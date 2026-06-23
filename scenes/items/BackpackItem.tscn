@@ -1,0 +1,36 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/EquippableItem.gd" id="1_equippable"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_backpack"]
+size = Vector3(0.55, 0.72, 0.28)
+
+[sub_resource type="StandardMaterial3D" id="Material_backpack"]
+albedo_color = Color(0.06, 0.10, 0.045, 1)
+roughness = 0.95
+
+[sub_resource type="BoxShape3D" id="BoxShape_backpack"]
+size = Vector3(0.58, 0.74, 0.30)
+
+[node name="BackpackItem" type="StaticBody3D" groups=["interactable"]]
+script = ExtResource("1_equippable")
+item_name = "Mochila"
+item_type = "backpack"
+can_be_taken_to_hands = false
+can_be_equipped = true
+equipment_slot = "backpack"
+world_model = "res://assets/external/realistic/root_glb/tactical_military_survival_backpack_3d_model.glb"
+equipped_model = "res://assets/external/realistic/root_glb/tactical_military_survival_backpack_3d_model.glb"
+pickup_text = "Equipar Mochila"
+equipped_position = Vector3(0, 0.02, 0.16)
+equipped_rotation = Vector3(8, 180, 0)
+equipped_scale = Vector3(0.24, 0.24, 0.24)
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_backpack")
+material_override = SubResource("Material_backpack")
+position = Vector3(0, 0.37, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape_backpack")
+position = Vector3(0, 0.37, 0)
