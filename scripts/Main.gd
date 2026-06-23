@@ -146,7 +146,7 @@ const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
 const ROOT_CANNED_FOOD_MODEL := ROOT_GLB_DIR + "canned_food_pack_opened__low_poly_game_asset.glb"
-const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "tactical_military_survival_backpack_3d_model.glb"
+const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
 const ROOT_KNIFE_MODEL := ROOT_GLB_DIR + "knife.glb"
 const ROOT_WEAPON_KNIFE_MODEL := ROOT_GLB_DIR + "call_of_duty_black_ops_cold_war_-_america_knife.glb"
 const ROOT_VEST_MODEL := ROOT_GLB_DIR + "vest_armor_holster_lowpoly_gameready_pack.glb"
@@ -973,7 +973,7 @@ func _create_survival_objectives() -> void:
 	_create_tool_pickup("shovel_pickup", "shovel_tool", "Pala vieja", SURVIVAL_TOOL_MODELS["shovel"], Vector3(-52.0, 0.05, 43.5), 0.9, Vector3(0, 12, 78))
 	_create_tool_pickup("hammer_pickup", "hammer_tool", "Martillo viejo", SURVIVAL_TOOL_MODELS["hammer"], Vector3(-49.0, 0.05, 46.1), 0.88, Vector3(0, -44, 82))
 	_create_tool_pickup("pickaxe_pickup", "pickaxe_tool", "Pico viejo", SURVIVAL_TOOL_MODELS["pickaxe"], Vector3(-53.2, 0.05, 45.3), 0.9, Vector3(0, 18, 82))
-	_create_backpack_pickup("small_backpack_pickup", Vector3(6.5, 0.05, 4.0))
+	_create_backpack_pickup("small_backpack_pickup", Vector3(9.5, 0.05, 3.5))
 	_create_loose_survival_pickups()
 	for i in range(4):
 		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
@@ -3448,18 +3448,23 @@ func _get_external_scene_resource(path: String):
 	return scene_resource
 
 func _precompute_snap_offset(path: String, node: Node3D) -> void:
-	var meshes := []
-	_collect_mesh_instances(node, meshes)
-	var min_y := 1000000.0
-	for mesh_node in meshes:
-		var mi := mesh_node as MeshInstance3D
-		if mi.mesh == null:
-			continue
-		var aabb := mi.get_aabb()
-		var world_aabb := mi.transform * aabb
-		min_y = min(min_y, world_aabb.position.y)
+	var min_y := _compute_hierarchy_min_y(node, Transform3D.IDENTITY)
 	if min_y < 999999.0:
 		_snap_offset_cache[path] = min_y
+
+func _compute_hierarchy_min_y(root: Node, parent_xform: Transform3D) -> float:
+	var min_y := 1000000.0
+	if root is MeshInstance3D:
+		var mi := root as MeshInstance3D
+		if mi.mesh != null:
+			var aabb := mi.get_aabb()
+			var world_aabb := parent_xform * mi.transform * aabb
+			min_y = min(min_y, world_aabb.position.y)
+	for child in root.get_children():
+		if child is Node3D:
+			var child_xform := parent_xform * (child as Node3D).transform
+			min_y = min(min_y, _compute_hierarchy_min_y(child, child_xform))
+	return min_y
 
 func _external_obj_color(path: String) -> Color:
 	var file_name := path.get_file().to_lower()
