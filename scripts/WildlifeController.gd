@@ -12,6 +12,9 @@ var _player: Node3D
 var _animation_player: AnimationPlayer
 var _stuck_time := 0.0
 var _last_position := Vector3.ZERO
+var _current_path: Array = []
+var _path_index := 0
+var _path_recalc_timer := 0.0
 
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
@@ -23,7 +26,6 @@ func setup(kind: String, points: Array) -> void:
 	patrol_points = points.duplicate()
 	if patrol_points.is_empty():
 		patrol_points = [Vector3.ZERO, Vector3(10, 0, 10), Vector3(-10, 0, -10)]
-	_sanitize_patrol_points()
 	global_position = patrol_points[0]
 	_last_position = global_position
 	target_index = 1 if patrol_points.size() > 1 else 0
@@ -79,8 +81,6 @@ func _process(delta: float) -> void:
 	if patrol_points.size() < 2:
 		return
 	_resolve_player()
-	if _escape_if_trapped(delta):
-		return
 	_update_stuck_timer(delta)
 	if _try_flee_from_player(delta):
 		return
@@ -89,13 +89,28 @@ func _process(delta: float) -> void:
 	to_target.y = 0.0
 	if to_target.length() < 0.55:
 		target_index = (target_index + 1) % patrol_points.size()
+		_current_path.clear()
+		_path_index = 0
 		return
-	var dir: Vector3 = to_target.normalized()
-	if _move_with_avoidance(dir, move_speed, delta, 5.0):
-		_walk_time += delta * move_speed * 5.0
-		_animate_legs(delta)
-	else:
-		_retarget_from_blocked_route()
+	_path_recalc_timer -= delta
+	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
+		_current_path = _request_path(global_position, target)
+		_path_index = 0
+		_path_recalc_timer = 3.0
+	var move_target: Vector3 = target
+	if _current_path.size() > 0 and _path_index < _current_path.size():
+		var waypoint: Vector3 = _current_path[_path_index]
+		var to_waypoint: Vector3 = waypoint - global_position
+		to_waypoint.y = 0.0
+		if to_waypoint.length() < 1.0:
+			_path_index += 1
+			if _path_index < _current_path.size():
+				move_target = _current_path[_path_index]
+		else:
+			move_target = waypoint
+	_move_towards(move_target, move_speed, delta, 5.0)
+	_walk_time += delta * move_speed * 5.0
+	_animate_legs(delta)
 
 func _update_stuck_timer(delta: float) -> void:
 	if global_position.distance_to(_last_position) < 0.015:
@@ -103,11 +118,15 @@ func _update_stuck_timer(delta: float) -> void:
 	else:
 		_stuck_time = 0.0
 		_last_position = global_position
-	if _stuck_time > 1.2:
+	if _stuck_time > 1.5:
 		_retarget_from_blocked_route()
 		_stuck_time = 0.0
+		_current_path.clear()
+		_path_index = 0
 
 func _retarget_from_blocked_route() -> void:
+	_current_path.clear()
+	_path_index = 0
 	for i in range(32):
 		var angle := randf_range(0.0, TAU)
 		var distance := randf_range(8.0, 20.0)
@@ -133,35 +152,81 @@ func _try_flee_from_player(delta: float) -> bool:
 		return false
 	if away.length() < 0.01:
 		away = Vector3.RIGHT
-	var dir := away.normalized()
+	var flee_goal := global_position + away.normalized() * 20.0
+	flee_goal.x = clamp(flee_goal.x, -68.0, 68.0)
+	flee_goal.z = clamp(flee_goal.z, -68.0, 68.0)
+	_path_recalc_timer -= delta
+	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
+		_current_path = _request_path(global_position, flee_goal)
+		_path_index = 0
+		_path_recalc_timer = 1.5
 	var flee_speed := move_speed * (2.65 if animal_type == "fox" else 2.05)
-	if _move_with_avoidance(dir, flee_speed, delta, 8.0):
-		_walk_time += delta * flee_speed * 4.8
-		_animate_legs(delta)
+	var move_target: Vector3 = flee_goal
+	if _current_path.size() > 0 and _path_index < _current_path.size():
+		var waypoint: Vector3 = _current_path[_path_index]
+		var to_waypoint: Vector3 = waypoint - global_position
+		to_waypoint.y = 0.0
+		if to_waypoint.length() < 1.0:
+			_path_index += 1
+			if _path_index < _current_path.size():
+				move_target = _current_path[_path_index]
+		else:
+			move_target = waypoint
+	_move_towards(move_target, flee_speed, delta, 8.0)
+	_walk_time += delta * flee_speed * 4.8
+	_animate_legs(delta)
 	return true
+
+func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: float) -> void:
+	var dir: Vector3 = target_pos - global_position
+	dir.y = 0.0
+	if dir.length() < 0.01:
+		return
+	dir = dir.normalized()
+	var step := speed * delta
+	var next_pos: Vector3 = global_position + dir * step
+	next_pos.x = clamp(next_pos.x, -72.0, 72.0)
+	next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+	global_position = next_pos
+	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
 
 func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: float) -> bool:
 	dir.y = 0.0
 	if dir.length() < 0.01:
 		return false
 	dir = dir.normalized()
+	var avoidance := _get_avoidance_vector()
+	if avoidance.length() > 0.01:
+		var steer := dir + avoidance * 1.5
+		steer.y = 0.0
+		if steer.length() > 0.01:
+			dir = steer.normalized()
 	var candidates := [
 		dir,
-		dir.rotated(Vector3.UP, deg_to_rad(35.0)),
-		dir.rotated(Vector3.UP, deg_to_rad(-35.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(20.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(-20.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(45.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(-45.0)),
 		dir.rotated(Vector3.UP, deg_to_rad(70.0)),
 		dir.rotated(Vector3.UP, deg_to_rad(-70.0)),
-		dir.rotated(Vector3.UP, deg_to_rad(120.0)),
-		dir.rotated(Vector3.UP, deg_to_rad(-120.0))
+		dir.rotated(Vector3.UP, deg_to_rad(100.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(-100.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(140.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(-140.0)),
+		dir.rotated(Vector3.UP, deg_to_rad(180.0))
 	]
 	for candidate in candidates:
 		candidate = candidate.normalized()
-		var next_pos: Vector3 = global_position + candidate * speed * delta
+		var step_dist := speed * delta
+		var next_pos: Vector3 = global_position + candidate * step_dist
 		next_pos.x = clamp(next_pos.x, -72.0, 72.0)
 		next_pos.z = clamp(next_pos.z, -72.0, 72.0)
-		if not _is_path_clear(next_pos, candidate):
-			continue
 		if not _is_position_allowed(next_pos):
+			continue
+		var lookahead: Vector3 = global_position + candidate * step_dist * 2.5
+		lookahead.x = clamp(lookahead.x, -72.0, 72.0)
+		lookahead.z = clamp(lookahead.z, -72.0, 72.0)
+		if not _is_position_allowed(lookahead):
 			continue
 		global_position = next_pos
 		rotation.y = lerp_angle(rotation.y, atan2(candidate.x, candidate.z), delta * turn_speed)
@@ -218,6 +283,12 @@ func _resolve_player() -> void:
 	if scene == null:
 		return
 	_player = scene.get_node_or_null("Player") as Node3D
+
+func _request_path(start: Vector3, goal: Vector3) -> Array:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("find_path_wildlife"):
+		return scene.call("find_path_wildlife", start, goal) as Array
+	return [goal]
 
 func _animate_legs(delta: float) -> void:
 	if _visual_root != null:

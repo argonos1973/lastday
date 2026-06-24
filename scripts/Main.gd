@@ -37,6 +37,10 @@ var _shared_foliage_green_mat: StandardMaterial3D = null
 var _display_props_stripped := {}
 var river_segments_data: Array = []
 var wildlife_blockers: Array = []
+var _nav_grid: Dictionary = {}
+var _nav_grid_size := 76
+var _nav_cell_size := 2.0
+var _nav_grid_built := false
 var game_over := false
 var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
@@ -687,6 +691,7 @@ func _create_map() -> void:
 	_create_forest()
 	_create_survival_objectives()
 	_create_river_drink_zones()
+	_build_nav_grid()
 	_create_wildlife()
 	_flush_grass_batches()
 
@@ -1198,7 +1203,7 @@ func _mark_world_action_visual(node_name: String) -> void:
 
 func _create_backpack_pickup(id: String, pos: Vector3) -> void:
 	var visual_name := "Pickup_" + id
-	if not _try_instance_external_scene([ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]], visual_name, pos, Vector3.ONE * 0.62, Vector3(0.0, -18.0, 0.0), true, 0.05):
+	if not _try_instance_external_scene([ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]], visual_name, pos, Vector3.ONE * 1.2, Vector3(0.0, -18.0, 0.0), true, 0.05):
 		push_warning("No se crea mochila porque falta/carga mal el asset real.")
 		return
 	_mark_world_action_visual(visual_name)
@@ -1209,7 +1214,6 @@ func _create_backpack_pickup(id: String, pos: Vector3) -> void:
 func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	var visual_name := "ChoppableTree_" + id
 	var collision_name := visual_name + "_Collision"
-	_register_wildlife_blocker(pos, 3.2)
 	var scale_value := Vector3.ONE * randf_range(1.05, 1.75)
 	if not _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.0):
 		if not _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.0):
@@ -1492,7 +1496,7 @@ func _create_terrain_variation() -> void:
 			continue
 		var rock_scale := randf_range(0.7, 1.35)
 		if _try_instance_external_scene(_shuffled_paths(REAL_ROCK_MODELS), "RealRock", rock_pos, Vector3.ONE * rock_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0):
-			_register_wildlife_blocker(rock_pos, max(1.0, rock_scale * 1.35))
+			pass
 		else:
 			_create_polyhaven_boulder(rock_pos, Vector3(randf_range(0.32, 0.74), randf_range(0.16, 0.34), randf_range(0.28, 0.62)))
 	for i in range(16):
@@ -1547,14 +1551,12 @@ func _create_rocky_foothills() -> void:
 			continue
 		var rock_scale := randf_range(1.0, 2.4)
 		if _try_instance_external_scene(_shuffled_paths(REAL_ROCK_MODELS), "FoothillRock", pos, Vector3.ONE * rock_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0):
-			_register_wildlife_blocker(pos, max(1.2, rock_scale * 1.45))
 			continue
 		_create_polyhaven_boulder(pos, Vector3(randf_range(0.8, 2.1), randf_range(0.25, 0.8), randf_range(0.7, 1.9)))
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
 		return
-	_register_wildlife_blocker(pos, max(scale_value.x, scale_value.z) * 1.35)
 	var base_color := Color(0.26, 0.24, 0.20)
 	var rock_texture := POLY_ROCK_07_DIFF if randf() < 0.55 else POLY_BOULDER_DIFF
 	_create_textured_visual_sphere("PolyhavenBoulder", pos + Vector3(0, scale_value.y * 0.55, 0), scale_value, rock_texture, base_color)
@@ -2214,11 +2216,9 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 	return false
 
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
-	if _is_near_wildlife_blocker(pos, 1.45):
+	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	if _is_inside_river_band(pos, 0.5):
-		return false
-	return not _is_in_no_grass_area(pos, 0.0)
+	return true
 
 func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 	var push := Vector3.ZERO
@@ -3667,4 +3667,109 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 				continue
 		migrated_inventory.append(raw_item)
 	player_data["inventory"] = migrated_inventory
-	data["balance_version"] = SAVE_BALANCE_VERSION
+
+func _world_to_grid(pos: Vector3) -> Vector2i:
+	return Vector2i(int(round(pos.x / _nav_cell_size)) + _nav_grid_size / 2, int(round(pos.z / _nav_cell_size)) + _nav_grid_size / 2)
+
+func _grid_to_world(cell: Vector2i) -> Vector3:
+	return Vector3(float(cell.x - _nav_grid_size / 2) * _nav_cell_size, 0.0, float(cell.y - _nav_grid_size / 2) * _nav_cell_size)
+
+func _build_nav_grid() -> void:
+	_nav_grid.clear()
+	for blocker in wildlife_blockers:
+		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var radius: float = float(blocker.get("radius", 1.8))
+		var center_cell := _world_to_grid(blocker_pos)
+		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
+		for dx in range(-cell_radius, cell_radius + 1):
+			for dy in range(-cell_radius, cell_radius + 1):
+				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
+				if cell.x < 0 or cell.x >= _nav_grid_size or cell.y < 0 or cell.y >= _nav_grid_size:
+					continue
+				var world_pos := _grid_to_world(cell)
+				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
+					_nav_grid[cell] = true
+	_nav_grid_built = true
+
+func is_nav_cell_blocked(cell: Vector2i) -> bool:
+	if cell.x < 1 or cell.x >= _nav_grid_size - 1 or cell.y < 1 or cell.y >= _nav_grid_size - 1:
+		return true
+	return _nav_grid.has(cell)
+
+func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
+	if not _nav_grid_built:
+		return [goal]
+	var start_cell := _world_to_grid(start)
+	var goal_cell := _world_to_grid(goal)
+	if start_cell == goal_cell:
+		return [goal]
+	if is_nav_cell_blocked(goal_cell):
+		goal_cell = _nearest_free_cell(goal_cell)
+		if goal_cell == start_cell:
+			return [goal]
+	if is_nav_cell_blocked(start_cell):
+		start_cell = _nearest_free_cell(start_cell)
+		if start_cell == goal_cell:
+			return [goal]
+	return _astar(start_cell, goal_cell, start)
+
+func _nearest_free_cell(cell: Vector2i) -> Vector2i:
+	for radius in range(1, 10):
+		for dx in range(-radius, radius + 1):
+			for dy in range(-radius, radius + 1):
+				if abs(dx) != radius and abs(dy) != radius:
+					continue
+				var candidate := Vector2i(cell.x + dx, cell.y + dy)
+				if not is_nav_cell_blocked(candidate):
+					return candidate
+	return cell
+
+func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> Array:
+	var came_from: Dictionary = {}
+	var visited: Dictionary = {}
+	var queue: Array = [start_cell]
+	visited[start_cell] = true
+	var head := 0
+	var max_iterations := 1500
+	var iterations := 0
+	while head < queue.size() and iterations < max_iterations:
+		iterations += 1
+		var current: Vector2i = queue[head]
+		head += 1
+		if current == goal_cell:
+			return _reconstruct_path(came_from, current, start_world)
+		for neighbor in _get_neighbors(current):
+			if visited.has(neighbor):
+				continue
+			if is_nav_cell_blocked(neighbor):
+				continue
+			visited[neighbor] = true
+			came_from[neighbor] = current
+			queue.append(neighbor)
+	return [_grid_to_world(goal_cell)]
+
+func _get_neighbors(cell: Vector2i) -> Array:
+	return [
+		Vector2i(cell.x + 1, cell.y),
+		Vector2i(cell.x - 1, cell.y),
+		Vector2i(cell.x, cell.y + 1),
+		Vector2i(cell.x, cell.y - 1),
+		Vector2i(cell.x + 1, cell.y + 1),
+		Vector2i(cell.x + 1, cell.y - 1),
+		Vector2i(cell.x - 1, cell.y + 1),
+		Vector2i(cell.x - 1, cell.y - 1)
+	]
+
+func _reconstruct_path(came_from: Dictionary, current: Vector2i, start_world: Vector3) -> Array:
+	var cells: Array = [current]
+	while came_from.has(current):
+		current = came_from[current]
+		cells.push_front(current)
+	var path: Array = []
+	for i in range(cells.size()):
+		if i == 0:
+			continue
+		path.append(_grid_to_world(cells[i]))
+	if path.is_empty():
+		path.append(_grid_to_world(cells[0]))
+	return path

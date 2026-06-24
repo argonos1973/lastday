@@ -97,6 +97,9 @@ var body_mesh: MeshInstance3D
 var third_person_model: Node3D
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
+var _spine_skeleton: Skeleton3D = null
+var _spine_bone_idx: int = -1
+var _backpack_rest_pos: Vector3 = Vector3(0.0, 1.18, 0.24)
 var third_person_left_arm: Node3D
 var third_person_right_arm: Node3D
 var third_person_left_leg: Node3D
@@ -501,6 +504,19 @@ func _physics_process(delta: float) -> void:
 	_update_walk_motion(delta, input_dir.length())
 	_update_interaction_prompt()
 	_update_flashlight(delta)
+	_update_backpack_socket()
+
+func _update_backpack_socket() -> void:
+	if _spine_skeleton == null or _spine_bone_idx < 0 or third_person_back_item_root == null:
+		return
+	if not is_instance_valid(_spine_skeleton) or not is_instance_valid(third_person_back_item_root):
+		return
+	var bone_pose := _spine_skeleton.get_bone_global_pose(_spine_bone_idx)
+	var skel_global := _spine_skeleton.global_transform
+	var bone_world := skel_global * bone_pose
+	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var bone_local := local_to_model * bone_world
+	third_person_back_item_root.position = bone_local.origin + _backpack_rest_pos
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -656,6 +672,13 @@ func _create_third_person_item_slots() -> void:
 	third_person_back_item_root.position = Vector3(0.0, 1.18, 0.24)
 	third_person_back_item_root.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 	third_person_model.add_child(third_person_back_item_root)
+	_spine_skeleton = _find_skeleton(third_person_model)
+	_spine_bone_idx = -1
+	if _spine_skeleton != null:
+		for bone_name in ["mixamorig:Spine2", "mixamorig:Spine1", "mixamorig:Spine", "mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"]:
+			_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
+			if _spine_bone_idx != -1:
+				break
 
 	var head_socket := _create_equipment_socket("HeadSocket", Vector3(0.0, 1.72, -0.02), Vector3.ZERO)
 	var chest_socket := _create_equipment_socket("ChestSocket", Vector3(0.0, 1.24, -0.18), Vector3.ZERO)
