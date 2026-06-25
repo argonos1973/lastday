@@ -58,10 +58,7 @@ func _make_box(size: Vector3, color: Color) -> void:
 	box.size = size
 	mesh_instance.mesh = box
 	mesh_instance.position.y = size.y * 0.5
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 1.0
-	mesh_instance.material_override = material
+	mesh_instance.visible = false
 	add_child(mesh_instance)
 
 	var collision := CollisionShape3D.new()

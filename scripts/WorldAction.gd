@@ -21,7 +21,7 @@ func setup(id: String, type: String, label: String, size: Vector3, color: Color,
 	repeatable = can_repeat
 	_make_box(size, color)
 	if _mesh_instance != null:
-		_mesh_instance.visible = marker_visible
+		_mesh_instance.visible = false
 	add_to_group("world_actions")
 	add_to_group("interactable")
 

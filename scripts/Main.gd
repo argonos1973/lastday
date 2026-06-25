@@ -803,8 +803,8 @@ func _create_gas_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin + Vector3(0.0, 0.0, 7.0), 6.8)
 	_create_label("Gasolinera", origin + Vector3(0, 3.3, 0))
 	if _try_instance_external_scene([REAL_GAS_STATION_MODEL], "RealGasStation", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16))
-		_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09))
+		_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16), [ROOT_RUSTY_CAR_MODEL])
+		_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09), [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box-large-open.glb"])
 		return
 	_create_static_box("GasStationFloor", origin, Vector3(9, 0.2, 6), Color(0.16, 0.14, 0.11))
 	_create_static_box("GasStationBack", origin + Vector3(0, 0, -3), Vector3(9, 2.6, 0.35), Color(0.27, 0.24, 0.19))
@@ -819,16 +819,16 @@ func _create_gas_station(origin: Vector3) -> void:
 	_create_static_box("PumpB", origin + Vector3(2.5, 0, 7), Vector3(0.8, 1.8, 0.8), Color(0.36, 0.08, 0.06))
 	_create_static_box("GasStationCanopy", origin + Vector3(-0.4, 2.6, 7), Vector3(9.5, 0.25, 5.5), Color(0.19, 0.16, 0.12))
 	_create_static_box("GasStationSign", origin + Vector3(-5.8, 0, 4.7), Vector3(0.35, 3.4, 1.8), Color(0.39, 0.09, 0.06))
-	_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16))
-	_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09))
+	_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16), [ROOT_RUSTY_CAR_MODEL])
+	_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09), [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box-large-open.glb"])
 	_create_scrap_pile(origin + Vector3(-6.5, 0, -4.8))
 
 func _create_police_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 8.7)
 	_create_label("Comisaria", origin + Vector3(0, 3.5, 0))
 	if _try_instance_external_scene([REAL_POLICE_STATION_MODEL], "RealPoliceStation", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17))
-		_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09))
+		_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17), [ROOT_FURNITURE_MODEL, K_SURVIVAL + "box-large-open.glb"])
+		_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09), [ROOT_BACKPACK_MODEL])
 		return
 	_create_static_box("PoliceFloor", origin, Vector3(10, 0.2, 7), Color(0.12, 0.13, 0.14))
 	_create_static_box("PoliceBack", origin + Vector3(0, 0, -3.5), Vector3(10, 3.0, 0.35), Color(0.18, 0.20, 0.22))
@@ -841,15 +841,15 @@ func _create_police_station(origin: Vector3) -> void:
 	_create_visual_box("PoliceWindowB", origin + Vector3(3.0, 1.45, 3.72), Vector3(1.25, 0.82, 0.06), Color(0.035, 0.045, 0.055), Vector3.ZERO)
 	_create_static_box("PoliceDesk", origin + Vector3(-1.2, 0, 0.8), Vector3(2.0, 0.8, 0.9), Color(0.13, 0.12, 0.10))
 	_create_static_box("PoliceBars", origin + Vector3(3.2, 0, -1.1), Vector3(0.25, 2.2, 2.6), Color(0.08, 0.09, 0.10))
-	_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17))
-	_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09))
+	_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17), [ROOT_FURNITURE_MODEL, K_SURVIVAL + "box-large-open.glb"])
+	_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09), [ROOT_BACKPACK_MODEL])
 
 func _create_radio_point(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 6.0)
 	_register_wildlife_blocker(origin + Vector3(3.6, 0.0, -1.5), 2.8)
 	_create_label("Punto de radio", origin + Vector3(0, 4.0, 0))
 	if _try_instance_external_scene([REAL_RADIO_POINT_MODEL], "RealRadioPoint", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10))
+		_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10), [K_SURVIVAL + "box-open.glb", ROOT_JUNK_MODEL])
 		return
 	_create_static_box("RadioShedFloor", origin, Vector3(5, 0.2, 5), Color(0.11, 0.11, 0.10))
 	_create_static_box("RadioShedBack", origin + Vector3(0, 0, -2.5), Vector3(5, 2.4, 0.3), Color(0.17, 0.17, 0.15))
@@ -858,7 +858,7 @@ func _create_radio_point(origin: Vector3) -> void:
 	_create_static_box("RadioShedFrontA", origin + Vector3(-1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
 	_create_static_box("RadioShedFrontB", origin + Vector3(1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
 	_create_static_box("RadioMast", origin + Vector3(3.6, 0, -1.5), Vector3(0.35, 8, 0.35), Color(0.12, 0.12, 0.12))
-	_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10))
+	_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10), [K_SURVIVAL + "box-open.glb", ROOT_JUNK_MODEL])
 
 func _create_new_world_props() -> void:
 	var car_s := Vector3.ONE * 0.013
@@ -938,16 +938,6 @@ func _create_survival_objectives() -> void:
 	_create_static_box_rotated("CabinFoundationLogsB", Vector3(-54, 0.12, 49.55), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsC", Vector3(-56.1, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsD", Vector3(-51.9, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
-	for i in range(6):
-		var berry_pos := Vector3(randf_range(-60, -35), 0.04, randf_range(22, 58))
-		_create_bush(berry_pos, randf_range(0.55, 0.85))
-		if not _try_instance_external_scene(_shuffled_paths([
-			"res://assets/external/quaternius_food_obj/OBJ/Apple.obj",
-			"res://assets/external/quaternius_food_obj/OBJ/Apple_Green.obj",
-			"res://assets/external/quaternius_food_obj/OBJ/Orange.obj"
-		]), "FoodFruitBushAsset", berry_pos + Vector3(0.10, 0.55, -0.08), Vector3.ONE * 0.26, Vector3(0, randf_range(0, 360), 0)):
-			_create_visual_sphere("BerryCluster", berry_pos + Vector3(0.12, 0.62, -0.08), Vector3(0.12, 0.08, 0.12), Color(0.22, 0.02, 0.045))
-		_create_world_action("berry_%d" % i, "forage", "Arbusto de bayas", berry_pos, Vector3(1.25, 1.1, 1.25), Color(0.08, 0.20, 0.07), false, false)
 	for i in range(5):
 		var wood_pos := Vector3(randf_range(-62, -28), 0.04, randf_range(12, 62))
 		var log_a_name := "HarvestableLogA_%d" % i
@@ -990,9 +980,6 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_north", "fish", "Zona de pesca", Vector3(-35, 0.05, -57), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
-	_create_visual_box("AnimalTrackA", Vector3(-50.2, 0.035, 28.0), Vector3(0.22, 0.025, 0.42), Color(0.08, 0.055, 0.025), Vector3(0, 22, 0))
-	_create_visual_box("AnimalTrackB", Vector3(-49.7, 0.035, 28.35), Vector3(0.20, 0.025, 0.38), Color(0.08, 0.055, 0.025), Vector3(0, -16, 0))
-	_try_instance_external_scene(["res://assets/external/quaternius_food_obj/OBJ/Steak.obj"], "HuntingFoodAsset", Vector3(-49.3, 0.08, 28.7), Vector3.ONE * 0.55, Vector3(0, 35, 0))
 	_create_tool_pickup("axe_pickup", "axe_tool", "Hacha vieja", SURVIVAL_TOOL_MODELS["axe"], Vector3(-48.2, 0.05, 43.0), 0.9, Vector3(0, -25, 78))
 	_create_tool_pickup("hoe_pickup", "hoe_tool", "Azada vieja", SURVIVAL_TOOL_MODELS["hoe"], Vector3(-50.1, 0.05, 44.4), 0.9, Vector3(0, 32, 78))
 	_create_tool_pickup("shovel_pickup", "shovel_tool", "Pala vieja", SURVIVAL_TOOL_MODELS["shovel"], Vector3(-52.0, 0.05, 43.5), 0.9, Vector3(0, 12, 78))
@@ -1110,58 +1097,19 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	var action = _create_world_action(id, action_type, label, pos, Vector3(1.2, 0.75, 1.2), Color(0.10, 0.095, 0.07), false, false)
 	action.set_meta("visual_name", visual_name)
 
-func _create_visible_tool_marker(node_name: String, action_type: String, pos: Vector3) -> void:
-	var root := Node3D.new()
-	root.name = node_name
-	root.position = pos + Vector3(0.0, 0.16, 0.0)
-	root.rotation_degrees = Vector3(0.0, randf_range(0.0, 180.0), 0.0)
-	root.add_to_group("world_action_visual")
-	add_child(root)
-
-	var handle := MeshInstance3D.new()
-	handle.name = "ToolHandle"
-	var handle_mesh := CylinderMesh.new()
-	handle_mesh.top_radius = 0.035
-	handle_mesh.bottom_radius = 0.045
-	handle_mesh.height = 0.85
-	handle_mesh.radial_segments = 8
-	handle.mesh = handle_mesh
-	handle.rotation_degrees = Vector3(88.0, 0.0, 0.0)
-	handle.position = Vector3(0.0, 0.04, 0.0)
-	handle.material_override = _make_material(Color(0.20, 0.12, 0.055), true)
-	root.add_child(handle)
-
-	var head := MeshInstance3D.new()
-	head.name = "ToolHead"
-	var head_mesh := BoxMesh.new()
-	head_mesh.size = Vector3(0.34, 0.08, 0.16)
-	head.mesh = head_mesh
-	head.position = Vector3(0.0, 0.09, -0.42)
-	var metal_color := Color(0.34, 0.34, 0.31)
-	if action_type == "hoe_tool" or action_type == "pickaxe_tool":
-		metal_color = Color(0.26, 0.24, 0.20)
-	head.material_override = _make_material(metal_color, true)
-	root.add_child(head)
-
 func _create_loose_survival_pickups() -> void:
+	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
-		{"id": "loose_food_0", "name": "Refresco", "type": "water", "weight": 0.35, "qty": 1, "use": 24.0, "pos": Vector3(-21.2, 0.06, -13.8), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Soda.obj"], "color": Color(0.34, 0.30, 0.22)},
-		{"id": "loose_food_1", "name": "Manzana", "type": "food", "weight": 0.12, "qty": 2, "use": 10.0, "pos": Vector3(-37.4, 0.06, 20.8), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Apple.obj", "res://assets/external/quaternius_food_obj/OBJ/Orange.obj"], "color": Color(0.55, 0.08, 0.04)},
-		{"id": "loose_canned_food_0", "name": "Lata abierta", "type": "food", "weight": 0.38, "qty": 1, "use": 28.0, "pos": Vector3(18.5, 0.06, -18.2), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Soda.obj"], "rot": Vector3(0, 34, 0), "color": Color(0.34, 0.27, 0.16)},
-		{"id": "loose_canned_food_1", "name": "Lata de comida", "type": "food", "weight": 0.38, "qty": 1, "use": 28.0, "pos": Vector3(-54.0, 0.06, 15.0), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Soda.obj"], "rot": Vector3(0, 120, 0), "color": Color(0.34, 0.27, 0.16)},
-		{"id": "loose_canned_food_2", "name": "Lata de comida", "type": "food", "weight": 0.38, "qty": 1, "use": 28.0, "pos": Vector3(42.0, 0.06, -12.0), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Soda.obj"], "rot": Vector3(0, 200, 0), "color": Color(0.34, 0.27, 0.16)},
-		{"id": "loose_food_2", "name": "Manzana", "type": "food", "weight": 0.12, "qty": 2, "use": 10.0, "pos": Vector3(12.0, 0.06, 8.0), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Apple_Green.obj", "res://assets/external/quaternius_food_obj/OBJ/Apple.obj"], "color": Color(0.25, 0.45, 0.08)},
-		{"id": "loose_water_0", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(26.4, 0.06, 21.5), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb", "res://assets/external/quaternius_food_obj/OBJ/Bottle1.obj"], "color": Color(0.18, 0.32, 0.38)},
-		{"id": "loose_water_1", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(35.6, 0.06, -27.2), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb", "res://assets/external/quaternius_food_obj/OBJ/Bottle2.obj"], "color": Color(0.18, 0.32, 0.38)},
-		{"id": "loose_seeds_0", "name": "Semillas", "type": "seed", "weight": 0.02, "qty": 4, "use": 0.0, "pos": Vector3(-56.5, 0.06, 38.0), "paths": ["res://assets/external/quaternius_food_obj/OBJ/Carrot.obj", "res://assets/external/quaternius_food_obj/OBJ/Tomato.obj"], "color": Color(0.38, 0.28, 0.10)},
+		{"id": "loose_water_0", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(26.4, 0.06, 21.5), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"], "color": Color(0.18, 0.32, 0.38)},
+		{"id": "loose_water_1", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(35.6, 0.06, -27.2), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"], "color": Color(0.18, 0.32, 0.38)},
 		{"id": "loose_planks_0", "name": "Madera", "type": "resource", "weight": 0.65, "qty": 2, "use": 0.0, "pos": Vector3(-52.6, 0.06, 49.5), "paths": [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]], "color": Color(0.20, 0.12, 0.055)},
 		{"id": "loose_boots_0", "name": "Botas de goma", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.18, "pos": Vector3(-18.6, 0.06, -11.9), "paths": [POLY_RUBBER_BOOTS_MODEL], "scale": 0.85, "rot": Vector3(0, 25, 0), "color": Color(0.10, 0.12, 0.08)},
 		{"id": "loose_gloves_0", "name": "Guantes de trabajo", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.08, "pos": Vector3(-49.2, 0.06, 41.0), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.62, "rot": Vector3(0, -20, 0), "color": Color(0.18, 0.14, 0.06)},
 		{"id": "loose_hat_0", "name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "pos": Vector3(-34.2, 0.06, -55.1), "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 0.68, "rot": Vector3(0, 74, 0), "color": Color(0.20, 0.17, 0.11)},
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
-		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_suitcase_0", "name": "Maleta vieja", "type": "misc", "weight": 2.4, "qty": 1, "use": 0.0, "pos": Vector3(12.8, 0.06, -21.4), "paths": [POLY_VINTAGE_SUITCASE_MODEL], "scale": 0.86, "rot": Vector3(0, 15, 0), "color": Color(0.16, 0.10, 0.055)}
 	]
 	for pickup in pickups:
@@ -1181,7 +1129,9 @@ func _create_pickup_item(data: Dictionary) -> void:
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, true, 0.06)
 	if not spawned:
-		_create_visual_pickup_marker(visual_name, item_type, pos, color)
+		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
+		return
+	_mark_world_action_visual(visual_name)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
@@ -1191,34 +1141,6 @@ func _create_pickup_item(data: Dictionary) -> void:
 	action.set_meta("item_weight", float(data.get("weight", 0.1)))
 	action.set_meta("item_quantity", int(data.get("qty", 1)))
 	action.set_meta("item_use_value", float(data.get("use", 0.0)))
-
-func _create_visual_pickup_marker(node_name: String, item_type: String, pos: Vector3, color: Color) -> void:
-	match item_type:
-		"medical":
-			_create_visual_box(node_name, pos + Vector3(0.0, 0.15, 0.0), Vector3(0.62, 0.18, 0.34), color, Vector3(0, randf_range(0, 180), 0))
-			_create_visual_box(node_name + "Wrap", pos + Vector3(0.0, 0.255, 0.0), Vector3(0.66, 0.05, 0.38), Color(0.92, 0.88, 0.76), Vector3(0, randf_range(0, 180), 0))
-		"seed":
-			_create_visual_box(node_name, pos + Vector3(0.0, 0.13, 0.0), Vector3(0.48, 0.22, 0.34), color, Vector3(0, randf_range(0, 180), 0))
-		_:
-			_create_visual_box(node_name, pos + Vector3(0.0, 0.16, 0.0), Vector3(0.46, 0.22, 0.36), color, Vector3(0, randf_range(0, 180), 0))
-	_mark_world_action_visual(node_name)
-	_mark_world_action_visual(node_name + "Wrap")
-
-func _create_pickup_visibility_prop(node_name: String, item_type: String, pos: Vector3, color: Color) -> void:
-	var prop_color := color.lightened(0.12)
-	var size := Vector3(0.42, 0.10, 0.30)
-	match item_type:
-		"water":
-			size = Vector3(0.22, 0.42, 0.22)
-			prop_color = Color(0.14, 0.32, 0.42)
-		"food":
-			size = Vector3(0.34, 0.20, 0.34)
-		"resource":
-			size = Vector3(0.70, 0.16, 0.28)
-		_:
-			pass
-	_create_visual_box(node_name, pos + Vector3(0.0, max(0.13, size.y * 0.65), 0.0), size, prop_color, Vector3(0, randf_range(0, 180), 0))
-	_mark_world_action_visual(node_name)
 
 func _mark_world_action_visual(node_name: String) -> void:
 	var node := get_node_or_null(NodePath(node_name))
@@ -2228,7 +2150,7 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	_create_static_box("CampBedroll", pos + Vector3(-0.8, 0, 0.3), Vector3(1.8, 0.18, 0.75), Color(0.17, 0.18, 0.13))
 	_create_static_cylinder("CampFireRingA", pos + Vector3(0.9, 0, -0.8), 0.48, 0.08, Color(0.05, 0.045, 0.04))
 	_create_visual_box("CampColdAsh", pos + Vector3(0.9, 0.08, -0.8), Vector3(0.55, 0.025, 0.35), Color(0.09, 0.085, 0.075), Vector3(0, 25, 0))
-	_create_loot_container("camp_backpack", "Mochila abandonada", pos + Vector3(1.6, 0, -0.2), Vector3(0.9, 0.65, 0.75), Color(0.08, 0.12, 0.07))
+	_create_loot_container("camp_backpack", "Mochila abandonada", pos + Vector3(1.6, 0, -0.2), Vector3(0.9, 0.65, 0.75), Color(0.08, 0.12, 0.07), [ROOT_BACKPACK_MODEL])
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
@@ -3495,11 +3417,20 @@ func _make_cloud_material() -> StandardMaterial3D:
 	material_cache["cloud_layer"] = material
 	return material
 
-func _create_loot_container(id: String, label: String, pos: Vector3, size: Vector3, color: Color):
+func _create_loot_container(id: String, label: String, pos: Vector3, size: Vector3, color: Color, model_paths: Array = []):
+	var visual_name := "LootContainer_" + id
+	var spawned := false
+	if not model_paths.is_empty():
+		spawned = _try_instance_external_scene(model_paths, visual_name, pos, Vector3.ONE, Vector3(0, randf_range(0, 360), 0), true, 0.0)
+	if not spawned:
+		push_warning("No se crea contenedor %s porque falta/carga mal el asset .glb" % label)
+		return null
+	_mark_world_action_visual(visual_name)
 	var container = LootContainerScript.new()
 	container.name = id
 	container.position = pos
 	container.setup(id, label, size, color)
+	container.set_meta("visual_name", visual_name)
 	add_child(container)
 	containers_by_id[id] = container
 	return container
