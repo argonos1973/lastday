@@ -164,6 +164,7 @@ const ROOT_AXE_CS2_MODEL := ROOT_GLB_DIR + "tool__axe_weapon_model_cs2.glb"
 const ROOT_SOFA_MODEL := ROOT_GLB_DIR + "trashy_backyard_sofa.glb"
 const ROOT_FRIDGE_MODEL := ROOT_GLB_DIR + "old_rusty_fridge.glb"
 const ROOT_GASSTOVE_MODEL := ROOT_GLB_DIR + "old_russian_gasstove.glb"
+const ROOT_POWER_POLE_MODEL := "res://assets/external/power_pole.glb"
 const POLY_MODEL_DIR := "res://assets/external/polyhaven/models/"
 const POLY_TREE_MODELS := [
 	POLY_MODEL_DIR + "tree_small_02/tree_small_02_1k.gltf",
@@ -633,8 +634,11 @@ func _on_player_died() -> void:
 	SaveSystemScript.delete_save()
 	if hud != null:
 		hud.show_notice("Has muerto. Todo vuelve a empezar.")
-	await get_tree().create_timer(3.0).timeout
-	get_tree().reload_current_scene()
+		var death_timer := get_tree().create_timer(3.0)
+		var tw := create_tween()
+		tw.tween_await(death_timer.timeout)
+		tw.tween_callback(func(): get_tree().reload_current_scene())
+		await tw.finished
 
 func _create_audio() -> void:
 	audio_system = AudioSystemScript.new()
@@ -659,13 +663,22 @@ func _create_npc() -> void:
 	)
 
 func _create_map() -> void:
+	var _tm := Time.get_ticks_msec()
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(150, 0.2, 150))
 	_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(150, 150), Color(0.17, 0.20, 0.145))
 	_create_grass_ground_cover()
+	print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_terrain_variation()
+	print("TIME terrain_variation: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_mountain_backdrop()
+	print("TIME mountain_backdrop: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_mountain_river()
+	print("TIME mountain_river: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_static_box("Road", Vector3(8, 0.01, 0), Vector3(7, 0.06, 125), Color(0.034, 0.036, 0.034))
 	_create_static_box("RoadCenterLineA", Vector3(8, 0.055, -32), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
 	_create_static_box("RoadCenterLineB", Vector3(8, 0.055, -8), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
@@ -675,25 +688,35 @@ func _create_map() -> void:
 	_create_static_box("RoadShoulderB", Vector3(12.1, 0.015, 0), Vector3(0.5, 0.05, 125), Color(0.22, 0.20, 0.17))
 	_create_broken_road_details()
 	_create_label("Carretera", Vector3(8, 1.0, -28))
-
 	_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
 	_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
 	_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
 	_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
 	_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
-	_create_gas_station(Vector3(33, 0, -30))
-	_create_police_station(Vector3(45, 0, 0))
 	_create_radio_point(Vector3(-42, 0, -42))
+	print("TIME structures: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_world_details()
+	print("TIME world_details: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_ground_clutter()
+	print("TIME ground_clutter: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_tall_grass_fields()
+	print("TIME tall_grass_fields: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_dense_vegetation_zones()
+	print("TIME dense_vegetation: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_forest()
+	print("TIME forest: %dms" % (Time.get_ticks_msec() - _tm))
+	_tm = Time.get_ticks_msec()
 	_create_survival_objectives()
 	_create_river_drink_zones()
 	_build_nav_grid()
 	_create_wildlife()
 	_flush_grass_batches()
+	print("TIME objectives+nav+wildlife+flush: %dms" % (Time.get_ticks_msec() - _tm))
 
 func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	_register_wildlife_blocker(origin, 8.2)
@@ -709,9 +732,6 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-1.95, 0, 4.7), Vector3(1.05, 3.65, 0.35), Vector3.ZERO)
 	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(1.95, 0, 4.7), Vector3(1.05, 3.65, 0.35), Vector3.ZERO)
 	_create_house_details(origin, label)
-	_create_loot_container(id_prefix + "_wardrobe", "Armario", origin + Vector3(-2.6, 0, -2.3), Vector3(1.0, 1.8, 0.55), Color(0.23, 0.17, 0.11))
-	_create_loot_container(id_prefix + "_box", "Caja", origin + Vector3(2.75, 0, 1.65), Vector3(1.0, 0.75, 0.9), Color(0.20, 0.16, 0.11))
-	_create_house_interior(origin, label, id_prefix)
 
 func _create_house_foundation(origin: Vector3, label: String) -> void:
 	# Concrete skirting (perimeter beams) under the brick walls, so the houses
@@ -875,7 +895,7 @@ func _create_world_details() -> void:
 	_try_instance_external_scene([ROOT_JUNK_MODEL], "RootJunkPile", Vector3(-30.5, 0.05, -8.7), Vector3.ONE * 0.72, Vector3(0, 37, 0), true, 0.02)
 	_create_new_world_props()
 	_create_quaternius_environment_props()
-	_create_power_line(Vector3(15, 0, -58), Vector3(15, 0, 58))
+	_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(19, 0, 12), Vector3(19, 0, 32), 6)
 	_create_scrap_pile(Vector3(14, 0, -17))
@@ -1003,55 +1023,59 @@ func _create_river_drink_zones() -> void:
 		)
 		if action != null:
 			action.rotation_degrees.y = yaw
+			action.disable_collision()
 
 func _create_wildlife() -> void:
-	# Deer follow perimeter routes away from the settlement and rivers.
 	_create_deer_pair([
-		Vector3(-65, 0.0, -40),
-		Vector3(-65, 0.0, -10),
-		Vector3(-65, 0.0, 20),
-		Vector3(-65, 0.0, 44),
-		Vector3(-48, 0.0, 50),
-		Vector3(-35, 0.0, 38),
-		Vector3(-35, 0.0, -38),
-		Vector3(-48, 0.0, -48)
+		Vector3(-35, 0.0, -30),
+		Vector3(-35, 0.0, -10),
+		Vector3(-35, 0.0, 10),
+		Vector3(-35, 0.0, 30),
+		Vector3(-20, 0.0, 38),
+		Vector3(-15, 0.0, 20),
+		Vector3(-15, 0.0, -15),
+		Vector3(-25, 0.0, -25)
 	])
 	_create_deer_pair([
-		Vector3(65, 0.0, -40),
-		Vector3(65, 0.0, -10),
-		Vector3(65, 0.0, 20),
-		Vector3(65, 0.0, 44),
-		Vector3(48, 0.0, 50),
-		Vector3(35, 0.0, 38),
-		Vector3(35, 0.0, -38),
-		Vector3(48, 0.0, -48)
+		Vector3(35, 0.0, -30),
+		Vector3(35, 0.0, -10),
+		Vector3(35, 0.0, 10),
+		Vector3(35, 0.0, 30),
+		Vector3(20, 0.0, 38),
+		Vector3(15, 0.0, 20),
+		Vector3(15, 0.0, -15),
+		Vector3(25, 0.0, -25)
 	])
 	_create_deer_pair([
-		Vector3(-48, 0.0, -48),
-		Vector3(-25, 0.0, -54),
-		Vector3(0, 0.0, -56),
-		Vector3(25, 0.0, -54),
-		Vector3(48, 0.0, -48),
-		Vector3(48, 0.0, -30),
-		Vector3(-48, 0.0, -30)
+		Vector3(-30, 0.0, -35),
+		Vector3(-10, 0.0, -38),
+		Vector3(0, 0.0, -40),
+		Vector3(10, 0.0, -38),
+		Vector3(30, 0.0, -35),
+		Vector3(30, 0.0, -20),
+		Vector3(10, 0.0, -15),
+		Vector3(-10, 0.0, -15),
+		Vector3(-30, 0.0, -20)
 	])
 	_create_wildlife_animal("fox", [
-		Vector3(-62, 0.0, -38),
-		Vector3(-68, 0.0, -18),
-		Vector3(-68, 0.0, 10),
-		Vector3(-55, 0.0, 42),
-		Vector3(-40, 0.0, 48),
-		Vector3(-40, 0.0, 0),
-		Vector3(-55, 0.0, -30)
+		Vector3(-20, 0.0, 35),
+		Vector3(-5, 0.0, 38),
+		Vector3(10, 0.0, 35),
+		Vector3(20, 0.0, 28),
+		Vector3(15, 0.0, 15),
+		Vector3(0, 0.0, 12),
+		Vector3(-12, 0.0, 20),
+		Vector3(-18, 0.0, 28)
 	])
 	_create_wildlife_animal("fox", [
-		Vector3(62, 0.0, -38),
-		Vector3(68, 0.0, -18),
-		Vector3(68, 0.0, 10),
-		Vector3(55, 0.0, 42),
-		Vector3(40, 0.0, 48),
-		Vector3(40, 0.0, 0),
-		Vector3(55, 0.0, -30)
+		Vector3(20, 0.0, 35),
+		Vector3(5, 0.0, 38),
+		Vector3(-10, 0.0, 35),
+		Vector3(-20, 0.0, 28),
+		Vector3(-15, 0.0, 15),
+		Vector3(0, 0.0, 12),
+		Vector3(12, 0.0, 20),
+		Vector3(18, 0.0, 28)
 	])
 
 func _create_deer_pair(route: Array) -> void:
@@ -1361,7 +1385,7 @@ func handle_world_action(action, actor) -> void:
 		"pickaxe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Pico", "tool_pickaxe", 1.35, 1, 0.0), "Recoges un pico.")
 		"backpack_pickup":
-			_play_actor_action(actor, "pickup", 0.9)
+			_play_actor_action(actor, "pickup", 0.3)
 			if not actor.inventory.add_item(ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)):
 				return
 			if actor.has_method("equip_backpack"):
@@ -1472,8 +1496,8 @@ func _create_quaternius_environment_props() -> void:
 	_spawn_external(Q_ENV + "Container_Red.gltf", "QContainerRed", Vector3(27, 0, -23), Vector3.ONE, Vector3(0, 24, 0), Vector3(2.6, 2.3, 5.6))
 	_spawn_external(Q_ENV + "Container_Green.gltf", "QContainerGreen", Vector3(38, 0, -23), Vector3.ONE, Vector3(0, -18, 0), Vector3(2.6, 2.3, 5.6))
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))
-	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(17.0, 0, -22), Vector3.ONE, Vector3(0, 0, 0), Vector3(0.5, 4.0, 0.5))
-	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(17.0, 0, 14), Vector3.ONE, Vector3(0, 180, 0), Vector3(0.5, 4.0, 0.5))
+	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
+	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 	_spawn_external(Q_ENV + "TrafficLight_1.gltf", "QTrafficLight", Vector3(13.0, 0, -5.0), Vector3.ONE, Vector3(0, 180, 0), Vector3(0.6, 3.5, 0.6))
 	_spawn_external(Q_ENV + "TownSign.gltf", "QTownSign", Vector3(14.8, 0, -28.5), Vector3.ONE, Vector3(0, 180, 0), Vector3(1.6, 1.8, 0.5))
 	_spawn_external(Q_ENV + "TrafficBarrier_1.gltf", "QBarrierA", Vector3(6.0, 0, -4.2), Vector3.ONE, Vector3(0, 18, 0), Vector3(2.2, 1.0, 0.6))
@@ -1598,6 +1622,20 @@ func _default_river_segments() -> Array:
 		{"center": Vector3(-63, 0.085, 15), "size": Vector2(26, 6), "yaw": 85.0},
 		{"center": Vector3(-66, 0.085, -14), "size": Vector2(30, 6.5), "yaw": 93.0},
 		{"center": Vector3(-64, 0.085, -40), "size": Vector2(25, 6), "yaw": 88.0}
+	]
+
+func get_river_segments_for_minimap() -> Array:
+	return _default_river_segments()
+
+func get_structures_for_minimap() -> Array:
+	return [
+		{"pos": Vector3(-25, 0, -18), "color": Color(0.5, 0.4, 0.3)},
+		{"pos": Vector3(-38, 0, 18), "color": Color(0.5, 0.4, 0.3)},
+		{"pos": Vector3(23, 0, 18), "color": Color(0.5, 0.4, 0.3)},
+		{"pos": Vector3(42, 0, 26), "color": Color(0.5, 0.4, 0.3)},
+		{"pos": Vector3(-12, 0, 42), "color": Color(0.5, 0.4, 0.3)},
+		{"pos": Vector3(-42, 0, -42), "color": Color(0.3, 0.5, 0.6)},
+		{"pos": Vector3(-54, 0, 48), "color": Color(0.4, 0.3, 0.2)}
 	]
 
 func get_river_depth_at(world_pos: Vector3) -> float:
@@ -1990,51 +2028,22 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " PeeledPlasterFrontB", origin + Vector3(3.05, 1.35, 3.955), Vector3(1.1, 1.25, 0.06), Color(0.115, 0.105, 0.08), Vector3(0, 0, 0))
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
-	var interior_light := OmniLight3D.new()
-	interior_light.name = label + " InteriorDaylight"
-	interior_light.position = origin + Vector3(0.0, 2.15, 0.25)
-	interior_light.light_energy = 2.2
-	interior_light.omni_range = 9.5
-	interior_light.shadow_enabled = false
-	add_child(interior_light)
-	_try_instance_external_scene([K_SURVIVAL + "floor-old.glb"], label + " OldFloorAsset", origin + Vector3(-1.4, 0.08, -0.8), Vector3(2.7, 1.0, 2.4), Vector3(0, 0, 0), true, origin.y + 0.03)
-	_try_instance_external_scene([K_SURVIVAL + "floor-hole.glb"], label + " BrokenFloorAsset", origin + Vector3(2.2, 0.09, -1.25), Vector3(1.8, 1.0, 1.55), Vector3(0, 12, 0), true, origin.y + 0.035)
-	_create_visual_box(label + " InteriorPartition", origin + Vector3(-0.35, 1.15, -0.2), Vector3(0.10, 2.05, 3.1), Color(0.18, 0.17, 0.145), Vector3(0, 6, 0))
-	_create_visual_box(label + " PartitionGap", origin + Vector3(-0.32, 1.05, 0.62), Vector3(0.13, 1.65, 0.95), Color(0.04, 0.035, 0.03), Vector3(0, 6, 0))
-	_create_loot_container(id_prefix + "_kitchen", "Armario de cocina", origin + Vector3(-3.05, 0, -0.35), Vector3(0.9, 1.35, 0.55), Color(0.19, 0.14, 0.09))
-	_create_extra_house_furniture(origin, label)
+	pass
 
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
 	pass
 
 func _create_extra_house_furniture(origin: Vector3, label: String) -> void:
-	if label.ends_with("1"):
-		_create_house_living_room(origin, label)
-	elif label.ends_with("2"):
-		_create_house_bedroom(origin, label)
-	elif label.ends_with("3"):
-		_create_house_warehouse(origin, label)
-	elif label.ends_with("4"):
-		_create_house_bedroom(origin, label)
-	elif label.ends_with("5"):
-		_create_house_living_room(origin, label)
+	pass
 
 func _create_house_living_room(origin: Vector3, label: String) -> void:
-	_try_instance_external_scene([ROOT_SOFA_MODEL], label + " SofaA", origin + Vector3(-2.3, 0.0, -1.2), Vector3.ONE * 0.009, Vector3(0, 90, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_SOFA_MODEL], label + " SofaB", origin + Vector3(2.5, 0.0, 1.8), Vector3.ONE * 0.009, Vector3(0, -20, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_JUNK_MODEL], label + " Junk", origin + Vector3(0.5, 0.05, -2.5), Vector3.ONE, Vector3(0, 45, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_FRIDGE_MODEL], label + " Fridge", origin + Vector3(3.5, 0.0, -3.2), Vector3.ONE * 0.095, Vector3(0, 180, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_GASSTOVE_MODEL], label + " Stove", origin + Vector3(2.8, 0.0, -3.2), Vector3.ONE * 0.007, Vector3(0, 180, 0), true, 0.0)
+	pass
 
 func _create_house_bedroom(origin: Vector3, label: String) -> void:
-	_try_instance_external_scene([ROOT_JUNK_MODEL], label + " JunkA", origin + Vector3(2.0, 0.05, -2.2), Vector3.ONE, Vector3(0, 20, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_JUNK_MODEL], label + " JunkB", origin + Vector3(-1.0, 0.05, 2.5), Vector3.ONE, Vector3(0, -35, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_FRIDGE_MODEL], label + " Fridge", origin + Vector3(-3.5, 0.0, -3.2), Vector3.ONE * 0.095, Vector3(0, 90, 0), true, 0.0)
+	pass
 
 func _create_house_warehouse(origin: Vector3, label: String) -> void:
-	_try_instance_external_scene([ROOT_JUNK_MODEL], label + " JunkA", origin + Vector3(-2.5, 0.05, -2.0), Vector3.ONE, Vector3(0, 10, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_JUNK_MODEL], label + " JunkB", origin + Vector3(2.0, 0.05, 1.5), Vector3.ONE, Vector3(0, -40, 0), true, 0.0)
-	_try_instance_external_scene([ROOT_GASSTOVE_MODEL], label + " Stove", origin + Vector3(2.5, 0.0, -1.8), Vector3.ONE * 0.007, Vector3(0, 0, 0), true, 0.0)
+	pass
 
 func _create_simple_chair(node_name: String, pos: Vector3, yaw: float) -> void:
 	_create_visual_box(node_name + " Seat", pos + Vector3(0, 0.42, 0), Vector3(0.48, 0.12, 0.44), Color(0.16, 0.09, 0.04), Vector3(0, yaw, 0))
@@ -2099,6 +2108,30 @@ func _add_vehicle_visibility_overlays(pos: Vector3, yaw: float, color: Color) ->
 	_create_static_box_rotated("VehicleDarkWindows", pos + Vector3(0, 1.02, -0.35), Vector3(1.75, 0.38, 1.15), Color(0.025, 0.035, 0.04), Vector3(0, yaw, 0))
 	_create_static_box_rotated("VehicleRustHood", pos + Vector3(0, 0.82, 1.45), Vector3(1.95, 0.08, 1.0), Color(0.36, 0.12, 0.045), Vector3(0, yaw + 3.0, 0))
 	_create_static_box_rotated("VehicleRustDoorPatch", pos + Vector3(-1.05, 0.72, -0.15), Vector3(0.08, 0.72, 0.85), color.lightened(0.18), Vector3(0, yaw, 0))
+	_apply_clearcoat_to_children("RealAbandonedCar", pos)
+	_apply_clearcoat_to_children("ExternalVehicleVisible", pos)
+	_apply_clearcoat_to_children("RealAbandonedVan", pos)
+
+func _apply_clearcoat_to_children(node_name: String, pos: Vector3) -> void:
+	var node := get_node_or_null(node_name)
+	if node == null:
+		return
+	var dist := global_position.distance_to(pos)
+	if dist > 40.0:
+		return
+	_apply_clearcoat_recursive(node)
+
+func _apply_clearcoat_recursive(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		for i in range(mi.get_surface_override_material_count()):
+			var mat := mi.get_surface_override_material(i)
+			if mat is StandardMaterial3D:
+				(mat as StandardMaterial3D).clearcoat_enabled = true
+				(mat as StandardMaterial3D).clearcoat = 0.8
+				(mat as StandardMaterial3D).clearcoat_roughness = 0.3
+	for child in node.get_children():
+		_apply_clearcoat_recursive(child)
 
 func _is_vehicle_spawn_clear(pos: Vector3) -> bool:
 	var blocked_centers := [
@@ -2133,12 +2166,32 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 	_create_visual_box("RoadCrackBranch", pos + Vector3(randf_range(-0.4, 0.4), 0.01, randf_range(-0.4, 0.4)), Vector3(0.8, 0.025, 0.06), Color(0.015, 0.015, 0.015), Vector3(0, yaw + randf_range(35, 70), 0))
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
-	var count := 6
+	var count := 4
+	var pole_height := 6.0
+	var pole_thickness := 0.28
+	var crossbar_len := 2.8
+	var crossbar_y := pole_height - 0.8
+	var wire_y := crossbar_y + 0.15
+	var positions: Array = []
 	for i in range(count):
 		var t := float(i) / float(count - 1)
 		var pos := start.lerp(end, t)
-		_create_static_box("PowerPole", pos, Vector3(0.32, 5.2, 0.32), Color(0.13, 0.09, 0.055))
-		_create_static_box("PowerCrossbar", pos + Vector3(0, 4.5, 0), Vector3(3.0, 0.18, 0.18), Color(0.12, 0.08, 0.05))
+		positions.append(pos)
+		_create_static_box("PowerPole_%d" % i, pos, Vector3(pole_thickness, pole_height, pole_thickness), Color(0.13, 0.09, 0.055))
+		_create_static_box("PowerCrossbar_%d" % i, pos + Vector3(0, crossbar_y, 0), Vector3(crossbar_len, 0.16, 0.16), Color(0.12, 0.08, 0.05))
+		_create_static_box("PowerInsulatorA_%d" % i, pos + Vector3(-crossbar_len * 0.4, crossbar_y - 0.15, 0), Vector3(0.12, 0.25, 0.12), Color(0.35, 0.32, 0.28))
+		_create_static_box("PowerInsulatorB_%d" % i, pos + Vector3(crossbar_len * 0.4, crossbar_y - 0.15, 0), Vector3(0.12, 0.25, 0.12), Color(0.35, 0.32, 0.28))
+		_register_wildlife_blocker(pos, 1.2)
+	for i in range(count - 1):
+		var a: Vector3 = positions[i]
+		var b: Vector3 = positions[i + 1]
+		var wire_len := a.distance_to(b)
+		var sag := wire_len * 0.06
+		var yaw_deg := rad_to_deg(atan2((b - a).x, (b - a).z))
+		var mid_a := a.lerp(b, 0.5) + Vector3(-crossbar_len * 0.4, wire_y, 0)
+		_create_visual_box("PowerWireA_%d" % i, mid_a, Vector3(0.04, 0.04, wire_len), Color(0.02, 0.02, 0.02), Vector3(0, yaw_deg, 0))
+		var mid_b := a.lerp(b, 0.5) + Vector3(crossbar_len * 0.4, wire_y, 0)
+		_create_visual_box("PowerWireB_%d" % i, mid_b, Vector3(0.04, 0.04, wire_len), Color(0.02, 0.02, 0.02), Vector3(0, yaw_deg, 0))
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
 	for i in range(posts):
@@ -2326,7 +2379,28 @@ func _create_grass_ground_cover() -> void:
 			_create_grass_clump(pos, randf_range(0.22, 0.48), Color(0.18, 0.32, 0.12).lerp(Color(0.34, 0.44, 0.16), randf()))
 
 func _create_grass_carpet() -> void:
-	return
+	_ensure_grass_batches()
+	var coverage := 60.0
+	var spacing := 4.0
+	var cells_x := int(coverage * 2.0 / spacing)
+	var cells_z := int(coverage * 2.0 / spacing)
+	var base_color := Color(0.20, 0.34, 0.12)
+	var color_var := Color(0.34, 0.46, 0.16)
+	for cx in range(cells_x):
+		for cz in range(cells_z):
+			if randf() < 0.5:
+				continue
+			var px := -coverage + float(cx) * spacing + randf_range(-0.8, 0.8)
+			var pz := -coverage + float(cz) * spacing + randf_range(-0.8, 0.8)
+			var pos := Vector3(px, 0.012, pz)
+			if abs(pos.x - 8.0) < 5.4:
+				continue
+			if _is_in_no_grass_area(pos, 0.65):
+				continue
+			var h := randf_range(0.10, 0.22)
+			var r := randf_range(0.28, 0.45)
+			var c := base_color.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
+			_queue_grass_instance(pos, h, r, c)
 
 func _create_billboard_underbrush_fields() -> void:
 	for i in range(8):
@@ -2430,6 +2504,47 @@ func _create_cut_tree_remains(pos: Vector3) -> void:
 	for i in range(3):
 		var branch_pos := pos + Vector3(randf_range(-0.7, 0.7), 0.10, randf_range(-0.7, 0.7))
 		_create_visual_cylinder("CutTreeBranch", branch_pos, randf_range(0.035, 0.06), randf_range(0.7, 1.15), Color(0.13, 0.075, 0.035), Vector3(90, randf_range(0, 180), randf_range(-12, 12)))
+	_spawn_wood_chips(pos + Vector3(0, 1.5, 0))
+
+func _spawn_wood_chips(origin: Vector3) -> void:
+	var particles := GPUParticles3D.new()
+	particles.name = "WoodChips"
+	particles.position = origin
+	particles.amount = 24
+	particles.lifetime = 1.2
+	particles.one_shot = true
+	particles.explosiveness = 0.8
+	particles.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 35.0
+	mat.initial_velocity_min = 2.5
+	mat.initial_velocity_max = 5.0
+	mat.gravity = Vector3(0, -9.8, 0)
+	mat.scale_min = 0.3
+	mat.scale_max = 1.0
+	mat.hue_variation_min = -0.05
+	mat.hue_variation_max = 0.05
+	mat.color = Color(0.42, 0.26, 0.12)
+	var scale_curve := Curve.new()
+	scale_curve.add_point(Vector2(0, 1.0))
+	scale_curve.add_point(Vector2(0.5, 0.6))
+	scale_curve.add_point(Vector2(1.0, 0.0))
+	var scale_tex := CurveTexture.new()
+	scale_tex.curve = scale_curve
+	mat.scale_curve = scale_tex
+	var rot_curve := Curve.new()
+	rot_curve.add_point(Vector2(0, 0.0))
+	rot_curve.add_point(Vector2(1.0, 12.0))
+	var rot_tex := CurveTexture.new()
+	rot_tex.curve = rot_curve
+	mat.rotation_curve = rot_tex
+	particles.process_material = mat
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.12, 0.06, 0.12)
+	particles.draw_pass_1 = mesh
+	add_child(particles)
+	get_tree().create_timer(2.5).timeout.connect(particles.queue_free)
 
 func _create_billboard_tree(pos: Vector3, texture_paths: Array, height: float, node_name: String) -> bool:
 	var texture_path := ""
@@ -2907,6 +3022,17 @@ func _create_visual_box(node_name: String, pos: Vector3, size: Vector3, color: C
 	mesh_instance.scale = size
 	mesh_instance.material_override = _make_material(color, true)
 	add_child(mesh_instance)
+
+func _create_area_light(node_name: String, pos: Vector3, light_size: Vector2, color: Color, energy: float, rot_deg: Vector3) -> void:
+	var light := AreaLight3D.new()
+	light.name = node_name
+	light.position = pos
+	light.rotation_degrees = rot_deg
+	light.size = light_size
+	light.color = color
+	light.energy = energy
+	light.shadow_enabled = true
+	add_child(light)
 
 func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3, texture_path: String, fallback_color: Color, rot: Vector3) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -3730,7 +3856,7 @@ func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> 
 	var queue: Array = [start_cell]
 	visited[start_cell] = true
 	var head := 0
-	var max_iterations := 1500
+	var max_iterations := 4000
 	var iterations := 0
 	while head < queue.size() and iterations < max_iterations:
 		iterations += 1

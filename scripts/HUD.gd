@@ -1,6 +1,8 @@
 extends CanvasLayer
 class_name HUD
 
+const MiniMapScript = preload("res://scripts/MiniMap.gd")
+
 var player
 var day_cycle
 
@@ -8,6 +10,7 @@ var root: Control
 var status_panel: PanelContainer
 var inventory_panel: PanelContainer
 var inventory_grid: GridContainer
+var minimap
 var inventory_weight_label: Label
 var time_label: Label
 var prompt_label: Label
@@ -46,12 +49,33 @@ func _process(delta: float) -> void:
 
 func toggle_inventory() -> void:
 	inventory_visible = not inventory_visible
-	inventory_panel.visible = inventory_visible
-	objective_label.visible = not inventory_visible
+	if inventory_visible:
+		inventory_panel.visible = true
+		objective_label.visible = false
+		inventory_panel.offset_transform_enabled = true
+		var tw := create_tween()
+		tw.tween_property(inventory_panel, "offset_transform_position:x", 0.0, 0.25).from(80.0).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+		tw.parallel().tween_property(inventory_panel, "offset_transform_scale", Vector2.ONE, 0.25).from(Vector2(0.92, 0.92)).set_ease(Tween.EASE_OUT)
+	else:
+		var tw2 := create_tween()
+		tw2.tween_property(inventory_panel, "offset_transform_position:x", 80.0, 0.2).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+		tw2.parallel().tween_property(inventory_panel, "modulate:a", 0.0, 0.2)
+		await tw2.finished
+		inventory_panel.visible = false
+		inventory_panel.modulate.a = 1.0
+		inventory_panel.offset_transform_position = Vector2.ZERO
+		inventory_panel.offset_transform_scale = Vector2.ONE
+		objective_label.visible = true
 
 func show_notice(text: String) -> void:
 	notice_label.text = text
 	notice_timer = 4.0
+	notice_label.offset_transform_enabled = true
+	notice_label.offset_transform_position = Vector2(0.0, -30.0)
+	notice_label.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(notice_label, "offset_transform_position:y", 0.0, 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tw.parallel().tween_property(notice_label, "modulate:a", 1.0, 0.25)
 
 func _build_ui() -> void:
 	root = Control.new()
@@ -62,6 +86,15 @@ func _build_ui() -> void:
 	_build_status_panel()
 	_build_inventory_panel()
 	_build_center_messages()
+	_build_minimap()
+
+func _build_minimap() -> void:
+	minimap = MiniMapScript.new()
+	minimap.name = "MiniMap"
+	minimap.position = Vector2(1010, 18)
+	minimap.size = Vector2(160, 160)
+	minimap.setup(player)
+	root.add_child(minimap)
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()

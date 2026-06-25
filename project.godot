@@ -7,7 +7,7 @@ config_version=5
 
 config/name="Un dia mas"
 run/main_scene="res://scenes/Main.tscn"
-config/features=PackedStringArray("4.2")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon=""
 
 [display]
@@ -82,3 +82,4 @@ jump={
 
 renderer/rendering_method="gl_compatibility"
 environment/defaults/default_clear_color=Color(0.045, 0.05, 0.055, 1)
+hdr/output_mode=2

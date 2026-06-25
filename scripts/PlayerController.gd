@@ -99,7 +99,9 @@ var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
-var _backpack_rest_pos: Vector3 = Vector3(0.0, 1.18, 0.24)
+var _backpack_rest_pos: Vector3 = Vector3(0.0, -0.05, -0.18)
+var _backpack_crouch_offset: Vector3 = Vector3(0.0, -0.12, -0.06)
+var _backpack_action_offset: Vector3 = Vector3(0.0, -0.18, -0.10)
 var third_person_left_arm: Node3D
 var third_person_right_arm: Node3D
 var third_person_left_leg: Node3D
@@ -516,7 +518,16 @@ func _update_backpack_socket() -> void:
 	var bone_world := skel_global * bone_pose
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var bone_local := local_to_model * bone_world
-	third_person_back_item_root.position = bone_local.origin + _backpack_rest_pos
+	var offset := _backpack_rest_pos
+	var tilt := 0.0
+	if third_person_action_timer > 0.0:
+		offset += _backpack_action_offset
+		tilt = 12.0
+	elif is_crouching:
+		offset += _backpack_crouch_offset
+		tilt = 8.0
+	third_person_back_item_root.position = bone_local.origin + offset
+	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -669,7 +680,7 @@ func _create_third_person_item_slots() -> void:
 
 	third_person_back_item_root = Node3D.new()
 	third_person_back_item_root.name = "BackpackSocket"
-	third_person_back_item_root.position = Vector3(0.0, 1.18, 0.24)
+	third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
 	third_person_back_item_root.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 	third_person_model.add_child(third_person_back_item_root)
 	_spine_skeleton = _find_skeleton(third_person_model)
@@ -687,7 +698,7 @@ func _create_third_person_item_slots() -> void:
 	var belt_socket := _create_equipment_socket("BeltSocket", Vector3(0.30, 0.90, -0.05), Vector3.ZERO)
 	_create_equipment_socket("FeetSocket", Vector3(0.0, 0.0, 0.04), Vector3.ZERO)
 	if equipment != null and equipment.has_method("register_socket"):
-		equipment.register_socket("backpack", third_person_back_item_root, Vector3(0.0, 0.02, 0.16), Vector3(8.0, 180.0, 0.0), Vector3.ONE * 0.24)
+		equipment.register_socket("backpack", third_person_back_item_root, Vector3(0.0, 0.0, 0.0), Vector3(8.0, 180.0, 0.0), Vector3.ONE * 0.24)
 		equipment.register_socket("head", head_socket)
 		equipment.register_socket("chest", chest_socket)
 		equipment.register_socket("primary_weapon", primary_socket)
@@ -1158,7 +1169,7 @@ func _build_third_person_backpack() -> void:
 				-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * bp_scale,
 				-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
 			)
-			bp_node.position = center_offset + Vector3(0.0, 1.5, -0.35)
+			bp_node.position = center_offset
 			bp_node.rotation_degrees = Vector3(0, 180, 0)
 			third_person_back_item_root.add_child(bp_node)
 			return
@@ -1403,6 +1414,11 @@ func _interact() -> void:
 	if target == null:
 		notice.emit("No hay nada al alcance.")
 		return
+	if camera != null:
+		var tw := create_tween()
+		tw.tween_property(camera, "fov", 72.0, 0.12).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(camera, "fov", 75.0, 0.18).set_ease(Tween.EASE_IN_OUT)
+		await tw.finished
 	target.interact(self)
 
 func _update_interaction_prompt() -> void:

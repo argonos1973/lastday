@@ -25,6 +25,11 @@ func setup(id: String, type: String, label: String, size: Vector3, color: Color,
 	add_to_group("world_actions")
 	add_to_group("interactable")
 
+func disable_collision() -> void:
+	if _collision != null:
+		collision_layer = 2
+		collision_mask = 0
+
 func interact(player) -> void:
 	if depleted and not repeatable:
 		player.notice.emit("%s ya no tiene nada util." % display_name)

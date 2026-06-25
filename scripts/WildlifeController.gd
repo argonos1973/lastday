@@ -31,6 +31,7 @@ func setup(kind: String, points: Array) -> void:
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else 2.35
 	_build_animal()
+	call_deferred("_sanitize_patrol_points")
 
 # Replace any patrol point that falls inside the river (or other blocked area)
 # with the nearest allowed position, so animals never patrol into the water.
@@ -81,11 +82,24 @@ func _process(delta: float) -> void:
 	if patrol_points.size() < 2:
 		return
 	_resolve_player()
-	_update_stuck_timer(delta)
-	if _try_flee_from_player(delta):
+	if _escape_if_trapped(delta):
 		return
-	var target: Vector3 = patrol_points[target_index]
-	var to_target: Vector3 = target - global_position
+	_update_stuck_timer(delta)
+	var target: Vector3
+	var flee_speed: float
+	if _player != null and is_instance_valid(_player):
+		var away := global_position - _player.global_position
+		away.y = 0.0
+		if away.length() < 0.01:
+			away = Vector3.RIGHT
+		target = global_position + away.normalized() * 15.0
+		flee_speed = move_speed * (2.65 if animal_type == "fox" else 2.05)
+	else:
+		target = patrol_points[target_index]
+		flee_speed = move_speed * 1.0
+	target.x = clamp(target.x, -55.0, 55.0)
+	target.z = clamp(target.z, -55.0, 55.0)
+	var to_target := target - global_position
 	to_target.y = 0.0
 	if to_target.length() < 0.55:
 		target_index = (target_index + 1) % patrol_points.size()
@@ -96,7 +110,7 @@ func _process(delta: float) -> void:
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 3.0
+		_path_recalc_timer = 1.5
 	var move_target: Vector3 = target
 	if _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
@@ -108,8 +122,8 @@ func _process(delta: float) -> void:
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
-	_move_towards(move_target, move_speed, delta, 5.0)
-	_walk_time += delta * move_speed * 5.0
+	_move_towards(move_target, flee_speed, delta, 8.0)
+	_walk_time += delta * flee_speed * 4.8
 	_animate_legs(delta)
 
 func _update_stuck_timer(delta: float) -> void:
@@ -118,7 +132,7 @@ func _update_stuck_timer(delta: float) -> void:
 	else:
 		_stuck_time = 0.0
 		_last_position = global_position
-	if _stuck_time > 1.5:
+	if _stuck_time > 0.5:
 		_retarget_from_blocked_route()
 		_stuck_time = 0.0
 		_current_path.clear()
@@ -127,20 +141,6 @@ func _update_stuck_timer(delta: float) -> void:
 func _retarget_from_blocked_route() -> void:
 	_current_path.clear()
 	_path_index = 0
-	for i in range(32):
-		var angle := randf_range(0.0, TAU)
-		var distance := randf_range(8.0, 20.0)
-		var candidate := global_position + Vector3(cos(angle) * distance, 0.0, sin(angle) * distance)
-		candidate.x = clamp(candidate.x, -68.0, 68.0)
-		candidate.z = clamp(candidate.z, -68.0, 68.0)
-		if not _is_position_allowed(candidate):
-			continue
-		if patrol_points.size() < 3:
-			patrol_points.append(candidate)
-			target_index = patrol_points.size() - 1
-		else:
-			patrol_points[target_index] = candidate
-		return
 	target_index = (target_index + 1) % patrol_points.size()
 
 func _try_flee_from_player(delta: float) -> bool:
