@@ -14,10 +14,10 @@ var body_temperature := 36.6
 var warmth_bonus := 0.0
 var dead := false
 
-var hunger_decay := 0.035
-var thirst_decay := 0.055
-var energy_decay := 0.018
-var cold_decay := 0.003
+var hunger_decay := 0.08
+var thirst_decay := 0.11
+var energy_decay := 0.06
+var cold_decay := 0.012
 
 func tick(delta: float, sprinting: bool, cold_factor: float, sheltered: bool) -> void:
 	if dead:
@@ -27,10 +27,18 @@ func tick(delta: float, sprinting: bool, cold_factor: float, sheltered: bool) ->
 	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier)
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier)
 
+	var night_cold_boost := 1.0
+	if cold_factor > 5.0:
+		night_cold_boost = 2.5
+	elif cold_factor > 2.0:
+		night_cold_boost = 1.6
+
 	if sheltered:
 		body_temperature = min(36.6, body_temperature + 0.008 * delta)
 	else:
-		body_temperature -= cold_decay * max(0.15, cold_factor - warmth_bonus) * delta
+		var cold_amount: float = max(0.15, cold_factor - warmth_bonus)
+		body_temperature -= cold_decay * cold_amount * night_cold_boost * delta
+		body_temperature -= 0.004 * delta
 
 	if hunger <= 0.0:
 		health -= 0.8 * delta

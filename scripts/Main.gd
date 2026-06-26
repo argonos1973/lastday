@@ -353,14 +353,22 @@ func _exit_tree() -> void:
 	external_scene_cache.clear()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Q:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Q and event.shift_pressed:
 		get_tree().quit()
 		return
 	if game_over:
 		return
+	if hud != null and hud.inventory_visible and event is InputEventMouseButton and event.pressed:
+		if hud.handle_context_menu_click(event.position, event.button_index):
+			return
+		hud.handle_slot_click(event.position, event.button_index)
+		return
 	var tab_pressed: bool = event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB
 	if hud != null and (event.is_action_pressed("toggle_inventory") or tab_pressed):
 		hud.toggle_inventory()
+
+func _input(event: InputEvent) -> void:
+	pass
 
 func _process(delta: float) -> void:
 	if player == null or day_cycle == null:
@@ -624,6 +632,7 @@ func _create_player() -> void:
 	player.position = Vector3(8.0, 0.4, 2.5)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
+	player.item_dropped.connect(_on_item_dropped)
 
 func _on_player_died() -> void:
 	if game_over:
@@ -639,6 +648,97 @@ func _on_player_died() -> void:
 		tw.tween_await(death_timer.timeout)
 		tw.tween_callback(func(): get_tree().reload_current_scene())
 		await tw.finished
+
+func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
+	var visual_name := "Pickup_" + drop_id
+	var paths: Array = _get_drop_model_paths(item_name, item_type)
+	var scale_value := _get_drop_scale(item_name, item_type)
+	if not paths.is_empty():
+		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+		_mark_world_action_visual(visual_name)
+	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
+	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	action.set_meta("visual_name", visual_name)
+	action.set_meta("item_name", item_name)
+	action.set_meta("item_type", item_type)
+	action.set_meta("item_weight", item_weight)
+	action.set_meta("item_quantity", item_quantity)
+	action.set_meta("item_use_value", item_use_value)
+
+func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
+	match item_type:
+		"water":
+			return [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"]
+		"resource":
+			if item_name == "Piedra":
+				return [SURVIVAL_TOOL_MODELS["stone"]]
+			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
+		"weapon":
+			return [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL, "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+		"food":
+			return [ROOT_CANNED_FOOD_MODEL]
+		"backpack":
+			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
+		"tool_axe":
+			return [ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
+		"tool_hoe":
+			return [SURVIVAL_TOOL_MODELS["hoe"]]
+		"tool_shovel":
+			return [SURVIVAL_TOOL_MODELS["shovel"]]
+		"tool_hammer":
+			return [SURVIVAL_TOOL_MODELS["hammer"]]
+		"tool_pickaxe":
+			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
+		"clothing":
+			match item_name:
+				"Botas de goma":
+					return [POLY_RUBBER_BOOTS_MODEL]
+				"Guantes de trabajo":
+					return [POLY_GARDEN_GLOVES_MODEL]
+				"Sombrero de pescador":
+					return [POLY_FISHERMANS_HAT_MODEL]
+				"Chaleco salvavidas":
+					return [POLY_LIFE_JACKET_MODEL]
+				"Chaleco tactico":
+					return [ROOT_VEST_MODEL]
+				"Chaqueta de abrigo":
+					return [POLY_LIFE_JACKET_MODEL]
+				_:
+					return [POLY_VINTAGE_SUITCASE_MODEL]
+		"seed":
+			return [K_SURVIVAL + "grass.glb"]
+		_:
+			return [POLY_VINTAGE_SUITCASE_MODEL]
+
+func _get_drop_scale(item_name: String, item_type: String) -> float:
+	match item_type:
+		"water":
+			return 1.0
+		"resource":
+			return 1.0
+		"weapon":
+			return 0.8
+		"food":
+			return 1.0
+		"backpack":
+			return 1.2
+		"tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
+			return 1.0
+		"clothing":
+			match item_name:
+				"Chaleco tactico":
+					return 0.05
+				"Chaleco salvavidas":
+					return 0.8
+				"Chaqueta de abrigo":
+					return 0.8
+				_:
+					return 0.7
+		"seed":
+			return 1.0
+		_:
+			return 0.8
 
 func _create_audio() -> void:
 	audio_system = AudioSystemScript.new()
@@ -870,7 +970,14 @@ func _create_new_world_props() -> void:
 	for i in range(car_positions.size()):
 		var cp = car_positions[i]
 		if _try_instance_external_scene([ROOT_RUSTY_CAR_MODEL], "RustyCar%d" % i, cp["pos"], car_s, cp["rot"], true, 0.0):
-			_create_invisible_collision_box_rotated("RustyCarCollision%d" % i, cp["pos"], Vector3(3.0, 1.5, 5.0), float(cp["rot"].y))
+			var rusty_node := get_node_or_null("RustyCar%d" % i)
+			var rusty_height := 2.5
+			if rusty_node != null and rusty_node is Node3D:
+				rusty_height = _get_node_world_aabb_height(rusty_node as Node3D)
+				rusty_height += 0.15
+				if rusty_height < 0.5:
+					rusty_height = 2.5
+			_create_invisible_collision_box_rotated("RustyCarCollision%d" % i, cp["pos"], Vector3(3.0, rusty_height, 5.0), float(cp["rot"].y))
 	var cont_s := Vector3.ONE * 1.0
 	var cont_positions := [
 		{"pos": Vector3(14.0, 0.0, -50.0), "rot": Vector3(0, 0, 0)},
@@ -881,8 +988,38 @@ func _create_new_world_props() -> void:
 		var cp = cont_positions[i]
 		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "Container%d" % i, cp["pos"], cont_s, cp["rot"], true, 0.0):
 			var yaw_f: float = float(cp["rot"].y)
-			var box_size := Vector3(6.0, 2.5, 12.0) if abs(fmod(yaw_f, 180.0)) < 45.0 else Vector3(12.0, 2.5, 6.0)
-			_create_invisible_collision_box("ContainerCollision%d" % i, cp["pos"], box_size)
+			var cont_node := get_node_or_null("Container%d" % i)
+			var box_w := 6.0
+			var box_h := 2.5
+			var box_d := 12.0
+			if cont_node != null and cont_node is Node3D:
+				var cn := cont_node as Node3D
+				var saved_rot := cn.rotation_degrees
+				cn.rotation_degrees = Vector3.ZERO
+				cn.force_update_transform()
+				var meshes := []
+				_collect_mesh_instances(cn, meshes)
+				var min_v := Vector3(999999, 999999, 999999)
+				var max_v := Vector3(-999999, -999999, -999999)
+				for mesh_node in meshes:
+					var mi := mesh_node as MeshInstance3D
+					if mi.mesh == null:
+						continue
+					mi.force_update_transform()
+					var wa: AABB = mi.global_transform * mi.get_aabb()
+					min_v.x = min(min_v.x, wa.position.x)
+					min_v.y = min(min_v.y, wa.position.y)
+					min_v.z = min(min_v.z, wa.position.z)
+					max_v.x = max(max_v.x, wa.position.x + wa.size.x)
+					max_v.y = max(max_v.y, wa.position.y + wa.size.y)
+					max_v.z = max(max_v.z, wa.position.z + wa.size.z)
+				cn.rotation_degrees = saved_rot
+				box_h = (max_v.y - min_v.y) + 0.1
+				box_w = max_v.x - min_v.x
+				box_d = max_v.z - min_v.z
+				if box_h < 0.5:
+					box_h = 2.5
+			_create_invisible_collision_box_rotated("ContainerCollision%d" % i, cp["pos"], Vector3(box_w, box_h, box_d), yaw_f)
 			_register_wildlife_blocker(cp["pos"], 7.0)
 	var sofa_s := Vector3.ONE * 0.009
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaA", Vector3(-24.0, 0.0, -5.0), sofa_s, Vector3(0, 45, 0), true, 0.0)
@@ -894,7 +1031,6 @@ func _create_world_details() -> void:
 	_create_concrete_barrier("RootConcreteBarrierB", Vector3(11.8, 0.0, -2.2), Vector3(0, -18, 0))
 	_try_instance_external_scene([ROOT_JUNK_MODEL], "RootJunkPile", Vector3(-30.5, 0.05, -8.7), Vector3.ONE * 0.72, Vector3(0, 37, 0), true, 0.02)
 	_create_new_world_props()
-	_create_quaternius_environment_props()
 	_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(19, 0, 12), Vector3(19, 0, 32), 6)
@@ -1109,8 +1245,7 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "loose_suitcase_0", "name": "Maleta vieja", "type": "misc", "weight": 2.4, "qty": 1, "use": 0.0, "pos": Vector3(12.8, 0.06, -21.4), "paths": [POLY_VINTAGE_SUITCASE_MODEL], "scale": 0.86, "rot": Vector3(0, 15, 0), "color": Color(0.16, 0.10, 0.055)}
+		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)}
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
@@ -1415,8 +1550,6 @@ func _build_player_cabin(origin: Vector3) -> void:
 	_create_visual_gable_roof("PlayerCabinRoof", origin + Vector3(0, 2.45, 0), 4.9, 3.9, 1.0, Color(0.10, 0.065, 0.035))
 
 func _create_quaternius_environment_props() -> void:
-	_spawn_external(Q_ENV + "Container_Red.gltf", "QContainerRed", Vector3(27, 0, -23), Vector3.ONE, Vector3(0, 24, 0), Vector3(2.6, 2.3, 5.6))
-	_spawn_external(Q_ENV + "Container_Green.gltf", "QContainerGreen", Vector3(38, 0, -23), Vector3.ONE, Vector3(0, -18, 0), Vector3(2.6, 2.3, 5.6))
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))
 	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
@@ -2006,7 +2139,14 @@ func _create_wrecked_car(pos: Vector3, yaw: float, color: Color) -> void:
 		return
 	_register_wildlife_blocker(pos, 3.8)
 	if _try_instance_external_scene(_shuffled_paths(REAL_CAR_MODELS), "RealAbandonedCar", pos + Vector3(0, 0.05, 0), Vector3(1.45, 1.45, 1.45), Vector3(0, yaw, 0), true, 0.0):
-		_create_invisible_collision_box("RealCarCollision", pos, Vector3(2.7, 1.3, 4.5))
+		var car_node := get_node_or_null("RealAbandonedCar")
+		var car_height := 2.3
+		if car_node != null and car_node is Node3D:
+			car_height = _get_node_world_aabb_height(car_node as Node3D)
+			car_height += 0.15
+			if car_height < 0.5:
+				car_height = 2.3
+		_create_invisible_collision_box("RealCarCollision", pos, Vector3(2.7, car_height, 4.5))
 		_add_vehicle_visibility_overlays(pos, yaw, color)
 		return
 	_create_static_box_rotated("WreckBody", pos + Vector3(0, 0, 0), Vector3(2.4, 0.9, 4.2), color, Vector3(0, yaw, 0))
@@ -2021,7 +2161,14 @@ func _create_visible_vehicle_asset(pos: Vector3, yaw: float, model_index: int) -
 	_register_wildlife_blocker(pos, 4.1)
 	var path: String = str(REAL_CAR_MODELS[model_index % REAL_CAR_MODELS.size()])
 	if _try_instance_external_scene([path], "ExternalVehicleVisible", pos + Vector3(0, 0.05, 0), Vector3(1.75, 1.75, 1.75), Vector3(0, yaw, 0), true, 0.0):
-		_create_invisible_collision_box("ExternalVehicleVisibleCollision", pos, Vector3(3.0, 1.45, 5.0))
+		var vis_node := get_node_or_null("ExternalVehicleVisible")
+		var vis_height := 2.8
+		if vis_node != null and vis_node is Node3D:
+			vis_height = _get_node_world_aabb_height(vis_node as Node3D)
+			vis_height += 0.15
+			if vis_height < 0.5:
+				vis_height = 2.8
+		_create_invisible_collision_box("ExternalVehicleVisibleCollision", pos, Vector3(3.0, vis_height, 5.0))
 		_add_vehicle_visibility_overlays(pos, yaw, Color(0.18, 0.11, 0.075))
 		return
 	_create_wrecked_car(pos, yaw, Color(0.18, 0.11, 0.075))
@@ -2075,7 +2222,14 @@ func _is_vehicle_spawn_clear(pos: Vector3) -> bool:
 func _create_wrecked_van(pos: Vector3, yaw: float) -> void:
 	_register_wildlife_blocker(pos, 4.4)
 	if _try_instance_external_scene([REAL_VAN_MODEL], "RealAbandonedVan", pos + Vector3(0, 0.05, 0), Vector3(1.55, 1.55, 1.55), Vector3(0, yaw, 0), true, 0.0):
-		_create_invisible_collision_box("RealVanCollision", pos, Vector3(3.0, 1.8, 5.2))
+		var van_node := get_node_or_null("RealAbandonedVan")
+		var van_height := 2.8
+		if van_node != null and van_node is Node3D:
+			van_height = _get_node_world_aabb_height(van_node as Node3D)
+			van_height += 0.15
+			if van_height < 0.5:
+				van_height = 2.8
+		_create_invisible_collision_box("RealVanCollision", pos, Vector3(3.0, van_height, 5.2))
 		return
 	_create_static_box_rotated("WreckVanBody", pos, Vector3(2.8, 1.6, 5.0), Color(0.17, 0.18, 0.15), Vector3(0, yaw, 0))
 	_create_static_box_rotated("WreckVanCabinDark", pos + Vector3(0, 1.0, -1.0), Vector3(2.3, 0.6, 1.8), Color(0.06, 0.07, 0.065), Vector3(0, yaw, 0))
@@ -3633,6 +3787,24 @@ func _collect_mesh_instances(root: Node, result: Array) -> void:
 	for child in root.get_children():
 		_collect_mesh_instances(child, result)
 
+func _get_node_world_aabb_height(node: Node3D) -> float:
+	node.force_update_transform()
+	var meshes := []
+	_collect_mesh_instances(node, meshes)
+	var min_y := 1000000.0
+	var max_y := -1000000.0
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
+		min_y = min(min_y, world_aabb.position.y)
+		max_y = max(max_y, world_aabb.position.y + world_aabb.size.y)
+	if max_y > min_y:
+		return max_y - min_y
+	return 0.0
+
 func _shuffled_paths(paths: Array) -> Array:
 	var shuffled := paths.duplicate()
 	shuffled.shuffle()
@@ -3642,7 +3814,12 @@ func _spawn_external(path: String, node_name: String, pos: Vector3, scale_value:
 	if not _try_instance_external_scene([path], node_name, pos, scale_value, rot, true, 0.0):
 		return false
 	if collision_size != Vector3.ZERO:
-		_create_invisible_collision_box(node_name + "Collision", pos, collision_size)
+		var node := get_node_or_null(node_name)
+		if node != null and node is Node3D:
+			var dyn_h := _get_node_world_aabb_height(node as Node3D) + 0.3
+			if dyn_h > 0.5:
+				collision_size.y = dyn_h
+		_create_invisible_collision_box_rotated(node_name + "Collision", pos, collision_size, rot.y)
 	return true
 
 func _create_label(text: String, pos: Vector3) -> void:

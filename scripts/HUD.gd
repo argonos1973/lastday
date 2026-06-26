@@ -25,10 +25,18 @@ var equipment_backpack_label: Label
 var inventory_visible := false
 var notice_timer := 0.0
 var status_bars := {}
+var stamina_bar: ProgressBar = null
+var stamina_label: Label = null
+var selected_slot_index := -1
+var slot_action_label: Label = null
+var _inv_refresh_timer := 0.0
+var _context_menu: PanelContainer = null
+var _context_menu_slot_index := -1
 
 func setup(new_player, new_day_cycle) -> void:
 	player = new_player
 	day_cycle = new_day_cycle
+	add_to_group("hud")
 	_build_ui()
 	_apply_aim_layout()
 	player.prompt_changed.connect(_set_prompt)
@@ -42,21 +50,30 @@ func _process(delta: float) -> void:
 	if player == null:
 		return
 	_update_stats()
+	if inventory_visible:
+		_inv_refresh_timer += delta
+		if _inv_refresh_timer >= 0.5 and selected_slot_index < 0:
+			_inv_refresh_timer = 0.0
+			_update_inventory()
 	if notice_timer > 0.0:
 		notice_timer -= delta
 		if notice_timer <= 0.0:
 			notice_label.text = ""
 
 func toggle_inventory() -> void:
+	_close_context_menu()
 	inventory_visible = not inventory_visible
 	if inventory_visible:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		inventory_panel.visible = true
 		objective_label.visible = false
+		_update_inventory()
 		inventory_panel.offset_transform_enabled = true
 		var tw := create_tween()
 		tw.tween_property(inventory_panel, "offset_transform_position:x", 0.0, 0.25).from(80.0).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 		tw.parallel().tween_property(inventory_panel, "offset_transform_scale", Vector2.ONE, 0.25).from(Vector2(0.92, 0.92)).set_ease(Tween.EASE_OUT)
 	else:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		var tw2 := create_tween()
 		tw2.tween_property(inventory_panel, "offset_transform_position:x", 80.0, 0.2).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
 		tw2.parallel().tween_property(inventory_panel, "modulate:a", 0.0, 0.2)
@@ -66,6 +83,9 @@ func toggle_inventory() -> void:
 		inventory_panel.offset_transform_position = Vector2.ZERO
 		inventory_panel.offset_transform_scale = Vector2.ONE
 		objective_label.visible = true
+	selected_slot_index = -1
+	if slot_action_label != null:
+		slot_action_label.text = ""
 
 func show_notice(text: String) -> void:
 	notice_label.text = text
@@ -98,8 +118,8 @@ func _build_minimap() -> void:
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
-	status_panel.position = Vector2(18, 530)
-	status_panel.size = Vector2(250, 164)
+	status_panel.position = Vector2(18, 420)
+	status_panel.size = Vector2(250, 300)
 	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
 	root.add_child(status_panel)
@@ -120,6 +140,7 @@ func _build_status_panel() -> void:
 	_create_status_bar(box, "thirst", "AGUA", Color(0.18, 0.42, 0.66))
 	_create_status_bar(box, "energy", "ENERGIA", Color(0.72, 0.70, 0.46))
 	_create_status_bar(box, "cold", "FRIO", Color(0.30, 0.58, 0.78))
+	_build_stamina_bar()
 
 func _create_status_bar(parent: VBoxContainer, key: String, title: String, color: Color) -> void:
 	var row := HBoxContainer.new()
@@ -268,7 +289,7 @@ func _add_equipment_line(parent: VBoxContainer, left_text: String, right_text: S
 
 func _add_inventory_hint(parent: VBoxContainer) -> void:
 	var label := Label.new()
-	label.text = "Usa 1-9 para consumir/equipar ranuras.\nI o Tab abre/cierra la mochila."
+	label.text = "Clic izq en objeto para ver opciones.\nClic der para soltar directamente.\nI o Tab abre/cierra la mochila."
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", Color(0.64, 0.66, 0.59))
@@ -359,8 +380,65 @@ func _update_stats() -> void:
 	_set_bar("energy", player.stats.energy / player.stats.max_stat, "%.0f" % player.stats.energy)
 	var cold_percent: float = clamp((36.6 - player.stats.body_temperature) / 3.0, 0.0, 1.0)
 	_set_bar("cold", cold_percent, "%.1f C" % player.stats.body_temperature)
-	if inventory_visible:
-		_update_inventory()
+	_update_stamina_bar()
+
+func _build_stamina_bar() -> void:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(220, 24)
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_panel.get_child(0).add_child(row)
+
+	var label := Label.new()
+	label.text = "STAMINA"
+	label.custom_minimum_size = Vector2(78, 20)
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(0.70, 0.73, 0.66))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(label)
+
+	stamina_bar = ProgressBar.new()
+	stamina_bar.custom_minimum_size = Vector2(110, 18)
+	stamina_bar.min_value = 0.0
+	stamina_bar.max_value = 100.0
+	stamina_bar.value = 100.0
+	stamina_bar.show_percentage = false
+	stamina_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = Color(0.18, 0.66, 0.40)
+	fill_style.set_corner_radius_all(2)
+	stamina_bar.add_theme_stylebox_override("fill", fill_style)
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color(0.05, 0.06, 0.05, 0.8)
+	bg_style.border_color = Color(0.20, 0.22, 0.19, 0.7)
+	bg_style.set_border_width_all(1)
+	bg_style.set_corner_radius_all(2)
+	stamina_bar.add_theme_stylebox_override("background", bg_style)
+	row.add_child(stamina_bar)
+
+	stamina_label = Label.new()
+	stamina_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	stamina_label.custom_minimum_size = Vector2(32, 20)
+	stamina_label.add_theme_font_size_override("font_size", 12)
+	stamina_label.add_theme_color_override("font_color", Color(0.88, 0.90, 0.84))
+	stamina_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(stamina_label)
+
+func _update_stamina_bar() -> void:
+	if stamina_bar == null or player == null:
+		return
+	var ratio: float = player.stats.energy / player.stats.max_stat
+	stamina_bar.value = ratio * 100.0
+	if stamina_label != null:
+		stamina_label.text = "%.0f" % player.stats.energy
+	var fill := stamina_bar.get_theme_stylebox("fill") as StyleBoxFlat
+	if fill != null:
+		if ratio > 0.5:
+			fill.bg_color = Color(0.18, 0.66, 0.40)
+		elif ratio > 0.2:
+			fill.bg_color = Color(0.72, 0.62, 0.16)
+		else:
+			fill.bg_color = Color(0.72, 0.16, 0.10)
 
 func _set_bar(key: String, ratio: float, value_text: String) -> void:
 	if not status_bars.has(key):
@@ -417,7 +495,9 @@ func _create_inventory_slot(index: int, item) -> void:
 	var slot := PanelContainer.new()
 	slot.custom_minimum_size = Vector2(86, 76)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	slot.add_theme_stylebox_override("panel", _panel_style(Color(0.055, 0.060, 0.055, 0.86), Color(0.25, 0.27, 0.23, 0.82), 1))
+	var is_selected := index == selected_slot_index
+	var border_color := Color(0.72, 0.74, 0.40, 0.95) if is_selected else Color(0.25, 0.27, 0.23, 0.82)
+	slot.add_theme_stylebox_override("panel", _panel_style(Color(0.055, 0.060, 0.055, 0.86), border_color, 2 if is_selected else 1))
 	inventory_grid.add_child(slot)
 
 	var box := VBoxContainer.new()
@@ -582,3 +662,116 @@ func _panel_style(fill: Color, border: Color, border_width: int) -> StyleBoxFlat
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	return style
+
+func _update_slot_buttons() -> void:
+	pass
+
+func _handle_slot_key_input() -> void:
+	pass
+
+func _input(event: InputEvent) -> void:
+	pass
+
+func handle_slot_click(mouse_pos: Vector2, button_index: int) -> void:
+	if not inventory_visible or inventory_grid == null:
+		return
+	if _context_menu != null:
+		_close_context_menu()
+		return
+	for i in range(inventory_grid.get_child_count()):
+		var slot = inventory_grid.get_child(i)
+		if slot is PanelContainer:
+			var rect = slot.get_global_rect()
+			if rect.has_point(mouse_pos):
+				if i < player.inventory.items.size() and player.inventory.items[i] != null:
+					if button_index == MOUSE_BUTTON_LEFT:
+						_show_context_menu(i, rect)
+					elif button_index == MOUSE_BUTTON_RIGHT:
+						selected_slot_index = i
+						_on_drop_pressed()
+				return
+
+func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
+	_close_context_menu()
+	selected_slot_index = slot_index
+	_context_menu_slot_index = slot_index
+	_context_menu = PanelContainer.new()
+	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_context_menu.add_child(vbox)
+	var item = player.inventory.items[slot_index]
+	var name_label := Label.new()
+	name_label.text = item.item_name
+	name_label.add_theme_font_size_override("font_size", 14)
+	name_label.add_theme_color_override("font_color", Color(0.90, 0.88, 0.72))
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(name_label)
+	var use_btn := Button.new()
+	use_btn.text = "Usar"
+	use_btn.add_theme_font_size_override("font_size", 14)
+	use_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(use_btn)
+	var drop_btn := Button.new()
+	drop_btn.text = "Soltar"
+	drop_btn.add_theme_font_size_override("font_size", 14)
+	drop_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(drop_btn)
+	_context_menu.position = Vector2(slot_rect.position.x + slot_rect.size.x + 6, slot_rect.position.y)
+	_context_menu.z_index = 100
+	root.add_child(_context_menu)
+	_update_inventory()
+
+func _close_context_menu() -> void:
+	if _context_menu != null:
+		_context_menu.queue_free()
+		_context_menu = null
+	_context_menu_slot_index = -1
+
+func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
+	if _context_menu == null:
+		return false
+	var rect = _context_menu.get_global_rect()
+	if rect.has_point(mouse_pos):
+		var use_btn = _context_menu.get_child(0).get_child(1)
+		var drop_btn = _context_menu.get_child(0).get_child(2)
+		if button_index == MOUSE_BUTTON_LEFT:
+			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
+				_on_use_pressed()
+				return true
+			elif drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
+				_on_drop_pressed()
+				return true
+		return true
+	_close_context_menu()
+	return false
+
+func _on_use_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	player.held_index = selected_slot_index
+	var item = player.inventory.items[selected_slot_index]
+	var item_type := str(item.item_type)
+	match item_type:
+		"food", "water", "medical", "clothing":
+			player._use_inventory_index(selected_slot_index)
+		_:
+			if player.has_method("clear_hands"):
+				player.clear_hands()
+			player.equip_item_by_name(str(item.item_name))
+			player._sync_held_item()
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+
+func _on_drop_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	player.drop_inventory_item(selected_slot_index)
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
