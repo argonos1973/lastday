@@ -1245,7 +1245,11 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)}
+		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
+		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
+		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.55, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)}
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
@@ -1260,12 +1264,23 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var color: Color = data.get("color", Color(0.42, 0.38, 0.28))
 	var scale_value: float = float(data.get("scale", 0.42))
 	var rotation_degrees: Vector3 = data.get("rot", Vector3(0, randf_range(0, 360), 0))
+	# Garments baked from the standing T-pose are tipped onto their back so they
+	# read as clothing dropped on the ground (rot.x=90, then spun by yaw).
+	var lay_flat: bool = bool(data.get("flat", false))
+	if lay_flat:
+		rotation_degrees.x += 90.0
 	var spawned := false
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, true, 0.06)
 	if not spawned:
 		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
 		return
+	# The cached ground-snap assumes the mesh is unrotated; after laying a garment
+	# flat its real lowest point changes, so re-snap from the actual world AABB.
+	if lay_flat:
+		var laid := get_node_or_null(NodePath(visual_name))
+		if laid is Node3D:
+			_snap_node_bottom_to_y(laid as Node3D, 0.06)
 	_mark_world_action_visual(visual_name)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
@@ -1298,7 +1313,8 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	var scale_value := Vector3.ONE * randf_range(1.05, 1.75)
 	if not _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.0):
 		if not _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.0):
-			_create_choppable_fallback_tree(visual_name, pos)
+			push_warning("No se crea arbol talable %s porque falta/carga mal el asset .glb" % id)
+			return
 	_override_tree_foliage_green(visual_name)
 	var collision := _create_tree_collision(collision_name, pos)
 	collision.add_to_group("world_action_visual")
@@ -1306,35 +1322,6 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("collision_name", collision_name)
 
-func _create_choppable_fallback_tree(visual_name: String, pos: Vector3) -> void:
-	var parent := Node3D.new()
-	parent.name = visual_name
-	parent.position = pos
-	parent.add_to_group("world_action_visual")
-	add_child(parent)
-
-	var trunk := MeshInstance3D.new()
-	trunk.name = "FallbackTrunk"
-	var trunk_mesh := CylinderMesh.new()
-	trunk_mesh.top_radius = 0.18
-	trunk_mesh.bottom_radius = 0.28
-	trunk_mesh.height = 6.2
-	trunk_mesh.radial_segments = 12
-	trunk.mesh = trunk_mesh
-	trunk.position = Vector3(0, 3.1, 0)
-	trunk.material_override = _make_material(Color(0.16, 0.10, 0.055), true)
-	parent.add_child(trunk)
-
-	for i in range(4):
-		var crown := MeshInstance3D.new()
-		crown.name = "FallbackCrown"
-		var crown_mesh := SphereMesh.new()
-		crown_mesh.radius = randf_range(1.15, 1.65)
-		crown_mesh.height = randf_range(1.0, 1.45)
-		crown.mesh = crown_mesh
-		crown.position = Vector3(randf_range(-0.9, 0.9), randf_range(5.1, 6.4), randf_range(-0.9, 0.9))
-		crown.material_override = _make_material(Color(0.09, 0.18, 0.075).lerp(Color(0.18, 0.28, 0.13), randf()), true)
-		parent.add_child(crown)
 
 func _hide_action_visual(action) -> void:
 	var visual_name := str(action.get_meta("visual_name")) if action.has_meta("visual_name") else ""

@@ -1,0 +1,28 @@
+[gd_scene load_steps=2 format=3]
+
+; Player root for the adapted survival character.
+;
+; The character model (player_with_clothes.glb) is loaded at RUNTIME by
+; player_equipment.gd (project convention), so the deformable clothing and the
+; Mixamo skeleton are built under this node when the scene enters the tree.
+;
+; Runtime tree built by PlayerEquipment.setup():
+;   Player (Node3D)                         <- player_equipment.gd
+;    └ CharacterModel  (player_with_clothes.glb instance)
+;       └ ... > Skeleton3D
+;          ├ Body / Hair / Eyes / ...       (Mixamo body, MeshInstance3D)
+;          ├ Tops / Bottoms / Shoes         (Mixamo default clothes, hidden when
+;          │                                  the matching survival garment is on)
+;          ├ cloth_torso / cloth_legs /
+;          │  cloth_hands / cloth_feet       (adapted clothing, deformable)
+;          └ Attach_backpack (BoneAttachment3D -> mixamorig:Spine2)
+;             └ gear_backpack (rigid, does NOT deform)
+;       └ AnimationPlayer                    (drives Mixamo animations)
+
+[ext_resource type="Script" path="res://scripts/player/player_equipment.gd" id="1_equip"]
+
+[node name="Player" type="Node3D"]
+script = ExtResource("1_equip")
+model_path = "res://assets/characters/adapted/player_with_clothes.glb"
+auto_setup = true
+equip_all_on_start = true
