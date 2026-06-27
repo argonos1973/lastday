@@ -7,7 +7,10 @@ const ItemScript = preload("res://scripts/Item.gd")
 const InteractionRaycastScript = preload("res://scripts/InteractionRaycast.gd")
 const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
-const REAL_KNIFE_MODEL := "res://assets/external/realistic/root_glb/knife.glb"
+const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
+const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
+const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
+const REAL_STONE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb"
 const REAL_AXE_MODEL := "res://assets/external/realistic/root_glb/axe_survival.glb"
 const REAL_HOE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hoe.glb"
 const REAL_SHOVEL_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-shovel.glb"
@@ -67,6 +70,8 @@ const THIRD_PERSON_FISH_ANIMATION_SOURCE := "res://Fishing Cast.glb"
 const THIRD_PERSON_INTERACT_ANIMATION_SOURCE := "res://coger.glb"
 const THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE := "res://malo.glb"
 const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://muerto.glb"
+const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://saltar.glb"
+const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://saltarabajo2.GLB"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -79,6 +84,8 @@ const THIRD_PERSON_EXTERNAL_FISH_ANIMATION := "FishExternal"
 const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
+const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
+const THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION := "JumpDownExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -92,13 +99,19 @@ const SMALL_BACKPACK_WEIGHT := 10.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
+signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3)
 
 @export var walk_speed := 4.0
 @export var sprint_speed := 7.0
 @export var crouch_speed := 2.0
+@export var jump_force := 5.0
+@export var sprint_jump_force := 9.0
 @export var mouse_sensitivity := 0.0025
-@export var interaction_distance := 0.5
+@export var interaction_distance := 2.5
+@export var jump_stamina_cost := 15.0
+@export var min_jump_stamina := 10.0
 
+var _model_cache: Dictionary = {}
 var stats
 var inventory
 var equipment
@@ -113,6 +126,8 @@ var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
+var _hand_skeleton: Skeleton3D = null
+var _hand_bone_idx: int = -1
 var _backpack_rest_pos: Vector3 = Vector3(0.0, -0.05, -0.18)
 var _backpack_crouch_offset: Vector3 = Vector3(0.0, -0.12, -0.06)
 var _backpack_action_offset: Vector3 = Vector3(0.0, -0.18, -0.10)
@@ -133,11 +148,19 @@ var third_person_fish_animation := ""
 var third_person_interact_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
+var third_person_jump_animation := ""
+var third_person_jump_down_animation := ""
+var _is_falling_from_height := false
+var _fall_height := 0.0
+var _max_fall_height := 0.0
 var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
+var is_jumping := false
+var _jump_velocity := 0.0
+var _jump_animation_timer := 0.0
 var is_dead := false
 var death_pose_time := 0.0
 var is_sprinting := false
@@ -194,6 +217,8 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if is_dead:
 		return
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return
 	if event is InputEventMouseButton and event.pressed:
 		_capture_mouse()
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -203,10 +228,21 @@ func _input(event: InputEvent) -> void:
 		camera.rotation.x = _pitch
 	if event.is_action_pressed("interact"):
 		_interact()
+	if event.is_action_pressed("drop_item"):
+		_drop_held_item()
 	if event.is_action_pressed("flashlight"):
 		_toggle_flashlight()
 	if event.is_action_pressed("toggle_inventory"):
 		notice.emit("Inventario alternado.")
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		if is_on_floor() and not is_in_water and not is_jumping and stats.energy >= min_jump_stamina:
+			var base_jump := sprint_jump_force if is_sprinting else jump_force
+			var carry := _get_carry_weight_ratio()
+			_jump_velocity = base_jump * (1.0 - carry * 0.6)
+			stats.energy = max(0.0, stats.energy - jump_stamina_cost)
+			stats.changed.emit()
+			is_jumping = true
+			_jump_animation_timer = 1.2
 	if event is InputEventKey and event.pressed and not event.echo:
 		var inventory_index := _inventory_index_for_key(event.keycode)
 		if inventory_index >= 0:
@@ -543,6 +579,12 @@ func _recalculate_carry_capacity() -> void:
 	inventory.max_slots = slots
 	inventory.max_weight = weight
 
+func _get_carry_weight_ratio() -> float:
+	if inventory == null or inventory.max_weight <= 0.0:
+		return 0.0
+	var current: float = inventory.get_total_weight()
+	return clamp(current / inventory.max_weight, 0.0, 1.0)
+
 func _physics_process(delta: float) -> void:
 	if is_dead:
 		is_sprinting = false
@@ -560,7 +602,14 @@ func _physics_process(delta: float) -> void:
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
 	is_crouching = Input.is_action_pressed("crouch")
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
-	var speed := crouch_speed if is_crouching else (sprint_speed if is_sprinting else walk_speed)
+	var carry := _get_carry_weight_ratio()
+	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
+	if is_sprinting:
+		stats.energy = max(0.0, stats.energy - (3.0 + carry * 7.0) * delta)
+		stats.changed.emit()
+	elif not is_jumping and is_on_floor():
+		stats.energy = min(stats.max_stat, stats.energy + (8.0 - carry * 4.0) * delta)
+		stats.changed.emit()
 	_update_water_state(delta)
 	if is_in_water:
 		speed = crouch_speed if is_crouching else walk_speed
@@ -569,16 +618,39 @@ func _physics_process(delta: float) -> void:
 
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
-	if not is_on_floor():
+	if is_jumping:
+		velocity.y = _jump_velocity
+		_jump_velocity -= _gravity * delta
+		move_and_slide()
+		if is_on_floor() and _jump_velocity < 0.0:
+			is_jumping = false
+			_jump_velocity = 0.0
+			velocity.y = 0.0
+			_jump_animation_timer = 0.0
+			_is_falling_from_height = false
+			_fall_height = 0.0
+			_max_fall_height = 0.0
+	elif not is_on_floor():
+		if not _is_falling_from_height:
+			_is_falling_from_height = true
+			_fall_height = global_position.y
+		_max_fall_height = max(_max_fall_height, global_position.y)
 		velocity.y -= _gravity * delta
+		move_and_slide()
+		if is_on_floor():
+			_is_falling_from_height = false
+			_fall_height = 0.0
+			_max_fall_height = 0.0
+			velocity.y = 0.0
 	else:
 		velocity.y = 0.0
-	move_and_slide()
+		move_and_slide()
 
 	_update_walk_motion(delta, input_dir.length())
 	_update_interaction_prompt()
 	_update_flashlight(delta)
 	_update_backpack_socket()
+	_update_hand_socket()
 
 func _update_backpack_socket() -> void:
 	if _spine_skeleton == null or _spine_bone_idx < 0 or third_person_back_item_root == null:
@@ -600,6 +672,20 @@ func _update_backpack_socket() -> void:
 		tilt = 8.0
 	third_person_back_item_root.position = bone_local.origin + offset
 	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
+
+func _update_hand_socket() -> void:
+	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
+		return
+	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(third_person_hand_item_root):
+		return
+	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
+	var skel_global := _hand_skeleton.global_transform
+	var bone_world := skel_global * bone_pose
+	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var bone_local := local_to_model * bone_world
+	third_person_hand_item_root.position = bone_local.origin
+	var euler := bone_local.basis.get_euler()
+	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -763,6 +849,13 @@ func _create_third_person_item_slots() -> void:
 			_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
 			if _spine_bone_idx != -1:
 				break
+	_hand_skeleton = _spine_skeleton
+	_hand_bone_idx = -1
+	if _hand_skeleton != null:
+		for bone_name in ["mixamorig:RightHand", "mixamorig:LeftHand", "mixamorig_RightHand", "mixamorig_LeftHand", "RightHand", "LeftHand"]:
+			_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
+			if _hand_bone_idx != -1:
+				break
 
 	var head_socket := _create_equipment_socket("HeadSocket", Vector3(0.0, 1.72, -0.02), Vector3.ZERO)
 	var chest_socket := _create_equipment_socket("ChestSocket", Vector3(0.0, 1.24, -0.18), Vector3.ZERO)
@@ -813,6 +906,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_INTERACT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION)
 	_import_external_animation(THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION)
 	_import_external_animation(THIRD_PERSON_DYING_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DYING_ANIMATION)
+	_import_external_animation(THIRD_PERSON_JUMP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_ANIMATION)
+	_import_external_animation(THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION)
 	var names := third_person_animation_player.get_animation_list()
 	for animation_name in names:
 		var name_text := String(animation_name)
@@ -859,6 +954,16 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var dying_animation := third_person_animation_player.get_animation(third_person_dying_animation)
 		if dying_animation != null:
 			dying_animation.loop_mode = Animation.LOOP_NONE
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_JUMP_ANIMATION):
+		third_person_jump_animation = "external/" + THIRD_PERSON_EXTERNAL_JUMP_ANIMATION
+		var jump_animation := third_person_animation_player.get_animation(third_person_jump_animation)
+		if jump_animation != null:
+			jump_animation.loop_mode = Animation.LOOP_NONE
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION):
+		third_person_jump_down_animation = "external/" + THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION
+		var jump_down_animation := third_person_animation_player.get_animation(third_person_jump_down_animation)
+		if jump_down_animation != null:
+			jump_down_animation.loop_mode = Animation.LOOP_NONE
 	if third_person_run_animation.is_empty():
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
@@ -1127,10 +1232,15 @@ func _find_animation_player(root: Node) -> AnimationPlayer:
 	return null
 
 func _load_external_node3d(path: String) -> Node3D:
+	if _model_cache.has(path):
+		var cached = _model_cache[path]
+		if cached is PackedScene:
+			return (cached as PackedScene).instantiate() as Node3D
 	var instance: Node = null
 	if ResourceLoader.exists(path):
 		var loaded = load(path)
 		if loaded is PackedScene:
+			_model_cache[path] = loaded
 			instance = (loaded as PackedScene).instantiate()
 	if instance == null and (path.get_extension().to_lower() == "gltf" or path.get_extension().to_lower() == "glb"):
 		instance = _load_gltf_node3d(path)
@@ -1151,6 +1261,12 @@ func _load_gltf_node3d(path: String) -> Node3D:
 		return null
 	var generated_scene := document.generate_scene(state)
 	if generated_scene is Node3D:
+		var packed := PackedScene.new()
+		if packed.pack(generated_scene) == OK:
+			_model_cache[path] = packed
+			var instance := packed.instantiate() as Node3D
+			generated_scene.queue_free()
+			return instance
 		return generated_scene as Node3D
 	if generated_scene != null:
 		generated_scene.queue_free()
@@ -1172,6 +1288,10 @@ func equip_item_by_name(item_name: String) -> void:
 			_sync_held_item()
 			return
 
+func clear_hands() -> void:
+	if hands != null:
+		hands.clear_hands()
+
 func _cycle_held_item() -> void:
 	if inventory.items.is_empty():
 		return
@@ -1179,6 +1299,34 @@ func _cycle_held_item() -> void:
 	_sync_held_item()
 	var item = inventory.items[held_index]
 	notice.emit("En mano: %s." % item.item_name)
+
+func _drop_held_item() -> void:
+	if inventory == null or inventory.items.is_empty():
+		notice.emit("No tienes nada que soltar.")
+		return
+	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	drop_inventory_item(held_index)
+
+func drop_inventory_item(index: int) -> void:
+	if inventory == null or index < 0 or index >= inventory.items.size():
+		return
+	var item = inventory.items[index]
+	var item_name := str(item.item_name)
+	var item_type := str(item.item_type)
+	if item_type == "backpack":
+		equipped_backpack = ""
+		_recalculate_carry_capacity()
+	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
+		equipped_clothing = ""
+		_recalculate_carry_capacity()
+	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+	drop_pos.y = global_position.y
+	item_dropped.emit(item_name, item_type, float(item.weight), int(item.quantity), float(item.use_value), drop_pos)
+	inventory.remove_index(index, item.quantity)
+	if held_index >= inventory.items.size():
+		held_index = max(0, inventory.items.size() - 1)
+	_sync_held_item()
+	notice.emit("Sueltas %s." % item_name)
 
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
@@ -1193,11 +1341,13 @@ func _sync_third_person_equipment(held_item) -> void:
 		return
 	if hands == null or not hands.has_item_in_hands():
 		for child in third_person_hand_item_root.get_children():
-			child.queue_free()
+			third_person_hand_item_root.remove_child(child)
+			child.free()
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
 	if not equip_has_bp:
 		for child in third_person_back_item_root.get_children():
-			child.queue_free()
+			third_person_back_item_root.remove_child(child)
+			child.free()
 	var inv_has_bp: bool = inventory != null and inventory.has_item_name("Mochila pequena")
 	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
 	if inventory != null and not equip_has_bp and (inv_has_bp or eq_bp_set):
@@ -1243,25 +1393,32 @@ func _sync_third_person_equipment(held_item) -> void:
 
 func _build_third_person_backpack() -> void:
 	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
-	if bp_node != null:
-		var raw_aabb := _hierarchy_local_aabb(bp_node)
-		if raw_aabb.size.y > 0.0001 and raw_aabb.size.x > 0.0001 and raw_aabb.size.z > 0.0001:
-			bp_node.name = "BackpackAsset"
-			var bp_scale := 1.3 / raw_aabb.size.y
-			bp_node.scale = Vector3.ONE * bp_scale
-			var center_offset := Vector3(
-				-(raw_aabb.position.x + raw_aabb.size.x * 0.5) * bp_scale,
-				-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * bp_scale,
-				-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
-			)
-			bp_node.position = center_offset
-			bp_node.rotation_degrees = Vector3(0, 180, 0)
-			third_person_back_item_root.add_child(bp_node)
-			return
+	if bp_node == null:
+		return
+	var raw_aabb := _hierarchy_local_aabb(bp_node)
+	if raw_aabb.size.y <= 0.0001 or raw_aabb.size.x <= 0.0001 or raw_aabb.size.z <= 0.0001:
 		bp_node.queue_free()
+<<<<<<< HEAD
 
 func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.0, 0.0), Vector3(82, 0, 0), Vector3.ONE * 0.15)
+=======
+		return
+	bp_node.name = "BackpackAsset"
+	var bp_scale := 1.3 / raw_aabb.size.y
+	bp_node.scale = Vector3.ONE * bp_scale
+	var center_offset := Vector3(
+		-(raw_aabb.position.x + raw_aabb.size.x * 0.5) * bp_scale,
+		-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * bp_scale,
+		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
+	)
+	bp_node.position = center_offset
+	bp_node.rotation_degrees = Vector3(0, 180, 0)
+	third_person_back_item_root.add_child(bp_node)
+
+func _build_third_person_knife() -> void:
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_flashlight() -> void:
 	pass
@@ -1270,7 +1427,11 @@ func _build_third_person_can() -> void:
 	pass
 
 func _build_third_person_bottle() -> void:
+<<<<<<< HEAD
 	_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb", "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.3)
+=======
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_BOTTLE_MODEL, "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_bandage() -> void:
 	pass
@@ -1280,9 +1441,15 @@ func _build_third_person_battery() -> void:
 
 func _build_third_person_resource(item_name: String) -> void:
 	if item_name == "Tronco" or item_name == "Madera" or item_name == "Ramas":
+<<<<<<< HEAD
 		_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb", "HeldLog", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.3)
 	elif item_name == "Piedra":
 		_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb", "HeldStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.25)
+=======
+		_try_add_model_to_parent(third_person_hand_item_root, REAL_WOOD_MODEL, "ThirdPersonWood", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.5)
+	elif item_name == "Piedra":
+		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.5)
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_seed_bag() -> void:
 	pass
@@ -1290,7 +1457,11 @@ func _build_third_person_seed_bag() -> void:
 func _build_third_person_clothing_bundle() -> void:
 	pass
 
+<<<<<<< HEAD
 func _build_third_person_tool(path: String, node_name: String, fallback_color: Color) -> void:
+=======
+func _build_third_person_tool(path: String, node_name: String, _fallback_color: Color) -> void:
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 	_try_add_model_to_parent(third_person_hand_item_root, path, node_name, Vector3(0.0, -0.02, -0.11), Vector3(82, 0, 18), Vector3.ONE * 0.44)
 
 func _build_third_person_pack() -> void:
@@ -1412,6 +1583,19 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	character.position = character.position.lerp(Vector3(0.0, third_person_ground_offset + bob + _water_sink * 0.55, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
+		if is_jumping and not third_person_jump_animation.is_empty():
+			_jump_animation_timer = max(0.0, _jump_animation_timer - delta)
+			if third_person_animation_player.current_animation != third_person_jump_animation:
+				third_person_animation_player.play(third_person_jump_animation, 0.1)
+			third_person_animation_player.speed_scale = 1.0
+			return
+		if _is_falling_from_height and not is_jumping and not third_person_jump_down_animation.is_empty():
+			var fall_dist := _max_fall_height - global_position.y
+			if fall_dist > 0.2:
+				if third_person_animation_player.current_animation != third_person_jump_down_animation:
+					third_person_animation_player.play(third_person_jump_down_animation, 0.1)
+				third_person_animation_player.speed_scale = 1.0
+				return
 		if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
 			third_person_action_timer = max(0.0, third_person_action_timer - delta)
 			if third_person_animation_player.current_animation != third_person_action_animation:
@@ -1489,7 +1673,6 @@ func _interact() -> void:
 		var tw := create_tween()
 		tw.tween_property(camera, "fov", 72.0, 0.12).set_ease(Tween.EASE_OUT)
 		tw.chain().tween_property(camera, "fov", 75.0, 0.18).set_ease(Tween.EASE_IN_OUT)
-		await tw.finished
 	target.interact(self)
 
 func _update_interaction_prompt() -> void:

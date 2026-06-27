@@ -1070,10 +1070,23 @@ func _spawn_interaction_item(scene_path: String, pos: Vector3, rot: Vector3) -> 
 func _create_survival_objectives() -> void:
 	_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
 	_create_world_action("cabin_site", "build_cabin", "Base de cabana", Vector3(-54, 0.02, 48), Vector3(3.8, 0.65, 3.0), Color(0.28, 0.22, 0.13), false, false)
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+	_try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CabinLogA", Vector3(-54, 0.12, 46.45), Vector3.ONE * 0.72, Vector3(0, 90, 0))
+	_try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CabinLogB", Vector3(-54, 0.12, 49.55), Vector3.ONE * 0.72, Vector3(0, 90, 0))
+	_try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CabinLogC", Vector3(-56.1, 0.12, 48), Vector3.ONE * 0.58, Vector3(0, 0, 0))
+	_try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CabinLogD", Vector3(-51.9, 0.12, 48), Vector3.ONE * 0.58, Vector3(0, 0, 0))
+=======
+>>>>>>> 70b7bff (Fix clothing fit: tighter shrinkwrap per slot, preserve glove finger weights, subdivide gloves, lay pickups flat)
 	_create_static_box_rotated("CabinFoundationLogsA", Vector3(-54, 0.12, 46.45), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsB", Vector3(-54, 0.12, 49.55), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsC", Vector3(-56.1, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsD", Vector3(-51.9, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
+<<<<<<< HEAD
+=======
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
+>>>>>>> 70b7bff (Fix clothing fit: tighter shrinkwrap per slot, preserve glove finger weights, subdivide gloves, lay pickups flat)
 	for i in range(5):
 		var wood_pos := Vector3(randf_range(-62, -28), 0.04, randf_range(12, 62))
 		var log_a_name := "HarvestableLogA_%d" % i
@@ -1245,11 +1258,15 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+<<<<<<< HEAD
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.55, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)}
+=======
+		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)}
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
@@ -1275,12 +1292,15 @@ func _create_pickup_item(data: Dictionary) -> void:
 	if not spawned:
 		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
 		return
+<<<<<<< HEAD
 	# The cached ground-snap assumes the mesh is unrotated; after laying a garment
 	# flat its real lowest point changes, so re-snap from the actual world AABB.
 	if lay_flat:
 		var laid := get_node_or_null(NodePath(visual_name))
 		if laid is Node3D:
 			_snap_node_bottom_to_y(laid as Node3D, 0.06)
+=======
+>>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 	_mark_world_action_visual(visual_name)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
