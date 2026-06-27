@@ -1398,11 +1398,6 @@ func _build_third_person_backpack() -> void:
 	var raw_aabb := _hierarchy_local_aabb(bp_node)
 	if raw_aabb.size.y <= 0.0001 or raw_aabb.size.x <= 0.0001 or raw_aabb.size.z <= 0.0001:
 		bp_node.queue_free()
-<<<<<<< HEAD
-
-func _build_third_person_knife() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.0, 0.0), Vector3(82, 0, 0), Vector3.ONE * 0.15)
-=======
 		return
 	bp_node.name = "BackpackAsset"
 	var bp_scale := 1.3 / raw_aabb.size.y
@@ -1418,7 +1413,6 @@ func _build_third_person_knife() -> void:
 
 func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
->>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_flashlight() -> void:
 	pass
@@ -1427,11 +1421,7 @@ func _build_third_person_can() -> void:
 	pass
 
 func _build_third_person_bottle() -> void:
-<<<<<<< HEAD
-	_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb", "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.3)
-=======
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_BOTTLE_MODEL, "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
->>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_bandage() -> void:
 	pass
@@ -1441,15 +1431,9 @@ func _build_third_person_battery() -> void:
 
 func _build_third_person_resource(item_name: String) -> void:
 	if item_name == "Tronco" or item_name == "Madera" or item_name == "Ramas":
-<<<<<<< HEAD
-		_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb", "HeldLog", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.3)
-	elif item_name == "Piedra":
-		_try_add_model_to_parent(third_person_hand_item_root, "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb", "HeldStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.25)
-=======
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_WOOD_MODEL, "ThirdPersonWood", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.5)
 	elif item_name == "Piedra":
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.5)
->>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 
 func _build_third_person_seed_bag() -> void:
 	pass
@@ -1457,11 +1441,7 @@ func _build_third_person_seed_bag() -> void:
 func _build_third_person_clothing_bundle() -> void:
 	pass
 
-<<<<<<< HEAD
-func _build_third_person_tool(path: String, node_name: String, fallback_color: Color) -> void:
-=======
 func _build_third_person_tool(path: String, node_name: String, _fallback_color: Color) -> void:
->>>>>>> 033540fd5d0a8f72e1ce648e49bb1432bb9c9df4
 	_try_add_model_to_parent(third_person_hand_item_root, path, node_name, Vector3(0.0, -0.02, -0.11), Vector3(82, 0, 18), Vector3.ONE * 0.44)
 
 func _build_third_person_pack() -> void:
