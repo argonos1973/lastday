@@ -654,8 +654,19 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
+	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
+	# so they only need the survival garments to be tipped 90 deg here.
+	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival"]
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas"]
+	var rot := Vector3(0, randf_range(0, 360), 0)
+	if lay_flat:
+		rot.x += 90.0
 	if not paths.is_empty():
-		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, not lay_flat, 0.06)
+		if lay_flat or pre_flat:
+			var laid := get_node_or_null(NodePath(visual_name))
+			if laid is Node3D:
+				_snap_node_bottom_to_y(laid as Node3D, 0.06)
 		_mark_world_action_visual(visual_name)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
@@ -704,6 +715,20 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [ROOT_VEST_MODEL]
 				"Chaqueta de abrigo":
 					return [POLY_LIFE_JACKET_MODEL]
+				"Camiseta":
+					return ["res://assets/characters/adapted/pickup_default_tops.glb"]
+				"Pantalones":
+					return ["res://assets/characters/adapted/pickup_default_bottoms.glb"]
+				"Zapatillas":
+					return ["res://assets/characters/adapted/pickup_default_shoes.glb"]
+				"Chaqueta survival":
+					return ["res://assets/characters/adapted/pickup_cloth_torso.glb"]
+				"Vaqueros survival":
+					return ["res://assets/characters/adapted/pickup_cloth_legs.glb"]
+				"Guantes survival":
+					return [POLY_GARDEN_GLOVES_MODEL]
+				"Botas survival":
+					return ["res://assets/characters/adapted/pickup_cloth_feet.glb"]
 				_:
 					return [POLY_VINTAGE_SUITCASE_MODEL]
 		"seed":
@@ -733,6 +758,20 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 0.8
 				"Chaqueta de abrigo":
 					return 0.8
+				"Camiseta":
+					return 0.5
+				"Pantalones":
+					return 0.5
+				"Zapatillas":
+					return 0.7
+				"Chaqueta survival":
+					return 0.5
+				"Vaqueros survival":
+					return 0.5
+				"Guantes survival":
+					return 0.55
+				"Botas survival":
+					return 0.9
 				_:
 					return 0.7
 		"seed":
@@ -1249,7 +1288,11 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.55, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
-		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)}
+		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(-30.5, 0.06, -20.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.5, "rot": Vector3(0, 45, 0), "flat": true, "color": Color(0.15, 0.18, 0.12)},
+		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(-29.3, 0.06, -19.2), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.5, "rot": Vector3(0, -25, 0), "flat": true, "color": Color(0.12, 0.14, 0.10)},
+		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(-31.2, 0.06, -19.8), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.5, "rot": Vector3(0, 60, 0), "flat": true, "color": Color(0.10, 0.12, 0.08)},
+		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(-30.0, 0.06, -18.4), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.5, "rot": Vector3(0, -50, 0), "flat": true, "color": Color(0.08, 0.09, 0.07)}
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
@@ -1271,7 +1314,10 @@ func _create_pickup_item(data: Dictionary) -> void:
 		rotation_degrees.x += 90.0
 	var spawned := false
 	if not paths.is_empty():
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, true, 0.06)
+		# For lay-flat garments, skip the cached snap (it assumes unrotated mesh)
+		# and do a fresh snap after rotation below.
+		var do_snap := not lay_flat
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, do_snap, 0.06)
 	if not spawned:
 		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
 		return
@@ -1499,6 +1545,28 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 		_hide_action_visual(action)
 	action.mark_depleted()
 	_save_world_change_silent()
+
+func handle_world_action_collect(action, actor) -> void:
+	match action.action_type:
+		"pickup_item":
+			var item = ItemScript.create(
+				str(action.get_meta("item_name")),
+				str(action.get_meta("item_type")),
+				float(action.get_meta("item_weight")),
+				int(action.get_meta("item_quantity")),
+				float(action.get_meta("item_use_value"))
+			)
+			_play_actor_action(actor, "pickup", 0.8)
+			if not actor.inventory.add_item(item):
+				return
+			if actor.has_method("refresh_carry_capacity"):
+				actor.refresh_carry_capacity()
+			actor.notice.emit("Coges %s." % item.item_name)
+			_hide_action_visual(action)
+			action.mark_depleted()
+			_save_world_change_silent()
+		_:
+			handle_world_action(action, actor)
 
 func _handle_farm_plot(action, actor) -> void:
 	match action.action_state:

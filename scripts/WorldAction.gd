@@ -38,6 +38,14 @@ func interact(player) -> void:
 	if main != null and main.has_method("handle_world_action"):
 		main.handle_world_action(self, player)
 
+func collect(player) -> void:
+	if depleted and not repeatable:
+		player.notice.emit("%s ya no tiene nada util." % display_name)
+		return
+	var main := get_tree().current_scene
+	if main != null and main.has_method("handle_world_action_collect"):
+		main.handle_world_action_collect(self, player)
+
 func mark_depleted() -> void:
 	depleted = true
 	if _mesh_instance != null:
@@ -74,6 +82,8 @@ func get_interaction_text(_player = null) -> String:
 		"build_cabin":
 			return "%s - construir cabana - E" % display_name
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "backpack_pickup", "coat":
+			if _is_clothing():
+				return "%s - [E] Equipar | [C] Coger" % display_name
 			return "%s - recoger - E" % display_name
 		"eat_food":
 			return "%s - comer - E" % display_name
@@ -164,3 +174,8 @@ func _clear_visual_children() -> void:
 		if is_instance_valid(child):
 			child.queue_free()
 	_visual_children.clear()
+
+func _is_clothing() -> bool:
+	if action_type == "pickup_item" and has_meta("item_type"):
+		return str(get_meta("item_type")) == "clothing"
+	return false

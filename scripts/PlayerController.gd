@@ -46,6 +46,37 @@ const SURVIVAL_CLOTHING := {
 	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"]},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"]},
+	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"]},
+	"Guantes militares": {"mesh": "soldier_hands", "hides": []},
+	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"]},
+}
+
+const DEFAULT_CLOTHING := {
+	"Camiseta": "Tops",
+	"Pantalones": "Bottoms",
+	"Zapatillas": "Shoes",
+}
+
+# Maps each clothing item to a body slot for exchange logic.
+const CLOTHING_SLOTS := {
+	"Camiseta": "torso",
+	"Pantalones": "legs",
+	"Zapatillas": "feet",
+	"Chaqueta survival": "torso",
+	"Vaqueros survival": "legs",
+	"Guantes survival": "hands",
+	"Botas survival": "feet",
+	"Chaqueta militar": "torso",
+	"Pantalones militares": "legs",
+	"Guantes militares": "hands",
+	"Botas militares": "feet",
+	"Chaqueta de abrigo": "torso",
+	"Chaleco salvavidas": "torso",
+	"Chaleco tactico": "torso",
+	"Botas de goma": "feet",
+	"Guantes de trabajo": "hands",
+	"Sombrero de pescador": "head",
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
@@ -176,6 +207,7 @@ var equipped_backpack := ""
 var _survival_cloth_nodes := {}
 var _survival_body_nodes := {}
 var _worn_survival := {}        # item_name -> true while the garment is shown
+var _equipped_slots := {}         # slot -> item_name currently equipped
 
 var _pitch := 0.0
 var _gravity := ProjectSettings.get_setting("physics/3d/default_gravity") as float
@@ -206,8 +238,8 @@ func _ready() -> void:
 	hands.name = "PlayerHands"
 	add_child(hands)
 
-	_create_body()
 	_add_starting_items()
+	_create_body()
 	_recalculate_carry_capacity()
 	_select_default_held_item()
 	_sync_held_item()
@@ -228,6 +260,8 @@ func _input(event: InputEvent) -> void:
 		camera.rotation.x = _pitch
 	if event.is_action_pressed("interact"):
 		_interact()
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+		_collect()
 	if event.is_action_pressed("drop_item"):
 		_drop_held_item()
 	if event.is_action_pressed("flashlight"):
@@ -313,21 +347,57 @@ func _on_inventory_changed() -> void:
 	_sync_held_item()
 
 func equip_clothing(item_name: String) -> void:
+	var slot := ""
+	if CLOTHING_SLOTS.has(item_name):
+		slot = CLOTHING_SLOTS[item_name]
+	# Unequip previous item in the same slot and drop it on the ground
+	if not slot.is_empty() and _equipped_slots.get(slot, "") != item_name:
+		var prev_name := str(_equipped_slots.get(slot, ""))
+		if not prev_name.is_empty() and prev_name != item_name:
+			unequip_clothing(prev_name)
+			# Remove old clothing from inventory and drop it on the ground
+			if inventory != null:
+				for i in range(inventory.items.size()):
+					if str(inventory.items[i].item_name) == prev_name:
+						inventory.remove_index(i)
+						break
+			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+			drop_pos.y = global_position.y
+			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos)
 	equipped_clothing = item_name
-	# Survival garments are skinned to the Mixamo rig: just reveal the mesh so it
-	# deforms with the animations. Everything else uses the legacy bbox visual.
-	if SURVIVAL_CLOTHING.has(item_name):
+	if DEFAULT_CLOTHING.has(item_name):
+		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
+		if bn != null:
+			bn.visible = true
+	elif SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, true)
 	else:
 		_wear_clothing_visual(item_name)
+	if not slot.is_empty():
+		_equipped_slots[slot] = item_name
 	_recalculate_carry_capacity()
 	_sync_held_item()
 	if inventory != null:
 		inventory.changed.emit()
 
 func unequip_clothing(item_name: String) -> void:
+	if DEFAULT_CLOTHING.has(item_name):
+		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
+		if bn != null:
+			bn.visible = false
 	if SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, false)
+	# Remove the attached 3D garment visual (vests, hat, rubber boots, gloves)
+	# so swapping two visual garments in the same slot doesn't leave the old one
+	# stuck on the character.
+	if CLOTHING_VISUALS.has(item_name) and third_person_model != null:
+		var worn := third_person_model.get_node_or_null("Worn_" + item_name)
+		if worn != null:
+			worn.free()
+	if CLOTHING_SLOTS.has(item_name):
+		var slot: String = CLOTHING_SLOTS[item_name]
+		if _equipped_slots.get(slot, "") == item_name:
+			_equipped_slots.erase(slot)
 	if equipped_clothing == item_name:
 		equipped_clothing = ""
 	_recalculate_carry_capacity()
@@ -356,6 +426,7 @@ func _init_survival_clothing(root: Node) -> void:
 				mi.visible = false
 			elif body_names.has(mi.name):
 				_survival_body_nodes[mi.name] = mi
+				mi.visible = false
 		for c in node.get_children():
 			stack.append(c)
 
@@ -368,10 +439,22 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 	var mi: MeshInstance3D = _survival_cloth_nodes.get(String(cfg["mesh"]))
 	if mi != null:
 		mi.visible = worn
+	# Build reverse map: body mesh name -> default clothing item name
+	var _body_to_default := {}
+	for dname in DEFAULT_CLOTHING:
+		_body_to_default[DEFAULT_CLOTHING[dname]] = dname
 	for h in cfg["hides"]:
 		var bn: MeshInstance3D = _survival_body_nodes.get(String(h))
 		if bn != null:
-			bn.visible = not worn
+			if worn:
+				bn.visible = false
+			else:
+				# Only restore the default body mesh if the corresponding
+				# default clothing item is actually still equipped.
+				var default_item: String = String(_body_to_default.get(String(h), ""))
+				var slot: String = String(CLOTHING_SLOTS.get(default_item, ""))
+				var equipped: String = String(_equipped_slots.get(slot, "")) if not slot.is_empty() else ""
+				bn.visible = equipped == default_item
 	_worn_survival[item_name] = worn
 
 # Attaches and fits a clothing model onto the body relative to its measured
@@ -763,7 +846,9 @@ func _create_body() -> void:
 	_create_third_person_model()
 
 func _add_starting_items() -> void:
-	return
+	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
+	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
+	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -784,6 +869,11 @@ func _create_third_person_model() -> void:
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
 		_init_survival_clothing(character)
+		# Equip default clothing items already in inventory
+		if inventory != null:
+			for item in inventory.items:
+				if DEFAULT_CLOTHING.has(str(item.item_name)):
+					equip_clothing(str(item.item_name))
 		_create_third_person_item_slots()
 		_setup_third_person_animation(character)
 		_align_third_person_model_to_ground()
@@ -1319,6 +1409,10 @@ func drop_inventory_item(index: int) -> void:
 	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
 		equipped_clothing = ""
 		_recalculate_carry_capacity()
+	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival"]:
+		unequip_clothing(item_name)
+	if DEFAULT_CLOTHING.has(item_name):
+		unequip_clothing(item_name)
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	item_dropped.emit(item_name, item_type, float(item.weight), int(item.quantity), float(item.use_value), drop_pos)
@@ -1655,6 +1749,13 @@ func _interact() -> void:
 		tw.chain().tween_property(camera, "fov", 75.0, 0.18).set_ease(Tween.EASE_IN_OUT)
 	target.interact(self)
 
+func _collect() -> void:
+	var target = _get_interaction_target()
+	if target == null:
+		return
+	if target.has_method("collect"):
+		target.collect(self)
+
 func _update_interaction_prompt() -> void:
 	var target = _get_interaction_target()
 	if target != null:
@@ -1782,4 +1883,29 @@ func to_dict() -> Dictionary:
 		"inventory_max_slots": inventory.max_slots,
 		"inventory_max_weight": inventory.max_weight,
 		"equipped_clothing": equipped_clothing,
-		"equipped_backpack": equ
+		"equipped_backpack": equipped_backpack,
+		"flashlight_charge": flashlight_charge,
+		"wetness": wetness
+	}
+
+func from_dict(data: Dictionary) -> void:
+	var pos = data.get("position", [])
+	if pos is Array and pos.size() == 3:
+		global_position = Vector3(float(pos[0]), float(pos[1]), float(pos[2]))
+	rotation.y = float(data.get("rotation_y", rotation.y))
+	if data.get("stats", null) is Dictionary:
+		stats.from_dict(data["stats"])
+	inventory.max_slots = int(data.get("inventory_max_slots", inventory.max_slots))
+	inventory.max_weight = float(data.get("inventory_max_weight", inventory.max_weight))
+	if data.get("inventory", null) is Array:
+		inventory.from_array(data["inventory"])
+	equipped_clothing = str(data.get("equipped_clothing", equipped_clothing))
+	equipped_backpack = str(data.get("equipped_backpack", equipped_backpack))
+	if equipped_backpack.is_empty() and inventory.has_item_name("Mochila pequena"):
+		equipped_backpack = "Mochila pequena"
+	flashlight_charge = float(data.get("flashlight_charge", flashlight_charge))
+	wetness = float(data.get("wetness", wetness))
+	_recalculate_carry_capacity()
+	if not equipped_clothing.is_empty():
+		_wear_clothing_visual(equipped_clothing)
+	_sync_held_item()

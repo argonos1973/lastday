@@ -66,7 +66,6 @@ func use_index(index: int, stats) -> bool:
 			if stats.has_method("equip_warmth"):
 				stats.equip_warmth(item.use_value)
 			item_used.emit("Te abrigas mejor.")
-			remove_index(index)
 			return true
 		"battery":
 			item_used.emit("Las pilas se colocan solas al encender la linterna.")
