@@ -656,7 +656,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival"]
+	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	if lay_flat:
@@ -729,6 +729,14 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Botas survival":
 					return ["res://assets/characters/adapted/pickup_cloth_feet.glb"]
+				"Chaqueta militar":
+					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
+				"Pantalones militares":
+					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
+				"Guantes militares":
+					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
+				"Botas militares":
+					return ["res://assets/characters/adapted/pickup_soldier_feet.glb"]
 				_:
 					return [POLY_VINTAGE_SUITCASE_MODEL]
 		"seed":
@@ -772,6 +780,14 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 0.55
 				"Botas survival":
 					return 0.9
+				"Chaqueta militar":
+					return 0.8
+				"Pantalones militares":
+					return 0.8
+				"Guantes militares":
+					return 0.8
+				"Botas militares":
+					return 0.8
 				_:
 					return 0.7
 		"seed":
@@ -1279,7 +1295,7 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_water_1", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(35.6, 0.06, -27.2), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"], "color": Color(0.18, 0.32, 0.38)},
 		{"id": "loose_planks_0", "name": "Madera", "type": "resource", "weight": 0.65, "qty": 2, "use": 0.0, "pos": Vector3(-52.6, 0.06, 49.5), "paths": [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]], "color": Color(0.20, 0.12, 0.055)},
 		{"id": "loose_boots_0", "name": "Botas de goma", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.18, "pos": Vector3(-18.6, 0.06, -11.9), "paths": [POLY_RUBBER_BOOTS_MODEL], "scale": 0.85, "rot": Vector3(0, 25, 0), "color": Color(0.10, 0.12, 0.08)},
-		{"id": "loose_gloves_0", "name": "Guantes de trabajo", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.08, "pos": Vector3(-49.2, 0.06, 41.0), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.62, "rot": Vector3(0, -20, 0), "color": Color(0.18, 0.14, 0.06)},
+		{"id": "loose_gloves_0", "name": "Guantes de trabajo", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.08, "pos": Vector3(-49.2, 0.06, 41.0), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.8, "rot": Vector3(0, -20, 0), "color": Color(0.18, 0.14, 0.06)},
 		{"id": "loose_hat_0", "name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "pos": Vector3(-34.2, 0.06, -55.1), "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 0.68, "rot": Vector3(0, 74, 0), "color": Color(0.20, 0.17, 0.11)},
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
@@ -1287,12 +1303,12 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
-		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.55, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.8, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(-30.5, 0.06, -20.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.5, "rot": Vector3(0, 45, 0), "flat": true, "color": Color(0.15, 0.18, 0.12)},
-		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(-29.3, 0.06, -19.2), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.5, "rot": Vector3(0, -25, 0), "flat": true, "color": Color(0.12, 0.14, 0.10)},
-		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(-31.2, 0.06, -19.8), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.5, "rot": Vector3(0, 60, 0), "flat": true, "color": Color(0.10, 0.12, 0.08)},
-		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(-30.0, 0.06, -18.4), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.5, "rot": Vector3(0, -50, 0), "flat": true, "color": Color(0.08, 0.09, 0.07)}
+		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(9.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": true, "color": Color(0.15, 0.18, 0.12)},
+		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(12.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": true, "color": Color(0.12, 0.14, 0.10)},
+		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.8, "rot": Vector3(0, 60, 0), "flat": true, "color": Color(0.10, 0.12, 0.08)},
+		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(12.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.8, "rot": Vector3(0, -50, 0), "flat": true, "color": Color(0.08, 0.09, 0.07)}
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)

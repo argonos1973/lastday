@@ -39,23 +39,31 @@ const CLOTHING_VISUALS := {
 # Loaded first so the deformable survival garments are available to wear.
 const ADAPTED_PLAYER_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
 
+const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
+
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
-	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"]},
-	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"]},
-	"Guantes survival": {"mesh": "cloth_hands", "hides": []},
-	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"]},
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"]},
-	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"]},
-	"Guantes militares": {"mesh": "soldier_hands", "hides": []},
-	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"]},
+	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": ["Body_torso", "Body_arms"]},
+	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"], "skin_hides": ["Body_legs"]},
+	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Body_hands"]},
+	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Body_feet"]},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Body_torso", "Body_arms"]},
+	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Body_legs"]},
+	"Guantes militares": {"mesh": "soldier_hands", "hides": [], "skin_hides": ["Body_hands"]},
+	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"], "skin_hides": ["Body_feet"]},
 }
 
 const DEFAULT_CLOTHING := {
 	"Camiseta": "Tops",
 	"Pantalones": "Bottoms",
 	"Zapatillas": "Shoes",
+}
+
+const DEFAULT_SKIN_HIDES := {
+	"Camiseta": ["Body_torso"],
+	"Pantalones": [],
+	"Zapatillas": ["Body_feet"],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
@@ -369,6 +377,11 @@ func equip_clothing(item_name: String) -> void:
 		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
 		if bn != null:
 			bn.visible = true
+		if DEFAULT_SKIN_HIDES.has(item_name):
+			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
+				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+				if skin_mi != null:
+					skin_mi.visible = false
 	elif SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, true)
 	else:
@@ -385,6 +398,11 @@ func unequip_clothing(item_name: String) -> void:
 		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
 		if bn != null:
 			bn.visible = false
+		if DEFAULT_SKIN_HIDES.has(item_name):
+			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
+				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+				if skin_mi != null:
+					skin_mi.visible = true
 	if SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, false)
 	# Remove the attached 3D garment visual (vests, hat, rubber boots, gloves)
@@ -429,14 +447,28 @@ func _init_survival_clothing(root: Node) -> void:
 				mi.visible = false
 		for c in node.get_children():
 			stack.append(c)
+	print("SURVIVAL_INIT cached cloth nodes: ", _survival_cloth_nodes.keys())
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
+func _find_mesh_in_third_person(mesh_name: String) -> MeshInstance3D:
+	if third_person_model == null:
+		return null
+	var stack: Array = [third_person_model]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D and node.name == mesh_name:
+			return node as MeshInstance3D
+		for c in node.get_children():
+			stack.append(c)
+	return null
+
 func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 	if not SURVIVAL_CLOTHING.has(item_name):
 		return
 	var cfg: Dictionary = SURVIVAL_CLOTHING[item_name]
-	var mi: MeshInstance3D = _survival_cloth_nodes.get(String(cfg["mesh"]))
+	var mesh_name := String(cfg["mesh"])
+	var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
 	if mi != null:
 		mi.visible = worn
 	# Build reverse map: body mesh name -> default clothing item name
@@ -456,6 +488,12 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 				var equipped: String = String(_equipped_slots.get(slot, "")) if not slot.is_empty() else ""
 				bn.visible = equipped == default_item
 	_worn_survival[item_name] = worn
+	# Hide/show skin meshes (e.g. Body) that would clip through clothing
+	if cfg.has("skin_hides"):
+		for skin_name in cfg["skin_hides"]:
+			var skin_mi: MeshInstance3D = _find_mesh_in_third_person(String(skin_name))
+			if skin_mi != null:
+				skin_mi.visible = not worn
 
 # Attaches and fits a clothing model onto the body relative to its measured
 # bounding box, so the player is visibly wearing it (e.g. the life vest on the
@@ -869,8 +907,22 @@ func _create_third_person_model() -> void:
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
 		_init_survival_clothing(character)
-		# Equip default clothing items already in inventory
+		# Ensure default clothing is in inventory and equipped
 		if inventory != null:
+			var has_camiseta := false
+			var has_pantalones := false
+			var has_zapatillas := false
+			for item in inventory.items:
+				if str(item.item_name) == "Camiseta": has_camiseta = true
+				if str(item.item_name) == "Pantalones": has_pantalones = true
+				if str(item.item_name) == "Zapatillas": has_zapatillas = true
+			if not has_camiseta:
+				inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.0))
+			if not has_pantalones:
+				inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
+			if not has_zapatillas:
+				inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
+			# Equip default clothing items
 			for item in inventory.items:
 				if DEFAULT_CLOTHING.has(str(item.item_name)):
 					equip_clothing(str(item.item_name))
@@ -1409,7 +1461,7 @@ func drop_inventory_item(index: int) -> void:
 	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
 		equipped_clothing = ""
 		_recalculate_carry_capacity()
-	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival"]:
+	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]:
 		unequip_clothing(item_name)
 	if DEFAULT_CLOTHING.has(item_name):
 		unequip_clothing(item_name)
