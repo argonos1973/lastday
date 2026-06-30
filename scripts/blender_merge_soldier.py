@@ -230,7 +230,7 @@ def main():
         sys.exit(1)
     print(f"Player armature: {player_arm.name}")
     
-    # 1b. Import desnudo.glb body mesh, scale and skin to leftturn armature
+    # 1b. Import desnudo body parts, scale and skin to leftturn armature
     pre_desnudo = set(o.name for o in bpy.context.scene.objects)
     load_glb(DESNUDO_MODEL)
     desnudo_body = None
@@ -253,34 +253,55 @@ def main():
             if vg.name.startswith(P1):
                 vg.name = P + vg.name[len(P1):]
         
-        desnudo_body.parent = player_arm
-        arm_mod = None
-        for m in desnudo_body.modifiers:
-            if m.type == 'ARMATURE':
-                arm_mod = m
-                break
-        if arm_mod is None:
-            arm_mod = desnudo_body.modifiers.new(name="Armature", type='ARMATURE')
-        arm_mod.object = player_arm
+        hand_bones = [P+"LeftHand", P+"RightHand",
+                      P+"LeftHandThumb1", P+"LeftHandThumb2", P+"LeftHandThumb3",
+                      P+"RightHandThumb1", P+"RightHandThumb2", P+"RightHandThumb3",
+                      P+"LeftHandIndex1", P+"LeftHandIndex2", P+"LeftHandIndex3",
+                      P+"RightHandIndex1", P+"RightHandIndex2", P+"RightHandIndex3",
+                      P+"LeftHandMiddle1", P+"LeftHandMiddle2", P+"LeftHandMiddle3",
+                      P+"RightHandMiddle1", P+"RightHandMiddle2", P+"RightHandMiddle3",
+                      P+"LeftHandRing1", P+"LeftHandRing2", P+"LeftHandRing3",
+                      P+"RightHandRing1", P+"RightHandRing2", P+"RightHandRing3",
+                      P+"LeftHandPinky1", P+"LeftHandPinky2", P+"LeftHandPinky3",
+                      P+"RightHandPinky1", P+"RightHandPinky2", P+"RightHandPinky3"]
         
-        for obj in list(bpy.context.scene.objects):
-            if obj.type == 'MESH' and obj.name == 'Body' and obj != desnudo_body:
-                bpy.ops.object.select_all(action='DESELECT')
-                obj.select_set(True)
-                bpy.ops.object.delete()
-                break
+        desnudo_parts = [
+            ("Desnudo_torso", [P+"Hips", P+"Spine", P+"Spine1", P+"Spine2", P+"LeftShoulder", P+"RightShoulder"]),
+            ("Desnudo_arms", [P+"LeftArm", P+"RightArm", P+"LeftForeArm", P+"RightForeArm"]),
+            ("Desnudo_legs", [P+"LeftUpLeg", P+"RightUpLeg", P+"LeftLeg", P+"RightLeg"]),
+            ("Desnudo_hands", hand_bones),
+            ("Desnudo_feet", [P+"LeftFoot", P+"RightFoot", P+"LeftToeBase", P+"RightToeBase", P+"LeftToe_End", P+"RightToe_End"]),
+        ]
         
-        desnudo_body.name = "Body"
-        desnudo_body.data.name = "Body"
-        print(f"Body mesh (desnudo): {len(desnudo_body.data.vertices)} verts")
+        for part_name, bones in desnudo_parts:
+            part = separate_by_bone_weights(desnudo_body, part_name, bones)
+            if part is not None:
+                part.parent = player_arm
+                arm_mod = None
+                for m in part.modifiers:
+                    if m.type == 'ARMATURE':
+                        arm_mod = m
+                        break
+                if arm_mod is None:
+                    arm_mod = part.modifiers.new(name="Armature", type='ARMATURE')
+                arm_mod.object = player_arm
+                print(f"  {part_name}: {len(part.data.vertices)} verts")
+        
+        # Delete the rest of desnudo body
+        bpy.ops.object.select_all(action='DESELECT')
+        desnudo_body.select_set(True)
+        bpy.ops.object.delete()
+        desnudo_body = None
     else:
         print("WARNING: Ch36 mesh not found in desnudo.glb")
     
-    # Delete desnudo armature and extra objects
+    # Delete desnudo armature and extra objects (keep Desnudo_* parts)
     for obj in list(bpy.context.scene.objects):
         if obj.name in pre_desnudo:
             continue
         if obj == desnudo_body:
+            continue
+        if obj.type == 'MESH' and obj.name.startswith('Desnudo_'):
             continue
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True)
@@ -389,8 +410,7 @@ def main():
             created.append(result)
             created_names.append(result.name)
     
-    # 7b. Separate player Body into parts by bone weights.
-    #     Uses bpy.ops.mesh.separate which preserves all skinning data.
+    # 7b. Separate leftturn Body into parts AND add Desnudo_* parts.
     player_body = None
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH' and obj.name == 'Body':
@@ -410,7 +430,6 @@ def main():
                       P+"LeftHandPinky1", P+"LeftHandPinky2", P+"LeftHandPinky3",
                       P+"RightHandPinky1", P+"RightHandPinky2", P+"RightHandPinky3"]
         
-        # Body_torso: torso only (no arms, no hands)
         torso_bones = [P+"Hips", P+"Spine", P+"Spine1", P+"Spine2",
                        P+"LeftShoulder", P+"RightShoulder"]
         body_torso = separate_by_bone_weights(player_body, "Body_torso", torso_bones)
@@ -418,27 +437,23 @@ def main():
             created.append(body_torso)
             created_names.append(body_torso.name)
         
-        # Body_arms: arms (excluding hands)
         arm_bones = [P+"LeftArm", P+"RightArm", P+"LeftForeArm", P+"RightForeArm"]
         body_arms = separate_by_bone_weights(player_body, "Body_arms", arm_bones)
         if body_arms is not None:
             created.append(body_arms)
             created_names.append(body_arms.name)
         
-        # Body_legs: legs (excluding feet)
         leg_bones = [P+"LeftUpLeg", P+"RightUpLeg", P+"LeftLeg", P+"RightLeg"]
         body_legs = separate_by_bone_weights(player_body, "Body_legs", leg_bones)
         if body_legs is not None:
             created.append(body_legs)
             created_names.append(body_legs.name)
         
-        # Body_hands: hands
         body_hands = separate_by_bone_weights(player_body, "Body_hands", hand_bones)
         if body_hands is not None:
             created.append(body_hands)
             created_names.append(body_hands.name)
         
-        # Body_feet: feet + toes
         foot_bones = [P+"LeftFoot", P+"RightFoot",
                       P+"LeftToeBase", P+"RightToeBase",
                       P+"LeftToe_End", P+"RightToe_End"]
@@ -448,6 +463,25 @@ def main():
             created_names.append(body_feet.name)
     else:
         print("WARNING: Player Body mesh not found")
+    
+    # Delete original leftturn Body mesh (already split into Body_* parts)
+    for obj in list(bpy.context.scene.objects):
+        if obj.type == 'MESH' and obj.name == 'Body':
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            bpy.ops.object.delete()
+            break
+    
+    # Add Desnudo_* parts
+    for dn_name in ['Desnudo_torso', 'Desnudo_arms', 'Desnudo_legs', 'Desnudo_hands', 'Desnudo_feet']:
+        dn_obj = None
+        for obj in bpy.context.scene.objects:
+            if obj.type == 'MESH' and obj.name == dn_name:
+                dn_obj = obj
+                break
+        if dn_obj is not None:
+            created.append(dn_obj)
+            created_names.append(dn_obj.name)
     
     # 8. Delete original soldado body and head, and soldado armature.
     #    (leftturn.glb doesn't have old soldier_* meshes, so no need to delete those)

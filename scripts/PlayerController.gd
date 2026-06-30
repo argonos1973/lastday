@@ -44,14 +44,14 @@ const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
-	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": ["Body_torso", "Body_arms"]},
-	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"], "skin_hides": ["Body_legs"]},
-	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Body_hands"]},
-	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Body_feet"]},
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Body_torso", "Body_arms"]},
-	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Body_legs"]},
-	"Guantes militares": {"mesh": "soldier_hands", "hides": [], "skin_hides": ["Body_hands"]},
-	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"], "skin_hides": ["Body_feet"]},
+	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": [], "body_hides": []},
+	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
+	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
+	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": [], "body_hides": []},
+	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
+	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
+	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
 }
 
 const DEFAULT_CLOTHING := {
@@ -61,8 +61,14 @@ const DEFAULT_CLOTHING := {
 }
 
 const DEFAULT_SKIN_HIDES := {
-	"Camiseta": ["Body_torso"],
-	"Pantalones": [],
+	"Camiseta": [],
+	"Pantalones": ["Desnudo_legs"],
+	"Zapatillas": ["Desnudo_feet"],
+}
+
+const DEFAULT_BODY_HIDES := {
+	"Camiseta": [],
+	"Pantalones": ["Body_legs"],
 	"Zapatillas": ["Body_feet"],
 }
 
@@ -382,6 +388,11 @@ func equip_clothing(item_name: String) -> void:
 				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
 				if skin_mi != null:
 					skin_mi.visible = false
+		if DEFAULT_BODY_HIDES.has(item_name):
+			for body_name in DEFAULT_BODY_HIDES[item_name]:
+				var body_mi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+				if body_mi != null:
+					body_mi.visible = true
 	elif SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, true)
 	else:
@@ -403,6 +414,11 @@ func unequip_clothing(item_name: String) -> void:
 				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
 				if skin_mi != null:
 					skin_mi.visible = true
+		if DEFAULT_BODY_HIDES.has(item_name):
+			for body_name in DEFAULT_BODY_HIDES[item_name]:
+				var body_mi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+				if body_mi != null:
+					body_mi.visible = false
 	if SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, false)
 	# Remove the attached 3D garment visual (vests, hat, rubber boots, gloves)
@@ -434,6 +450,8 @@ func _init_survival_clothing(root: Node) -> void:
 	for name in SURVIVAL_CLOTHING:
 		for h in SURVIVAL_CLOTHING[name]["hides"]:
 			body_names[String(h)] = true
+	for dname in DEFAULT_CLOTHING:
+		body_names[String(DEFAULT_CLOTHING[dname])] = true
 	var stack: Array = [root]
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
@@ -448,6 +466,28 @@ func _init_survival_clothing(root: Node) -> void:
 		for c in node.get_children():
 			stack.append(c)
 	print("SURVIVAL_INIT cached cloth nodes: ", _survival_cloth_nodes.keys())
+	# Hide all Desnudo_* parts at init (character starts clothed)
+	# EXCEPT Desnudo_arms and Desnudo_hands (leftturn Body_arms/hands have built-in gloves)
+	var skin_names := ["Desnudo_legs", "Desnudo_feet"]
+	for sn in skin_names:
+		var smi: MeshInstance3D = _find_mesh_in_third_person(sn)
+		if smi != null:
+			smi.visible = false
+	# Body_arms and Body_hands from leftturn have built-in gloves, always hide them
+	# soldier_hands is also always hidden (not used, would show as gloves)
+	for bn in ["Body_arms", "Body_hands", "soldier_hands"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi != null:
+			bmi.visible = false
+	# Body_torso includes the neck, always show it under clothing
+	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
+	if bt != null:
+		bt.visible = true
+	# Always show Desnudo_arms and Desnudo_hands as the bare skin
+	for dn in ["Desnudo_arms", "Desnudo_hands"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			dmi.visible = true
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
@@ -488,12 +528,18 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 				var equipped: String = String(_equipped_slots.get(slot, "")) if not slot.is_empty() else ""
 				bn.visible = equipped == default_item
 	_worn_survival[item_name] = worn
-	# Hide/show skin meshes (e.g. Body) that would clip through clothing
+	# Hide/show skin meshes (e.g. Desnudo_*) that would clip through clothing
 	if cfg.has("skin_hides"):
 		for skin_name in cfg["skin_hides"]:
 			var skin_mi: MeshInstance3D = _find_mesh_in_third_person(String(skin_name))
 			if skin_mi != null:
 				skin_mi.visible = not worn
+	# Show/hide leftturn Body_* parts: visible when clothed, hidden when bare
+	if cfg.has("body_hides"):
+		for body_name in cfg["body_hides"]:
+			var body_mi: MeshInstance3D = _find_mesh_in_third_person(String(body_name))
+			if body_mi != null:
+				body_mi.visible = worn
 
 # Attaches and fits a clothing model onto the body relative to its measured
 # bounding box, so the player is visibly wearing it (e.g. the life vest on the
