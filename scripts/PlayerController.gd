@@ -106,7 +106,8 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 const THIRD_PERSON_RUN_ANIMATION_SOURCE := "res://correr.glb"
 const THIRD_PERSON_IDLE_ANIMATION_SOURCE := "res://idle.glb"
 const THIRD_PERSON_WALK_ANIMATION_SOURCE := "res://walking.glb"
-const THIRD_PERSON_SNEAK_ANIMATION_SOURCE := "res://walking.glb"
+const THIRD_PERSON_SNEAK_ANIMATION_SOURCE := "res://agachado.glb"
+const THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE := "res://andarAgachado.glb"
 const THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE := "res://leftturn.glb"
 const THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE := "res://rightturn.glb"
 const THIRD_PERSON_PLANT_ANIMATION_SOURCE := "res://plantar.glb"
@@ -121,6 +122,7 @@ const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
 const THIRD_PERSON_EXTERNAL_SNEAK_ANIMATION := "SneakExternal"
+const THIRD_PERSON_EXTERNAL_SNEAK_WALK_ANIMATION := "SneakWalkExternal"
 const THIRD_PERSON_EXTERNAL_LEFT_TURN_ANIMATION := "LeftTurnExternal"
 const THIRD_PERSON_EXTERNAL_RIGHT_TURN_ANIMATION := "RightTurnExternal"
 const THIRD_PERSON_EXTERNAL_PLANT_ANIMATION := "PlantExternal"
@@ -185,6 +187,7 @@ var third_person_idle_animation := ""
 var third_person_walk_animation := ""
 var third_person_run_animation := ""
 var third_person_sneak_animation := ""
+var third_person_sneak_walk_animation := ""
 var third_person_left_turn_animation := ""
 var third_person_right_turn_animation := ""
 var third_person_plant_animation := ""
@@ -275,7 +278,11 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
-		_collect()
+		var target = _get_interaction_target()
+		if target != null and target.has_method("interact") and "is_open" in target and target.is_open:
+			target.interact(self)
+		else:
+			_collect()
 	if event.is_action_pressed("drop_item"):
 		_drop_held_item()
 	if event.is_action_pressed("flashlight"):
@@ -1086,6 +1093,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_WALK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_WALK_ANIMATION)
 	_import_external_animation(THIRD_PERSON_RUN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RUN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_SNEAK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SNEAK_ANIMATION)
+	_import_external_animation(THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SNEAK_WALK_ANIMATION)
 	_import_external_animation(THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_LEFT_TURN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIGHT_TURN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_PLANT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_PLANT_ANIMATION)
@@ -1123,6 +1131,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		third_person_run_animation = "external/" + THIRD_PERSON_EXTERNAL_RUN_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_SNEAK_ANIMATION):
 		third_person_sneak_animation = "external/" + THIRD_PERSON_EXTERNAL_SNEAK_ANIMATION
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_SNEAK_WALK_ANIMATION):
+		third_person_sneak_walk_animation = "external/" + THIRD_PERSON_EXTERNAL_SNEAK_WALK_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_LEFT_TURN_ANIMATION):
 		third_person_left_turn_animation = "external/" + THIRD_PERSON_EXTERNAL_LEFT_TURN_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIGHT_TURN_ANIMATION):
@@ -1156,6 +1166,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
 		third_person_sneak_animation = third_person_walk_animation
+	if third_person_sneak_walk_animation.is_empty():
+		third_person_sneak_walk_animation = third_person_sneak_animation
 	if third_person_has_real_idle and not third_person_idle_animation.is_empty():
 		third_person_animation_player.play(third_person_idle_animation)
 	else:
@@ -1184,10 +1196,11 @@ func _import_external_animation(source_path: String, animation_name: String) -> 
 			best_track_count = candidate.get_track_count()
 	if source_animation != null:
 		var copied_animation := source_animation.duplicate(true) as Animation
-		copied_animation.loop_mode = Animation.LOOP_LINEAR
+		copied_animation.loop_mode = Animation.LOOP_NONE
 		copied_animation.step = 0.0166667
 		_retarget_animation_to_character_skeleton(copied_animation)
 		_remove_root_motion_drift(copied_animation)
+		_smooth_loop_boundary(copied_animation)
 		var library: AnimationLibrary
 		if third_person_animation_player.has_animation_library("external"):
 			library = third_person_animation_player.get_animation_library("external")
@@ -1268,8 +1281,9 @@ func _remove_root_motion_drift(animation: Animation) -> void:
 		var drift := last_position - first_position
 		var path_text := str(animation.track_get_path(track_index))
 		var is_root_hips := path_text.find("mixamorig_Hips") >= 0 or path_text.find("mixamorig:Hips") >= 0
+		var is_lower_body := path_text.find("Foot") >= 0 or path_text.find("foot") >= 0 or path_text.find("Leg") >= 0 or path_text.find("leg") >= 0 or path_text.find("Toe") >= 0 or path_text.find("toe") >= 0
 		var lock_x := is_root_hips or absf(drift.x) > 2.0
-		var lock_y := absf(drift.y) > 2.0
+		var lock_y := is_root_hips or is_lower_body or absf(drift.y) > 2.0
 		var lock_z := is_root_hips or absf(drift.z) > 2.0
 		if not lock_x and not lock_y and not lock_z:
 			continue
@@ -1284,6 +1298,42 @@ func _remove_root_motion_drift(animation: Animation) -> void:
 				if lock_z:
 					locked_position.z = first_position.z
 				animation.track_set_key_value(track_index, key_index, locked_position)
+
+func _smooth_loop_boundary(animation: Animation) -> void:
+	var blend_keys := 10
+	for track_index in range(animation.get_track_count()):
+		var key_count := animation.track_get_key_count(track_index)
+		if key_count < blend_keys * 2:
+			continue
+		var track_type := animation.track_get_type(track_index)
+		var first_value: Variant = animation.track_get_key_value(track_index, 0)
+		if track_type == Animation.TYPE_POSITION_3D and first_value is Vector3:
+			var first_pos := first_value as Vector3
+			for i in range(blend_keys):
+				var idx := key_count - blend_keys + i
+				var t := float(i + 1) / float(blend_keys + 1)
+				var cur: Variant = animation.track_get_key_value(track_index, idx)
+				if cur is Vector3:
+					var blended := (cur as Vector3).lerp(first_pos, t)
+					animation.track_set_key_value(track_index, idx, blended)
+		elif track_type == Animation.TYPE_ROTATION_3D and first_value is Quaternion:
+			var first_quat := first_value as Quaternion
+			for i in range(blend_keys):
+				var idx := key_count - blend_keys + i
+				var t := float(i + 1) / float(blend_keys + 1)
+				var cur: Variant = animation.track_get_key_value(track_index, idx)
+				if cur is Quaternion:
+					var blended := (cur as Quaternion).slerp(first_quat, t)
+					animation.track_set_key_value(track_index, idx, blended)
+		elif track_type == Animation.TYPE_SCALE_3D and first_value is Vector3:
+			var first_scale := first_value as Vector3
+			for i in range(blend_keys):
+				var idx := key_count - blend_keys + i
+				var t := float(i + 1) / float(blend_keys + 1)
+				var cur: Variant = animation.track_get_key_value(track_index, idx)
+				if cur is Vector3:
+					var blended := (cur as Vector3).lerp(first_scale, t)
+					animation.track_set_key_value(track_index, idx, blended)
 
 func play_action_animation(action_name: String, duration := 1.1) -> void:
 	if is_dead or third_person_animation_player == null:
@@ -1752,7 +1802,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
-	character.position = character.position.lerp(Vector3(0.0, third_person_ground_offset + bob + _water_sink * 0.55, 0.0), delta * 10.0)
+	var crouch_lift := 0.25 if is_crouching else 0.0
+	character.position = character.position.lerp(Vector3(0.0, third_person_ground_offset + bob + crouch_lift + _water_sink * 0.55, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
 		if is_jumping and not third_person_jump_animation.is_empty():
@@ -1783,6 +1834,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = third_person_low_health_animation
 			elif is_sprinting:
 				target_animation = third_person_run_animation
+			elif is_crouching and not third_person_sneak_walk_animation.is_empty():
+				target_animation = third_person_sneak_walk_animation
 			elif is_crouching:
 				target_animation = third_person_sneak_animation
 			else:
@@ -1791,6 +1844,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			target_animation = third_person_left_turn_animation
 		elif _turn_input > 2.0 and not third_person_right_turn_animation.is_empty():
 			target_animation = third_person_right_turn_animation
+		elif is_crouching and not third_person_sneak_animation.is_empty():
+			target_animation = third_person_sneak_animation
 		elif low_health:
 			target_animation = third_person_low_health_animation
 		elif third_person_has_real_idle:
@@ -1804,9 +1859,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.stop()
 			return
 		if not target_animation.is_empty() and third_person_animation_player.current_animation != target_animation:
-			third_person_animation_player.play(target_animation)
+			third_person_animation_player.play(target_animation, 0.15)
 		elif not target_animation.is_empty() and not third_person_animation_player.is_playing():
-			third_person_animation_player.play(target_animation)
+			third_person_animation_player.play(target_animation, 0.15)
 		_loop_third_person_animation(target_animation)
 		if target_animation == third_person_low_health_animation:
 			third_person_animation_player.speed_scale = 0.78 if moving else 0.58
@@ -1834,7 +1889,7 @@ func _loop_third_person_animation(animation_name: String) -> void:
 		return
 	var length := animation.length
 	if length > 0.0 and third_person_animation_player.current_animation_position >= length - 0.05:
-		third_person_animation_player.seek(0.0, true)
+		third_person_animation_player.play(animation_name, 0.25)
 
 func _interact() -> void:
 	var target = _get_interaction_target()

@@ -49,6 +49,11 @@ const ANIMAL_FOX_PATHS := [
 	"res://assets/external/audio/fox_call.ogg",
 	"res://assets/external/audio/fox_call.wav"
 ]
+const ANIMAL_WOLF_PATHS := [
+	"res://assets/external/audio/downloaded/wolf_howl.wav",
+	"res://assets/external/audio/downloaded/wolf_growl.wav",
+	"res://assets/external/audio/downloaded/wolf_attack.wav"
+]
 
 const FOOTSTEP_GRASS_PATHS := [
 	"res://assets/external/audio/footstep_grass_01.ogg",
@@ -94,6 +99,7 @@ var wood_steps: Array = []
 var chop_sounds: Array = []
 var deer_calls: Array = []
 var fox_calls: Array = []
+var wolf_calls: Array = []
 var step_timer := 0.0
 var step_index := 0
 var animal_call_timer := 18.0
@@ -181,6 +187,7 @@ func _load_audio() -> void:
 		chop_sounds = wood_steps
 	deer_calls = _load_streams(ANIMAL_DEER_PATHS)
 	fox_calls = _load_streams(ANIMAL_FOX_PATHS)
+	wolf_calls = _load_streams(ANIMAL_WOLF_PATHS)
 	forest_sounds = _load_streams(FOREST_BIRD_PATHS)
 	if not forest_sounds.is_empty():
 		_forest_loop_stream = forest_sounds[0]
@@ -318,7 +325,13 @@ func _update_animal_calls(delta: float) -> void:
 	var animal_type := "deer"
 	if chosen.get("animal_type") != null:
 		animal_type = str(chosen.get("animal_type"))
-	var calls := fox_calls if animal_type == "fox" else deer_calls
+	var calls: Array
+	if animal_type == "wolf":
+		calls = wolf_calls
+	elif animal_type == "fox":
+		calls = fox_calls
+	else:
+		calls = deer_calls
 	if calls.is_empty():
 		animal_call_timer = randf_range(24.0, 42.0)
 		return

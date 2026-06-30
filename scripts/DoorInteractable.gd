@@ -13,8 +13,6 @@ func _ready() -> void:
 
 func interact(player) -> void:
 	is_open = not is_open
-	if _collision != null:
-		_collision.set_deferred("disabled", is_open)
 	if _tween != null:
 		_tween.kill()
 	_tween = create_tween()

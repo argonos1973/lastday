@@ -15,6 +15,14 @@ var _last_position := Vector3.ZERO
 var _current_path: Array = []
 var _path_index := 0
 var _path_recalc_timer := 0.0
+var _debug_timer := 0.0
+var _attack_timer := 0.0
+var _attack_cooldown := 0.0
+var _chase_target: Node3D = null
+var _state := "patrol"
+var _howl_timer := randf_range(15.0, 35.0)
+var _growl_timer := randf_range(8.0, 18.0)
+var _wolf_audio_player: AudioStreamPlayer3D = null
 
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
@@ -29,7 +37,7 @@ func setup(kind: String, points: Array) -> void:
 	global_position = patrol_points[0]
 	_last_position = global_position
 	target_index = 1 if patrol_points.size() > 1 else 0
-	move_speed = 1.65 if animal_type == "deer" else 2.35
+	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
 	_build_animal()
 	call_deferred("_sanitize_patrol_points")
 
@@ -85,18 +93,19 @@ func _process(delta: float) -> void:
 	if _escape_if_trapped(delta):
 		return
 	_update_stuck_timer(delta)
+	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	if animal_type == "wolf":
+		_update_wolf_sounds(delta)
 	var target: Vector3
-	var flee_speed: float
-	if _player != null and is_instance_valid(_player):
-		var away := global_position - _player.global_position
-		away.y = 0.0
-		if away.length() < 0.01:
-			away = Vector3.RIGHT
-		target = global_position + away.normalized() * 15.0
-		flee_speed = move_speed * (2.65 if animal_type == "fox" else 2.05)
+	var speed: float
+	if animal_type == "wolf":
+		var result := _wolf_ai(delta)
+		target = result["target"]
+		speed = result["speed"]
 	else:
-		target = patrol_points[target_index]
-		flee_speed = move_speed * 1.0
+		var result := _prey_ai(delta)
+		target = result["target"]
+		speed = result["speed"]
 	target.x = clamp(target.x, -55.0, 55.0)
 	target.z = clamp(target.z, -55.0, 55.0)
 	var to_target := target - global_position
@@ -122,9 +131,176 @@ func _process(delta: float) -> void:
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
-	_move_towards(move_target, flee_speed, delta, 8.0)
-	_walk_time += delta * flee_speed * 4.8
+	_move_towards(move_target, speed, delta, 8.0)
+	_walk_time += delta * speed * 4.8
 	_animate_legs(delta)
+	_update_animation_speed(speed)
+
+func _wolf_ai(delta: float) -> Dictionary:
+	var target: Vector3
+	var speed: float = move_speed
+	_attack_timer -= delta
+	# Priority 1: chase player if close enough
+	if _player != null and is_instance_valid(_player):
+		var dist_to_player := global_position.distance_to(_player.global_position)
+		if dist_to_player < 20.0:
+			_state = "chase_player"
+			_chase_target = _player
+			target = _player.global_position
+			speed = move_speed * 2.8
+			if dist_to_player < 2.0:
+				if _attack_cooldown <= 0.0:
+					_attack_cooldown = 5.0
+					_attack_timer = randf_range(8.0, 15.0)
+					_player.apply_damage(8.0)
+					_play_wolf_sound("attack")
+				_play_animation_by_name("run")
+			else:
+				_play_animation_by_name("run")
+			return {"target": target, "speed": speed}
+	# Priority 2: chase nearby deer
+	var nearest_deer := _find_nearest_animal("deer")
+	if nearest_deer != null and is_instance_valid(nearest_deer):
+		var dist_to_deer := global_position.distance_to(nearest_deer.global_position)
+		if dist_to_deer < 15.0:
+			_state = "chase_deer"
+			_chase_target = nearest_deer
+			target = nearest_deer.global_position
+			speed = move_speed * 2.5
+			if dist_to_deer < 1.5:
+				_play_animation_by_name("run")
+			else:
+				_play_animation_by_name("trot")
+			return {"target": target, "speed": speed}
+	# Default: patrol
+	_state = "patrol"
+	_chase_target = null
+	target = patrol_points[target_index]
+	speed = move_speed * 1.0
+	_play_animation_by_name("walk")
+	return {"target": target, "speed": speed}
+
+func _prey_ai(delta: float) -> Dictionary:
+	var target: Vector3
+	var speed: float = move_speed
+	var nearest_wolf := _find_nearest_animal("wolf")
+	if nearest_wolf != null and is_instance_valid(nearest_wolf):
+		var dist_to_wolf := global_position.distance_to(nearest_wolf.global_position)
+		if dist_to_wolf < 20.0:
+			var away := global_position - nearest_wolf.global_position
+			away.y = 0.0
+			if away.length() < 0.01:
+				away = Vector3.RIGHT
+			target = global_position + away.normalized() * 20.0
+			speed = move_speed * 2.5
+			_play_animation_by_name("gallop")
+			return {"target": target, "speed": speed}
+	if _player != null and is_instance_valid(_player):
+		var away := global_position - _player.global_position
+		away.y = 0.0
+		if away.length() < _flee_distance():
+			if away.length() < 0.01:
+				away = Vector3.RIGHT
+			target = global_position + away.normalized() * 15.0
+			speed = move_speed * (2.65 if animal_type == "fox" else 2.05)
+			_play_animation_by_name("gallop")
+			return {"target": target, "speed": speed}
+	target = patrol_points[target_index]
+	speed = move_speed * 1.0
+	_play_animation_by_name("walk")
+	return {"target": target, "speed": speed}
+
+func _find_nearest_animal(kind: String) -> Node3D:
+	var nearest: Node3D = null
+	var nearest_dist := 9999.0
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self:
+			continue
+		if not (node is Node3D):
+			continue
+		var other := node as Node3D
+		if other.get("animal_type") == null:
+			continue
+		if str(other.get("animal_type")) != kind:
+			continue
+		var d := global_position.distance_to(other.global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+			nearest = other
+	return nearest
+
+func _play_animation_by_name(keyword: String) -> void:
+	if _animation_player == null:
+		return
+	var lower_keyword := keyword.to_lower()
+	var current := _animation_player.current_animation
+	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0:
+		return
+	var best := ""
+	for animation_name in _animation_player.get_animation_list():
+		var animation := _animation_player.get_animation(animation_name)
+		if animation != null:
+			animation.loop_mode = Animation.LOOP_LINEAR
+		var lower := animation_name.to_lower()
+		if lower.find(lower_keyword) >= 0:
+			best = animation_name
+			break
+	if best.is_empty():
+		return
+	if current != best:
+		_animation_player.play(best, 0.2)
+
+func _update_animation_speed(speed: float) -> void:
+	if _animation_player == null:
+		return
+	var ratio := speed / move_speed
+	_animation_player.speed_scale = clamp(ratio, 0.5, 2.5)
+
+func _update_wolf_sounds(delta: float) -> void:
+	_howl_timer -= delta
+	_growl_timer -= delta
+	if _howl_timer <= 0.0:
+		_play_wolf_sound("howl")
+		_howl_timer = randf_range(20.0, 45.0)
+	if _growl_timer <= 0.0:
+		if _state == "chase_player" or _state == "chase_deer":
+			_play_wolf_sound("growl")
+			_growl_timer = randf_range(3.0, 8.0)
+		else:
+			_growl_timer = randf_range(10.0, 20.0)
+
+func _play_wolf_sound(sound_type: String) -> void:
+	if _wolf_audio_player == null:
+		_wolf_audio_player = AudioStreamPlayer3D.new()
+		_wolf_audio_player.name = "WolfSound"
+		_wolf_audio_player.unit_size = 8.0
+		_wolf_audio_player.max_distance = 60.0
+		add_child(_wolf_audio_player)
+	if _wolf_audio_player.playing:
+		return
+	var path := ""
+	match sound_type:
+		"howl":
+			path = "res://assets/external/audio/downloaded/wolf_howl.wav"
+		"growl":
+			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
+		"attack":
+			path = "res://assets/external/audio/downloaded/wolf_attack.wav"
+		_:
+			return
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null:
+		return
+	_wolf_audio_player.stream = stream
+	_wolf_audio_player.volume_db = -8.0 if sound_type == "attack" else -15.0
+	_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
+	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:
 	if global_position.distance_to(_last_position) < 0.015:
@@ -187,6 +363,15 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -72.0, 72.0)
 	next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+	if not _is_position_allowed(next_pos):
+		var avoidance := _get_avoidance_vector()
+		if avoidance.length() > 0.01:
+			dir = (dir + avoidance).normalized()
+			next_pos = global_position + dir * step
+			next_pos.x = clamp(next_pos.x, -72.0, 72.0)
+			next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+		if not _is_position_allowed(next_pos):
+			return
 	global_position = next_pos
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
 
@@ -274,6 +459,8 @@ func _find_safe_patrol_points(source_points: Array) -> Array:
 	return safe_points
 
 func _flee_distance() -> float:
+	if animal_type == "wolf":
+		return 0.0
 	return 16.0 if animal_type == "fox" else 13.0
 
 func _resolve_player() -> void:
@@ -331,8 +518,9 @@ func _try_build_external_animal() -> bool:
 		add_child(node)
 		# Normalize by bounding box so models authored in different units end up
 		# at a believable real-world height (deer ~1.5 m, fox ~0.55 m).
-		var target_height := 1.5 if animal_type == "deer" else 0.55
+		var target_height := 1.5 if animal_type == "deer" else (1.2 if animal_type == "wolf" else 0.55)
 		_normalize_model_height(node, target_height)
+		node.visible = true
 		_visual_root = node
 		_animation_player = _find_animation_player(node)
 		_play_external_walk_animation()
@@ -382,6 +570,10 @@ func _animal_asset_candidates() -> Array:
 			"res://assets/external/quaternius_animals/glTF/Fox.gltf",
 			"res://assets/external/realistic/root_glb/fox_-_realistic_3d_model_demo_free.glb"
 		]
+	if animal_type == "wolf":
+		return [
+			"res://assets/external/wolf/WolfAnimated.glb"
+		]
 	return [
 		"res://assets/external/quaternius_animals/glTF/Fox.gltf"
 	]
@@ -399,16 +591,23 @@ func _play_external_walk_animation() -> void:
 	if _animation_player == null:
 		return
 	var chosen := ""
+	var walk_fallback := ""
+	var any_fallback := ""
 	for animation_name in _animation_player.get_animation_list():
 		var animation := _animation_player.get_animation(animation_name)
 		if animation != null:
 			animation.loop_mode = Animation.LOOP_LINEAR
 		var lower := animation_name.to_lower()
-		if lower.find("walk") >= 0 or lower.find("run") >= 0:
+		if lower.find("walk") >= 0 and lower.find("_f") >= 0:
 			chosen = animation_name
 			break
-		if chosen.is_empty():
-			chosen = animation_name
+		if lower.find("walk") >= 0 or lower.find("trot") >= 0 or lower.find("run") >= 0 or lower.find("gallop") >= 0:
+			if walk_fallback.is_empty():
+				walk_fallback = animation_name
+		if any_fallback.is_empty():
+			any_fallback = animation_name
+	if chosen.is_empty():
+		chosen = walk_fallback if not walk_fallback.is_empty() else any_fallback
 	if not chosen.is_empty():
 		_animation_player.play(chosen)
 

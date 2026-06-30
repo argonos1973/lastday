@@ -27,6 +27,8 @@ var material_cache := {}
 var billboard_texture_cache := {}
 var texture_path_cache := {}
 var external_scene_cache := {}
+var _forest_tree_meshes: Array = []
+var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
 var _shared_visual_sphere_mesh: SphereMesh = null
 var _shared_box_mesh: BoxMesh = null
@@ -120,6 +122,7 @@ const POLY_PINE_TWIG_ALPHA := "res://assets/external/polyhaven/pine_tree_01/text
 const POLY_FIR_BARK_DIFF := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_bark_diff_4k.png"
 const POLY_FIR_TWIG_DIFF := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_diff_4k.png"
 const POLY_FIR_TWIG_ALPHA := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_alpha_4k.png"
+const LEAFY_FLOOR_MODEL := "res://leafy_floor.glb"
 const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
 const POLY_ROCKY_TERRAIN_DISP := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"
 const POLY_ROCKY_TERRAIN_SPEC := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_spec_4k.png"
@@ -175,6 +178,8 @@ const POLY_TREE_MODELS := [
 	POLY_MODEL_DIR + "island_tree_02/island_tree_02_1k.gltf",
 	POLY_MODEL_DIR + "island_tree_03/island_tree_03_1k.gltf"
 ]
+const FOREST_TREE_PACK_MODEL := "res://low_poly_forest_tree_pack.glb"
+const MODULAR_ROOF_MODEL := "res://modular_roof.glb"
 const POLY_FURNITURE_DIR := "res://assets/external/polyhaven/furniture/"
 const POLY_FURNITURE_MODELS := [
 	POLY_MODEL_DIR + "Sofa_01/Sofa_01_1k.gltf",
@@ -287,6 +292,10 @@ const REAL_GAS_STATION_MODEL := "res://assets/external/realistic/gas_station.glb
 const REAL_POLICE_STATION_MODEL := "res://assets/external/realistic/police_station.glb"
 const REAL_RADIO_POINT_MODEL := "res://assets/external/realistic/radio_point.glb"
 
+const DOOR_MODELS := [
+	"res://assets/external/doors/simple_room_door.glb",
+]
+
 const Q_ENV := "res://assets/external/quaternius_zombie_apocalypse/Environment/glTF/"
 const HOUSE_BUILDING_PROPS := [
 	K_SURVIVAL + "structure.glb",
@@ -322,7 +331,6 @@ const HOUSE_INTERIOR_PROPS := [
 	K_SURVIVAL + "box-large-open.glb"
 ]
 const NO_GRASS_AREAS := [
-	{"center": Vector3(0, 0, 0), "half": Vector2(6.0, 5.6)},
 	{"center": Vector3(-25, 0, -18), "half": Vector2(7.4, 6.6)},
 	{"center": Vector3(-38, 0, 18), "half": Vector2(7.4, 6.6)},
 	{"center": Vector3(23, 0, 18), "half": Vector2(7.4, 6.6)},
@@ -821,7 +829,7 @@ func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(150, 0.2, 150))
-	_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(150, 150), Color(0.17, 0.20, 0.145))
+	_create_leafy_floor_ground()
 	_create_grass_ground_cover()
 	print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
@@ -834,15 +842,6 @@ func _create_map() -> void:
 	_create_mountain_river()
 	print("TIME mountain_river: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_static_box("Road", Vector3(8, 0.01, 0), Vector3(7, 0.06, 125), Color(0.034, 0.036, 0.034))
-	_create_static_box("RoadCenterLineA", Vector3(8, 0.055, -32), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
-	_create_static_box("RoadCenterLineB", Vector3(8, 0.055, -8), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
-	_create_static_box("RoadCenterLineC", Vector3(8, 0.055, 16), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
-	_create_static_box("RoadCenterLineD", Vector3(8, 0.055, 40), Vector3(0.18, 0.025, 12), Color(0.62, 0.58, 0.38))
-	_create_static_box("RoadShoulderA", Vector3(3.9, 0.015, 0), Vector3(0.5, 0.05, 125), Color(0.22, 0.20, 0.17))
-	_create_static_box("RoadShoulderB", Vector3(12.1, 0.015, 0), Vector3(0.5, 0.05, 125), Color(0.22, 0.20, 0.17))
-	_create_broken_road_details()
-	_create_label("Carretera", Vector3(8, 1.0, -28))
 	_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
 	_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
 	_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
@@ -879,14 +878,34 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	_create_house_overgrowth(origin, label)
 	_create_house_foundation(origin, label)
 	_create_house_floor(origin, label)
-	_create_textured_wall(label + " Back", origin + Vector3(0, 0, -4.7), Vector3(11.4, 3.65, 0.35), Vector3.ZERO)
-	_create_textured_wall(label + " Left", origin + Vector3(-5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO)
-	_create_textured_wall(label + " Right", origin + Vector3(5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO)
-	_create_textured_wall(label + " FrontA", origin + Vector3(-4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO)
-	_create_textured_wall(label + " FrontB", origin + Vector3(4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO)
-	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-1.95, 0, 4.7), Vector3(1.05, 3.65, 0.35), Vector3.ZERO)
-	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(1.95, 0, 4.7), Vector3(1.05, 3.65, 0.35), Vector3.ZERO)
+	# Back wall with two window holes (windows at x=-3.2 and x=3.2, y=1.68, 1.18×0.88)
+	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -4.7), Vector3(11.4, 3.65, 0.35), Vector3.ZERO, [
+		[-3.2, 1.68, 1.18, 0.88],
+		[3.2, 1.68, 1.18, 0.88],
+	])
+	# Left wall with one window hole (z=-1.55, y=1.68, 1.18×0.88)
+	_create_textured_wall_with_openings(label + " Left", origin + Vector3(-5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
+		[-1.55, 1.68, 1.18, 0.88],
+	])
+	# Right wall with one window hole
+	_create_textured_wall_with_openings(label + " Right", origin + Vector3(5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
+		[-1.55, 1.68, 1.18, 0.88],
+	])
+	# FrontA with window hole (window centered in wall at x=-4.35, y=1.75, 1.25×0.95)
+	_create_textured_wall_with_openings(label + " FrontA", origin + Vector3(-4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
+		[0.0, 1.75, 1.25, 0.95],
+	])
+	# FrontB with window hole (window centered in wall at x=4.35)
+	_create_textured_wall_with_openings(label + " FrontB", origin + Vector3(4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
+		[0.0, 1.75, 1.25, 0.95],
+	])
+	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
+	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
+	# Door lintel: wall segment above the door gap (door is 2.55m tall, wall is 3.65m)
+	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, 2.55, 4.7), Vector3(3.0, 1.1, 0.35), Vector3.ZERO)
 	_create_house_details(origin, label)
+	# Roof collision: flat box at wall top height to block player from jumping through roof
+	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, 3.65, 0), Vector3(11.4, 0.7, 9.4))
 
 func _create_house_foundation(origin: Vector3, label: String) -> void:
 	# Concrete skirting (perimeter beams) under the brick walls, so the houses
@@ -949,6 +968,12 @@ func _create_house_overgrowth(origin: Vector3, label: String) -> void:
 		var side := -1.0 if i % 2 == 0 else 1.0
 		var pos := origin + Vector3(side * randf_range(5.9, 6.55), 0.055, randf_range(-4.2, 4.6))
 		_create_house_grass_asset(label + " SideGrass", pos, randf_range(0.20, 0.38))
+	# Tall grass ring around the house perimeter
+	for i in range(80):
+		var angle := randf_range(0.0, TAU)
+		var dist := randf_range(6.8, 9.5)
+		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
+		_create_grass_clump(pos, randf_range(0.6, 1.1), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), randf()))
@@ -1019,7 +1044,7 @@ func _create_new_world_props() -> void:
 	var car_s := Vector3.ONE * 0.013
 	var car_positions := [
 		{"pos": Vector3(-22.0, 0.0, -8.0), "rot": Vector3(0, 35, 0)},
-		{"pos": Vector3(38.0, 0.0, 18.0), "rot": Vector3(0, -60, 0)},
+		{"pos": Vector3(33.0, 0.0, 2.0), "rot": Vector3(0, -60, 0)},
 		{"pos": Vector3(-48.0, 0.0, -32.0), "rot": Vector3(0, 110, 0)}
 	]
 	for i in range(car_positions.size()):
@@ -1081,26 +1106,16 @@ func _create_new_world_props() -> void:
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaB", Vector3(30.0, 0.0, -35.0), sofa_s, Vector3(0, -20, 0), true, 0.0)
 
 func _create_world_details() -> void:
-	_create_road_checkpoint(Vector3(8, 0, -4))
-	_create_concrete_barrier("RootConcreteBarrierA", Vector3(4.3, 0.0, -5.7), Vector3(0, 12, 0))
-	_create_concrete_barrier("RootConcreteBarrierB", Vector3(11.8, 0.0, -2.2), Vector3(0, -18, 0))
 	_try_instance_external_scene([ROOT_JUNK_MODEL], "RootJunkPile", Vector3(-30.5, 0.05, -8.7), Vector3.ONE * 0.72, Vector3(0, 37, 0), true, 0.02)
 	_create_new_world_props()
 	_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
-	_create_fence_line(Vector3(19, 0, 12), Vector3(19, 0, 32), 6)
+	_create_fence_line(Vector3(16, 0, 32), Vector3(16, 0, 48), 6)
 	_create_scrap_pile(Vector3(14, 0, -17))
 	_create_scrap_pile(Vector3(-31, 0, -10))
 	_create_abandoned_camp(Vector3(-56, 0, 28))
 	_create_military_leftovers(Vector3(25, 0, -12))
 	_create_dayz_interaction_examples()
-	_create_static_box("RoadSignNorth", Vector3(14.6, 0, -24), Vector3(0.18, 2.4, 0.18), Color(0.10, 0.10, 0.09))
-	_create_static_box("RoadSignBoard", Vector3(14.6, 2.0, -24), Vector3(1.5, 0.75, 0.16), Color(0.36, 0.32, 0.22))
-	_create_visual_box("RoadSignScratch", Vector3(14.6, 2.05, -23.9), Vector3(1.2, 0.09, 0.05), Color(0.08, 0.075, 0.05), Vector3(0, 0, 8))
-	_create_static_box("BusStopFrame", Vector3(14.5, 0, 35), Vector3(0.25, 2.2, 3.0), Color(0.11, 0.12, 0.12))
-	_create_static_box("BusStopBench", Vector3(13.8, 0, 35), Vector3(1.6, 0.45, 0.55), Color(0.16, 0.10, 0.07))
-	for z in [-54, -38, -21, -6, 12, 27, 48]:
-		_create_road_crack(Vector3(8, 0.055, z), randf_range(-18.0, 18.0))
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -1254,6 +1269,24 @@ func _create_wildlife() -> void:
 		Vector3(0, 0.0, 12),
 		Vector3(12, 0.0, 20),
 		Vector3(18, 0.0, 28)
+	])
+	_create_wildlife_animal("wolf", [
+		Vector3(18, 0.0, -8),
+		Vector3(22, 0.0, -12),
+		Vector3(20, 0.0, -4),
+		Vector3(16, 0.0, -2),
+		Vector3(14, 0.0, -6),
+		Vector3(18, 0.0, -10),
+		Vector3(20, 0.0, -6)
+	])
+	_create_wildlife_animal("wolf", [
+		Vector3(-8, 0.0, -10),
+		Vector3(-12, 0.0, -14),
+		Vector3(-10, 0.0, -6),
+		Vector3(-6, 0.0, -4),
+		Vector3(-4, 0.0, -8),
+		Vector3(-8, 0.0, -12),
+		Vector3(-10, 0.0, -8)
 	])
 
 func _create_deer_pair(route: Array) -> void:
@@ -2080,47 +2113,85 @@ func _create_house_details(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " OldCurtain", origin + Vector3(-3.9, 1.45, 5.01), Vector3(0.18, 0.92, 0.035), Color(0.26, 0.18, 0.14), Vector3(0, 0, 5))
 
 func _create_house_doorway(origin: Vector3, label: String) -> void:
-	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, 1.35, 5.08), Vector3(0.18, 2.75, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameRight", origin + Vector3(1.34, 1.35, 5.08), Vector3(0.18, 2.75, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, 2.7, 5.08), Vector3(2.86, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
-	_create_interactive_door(label + " Door", origin + Vector3(-0.92, 0.0, 5.23), Vector3(1.84, 2.36, 0.11), Color(0.13, 0.075, 0.04), -96.0)
+	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, 1.275, 4.87), Vector3(0.18, 2.55, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameRight", origin + Vector3(1.34, 1.275, 4.87), Vector3(0.18, 2.55, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, 2.64, 4.87), Vector3(2.86, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
+	_create_interactive_door(label + " Door", origin + Vector3(-1.25, 0.0, 4.8), Vector3(2.5, 2.55, 0.11), Color(0.13, 0.075, 0.04), -96.0)
 
 func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vector3, color: Color, open_angle: float) -> void:
 	var door = DoorScript.new()
 	door.name = node_name
 	door.position = hinge_pos
-	door.setup("Puerta", size, color, open_angle)
 	add_child(door)
+	var door_model: String = DOOR_MODELS[randi() % DOOR_MODELS.size()]
+	door.setup("Puerta", size, color, open_angle, door_model)
 
 func _create_house_windows(origin: Vector3, label: String) -> void:
-	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-3.65, 1.75, 5.08), 1.25, 0.95)
-	_create_front_window(label + " FrontWindowRight", origin + Vector3(3.65, 1.75, 5.08), 1.25, 0.95)
-	_create_front_window(label + " BackWindowA", origin + Vector3(-3.2, 1.68, -5.08), 1.18, 0.88)
-	_create_front_window(label + " BackWindowB", origin + Vector3(3.2, 1.68, -5.08), 1.18, 0.88)
-	_create_side_window(label + " LeftSideWindow", origin + Vector3(-5.95, 1.68, -1.55), 1.18, 0.88)
-	_create_side_window(label + " RightSideWindow", origin + Vector3(5.95, 1.68, -1.55), 1.18, 0.88)
+	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-4.35, 1.75, 4.7), 1.25, 0.95)
+	_create_front_window(label + " FrontWindowRight", origin + Vector3(4.35, 1.75, 4.7), 1.25, 0.95)
+	_create_front_window(label + " BackWindowA", origin + Vector3(-3.2, 1.68, -4.7), 1.18, 0.88)
+	_create_front_window(label + " BackWindowB", origin + Vector3(3.2, 1.68, -4.7), 1.18, 0.88)
+	_create_side_window(label + " LeftSideWindow", origin + Vector3(-5.7, 1.68, -1.55), 1.18, 0.88)
+	_create_side_window(label + " RightSideWindow", origin + Vector3(5.7, 1.68, -1.55), 1.18, 0.88)
 
 func _create_front_window(node_name: String, center: Vector3, width: float, height: float) -> void:
 	var frame := Color(0.19, 0.12, 0.065)
-	var glass := Color(0.075, 0.13, 0.145)
-	_create_visual_box(node_name + " Glass", center, Vector3(width, height, 0.075), glass, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameTop", center + Vector3(0, height * 0.5 + 0.06, 0.055), Vector3(width + 0.22, 0.10, 0.13), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameBottom", center + Vector3(0, -height * 0.5 - 0.06, 0.055), Vector3(width + 0.22, 0.10, 0.13), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameLeft", center + Vector3(-width * 0.5 - 0.06, 0, 0.055), Vector3(0.10, height + 0.22, 0.13), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameRight", center + Vector3(width * 0.5 + 0.06, 0, 0.055), Vector3(0.10, height + 0.22, 0.13), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " CrossVertical", center + Vector3(0, 0, 0.075), Vector3(0.06, height + 0.05, 0.12), frame.darkened(0.12), Vector3.ZERO)
-	_create_visual_box(node_name + " CrossHorizontal", center + Vector3(0, 0, 0.075), Vector3(width + 0.05, 0.055, 0.12), frame.darkened(0.12), Vector3.ZERO)
+	var frame_dark := Color(0.14, 0.085, 0.045)
+	var sill := Color(0.12, 0.09, 0.07)
+	var ft := 0.06  # frame thickness
+	var fd := 0.35  # frame depth (matches wall thickness)
+	# Sill (alféizar)
+	_create_visual_box(node_name + " Sill", center + Vector3(0, -height * 0.5 - 0.04, fd * 0.5 + 0.04), Vector3(width, 0.06, 0.16), sill, Vector3.ZERO)
+	# Glass
+	var gw := width - ft * 2.0
+	var gh := height - ft * 2.0
+	_create_glass_panel(node_name + " Glass", center, Vector3(gw, gh, fd), false)
+	# Frame boards — outer edge exactly at opening edge
+	_create_visual_box(node_name + " FrameTop", center + Vector3(0, height * 0.5 - ft * 0.5, 0.0), Vector3(width, ft, fd), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameBottom", center + Vector3(0, -height * 0.5 + ft * 0.5, 0.0), Vector3(width, ft, fd), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameLeft", center + Vector3(-width * 0.5 + ft * 0.5, 0, 0.0), Vector3(ft, height, fd), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameRight", center + Vector3(width * 0.5 - ft * 0.5, 0, 0.0), Vector3(ft, height, fd), frame, Vector3.ZERO)
+	# Inner mullions (cross dividers)
+	_create_visual_box(node_name + " MullionVertical", center + Vector3(0, 0, 0.0), Vector3(0.04, gh, fd), frame_dark, Vector3.ZERO)
+	_create_visual_box(node_name + " MullionHorizontal", center + Vector3(0, 0, 0.0), Vector3(gw, 0.04, fd), frame_dark, Vector3.ZERO)
 
 func _create_side_window(node_name: String, center: Vector3, width: float, height: float) -> void:
 	var frame := Color(0.19, 0.12, 0.065)
-	var glass := Color(0.075, 0.13, 0.145)
-	_create_visual_box(node_name + " Glass", center, Vector3(0.075, height, width), glass, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameTop", center + Vector3(0.055, height * 0.5 + 0.06, 0), Vector3(0.13, 0.10, width + 0.22), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameBottom", center + Vector3(0.055, -height * 0.5 - 0.06, 0), Vector3(0.13, 0.10, width + 0.22), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameLeft", center + Vector3(0.055, 0, -width * 0.5 - 0.06), Vector3(0.13, height + 0.22, 0.10), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " FrameRight", center + Vector3(0.055, 0, width * 0.5 + 0.06), Vector3(0.13, height + 0.22, 0.10), frame, Vector3.ZERO)
-	_create_visual_box(node_name + " CrossVertical", center + Vector3(0.075, 0, 0), Vector3(0.12, height + 0.05, 0.06), frame.darkened(0.12), Vector3.ZERO)
-	_create_visual_box(node_name + " CrossHorizontal", center + Vector3(0.075, 0, 0), Vector3(0.12, 0.055, width + 0.05), frame.darkened(0.12), Vector3.ZERO)
+	var frame_dark := Color(0.14, 0.085, 0.045)
+	var sill := Color(0.12, 0.09, 0.07)
+	var ft := 0.06
+	var fd := 0.35
+	# Sill
+	_create_visual_box(node_name + " Sill", center + Vector3(fd * 0.5 + 0.04, -height * 0.5 - 0.04, 0), Vector3(0.16, 0.06, width), sill, Vector3.ZERO)
+	# Glass
+	var gw := width - ft * 2.0
+	var gh := height - ft * 2.0
+	_create_glass_panel(node_name + " Glass", center, Vector3(fd, gh, gw), true)
+	# Frame boards — outer edge exactly at opening edge
+	_create_visual_box(node_name + " FrameTop", center + Vector3(0, height * 0.5 - ft * 0.5, 0), Vector3(fd, ft, width), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameBottom", center + Vector3(0, -height * 0.5 + ft * 0.5, 0), Vector3(fd, ft, width), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameLeft", center + Vector3(0, 0, -width * 0.5 + ft * 0.5), Vector3(fd, height, ft), frame, Vector3.ZERO)
+	_create_visual_box(node_name + " FrameRight", center + Vector3(0, 0, width * 0.5 - ft * 0.5), Vector3(fd, height, ft), frame, Vector3.ZERO)
+	# Inner mullions
+	_create_visual_box(node_name + " MullionVertical", center + Vector3(0, 0, 0), Vector3(fd, gh, 0.04), frame_dark, Vector3.ZERO)
+	_create_visual_box(node_name + " MullionHorizontal", center + Vector3(0, 0, 0), Vector3(fd, 0.04, gw), frame_dark, Vector3.ZERO)
+
+func _create_glass_panel(node_name: String, pos: Vector3, size: Vector3, is_side: bool) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.name = node_name
+	mesh_instance.position = pos
+	mesh_instance.mesh = _get_shared_box_mesh()
+	mesh_instance.scale = size
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.04, 0.09, 0.12, 0.2)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.05
+	mat.metallic = 0.3
+	mat.emission = Color(0.03, 0.05, 0.07)
+	mat.emission_energy_multiplier = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh_instance.material_override = mat
+	add_child(mesh_instance)
 
 func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_house_grass_asset(label + " FrontGrassLeft", origin + Vector3(-1.75, 0.055, 5.75), 0.34)
@@ -2274,20 +2345,27 @@ func _apply_clearcoat_recursive(node: Node) -> void:
 		_apply_clearcoat_recursive(child)
 
 func _is_vehicle_spawn_clear(pos: Vector3) -> bool:
-	var blocked_centers := [
-		Vector3(0, 0, 0),
+	var house_centers := [
 		Vector3(-25, 0, -18),
 		Vector3(-38, 0, 18),
 		Vector3(23, 0, 18),
 		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42),
+		Vector3(-12, 0, 42)
+	]
+	for center in house_centers:
+		if absf(pos.x - center.x) < 8.0 and absf(pos.z - center.z) < 10.0:
+			return false
+	var other_blocked := [
+		Vector3(0, 0, 0),
 		Vector3(33, 0, -30),
 		Vector3(45, 0, 0),
 		Vector3(-42, 0, -42)
 	]
-	for center in blocked_centers:
+	for center in other_blocked:
 		if absf(pos.x - center.x) < 9.0 and absf(pos.z - center.z) < 8.0:
 			return false
+	if _is_in_house_doorway(pos, 8.0):
+		return false
 	return true
 
 func _create_wrecked_van(pos: Vector3, yaw: float) -> void:
@@ -2385,8 +2463,24 @@ func _create_military_leftovers(pos: Vector3) -> void:
 	_create_static_cylinder("OldOilDrumB", pos + Vector3(-1.65, 0, -1.35), 0.30, 0.78, Color(0.15, 0.08, 0.055))
 	_create_static_box_rotated("WarningBoard", pos + Vector3(1.7, 0.5, -1.2), Vector3(1.4, 0.72, 0.10), Color(0.30, 0.25, 0.11), Vector3(0, -24, -5))
 
+func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
+	var house_origins := [
+		Vector3(-25, 0, -18),
+		Vector3(-38, 0, 18),
+		Vector3(23, 0, 18),
+		Vector3(42, 0, 26),
+		Vector3(-12, 0, 42)
+	]
+	for origin in house_origins:
+		var door_pos: Vector3 = origin + Vector3(0, 0, 4.87)
+		if absf(pos.x - door_pos.x) <= 3.0 + margin and pos.z >= door_pos.z - 1.0 and pos.z <= door_pos.z + margin:
+			return true
+	return false
+
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
 	if abs(pos.x - 8.0) < 5.4:
+		return false
+	if _is_in_house_doorway(pos):
 		return false
 	if river_margin >= 0.0 and _is_inside_river_band(pos, river_margin):
 		return false
@@ -2468,7 +2562,8 @@ func _create_tall_grass_fields() -> void:
 		{"center": Vector3(36, 0, 48), "radius": Vector2(34, 28), "count": 195},
 		{"center": Vector3(-20, 0, -52), "radius": Vector2(35, 22), "count": 165},
 		{"center": Vector3(58, 0, -44), "radius": Vector2(23, 31), "count": 155},
-		{"center": Vector3(-2, 0, 10), "radius": Vector2(55, 48), "count": 240}
+		{"center": Vector3(-2, 0, 10), "radius": Vector2(55, 48), "count": 240},
+		{"center": Vector3(8, 0, 0), "radius": Vector2(10, 62), "count": 500}
 	]
 	for field in fields:
 		var center: Vector3 = field["center"]
@@ -2599,44 +2694,128 @@ func _create_clouds() -> void:
 
 func _create_forest() -> void:
 	_create_label("Bosque", Vector3(-48, 2.2, 20))
-	for i in range(210):
-		var x := randf_range(-68, -18)
-		var z := randf_range(-4, 66)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.8):
+	_create_label("Bosque denso norte", Vector3(40, 2.2, -55))
+	_create_label("Bosque frondoso este", Vector3(60, 2.2, 0))
+	_create_label("Bosque sur", Vector3(-30, 2.2, -55))
+	for i in range(320):
+		var x := randf_range(-72, -12)
+		var z := randf_range(-4, 70)
+		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
 		if Vector3(x, 0, z).distance_to(Vector3(-38, 0, 18)) < 9.0:
 			continue
 		if Vector3(x, 0, z).distance_to(Vector3(-42, 0, -42)) < 8.0:
 			continue
 		_create_tree(Vector3(x, 0, z))
-	for i in range(70):
-		var x := randf_range(17, 68)
-		var z := randf_range(34, 68)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.8):
+	for i in range(180):
+		var x := randf_range(15, 72)
+		var z := randf_range(30, 72)
+		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
 		_create_tree(Vector3(x, 0, z))
-	for i in range(52):
-		var x := randf_range(-6, 66)
-		var z := randf_range(-68, -49)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.8):
+	for i in range(160):
+		var x := randf_range(-10, 72)
+		var z := randf_range(-72, -45)
+		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
 		_create_tree(Vector3(x, 0, z))
+	for i in range(120):
+		var x := randf_range(45, 72)
+		var z := randf_range(-15, 25)
+		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
+			continue
+		_create_tree(Vector3(x, 0, z))
+	for i in range(100):
+		var x := randf_range(-72, -20)
+		var z := randf_range(-72, -40)
+		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
+			continue
+		_create_tree(Vector3(x, 0, z))
+	for i in range(400):
+		var edge := randi() % 4
+		var pos := Vector3.ZERO
+		match edge:
+			0:
+				pos = Vector3(randf_range(-74, 74), 0, randf_range(-74, -64))
+			1:
+				pos = Vector3(randf_range(-74, 74), 0, randf_range(64, 74))
+			2:
+				pos = Vector3(randf_range(-74, -64), 0, randf_range(-74, 74))
+			_:
+				pos = Vector3(randf_range(64, 74), 0, randf_range(-74, 74))
+		if not _can_place_ground_vegetation(pos, 1.5):
+			continue
+		_create_tree(pos)
 
 func _create_tree(pos: Vector3) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
 	_register_wildlife_blocker(pos, 1.0)
-	if randf() < 0.0:
-		if _create_billboard_tree(pos, _get_billboard_textures("dead"), randf_range(4.8, 7.2), "DeadBillboardTree"):
-			return
-		_create_dead_tree_fallback(pos)
-		_create_tree_collision("RealTreeCollision", pos)
+	if _forest_tree_meshes.is_empty():
+		_load_forest_tree_pack()
+	if not _forest_tree_meshes.is_empty():
+		var entry = _forest_tree_meshes[randi() % _forest_tree_meshes.size()]
+		var src_mesh: ArrayMesh = entry.mesh
+		var xform: Transform3D = entry.transform
+		var aabb: AABB = entry.aabb
+		var mi := MeshInstance3D.new()
+		mi.name = "ForestTree"
+		mi.mesh = src_mesh
+		var tree_scale := randf_range(0.8, 1.4)
+		var tree_height := aabb.size.z * tree_scale
+		if tree_height < 1.0:
+			tree_scale = 1.0 / max(0.01, aabb.size.z)
+		mi.position = pos + Vector3(0, -aabb.position.z * tree_scale, 0)
+		mi.rotation_degrees = Vector3(-90, 0, randf_range(0, 360))
+		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
+		add_child(mi)
+		_create_tree_collision("ForestTreeCollision", pos)
 		return
 	if _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), "PolyhavenTree", pos, Vector3.ONE * randf_range(1.15, 2.15), Vector3(0, randf_range(0, 360), 0), true, 0.0):
 		_create_tree_collision("PolyhavenTreeCollision", pos)
 		_override_tree_foliage_green("PolyhavenTree")
 		return
 	_create_living_tree_fallback(pos)
+
+func _load_forest_tree_pack() -> void:
+	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
+	if scene_resource == null:
+		return
+	var instance: Node = null
+	if scene_resource is PackedScene:
+		instance = (scene_resource as PackedScene).instantiate()
+	elif scene_resource is Node3D:
+		instance = (scene_resource as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION)
+	if not (instance is Node3D):
+		if instance != null:
+			instance.queue_free()
+		return
+	var root := instance as Node3D
+	add_child(root)
+	root.rotation_degrees.x = -90.0
+	root.force_update_transform()
+	var meshes: Array = []
+	_collect_mesh_instances(root, meshes)
+	for mi in meshes:
+		var mesh_inst := mi as MeshInstance3D
+		if mesh_inst.mesh == null:
+			continue
+		var name_lower := mesh_inst.name.to_lower()
+		if not (name_lower.contains("tree") or name_lower.contains("branch") or name_lower.contains("trunk")):
+			continue
+		if name_lower.contains("rock"):
+			continue
+		var aabb := mesh_inst.get_aabb()
+		if aabb.size.z < 1.5:
+			continue
+		var world_xform: Transform3D = mesh_inst.global_transform
+		_forest_tree_meshes.append({
+			"mesh": mesh_inst.mesh,
+			"transform": world_xform,
+			"aabb": aabb
+		})
+	remove_child(root)
+	root.queue_free()
 
 func _create_cut_tree_remains(pos: Vector3) -> void:
 	var stump := _create_static_cylinder("CutTreeStump", pos, 0.32, 0.55, Color(0.18, 0.105, 0.045))
@@ -3024,6 +3203,63 @@ func _create_static_box(node_name: String, pos: Vector3, size: Vector3, color: C
 	add_child(body)
 	return body
 
+func _create_textured_wall_with_openings(node_name: String, pos: Vector3, size: Vector3, rot: Vector3, openings: Array) -> void:
+	var is_x_wall := size.x > size.z
+	var wall_w := size.x if is_x_wall else size.z
+	var wall_h := size.y
+	var wall_t := size.z if is_x_wall else size.x
+	var holes: Array = []
+	for op in openings:
+		holes.append({
+			"x0": float(op[0]) - float(op[2]) * 0.5,
+			"x1": float(op[0]) + float(op[2]) * 0.5,
+			"y0": float(op[1]) - float(op[3]) * 0.5,
+			"y1": float(op[1]) + float(op[3]) * 0.5,
+		})
+	var ys: Array = [0.0, wall_h]
+	for h in holes:
+		ys.append(h["y0"])
+		ys.append(h["y1"])
+	ys.sort()
+	var seg := 0
+	for yi in range(ys.size() - 1):
+		var y0: float = ys[yi]
+		var y1: float = ys[yi + 1]
+		if y1 - y0 < 0.005:
+			continue
+		var yh := y1 - y0
+		var xs: Array = [-wall_w * 0.5, wall_w * 0.5]
+		for h in holes:
+			if h["y0"] <= y0 + 0.005 and h["y1"] >= y1 - 0.005:
+				xs.append(h["x0"])
+				xs.append(h["x1"])
+		xs.sort()
+		for xi in range(xs.size() - 1):
+			var x0: float = xs[xi]
+			var x1: float = xs[xi + 1]
+			if x1 - x0 < 0.005:
+				continue
+			var is_hole := false
+			for h in holes:
+				if h["y0"] <= y0 + 0.005 and h["y1"] >= y1 - 0.005:
+					if x0 >= h["x0"] - 0.005 and x1 <= h["x1"] + 0.005:
+						is_hole = true
+						break
+			if is_hole:
+				continue
+			var xmid := (x0 + x1) * 0.5
+			var xw := x1 - x0
+			var seg_pos: Vector3
+			var seg_size: Vector3
+			if is_x_wall:
+				seg_pos = pos + Vector3(xmid, y0, 0)
+				seg_size = Vector3(xw, yh, wall_t)
+			else:
+				seg_pos = pos + Vector3(0, y0, xmid)
+				seg_size = Vector3(wall_t, yh, xw)
+			_create_textured_wall(node_name + " S" + str(seg), seg_pos, seg_size, rot)
+			seg += 1
+
 func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: Vector3) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
@@ -3191,6 +3427,86 @@ func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3,
 	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.8, 1.8, 1.0))
 	add_child(mesh_instance)
 
+func _create_leafy_floor_ground() -> void:
+	var leafy_texture = _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
+	if leafy_texture == null:
+		_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(150, 150), Color(0.17, 0.20, 0.145))
+		return
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.name = "TerrainSurface"
+	mesh_instance.position = Vector3(0, 0.003, 0)
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(150, 150)
+	mesh.subdivide_width = 12
+	mesh.subdivide_depth = 12
+	mesh_instance.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.45, 0.65, 0.28)
+	material.albedo_texture = leafy_texture
+	material.roughness = 0.97
+	material.metallic = 0.0
+	material.uv1_scale = Vector3(44.0, 44.0, 1.0)
+	mesh_instance.material_override = material
+	add_child(mesh_instance)
+	var dirt_mi := MeshInstance3D.new()
+	dirt_mi.name = "TerrainSurfaceDirt"
+	dirt_mi.position = Vector3(0, 0.002, 0)
+	var dirt_mesh := PlaneMesh.new()
+	dirt_mesh.size = Vector2(150, 150)
+	dirt_mesh.subdivide_width = 12
+	dirt_mesh.subdivide_depth = 12
+	dirt_mi.mesh = dirt_mesh
+	var dirt_mat := StandardMaterial3D.new()
+	dirt_mat.albedo_color = Color(0.48, 0.38, 0.26, 0.5)
+	dirt_mat.albedo_texture = leafy_texture
+	dirt_mat.roughness = 0.97
+	dirt_mat.metallic = 0.0
+	dirt_mat.uv1_scale = Vector3(44.0, 44.0, 1.0)
+	dirt_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dirt_mi.material_override = dirt_mat
+	add_child(dirt_mi)
+
+func _extract_texture_from_glb(path: String) -> Texture2D:
+	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
+	if not FileAccess.file_exists(disk_path):
+		return null
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	var error := document.append_from_file(disk_path, state)
+	if error != OK:
+		return null
+	var generated_scene := document.generate_scene(state)
+	if not (generated_scene is Node3D):
+		if generated_scene != null:
+			generated_scene.queue_free()
+		return null
+	var root := generated_scene as Node3D
+	add_child(root)
+	var meshes: Array = []
+	_collect_mesh_instances(root, meshes)
+	var result: Texture2D = null
+	for mi in meshes:
+		var mesh_inst := mi as MeshInstance3D
+		if mesh_inst.mesh != null and mesh_inst.mesh.get_surface_count() > 0:
+			var mat = mesh_inst.mesh.surface_get_material(0)
+			if mat is StandardMaterial3D:
+				var sm := mat as StandardMaterial3D
+				if sm.albedo_texture != null:
+					result = sm.albedo_texture
+					break
+	if result == null:
+		for mi in meshes:
+			var mesh_inst := mi as MeshInstance3D
+			var mat_override = mesh_inst.material_override
+			if mat_override is StandardMaterial3D:
+				var sm := mat_override as StandardMaterial3D
+				if sm.albedo_texture != null:
+					result = sm.albedo_texture
+					break
+	remove_child(root)
+	root.queue_free()
+	return result
+
 func _create_visual_plane(node_name: String, pos: Vector3, size: Vector2, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = node_name
@@ -3340,17 +3656,49 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 		0, 1, 4,
 		0, 4, 3
 	])
+	var tile := 1.5
+	var uvs := PackedVector2Array([
+		Vector2(vertices[0].x / tile + 0.5, vertices[0].z / tile + 0.5),
+		Vector2(vertices[1].x / tile + 0.5, vertices[1].z / tile + 0.5),
+		Vector2(vertices[2].x / tile + 0.5, vertices[2].z / tile + 0.5),
+		Vector2(vertices[3].x / tile + 0.5, vertices[3].z / tile + 0.5),
+		Vector2(vertices[4].x / tile + 0.5, vertices[4].z / tile + 0.5),
+		Vector2(vertices[5].x / tile + 0.5, vertices[5].z / tile + 0.5)
+	])
+	var normals := PackedVector3Array([
+		Vector3(0, 1, 0),
+		Vector3(0, 1, 0),
+		Vector3(0, 1, 0),
+		Vector3(0, 1, 0),
+		Vector3(0, 1, 0),
+		Vector3(0, 1, 0)
+	])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_NORMAL] = normals
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = node_name
 	mesh_instance.position = pos
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_material(color, true)
+	if _roof_texture == null:
+		_roof_texture = _extract_texture_from_glb(MODULAR_ROOF_MODEL)
+	if _roof_texture != null:
+		var roof_mat := StandardMaterial3D.new()
+		roof_mat.albedo_color = Color.WHITE
+		roof_mat.albedo_texture = _roof_texture
+		roof_mat.roughness = 0.85
+		roof_mat.metallic = 0.0
+		roof_mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+		roof_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		roof_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		mesh.surface_set_material(0, roof_mat)
+	else:
+		mesh_instance.material_override = _make_material(color, true)
 	add_child(mesh_instance)
 
 func _make_material(color: Color, noisy: bool) -> StandardMaterial3D:
