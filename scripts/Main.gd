@@ -42,6 +42,7 @@ var wildlife_blockers: Array = []
 var _nav_grid: Dictionary = {}
 var _nav_grid_size := 76
 var _nav_cell_size := 2.0
+var _door_open_cache: Dictionary = {}
 var _nav_grid_built := false
 var game_over := false
 var _drink_hold_actor = null
@@ -128,8 +129,6 @@ const POLY_ROCKY_TERRAIN_DISP := "res://assets/external/polyhaven/rocky_terrain_
 const POLY_ROCKY_TERRAIN_SPEC := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_spec_4k.png"
 const POLY_RIVER_PEBBLES_DIFF := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg"
 const POLY_RIVER_PEBBLES_DISP := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_disp_4k.png"
-const POLY_RIVER_PEBBLES_NOR := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_nor_gl_4k.exr"
-const POLY_RIVER_PEBBLES_ROUGH := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_rough_4k.exr"
 const POLY_BOULDER_DIFF := "res://assets/external/polyhaven/namaqualand_boulder_02/textures/namaqualand_boulder_02_diff_4k.jpg"
 const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
 const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabinet/textures/painted_wooden_cabinet_diff_4k.jpg"
@@ -138,15 +137,11 @@ const POLY_RUBBER_BOOTS_MODEL := POLY_EQUIPMENT_DIR + "rubber_boots/rubber_boots
 const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_LIFE_JACKET_MODEL := POLY_EQUIPMENT_DIR + "life_jacket/life_jacket_1k.gltf"
-const POLY_VINTAGE_SUITCASE_MODEL := POLY_EQUIPMENT_DIR + "vintage_suitcase/vintage_suitcase_1k.gltf"
 const ROOT_GLB_DIR := "res://assets/external/realistic/root_glb/"
 const TEX_DIR := "res://assets/external/textures/"
 const TEX_PLASTER_DIFF := TEX_DIR + "plaster_brick_01/plaster_brick_01_diff_4k.jpg"
 const TEX_PLASTER_ROUGH := TEX_DIR + "plaster_brick_01/plaster_brick_01_rough_4k.jpg"
-const TEX_PLASTER_NOR := TEX_DIR + "plaster_brick_01/plaster_brick_01_nor_gl_4k.exr"
 const TEX_RUST_DIFF := TEX_DIR + "rusty_metal_03/rusty_metal_03_diff_4k.jpg"
-const TEX_RUST_ROUGH := TEX_DIR + "rusty_metal_03/rusty_metal_03_rough_4k.exr"
-const TEX_RUST_NOR := TEX_DIR + "rusty_metal_03/rusty_metal_03_nor_gl_4k.exr"
 const TEX_WOOD_FLOOR_DIFF := TEX_DIR + "wood_floor_deck/wood_floor_deck_diff_4k.jpg"
 const TEX_CONCRETE_DIFF := TEX_DIR + "concrete_floor_02/concrete_floor_02_diff_4k.jpg"
 const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
@@ -384,7 +379,11 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
-	player.stats.tick(delta, player.is_sprinting, day_cycle.get_cold_factor(), player.in_shelter)
+	var warmth := 0.0
+	if player.inventory != null and player.inventory.has_method("get_equipped_warmth"):
+		warmth = player.inventory.get_equipped_warmth()
+	player.stats.tick(delta, player.is_sprinting, day_cycle.get_ambient_temperature(), player.in_shelter, warmth)
+	_update_door_open_cache()
 	_update_water_night_amount()
 	_tick_world_actions(delta)
 	_tick_drink_hold(delta)
@@ -658,14 +657,31 @@ func _on_player_died() -> void:
 		await tw.finished
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+	# Dropping a whole wolf corpse spawns the wolf model lying on the ground
+	if item_name == "Lobo muerto":
+		var p := pos
+		p.y = 0.1
+		var drop_id := "wolf_drop_%d" % Time.get_ticks_msec()
+		var visual_name := "Pickup_" + drop_id
+		_try_instance_external_scene(["res://assets/external/wolf/WolfAnimated.glb"], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, 0.06)
+		_mark_world_action_visual(visual_name)
+		var action = _create_world_action(drop_id, "gut_wolf", "Lobo muerto", p, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+		action.set_meta("visual_name", visual_name)
+		action.set_meta("item_name", "Lobo muerto")
+		action.set_meta("item_type", "material")
+		action.set_meta("item_weight", 8.0)
+		action.set_meta("item_quantity", 1)
+		action.set_meta("item_use_value", 0.0)
+		action.set_meta("gutted", false)
+		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas"]
+	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival"]
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	if lay_flat:
 		rot.x += 90.0
@@ -696,6 +712,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"weapon":
 			return [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL, "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
 		"food":
+			if item_name == "Carne cruda de lobo":
+				return ["res://cc0_-_raw_meat_4.glb"]
 			return [ROOT_CANNED_FOOD_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
@@ -711,6 +729,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"clothing":
 			match item_name:
+				"Piel de lobo":
+					return ["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"]
 				"Botas de goma":
 					return [POLY_RUBBER_BOOTS_MODEL]
 				"Guantes de trabajo":
@@ -746,11 +766,11 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				"Botas militares":
 					return ["res://assets/characters/adapted/pickup_soldier_feet.glb"]
 				_:
-					return [POLY_VINTAGE_SUITCASE_MODEL]
+					return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 		"seed":
 			return [K_SURVIVAL + "grass.glb"]
 		_:
-			return [POLY_VINTAGE_SUITCASE_MODEL]
+			return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 
 func _get_drop_scale(item_name: String, item_type: String) -> float:
 	match item_type:
@@ -761,6 +781,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"weapon":
 			return 0.8
 		"food":
+			if item_name == "Carne cruda de lobo":
+				return 1.0
 			return 1.0
 		"backpack":
 			return 1.2
@@ -873,8 +895,8 @@ func _create_map() -> void:
 	print("TIME objectives+nav+wildlife+flush: %dms" % (Time.get_ticks_msec() - _tm))
 
 func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
-	_register_wildlife_blocker(origin, 8.2)
-	_create_label(label, origin + Vector3(0, 4.05, -4.65))
+	var blocker_idx := _register_wildlife_blocker(origin, 8.2)
+	#_create_label(label, origin + Vector3(0, 4.05, -4.65))
 	_create_house_overgrowth(origin, label)
 	_create_house_foundation(origin, label)
 	_create_house_floor(origin, label)
@@ -904,8 +926,15 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	# Door lintel: wall segment above the door gap (door is 2.55m tall, wall is 3.65m)
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, 2.55, 4.7), Vector3(3.0, 1.1, 0.35), Vector3.ZERO)
 	_create_house_details(origin, label)
+	if id_prefix == "house_1":
+		_create_house_interior(origin, label, id_prefix)
 	# Roof collision: flat box at wall top height to block player from jumping through roof
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, 3.65, 0), Vector3(11.4, 0.7, 9.4))
+	# Link door to wildlife blocker so wolves can enter when door is open
+	var door_node := get_node_or_null(label + " Door")
+	if door_node != null:
+		wildlife_blockers[blocker_idx]["door"] = door_node
+		wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
 
 func _create_house_foundation(origin: Vector3, label: String) -> void:
 	# Concrete skirting (perimeter beams) under the brick walls, so the houses
@@ -981,10 +1010,8 @@ func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: flo
 func _create_gas_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 10.5)
 	_register_wildlife_blocker(origin + Vector3(0.0, 0.0, 7.0), 6.8)
-	_create_label("Gasolinera", origin + Vector3(0, 3.3, 0))
+	#_create_label("Gasolinera", origin + Vector3(0, 3.3, 0))
 	if _try_instance_external_scene([REAL_GAS_STATION_MODEL], "RealGasStation", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16), [ROOT_RUSTY_CAR_MODEL])
-		_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09), [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box-large-open.glb"])
 		return
 	_create_static_box("GasStationFloor", origin, Vector3(9, 0.2, 6), Color(0.16, 0.14, 0.11))
 	_create_static_box("GasStationBack", origin + Vector3(0, 0, -3), Vector3(9, 2.6, 0.35), Color(0.27, 0.24, 0.19))
@@ -999,16 +1026,12 @@ func _create_gas_station(origin: Vector3) -> void:
 	_create_static_box("PumpB", origin + Vector3(2.5, 0, 7), Vector3(0.8, 1.8, 0.8), Color(0.36, 0.08, 0.06))
 	_create_static_box("GasStationCanopy", origin + Vector3(-0.4, 2.6, 7), Vector3(9.5, 0.25, 5.5), Color(0.19, 0.16, 0.12))
 	_create_static_box("GasStationSign", origin + Vector3(-5.8, 0, 4.7), Vector3(0.35, 3.4, 1.8), Color(0.39, 0.09, 0.06))
-	_create_loot_container("gas_car", "Coche abandonado", origin + Vector3(8, 0, 7), Vector3(2.4, 1.2, 4.0), Color(0.12, 0.16, 0.16), [ROOT_RUSTY_CAR_MODEL])
-	_create_loot_container("gas_crate", "Caja de gasolinera", origin + Vector3(-2, 0, -1), Vector3(1.2, 0.8, 1.0), Color(0.18, 0.13, 0.09), [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box-large-open.glb"])
 	_create_scrap_pile(origin + Vector3(-6.5, 0, -4.8))
 
 func _create_police_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 8.7)
-	_create_label("Comisaria", origin + Vector3(0, 3.5, 0))
+	#_create_label("Comisaria", origin + Vector3(0, 3.5, 0))
 	if _try_instance_external_scene([REAL_POLICE_STATION_MODEL], "RealPoliceStation", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17), [ROOT_FURNITURE_MODEL, K_SURVIVAL + "box-large-open.glb"])
-		_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09), [ROOT_BACKPACK_MODEL])
 		return
 	_create_static_box("PoliceFloor", origin, Vector3(10, 0.2, 7), Color(0.12, 0.13, 0.14))
 	_create_static_box("PoliceBack", origin + Vector3(0, 0, -3.5), Vector3(10, 3.0, 0.35), Color(0.18, 0.20, 0.22))
@@ -1021,15 +1044,12 @@ func _create_police_station(origin: Vector3) -> void:
 	_create_visual_box("PoliceWindowB", origin + Vector3(3.0, 1.45, 3.72), Vector3(1.25, 0.82, 0.06), Color(0.035, 0.045, 0.055), Vector3.ZERO)
 	_create_static_box("PoliceDesk", origin + Vector3(-1.2, 0, 0.8), Vector3(2.0, 0.8, 0.9), Color(0.13, 0.12, 0.10))
 	_create_static_box("PoliceBars", origin + Vector3(3.2, 0, -1.1), Vector3(0.25, 2.2, 2.6), Color(0.08, 0.09, 0.10))
-	_create_loot_container("police_locker", "Taquilla", origin + Vector3(-3, 0, -2), Vector3(1.0, 1.9, 0.65), Color(0.13, 0.16, 0.17), [ROOT_FURNITURE_MODEL, K_SURVIVAL + "box-large-open.glb"])
-	_create_loot_container("police_bag", "Mochila abandonada", origin + Vector3(2.3, 0, 1.7), Vector3(1.0, 0.75, 0.8), Color(0.10, 0.13, 0.09), [ROOT_BACKPACK_MODEL])
 
 func _create_radio_point(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 6.0)
 	_register_wildlife_blocker(origin + Vector3(3.6, 0.0, -1.5), 2.8)
-	_create_label("Punto de radio", origin + Vector3(0, 4.0, 0))
+	#_create_label("Punto de radio", origin + Vector3(0, 4.0, 0))
 	if _try_instance_external_scene([REAL_RADIO_POINT_MODEL], "RealRadioPoint", origin, Vector3.ONE, Vector3.ZERO):
-		_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10), [K_SURVIVAL + "box-open.glb", ROOT_JUNK_MODEL])
 		return
 	_create_static_box("RadioShedFloor", origin, Vector3(5, 0.2, 5), Color(0.11, 0.11, 0.10))
 	_create_static_box("RadioShedBack", origin + Vector3(0, 0, -2.5), Vector3(5, 2.4, 0.3), Color(0.17, 0.17, 0.15))
@@ -1038,12 +1058,10 @@ func _create_radio_point(origin: Vector3) -> void:
 	_create_static_box("RadioShedFrontA", origin + Vector3(-1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
 	_create_static_box("RadioShedFrontB", origin + Vector3(1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
 	_create_static_box("RadioMast", origin + Vector3(3.6, 0, -1.5), Vector3(0.35, 8, 0.35), Color(0.12, 0.12, 0.12))
-	_create_loot_container("radio_crate", "Caja tecnica", origin + Vector3(-1.3, 0, -1.2), Vector3(1.2, 0.75, 1.0), Color(0.10, 0.12, 0.10), [K_SURVIVAL + "box-open.glb", ROOT_JUNK_MODEL])
 
 func _create_new_world_props() -> void:
 	var car_s := Vector3.ONE * 0.013
 	var car_positions := [
-		{"pos": Vector3(-22.0, 0.0, -8.0), "rot": Vector3(0, 35, 0)},
 		{"pos": Vector3(33.0, 0.0, 2.0), "rot": Vector3(0, -60, 0)},
 		{"pos": Vector3(-48.0, 0.0, -32.0), "rot": Vector3(0, 110, 0)}
 	]
@@ -1138,7 +1156,7 @@ func _spawn_interaction_item(scene_path: String, pos: Vector3, rot: Vector3) -> 
 	add_child(node)
 
 func _create_survival_objectives() -> void:
-	_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
+	#_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
 	_create_world_action("cabin_site", "build_cabin", "Base de cabana", Vector3(-54, 0.02, 48), Vector3(3.8, 0.65, 3.0), Color(0.28, 0.22, 0.13), false, false)
 	_create_static_box_rotated("CabinFoundationLogsA", Vector3(-54, 0.12, 46.45), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CabinFoundationLogsB", Vector3(-54, 0.12, 49.55), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
@@ -1186,11 +1204,6 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_north", "fish", "Zona de pesca", Vector3(-35, 0.05, -57), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
-	_create_tool_pickup("axe_pickup", "axe_tool", "Hacha vieja", SURVIVAL_TOOL_MODELS["axe"], Vector3(-48.2, 0.05, 43.0), 0.9, Vector3(0, -25, 78))
-	_create_tool_pickup("hoe_pickup", "hoe_tool", "Azada vieja", SURVIVAL_TOOL_MODELS["hoe"], Vector3(-50.1, 0.05, 44.4), 0.9, Vector3(0, 32, 78))
-	_create_tool_pickup("shovel_pickup", "shovel_tool", "Pala vieja", SURVIVAL_TOOL_MODELS["shovel"], Vector3(-52.0, 0.05, 43.5), 0.9, Vector3(0, 12, 78))
-	_create_tool_pickup("hammer_pickup", "hammer_tool", "Martillo viejo", SURVIVAL_TOOL_MODELS["hammer"], Vector3(-49.0, 0.05, 46.1), 0.88, Vector3(0, -44, 82))
-	_create_tool_pickup("pickaxe_pickup", "pickaxe_tool", "Pico viejo", SURVIVAL_TOOL_MODELS["pickaxe"], Vector3(-53.2, 0.05, 45.3), 0.9, Vector3(0, 18, 82))
 	_create_backpack_pickup("small_backpack_pickup", Vector3(9.5, 0.05, 3.5))
 	_create_loose_survival_pickups()
 	for i in range(4):
@@ -1271,22 +1284,22 @@ func _create_wildlife() -> void:
 		Vector3(18, 0.0, 28)
 	])
 	_create_wildlife_animal("wolf", [
-		Vector3(18, 0.0, -8),
-		Vector3(22, 0.0, -12),
-		Vector3(20, 0.0, -4),
-		Vector3(16, 0.0, -2),
-		Vector3(14, 0.0, -6),
-		Vector3(18, 0.0, -10),
-		Vector3(20, 0.0, -6)
+		Vector3(25, 0.0, -15),
+		Vector3(28, 0.0, -20),
+		Vector3(22, 0.0, -10),
+		Vector3(30, 0.0, -18),
+		Vector3(26, 0.0, -25),
+		Vector3(20, 0.0, -22),
+		Vector3(28, 0.0, -12)
 	])
 	_create_wildlife_animal("wolf", [
-		Vector3(-8, 0.0, -10),
-		Vector3(-12, 0.0, -14),
-		Vector3(-10, 0.0, -6),
-		Vector3(-6, 0.0, -4),
-		Vector3(-4, 0.0, -8),
-		Vector3(-8, 0.0, -12),
-		Vector3(-10, 0.0, -8)
+		Vector3(-15, 0.0, 5),
+		Vector3(-10, 0.0, 12),
+		Vector3(-18, 0.0, 0),
+		Vector3(-8, 0.0, 8),
+		Vector3(-12, 0.0, -5),
+		Vector3(-5, 0.0, 15),
+		Vector3(-20, 0.0, 3)
 	])
 
 func _create_deer_pair(route: Array) -> void:
@@ -1324,12 +1337,6 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 func _create_loose_survival_pickups() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
-		{"id": "loose_water_0", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(26.4, 0.06, 21.5), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"], "color": Color(0.18, 0.32, 0.38)},
-		{"id": "loose_water_1", "name": "Botella de agua", "type": "water", "weight": 0.6, "qty": 1, "use": 38.0, "pos": Vector3(35.6, 0.06, -27.2), "paths": [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"], "color": Color(0.18, 0.32, 0.38)},
-		{"id": "loose_planks_0", "name": "Madera", "type": "resource", "weight": 0.65, "qty": 2, "use": 0.0, "pos": Vector3(-52.6, 0.06, 49.5), "paths": [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]], "color": Color(0.20, 0.12, 0.055)},
-		{"id": "loose_boots_0", "name": "Botas de goma", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.18, "pos": Vector3(-18.6, 0.06, -11.9), "paths": [POLY_RUBBER_BOOTS_MODEL], "scale": 0.85, "rot": Vector3(0, 25, 0), "color": Color(0.10, 0.12, 0.08)},
-		{"id": "loose_gloves_0", "name": "Guantes de trabajo", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.08, "pos": Vector3(-49.2, 0.06, 41.0), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.8, "rot": Vector3(0, -20, 0), "color": Color(0.18, 0.14, 0.06)},
-		{"id": "loose_hat_0", "name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "pos": Vector3(-34.2, 0.06, -55.1), "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 0.68, "rot": Vector3(0, 74, 0), "color": Color(0.20, 0.17, 0.11)},
 		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
 		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
@@ -1338,10 +1345,10 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.8, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(9.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": true, "color": Color(0.15, 0.18, 0.12)},
-		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(12.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": true, "color": Color(0.12, 0.14, 0.10)},
-		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.8, "rot": Vector3(0, 60, 0), "flat": true, "color": Color(0.10, 0.12, 0.08)},
-		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(12.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.8, "rot": Vector3(0, -50, 0), "flat": true, "color": Color(0.08, 0.09, 0.07)}
+		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(9.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
+		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(12.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
+		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.8, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
+		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(12.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.8, "rot": Vector3(0, -50, 0), "flat": false, "color": Color(0.08, 0.09, 0.07)},
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
@@ -1434,6 +1441,73 @@ func _hide_action_visual(action) -> void:
 
 func handle_world_action(action, actor) -> void:
 	match action.action_type:
+		"gut_wolf":
+			if action.get_meta("gutted", false):
+				actor.notice.emit("El lobo ya esta vacio.")
+				return
+			var has_knife := false
+			for it in actor.inventory.items:
+				if it != null and it.item_type == "weapon":
+					has_knife = true
+					break
+			if not has_knife:
+				actor.notice.emit("Necesitas un cuchillo para destripar.")
+				return
+			_play_actor_action(actor, "plant", 5.0)
+			action.set_meta("gutted", true)
+			# Spawn 5 meat pieces and 1 skin around the wolf
+			var wolf_pos: Vector3 = action.global_position
+			var meat_model := "res://cc0_-_raw_meat_4.glb"
+			for i in range(5):
+				var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
+				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+				var mpos := wolf_pos + offset
+				mpos.y = 0.06
+				var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+				var mvis := "Pickup_" + mid
+				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+				_mark_world_action_visual(mvis)
+				var maction = _create_world_action(mid, "wolf_meat_raw", "Carne cruda de lobo", mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+				maction.set_meta("visual_name", mvis)
+				maction.set_meta("item_name", "Carne cruda de lobo")
+				maction.set_meta("item_type", "food")
+				maction.set_meta("item_weight", 0.3)
+				maction.set_meta("item_quantity", 1)
+				maction.set_meta("item_use_value", 15.0)
+			# Spawn 1 skin
+			var spos := wolf_pos + Vector3(randf_range(-0.5, 0.5), 0.0, randf_range(-0.5, 0.5))
+			spos.y = 0.06
+			var sid := "gut_skin_%d" % Time.get_ticks_msec()
+			var svis := "Pickup_" + sid
+			_try_instance_external_scene(["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"], svis, spos, Vector3.ONE * 0.4, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+			_mark_world_action_visual(svis)
+			var saction = _create_world_action(sid, "pickup_item", "Piel de lobo", spos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+			saction.set_meta("visual_name", svis)
+			saction.set_meta("item_name", "Piel de lobo")
+			saction.set_meta("item_type", "clothing")
+			saction.set_meta("item_weight", 0.8)
+			saction.set_meta("item_quantity", 1)
+			saction.set_meta("item_use_value", 0.3)
+			actor.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
+			_save_world_change_silent()
+			# Hide the wolf corpse after the 5-second animation finishes
+			var action_ref: Node = action
+			var t := get_tree().create_timer(5.0)
+			t.timeout.connect(func():
+				_hide_action_visual(action_ref)
+				action_ref.mark_depleted()
+				_save_world_change_silent()
+			)
+			return
+		"wolf_meat_raw":
+			var meat_item = ItemScript.create(
+				str(action.get_meta("item_name")),
+				str(action.get_meta("item_type")),
+				float(action.get_meta("item_weight")),
+				int(action.get_meta("item_quantity")),
+				float(action.get_meta("item_use_value"))
+			)
+			_finish_pickup_action(action, actor, meat_item, "Recoges %s." % meat_item.item_name)
 		"pickup_item":
 			var item = ItemScript.create(
 				str(action.get_meta("item_name")),
@@ -1485,7 +1559,6 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("Necesitas el cuchillo para preparar el pez.")
 				return
 			_play_actor_action(actor, "fish", 1.6)
-			actor.stats.energy = max(0.0, actor.stats.energy - 6.0)
 			if randf() < 0.72:
 				if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
 					_equip_actor_item(actor, "Pez crudo")
@@ -1500,11 +1573,7 @@ func handle_world_action(action, actor) -> void:
 			_drink_hold_timer = 0.0
 			actor.notice.emit("Mantén E para beber...")
 		"hunt":
-			if actor.stats.energy < 14.0:
-				actor.notice.emit("Estas demasiado cansado para cazar.")
-				return
 			_play_actor_action(actor, "interact", 1.0)
-			actor.stats.energy = max(0.0, actor.stats.energy - 14.0)
 			if randf() < 0.48:
 				if actor.inventory.add_item(ItemScript.create("Carne cruda", "food", 0.75, 1, 30.0)):
 					_equip_actor_item(actor, "Carne cruda")
@@ -1541,16 +1610,12 @@ func handle_world_action(action, actor) -> void:
 			if not actor.inventory.has_item_name("Hacha"):
 				actor.notice.emit("Necesitas un hacha para talar este arbol.")
 				return
-			if actor.stats.energy < 10.0:
-				actor.notice.emit("Estas demasiado cansado para talar.")
-				return
 			_play_actor_action(actor, "chop", 1.1)
 			if audio_system != null and audio_system.has_method("play_chop_at"):
 				audio_system.play_chop_at(action.position)
 			if not actor.inventory.add_item(ItemScript.create("Tronco", "resource", 1.2, 3, 0.0)):
 				return
 			_equip_actor_item(actor, "Tronco")
-			actor.stats.energy = max(0.0, actor.stats.energy - 10.0)
 			_hide_action_visual(action)
 			actor.inventory.add_item(ItemScript.create("Madera", "resource", 0.65, 1, 0.0))
 			if randf() < 0.45:
@@ -1597,6 +1662,41 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
+		"gut_wolf":
+			if action.get_meta("gutted", false):
+				actor.notice.emit("El lobo ya esta vacio, no hay nada que coger.")
+				return
+			var has_backpack := false
+			if actor.get("equipped_backpack") != null and not str(actor.get("equipped_backpack")).is_empty():
+				has_backpack = true
+			if not has_backpack:
+				for it in actor.inventory.items:
+					if it != null and (it.item_type == "backpack" or it.item_name == "Mochila pequena"):
+						has_backpack = true
+						break
+			if not has_backpack:
+				actor.notice.emit("Necesitas una mochila para cargar el lobo entero.")
+				return
+			var wolf_item = ItemScript.create("Lobo muerto", "material", 8.0, 1, 0.0)
+			_play_actor_action(actor, "pickup", 0.8)
+			if not actor.inventory.add_item(wolf_item):
+				actor.notice.emit("No puedes cargar con el lobo, demasiado peso.")
+				return
+			actor.notice.emit("Coges el lobo entero.")
+			_hide_action_visual(action)
+			action.mark_depleted()
+			_save_world_change_silent()
+		"wolf_meat_raw":
+			_play_actor_action(actor, "plant", 3.0)
+			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
+			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
+			if actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(60.0)
+			actor.stats.changed.emit()
+			actor.notice.emit("Comes carne cruda de lobo. Te sientes mal del estomago.")
+			_hide_action_visual(action)
+			action.mark_depleted()
+			_save_world_change_silent()
 		"pickup_item":
 			var item = ItemScript.create(
 				str(action.get_meta("item_name")),
@@ -1639,7 +1739,6 @@ func _handle_farm_plot(action, actor) -> void:
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
 				return
 			_play_actor_action(actor, "plant", 1.35)
-			actor.stats.energy = max(0.0, actor.stats.energy - 5.0)
 			action.set_crop_state("planted", 0.0)
 			actor.notice.emit("Plantas semillas. Vuelve cuando hayan crecido.")
 			_save_world_change_silent()
@@ -1796,6 +1895,9 @@ func get_structures_for_minimap() -> Array:
 		{"pos": Vector3(-42, 0, -42), "color": Color(0.3, 0.5, 0.6)},
 		{"pos": Vector3(-54, 0, 48), "color": Color(0.4, 0.3, 0.2)}
 	]
+
+func get_day_cycle():
+	return day_cycle
 
 func get_river_depth_at(world_pos: Vector3) -> float:
 	for segment in river_segments_data:
@@ -2225,7 +2327,68 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " PeeledPlasterFrontB", origin + Vector3(3.05, 1.35, 3.955), Vector3(1.1, 1.25, 0.06), Color(0.115, 0.105, 0.08), Vector3(0, 0, 0))
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
-	pass
+	var fire_pos := origin + Vector3(0, 0.15, 0)
+	_try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], label + " Campfire", fire_pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
+	_create_campfire_fire(fire_pos + Vector3(0, 0.3, 0), label + " Fire")
+
+func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
+	# Point light for warm glow
+	var light := OmniLight3D.new()
+	light.name = node_name + "Light"
+	light.position = pos
+	light.light_color = Color(1.0, 0.65, 0.25)
+	light.light_energy = 3.0
+	light.omni_range = 8.0
+	light.omni_attenuation = 1.2
+	light.shadow_enabled = true
+	add_child(light)
+	# Fire particles with billboard planes
+	var particles := GPUParticles3D.new()
+	particles.name = node_name + "Particles"
+	particles.position = pos
+	particles.amount = 60
+	particles.lifetime = 0.6
+	particles.explosiveness = 0.4
+	particles.randomness = 0.6
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 8.0
+	mat.initial_velocity_min = 1.0
+	mat.initial_velocity_max = 2.5
+	mat.gravity = Vector3(0, 1.0, 0)
+	mat.scale_min = 0.15
+	mat.scale_max = 0.4
+	mat.color = Color(1.0, 0.6, 0.15, 1.0)
+	mat.color_ramp = _make_fire_ramp()
+	particles.process_material = mat
+	# Billboard plane with radial gradient flame texture
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(0.3, 0.3)
+	quad.orientation = PlaneMesh.FACE_Y
+	var fire_mat := StandardMaterial3D.new()
+	fire_mat.albedo_color = Color(1.0, 0.5, 0.1, 1.0)
+	fire_mat.emission_enabled = true
+	fire_mat.emission = Color(1.0, 0.55, 0.12)
+	fire_mat.emission_energy_multiplier = 4.0
+	fire_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	fire_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fire_mat.no_depth_test = true
+	fire_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	fire_mat.billboard_keep_scale = true
+	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	quad.material = fire_mat
+	particles.draw_pass_1 = quad
+	add_child(particles)
+
+func _make_fire_ramp() -> GradientTexture1D:
+	var grad := Gradient.new()
+	grad.add_point(0.0, Color(1.0, 0.9, 0.3, 1.0))
+	grad.add_point(0.3, Color(1.0, 0.5, 0.1, 0.9))
+	grad.add_point(0.7, Color(0.8, 0.15, 0.02, 0.5))
+	grad.add_point(1.0, Color(0.2, 0.05, 0.0, 0.0))
+	var tex := GradientTexture1D.new()
+	tex.gradient = grad
+	return tex
 
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
 	pass
@@ -2241,14 +2404,6 @@ func _create_house_bedroom(origin: Vector3, label: String) -> void:
 
 func _create_house_warehouse(origin: Vector3, label: String) -> void:
 	pass
-
-func _create_simple_chair(node_name: String, pos: Vector3, yaw: float) -> void:
-	_create_visual_box(node_name + " Seat", pos + Vector3(0, 0.42, 0), Vector3(0.48, 0.12, 0.44), Color(0.16, 0.09, 0.04), Vector3(0, yaw, 0))
-	_create_visual_box(node_name + " Back", pos + Vector3(0, 0.78, -0.18), Vector3(0.50, 0.60, 0.10), Color(0.13, 0.075, 0.035), Vector3(0, yaw, -3))
-	_create_visual_box(node_name + " LegA", pos + Vector3(-0.18, 0.22, -0.15), Vector3(0.07, 0.40, 0.07), Color(0.10, 0.055, 0.025), Vector3(0, yaw, 0))
-	_create_visual_box(node_name + " LegB", pos + Vector3(0.18, 0.22, -0.15), Vector3(0.07, 0.40, 0.07), Color(0.10, 0.055, 0.025), Vector3(0, yaw, 0))
-	_create_visual_box(node_name + " LegC", pos + Vector3(-0.18, 0.22, 0.15), Vector3(0.07, 0.40, 0.07), Color(0.10, 0.055, 0.025), Vector3(0, yaw, 0))
-	_create_visual_box(node_name + " LegD", pos + Vector3(0.18, 0.22, 0.15), Vector3(0.07, 0.40, 0.07), Color(0.10, 0.055, 0.025), Vector3(0, yaw, 0))
 
 func _create_road_checkpoint(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 5.7)
@@ -2442,7 +2597,7 @@ func _create_scrap_pile(pos: Vector3) -> void:
 
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
-	_create_label("Campamento abandonado", pos + Vector3(0, 2.1, 0))
+	#_create_label("Campamento abandonado", pos + Vector3(0, 2.1, 0))
 	_spawn_external(K_SURVIVAL + "tent-canvas.glb", "KCampTent", pos + Vector3(-1.1, 0, 0.6), Vector3.ONE * 1.2, Vector3(0, -25, 0), Vector3(2.3, 1.6, 2.2))
 	_spawn_external(K_SURVIVAL + "bedroll.glb", "KCampBedroll", pos + Vector3(1.0, 0, 0.8), Vector3.ONE, Vector3(0, 18, 0), Vector3(1.8, 0.25, 0.8))
 	_spawn_external(K_SURVIVAL + "campfire-pit.glb", "KCampfirePit", pos + Vector3(0.9, 0, -0.8), Vector3.ONE, Vector3(0, 0, 0), Vector3(0.9, 0.2, 0.9))
@@ -2453,7 +2608,6 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	_create_static_box("CampBedroll", pos + Vector3(-0.8, 0, 0.3), Vector3(1.8, 0.18, 0.75), Color(0.17, 0.18, 0.13))
 	_create_static_cylinder("CampFireRingA", pos + Vector3(0.9, 0, -0.8), 0.48, 0.08, Color(0.05, 0.045, 0.04))
 	_create_visual_box("CampColdAsh", pos + Vector3(0.9, 0.08, -0.8), Vector3(0.55, 0.025, 0.35), Color(0.09, 0.085, 0.075), Vector3(0, 25, 0))
-	_create_loot_container("camp_backpack", "Mochila abandonada", pos + Vector3(1.6, 0, -0.2), Vector3(0.9, 0.65, 0.75), Color(0.08, 0.12, 0.07), [ROOT_BACKPACK_MODEL])
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
@@ -2514,37 +2668,112 @@ func is_wildlife_allowed_at(pos: Vector3) -> bool:
 		return false
 	return true
 
+func _is_inside_closed_house(pos: Vector3) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	for blocker in wildlife_blockers:
+		var door = blocker.get("door", null)
+		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		if not door_is_open and blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			if bounds.has_point(p):
+				return true
+	return false
+
 func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 	var push := Vector3.ZERO
 	var p := Vector2(pos.x, pos.z)
 	for blocker in wildlife_blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var door = blocker.get("door", null)
+		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		# When a house door is closed, push wolf toward house center if near bounds edge
+		if not door_is_open and blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			var expanded := bounds.grow(2.5)
+			if expanded.has_point(p) and not bounds.has_point(p):
+				var center := bounds.get_center()
+				push += Vector3(center.x - p.x, 0.0, center.y - p.y).normalized()
+			continue
 		var radius := float(blocker.get("radius", 1.8)) + 2.1
 		var offset := p - Vector2(blocker_pos.x, blocker_pos.z)
 		var distance := offset.length()
 		if distance <= 0.001:
 			push += Vector3.RIGHT * radius
 		elif distance < radius:
+			if door_is_open:
+				var local_x := pos.x - blocker_pos.x
+				var local_z := pos.z - blocker_pos.z
+				if abs(local_x) <= 3.0 and local_z >= -5.5 and local_z <= 10.0:
+					continue
 			var strength := (radius - distance) / radius
 			push += Vector3(offset.x, 0.0, offset.y).normalized() * strength
 	if push.length() > 0.01:
 		return push.normalized()
 	return Vector3.ZERO
 
-func _register_wildlife_blocker(pos: Vector3, radius := 1.8) -> void:
+func _register_wildlife_blocker(pos: Vector3, radius := 1.8) -> int:
+	var idx := wildlife_blockers.size()
 	wildlife_blockers.append({
 		"pos": Vector3(pos.x, 0.0, pos.z),
-		"radius": radius
+		"radius": radius,
+		"door": null
 	})
+	return idx
 
 func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 	var p := Vector2(pos.x, pos.z)
 	for blocker in wildlife_blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var door = blocker.get("door", null)
+		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		# When a house door is closed, use rectangular bounds to trap wolves inside
+		if not door_is_open and blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			var expanded_bounds := bounds.grow(2.0)
+			if expanded_bounds.has_point(p):
+				return true
+			continue
 		var radius := float(blocker.get("radius", 1.8)) + extra_margin
 		if p.distance_to(Vector2(blocker_pos.x, blocker_pos.z)) <= radius:
+			if door_is_open:
+				var local_x := pos.x - blocker_pos.x
+				var local_z := pos.z - blocker_pos.z
+				if abs(local_x) <= 3.0 and local_z >= -5.5 and local_z <= 10.0:
+					continue
 			return true
 	return false
+
+func _is_in_doorway_passage(pos: Vector3, house_origin: Vector3) -> bool:
+	var local_x := pos.x - house_origin.x
+	var local_z := pos.z - house_origin.z
+	if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 5.2:
+		return true
+	return false
+
+func _update_door_open_cache() -> void:
+	_door_open_cache.clear()
+	for blocker in wildlife_blockers:
+		var door = blocker.get("door", null)
+		if door == null or not is_instance_valid(door):
+			continue
+		if door.get("is_open") != true:
+			continue
+		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var radius: float = float(blocker.get("radius", 1.8))
+		var center_cell := _world_to_grid(blocker_pos)
+		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
+		for dx in range(-cell_radius, cell_radius + 1):
+			for dy in range(-cell_radius, cell_radius + 1):
+				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
+				if cell.x < 0 or cell.x >= _nav_grid_size or cell.y < 0 or cell.y >= _nav_grid_size:
+					continue
+				if not _nav_grid.has(cell):
+					continue
+				var world_pos := _grid_to_world(cell)
+				var local_x := world_pos.x - blocker_pos.x
+				var local_z := world_pos.z - blocker_pos.z
+				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
+					_door_open_cache[cell] = true
 
 func _create_ground_clutter() -> void:
 	for i in range(360):
@@ -2693,10 +2922,10 @@ func _create_clouds() -> void:
 		_create_cloud_billboard(base, _shuffled_paths(cloud_textures), randf_range(15.0, 28.0), randf_range(6.0, 12.0), randf_range(0, 180))
 
 func _create_forest() -> void:
-	_create_label("Bosque", Vector3(-48, 2.2, 20))
-	_create_label("Bosque denso norte", Vector3(40, 2.2, -55))
-	_create_label("Bosque frondoso este", Vector3(60, 2.2, 0))
-	_create_label("Bosque sur", Vector3(-30, 2.2, -55))
+	#_create_label("Bosque", Vector3(-48, 2.2, 20))
+	#_create_label("Bosque denso norte", Vector3(40, 2.2, -55))
+	#_create_label("Bosque frondoso este", Vector3(60, 2.2, 0))
+	#_create_label("Bosque sur", Vector3(-30, 2.2, -55))
 	for i in range(320):
 		var x := randf_range(-72, -12)
 		var z := randf_range(-4, 70)
@@ -4347,7 +4576,11 @@ func _build_nav_grid() -> void:
 func is_nav_cell_blocked(cell: Vector2i) -> bool:
 	if cell.x < 1 or cell.x >= _nav_grid_size - 1 or cell.y < 1 or cell.y >= _nav_grid_size - 1:
 		return true
-	return _nav_grid.has(cell)
+	if not _nav_grid.has(cell):
+		return false
+	if _door_open_cache.has(cell):
+		return false
+	return true
 
 func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
 	if not _nav_grid_built:

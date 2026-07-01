@@ -31,9 +31,7 @@ const AXE_CHOP_PATHS := [
 	"res://assets/external/audio/wood_chop.wav"
 ]
 const FOREST_BIRD_PATHS := [
-	"res://assets/external/audio/downloaded/forest_birds_loop.mp3",
-	"res://assets/external/audio/downloaded/deer_sound_orange.mp3",
-	"res://assets/external/audio/animal_deer_call.wav"
+	"res://assets/external/audio/downloaded/forest_birds_loop.mp3"
 ]
 const ANIMAL_DEER_PATHS := [
 	"res://assets/external/audio/downloaded/deer_sound_orange.mp3",
@@ -51,8 +49,7 @@ const ANIMAL_FOX_PATHS := [
 ]
 const ANIMAL_WOLF_PATHS := [
 	"res://assets/external/audio/downloaded/wolf_howl.wav",
-	"res://assets/external/audio/downloaded/wolf_growl.wav",
-	"res://assets/external/audio/downloaded/wolf_attack.wav"
+	"res://assets/external/audio/downloaded/wolf_growl.wav"
 ]
 
 const FOOTSTEP_GRASS_PATHS := [

@@ -77,6 +77,12 @@ func get_interaction_text(_player = null) -> String:
 			_:
 				return "%s plantar semillas - E" % display_name
 	match action_type:
+		"gut_wolf":
+			if get_meta("gutted", false):
+				return "Lobo vacio"
+			return "Destripar lobo - E (cuchillo) | Coger - C (mochila)"
+		"wolf_meat_raw":
+			return "Carne cruda de lobo - [E] Recoger | [C] Comer (cruda)"
 		"fell_tree":
 			return "%s - talar con hacha - E" % display_name
 		"build_cabin":

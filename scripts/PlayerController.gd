@@ -33,7 +33,8 @@ const CLOTHING_VISUALS := {
 	"Chaleco tactico": {"path": ROOT_VEST_MODEL, "frac_y": 0.70, "size": 0.30, "yaw": 0.0, "forward": 0.05},
 	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.96, "size": 0.12, "yaw": 0.0, "align": "bottom"},
 	"Botas de goma": {"path": POLY_RUBBER_BOOTS_MODEL, "frac_y": 0.0, "size": 0.20, "yaw": 0.0, "align": "bottom", "strip": ["dirty", "dirt"]},
-	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2}
+	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
+	"Piel de lobo": {"path": "res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb", "frac_y": 0.55, "size": 0.25, "yaw": 0.0, "forward": 0.05}
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
 # Loaded first so the deformable survival garments are available to wear.
@@ -91,6 +92,7 @@ const CLOTHING_SLOTS := {
 	"Botas de goma": "feet",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
+	"Piel de lobo": "torso",
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
@@ -114,6 +116,7 @@ const THIRD_PERSON_PLANT_ANIMATION_SOURCE := "res://plantar.glb"
 const THIRD_PERSON_GATHER_ANIMATION_SOURCE := "res://recoger.glb"
 const THIRD_PERSON_FISH_ANIMATION_SOURCE := "res://Fishing Cast.glb"
 const THIRD_PERSON_INTERACT_ANIMATION_SOURCE := "res://coger.glb"
+const THIRD_PERSON_ATTACK_ANIMATION_SOURCE := "res://pegar.glb"
 const THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE := "res://malo.glb"
 const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://muerto.glb"
 const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://saltar.glb"
@@ -129,6 +132,7 @@ const THIRD_PERSON_EXTERNAL_PLANT_ANIMATION := "PlantExternal"
 const THIRD_PERSON_EXTERNAL_GATHER_ANIMATION := "GatherExternal"
 const THIRD_PERSON_EXTERNAL_FISH_ANIMATION := "FishExternal"
 const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
+const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -168,6 +172,7 @@ var audio_listener: AudioListener3D
 var raycast
 var flashlight: SpotLight3D
 var body_mesh: MeshInstance3D
+var _collision_shape: CollisionShape3D
 var third_person_model: Node3D
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
@@ -194,6 +199,7 @@ var third_person_plant_animation := ""
 var third_person_gather_animation := ""
 var third_person_fish_animation := ""
 var third_person_interact_animation := ""
+var third_person_attack_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -203,9 +209,12 @@ var _fall_height := 0.0
 var _max_fall_height := 0.0
 var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
+var _pain_audio_player: AudioStreamPlayer = null
+var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
+var _attack_cooldown := 0.0
 var is_jumping := false
 var _jump_velocity := 0.0
 var _jump_animation_timer := 0.0
@@ -270,6 +279,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.pressed:
 		_capture_mouse()
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_melee_attack()
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
@@ -568,7 +579,8 @@ func _wear_clothing_visual(item_name: String) -> void:
 	var body := _baked_aabb(parent, true)
 	if body.size.y <= 0.001:
 		return
-	var node := _load_external_node3d(str(cfg["path"]))
+	var node: Node3D = null
+	node = _load_external_node3d(str(cfg["path"]))
 	if node == null:
 		return
 	node.name = worn_name
@@ -591,6 +603,16 @@ func _wear_clothing_visual(item_name: String) -> void:
 		item_center.y = item.position.y
 	node.position += anchor - item_center
 	node.position += cfg.get("offset", Vector3.ZERO)
+	if cfg.has("tint"):
+		var tint: Color = cfg["tint"]
+		var meshes: Array = []
+		_collect_mesh_instances(node, meshes)
+		for mi in meshes:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = tint
+			mat.roughness = 0.9
+			mat.metallic = 0.0
+			mi.material_override = mat
 
 # Body AABB collected directly from get_aabb() without going through
 # global_transform.  This is correct for Mixamo GLTF models because the
@@ -759,7 +781,24 @@ func _get_carry_weight_ratio() -> float:
 	var current: float = inventory.get_total_weight()
 	return clamp(current / inventory.max_weight, 0.0, 1.0)
 
+func _update_crouch_collision() -> void:
+	if _collision_shape == null:
+		return
+	var capsule := _collision_shape.shape as CapsuleShape3D
+	if capsule == null:
+		return
+	# Keep capsule bottom at fixed Y (0.025) so player doesn't float when crouching on objects
+	var bottom_y := 0.025
+	if is_crouching:
+		capsule.height = 1.1
+		_collision_shape.position.y = bottom_y + 0.55
+	else:
+		capsule.height = 1.75
+		_collision_shape.position.y = bottom_y + 0.875
+
 func _physics_process(delta: float) -> void:
+	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
+	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if is_dead:
 		is_sprinting = false
 		is_crouching = false
@@ -775,9 +814,15 @@ func _physics_process(delta: float) -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
 	is_crouching = Input.is_action_pressed("crouch")
+	_update_crouch_collision()
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
 	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
+	# Lock movement while attacking
+	if third_person_action_timer > 0.0 and third_person_action_animation == third_person_attack_animation:
+		direction = Vector3.ZERO
+		speed = 0.0
+		is_sprinting = false
 	if is_sprinting:
 		stats.energy = max(0.0, stats.energy - (3.0 + carry * 7.0) * delta)
 		stats.changed.emit()
@@ -817,8 +862,9 @@ func _physics_process(delta: float) -> void:
 			_max_fall_height = 0.0
 			velocity.y = 0.0
 	else:
-		velocity.y = 0.0
+		velocity.y = -1.0
 		move_and_slide()
+		velocity.y = 0.0
 
 	_update_walk_motion(delta, input_dir.length())
 	_update_interaction_prompt()
@@ -868,16 +914,25 @@ func _update_water_state(delta: float) -> void:
 	is_in_water = river_depth > 0.02
 	if is_in_water:
 		wetness = min(1.0, wetness + delta * (0.38 + river_depth * 0.55))
+		stats.wetness = wetness
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + river_depth))
-		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.010 * (0.5 + wetness + river_depth))
+		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + river_depth))
 		stats.changed.emit()
 		if _water_notice_cooldown <= 0.0:
 			notice.emit("Te mojas. La ropa fria te roba calor.")
 			_water_notice_cooldown = 8.0
 	else:
-		wetness = max(0.0, wetness - delta * 0.035)
-		if wetness > 0.25:
-			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.004 * wetness)
+		var ambient: float = 12.0
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("get_day_cycle"):
+			var dc = scene.call("get_day_cycle")
+			if dc != null and dc.has_method("get_ambient_temperature"):
+				ambient = float(dc.call("get_ambient_temperature"))
+		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008
+		wetness = max(0.0, wetness - delta * dry_rate)
+		stats.wetness = wetness
+		if wetness > 0.05:
+			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.008 * wetness)
 			stats.changed.emit()
 
 func _query_river_depth() -> float:
@@ -887,13 +942,13 @@ func _query_river_depth() -> float:
 	return 0.0
 
 func _create_body() -> void:
-	var collision := CollisionShape3D.new()
+	_collision_shape = CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.35
 	capsule.height = 1.75
-	collision.shape = capsule
-	collision.position.y = 0.9
-	add_child(collision)
+	_collision_shape.shape = capsule
+	_collision_shape.position.y = 0.9
+	add_child(_collision_shape)
 
 	var mesh := MeshInstance3D.new()
 	var capsule_mesh := CapsuleMesh.new()
@@ -1100,6 +1155,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_GATHER_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_GATHER_ANIMATION)
 	_import_external_animation(THIRD_PERSON_FISH_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_FISH_ANIMATION)
 	_import_external_animation(THIRD_PERSON_INTERACT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION)
+	_import_external_animation(THIRD_PERSON_ATTACK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION)
 	_import_external_animation(THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION)
 	_import_external_animation(THIRD_PERSON_DYING_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DYING_ANIMATION)
 	_import_external_animation(THIRD_PERSON_JUMP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_ANIMATION)
@@ -1145,6 +1201,11 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		third_person_fish_animation = "external/" + THIRD_PERSON_EXTERNAL_FISH_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION):
 		third_person_interact_animation = "external/" + THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION):
+		third_person_attack_animation = "external/" + THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
+		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
+		if atk_anim != null:
+			atk_anim.loop_mode = Animation.LOOP_NONE
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION):
 		third_person_low_health_animation = "external/" + THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_DYING_ANIMATION):
@@ -2023,9 +2084,114 @@ func apply_damage(amount: float) -> void:
 	stats.health = max(0.0, stats.health - amount)
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
+	_play_pain_sound()
+	_spawn_blood_splatter()
 	if stats.health <= 0.0 and not stats.dead:
 		stats.dead = true
 		stats.died.emit()
+
+func _melee_attack() -> void:
+	if is_dead or _attack_cooldown > 0.0:
+		return
+	if stats.energy < 5.0:
+		notice.emit("Estas demasiado cansado para atacar.")
+		return
+	# Play attack animation
+	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
+		third_person_action_animation = third_person_attack_animation
+		third_person_action_timer = 0.8
+		third_person_animation_player.play(third_person_attack_animation, 0.08)
+	# Determine if holding knife for bonus damage
+	var has_knife := false
+	if inventory != null and not inventory.items.is_empty():
+		var held = inventory.items[held_index]
+		if held != null and held.item_type == "weapon":
+			has_knife = true
+	var energy_cost := 4.0 if has_knife else 8.0
+	stats.energy = max(0.0, stats.energy - energy_cost)
+	stats.changed.emit()
+	_attack_cooldown = 0.7 if has_knife else 1.0
+	# Damage nearby wildlife
+	var base_damage := 25.0 if has_knife else 10.0
+	var attack_range := 3.0
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if not (node is Node3D) or not is_instance_valid(node):
+			continue
+		var animal := node as Node3D
+		if animal == self:
+			continue
+		var dist := global_position.distance_to(animal.global_position)
+		if dist > attack_range:
+			continue
+		# Only hit animals in front of the player
+		var to_animal := (animal.global_position - global_position).normalized()
+		var forward := -global_transform.basis.z.normalized()
+		if forward.dot(to_animal) < 0.3:
+			continue
+		if animal.has_method("take_damage"):
+			animal.take_damage(base_damage, has_knife)
+
+func _spawn_blood_splatter() -> void:
+	var particles := GPUParticles3D.new()
+	particles.name = "BloodSplatter"
+	particles.amount = 60
+	particles.lifetime = 1.2
+	particles.explosiveness = 1.0
+	particles.randomness = 1.0
+	particles.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 60.0
+	mat.initial_velocity_min = 4.0
+	mat.initial_velocity_max = 9.0
+	mat.gravity = Vector3(0, -15.0, 0)
+	mat.scale_min = 0.08
+	mat.scale_max = 0.15
+	mat.color = Color(0.6, 0.02, 0.02, 1.0)
+	mat.hue_variation_min = -0.03
+	mat.hue_variation_max = 0.03
+	particles.process_material = mat
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.08
+	sphere.height = 0.16
+	var blood_mat := StandardMaterial3D.new()
+	blood_mat.albedo_color = Color(0.6, 0.02, 0.02)
+	blood_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	blood_mat.no_depth_test = true
+	sphere.material = blood_mat
+	particles.draw_pass_1 = sphere
+	get_tree().current_scene.add_child(particles)
+	particles.global_position = global_position + Vector3(0, 1.2, 0)
+	particles.emitting = true
+	get_tree().create_timer(2.5).timeout.connect(func(): particles.queue_free())
+
+func _play_pain_sound() -> void:
+	if _pain_sound_timer > 0.0:
+		return
+	_pain_sound_timer = 1.5
+	if _pain_audio_player == null:
+		_pain_audio_player = AudioStreamPlayer.new()
+		_pain_audio_player.name = "PainSound"
+		add_child(_pain_audio_player)
+	var paths := [
+		"res://assets/external/audio/downloaded/pain1.wav",
+		"res://assets/external/audio/downloaded/pain2.wav",
+		"res://assets/external/audio/downloaded/pain3.wav"
+	]
+	var path: String = paths[randi() % paths.size()]
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null:
+		return
+	_pain_audio_player.stream = stream
+	_pain_audio_player.volume_db = 3.0
+	_pain_audio_player.pitch_scale = randf_range(0.85, 1.15)
+	_pain_audio_player.play()
 
 func to_dict() -> Dictionary:
 	return {

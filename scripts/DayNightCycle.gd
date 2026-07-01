@@ -27,11 +27,11 @@ func is_night() -> bool:
 	return time_of_day < 6.0 or time_of_day >= 20.0
 
 func get_cold_factor() -> float:
-	if is_night():
-		return 9.0
-	if time_of_day < 8.0 or time_of_day > 18.5:
-		return 3.6
-	return 0.5
+	return get_ambient_temperature()
+
+func get_ambient_temperature() -> float:
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
+	return lerp(2.0, 22.0, day_amount)
 
 func get_hour_text() -> String:
 	var hour := int(floor(time_of_day))

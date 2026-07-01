@@ -45,15 +45,23 @@ func use_index(index: int, stats) -> bool:
 	var item = items[index]
 	match item.item_type:
 		"food":
+			if item.item_name == "Carne cruda de lobo":
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has_method("get_sick"):
+					stats.get_sick(60.0)
+				stats.changed.emit()
+				item_used.emit("Comes carne cruda de lobo. Te sientes mal del estomago.")
+				remove_index(index)
+				return true
 			stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-			stats.health = min(stats.max_health, stats.health + max(1.0, item.use_value * 0.12))
+			stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
 			item_used.emit("Comida consumida. Te recuperas un poco.")
 			remove_index(index)
 			return true
 		"water":
 			stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
 			if stats.thirst > 35.0:
-				stats.health = min(stats.max_health, stats.health + max(0.5, item.use_value * 0.04))
+				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
 			item_used.emit("Agua bebida.")
 			remove_index(index)
 			return true

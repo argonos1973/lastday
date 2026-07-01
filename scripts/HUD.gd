@@ -5,6 +5,9 @@ const MiniMapScript = preload("res://scripts/MiniMap.gd")
 
 var player
 var day_cycle
+var _damage_overlay: ColorRect = null
+var _damage_flash: float = 0.0
+var _prev_health: float = 100.0
 
 var root: Control
 var status_panel: PanelContainer
@@ -50,6 +53,7 @@ func _process(delta: float) -> void:
 	if player == null:
 		return
 	_update_stats()
+	_update_damage_overlay(delta)
 	if inventory_visible:
 		_inv_refresh_timer += delta
 		if _inv_refresh_timer >= 0.5 and selected_slot_index < 0:
@@ -138,7 +142,6 @@ func _build_status_panel() -> void:
 	_create_status_bar(box, "health", "SALUD", Color(0.62, 0.10, 0.08))
 	_create_status_bar(box, "hunger", "COMIDA", Color(0.62, 0.48, 0.15))
 	_create_status_bar(box, "thirst", "AGUA", Color(0.18, 0.42, 0.66))
-	_create_status_bar(box, "energy", "ENERGIA", Color(0.72, 0.70, 0.46))
 	_create_status_bar(box, "cold", "FRIO", Color(0.30, 0.58, 0.78))
 	_build_stamina_bar()
 
@@ -195,8 +198,6 @@ func _status_icon_text(key: String) -> String:
 			return "FO"
 		"thirst":
 			return "WA"
-		"energy":
-			return "EN"
 		"cold":
 			return "T"
 		_:
@@ -330,6 +331,13 @@ func _build_center_messages() -> void:
 	crosshair_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(crosshair_dot)
 
+	_damage_overlay = ColorRect.new()
+	_damage_overlay.position = Vector2.ZERO
+	_damage_overlay.size = Vector2(1500, 800)
+	_damage_overlay.color = Color(0.4, 0.0, 0.0, 0.0)
+	_damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_damage_overlay)
+
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	prompt_label.position = Vector2(486, 348)
@@ -377,10 +385,24 @@ func _update_stats() -> void:
 	_set_bar("health", player.stats.health / player.stats.max_health, "%.0f" % player.stats.health)
 	_set_bar("hunger", player.stats.hunger / player.stats.max_stat, "%.0f" % player.stats.hunger)
 	_set_bar("thirst", player.stats.thirst / player.stats.max_stat, "%.0f" % player.stats.thirst)
-	_set_bar("energy", player.stats.energy / player.stats.max_stat, "%.0f" % player.stats.energy)
 	var cold_percent: float = clamp((36.6 - player.stats.body_temperature) / 3.0, 0.0, 1.0)
 	_set_bar("cold", cold_percent, "%.1f C" % player.stats.body_temperature)
 	_update_stamina_bar()
+	if _prev_health > player.stats.health + 0.1:
+		_damage_flash = 1.0
+	_prev_health = player.stats.health
+
+func _update_damage_overlay(delta: float) -> void:
+	if _damage_overlay == null or player == null:
+		return
+	_damage_flash = max(0.0, _damage_flash - delta * 1.5)
+	var health_ratio: float = float(player.stats.health) / float(player.stats.max_health)
+	var persistent_alpha: float = 0.0
+	if health_ratio < 0.5:
+		persistent_alpha = (0.5 - health_ratio) * 0.6
+	var flash_alpha := _damage_flash * 0.5
+	var total_alpha: float = clamp(persistent_alpha + flash_alpha, 0.0, 0.85)
+	_damage_overlay.color = Color(0.4, 0.0, 0.0, total_alpha)
 
 func _build_stamina_bar() -> void:
 	var row := HBoxContainer.new()

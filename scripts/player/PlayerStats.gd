@@ -141,12 +141,17 @@ func from_dict(data: Dictionary) -> void:
 
 func _update_temperature(delta: float, ambient_temperature: float, warmth: float, rain_exposure: float) -> void:
 	wetness = clamp(wetness + rain_exposure * delta * 0.08 - delta * 0.012, 0.0, 1.0)
+	# Wet clothes dry faster when it's warm, slower when cold
+	var dry_rate := 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
+	wetness = max(0.0, wetness - delta * dry_rate)
 	var protection := clamp(warmth, 0.0, 1.5)
 	var target_temperature := normal_temperature
-	if ambient_temperature < 10.0:
-		target_temperature -= (10.0 - ambient_temperature) * (0.035 / max(0.25, protection + 0.35))
-	if wetness > 0.15:
-		target_temperature -= wetness * 1.25
+	# Ambient temperature effect: below 15°C starts cooling the body
+	if ambient_temperature < 15.0:
+		target_temperature -= (15.0 - ambient_temperature) * (0.045 / max(0.25, protection + 0.35))
+	# Wet clothes significantly lower body temperature until dry
+	if wetness > 0.05:
+		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
 	temperature = lerp(temperature, target_temperature, delta * 0.025)
 
 func _apply_survival_damage(delta: float) -> void:
@@ -161,6 +166,12 @@ func _apply_survival_damage(delta: float) -> void:
 		infection = min(100.0, infection + delta * 0.18)
 	if infection > 0.0:
 		health = max(0.0, health - infection_damage_per_second * delta * (infection / 100.0))
+	# Passive slow health regen when not suffering any critical condition
+	if hunger > 0.0 and thirst > 0.0 and temperature >= min_safe_temperature and bleeding <= 0.0 and infection <= 0.0 and health < max_health:
+		var regen_rate := 0.5
+		if hunger > 60.0 and thirst > 60.0:
+			regen_rate = 1.2
+		health = min(max_health, health + regen_rate * delta)
 	_check_death()
 
 func _emit_state_messages() -> void:

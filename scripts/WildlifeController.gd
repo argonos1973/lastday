@@ -23,6 +23,13 @@ var _state := "patrol"
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
+var _wolf_pain_player: AudioStreamPlayer3D = null
+var health := 100.0
+var max_health := 100.0
+var _is_dead := false
+var _hit_flash_timer := 0.0
+var _gutted := false
+var _corpse_body: StaticBody3D = null
 
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
@@ -68,6 +75,11 @@ func _nearest_allowed_point(origin: Vector3):
 func _escape_if_trapped(delta: float) -> bool:
 	if _is_position_allowed(global_position):
 		return false
+	# Don't escape from inside a house with a closed door - wolf should stay trapped
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_is_inside_closed_house"):
+		if scene.call("_is_inside_closed_house", global_position):
+			return false
 	var safe = _nearest_allowed_point(global_position)
 	if safe == null:
 		return false
@@ -87,6 +99,8 @@ func _escape_if_trapped(delta: float) -> bool:
 	return true
 
 func _process(delta: float) -> void:
+	if _is_dead:
+		return
 	if patrol_points.size() < 2:
 		return
 	_resolve_player()
@@ -94,6 +108,7 @@ func _process(delta: float) -> void:
 		return
 	_update_stuck_timer(delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
 	var target: Vector3
@@ -146,7 +161,6 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if dist_to_player < 20.0:
 			_state = "chase_player"
 			_chase_target = _player
-			target = _player.global_position
 			speed = move_speed * 2.8
 			if dist_to_player < 2.0:
 				if _attack_cooldown <= 0.0:
@@ -155,8 +169,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_player.apply_damage(8.0)
 					_play_wolf_sound("attack")
 				_play_animation_by_name("run")
+				# Stop at minimum distance — don't overlap the player
+				var away_dir := (global_position - _player.global_position).normalized()
+				away_dir.y = 0.0
+				target = _player.global_position + away_dir * 2.5
+				speed = 0.0
 			else:
 				_play_animation_by_name("run")
+				target = _player.global_position
 			return {"target": target, "speed": speed}
 	# Priority 2: chase nearby deer
 	var nearest_deer := _find_nearest_animal("deer")
@@ -209,6 +229,244 @@ func _prey_ai(delta: float) -> Dictionary:
 	speed = move_speed * 1.0
 	_play_animation_by_name("walk")
 	return {"target": target, "speed": speed}
+
+func take_damage(amount: float, _from_knife: bool) -> void:
+	if _is_dead:
+		return
+	health = max(0.0, health - amount)
+	_hit_flash_timer = 0.3
+	_spawn_blood_splatter()
+	_play_wolf_pain_sound()
+	if health <= 0.0:
+		_is_dead = true
+		_hit_flash_timer = 2.0
+		if _animation_player != null:
+			_animation_player.stop()
+		# Lie the corpse flat on the ground
+		_lie_corpse_flat()
+
+func _lie_corpse_flat() -> void:
+	if not is_instance_valid(_visual_root):
+		return
+	if _animation_player != null:
+		_animation_player.stop()
+	# Reset skeleton to rest pose
+	var skel := _find_skeleton(_visual_root)
+	if skel != null:
+		skel.reset_bone_poses()
+	# Rotate the entire node -90 on Z to lie on its side (not on its back)
+	var current_y_rad := rotation.y
+	var basis := Basis.from_euler(Vector3(0.0, current_y_rad, deg_to_rad(-90.0)))
+	global_transform = Transform3D(basis, Vector3(global_position.x, 0.1, global_position.z))
+	_visual_root.position = Vector3.ZERO
+	_visual_root.rotation_degrees = Vector3.ZERO
+	# Add collision body so the player can interact with the corpse
+	_corpse_body = StaticBody3D.new()
+	_corpse_body.name = "CorpseBody"
+	var col_shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(1.2, 0.4, 2.0)
+	col_shape.shape = box
+	_corpse_body.add_child(col_shape)
+	add_child(_corpse_body)
+	# Make interactable
+	add_to_group("interactable")
+
+func get_interaction_text(player = null) -> String:
+	if not _is_dead:
+		return ""
+	if _gutted:
+		return "[E] Lobo vacio"
+	var has_knife := _player_has_knife(player)
+	if has_knife:
+		return "[E] Destripar lobo  |  [C] Coger lobo entero (necesitas mochila)"
+	return "[E] Necesitas un cuchillo  |  [C] Coger lobo (necesitas mochila)"
+
+func interact(player: Node) -> void:
+	if not _is_dead:
+		return
+	if _gutted:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("El lobo ya esta vacio.")
+		return
+	var has_knife := _player_has_knife(player)
+	if not has_knife:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("Necesitas un cuchillo para destripar.")
+		return
+	# Gut: spawn 5 meat pieces and 1 skin on the ground
+	_gutted = true
+	if player != null and player.has_method("play_action_animation"):
+		player.play_action_animation("plant", 5.0)
+	_spawn_gut_pickups()
+	if player != null and player.has_signal("notice"):
+		player.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
+	# Remove the corpse after the 5-second animation finishes
+	var timer := Timer.new()
+	timer.wait_time = 5.0
+	timer.one_shot = true
+	timer.timeout.connect(_remove_corpse)
+	add_child(timer)
+	timer.start()
+
+func collect(player: Node) -> void:
+	if not _is_dead:
+		return
+	if _gutted:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("El lobo ya esta vacio, no hay nada que coger.")
+		return
+	# Need backpack to carry a whole wolf
+	if not _player_has_backpack(player):
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("Necesitas una mochila para cargar el lobo entero.")
+		return
+	var inventory = player.get("inventory") if player != null else null
+	if inventory == null or not inventory.has_method("add_item"):
+		return
+	var ItemScript = load("res://scripts/Item.gd")
+	var whole_wolf = ItemScript.create("Lobo muerto", "material", 8.0, 1, 0.0)
+	var added: bool = inventory.add_item(whole_wolf)
+	if added:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("Coges el lobo entero.")
+		_remove_corpse()
+	else:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("No puedes cargar con el lobo, demasiado peso.")
+
+func _player_has_knife(player: Node) -> bool:
+	if player == null:
+		return false
+	var inventory = player.get("inventory")
+	if inventory == null or not ("items" in inventory):
+		return false
+	for item in inventory.items:
+		if item != null and item.item_type == "weapon":
+			return true
+	return false
+
+func _player_has_backpack(player: Node) -> bool:
+	if player == null:
+		return false
+	var equipped_bp = player.get("equipped_backpack")
+	if equipped_bp != null and not str(equipped_bp).is_empty():
+		return true
+	var inventory = player.get("inventory")
+	if inventory == null or not ("items" in inventory):
+		return false
+	for item in inventory.items:
+		if item != null and (item.item_type == "backpack" or item.item_name == "Mochila pequena"):
+			return true
+	return false
+
+func _spawn_gut_pickups() -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var meat_model := "res://cc0_-_raw_meat_4.glb"
+	var base_pos := global_position
+	# Spawn 5 meat pieces scattered around the corpse
+	for i in range(5):
+		var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
+		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+		var pos := base_pos + offset
+		pos.y = 0.06
+		var drop_id := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+		var visual_name := "Pickup_" + drop_id
+		if scene.has_method("_try_instance_external_scene"):
+			scene.call("_try_instance_external_scene", [meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+		if scene.has_method("_create_world_action"):
+			var action = scene.call("_create_world_action", drop_id, "wolf_meat_raw", "Carne cruda de lobo", pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+			if action != null:
+				action.set_meta("visual_name", visual_name)
+				action.set_meta("item_name", "Carne cruda de lobo")
+				action.set_meta("item_type", "food")
+				action.set_meta("item_weight", 0.3)
+				action.set_meta("item_quantity", 1)
+				action.set_meta("item_use_value", 15.0)
+	# Spawn 1 skin
+	var skin_pos := base_pos + Vector3(randf_range(-0.5, 0.5), 0.0, randf_range(-0.5, 0.5))
+	skin_pos.y = 0.06
+	var skin_id := "gut_skin_%d" % Time.get_ticks_msec()
+	var skin_visual := "Pickup_" + skin_id
+	if scene.has_method("_try_instance_external_scene"):
+		scene.call("_try_instance_external_scene", ["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"], skin_visual, skin_pos, Vector3.ONE * 0.4, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+	if scene.has_method("_create_world_action"):
+		var skin_action = scene.call("_create_world_action", skin_id, "pickup_item", "Piel de lobo", skin_pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+		if skin_action != null:
+			skin_action.set_meta("visual_name", skin_visual)
+			skin_action.set_meta("item_name", "Piel de lobo")
+			skin_action.set_meta("item_type", "clothing")
+			skin_action.set_meta("item_weight", 0.8)
+			skin_action.set_meta("item_quantity", 1)
+			skin_action.set_meta("item_use_value", 0.3)
+
+func _remove_corpse() -> void:
+	remove_from_group("interactable")
+	if is_instance_valid(_corpse_body):
+		_corpse_body.queue_free()
+	_corpse_body = null
+	queue_free()
+
+func _find_skeleton(root: Node) -> Skeleton3D:
+	if root is Skeleton3D:
+		return root as Skeleton3D
+	for child in root.get_children():
+		var result := _find_skeleton(child)
+		if result != null:
+			return result
+	return null
+
+func _spawn_blood_splatter() -> void:
+	var particles := GPUParticles3D.new()
+	particles.name = "WolfBloodSplatter"
+	particles.amount = 40
+	particles.lifetime = 0.8
+	particles.explosiveness = 1.0
+	particles.randomness = 1.0
+	particles.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 35.0
+	mat.initial_velocity_min = 2.0
+	mat.initial_velocity_max = 5.0
+	mat.gravity = Vector3(0, -9.8, 0)
+	mat.color = Color(0.6, 0.05, 0.05, 1.0)
+	mat.scale_min = 0.08
+	mat.scale_max = 0.2
+	particles.process_material = mat
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.06
+	sphere.height = 0.12
+	particles.draw_pass_1 = sphere
+	get_tree().current_scene.add_child(particles)
+	particles.global_position = global_position + Vector3(0, 0.8, 0)
+	particles.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(func(): particles.queue_free())
+
+func _play_wolf_pain_sound() -> void:
+	if _wolf_pain_player == null:
+		_wolf_pain_player = AudioStreamPlayer3D.new()
+		_wolf_pain_player.name = "WolfPainSound"
+		_wolf_pain_player.unit_size = 3.0
+		_wolf_pain_player.max_distance = 40.0
+		add_child(_wolf_pain_player)
+	var path := "res://assets/external/audio/downloaded/wolf_growl.wav"
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null:
+		return
+	_wolf_pain_player.stop()
+	_wolf_pain_player.stream = stream
+	_wolf_pain_player.volume_db = 2.0
+	_wolf_pain_player.pitch_scale = randf_range(0.85, 1.15)
+	_wolf_pain_player.play()
 
 func _find_nearest_animal(kind: String) -> Node3D:
 	var nearest: Node3D = null
@@ -285,7 +543,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		"growl":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
-			path = "res://assets/external/audio/downloaded/wolf_attack.wav"
+			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		_:
 			return
 	var stream: AudioStream = null
@@ -359,19 +617,18 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	if dir.length() < 0.01:
 		return
 	dir = dir.normalized()
+	# Separation: push away from nearby animals of same type to avoid stacking
+	var sep := _get_separation_vector()
+	if sep.length() > 0.01:
+		dir = (dir + sep * 0.8).normalized()
 	var step := speed * delta
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -72.0, 72.0)
 	next_pos.z = clamp(next_pos.z, -72.0, 72.0)
 	if not _is_position_allowed(next_pos):
-		var avoidance := _get_avoidance_vector()
-		if avoidance.length() > 0.01:
-			dir = (dir + avoidance).normalized()
-			next_pos = global_position + dir * step
-			next_pos.x = clamp(next_pos.x, -72.0, 72.0)
-			next_pos.z = clamp(next_pos.z, -72.0, 72.0)
-		if not _is_position_allowed(next_pos):
+		if not _move_with_avoidance(dir, speed, delta, turn_speed):
 			return
+		return
 	global_position = next_pos
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
 
@@ -426,7 +683,31 @@ func _is_position_allowed(pos: Vector3) -> bool:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("is_wildlife_allowed_at"):
 		return bool(scene.call("is_wildlife_allowed_at", pos))
+	if scene != null and scene.has_method("_is_near_wildlife_blocker"):
+		if bool(scene.call("_is_near_wildlife_blocker", pos, 1.0)):
+			return false
 	return true
+
+func _get_separation_vector() -> Vector3:
+	var push := Vector3.ZERO
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self:
+			continue
+		if not (node is Node3D):
+			continue
+		var other := node as Node3D
+		if other.get("animal_type") == null:
+			continue
+		if str(other.get("animal_type")) != animal_type:
+			continue
+		var diff := global_position - other.global_position
+		diff.y = 0.0
+		var d := diff.length()
+		if d > 0.001 and d < 3.0:
+			push += diff.normalized() * (3.0 - d) / 3.0
+	if push.length() > 0.01:
+		return push.normalized()
+	return Vector3.ZERO
 
 func _get_avoidance_vector() -> Vector3:
 	var scene := get_tree().current_scene
