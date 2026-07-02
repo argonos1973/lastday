@@ -10,6 +10,7 @@ var health := 100.0
 var hunger := 78.0
 var thirst := 70.0
 var energy := 85.0
+var sleep := 100.0
 var body_temperature := 36.6
 var warmth_bonus := 0.0
 var wetness := 0.0
@@ -20,15 +21,25 @@ var dead := false
 var hunger_decay := 0.08
 var thirst_decay := 0.11
 var energy_decay := 0.06
+var sleep_decay := 0.04
 var cold_decay := 0.012
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false) -> void:
 	if dead:
 		return
 	var sprint_multiplier := 3.0 if sprinting else 1.0
 	hunger = max(0.0, hunger - hunger_decay * delta)
 	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier)
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier)
+	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
+	var sleep_mult := sprint_multiplier
+	if energy < 30.0:
+		sleep_mult *= 1.5
+	if body_temperature > 37.5:
+		sleep_mult *= 1.4
+	if night:
+		sleep_mult *= 2.0
+	sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult)
 
 	# Wet clothes dry faster when it's warm, slower when cold
 	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
@@ -36,23 +47,31 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 
 	var protection: float = clamp(warmth + warmth_bonus, 0.0, 1.5)
 	var target_temperature := 36.6
-	# Ambient temperature effect: below 15°C starts cooling the body
-	if ambient_temperature < 15.0:
-		target_temperature -= (15.0 - ambient_temperature) * (0.045 / max(0.25, protection + 0.35))
+	# Ambient temperature effect: below 18°C starts cooling the body
+	if ambient_temperature < 18.0:
+		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
+	# Hot ambient: above 28°C starts heating the body
+	if ambient_temperature > 28.0:
+		target_temperature += (ambient_temperature - 28.0) * 0.03
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
 
 	if sheltered:
-		target_temperature = max(target_temperature, 35.5)
-	body_temperature = lerp(body_temperature, target_temperature, delta * 0.025)
+		target_temperature = max(target_temperature, 34.0)
+	body_temperature = lerp(body_temperature, target_temperature, delta * 0.15)
 
 	if hunger <= 0.0:
 		health -= 0.8 * delta
 	if thirst <= 0.0:
 		health -= 1.25 * delta
+	if sleep <= 0.0:
+		health -= 0.6 * delta
 	if body_temperature < 35.0:
 		health -= (35.0 - body_temperature) * 0.16 * delta
+	if body_temperature > 38.0:
+		health -= (body_temperature - 38.0) * 0.12 * delta
+		thirst = max(0.0, thirst - thirst_decay * 3.0 * delta)
 
 	if sick:
 		sick_timer -= delta
@@ -81,14 +100,22 @@ func rest(hours: float) -> void:
 	thirst = max(0.0, thirst - 5.0 * hours)
 	changed.emit()
 
+func do_sleep(hours: float) -> void:
+	if dead:
+		return
+	sleep = min(max_stat, sleep + 25.0 * hours)
+	energy = min(max_stat, energy + 10.0 * hours)
+	if sleep >= max_stat:
+		health = min(max_stat, health + 2.0 * hours)
+	changed.emit()
+
 func get_sick(duration: float) -> void:
 	sick = true
 	sick_timer = max(sick_timer, duration)
 	changed.emit()
 
 func equip_warmth(value: float) -> void:
-	warmth_bonus = max(warmth_bonus, value)
-	body_temperature = min(36.6, body_temperature + 0.25)
+	warmth_bonus = value
 	changed.emit()
 
 func to_dict() -> Dictionary:
@@ -98,6 +125,7 @@ func to_dict() -> Dictionary:
 		"thirst": thirst,
 		"body_temperature": body_temperature,
 		"energy": energy,
+		"sleep": sleep,
 		"warmth_bonus": warmth_bonus,
 		"wetness": wetness,
 		"sick": sick,
@@ -111,6 +139,7 @@ func from_dict(data: Dictionary) -> void:
 	thirst = float(data.get("thirst", thirst))
 	body_temperature = float(data.get("body_temperature", body_temperature))
 	energy = float(data.get("energy", energy))
+	sleep = float(data.get("sleep", sleep))
 	warmth_bonus = float(data.get("warmth_bonus", warmth_bonus))
 	wetness = float(data.get("wetness", wetness))
 	sick = bool(data.get("sick", false))

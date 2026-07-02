@@ -18,14 +18,12 @@ func _ready() -> void:
 
 func get_interactable(player: Node3D, camera: Camera3D, screen_offset := Vector2.ZERO):
 	var collider: Object = _get_collider_from_camera(player, camera, screen_offset)
-	if collider == null:
-		return null
-	var target: Object = _find_interactable_owner(collider)
-	if target == null:
-		return null
-	if not _is_close_enough(player, target):
-		return null
-	return target
+	if collider != null:
+		var target: Object = _find_interactable_owner(collider)
+		if target != null and _is_close_enough(player, target):
+			return target
+	# Fallback: find nearest interactable within interaction distance
+	return _find_nearest_interactable(player)
 
 func get_default_text(target, player = null) -> String:
 	if target != null and target.has_method("get_interaction_text"):
@@ -73,3 +71,40 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 				var box := (child as CollisionShape3D).shape as BoxShape3D
 				reach_padding = max(reach_padding, max(box.size.x, box.size.z) * 0.5)
 	return flat_distance <= interaction_distance + reach_padding
+
+func _find_nearest_interactable(player: Node3D) -> Object:
+	if player == null or player.get_tree() == null:
+		return null
+	var player_pos := player.global_position
+	var best: Object = null
+	var best_dist := interaction_distance
+	for node in player.get_tree().get_nodes_in_group("interactable"):
+		if not (node is Node3D):
+			continue
+		if node is WorldAction:
+			var wa := node as WorldAction
+			if wa.depleted and not wa.repeatable:
+				continue
+			# Only use fallback for choppable objects
+			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log":
+				continue
+		var node_pos := (node as Node3D).global_position
+		var flat_dist := Vector2(player_pos.x, player_pos.z).distance_to(Vector2(node_pos.x, node_pos.z))
+		var reach := 0.0
+		var max_dist := interaction_distance
+		if node is CollisionObject3D:
+			for child in (node as Node).get_children():
+				if child is CollisionShape3D and (child as CollisionShape3D).shape is BoxShape3D:
+					var box := (child as CollisionShape3D).shape as BoxShape3D
+					reach = max(reach, max(box.size.x, box.size.z) * 0.5)
+		if node is WorldAction:
+			var wa2 := node as WorldAction
+			if wa2.action_type == "fell_tree":
+				max_dist = interaction_distance + 2.0
+			elif wa2.action_type == "fell_bush":
+				max_dist = interaction_distance + 1.0
+		var total_dist := flat_dist - reach
+		if total_dist < max_dist and total_dist < best_dist:
+			best_dist = total_dist
+			best = node
+	return best

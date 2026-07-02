@@ -16,6 +16,13 @@ var inventory_grid: GridContainer
 var minimap
 var inventory_weight_label: Label
 var time_label: Label
+var real_clock_label: Label
+var weather_label: Label
+var _weather_timer := 0.0
+var _weather_http: HTTPRequest
+var _real_temp := "--"
+var _real_temp_parsed := -999.0
+var _weather_loading := false
 var prompt_label: Label
 var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
@@ -27,6 +34,10 @@ var equipment_clothing_label: Label
 var equipment_backpack_label: Label
 var inventory_visible := false
 var notice_timer := 0.0
+var countdown_label: Label = null
+var countdown_timer := 0.0
+var countdown_total := 0.0
+var countdown_text := ""
 var status_bars := {}
 var stamina_bar: ProgressBar = null
 var stamina_label: Label = null
@@ -53,6 +64,11 @@ func _process(delta: float) -> void:
 	if player == null:
 		return
 	_update_stats()
+	_update_real_clock()
+	_weather_timer += delta
+	if _weather_timer >= 600.0:
+		_weather_timer = 0.0
+		_fetch_weather()
 	_update_damage_overlay(delta)
 	if inventory_visible:
 		_inv_refresh_timer += delta
@@ -63,6 +79,21 @@ func _process(delta: float) -> void:
 		notice_timer -= delta
 		if notice_timer <= 0.0:
 			notice_label.text = ""
+	if countdown_timer > 0.0:
+		countdown_timer -= delta
+		if countdown_timer <= 0.0:
+			countdown_timer = 0.0
+			countdown_label.visible = false
+		else:
+			var remaining: int = ceili(countdown_timer)
+			countdown_label.text = "%s... %ds" % [countdown_text, remaining]
+
+func show_countdown(text: String, duration: float) -> void:
+	countdown_text = text
+	countdown_total = duration
+	countdown_timer = duration
+	countdown_label.visible = true
+	countdown_label.text = "%s... %ds" % [text, ceili(duration)]
 
 func toggle_inventory() -> void:
 	_close_context_menu()
@@ -111,6 +142,7 @@ func _build_ui() -> void:
 	_build_inventory_panel()
 	_build_center_messages()
 	_build_minimap()
+	_build_real_clock_panel()
 
 func _build_minimap() -> void:
 	minimap = MiniMapScript.new()
@@ -119,6 +151,64 @@ func _build_minimap() -> void:
 	minimap.size = Vector2(160, 160)
 	minimap.setup(player)
 	root.add_child(minimap)
+
+func _build_real_clock_panel() -> void:
+	var panel := PanelContainer.new()
+	panel.position = Vector2(18, 18)
+	panel.size = Vector2(200, 70)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
+	root.add_child(panel)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(box)
+
+	real_clock_label = Label.new()
+	real_clock_label.add_theme_font_size_override("font_size", 22)
+	real_clock_label.add_theme_color_override("font_color", Color(0.90, 0.92, 0.85))
+	real_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(real_clock_label)
+
+	weather_label = Label.new()
+	weather_label.add_theme_font_size_override("font_size", 14)
+	weather_label.add_theme_color_override("font_color", Color(0.70, 0.74, 0.68))
+	weather_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(weather_label)
+
+	_weather_http = HTTPRequest.new()
+	add_child(_weather_http)
+	_weather_http.request_completed.connect(_on_weather_received)
+	_fetch_weather()
+
+func _fetch_weather() -> void:
+	if _weather_loading:
+		return
+	_weather_loading = true
+	var url := "https://wttr.in/Barcelona?format=%t"
+	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
+	if err != OK:
+		_weather_loading = false
+
+func _on_weather_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_weather_loading = false
+	if result == HTTPRequest.RESULT_SUCCESS:
+		var text := body.get_string_from_utf8().strip_edges()
+		if text.length() > 0:
+			_real_temp = text
+			var cleaned := text.replace("+", "").replace("°C", "").replace("°", "").replace("C", "").strip_edges()
+			var parsed := float(cleaned)
+			if not is_nan(parsed):
+				_real_temp_parsed = parsed
+
+func _update_real_clock() -> void:
+	if real_clock_label == null:
+		return
+	var now := Time.get_time_dict_from_system()
+	real_clock_label.text = "%02d:%02d:%02d" % [now.hour, now.minute, now.second]
+	if weather_label != null:
+		weather_label.text = "Barcelona: %s" % _real_temp
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -142,6 +232,7 @@ func _build_status_panel() -> void:
 	_create_status_bar(box, "health", "SALUD", Color(0.62, 0.10, 0.08))
 	_create_status_bar(box, "hunger", "COMIDA", Color(0.62, 0.48, 0.15))
 	_create_status_bar(box, "thirst", "AGUA", Color(0.18, 0.42, 0.66))
+	_create_status_bar(box, "sleep", "SUEÑO", Color(0.35, 0.20, 0.55))
 	_create_status_bar(box, "cold", "FRIO", Color(0.30, 0.58, 0.78))
 	_build_stamina_bar()
 
@@ -208,13 +299,13 @@ func _build_inventory_panel() -> void:
 	inventory_panel.position = Vector2(250, 86)
 	inventory_panel.size = Vector2(780, 548)
 	inventory_panel.visible = inventory_visible
-	inventory_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inventory_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	inventory_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.020, 0.018, 0.91), Color(0.47, 0.49, 0.42, 0.52), 1))
 	root.add_child(inventory_panel)
 
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 12)
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.mouse_filter = Control.MOUSE_FILTER_PASS
 	inventory_panel.add_child(box)
 
 	var title_row := HBoxContainer.new()
@@ -239,12 +330,12 @@ func _build_inventory_panel() -> void:
 
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 16)
-	columns.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	columns.mouse_filter = Control.MOUSE_FILTER_PASS
 	box.add_child(columns)
 
 	var left := VBoxContainer.new()
 	left.custom_minimum_size = Vector2(250, 420)
-	left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left.mouse_filter = Control.MOUSE_FILTER_PASS
 	columns.add_child(left)
 	_add_inventory_section_title(left, "EQUIPO")
 	equipment_hand_label = _add_equipment_line(left, "Manos", "Vacio")
@@ -257,7 +348,7 @@ func _build_inventory_panel() -> void:
 	right.custom_minimum_size = Vector2(480, 420)
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	columns.add_child(right)
-	_add_inventory_section_title(right, "MOCHILA")
+	_add_inventory_section_title(right, "INVENTARIO")
 
 	inventory_grid = GridContainer.new()
 	inventory_grid.columns = 5
@@ -296,6 +387,20 @@ func _add_inventory_hint(parent: VBoxContainer) -> void:
 	label.add_theme_color_override("font_color", Color(0.64, 0.66, 0.59))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(label)
+
+	var craft_btn := Button.new()
+	craft_btn.text = "Craftear Fogata (2 Troncos + 1 Palo)"
+	craft_btn.add_theme_font_size_override("font_size", 14)
+	craft_btn.custom_minimum_size = Vector2(230, 36)
+	craft_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	craft_btn.pressed.connect(_on_craft_campfire_pressed)
+	parent.add_child(craft_btn)
+
+func _on_craft_campfire_pressed() -> void:
+	if player == null or player.inventory == null:
+		return
+	if player.has_method("_craft_campfire"):
+		player._craft_campfire()
 
 func _build_center_messages() -> void:
 	objective_label = Label.new()
@@ -360,6 +465,19 @@ func _build_center_messages() -> void:
 	notice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(notice_label)
 
+	countdown_label = Label.new()
+	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	countdown_label.position = Vector2(340, 130)
+	countdown_label.size = Vector2(600, 50)
+	countdown_label.add_theme_font_size_override("font_size", 28)
+	countdown_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	countdown_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.86))
+	countdown_label.add_theme_constant_override("shadow_offset_x", 1)
+	countdown_label.add_theme_constant_override("shadow_offset_y", 1)
+	countdown_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	countdown_label.visible = false
+	root.add_child(countdown_label)
+
 func _apply_aim_layout() -> void:
 	if player == null or not player.has_method("get_aim_screen_offset"):
 		return
@@ -385,6 +503,7 @@ func _update_stats() -> void:
 	_set_bar("health", player.stats.health / player.stats.max_health, "%.0f" % player.stats.health)
 	_set_bar("hunger", player.stats.hunger / player.stats.max_stat, "%.0f" % player.stats.hunger)
 	_set_bar("thirst", player.stats.thirst / player.stats.max_stat, "%.0f" % player.stats.thirst)
+	_set_bar("sleep", player.stats.sleep / player.stats.max_stat, "%.0f" % player.stats.sleep)
 	var cold_percent: float = clamp((36.6 - player.stats.body_temperature) / 3.0, 0.0, 1.0)
 	_set_bar("cold", cold_percent, "%.1f C" % player.stats.body_temperature)
 	_update_stamina_bar()
@@ -486,7 +605,7 @@ func _update_inventory() -> void:
 	for child in inventory_grid.get_children():
 		child.queue_free()
 	inventory_weight_label.text = "PESO %.1f / %.1f KG" % [player.inventory.get_total_weight(), player.inventory.max_weight]
-	var slot_count: int = max(player.inventory.max_slots, 15)
+	var slot_count: int = max(player.inventory.max_slots, player.inventory.items.size())
 	for i in range(slot_count):
 		var item = player.inventory.items[i] if i < player.inventory.items.size() else null
 		_create_inventory_slot(i, item)
@@ -499,19 +618,22 @@ func _update_equipment_labels() -> void:
 			hand_text = player.inventory.items[held_index].item_name
 		equipment_hand_label.text = "Manos\n%s" % hand_text
 	if equipment_clothing_label != null:
-		var clothing_text := "Sin abrigo"
-		if not player.equipped_clothing.is_empty():
-			clothing_text = player.equipped_clothing
-		elif player.inventory.has_item_name("Chaqueta de abrigo"):
-			clothing_text = "Chaqueta de abrigo"
-		equipment_clothing_label.text = "Ropa\n%s" % clothing_text
+		var parts: Array = []
+		if "_equipped_slots" in player:
+			for slot in player._equipped_slots:
+				parts.append(str(player._equipped_slots[slot]))
+		if parts.is_empty():
+			var clothing_text := "Sin ropa"
+			if not player.equipped_clothing.is_empty():
+				clothing_text = player.equipped_clothing
+			parts.append(clothing_text)
+		equipment_clothing_label.text = "Ropa\n%s" % "\n".join(parts)
 	if equipment_backpack_label != null:
 		var backpack_text := "Sin mochila"
 		if not player.equipped_backpack.is_empty():
 			backpack_text = player.equipped_backpack
-		elif player.inventory.has_item_name("Mochila pequena"):
-			backpack_text = "Mochila pequena"
-		equipment_backpack_label.text = "Mochila\n%s" % backpack_text
+		var cap_text := "Slots: %d | Peso: %.1f/%.1f kg" % [player.inventory.max_slots, player.inventory.get_total_weight(), player.inventory.max_weight]
+		equipment_backpack_label.text = "Mochila\n%s\n%s" % [backpack_text, cap_text]
 
 func _create_inventory_slot(index: int, item) -> void:
 	var slot := PanelContainer.new()

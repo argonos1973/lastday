@@ -13,9 +13,8 @@ var star_field: Node3D
 var moon_field: Node3D
 
 func _process(delta: float) -> void:
-	time_of_day += 24.0 * delta / day_length_seconds
-	if time_of_day >= 24.0:
-		time_of_day -= 24.0
+	var now := Time.get_time_dict_from_system()
+	time_of_day = float(now.hour) + float(now.minute) / 60.0 + float(now.second) / 3600.0
 	var night := is_night()
 	if night and not last_was_night:
 		night_started.emit()
@@ -24,13 +23,13 @@ func _process(delta: float) -> void:
 	time_changed.emit()
 
 func is_night() -> bool:
-	return time_of_day < 6.0 or time_of_day >= 20.0
+	return time_of_day < 6.0 or time_of_day >= 21.5
 
 func get_cold_factor() -> float:
 	return get_ambient_temperature()
 
 func get_ambient_temperature() -> float:
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
 	return lerp(2.0, 22.0, day_amount)
 
 func get_hour_text() -> String:
@@ -47,7 +46,7 @@ func skip_to_morning() -> void:
 func _update_lighting() -> void:
 	if sun == null:
 		return
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
 	var night_amount: float = 1.0 - day_amount
 	sun.rotation_degrees.x = lerp(-15.0, -72.0, day_amount)
 	sun.light_energy = lerp(0.04, 1.15, day_amount)
@@ -73,6 +72,5 @@ func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}
 
 func from_dict(data: Dictionary) -> void:
-	time_of_day = float(data.get("time_of_day", time_of_day))
 	last_was_night = is_night()
 	_update_lighting()

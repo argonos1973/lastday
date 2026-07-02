@@ -245,8 +245,8 @@ func _load_streams(paths: Array) -> Array:
 
 func _update_ambience() -> void:
 	var night_amount: float = 1.0 if day_cycle.is_night() else 0.0
-	if day_cycle.time_of_day >= 18.0 and day_cycle.time_of_day < 20.0:
-		night_amount = inverse_lerp(18.0, 20.0, day_cycle.time_of_day)
+	if day_cycle.time_of_day >= 20.5 and day_cycle.time_of_day < 21.5:
+		night_amount = inverse_lerp(20.5, 21.5, day_cycle.time_of_day)
 	elif day_cycle.time_of_day >= 5.0 and day_cycle.time_of_day < 7.0:
 		night_amount = 1.0 - inverse_lerp(5.0, 7.0, day_cycle.time_of_day)
 	var day_volume: float = lerp(-13.0, -80.0, night_amount)
@@ -341,6 +341,13 @@ func _update_animal_calls(delta: float) -> void:
 
 func play_chop_at(pos: Vector3) -> void:
 	_play_one_shot_at(action_player, chop_sounds, pos, -1.0, randf_range(0.90, 1.06))
+
+func play_chop_loop_at(pos: Vector3, duration: float) -> void:
+	var elapsed := 0.0
+	while elapsed < duration:
+		_play_one_shot_at(action_player, chop_sounds, pos, -1.0, randf_range(0.90, 1.06))
+		await get_tree().create_timer(1.2).timeout
+		elapsed += 1.2
 
 func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float) -> void:
 	if player_node == null or streams.is_empty():

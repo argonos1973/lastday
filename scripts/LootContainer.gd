@@ -9,11 +9,10 @@ const ItemScript = preload("res://scripts/Item.gd")
 
 var loot_table := [
 	{"item": ["Lata de comida", "food", 0.35, 1, 32.0], "chance": 0.18},
-	{"item": ["Botella de agua", "water", 0.5, 1, 38.0], "chance": 0.16},
 	{"item": ["Venda", "medical", 0.12, 1, 24.0], "chance": 0.11},
 	{"item": ["Pilas", "battery", 0.08, 1, 90.0], "chance": 0.12},
 	{"item": ["Comida caducada", "food", 0.32, 1, 16.0], "chance": 0.12},
-	{"item": ["Agua turbia", "water", 0.45, 1, 18.0], "chance": 0.10}
+	{"item": ["Cerillas", "tool_matches", 0.1, 10, 0.0], "chance": 0.15}
 ]
 
 func setup(id: String, label: String, size: Vector3, color: Color) -> void:

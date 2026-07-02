@@ -84,7 +84,11 @@ func get_interaction_text(_player = null) -> String:
 		"wolf_meat_raw":
 			return "Carne cruda de lobo - [E] Recoger | [C] Comer (cruda)"
 		"fell_tree":
-			return "%s - talar con hacha - E" % display_name
+			return "%s - talar con hacha - E (10s)" % display_name
+		"fell_bush":
+			return "%s - cortar con cuchillo - E (5s)" % display_name
+		"cut_log":
+			return "%s - cortar con hacha - E" % display_name
 		"build_cabin":
 			return "%s - construir cabana - E" % display_name
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "backpack_pickup", "coat":

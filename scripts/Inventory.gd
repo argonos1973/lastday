@@ -71,8 +71,6 @@ func use_index(index: int, stats) -> bool:
 			remove_index(index)
 			return true
 		"clothing":
-			if stats.has_method("equip_warmth"):
-				stats.equip_warmth(item.use_value)
 			item_used.emit("Te abrigas mejor.")
 			return true
 		"battery":

@@ -20,6 +20,8 @@ var _attack_timer := 0.0
 var _attack_cooldown := 0.0
 var _chase_target: Node3D = null
 var _state := "patrol"
+var _noise_attract_pos: Vector3 = Vector3.ZERO
+var _noise_attract_timer := 0.0
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
@@ -151,16 +153,28 @@ func _process(delta: float) -> void:
 	_animate_legs(delta)
 	_update_animation_speed(speed)
 
+func attract_to_noise(pos: Vector3, radius: float) -> void:
+	if _is_dead or animal_type != "wolf":
+		return
+	var dist := global_position.distance_to(pos)
+	if dist > radius:
+		return
+	_noise_attract_pos = pos
+	_noise_attract_timer = 15.0
+
 func _wolf_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
 	_attack_timer -= delta
-	# Priority 1: chase player if close enough
+	if _noise_attract_timer > 0.0:
+		_noise_attract_timer -= delta
+	# Priority 1: chase player
 	if _player != null and is_instance_valid(_player):
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		if dist_to_player < 20.0:
 			_state = "chase_player"
 			_chase_target = _player
+			_noise_attract_timer = 0.0
 			speed = move_speed * 2.8
 			if dist_to_player < 2.0:
 				if _attack_cooldown <= 0.0:
@@ -178,11 +192,26 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_play_animation_by_name("run")
 				target = _player.global_position
 			return {"target": target, "speed": speed}
-	# Priority 2: chase nearby deer
+	# Priority 2: investigate noise
+	if _noise_attract_timer > 0.0:
+		_state = "investigate"
+		_chase_target = null
+		var dist_to_noise := global_position.distance_to(_noise_attract_pos)
+		if dist_to_noise > 2.0:
+			target = _noise_attract_pos
+			speed = move_speed * 2.0
+			_play_animation_by_name("trot")
+		else:
+			_noise_attract_timer = 0.0
+			target = patrol_points[target_index]
+			speed = move_speed * 1.0
+			_play_animation_by_name("walk")
+		return {"target": target, "speed": speed}
+	# Priority 3: chase nearby deer if no player nearby
 	var nearest_deer := _find_nearest_animal("deer")
 	if nearest_deer != null and is_instance_valid(nearest_deer):
 		var dist_to_deer := global_position.distance_to(nearest_deer.global_position)
-		if dist_to_deer < 15.0:
+		if dist_to_deer < 25.0:
 			_state = "chase_deer"
 			_chase_target = nearest_deer
 			target = nearest_deer.global_position

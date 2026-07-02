@@ -23,6 +23,8 @@ var radio
 var audio_system
 var containers_by_id := {}
 var world_actions_by_id := {}
+var _tree_id_counter := 0
+var _bush_id_counter := 0
 var material_cache := {}
 var billboard_texture_cache := {}
 var texture_path_cache := {}
@@ -39,6 +41,8 @@ var _shared_foliage_green_mat: StandardMaterial3D = null
 var _display_props_stripped := {}
 var river_segments_data: Array = []
 var wildlife_blockers: Array = []
+var campfire_positions: Array = []
+var campfire_fire_timers: Dictionary = {}
 var _nav_grid: Dictionary = {}
 var _nav_grid_size := 76
 var _nav_cell_size := 2.0
@@ -379,14 +383,63 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
-	var warmth := 0.0
-	if player.inventory != null and player.inventory.has_method("get_equipped_warmth"):
-		warmth = player.inventory.get_equipped_warmth()
-	player.stats.tick(delta, player.is_sprinting, day_cycle.get_ambient_temperature(), player.in_shelter, warmth)
+	var ambient_temp: float = day_cycle.get_ambient_temperature()
+	# Blend real weather temp with game cycle temp (50/50) so real weather
+	# influences but doesn't override the day/night cycle temperature
+	if hud != null and hud._real_temp_parsed != -999.0:
+		ambient_temp = (ambient_temp + hud._real_temp_parsed) * 0.5
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, player.in_shelter, 0.0, day_cycle.is_night())
+	_apply_campfire_effect(player, delta)
 	_update_door_open_cache()
 	_update_water_night_amount()
 	_tick_world_actions(delta)
 	_tick_drink_hold(delta)
+	_tick_campfire_fires()
+
+func _tick_campfire_fires() -> void:
+	if campfire_fire_timers.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	var expired := []
+	for fire_name in campfire_fire_timers.keys():
+		if now >= campfire_fire_timers[fire_name]:
+			expired.append(fire_name)
+	for fire_name in expired:
+		campfire_fire_timers.erase(fire_name)
+		# Remove light, particles and smoke
+		var light_node := get_node_or_null(fire_name + "Light")
+		if light_node != null:
+			light_node.queue_free()
+		var particles_node := get_node_or_null(fire_name + "Particles")
+		if particles_node != null:
+			particles_node.queue_free()
+		var smoke_node := get_node_or_null(fire_name + "Smoke")
+		if smoke_node != null:
+			smoke_node.queue_free()
+		# Remove from campfire_positions
+		for i in range(campfire_positions.size() - 1, -1, -1):
+			if campfire_positions[i] is Vector3:
+				campfire_positions.remove_at(i)
+				break
+		if player != null:
+			player.notice.emit("La fogata se ha apagado.")
+
+func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
+	if campfire_positions.is_empty():
+		return
+	var ppos := player_node.global_position
+	for fire_pos in campfire_positions:
+		var dist := ppos.distance_to(Vector3(fire_pos.x, ppos.y, fire_pos.z))
+		if dist < 1.2:
+			player_node.stats.health -= 5.0 * delta
+			player_node.stats.changed.emit()
+			if randf() < delta * 2.0:
+				player_node.notice.emit("Te quemas al estar demasiado cerca del fuego.")
+		elif dist < 4.0:
+			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
+			player_node.stats.body_temperature = min(38.0, player_node.stats.body_temperature + warmth_factor * 3.0 * delta)
+			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
+			player_node.stats.changed.emit()
 
 func _tick_drink_hold(delta: float) -> void:
 	if _drink_hold_actor == null:
@@ -414,7 +467,7 @@ func _update_celestial_follow() -> void:
 func _update_water_night_amount() -> void:
 	if day_cycle == null:
 		return
-	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
 	var night_amount := 1.0 - day_amount
 	for node in get_tree().get_nodes_in_group("river_water"):
 		if node is RiverWater and node.has_method("set_night_amount"):
@@ -649,14 +702,17 @@ func _on_player_died() -> void:
 		player.die()
 	SaveSystemScript.delete_save()
 	if hud != null:
-		hud.show_notice("Has muerto. Todo vuelve a empezar.")
+		hud.show_notice("Has muerto. El juego se cerrara...")
 		var death_timer := get_tree().create_timer(3.0)
 		var tw := create_tween()
 		tw.tween_await(death_timer.timeout)
-		tw.tween_callback(func(): get_tree().reload_current_scene())
+		tw.tween_callback(func(): get_tree().quit())
 		await tw.finished
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+	if item_name == "campfire":
+		_spawn_player_campfire(pos)
+		return
 	# Dropping a whole wolf corpse spawns the wolf model lying on the ground
 	if item_name == "Lobo muerto":
 		var p := pos
@@ -708,9 +764,15 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"resource":
 			if item_name == "Piedra":
 				return [SURVIVAL_TOOL_MODELS["stone"]]
+			if item_name == "Tronco":
+				return [K_SURVIVAL + "tree-log.glb", K_SURVIVAL + "tree-log-small.glb", "res://wood_stick_01.glb"]
+			if item_name == "Palo":
+				return ["res://wood_stick.glb"]
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
 			return [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL, "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+		"tool_matches":
+			return ["res://box_of_matches_north_korea_1955.glb"]
 		"food":
 			if item_name == "Carne cruda de lobo":
 				return ["res://cc0_-_raw_meat_4.glb"]
@@ -718,7 +780,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
 		"tool_axe":
-			return [ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
+			return ["res://simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
 		"tool_hoe":
 			return [SURVIVAL_TOOL_MODELS["hoe"]]
 		"tool_shovel":
@@ -777,6 +839,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"water":
 			return 1.0
 		"resource":
+			if item_name == "Tronco":
+				return 0.5
+			if item_name == "Palo":
+				return 0.2
 			return 1.0
 		"weapon":
 			return 0.8
@@ -788,6 +854,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 1.2
 		"tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
 			return 1.0
+		"tool_matches":
+			return 0.0005
 		"clothing":
 			match item_name:
 				"Chaleco tactico":
@@ -1137,7 +1205,6 @@ func _create_world_details() -> void:
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
-	_spawn_interaction_item(WATER_BOTTLE_ITEM_SCENE, Vector3(7.55, 0.05, 2.85), Vector3(0, 22, 0))
 
 func _spawn_interaction_item(scene_path: String, pos: Vector3, rot: Vector3) -> void:
 	if not ResourceLoader.exists(scene_path):
@@ -1205,15 +1272,12 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
 	_create_backpack_pickup("small_backpack_pickup", Vector3(9.5, 0.05, 3.5))
+	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://simple_axe.glb", Vector3(7.0, 0.05, 1.5), 1.2, Vector3(0, 45, 0))
+	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://box_of_matches_north_korea_1955.glb", Vector3(7.5, 0.05, 2.0), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
 	for i in range(4):
 		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
 		_create_world_action("farm_plot_%d" % i, "farm_plot", "Parcela de cultivo", plot_pos, Vector3(2.0, 0.16, 1.8), Color(0.20, 0.12, 0.055), true, true)
-	for i in range(10):
-		var tree_pos := Vector3(randf_range(-66, -28), 0.0, randf_range(16, 62))
-		if not _can_place_ground_vegetation(tree_pos, 3.2):
-			continue
-		_create_choppable_tree("fell_tree_%d" % i, tree_pos)
 
 func _create_river_drink_zones() -> void:
 	var segments := _default_river_segments()
@@ -1232,75 +1296,55 @@ func _create_river_drink_zones() -> void:
 			action.disable_collision()
 
 func _create_wildlife() -> void:
-	_create_deer_pair([
-		Vector3(-35, 0.0, -30),
-		Vector3(-35, 0.0, -10),
-		Vector3(-35, 0.0, 10),
-		Vector3(-35, 0.0, 30),
-		Vector3(-20, 0.0, 38),
-		Vector3(-15, 0.0, 20),
-		Vector3(-15, 0.0, -15),
-		Vector3(-25, 0.0, -25)
-	])
-	_create_deer_pair([
-		Vector3(35, 0.0, -30),
-		Vector3(35, 0.0, -10),
-		Vector3(35, 0.0, 10),
-		Vector3(35, 0.0, 30),
-		Vector3(20, 0.0, 38),
-		Vector3(15, 0.0, 20),
-		Vector3(15, 0.0, -15),
-		Vector3(25, 0.0, -25)
-	])
-	_create_deer_pair([
-		Vector3(-30, 0.0, -35),
-		Vector3(-10, 0.0, -38),
-		Vector3(0, 0.0, -40),
-		Vector3(10, 0.0, -38),
-		Vector3(30, 0.0, -35),
-		Vector3(30, 0.0, -20),
-		Vector3(10, 0.0, -15),
-		Vector3(-10, 0.0, -15),
-		Vector3(-30, 0.0, -20)
-	])
-	_create_wildlife_animal("fox", [
-		Vector3(-20, 0.0, 35),
-		Vector3(-5, 0.0, 38),
-		Vector3(10, 0.0, 35),
-		Vector3(20, 0.0, 28),
-		Vector3(15, 0.0, 15),
-		Vector3(0, 0.0, 12),
-		Vector3(-12, 0.0, 20),
-		Vector3(-18, 0.0, 28)
-	])
-	_create_wildlife_animal("fox", [
-		Vector3(20, 0.0, 35),
-		Vector3(5, 0.0, 38),
-		Vector3(-10, 0.0, 35),
-		Vector3(-20, 0.0, 28),
-		Vector3(-15, 0.0, 15),
-		Vector3(0, 0.0, 12),
-		Vector3(12, 0.0, 20),
-		Vector3(18, 0.0, 28)
-	])
-	_create_wildlife_animal("wolf", [
-		Vector3(25, 0.0, -15),
-		Vector3(28, 0.0, -20),
-		Vector3(22, 0.0, -10),
-		Vector3(30, 0.0, -18),
-		Vector3(26, 0.0, -25),
-		Vector3(20, 0.0, -22),
-		Vector3(28, 0.0, -12)
-	])
-	_create_wildlife_animal("wolf", [
-		Vector3(-15, 0.0, 5),
-		Vector3(-10, 0.0, 12),
-		Vector3(-18, 0.0, 0),
-		Vector3(-8, 0.0, 8),
-		Vector3(-12, 0.0, -5),
-		Vector3(-5, 0.0, 15),
-		Vector3(-20, 0.0, 3)
-	])
+	var player_start := Vector3(8, 0.0, 2.5)
+	var min_distance := 30.0
+	var world_range := 70.0
+	# Generate random deer herds
+	for i in range(3):
+		var center := _random_pos_far_from(player_start, min_distance, world_range)
+		var route: Array = []
+		for j in range(8):
+			route.append(center + Vector3(randf_range(-6, 6), 0.0, randf_range(-6, 6)))
+		_create_deer_pair(route)
+	# Generate random foxes
+	for i in range(2):
+		var center := _random_pos_far_from(player_start, min_distance, world_range)
+		var route: Array = []
+		for j in range(8):
+			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
+		_create_wildlife_animal("fox", route)
+	# Generate random wolves
+	var wolf_centers: Array = []
+	for i in range(2):
+		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 10.0, 25.0, world_range)
+		wolf_centers.append(center)
+		var route: Array = []
+		for j in range(7):
+			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
+		_create_wildlife_animal("wolf", route)
+
+func _random_pos_far_from(origin: Vector3, min_dist: float, world_range: float) -> Vector3:
+	var pos := Vector3.ZERO
+	for _attempt in range(50):
+		pos = Vector3(randf_range(-world_range, world_range), 0.0, randf_range(-world_range, world_range))
+		if Vector2(pos.x, pos.z).distance_to(Vector2(origin.x, origin.z)) >= min_dist:
+			break
+	return pos
+
+func _random_pos_far_from_all(origin: Vector3, others: Array, min_dist: float, min_from_others: float, world_range: float) -> Vector3:
+	var pos := Vector3.ZERO
+	for _attempt in range(80):
+		pos = Vector3(randf_range(-world_range, world_range), 0.0, randf_range(-world_range, world_range))
+		if Vector2(pos.x, pos.z).distance_to(Vector2(origin.x, origin.z)) < min_dist:
+			continue
+		var ok := true
+		for other in others:
+			if Vector2(pos.x, pos.z).distance_to(Vector2(other.x, other.z)) < min_from_others:
+				ok = false
+				break
+		if ok:
+			break
+	return pos
 
 func _create_deer_pair(route: Array) -> void:
 	var offsets := [Vector3(-2.4, 0.0, -1.6), Vector3(2.4, 0.0, 1.6)]
@@ -1424,6 +1468,78 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("collision_name", collision_name)
 
+func _create_choppable_bush(id: String, pos: Vector3) -> void:
+	var visual_name := "ChoppableBush_" + id
+	var scale_value := Vector3.ONE * randf_range(0.8, 1.3)
+	if not _try_instance_external_scene(_shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, scale_value, Vector3(0, randf_range(0, 360), 0), true, 0.0):
+		var base_color := Color(0.05, 0.12, 0.045).lerp(Color(0.10, 0.17, 0.075), randf())
+		_create_visual_sphere(visual_name, pos + Vector3(0, 0.35, 0), Vector3(0.8, 0.5, 0.8), base_color)
+	var visual_node := get_node_or_null(visual_name)
+	if visual_node != null:
+		visual_node.add_to_group("world_action_visual")
+	var action = _create_world_action(id, "fell_bush", "Arbusto", pos, Vector3(0.9, 0.8, 0.9), Color(0.08, 0.14, 0.05), false, false)
+	action.set_meta("visual_name", visual_name)
+
+func _fall_tree_animation(action) -> void:
+	var visual_name := str(action.get_meta("visual_name")) if action.has_meta("visual_name") else ""
+	if visual_name.is_empty():
+		return
+	var tree_node := get_node_or_null(visual_name)
+	if tree_node == null or not is_instance_valid(tree_node):
+		return
+	var fall_dir := Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)).normalized()
+	if fall_dir == Vector3.ZERO:
+		fall_dir = Vector3.FORWARD
+	var fall_axis := fall_dir.cross(Vector3.UP).normalized()
+	var tw := create_tween()
+	var start_rot: Vector3 = tree_node.rotation
+	var target_rot: Vector3 = start_rot + fall_axis * deg_to_rad(80.0)
+	tw.tween_property(tree_node, "rotation", target_rot, 1.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	tw.parallel().tween_property(tree_node, "position:y", tree_node.position.y - 0.3, 1.5)
+
+func _shrink_bush_animation(action) -> void:
+	var visual_name := str(action.get_meta("visual_name")) if action.has_meta("visual_name") else ""
+	if visual_name.is_empty():
+		return
+	var visual_names := visual_name.split("|", false)
+	for vn in visual_names:
+		var node := get_node_or_null(vn)
+		if node == null or not is_instance_valid(node):
+			continue
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(node, "scale", Vector3.ZERO, 0.8).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(node, "position:y", node.position.y - 0.2, 0.8)
+
+func _create_cut_log_action(pos: Vector3) -> void:
+	var id := "cut_log_%d" % [randi() % 100000]
+	var visual_name := "CutLog_" + id
+	_create_static_box(visual_name, pos + Vector3(0, 0.2, 0), Vector3(3.5, 0.4, 0.4), Color(0.25, 0.15, 0.06))
+	var visual_node := get_node_or_null(visual_name)
+	if visual_node != null:
+		visual_node.add_to_group("world_action_visual")
+	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
+	action.set_meta("visual_name", visual_name)
+
+func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float) -> void:
+	var id := "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
+	var visual_name := "Pickup_" + id
+	var paths: Array = _get_drop_model_paths(item_name, item_type)
+	var drop_scale := _get_drop_scale(item_name, item_type)
+	var spawned := false
+	if not paths.is_empty():
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+	if not spawned:
+		_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
+	_mark_world_action_visual(visual_name)
+	var action = _create_world_action(id, "pickup_item", item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	action.set_meta("visual_name", visual_name)
+	action.set_meta("item_name", item_name)
+	action.set_meta("item_type", item_type)
+	action.set_meta("item_weight", weight)
+	action.set_meta("item_quantity", qty)
+	action.set_meta("item_use_value", use_value)
+
 
 func _hide_action_visual(action) -> void:
 	var visual_name := str(action.get_meta("visual_name")) if action.has_meta("visual_name") else ""
@@ -1435,7 +1551,7 @@ func _hide_action_visual(action) -> void:
 		if not node is Node3D:
 			continue
 		if not visual_names.is_empty() and visual_names.has(String(node.name)):
-			(node as Node3D).visible = false
+			node.queue_free()
 		if not collision_name.is_empty() and node.name == collision_name:
 			node.queue_free()
 
@@ -1445,15 +1561,14 @@ func handle_world_action(action, actor) -> void:
 			if action.get_meta("gutted", false):
 				actor.notice.emit("El lobo ya esta vacio.")
 				return
-			var has_knife := false
-			for it in actor.inventory.items:
-				if it != null and it.item_type == "weapon":
-					has_knife = true
-					break
-			if not has_knife:
-				actor.notice.emit("Necesitas un cuchillo para destripar.")
+			var held_g = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_g == null or held_g.item_type != "weapon":
+				actor.notice.emit("Necesitas tener un cuchillo en la mano para destripar.")
 				return
 			_play_actor_action(actor, "plant", 5.0)
+			if hud != null:
+				hud.show_countdown("Destripando lobo", 5.0)
+			await get_tree().create_timer(5.0).timeout
 			action.set_meta("gutted", true)
 			# Spawn 5 meat pieces and 1 skin around the wolf
 			var wolf_pos: Vector3 = action.global_position
@@ -1519,6 +1634,9 @@ func handle_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
 			_play_actor_action(actor, "plant", 1.2)
+			if hud != null:
+				hud.show_countdown("Comiendo", 1.2)
+			await get_tree().create_timer(1.2).timeout
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
 			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
 			actor.stats.changed.emit()
@@ -1555,10 +1673,14 @@ func handle_world_action(action, actor) -> void:
 			action.mark_depleted()
 			_save_world_change_silent()
 		"fish":
-			if not actor.inventory.has_item_name("Cuchillo"):
-				actor.notice.emit("Necesitas el cuchillo para preparar el pez.")
+			var held_f = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_f == null or held_f.item_name != "Cuchillo":
+				actor.notice.emit("Necesitas tener el cuchillo en la mano para pescar.")
 				return
 			_play_actor_action(actor, "fish", 1.6)
+			if hud != null:
+				hud.show_countdown("Pescando", 1.6)
+			await get_tree().create_timer(1.6).timeout
 			if randf() < 0.72:
 				if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
 					_equip_actor_item(actor, "Pez crudo")
@@ -1572,8 +1694,30 @@ func handle_world_action(action, actor) -> void:
 			_drink_hold_actor = actor
 			_drink_hold_timer = 0.0
 			actor.notice.emit("Mantén E para beber...")
+		"light_campfire":
+			if action.get_meta("lit", false):
+				actor.notice.emit("La fogata ya esta encendida.")
+				return
+			var held_m = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_m == null or held_m.item_name != "Cerillas":
+				actor.notice.emit("Necesitas tener las cerillas en la mano para encender la fogata.")
+				return
+			_play_actor_action(actor, "plant", 1.5)
+			actor.notice.emit("Encendiendo fogata...")
+			if hud != null:
+				hud.show_countdown("Encendiendo fogata", 1.5)
+			await get_tree().create_timer(1.5).timeout
+			_create_campfire_fire(action.position + Vector3(0, 0.15, 0), "CampfireFire_%d" % randi())
+			action.set_meta("lit", true)
+			action.set_meta("lit_time", Time.get_ticks_msec())
+			action.mark_depleted()
+			_save_world_change_silent()
+			actor.notice.emit("Has encendido la fogata. Durara 5 minutos.")
 		"hunt":
 			_play_actor_action(actor, "interact", 1.0)
+			if hud != null:
+				hud.show_countdown("Cazando", 1.0)
+			await get_tree().create_timer(1.0).timeout
 			if randf() < 0.48:
 				if actor.inventory.add_item(ItemScript.create("Carne cruda", "food", 0.75, 1, 30.0)):
 					_equip_actor_item(actor, "Carne cruda")
@@ -1584,6 +1728,8 @@ func handle_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, ItemScript.create("Chaqueta de abrigo", "clothing", 1.1, 1, 0.65), "Encuentras una chaqueta vieja. Usala desde el inventario.")
 		"axe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0), "Recoges un hacha. Ya puedes talar arboles.")
+		"matches_tool":
+			_finish_pickup_action(action, actor, ItemScript.create("Cerillas", "tool_matches", 0.1, 10, 0.0), "Recoges cerillas (10 usos). Ya puedes encender fogatas.")
 		"hoe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Azada", "tool_hoe", 0.9, 1, 0.0), "Recoges una azada para cultivar.")
 		"shovel_tool":
@@ -1607,28 +1753,98 @@ func handle_world_action(action, actor) -> void:
 		"farm_plot":
 			_handle_farm_plot(action, actor)
 		"fell_tree":
-			if not actor.inventory.has_item_name("Hacha"):
-				actor.notice.emit("Necesitas un hacha para talar este arbol.")
+			var held = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held == null or held.item_name != "Hacha":
+				actor.notice.emit("Necesitas tener el hacha en la mano para talar.")
 				return
-			_play_actor_action(actor, "chop", 1.1)
-			if audio_system != null and audio_system.has_method("play_chop_at"):
-				audio_system.play_chop_at(action.position)
-			if not actor.inventory.add_item(ItemScript.create("Tronco", "resource", 1.2, 3, 0.0)):
-				return
-			_equip_actor_item(actor, "Tronco")
+			_play_actor_action(actor, "chop", 10.0)
+			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
+				audio_system.play_chop_loop_at(action.position, 10.0)
+			_attract_wolves_to_noise(action.position, 45.0)
+			actor.notice.emit("Taland arbol... (10s)")
+			if hud != null:
+				hud.show_countdown("Talando arbol", 10.0)
+			await get_tree().create_timer(10.0).timeout
+			_fall_tree_animation(action)
+			await get_tree().create_timer(1.5).timeout
 			_hide_action_visual(action)
-			actor.inventory.add_item(ItemScript.create("Madera", "resource", 0.65, 1, 0.0))
-			if randf() < 0.45:
-				actor.inventory.add_item(ItemScript.create("Ramas", "resource", 0.18, 3, 0.0))
 			_create_cut_tree_remains(action.position)
-			actor.notice.emit("Talas el arbol y consigues troncos.")
+			var tree_pos: Vector3 = action.position
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.0, 0.06, 0.3), 1.2, 2, 0.0)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.5, 0.06, -0.2), 1.2, 2, 0.0)
+			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
+		"fell_bush":
+			var held_b = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_b == null or (held_b.item_name != "Cuchillo" and held_b.item_name != "Hacha"):
+				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para cortar.")
+				return
+			_play_actor_action(actor, "forage", 5.0)
+			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
+				audio_system.play_chop_loop_at(action.position, 5.0)
+			_attract_wolves_to_noise(action.position, 30.0)
+			actor.notice.emit("Cortando arbusto... (5s)")
+			if hud != null:
+				hud.show_countdown("Cortando arbusto", 5.0)
+			await get_tree().create_timer(5.0).timeout
+			_shrink_bush_animation(action)
+			await get_tree().create_timer(0.8).timeout
+			_hide_action_visual(action)
+			var bush_pos: Vector3 = action.position
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.3, 0.06, 0.0), 0.3, 1, 0.0)
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(-0.3, 0.06, 0.2), 0.3, 1, 0.0)
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0)
+			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
+			action.mark_depleted()
+			_save_world_change_silent()
+		"cut_log":
+			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_l == null or held_l.item_name != "Hacha":
+				actor.notice.emit("Necesitas tener el hacha en la mano para cortar el tronco.")
+				return
+			_play_actor_action(actor, "chop", 3.0)
+			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
+				audio_system.play_chop_loop_at(action.position, 3.0)
+			_attract_wolves_to_noise(action.position, 35.0)
+			actor.notice.emit("Cortando tronco...")
+			if hud != null:
+				hud.show_countdown("Cortando tronco", 3.0)
+			await get_tree().create_timer(3.0).timeout
+			_hide_action_visual(action)
+			var log_pos: Vector3 = action.position
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.3, 0.06, 0.0), 1.2, 1, 0.0)
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(-0.3, 0.06, 0.2), 1.2, 1, 0.0)
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0)
+			actor.notice.emit("Cortas el tronco en troncos mas pequenos. Recogelos del suelo.")
+			action.mark_depleted()
+			_save_world_change_silent()
+		"sleep":
+			if actor.has_method("start_sleep"):
+				actor.start_sleep()
+			else:
+				_play_actor_action(actor, "sleep", 8.0)
+			actor.notice.emit("Durmiendo... pulsa D para despertar.")
+			# Wait until sleep is full and health is full, or player wakes up
+			var sleep_seconds := 0
+			while actor.stats.sleep < actor.stats.max_stat or actor.stats.health < actor.stats.max_health:
+				if actor.has_method("is_sleeping") and not actor.is_sleeping:
+					break
+				sleep_seconds += 1
+				if hud != null:
+					hud.show_countdown("Durmiendo", float(sleep_seconds + 1))
+				await get_tree().create_timer(1.0).timeout
+			if actor.has_method("stop_sleep"):
+				actor.stop_sleep()
+			actor.notice.emit("Has dormido. Te sientes descansado.")
 		"build_cabin":
 			if not actor.inventory.has_item_name("Tronco", 6) or not actor.inventory.has_item_name("Piedra", 4):
 				actor.notice.emit("Faltan materiales: 6 troncos y 4 piedra.")
 				return
-			_play_actor_action(actor, "interact", 1.2)
+			_play_actor_action(actor, "interact", 3.0)
+			if hud != null:
+				hud.show_countdown("Construyendo cabana", 3.0)
+			await get_tree().create_timer(3.0).timeout
 			actor.inventory.consume_item_name("Tronco", 6)
 			actor.inventory.consume_item_name("Piedra", 4)
 			_build_player_cabin(action.position)
@@ -1639,6 +1855,13 @@ func handle_world_action(action, actor) -> void:
 func _play_actor_action(actor, action_name: String, duration: float) -> void:
 	if actor != null and actor.has_method("play_action_animation"):
 		actor.play_action_animation(action_name, duration)
+
+func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == null or not is_instance_valid(node):
+			continue
+		if node.has_method("attract_to_noise"):
+			node.attract_to_noise(pos, radius)
 
 func _equip_actor_item(actor, item_name: String) -> void:
 	if actor != null and actor.has_method("equip_item_by_name"):
@@ -1688,6 +1911,9 @@ func handle_world_action_collect(action, actor) -> void:
 			_save_world_change_silent()
 		"wolf_meat_raw":
 			_play_actor_action(actor, "plant", 3.0)
+			if hud != null:
+				hud.show_countdown("Comiendo carne cruda", 3.0)
+			await get_tree().create_timer(3.0).timeout
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
 			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
 			if actor.stats.has_method("get_sick"):
@@ -1723,6 +1949,9 @@ func _handle_farm_plot(action, actor) -> void:
 			actor.notice.emit("El cultivo aun esta creciendo.")
 		"ready":
 			_play_actor_action(actor, "plant", 1.25)
+			if hud != null:
+				hud.show_countdown("Cosechando", 1.25)
+			await get_tree().create_timer(1.25).timeout
 			if not actor.inventory.add_item(ItemScript.create("Verduras", "food", 0.22, 3, 16.0)):
 				return
 			_equip_actor_item(actor, "Verduras")
@@ -1739,6 +1968,9 @@ func _handle_farm_plot(action, actor) -> void:
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
 				return
 			_play_actor_action(actor, "plant", 1.35)
+			if hud != null:
+				hud.show_countdown("Plantando semillas", 1.35)
+			await get_tree().create_timer(1.35).timeout
 			action.set_crop_state("planted", 0.0)
 			actor.notice.emit("Plantas semillas. Vuelve cuando hayan crecido.")
 			_save_world_change_silent()
@@ -1751,6 +1983,18 @@ func _build_player_cabin(origin: Vector3) -> void:
 	_create_static_box("PlayerCabinFrontA", origin + Vector3(-1.45, 0, 1.7), Vector3(1.5, 2.4, 0.22), Color(0.19, 0.12, 0.055))
 	_create_static_box("PlayerCabinFrontB", origin + Vector3(1.45, 0, 1.7), Vector3(1.5, 2.4, 0.22), Color(0.19, 0.12, 0.055))
 	_create_visual_gable_roof("PlayerCabinRoof", origin + Vector3(0, 2.45, 0), 4.9, 3.9, 1.0, Color(0.10, 0.065, 0.035))
+
+func _spawn_player_campfire(pos: Vector3) -> void:
+	var cf_id := "player_campfire_%d" % randi()
+	var spawned := _try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], "PlayerCampfire_" + cf_id, pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
+	if not spawned:
+		_create_visual_box("PlayerCampfireAsh_" + cf_id, pos, Vector3(0.7, 0.04, 0.7), Color(0.09, 0.085, 0.075), Vector3.ZERO)
+		for i in range(8):
+			var angle := i * 45.0
+			var stone_pos := pos + Vector3(cos(deg_to_rad(angle)) * 0.45, 0.05, sin(deg_to_rad(angle)) * 0.45)
+			_create_static_box("PlayerCampfireStone_%s_%d" % [cf_id, i], stone_pos, Vector3(0.18, 0.12, 0.15), Color(0.25, 0.23, 0.22))
+	var campfire_action = _create_world_action(cf_id, "light_campfire", "Fogata apagada", pos, Vector3(1.2, 0.8, 1.2), Color(0.12, 0.08, 0.04), false, false)
+	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
 
 func _create_quaternius_environment_props() -> void:
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))
@@ -2327,11 +2571,16 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " PeeledPlasterFrontB", origin + Vector3(3.05, 1.35, 3.955), Vector3(1.1, 1.25, 0.06), Color(0.115, 0.105, 0.08), Vector3(0, 0, 0))
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
-	var fire_pos := origin + Vector3(0, 0.15, 0)
-	_try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], label + " Campfire", fire_pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
-	_create_campfire_fire(fire_pos + Vector3(0, 0.3, 0), label + " Fire")
+	# Bed for sleeping
+	var bed_pos := origin + Vector3(3.0, 0.0, -2.0)
+	var bed_action = _create_world_action("house_bed", "sleep", "Cama para dormir", bed_pos, Vector3(1.5, 0.8, 1.5), Color(0.15, 0.10, 0.06), false, false)
+	bed_action.set_meta("visual_name", label + " Bed")
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
+	campfire_positions.append(pos)
+	# Store expiry time (5 minutes from now)
+	var expiry_time := Time.get_ticks_msec() + 300000
+	campfire_fire_timers[node_name] = expiry_time
 	# Point light for warm glow
 	var light := OmniLight3D.new()
 	light.name = node_name + "Light"
@@ -2379,6 +2628,37 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	quad.material = fire_mat
 	particles.draw_pass_1 = quad
 	add_child(particles)
+	# Smoke particles
+	var smoke := GPUParticles3D.new()
+	smoke.name = node_name + "Smoke"
+	smoke.position = pos + Vector3(0, 0.5, 0)
+	smoke.amount = 20
+	smoke.lifetime = 3.0
+	smoke.explosiveness = 0.2
+	smoke.randomness = 0.5
+	var smoke_mat := ParticleProcessMaterial.new()
+	smoke_mat.direction = Vector3(0, 1, 0)
+	smoke_mat.spread = 15.0
+	smoke_mat.initial_velocity_min = 0.5
+	smoke_mat.initial_velocity_max = 1.5
+	smoke_mat.gravity = Vector3(0, 0.3, 0)
+	smoke_mat.scale_min = 0.3
+	smoke_mat.scale_max = 1.0
+	smoke_mat.color = Color(0.3, 0.3, 0.3, 0.4)
+	smoke.process_material = smoke_mat
+	var smoke_quad := PlaneMesh.new()
+	smoke_quad.size = Vector2(0.5, 0.5)
+	smoke_quad.orientation = PlaneMesh.FACE_Y
+	var smoke_tex_mat := StandardMaterial3D.new()
+	smoke_tex_mat.albedo_color = Color(0.3, 0.3, 0.3, 0.4)
+	smoke_tex_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	smoke_tex_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	smoke_tex_mat.no_depth_test = true
+	smoke_tex_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	smoke_tex_mat.billboard_keep_scale = true
+	smoke_quad.material = smoke_tex_mat
+	smoke.draw_pass_1 = smoke_quad
+	add_child(smoke)
 
 func _make_fire_ramp() -> GradientTexture1D:
 	var grad := Gradient.new()
@@ -2980,6 +3260,10 @@ func _create_tree(pos: Vector3) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
 	_register_wildlife_blocker(pos, 1.0)
+	_tree_id_counter += 1
+	var visual_name := "Tree_%d" % _tree_id_counter
+	var collision_name := visual_name + "_Collision"
+	var made_visual := false
 	if _forest_tree_meshes.is_empty():
 		_load_forest_tree_pack()
 	if not _forest_tree_meshes.is_empty():
@@ -2988,7 +3272,7 @@ func _create_tree(pos: Vector3) -> void:
 		var xform: Transform3D = entry.transform
 		var aabb: AABB = entry.aabb
 		var mi := MeshInstance3D.new()
-		mi.name = "ForestTree"
+		mi.name = visual_name
 		mi.mesh = src_mesh
 		var tree_scale := randf_range(0.8, 1.4)
 		var tree_height := aabb.size.z * tree_scale
@@ -2998,13 +3282,27 @@ func _create_tree(pos: Vector3) -> void:
 		mi.rotation_degrees = Vector3(-90, 0, randf_range(0, 360))
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
 		add_child(mi)
-		_create_tree_collision("ForestTreeCollision", pos)
-		return
-	if _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), "PolyhavenTree", pos, Vector3.ONE * randf_range(1.15, 2.15), Vector3(0, randf_range(0, 360), 0), true, 0.0):
-		_create_tree_collision("PolyhavenTreeCollision", pos)
-		_override_tree_foliage_green("PolyhavenTree")
-		return
-	_create_living_tree_fallback(pos)
+		mi.add_to_group("world_action_visual")
+		made_visual = true
+	elif _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, Vector3.ONE * randf_range(1.15, 2.15), Vector3(0, randf_range(0, 360), 0), true, 0.0):
+		_override_tree_foliage_green(visual_name)
+		made_visual = true
+	else:
+		made_visual = _create_living_tree_fallback(pos, visual_name)
+	if made_visual:
+		var collision := _create_tree_collision(collision_name, pos)
+		collision.add_to_group("world_action_visual")
+		var action = _create_world_action("fell_tree_%d" % _tree_id_counter, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
+		var trunk_check := get_node_or_null(visual_name)
+		if trunk_check == null:
+			var trunk_fallback := get_node_or_null(visual_name + "_Trunk")
+			if trunk_fallback != null:
+				action.set_meta("visual_name", visual_name + "_Trunk")
+			else:
+				action.set_meta("visual_name", visual_name)
+		else:
+			action.set_meta("visual_name", visual_name)
+		action.set_meta("collision_name", collision_name)
 
 func _load_forest_tree_pack() -> void:
 	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
@@ -3129,18 +3427,20 @@ func _create_billboard_tree(pos: Vector3, texture_paths: Array, height: float, n
 	_create_tree_collision(node_name + "Collision", pos)
 	return true
 
-func _create_living_tree_fallback(pos: Vector3) -> void:
-	if _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), "ExternalLivingTree", pos, Vector3.ONE * randf_range(1.15, 1.9), Vector3(0, randf_range(0, 360), 0), true, 0.0):
-		_create_tree_collision("ExternalLivingTreeCollision", pos)
-		_override_tree_foliage_green("ExternalLivingTree")
-		return
+func _create_living_tree_fallback(pos: Vector3, visual_name: String) -> bool:
+	if _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), visual_name, pos, Vector3.ONE * randf_range(1.15, 1.9), Vector3(0, randf_range(0, 360), 0), true, 0.0):
+		_override_tree_foliage_green(visual_name)
+		return true
 	var height := randf_range(6.4, 10.2)
 	var trunk_radius := randf_range(0.18, 0.34)
 	var use_fir := randf() < 0.45
 	var bark_texture := POLY_FIR_BARK_DIFF if use_fir else POLY_PINE_BARK_DIFF
 	var twig_texture := POLY_FIR_TWIG_DIFF if use_fir else POLY_PINE_TWIG_DIFF
 	var twig_alpha := POLY_FIR_TWIG_ALPHA if use_fir else POLY_PINE_TWIG_ALPHA
-	_create_textured_cylinder("PolyTexturedTreeTrunk", pos, trunk_radius, height * 0.82, bark_texture, Color(0.18, 0.12, 0.075), Vector3(2.0, 6.0, 1.0))
+	_create_textured_cylinder(visual_name + "_Trunk", pos, trunk_radius, height * 0.82, bark_texture, Color(0.18, 0.12, 0.075), Vector3(2.0, 6.0, 1.0))
+	var trunk_node := get_node_or_null(visual_name + "_Trunk")
+	if trunk_node != null:
+		trunk_node.add_to_group("world_action_visual")
 	var branch_count := 18 + randi() % 9
 	for i in range(branch_count):
 		var t: float = float(i) / float(max(branch_count - 1, 1))
@@ -3152,7 +3452,7 @@ func _create_living_tree_fallback(pos: Vector3) -> void:
 		var branch_width := randf_range(1.2, 2.4) * ring_scale
 		var branch_height := randf_range(0.62, 1.15) * ring_scale
 		_create_tree_twig_plane(branch_pos, Vector2(branch_width, branch_height), rad_to_deg(angle), twig_texture, twig_alpha)
-	_create_tree_collision("TreeCollision", pos)
+	return true
 
 func _create_dead_tree_fallback(pos: Vector3) -> void:
 	if _try_instance_external_scene(_shuffled_paths(REAL_DEAD_TREE_MODELS), "ExternalDeadTree", pos, Vector3.ONE * randf_range(1.05, 1.75), Vector3(0, randf_range(0, 360), 0), true, 0.0):
@@ -3350,12 +3650,33 @@ func _flush_grass_batches() -> void:
 func _create_bush(pos: Vector3, radius: float) -> void:
 	if not _can_place_ground_vegetation(pos):
 		return
-	if _try_instance_external_scene(_shuffled_paths(REAL_BUSH_MODELS), "RealBush", pos, Vector3.ONE * randf_range(radius * 0.22, radius * 0.42), Vector3(0, randf_range(0, 360), 0), true, 0.0):
-		return
-	var base_color := Color(0.05, 0.12, 0.045).lerp(Color(0.10, 0.17, 0.075), randf())
-	_create_visual_sphere("BushCore", pos + Vector3(0, radius * 0.25, 0), Vector3(radius, radius * 0.48, radius * 0.82), base_color)
-	_create_visual_sphere("BushLobeA", pos + Vector3(radius * 0.30, radius * 0.35, -radius * 0.12), Vector3(radius * 0.55, radius * 0.36, radius * 0.50), base_color.darkened(0.10))
-	_create_visual_sphere("BushLobeB", pos + Vector3(-radius * 0.28, radius * 0.28, radius * 0.18), Vector3(radius * 0.48, radius * 0.34, radius * 0.52), base_color.lightened(0.06))
+	_bush_id_counter += 1
+	var visual_name := "Bush_%d" % _bush_id_counter
+	var made_visual := false
+	var meta_names := ""
+	if _try_instance_external_scene(_shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, Vector3.ONE * randf_range(radius * 0.22, radius * 0.42), Vector3(0, randf_range(0, 360), 0), true, 0.0):
+		var vn := get_node_or_null(visual_name)
+		if vn != null:
+			vn.add_to_group("world_action_visual")
+		meta_names = visual_name
+		made_visual = true
+	else:
+		var base_color := Color(0.05, 0.12, 0.045).lerp(Color(0.10, 0.17, 0.075), randf())
+		var parts := ["_Core", "_LobeA", "_LobeB"]
+		var offsets := [Vector3(0, radius * 0.25, 0), Vector3(radius * 0.30, radius * 0.35, -radius * 0.12), Vector3(-radius * 0.28, radius * 0.28, radius * 0.18)]
+		var sizes := [Vector3(radius, radius * 0.48, radius * 0.82), Vector3(radius * 0.55, radius * 0.36, radius * 0.50), Vector3(radius * 0.48, radius * 0.34, radius * 0.52)]
+		var colors := [base_color, base_color.darkened(0.10), base_color.lightened(0.06)]
+		for i in range(3):
+			var pname: String = visual_name + parts[i]
+			_create_visual_sphere(pname, pos + offsets[i], sizes[i], colors[i])
+			var pnode := get_node_or_null(pname)
+			if pnode != null:
+				pnode.add_to_group("world_action_visual")
+		meta_names = visual_name + "_Core|" + visual_name + "_LobeA|" + visual_name + "_LobeB"
+		made_visual = true
+	if made_visual:
+		var action = _create_world_action("fell_bush_%d" % _bush_id_counter, "fell_bush", "Arbusto", pos, Vector3(1.4, 1.2, 1.4), Color(0.08, 0.14, 0.05), false, false)
+		action.set_meta("visual_name", meta_names)
 
 func _create_cutout_plant(node_name: String, pos: Vector3, height: float, texture_path: String, alpha_path: String, width_factor: float) -> bool:
 	if not _resource_path_exists(texture_path):
