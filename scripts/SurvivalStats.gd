@@ -17,12 +17,19 @@ var wetness := 0.0
 var sick := false
 var sick_timer := 0.0
 var dead := false
+var hot_food_charges := 0
+var hot_food_temp_bonus := 0.0
 
 var hunger_decay := 0.08
 var thirst_decay := 0.11
 var energy_decay := 0.06
 var sleep_decay := 0.04
 var cold_decay := 0.012
+
+func add_hot_food(charges: int) -> void:
+	hot_food_charges = max(hot_food_charges, charges)
+	hot_food_temp_bonus = 2.5
+	changed.emit()
 
 func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false) -> void:
 	if dead:
@@ -59,6 +66,12 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 
 	if sheltered:
 		target_temperature = max(target_temperature, 34.0)
+	# Hot food bonus: increases body temp, decays over time
+	if hot_food_charges > 0:
+		target_temperature += hot_food_temp_bonus
+		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
+		if hot_food_temp_bonus <= 0.01:
+			hot_food_charges = 0
 	body_temperature = lerp(body_temperature, target_temperature, delta * 0.15)
 
 	if hunger <= 0.0:
@@ -72,6 +85,8 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if body_temperature > 38.0:
 		health -= (body_temperature - 38.0) * 0.12 * delta
 		thirst = max(0.0, thirst - thirst_decay * 3.0 * delta)
+	if body_temperature >= 40.0:
+		health -= (body_temperature - 40.0) * 2.5 * delta + 5.0 * delta
 
 	if sick:
 		sick_timer -= delta
@@ -81,7 +96,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			sick = false
 		health = clamp(health, 0.0, max_health)
 	# Passive slow health regen when not suffering any critical condition
-	if not sick and hunger > 0.0 and thirst > 0.0 and body_temperature >= 35.0 and health < max_health:
+	if not sick and hunger > 0.0 and thirst > 0.0 and body_temperature >= 35.0 and body_temperature < 39.0 and health < max_health:
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2
@@ -103,10 +118,11 @@ func rest(hours: float) -> void:
 func do_sleep(hours: float) -> void:
 	if dead:
 		return
-	sleep = min(max_stat, sleep + 25.0 * hours)
-	energy = min(max_stat, energy + 10.0 * hours)
-	if sleep >= max_stat:
-		health = min(max_stat, health + 2.0 * hours)
+	sleep = min(max_stat, sleep + 5.0 * hours)
+	energy = min(max_stat, energy + 3.0 * hours)
+	# Only heal during sleep if not starving or dehydrated
+	if sleep >= max_stat and hunger > 0.0 and thirst > 0.0:
+		health = min(max_stat, health + 8.0 * hours)
 	changed.emit()
 
 func get_sick(duration: float) -> void:
@@ -130,6 +146,8 @@ func to_dict() -> Dictionary:
 		"wetness": wetness,
 		"sick": sick,
 		"sick_timer": sick_timer,
+		"hot_food_charges": hot_food_charges,
+		"hot_food_temp_bonus": hot_food_temp_bonus,
 		"dead": dead
 	}
 
@@ -144,5 +162,7 @@ func from_dict(data: Dictionary) -> void:
 	wetness = float(data.get("wetness", wetness))
 	sick = bool(data.get("sick", false))
 	sick_timer = float(data.get("sick_timer", 0.0))
+	hot_food_charges = int(data.get("hot_food_charges", 0))
+	hot_food_temp_bonus = float(data.get("hot_food_temp_bonus", 0.0))
 	dead = bool(data.get("dead", health <= 0.0))
 	changed.emit()

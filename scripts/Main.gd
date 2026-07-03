@@ -416,6 +416,27 @@ func _tick_campfire_fires() -> void:
 		var smoke_node := get_node_or_null(fire_name + "Smoke")
 		if smoke_node != null:
 			smoke_node.queue_free()
+		# Find and remove the WorldAction and visual structure for this campfire
+		for action_id in world_actions_by_id.keys():
+			var action = world_actions_by_id[action_id]
+			if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
+				var visual_name := str(action.get_meta("visual_name", ""))
+				if not visual_name.is_empty():
+					var vis_node := get_node_or_null(visual_name)
+					if vis_node != null:
+						vis_node.queue_free()
+				# Remove fallback stones/ash
+				var cf_id := str(action_id)
+				var ash_node := get_node_or_null("PlayerCampfireAsh_" + cf_id)
+				if ash_node != null:
+					ash_node.queue_free()
+				for i in range(8):
+					var stone := get_node_or_null("PlayerCampfireStone_%s_%d" % [cf_id, i])
+					if stone != null:
+						stone.queue_free()
+				action.queue_free()
+				world_actions_by_id.erase(action_id)
+				break
 		# Remove from campfire_positions
 		for i in range(campfire_positions.size() - 1, -1, -1):
 			if campfire_positions[i] is Vector3:
@@ -423,6 +444,7 @@ func _tick_campfire_fires() -> void:
 				break
 		if player != null:
 			player.notice.emit("La fogata se ha apagado.")
+		_save_world_change_silent()
 
 func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 	if campfire_positions.is_empty():
@@ -1315,8 +1337,8 @@ func _create_wildlife() -> void:
 		_create_wildlife_animal("fox", route)
 	# Generate random wolves
 	var wolf_centers: Array = []
-	for i in range(2):
-		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 10.0, 25.0, world_range)
+	for i in range(4):
+		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 20.0, 30.0, world_range)
 		wolf_centers.append(center)
 		var route: Array = []
 		for j in range(7):
@@ -1674,14 +1696,15 @@ func handle_world_action(action, actor) -> void:
 			_save_world_change_silent()
 		"fish":
 			var held_f = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_f == null or held_f.item_name != "Cuchillo":
-				actor.notice.emit("Necesitas tener el cuchillo en la mano para pescar.")
+			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_type != "tool_fishing"):
+				actor.notice.emit("Necesitas un cuchillo o caña de pescar para pescar.")
 				return
+			var fish_chance := 0.72 if held_f.item_type == "tool_fishing" else 0.48
 			_play_actor_action(actor, "fish", 1.6)
 			if hud != null:
 				hud.show_countdown("Pescando", 1.6)
 			await get_tree().create_timer(1.6).timeout
-			if randf() < 0.72:
+			if randf() < fish_chance:
 				if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
 					_equip_actor_item(actor, "Pez crudo")
 					actor.notice.emit("Pescas un pez pequeno.")
@@ -1707,12 +1730,39 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Encendiendo fogata", 1.5)
 			await get_tree().create_timer(1.5).timeout
-			_create_campfire_fire(action.position + Vector3(0, 0.15, 0), "CampfireFire_%d" % randi())
+			var fire_name := "CampfireFire_%d" % randi()
+			_create_campfire_fire(action.position + Vector3(0, 0.15, 0), fire_name)
 			action.set_meta("lit", true)
 			action.set_meta("lit_time", Time.get_ticks_msec())
-			action.mark_depleted()
+			action.set_meta("fire_name", fire_name)
+			action.action_type = "cook"
+			action.display_name = "Fogata encendida"
+			action.repeatable = true
 			_save_world_change_silent()
 			actor.notice.emit("Has encendido la fogata. Durara 5 minutos.")
+		"cook":
+			if not action.get_meta("lit", false):
+				actor.notice.emit("La fogata no esta encendida.")
+				return
+			var held_c = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_c == null or held_c.item_name != "Carne ensartada":
+				actor.notice.emit("Necesitas tener carne ensartada en la mano para cocinar.")
+				return
+			_play_actor_action(actor, "cook", 10.0)
+			actor.notice.emit("Cocinando carne en la fogata...")
+			if hud != null:
+				hud.show_countdown("Cocinando", 10.0)
+			await get_tree().create_timer(10.0).timeout
+			# Replace raw meat on stick with cooked meat on stick
+			for i in range(actor.inventory.items.size()):
+				if actor.inventory.items[i].item_name == "Carne ensartada":
+					actor.inventory.remove_index(i)
+					break
+			if actor.inventory.add_item(ItemScript.create("Carne asada en palo", "food", 0.4, 1, 35.0)):
+				if actor.stats.has_method("add_hot_food"):
+					actor.stats.add_hot_food(2)
+				_equip_actor_item(actor, "Carne asada en palo")
+				actor.notice.emit("Has cocinado carne asada en palo. Segura para comer. Caliente!")
 		"hunt":
 			_play_actor_action(actor, "interact", 1.0)
 			if hud != null:
@@ -1827,10 +1877,12 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Durmiendo... pulsa D para despertar.")
 			# Wait until sleep is full and health is full, or player wakes up
 			var sleep_seconds := 0
-			while actor.stats.sleep < actor.stats.max_stat or actor.stats.health < actor.stats.max_health:
+			while actor.stats.sleep < actor.stats.max_stat:
 				if actor.has_method("is_sleeping") and not actor.is_sleeping:
 					break
 				sleep_seconds += 1
+				if sleep_seconds >= 120:
+					break
 				if hud != null:
 					hud.show_countdown("Durmiendo", float(sleep_seconds + 1))
 				await get_tree().create_timer(1.0).timeout

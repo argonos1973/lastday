@@ -62,7 +62,7 @@ const DEFAULT_CLOTHING := {
 }
 
 const DEFAULT_SKIN_HIDES := {
-	"Camiseta": [],
+	"Camiseta": ["Desnudo_torso"],
 	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
 }
@@ -207,6 +207,8 @@ var flashlight: SpotLight3D
 var body_mesh: MeshInstance3D
 var _collision_shape: CollisionShape3D
 var third_person_model: Node3D
+var _full_body_mesh: MeshInstance3D = null
+var _head_mesh: MeshInstance3D = null
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _spine_skeleton: Skeleton3D = null
@@ -443,6 +445,44 @@ func equip_clothing(item_name: String) -> void:
 			drop_pos.y = global_position.y
 			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos)
 	equipped_clothing = item_name
+	# Determine if all clothing slots will be equipped after this item
+	var equipped_check := _equipped_slots.duplicate()
+	if CLOTHING_SLOTS.has(item_name):
+		equipped_check[CLOTHING_SLOTS[item_name]] = item_name
+	var all_equipped := not str(equipped_check.get("torso", "")).is_empty() \
+		and not str(equipped_check.get("legs", "")).is_empty() \
+		and not str(equipped_check.get("feet", "")).is_empty()
+	if all_equipped:
+		if _full_body_mesh != null:
+			_full_body_mesh.visible = true
+			_full_body_mesh.material_override = null
+		if _head_mesh != null:
+			_head_mesh.visible = false
+		# Hide all Desnudo_* parts
+		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+			if dmi != null:
+				dmi.visible = false
+	else:
+		# Not all equipped — use _head_mesh + Desnudo_*
+		if _full_body_mesh != null:
+			_full_body_mesh.visible = false
+			_full_body_mesh.material_override = null
+		if _head_mesh != null:
+			_head_mesh.visible = true
+		# Show all Desnudo_* parts
+		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+			if dmi != null:
+				dmi.visible = true
+		# Hide Desnudo_* covered by equipped clothing
+		for equipped_item in equipped_check.values():
+			var eitem := str(equipped_item)
+			if DEFAULT_SKIN_HIDES.has(eitem):
+				for skin_name in DEFAULT_SKIN_HIDES[eitem]:
+					var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+					if skin_mi != null:
+						skin_mi.visible = false
 	if DEFAULT_CLOTHING.has(item_name):
 		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
 		if bn != null:
@@ -501,6 +541,31 @@ func unequip_clothing(item_name: String) -> void:
 		equipped_clothing = ""
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
+	# Hide _full_body_mesh, show _head_mesh (face stays visible).
+	# Show Desnudo_* for exposed areas.
+	var hide_legs := not (_equipped_slots.has("legs") and not str(_equipped_slots["legs"]).is_empty())
+	var hide_torso := not (_equipped_slots.has("torso") and not str(_equipped_slots["torso"]).is_empty())
+	if _full_body_mesh != null:
+		_full_body_mesh.visible = false
+		_full_body_mesh.material_override = null
+	if _head_mesh != null:
+		_head_mesh.visible = true
+	# Show all Desnudo_* parts
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			dmi.visible = true
+	# Hide Desnudo_* parts that are covered by still-equipped clothing
+	for equipped_item in _equipped_slots.values():
+		var eitem := str(equipped_item)
+		if DEFAULT_SKIN_HIDES.has(eitem):
+			for skin_name in DEFAULT_SKIN_HIDES[eitem]:
+				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+				if skin_mi != null:
+					skin_mi.visible = false
+	# If torso is still equipped, _head_mesh shows nothing below head,
+	# so we need Desnudo_arms/hands for arms
+	# (they're already shown above and not hidden by Camiseta's SKIN_HIDES)
 	if inventory != null:
 		inventory.changed.emit()
 
@@ -554,6 +619,8 @@ func _init_survival_clothing(root: Node) -> void:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
 			dmi.visible = true
+	# Add the head/face from inicio.glb (player_with_clothes.glb lacks face geometry)
+	_add_head_mesh()
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
@@ -1446,6 +1513,110 @@ func _resolve_mixamo_bone_name(skeleton: Skeleton3D, imported_bone_name: String)
 			continue
 		return candidate
 	return ""
+
+func _find_mesh_in_node(root: Node, mesh_name: String) -> MeshInstance3D:
+	if root == null:
+		return null
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D and node.name == mesh_name:
+			return node as MeshInstance3D
+		for c in node.get_children():
+			stack.append(c)
+	return null
+
+func _add_head_mesh() -> void:
+	if third_person_model == null:
+		return
+	var skeleton := _find_skeleton(third_person_model)
+	if skeleton == null:
+		return
+	var src_model := _load_external_node3d("res://inicio.glb")
+	if src_model == null:
+		return
+	var src_body := _find_mesh_in_node(src_model, "Body")
+	if src_body != null:
+		var src_parent := src_body.get_parent()
+		if src_parent != null:
+			src_parent.remove_child(src_body)
+		# Duplicate the Body node BEFORE adding to skeleton — duplicate preserves skin
+		var head_dup := src_body.duplicate() as MeshInstance3D
+		skeleton.add_child(src_body)
+		_full_body_mesh = src_body
+		if head_dup != null:
+			head_dup.name = "HeadMesh"
+			# Build a clean head-only mesh using add_surface_from_arrays
+			var mesh_res := src_body.mesh
+			if mesh_res != null and mesh_res.get_surface_count() > 0:
+				var orig_mat := mesh_res.surface_get_material(0)
+				var mdt := MeshDataTool.new()
+				mdt.create_from_surface(mesh_res, 0)
+				# Collect head face indices
+				var head_faces: PackedInt32Array = []
+				for face_idx in range(mdt.get_face_count()):
+					var v0 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 0))
+					var v1 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 1))
+					var v2 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 2))
+					var cy := (v0.y + v1.y + v2.y) / 3.0
+					var cx := (v0.x + v1.x + v2.x) / 3.0
+					if cy >= 3.0 and absf(cx) < 0.4:
+						head_faces.append(face_idx)
+				# Build arrays for head-only mesh
+				var verts: PackedVector3Array = []
+				var normals: PackedVector3Array = []
+				var uvs: PackedVector2Array = []
+				var bones_arr: PackedInt32Array = []
+				var weights_arr: PackedFloat32Array = []
+				var indices: PackedInt32Array = []
+				var vert_map := {}
+				for face_idx in head_faces:
+					for fv in range(3):
+						var orig_vi := mdt.get_face_vertex(face_idx, fv)
+						var key := orig_vi
+						if not vert_map.has(key):
+							var new_idx := verts.size()
+							vert_map[key] = new_idx
+							verts.append(mdt.get_vertex(orig_vi))
+							normals.append(mdt.get_vertex_normal(orig_vi))
+							uvs.append(mdt.get_vertex_uv(orig_vi))
+							var bs: PackedInt32Array = mdt.get_vertex_bones(orig_vi)
+							var ws: PackedFloat32Array = mdt.get_vertex_weights(orig_vi)
+							# Ensure exactly 4 bones/weights per vertex
+							for b in range(4):
+								if b < bs.size():
+									bones_arr.append(bs[b])
+								else:
+									bones_arr.append(0)
+							for w in range(4):
+								if w < ws.size():
+									weights_arr.append(ws[w])
+								else:
+									weights_arr.append(0.0)
+						indices.append(vert_map[key])
+				var arrays: Array = []
+				arrays.resize(Mesh.ARRAY_MAX)
+				arrays[Mesh.ARRAY_VERTEX] = verts
+				arrays[Mesh.ARRAY_NORMAL] = normals
+				arrays[Mesh.ARRAY_TEX_UV] = uvs
+				arrays[Mesh.ARRAY_BONES] = bones_arr
+				arrays[Mesh.ARRAY_WEIGHTS] = weights_arr
+				arrays[Mesh.ARRAY_INDEX] = indices
+				var head_mesh := ArrayMesh.new()
+				head_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				if head_mesh.get_surface_count() > 0 and orig_mat != null:
+					head_mesh.surface_set_material(0, orig_mat)
+				head_dup.mesh = head_mesh
+			skeleton.add_child(head_dup)
+			_head_mesh = head_dup
+			_head_mesh.visible = false
+		# Hide the Body_* and Desnudo_* parts from player_with_clothes.glb
+		for bn in ["Body_arms", "Body_hands", "Body_torso", "Body_legs", "Body_feet",
+				"Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+			if bmi != null:
+				bmi.visible = false
+	src_model.queue_free()
 
 func _find_skeleton(root: Node) -> Skeleton3D:
 	if root == null:

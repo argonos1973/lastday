@@ -53,6 +53,16 @@ func use_index(index: int, stats) -> bool:
 				item_used.emit("Comes carne cruda de lobo. Te sientes mal del estomago.")
 				remove_index(index)
 				return true
+			if item.item_name == "Carne asada en palo":
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.4))
+				if stats.has_method("add_hot_food"):
+					stats.add_hot_food(1)
+				stats.changed.emit()
+				item_used.emit("Comes carne asada separada del palo. Calienta tu cuerpo.")
+				remove_index(index)
+				add_item(ItemScript.create("Palo", "material", 0.3, 1, 0.0))
+				return true
 			stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
 			stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
 			item_used.emit("Comida consumida. Te recuperas un poco.")

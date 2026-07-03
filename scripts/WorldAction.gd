@@ -107,17 +107,25 @@ func get_interaction_text(_player = null) -> String:
 			return "%s - rastrear - E" % display_name
 		"drink_water":
 			return "Beber agua del rio - E"
+		"light_campfire":
+			return "Encender fogata - E (cerillas)"
+		"cook":
+			return "Cocinar carne ensartada - E"
 	return "%s - E" % display_name
 
 func to_dict() -> Dictionary:
 	return {
 		"id": action_id,
+		"action_type": action_type,
 		"depleted": depleted,
 		"state": action_state,
 		"growth": growth
 	}
 
 func from_dict(data: Dictionary) -> void:
+	var saved_type := str(data.get("action_type", ""))
+	if not saved_type.is_empty():
+		action_type = saved_type
 	depleted = bool(data.get("depleted", depleted))
 	action_state = str(data.get("state", action_state))
 	growth = float(data.get("growth", growth))

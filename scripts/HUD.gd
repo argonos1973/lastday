@@ -1,7 +1,7 @@
 extends CanvasLayer
 class_name HUD
 
-const MiniMapScript = preload("res://scripts/MiniMap.gd")
+const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 
 var player
 var day_cycle
@@ -13,7 +13,6 @@ var root: Control
 var status_panel: PanelContainer
 var inventory_panel: PanelContainer
 var inventory_grid: GridContainer
-var minimap
 var inventory_weight_label: Label
 var time_label: Label
 var real_clock_label: Label
@@ -46,6 +45,7 @@ var slot_action_label: Label = null
 var _inv_refresh_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
+var _context_menu_recipes: Array = []
 
 func setup(new_player, new_day_cycle) -> void:
 	player = new_player
@@ -141,21 +141,18 @@ func _build_ui() -> void:
 	_build_status_panel()
 	_build_inventory_panel()
 	_build_center_messages()
-	_build_minimap()
 	_build_real_clock_panel()
-
-func _build_minimap() -> void:
-	minimap = MiniMapScript.new()
-	minimap.name = "MiniMap"
-	minimap.position = Vector2(1010, 18)
-	minimap.size = Vector2(160, 160)
-	minimap.setup(player)
-	root.add_child(minimap)
 
 func _build_real_clock_panel() -> void:
 	var panel := PanelContainer.new()
-	panel.position = Vector2(18, 18)
-	panel.size = Vector2(200, 70)
+	panel.offset_left = 18
+	panel.offset_top = 18
+	panel.offset_right = 218
+	panel.offset_bottom = 88
+	panel.anchor_left = 0.0
+	panel.anchor_top = 0.0
+	panel.anchor_right = 0.0
+	panel.anchor_bottom = 0.0
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
 	root.add_child(panel)
@@ -212,8 +209,16 @@ func _update_real_clock() -> void:
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
-	status_panel.position = Vector2(18, 420)
-	status_panel.size = Vector2(250, 300)
+	status_panel.offset_left = 18
+	status_panel.offset_top = 420
+	status_panel.offset_right = 268
+	status_panel.offset_bottom = 720
+	status_panel.anchor_left = 0.0
+	status_panel.anchor_top = 1.0
+	status_panel.anchor_right = 0.0
+	status_panel.anchor_bottom = 1.0
+	status_panel.offset_top = -300
+	status_panel.offset_bottom = 0
 	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
 	root.add_child(status_panel)
@@ -296,8 +301,14 @@ func _status_icon_text(key: String) -> String:
 
 func _build_inventory_panel() -> void:
 	inventory_panel = PanelContainer.new()
-	inventory_panel.position = Vector2(250, 86)
-	inventory_panel.size = Vector2(780, 548)
+	inventory_panel.anchor_left = 0.5
+	inventory_panel.anchor_top = 0.0
+	inventory_panel.anchor_right = 0.5
+	inventory_panel.anchor_bottom = 1.0
+	inventory_panel.offset_left = -390
+	inventory_panel.offset_top = 86
+	inventory_panel.offset_right = 390
+	inventory_panel.offset_bottom = -86
 	inventory_panel.visible = inventory_visible
 	inventory_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	inventory_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.020, 0.018, 0.91), Color(0.47, 0.49, 0.42, 0.52), 1))
@@ -404,8 +415,14 @@ func _on_craft_campfire_pressed() -> void:
 
 func _build_center_messages() -> void:
 	objective_label = Label.new()
-	objective_label.position = Vector2(18, 18)
-	objective_label.size = Vector2(440, 54)
+	objective_label.offset_left = 18
+	objective_label.offset_top = 18
+	objective_label.offset_right = 458
+	objective_label.offset_bottom = 72
+	objective_label.anchor_left = 0.0
+	objective_label.anchor_top = 0.0
+	objective_label.anchor_right = 0.0
+	objective_label.anchor_bottom = 0.0
 	objective_label.text = "OBJETIVO: recolecta madera, piedra, comida y abrigo. Construye una cabana."
 	objective_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	objective_label.add_theme_font_size_override("font_size", 15)
@@ -414,39 +431,69 @@ func _build_center_messages() -> void:
 	root.add_child(objective_label)
 
 	crosshair_ring_h = ColorRect.new()
-	crosshair_ring_h.position = Vector2(728, 325)
-	crosshair_ring_h.size = Vector2(16, 2)
+	crosshair_ring_h.anchor_left = 0.5
+	crosshair_ring_h.anchor_top = 0.5
+	crosshair_ring_h.anchor_right = 0.5
+	crosshair_ring_h.anchor_bottom = 0.5
+	crosshair_ring_h.offset_left = -8
+	crosshair_ring_h.offset_top = -1
+	crosshair_ring_h.offset_right = 8
+	crosshair_ring_h.offset_bottom = 1
 	crosshair_ring_h.color = Color(0.86, 0.88, 0.82, 0.62)
 	crosshair_ring_h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	crosshair_ring_h.visible = false
 	root.add_child(crosshair_ring_h)
 
 	crosshair_ring_v = ColorRect.new()
-	crosshair_ring_v.position = Vector2(735, 318)
-	crosshair_ring_v.size = Vector2(2, 16)
+	crosshair_ring_v.anchor_left = 0.5
+	crosshair_ring_v.anchor_top = 0.5
+	crosshair_ring_v.anchor_right = 0.5
+	crosshair_ring_v.anchor_bottom = 0.5
+	crosshair_ring_v.offset_left = -1
+	crosshair_ring_v.offset_top = -8
+	crosshair_ring_v.offset_right = 1
+	crosshair_ring_v.offset_bottom = 8
 	crosshair_ring_v.color = Color(0.86, 0.88, 0.82, 0.62)
 	crosshair_ring_v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	crosshair_ring_v.visible = false
 	root.add_child(crosshair_ring_v)
 
 	crosshair_dot = ColorRect.new()
-	crosshair_dot.position = Vector2(734, 324)
-	crosshair_dot.size = Vector2(4, 4)
+	crosshair_dot.anchor_left = 0.5
+	crosshair_dot.anchor_top = 0.5
+	crosshair_dot.anchor_right = 0.5
+	crosshair_dot.anchor_bottom = 0.5
+	crosshair_dot.offset_left = -2
+	crosshair_dot.offset_top = -2
+	crosshair_dot.offset_right = 2
+	crosshair_dot.offset_bottom = 2
 	crosshair_dot.color = Color(0.96, 0.94, 0.84, 0.92)
 	crosshair_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(crosshair_dot)
 
 	_damage_overlay = ColorRect.new()
-	_damage_overlay.position = Vector2.ZERO
-	_damage_overlay.size = Vector2(1500, 800)
+	_damage_overlay.anchor_left = 0.0
+	_damage_overlay.anchor_top = 0.0
+	_damage_overlay.anchor_right = 1.0
+	_damage_overlay.anchor_bottom = 1.0
+	_damage_overlay.offset_left = 0
+	_damage_overlay.offset_top = 0
+	_damage_overlay.offset_right = 0
+	_damage_overlay.offset_bottom = 0
 	_damage_overlay.color = Color(0.4, 0.0, 0.0, 0.0)
 	_damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_damage_overlay)
 
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	prompt_label.position = Vector2(486, 348)
-	prompt_label.size = Vector2(500, 40)
+	prompt_label.anchor_left = 0.5
+	prompt_label.anchor_top = 0.5
+	prompt_label.anchor_right = 0.5
+	prompt_label.anchor_bottom = 0.5
+	prompt_label.offset_left = -250
+	prompt_label.offset_top = 8
+	prompt_label.offset_right = 250
+	prompt_label.offset_bottom = 48
 	prompt_label.add_theme_font_size_override("font_size", 18)
 	prompt_label.add_theme_color_override("font_color", Color(0.94, 0.92, 0.82))
 	prompt_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.86))
@@ -457,8 +504,14 @@ func _build_center_messages() -> void:
 
 	notice_label = Label.new()
 	notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	notice_label.position = Vector2(340, 52)
-	notice_label.size = Vector2(600, 70)
+	notice_label.anchor_left = 0.5
+	notice_label.anchor_top = 0.0
+	notice_label.anchor_right = 0.5
+	notice_label.anchor_bottom = 0.0
+	notice_label.offset_left = -300
+	notice_label.offset_top = 52
+	notice_label.offset_right = 300
+	notice_label.offset_bottom = 122
 	notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	notice_label.add_theme_font_size_override("font_size", 19)
 	notice_label.add_theme_color_override("font_color", Color(0.96, 0.86, 0.66))
@@ -467,8 +520,14 @@ func _build_center_messages() -> void:
 
 	countdown_label = Label.new()
 	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	countdown_label.position = Vector2(340, 130)
-	countdown_label.size = Vector2(600, 50)
+	countdown_label.anchor_left = 0.5
+	countdown_label.anchor_top = 0.0
+	countdown_label.anchor_right = 0.5
+	countdown_label.anchor_bottom = 0.0
+	countdown_label.offset_left = -300
+	countdown_label.offset_top = 130
+	countdown_label.offset_right = 300
+	countdown_label.offset_bottom = 180
 	countdown_label.add_theme_font_size_override("font_size", 28)
 	countdown_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 	countdown_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.86))
@@ -481,7 +540,8 @@ func _build_center_messages() -> void:
 func _apply_aim_layout() -> void:
 	if player == null or not player.has_method("get_aim_screen_offset"):
 		return
-	var center := Vector2(640.0, 360.0)
+	var vp_size := get_viewport().get_visible_rect().size
+	var center := vp_size * 0.5
 	var aim: Vector2 = center + player.get_aim_screen_offset()
 	if crosshair_ring_h != null:
 		crosshair_ring_h.position = aim - crosshair_ring_h.size * 0.5
@@ -497,7 +557,7 @@ func _update_stats() -> void:
 		return
 	time_label.text = "%s  |  %.1f / %.1f kg" % [
 		day_cycle.get_hour_text(),
-		player.inventory.get_total_weight(),
+		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
 		player.inventory.max_weight
 	]
 	_set_bar("health", player.stats.health / player.stats.max_health, "%.0f" % player.stats.health)
@@ -604,7 +664,10 @@ func _update_inventory() -> void:
 	_update_equipment_labels()
 	for child in inventory_grid.get_children():
 		child.queue_free()
-	inventory_weight_label.text = "PESO %.1f / %.1f KG" % [player.inventory.get_total_weight(), player.inventory.max_weight]
+	inventory_weight_label.text = "PESO %.1f / %.1f KG" % [
+		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
+		player.inventory.max_weight
+	]
 	var slot_count: int = max(player.inventory.max_slots, player.inventory.items.size())
 	for i in range(slot_count):
 		var item = player.inventory.items[i] if i < player.inventory.items.size() else null
@@ -632,7 +695,11 @@ func _update_equipment_labels() -> void:
 		var backpack_text := "Sin mochila"
 		if not player.equipped_backpack.is_empty():
 			backpack_text = player.equipped_backpack
-		var cap_text := "Slots: %d | Peso: %.1f/%.1f kg" % [player.inventory.max_slots, player.inventory.get_total_weight(), player.inventory.max_weight]
+		var cap_text := "Slots: %d | Peso: %.1f/%.1f kg" % [
+			player.inventory.max_slots,
+			player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
+			player.inventory.max_weight
+		]
 		equipment_backpack_label.text = "Mochila\n%s\n%s" % [backpack_text, cap_text]
 
 func _create_inventory_slot(index: int, item) -> void:
@@ -716,6 +783,12 @@ func _item_thumbnail_color(item) -> Color:
 			return Color(0.22, 0.36, 0.10)
 		"battery":
 			return Color(0.12, 0.12, 0.10)
+		"tool_spear":
+			return Color(0.38, 0.26, 0.10)
+		"tool_fishing":
+			return Color(0.30, 0.22, 0.08)
+		"campfire":
+			return Color(0.20, 0.12, 0.04)
 		_:
 			return Color(0.18, 0.18, 0.16)
 
@@ -729,7 +802,7 @@ func _item_thumbnail_text(item) -> String:
 			return "ME"
 		"weapon":
 			return "WE"
-		"tool", "tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
+		"tool", "tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "tool_fishing":
 			return "TO"
 		"clothing":
 			return "CL"
@@ -863,6 +936,20 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	drop_btn.add_theme_font_size_override("font_size", 14)
 	drop_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(drop_btn)
+	# Add combine button if there are recipes available for this item
+	var item_name := str(item.item_name)
+	var recipes := CraftingSystemScript.get_recipes_for_item(item_name)
+	_context_menu_recipes = []
+	for recipe in recipes:
+		if CraftingSystemScript._can_craft(recipe, player.inventory.items):
+			var recipe_label = CraftingSystemScript.get_recipe_label(recipe)
+			var combine_btn := Button.new()
+			combine_btn.text = "Combinar: %s" % recipe_label
+			combine_btn.add_theme_font_size_override("font_size", 13)
+			combine_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			combine_btn.custom_minimum_size = Vector2(220, 30)
+			vbox.add_child(combine_btn)
+			_context_menu_recipes.append(recipe)
 	_context_menu.position = Vector2(slot_rect.position.x + slot_rect.size.x + 6, slot_rect.position.y)
 	_context_menu.z_index = 100
 	root.add_child(_context_menu)
@@ -879,8 +966,9 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		return false
 	var rect = _context_menu.get_global_rect()
 	if rect.has_point(mouse_pos):
-		var use_btn = _context_menu.get_child(0).get_child(1)
-		var drop_btn = _context_menu.get_child(0).get_child(2)
+		var vbox = _context_menu.get_child(0)
+		var use_btn = vbox.get_child(1)
+		var drop_btn = vbox.get_child(2)
 		if button_index == MOUSE_BUTTON_LEFT:
 			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
 				_on_use_pressed()
@@ -888,9 +976,27 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 			elif drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
 				_on_drop_pressed()
 				return true
+			# Check combine buttons (child 3+)
+			for i in range(3, vbox.get_child_count()):
+				var btn = vbox.get_child(i)
+				if btn is Button and btn.get_global_rect().has_point(mouse_pos):
+					var recipe_index := i - 3
+					if recipe_index < _context_menu_recipes.size():
+						_on_combine_pressed(_context_menu_recipes[recipe_index])
+						return true
 		return true
 	_close_context_menu()
 	return false
+
+func _on_combine_pressed(recipe: Dictionary) -> void:
+	if player == null or player.inventory == null:
+		return
+	if player.has_method("craft_recipe"):
+		player.craft_recipe(recipe)
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
 
 func _on_use_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
@@ -898,13 +1004,16 @@ func _on_use_pressed() -> void:
 	player.held_index = selected_slot_index
 	var item = player.inventory.items[selected_slot_index]
 	var item_type := str(item.item_type)
+	var item_name := str(item.item_name)
+	# Items that should go to hand instead of being consumed
+	var to_hand := item_name.find("ensartada") >= 0 or (item_name == "Palo") or (item_name == "Palo afilado")
 	match item_type:
 		"food", "water", "medical", "clothing":
-			player._use_inventory_index(selected_slot_index)
+			if to_hand:
+				player._sync_held_item()
+			else:
+				player._use_inventory_index(selected_slot_index)
 		_:
-			if player.has_method("clear_hands"):
-				player.clear_hands()
-			player.equip_item_by_name(str(item.item_name))
 			player._sync_held_item()
 	selected_slot_index = -1
 	_close_context_menu()

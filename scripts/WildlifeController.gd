@@ -22,6 +22,9 @@ var _chase_target: Node3D = null
 var _state := "patrol"
 var _noise_attract_pos: Vector3 = Vector3.ZERO
 var _noise_attract_timer := 0.0
+var _chase_stuck_time := 0.0
+var _wait_near_timer := 0.0
+var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
@@ -168,15 +171,80 @@ func _wolf_ai(delta: float) -> Dictionary:
 	_attack_timer -= delta
 	if _noise_attract_timer > 0.0:
 		_noise_attract_timer -= delta
+	# State: wait_near — wolf gave up chasing but stays close
+	if _state == "wait_near" and _wait_near_timer > 0.0:
+		_wait_near_timer -= delta
+		# Keep waiting near the player's last known position
+		if _player != null and is_instance_valid(_player):
+			var dist_to_player := global_position.distance_to(_player.global_position)
+			# If player comes down and is reachable, resume chase
+			if dist_to_player < 20.0 and _can_reach_player():
+				_chase_stuck_time = 0.0
+				_state = "chase_player"
+				_chase_target = _player
+				speed = move_speed * 2.8
+				target = _player.global_position
+				_play_animation_by_name("run")
+				return {"target": target, "speed": speed}
+			# Stay near but don't chase — circle around the wait position
+			var wait_target := _player.global_position
+			var to_wait := wait_target - global_position
+			to_wait.y = 0.0
+			if to_wait.length() > 8.0:
+				target = wait_target
+				speed = move_speed * 1.2
+				_play_animation_by_name("walk")
+			else:
+				# Idle near the player, occasional growl
+				target = global_position
+				speed = 0.0
+				_play_animation_by_name("idle")
+			return {"target": target, "speed": speed}
+		else:
+			_wait_near_timer = 0.0
+	# State: wait_near expired — go back to patrol
+	if _wait_near_timer <= 0.0 and _state == "wait_near":
+		# If player is still elevated and close, retreat further
+		if _player != null and is_instance_valid(_player):
+			var height_diff := absf(_player.global_position.y - global_position.y)
+			var dist_to_player := global_position.distance_to(_player.global_position)
+			if height_diff >= 1.5 and dist_to_player < 25.0:
+				# Retreat away from the player
+				var away := (global_position - _player.global_position).normalized()
+				away.y = 0.0
+				_state = "patrol"
+				_chase_stuck_time = 0.0
+				_play_wolf_sound("growl")
+				_play_animation_by_name("trot")
+				return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
+		_state = "patrol"
+		_chase_stuck_time = 0.0
 	# Priority 1: chase player
 	if _player != null and is_instance_valid(_player):
 		var dist_to_player := global_position.distance_to(_player.global_position)
+		var height_diff := absf(_player.global_position.y - global_position.y)
+		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
 		if dist_to_player < 20.0:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
 			speed = move_speed * 2.8
-			if dist_to_player < 2.0:
+			# Player elevated (on container/car/house roof) — can't reach
+			if height_diff >= 1.5 and not _can_reach_player():
+				_chase_stuck_time += delta * 2.0
+				if _chase_stuck_time > 2.0:
+					_state = "wait_near"
+					_wait_near_timer = 20.0
+					_wait_near_pos = global_position
+					_chase_stuck_time = 0.0
+					_play_wolf_sound("growl")
+					target = global_position
+					speed = 0.0
+					_play_animation_by_name("idle")
+				else:
+					target = _player.global_position
+					_play_animation_by_name("run")
+			elif flat_dist < 2.0 and height_diff < 1.5:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 5.0
 					_attack_timer = randf_range(8.0, 15.0)
@@ -188,9 +256,25 @@ func _wolf_ai(delta: float) -> Dictionary:
 				away_dir.y = 0.0
 				target = _player.global_position + away_dir * 2.5
 				speed = 0.0
+				_chase_stuck_time = 0.0
 			else:
 				_play_animation_by_name("run")
 				target = _player.global_position
+				# Track stuck time while chasing
+				if _stuck_time > 0.3:
+					_chase_stuck_time += delta
+				else:
+					_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
+				# If stuck for too long, give up and wait nearby
+				if _chase_stuck_time > 5.0:
+					_state = "wait_near"
+					_wait_near_timer = 15.0
+					_wait_near_pos = global_position
+					_chase_stuck_time = 0.0
+					_play_wolf_sound("growl")
+					target = global_position
+					speed = 0.0
+					_play_animation_by_name("idle")
 			return {"target": target, "speed": speed}
 	# Priority 2: investigate noise
 	if _noise_attract_timer > 0.0:
@@ -786,6 +870,24 @@ func _request_path(start: Vector3, goal: Vector3) -> Array:
 	if scene != null and scene.has_method("find_path_wildlife"):
 		return scene.call("find_path_wildlife", start, goal) as Array
 	return [goal]
+
+func _can_reach_player() -> bool:
+	if _player == null or not is_instance_valid(_player):
+		return false
+	var height_diff := absf(_player.global_position.y - global_position.y)
+	if height_diff >= 1.5:
+		return false
+	var scene := get_tree().current_scene
+	if scene == null or not scene.has_method("find_path_wildlife"):
+		return true
+	var path: Array = scene.call("find_path_wildlife", global_position, _player.global_position)
+	if path.is_empty():
+		return false
+	if path.size() == 1:
+		return true
+	var last_point: Vector3 = path[path.size() - 1]
+	var dist := last_point.distance_to(_player.global_position)
+	return dist < 3.0
 
 func _animate_legs(delta: float) -> void:
 	if _visual_root != null:
