@@ -7,6 +7,7 @@ const ItemScript = preload("res://scripts/Item.gd")
 const InteractionRaycastScript = preload("res://scripts/InteractionRaycast.gd")
 const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
+const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
@@ -1964,6 +1965,20 @@ func _craft_campfire() -> void:
 	pos.y = 0.15
 	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
+
+func craft_recipe(recipe: Dictionary) -> void:
+	if inventory == null:
+		return
+	var out: Dictionary = recipe["output"]
+	# Fogata uses the full campfire flow with animation + spawn
+	if out["type"] == "campfire":
+		_craft_campfire()
+		return
+	if not CraftingSystemScript.craft(recipe, inventory):
+		notice.emit("No tienes los materiales necesarios.")
+		return
+	inventory.changed.emit()
+	notice.emit("Has crafteado: %s." % out["name"])
 
 func _drop_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():

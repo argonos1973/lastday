@@ -23,6 +23,8 @@ var _state := "patrol"
 var _noise_attract_pos: Vector3 = Vector3.ZERO
 var _noise_attract_timer := 0.0
 var _chase_stuck_time := 0.0
+var _reach_check_timer := 0.0
+var _chase_cooldown := 0.0
 var _wait_near_timer := 0.0
 var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
@@ -113,6 +115,7 @@ func _process(delta: float) -> void:
 		return
 	_update_stuck_timer(delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	_chase_cooldown = max(0.0, _chase_cooldown - delta)
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
@@ -204,23 +207,20 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_wait_near_timer = 0.0
 	# State: wait_near expired — go back to patrol
 	if _wait_near_timer <= 0.0 and _state == "wait_near":
-		# If player is still elevated and close, retreat further
+		# Retreat away from the player
 		if _player != null and is_instance_valid(_player):
-			var height_diff := absf(_player.global_position.y - global_position.y)
-			var dist_to_player := global_position.distance_to(_player.global_position)
-			if height_diff >= 1.5 and dist_to_player < 25.0:
-				# Retreat away from the player
-				var away := (global_position - _player.global_position).normalized()
-				away.y = 0.0
-				_state = "patrol"
-				_chase_stuck_time = 0.0
-				_play_wolf_sound("growl")
-				_play_animation_by_name("trot")
-				return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
+			var away := (global_position - _player.global_position).normalized()
+			away.y = 0.0
+			_state = "patrol"
+			_chase_stuck_time = 0.0
+			_play_wolf_sound("growl")
+			_play_animation_by_name("trot")
+			return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
 		_state = "patrol"
 		_chase_stuck_time = 0.0
+		_chase_cooldown = 15.0
 	# Priority 1: chase player
-	if _player != null and is_instance_valid(_player):
+	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
@@ -260,21 +260,38 @@ func _wolf_ai(delta: float) -> Dictionary:
 			else:
 				_play_animation_by_name("run")
 				target = _player.global_position
-				# Track stuck time while chasing
-				if _stuck_time > 0.3:
-					_chase_stuck_time += delta
+				# Periodically check if player is reachable (e.g. across river)
+				_reach_check_timer -= delta
+				if _reach_check_timer <= 0.0:
+					_reach_check_timer = 1.0
+					if not _can_reach_player():
+						_chase_stuck_time += 3.0
+					else:
+						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
 				else:
-					_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
-				# If stuck for too long, give up and wait nearby
+					# Track stuck time while chasing
+					if _stuck_time > 0.3:
+						_chase_stuck_time += delta
+					else:
+						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
+				# If can't reach player, retreat and go back to patrol far away
 				if _chase_stuck_time > 5.0:
-					_state = "wait_near"
-					_wait_near_timer = 15.0
-					_wait_near_pos = global_position
+					_state = "patrol"
 					_chase_stuck_time = 0.0
+					_chase_target = null
+					_chase_cooldown = 15.0
 					_play_wolf_sound("growl")
-					target = global_position
-					speed = 0.0
-					_play_animation_by_name("idle")
+					# Pick the patrol point farthest from the player
+					var farthest_patrol: Vector3 = patrol_points[0]
+					var farthest_dist := 0.0
+					for pp in patrol_points:
+						var d: float = global_position.distance_to(pp)
+						if d > farthest_dist:
+							farthest_dist = d
+							farthest_patrol = pp
+					target = farthest_patrol
+					speed = move_speed * 2.0
+					_play_animation_by_name("trot")
 			return {"target": target, "speed": speed}
 	# Priority 2: investigate noise
 	if _noise_attract_timer > 0.0:

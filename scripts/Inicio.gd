@@ -6,7 +6,7 @@ var _started: bool = false
 var _input_blocked: float = 1.0
 
 func _ready() -> void:
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
 	# Background color (dark) in case image fails
 	var bg := ColorRect.new()

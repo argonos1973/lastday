@@ -400,7 +400,7 @@ func _add_inventory_hint(parent: VBoxContainer) -> void:
 	parent.add_child(label)
 
 	var craft_btn := Button.new()
-	craft_btn.text = "Craftear Fogata (2 Troncos + 1 Palo)"
+	craft_btn.text = "Craftear Fogata (2 Troncos + 1 Palo + Cerillas)"
 	craft_btn.add_theme_font_size_override("font_size", 14)
 	craft_btn.custom_minimum_size = Vector2(230, 36)
 	craft_btn.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -908,6 +908,16 @@ func handle_slot_click(mouse_pos: Vector2, button_index: int) -> void:
 						_on_drop_pressed()
 				return
 
+func is_click_on_slot(mouse_pos: Vector2) -> bool:
+	if not inventory_visible or inventory_grid == null:
+		return false
+	for i in range(inventory_grid.get_child_count()):
+		var slot = inventory_grid.get_child(i)
+		if slot is PanelContainer:
+			if slot.get_global_rect().has_point(mouse_pos):
+				return true
+	return false
+
 func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	_close_context_menu()
 	selected_slot_index = slot_index
@@ -995,6 +1005,10 @@ func _on_combine_pressed(recipe: Dictionary) -> void:
 		player.craft_recipe(recipe)
 	selected_slot_index = -1
 	_close_context_menu()
+	var out: Dictionary = recipe["output"]
+	if out.get("type", "") == "campfire":
+		# Keep inventory open during the 2s crafting animation
+		await get_tree().create_timer(2.0).timeout
 	if inventory_visible:
 		toggle_inventory()
 

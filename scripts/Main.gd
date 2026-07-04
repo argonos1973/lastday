@@ -368,8 +368,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hud != null and hud.inventory_visible and event is InputEventMouseButton and event.pressed:
 		if hud.handle_context_menu_click(event.position, event.button_index):
 			return
-		hud.handle_slot_click(event.position, event.button_index)
-		return
+		if hud.is_click_on_slot(event.position):
+			hud.handle_slot_click(event.position, event.button_index)
+			return
 	var tab_pressed: bool = event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB
 	if hud != null and (event.is_action_pressed("toggle_inventory") or tab_pressed):
 		hud.toggle_inventory()
@@ -550,8 +551,7 @@ func _create_environment() -> void:
 	environment.fog_enabled = true
 	environment.fog_light_color = Color(0.78, 0.86, 0.90)
 	environment.fog_density = 0.0025
-	environment.glow_enabled = true
-	environment.glow_intensity = 0.08
+	environment.glow_enabled = false
 	world.environment = environment
 	add_child(world)
 
@@ -562,7 +562,7 @@ func _create_environment() -> void:
 	sun.shadow_enabled = true
 	# Shorter shadow distance massively reduces per-frame shadow draw cost in the
 	# gl_compatibility renderer while keeping shadows near the player.
-	sun.directional_shadow_max_distance = 55.0
+	sun.directional_shadow_max_distance = 30.0
 	add_child(sun)
 	_create_star_field()
 	_create_moon_field()
@@ -2998,7 +2998,26 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
+	if _is_in_river(pos):
+		return false
 	return true
+
+func _is_in_river(pos: Vector3) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	for segment in river_segments_data:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along := Vector2(cos(yaw), -sin(yaw))
+		var across := Vector2(sin(yaw), cos(yaw))
+		var half_length := size.x * 0.5
+		var half_width := size.y * 0.5
+		var offset := p - Vector2(center.x, center.z)
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		if abs(local_along) <= half_length and abs(local_across) <= half_width:
+			return true
+	return false
 
 func _is_inside_closed_house(pos: Vector3) -> bool:
 	var p := Vector2(pos.x, pos.z)
@@ -3443,7 +3462,7 @@ func _spawn_wood_chips(origin: Vector3) -> void:
 	rot_curve.add_point(Vector2(1.0, 12.0))
 	var rot_tex := CurveTexture.new()
 	rot_tex.curve = rot_curve
-	mat.rotation_curve = rot_tex
+	mat.angle_curve = rot_tex
 	particles.process_material = mat
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.12, 0.06, 0.12)
@@ -4944,7 +4963,28 @@ func _build_nav_grid() -> void:
 				var world_pos := _grid_to_world(cell)
 				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
 					_nav_grid[cell] = true
+	_block_river_cells_in_nav_grid()
 	_nav_grid_built = true
+
+func _block_river_cells_in_nav_grid() -> void:
+	for segment in river_segments_data:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var half_length := size.x * 0.5
+		var half_width := size.y * 0.5
+		var steps_l := int(ceil(size.x / _nav_cell_size)) + 1
+		var steps_w := int(ceil(size.y / _nav_cell_size)) + 1
+		for i in range(steps_l + 1):
+			var local_along: float = lerp(-half_length, half_length, float(i) / float(steps_l))
+			for j in range(steps_w + 1):
+				var local_across: float = lerp(-half_width, half_width, float(j) / float(steps_w))
+				var world_pos: Vector3 = center + along * local_along + across * local_across
+				var cell := _world_to_grid(world_pos)
+				if cell.x >= 0 and cell.x < _nav_grid_size and cell.y >= 0 and cell.y < _nav_grid_size:
+					_nav_grid[cell] = true
 
 func is_nav_cell_blocked(cell: Vector2i) -> bool:
 	if cell.x < 1 or cell.x >= _nav_grid_size - 1 or cell.y < 1 or cell.y >= _nav_grid_size - 1:
@@ -5005,7 +5045,7 @@ func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> 
 			visited[neighbor] = true
 			came_from[neighbor] = current
 			queue.append(neighbor)
-	return [_grid_to_world(goal_cell)]
+	return []
 
 func _get_neighbors(cell: Vector2i) -> Array:
 	return [

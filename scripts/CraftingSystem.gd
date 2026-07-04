@@ -46,7 +46,7 @@ const RECIPES := [
 		"label": "Ensartar carne en palo"
 	},
 	{
-		"inputs": { "Tronco": 2, "Palo": 1 },
+		"inputs": { "Tronco": 2, "Palo": 1, "Cerillas": 1 },
 		"output": { "name": "Fogata", "type": "campfire", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir fogata"
 	},
