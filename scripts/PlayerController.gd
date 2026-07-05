@@ -720,7 +720,6 @@ func _init_survival_clothing(root: Node) -> void:
 					mi.material_override = shoe_mat
 		for c in node.get_children():
 			stack.append(c)
-	print("SURVIVAL_INIT cached cloth nodes: ", _survival_cloth_nodes.keys())
 	# Hide all Desnudo_* parts at init (character starts clothed)
 	# EXCEPT Desnudo_arms and Desnudo_hands (leftturn Body_arms/hands have built-in gloves)
 	var skin_names := ["Desnudo_legs", "Desnudo_feet"]
