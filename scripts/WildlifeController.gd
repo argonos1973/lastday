@@ -939,6 +939,9 @@ func _resolve_player() -> void:
 			# Skip proxies with active spawn protection
 			if p.get_meta("protection_timer", 0.0) > 0.0:
 				continue
+			# Skip proxies that haven't received real position from client
+			if not p.get_meta("has_real_pos", false):
+				continue
 			var d: float = global_position.distance_to((p as Node3D).global_position)
 			if d < nearest_dist:
 				nearest_dist = d

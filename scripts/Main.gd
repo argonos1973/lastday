@@ -790,7 +790,8 @@ func _spawn_server_proxy(id: int) -> void:
 	# Store peer_id as metadata
 	proxy.set_meta("peer_id", id)
 	# Spawn protection: wolves won't target this proxy for 20 seconds
-	proxy.set_meta("protection_timer", 20.0)
+	proxy.set_meta("protection_timer", 60.0)
+	proxy.set_meta("has_real_pos", false)
 	add_child(proxy)
 	# Add to group after adding to scene tree so get_nodes_in_group finds it
 	proxy.add_to_group("net_player_proxy")
@@ -800,7 +801,7 @@ func _spawn_server_proxy(id: int) -> void:
 	for w in wolves:
 		if w is Node3D and w.has_method("_wolf_ai"):
 			w.set("_chase_cooldown", 20.0)
-	print("[NET] Created server proxy for player %d (protection 20s, wolf cooldown 20s)" % id)
+	print("[NET] Created server proxy for player %d (protection 60s, wolf cooldown 20s)" % id)
 
 # Called by RPC from server on client to apply wolf damage
 func _net_apply_damage(amount: float) -> void:
@@ -827,7 +828,11 @@ func _update_server_proxies(delta: float) -> void:
 			continue
 		var data: Dictionary = net.players[pid]
 		var proxy: Node3D = server_proxies[pid]
-		proxy.global_position = data.get("pos", Vector3(8.0, 0.4, 2.5))
+		var received_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
+		# Only update proxy position if client has sent real position data
+		if data.has("pos"):
+			proxy.set_meta("has_real_pos", true)
+		proxy.global_position = received_pos
 		# Decrement spawn protection timer using real delta
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
