@@ -1,0 +1,6 @@
+{
+  "backpack": {
+    "file": "gear_backpack.glb",
+    "attach_bone": "mixamorig:Spine2"
+  }
+}
