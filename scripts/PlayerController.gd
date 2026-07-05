@@ -316,6 +316,7 @@ func setup_as_puppet() -> void:
 
 var _puppet_clothing := ""
 var _puppet_held := ""
+var _puppet_backpack := ""
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	global_position = pos
@@ -357,7 +358,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			third_person_animation_player.play(target, 0.15)
 			_puppet_current_anim = anim
 
-func puppet_apply_visuals(clothing: String, held_item: String) -> void:
+func puppet_apply_visuals(clothing: String, held_item: String, backpack: String) -> void:
 	if not is_puppet:
 		return
 	# Update clothing
@@ -379,6 +380,18 @@ func puppet_apply_visuals(clothing: String, held_item: String) -> void:
 	if held_item != _puppet_held:
 		_puppet_held = held_item
 		_update_puppet_held_item(held_item)
+	# Update backpack
+	if backpack != _puppet_backpack:
+		_puppet_backpack = backpack
+		if third_person_back_item_root != null:
+			for child in third_person_back_item_root.get_children():
+				third_person_back_item_root.remove_child(child)
+				child.free()
+		if not backpack.is_empty():
+			equipped_backpack = backpack
+			_build_third_person_backpack()
+		else:
+			equipped_backpack = ""
 
 func _update_puppet_held_item(item_name: String) -> void:
 	if third_person_hand_item_root == null:

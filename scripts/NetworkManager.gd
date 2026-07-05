@@ -233,7 +233,7 @@ func _check_all_ready() -> void:
 # Position sync — called by each client for their own player
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
-func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String) -> void:
+func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String) -> void:
 	if not players.has(id):
 		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
 	players[id]["pos"] = pos
@@ -241,11 +241,12 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["anim"] = anim
 	players[id]["equipped_clothing"] = equipped_clothing
 	players[id]["held_item"] = held_item
+	players[id]["equipped_backpack"] = equipped_backpack
 	# Server relays to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != id and pid != multiplayer.get_unique_id():
-				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item)
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
@@ -270,6 +271,19 @@ func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_damage_animal"):
 		scene._net_damage_animal(animal_name, amount, from_knife)
+
+# Client tells server it picked up an item (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func item_picked_up(action_id: String) -> void:
+	# Server relays to all other clients
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id():
+				item_picked_up.rpc_id(pid, action_id)
+	# All clients: remove the item from world
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_item_picked_up"):
+		scene._net_item_picked_up(action_id)
 
 func get_player_list() -> Dictionary:
 	return players

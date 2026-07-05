@@ -812,6 +812,15 @@ func _net_apply_damage(amount: float) -> void:
 		player.apply_damage(amount)
 
 # Called by RPC from client on server to damage a real animal
+func _net_item_picked_up(action_id: String) -> void:
+	# Remove the picked up item from this client's world
+	if world_actions_by_id.has(action_id):
+		var action = world_actions_by_id[action_id]
+		_hide_action_visual(action)
+		action.mark_depleted()
+		world_actions_by_id.erase(action_id)
+		print("[NET] Item picked up by another player: %s" % action_id)
+
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
 	var real_name := animal_name.replacen("Puppet_", "")
@@ -903,7 +912,8 @@ func _sync_local_player_state() -> void:
 	if player.inventory != null and player.inventory.items.size() > 0:
 		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
 		held = player.inventory.items[hi].item_name
-	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held)
+	var backpack: String = player.equipped_backpack if player.has("equipped_backpack") else ""
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack)
 
 func _update_remote_players() -> void:
 	if net == null:
@@ -921,12 +931,13 @@ func _update_remote_players() -> void:
 		var anim: String = data.get("anim", "idle")
 		var clothing: String = data.get("equipped_clothing", "")
 		var held: String = data.get("held_item", "")
+		var backpack: String = data.get("equipped_backpack", "")
 		# Smooth interpolation
 		var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
 		var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
 		if rp.has_method("puppet_apply"):
 			rp.puppet_apply(smooth_pos, smooth_rot, anim)
-			rp.puppet_apply_visuals(clothing, held)
+			rp.puppet_apply_visuals(clothing, held, backpack)
 		else:
 			rp.global_position = smooth_pos
 			rp.rotation.y = smooth_rot
@@ -2322,6 +2333,15 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 		_hide_action_visual(action)
 	action.mark_depleted()
 	_save_world_change_silent()
+	# Notify other clients to remove this item from world
+	if net != null and net.is_connected and not net.is_host:
+		var picked_id: String = action.action_id if action.has("action_id") else str(action.name)
+		net.item_picked_up.rpc_id(1, picked_id)
+
+func _net_notify_pickup(action) -> void:
+	if net != null and net.is_connected and not net.is_host:
+		var picked_id: String = action.action_id if action.has("action_id") else str(action.name)
+		net.item_picked_up.rpc_id(1, picked_id)
 
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
