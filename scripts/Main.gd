@@ -1204,47 +1204,54 @@ func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(150, 0.2, 150))
-	_create_leafy_floor_ground()
-	# Skip heavy decorative grass on connected clients
 	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
-	if not is_client:
+	var is_server: bool = net != null and net.is_dedicated_server
+	if not is_server:
+		_create_leafy_floor_ground()
+	if not is_client and not is_server:
 		_create_grass_ground_cover()
 		print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	if not is_client:
+	if not is_client and not is_server:
 		_create_terrain_variation()
 		print("TIME terrain_variation: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_mountain_backdrop()
-	print("TIME mountain_backdrop: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_mountain_backdrop()
+		print("TIME mountain_backdrop: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_mountain_river()
-	print("TIME mountain_river: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_mountain_river()
+		print("TIME mountain_river: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
-	_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
-	_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
-	_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
-	_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
-	_create_radio_point(Vector3(-42, 0, -42))
-	print("TIME structures: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
+		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
+		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
+		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
+		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
+		_create_radio_point(Vector3(-42, 0, -42))
+		print("TIME structures: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_world_details()
-	print("TIME world_details: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_world_details()
+		print("TIME world_details: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	if not is_client:
+	if not is_client and not is_server:
 		_create_ground_clutter()
 		print("TIME ground_clutter: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	if not is_client:
+	if not is_client and not is_server:
 		_create_tall_grass_fields()
 		print("TIME tall_grass_fields: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_dense_vegetation_zones()
-	print("TIME dense_vegetation: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_dense_vegetation_zones()
+		print("TIME dense_vegetation: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_forest()
-	print("TIME forest: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_server:
+		_create_forest()
+		print("TIME forest: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	_create_survival_objectives()
 	_create_river_drink_zones()
@@ -1252,7 +1259,8 @@ func _create_map() -> void:
 	if not is_client:
 		_build_nav_grid()
 		_create_wildlife()
-	_flush_grass_batches()
+	if not is_server:
+		_flush_grass_batches()
 	print("TIME objectives+nav+wildlife+flush: %dms" % (Time.get_ticks_msec() - _tm))
 
 func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
