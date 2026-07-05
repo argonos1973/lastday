@@ -272,6 +272,7 @@ var third_person_action_timer := 0.0
 var _attack_cooldown := 0.0
 var is_jumping := false
 var _jump_velocity := 0.0
+var _jump_apex := false
 var _jump_animation_timer := 0.0
 var is_dead := false
 var death_pose_time := 0.0
@@ -366,6 +367,7 @@ func _input(event: InputEvent) -> void:
 			stats.energy = max(0.0, stats.energy - jump_stamina_cost)
 			stats.changed.emit()
 			is_jumping = true
+			_jump_apex = false
 			_jump_animation_timer = 1.2
 	if event is InputEventKey and event.pressed and not event.echo:
 		var inventory_index := _inventory_index_for_key(event.keycode)
@@ -1091,7 +1093,9 @@ func _physics_process(delta: float) -> void:
 		velocity.y = _jump_velocity
 		_jump_velocity -= _gravity * delta
 		move_and_slide()
-		if is_on_floor() and _jump_velocity < 0.0:
+		if not is_on_floor():
+			_jump_apex = true
+		if _jump_apex and is_on_floor() and _jump_velocity < 0.0:
 			is_jumping = false
 			_jump_velocity = 0.0
 			velocity.y = 0.0
@@ -1099,6 +1103,7 @@ func _physics_process(delta: float) -> void:
 			_is_falling_from_height = false
 			_fall_height = 0.0
 			_max_fall_height = 0.0
+			_jump_apex = false
 	elif not is_on_floor():
 		if not _is_falling_from_height:
 			_is_falling_from_height = true

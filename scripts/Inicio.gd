@@ -1,6 +1,7 @@
 extends Control
 
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
+const SERVER_PUBLIC_IP := "89.6.96.200"
 
 var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
@@ -81,8 +82,8 @@ func _ready() -> void:
 
 	# IP input (hidden initially)
 	_ip_edit = LineEdit.new()
-	_ip_edit.placeholder_text = "IP del host (ej: 127.0.0.1)"
-	_ip_edit.text = "127.0.0.1"
+	_ip_edit.placeholder_text = "IP del host (ej: 192.168.1.100)"
+	_ip_edit.text = _load_saved_ip()
 	_ip_edit.custom_minimum_size = Vector2(240, 36)
 	_ip_edit.visible = false
 	_ip_edit.add_theme_font_size_override("font_size", 16)
@@ -136,6 +137,7 @@ func _on_join() -> void:
 	if ip.is_empty():
 		_status_label.text = "Introduce una IP"
 		return
+	_save_ip(ip)
 	_net = get_node("/root/NetworkManager")
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
@@ -144,6 +146,19 @@ func _on_join() -> void:
 		_mode = "join"
 	else:
 		_status_label.text = "Error al conectar"
+
+func _save_ip(ip: String) -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("network", "last_ip", ip)
+	cfg.save("user://last_ip.cfg")
+
+func _load_saved_ip() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://last_ip.cfg") == OK:
+		var saved := cfg.get_value("network", "last_ip", "")
+		if not saved.is_empty():
+			return saved
+	return SERVER_PUBLIC_IP
 
 func _on_net_connected() -> void:
 	_status_label.text = "Conectado!"
