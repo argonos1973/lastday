@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Lanzar Cliente
+Exec=/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/lanzar_cliente.sh
+Icon=applications-games
+Terminal=true
+Categories=Game;

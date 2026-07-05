@@ -1,4 +1,3 @@
 #!/bin/bash
-pkill -f "godot" 2>/dev/null
-sleep 1
-flatpak run org.godotengine.Godot --path /home/sami/Documentos/quiero-crear-un-prototipo-de-juego
+# Don't kill server - only launch client
+/home/sami/bin/godot --path /home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego
