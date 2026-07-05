@@ -231,7 +231,7 @@ func _check_all_ready() -> void:
 		all_players_ready.emit()
 
 # Position sync — called by each client for their own player
-# Godot 4 automatically forwards any_peer RPCs to all other peers via the server
+# Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
 func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String) -> void:
 	if not players.has(id):
@@ -241,6 +241,11 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["anim"] = anim
 	players[id]["equipped_clothing"] = equipped_clothing
 	players[id]["held_item"] = held_item
+	# Server relays to all other clients
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != id and pid != multiplayer.get_unique_id():
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
