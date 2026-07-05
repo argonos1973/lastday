@@ -7,6 +7,7 @@ signal connection_succeeded()
 signal all_players_ready()
 
 const PORT := 5005
+const DISCOVERY_PORT := 5006
 const MAX_PLAYERS := 4
 const SPAWN_POS := Vector3(8.0, 0.4, 2.5)
 
@@ -14,6 +15,8 @@ var peer: ENetMultiplayerPeer = null
 var is_host := false
 var is_connected := false
 var is_dedicated_server := false
+var _broadcast_server: PacketPeerUDP = null
+var _broadcast_timer := 0.0
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
@@ -39,7 +42,9 @@ func start_dedicated_server() -> bool:
 	is_host = true
 	is_connected = true
 	is_dedicated_server = true
+	_start_broadcast()
 	print("[NET] Servidor dedicado iniciado en puerto %d" % PORT)
+	print("[NET] IP local: %s" % _get_local_ip())
 	print("[NET] Esperando jugadores...")
 	return true
 
@@ -52,6 +57,7 @@ func host_game() -> bool:
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	is_connected = true
+	_start_broadcast()
 	players[multiplayer.get_unique_id()] = {
 		"name": "Host",
 		"pos": SPAWN_POS,
@@ -59,7 +65,37 @@ func host_game() -> bool:
 		"ready": true
 	}
 	print("[NET] Servidor iniciado en puerto %d" % PORT)
+	print("[NET] IP local: %s" % _get_local_ip())
 	return true
+
+func _start_broadcast() -> void:
+	_broadcast_server = PacketPeerUDP.new()
+	_broadcast_server.set_broadcast_enabled(true)
+	_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+	print("[NET] Broadcast de descubrimiento activo en puerto %d" % DISCOVERY_PORT)
+
+func _get_local_ip() -> String:
+	var ips := IP.get_local_addresses()
+	for ip in ips:
+		var s := str(ip)
+		if s.begins_with("192.168.") or s.begins_with("10.") or s.begins_with("172."):
+			return s
+	if ips.size() > 0:
+		return str(ips[0])
+	return "127.0.0.1"
+
+func _process(_delta: float) -> void:
+	if _broadcast_server != null and is_host:
+		_broadcast_timer += _delta
+		if _broadcast_timer >= 2.0:
+			_broadcast_timer = 0.0
+			var msg := "LASTDAY_SERVER:%s" % _get_local_ip()
+			_broadcast_server.put_packet(msg.to_utf8_buffer())
+
+func _exit_tree() -> void:
+	if _broadcast_server != null:
+		_broadcast_server.close()
+		_broadcast_server = null
 
 func join_game(ip: String) -> bool:
 	peer = ENetMultiplayerPeer.new()

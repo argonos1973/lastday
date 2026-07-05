@@ -1,7 +1,7 @@
 extends Control
 
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
-const SERVER_PUBLIC_IP := "89.6.96.200"
+const DISCOVERY_PORT := 5006
 
 var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
@@ -9,6 +9,8 @@ var _net = null
 var _ip_edit: LineEdit = null
 var _btn_connect: Button = null
 var _status_label: Label = null
+var _discovery: PacketPeerUDP = null
+var _discovered_ip := ""
 
 func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
@@ -17,6 +19,15 @@ func _ready() -> void:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+
+	# Start UDP discovery listener to auto-find server on local network
+	_discovery = PacketPeerUDP.new()
+	var bind_err := _discovery.bind(DISCOVERY_PORT)
+	if bind_err == OK:
+		print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % DISCOVERY_PORT)
+	else:
+		print("[DISCOVERY] No se pudo bind puerto %d: %d" % [DISCOVERY_PORT, bind_err])
+		_discovery = null
 
 	# Background color (dark) in case image fails
 	var bg := ColorRect.new()
@@ -107,6 +118,29 @@ func _ready() -> void:
 	_status_label.custom_minimum_size = Vector2(240, 24)
 	vbox.add_child(_status_label)
 
+func _process(_delta: float) -> void:
+	if _discovery == null or _started:
+		return
+	var count := _discovery.get_available_packet_count()
+	while count > 0:
+		var packet := _discovery.get_packet()
+		var msg := packet.get_string_from_utf8()
+		if msg.begins_with("LASTDAY_SERVER:"):
+			var ip := msg.substr("LASTDAY_SERVER:".length())
+			if not ip.is_empty() and _discovered_ip != ip:
+				_discovered_ip = ip
+				if _ip_edit != null:
+					_ip_edit.text = ip
+				if _status_label != null:
+					_status_label.text = "Servidor encontrado: %s" % ip
+				print("[DISCOVERY] Servidor encontrado: %s" % ip)
+		count -= 1
+
+func _exit_tree() -> void:
+	if _discovery != null:
+		_discovery.close()
+		_discovery = null
+
 func _on_single_player() -> void:
 	if _started:
 		return
@@ -155,10 +189,10 @@ func _save_ip(ip: String) -> void:
 func _load_saved_ip() -> String:
 	var cfg := ConfigFile.new()
 	if cfg.load("user://last_ip.cfg") == OK:
-		var saved := cfg.get_value("network", "last_ip", "")
+		var saved: String = cfg.get_value("network", "last_ip", "")
 		if not saved.is_empty():
 			return saved
-	return SERVER_PUBLIC_IP
+	return ""
 
 func _on_net_connected() -> void:
 	_status_label.text = "Conectado!"

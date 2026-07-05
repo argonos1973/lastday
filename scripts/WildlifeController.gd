@@ -739,7 +739,7 @@ func _update_stuck_timer(delta: float) -> void:
 	else:
 		_stuck_time = 0.0
 		_last_position = global_position
-	if _stuck_time > 0.5:
+	if _stuck_time > 1.0:
 		_retarget_from_blocked_route()
 		_stuck_time = 0.0
 		_current_path.clear()

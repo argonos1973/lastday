@@ -1575,36 +1575,60 @@ func _create_river_drink_zones() -> void:
 
 func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
-	var min_distance := 30.0
-	var world_range := 70.0
-	# Generate random deer herds
-	for i in range(3):
-		var center := _random_pos_far_from(player_start, min_distance, world_range)
-		var route: Array = []
-		for j in range(8):
-			route.append(center + Vector3(randf_range(-6, 6), 0.0, randf_range(-6, 6)))
-		_create_deer_pair(route)
-	# Generate random foxes
-	for i in range(2):
-		var center := _random_pos_far_from(player_start, min_distance, world_range)
-		var route: Array = []
-		for j in range(8):
-			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
-		_create_wildlife_animal("fox", route)
-	# Generate random wolves — keep them far from player spawn and rivers
+	# Deer: large outer ring route around the map
+	var deer_route := _build_circular_route(45.0, 0.0, 10, 6.0)
+	_create_deer_pair(deer_route)
+	# Second deer herd on a different offset
+	var deer_route_2 := _build_circular_route(38.0, PI, 10, 5.0)
+	_create_deer_pair(deer_route_2)
+	# Foxes: smaller inner ring, offset rotation
+	var fox_route_1 := _build_circular_route(28.0, PI * 0.5, 8, 4.0)
+	_create_wildlife_animal("fox", fox_route_1)
+	var fox_route_2 := _build_circular_route(32.0, PI * 1.5, 8, 4.0)
+	_create_wildlife_animal("fox", fox_route_2)
+	# Wolves: keep them far from player spawn and rivers
 	var wolf_centers: Array = []
 	for i in range(4):
-		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 15.0, 35.0, world_range)
-		# Reject positions near rivers
+		var center := _random_pos_far_from_all(player_start, wolf_centers, 45.0, 35.0, 70.0)
 		for _retry in range(20):
 			if not _is_near_river(center, 8.0):
 				break
-			center = _random_pos_far_from_all(player_start, wolf_centers, min_distance + 15.0, 35.0, world_range)
+			center = _random_pos_far_from_all(player_start, wolf_centers, 45.0, 35.0, 70.0)
 		wolf_centers.append(center)
 		var route: Array = []
 		for j in range(7):
 			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
 		_create_wildlife_animal("wolf", route)
+
+# Build a circular patrol route around the map center.
+# radius: distance from center, angle_offset: starting angle in radians,
+# num_points: waypoints around the circle, jitter: random offset per point.
+func _build_circular_route(radius: float, angle_offset: float, num_points: int, jitter: float) -> Array:
+	var route: Array = []
+	for i in range(num_points):
+		var angle := angle_offset + TAU * float(i) / float(num_points)
+		var r := radius + randf_range(-jitter, jitter)
+		var pos := Vector3(cos(angle) * r, 0.0, sin(angle) * r)
+		pos.x = clamp(pos.x, -65.0, 65.0)
+		pos.z = clamp(pos.z, -65.0, 65.0)
+		# Sanitize: push point away from blocked areas
+		if not is_wildlife_allowed_at(pos):
+			pos = _find_allowed_near(pos, 3.0)
+		route.append(pos)
+	return route
+
+func _find_allowed_near(origin: Vector3, max_radius: float) -> Vector3:
+	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0]:
+		if radius > max_radius and max_radius > 0.0:
+			break
+		for i in range(16):
+			var angle := TAU * float(i) / 16.0
+			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+			candidate.x = clamp(candidate.x, -65.0, 65.0)
+			candidate.z = clamp(candidate.z, -65.0, 65.0)
+			if is_wildlife_allowed_at(candidate):
+				return candidate
+	return origin
 
 func _random_pos_far_from(origin: Vector3, min_dist: float, world_range: float) -> Vector3:
 	var pos := Vector3.ZERO
