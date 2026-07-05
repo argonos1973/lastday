@@ -842,18 +842,24 @@ func _update_server_proxies(delta: float) -> void:
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
 		return
-	# Create a full PlayerController in puppet mode (3D model + animations, no input/camera)
-	var avatar = PlayerControllerScript.new()
+	# Lightweight remote player: simple capsule, no GLB loading
+	var avatar := CharacterBody3D.new()
 	avatar.name = "RemotePlayer_%d" % id
 	avatar.position = Vector3(8.0, 0.4, 2.5)
-	avatar.is_puppet = true
 	add_child(avatar)
-	# Register BEFORE setup_as_puppet — setup is heavy and can block; if another frame
-	# fires _update_remote_players while we're still in setup, it would respawn infinitely
 	remote_players[id] = avatar
-	var _t0 := Time.get_ticks_msec()
-	avatar.setup_as_puppet()
-	print("[NET] Spawned remote player puppet for id %d (setup took %dms)" % [id, Time.get_ticks_msec() - _t0])
+	# Simple capsule body
+	var mesh := CapsuleMesh.new()
+	mesh.radius = 0.3
+	mesh.height = 1.8
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = Vector3(0, 0.9, 0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.3, 0.6, 1.0)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = mat
+	avatar.add_child(mi)
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -863,6 +869,7 @@ func _spawn_remote_player(id: int) -> void:
 	label.position = Vector3(0, 2.0, 0)
 	label.no_depth_test = true
 	avatar.add_child(label)
+	print("[NET] Spawned lightweight remote player for id %d" % id)
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:
