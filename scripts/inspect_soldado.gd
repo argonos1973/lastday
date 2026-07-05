@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _init() -> void:
-	var path := "res://soldado.glb"
+	var path := "res://assets/animations/soldado.glb"
 	var gltf := GLTFDocument.new()
 	var state := GLTFState.new()
 	var err := gltf.append_from_file(ProjectSettings.globalize_path(path), state)

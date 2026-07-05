@@ -10,6 +10,11 @@ var _btn_connect: Button = null
 var _status_label: Label = null
 
 func _ready() -> void:
+	# Dedicated server: skip UI entirely, load the world immediately
+	var net_check = get_node_or_null("/root/NetworkManager")
+	if net_check != null and net_check.is_dedicated_server:
+		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
+		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
 	# Background color (dark) in case image fails
@@ -22,7 +27,7 @@ func _ready() -> void:
 
 	# Load inicio.png
 	var tex_rect := TextureRect.new()
-	var abs_path := ProjectSettings.globalize_path("res://inicio.png")
+	var abs_path := ProjectSettings.globalize_path("res://assets/textures/inicio.png")
 	var loaded := false
 	var img := Image.load_from_file(abs_path)
 	if img != null:

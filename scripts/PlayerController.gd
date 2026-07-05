@@ -10,17 +10,17 @@ const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
-const REAL_PLASTIC_BOTTLE_MODEL := "res://plastic_water_bottle.glb"
+const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
 const REAL_STONE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb"
-const REAL_AXE_MODEL := "res://simple_axe.glb"
+const REAL_AXE_MODEL := "res://assets/models/props/simple_axe.glb"
 const REAL_HOE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hoe.glb"
 const REAL_SHOVEL_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-shovel.glb"
 const REAL_HAMMER_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hammer.glb"
 const REAL_PICKAXE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-pickaxe.glb"
 const REAL_BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
-const REAL_MEAT_ON_STICK_MODEL := "res://cc0_-_raw_meat_4.glb"
-const REAL_WOOD_STICK_MODEL := "res://wood_stick.glb"
+const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const POLY_LIFE_JACKET_MODEL := "res://assets/external/polyhaven/life_jacket/life_jacket_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_RUBBER_BOOTS_MODEL := "res://assets/external/polyhaven/rubber_boots/rubber_boots_1k.gltf"
@@ -128,32 +128,33 @@ const CLOTHING_WARMTH := {
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
 	"res://assets/characters/adapted/player_with_clothes.glb",
-	"res://inicio.glb",
-	"res://walking.glb",
-	"res://Walking.glb",
-	"res://untitled.glb",
+	"res://assets/animations/inicio.glb",
+	"res://assets/animations/walking.glb",
+	"res://assets/animations/Walking.glb",
+	"res://assets/animations/untitled.glb",
 	"res://Walking.gltf",
-	"res://Walking.fbx",
+	"res://assets/animations/Walking.fbx",
 	"res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon.gltf"
 ]
-const THIRD_PERSON_RUN_ANIMATION_SOURCE := "res://correr.glb"
-const THIRD_PERSON_IDLE_ANIMATION_SOURCE := "res://idle.glb"
-const THIRD_PERSON_WALK_ANIMATION_SOURCE := "res://walking.glb"
-const THIRD_PERSON_SNEAK_ANIMATION_SOURCE := "res://agachado.glb"
-const THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE := "res://andarAgachado.glb"
-const THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE := "res://leftturn.glb"
-const THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE := "res://rightturn.glb"
-const THIRD_PERSON_PLANT_ANIMATION_SOURCE := "res://plantar.glb"
-const THIRD_PERSON_GATHER_ANIMATION_SOURCE := "res://recoger.glb"
-const THIRD_PERSON_FISH_ANIMATION_SOURCE := "res://Fishing Cast.glb"
-const THIRD_PERSON_INTERACT_ANIMATION_SOURCE := "res://coger.glb"
-const THIRD_PERSON_ATTACK_ANIMATION_SOURCE := "res://pegar.glb"
-const THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE := "res://malo.glb"
-const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://muerto.glb"
-const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://saltar.glb"
-const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://saltarabajo2.GLB"
-const THIRD_PERSON_SLEEP_ANIMATION_SOURCE := "res://dormir2.glb"
-const THIRD_PERSON_SIT_ANIMATION_SOURCE := "res://sentarse.glb"
+const THIRD_PERSON_RUN_ANIMATION_SOURCE := "res://assets/animations/correr.glb"
+const THIRD_PERSON_IDLE_ANIMATION_SOURCE := "res://assets/animations/idle.glb"
+const THIRD_PERSON_WALK_ANIMATION_SOURCE := "res://assets/animations/walking.glb"
+const THIRD_PERSON_SNEAK_ANIMATION_SOURCE := "res://assets/animations/agachado.glb"
+const THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE := "res://assets/animations/andarAgachado.glb"
+const THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE := "res://assets/animations/leftturn.glb"
+const THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE := "res://assets/animations/rightturn.glb"
+const THIRD_PERSON_PLANT_ANIMATION_SOURCE := "res://assets/animations/plantar.glb"
+const THIRD_PERSON_GATHER_ANIMATION_SOURCE := "res://assets/animations/recoger.glb"
+const THIRD_PERSON_FISH_ANIMATION_SOURCE := "res://assets/animations/Fishing Cast.glb"
+const THIRD_PERSON_INTERACT_ANIMATION_SOURCE := "res://assets/animations/coger.glb"
+const THIRD_PERSON_ATTACK_ANIMATION_SOURCE := "res://assets/animations/pegar.glb"
+const THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE := "res://assets/animations/malo.glb"
+const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://assets/animations/muerto.glb"
+const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://assets/animations/saltar.glb"
+const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://assets/animations/saltarabajo2.GLB"
+const THIRD_PERSON_SLEEP_ANIMATION_SOURCE := "res://assets/animations/dormir2.glb"
+const THIRD_PERSON_SIT_ANIMATION_SOURCE := "res://assets/animations/sentarse.glb"
+const THIRD_PERSON_DRINK_ANIMATION_SOURCE := "res://assets/animations/beber.glb"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -172,6 +173,7 @@ const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION := "JumpDownExternal"
 const THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION := "SleepExternal"
 const THIRD_PERSON_EXTERNAL_SIT_ANIMATION := "SitExternal"
+const THIRD_PERSON_EXTERNAL_DRINK_ANIMATION := "DrinkExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -251,8 +253,10 @@ var third_person_jump_animation := ""
 var third_person_jump_down_animation := ""
 var third_person_sleep_animation := ""
 var third_person_sit_animation := ""
+var third_person_drink_animation := ""
 var is_sleeping := false
 var is_sitting := false
+var _sit_cooldown := 0.0
 var _auto_sleep_triggered := false
 var _clothing_wear_timer := 0.0
 var _is_falling_from_height := false
@@ -380,7 +384,6 @@ func _input(event: InputEvent) -> void:
 			notice.emit("Has despertado.")
 			return
 		if event.keycode == KEY_S and not is_sleeping:
-			print("KEY_S pressed, calling _toggle_sit")
 			_toggle_sit()
 	if event.is_action_pressed("quick_use_1"):
 		held_index = 0
@@ -444,6 +447,15 @@ func _use_inventory_index(index: int) -> void:
 			held_index = index
 			_sync_held_item()
 			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para comer." % item_name)
+		return
+	# Water items: first put in hand, then drink with animation when used again
+	if item_type == "water":
+		if held_index == index and hands != null and hands.has_item_in_hands():
+			_drink_held_item()
+		else:
+			held_index = index
+			_sync_held_item()
+			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para beber." % item_name)
 		return
 	# Plastic bottle: put in hand, then fill at river
 	if item_name == "Botella de plastico":
@@ -1042,8 +1054,10 @@ func _physics_process(delta: float) -> void:
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
+	if _sit_cooldown > 0.0:
+		_sit_cooldown = max(0.0, _sit_cooldown - delta)
 	if is_sitting:
-		if input_dir.length() > 0.1:
+		if _sit_cooldown <= 0.0 and input_dir.length() > 0.1:
 			is_sitting = false
 		else:
 			velocity.x = 0.0
@@ -1399,6 +1413,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_SLEEP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, true)
 	_import_external_animation(THIRD_PERSON_SIT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, true)
+	_import_external_animation(THIRD_PERSON_DRINK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DRINK_ANIMATION)
 	var names := third_person_animation_player.get_animation_list()
 	for animation_name in names:
 		var name_text := String(animation_name)
@@ -1472,6 +1487,11 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var sit_anim := third_person_animation_player.get_animation(third_person_sit_animation)
 		if sit_anim != null:
 			sit_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_DRINK_ANIMATION):
+		third_person_drink_animation = "external/" + THIRD_PERSON_EXTERNAL_DRINK_ANIMATION
+		var drink_anim := third_person_animation_player.get_animation(third_person_drink_animation)
+		if drink_anim != null:
+			drink_anim.loop_mode = Animation.LOOP_LINEAR
 	if third_person_run_animation.is_empty():
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
@@ -1620,7 +1640,7 @@ func _add_head_mesh() -> void:
 	var skeleton := _find_skeleton(third_person_model)
 	if skeleton == null:
 		return
-	var src_model := _load_external_node3d("res://inicio.glb")
+	var src_model := _load_external_node3d("res://assets/animations/inicio.glb")
 	if src_model == null:
 		return
 	var src_body := _find_mesh_in_node(src_model, "Body")
@@ -1818,6 +1838,10 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			target_animation = third_person_interact_animation
 		"cook":
 			target_animation = third_person_sit_animation
+			if target_animation.is_empty():
+				target_animation = third_person_plant_animation
+		"drink":
+			target_animation = third_person_drink_animation
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"interact", "chop":
@@ -2085,6 +2109,7 @@ func _toggle_sit() -> void:
 		notice.emit("Te levantas.")
 	else:
 		is_sitting = true
+		_sit_cooldown = 0.3
 		if not third_person_sit_animation.is_empty():
 			third_person_animation_player.play(third_person_sit_animation, 0.1)
 		notice.emit("Te sientas. Pulsa S para levantarte.")
@@ -2118,6 +2143,44 @@ func _eat_held_item() -> void:
 	)
 	add_child(eat_timer)
 	eat_timer.start()
+
+func _drink_held_item() -> void:
+	if inventory == null or inventory.items.is_empty():
+		notice.emit("No tienes nada en la mano.")
+		return
+	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	var item = inventory.items[held_index]
+	if item.item_type != "water":
+		notice.emit("No tienes agua en la mano.")
+		return
+	play_action_animation("drink", 2.0)
+	notice.emit("Bebiendo %s..." % item.item_name)
+	var item_name := str(item.item_name)
+	var drink_timer := Timer.new()
+	drink_timer.wait_time = 2.0
+	drink_timer.one_shot = true
+	drink_timer.timeout.connect(func():
+		if stats != null:
+			stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
+			if stats.thirst > 35.0:
+				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
+			stats.changed.emit()
+		if item_name == "Botella de agua" and item.has_method("is_broken") and item.is_broken():
+			inventory.remove_index(held_index)
+			inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
+		elif item_name == "Botella de agua":
+			item.reduce_durability(float(item.max_durability) * 0.25)
+			if item.is_broken():
+				inventory.remove_index(held_index)
+				inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
+		else:
+			inventory.remove_index(held_index)
+		inventory.changed.emit()
+		_sync_held_item()
+		notice.emit("Bebes %s." % item_name)
+	)
+	add_child(drink_timer)
+	drink_timer.start()
 
 func _drop_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():

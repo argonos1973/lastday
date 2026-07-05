@@ -106,7 +106,11 @@ func get_interaction_text(_player = null) -> String:
 		"hunt":
 			return "%s - rastrear - E" % display_name
 		"drink_water":
-			return "Beber agua / Llenar botella - E"
+			if _player != null and _player.has_method("get_held_item"):
+				var held = _player.get_held_item()
+				if held != null and held.item_name == "Botella de plastico":
+					return "Llenar botella - E"
+			return "Beber agua - E"
 		"light_campfire":
 			return "Encender fogata - E (cerillas)"
 		"cook":

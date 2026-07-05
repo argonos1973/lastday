@@ -77,8 +77,8 @@ const FOOTSTEP_WOOD_PATHS := [
 	"res://assets/external/audio/footstep_wood_03.wav"
 ]
 
-const WALK_SOUND_PATH := "res://andar.mp3"
-const RUN_SOUND_PATH := "res://correr.mp3"
+const WALK_SOUND_PATH := "res://assets/audio/andar.mp3"
+const RUN_SOUND_PATH := "res://assets/audio/correr.mp3"
 
 var player
 var day_cycle
@@ -414,25 +414,15 @@ func _update_footsteps(delta: float) -> void:
 			_run_active = true
 		else:
 			run_loop_player.global_position = player.global_position
-		# Still play surface-based footsteps on top for variety
-		step_timer -= delta
-		if step_timer <= 0.0:
-			step_timer = 0.34
-			_play_surface_step()
 		return
 	if not player.is_sprinting and walk_stream != null and walk_loop_player != null:
 		_stop_run()
-		var interval: float = 0.82 if player.is_crouching else 0.58
 		if not _walk_active:
 			walk_loop_player.global_position = player.global_position
 			walk_loop_player.play()
 			_walk_active = true
 		else:
 			walk_loop_player.global_position = player.global_position
-		step_timer -= delta
-		if step_timer <= 0.0:
-			step_timer = interval
-			_play_surface_step()
 		return
 	# Fall back to surface-based footsteps only
 	_stop_walk_run()

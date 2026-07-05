@@ -26,7 +26,11 @@ var containers_by_id := {}
 # Multiplayer
 var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
+var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
 var _net_sync_timer := 0.0
+var _animal_sync_timer := 0.0
+var _animal_debug_timer := 0
+var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
 var world_actions_by_id := {}
 var _tree_id_counter := 0
 var _bush_id_counter := 0
@@ -132,7 +136,7 @@ const POLY_PINE_TWIG_ALPHA := "res://assets/external/polyhaven/pine_tree_01/text
 const POLY_FIR_BARK_DIFF := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_bark_diff_4k.png"
 const POLY_FIR_TWIG_DIFF := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_diff_4k.png"
 const POLY_FIR_TWIG_ALPHA := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_alpha_4k.png"
-const LEAFY_FLOOR_MODEL := "res://leafy_floor.glb"
+const LEAFY_FLOOR_MODEL := "res://assets/models/environment/leafy_floor.glb"
 const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
 const POLY_ROCKY_TERRAIN_DISP := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"
 const POLY_ROCKY_TERRAIN_SPEC := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_spec_4k.png"
@@ -156,7 +160,7 @@ const TEX_CONCRETE_DIFF := TEX_DIR + "concrete_floor_02/concrete_floor_02_diff_4
 const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
-const PLASTIC_BOTTLE_MODEL := "res://plastic_water_bottle.glb"
+const PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const ROOT_CANNED_FOOD_MODEL := ROOT_GLB_DIR + "canned_food_pack_opened__low_poly_game_asset.glb"
 const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
 const ROOT_KNIFE_MODEL := ROOT_GLB_DIR + "knife.glb"
@@ -183,8 +187,8 @@ const POLY_TREE_MODELS := [
 	POLY_MODEL_DIR + "island_tree_02/island_tree_02_1k.gltf",
 	POLY_MODEL_DIR + "island_tree_03/island_tree_03_1k.gltf"
 ]
-const FOREST_TREE_PACK_MODEL := "res://low_poly_forest_tree_pack.glb"
-const MODULAR_ROOF_MODEL := "res://modular_roof.glb"
+const FOREST_TREE_PACK_MODEL := "res://assets/models/environment/low_poly_forest_tree_pack.glb"
+const MODULAR_ROOF_MODEL := "res://assets/models/environment/modular_roof.glb"
 const POLY_FURNITURE_DIR := "res://assets/external/polyhaven/furniture/"
 const POLY_FURNITURE_MODELS := [
 	POLY_MODEL_DIR + "Sofa_01/Sofa_01_1k.gltf",
@@ -205,7 +209,7 @@ const POLY_FURNITURE_MODELS := [
 	POLY_FURNITURE_DIR + "side_table_01.glb"
 ]
 const SKY_HDRI_CANDIDATES := [
-	"res://kloofendal_48d_partly_cloudy_4k.exr",
+	"res://assets/hdri/kloofendal_48d_partly_cloudy_4k.exr",
 	"res://assets/external/polyhaven/skies/rogland_overcast_1k.hdr",
 	"res://assets/external/polyhaven/skies/misty_farm_road_1k.hdr",
 	"res://assets/external/polyhaven/skies/quarry_cloudy_1k.hdr",
@@ -355,13 +359,14 @@ func _ready() -> void:
 	seed(WORLD_SEED)
 	# Get NetworkManager (autoload)
 	net = get_node("/root/NetworkManager")
-	if net != null and not net.is_dedicated_server:
+	if net != null:
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
-		# Spawn any already-connected players
-		for pid in net.players.keys():
-			if pid != net.get_my_id():
-				_spawn_remote_player(pid)
+		if not net.is_dedicated_server:
+			# Spawn any already-connected players
+			for pid in net.players.keys():
+				if pid != net.get_my_id():
+					_spawn_remote_player(pid)
 	_create_environment()
 	_create_day_night()
 	_create_map()
@@ -401,7 +406,13 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if net != null and net.is_dedicated_server:
-		# Server only tracks player positions via RPCs, no rendering
+		# Update proxy positions from client sync data
+		_update_server_proxies(delta)
+		# Server broadcasts animal state to clients
+		_animal_sync_timer += delta
+		if _animal_sync_timer >= 0.1:
+			_animal_sync_timer = 0.0
+			_broadcast_animals()
 		return
 	if player == null or day_cycle == null:
 		return
@@ -427,6 +438,8 @@ func _process(delta: float) -> void:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
 		_update_remote_players()
+		if not net.is_host:
+			_update_puppet_animals()
 
 func _tick_campfire_fires() -> void:
 	if campfire_fire_timers.is_empty():
@@ -752,13 +765,76 @@ func _on_remote_player_connected(id: int) -> void:
 		return
 	if id == net.get_my_id():
 		return
-	_spawn_remote_player(id)
+	# Server: create a proxy node for wildlife AI to target (no visual avatar needed)
+	if net.is_dedicated_server:
+		_spawn_server_proxy(id)
+	else:
+		_spawn_remote_player(id)
 
 func _on_remote_player_disconnected(id: int) -> void:
 	if remote_players.has(id):
 		var rp: Node3D = remote_players[id]
 		rp.queue_free()
 		remote_players.erase(id)
+	if server_proxies.has(id):
+		var sp: Node3D = server_proxies[id]
+		sp.queue_free()
+		server_proxies.erase(id)
+
+func _spawn_server_proxy(id: int) -> void:
+	if server_proxies.has(id):
+		return
+	var proxy := Node3D.new()
+	proxy.name = "ServerProxy_%d" % id
+	proxy.position = Vector3(8.0, 0.4, 2.5)
+	# Store peer_id as metadata
+	proxy.set_meta("peer_id", id)
+	# Spawn protection: wolves won't target this proxy for 20 seconds
+	proxy.set_meta("protection_timer", 20.0)
+	add_child(proxy)
+	# Add to group after adding to scene tree so get_nodes_in_group finds it
+	proxy.add_to_group("net_player_proxy")
+	server_proxies[id] = proxy
+	# Set chase cooldown on all wolves so they don't immediately chase
+	var wolves := get_tree().get_nodes_in_group("wildlife_wolf")
+	for w in wolves:
+		if w is Node3D and w.has_method("_wolf_ai"):
+			w.set("_chase_cooldown", 20.0)
+	print("[NET] Created server proxy for player %d (protection 20s, wolf cooldown 20s)" % id)
+
+# Called by RPC from server on client to apply wolf damage
+func _net_apply_damage(amount: float) -> void:
+	if player != null and player.has_method("apply_damage"):
+		player.apply_damage(amount)
+
+# Called by RPC from client on server to damage a real animal
+func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
+	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
+	var real_name := animal_name.replacen("Puppet_", "")
+	var animal := get_node_or_null(real_name)
+	if animal != null and animal.has_method("take_damage"):
+		animal.take_damage(amount, from_knife)
+
+func _update_server_proxies(delta: float) -> void:
+	if net == null or not net.is_dedicated_server:
+		return
+	# Update proxy positions from net.players data
+	for pid in net.players.keys():
+		if pid == net.get_my_id():
+			continue
+		if not server_proxies.has(pid):
+			_spawn_server_proxy(pid)
+			continue
+		var data: Dictionary = net.players[pid]
+		var proxy: Node3D = server_proxies[pid]
+		proxy.global_position = data.get("pos", Vector3(8.0, 0.4, 2.5))
+		# Decrement spawn protection timer using real delta
+		var pt: float = proxy.get_meta("protection_timer", 0.0)
+		if pt > 0.0:
+			proxy.set_meta("protection_timer", max(0.0, pt - delta))
+			# Only log every ~2 seconds
+			if int(pt * 10) % 20 == 0:
+				print("[NET] Proxy %d protection: %.1fs" % [pid, pt])
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
@@ -825,6 +901,56 @@ func _update_remote_players() -> void:
 		# Smooth interpolation
 		rp.global_position = rp.global_position.lerp(target_pos, 0.15)
 		rp.rotation.y = lerp_angle(rp.rotation.y, target_rot, 0.15)
+
+# Server: collect all wildlife states and broadcast to clients
+func _broadcast_animals() -> void:
+	if net == null or not net.is_connected:
+		return
+	var data := {}
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if not (node is Node3D):
+			continue
+		var animal := node as Node3D
+		var aid := str(animal.name)
+		data[aid] = {
+			"type": str(animal.get("animal_type")),
+			"pos": animal.global_position,
+			"rot": animal.rotation.y,
+			"anim": str(animal.get("current_anim_keyword")),
+			"dead": bool(animal.get("_is_dead"))
+		}
+	net.animals = data
+	_animal_debug_timer += 1
+	if _animal_debug_timer >= 50:
+		_animal_debug_timer = 0
+		print("[NET] Broadcasting %d animales a %d peers" % [data.size(), multiplayer.get_peers().size()])
+	net.sync_animals.rpc(data)
+
+# Client: spawn/update visual-only puppet animals from server data
+func _update_puppet_animals() -> void:
+	if net == null:
+		return
+	for aid in net.animals.keys():
+		var d: Dictionary = net.animals[aid]
+		if not puppet_animals.has(aid):
+			var puppet = WildlifeControllerScript.new()
+			puppet.name = "Puppet_" + str(aid)
+			add_child(puppet)
+			puppet.setup_puppet(str(d.get("type", "deer")))
+			puppet.global_position = d.get("pos", Vector3.ZERO)
+			puppet_animals[aid] = puppet
+		var p = puppet_animals[aid]
+		if is_instance_valid(p):
+			p.puppet_apply(d.get("pos", Vector3.ZERO), d.get("rot", 0.0), str(d.get("anim", "walk")), bool(d.get("dead", false)))
+	# Remove puppets that no longer exist on the server
+	var stale := []
+	for aid in puppet_animals.keys():
+		if not net.animals.has(aid):
+			stale.append(aid)
+	for aid in stale:
+		if is_instance_valid(puppet_animals[aid]):
+			puppet_animals[aid].queue_free()
+		puppet_animals.erase(aid)
 
 func _on_player_died() -> void:
 	if game_over:
@@ -904,22 +1030,22 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			if item_name == "Piedra":
 				return [SURVIVAL_TOOL_MODELS["stone"]]
 			if item_name == "Tronco":
-				return [K_SURVIVAL + "tree-log.glb", K_SURVIVAL + "tree-log-small.glb", "res://wood_stick_01.glb"]
+				return [K_SURVIVAL + "tree-log.glb", K_SURVIVAL + "tree-log-small.glb", "res://assets/models/props/wood_stick_01.glb"]
 			if item_name == "Palo":
-				return ["res://wood_stick.glb"]
+				return ["res://assets/models/props/wood_stick.glb"]
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
 			return [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL, "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
 		"tool_matches":
-			return ["res://box_of_matches_north_korea_1955.glb"]
+			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
 			if item_name == "Carne cruda de lobo":
-				return ["res://cc0_-_raw_meat_4.glb"]
+				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
 			return [ROOT_CANNED_FOOD_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
 		"tool_axe":
-			return ["res://simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
+			return ["res://assets/models/props/simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
 		"tool_hoe":
 			return [SURVIVAL_TOOL_MODELS["hoe"]]
 		"tool_shovel":
@@ -1424,8 +1550,8 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
 	_create_backpack_pickup("small_backpack_pickup", Vector3(9.5, 0.05, 3.5))
-	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://simple_axe.glb", Vector3(7.0, 0.05, 1.5), 1.2, Vector3(0, 45, 0))
-	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://box_of_matches_north_korea_1955.glb", Vector3(7.5, 0.05, 2.0), 0.0005, Vector3(0, 30, 0))
+	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", Vector3(7.0, 0.05, 1.5), 1.2, Vector3(0, 45, 0))
+	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", Vector3(7.5, 0.05, 2.0), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
 	for i in range(4):
 		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
@@ -1465,10 +1591,15 @@ func _create_wildlife() -> void:
 		for j in range(8):
 			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
 		_create_wildlife_animal("fox", route)
-	# Generate random wolves
+	# Generate random wolves — keep them far from player spawn and rivers
 	var wolf_centers: Array = []
 	for i in range(4):
-		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 20.0, 30.0, world_range)
+		var center := _random_pos_far_from_all(player_start, wolf_centers, min_distance + 15.0, 35.0, world_range)
+		# Reject positions near rivers
+		for _retry in range(20):
+			if not _is_near_river(center, 8.0):
+				break
+			center = _random_pos_far_from_all(player_start, wolf_centers, min_distance + 15.0, 35.0, world_range)
 		wolf_centers.append(center)
 		var route: Array = []
 		for j in range(7):
@@ -1508,9 +1639,12 @@ func _create_deer_pair(route: Array) -> void:
 			shifted.append((point as Vector3) + offset)
 		_create_wildlife_animal("deer", shifted)
 
+var _animal_id_counter := 0
+
 func _create_wildlife_animal(kind: String, points: Array) -> void:
 	var animal = WildlifeControllerScript.new()
-	animal.name = "Wildlife_" + kind
+	animal.name = "Wildlife_%s_%d" % [kind, _animal_id_counter]
+	_animal_id_counter += 1
 	add_child(animal)
 	animal.setup(kind, points)
 
@@ -1744,7 +1878,7 @@ func handle_world_action(action, actor) -> void:
 			action.set_meta("gutted", true)
 			# Spawn 5 meat pieces and 1 skin around the wolf
 			var wolf_pos: Vector3 = action.global_position
-			var meat_model := "res://cc0_-_raw_meat_4.glb"
+			var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 			for i in range(5):
 				var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
@@ -1850,7 +1984,7 @@ func handle_world_action(action, actor) -> void:
 			# If holding an empty plastic bottle, fill it instead of drinking
 			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_dw != null and held_dw.item_name == "Botella de plastico":
-				_play_actor_action(actor, "plant", 2.0)
+				_play_actor_action(actor, "drink", 2.0)
 				actor.notice.emit("Llenando botella en el rio...")
 				if hud != null:
 					hud.show_countdown("Llenando botella", 2.0)
@@ -3180,6 +3314,23 @@ func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_in_river(pos):
 		return false
 	return true
+
+func _is_near_river(pos: Vector3, margin: float) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	for segment in river_segments_data:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along := Vector2(cos(yaw), -sin(yaw))
+		var across := Vector2(sin(yaw), cos(yaw))
+		var half_length := size.x * 0.5 + margin
+		var half_width := size.y * 0.5 + margin
+		var offset := p - Vector2(center.x, center.z)
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		if abs(local_along) <= half_length and abs(local_across) <= half_width:
+			return true
+	return false
 
 func _is_in_river(pos: Vector3) -> bool:
 	var p := Vector2(pos.x, pos.z)

@@ -34,6 +34,8 @@ var _wolf_pain_player: AudioStreamPlayer3D = null
 var health := 150.0
 var max_health := 150.0
 var _is_dead := false
+var is_puppet := false
+var current_anim_keyword := "walk"
 var _hit_flash_timer := 0.0
 var _gutted := false
 var _corpse_body: StaticBody3D = null
@@ -42,9 +44,52 @@ static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
 static var _shared_cylinder: CylinderMesh = null
 
+# Puppet mode: visual-only animal controlled by network sync (no AI)
+func setup_puppet(kind: String) -> void:
+	animal_type = kind
+	is_puppet = true
+	add_to_group("wildlife")
+	_build_animal()
+
+func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool) -> void:
+	global_position = global_position.lerp(pos, 0.2)
+	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
+	if dead and not _is_dead:
+		_is_dead = true
+		if _animation_player != null:
+			_animation_player.stop()
+		_lie_corpse_flat()
+	elif not dead:
+		_play_animation_by_name(anim)
+
+# Puppet take_damage: forward to server via RPC
+func take_damage(amount: float, from_knife: bool) -> void:
+	if not is_puppet:
+		# Real animal — apply damage directly
+		if _is_dead:
+			return
+		health = max(0.0, health - amount)
+		_hit_flash_timer = 0.3
+		_spawn_blood_splatter()
+		_play_wolf_pain_sound()
+		if health <= 0.0:
+			_is_dead = true
+			_hit_flash_timer = 2.0
+			if _animation_player != null:
+				_animation_player.stop()
+			_lie_corpse_flat()
+		return
+	# Puppet: send RPC to server to damage the real animal
+	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if net_node != null:
+		net_node.damage_animal.rpc_id(1, name, amount, from_knife)
+	_spawn_blood_splatter()
+
 func setup(kind: String, points: Array) -> void:
 	animal_type = kind
 	add_to_group("wildlife")
+	if animal_type == "wolf":
+		add_to_group("wildlife_wolf")
 	patrol_points = points.duplicate()
 	if patrol_points.is_empty():
 		patrol_points = [Vector3.ZERO, Vector3(10, 0, 10), Vector3(-10, 0, -10)]
@@ -52,6 +97,8 @@ func setup(kind: String, points: Array) -> void:
 	_last_position = global_position
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
+	if animal_type == "wolf":
+		_chase_cooldown = 15.0
 	_build_animal()
 	call_deferred("_sanitize_patrol_points")
 
@@ -106,6 +153,10 @@ func _escape_if_trapped(delta: float) -> bool:
 	return true
 
 func _process(delta: float) -> void:
+	if is_puppet:
+		if animal_type == "wolf" and not _is_dead:
+			_update_wolf_sounds(delta)
+		return
 	if _is_dead:
 		return
 	if patrol_points.size() < 2:
@@ -218,13 +269,13 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
 		_state = "patrol"
 		_chase_stuck_time = 0.0
-		_chase_cooldown = 15.0
+		_chase_cooldown = 20.0
 	# Priority 1: chase player
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		if dist_to_player < 20.0:
+		if dist_to_player < 30.0:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
@@ -250,7 +301,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 5.0
 					_attack_timer = randf_range(8.0, 15.0)
-					_player.apply_damage(15.0)
+					# If target is a network proxy, send damage via RPC to client
+					if _player.is_in_group("net_player_proxy"):
+						var peer_id: int = _player.get_meta("peer_id", 0)
+						if peer_id != 0:
+							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+							if net_node != null:
+								net_node.apply_damage_to_client.rpc_id(peer_id, 15.0)
+					else:
+						_player.apply_damage(15.0)
 					_play_wolf_sound("attack")
 				_play_animation_by_name("run")
 				# Stop at minimum distance — don't overlap the player
@@ -365,21 +424,6 @@ func _prey_ai(delta: float) -> Dictionary:
 	speed = move_speed * 1.0
 	_play_animation_by_name("walk")
 	return {"target": target, "speed": speed}
-
-func take_damage(amount: float, _from_knife: bool) -> void:
-	if _is_dead:
-		return
-	health = max(0.0, health - amount)
-	_hit_flash_timer = 0.3
-	_spawn_blood_splatter()
-	_play_wolf_pain_sound()
-	if health <= 0.0:
-		_is_dead = true
-		_hit_flash_timer = 2.0
-		if _animation_player != null:
-			_animation_player.stop()
-		# Lie the corpse flat on the ground
-		_lie_corpse_flat()
 
 func _lie_corpse_flat() -> void:
 	if not is_instance_valid(_visual_root):
@@ -505,7 +549,7 @@ func _spawn_gut_pickups() -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	var meat_model := "res://cc0_-_raw_meat_4.glb"
+	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	var base_pos := global_position
 	# Spawn 5 meat pieces scattered around the corpse
 	for i in range(5):
@@ -630,6 +674,7 @@ func _play_animation_by_name(keyword: String) -> void:
 			break
 	if best.is_empty():
 		return
+	current_anim_keyword = lower_keyword
 	if current != best:
 		_animation_player.play(best, 0.2)
 
@@ -646,7 +691,10 @@ func _update_wolf_sounds(delta: float) -> void:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(20.0, 45.0)
 	if _growl_timer <= 0.0:
-		if _state == "chase_player" or _state == "chase_deer":
+		if is_puppet:
+			_play_wolf_sound("growl")
+			_growl_timer = randf_range(8.0, 16.0)
+		elif _state == "chase_player" or _state == "chase_deer":
 			_play_wolf_sound("growl")
 			_growl_timer = randf_range(3.0, 8.0)
 		else:
@@ -657,7 +705,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
 		_wolf_audio_player.unit_size = 8.0
-		_wolf_audio_player.max_distance = 60.0
+		_wolf_audio_player.max_distance = 120.0
 		add_child(_wolf_audio_player)
 	if _wolf_audio_player.playing:
 		return
@@ -871,10 +919,34 @@ func _flee_distance() -> float:
 
 func _resolve_player() -> void:
 	if _player != null and is_instance_valid(_player):
-		return
+		# Check if player moved too far or became invalid
+		if _player.is_in_group("net_player_proxy"):
+			# Re-evaluate: find nearest proxy each time
+			_player = null
+		else:
+			return
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	# On server: find nearest net_player_proxy (skip protected ones)
+	var proxies := get_tree().get_nodes_in_group("net_player_proxy")
+	if not proxies.is_empty():
+		var nearest: Node3D = null
+		var nearest_dist := 99999.0
+		for p in proxies:
+			if not (p is Node3D):
+				continue
+			# Skip proxies with active spawn protection
+			if p.get_meta("protection_timer", 0.0) > 0.0:
+				continue
+			var d: float = global_position.distance_to((p as Node3D).global_position)
+			if d < nearest_dist:
+				nearest_dist = d
+				nearest = p as Node3D
+		if nearest != null:
+			_player = nearest
+			return
+	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
 
 func _request_path(start: Vector3, goal: Vector3) -> Array:

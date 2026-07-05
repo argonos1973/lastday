@@ -35,7 +35,6 @@ func start_dedicated_server() -> bool:
 	if err != OK:
 		push_error("No se pudo crear el servidor: %d" % err)
 		return false
-	peer.set_meta("timeout", 30000) # 30s timeout for slow clients
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	is_connected = true
@@ -64,7 +63,7 @@ func host_game() -> bool:
 
 func join_game(ip: String) -> bool:
 	peer = ENetMultiplayerPeer.new()
-	var err := peer.create_client(ip, PORT, 0, 0, 30000) # 30s timeout
+	var err := peer.create_client(ip, PORT)
 	if err != OK:
 		push_error("No se pudo conectar al servidor: %d" % err)
 		return false
@@ -84,6 +83,11 @@ func close_connection() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	print("[NET] Peer conectado: %d" % id)
+	# Generous timeout so clients don't get kicked while loading the world
+	if peer != null:
+		var enet_peer := peer.get_peer(id)
+		if enet_peer != null:
+			enet_peer.set_timeout(120000, 120000, 180000)
 	if is_host:
 		# Send current player list to the new client
 		_sync_player_list.rpc_id(id, players)
@@ -96,6 +100,11 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	print("[NET] Conectado al servidor")
+	# Generous timeout so we don't drop the server while loading the world
+	if peer != null:
+		var server_peer := peer.get_peer(1)
+		if server_peer != null:
+			server_peer.set_timeout(120000, 120000, 180000)
 	is_connected = true
 	var my_id := multiplayer.get_unique_id()
 	players[my_id] = {
@@ -151,6 +160,28 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["anim"] = anim
 	players[id]["equipped_clothing"] = equipped_clothing
 	players[id]["held_item"] = held_item
+
+# Animal state broadcast — server sends to all clients
+# animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
+var animals: Dictionary = {}
+
+@rpc("authority", "unreliable_ordered")
+func sync_animals(data: Dictionary) -> void:
+	animals = data
+
+# Server tells specific client to apply damage
+@rpc("authority", "reliable")
+func apply_damage_to_client(amount: float) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_apply_damage"):
+		scene._net_apply_damage(amount)
+
+# Client tells server to damage an animal
+@rpc("any_peer", "reliable")
+func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_damage_animal"):
+		scene._net_damage_animal(animal_name, amount, from_knife)
 
 func get_player_list() -> Dictionary:
 	return players
