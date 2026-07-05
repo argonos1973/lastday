@@ -839,24 +839,13 @@ func _update_server_proxies(delta: float) -> void:
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
 		return
-	# Create a simple avatar for the remote player
-	var avatar := Node3D.new()
+	# Create a full PlayerController in puppet mode (3D model + animations, no input/camera)
+	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
 	avatar.position = Vector3(8.0, 0.4, 2.5)
+	avatar.is_puppet = true
 	add_child(avatar)
-	# Body capsule
-	var body := MeshInstance3D.new()
-	body.name = "Body"
-	var cap := CapsuleMesh.new()
-	cap.radius = 0.35
-	cap.height = 1.6
-	body.mesh = cap
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.6, 0.9, 0.9)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	body.material_override = mat
-	body.position = Vector3(0, 0.8, 0)
-	avatar.add_child(body)
+	avatar.setup_as_puppet()
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -867,7 +856,7 @@ func _spawn_remote_player(id: int) -> void:
 	label.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	avatar.add_child(label)
 	remote_players[id] = avatar
-	print("[NET] Spawned remote player avatar for id %d" % id)
+	print("[NET] Spawned remote player puppet for id %d" % id)
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:
@@ -898,9 +887,15 @@ func _update_remote_players() -> void:
 		var rp: Node3D = remote_players[pid]
 		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
 		var target_rot: float = data.get("rot", 0.0)
+		var anim: String = data.get("anim", "idle")
 		# Smooth interpolation
-		rp.global_position = rp.global_position.lerp(target_pos, 0.15)
-		rp.rotation.y = lerp_angle(rp.rotation.y, target_rot, 0.15)
+		var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
+		var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
+		if rp.has_method("puppet_apply"):
+			rp.puppet_apply(smooth_pos, smooth_rot, anim)
+		else:
+			rp.global_position = smooth_pos
+			rp.rotation.y = smooth_rot
 
 # Server: collect all wildlife states and broadcast to clients
 func _broadcast_animals() -> void:

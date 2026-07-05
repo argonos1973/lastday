@@ -237,6 +237,19 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["anim"] = anim
 	players[id]["equipped_clothing"] = equipped_clothing
 	players[id]["held_item"] = held_item
+	# Server relays to all other clients (dedicated server mode)
+	if is_host:
+		_relay_player_state.rpc(id, pos, rot, anim, equipped_clothing, held_item)
+
+@rpc("authority", "unreliable_ordered")
+func _relay_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String) -> void:
+	if not players.has(id):
+		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
+	players[id]["pos"] = pos
+	players[id]["rot"] = rot
+	players[id]["anim"] = anim
+	players[id]["equipped_clothing"] = equipped_clothing
+	players[id]["held_item"] = held_item
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }

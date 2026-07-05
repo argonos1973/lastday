@@ -300,8 +300,69 @@ var _water_depth := 0.0
 var _water_sink := 0.0
 var _water_notice_cooldown := 0.0
 var _aim_screen_offset := Vector2.ZERO
+var is_puppet := false
+var _puppet_anim := "idle"
+var _puppet_current_anim := ""
+
+func setup_as_puppet() -> void:
+	is_puppet = true
+	# Load the 3D model and animations (same as local player but no camera/input)
+	_create_body()
+	# Remove camera and raycast — puppet doesn't need them
+	if camera != null:
+		camera.queue_free()
+		camera = null
+	if raycast != null:
+		raycast.queue_free()
+		raycast = null
+	if flashlight != null:
+		flashlight.queue_free()
+		flashlight = null
+	# Make the third person model visible (for local player it's hidden in first person)
+	if third_person_model != null:
+		third_person_model.visible = true
+	set_process(false)
+	set_process_input(false)
+	set_physics_process(false)
+
+func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
+	global_position = pos
+	rotation.y = rot
+	_puppet_anim = anim
+	if third_person_animation_player != null and anim != _puppet_current_anim:
+		# Map network anim names to actual animation names
+		var target := ""
+		if anim.find("run") >= 0 or anim.find("Run") >= 0:
+			target = third_person_run_animation
+		elif anim.find("walk") >= 0 or anim.find("Walk") >= 0:
+			target = third_person_walk_animation
+		elif anim.find("sneak") >= 0 or anim.find("Sneak") >= 0:
+			target = third_person_sneak_animation
+		elif anim.find("idle") >= 0 or anim.find("Idle") >= 0:
+			target = third_person_idle_animation
+		elif anim.find("jump") >= 0 or anim.find("Jump") >= 0:
+			target = third_person_jump_animation
+		elif anim.find("attack") >= 0 or anim.find("Attack") >= 0:
+			target = third_person_attack_animation
+		elif anim.find("sit") >= 0 or anim.find("Sit") >= 0:
+			target = third_person_sit_animation
+		elif anim.find("sleep") >= 0 or anim.find("Sleep") >= 0:
+			target = third_person_sleep_animation
+		elif anim.find("drink") >= 0 or anim.find("Drink") >= 0:
+			target = third_person_drink_animation
+		elif anim.find("dead") >= 0 or anim.find("Dead") >= 0 or anim.find("dying") >= 0 or anim.find("Dying") >= 0:
+			target = third_person_dying_animation
+		elif anim.find("low") >= 0 or anim.find("Low") >= 0:
+			target = third_person_low_health_animation
+		elif not anim.is_empty() and third_person_animation_player.has_animation(anim):
+			target = anim
+		if not target.is_empty() and third_person_animation_player.has_animation(target):
+			third_person_animation_player.play(target, 0.15)
+			_puppet_current_anim = anim
 
 func _ready() -> void:
+	if is_puppet:
+		return
 	stats = SurvivalStatsScript.new()
 	stats.name = "SurvivalStats"
 	add_child(stats)
@@ -329,7 +390,7 @@ func _ready() -> void:
 	call_deferred("_capture_mouse")
 
 func _input(event: InputEvent) -> void:
-	if is_dead:
+	if is_puppet or is_dead:
 		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
@@ -1006,6 +1067,8 @@ func _update_crouch_collision() -> void:
 		_collision_shape.position.y = bottom_y + 0.875
 
 func _physics_process(delta: float) -> void:
+	if is_puppet:
+		return
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	# Gradually wear equipped clothing
