@@ -1328,8 +1328,9 @@ func _create_third_person_model() -> void:
 		third_person_model = character
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
+		# Always init survival clothing (hides soldier nodes, shows default clothing)
+		_init_survival_clothing(character)
 		if not is_puppet:
-			_init_survival_clothing(character)
 			# Ensure default clothing is in inventory and equipped
 			if inventory != null:
 				var has_camiseta := false
@@ -1349,6 +1350,12 @@ func _create_third_person_model() -> void:
 				for item in inventory.items:
 					if DEFAULT_CLOTHING.has(str(item.item_name)):
 						equip_clothing(str(item.item_name))
+		else:
+			# Puppet: equip default clothing directly without inventory
+			equip_clothing("Camiseta")
+			equip_clothing("Pantalones")
+			equip_clothing("Zapatillas")
+		if not is_puppet:
 			_create_third_person_item_slots()
 		_setup_third_person_animation(character)
 		_align_third_person_model_to_ground()

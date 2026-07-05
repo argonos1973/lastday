@@ -416,9 +416,6 @@ func _process(delta: float) -> void:
 			_broadcast_animals()
 		return
 	if player == null or day_cycle == null:
-		# Still check async puppet loads even before player is ready
-		if not _puppet_loads.is_empty():
-			_check_puppet_model_loads()
 		return
 	if game_over:
 		return
@@ -442,8 +439,6 @@ func _process(delta: float) -> void:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
 		_update_remote_players()
-		if not _puppet_loads.is_empty():
-			_check_puppet_model_loads()
 		if not net.is_host:
 			_update_puppet_animals()
 
@@ -847,25 +842,14 @@ func _update_server_proxies(delta: float) -> void:
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
 		return
-	# Lightweight remote player: start as capsule, load 3D model async
-	var avatar := CharacterBody3D.new()
+	# PlayerController puppet — setup_as_puppet is lightweight (model is cached)
+	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
 	avatar.position = Vector3(8.0, 0.4, 2.5)
+	avatar.is_puppet = true
 	add_child(avatar)
 	remote_players[id] = avatar
-	# Simple capsule body (placeholder while 3D model loads)
-	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.3
-	mesh.height = 1.8
-	var mi := MeshInstance3D.new()
-	mi.name = "PlaceholderCapsule"
-	mi.mesh = mesh
-	mi.position = Vector3(0, 0.9, 0)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.6, 1.0)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mi.material_override = mat
-	avatar.add_child(mi)
+	avatar.setup_as_puppet()
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -875,55 +859,7 @@ func _spawn_remote_player(id: int) -> void:
 	label.position = Vector3(0, 2.0, 0)
 	label.no_depth_test = true
 	avatar.add_child(label)
-	# Start async load of real 3D model
-	_start_puppet_model_load(avatar)
-	print("[NET] Spawned lightweight remote player for id %d" % id)
-
-# Async load 3D model for puppet — swaps capsule with real model when ready
-var _puppet_loads: Dictionary = {} # avatar_name (String) -> model_path (String)
-var _puppet_model_cache: Node3D = null
-
-func _start_puppet_model_load(avatar: Node3D) -> void:
-	var model_path := "res://assets/characters/adapted/player_with_clothes.glb"
-	_puppet_loads[avatar.name] = model_path
-
-func _check_puppet_model_loads() -> void:
-	if _puppet_model_cache == null:
-		# Only attempt load if local player exists (model should be cached by then)
-		if player == null:
-			return
-		# Try same candidates as local player
-		for candidate in PlayerControllerScript.THIRD_PERSON_MODEL_CANDIDATES:
-			if external_scene_cache.has(candidate):
-				var cached = external_scene_cache[candidate]
-				if cached is Node3D:
-					_puppet_model_cache = cached
-					break
-			else:
-				var cached = _get_external_scene_resource(candidate)
-				if cached is Node3D:
-					_puppet_model_cache = cached
-					break
-		if _puppet_model_cache == null:
-			return # Not ready yet, try next frame
-	var loaded := []
-	for avatar_name in _puppet_loads.keys():
-		loaded.append(avatar_name)
-		var avatar := get_node_or_null(NodePath(avatar_name))
-		if avatar != null and is_instance_valid(avatar):
-			var model := _puppet_model_cache.duplicate()
-			model.name = "ThirdPersonCharacter"
-			var model3d := model as Node3D
-			if model3d != null:
-				model3d.position = Vector3.ZERO
-				model3d.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-			avatar.add_child(model)
-			var placeholder := avatar.get_node_or_null("PlaceholderCapsule")
-			if placeholder != null:
-				placeholder.queue_free()
-			print("[NET] Puppet 3D model loaded for %s" % avatar_name)
-	for name in loaded:
-		_puppet_loads.erase(name)
+	print("[NET] Spawned puppet player for id %d" % id)
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:
