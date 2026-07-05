@@ -8,7 +8,7 @@ const RECIPES := [
 	{
 		"inputs": { "Palo": 1, "Cuchillo": 1 },
 		"output": { "name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "use_value": 0.0 },
-		"label": "Afilar palo con cuchillo"
+		"label": "Afilar palo con cuchillo/hacha"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda": 1 },
@@ -28,12 +28,12 @@ const RECIPES := [
 	{
 		"inputs": { "Tronco": 1, "Cuchillo": 1 },
 		"output": { "name": "Palo", "type": "resource", "weight": 0.15, "use_value": 0.0, "quantity": 2 },
-		"label": "Tallar tronco para hacer 2 palos"
+		"label": "Tallar tronco con cuchillo/hacha para hacer 2 palos"
 	},
 	{
 		"inputs": { "Piel de lobo": 1, "Cuchillo": 1 },
 		"output": { "name": "Cuerda", "type": "resource", "weight": 0.1, "use_value": 0.0 },
-		"label": "Cortar piel de lobo para hacer cuerda"
+		"label": "Cortar piel de lobo con cuchillo/hacha para hacer cuerda"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de lobo": 1 },
@@ -46,7 +46,7 @@ const RECIPES := [
 		"label": "Ensartar carne en palo"
 	},
 	{
-		"inputs": { "Tronco": 2, "Palo": 1, "Cerillas": 1 },
+		"inputs": { "Tronco": 2, "Palo": 1 },
 		"output": { "name": "Fogata", "type": "campfire", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir fogata"
 	},

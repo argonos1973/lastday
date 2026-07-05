@@ -31,8 +31,8 @@ var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
 var _wolf_pain_player: AudioStreamPlayer3D = null
-var health := 100.0
-var max_health := 100.0
+var health := 150.0
+var max_health := 150.0
 var _is_dead := false
 var _hit_flash_timer := 0.0
 var _gutted := false
@@ -229,18 +229,20 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_chase_target = _player
 			_noise_attract_timer = 0.0
 			speed = move_speed * 2.8
-			# Player elevated (on container/car/house roof) — can't reach
+			# Player elevated (on container/car/house roof) — can't reach, go away
 			if height_diff >= 1.5 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 2.0:
-					_state = "wait_near"
-					_wait_near_timer = 20.0
-					_wait_near_pos = global_position
+					_state = "patrol"
 					_chase_stuck_time = 0.0
+					_chase_target = null
+					_chase_cooldown = 15.0
 					_play_wolf_sound("growl")
-					target = global_position
-					speed = 0.0
-					_play_animation_by_name("idle")
+					var away := (global_position - _player.global_position).normalized()
+					away.y = 0.0
+					target = global_position + away * 30.0
+					speed = move_speed * 2.0
+					_play_animation_by_name("trot")
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
@@ -248,7 +250,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 5.0
 					_attack_timer = randf_range(8.0, 15.0)
-					_player.apply_damage(8.0)
+					_player.apply_damage(15.0)
 					_play_wolf_sound("attack")
 				_play_animation_by_name("run")
 				# Stop at minimum distance — don't overlap the player
@@ -292,6 +294,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 					target = farthest_patrol
 					speed = move_speed * 2.0
 					_play_animation_by_name("trot")
+			# Apply separation from other wolves to avoid clustering
+			var sep := _compute_wolf_separation(3.5)
+			if sep.length() > 0.01:
+				target += sep
 			return {"target": target, "speed": speed}
 	# Priority 2: investigate noise
 	if _noise_attract_timer > 0.0:
@@ -410,7 +416,7 @@ func get_interaction_text(player = null) -> String:
 	var has_knife := _player_has_knife(player)
 	if has_knife:
 		return "[E] Destripar lobo  |  [C] Coger lobo entero (necesitas mochila)"
-	return "[E] Necesitas un cuchillo  |  [C] Coger lobo (necesitas mochila)"
+	return "[E] Necesitas un cuchillo o hacha  |  [C] Coger lobo (necesitas mochila)"
 
 func interact(player: Node) -> void:
 	if not _is_dead:
@@ -422,20 +428,25 @@ func interact(player: Node) -> void:
 	var has_knife := _player_has_knife(player)
 	if not has_knife:
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("Necesitas un cuchillo para destripar.")
+			player.notice.emit("Necesitas un cuchillo o hacha para destripar.")
 		return
-	# Gut: spawn 5 meat pieces and 1 skin on the ground
+	# Gut: spawn 5 meat pieces and 1 skin on the ground after animation
 	_gutted = true
 	if player != null and player.has_method("play_action_animation"):
 		player.play_action_animation("plant", 5.0)
-	_spawn_gut_pickups()
 	if player != null and player.has_signal("notice"):
-		player.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
-	# Remove the corpse after the 5-second animation finishes
+		player.notice.emit("Destripando al lobo...")
+	# Spawn meat and remove corpse after the 5-second animation finishes
+	var player_ref: Node = player
 	var timer := Timer.new()
 	timer.wait_time = 5.0
 	timer.one_shot = true
-	timer.timeout.connect(_remove_corpse)
+	timer.timeout.connect(func():
+		_spawn_gut_pickups()
+		if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
+			player_ref.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
+		_remove_corpse()
+	)
 	add_child(timer)
 	timer.start()
 
@@ -472,7 +483,7 @@ func _player_has_knife(player: Node) -> bool:
 	if inventory == null or not ("items" in inventory):
 		return false
 	for item in inventory.items:
-		if item != null and item.item_type == "weapon":
+		if item != null and (item.item_type == "weapon" or item.item_name == "Hacha"):
 			return true
 	return false
 
@@ -515,22 +526,6 @@ func _spawn_gut_pickups() -> void:
 				action.set_meta("item_weight", 0.3)
 				action.set_meta("item_quantity", 1)
 				action.set_meta("item_use_value", 15.0)
-	# Spawn 1 skin
-	var skin_pos := base_pos + Vector3(randf_range(-0.5, 0.5), 0.0, randf_range(-0.5, 0.5))
-	skin_pos.y = 0.06
-	var skin_id := "gut_skin_%d" % Time.get_ticks_msec()
-	var skin_visual := "Pickup_" + skin_id
-	if scene.has_method("_try_instance_external_scene"):
-		scene.call("_try_instance_external_scene", ["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"], skin_visual, skin_pos, Vector3.ONE * 0.4, Vector3(0, randf_range(0, 360), 0), true, 0.06)
-	if scene.has_method("_create_world_action"):
-		var skin_action = scene.call("_create_world_action", skin_id, "pickup_item", "Piel de lobo", skin_pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-		if skin_action != null:
-			skin_action.set_meta("visual_name", skin_visual)
-			skin_action.set_meta("item_name", "Piel de lobo")
-			skin_action.set_meta("item_type", "clothing")
-			skin_action.set_meta("item_weight", 0.8)
-			skin_action.set_meta("item_quantity", 1)
-			skin_action.set_meta("item_use_value", 0.3)
 
 func _remove_corpse() -> void:
 	remove_from_group("interactable")
@@ -905,6 +900,20 @@ func _can_reach_player() -> bool:
 	var last_point: Vector3 = path[path.size() - 1]
 	var dist := last_point.distance_to(_player.global_position)
 	return dist < 3.0
+
+func _compute_wolf_separation(radius: float) -> Vector3:
+	var push := Vector3.ZERO
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self or not (node is Node3D) or not is_instance_valid(node):
+			continue
+		var other := node as Node3D
+		var d := global_position.distance_to(other.global_position)
+		if d > radius or d < 0.01:
+			continue
+		var away := (global_position - other.global_position).normalized()
+		away.y = 0.0
+		push += away * (radius - d) / radius
+	return push
 
 func _animate_legs(delta: float) -> void:
 	if _visual_root != null:

@@ -10,6 +10,7 @@ const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
+const REAL_PLASTIC_BOTTLE_MODEL := "res://plastic_water_bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
 const REAL_STONE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb"
 const REAL_AXE_MODEL := "res://simple_axe.glb"
@@ -18,6 +19,8 @@ const REAL_SHOVEL_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB
 const REAL_HAMMER_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hammer.glb"
 const REAL_PICKAXE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-pickaxe.glb"
 const REAL_BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
+const REAL_MEAT_ON_STICK_MODEL := "res://cc0_-_raw_meat_4.glb"
+const REAL_WOOD_STICK_MODEL := "res://wood_stick.glb"
 const POLY_LIFE_JACKET_MODEL := "res://assets/external/polyhaven/life_jacket/life_jacket_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_RUBBER_BOOTS_MODEL := "res://assets/external/polyhaven/rubber_boots/rubber_boots_1k.gltf"
@@ -46,14 +49,13 @@ const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
-	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": [], "body_hides": []},
+	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
 	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": [], "body_hides": []},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
-	"Botas militares": {"mesh": "soldier_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
 }
 
 const DEFAULT_CLOTHING := {
@@ -66,6 +68,13 @@ const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
 	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
+	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
+	"Vaqueros survival": ["Desnudo_legs"],
+	"Pantalones militares": ["Desnudo_legs"],
+	"Guantes survival": ["Desnudo_hands"],
+	"Guantes militares": ["Desnudo_hands"],
+	"Botas survival": ["Desnudo_feet"],
 }
 
 const DEFAULT_BODY_HIDES := {
@@ -86,7 +95,6 @@ const CLOTHING_SLOTS := {
 	"Chaqueta militar": "torso",
 	"Pantalones militares": "legs",
 	"Guantes militares": "hands",
-	"Botas militares": "feet",
 	"Chaqueta de abrigo": "torso",
 	"Chaleco salvavidas": "torso",
 	"Chaleco tactico": "torso",
@@ -109,7 +117,6 @@ const CLOTHING_WARMTH := {
 	"Chaqueta militar": 0.28,
 	"Pantalones militares": 0.20,
 	"Guantes militares": 0.10,
-	"Botas militares": 0.22,
 	"Chaqueta de abrigo": 0.45,
 	"Chaleco salvavidas": 0.06,
 	"Chaleco tactico": 0.10,
@@ -146,6 +153,7 @@ const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://muerto.glb"
 const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://saltar.glb"
 const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://saltarabajo2.GLB"
 const THIRD_PERSON_SLEEP_ANIMATION_SOURCE := "res://dormir2.glb"
+const THIRD_PERSON_SIT_ANIMATION_SOURCE := "res://sentarse.glb"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -163,6 +171,7 @@ const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION := "JumpDownExternal"
 const THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION := "SleepExternal"
+const THIRD_PERSON_EXTERNAL_SIT_ANIMATION := "SitExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -241,8 +250,11 @@ var third_person_dying_animation := ""
 var third_person_jump_animation := ""
 var third_person_jump_down_animation := ""
 var third_person_sleep_animation := ""
+var third_person_sit_animation := ""
 var is_sleeping := false
+var is_sitting := false
 var _auto_sleep_triggered := false
+var _clothing_wear_timer := 0.0
 var _is_falling_from_height := false
 var _fall_height := 0.0
 var _max_fall_height := 0.0
@@ -324,7 +336,8 @@ func _input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-78.0), deg_to_rad(78.0))
-		camera.rotation.x = _pitch
+		if camera != null:
+			camera.rotation.x = _pitch
 	if event.is_action_pressed("interact"):
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
@@ -335,6 +348,8 @@ func _input(event: InputEvent) -> void:
 			_collect()
 	if event.is_action_pressed("drop_item"):
 		_drop_held_item()
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_G:
+		_store_held_item()
 	if event.is_action_pressed("flashlight"):
 		_toggle_flashlight()
 	if event.is_action_pressed("toggle_inventory"):
@@ -364,6 +379,9 @@ func _input(event: InputEvent) -> void:
 			stop_sleep()
 			notice.emit("Has despertado.")
 			return
+		if event.keycode == KEY_S and not is_sleeping:
+			print("KEY_S pressed, calling _toggle_sit")
+			_toggle_sit()
 	if event.is_action_pressed("quick_use_1"):
 		held_index = 0
 		_use_inventory_index(0)
@@ -415,6 +433,24 @@ func _use_inventory_index(index: int) -> void:
 	var item = inventory.items[index]
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
+	if item.has_method("is_broken") and item.is_broken() and item_type != "food" and item_type != "water":
+		notice.emit("%s esta roto y no se puede usar." % item_name)
+		return
+	# Food items: first put in hand, then eat with animation when used again
+	if item_type == "food":
+		if held_index == index and hands != null and hands.has_item_in_hands():
+			_eat_held_item()
+		else:
+			held_index = index
+			_sync_held_item()
+			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para comer." % item_name)
+		return
+	# Plastic bottle: put in hand, then fill at river
+	if item_name == "Botella de plastico":
+		held_index = index
+		_sync_held_item()
+		notice.emit("Tienes la botella en la mano. Ve al rio y pulsa E para llenarla.")
+		return
 	var used: bool = inventory.use_index(index, stats)
 	if used:
 		stats.changed.emit()
@@ -453,7 +489,15 @@ func equip_clothing(item_name: String) -> void:
 	var all_equipped := not str(equipped_check.get("torso", "")).is_empty() \
 		and not str(equipped_check.get("legs", "")).is_empty() \
 		and not str(equipped_check.get("feet", "")).is_empty()
-	if all_equipped:
+	# Check if any survival clothing with skin_hides is equipped — if so, we can't
+	# use _full_body_mesh because it shows bare skin that can't be selectively hidden.
+	var has_survival_skin_hide := false
+	for equipped_item in equipped_check.values():
+		var eitem := str(equipped_item)
+		if SURVIVAL_CLOTHING.has(eitem) and not SURVIVAL_CLOTHING[eitem]["skin_hides"].is_empty():
+			has_survival_skin_hide = true
+			break
+	if all_equipped and not has_survival_skin_hide:
 		if _full_body_mesh != null:
 			_full_body_mesh.visible = true
 			_full_body_mesh.material_override = null
@@ -465,7 +509,7 @@ func equip_clothing(item_name: String) -> void:
 			if dmi != null:
 				dmi.visible = false
 	else:
-		# Not all equipped — use _head_mesh + Desnudo_*
+		# Not all equipped or has survival clothing — use _head_mesh + Desnudo_*
 		if _full_body_mesh != null:
 			_full_body_mesh.visible = false
 			_full_body_mesh.material_override = null
@@ -592,9 +636,19 @@ func _init_survival_clothing(root: Node) -> void:
 			if wanted.has(mi.name):
 				_survival_cloth_nodes[mi.name] = mi
 				mi.visible = false
+				if mi.name == "cloth_hands" or mi.name == "cloth_feet":
+					var black_mat := StandardMaterial3D.new()
+					black_mat.albedo_color = Color(0.05, 0.05, 0.05)
+					black_mat.roughness = 0.9
+					mi.material_override = black_mat
 			elif body_names.has(mi.name):
 				_survival_body_nodes[mi.name] = mi
 				mi.visible = false
+				if mi.name == "Shoes":
+					var shoe_mat := StandardMaterial3D.new()
+					shoe_mat.albedo_color = Color(0.85, 0.82, 0.78)
+					shoe_mat.roughness = 0.8
+					mi.material_override = shoe_mat
 		for c in node.get_children():
 			stack.append(c)
 	print("SURVIVAL_INIT cached cloth nodes: ", _survival_cloth_nodes.keys())
@@ -940,6 +994,23 @@ func _update_crouch_collision() -> void:
 func _physics_process(delta: float) -> void:
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	# Gradually wear equipped clothing
+	if not is_dead and inventory != null:
+		_clothing_wear_timer += delta
+		if _clothing_wear_timer >= 60.0:
+			_clothing_wear_timer = 0.0
+			for item in inventory.items:
+				if item != null and item.item_type == "clothing" and item.has_method("reduce_durability"):
+					var is_equipped := false
+					for slot_val in _equipped_slots.values():
+						if str(slot_val) == item.item_name:
+							is_equipped = true
+							break
+					if is_equipped:
+						item.reduce_durability(1.0)
+						if item.is_broken():
+							notice.emit("%s se ha deteriorado y ya no sirve." % item.item_name)
+			inventory.changed.emit()
 	if is_dead:
 		is_sprinting = false
 		is_crouching = false
@@ -966,9 +1037,18 @@ func _physics_process(delta: float) -> void:
 			velocity.y = 0.0
 		move_and_slide()
 		stats.do_sleep(delta)
+		_update_backpack_socket()
+		_update_hand_socket()
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
+	if is_sitting:
+		if input_dir.length() > 0.1:
+			is_sitting = false
+		else:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			direction = Vector3.ZERO
 	is_crouching = Input.is_action_pressed("crouch")
 	_update_crouch_collision()
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
@@ -1318,6 +1398,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_JUMP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_ANIMATION)
 	_import_external_animation(THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_SLEEP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, true)
+	_import_external_animation(THIRD_PERSON_SIT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, true)
 	var names := third_person_animation_player.get_animation_list()
 	for animation_name in names:
 		var name_text := String(animation_name)
@@ -1386,6 +1467,11 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var sleep_anim := third_person_animation_player.get_animation(third_person_sleep_animation)
 		if sleep_anim != null:
 			sleep_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_SIT_ANIMATION):
+		third_person_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_SIT_ANIMATION
+		var sit_anim := third_person_animation_player.get_animation(third_person_sit_animation)
+		if sit_anim != null:
+			sit_anim.loop_mode = Animation.LOOP_LINEAR
 	if third_person_run_animation.is_empty():
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
@@ -1423,8 +1509,9 @@ func _import_external_animation(source_path: String, animation_name: String, ski
 		copied_animation.loop_mode = Animation.LOOP_NONE
 		copied_animation.step = 0.0166667
 		_retarget_animation_to_character_skeleton(copied_animation)
+		var skeleton := _find_skeleton(third_person_model)
 		if not skip_post_process:
-			_remove_root_motion_drift(copied_animation)
+			_remove_root_motion_drift(copied_animation, skeleton)
 			_smooth_loop_boundary(copied_animation)
 		else:
 			# For sleep animation: trim to the lying-still portion (first 5s)
@@ -1630,7 +1717,14 @@ func _find_skeleton(root: Node) -> Skeleton3D:
 			return found
 	return null
 
-func _remove_root_motion_drift(animation: Animation) -> void:
+func _remove_root_motion_drift(animation: Animation, skeleton: Skeleton3D = null) -> void:
+	var rest_hips_y := 0.0
+	if skeleton != null:
+		var hips_bone := skeleton.find_bone("mixamorig_Hips")
+		if hips_bone == -1:
+			hips_bone = skeleton.find_bone("mixamorig:Hips")
+		if hips_bone != -1:
+			rest_hips_y = skeleton.get_bone_rest(hips_bone).origin.y
 	for track_index in range(animation.get_track_count()):
 		if animation.track_get_type(track_index) != Animation.TYPE_POSITION_3D:
 			continue
@@ -1661,7 +1755,10 @@ func _remove_root_motion_drift(animation: Animation) -> void:
 				if lock_x:
 					locked_position.x = first_position.x
 				if lock_y:
-					locked_position.y = first_position.y
+					if is_root_hips:
+						locked_position.y = rest_hips_y
+					else:
+						locked_position.y = first_position.y
 				if lock_z:
 					locked_position.z = first_position.z
 				animation.track_set_key_value(track_index, key_index, locked_position)
@@ -1719,6 +1816,10 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 				target_animation = third_person_plant_animation
 		"pickup", "collect":
 			target_animation = third_person_interact_animation
+		"cook":
+			target_animation = third_person_sit_animation
+			if target_animation.is_empty():
+				target_animation = third_person_plant_animation
 		"interact", "chop":
 			target_animation = third_person_attack_animation
 			if target_animation.is_empty():
@@ -1945,12 +2046,8 @@ func _craft_campfire() -> void:
 	if not inventory.has_item_name("Palo", 1):
 		notice.emit("Necesitas 1 palo para craftear una fogata.")
 		return
-	if not inventory.has_item_name("Cerillas", 1):
-		notice.emit("Necesitas cerillas para craftear una fogata.")
-		return
 	inventory.consume_item_name("Tronco", 2)
 	inventory.consume_item_name("Palo", 1)
-	inventory.consume_item_name("Cerillas", 1)
 	play_action_animation("plant", 2.0)
 	notice.emit("Crafteando fogata...")
 	# Show countdown via parent HUD
@@ -1978,7 +2075,49 @@ func craft_recipe(recipe: Dictionary) -> void:
 		notice.emit("No tienes los materiales necesarios.")
 		return
 	inventory.changed.emit()
+	# Play crafting animation
+	play_action_animation("forage", 2.0)
 	notice.emit("Has crafteado: %s." % out["name"])
+
+func _toggle_sit() -> void:
+	if is_sitting:
+		is_sitting = false
+		notice.emit("Te levantas.")
+	else:
+		is_sitting = true
+		if not third_person_sit_animation.is_empty():
+			third_person_animation_player.play(third_person_sit_animation, 0.1)
+		notice.emit("Te sientas. Pulsa S para levantarte.")
+
+func _eat_held_item() -> void:
+	if inventory == null or inventory.items.is_empty():
+		notice.emit("No tienes nada en la mano.")
+		return
+	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	var item = inventory.items[held_index]
+	if item.item_type != "food":
+		notice.emit("No tienes comida en la mano.")
+		return
+	# Play eating animation (same as campfire crafting)
+	play_action_animation("plant", 2.0)
+	notice.emit("Comiendo %s..." % item.item_name)
+	# Consume the food after animation
+	var item_name := str(item.item_name)
+	var food_value := float(item.use_value)
+	var eat_timer := Timer.new()
+	eat_timer.wait_time = 2.0
+	eat_timer.one_shot = true
+	eat_timer.timeout.connect(func():
+		if stats != null:
+			stats.consume_food(food_value)
+			stats.changed.emit()
+		inventory.remove_index(held_index)
+		inventory.changed.emit()
+		_sync_held_item()
+		notice.emit("Comes %s. +%d hambre." % [item_name, int(food_value)])
+	)
+	add_child(eat_timer)
+	eat_timer.start()
 
 func _drop_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
@@ -1986,6 +2125,32 @@ func _drop_held_item() -> void:
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	drop_inventory_item(held_index)
+
+func _store_held_item() -> void:
+	if inventory == null or inventory.items.is_empty():
+		notice.emit("No tienes nada en la mano.")
+		return
+	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	var item = inventory.items[held_index]
+	# Clear hands visual - item stays in inventory but is not shown in hand
+	if hands != null:
+		hands.clear_hands()
+	# Re-sync third person equipment: clear hand items but keep backpack on back
+	if third_person_hand_item_root != null:
+		for child in third_person_hand_item_root.get_children():
+			third_person_hand_item_root.remove_child(child)
+			child.free()
+	# Rebuild backpack if equipped
+	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
+	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
+	if third_person_back_item_root != null:
+		if not equip_has_bp:
+			for child in third_person_back_item_root.get_children():
+				third_person_back_item_root.remove_child(child)
+				child.free()
+		if inventory != null and not equip_has_bp and eq_bp_set:
+			_build_third_person_backpack()
+	notice.emit("Guardas %s en el inventario." % item.item_name)
 
 func drop_inventory_item(index: int) -> void:
 	if inventory == null or index < 0 or index >= inventory.items.size():
@@ -1999,14 +2164,14 @@ func drop_inventory_item(index: int) -> void:
 	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
 		equipped_clothing = ""
 		_recalculate_carry_capacity()
-	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]:
+	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares"]:
 		unequip_clothing(item_name)
 	if DEFAULT_CLOTHING.has(item_name):
 		unequip_clothing(item_name)
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
-	item_dropped.emit(item_name, item_type, float(item.weight), int(item.quantity), float(item.use_value), drop_pos)
-	inventory.remove_index(index, item.quantity)
+	item_dropped.emit(item_name, item_type, float(item.weight), 1, float(item.use_value), drop_pos)
+	inventory.remove_index(index, 1)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)
 	_sync_held_item()
@@ -2053,9 +2218,17 @@ func _sync_third_person_equipment(held_item) -> void:
 		"tool":
 			_build_third_person_flashlight()
 		"food":
-			_build_third_person_can()
+			var fname := str(held_item.item_name)
+			if fname.find("ensartada") >= 0 or fname.find("asada") >= 0:
+				_build_third_person_can()
+			else:
+				_build_third_person_pack()
 		"water":
-			_build_third_person_bottle()
+			var wname := str(held_item.item_name)
+			if wname == "Botella de agua":
+				_build_third_person_plastic_bottle()
+			else:
+				_build_third_person_bottle()
 		"medical":
 			_build_third_person_bandage()
 		"battery":
@@ -2066,6 +2239,11 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_seed_bag()
 		"clothing":
 			_build_third_person_clothing_bundle()
+		"misc":
+			if str(held_item.item_name) == "Botella de plastico":
+				_build_third_person_plastic_bottle()
+			else:
+				_build_third_person_pack()
 		"tool_axe":
 			_build_third_person_axe()
 		"tool_hoe":
@@ -2106,10 +2284,29 @@ func _build_third_person_flashlight() -> void:
 	pass
 
 func _build_third_person_can() -> void:
-	pass
+	_build_third_person_meat_on_stick()
+
+func _build_third_person_meat_on_stick() -> void:
+	var stick_node := _load_external_node3d(REAL_WOOD_STICK_MODEL)
+	if stick_node != null:
+		stick_node.name = "ThirdPersonStick"
+		stick_node.scale = Vector3.ONE * 0.2
+		stick_node.position = Vector3(0.0, 0.05, -0.15)
+		stick_node.rotation_degrees = Vector3(75, 0, 0)
+		third_person_hand_item_root.add_child(stick_node)
+	var meat_node := _load_external_node3d(REAL_MEAT_ON_STICK_MODEL)
+	if meat_node != null:
+		meat_node.name = "ThirdPersonMeat"
+		meat_node.scale = Vector3.ONE * 0.15
+		meat_node.position = Vector3(0.0, 0.12, -0.20)
+		meat_node.rotation_degrees = Vector3(75, 0, 0)
+		third_person_hand_item_root.add_child(meat_node)
 
 func _build_third_person_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_BOTTLE_MODEL, "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
+
+func _build_third_person_plastic_bottle() -> void:
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.015)
 
 func _build_third_person_bandage() -> void:
 	pass
@@ -2299,6 +2496,11 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			return
 		elif third_person_action_timer <= 0.0:
 			third_person_action_animation = ""
+		if is_sitting and third_person_action_timer <= 0.0 and not third_person_sit_animation.is_empty():
+			if third_person_animation_player.current_animation != third_person_sit_animation:
+				third_person_animation_player.play(third_person_sit_animation, 0.1)
+			third_person_animation_player.speed_scale = 1.0
+			return
 		var target_animation := ""
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
 		if moving:
@@ -2362,6 +2564,11 @@ func _loop_third_person_animation(animation_name: String) -> void:
 	var length := animation.length
 	if length > 0.0 and third_person_animation_player.current_animation_position >= length - 0.05:
 		third_person_animation_player.play(animation_name, 0.25)
+
+func _get_current_anim() -> String:
+	if third_person_animation_player != null:
+		return third_person_animation_player.current_animation
+	return "idle"
 
 func _interact() -> void:
 	var target = _get_interaction_target()
@@ -2481,6 +2688,8 @@ func _toggle_flashlight() -> void:
 	notice.emit("Linterna encendida.")
 
 func _update_flashlight(delta: float) -> void:
+	if flashlight == null:
+		return
 	if flashlight.visible:
 		flashlight_charge = max(0.0, flashlight_charge - delta)
 		flashlight.light_energy = 1.1 + 2.2 * (flashlight_charge / 90.0)
@@ -2495,6 +2704,20 @@ func apply_damage(amount: float) -> void:
 	if is_sleeping:
 		stop_sleep()
 		notice.emit("Te han despertado!")
+	# Wolf attacks damage equipped clothing
+	if amount >= 10.0:
+		for item in inventory.items:
+			if item != null and item.item_type == "clothing" and item.has_method("reduce_durability"):
+				var is_equipped := false
+				for slot_val in _equipped_slots.values():
+					if str(slot_val) == item.item_name:
+						is_equipped = true
+						break
+				if is_equipped:
+					item.reduce_durability(3.0)
+					if item.is_broken():
+						notice.emit("%s se ha roto por el ataque!" % item.item_name)
+		inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
@@ -2557,10 +2780,15 @@ func _melee_attack() -> void:
 				# Resources and other items cannot be used to attack
 				notice.emit("No puedes atacar con %s." % str(held.item_name))
 				return
+	if held != null and held.has_method("is_broken") and held.is_broken():
+		notice.emit("%s esta roto y no se puede usar." % str(held.item_name))
+		return
 	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
 	_attack_cooldown = 0.7 if is_knife else 1.0
-	# Damage nearby wildlife
+	# Damage the closest wildlife target only (one hit per swing)
+	var closest_animal: Node3D = null
+	var closest_dist := attack_range
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if not (node is Node3D) or not is_instance_valid(node):
 			continue
@@ -2568,15 +2796,21 @@ func _melee_attack() -> void:
 		if animal == self:
 			continue
 		var dist := global_position.distance_to(animal.global_position)
-		if dist > attack_range:
+		if dist > closest_dist:
 			continue
 		# Only hit animals in front of the player
 		var to_animal := (animal.global_position - global_position).normalized()
 		var forward := -global_transform.basis.z.normalized()
 		if forward.dot(to_animal) < 0.3:
 			continue
-		if animal.has_method("take_damage"):
-			animal.take_damage(base_damage, is_knife)
+		closest_animal = animal
+		closest_dist = dist
+	if closest_animal != null and closest_animal.has_method("take_damage"):
+		closest_animal.take_damage(base_damage, is_knife)
+		if held != null and held.has_method("reduce_durability"):
+			held.reduce_durability(5.0)
+			if held.is_broken():
+				notice.emit("%s se ha roto!" % str(held.item_name))
 
 func _spawn_blood_splatter() -> void:
 	var particles := GPUParticles3D.new()

@@ -80,13 +80,13 @@ func get_interaction_text(_player = null) -> String:
 		"gut_wolf":
 			if get_meta("gutted", false):
 				return "Lobo vacio"
-			return "Destripar lobo - E (cuchillo) | Coger - C (mochila)"
+			return "Destripar lobo - E (cuchillo/hacha) | Coger - C (mochila)"
 		"wolf_meat_raw":
 			return "Carne cruda de lobo - [E] Recoger | [C] Comer (cruda)"
 		"fell_tree":
 			return "%s - talar con hacha - E (10s)" % display_name
 		"fell_bush":
-			return "%s - cortar con cuchillo - E (5s)" % display_name
+			return "%s - cortar con cuchillo/hacha - E (5s)" % display_name
 		"cut_log":
 			return "%s - cortar con hacha - E" % display_name
 		"build_cabin":
@@ -94,19 +94,19 @@ func get_interaction_text(_player = null) -> String:
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "backpack_pickup", "coat":
 			if _is_clothing():
 				return "%s - [E] Equipar | [C] Coger" % display_name
-			return "%s - recoger - E" % display_name
+			return "%s - [E] Recoger | [C] Coger" % display_name
 		"eat_food":
 			return "%s - comer - E" % display_name
 		"wood", "stone":
-			return "%s - recoger - E" % display_name
+			return "%s - [E] Recoger | [C] Coger" % display_name
 		"forage":
-			return "%s - recolectar - E" % display_name
+			return "%s - [E] Recolectar | [C] Coger" % display_name
 		"fish":
 			return "%s - pescar - E" % display_name
 		"hunt":
 			return "%s - rastrear - E" % display_name
 		"drink_water":
-			return "Beber agua del rio - E"
+			return "Beber agua / Llenar botella - E"
 		"light_campfire":
 			return "Encender fogata - E (cerillas)"
 		"cook":

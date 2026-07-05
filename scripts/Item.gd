@@ -6,6 +6,8 @@ class_name Item
 @export var weight := 0.0
 @export var quantity := 1
 @export var use_value := 0.0
+@export var durability := 100.0
+@export var max_durability := 100.0
 
 static func create(new_name: String, new_type: String, new_weight: float, new_quantity := 1, new_use_value := 0.0):
 	var item = load("res://scripts/Item.gd").new()
@@ -28,14 +30,30 @@ func to_dict() -> Dictionary:
 		"type": item_type,
 		"weight": weight,
 		"quantity": quantity,
-		"use_value": use_value
+		"use_value": use_value,
+		"durability": durability,
+		"max_durability": max_durability
 	}
 
 static func from_dict(data: Dictionary):
-	return load("res://scripts/Item.gd").create(
+	var item = load("res://scripts/Item.gd").create(
 		str(data.get("name", "")),
 		str(data.get("type", "")),
 		float(data.get("weight", 0.0)),
 		int(data.get("quantity", 1)),
 		float(data.get("use_value", 0.0))
 	)
+	item.durability = float(data.get("durability", 100.0))
+	item.max_durability = float(data.get("max_durability", 100.0))
+	return item
+
+func is_broken() -> bool:
+	return durability <= 0.0
+
+func reduce_durability(amount: float) -> void:
+	durability = max(0.0, durability - amount)
+
+func durability_pct() -> float:
+	if max_durability <= 0.0:
+		return 1.0
+	return durability / max_durability

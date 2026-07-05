@@ -22,6 +22,11 @@ var day_cycle
 var radio
 var audio_system
 var containers_by_id := {}
+
+# Multiplayer
+var net = null
+var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
+var _net_sync_timer := 0.0
 var world_actions_by_id := {}
 var _tree_id_counter := 0
 var _bush_id_counter := 0
@@ -151,6 +156,7 @@ const TEX_CONCRETE_DIFF := TEX_DIR + "concrete_floor_02/concrete_floor_02_diff_4
 const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
+const PLASTIC_BOTTLE_MODEL := "res://plastic_water_bottle.glb"
 const ROOT_CANNED_FOOD_MODEL := ROOT_GLB_DIR + "canned_food_pack_opened__low_poly_game_asset.glb"
 const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
 const ROOT_KNIFE_MODEL := ROOT_GLB_DIR + "knife.glb"
@@ -343,11 +349,26 @@ const NO_GRASS_AREAS := [
 	{"center": Vector3(58, 0, -52), "half": Vector2(4.0, 7.0)}
 ]
 
+const WORLD_SEED := 1337
+
 func _ready() -> void:
-	randomize()
+	seed(WORLD_SEED)
+	# Get NetworkManager (autoload)
+	net = get_node("/root/NetworkManager")
+	if net != null and not net.is_dedicated_server:
+		net.player_connected.connect(_on_remote_player_connected)
+		net.player_disconnected.connect(_on_remote_player_disconnected)
+		# Spawn any already-connected players
+		for pid in net.players.keys():
+			if pid != net.get_my_id():
+				_spawn_remote_player(pid)
 	_create_environment()
 	_create_day_night()
 	_create_map()
+	# Dedicated server: no local player, no HUD, no audio
+	if net != null and net.is_dedicated_server:
+		print("[NET] Servidor dedicado listo. Mundo cargado.")
+		return
 	_create_player()
 	_create_audio()
 	_create_hud()
@@ -379,6 +400,9 @@ func _input(event: InputEvent) -> void:
 	pass
 
 func _process(delta: float) -> void:
+	if net != null and net.is_dedicated_server:
+		# Server only tracks player positions via RPCs, no rendering
+		return
 	if player == null or day_cycle == null:
 		return
 	if game_over:
@@ -396,6 +420,13 @@ func _process(delta: float) -> void:
 	_tick_world_actions(delta)
 	_tick_drink_hold(delta)
 	_tick_campfire_fires()
+	# Network sync
+	if net != null and net.is_connected:
+		_net_sync_timer += delta
+		if _net_sync_timer >= 0.05:
+			_net_sync_timer = 0.0
+			_sync_local_player_state()
+		_update_remote_players()
 
 func _tick_campfire_fires() -> void:
 	if campfire_fire_timers.is_empty():
@@ -716,6 +747,85 @@ func _create_player() -> void:
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
 
+func _on_remote_player_connected(id: int) -> void:
+	if net == null:
+		return
+	if id == net.get_my_id():
+		return
+	_spawn_remote_player(id)
+
+func _on_remote_player_disconnected(id: int) -> void:
+	if remote_players.has(id):
+		var rp: Node3D = remote_players[id]
+		rp.queue_free()
+		remote_players.erase(id)
+
+func _spawn_remote_player(id: int) -> void:
+	if remote_players.has(id):
+		return
+	# Create a simple avatar for the remote player
+	var avatar := Node3D.new()
+	avatar.name = "RemotePlayer_%d" % id
+	avatar.position = Vector3(8.0, 0.4, 2.5)
+	add_child(avatar)
+	# Body capsule
+	var body := MeshInstance3D.new()
+	body.name = "Body"
+	var cap := CapsuleMesh.new()
+	cap.radius = 0.35
+	cap.height = 1.6
+	body.mesh = cap
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.3, 0.6, 0.9, 0.9)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	body.material_override = mat
+	body.position = Vector3(0, 0.8, 0)
+	avatar.add_child(body)
+	# Name label
+	var label := Label3D.new()
+	label.text = "Jugador %d" % id
+	label.font_size = 48
+	label.outline_size = 12
+	label.outline_modulate = Color.BLACK
+	label.position = Vector3(0, 2.0, 0)
+	label.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	avatar.add_child(label)
+	remote_players[id] = avatar
+	print("[NET] Spawned remote player avatar for id %d" % id)
+
+func _sync_local_player_state() -> void:
+	if net == null or player == null or not net.is_connected:
+		return
+	var my_id: int = net.get_my_id()
+	var pos: Vector3 = player.global_position
+	var rot: float = player.rotation.y
+	var anim: String = "idle"
+	if player.has_method("_get_current_anim"):
+		anim = player._get_current_anim()
+	var clothing: String = player.equipped_clothing
+	var held: String = ""
+	if player.inventory != null and player.inventory.items.size() > 0:
+		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
+		held = player.inventory.items[hi].item_name
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held)
+
+func _update_remote_players() -> void:
+	if net == null:
+		return
+	for pid in net.players.keys():
+		if pid == net.get_my_id():
+			continue
+		if not remote_players.has(pid):
+			_spawn_remote_player(pid)
+			continue
+		var data: Dictionary = net.players[pid]
+		var rp: Node3D = remote_players[pid]
+		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
+		var target_rot: float = data.get("rot", 0.0)
+		# Smooth interpolation
+		rp.global_position = rp.global_position.lerp(target_pos, 0.15)
+		rp.rotation.y = lerp_angle(rp.rotation.y, target_rot, 0.15)
+
 func _on_player_died() -> void:
 	if game_over:
 		return
@@ -759,7 +869,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
 	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival"]
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Botas militares"]
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	if lay_flat:
 		rot.x += 90.0
@@ -770,6 +880,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			if laid is Node3D:
 				_snap_node_bottom_to_y(laid as Node3D, 0.06)
 		_mark_world_action_visual(visual_name)
+	# Apply black material to dropped Botas survival
+	if item_name == "Botas survival":
+		var boot_node := get_node_or_null(NodePath(visual_name))
+		if boot_node is Node3D:
+			_apply_black_material_recursive(boot_node as Node3D)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -782,6 +897,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	match item_type:
 		"water":
+			if item_name == "Botella de agua":
+				return [PLASTIC_BOTTLE_MODEL]
 			return [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"]
 		"resource":
 			if item_name == "Piedra":
@@ -847,18 +964,22 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
 				"Guantes militares":
 					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
-				"Botas militares":
-					return ["res://assets/characters/adapted/pickup_soldier_feet.glb"]
 				_:
 					return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 		"seed":
 			return [K_SURVIVAL + "grass.glb"]
+		"misc":
+			if item_name == "Botella de plastico":
+				return [PLASTIC_BOTTLE_MODEL]
+			return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 		_:
 			return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 
 func _get_drop_scale(item_name: String, item_type: String) -> float:
 	match item_type:
 		"water":
+			if item_name == "Botella de agua":
+				return 0.02
 			return 1.0
 		"resource":
 			if item_name == "Tronco":
@@ -897,7 +1018,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Vaqueros survival":
 					return 0.5
 				"Guantes survival":
-					return 0.55
+					return 1.2
 				"Botas survival":
 					return 0.9
 				"Chaqueta militar":
@@ -905,13 +1026,15 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Pantalones militares":
 					return 0.8
 				"Guantes militares":
-					return 0.8
-				"Botas militares":
-					return 0.8
+					return 1.2
 				_:
 					return 0.7
 		"seed":
 			return 1.0
+		"misc":
+			if item_name == "Botella de plastico":
+				return 0.02
+			return 0.8
 		_:
 			return 0.8
 
@@ -942,11 +1065,15 @@ func _create_map() -> void:
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(150, 0.2, 150))
 	_create_leafy_floor_ground()
-	_create_grass_ground_cover()
-	print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
+	# Skip heavy decorative grass on connected clients
+	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
+	if not is_client:
+		_create_grass_ground_cover()
+		print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_terrain_variation()
-	print("TIME terrain_variation: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_client:
+		_create_terrain_variation()
+		print("TIME terrain_variation: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	_create_mountain_backdrop()
 	print("TIME mountain_backdrop: %dms" % (Time.get_ticks_msec() - _tm))
@@ -965,11 +1092,13 @@ func _create_map() -> void:
 	_create_world_details()
 	print("TIME world_details: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_ground_clutter()
-	print("TIME ground_clutter: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_client:
+		_create_ground_clutter()
+		print("TIME ground_clutter: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_tall_grass_fields()
-	print("TIME tall_grass_fields: %dms" % (Time.get_ticks_msec() - _tm))
+	if not is_client:
+		_create_tall_grass_fields()
+		print("TIME tall_grass_fields: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	_create_dense_vegetation_zones()
 	print("TIME dense_vegetation: %dms" % (Time.get_ticks_msec() - _tm))
@@ -979,8 +1108,10 @@ func _create_map() -> void:
 	_tm = Time.get_ticks_msec()
 	_create_survival_objectives()
 	_create_river_drink_zones()
-	_build_nav_grid()
-	_create_wildlife()
+	# Only server simulates wildlife AI and navigation
+	if not is_client:
+		_build_nav_grid()
+		_create_wildlife()
 	_flush_grass_batches()
 	print("TIME objectives+nav+wildlife+flush: %dms" % (Time.get_ticks_msec() - _tm))
 
@@ -1223,7 +1354,6 @@ func _create_world_details() -> void:
 	_create_scrap_pile(Vector3(-31, 0, -10))
 	_create_abandoned_camp(Vector3(-56, 0, 28))
 	_create_military_leftovers(Vector3(25, 0, -12))
-	_create_dayz_interaction_examples()
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -1364,6 +1494,8 @@ func _random_pos_far_from_all(origin: Vector3, others: Array, min_dist: float, m
 			if Vector2(pos.x, pos.z).distance_to(Vector2(other.x, other.z)) < min_from_others:
 				ok = false
 				break
+		if ok and not is_wildlife_allowed_at(pos):
+			ok = false
 		if ok:
 			break
 	return pos
@@ -1409,15 +1541,28 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
-		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 0.8, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
 		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(9.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
 		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(12.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
-		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 0.8, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
-		{"id": "soldier_feet_0", "name": "Botas militares", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(12.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_feet.glb"], "scale": 0.8, "rot": Vector3(0, -50, 0), "flat": false, "color": Color(0.08, 0.09, 0.07)},
+		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
+		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": Vector3(8.0, 0.06, 2.5), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": Vector3(-42.0, 0.06, -38.0), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
 	for pickup in pickups:
 		_create_pickup_item(pickup)
+
+func _apply_black_material_recursive(node: Node3D) -> void:
+	var black_mat := StandardMaterial3D.new()
+	black_mat.albedo_color = Color(0.05, 0.05, 0.05)
+	black_mat.roughness = 0.9
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			(n as MeshInstance3D).material_override = black_mat
+		for c in n.get_children():
+			stack.append(c)
 
 func _create_pickup_item(data: Dictionary) -> void:
 	var id := str(data["id"])
@@ -1450,6 +1595,11 @@ func _create_pickup_item(data: Dictionary) -> void:
 		if laid is Node3D:
 			_snap_node_bottom_to_y(laid as Node3D, 0.06)
 	_mark_world_action_visual(visual_name)
+	# Apply black material to Botas survival pickup so they look black on the ground
+	if item_name == "Botas survival":
+		var boot_node := get_node_or_null(NodePath(visual_name))
+		if boot_node is Node3D:
+			_apply_black_material_recursive(boot_node as Node3D)
 	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
@@ -1584,8 +1734,8 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("El lobo ya esta vacio.")
 				return
 			var held_g = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_g == null or held_g.item_type != "weapon":
-				actor.notice.emit("Necesitas tener un cuchillo en la mano para destripar.")
+			if held_g == null or (held_g.item_type != "weapon" and held_g.item_name != "Hacha"):
+				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para destripar.")
 				return
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
@@ -1611,21 +1761,7 @@ func handle_world_action(action, actor) -> void:
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
-			# Spawn 1 skin
-			var spos := wolf_pos + Vector3(randf_range(-0.5, 0.5), 0.0, randf_range(-0.5, 0.5))
-			spos.y = 0.06
-			var sid := "gut_skin_%d" % Time.get_ticks_msec()
-			var svis := "Pickup_" + sid
-			_try_instance_external_scene(["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"], svis, spos, Vector3.ONE * 0.4, Vector3(0, randf_range(0, 360), 0), true, 0.06)
-			_mark_world_action_visual(svis)
-			var saction = _create_world_action(sid, "pickup_item", "Piel de lobo", spos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-			saction.set_meta("visual_name", svis)
-			saction.set_meta("item_name", "Piel de lobo")
-			saction.set_meta("item_type", "clothing")
-			saction.set_meta("item_weight", 0.8)
-			saction.set_meta("item_quantity", 1)
-			saction.set_meta("item_use_value", 0.3)
-			actor.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
+			actor.notice.emit("Destripar al lobo: +5 carne cruda.")
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action
@@ -1696,8 +1832,8 @@ func handle_world_action(action, actor) -> void:
 			_save_world_change_silent()
 		"fish":
 			var held_f = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_type != "tool_fishing"):
-				actor.notice.emit("Necesitas un cuchillo o caña de pescar para pescar.")
+			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_name != "Hacha" and held_f.item_type != "tool_fishing"):
+				actor.notice.emit("Necesitas un cuchillo, hacha o caña de pescar para pescar.")
 				return
 			var fish_chance := 0.72 if held_f.item_type == "tool_fishing" else 0.48
 			_play_actor_action(actor, "fish", 1.6)
@@ -1711,6 +1847,28 @@ func handle_world_action(action, actor) -> void:
 			else:
 				actor.notice.emit("No pica nada.")
 		"drink_water":
+			# If holding an empty plastic bottle, fill it instead of drinking
+			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_dw != null and held_dw.item_name == "Botella de plastico":
+				_play_actor_action(actor, "plant", 2.0)
+				actor.notice.emit("Llenando botella en el rio...")
+				if hud != null:
+					hud.show_countdown("Llenando botella", 2.0)
+				await get_tree().create_timer(2.0).timeout
+				# Remove empty bottle and add filled one
+				for i in range(actor.inventory.items.size()):
+					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
+						actor.inventory.remove_index(i)
+						break
+				var filled_bottle = ItemScript.create("Botella de agua", "water", 0.4, 1, 25.0)
+				filled_bottle.max_durability = 100.0
+				filled_bottle.durability = 100.0
+				if actor.inventory.add_item(filled_bottle):
+					actor.inventory.changed.emit()
+					if actor.has_method("_sync_held_item"):
+						actor._sync_held_item()
+					actor.notice.emit("Has llenado la botella de agua. Puedes beber de ella.")
+				return
 			if _drink_hold_actor != null:
 				return
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)
@@ -1748,21 +1906,39 @@ func handle_world_action(action, actor) -> void:
 			if held_c == null or held_c.item_name != "Carne ensartada":
 				actor.notice.emit("Necesitas tener carne ensartada en la mano para cocinar.")
 				return
+			# Make sure the meat on stick is visible in hand during cooking
+			if actor.has_method("_sync_held_item"):
+				actor._sync_held_item()
 			_play_actor_action(actor, "cook", 10.0)
 			actor.notice.emit("Cocinando carne en la fogata...")
 			if hud != null:
 				hud.show_countdown("Cocinando", 10.0)
 			await get_tree().create_timer(10.0).timeout
 			# Replace raw meat on stick with cooked meat on stick
+			var cooked := false
 			for i in range(actor.inventory.items.size()):
-				if actor.inventory.items[i].item_name == "Carne ensartada":
+				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Carne ensartada":
+					actor.inventory.remove_index(i)
+					cooked = true
+					break
+			# Also remove any leftover Palo afilado used for the skewer
+			for i in range(actor.inventory.items.size() - 1, -1, -1):
+				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Palo afilado":
 					actor.inventory.remove_index(i)
 					break
-			if actor.inventory.add_item(ItemScript.create("Carne asada en palo", "food", 0.4, 1, 35.0)):
-				if actor.stats.has_method("add_hot_food"):
-					actor.stats.add_hot_food(2)
-				_equip_actor_item(actor, "Carne asada en palo")
-				actor.notice.emit("Has cocinado carne asada en palo. Segura para comer. Caliente!")
+			if cooked:
+				var cooked_item = ItemScript.create("Carne asada en palo", "food", 0.4, 1, 35.0)
+				if actor.inventory.add_item(cooked_item):
+					if actor.stats.has_method("add_hot_food"):
+						actor.stats.add_hot_food(2)
+					actor.inventory.changed.emit()
+					_equip_actor_item(actor, "Carne asada en palo")
+					if actor.has_method("_sync_held_item"):
+						actor._sync_held_item()
+					actor.notice.emit("Has cocinado carne asada en palo. Segura para comer. Caliente!")
+				else:
+					actor.inventory.changed.emit()
+					actor.notice.emit("No tienes espacio para la carne asada.")
 		"hunt":
 			_play_actor_action(actor, "interact", 1.0)
 			if hud != null:
@@ -1975,7 +2151,10 @@ func handle_world_action_collect(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
-		"pickup_item":
+		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool":
+			if not action.has_meta("item_name"):
+				handle_world_action(action, actor)
+				return
 			var item = ItemScript.create(
 				str(action.get_meta("item_name")),
 				str(action.get_meta("item_type")),
@@ -3330,7 +3509,7 @@ func _create_forest() -> void:
 func _create_tree(pos: Vector3) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
-	_register_wildlife_blocker(pos, 1.0)
+	_register_wildlife_blocker(pos, 5.0)
 	_tree_id_counter += 1
 	var visual_name := "Tree_%d" % _tree_id_counter
 	var collision_name := visual_name + "_Collision"

@@ -1,9 +1,13 @@
 extends Control
 
-var _countdown: float = 5.0
-var _countdown_label: Label
+const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
+
 var _started: bool = false
-var _input_blocked: float = 1.0
+var _mode: String = ""  # "single", "host", "join"
+var _net = null
+var _ip_edit: LineEdit = null
+var _btn_connect: Button = null
+var _status_label: Label = null
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
@@ -37,48 +41,112 @@ func _ready() -> void:
 	tex_rect.anchor_bottom = 1.0
 	add_child(tex_rect)
 
-	# Countdown label
-	_countdown_label = Label.new()
-	_countdown_label.text = "El mundo carga en 5..."
-	_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	_countdown_label.anchors_preset = Control.PRESET_FULL_RECT
-	_countdown_label.anchor_right = 1.0
-	_countdown_label.anchor_bottom = 1.0
-	_countdown_label.add_theme_font_size_override("font_size", 32)
-	_countdown_label.add_theme_color_override("font_color", Color(1, 0.9, 0.3, 1.0))
-	_countdown_label.add_theme_constant_override("offset_bottom", 80)
-	add_child(_countdown_label)
+	# Title
+	var title := Label.new()
+	title.text = "UN DIA MAS"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 48)
+	title.add_theme_color_override("font_color", Color(1, 0.9, 0.3, 1.0))
+	title.position = Vector2(0, 60)
+	title.size = Vector2(get_viewport().get_visible_rect().size.x, 60)
+	add_child(title)
 
-	# Use a Timer instead of _process for reliability
-	var timer := Timer.new()
-	timer.name = "CountdownTimer"
-	timer.wait_time = 1.0
-	timer.autostart = true
-	timer.timeout.connect(_on_timer_tick)
-	add_child(timer)
+	# Button container
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 12)
+	vbox.anchors_preset = Control.PRESET_CENTER
+	vbox.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 120, 180)
+	vbox.custom_minimum_size = Vector2(240, 0)
+	add_child(vbox)
 
-func _on_timer_tick() -> void:
+	var btn_single := Button.new()
+	btn_single.text = "Un jugador"
+	btn_single.custom_minimum_size = Vector2(240, 44)
+	btn_single.add_theme_font_size_override("font_size", 18)
+	btn_single.pressed.connect(_on_single_player)
+	vbox.add_child(btn_single)
+
+	var btn_join := Button.new()
+	btn_join.text = "Conectar por IP"
+	btn_join.custom_minimum_size = Vector2(240, 44)
+	btn_join.add_theme_font_size_override("font_size", 18)
+	btn_join.pressed.connect(_on_show_join)
+	vbox.add_child(btn_join)
+
+	# IP input (hidden initially)
+	_ip_edit = LineEdit.new()
+	_ip_edit.placeholder_text = "IP del host (ej: 127.0.0.1)"
+	_ip_edit.text = "127.0.0.1"
+	_ip_edit.custom_minimum_size = Vector2(240, 36)
+	_ip_edit.visible = false
+	_ip_edit.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(_ip_edit)
+
+	var btn_connect := Button.new()
+	btn_connect.text = "Conectar"
+	btn_connect.custom_minimum_size = Vector2(240, 36)
+	btn_connect.add_theme_font_size_override("font_size", 16)
+	btn_connect.visible = false
+	btn_connect.pressed.connect(_on_join)
+	vbox.add_child(btn_connect)
+	_btn_connect = btn_connect
+
+	# Status label
+	_status_label = Label.new()
+	_status_label.text = ""
+	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status_label.add_theme_font_size_override("font_size", 16)
+	_status_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
+	_status_label.custom_minimum_size = Vector2(240, 24)
+	vbox.add_child(_status_label)
+
+func _on_single_player() -> void:
 	if _started:
 		return
-	_countdown -= 1.0
-	if _countdown <= 0.0:
-		_start_game()
-		return
-	_countdown_label.text = "El mundo carga en %d..." % ceili(_countdown)
+	_mode = "single"
+	_start_game()
 
-func _input(event: InputEvent) -> void:
+func _on_host() -> void:
 	if _started:
 		return
-	# Block input for the first second to avoid spurious events
-	_input_blocked -= get_process_delta_time()
-	if _input_blocked > 0.0:
+	_net = get_node("/root/NetworkManager")
+	if _net.host_game():
+		_status_label.text = "Servidor iniciado en puerto %d" % NetworkManagerScript.PORT
+		_mode = "host"
+		# Give a moment for the server to be ready
+		get_tree().create_timer(0.5).timeout.connect(_start_game)
+	else:
+		_status_label.text = "Error al crear servidor"
+
+func _on_show_join() -> void:
+	_ip_edit.visible = true
+	_btn_connect.visible = true
+	_ip_edit.grab_focus()
+
+func _on_join() -> void:
+	if _started:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode != 0:
-			_start_game()
-	elif event is InputEventMouseButton and event.pressed:
-		_start_game()
+	var ip := _ip_edit.text.strip_edges()
+	if ip.is_empty():
+		_status_label.text = "Introduce una IP"
+		return
+	_net = get_node("/root/NetworkManager")
+	_net.connection_succeeded.connect(_on_net_connected)
+	_net.connection_failed.connect(_on_net_failed)
+	if _net.join_game(ip):
+		_status_label.text = "Conectando a %s..." % ip
+		_mode = "join"
+	else:
+		_status_label.text = "Error al conectar"
+
+func _on_net_connected() -> void:
+	_status_label.text = "Conectado!"
+	get_tree().create_timer(0.3).timeout.connect(_start_game)
+
+func _on_net_failed() -> void:
+	_status_label.text = "Fallo de conexion"
+	_net = null
 
 func _start_game() -> void:
 	if _started:

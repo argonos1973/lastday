@@ -205,7 +205,7 @@ func _update_real_clock() -> void:
 	var now := Time.get_time_dict_from_system()
 	real_clock_label.text = "%02d:%02d:%02d" % [now.hour, now.minute, now.second]
 	if weather_label != null:
-		weather_label.text = "Barcelona: %s" % _real_temp
+		weather_label.text = "Temp: %s" % _real_temp
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -352,7 +352,6 @@ func _build_inventory_panel() -> void:
 	equipment_hand_label = _add_equipment_line(left, "Manos", "Vacio")
 	equipment_clothing_label = _add_equipment_line(left, "Ropa", "Sin abrigo")
 	equipment_backpack_label = _add_equipment_line(left, "Mochila", "Sin mochila")
-	_add_equipment_line(left, "Objetivo", "Construir cabana")
 	_add_inventory_hint(left)
 
 	var right := VBoxContainer.new()
@@ -423,7 +422,7 @@ func _build_center_messages() -> void:
 	objective_label.anchor_top = 0.0
 	objective_label.anchor_right = 0.0
 	objective_label.anchor_bottom = 0.0
-	objective_label.text = "OBJETIVO: recolecta madera, piedra, comida y abrigo. Construye una cabana."
+	objective_label.text = ""
 	objective_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	objective_label.add_theme_font_size_override("font_size", 15)
 	objective_label.add_theme_color_override("font_color", Color(0.82, 0.84, 0.75))
@@ -554,6 +553,8 @@ func _apply_aim_layout() -> void:
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:
+		return
+	if player.inventory == null:
 		return
 	time_label.text = "%s  |  %.1f / %.1f kg" % [
 		day_cycle.get_hour_text(),
@@ -759,6 +760,21 @@ func _create_inventory_slot(index: int, item) -> void:
 		label.add_theme_color_override("font_color", Color(0.36, 0.38, 0.34))
 	else:
 		label.text = "%s\nx%d" % [item.item_name, item.quantity]
+		if item.item_name == "Botella de agua" and item.has_method("durability_pct"):
+			var wpct := int(item.durability_pct() * 100.0)
+			label.text += "\nAgua: %d%%" % wpct
+			if wpct < 25:
+				label.add_theme_color_override("font_color", Color(0.96, 0.40, 0.30))
+			elif wpct < 50:
+				label.add_theme_color_override("font_color", Color(0.92, 0.78, 0.30))
+		elif item.has_method("durability_pct") and item.item_type != "food" and item.item_type != "water":
+			var pct := int(item.durability_pct() * 100.0)
+			if pct < 100:
+				label.text += "\n%d%%" % pct
+				if pct < 25:
+					label.add_theme_color_override("font_color", Color(0.96, 0.40, 0.30))
+				elif pct < 50:
+					label.add_theme_color_override("font_color", Color(0.92, 0.78, 0.30))
 	box.add_child(label)
 
 func _item_thumbnail_color(item) -> Color:
@@ -946,6 +962,11 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	drop_btn.add_theme_font_size_override("font_size", 14)
 	drop_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(drop_btn)
+	var store_btn := Button.new()
+	store_btn.text = "Guardar"
+	store_btn.add_theme_font_size_override("font_size", 14)
+	store_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(store_btn)
 	# Add combine button if there are recipes available for this item
 	var item_name := str(item.item_name)
 	var recipes := CraftingSystemScript.get_recipes_for_item(item_name)
@@ -979,6 +1000,7 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		var vbox = _context_menu.get_child(0)
 		var use_btn = vbox.get_child(1)
 		var drop_btn = vbox.get_child(2)
+		var store_btn = vbox.get_child(3)
 		if button_index == MOUSE_BUTTON_LEFT:
 			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
 				_on_use_pressed()
@@ -986,11 +1008,14 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 			elif drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
 				_on_drop_pressed()
 				return true
-			# Check combine buttons (child 3+)
-			for i in range(3, vbox.get_child_count()):
+			elif store_btn is Button and store_btn.get_global_rect().has_point(mouse_pos):
+				_on_store_pressed()
+				return true
+			# Check combine buttons (child 4+)
+			for i in range(4, vbox.get_child_count()):
 				var btn = vbox.get_child(i)
 				if btn is Button and btn.get_global_rect().has_point(mouse_pos):
-					var recipe_index := i - 3
+					var recipe_index := i - 4
 					if recipe_index < _context_menu_recipes.size():
 						_on_combine_pressed(_context_menu_recipes[recipe_index])
 						return true
@@ -1001,16 +1026,13 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 func _on_combine_pressed(recipe: Dictionary) -> void:
 	if player == null or player.inventory == null:
 		return
-	if player.has_method("craft_recipe"):
-		player.craft_recipe(recipe)
+	# Close inventory immediately so the crafting animation is visible
 	selected_slot_index = -1
 	_close_context_menu()
-	var out: Dictionary = recipe["output"]
-	if out.get("type", "") == "campfire":
-		# Keep inventory open during the 2s crafting animation
-		await get_tree().create_timer(2.0).timeout
 	if inventory_visible:
 		toggle_inventory()
+	if player.has_method("craft_recipe"):
+		player.craft_recipe(recipe)
 
 func _on_use_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
@@ -1020,10 +1042,12 @@ func _on_use_pressed() -> void:
 	var item_type := str(item.item_type)
 	var item_name := str(item.item_name)
 	# Items that should go to hand instead of being consumed
-	var to_hand := item_name.find("ensartada") >= 0 or (item_name == "Palo") or (item_name == "Palo afilado")
+	var to_hand := item_name.find("ensartada") >= 0 or item_name.find("asada") >= 0 or (item_name == "Palo") or (item_name == "Palo afilado")
 	match item_type:
 		"food", "water", "medical", "clothing":
-			if to_hand:
+			if to_hand and item_type == "food":
+				player._use_inventory_index(selected_slot_index)
+			elif to_hand:
 				player._sync_held_item()
 			else:
 				player._use_inventory_index(selected_slot_index)
@@ -1038,6 +1062,17 @@ func _on_drop_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
 		return
 	player.drop_inventory_item(selected_slot_index)
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+
+func _on_store_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	player.held_index = selected_slot_index
+	if player.has_method("_store_held_item"):
+		player._store_held_item()
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:

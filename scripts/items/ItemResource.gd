@@ -91,3 +91,17 @@ static func from_dict(data: Dictionary) -> ItemResource:
 	item.magazine_size = int(data.get("magazine_size", 0))
 	item.reload_time = float(data.get("reload_time", 0.0))
 	return item
+
+func is_broken() -> bool:
+	return (condition <= 0.0 and item_type == "clothing") or (durability <= 0.0 and item_type == "weapon")
+
+func reduce_durability(amount: float) -> void:
+	if item_type == "clothing":
+		condition = max(0.0, condition - amount)
+	else:
+		durability = max(0.0, durability - amount)
+
+func durability_pct() -> float:
+	if item_type == "clothing":
+		return condition / 100.0
+	return durability / 100.0

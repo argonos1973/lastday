@@ -77,8 +77,17 @@ const FOOTSTEP_WOOD_PATHS := [
 	"res://assets/external/audio/footstep_wood_03.wav"
 ]
 
+const WALK_SOUND_PATH := "res://andar.mp3"
+const RUN_SOUND_PATH := "res://correr.mp3"
+
 var player
 var day_cycle
+var walk_stream: AudioStream = null
+var run_stream: AudioStream = null
+var walk_loop_player: AudioStreamPlayer3D = null
+var run_loop_player: AudioStreamPlayer3D = null
+var _walk_active := false
+var _run_active := false
 var ambient_day_player: AudioStreamPlayer
 var ambient_night_player: AudioStreamPlayer
 var wind_player: AudioStreamPlayer
@@ -150,6 +159,20 @@ func _create_players() -> void:
 	footstep_player.volume_db = -2.0
 	add_child(footstep_player)
 
+	walk_loop_player = AudioStreamPlayer3D.new()
+	walk_loop_player.name = "WalkLoop"
+	walk_loop_player.unit_size = 1.0
+	walk_loop_player.max_distance = 16.0
+	walk_loop_player.volume_db = -2.0
+	add_child(walk_loop_player)
+
+	run_loop_player = AudioStreamPlayer3D.new()
+	run_loop_player.name = "RunLoop"
+	run_loop_player.unit_size = 1.0
+	run_loop_player.max_distance = 16.0
+	run_loop_player.volume_db = -2.0
+	add_child(run_loop_player)
+
 	action_player = AudioStreamPlayer3D.new()
 	action_player.name = "ActionSounds"
 	action_player.unit_size = 1.0
@@ -176,6 +199,16 @@ func _load_audio() -> void:
 	_assign_loop(ambient_night_player, _load_first_stream(AMBIENT_NIGHT_PATHS))
 	_assign_loop(wind_player, _load_first_stream(WIND_PATHS))
 	_assign_loop_3d(river_player, _load_first_stream(RIVER_WATER_PATHS))
+	walk_stream = _load_stream_from_path(WALK_SOUND_PATH)
+	run_stream = _load_stream_from_path(RUN_SOUND_PATH)
+	if walk_stream is AudioStreamMP3:
+		(walk_stream as AudioStreamMP3).loop = true
+	if run_stream is AudioStreamMP3:
+		(run_stream as AudioStreamMP3).loop = true
+	if walk_loop_player != null and walk_stream != null:
+		walk_loop_player.stream = walk_stream
+	if run_loop_player != null and run_stream != null:
+		run_loop_player.stream = run_stream
 	grass_steps = _load_streams(FOOTSTEP_GRASS_PATHS)
 	road_steps = _load_streams(FOOTSTEP_ROAD_PATHS)
 	wood_steps = _load_streams(FOOTSTEP_WOOD_PATHS)
@@ -364,12 +397,45 @@ func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Ve
 
 func _update_footsteps(delta: float) -> void:
 	if not player.is_on_floor():
+		_stop_walk_run()
 		step_timer = 0.0
 		return
 	var input_dir: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	if input_dir.length() < 0.1:
+		_stop_walk_run()
 		step_timer = 0.0
 		return
+	# Use continuous loop players for walk/run mp3 sounds
+	if player.is_sprinting and run_stream != null and run_loop_player != null:
+		_stop_walk()
+		if not _run_active:
+			run_loop_player.global_position = player.global_position
+			run_loop_player.play()
+			_run_active = true
+		else:
+			run_loop_player.global_position = player.global_position
+		# Still play surface-based footsteps on top for variety
+		step_timer -= delta
+		if step_timer <= 0.0:
+			step_timer = 0.34
+			_play_surface_step()
+		return
+	if not player.is_sprinting and walk_stream != null and walk_loop_player != null:
+		_stop_run()
+		var interval: float = 0.82 if player.is_crouching else 0.58
+		if not _walk_active:
+			walk_loop_player.global_position = player.global_position
+			walk_loop_player.play()
+			_walk_active = true
+		else:
+			walk_loop_player.global_position = player.global_position
+		step_timer -= delta
+		if step_timer <= 0.0:
+			step_timer = interval
+			_play_surface_step()
+		return
+	# Fall back to surface-based footsteps only
+	_stop_walk_run()
 	var interval: float = 0.58
 	if player.is_sprinting:
 		interval = 0.34
@@ -378,9 +444,23 @@ func _update_footsteps(delta: float) -> void:
 	step_timer -= delta
 	if step_timer <= 0.0:
 		step_timer = interval
-		_play_step()
+		_play_surface_step()
 
-func _play_step() -> void:
+func _stop_walk() -> void:
+	if _walk_active and walk_loop_player != null:
+		walk_loop_player.stop()
+	_walk_active = false
+
+func _stop_run() -> void:
+	if _run_active and run_loop_player != null:
+		run_loop_player.stop()
+	_run_active = false
+
+func _stop_walk_run() -> void:
+	_stop_walk()
+	_stop_run()
+
+func _play_surface_step() -> void:
 	var pool: Array = _get_surface_steps()
 	if pool.is_empty():
 		return

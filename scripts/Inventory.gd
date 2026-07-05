@@ -69,6 +69,27 @@ func use_index(index: int, stats) -> bool:
 			remove_index(index)
 			return true
 		"water":
+			if item.item_name == "Botella de agua":
+				var drink_pct := 0.25
+				var remaining_pct: float = float(item.durability_pct())
+				if remaining_pct <= 0.0:
+					item_used.emit("La botella esta vacia.")
+					return false
+				var actual_drink: float = min(drink_pct, remaining_pct)
+				var thirst_restore: float = float(item.use_value) * actual_drink
+				stats.thirst = min(stats.max_stat, stats.thirst + thirst_restore)
+				if stats.thirst > 35.0:
+					stats.health = min(stats.max_health, stats.health + max(2.0, thirst_restore * 0.15))
+				item.reduce_durability(float(item.max_durability) * actual_drink)
+				var new_pct := int(float(item.durability_pct()) * 100.0)
+				if item.is_broken():
+					item_used.emit("Bebes el ultimo agua de la botella.")
+					remove_index(index)
+					add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
+				else:
+					item_used.emit("Bebes agua de la botella. Queda %d%%." % new_pct)
+				stats.changed.emit()
+				return true
 			stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
 			if stats.thirst > 35.0:
 				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
