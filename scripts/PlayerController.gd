@@ -310,7 +310,22 @@ func setup_as_puppet() -> void:
 	_create_third_person_model()
 	if third_person_model != null:
 		third_person_model.visible = true
-	set_process(false)
+		# Find skeleton and bone indices for hand/backpack sockets
+		_spine_skeleton = _find_skeleton(third_person_model)
+		_spine_bone_idx = -1
+		if _spine_skeleton != null:
+			for bone_name in ["mixamorig:Spine2", "mixamorig:Spine1", "mixamorig:Spine", "mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"]:
+				_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
+				if _spine_bone_idx != -1:
+					break
+			_hand_skeleton = _spine_skeleton
+			_hand_bone_idx = -1
+			if _hand_skeleton != null:
+				for bone_name in ["mixamorig:RightHand", "mixamorig:LeftHand", "mixamorig_RightHand", "mixamorig_LeftHand", "RightHand", "LeftHand"]:
+					_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
+					if _hand_bone_idx != -1:
+						break
+	set_process(true)
 	set_process_input(false)
 	set_physics_process(false)
 
@@ -432,6 +447,11 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_can()
 		_:
 			_build_third_person_pack()
+
+func _process(_delta: float) -> void:
+	if is_puppet:
+		_update_hand_socket()
+		_update_backpack_socket()
 
 func _ready() -> void:
 	if is_puppet:
