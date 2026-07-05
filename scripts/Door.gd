@@ -101,7 +101,6 @@ func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 
 	# Use the mesh's local AABB (in Blender space: X=width, Y=depth, Z=height)
 	var mesh_aabb := panel_mi.get_aabb()
-	print("[Door] model_path=", model_path, " mesh=", panel_mi.name, " AABB=", mesh_aabb)
 
 	# Blender Z-up → Godot Y-up: rotate model -90° around X so Z→Y
 	model.rotation_degrees = Vector3(-90, 0, 0)
@@ -123,7 +122,6 @@ func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 	# After -90° X rotation: (x,y,z) → (x, z, -y)
 	var rotated_min := Vector3(scaled_local_min.x, scaled_local_min.z, -scaled_local_min.y)
 	model.position = Vector3(-rotated_min.x, -rotated_min.y, 0.0)
-	print("[Door] scale=", model.scale, " pos=", model.position, " dims=", Vector3(dx, dy, dz))
 
 	# Collision box matching the door size
 	var collision := CollisionShape3D.new()

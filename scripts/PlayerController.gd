@@ -314,6 +314,9 @@ func setup_as_puppet() -> void:
 	set_process_input(false)
 	set_physics_process(false)
 
+var _puppet_clothing := ""
+var _puppet_held := ""
+
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	global_position = pos
 	rotation.y = rot
@@ -353,6 +356,69 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		if not target.is_empty() and third_person_animation_player.has_animation(target):
 			third_person_animation_player.play(target, 0.15)
 			_puppet_current_anim = anim
+
+func puppet_apply_visuals(clothing: String, held_item: String) -> void:
+	if not is_puppet:
+		return
+	# Update clothing
+	if clothing != _puppet_clothing:
+		_puppet_clothing = clothing
+		if clothing.is_empty():
+			# Reset to default clothing
+			equip_clothing("Camiseta")
+			equip_clothing("Pantalones")
+			equip_clothing("Zapatillas")
+		else:
+			# Equip the clothing item (may be comma-separated list)
+			var items := clothing.split(",")
+			for item_name in items:
+				var name := item_name.strip_edges()
+				if not name.is_empty():
+					equip_clothing(name)
+	# Update held item
+	if held_item != _puppet_held:
+		_puppet_held = held_item
+		_update_puppet_held_item(held_item)
+
+func _update_puppet_held_item(item_name: String) -> void:
+	if third_person_hand_item_root == null:
+		return
+	# Clear current held item
+	for child in third_person_hand_item_root.get_children():
+		third_person_hand_item_root.remove_child(child)
+		child.free()
+	if item_name.is_empty():
+		return
+	# Build visual based on item name
+	match item_name:
+		"Cuchillo":
+			_build_third_person_knife()
+		"Hacha":
+			_build_third_person_axe()
+		"Pala":
+			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2))
+		"Martillo":
+			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
+		"Pico":
+			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4))
+		"Botella de agua":
+			_build_third_person_plastic_bottle()
+		"Botella":
+			_build_third_person_bottle()
+		"Vendaje":
+			_build_third_person_bandage()
+		"Bateria":
+			_build_third_person_battery()
+		"Madera":
+			_build_third_person_resource("Madera")
+		"Piedra":
+			_build_third_person_resource("Piedra")
+		"Carne ensartada":
+			_build_third_person_can()
+		"Carne asada":
+			_build_third_person_can()
+		_:
+			_build_third_person_pack()
 
 func _ready() -> void:
 	if is_puppet:
@@ -1357,6 +1423,18 @@ func _create_third_person_model() -> void:
 			equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
+		else:
+			# Puppet: create minimal hand socket for held items
+			if third_person_model != null:
+				third_person_hand_item_root = Node3D.new()
+				third_person_hand_item_root.name = "HandsSocket"
+				third_person_hand_item_root.position = Vector3(0.29, 1.15, -0.16)
+				third_person_hand_item_root.rotation_degrees = Vector3(8.0, 188.0, -8.0)
+				third_person_model.add_child(third_person_hand_item_root)
+				third_person_back_item_root = Node3D.new()
+				third_person_back_item_root.name = "BackpackSocket"
+				third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
+				third_person_model.add_child(third_person_back_item_root)
 		_setup_third_person_animation(character)
 		_align_third_person_model_to_ground()
 		return
@@ -1728,6 +1806,7 @@ func _add_head_mesh() -> void:
 			src_parent.remove_child(src_body)
 		# Duplicate the Body node BEFORE adding to skeleton — duplicate preserves skin
 		var head_dup := src_body.duplicate() as MeshInstance3D
+		src_body.owner = null
 		skeleton.add_child(src_body)
 		_full_body_mesh = src_body
 		if head_dup != null:

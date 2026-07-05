@@ -891,7 +891,14 @@ func _sync_local_player_state() -> void:
 	var anim: String = "idle"
 	if player.has_method("_get_current_anim"):
 		anim = player._get_current_anim()
-	var clothing: String = player.equipped_clothing
+	var clothing: String = ""
+	if player._equipped_slots != null and not player._equipped_slots.is_empty():
+		var clothing_items: Array = []
+		for slot in player._equipped_slots.keys():
+			var item_name: String = str(player._equipped_slots[slot])
+			if not item_name.is_empty():
+				clothing_items.append(item_name)
+		clothing = ",".join(clothing_items)
 	var held: String = ""
 	if player.inventory != null and player.inventory.items.size() > 0:
 		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
@@ -912,11 +919,14 @@ func _update_remote_players() -> void:
 		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
+		var clothing: String = data.get("equipped_clothing", "")
+		var held: String = data.get("held_item", "")
 		# Smooth interpolation
 		var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
 		var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
 		if rp.has_method("puppet_apply"):
 			rp.puppet_apply(smooth_pos, smooth_rot, anim)
+			rp.puppet_apply_visuals(clothing, held)
 		else:
 			rp.global_position = smooth_pos
 			rp.rotation.y = smooth_rot
