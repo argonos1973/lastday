@@ -16,6 +16,7 @@ var is_host := false
 var is_connected := false
 var is_dedicated_server := false
 var _broadcast_server: PacketPeerUDP = null
+var _probe_listener: PacketPeerUDP = null
 var _broadcast_timer := 0.0
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
@@ -69,9 +70,14 @@ func host_game() -> bool:
 	return true
 
 func _start_broadcast() -> void:
+	# Sender socket on ephemeral port for broadcasting
 	_broadcast_server = PacketPeerUDP.new()
 	_broadcast_server.set_broadcast_enabled(true)
+	_broadcast_server.bind(0)
 	_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+	# Listener socket on DISCOVERY_PORT for responding to probes
+	_probe_listener = PacketPeerUDP.new()
+	_probe_listener.bind(DISCOVERY_PORT)
 	print("[NET] Broadcast de descubrimiento activo en puerto %d" % DISCOVERY_PORT)
 
 func _get_local_ip() -> String:
@@ -84,18 +90,53 @@ func _get_local_ip() -> String:
 		return str(ips[0])
 	return "127.0.0.1"
 
+func _get_all_local_ips() -> Array:
+	var result: Array = []
+	var ips := IP.get_local_addresses()
+	for ip in ips:
+		var s := str(ip)
+		if s.begins_with("192.168.") or s.begins_with("10.") or s.begins_with("172."):
+			result.append(s)
+	if result.is_empty() and ips.size() > 0:
+		result.append(str(ips[0]))
+	return result
+
 func _process(_delta: float) -> void:
-	if _broadcast_server != null and is_host:
-		_broadcast_timer += _delta
-		if _broadcast_timer >= 2.0:
-			_broadcast_timer = 0.0
-			var msg := "LASTDAY_SERVER:%s" % _get_local_ip()
-			_broadcast_server.put_packet(msg.to_utf8_buffer())
+	if is_host:
+		# Listen for probe packets from clients doing active scan
+		if _probe_listener != null:
+			var count := _probe_listener.get_available_packet_count()
+			while count > 0:
+				var packet := _probe_listener.get_packet()
+				var msg := packet.get_string_from_utf8()
+				if msg == "LASTDAY_PROBE":
+					var sender_ip := _probe_listener.get_packet_ip()
+					var sender_port := _probe_listener.get_packet_port()
+					var all_ips := _get_all_local_ips()
+					var response := "LASTDAY_SERVER:" + ",".join(all_ips)
+					_broadcast_server.set_dest_address(sender_ip, sender_port)
+					_broadcast_server.put_packet(response.to_utf8_buffer())
+					# Reset back to broadcast mode
+					_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+					print("[NET] Respondido probe de %s:%d con IPs: %s" % [sender_ip, sender_port, ",".join(all_ips)])
+				count -= 1
+		# Periodic broadcast
+		if _broadcast_server != null:
+			_broadcast_timer += _delta
+			if _broadcast_timer >= 2.0:
+				_broadcast_timer = 0.0
+				var all_ips := _get_all_local_ips()
+				var msg := "LASTDAY_SERVER:" + ",".join(all_ips)
+				_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+				_broadcast_server.put_packet(msg.to_utf8_buffer())
 
 func _exit_tree() -> void:
 	if _broadcast_server != null:
 		_broadcast_server.close()
 		_broadcast_server = null
+	if _probe_listener != null:
+		_probe_listener.close()
+		_probe_listener = null
 
 func join_game(ip: String) -> bool:
 	peer = ENetMultiplayerPeer.new()

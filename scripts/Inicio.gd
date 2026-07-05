@@ -10,7 +10,11 @@ var _ip_edit: LineEdit = null
 var _btn_connect: Button = null
 var _status_label: Label = null
 var _discovery: PacketPeerUDP = null
-var _discovered_ip := ""
+var _discovered_ips: Array = []
+var _scan_timer := 0.0
+var _scan_index := 0
+var _scan_probe: PacketPeerUDP = null
+var _scanning := false
 
 func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
@@ -119,27 +123,89 @@ func _ready() -> void:
 	vbox.add_child(_status_label)
 
 func _process(_delta: float) -> void:
-	if _discovery == null or _started:
+	if _started:
 		return
-	var count := _discovery.get_available_packet_count()
+	# Passive: listen for broadcast from server
+	if _discovery != null:
+		var count := _discovery.get_available_packet_count()
+		while count > 0:
+			var packet := _discovery.get_packet()
+			var msg := packet.get_string_from_utf8()
+			if msg.begins_with("LASTDAY_SERVER:"):
+				var ip_list_str := msg.substr("LASTDAY_SERVER:".length())
+				if not ip_list_str.is_empty():
+					var ip_list := ip_list_str.split(",")
+					if _discovered_ips.is_empty():
+						_discovered_ips = ip_list
+						if _ip_edit != null and not _discovered_ips.is_empty():
+							_ip_edit.text = str(_discovered_ips[0])
+						if _status_label != null:
+							_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
+						print("[DISCOVERY] Servidor encontrado: %s" % str(_discovered_ips))
+			count -= 1
+	# Active scan fallback: probe IPs on local subnet if no server found yet
+	if _discovered_ips.is_empty() and not _scanning:
+		_scan_timer += _delta
+		if _scan_timer >= 3.0:
+			_scan_timer = 0.0
+			_start_active_scan()
+	if _scanning:
+		_process_scan(_delta)
+
+func _start_active_scan() -> void:
+	_scanning = true
+	_scan_index = 1
+	_scan_probe = PacketPeerUDP.new()
+	_scan_probe.bind(0)
+	print("[DISCOVERY] Iniciando scan activo de red local...")
+
+func _process_scan(_delta: float) -> void:
+	if not _scanning or _scan_probe == null:
+		return
+	# Send a few probes per frame
+	for _i in range(5):
+		if _scan_index > 254:
+			_scanning = false
+			if _scan_probe != null:
+				_scan_probe.close()
+				_scan_probe = null
+			if _discovered_ips.is_empty():
+				print("[DISCOVERY] Scan completado, servidor no encontrado")
+			return
+		var ip := "192.168.0.%d" % _scan_index
+		_scan_probe.set_dest_address(ip, DISCOVERY_PORT)
+		_scan_probe.put_packet("LASTDAY_PROBE".to_utf8_buffer())
+		_scan_index += 1
+	# Check for responses
+	var count := _scan_probe.get_available_packet_count()
 	while count > 0:
-		var packet := _discovery.get_packet()
+		var packet := _scan_probe.get_packet()
 		var msg := packet.get_string_from_utf8()
 		if msg.begins_with("LASTDAY_SERVER:"):
-			var ip := msg.substr("LASTDAY_SERVER:".length())
-			if not ip.is_empty() and _discovered_ip != ip:
-				_discovered_ip = ip
-				if _ip_edit != null:
-					_ip_edit.text = ip
-				if _status_label != null:
-					_status_label.text = "Servidor encontrado: %s" % ip
-				print("[DISCOVERY] Servidor encontrado: %s" % ip)
+			var ip_list_str := msg.substr("LASTDAY_SERVER:".length())
+			if not ip_list_str.is_empty():
+				var ip_list := ip_list_str.split(",")
+				if _discovered_ips.is_empty():
+					_discovered_ips = ip_list
+					if _ip_edit != null and not _discovered_ips.is_empty():
+						_ip_edit.text = str(_discovered_ips[0])
+					if _status_label != null:
+						_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
+					print("[DISCOVERY] Servidor encontrado via scan: %s" % str(_discovered_ips))
+				_scanning = false
+				if _scan_probe != null:
+					_scan_probe.close()
+					_scan_probe = null
+				return
 		count -= 1
 
 func _exit_tree() -> void:
 	if _discovery != null:
 		_discovery.close()
 		_discovery = null
+	if _scan_probe != null:
+		_scan_probe.close()
+		_scan_probe = null
 
 func _on_single_player() -> void:
 	if _started:
