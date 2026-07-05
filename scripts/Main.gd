@@ -881,34 +881,47 @@ func _spawn_remote_player(id: int) -> void:
 
 # Async load 3D model for puppet — swaps capsule with real model when ready
 var _puppet_loads: Dictionary = {} # avatar_name (String) -> model_path (String)
+var _puppet_model_cache: Node3D = null
 
 func _start_puppet_model_load(avatar: Node3D) -> void:
 	var model_path := "res://assets/characters/adapted/player_with_clothes.glb"
-	ResourceLoader.load_threaded_request(model_path)
 	_puppet_loads[avatar.name] = model_path
 
 func _check_puppet_model_loads() -> void:
+	if _puppet_model_cache == null:
+		# Only attempt load if local player exists (model should be cached by then)
+		if player == null:
+			return
+		# Try same candidates as local player
+		for candidate in PlayerControllerScript.THIRD_PERSON_MODEL_CANDIDATES:
+			if external_scene_cache.has(candidate):
+				var cached = external_scene_cache[candidate]
+				if cached is Node3D:
+					_puppet_model_cache = cached
+					break
+			else:
+				var cached = _get_external_scene_resource(candidate)
+				if cached is Node3D:
+					_puppet_model_cache = cached
+					break
+		if _puppet_model_cache == null:
+			return # Not ready yet, try next frame
 	var loaded := []
 	for avatar_name in _puppet_loads.keys():
-		var path: String = _puppet_loads[avatar_name]
-		var status: int = ResourceLoader.load_threaded_get_status(path)
-		if status == ResourceLoader.THREAD_LOAD_LOADED:
-			loaded.append(avatar_name)
-			var res := ResourceLoader.load_threaded_get(path)
-			if res is PackedScene:
-				var avatar := get_node_or_null(NodePath(avatar_name))
-				if avatar != null and is_instance_valid(avatar):
-					var model: Node = res.instantiate()
-					model.name = "ThirdPersonCharacter"
-					var model3d := model as Node3D
-					if model3d != null:
-						model3d.position = Vector3.ZERO
-						model3d.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-					avatar.add_child(model)
-					var placeholder := avatar.get_node_or_null("PlaceholderCapsule")
-					if placeholder != null:
-						placeholder.queue_free()
-					print("[NET] Puppet 3D model loaded for %s" % avatar_name)
+		loaded.append(avatar_name)
+		var avatar := get_node_or_null(NodePath(avatar_name))
+		if avatar != null and is_instance_valid(avatar):
+			var model := _puppet_model_cache.duplicate()
+			model.name = "ThirdPersonCharacter"
+			var model3d := model as Node3D
+			if model3d != null:
+				model3d.position = Vector3.ZERO
+				model3d.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+			avatar.add_child(model)
+			var placeholder := avatar.get_node_or_null("PlaceholderCapsule")
+			if placeholder != null:
+				placeholder.queue_free()
+			print("[NET] Puppet 3D model loaded for %s" % avatar_name)
 	for name in loaded:
 		_puppet_loads.erase(name)
 
