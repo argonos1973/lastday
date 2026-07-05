@@ -416,6 +416,7 @@ func _process(delta: float) -> void:
 			_broadcast_animals()
 		return
 	if player == null or day_cycle == null:
+		_process_pending_puppets()
 		return
 	if game_over:
 		return
@@ -842,14 +843,13 @@ func _update_server_proxies(delta: float) -> void:
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
 		return
-	# PlayerController puppet — setup_as_puppet is lightweight (model is cached)
+	# PlayerController puppet — model loads from cache (instant if local player already loaded)
 	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
 	avatar.position = Vector3(8.0, 0.4, 2.5)
 	avatar.is_puppet = true
 	add_child(avatar)
 	remote_players[id] = avatar
-	avatar.setup_as_puppet()
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -859,7 +859,27 @@ func _spawn_remote_player(id: int) -> void:
 	label.position = Vector3(0, 2.0, 0)
 	label.no_depth_test = true
 	avatar.add_child(label)
-	print("[NET] Spawned puppet player for id %d" % id)
+	# Defer setup — if local player hasn't loaded model yet, _pending_puppets will retry
+	_pending_puppets.append(avatar)
+	print("[NET] Spawned puppet player for id %d (pending setup)" % id)
+
+var _pending_puppets: Array = []
+
+func _process_pending_puppets() -> void:
+	if _pending_puppets.is_empty():
+		return
+	var ready := []
+	for avatar in _pending_puppets:
+		if not is_instance_valid(avatar):
+			ready.append(avatar)
+			continue
+		# Check if local player model is cached
+		if player != null and player.third_person_model != null:
+			avatar.setup_as_puppet()
+			ready.append(avatar)
+			print("[NET] Puppet setup complete for %s" % avatar.name)
+	for avatar in ready:
+		_pending_puppets.erase(avatar)
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:

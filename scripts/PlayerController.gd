@@ -207,7 +207,7 @@ signal item_dropped(item_name: String, item_type: String, item_weight: float, it
 @export var jump_stamina_cost := 15.0
 @export var min_jump_stamina := 10.0
 
-var _model_cache: Dictionary = {}
+static var _model_cache: Dictionary = {}
 var stats
 var inventory
 var equipment
