@@ -244,7 +244,9 @@ var animals: Dictionary = {}
 
 @rpc("authority", "unreliable_ordered")
 func sync_animals(data: Dictionary) -> void:
-	animals = data
+	# Merge chunks instead of replacing (server may split into multiple packets)
+	for key in data.keys():
+		animals[key] = data[key]
 
 # Server tells specific client to apply damage
 @rpc("authority", "reliable")

@@ -8,22 +8,13 @@
 # Local tools and editor/system files
 .DS_Store
 work/
-tools/
 outputs/
 FBX2glTF*
-
-# Heavy game assets kept locally for now
-assets/
-*.glb
-*.gltf
-*.obj
-*.exr
 
 # Downloaded/source archives and conversion leftovers
 *.zip
 *.blend
 *.blend1
-*.fbx
 *.fbm/
 
 # Local build/export output
@@ -34,3 +25,5 @@ exports/
 
 # Logs
 *.log
+__MACOSX/
+Wolf 2.0/

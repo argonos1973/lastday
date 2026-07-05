@@ -912,19 +912,35 @@ func _broadcast_animals() -> void:
 			continue
 		var animal := node as Node3D
 		var aid := str(animal.name)
+		var pos := animal.global_position
 		data[aid] = {
-			"type": str(animal.get("animal_type")),
-			"pos": animal.global_position,
-			"rot": animal.rotation.y,
-			"anim": str(animal.get("current_anim_keyword")),
-			"dead": bool(animal.get("_is_dead"))
+			"t": str(animal.get("animal_type")),
+			"x": round(pos.x * 100.0) / 100.0,
+			"y": round(pos.y * 100.0) / 100.0,
+			"z": round(pos.z * 100.0) / 100.0,
+			"r": round(animal.rotation.y * 100.0) / 100.0,
+			"a": str(animal.get("current_anim_keyword")),
+			"d": bool(animal.get("_is_dead"))
 		}
 	net.animals = data
 	_animal_debug_timer += 1
 	if _animal_debug_timer >= 50:
 		_animal_debug_timer = 0
 		print("[NET] Broadcasting %d animales a %d peers" % [data.size(), multiplayer.get_peers().size()])
-	net.sync_animals.rpc(data)
+	# Split into chunks to stay under MTU
+	var keys := data.keys()
+	var half := int(ceil(float(keys.size()) / 2.0))
+	var chunk1 := {}
+	var chunk2 := {}
+	for i in range(keys.size()):
+		if i < half:
+			chunk1[keys[i]] = data[keys[i]]
+		else:
+			chunk2[keys[i]] = data[keys[i]]
+	if not chunk1.is_empty():
+		net.sync_animals.rpc(chunk1)
+	if not chunk2.is_empty():
+		net.sync_animals.rpc(chunk2)
 
 # Client: spawn/update visual-only puppet animals from server data
 func _update_puppet_animals() -> void:
@@ -936,12 +952,12 @@ func _update_puppet_animals() -> void:
 			var puppet = WildlifeControllerScript.new()
 			puppet.name = "Puppet_" + str(aid)
 			add_child(puppet)
-			puppet.setup_puppet(str(d.get("type", "deer")))
-			puppet.global_position = d.get("pos", Vector3.ZERO)
+			puppet.setup_puppet(str(d.get("t", "deer")))
+			puppet.global_position = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0))
 			puppet_animals[aid] = puppet
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
-			p.puppet_apply(d.get("pos", Vector3.ZERO), d.get("rot", 0.0), str(d.get("anim", "walk")), bool(d.get("dead", false)))
+			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)))
 	# Remove puppets that no longer exist on the server
 	var stale := []
 	for aid in puppet_animals.keys():
