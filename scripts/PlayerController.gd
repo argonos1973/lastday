@@ -306,19 +306,8 @@ var _puppet_current_anim := ""
 
 func setup_as_puppet() -> void:
 	is_puppet = true
-	# Load the 3D model and animations (same as local player but no camera/input)
-	_create_body()
-	# Remove camera and raycast — puppet doesn't need them
-	if camera != null:
-		camera.queue_free()
-		camera = null
-	if raycast != null:
-		raycast.queue_free()
-		raycast = null
-	if flashlight != null:
-		flashlight.queue_free()
-		flashlight = null
-	# Make the third person model visible (for local player it's hidden in first person)
+	# Lightweight puppet: only load 3D model + animations, skip everything heavy
+	_create_third_person_model()
 	if third_person_model != null:
 		third_person_model.visible = true
 	set_process(false)
@@ -1339,27 +1328,28 @@ func _create_third_person_model() -> void:
 		third_person_model = character
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
-		_init_survival_clothing(character)
-		# Ensure default clothing is in inventory and equipped
-		if inventory != null:
-			var has_camiseta := false
-			var has_pantalones := false
-			var has_zapatillas := false
-			for item in inventory.items:
-				if str(item.item_name) == "Camiseta": has_camiseta = true
-				if str(item.item_name) == "Pantalones": has_pantalones = true
-				if str(item.item_name) == "Zapatillas": has_zapatillas = true
-			if not has_camiseta:
-				inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.0))
-			if not has_pantalones:
-				inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
-			if not has_zapatillas:
-				inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
-			# Equip default clothing items
-			for item in inventory.items:
-				if DEFAULT_CLOTHING.has(str(item.item_name)):
-					equip_clothing(str(item.item_name))
-		_create_third_person_item_slots()
+		if not is_puppet:
+			_init_survival_clothing(character)
+			# Ensure default clothing is in inventory and equipped
+			if inventory != null:
+				var has_camiseta := false
+				var has_pantalones := false
+				var has_zapatillas := false
+				for item in inventory.items:
+					if str(item.item_name) == "Camiseta": has_camiseta = true
+					if str(item.item_name) == "Pantalones": has_pantalones = true
+					if str(item.item_name) == "Zapatillas": has_zapatillas = true
+				if not has_camiseta:
+					inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.0))
+				if not has_pantalones:
+					inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
+				if not has_zapatillas:
+					inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
+				# Equip default clothing items
+				for item in inventory.items:
+					if DEFAULT_CLOTHING.has(str(item.item_name)):
+						equip_clothing(str(item.item_name))
+			_create_third_person_item_slots()
 		_setup_third_person_animation(character)
 		_align_third_person_model_to_ground()
 		return

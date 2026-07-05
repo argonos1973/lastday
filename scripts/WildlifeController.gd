@@ -1000,6 +1000,10 @@ func _animate_legs(delta: float) -> void:
 		leg.rotation_degrees.x = lerp(leg.rotation_degrees.x, sin(_walk_time + side * PI) * 18.0, delta * 8.0)
 
 func _build_animal() -> void:
+	# Dedicated server: skip visual model loading — only AI logic and position matter
+	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.is_dedicated_server:
+		return
 	if _try_build_external_animal():
 		return
 	var scale_value := 1.0 if animal_type == "deer" else 0.48

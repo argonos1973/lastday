@@ -367,13 +367,14 @@ func _ready() -> void:
 			for pid in net.players.keys():
 				if pid != net.get_my_id():
 					_spawn_remote_player(pid)
+	if net != null and net.is_dedicated_server:
+		# Server only needs collision + nav grid + wildlife AI — skip all visuals
+		_create_map()
+		print("[NET] Servidor dedicado listo. Mundo cargado.")
+		return
 	_create_environment()
 	_create_day_night()
 	_create_map()
-	# Dedicated server: no local player, no HUD, no audio
-	if net != null and net.is_dedicated_server:
-		print("[NET] Servidor dedicado listo. Mundo cargado.")
-		return
 	_create_player()
 	_create_audio()
 	_create_hud()
@@ -1255,7 +1256,8 @@ func _create_map() -> void:
 		_create_forest()
 		print("TIME forest: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
-	_create_survival_objectives()
+	if not is_server:
+		_create_survival_objectives()
 	_create_river_drink_zones()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
