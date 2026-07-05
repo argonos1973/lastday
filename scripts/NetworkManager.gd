@@ -160,8 +160,8 @@ func close_connection() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	print("[NET] Peer conectado: %d" % id)
-	# Generous timeout so clients don't get kicked while loading the world
-	if peer != null:
+	# Only server has direct ENet connections to all peers — set timeout there
+	if is_host and peer != null:
 		var enet_peer := peer.get_peer(id)
 		if enet_peer != null:
 			enet_peer.set_timeout(120000, 120000, 180000)
