@@ -420,6 +420,7 @@ func _process(delta: float) -> void:
 		return
 	if game_over:
 		return
+	_process_pending_puppets()
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Blend real weather temp with game cycle temp (50/50) so real weather
