@@ -832,9 +832,6 @@ func _update_server_proxies(delta: float) -> void:
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
 			proxy.set_meta("protection_timer", max(0.0, pt - delta))
-			# Only log every ~2 seconds
-			if int(pt * 10) % 20 == 0:
-				print("[NET] Proxy %d protection: %.1fs" % [pid, pt])
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):

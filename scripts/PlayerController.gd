@@ -330,32 +330,37 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	rotation.y = rot
 	_puppet_anim = anim
 	if third_person_animation_player != null and anim != _puppet_current_anim:
-		# Map network anim names to actual animation names
 		var target := ""
-		if anim.find("run") >= 0 or anim.find("Run") >= 0:
-			target = third_person_run_animation
-		elif anim.find("walk") >= 0 or anim.find("Walk") >= 0:
-			target = third_person_walk_animation
-		elif anim.find("sneak") >= 0 or anim.find("Sneak") >= 0:
-			target = third_person_sneak_animation
-		elif anim.find("idle") >= 0 or anim.find("Idle") >= 0:
-			target = third_person_idle_animation
-		elif anim.find("jump") >= 0 or anim.find("Jump") >= 0:
-			target = third_person_jump_animation
-		elif anim.find("attack") >= 0 or anim.find("Attack") >= 0:
-			target = third_person_attack_animation
-		elif anim.find("sit") >= 0 or anim.find("Sit") >= 0:
-			target = third_person_sit_animation
-		elif anim.find("sleep") >= 0 or anim.find("Sleep") >= 0:
-			target = third_person_sleep_animation
-		elif anim.find("drink") >= 0 or anim.find("Drink") >= 0:
-			target = third_person_drink_animation
-		elif anim.find("dead") >= 0 or anim.find("Dead") >= 0 or anim.find("dying") >= 0 or anim.find("Dying") >= 0:
-			target = third_person_dying_animation
-		elif anim.find("low") >= 0 or anim.find("Low") >= 0:
-			target = third_person_low_health_animation
-		elif not anim.is_empty() and third_person_animation_player.has_animation(anim):
+		# Try exact animation name first (both clients load same animations)
+		if not anim.is_empty() and third_person_animation_player.has_animation(anim):
 			target = anim
+		else:
+			# Fall back to keyword matching
+			var lower := anim.to_lower()
+			if lower.find("run") >= 0:
+				target = third_person_run_animation
+			elif lower.find("walk") >= 0:
+				target = third_person_walk_animation
+			elif lower.find("sneak") >= 0:
+				target = third_person_sneak_animation
+			elif lower.find("idle") >= 0:
+				target = third_person_idle_animation
+			elif lower.find("jumpdown") >= 0 or lower.find("jump_down") >= 0:
+				target = third_person_jump_down_animation
+			elif lower.find("jump") >= 0:
+				target = third_person_jump_animation
+			elif lower.find("attack") >= 0:
+				target = third_person_attack_animation
+			elif lower.find("sit") >= 0:
+				target = third_person_sit_animation
+			elif lower.find("sleep") >= 0:
+				target = third_person_sleep_animation
+			elif lower.find("drink") >= 0:
+				target = third_person_drink_animation
+			elif lower.find("dying") >= 0 or lower.find("dead") >= 0:
+				target = third_person_dying_animation
+			elif lower.find("low") >= 0:
+				target = third_person_low_health_animation
 		if not target.is_empty() and third_person_animation_player.has_animation(target):
 			third_person_animation_player.play(target, 0.15)
 			_puppet_current_anim = anim
@@ -1483,11 +1488,19 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_SIT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, true)
 	_import_external_animation(THIRD_PERSON_DRINK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DRINK_ANIMATION)
 	var names := third_person_animation_player.get_animation_list()
+	var non_loop_keywords := ["jump", "attack", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar"]
 	for animation_name in names:
 		var name_text := String(animation_name)
 		var animation := third_person_animation_player.get_animation(animation_name)
 		if animation != null:
-			animation.loop_mode = Animation.LOOP_LINEAR
+			var lower := name_text.to_lower()
+			var is_non_loop := false
+			for kw in non_loop_keywords:
+				if lower.find(kw) >= 0:
+					is_non_loop = true
+					break
+			if not is_non_loop:
+				animation.loop_mode = Animation.LOOP_LINEAR
 		var lower_name := name_text.to_lower()
 		if lower_name == "idle" or lower_name.find("idle") >= 0:
 			third_person_idle_animation = name_text
