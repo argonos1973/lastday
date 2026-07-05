@@ -848,6 +848,8 @@ func _spawn_remote_player(id: int) -> void:
 	avatar.is_puppet = true
 	add_child(avatar)
 	avatar.setup_as_puppet()
+	# Register in remote_players BEFORE creating label so a crash doesn't cause infinite respawn
+	remote_players[id] = avatar
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -855,9 +857,8 @@ func _spawn_remote_player(id: int) -> void:
 	label.outline_size = 12
 	label.outline_modulate = Color.BLACK
 	label.position = Vector3(0, 2.0, 0)
-	label.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
 	avatar.add_child(label)
-	remote_players[id] = avatar
 	print("[NET] Spawned remote player puppet for id %d" % id)
 
 func _sync_local_player_state() -> void:
