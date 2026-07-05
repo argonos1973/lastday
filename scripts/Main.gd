@@ -912,7 +912,7 @@ func _sync_local_player_state() -> void:
 	if player.inventory != null and player.inventory.items.size() > 0:
 		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
 		held = player.inventory.items[hi].item_name
-	var backpack: String = player.equipped_backpack if player.has("equipped_backpack") else ""
+	var backpack: String = str(player.get("equipped_backpack", ""))
 	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack)
 
 func _update_remote_players() -> void:
@@ -2335,12 +2335,12 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 	_save_world_change_silent()
 	# Notify other clients to remove this item from world
 	if net != null and net.is_connected and not net.is_host:
-		var picked_id: String = action.action_id if action.has("action_id") else str(action.name)
+		var picked_id: String = str(action.get("action_id", action.name))
 		net.item_picked_up.rpc_id(1, picked_id)
 
 func _net_notify_pickup(action) -> void:
 	if net != null and net.is_connected and not net.is_host:
-		var picked_id: String = action.action_id if action.has("action_id") else str(action.name)
+		var picked_id: String = str(action.get("action_id", action.name))
 		net.item_picked_up.rpc_id(1, picked_id)
 
 func handle_world_action_collect(action, actor) -> void:
