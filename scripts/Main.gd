@@ -847,9 +847,12 @@ func _spawn_remote_player(id: int) -> void:
 	avatar.position = Vector3(8.0, 0.4, 2.5)
 	avatar.is_puppet = true
 	add_child(avatar)
-	avatar.setup_as_puppet()
-	# Register in remote_players BEFORE creating label so a crash doesn't cause infinite respawn
+	# Register BEFORE setup_as_puppet — setup is heavy and can block; if another frame
+	# fires _update_remote_players while we're still in setup, it would respawn infinitely
 	remote_players[id] = avatar
+	var _t0 := Time.get_ticks_msec()
+	avatar.setup_as_puppet()
+	print("[NET] Spawned remote player puppet for id %d (setup took %dms)" % [id, Time.get_ticks_msec() - _t0])
 	# Name label
 	var label := Label3D.new()
 	label.text = "Jugador %d" % id
@@ -859,7 +862,6 @@ func _spawn_remote_player(id: int) -> void:
 	label.position = Vector3(0, 2.0, 0)
 	label.no_depth_test = true
 	avatar.add_child(label)
-	print("[NET] Spawned remote player puppet for id %d" % id)
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:
