@@ -462,7 +462,7 @@ func _notification(what: int) -> void:
 		call_deferred("_capture_mouse")
 
 func _capture_mouse() -> void:
-	if DisplayServer.window_is_focused() and not get_tree().get_root().gui_is_hidden():
+	if DisplayServer.window_is_focused() and get_tree().get_root().visible:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _inventory_index_for_key(keycode: Key) -> int:
