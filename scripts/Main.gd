@@ -2025,6 +2025,7 @@ func handle_world_action(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"forage":
 			_play_actor_action(actor, "forage", 0.9)
 			if not actor.inventory.add_item(ItemScript.create("Bayas silvestres", "food", 0.08, 2, 12.0)):
@@ -2035,6 +2036,7 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Recolectas bayas silvestres.")
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"wood":
 			_play_actor_action(actor, "collect", 0.8)
 			if not actor.inventory.add_item(ItemScript.create("Tronco", "resource", 1.2, 2, 0.0)):
@@ -2044,6 +2046,7 @@ func handle_world_action(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"stone":
 			_play_actor_action(actor, "collect", 0.8)
 			if not actor.inventory.add_item(ItemScript.create("Piedra", "resource", 0.45, 2, 0.0)):
@@ -2053,6 +2056,7 @@ func handle_world_action(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"fish":
 			var held_f = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_name != "Hacha" and held_f.item_type != "tool_fishing"):
@@ -2199,6 +2203,7 @@ func handle_world_action(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"farm_plot":
 			_handle_farm_plot(action, actor)
 		"fell_tree":
@@ -2224,6 +2229,7 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"fell_bush":
 			var held_b = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_b == null or (held_b.item_name != "Cuchillo" and held_b.item_name != "Hacha"):
@@ -2247,6 +2253,7 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"cut_log":
 			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_l == null or held_l.item_name != "Hacha":
@@ -2267,6 +2274,7 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0)
 			actor.notice.emit("Cortas el tronco en troncos mas pequenos. Recogelos del suelo.")
 			action.mark_depleted()
+			_net_notify_pickup(action)
 			_save_world_change_silent()
 		"sleep":
 			if actor.has_method("start_sleep"):
