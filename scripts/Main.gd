@@ -813,6 +813,7 @@ func _net_apply_damage(amount: float) -> void:
 
 # Called by RPC from client on server to damage a real animal
 func _net_item_picked_up(action_id: String) -> void:
+	print("[NET] Recibido item_picked_up: %s (tiene: %s)" % [action_id, world_actions_by_id.has(action_id)])
 	# Remove the picked up item from this client's world
 	if world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -2354,6 +2355,7 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 	# Notify other clients to remove this item from world
 	if net != null and net.is_connected and not net.is_host:
 		var picked_id: String = action.action_id
+		print("[NET] Enviando item_picked_up RPC: %s" % picked_id)
 		net.item_picked_up.rpc_id(1, picked_id)
 
 func _net_notify_pickup(action) -> void:
