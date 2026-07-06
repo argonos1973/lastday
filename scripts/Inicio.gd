@@ -15,12 +15,28 @@ var _scan_timer := 0.0
 var _scan_index := 0
 var _scan_probe: PacketPeerUDP = null
 var _scanning := false
+var _scan_subnet := "192.168.0"
 
 func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
 	var net_check = get_node_or_null("/root/NetworkManager")
 	if net_check != null and net_check.is_dedicated_server:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
+		return
+	# Check for --client IP PORT command line args
+	var args := OS.get_cmdline_user_args()
+	if args.size() >= 2 and args[0] == "--client":
+		var ip := args[1]
+		_net = get_node("/root/NetworkManager")
+		_net.connection_succeeded.connect(_on_net_connected)
+		_net.connection_failed.connect(_on_net_failed)
+		if _net.join_game(ip):
+			print("[CLIENT] Conectando a %s..." % ip)
+			_mode = "join"
+			_started = true
+			get_tree().create_timer(1.0).timeout.connect(_start_game)
+		else:
+			print("[CLIENT] Error al conectar a %s" % ip)
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
@@ -157,7 +173,17 @@ func _start_active_scan() -> void:
 	_scan_index = 1
 	_scan_probe = PacketPeerUDP.new()
 	_scan_probe.bind(0)
-	print("[DISCOVERY] Iniciando scan activo de red local...")
+	_scan_subnet = _get_local_subnet_prefix()
+	print("[DISCOVERY] Iniciando scan activo de red local (%s.x)..." % _scan_subnet)
+
+func _get_local_subnet_prefix() -> String:
+	for addr in IP.get_local_addresses():
+		if addr.begins_with("127.") or addr.find(":") != -1:
+			continue
+		var parts := addr.split(".")
+		if parts.size() == 4:
+			return "%s.%s.%s" % [parts[0], parts[1], parts[2]]
+	return "192.168.0"
 
 func _process_scan(_delta: float) -> void:
 	if not _scanning or _scan_probe == null:
@@ -172,7 +198,7 @@ func _process_scan(_delta: float) -> void:
 			if _discovered_ips.is_empty():
 				print("[DISCOVERY] Scan completado, servidor no encontrado")
 			return
-		var ip := "192.168.0.%d" % _scan_index
+		var ip := "%s.%d" % [_scan_subnet, _scan_index]
 		_scan_probe.set_dest_address(ip, DISCOVERY_PORT)
 		_scan_probe.put_packet("LASTDAY_PROBE".to_utf8_buffer())
 		_scan_index += 1
