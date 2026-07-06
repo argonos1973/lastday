@@ -11,6 +11,7 @@ const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
+const REAL_DRINK_BOTTLE_MODEL := "res://assets/models/props/beberbotella.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
 const REAL_STONE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb"
 const REAL_AXE_MODEL := "res://assets/models/props/simple_axe.glb"
@@ -2351,6 +2352,8 @@ func _drink_held_item() -> void:
 	if item.item_type != "water":
 		notice.emit("No tienes agua en la mano.")
 		return
+	# Show drink bottle model in hand during animation
+	_build_third_person_drink_bottle()
 	play_action_animation("drink", 2.0)
 	notice.emit("Bebiendo %s..." % item.item_name)
 	var item_name := str(item.item_name)
@@ -2568,6 +2571,9 @@ func _build_third_person_bottle() -> void:
 
 func _build_third_person_plastic_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.015)
+
+func _build_third_person_drink_bottle() -> void:
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_DRINK_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_bandage() -> void:
 	pass
