@@ -2023,7 +2023,7 @@ func handle_world_action(action, actor) -> void:
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action
-			var gut_action_id := action.action_id
+			var gut_action_id: String = action.action_id
 			var t := get_tree().create_timer(5.0)
 			t.timeout.connect(func():
 				_hide_action_visual(action_ref)
