@@ -378,19 +378,27 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 		return
 	# Update clothing
 	if clothing != _puppet_clothing:
+		var old_items: Array = []
+		for item_name in _puppet_clothing.split(","):
+			var name := item_name.strip_edges()
+			if not name.is_empty():
+				old_items.append(name)
 		_puppet_clothing = clothing
+		var new_items: Array = []
 		if clothing.is_empty():
-			# Reset to default clothing
-			equip_clothing("Camiseta")
-			equip_clothing("Pantalones")
-			equip_clothing("Zapatillas")
+			new_items = ["Camiseta", "Pantalones", "Zapatillas"]
 		else:
-			# Equip the clothing item (may be comma-separated list)
-			var items := clothing.split(",")
-			for item_name in items:
+			for item_name in clothing.split(","):
 				var name := item_name.strip_edges()
 				if not name.is_empty():
-					equip_clothing(name)
+					new_items.append(name)
+		# Unequip items that were worn before but are no longer in the list
+		for name in old_items:
+			if not new_items.has(name):
+				unequip_clothing(name)
+		# Equip items in the new list
+		for name in new_items:
+			equip_clothing(name)
 	# Update held item
 	if held_item != _puppet_held:
 		_puppet_held = held_item

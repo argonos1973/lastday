@@ -1045,6 +1045,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+	if net != null:
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -1075,6 +1080,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
+
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+	if world_actions_by_id.has(drop_id):
+		return
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	match item_type:
