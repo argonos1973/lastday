@@ -46,6 +46,7 @@ var _inv_refresh_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
+var _context_menu_has_drink := false
 
 func setup(new_player, new_day_cycle) -> void:
 	player = new_player
@@ -938,6 +939,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	_close_context_menu()
 	selected_slot_index = slot_index
 	_context_menu_slot_index = slot_index
+	_context_menu_has_drink = false
 	_context_menu = PanelContainer.new()
 	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
@@ -957,6 +959,14 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	use_btn.add_theme_font_size_override("font_size", 14)
 	use_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(use_btn)
+	# Add Beber button for water items
+	if str(item.item_type) == "water":
+		var drink_btn := Button.new()
+		drink_btn.text = "Beber"
+		drink_btn.add_theme_font_size_override("font_size", 14)
+		drink_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(drink_btn)
+		_context_menu_has_drink = true
 	var drop_btn := Button.new()
 	drop_btn.text = "Soltar"
 	drop_btn.add_theme_font_size_override("font_size", 14)
@@ -998,24 +1008,36 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 	var rect = _context_menu.get_global_rect()
 	if rect.has_point(mouse_pos):
 		var vbox = _context_menu.get_child(0)
+		# child 0 = name label, child 1 = use_btn
+		# if _context_menu_has_drink: child 2 = drink_btn, child 3 = drop_btn, child 4 = store_btn, child 5+ = combine
+		# else: child 2 = drop_btn, child 3 = store_btn, child 4+ = combine
 		var use_btn = vbox.get_child(1)
-		var drop_btn = vbox.get_child(2)
-		var store_btn = vbox.get_child(3)
+		var drink_index := 2 if _context_menu_has_drink else -1
+		var drop_index := 3 if _context_menu_has_drink else 2
+		var store_index := 4 if _context_menu_has_drink else 3
+		var combine_start := 5 if _context_menu_has_drink else 4
 		if button_index == MOUSE_BUTTON_LEFT:
 			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
 				_on_use_pressed()
 				return true
-			elif drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
+			elif drink_index >= 0:
+				var drink_btn = vbox.get_child(drink_index)
+				if drink_btn is Button and drink_btn.get_global_rect().has_point(mouse_pos):
+					_on_drink_pressed()
+					return true
+			var drop_btn = vbox.get_child(drop_index)
+			if drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
 				_on_drop_pressed()
 				return true
-			elif store_btn is Button and store_btn.get_global_rect().has_point(mouse_pos):
+			var store_btn = vbox.get_child(store_index)
+			if store_btn is Button and store_btn.get_global_rect().has_point(mouse_pos):
 				_on_store_pressed()
 				return true
-			# Check combine buttons (child 4+)
-			for i in range(4, vbox.get_child_count()):
+			# Check combine buttons
+			for i in range(combine_start, vbox.get_child_count()):
 				var btn = vbox.get_child(i)
 				if btn is Button and btn.get_global_rect().has_point(mouse_pos):
-					var recipe_index := i - 4
+					var recipe_index := i - combine_start
 					if recipe_index < _context_menu_recipes.size():
 						_on_combine_pressed(_context_menu_recipes[recipe_index])
 						return true
@@ -1062,6 +1084,20 @@ func _on_drop_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
 		return
 	player.drop_inventory_item(selected_slot_index)
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+
+func _on_drink_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	var item = player.inventory.items[selected_slot_index]
+	if str(item.item_type) != "water":
+		return
+	player.held_index = selected_slot_index
+	player._sync_held_item()
+	player._drink_held_item()
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:
