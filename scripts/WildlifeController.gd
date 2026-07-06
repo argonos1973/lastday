@@ -275,7 +275,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		if dist_to_player < 60.0:
+		if dist_to_player < 30.0:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
