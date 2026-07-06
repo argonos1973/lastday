@@ -2445,6 +2445,7 @@ func handle_world_action_collect(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"wolf_meat_raw":
 			_play_actor_action(actor, "plant", 3.0)
 			if hud != null:
@@ -2459,6 +2460,7 @@ func handle_world_action_collect(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool":
 			if not action.has_meta("item_name"):
 				handle_world_action(action, actor)
@@ -2479,6 +2481,7 @@ func handle_world_action_collect(action, actor) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
+			_net_notify_pickup(action)
 		_:
 			handle_world_action(action, actor)
 
