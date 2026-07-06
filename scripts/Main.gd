@@ -2115,7 +2115,7 @@ func handle_world_action(action, actor) -> void:
 			# If holding an empty plastic bottle, fill it instead of drinking
 			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_dw != null and held_dw.item_name == "Botella de plastico":
-				_play_actor_action(actor, "drink", 2.0)
+				_play_actor_action(actor, "plant", 2.0)
 				actor.notice.emit("Llenando botella en el rio...")
 				if hud != null:
 					hud.show_countdown("Llenando botella", 2.0)
