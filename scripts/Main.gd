@@ -1930,8 +1930,8 @@ func _create_cut_log_action(pos: Vector3) -> void:
 	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
 	action.set_meta("visual_name", visual_name)
 
-func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float) -> void:
-	var id := "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
+func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "") -> void:
+	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var drop_scale := _get_drop_scale(item_name, item_type)
@@ -1948,6 +1948,25 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_weight", weight)
 	action.set_meta("item_quantity", qty)
 	action.set_meta("item_use_value", use_value)
+
+func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
+	# Remove the completed action's visual on this client
+	if not action_id.is_empty() and world_actions_by_id.has(action_id):
+		var action = world_actions_by_id[action_id]
+		_hide_action_visual(action)
+		action.mark_depleted()
+		world_actions_by_id.erase(action_id)
+	# Spawn any items that resulted from the action
+	for spawn in spawns:
+		_spawn_ground_pickup(
+			spawn["name"], spawn["type"], spawn["pos"],
+			spawn["weight"], spawn["qty"], spawn["use"], spawn["id"]
+		)
+	# Create extra visual if specified
+	if extra_visual == "tree_remains":
+		_create_cut_tree_remains(extra_pos)
+	elif extra_visual == "cabin":
+		_build_player_cabin(extra_pos)
 
 
 func _hide_action_visual(action) -> void:
@@ -1982,6 +2001,7 @@ func handle_world_action(action, actor) -> void:
 			# Spawn 5 meat pieces and 1 skin around the wolf
 			var wolf_pos: Vector3 = action.global_position
 			var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+			var gut_spawns: Array = []
 			for i in range(5):
 				var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
@@ -1998,15 +2018,19 @@ func handle_world_action(action, actor) -> void:
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
+				gut_spawns.append({"id": mid, "name": "Carne cruda de lobo", "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
 			actor.notice.emit("Destripar al lobo: +5 carne cruda.")
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action
+			var gut_action_id := action.action_id
 			var t := get_tree().create_timer(5.0)
 			t.timeout.connect(func():
 				_hide_action_visual(action_ref)
 				action_ref.mark_depleted()
 				_save_world_change_silent()
+				if net != null and net.is_connected and not net.is_host:
+					net.world_action_completed.rpc_id(1, gut_action_id, gut_spawns, "", Vector3.ZERO)
 			)
 			return
 		"wolf_meat_raw":
@@ -2240,12 +2264,19 @@ func handle_world_action(action, actor) -> void:
 			_hide_action_visual(action)
 			_create_cut_tree_remains(action.position)
 			var tree_pos: Vector3 = action.position
-			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.0, 0.06, 0.3), 1.2, 2, 0.0)
-			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.5, 0.06, -0.2), 1.2, 2, 0.0)
+			var log1_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var log2_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.0, 0.06, 0.3), 1.2, 2, 0.0, log1_id)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.5, 0.06, -0.2), 1.2, 2, 0.0, log2_id)
 			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
-			_net_notify_pickup(action)
+			var tree_spawns: Array = [
+				{"id": log1_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.0, 0.06, 0.3), "weight": 1.2, "qty": 2, "use": 0.0},
+				{"id": log2_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.5, 0.06, -0.2), "weight": 1.2, "qty": 2, "use": 0.0},
+			]
+			if net != null and net.is_connected and not net.is_host:
+				net.world_action_completed.rpc_id(1, action.action_id, tree_spawns, "tree_remains", tree_pos)
 		"fell_bush":
 			var held_b = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_b == null or (held_b.item_name != "Cuchillo" and held_b.item_name != "Hacha"):
@@ -2263,13 +2294,22 @@ func handle_world_action(action, actor) -> void:
 			await get_tree().create_timer(0.8).timeout
 			_hide_action_visual(action)
 			var bush_pos: Vector3 = action.position
-			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.3, 0.06, 0.0), 0.3, 1, 0.0)
-			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(-0.3, 0.06, 0.2), 0.3, 1, 0.0)
-			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0)
+			var stick1_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var stick2_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var stick3_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.3, 0.06, 0.0), 0.3, 1, 0.0, stick1_id)
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(-0.3, 0.06, 0.2), 0.3, 1, 0.0, stick2_id)
+			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0, stick3_id)
 			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
-			_net_notify_pickup(action)
+			var bush_spawns: Array = [
+				{"id": stick1_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(0.3, 0.06, 0.0), "weight": 0.3, "qty": 1, "use": 0.0},
+				{"id": stick2_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(-0.3, 0.06, 0.2), "weight": 0.3, "qty": 1, "use": 0.0},
+				{"id": stick3_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(0.1, 0.06, -0.3), "weight": 0.3, "qty": 1, "use": 0.0},
+			]
+			if net != null and net.is_connected and not net.is_host:
+				net.world_action_completed.rpc_id(1, action.action_id, bush_spawns, "", Vector3.ZERO)
 		"cut_log":
 			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_l == null or held_l.item_name != "Hacha":
@@ -2285,12 +2325,21 @@ func handle_world_action(action, actor) -> void:
 			await get_tree().create_timer(3.0).timeout
 			_hide_action_visual(action)
 			var log_pos: Vector3 = action.position
-			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.3, 0.06, 0.0), 1.2, 1, 0.0)
-			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(-0.3, 0.06, 0.2), 1.2, 1, 0.0)
-			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0)
+			var clog1_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var clog2_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var clog3_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.3, 0.06, 0.0), 1.2, 1, 0.0, clog1_id)
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(-0.3, 0.06, 0.2), 1.2, 1, 0.0, clog2_id)
+			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0, clog3_id)
 			actor.notice.emit("Cortas el tronco en troncos mas pequenos. Recogelos del suelo.")
 			action.mark_depleted()
-			_net_notify_pickup(action)
+			var cutlog_spawns: Array = [
+				{"id": clog1_id, "name": "Tronco", "type": "resource", "pos": log_pos + Vector3(0.3, 0.06, 0.0), "weight": 1.2, "qty": 1, "use": 0.0},
+				{"id": clog2_id, "name": "Tronco", "type": "resource", "pos": log_pos + Vector3(-0.3, 0.06, 0.2), "weight": 1.2, "qty": 1, "use": 0.0},
+				{"id": clog3_id, "name": "Tronco", "type": "resource", "pos": log_pos + Vector3(0.0, 0.06, -0.3), "weight": 1.2, "qty": 1, "use": 0.0},
+			]
+			if net != null and net.is_connected and not net.is_host:
+				net.world_action_completed.rpc_id(1, action.action_id, cutlog_spawns, "", Vector3.ZERO)
 			_save_world_change_silent()
 		"sleep":
 			if actor.has_method("start_sleep"):
@@ -2326,6 +2375,8 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Levantas una cabana basica. Ya tienes un refugio propio.")
 			action.mark_depleted()
 			_save_world_change_silent()
+			if net != null and net.is_connected and not net.is_host:
+				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 
 func _play_actor_action(actor, action_name: String, duration: float) -> void:
 	if actor != null and actor.has_method("play_action_animation"):

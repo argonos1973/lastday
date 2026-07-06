@@ -301,6 +301,21 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 func get_player_list() -> Dictionary:
 	return players
 
+# Generic RPC: client tells server a world action was completed.
+# action_id: the action to remove (empty string if none)
+# spawns: array of dictionaries with item spawn data
+# extra_visual: "tree_remains", "cabin", or ""
+# extra_pos: position for the extra visual
+@rpc("any_peer", "reliable")
+func world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id():
+				world_action_completed.rpc_id(pid, action_id, spawns, extra_visual, extra_pos)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_world_action_completed"):
+		scene._net_world_action_completed(action_id, spawns, extra_visual, extra_pos)
+
 # Client tells server it built a campfire (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func campfire_built(cf_id: String, pos: Vector3) -> void:
