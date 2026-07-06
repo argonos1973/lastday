@@ -301,5 +301,27 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 func get_player_list() -> Dictionary:
 	return players
 
+# Client tells server it built a campfire (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func campfire_built(cf_id: String, pos: Vector3) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id():
+				campfire_built.rpc_id(pid, cf_id, pos)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_campfire_built"):
+		scene._net_campfire_built(cf_id, pos)
+
+# Client tells server it lit a campfire (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id():
+				campfire_lit.rpc_id(pid, action_id, fire_name, pos)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_campfire_lit"):
+		scene._net_campfire_lit(action_id, fire_name, pos)
+
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()

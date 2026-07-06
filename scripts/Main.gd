@@ -1026,7 +1026,10 @@ func _on_player_died() -> void:
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
 	if item_name == "campfire":
-		_spawn_player_campfire(pos)
+		var cf_id := "player_campfire_%d" % randi()
+		_spawn_player_campfire_with_id(cf_id, pos)
+		if net != null and net.is_connected and not net.is_host:
+			net.campfire_built.rpc_id(1, cf_id, pos)
 		return
 	# Dropping a whole wolf corpse spawns the wolf model lying on the ground
 	if item_name == "Lobo muerto":
@@ -2136,6 +2139,8 @@ func handle_world_action(action, actor) -> void:
 			action.repeatable = true
 			_save_world_change_silent()
 			actor.notice.emit("Has encendido la fogata. Durara 5 minutos.")
+			if net != null and net.is_connected and not net.is_host:
+				net.campfire_lit.rpc_id(1, action.action_id, fire_name, action.position)
 		"cook":
 			if not action.get_meta("lit", false):
 				actor.notice.emit("La fogata no esta encendida.")
@@ -2469,6 +2474,9 @@ func _build_player_cabin(origin: Vector3) -> void:
 
 func _spawn_player_campfire(pos: Vector3) -> void:
 	var cf_id := "player_campfire_%d" % randi()
+	_spawn_player_campfire_with_id(cf_id, pos)
+
+func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 	var spawned := _try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], "PlayerCampfire_" + cf_id, pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
 	if not spawned:
 		_create_visual_box("PlayerCampfireAsh_" + cf_id, pos, Vector3(0.7, 0.04, 0.7), Color(0.09, 0.085, 0.075), Vector3.ZERO)
@@ -2478,6 +2486,25 @@ func _spawn_player_campfire(pos: Vector3) -> void:
 			_create_static_box("PlayerCampfireStone_%s_%d" % [cf_id, i], stone_pos, Vector3(0.18, 0.12, 0.15), Color(0.25, 0.23, 0.22))
 	var campfire_action = _create_world_action(cf_id, "light_campfire", "Fogata apagada", pos, Vector3(1.2, 0.8, 1.2), Color(0.12, 0.08, 0.04), false, false)
 	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
+
+func _net_campfire_built(cf_id: String, pos: Vector3) -> void:
+	if world_actions_by_id.has(cf_id):
+		return
+	_spawn_player_campfire_with_id(cf_id, pos)
+
+func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
+	if not world_actions_by_id.has(action_id):
+		return
+	var action = world_actions_by_id[action_id]
+	if action.get_meta("lit", false):
+		return
+	_create_campfire_fire(action.position + Vector3(0, 0.15, 0), fire_name)
+	action.set_meta("lit", true)
+	action.set_meta("lit_time", Time.get_ticks_msec())
+	action.set_meta("fire_name", fire_name)
+	action.action_type = "cook"
+	action.display_name = "Fogata encendida"
+	action.repeatable = true
 
 func _create_quaternius_environment_props() -> void:
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))
