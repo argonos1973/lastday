@@ -98,7 +98,7 @@ func setup(kind: String, points: Array) -> void:
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
 	if animal_type == "wolf":
-		_chase_cooldown = 15.0
+		_chase_cooldown = 5.0
 	_build_animal()
 	call_deferred("_sanitize_patrol_points")
 
@@ -269,17 +269,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
 		_state = "patrol"
 		_chase_stuck_time = 0.0
-		_chase_cooldown = 20.0
+		_chase_cooldown = 5.0
 	# Priority 1: chase player
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		if dist_to_player < 30.0:
+		if dist_to_player < 60.0:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
-			speed = move_speed * 2.8
+			speed = move_speed * 3.5
 			# Player elevated (on container/car/house roof) — can't reach, go away
 			if height_diff >= 1.5 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
@@ -287,12 +287,12 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_state = "patrol"
 					_chase_stuck_time = 0.0
 					_chase_target = null
-					_chase_cooldown = 15.0
+					_chase_cooldown = 5.0
 					_play_wolf_sound("growl")
 					var away := (global_position - _player.global_position).normalized()
 					away.y = 0.0
 					target = global_position + away * 30.0
-					speed = move_speed * 2.0
+					speed = move_speed * 2.5
 					_play_animation_by_name("trot")
 				else:
 					target = _player.global_position
@@ -340,7 +340,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_state = "patrol"
 					_chase_stuck_time = 0.0
 					_chase_target = null
-					_chase_cooldown = 15.0
+					_chase_cooldown = 5.0
 					_play_wolf_sound("growl")
 					# Pick the patrol point farthest from the player
 					var farthest_patrol: Vector3 = patrol_points[0]

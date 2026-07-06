@@ -803,8 +803,8 @@ func _spawn_server_proxy(id: int) -> void:
 	var wolves := get_tree().get_nodes_in_group("wildlife_wolf")
 	for w in wolves:
 		if w is Node3D and w.has_method("_wolf_ai"):
-			w.set("_chase_cooldown", 20.0)
-	print("[NET] Created server proxy for player %d (protection 60s, wolf cooldown 20s)" % id)
+			w.set("_chase_cooldown", 8.0)
+	print("[NET] Created server proxy for player %d (protection 60s, wolf cooldown 8s)" % id)
 
 # Called by RPC from server on client to apply wolf damage
 func _net_apply_damage(amount: float) -> void:
