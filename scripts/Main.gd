@@ -2147,6 +2147,19 @@ func handle_world_action(action, actor) -> void:
 						actor._sync_held_item()
 					actor.notice.emit("Has llenado la botella de agua. Puedes beber de ella.")
 				return
+			# If holding a partially empty water bottle, refill it
+			if held_dw != null and held_dw.item_name == "Botella de agua" and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
+				_play_actor_action(actor, "plant", 5.0)
+				actor.notice.emit("Llenando botella en el rio...")
+				if hud != null:
+					hud.show_countdown("Llenando botella", 5.0)
+				await get_tree().create_timer(5.0).timeout
+				held_dw.durability = float(held_dw.max_durability)
+				actor.inventory.changed.emit()
+				if actor.has_method("_sync_held_item"):
+					actor._sync_held_item()
+				actor.notice.emit("Has llenado la botella de agua.")
+				return
 			if _drink_hold_actor != null:
 				return
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)

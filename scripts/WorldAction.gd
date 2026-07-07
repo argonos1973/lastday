@@ -110,6 +110,8 @@ func get_interaction_text(_player = null) -> String:
 				var held = _player.get_held_item()
 				if held != null and held.item_name == "Botella de plastico":
 					return "Llenar botella - E"
+				if held != null and held.item_name == "Botella de agua" and held.has_method("is_broken") and not held.is_broken() and float(held.durability) < float(held.max_durability):
+					return "Llenar botella - E"
 			return "Beber agua - E"
 		"light_campfire":
 			return "Encender fogata - E (cerillas)"
