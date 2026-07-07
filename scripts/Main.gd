@@ -902,6 +902,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("client_id", cid)
+			server_proxies[peer_id].set_meta("reconnecting", false)
 		else:
 			pending_client_ids[peer_id] = cid
 
@@ -917,6 +918,7 @@ func _spawn_server_proxy(id: int) -> void:
 	proxy.set_meta("protection_timer", 60.0)
 	proxy.set_meta("has_real_pos", false)
 	proxy.set_meta("disconnected", false)
+	proxy.set_meta("reconnecting", true)
 	proxy.set_meta("proxy_health", 100.0)
 	proxy.set_meta("proxy_dead", false)
 	# Set client_id from pending if available (for persistence across reconnects)
