@@ -1127,8 +1127,12 @@ func _process_pending_puppets() -> void:
 		# Check if local player model is cached
 		if player != null and player.third_person_model != null:
 			avatar.setup_as_puppet()
+			# Copy ground offset from local player (same model, same offset)
+			avatar.third_person_ground_offset = player.third_person_ground_offset
+			if avatar.third_person_model != null:
+				avatar.third_person_model.position.y = player.third_person_ground_offset
 			ready.append(avatar)
-			print("[NET] Puppet setup complete for %s" % avatar.name)
+			print("[NET] Puppet setup complete for %s (ground_offset=%.3f)" % [avatar.name, player.third_person_ground_offset])
 	for avatar in ready:
 		_pending_puppets.erase(avatar)
 
