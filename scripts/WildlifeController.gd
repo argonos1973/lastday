@@ -1089,7 +1089,8 @@ func _animal_asset_candidates() -> Array:
 		]
 	if animal_type == "wolf":
 		return [
-			"res://assets/external/wolf/WolfAnimated.glb"
+			"res://assets/external/quaternius_animals/glTF/Wolf.gltf",
+			"res://assets/external/quaternius_animals/glTF/Husky.gltf"
 		]
 	return [
 		"res://assets/external/quaternius_animals/glTF/Fox.gltf"
