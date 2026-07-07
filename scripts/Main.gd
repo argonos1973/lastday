@@ -775,6 +775,7 @@ func _on_remote_player_connected(id: int) -> void:
 	# Server: create a proxy node for wildlife AI to target (no visual avatar needed)
 	if net.is_dedicated_server:
 		_spawn_server_proxy(id)
+		call_deferred("_delayed_send_world_state", id)
 	else:
 		_spawn_remote_player(id)
 
@@ -787,6 +788,11 @@ func _on_remote_player_disconnected(id: int) -> void:
 		var sp: Node3D = server_proxies[id]
 		sp.queue_free()
 		server_proxies.erase(id)
+
+func _delayed_send_world_state(peer_id: int) -> void:
+	# Wait a bit for the client to load the scene before sending world state
+	await get_tree().create_timer(2.0).timeout
+	_send_world_state_to_client(peer_id)
 
 func _spawn_server_proxy(id: int) -> void:
 	if server_proxies.has(id):
