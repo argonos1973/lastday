@@ -1,3 +1,18 @@
 #!/bin/bash
 # Don't kill server - only launch client
-/home/sami/bin/godot --path /home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego
+# Auto-detect project directory (this script's location)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Locate the Godot binary: prefer bundled build, fall back to PATH.
+if [ -x "$SCRIPT_DIR/work/godot4.7/Godot.app/Contents/MacOS/Godot" ]; then
+    GODOT="$SCRIPT_DIR/work/godot4.7/Godot.app/Contents/MacOS/Godot"
+elif command -v godot >/dev/null 2>&1; then
+    GODOT="$(command -v godot)"
+elif [ -x "/home/sami/bin/godot" ]; then
+    GODOT="/home/sami/bin/godot"
+else
+    echo "ERROR: no se encuentra el binario de Godot" >&2
+    exit 1
+fi
+
+exec "$GODOT" --path "$SCRIPT_DIR"

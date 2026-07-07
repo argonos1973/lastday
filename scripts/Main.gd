@@ -1766,6 +1766,9 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	if not spawned:
 		push_warning("No se crea %s porque falta/carga mal el asset: %s" % [label, model_path])
 		return
+	var tool_node := get_node_or_null(visual_name)
+	if tool_node != null:
+		_remove_collision_from_node(tool_node)
 	var action = _create_world_action(id, action_type, label, pos, Vector3(1.2, 0.75, 1.2), Color(0.10, 0.095, 0.07), false, false)
 	action.set_meta("visual_name", visual_name)
 
@@ -1832,6 +1835,9 @@ func _create_pickup_item(data: Dictionary) -> void:
 		if laid is Node3D:
 			_snap_node_bottom_to_y(laid as Node3D, 0.06)
 	_mark_world_action_visual(visual_name)
+	var pickup_node := get_node_or_null(visual_name)
+	if pickup_node != null:
+		_remove_collision_from_node(pickup_node)
 	# Apply black material to Botas survival pickup so they look black on the ground
 	if item_name == "Botas survival":
 		var boot_node := get_node_or_null(NodePath(visual_name))
@@ -1858,6 +1864,9 @@ func _create_backpack_pickup(id: String, pos: Vector3) -> void:
 		push_warning("No se crea mochila porque falta/carga mal el asset real.")
 		return
 	_mark_world_action_visual(visual_name)
+	var backpack_node := get_node_or_null(visual_name)
+	if backpack_node != null:
+		_remove_collision_from_node(backpack_node)
 
 	var action = _create_world_action(id, "backpack_pickup", "Mochila pequena", pos, Vector3(1.25, 0.85, 1.25), Color(0.06, 0.075, 0.055), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -1886,6 +1895,7 @@ func _create_choppable_bush(id: String, pos: Vector3) -> void:
 	var visual_node := get_node_or_null(visual_name)
 	if visual_node != null:
 		visual_node.add_to_group("world_action_visual")
+		_remove_collision_from_node(visual_node)
 	var action = _create_world_action(id, "fell_bush", "Arbusto", pos, Vector3(0.9, 0.8, 0.9), Color(0.08, 0.14, 0.05), false, false)
 	action.set_meta("visual_name", visual_name)
 
@@ -1941,6 +1951,9 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	if not spawned:
 		_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
 	_mark_world_action_visual(visual_name)
+	var ground_node := get_node_or_null(visual_name)
+	if ground_node != null:
+		_remove_collision_from_node(ground_node)
 	var action = _create_world_action(id, "pickup_item", item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
@@ -5197,6 +5210,23 @@ func _strip_display_props(root: Node) -> void:
 			if parent != null:
 				parent.remove_child(node)
 			(node as Node).queue_free()
+
+func _remove_collision_from_node(root: Node) -> void:
+	var to_remove: Array = []
+	_collect_collision_nodes(root, to_remove)
+	for node in to_remove:
+		if is_instance_valid(node):
+			var parent := (node as Node).get_parent()
+			if parent != null:
+				parent.remove_child(node)
+			(node as Node).queue_free()
+
+func _collect_collision_nodes(node: Node, result: Array) -> void:
+	if node is CollisionShape3D or node is StaticBody3D:
+		result.append(node)
+		return
+	for child in node.get_children():
+		_collect_collision_nodes(child, result)
 
 func _collect_display_props(node: Node, result: Array) -> void:
 	if node is Light3D:
