@@ -213,6 +213,7 @@ var inventory
 var equipment
 var hands
 var camera: Camera3D
+var _camera_fov := 72.0
 var audio_listener: AudioListener3D
 var raycast
 var flashlight: SpotLight3D
@@ -499,6 +500,14 @@ func _input(event: InputEvent) -> void:
 		_capture_mouse()
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_melee_attack()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
+			if camera != null:
+				camera.fov = _camera_fov
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_camera_fov = clamp(_camera_fov + 4.0, 30.0, 90.0)
+			if camera != null:
+				camera.fov = _camera_fov
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
@@ -2702,7 +2711,7 @@ func _apply_view_mode() -> void:
 		_pitch = deg_to_rad(-8.0)
 		camera.rotation.x = _pitch
 		camera.rotation.z = 0.0
-		camera.fov = 72.0
+		camera.fov = _camera_fov
 
 func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	if camera == null:
