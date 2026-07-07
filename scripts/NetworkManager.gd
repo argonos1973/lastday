@@ -257,6 +257,15 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 				players[id]["held_item"] = scene.server_proxies[id].get_meta("saved_held_item", "")
 	# Send updated list to all clients (including new one)
 	_sync_player_list.rpc(players.duplicate(true))
+	# Send current positions of all online players to the new client
+	if peer != null and peer.has_peer(id):
+		for pid in players.keys():
+			if pid == id or pid == multiplayer.get_unique_id():
+				continue
+			if players[pid].get("offline", false):
+				continue
+			var pdata: Dictionary = players[pid]
+			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""))
 	_check_all_ready()
 
 @rpc("authority", "reliable")
@@ -288,6 +297,12 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != id and pid != multiplayer.get_unique_id():
+				# Skip offline players
+				if players[pid].get("offline", false):
+					continue
+				# Skip peers that are not actually connected
+				if not peer.has_peer(pid):
+					continue
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
 
 @rpc("authority", "reliable")
