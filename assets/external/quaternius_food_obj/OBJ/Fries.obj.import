@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://4qh1jp3l74gr"
+path="res://.godot/imported/Fries.obj-98b0b8657d0c44cb35fa940ed05c9129.mesh"
+
+[deps]
+
+files=["res://.godot/imported/Fries.obj-98b0b8657d0c44cb35fa940ed05c9129.mesh"]
+
+source_file="res://assets/external/quaternius_food_obj/OBJ/Fries.obj"
+dest_files=["res://.godot/imported/Fries.obj-98b0b8657d0c44cb35fa940ed05c9129.mesh", "res://.godot/imported/Fries.obj-98b0b8657d0c44cb35fa940ed05c9129.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

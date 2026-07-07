@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://txareb5vjf3d"
+path="res://.godot/imported/Pizza.obj-c0d8bff8317be4c5b1d82976a8d4468e.mesh"
+
+[deps]
+
+files=["res://.godot/imported/Pizza.obj-c0d8bff8317be4c5b1d82976a8d4468e.mesh"]
+
+source_file="res://assets/external/quaternius_food_obj/OBJ/Pizza.obj"
+dest_files=["res://.godot/imported/Pizza.obj-c0d8bff8317be4c5b1d82976a8d4468e.mesh", "res://.godot/imported/Pizza.obj-c0d8bff8317be4c5b1d82976a8d4468e.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

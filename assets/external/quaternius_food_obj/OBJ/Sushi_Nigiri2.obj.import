@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://cem8xaaq4uylb"
+path="res://.godot/imported/Sushi_Nigiri2.obj-8e7ec2959d7cd1dafa32df3c3c8a053b.mesh"
+
+[deps]
+
+files=["res://.godot/imported/Sushi_Nigiri2.obj-8e7ec2959d7cd1dafa32df3c3c8a053b.mesh"]
+
+source_file="res://assets/external/quaternius_food_obj/OBJ/Sushi_Nigiri2.obj"
+dest_files=["res://.godot/imported/Sushi_Nigiri2.obj-8e7ec2959d7cd1dafa32df3c3c8a053b.mesh", "res://.godot/imported/Sushi_Nigiri2.obj-8e7ec2959d7cd1dafa32df3c3c8a053b.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false
