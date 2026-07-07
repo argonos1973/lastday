@@ -1080,8 +1080,12 @@ func _update_server_proxies(delta: float) -> void:
 		for connected_pid in net.players.keys():
 			if connected_pid == net.get_my_id() or connected_pid == pid:
 				continue
-			if not net.players[connected_pid].get("offline", false):
-				net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, 0.0, "idle", off_clothing, off_held, off_backpack)
+			if net.players[connected_pid].get("offline", false):
+				continue
+			# Check if peer is actually still connected before sending RPC
+			if net.peer != null and not net.peer.has_peer(connected_pid):
+				continue
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, 0.0, "idle", off_clothing, off_held, off_backpack)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):

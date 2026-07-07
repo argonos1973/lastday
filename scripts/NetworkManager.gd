@@ -180,9 +180,8 @@ func _on_peer_connected(id: int) -> void:
 		var enet_peer := peer.get_peer(id)
 		if enet_peer != null:
 			enet_peer.set_timeout(120000, 120000, 180000)
-	if is_host:
-		# Send current player list to the new client
-		_sync_player_list.rpc_id(id, players)
+	# Don't send player list here — wait for _register_player so client_id is processed
+	# and old offline entries are removed before sending the list
 	player_connected.emit(id)
 
 func _on_peer_disconnected(id: int) -> void:
@@ -250,6 +249,13 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_match_proxy_to_client"):
 			scene.call("_match_proxy_to_client", id, cid)
+			# After matching, update player position from restored proxy
+			if scene.server_proxies.has(id):
+				players[id]["pos"] = scene.server_proxies[id].global_position
+				players[id]["equipped_clothing"] = scene.server_proxies[id].get_meta("saved_clothing", "")
+				players[id]["equipped_backpack"] = scene.server_proxies[id].get_meta("saved_backpack", "")
+				players[id]["held_item"] = scene.server_proxies[id].get_meta("saved_held_item", "")
+	# Send updated list to all clients (including new one)
 	_sync_player_list.rpc(players.duplicate(true))
 	_check_all_ready()
 
