@@ -832,6 +832,17 @@ func _on_remote_player_disconnected(id: int) -> void:
 		sp.set_meta("disconnected", true)
 		sp.set_meta("protection_timer", 0.0)
 		var cid: String = sp.get_meta("client_id", "")
+		# Update net.players with proxy position and equipment for other clients to see
+		if net != null and net.is_host and net.players.has(id):
+			net.players[id]["pos"] = sp.global_position
+			net.players[id]["offline"] = true
+			# Include saved equipment
+			net.players[id]["equipped_clothing"] = sp.get_meta("saved_clothing", "")
+			net.players[id]["equipped_backpack"] = sp.get_meta("saved_backpack", "")
+			net.players[id]["held_item"] = sp.get_meta("saved_held_item", "")
+			net.players[id]["anim"] = "idle"
+			# Sync updated list to all remaining clients
+			net._sync_player_list.rpc(net.players.duplicate(true))
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
@@ -1048,6 +1059,29 @@ func _update_server_proxies(delta: float) -> void:
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
 			proxy.set_meta("protection_timer", max(0.0, pt - delta))
+	# Broadcast offline proxies to all connected clients
+	# Check both server_proxies (just disconnected) and proxy_by_client_id (fully offline)
+	var offline_proxies: Dictionary = {}
+	for pid in net.players.keys():
+		if pid == net.get_my_id():
+			continue
+		if net.players[pid].get("offline", false) and server_proxies.has(pid):
+			offline_proxies[pid] = server_proxies[pid]
+	for cid in proxy_by_client_id.keys():
+		var op: Node3D = proxy_by_client_id[cid]
+		var op_pid: int = op.get_meta("peer_id", 0)
+		if op_pid != 0 and net.players.has(op_pid):
+			offline_proxies[op_pid] = op
+	for pid in offline_proxies.keys():
+		var offline_proxy: Node3D = offline_proxies[pid]
+		var off_clothing: String = offline_proxy.get_meta("saved_clothing", net.players[pid].get("equipped_clothing", ""))
+		var off_backpack: String = offline_proxy.get_meta("saved_backpack", net.players[pid].get("equipped_backpack", ""))
+		var off_held: String = offline_proxy.get_meta("saved_held_item", net.players[pid].get("held_item", ""))
+		for connected_pid in net.players.keys():
+			if connected_pid == net.get_my_id() or connected_pid == pid:
+				continue
+			if not net.players[connected_pid].get("offline", false):
+				net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, 0.0, "idle", off_clothing, off_held, off_backpack)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
@@ -1055,7 +1089,11 @@ func _spawn_remote_player(id: int) -> void:
 	# PlayerController puppet — model loads from cache (instant if local player already loaded)
 	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
-	avatar.position = Vector3(8.0, 0.4, 2.5)
+	# Use position from net.players if available (e.g. offline character)
+	var spawn_pos: Vector3 = Vector3(8.0, 0.4, 2.5)
+	if net != null and net.players.has(id):
+		spawn_pos = net.players[id].get("pos", spawn_pos)
+	avatar.position = spawn_pos
 	avatar.is_puppet = true
 	add_child(avatar)
 	remote_players[id] = avatar
@@ -1163,15 +1201,25 @@ func _update_remote_players() -> void:
 		var clothing: String = data.get("equipped_clothing", "")
 		var held: String = data.get("held_item", "")
 		var backpack: String = data.get("equipped_backpack", "")
-		# Smooth interpolation
-		var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
-		var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
-		if rp.has_method("puppet_apply"):
-			rp.puppet_apply(smooth_pos, smooth_rot, anim)
-			rp.puppet_apply_visuals(clothing, held, backpack)
+		var is_offline: bool = data.get("offline", false)
+		if is_offline:
+			# Snap to exact position for offline characters
+			if rp.has_method("puppet_apply"):
+				rp.puppet_apply(target_pos, target_rot, "idle")
+				rp.puppet_apply_visuals(clothing, held, backpack)
+			else:
+				rp.global_position = target_pos
+				rp.rotation.y = target_rot
 		else:
-			rp.global_position = smooth_pos
-			rp.rotation.y = smooth_rot
+			# Smooth interpolation for active players
+			var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
+			var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
+			if rp.has_method("puppet_apply"):
+				rp.puppet_apply(smooth_pos, smooth_rot, anim)
+				rp.puppet_apply_visuals(clothing, held, backpack)
+			else:
+				rp.global_position = smooth_pos
+				rp.rotation.y = smooth_rot
 
 # Server: collect all wildlife states and broadcast to clients
 func _broadcast_animals() -> void:

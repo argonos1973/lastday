@@ -187,7 +187,13 @@ func _on_peer_connected(id: int) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	print("[NET] Peer desconectado: %d" % id)
-	players.erase(id)
+	if is_host:
+		# On server: keep player in list but mark as offline (don't erase)
+		# so other clients still see the character in the world
+		if players.has(id):
+			players[id]["offline"] = true
+	else:
+		players.erase(id)
 	player_disconnected.emit(id)
 
 func _on_connected_to_server() -> void:
@@ -232,6 +238,15 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	# Store client_id for proxy matching
 	if not cid.is_empty():
 		players[id]["client_id"] = cid
+		# Remove old offline entry with same client_id
+		var old_pid_to_remove := -1
+		for pid in players.keys():
+			if pid != id and players[pid].get("client_id", "") == cid:
+				old_pid_to_remove = pid
+				break
+		if old_pid_to_remove != -1:
+			print("[NET] Removing old offline entry for peer %d (same client_id %s)" % [old_pid_to_remove, cid])
+			players.erase(old_pid_to_remove)
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_match_proxy_to_client"):
 			scene.call("_match_proxy_to_client", id, cid)
