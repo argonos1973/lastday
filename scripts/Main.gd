@@ -808,6 +808,11 @@ func _create_player() -> void:
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
+	# Apply pending spawn position if received before player was ready
+	if _has_pending_spawn_pos:
+		player.global_position = _pending_spawn_pos
+		_has_pending_spawn_pos = false
+		print("[NET] Applied pending spawn position after player creation: %s" % _pending_spawn_pos)
 
 func _on_remote_player_connected(id: int) -> void:
 	if net == null:
@@ -942,10 +947,17 @@ func _net_apply_damage(amount: float) -> void:
 		player.apply_damage(amount)
 
 # Called by RPC from server on client to set position on reconnect
+var _pending_spawn_pos: Vector3 = Vector3.ZERO
+var _has_pending_spawn_pos := false
+
 func _apply_net_spawn_pos(pos: Vector3) -> void:
 	if player != null:
 		player.global_position = pos
 		print("[NET] Applied reconnect spawn position: %s" % pos)
+	else:
+		_pending_spawn_pos = pos
+		_has_pending_spawn_pos = true
+		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
