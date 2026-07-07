@@ -1709,18 +1709,18 @@ func _create_wildlife() -> void:
 	_create_wildlife_animal("fox", fox_route_1)
 	var fox_route_2 := _build_circular_route(32.0, PI * 1.5, 8, 4.0)
 	_create_wildlife_animal("fox", fox_route_2)
-	# Wolves: keep them far from player spawn and rivers
+	# Wolves: keep them far from player spawn, rivers, and each other
 	var wolf_centers: Array = []
 	for i in range(4):
-		var center := _random_pos_far_from_all(player_start, wolf_centers, 45.0, 35.0, 70.0)
-		for _retry in range(20):
+		var center := _random_pos_far_from_all(player_start, wolf_centers, 60.0, 50.0, 90.0)
+		for _retry in range(30):
 			if not _is_near_river(center, 8.0):
 				break
-			center = _random_pos_far_from_all(player_start, wolf_centers, 45.0, 35.0, 70.0)
+			center = _random_pos_far_from_all(player_start, wolf_centers, 60.0, 50.0, 90.0)
 		wolf_centers.append(center)
 		var route: Array = []
 		for j in range(7):
-			route.append(center + Vector3(randf_range(-5, 5), 0.0, randf_range(-5, 5)))
+			route.append(center + Vector3(randf_range(-3, 3), 0.0, randf_range(-3, 3)))
 		_create_wildlife_animal("wolf", route)
 
 # Build a circular patrol route around the map center.
