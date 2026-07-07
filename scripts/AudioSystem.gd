@@ -13,6 +13,7 @@ const WIND_PATHS := [
 	"res://assets/external/audio/wind_loop.wav"
 ]
 const RIVER_WATER_PATHS := [
+	"res://assets/external/audio/downloaded/rio.mp3",
 	"res://assets/external/audio/river_water_loop.ogg",
 	"res://assets/external/audio/river_water_loop.wav",
 	"res://assets/external/audio/water_river_loop.ogg",

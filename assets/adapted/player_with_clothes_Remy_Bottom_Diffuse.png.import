@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dp2gcgx4yoomb"
-path="res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-cd41fe7e465e1204b36d8c17e212aaff.ctex"
+path="res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-6776570535a6aec5d6a1ea681a8bb247.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Remy_Bottom_Diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-cd41fe7e465e1204b36d8c17e212aaff.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Remy_Bottom_Diffuse.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-6776570535a6aec5d6a1ea681a8bb247.ctex"]
 
 [params]
 

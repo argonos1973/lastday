@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b4t7dynni53i0"
-path="res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-19fbff6c15fa52fce95ed550da020f6e.ctex"
+path="res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-8b91215bcc2ed0d0e6411d63024b4bd0.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/soldado_parts_Soldier_Body_diffuse.png"
-dest_files=["res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-19fbff6c15fa52fce95ed550da020f6e.ctex"]
+source_file="res://assets/adapted/soldado_parts_Soldier_Body_diffuse.png"
+dest_files=["res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-8b91215bcc2ed0d0e6411d63024b4bd0.ctex"]
 
 [params]
 

@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://d3n1ypbvxoqwh"
-path="res://.godot/imported/pickup_soldier_torso.glb-f01436881e04ae98231defc5ac8ab004.scn"
+path="res://.godot/imported/pickup_soldier_torso.glb-d6e7a782e5d567bc438d8cef9477262b.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_soldier_torso.glb"
-dest_files=["res://.godot/imported/pickup_soldier_torso.glb-f01436881e04ae98231defc5ac8ab004.scn"]
+source_file="res://assets/characters/adapted/pickup_soldier_torso.glb"
+dest_files=["res://.godot/imported/pickup_soldier_torso.glb-d6e7a782e5d567bc438d8cef9477262b.scn"]
 
 [params]
 
