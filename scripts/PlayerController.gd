@@ -331,12 +331,35 @@ func setup_as_puppet() -> void:
 	set_process(true)
 	set_process_input(false)
 	set_physics_process(false)
-	# Re-align model to ground after a frame to ensure meshes are ready
-	call_deferred("_align_third_person_model_to_ground")
+	# Re-align model to ground after meshes are fully initialized
+	_align_puppet_model_deferred()
 
 var _puppet_clothing := ""
 var _puppet_held := ""
 var _puppet_backpack := ""
+
+func _align_puppet_model_deferred() -> void:
+	# Retry alignment over several frames until meshes report valid AABB
+	for i in range(5):
+		await get_tree().process_frame
+		if third_person_model == null or not is_instance_valid(third_person_model):
+			return
+		var meshes := []
+		_collect_mesh_instances(third_person_model, meshes)
+		if meshes.is_empty():
+			continue
+		# Check if any mesh has a valid (non-zero) AABB
+		var has_valid := false
+		for mesh_node in meshes:
+			var mi := mesh_node as MeshInstance3D
+			if mi != null and mi.get_aabb().size.length() > 0.01:
+				has_valid = true
+				break
+		if has_valid:
+			_align_third_person_model_to_ground()
+			return
+	# Final attempt after 5 frames
+	_align_third_person_model_to_ground()
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	global_position = pos
