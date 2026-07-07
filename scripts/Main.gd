@@ -442,6 +442,8 @@ func _process(delta: float) -> void:
 		if _animal_sync_timer >= 0.1:
 			_animal_sync_timer = 0.0
 			_broadcast_animals()
+		# Tick campfire fires on server
+		_tick_campfire_fires()
 		return
 	if net != null and net.is_connected and not net.is_host:
 		_update_puppet_animals()
@@ -499,9 +501,11 @@ func _tick_campfire_fires() -> void:
 		if smoke_node != null:
 			smoke_node.queue_free()
 		# Find and remove the WorldAction and visual structure for this campfire
+		var expired_action_id := ""
 		for action_id in world_actions_by_id.keys():
 			var action = world_actions_by_id[action_id]
 			if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
+				expired_action_id = action_id
 				var visual_name := str(action.get_meta("visual_name", ""))
 				if not visual_name.is_empty():
 					var vis_node := get_node_or_null(visual_name)
@@ -524,6 +528,14 @@ func _tick_campfire_fires() -> void:
 			if campfire_positions[i] is Vector3:
 				campfire_positions.remove_at(i)
 				break
+		# Remove from _lit_campfires and _built_campfires
+		for i in range(_lit_campfires.size() - 1, -1, -1):
+			if _lit_campfires[i] is Dictionary and _lit_campfires[i].get("fire_name", "") == fire_name:
+				_lit_campfires.remove_at(i)
+		if not expired_action_id.is_empty():
+			for i in range(_built_campfires.size() - 1, -1, -1):
+				if _built_campfires[i] is Dictionary and _built_campfires[i].get("id", "") == expired_action_id:
+					_built_campfires.remove_at(i)
 		if player != null:
 			player.notice.emit("La fogata se ha apagado.")
 		_save_world_change_silent()
@@ -953,6 +965,9 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	if not equipped_backpack.is_empty():
 		player.equip_backpack(equipped_backpack)
 	if not equipped_clothing.is_empty():
+		# Clear existing slots to prevent equip_clothing from dropping old items
+		if "_equipped_slots" in player:
+			player._equipped_slots.clear()
 		var slots := equipped_clothing.split(",")
 		for slot_name in slots:
 			if not slot_name.is_empty():
