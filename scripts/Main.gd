@@ -1650,7 +1650,6 @@ func _create_river_drink_zones() -> void:
 		)
 		if action != null:
 			action.rotation_degrees.y = yaw
-			action.disable_collision()
 
 func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
@@ -1758,6 +1757,7 @@ func _create_world_action(id: String, action_type: String, label: String, pos: V
 	action.setup(id, action_type, label, size, color, repeatable, marker_visible)
 	add_child(action)
 	world_actions_by_id[id] = action
+	action.disable_collision()
 	return action
 
 func _create_tool_pickup(id: String, action_type: String, label: String, model_path: String, pos: Vector3, scale_value: float, rot: Vector3) -> void:
@@ -4271,6 +4271,7 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 		var vn := get_node_or_null(visual_name)
 		if vn != null:
 			vn.add_to_group("world_action_visual")
+			_remove_collision_from_node(vn)
 		meta_names = visual_name
 		made_visual = true
 	else:
