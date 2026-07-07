@@ -1,12 +1,7 @@
 extends Node
 class_name AudioSystem
 
-const AMBIENT_DAY_PATHS := [
-	"res://assets/external/audio/ambient_day.ogg",
-	"res://assets/external/audio/ambient_day.wav",
-	"res://assets/external/audio/forest_wind_day.ogg",
-	"res://assets/external/audio/forest_wind_day.wav"
-]
+const AMBIENT_DAY_PATHS := []
 const AMBIENT_NIGHT_PATHS := [
 	"res://assets/external/audio/ambient_night.ogg",
 	"res://assets/external/audio/ambient_night.wav",
