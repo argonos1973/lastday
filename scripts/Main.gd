@@ -854,7 +854,7 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	_send_world_state_to_client(peer_id)
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int) -> void:
-	await get_tree().create_timer(2.5).timeout
+	await get_tree().create_timer(0.5).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx)
@@ -1195,6 +1195,17 @@ func _sync_local_player_inventory() -> void:
 func _update_remote_players() -> void:
 	if net == null:
 		return
+	# Remove remote players no longer in the player list
+	var stale_pids: Array = []
+	for pid in remote_players.keys():
+		if not net.players.has(pid):
+			stale_pids.append(pid)
+	for pid in stale_pids:
+		var stale: Node3D = remote_players[pid]
+		if is_instance_valid(stale):
+			stale.queue_free()
+		remote_players.erase(pid)
+		print("[NET] Removed stale remote player %d (no longer in player list)" % pid)
 	for pid in net.players.keys():
 		if pid == net.get_my_id():
 			continue
