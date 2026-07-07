@@ -733,6 +733,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 			vol = -12.0
 		else:
 			vol = -18.0
+		if player_node != null and player_node.has_meta("in_house") and player_node.get_meta("in_house", false):
+			vol -= 20.0
 		_wolf_howl_2d_player.volume_db = vol
 		_wolf_howl_2d_player.pitch_scale = randf_range(0.85, 1.15)
 		_wolf_howl_2d_player.play()

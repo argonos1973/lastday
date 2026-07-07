@@ -428,6 +428,8 @@ func _process(delta: float) -> void:
 		return
 	_process_pending_puppets()
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
+	var in_house := _is_player_in_house(player.global_position)
+	player.set_meta("in_house", in_house)
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Blend real weather temp with game cycle temp (50/50) so real weather
 	# influences but doesn't override the day/night cycle temperature
@@ -1720,7 +1722,7 @@ func _create_wildlife() -> void:
 		wolf_centers.append(center)
 		var route: Array = []
 		for j in range(7):
-			route.append(center + Vector3(randf_range(-3, 3), 0.0, randf_range(-3, 3)))
+			route.append(center + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15)))
 		_create_wildlife_animal("wolf", route)
 
 # Build a circular patrol route around the map center.
@@ -2837,6 +2839,20 @@ func get_forest_audio_point(world_pos: Vector3) -> Dictionary:
 		"position": forest_center,
 		"distance": distance
 	}
+
+const HOUSE_POSITIONS := [
+	Vector3(-25, 0, -18),
+	Vector3(-38, 0, 18),
+	Vector3(23, 0, 18),
+	Vector3(42, 0, 26),
+	Vector3(-12, 0, 42)
+]
+
+func _is_player_in_house(pos: Vector3) -> bool:
+	for house_pos in HOUSE_POSITIONS:
+		if abs(pos.x - house_pos.x) < 5.7 and abs(pos.z - house_pos.z) < 4.7:
+			return true
+	return false
 
 func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	var mesh_instance = RiverWaterScript.new()
