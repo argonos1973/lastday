@@ -307,6 +307,8 @@ var _puppet_current_anim := ""
 
 func setup_as_puppet() -> void:
 	is_puppet = true
+	# Disable physics entirely — puppet position is set via puppet_apply
+	set_physics_process(false)
 	# Lightweight puppet: only load 3D model + animations, skip everything heavy
 	_create_third_person_model()
 	if third_person_model != null:
@@ -329,6 +331,8 @@ func setup_as_puppet() -> void:
 	set_process(true)
 	set_process_input(false)
 	set_physics_process(false)
+	# Re-align model to ground after a frame to ensure meshes are ready
+	call_deferred("_align_third_person_model_to_ground")
 
 var _puppet_clothing := ""
 var _puppet_held := ""
