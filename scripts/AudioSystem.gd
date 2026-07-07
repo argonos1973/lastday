@@ -219,11 +219,13 @@ func _load_audio() -> void:
 	fox_calls = _load_streams(ANIMAL_FOX_PATHS)
 	wolf_calls = _load_streams(ANIMAL_WOLF_PATHS)
 	forest_sounds = _load_streams(FOREST_BIRD_PATHS)
+	print("[AUDIO] Forest sounds loaded: %d" % forest_sounds.size())
 	if not forest_sounds.is_empty():
 		_forest_loop_stream = forest_sounds[0]
 		_make_loop(_forest_loop_stream)
 		forest_player.stream = _forest_loop_stream
 		forest_player.volume_db = -80.0
+		forest_player.play()
 
 func _assign_loop(player_node: AudioStreamPlayer, stream: AudioStream) -> void:
 	if stream == null:
@@ -244,6 +246,8 @@ func _make_loop(stream: AudioStream) -> void:
 		(stream as AudioStreamOggVorbis).loop = true
 	elif stream is AudioStreamWAV:
 		(stream as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
+	elif stream is AudioStreamMP3:
+		(stream as AudioStreamMP3).loop = true
 
 func _load_first_stream(paths: Array) -> AudioStream:
 	for path in paths:
