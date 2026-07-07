@@ -41,6 +41,7 @@ const ANIMAL_FOX_PATHS := [
 	"res://assets/external/audio/fox_call.wav"
 ]
 const ANIMAL_WOLF_PATHS := [
+	"res://assets/external/audio/downloaded/aullidos.mp3",
 	"res://assets/external/audio/downloaded/wolf_howl.wav",
 	"res://assets/external/audio/downloaded/wolf_growl.wav"
 ]

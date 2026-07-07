@@ -31,6 +31,7 @@ var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
 var _wolf_pain_player: AudioStreamPlayer3D = null
+var _wolf_howl_2d_player: AudioStreamPlayer = null
 var health := 150.0
 var max_health := 150.0
 var _is_dead := false
@@ -701,6 +702,41 @@ func _update_wolf_sounds(delta: float) -> void:
 			_growl_timer = randf_range(10.0, 20.0)
 
 func _play_wolf_sound(sound_type: String) -> void:
+	if sound_type == "howl":
+		if _wolf_howl_2d_player == null:
+			_wolf_howl_2d_player = AudioStreamPlayer.new()
+			_wolf_howl_2d_player.name = "WolfHowl2D"
+			add_child(_wolf_howl_2d_player)
+		if _wolf_howl_2d_player.playing:
+			return
+		var path := "res://assets/external/audio/downloaded/aullidos.mp3"
+		var stream: AudioStream = null
+		if ResourceLoader.exists(path):
+			stream = load(path)
+		if stream == null:
+			var disk_path := ProjectSettings.globalize_path(path)
+			if FileAccess.file_exists(disk_path):
+				stream = AudioStreamMP3.load_from_file(disk_path)
+		if stream == null:
+			return
+		if stream is AudioStreamMP3:
+			(stream as AudioStreamMP3).loop = false
+		_wolf_howl_2d_player.stream = stream
+		var player_node := get_tree().current_scene.get_node_or_null("Player")
+		var dist := 999.0
+		if player_node != null and player_node is Node3D:
+			dist = global_position.distance_to((player_node as Node3D).global_position)
+		var vol := -15.0
+		if dist > 60.0:
+			vol = -8.0
+		elif dist > 30.0:
+			vol = -12.0
+		else:
+			vol = -18.0
+		_wolf_howl_2d_player.volume_db = vol
+		_wolf_howl_2d_player.pitch_scale = randf_range(0.85, 1.15)
+		_wolf_howl_2d_player.play()
+		return
 	if _wolf_audio_player == null:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
@@ -711,8 +747,6 @@ func _play_wolf_sound(sound_type: String) -> void:
 		return
 	var path := ""
 	match sound_type:
-		"howl":
-			path = "res://assets/external/audio/downloaded/wolf_howl.wav"
 		"growl":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
