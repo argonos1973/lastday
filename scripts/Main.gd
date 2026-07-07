@@ -808,15 +808,10 @@ func _create_player() -> void:
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
-	# Hide player model until spawn position is applied (don't hide entire node — camera is a child)
-	if player.third_person_model != null:
-		player.third_person_model.visible = false
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
 		_has_pending_spawn_pos = false
-		if player.third_person_model != null:
-			player.third_person_model.visible = true
 		print("[NET] Applied pending spawn position after player creation: %s" % _pending_spawn_pos)
 
 func _on_remote_player_connected(id: int) -> void:
@@ -864,7 +859,7 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	_send_world_state_to_client(peer_id)
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int) -> void:
-	await get_tree().create_timer(0.5).timeout
+	await get_tree().create_timer(2.0).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx)
@@ -874,7 +869,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 		print("[NET] Sent reconnect state to client %d: pos=%s, %d items, backpack=%s" % [peer_id, pos, inv.size(), backpack])
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
-	await get_tree().create_timer(0.5).timeout
+	await get_tree().create_timer(2.0).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, Vector3(8.0, 0.4, 2.5))
 		# Clear reconnecting flag so server accepts position updates from this client
@@ -970,8 +965,6 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 	_has_received_spawn_pos = true
 	if player != null:
 		player.global_position = pos
-		if player.third_person_model != null:
-			player.third_person_model.visible = true
 		print("[NET] Applied reconnect spawn position: %s" % pos)
 	else:
 		_pending_spawn_pos = pos
