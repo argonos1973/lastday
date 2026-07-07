@@ -846,7 +846,7 @@ func _on_remote_player_disconnected(id: int) -> void:
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
-		print("[NET] Player %d disconnected, proxy kept alive at %s" % [id, sp.global_position])
+		print("[NET] Player %d disconnected, proxy kept alive at %s, in_group=%s, has_real_pos=%s, protection=%s" % [id, sp.global_position, sp.is_in_group("net_player_proxy"), sp.get_meta("has_real_pos", false), sp.get_meta("protection_timer", 0.0)])
 
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state
