@@ -830,6 +830,13 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	_send_world_state_to_client(peer_id)
 
+func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float) -> void:
+	await get_tree().create_timer(2.5).timeout
+	if net != null and net.peer != null:
+		net.set_client_spawn_pos.rpc_id(peer_id, pos)
+		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst)
+		print("[NET] Sent reconnect state to client %d: pos=%s, %d items" % [peer_id, pos, inv.size()])
+
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 	if proxy_by_client_id.has(cid):
@@ -852,14 +859,13 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.set_meta("disconnected", false)
 			existing.set_meta("protection_timer", 20.0)
 			server_proxies[peer_id] = existing
-			# Send position and inventory to reconnecting client
-			if net != null and net.peer != null:
-				net.set_client_spawn_pos.rpc_id(peer_id, existing.global_position)
-				var saved_inv: Array = existing.get_meta("saved_inventory", [])
-				var saved_hp: float = existing.get_meta("saved_health", 100.0)
-				var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
-				var saved_thirst: float = existing.get_meta("saved_thirst", 100.0)
-				net.restore_player_inventory.rpc_id(peer_id, saved_inv, saved_hp, saved_hunger, saved_thirst)
+			# Send position and inventory to reconnecting client (delayed so scene is loaded)
+			var saved_pos: Vector3 = existing.global_position
+			var saved_inv: Array = existing.get_meta("saved_inventory", [])
+			var saved_hp: float = existing.get_meta("saved_health", 100.0)
+			var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
+			var saved_thirst: float = existing.get_meta("saved_thirst", 100.0)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst)
 			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists

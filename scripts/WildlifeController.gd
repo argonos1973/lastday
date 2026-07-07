@@ -272,7 +272,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_chase_stuck_time = 0.0
 		_chase_cooldown = 5.0
 	# Priority 1: chase player
-	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0:
+	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false):
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
@@ -321,7 +321,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null:
 								net_node.apply_damage_to_client.rpc_id(peer_id, 15.0)
-					else:
+					elif _player.has_method("apply_damage"):
 						_player.apply_damage(15.0)
 					_play_wolf_sound("attack")
 				_play_animation_by_name("run")
