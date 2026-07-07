@@ -383,10 +383,6 @@ func _ready() -> void:
 	_create_day_night()
 	_create_map()
 	_create_player()
-	# If no pending spawn position, make player visible after a short delay
-	# (new players start at default spawn, reconnecting players get set_client_spawn_pos)
-	if not _has_pending_spawn_pos:
-		_reveal_player_timer()
 	_create_audio()
 	_create_hud()
 	hud.show_notice("Haz clic en la ventana para capturar el raton. Empiezas en la carretera.")
@@ -875,6 +871,15 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 			server_proxies[peer_id].set_meta("reconnecting", false)
 		print("[NET] Sent reconnect state to client %d: pos=%s, %d items, backpack=%s" % [peer_id, pos, inv.size(), backpack])
 
+func _delayed_send_new_player_state(peer_id: int) -> void:
+	await get_tree().create_timer(0.5).timeout
+	if net != null and net.peer != null:
+		net.set_client_spawn_pos.rpc_id(peer_id, Vector3(8.0, 0.4, 2.5))
+		# Clear reconnecting flag so server accepts position updates from this client
+		if server_proxies.has(peer_id):
+			server_proxies[peer_id].set_meta("reconnecting", false)
+		print("[NET] Sent new player spawn pos to client %d" % peer_id)
+
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 	if proxy_by_client_id.has(cid):
@@ -914,9 +919,10 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("client_id", cid)
-			server_proxies[peer_id].set_meta("reconnecting", false)
 		else:
 			pending_client_ids[peer_id] = cid
+		# Send spawn position to new player too (so client knows when to start sending position)
+		call_deferred("_delayed_send_new_player_state", peer_id)
 
 func _spawn_server_proxy(id: int) -> void:
 	if server_proxies.has(id):
@@ -954,10 +960,12 @@ func _net_apply_damage(amount: float) -> void:
 		player.apply_damage(amount)
 
 # Called by RPC from server on client to set position on reconnect
+var _has_received_spawn_pos := false
 var _pending_spawn_pos: Vector3 = Vector3.ZERO
 var _has_pending_spawn_pos := false
 
 func _apply_net_spawn_pos(pos: Vector3) -> void:
+	_has_received_spawn_pos = true
 	if player != null:
 		player.global_position = pos
 		player.visible = true
@@ -966,11 +974,6 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
 		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
-
-func _reveal_player_timer() -> void:
-	await get_tree().create_timer(1.0).timeout
-	if player != null and not player.visible:
-		player.visible = true
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
@@ -1169,6 +1172,8 @@ func _process_pending_puppets() -> void:
 
 func _sync_local_player_state() -> void:
 	if net == null or player == null or not net.is_connected:
+		return
+	if not _has_received_spawn_pos:
 		return
 	var my_id: int = net.get_my_id()
 	var pos: Vector3 = player.global_position
