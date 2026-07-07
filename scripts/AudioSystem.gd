@@ -29,14 +29,12 @@ const FOREST_BIRD_PATHS := [
 	"res://assets/external/audio/downloaded/pajaros.mp3"
 ]
 const ANIMAL_DEER_PATHS := [
-	"res://assets/external/audio/downloaded/deer_sound_orange.mp3",
 	"res://assets/external/audio/animal_deer_call.ogg",
 	"res://assets/external/audio/animal_deer_call.wav",
 	"res://assets/external/audio/deer_call.ogg",
 	"res://assets/external/audio/deer_call.wav"
 ]
 const ANIMAL_FOX_PATHS := [
-	"res://assets/external/audio/downloaded/fox_calls_orange.mp3",
 	"res://assets/external/audio/animal_fox_call.ogg",
 	"res://assets/external/audio/animal_fox_call.wav",
 	"res://assets/external/audio/fox_call.ogg",
