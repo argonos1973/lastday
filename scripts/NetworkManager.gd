@@ -338,5 +338,12 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 	if scene != null and scene.has_method("_net_campfire_lit"):
 		scene._net_campfire_lit(action_id, fire_name, pos)
 
+# Server sends world state to a newly connected client
+@rpc("authority", "reliable")
+func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_sync_world_state"):
+		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires)
+
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()

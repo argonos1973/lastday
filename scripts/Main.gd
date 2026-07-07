@@ -32,6 +32,10 @@ var _animal_sync_timer := 0.0
 var _animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
 var world_actions_by_id := {}
+var _depleted_action_ids: Array = []
+var _dropped_items: Array = []
+var _built_campfires: Array = []
+var _lit_campfires: Array = []
 var _tree_id_counter := 0
 var _bush_id_counter := 0
 var material_cache := {}
@@ -812,8 +816,41 @@ func _net_apply_damage(amount: float) -> void:
 		player.apply_damage(amount)
 
 # Called by RPC from client on server to damage a real animal
+func _send_world_state_to_client(peer_id: int) -> void:
+	if net == null:
+		return
+	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires)
+	print("[NET] Sent world state to client %d: %d depleted, %d dropped, %d campfires, %d lit" % [peer_id, _depleted_action_ids.size(), _dropped_items.size(), _built_campfires.size(), _lit_campfires.size()])
+
+func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array) -> void:
+	for action_id in depleted_ids:
+		if world_actions_by_id.has(action_id):
+			var action = world_actions_by_id[action_id]
+			_hide_action_visual(action)
+			action.mark_depleted()
+			world_actions_by_id.erase(action_id)
+	for drop in dropped_items:
+		if not world_actions_by_id.has(str(drop["id"])):
+			_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), drop["pos"])
+	for cf in campfires:
+		if not world_actions_by_id.has(str(cf["id"])):
+			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
+	for lc in lit_campfires:
+		if world_actions_by_id.has(str(lc["id"])):
+			var action = world_actions_by_id[str(lc["id"])]
+			if not action.get_meta("lit", false):
+				_create_campfire_fire(action.position + Vector3(0, 0.15, 0), str(lc["fire_name"]))
+				action.set_meta("lit", true)
+				action.action_type = "cook"
+				action.display_name = "Fogata encendida"
+				action.repeatable = true
+	print("[NET] World state synced: %d depleted, %d dropped, %d campfires, %d lit" % [depleted_ids.size(), dropped_items.size(), campfires.size(), lit_campfires.size()])
+
 func _net_item_picked_up(action_id: String) -> void:
 	print("[NET] Recibido item_picked_up: %s (tiene: %s)" % [action_id, world_actions_by_id.has(action_id)])
+	if net != null and net.is_dedicated_server:
+		if not _depleted_action_ids.has(action_id):
+			_depleted_action_ids.append(action_id)
 	# Remove the picked up item from this client's world
 	if world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -1086,6 +1123,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	action.set_meta("item_use_value", item_use_value)
 
 func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+	if net != null and net.is_dedicated_server:
+		_dropped_items.append({"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos})
 	if world_actions_by_id.has(drop_id):
 		return
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
@@ -1963,6 +2002,11 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_use_value", use_value)
 
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
+	if net != null and net.is_dedicated_server:
+		if not action_id.is_empty() and not _depleted_action_ids.has(action_id):
+			_depleted_action_ids.append(action_id)
+		for spawn in spawns:
+			_dropped_items.append(spawn)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -2568,11 +2612,15 @@ func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
 
 func _net_campfire_built(cf_id: String, pos: Vector3) -> void:
+	if net != null and net.is_dedicated_server:
+		_built_campfires.append({"id": cf_id, "pos": pos})
 	if world_actions_by_id.has(cf_id):
 		return
 	_spawn_player_campfire_with_id(cf_id, pos)
 
 func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
+	if net != null and net.is_dedicated_server:
+		_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
 	if not world_actions_by_id.has(action_id):
 		return
 	var action = world_actions_by_id[action_id]
