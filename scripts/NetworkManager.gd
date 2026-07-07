@@ -276,17 +276,17 @@ func set_client_spawn_pos(pos: Vector3) -> void:
 		scene.call("_apply_net_spawn_pos", pos)
 
 @rpc("any_peer", "reliable")
-func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
-		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst)
+		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx)
 
 @rpc("authority", "reliable")
-func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
-		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst)
+		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }

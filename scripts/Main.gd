@@ -830,12 +830,12 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	_send_world_state_to_client(peer_id)
 
-func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float) -> void:
+func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int) -> void:
 	await get_tree().create_timer(2.5).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
-		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst)
-		print("[NET] Sent reconnect state to client %d: pos=%s, %d items" % [peer_id, pos, inv.size()])
+		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx)
+		print("[NET] Sent reconnect state to client %d: pos=%s, %d items, backpack=%s" % [peer_id, pos, inv.size(), backpack])
 
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
@@ -865,7 +865,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_hp: float = existing.get_meta("saved_health", 100.0)
 			var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
 			var saved_thirst: float = existing.get_meta("saved_thirst", 100.0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst)
+			var saved_clothing: String = existing.get_meta("saved_clothing", "")
+			var saved_backpack: String = existing.get_meta("saved_backpack", "")
+			var saved_held: String = existing.get_meta("saved_held_item", "")
+			var saved_held_idx: int = existing.get_meta("saved_held_idx", 0)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx)
 			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
@@ -914,17 +918,21 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 		player.global_position = pos
 		print("[NET] Applied reconnect spawn position: %s" % pos)
 
-# Server: store player inventory/stats on their proxy
-func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float) -> void:
+# Server: store player inventory/stats/equipment on their proxy
+func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
 	if server_proxies.has(peer_id):
 		var proxy: Node3D = server_proxies[peer_id]
 		proxy.set_meta("saved_inventory", items_data)
 		proxy.set_meta("saved_health", health)
 		proxy.set_meta("saved_hunger", hunger)
 		proxy.set_meta("saved_thirst", thirst)
+		proxy.set_meta("saved_clothing", equipped_clothing)
+		proxy.set_meta("saved_backpack", equipped_backpack)
+		proxy.set_meta("saved_held_item", held_item)
+		proxy.set_meta("saved_held_idx", held_idx)
 
-# Client: restore inventory/stats from server on reconnect
-func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+# Client: restore inventory/stats/equipment from server on reconnect
+func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
 	if player == null:
 		return
 	var ItemScript = load("res://scripts/Item.gd")
@@ -941,7 +949,17 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.stats.hunger = hunger
 		player.stats.thirst = thirst
 		player.stats.changed.emit()
-	print("[NET] Restored inventory: %d items, HP=%.0f" % [items_data.size(), health])
+	# Restore equipped items
+	if not equipped_backpack.is_empty():
+		player.equip_backpack(equipped_backpack)
+	if not equipped_clothing.is_empty():
+		var slots := equipped_clothing.split(",")
+		for slot_name in slots:
+			if not slot_name.is_empty():
+				player.equip_clothing(slot_name)
+	player.held_index = clampi(held_idx, 0, max(0, player.inventory.items.size() - 1))
+	player._sync_held_item()
+	print("[NET] Restored inventory: %d items, HP=%.0f, backpack=%s" % [items_data.size(), health, equipped_backpack])
 
 # Called by RPC from client on server to damage a real animal
 func _send_world_state_to_client(peer_id: int) -> void:
@@ -1098,7 +1116,20 @@ func _sync_local_player_inventory() -> void:
 		hp = player.stats.health
 		hunger = player.stats.hunger
 		thirst = player.stats.thirst
-	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst)
+	var clothing: String = ""
+	if player._equipped_slots != null and not player._equipped_slots.is_empty():
+		var clothing_items: Array = []
+		for slot in player._equipped_slots.keys():
+			var item_name: String = str(player._equipped_slots[slot])
+			if not item_name.is_empty():
+				clothing_items.append(item_name)
+		clothing = ",".join(clothing_items)
+	var backpack: String = player.equipped_backpack
+	var held: String = ""
+	if player.inventory != null and player.inventory.items.size() > 0:
+		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
+		held = player.inventory.items[hi].item_name
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index)
 
 func _update_remote_players() -> void:
 	if net == null:
