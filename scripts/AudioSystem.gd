@@ -89,7 +89,7 @@ var river_player: AudioStreamPlayer3D
 var footstep_player: AudioStreamPlayer3D
 var action_player: AudioStreamPlayer3D
 var animal_call_player: AudioStreamPlayer3D
-var forest_player: AudioStreamPlayer3D
+var forest_player: AudioStreamPlayer
 var forest_sounds: Array = []
 var _forest_call_timer := 8.0
 var _forest_loop_stream: AudioStream = null
@@ -181,10 +181,8 @@ func _create_players() -> void:
 	animal_call_player.volume_db = -18.0
 	add_child(animal_call_player)
 
-	forest_player = AudioStreamPlayer3D.new()
+	forest_player = AudioStreamPlayer.new()
 	forest_player.name = "ForestBirds"
-	forest_player.unit_size = 4.0
-	forest_player.max_distance = 80.0
 	forest_player.volume_db = -80.0
 	add_child(forest_player)
 
@@ -213,7 +211,6 @@ func _load_audio() -> void:
 	fox_calls = _load_streams(ANIMAL_FOX_PATHS)
 	wolf_calls = _load_streams(ANIMAL_WOLF_PATHS)
 	forest_sounds = _load_streams(FOREST_BIRD_PATHS)
-	print("[AUDIO] Forest sounds loaded: %d" % forest_sounds.size())
 	if not forest_sounds.is_empty():
 		_forest_loop_stream = forest_sounds[0]
 		_make_loop(_forest_loop_stream)
@@ -323,7 +320,6 @@ func _update_forest_ambience(delta: float) -> void:
 		return
 	var forest_pos: Vector3 = data.get("position", player.global_position)
 	var distance: float = float(data.get("distance", 999.0))
-	forest_player.global_position = forest_pos
 	var target_vol := -80.0
 	if distance < 75.0:
 		target_vol = lerp(-5.0, -28.0, clamp((distance - 8.0) / 67.0, 0.0, 1.0))
