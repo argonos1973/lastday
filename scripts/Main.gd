@@ -820,8 +820,14 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
 		else:
-			# Rebind proxy to new peer_id
+			# Remove the freshly-created proxy for this peer_id if it exists
+			if server_proxies.has(peer_id):
+				var fresh: Node3D = server_proxies[peer_id]
+				fresh.queue_free()
+				server_proxies.erase(peer_id)
+			# Rebind persisted proxy to new peer_id
 			existing.set_meta("peer_id", peer_id)
+			existing.set_meta("client_id", cid)
 			existing.set_meta("disconnected", false)
 			existing.set_meta("protection_timer", 20.0)
 			server_proxies[peer_id] = existing
@@ -835,8 +841,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				net.restore_player_inventory.rpc_id(peer_id, saved_inv, saved_hp, saved_hunger, saved_thirst)
 			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
-		# No existing proxy — store client_id for when proxy is created
-		pending_client_ids[peer_id] = cid
+		# No existing proxy — set client_id on the freshly created proxy if it exists
+		if server_proxies.has(peer_id):
+			server_proxies[peer_id].set_meta("client_id", cid)
+		else:
+			pending_client_ids[peer_id] = cid
 
 func _spawn_server_proxy(id: int) -> void:
 	if server_proxies.has(id):
