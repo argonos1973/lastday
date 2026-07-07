@@ -1719,14 +1719,14 @@ func _create_wildlife() -> void:
 		Vector3(50, 0, 50)
 	]
 	for i in range(4):
-		var center := wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
+		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		for _retry in range(30):
 			if not _is_near_river(center, 8.0):
 				break
 			center = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		var route: Array = []
 		for j in range(8):
-			var wp := center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
 			route.append(wp)
