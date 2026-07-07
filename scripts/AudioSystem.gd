@@ -30,7 +30,9 @@ const AXE_CHOP_PATHS := [
 	"res://assets/external/audio/wood_chop.ogg",
 	"res://assets/external/audio/wood_chop.wav"
 ]
-const FOREST_BIRD_PATHS := []
+const FOREST_BIRD_PATHS := [
+	"res://assets/external/audio/downloaded/pajaros.mp3"
+]
 const ANIMAL_DEER_PATHS := [
 	"res://assets/external/audio/downloaded/deer_sound_orange.mp3",
 	"res://assets/external/audio/animal_deer_call.ogg",

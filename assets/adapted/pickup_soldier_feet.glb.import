@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://csf57utthlml3"
-path="res://.godot/imported/pickup_soldier_feet.glb-69ffbc09f8b0b01883b5b27c4deccdd5.scn"
+path="res://.godot/imported/pickup_soldier_feet.glb-ac94051eed73e1292812ae517474811a.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_soldier_feet.glb"
-dest_files=["res://.godot/imported/pickup_soldier_feet.glb-69ffbc09f8b0b01883b5b27c4deccdd5.scn"]
+source_file="res://assets/characters/adapted/pickup_soldier_feet.glb"
+dest_files=["res://.godot/imported/pickup_soldier_feet.glb-ac94051eed73e1292812ae517474811a.scn"]
 
 [params]
 

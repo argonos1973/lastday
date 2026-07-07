@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b1ereimud2xq6"
-path="res://.godot/imported/pickup_default_tops_Remy_Top_Normal.png-df2ee51bd3c549a97956e54910333de4.ctex"
+path="res://.godot/imported/pickup_default_tops_Remy_Top_Normal.png-e10510a21d509548c966b9691967db4d.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_default_tops_Remy_Top_Normal.png"
-dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Normal.png-df2ee51bd3c549a97956e54910333de4.ctex"]
+source_file="res://assets/adapted/pickup_default_tops_Remy_Top_Normal.png"
+dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Normal.png-e10510a21d509548c966b9691967db4d.ctex"]
 
 [params]
 
