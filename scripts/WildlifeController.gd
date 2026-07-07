@@ -305,7 +305,19 @@ func _wolf_ai(delta: float) -> Dictionary:
 					# If target is a network proxy, send damage via RPC to client
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
-						if peer_id != 0:
+						var is_disconnected: bool = _player.get_meta("disconnected", false)
+						var is_proxy_dead: bool = _player.get_meta("proxy_dead", false)
+						if is_proxy_dead:
+							pass
+						elif is_disconnected and peer_id != 0:
+							var hp: float = _player.get_meta("proxy_health", 100.0)
+							hp = max(0.0, hp - 15.0)
+							_player.set_meta("proxy_health", hp)
+							if hp <= 0.0:
+								_player.set_meta("proxy_dead", true)
+								_player.remove_from_group("net_player_proxy")
+								print("[NET] Player %d proxy died while disconnected at %s" % [peer_id, _player.global_position])
+						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null:
 								net_node.apply_damage_to_client.rpc_id(peer_id, 15.0)

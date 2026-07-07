@@ -28,6 +28,7 @@ var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
 var _net_sync_timer := 0.0
+var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
 var _animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
@@ -448,6 +449,10 @@ func _process(delta: float) -> void:
 		if _net_sync_timer >= 0.05:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
+		_inv_sync_timer += delta
+		if _inv_sync_timer >= 5.0:
+			_inv_sync_timer = 0.0
+			_sync_local_player_inventory()
 		_update_remote_players()
 
 func _tick_campfire_fires() -> void:
@@ -786,10 +791,13 @@ func _on_remote_player_disconnected(id: int) -> void:
 		var rp: Node3D = remote_players[id]
 		rp.queue_free()
 		remote_players.erase(id)
+	# Keep server proxy alive so character persists in the world
+	# Only mark as disconnected — wolves can still target it
 	if server_proxies.has(id):
 		var sp: Node3D = server_proxies[id]
-		sp.queue_free()
-		server_proxies.erase(id)
+		sp.set_meta("disconnected", true)
+		sp.set_meta("protection_timer", 0.0)
+		print("[NET] Player %d disconnected, proxy kept alive at %s" % [id, sp.global_position])
 
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state
@@ -798,7 +806,28 @@ func _delayed_send_world_state(peer_id: int) -> void:
 
 func _spawn_server_proxy(id: int) -> void:
 	if server_proxies.has(id):
-		return
+		# Player reconnecting — restore existing proxy
+		var existing: Node3D = server_proxies[id]
+		var was_dead: bool = existing.get_meta("proxy_dead", false)
+		if was_dead:
+			# Proxy died while offline — remove and create fresh spawn
+			print("[NET] Player %d proxy was dead, respawning fresh" % id)
+			existing.queue_free()
+			server_proxies.erase(id)
+		else:
+			existing.set_meta("disconnected", false)
+			existing.set_meta("protection_timer", 20.0)
+			# Send the proxy position to the reconnecting client
+			if net != null and net.peer != null:
+				net.set_client_spawn_pos.rpc_id(id, existing.global_position)
+				# Send saved inventory and stats if available
+				var saved_inv: Array = existing.get_meta("saved_inventory", [])
+				var saved_hp: float = existing.get_meta("saved_health", 100.0)
+				var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
+				var saved_thirst: float = existing.get_meta("saved_thirst", 100.0)
+				net.restore_player_inventory.rpc_id(id, saved_inv, saved_hp, saved_hunger, saved_thirst)
+			print("[NET] Player %d reconnected, proxy restored at %s" % [id, existing.global_position])
+			return
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_%d" % id
 	proxy.position = Vector3(8.0, 0.4, 2.5)
@@ -807,6 +836,9 @@ func _spawn_server_proxy(id: int) -> void:
 	# Spawn protection: wolves won't target this proxy for 20 seconds
 	proxy.set_meta("protection_timer", 60.0)
 	proxy.set_meta("has_real_pos", false)
+	proxy.set_meta("disconnected", false)
+	proxy.set_meta("proxy_health", 100.0)
+	proxy.set_meta("proxy_dead", false)
 	add_child(proxy)
 	# Add to group after adding to scene tree so get_nodes_in_group finds it
 	proxy.add_to_group("net_player_proxy")
@@ -822,6 +854,41 @@ func _spawn_server_proxy(id: int) -> void:
 func _net_apply_damage(amount: float) -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
+
+# Called by RPC from server on client to set position on reconnect
+func _apply_net_spawn_pos(pos: Vector3) -> void:
+	if player != null:
+		player.global_position = pos
+		print("[NET] Applied reconnect spawn position: %s" % pos)
+
+# Server: store player inventory/stats on their proxy
+func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float) -> void:
+	if server_proxies.has(peer_id):
+		var proxy: Node3D = server_proxies[peer_id]
+		proxy.set_meta("saved_inventory", items_data)
+		proxy.set_meta("saved_health", health)
+		proxy.set_meta("saved_hunger", hunger)
+		proxy.set_meta("saved_thirst", thirst)
+
+# Client: restore inventory/stats from server on reconnect
+func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+	if player == null:
+		return
+	var ItemScript = load("res://scripts/Item.gd")
+	if player.has_node("Inventory"):
+		var inv = player.get_node("Inventory")
+		if inv != null and "items" in inv:
+			inv.items.clear()
+			for d in items_data:
+				var item = ItemScript.from_dict(d)
+				if item != null:
+					inv.items.append(item)
+	if player.get("stats") != null:
+		player.stats.health = health
+		player.stats.hunger = hunger
+		player.stats.thirst = thirst
+		player.stats.changed.emit()
+	print("[NET] Restored inventory: %d items, HP=%.0f" % [items_data.size(), health])
 
 # Called by RPC from client on server to damage a real animal
 func _send_world_state_to_client(peer_id: int) -> void:
@@ -960,6 +1027,25 @@ func _sync_local_player_state() -> void:
 		held = player.inventory.items[hi].item_name
 	var backpack: String = player.equipped_backpack
 	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack)
+
+func _sync_local_player_inventory() -> void:
+	if net == null or player == null or not net.is_connected:
+		return
+	if net.is_dedicated_server:
+		return
+	var items_data: Array = []
+	if player.inventory != null:
+		for item in player.inventory.items:
+			if item != null:
+				items_data.append(item.to_dict())
+	var hp := 100.0
+	var hunger := 100.0
+	var thirst := 100.0
+	if player.stats != null:
+		hp = player.stats.health
+		hunger = player.stats.hunger
+		thirst = player.stats.thirst
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst)
 
 func _update_remote_players() -> void:
 	if net == null:

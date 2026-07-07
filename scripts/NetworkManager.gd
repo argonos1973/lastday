@@ -248,6 +248,25 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 			if pid != id and pid != multiplayer.get_unique_id():
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
 
+@rpc("authority", "reliable")
+func set_client_spawn_pos(pos: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_apply_net_spawn_pos"):
+		scene.call("_apply_net_spawn_pos", pos)
+
+@rpc("any_peer", "reliable")
+func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_store_player_inventory"):
+		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst)
+
+@rpc("authority", "reliable")
+func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_apply_restored_inventory"):
+		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst)
+
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
 var animals: Dictionary = {}
