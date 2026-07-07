@@ -2377,6 +2377,9 @@ func _drink_held_item() -> void:
 		else:
 			inventory.remove_index(held_index)
 		inventory.changed.emit()
+		for child in third_person_hand_item_root.get_children():
+			third_person_hand_item_root.remove_child(child)
+			child.free()
 		_sync_held_item()
 		notice.emit("Bebes %s." % item_name)
 	)
@@ -2570,10 +2573,10 @@ func _build_third_person_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_BOTTLE_MODEL, "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_plastic_bottle() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.015)
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
 
 func _build_third_person_drink_bottle() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_DRINK_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_DRINK_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_bandage() -> void:
 	pass
