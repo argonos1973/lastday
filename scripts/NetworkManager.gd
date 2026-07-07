@@ -18,11 +18,26 @@ var is_dedicated_server := false
 var _broadcast_server: PacketPeerUDP = null
 var _probe_listener: PacketPeerUDP = null
 var _broadcast_timer := 0.0
+var client_id := ""
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
 
+func _load_or_generate_client_id() -> void:
+	var path := "user://client_id.txt"
+	if FileAccess.file_exists(path):
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f != null:
+			client_id = f.get_as_text().strip_edges()
+			if client_id.length() > 0:
+				return
+	client_id = str(randi()) + "_" + str(Time.get_ticks_msec())
+	var f2 := FileAccess.open(path, FileAccess.WRITE)
+	if f2 != null:
+		f2.store_string(client_id)
+
 func _ready() -> void:
+	_load_or_generate_client_id()
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -190,7 +205,7 @@ func _on_connected_to_server() -> void:
 		"rot": 0.0,
 		"ready": true
 	}
-	_register_player.rpc_id(1, my_id, players[my_id]["name"])
+	_register_player.rpc_id(1, my_id, players[my_id]["name"], client_id)
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
@@ -205,7 +220,7 @@ func _on_server_disconnected() -> void:
 	connection_failed.emit()
 
 @rpc("any_peer", "reliable")
-func _register_player(id: int, player_name: String) -> void:
+func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	if not is_host:
 		return
 	players[id] = {
@@ -214,6 +229,12 @@ func _register_player(id: int, player_name: String) -> void:
 		"rot": 0.0,
 		"ready": true
 	}
+	# Store client_id for proxy matching
+	if not cid.is_empty():
+		players[id]["client_id"] = cid
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("_match_proxy_to_client"):
+			scene.call("_match_proxy_to_client", id, cid)
 	_sync_player_list.rpc(players.duplicate(true))
 	_check_all_ready()
 

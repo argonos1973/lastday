@@ -27,6 +27,8 @@ var containers_by_id := {}
 var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
+var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
+var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
 var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
@@ -792,11 +794,14 @@ func _on_remote_player_disconnected(id: int) -> void:
 		rp.queue_free()
 		remote_players.erase(id)
 	# Keep server proxy alive so character persists in the world
-	# Only mark as disconnected — wolves can still target it
 	if server_proxies.has(id):
 		var sp: Node3D = server_proxies[id]
 		sp.set_meta("disconnected", true)
 		sp.set_meta("protection_timer", 0.0)
+		var cid: String = sp.get_meta("client_id", "")
+		server_proxies.erase(id)
+		if not cid.is_empty():
+			proxy_by_client_id[cid] = sp
 		print("[NET] Player %d disconnected, proxy kept alive at %s" % [id, sp.global_position])
 
 func _delayed_send_world_state(peer_id: int) -> void:
@@ -804,30 +809,38 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	_send_world_state_to_client(peer_id)
 
-func _spawn_server_proxy(id: int) -> void:
-	if server_proxies.has(id):
-		# Player reconnecting — restore existing proxy
-		var existing: Node3D = server_proxies[id]
+# Match reconnecting client to their persisted proxy by client_id
+func _match_proxy_to_client(peer_id: int, cid: String) -> void:
+	if proxy_by_client_id.has(cid):
+		var existing: Node3D = proxy_by_client_id[cid]
+		proxy_by_client_id.erase(cid)
 		var was_dead: bool = existing.get_meta("proxy_dead", false)
 		if was_dead:
-			# Proxy died while offline — remove and create fresh spawn
-			print("[NET] Player %d proxy was dead, respawning fresh" % id)
+			print("[NET] Client %s proxy was dead, respawning fresh" % cid)
 			existing.queue_free()
-			server_proxies.erase(id)
+			pending_client_ids[peer_id] = cid
 		else:
+			# Rebind proxy to new peer_id
+			existing.set_meta("peer_id", peer_id)
 			existing.set_meta("disconnected", false)
 			existing.set_meta("protection_timer", 20.0)
-			# Send the proxy position to the reconnecting client
+			server_proxies[peer_id] = existing
+			# Send position and inventory to reconnecting client
 			if net != null and net.peer != null:
-				net.set_client_spawn_pos.rpc_id(id, existing.global_position)
-				# Send saved inventory and stats if available
+				net.set_client_spawn_pos.rpc_id(peer_id, existing.global_position)
 				var saved_inv: Array = existing.get_meta("saved_inventory", [])
 				var saved_hp: float = existing.get_meta("saved_health", 100.0)
 				var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
 				var saved_thirst: float = existing.get_meta("saved_thirst", 100.0)
-				net.restore_player_inventory.rpc_id(id, saved_inv, saved_hp, saved_hunger, saved_thirst)
-			print("[NET] Player %d reconnected, proxy restored at %s" % [id, existing.global_position])
-			return
+				net.restore_player_inventory.rpc_id(peer_id, saved_inv, saved_hp, saved_hunger, saved_thirst)
+			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
+	else:
+		# No existing proxy — store client_id for when proxy is created
+		pending_client_ids[peer_id] = cid
+
+func _spawn_server_proxy(id: int) -> void:
+	if server_proxies.has(id):
+		return
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_%d" % id
 	proxy.position = Vector3(8.0, 0.4, 2.5)
@@ -839,6 +852,10 @@ func _spawn_server_proxy(id: int) -> void:
 	proxy.set_meta("disconnected", false)
 	proxy.set_meta("proxy_health", 100.0)
 	proxy.set_meta("proxy_dead", false)
+	# Set client_id from pending if available (for persistence across reconnects)
+	if pending_client_ids.has(id):
+		proxy.set_meta("client_id", pending_client_ids[id])
+		pending_client_ids.erase(id)
 	add_child(proxy)
 	# Add to group after adding to scene tree so get_nodes_in_group finds it
 	proxy.add_to_group("net_player_proxy")
