@@ -657,9 +657,10 @@ func _find_nearest_animal(kind: String) -> Node3D:
 	return nearest
 
 func _play_animation_by_name(keyword: String) -> void:
+	var lower_keyword := keyword.to_lower()
+	current_anim_keyword = lower_keyword
 	if _animation_player == null:
 		return
-	var lower_keyword := keyword.to_lower()
 	var current := _animation_player.current_animation
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0:
 		return
@@ -674,7 +675,6 @@ func _play_animation_by_name(keyword: String) -> void:
 			break
 	if best.is_empty():
 		return
-	current_anim_keyword = lower_keyword
 	if current != best:
 		_animation_player.play(best, 0.2)
 
