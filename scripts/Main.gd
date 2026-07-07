@@ -858,6 +858,9 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx)
+		# Clear reconnecting flag so server accepts position updates from this client
+		if server_proxies.has(peer_id):
+			server_proxies[peer_id].set_meta("reconnecting", false)
 		print("[NET] Sent reconnect state to client %d: pos=%s, %d items, backpack=%s" % [peer_id, pos, inv.size(), backpack])
 
 # Match reconnecting client to their persisted proxy by client_id
@@ -880,6 +883,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.set_meta("peer_id", peer_id)
 			existing.set_meta("client_id", cid)
 			existing.set_meta("disconnected", false)
+			existing.set_meta("reconnecting", true)
 			existing.set_meta("protection_timer", 20.0)
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)

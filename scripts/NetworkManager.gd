@@ -287,6 +287,12 @@ func _check_all_ready() -> void:
 func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String) -> void:
 	if not players.has(id):
 		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
+	# Ignore position updates from reconnecting clients (they're still at spawn pos)
+	if is_host:
+		var scene := get_tree().current_scene
+		if scene != null and scene.server_proxies.has(id):
+			if scene.server_proxies[id].get_meta("reconnecting", false):
+				return
 	players[id]["pos"] = pos
 	players[id]["rot"] = rot
 	players[id]["anim"] = anim
