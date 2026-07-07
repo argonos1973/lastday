@@ -2154,7 +2154,9 @@ func _align_third_person_model_to_ground() -> void:
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
 		var world_aabb: AABB = mesh_instance.global_transform * mesh_instance.get_aabb()
-		min_y = min(min_y, world_aabb.position.y)
+		# Convert world-space AABB min back to body local space
+		var local_min: Vector3 = global_transform.affine_inverse() * world_aabb.position
+		min_y = min(min_y, local_min.y)
 	if min_y < 999999.0:
 		third_person_ground_offset = -min_y
 		if _is_mixamo_root_asset(third_person_loaded_path):
