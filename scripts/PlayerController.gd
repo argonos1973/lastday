@@ -2353,7 +2353,7 @@ func _drink_held_item() -> void:
 		notice.emit("No tienes agua en la mano.")
 		return
 	# Show drink bottle model in hand during animation
-	_build_third_person_drink_bottle()
+	_build_third_person_plastic_bottle()
 	play_action_animation("drink", 2.0)
 	notice.emit("Bebiendo %s..." % item.item_name)
 	var item_name := str(item.item_name)
@@ -2575,7 +2575,7 @@ func _build_third_person_bottle() -> void:
 func _build_third_person_plastic_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
 
-func _build_third_person_drink_bottle() -> void:
+func _build_third_person_plastic_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_DRINK_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_bandage() -> void:
