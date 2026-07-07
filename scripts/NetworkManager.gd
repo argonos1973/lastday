@@ -258,7 +258,7 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	# Send updated list to all clients (including new one)
 	_sync_player_list.rpc(players.duplicate(true))
 	# Send current positions of all online players to the new client
-	if peer != null and peer.has_peer(id):
+	if peer != null and peer.get_peer(id) != null:
 		for pid in players.keys():
 			if pid == id or pid == multiplayer.get_unique_id():
 				continue
@@ -307,7 +307,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				if players[pid].get("offline", false):
 					continue
 				# Skip peers that are not actually connected
-				if not peer.has_peer(pid):
+				if peer.get_peer(pid) == null:
 					continue
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
 
