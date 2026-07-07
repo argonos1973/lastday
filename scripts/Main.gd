@@ -805,16 +805,18 @@ func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
 	player.position = Vector3(8.0, 0.4, 2.5)
-	# Hide player until spawn position is applied
-	player.visible = false
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
+	# Hide player model until spawn position is applied (don't hide entire node — camera is a child)
+	if player.third_person_model != null:
+		player.third_person_model.visible = false
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
 		_has_pending_spawn_pos = false
-		player.visible = true
+		if player.third_person_model != null:
+			player.third_person_model.visible = true
 		print("[NET] Applied pending spawn position after player creation: %s" % _pending_spawn_pos)
 
 func _on_remote_player_connected(id: int) -> void:
@@ -968,7 +970,8 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 	_has_received_spawn_pos = true
 	if player != null:
 		player.global_position = pos
-		player.visible = true
+		if player.third_person_model != null:
+			player.third_person_model.visible = true
 		print("[NET] Applied reconnect spawn position: %s" % pos)
 	else:
 		_pending_spawn_pos = pos
