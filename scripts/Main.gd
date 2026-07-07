@@ -383,6 +383,10 @@ func _ready() -> void:
 	_create_day_night()
 	_create_map()
 	_create_player()
+	# If no pending spawn position, make player visible after a short delay
+	# (new players start at default spawn, reconnecting players get set_client_spawn_pos)
+	if not _has_pending_spawn_pos:
+		_reveal_player_timer()
 	_create_audio()
 	_create_hud()
 	hud.show_notice("Haz clic en la ventana para capturar el raton. Empiezas en la carretera.")
@@ -805,6 +809,8 @@ func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
 	player.position = Vector3(8.0, 0.4, 2.5)
+	# Hide player until spawn position is applied
+	player.visible = false
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -812,6 +818,7 @@ func _create_player() -> void:
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
 		_has_pending_spawn_pos = false
+		player.visible = true
 		print("[NET] Applied pending spawn position after player creation: %s" % _pending_spawn_pos)
 
 func _on_remote_player_connected(id: int) -> void:
@@ -953,11 +960,17 @@ var _has_pending_spawn_pos := false
 func _apply_net_spawn_pos(pos: Vector3) -> void:
 	if player != null:
 		player.global_position = pos
+		player.visible = true
 		print("[NET] Applied reconnect spawn position: %s" % pos)
 	else:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
 		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
+
+func _reveal_player_timer() -> void:
+	await get_tree().create_timer(1.0).timeout
+	if player != null and not player.visible:
+		player.visible = true
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
