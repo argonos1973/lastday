@@ -419,6 +419,8 @@ func _process(delta: float) -> void:
 			_animal_sync_timer = 0.0
 			_broadcast_animals()
 		return
+	if net != null and net.is_connected and not net.is_host:
+		_update_puppet_animals()
 	if player == null or day_cycle == null:
 		_process_pending_puppets()
 		return
@@ -445,8 +447,6 @@ func _process(delta: float) -> void:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
 		_update_remote_players()
-		if not net.is_host:
-			_update_puppet_animals()
 
 func _tick_campfire_fires() -> void:
 	if campfire_fire_timers.is_empty():
