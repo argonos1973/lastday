@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bq11k0e0u73nl"
-path="res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Gloss.png-8da0702761c565092e07dd41bc06d043.ctex"
+path="res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Gloss.png-394b109ed78417f04ee2a88bf64f84fe.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_default_bottoms_Remy_Bottom_Gloss.png"
-dest_files=["res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Gloss.png-8da0702761c565092e07dd41bc06d043.ctex"]
+source_file="res://assets/adapted/pickup_default_bottoms_Remy_Bottom_Gloss.png"
+dest_files=["res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Gloss.png-394b109ed78417f04ee2a88bf64f84fe.ctex"]
 
 [params]
 
