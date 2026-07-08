@@ -644,14 +644,17 @@ func save_current_game() -> void:
 	pass
 
 func _build_save_data() -> Dictionary:
-	return {
+	var data := {
 		"balance_version": SAVE_BALANCE_VERSION,
-		"player": player.to_dict(),
-		"day_cycle": day_cycle.to_dict(),
-		"radio": radio.to_dict(),
+		"day_cycle": day_cycle.to_dict() if day_cycle != null else {},
 		"containers": _containers_to_array(),
 		"world_actions": _world_actions_to_array()
 	}
+	if player != null:
+		data["player"] = player.to_dict()
+	if radio != null:
+		data["radio"] = radio.to_dict()
+	return data
 
 func _save_world_change_silent() -> void:
 	SaveSystemScript.save_game(_build_save_data())
