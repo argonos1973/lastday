@@ -905,7 +905,7 @@ func _on_remote_player_disconnected(id: int) -> void:
 			net.players[id]["equipped_clothing"] = sp.get_meta("saved_clothing", "")
 			net.players[id]["equipped_backpack"] = sp.get_meta("saved_backpack", "")
 			net.players[id]["held_item"] = sp.get_meta("saved_held_item", "")
-			net.players[id]["anim"] = "idle"
+			# Keep last anim (don't force idle — player may be sitting/sleeping)
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
@@ -1217,7 +1217,7 @@ func _update_server_proxies(delta: float) -> void:
 			# Check if peer is actually still connected before sending RPC
 			if net.peer != null and net.peer.get_peer(connected_pid) == null:
 				continue
-			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, 0.0, "idle", off_clothing, off_held, off_backpack)
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
