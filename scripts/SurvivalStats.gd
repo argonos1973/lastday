@@ -57,9 +57,10 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# Ambient temperature effect: below 18°C starts cooling the body
 	if ambient_temperature < 18.0:
 		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
-	# Hot ambient: above 28°C starts heating the body
+	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
-		target_temperature += (ambient_temperature - 28.0) * 0.03
+		var heat_retention := 1.0 + protection * 0.8
+		target_temperature += (ambient_temperature - 28.0) * 0.03 * heat_retention
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
