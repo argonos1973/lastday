@@ -10,6 +10,7 @@ signal died
 @export var max_need := 100.0
 @export var normal_temperature := 36.6
 @export var min_safe_temperature := 35.0
+@export var max_safe_temperature := 38.0
 
 @export var hunger_decay_per_second := 0.020
 @export var thirst_decay_per_second := 0.034
@@ -142,13 +143,16 @@ func from_dict(data: Dictionary) -> void:
 func _update_temperature(delta: float, ambient_temperature: float, warmth: float, rain_exposure: float) -> void:
 	wetness = clamp(wetness + rain_exposure * delta * 0.08 - delta * 0.012, 0.0, 1.0)
 	# Wet clothes dry faster when it's warm, slower when cold
-	var dry_rate := 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
+	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
 	wetness = max(0.0, wetness - delta * dry_rate)
-	var protection := clamp(warmth, 0.0, 1.5)
+	var protection: float = clamp(warmth, 0.0, 1.5)
 	var target_temperature := normal_temperature
 	# Ambient temperature effect: below 15°C starts cooling the body
 	if ambient_temperature < 15.0:
 		target_temperature -= (15.0 - ambient_temperature) * (0.045 / max(0.25, protection + 0.35))
+	# Hot ambient: above 28°C starts heating the body
+	if ambient_temperature > 28.0:
+		target_temperature += (ambient_temperature - 28.0) * 0.03
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
@@ -161,13 +165,16 @@ func _apply_survival_damage(delta: float) -> void:
 		health = max(0.0, health - dehydration_damage_per_second * delta)
 	if temperature < min_safe_temperature:
 		health = max(0.0, health - cold_damage_per_second * delta * (min_safe_temperature - temperature))
+	if temperature > max_safe_temperature:
+		health = max(0.0, health - cold_damage_per_second * delta * (temperature - max_safe_temperature) * 0.8)
+		thirst = max(0.0, thirst - thirst_decay_per_second * 2.0 * delta)
 	if bleeding > 0.0:
 		health = max(0.0, health - bleeding_damage_per_second * delta * (bleeding / 100.0))
 		infection = min(100.0, infection + delta * 0.18)
 	if infection > 0.0:
 		health = max(0.0, health - infection_damage_per_second * delta * (infection / 100.0))
 	# Passive slow health regen when not suffering any critical condition
-	if hunger > 0.0 and thirst > 0.0 and temperature >= min_safe_temperature and bleeding <= 0.0 and infection <= 0.0 and health < max_health:
+	if hunger > 0.0 and thirst > 0.0 and temperature >= min_safe_temperature and temperature <= max_safe_temperature and bleeding <= 0.0 and infection <= 0.0 and health < max_health:
 		var regen_rate := 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2
