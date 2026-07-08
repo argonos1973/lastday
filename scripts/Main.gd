@@ -1220,7 +1220,6 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			return
 	# Mark as gutted
 	animal.set("_gutted", true)
-	animal.set("_rot_timer", 5.1)
 	var meat_drops: Array = []
 	var meat_name := "Carne cruda de lobo"
 	var meat_qty := 5
