@@ -36,6 +36,7 @@ var _wolf_hunger := 100.0
 var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
+var _rot_timer := 0.0
 var health := 150.0
 var max_health := 150.0
 var _is_dead := false
@@ -189,8 +190,16 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		if animal_type == "wolf" and not _is_dead:
 			_update_wolf_sounds(delta)
+		if _is_dead and _gutted:
+			_rot_timer = max(0.0, _rot_timer - delta)
+			if _rot_timer <= 0.0:
+				_remove_corpse()
 		return
 	if _is_dead:
+		if _gutted:
+			_rot_timer = max(0.0, _rot_timer - delta)
+			if _rot_timer <= 0.0:
+				_remove_corpse()
 		return
 	if patrol_points.size() < 2:
 		return
@@ -214,13 +223,13 @@ func _process(delta: float) -> void:
 				_lie_corpse_flat()
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
-			if _wolf_eating_timer <= 0.0:
+			_wolf_hunger = min(100.0, _wolf_hunger + delta * 12.5)
+			if _wolf_hunger >= 100.0 or _wolf_eating_timer <= 0.0:
 				_wolf_eating_timer = 0.0
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
-					_wolf_eating_target._remove_corpse()
+					_wolf_eating_target._gutted = true
+					_wolf_eating_target._rot_timer = 3600.0
 				_wolf_eating_target = null
-				_wolf_hunger = 100.0
-				health = min(max_health, health + 30.0)
 			return
 	if animal_type != "wolf":
 		_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
