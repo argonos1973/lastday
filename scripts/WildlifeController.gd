@@ -781,8 +781,6 @@ func _player_has_backpack(player: Node) -> bool:
 	return false
 
 func _spawn_gut_pickups() -> void:
-	if is_puppet:
-		return
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
