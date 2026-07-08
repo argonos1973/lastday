@@ -79,8 +79,6 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		if _animation_player != null:
 			_animation_player.stop()
 		_lie_corpse_flat()
-		if _gutted:
-			_spawn_gutted_meat()
 	elif not dead:
 		_play_animation_by_name(anim)
 
@@ -232,6 +230,7 @@ func _process(delta: float) -> void:
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
 					_wolf_eating_target._gutted = true
 					_wolf_eating_target._rot_timer = 3600.0
+					_wolf_eating_target._spawn_gut_pickups()
 				_wolf_eating_target = null
 			return
 	if animal_type != "wolf":
@@ -780,6 +779,8 @@ func _player_has_backpack(player: Node) -> bool:
 	return false
 
 func _spawn_gut_pickups() -> void:
+	if is_puppet:
+		return
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
