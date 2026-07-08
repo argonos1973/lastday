@@ -2978,6 +2978,18 @@ func _update_flashlight(delta: float) -> void:
 			_sync_held_item()
 			notice.emit("La linterna se queda sin pilas.")
 
+func take_damage(amount: float, from_knife: bool = false) -> void:
+	if is_puppet:
+		# Puppet: send damage to server via RPC
+		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null:
+			var peer_id: int = get_meta("peer_id", 0)
+			if peer_id != 0:
+				net_node.damage_player.rpc_id(1, peer_id, amount)
+		_spawn_blood_splatter()
+		return
+	apply_damage(amount)
+
 func apply_damage(amount: float) -> void:
 	if is_dead:
 		return
@@ -3066,27 +3078,75 @@ func _melee_attack() -> void:
 	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
 	_attack_cooldown = 0.7 if is_knife else 1.0
-	# Damage the closest wildlife target only (one hit per swing)
-	var closest_animal: Node3D = null
+	# Damage the closest target (wildlife or player) in range
+	var closest_target: Node3D = null
 	var closest_dist := attack_range
+	var fwd := -global_transform.basis.z.normalized()
+	# Check wildlife
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if not (node is Node3D) or not is_instance_valid(node):
 			continue
 		var animal := node as Node3D
 		if animal == self:
 			continue
-		var dist := global_position.distance_to(animal.global_position)
-		if dist > closest_dist:
+		var d := global_position.distance_to(animal.global_position)
+		if d > closest_dist:
 			continue
-		# Only hit animals in front of the player
-		var to_animal := (animal.global_position - global_position).normalized()
-		var forward := -global_transform.basis.z.normalized()
-		if forward.dot(to_animal) < 0.3:
+		var dir := (animal.global_position - global_position).normalized()
+		if fwd.dot(dir) < 0.3:
 			continue
-		closest_animal = animal
-		closest_dist = dist
-	if closest_animal != null and closest_animal.has_method("take_damage"):
-		closest_animal.take_damage(base_damage, is_knife)
+		closest_target = animal
+		closest_dist = d
+	# Check server proxies (net_player_proxy group)
+	for node in get_tree().get_nodes_in_group("net_player_proxy"):
+		if not (node is Node3D) or not is_instance_valid(node):
+			continue
+		var proxy_node := node as Node3D
+		var d := global_position.distance_to(proxy_node.global_position)
+		if d > closest_dist:
+			continue
+		var dir := (proxy_node.global_position - global_position).normalized()
+		if fwd.dot(dir) < 0.3:
+			continue
+		closest_target = proxy_node
+		closest_dist = d
+	# Check remote player avatars (puppets on clients)
+	var scene := get_tree().current_scene
+	if scene != null and scene.get("remote_players") != null:
+		for pid in scene.remote_players.keys():
+			var rp: Node3D = scene.remote_players[pid]
+			if not is_instance_valid(rp):
+				continue
+			var d := global_position.distance_to(rp.global_position)
+			if d > closest_dist:
+				continue
+			var dir := (rp.global_position - global_position).normalized()
+			if fwd.dot(dir) < 0.3:
+				continue
+			closest_target = rp
+			closest_dist = d
+	if closest_target != null:
+		if closest_target.has_method("take_damage"):
+			closest_target.take_damage(base_damage, is_knife)
+		elif closest_target.is_in_group("net_player_proxy"):
+			# Server proxy: apply damage directly on server
+			var peer_id: int = closest_target.get_meta("peer_id", 0)
+			var is_dead: bool = closest_target.get_meta("proxy_dead", false)
+			if not is_dead and peer_id != 0:
+				var hp: float = closest_target.get_meta("proxy_health", 100.0)
+				hp = max(0.0, hp - base_damage)
+				closest_target.set_meta("proxy_health", hp)
+				if hp <= 0.0:
+					closest_target.set_meta("proxy_dead", true)
+					closest_target.remove_from_group("net_player_proxy")
+					print("[NET] Player %d proxy killed by melee at %s" % [peer_id, closest_target.global_position])
+				else:
+					# Send damage to the client if connected
+					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+					if net_node != null and net_node.peer != null and net_node.peer.get_peer(peer_id) != null:
+						net_node.apply_damage_to_client.rpc_id(peer_id, base_damage)
+		elif closest_target.has_method("apply_damage"):
+			closest_target.apply_damage(base_damage)
 		if held != null and held.has_method("reduce_durability"):
 			held.reduce_durability(5.0)
 			if held.is_broken():

@@ -50,6 +50,19 @@ func setup_puppet(kind: String) -> void:
 	animal_type = kind
 	is_puppet = true
 	add_to_group("wildlife")
+	match animal_type:
+		"wolf":
+			health = 150.0
+			max_health = 150.0
+		"deer":
+			health = 80.0
+			max_health = 80.0
+		"fox":
+			health = 50.0
+			max_health = 50.0
+		_:
+			health = 100.0
+			max_health = 100.0
 	_build_animal()
 
 func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool) -> void:
@@ -91,6 +104,20 @@ func setup(kind: String, points: Array) -> void:
 	add_to_group("wildlife")
 	if animal_type == "wolf":
 		add_to_group("wildlife_wolf")
+	# Set health based on animal type
+	match animal_type:
+		"wolf":
+			health = 150.0
+			max_health = 150.0
+		"deer":
+			health = 80.0
+			max_health = 80.0
+		"fox":
+			health = 50.0
+			max_health = 50.0
+		_:
+			health = 100.0
+			max_health = 100.0
 	patrol_points = points.duplicate()
 	if patrol_points.is_empty():
 		patrol_points = [Vector3.ZERO, Vector3(10, 0, 10), Vector3(-10, 0, -10)]

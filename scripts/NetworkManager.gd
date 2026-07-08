@@ -350,6 +350,14 @@ func apply_damage_to_client(amount: float) -> void:
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount)
 
+# Client tells server to damage another player (PvP)
+@rpc("any_peer", "reliable")
+func damage_player(target_peer_id: int, amount: float) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_damage_player"):
+		scene._net_damage_player(target_peer_id, amount, sender)
+
 # Client tells server to damage an animal
 @rpc("any_peer", "reliable")
 func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:

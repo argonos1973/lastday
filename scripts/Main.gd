@@ -1184,6 +1184,32 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) ->
 	if animal != null and animal.has_method("take_damage"):
 		animal.take_damage(amount, from_knife)
 
+func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
+	if net == null or not net.is_host:
+		return
+	# Verify sender is close enough to target (anti-cheat)
+	if server_proxies.has(target_peer_id):
+		var proxy: Node3D = server_proxies[target_peer_id]
+		var is_dead: bool = proxy.get_meta("proxy_dead", false)
+		if is_dead:
+			return
+		# Check distance if sender has a proxy
+		if server_proxies.has(sender):
+			var sender_proxy: Node3D = server_proxies[sender]
+			var dist := sender_proxy.global_position.distance_to(proxy.global_position)
+			if dist > 5.0:
+				return
+		var hp: float = proxy.get_meta("proxy_health", 100.0)
+		hp = max(0.0, hp - amount)
+		proxy.set_meta("proxy_health", hp)
+		if hp <= 0.0:
+			proxy.set_meta("proxy_dead", true)
+			proxy.remove_from_group("net_player_proxy")
+			print("[NET] Player %d killed by player %d at %s" % [target_peer_id, sender, proxy.global_position])
+		# Send damage to the target client if connected
+		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+
 func _update_server_proxies(delta: float) -> void:
 	if net == null or not net.is_dedicated_server:
 		return
@@ -1247,6 +1273,7 @@ func _spawn_remote_player(id: int) -> void:
 		spawn_pos = net.players[id].get("pos", spawn_pos)
 	avatar.position = spawn_pos
 	avatar.is_puppet = true
+	avatar.set_meta("peer_id", id)
 	add_child(avatar)
 	remote_players[id] = avatar
 	# Defer setup — if local player hasn't loaded model yet, _pending_puppets will retry
