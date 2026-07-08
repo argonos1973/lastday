@@ -557,6 +557,7 @@ func interact(player: Node) -> void:
 		return
 	# Puppet: send RPC to server, server handles gutting and meat spawning
 	if is_puppet:
+		print("[WILDLIFE] Puppet interact() called, sending gut_animal RPC for %s" % name)
 		_gutted = true
 		if player != null and player.has_method("play_action_animation"):
 			player.play_action_animation("plant", 5.0)

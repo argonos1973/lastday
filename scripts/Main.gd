@@ -1191,17 +1191,24 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	var real_name := animal_name.replacen("Puppet_", "")
 	var animal := get_node_or_null(real_name)
 	if animal == null or not is_instance_valid(animal):
+		print("[NET] gut_animal: animal %s not found (real_name=%s)" % [animal_name, real_name])
 		return
 	if not animal.get("_is_dead"):
+		print("[NET] gut_animal: animal %s is not dead" % animal_name)
 		return
 	if animal.get("_gutted"):
+		print("[NET] gut_animal: animal %s already gutted" % animal_name)
 		return
 	# Verify sender is close enough (anti-cheat)
 	if server_proxies.has(sender):
 		var sender_proxy: Node3D = server_proxies[sender]
 		var dist := sender_proxy.global_position.distance_to(animal.global_position)
+		print("[NET] gut_animal: dist=%.1f (max 5.0)" % dist)
 		if dist > 5.0:
+			print("[NET] gut_animal: too far, rejecting")
 			return
+	else:
+		print("[NET] gut_animal: no server proxy for sender %d" % sender)
 	# Mark as gutted
 	animal.set("_gutted", true)
 	var meat_drops: Array = []
