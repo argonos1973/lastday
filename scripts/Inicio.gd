@@ -33,7 +33,6 @@ func _ready() -> void:
 		if _net.join_game(ip):
 			print("[CLIENT] Conectando a %s..." % ip)
 			_mode = "join"
-			_started = true
 			get_tree().create_timer(1.0).timeout.connect(_start_game)
 		else:
 			print("[CLIENT] Error al conectar a %s" % ip)
