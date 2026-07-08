@@ -70,14 +70,17 @@ func setup_puppet(kind: String) -> void:
 			max_health = 100.0
 	_build_animal()
 
-func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool) -> void:
+func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool) -> void:
 	global_position = global_position.lerp(pos, 0.2)
 	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
 	if dead and not _is_dead:
 		_is_dead = true
+		_gutted = gutted
 		if _animation_player != null:
 			_animation_player.stop()
 		_lie_corpse_flat()
+		if _gutted:
+			_spawn_gutted_meat()
 	elif not dead:
 		_play_animation_by_name(anim)
 
@@ -808,8 +811,11 @@ func _remove_corpse() -> void:
 	remove_from_group("interactable")
 	if is_instance_valid(_corpse_body):
 		_corpse_body.queue_free()
-	_corpse_body = null
+		_corpse_body = null
 	queue_free()
+
+func _spawn_gutted_meat() -> void:
+	_spawn_gut_pickups()
 
 func _find_skeleton(root: Node) -> Skeleton3D:
 	if root is Skeleton3D:

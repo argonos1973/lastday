@@ -1570,7 +1570,8 @@ func _broadcast_animals() -> void:
 			"z": round(pos.z * 100.0) / 100.0,
 			"r": round(animal.rotation.y * 100.0) / 100.0,
 			"a": str(animal.get("current_anim_keyword")),
-			"d": bool(animal.get("_is_dead"))
+			"d": bool(animal.get("_is_dead")),
+			"g": bool(animal.get("_gutted"))
 		}
 	net.animals = data
 	_animal_debug_timer += 1
@@ -1609,7 +1610,7 @@ func _update_puppet_animals() -> void:
 			puppet_animals[aid] = puppet
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
-			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)))
+			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
 	# Remove puppets that no longer exist on the server
 	var stale := []
 	for aid in puppet_animals.keys():
