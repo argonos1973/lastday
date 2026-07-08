@@ -1251,12 +1251,10 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 		animal.queue_free()
 	# Save world state
 	_save_world_change_silent()
-	# Notify all clients (except sender) to remove the animal and spawn meat
+	# Notify all clients (including sender) to remove the animal and spawn meat
 	if net.peer != null:
 		for pid in net.players.keys():
 			if pid == multiplayer.get_unique_id():
-				continue
-			if pid == sender:
 				continue
 			if net.players[pid].get("offline", false):
 				continue
