@@ -72,7 +72,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
-	body_temperature = lerp(body_temperature, target_temperature, delta * 0.15)
+	body_temperature = lerp(body_temperature, target_temperature, delta * 0.025)
 
 	if hunger <= 0.0:
 		health -= 0.8 * delta
