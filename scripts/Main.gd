@@ -1264,20 +1264,21 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	print("[NET] Animal %s gutted by player %d, %d meat spawned" % [animal_name, sender, meat_drops.size()])
 
 func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
+	# Fix key: animal_name may be "Puppet_X" but puppet_animals is keyed by "X"
+	var puppet_key := animal_name.replacen("Puppet_", "")
 	# Delay removal and meat spawning by 5s to match the gutting animation
-	var animal_name_ref: String = animal_name
 	var meat_drops_ref: Array = meat_drops
 	var t := get_tree().create_timer(5.0)
 	t.timeout.connect(func():
 		# Remove the puppet animal
-		if puppet_animals.has(animal_name_ref):
-			var puppet: Node3D = puppet_animals[animal_name_ref]
+		if puppet_animals.has(puppet_key):
+			var puppet: Node3D = puppet_animals[puppet_key]
 			if is_instance_valid(puppet):
 				puppet.queue_free()
-			puppet_animals.erase(animal_name_ref)
+			puppet_animals.erase(puppet_key)
 		# Also remove from net.animals so it doesn't respawn
-		if net != null and net.animals.has(animal_name_ref):
-			net.animals.erase(animal_name_ref)
+		if net != null and net.animals.has(puppet_key):
+			net.animals.erase(puppet_key)
 		# Spawn meat drops on this client
 		for drop in meat_drops_ref:
 			var mid: String = str(drop.get("id", ""))
@@ -1286,7 +1287,7 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 			var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
 			if not world_actions_by_id.has(mid):
 				_spawn_raw_meat_visual(mid, mname, mpos)
-		print("[NET] Animal %s gutted remotely, %d meat spawned" % [animal_name_ref, meat_drops_ref.size()])
+		print("[NET] Animal %s gutted remotely, %d meat spawned" % [puppet_key, meat_drops_ref.size()])
 	)
 
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
@@ -1604,12 +1605,12 @@ func _update_puppet_animals() -> void:
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
 			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
-	# Remove puppets that no longer exist on the server (unless dead - those are removed by _net_animal_gutted after animation)
+	# Remove puppets that no longer exist on the server (unless dead/gutted - those are removed by _net_animal_gutted after animation)
 	var stale := []
 	for aid in puppet_animals.keys():
 		if not net.animals.has(aid):
 			var puppet_node = puppet_animals[aid]
-			if is_instance_valid(puppet_node) and puppet_node.get("_is_dead"):
+			if is_instance_valid(puppet_node) and (puppet_node.get("_is_dead") or puppet_node.get("_gutted")):
 				continue
 			stale.append(aid)
 	for aid in stale:
