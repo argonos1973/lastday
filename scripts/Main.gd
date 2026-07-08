@@ -33,6 +33,7 @@ var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
 var _animal_debug_timer := 0
+var _client_animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
 var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
@@ -489,6 +490,10 @@ func _process(delta: float) -> void:
 		return
 	if net != null and net.is_connected and not net.is_host:
 		_update_puppet_animals()
+		if _client_animal_debug_timer < 100:
+			_client_animal_debug_timer += 1
+			if _client_animal_debug_timer == 100:
+				print("[NET] Client animal sync: net.animals=%d puppet_animals=%d" % [net.animals.size(), puppet_animals.size()])
 	if player == null or day_cycle == null:
 		_process_pending_puppets()
 		return
@@ -901,11 +906,11 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	_send_world_state_to_client(peer_id)
 
-func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
+func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
-		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, rot)
+		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -954,8 +959,9 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_held: String = existing.get_meta("saved_held_item", "")
 			var saved_held_idx: int = existing.get_meta("saved_held_idx", 0)
 			var saved_sleeping: bool = existing.get_meta("saved_sleeping", false)
+			var saved_sitting: bool = existing.get_meta("saved_sitting", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_rot)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
 			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
@@ -1017,7 +1023,7 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
 
 # Server: store player inventory/stats/equipment on their proxy
-func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
+func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
 	if server_proxies.has(peer_id):
 		var proxy: Node3D = server_proxies[peer_id]
 		proxy.set_meta("saved_inventory", items_data)
@@ -1029,10 +1035,11 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 		proxy.set_meta("saved_held_item", held_item)
 		proxy.set_meta("saved_held_idx", held_idx)
 		proxy.set_meta("saved_sleeping", sleeping)
+		proxy.set_meta("saved_sitting", sitting)
 		proxy.set_meta("saved_rot", rot)
 
 # Client: restore inventory/stats/equipment from server on reconnect
-func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
+func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
 	if player == null:
 		return
 	var ItemScript = load("res://scripts/Item.gd")
@@ -1054,6 +1061,12 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	# Restore sleeping state
 	if sleeping and not player.is_sleeping:
 		player.start_sleep()
+	# Restore sitting state
+	if sitting and not player.is_sitting:
+		player.is_sitting = true
+		player._sit_cooldown = 0.3
+		if not player.third_person_sit_animation.is_empty():
+			player.third_person_animation_player.play(player.third_person_sit_animation, 0.1)
 	# Restore equipped items
 	if not equipped_backpack.is_empty():
 		player.equip_backpack(equipped_backpack)
@@ -1292,8 +1305,9 @@ func _sync_local_player_inventory() -> void:
 		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
 		held = player.inventory.items[hi].item_name
 	var sleeping: bool = player.is_sleeping
+	var sitting: bool = player.is_sitting
 	var rot: float = player.rotation.y
-	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, rot)
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot)
 
 func _update_remote_players() -> void:
 	if net == null:
@@ -1387,6 +1401,8 @@ func _broadcast_animals() -> void:
 # Client: spawn/update visual-only puppet animals from server data
 func _update_puppet_animals() -> void:
 	if net == null:
+		return
+	if net.animals.is_empty():
 		return
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
