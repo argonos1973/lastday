@@ -2529,16 +2529,20 @@ func handle_world_action(action, actor) -> void:
 			var animal_kind: String = action.get_meta("animal_type", "wolf")
 			var an_lower := "lobo"
 			var meat_name := "Carne cruda de lobo"
+			var meat_qty := 5
 			match animal_kind:
 				"deer":
 					an_lower = "ciervo"
 					meat_name = "Carne cruda de ciervo"
+					meat_qty = 8
 				"fox":
 					an_lower = "zorro"
 					meat_name = "Carne cruda de zorro"
+					meat_qty = 3
 				_:
 					an_lower = "lobo"
 					meat_name = "Carne cruda de lobo"
+					meat_qty = 5
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
@@ -2548,8 +2552,8 @@ func handle_world_action(action, actor) -> void:
 			var animal_pos: Vector3 = action.global_position
 			var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 			var gut_spawns: Array = []
-			for i in range(5):
-				var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
+			for i in range(meat_qty):
+				var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 				var mpos := animal_pos + offset
 				mpos.y = 0.06
@@ -2565,7 +2569,7 @@ func handle_world_action(action, actor) -> void:
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
 				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
-			actor.notice.emit("Destripar al %s: +5 carne cruda." % an_lower)
+			actor.notice.emit("Destripar al %s: +%d carne cruda." % [an_lower, meat_qty])
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action

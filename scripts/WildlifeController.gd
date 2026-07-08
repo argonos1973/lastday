@@ -516,6 +516,13 @@ func _meat_name() -> String:
 		"fox": return "Carne cruda de zorro"
 		_: return "Carne cruda"
 
+func _meat_count() -> int:
+	match animal_type:
+		"wolf": return 5
+		"deer": return 8
+		"fox": return 3
+		_: return 5
+
 func _corpse_item_name() -> String:
 	match animal_type:
 		"wolf": return "Lobo muerto"
@@ -557,13 +564,14 @@ func interact(player: Node) -> void:
 	# Spawn meat and remove corpse after the 5-second animation finishes
 	var player_ref: Node = player
 	var an_ref := an
+	var meat_qty := _meat_count()
 	var timer := Timer.new()
 	timer.wait_time = 5.0
 	timer.one_shot = true
 	timer.timeout.connect(func():
 		_spawn_gut_pickups()
 		if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
-			player_ref.notice.emit("Destripar al %s: +5 carne cruda, +1 piel." % an_ref)
+			player_ref.notice.emit("Destripar al %s: +%d carne cruda, +1 piel." % [an_ref, meat_qty])
 		_remove_corpse()
 	)
 	add_child(timer)
@@ -629,9 +637,10 @@ func _spawn_gut_pickups() -> void:
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	var base_pos := global_position
 	var meat := _meat_name()
-	# Spawn 5 meat pieces scattered around the corpse
-	for i in range(5):
-		var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
+	var meat_qty := _meat_count()
+	# Spawn meat pieces scattered around the corpse
+	for i in range(meat_qty):
+		var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 		var pos := base_pos + offset
 		pos.y = 0.06
