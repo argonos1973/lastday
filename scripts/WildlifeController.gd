@@ -785,10 +785,11 @@ func _spawn_gut_pickups() -> void:
 	if scene == null:
 		return
 	print("[WILDLIFE] Spawning gutted pickups for %s at %s" % [animal_type, global_position])
-	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	var base_pos := global_position
 	var meat := _meat_name()
 	var meat_qty := _meat_count()
+	var meat_weight := 0.3
+	var meat_use_value := 15.0
 	# Spawn meat pieces scattered around the corpse
 	for i in range(meat_qty):
 		var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
@@ -796,18 +797,8 @@ func _spawn_gut_pickups() -> void:
 		var pos := base_pos + offset
 		pos.y = 0.06
 		var drop_id := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
-		var visual_name := "Pickup_" + drop_id
-		if scene.has_method("_try_instance_external_scene"):
-			scene.call("_try_instance_external_scene", [meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
-		if scene.has_method("_create_world_action"):
-			var action = scene.call("_create_world_action", drop_id, "wolf_meat_raw", meat, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-			if action != null:
-				action.set_meta("visual_name", visual_name)
-				action.set_meta("item_name", meat)
-				action.set_meta("item_type", "food")
-				action.set_meta("item_weight", 0.3)
-				action.set_meta("item_quantity", 1)
-				action.set_meta("item_use_value", 15.0)
+		if scene.has_method("_spawn_ground_pickup"):
+			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id)
 
 func _remove_corpse() -> void:
 	remove_from_group("interactable")
