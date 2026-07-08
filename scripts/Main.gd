@@ -412,7 +412,7 @@ func _ready() -> void:
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
-	set_process(true)
+	print("[LOADING] Countdown started, overlay=%s" % (_loading_overlay != null))
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -422,7 +422,6 @@ func _process_loading_countdown(delta: float) -> void:
 		_loading_overlay.queue_free()
 		_loading_overlay = null
 		_loading_label = null
-		set_process(false)
 		return
 	var secs := ceili(_loading_countdown)
 	if _loading_label != null:
@@ -870,6 +869,7 @@ func _on_remote_player_connected(id: int) -> void:
 		_spawn_remote_player(id)
 
 func _on_remote_player_disconnected(id: int) -> void:
+	print("[NET] _on_remote_player_disconnected: id=%d, has_remote=%s" % [id, remote_players.has(id)])
 	if remote_players.has(id):
 		var rp: Node3D = remote_players[id]
 		rp.queue_free()
@@ -1162,7 +1162,9 @@ func _update_server_proxies(delta: float) -> void:
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
+		print("[NET] _spawn_remote_player: already has puppet for %d, skipping" % id)
 		return
+	print("[NET] _spawn_remote_player: creating puppet for %d" % id)
 	# PlayerController puppet — model loads from cache (instant if local player already loaded)
 	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
@@ -1281,6 +1283,7 @@ func _update_remote_players() -> void:
 			stale.queue_free()
 		remote_players.erase(pid)
 		print("[NET] Removed stale remote player %d (no longer in player list)" % pid)
+	print("[NET] _update_remote_players: players=%s remote=%s" % [net.players.keys(), remote_players.keys()])
 	for pid in net.players.keys():
 		if pid == net.get_my_id():
 			continue
