@@ -901,7 +901,8 @@ func _on_remote_player_disconnected(id: int) -> void:
 	if server_proxies.has(id):
 		var sp: Node3D = server_proxies[id]
 		sp.set_meta("disconnected", true)
-		sp.set_meta("protection_timer", 0.0)
+		sp.set_meta("protection_timer", 999999.0)
+		sp.remove_from_group("net_player_proxy")
 		var cid: String = sp.get_meta("client_id", "")
 		# Update net.players with proxy position and equipment for other clients to see
 		if net != null and net.is_host and net.players.has(id):
@@ -968,6 +969,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.set_meta("disconnected", false)
 			existing.set_meta("reconnecting", true)
 			existing.set_meta("protection_timer", 20.0)
+			existing.add_to_group("net_player_proxy")
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
 			var saved_pos: Vector3 = existing.global_position
