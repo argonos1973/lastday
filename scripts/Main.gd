@@ -2958,14 +2958,20 @@ func handle_world_action(action, actor) -> void:
 			var tree_pos: Vector3 = action.position
 			var log1_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
 			var log2_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
-			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.0, 0.06, 0.3), 1.2, 2, 0.0, log1_id)
-			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.5, 0.06, -0.2), 1.2, 2, 0.0, log2_id)
+			var log3_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var log4_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.0, 0.06, 0.3), 1.2, 1, 0.0, log1_id)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(1.5, 0.06, -0.2), 1.2, 1, 0.0, log2_id)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(0.5, 0.06, 0.8), 1.2, 1, 0.0, log3_id)
+			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(2.0, 0.06, 0.1), 1.2, 1, 0.0, log4_id)
 			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
 			action.mark_depleted()
 			_save_world_change_silent()
 			var tree_spawns: Array = [
-				{"id": log1_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.0, 0.06, 0.3), "weight": 1.2, "qty": 2, "use": 0.0},
-				{"id": log2_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.5, 0.06, -0.2), "weight": 1.2, "qty": 2, "use": 0.0},
+				{"id": log1_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.0, 0.06, 0.3), "weight": 1.2, "qty": 1, "use": 0.0},
+				{"id": log2_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.5, 0.06, -0.2), "weight": 1.2, "qty": 1, "use": 0.0},
+				{"id": log3_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(0.5, 0.06, 0.8), "weight": 1.2, "qty": 1, "use": 0.0},
+				{"id": log4_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(2.0, 0.06, 0.1), "weight": 1.2, "qty": 1, "use": 0.0},
 			]
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, tree_spawns, "tree_remains", tree_pos)
