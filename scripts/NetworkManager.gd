@@ -430,9 +430,11 @@ func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Arra
 # Client tells server a door was toggled (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func door_state_changed(door_name: String, is_open: bool) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	print("[NET] door_state_changed: door=%s open=%s from=%d" % [door_name, is_open, sender])
 	if is_host and peer != null:
 		for pid in players.keys():
-			if pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
+			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
 				if peer.get_peer(pid) != null:
 					door_state_changed.rpc_id(pid, door_name, is_open)
 	var scene := get_tree().current_scene

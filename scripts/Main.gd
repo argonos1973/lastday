@@ -1125,6 +1125,7 @@ func _net_item_picked_up(action_id: String) -> void:
 
 func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 	var door := get_node_or_null(door_name)
+	print("[NET] _net_door_state_changed: door=%s open=%s found=%s" % [door_name, is_open, door != null])
 	if door != null and door is Door:
 		if door.is_open != is_open:
 			door.is_open = is_open
