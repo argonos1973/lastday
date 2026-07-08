@@ -368,6 +368,21 @@ func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void
 	if scene != null and scene.has_method("_net_damage_animal"):
 		scene._net_damage_animal(animal_name, amount, from_knife)
 
+# Client tells server to gut an animal (server processes and relays to all clients)
+@rpc("any_peer", "reliable")
+func gut_animal(animal_name: String, collect_mode: bool = false) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_gut_animal"):
+		scene._net_gut_animal(animal_name, sender, collect_mode)
+
+# Server tells all clients to remove gutted animal and spawn meat
+@rpc("authority", "reliable")
+func animal_gutted(animal_name: String, meat_drops: Array) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_animal_gutted"):
+		scene._net_animal_gutted(animal_name, meat_drops)
+
 # Client tells server it picked up an item (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func item_picked_up(action_id: String) -> void:

@@ -1184,6 +1184,112 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) ->
 	if animal != null and animal.has_method("take_damage"):
 		animal.take_damage(amount, from_knife)
 
+func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = false) -> void:
+	if net == null or not net.is_host:
+		return
+	# Extract real animal name from puppet name
+	var real_name := animal_name.replacen("Puppet_", "")
+	var animal := get_node_or_null(real_name)
+	if animal == null or not is_instance_valid(animal):
+		return
+	if not animal.get("_is_dead"):
+		return
+	if animal.get("_gutted"):
+		return
+	# Verify sender is close enough (anti-cheat)
+	if server_proxies.has(sender):
+		var sender_proxy: Node3D = server_proxies[sender]
+		var dist := sender_proxy.global_position.distance_to(animal.global_position)
+		if dist > 5.0:
+			return
+	# Mark as gutted
+	animal.set("_gutted", true)
+	var meat_drops: Array = []
+	if not collect_mode:
+		var animal_type: String = animal.get("animal_type")
+		var meat_name := "Carne cruda de lobo"
+		var meat_qty := 5
+		match animal_type:
+			"deer":
+				meat_name = "Carne cruda de ciervo"
+				meat_qty = 8
+			"fox":
+				meat_name = "Carne cruda de zorro"
+				meat_qty = 3
+			_:
+				meat_name = "Carne cruda de lobo"
+				meat_qty = 5
+		# Spawn meat on server
+		var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+		var base_pos: Vector3 = animal.global_position
+		for i in range(meat_qty):
+			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
+			var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+			var mpos := base_pos + offset
+			mpos.y = 0.06
+			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+			var mvis := "Pickup_" + mid
+			_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+			_mark_world_action_visual(mvis)
+			var maction = _create_world_action(mid, "wolf_meat_raw", meat_name, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+			if maction != null:
+				maction.set_meta("visual_name", mvis)
+				maction.set_meta("item_name", meat_name)
+				maction.set_meta("item_type", "food")
+				maction.set_meta("item_weight", 0.3)
+				maction.set_meta("item_quantity", 1)
+				maction.set_meta("item_use_value", 15.0)
+			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "visual": mvis})
+	# Remove the animal from server
+	if animal.has_method("_remove_corpse"):
+		animal._remove_corpse()
+	else:
+		animal.queue_free()
+	# Save world state
+	_save_world_change_silent()
+	# Notify all clients to remove the animal and spawn meat
+	if net.peer != null:
+		for pid in net.players.keys():
+			if pid == multiplayer.get_unique_id():
+				continue
+			if net.players[pid].get("offline", false):
+				continue
+			if net.peer.get_peer(pid) == null:
+				continue
+			net.animal_gutted.rpc_id(pid, animal_name, meat_drops)
+	print("[NET] Animal %s gutted by player %d, %d meat spawned" % [animal_name, sender, meat_drops.size()])
+
+func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
+	# Remove the puppet animal
+	if puppet_animals.has(animal_name):
+		var puppet: Node3D = puppet_animals[animal_name]
+		if is_instance_valid(puppet):
+			puppet.queue_free()
+		puppet_animals.erase(animal_name)
+	# Also remove from net.animals so it doesn't respawn
+	if net != null and net.animals.has(animal_name):
+		net.animals.erase(animal_name)
+	# Spawn meat drops on this client
+	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+	for drop in meat_drops:
+		var mid: String = str(drop.get("id", ""))
+		var mname: String = str(drop.get("name", "Carne cruda"))
+		var mvis: String = str(drop.get("visual", "Pickup_" + mid))
+		var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
+		var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
+		if not world_actions_by_id.has(mid):
+			_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+			_mark_world_action_visual(mvis)
+			var maction = _create_world_action(mid, "wolf_meat_raw", mname, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+			if maction != null:
+				maction.set_meta("visual_name", mvis)
+				maction.set_meta("item_name", mname)
+				maction.set_meta("item_type", "food")
+				maction.set_meta("item_weight", 0.3)
+				maction.set_meta("item_quantity", 1)
+				maction.set_meta("item_use_value", 15.0)
+	print("[NET] Animal %s gutted remotely, %d meat spawned" % [animal_name, meat_drops.size()])
+
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
 	if net == null or not net.is_host:
 		return
@@ -3019,7 +3125,7 @@ func handle_world_action_collect(action, actor) -> void:
 			if actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(60.0)
 			actor.stats.changed.emit()
-			actor.notice.emit("Comes carne cruda de lobo. Te sientes mal del estomago.")
+			actor.notice.emit("Comes %s. Te sientes mal del estomago." % str(action.get_meta("item_name", "carne cruda")))
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()

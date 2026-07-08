@@ -555,7 +555,32 @@ func interact(player: Node) -> void:
 		if player != null and player.has_signal("notice"):
 			player.notice.emit("Necesitas un cuchillo o hacha para destripar.")
 		return
-	# Gut: spawn 5 meat pieces and 1 skin on the ground after animation
+	# Puppet: send RPC to server, server handles gutting and meat spawning
+	if is_puppet:
+		_gutted = true
+		if player != null and player.has_method("play_action_animation"):
+			player.play_action_animation("plant", 5.0)
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("Destripando al %s..." % an)
+		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null:
+			net_node.gut_animal.rpc_id(1, name)
+		# Remove puppet after animation
+		var player_ref: Node = player
+		var an_ref := an
+		var meat_qty := _meat_count()
+		var timer := Timer.new()
+		timer.wait_time = 5.0
+		timer.one_shot = true
+		timer.timeout.connect(func():
+			if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
+				player_ref.notice.emit("Destripar al %s: +%d carne cruda, +1 piel." % [an_ref, meat_qty])
+			_remove_corpse()
+		)
+		add_child(timer)
+		timer.start()
+		return
+	# Server/local: gut directly
 	_gutted = true
 	if player != null and player.has_method("play_action_animation"):
 		player.play_action_animation("plant", 5.0)
@@ -600,6 +625,11 @@ func collect(player: Node) -> void:
 	if added:
 		if player != null and player.has_signal("notice"):
 			player.notice.emit("Coges el %s entero." % an)
+		# For puppets, notify server to remove the animal
+		if is_puppet:
+			var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+			if net_node != null:
+				net_node.gut_animal.rpc_id(1, name, true)
 		_remove_corpse()
 	else:
 		if player != null and player.has_signal("notice"):

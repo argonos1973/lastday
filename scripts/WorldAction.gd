@@ -79,10 +79,10 @@ func get_interaction_text(_player = null) -> String:
 	match action_type:
 		"gut_wolf":
 			if get_meta("gutted", false):
-				return "Lobo vacio"
-			return "Destripar lobo - E (cuchillo/hacha) | Coger - C (mochila)"
+				return "%s vacio" % display_name
+			return "Destripar %s - E (cuchillo/hacha) | Coger - C (mochila)" % display_name.to_lower()
 		"wolf_meat_raw":
-			return "Carne cruda de lobo - [E] Recoger | [C] Comer (cruda)"
+			return "%s - [E] Recoger | [C] Comer (cruda)" % display_name
 		"fell_tree":
 			return "%s - talar con hacha - E (10s)" % display_name
 		"fell_bush":
@@ -120,21 +120,33 @@ func get_interaction_text(_player = null) -> String:
 	return "%s - E" % display_name
 
 func to_dict() -> Dictionary:
+	var meta_dict := {}
+	for mk in get_meta_list():
+		meta_dict[mk] = get_meta(mk)
 	return {
 		"id": action_id,
 		"action_type": action_type,
+		"display_name": display_name,
 		"depleted": depleted,
 		"state": action_state,
-		"growth": growth
+		"growth": growth,
+		"meta": meta_dict
 	}
 
 func from_dict(data: Dictionary) -> void:
 	var saved_type := str(data.get("action_type", ""))
 	if not saved_type.is_empty():
 		action_type = saved_type
+	var saved_name := str(data.get("display_name", ""))
+	if not saved_name.is_empty():
+		display_name = saved_name
 	depleted = bool(data.get("depleted", depleted))
 	action_state = str(data.get("state", action_state))
 	growth = float(data.get("growth", growth))
+	var saved_meta = data.get("meta", {})
+	if saved_meta is Dictionary:
+		for mk in saved_meta.keys():
+			set_meta(mk, saved_meta[mk])
 	if depleted and not repeatable:
 		mark_depleted()
 	else:
