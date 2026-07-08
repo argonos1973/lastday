@@ -882,7 +882,7 @@ func _on_remote_player_disconnected(id: int) -> void:
 			var rp: Node3D = remote_players[id]
 			var target_pos: Vector3 = net.players[id].get("pos", rp.global_position)
 			if rp.has_method("puppet_apply"):
-				rp.puppet_apply(target_pos, net.players[id].get("rot", 0.0), "idle")
+				rp.puppet_apply(target_pos, net.players[id].get("rot", 0.0), net.players[id].get("anim", "idle"))
 			else:
 				rp.global_position = target_pos
 		print("[NET] Player %d went offline, keeping puppet at %s" % [id, net.players[id].get("pos", Vector3.ZERO)])
@@ -1419,7 +1419,7 @@ func _update_remote_players() -> void:
 		if is_offline:
 			# Snap to exact position for offline characters
 			if rp.has_method("puppet_apply"):
-				rp.puppet_apply(target_pos, target_rot, "idle")
+				rp.puppet_apply(target_pos, target_rot, anim)
 				rp.puppet_apply_visuals(clothing, held, backpack)
 			else:
 				rp.global_position = target_pos

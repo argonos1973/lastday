@@ -2846,6 +2846,8 @@ func _loop_third_person_animation(animation_name: String) -> void:
 		third_person_animation_player.play(animation_name, 0.25)
 
 func _get_current_anim() -> String:
+	if is_dead:
+		return "dead"
 	if third_person_animation_player != null:
 		return third_person_animation_player.current_animation
 	return "idle"
