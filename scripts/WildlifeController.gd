@@ -204,6 +204,14 @@ func _process(delta: float) -> void:
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
 		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.3)
+		if _wolf_hunger <= 0.0:
+			health = max(0.0, health - delta * 5.0)
+			if health <= 0.0 and not _is_dead:
+				_is_dead = true
+				_hit_flash_timer = 2.0
+				if _animation_player != null:
+					_animation_player.stop()
+				_lie_corpse_flat()
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
 			if _wolf_eating_timer <= 0.0:
@@ -212,6 +220,7 @@ func _process(delta: float) -> void:
 					_wolf_eating_target._remove_corpse()
 				_wolf_eating_target = null
 				_wolf_hunger = 100.0
+				health = min(max_health, health + 30.0)
 			return
 	if animal_type != "wolf":
 		_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
