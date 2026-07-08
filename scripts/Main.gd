@@ -1530,14 +1530,19 @@ func _update_remote_players() -> void:
 				rp.rotation.y = target_rot
 		else:
 			# Smooth interpolation for active players
-			var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
-			var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
-			if rp.has_method("puppet_apply"):
-				rp.puppet_apply(smooth_pos, smooth_rot, anim)
-				rp.puppet_apply_visuals(clothing, held, backpack)
+			if rp.get("is_dead") == true:
+				if rp.has_method("puppet_apply"):
+					rp.puppet_apply(target_pos, target_rot, anim)
+					rp.puppet_apply_visuals(clothing, held, backpack)
 			else:
-				rp.global_position = smooth_pos
-				rp.rotation.y = smooth_rot
+				var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
+				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
+				if rp.has_method("puppet_apply"):
+					rp.puppet_apply(smooth_pos, smooth_rot, anim)
+					rp.puppet_apply_visuals(clothing, held, backpack)
+				else:
+					rp.global_position = smooth_pos
+					rp.rotation.y = smooth_rot
 
 # Server: collect all wildlife states and broadcast to clients
 func _broadcast_animals() -> void:

@@ -277,6 +277,7 @@ var _jump_apex := false
 var _jump_animation_timer := 0.0
 var is_dead := false
 var death_pose_time := 0.0
+var _puppet_death_remove_timer := 0.0
 var is_sprinting := false
 var is_crouching := false
 var in_shelter := false
@@ -337,9 +338,15 @@ var _puppet_held := ""
 var _puppet_backpack := ""
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
-	global_position = pos
+	if not is_dead:
+		global_position = pos
 	rotation.y = rot
 	_puppet_anim = anim
+	if anim.to_lower().find("dead") >= 0 and not is_dead:
+		is_dead = true
+		death_pose_time = 0.0
+		_puppet_death_remove_timer = 0.0
+		flashlight.visible = false
 	if third_person_animation_player != null and anim != _puppet_current_anim:
 		var target := ""
 		# Try exact animation name first (both clients load same animations)
@@ -459,10 +466,19 @@ func _update_puppet_held_item(item_name: String) -> void:
 		_:
 			_build_third_person_pack()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
 		_update_backpack_socket()
+		if is_dead:
+			_update_death_pose(delta)
+			_puppet_death_remove_timer += delta
+			if _puppet_death_remove_timer > 30.0:
+				var character: Node3D = third_person_model if third_person_model != null else body_mesh
+				if character != null:
+					character.visible = false
+				if _puppet_death_remove_timer > 32.0:
+					queue_free()
 
 func _ready() -> void:
 	if is_puppet:
