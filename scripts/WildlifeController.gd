@@ -203,7 +203,7 @@ func _process(delta: float) -> void:
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
-		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.8)
+		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.3)
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
 			if _wolf_eating_timer <= 0.0:
@@ -270,7 +270,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 	_attack_timer -= delta
 	if _noise_attract_timer > 0.0:
 		_noise_attract_timer -= delta
-	var is_hungry := _wolf_hunger < 50.0
+	var is_hungry := _wolf_hunger < 30.0
 	if is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
@@ -464,8 +464,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 2.8
 				if dist_to_prey < 1.5:
 					if _attack_cooldown <= 0.0:
-						_attack_cooldown = 3.0
-						nearest_prey.take_damage(25.0, false)
+						_attack_cooldown = 5.0
+						nearest_prey.take_damage(15.0, false)
 						_play_wolf_sound("attack")
 					_play_animation_by_name("run")
 				else:
@@ -523,7 +523,7 @@ func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
 	var flee_dist := _flee_distance()
-	var flee_speed := move_speed * (2.8 if animal_type == "fox" else 2.2)
+	var flee_speed := move_speed * (3.2 if animal_type == "fox" else 2.6)
 	# Flee from wolves (larger distance if already fleeing)
 	var nearest_wolf := _find_nearest_animal("wolf")
 	if nearest_wolf != null and is_instance_valid(nearest_wolf):
