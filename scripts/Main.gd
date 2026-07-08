@@ -1233,8 +1233,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			_:
 				meat_name = "Carne cruda de lobo"
 				meat_qty = 5
-		# Spawn meat on server
-		var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+		# Spawn meat on server using _spawn_ground_pickup which syncs to clients
 		var base_pos: Vector3 = animal.global_position
 		for i in range(meat_qty):
 			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
@@ -1242,18 +1241,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var mpos := base_pos + offset
 			mpos.y = 0.06
 			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
-			var mvis := "Pickup_" + mid
-			_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
-			_mark_world_action_visual(mvis)
-			var maction = _create_world_action(mid, "wolf_meat_raw", meat_name, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-			if maction != null:
-				maction.set_meta("visual_name", mvis)
-				maction.set_meta("item_name", meat_name)
-				maction.set_meta("item_type", "food")
-				maction.set_meta("item_weight", 0.3)
-				maction.set_meta("item_quantity", 1)
-				maction.set_meta("item_use_value", 15.0)
-			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "visual": mvis, "action_type": "wolf_meat_raw"})
+			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid)
+			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
 			_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
