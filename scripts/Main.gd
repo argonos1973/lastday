@@ -2617,12 +2617,14 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-	# Spawn any items that resulted from the action
+	# Spawn any items that resulted from the action (skip if already spawned locally)
 	for spawn in spawns:
-		_spawn_ground_pickup(
-			spawn["name"], spawn["type"], spawn["pos"],
-			spawn["weight"], spawn["qty"], spawn["use"], spawn["id"]
-		)
+		var spawn_id := str(spawn.get("id", ""))
+		if not world_actions_by_id.has(spawn_id):
+			_spawn_ground_pickup(
+				spawn["name"], spawn["type"], spawn["pos"],
+				spawn["weight"], spawn["qty"], spawn["use"], spawn_id
+			)
 	# Create extra visual if specified
 	if extra_visual == "tree_remains":
 		_create_cut_tree_remains(extra_pos)
