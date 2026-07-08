@@ -1316,10 +1316,68 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.set_meta("proxy_dead", true)
 			proxy.remove_from_group("net_player_proxy")
 			print("[NET] Player %d killed by player %d at %s" % [target_peer_id, sender, proxy.global_position])
+			_drop_player_loot(target_peer_id, proxy)
 			_broadcast_player_death(target_peer_id, proxy)
 		# Send damage to the target client if connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+
+func _net_player_died(peer_id: int) -> void:
+	if net == null or not net.is_host:
+		return
+	if not server_proxies.has(peer_id):
+		return
+	var proxy: Node3D = server_proxies[peer_id]
+	if proxy.get_meta("proxy_dead", false):
+		return
+	proxy.set_meta("proxy_dead", true)
+	proxy.remove_from_group("net_player_proxy")
+	print("[NET] Player %d died (client notification)" % peer_id)
+	_drop_player_loot(peer_id, proxy)
+	_broadcast_player_death(peer_id, proxy)
+
+func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
+	if proxy.get_meta("loot_dropped", false):
+		return
+	proxy.set_meta("loot_dropped", true)
+	var pos: Vector3 = proxy.global_position
+	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
+	print("[NET] Player %d dropping %d items as loot at %s" % [peer_id, saved_inv.size(), pos])
+	# Drop each item as a pickup on the server and notify all clients
+	var drops: Array = []
+	for i in range(saved_inv.size()):
+		var d: Dictionary = saved_inv[i]
+		var iname: String = str(d.get("item_name", ""))
+		var itype: String = str(d.get("item_type", ""))
+		var iweight: float = float(d.get("weight", 0.1))
+		var iqty: int = int(d.get("quantity", 1))
+		var iuse: float = float(d.get("use_value", 0.0))
+		if iname.is_empty():
+			continue
+		var angle := TAU * float(i) / float(max(1, saved_inv.size())) + randf_range(-0.3, 0.3)
+		var offset := Vector3(cos(angle) * randf_range(0.4, 1.0), 0.0, sin(angle) * randf_range(0.4, 1.0))
+		var dpos := pos + offset
+		dpos.y = 0.06
+		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
+		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did)
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse})
+		_dropped_items.append({"id": did, "name": iname, "type": itype, "weight": iweight, "qty": iqty, "use": iuse, "pos": [dpos.x, dpos.y, dpos.z]})
+	_save_world_change_silent()
+	# Notify all clients to spawn the loot
+	if net.peer != null:
+		for pid in net.players.keys():
+			if pid == multiplayer.get_unique_id():
+				continue
+			if net.players[pid].get("offline", false):
+				continue
+			if net.peer.get_peer(pid) == null:
+				continue
+			for drop in drops:
+				var dpos_arr = drop["pos"]
+				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
+	# Clear saved inventory so reconnecting player doesn't get items back
+	proxy.set_meta("saved_inventory", [])
 
 func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	if net == null or net.peer == null:
@@ -1628,6 +1686,9 @@ func _on_player_died() -> void:
 	game_over = true
 	if player != null and player.has_method("die"):
 		player.die()
+	# Notify server so it drops our inventory as loot
+	if net != null and net.is_connected and not net.is_host:
+		net.notify_death.rpc_id(1)
 	SaveSystemScript.delete_save()
 	if hud != null:
 		hud.show_notice("Has muerto. El juego se cerrara...")
