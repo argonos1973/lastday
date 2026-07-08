@@ -674,6 +674,7 @@ func interact(player: Node) -> void:
 	# Puppet: only play animation and notify server - server handles meat spawning and corpse removal
 	if is_puppet:
 		_gutted = true
+		_rot_timer = 5.1
 		if player != null and player.has_method("play_action_animation"):
 			player.play_action_animation("plant", 5.0)
 		if player != null and player.has_signal("notice"):
