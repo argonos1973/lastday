@@ -1233,66 +1233,61 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			_:
 				meat_name = "Carne cruda de lobo"
 				meat_qty = 5
-	# Delay meat spawning, removal and notification by 5 seconds to match the gutting animation
-	var animal_ref: Node = animal
-	var animal_name_ref: String = animal_name
-	var meat_drops_ref: Array = meat_drops
-	var sender_ref: int = sender
-	var meat_name_ref: String = meat_name
-	var meat_qty_ref: int = meat_qty
-	var base_pos_ref: Vector3 = animal.global_position
-	var collect_mode_ref: bool = collect_mode
-	var t := get_tree().create_timer(5.0)
-	t.timeout.connect(func():
-		if not collect_mode_ref:
-			# Spawn meat on server after animation
-			for i in range(meat_qty_ref):
-				var angle := TAU * float(i) / float(meat_qty_ref) + randf_range(-0.3, 0.3)
-				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
-				var mpos := base_pos_ref + offset
-				mpos.y = 0.06
-				var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
-				_spawn_ground_pickup(meat_name_ref, "food", mpos, 0.3, 1, 15.0, mid, "wolf_meat_raw")
-				meat_drops_ref.append({"id": mid, "name": meat_name_ref, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
-				_dropped_items.append({"id": mid, "name": meat_name_ref, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
-		if animal_ref != null and is_instance_valid(animal_ref):
-			if animal_ref.has_method("_remove_corpse"):
-				animal_ref._remove_corpse()
-			else:
-				animal_ref.queue_free()
-		_save_world_change_silent()
-		# Notify all clients (including sender) to remove the animal and spawn meat
-		if net.peer != null:
-			for pid in net.players.keys():
-				if pid == multiplayer.get_unique_id():
-					continue
-				if net.players[pid].get("offline", false):
-					continue
-				if net.peer.get_peer(pid) == null:
-					continue
-				net.animal_gutted.rpc_id(pid, animal_name_ref, meat_drops_ref)
-	)
-	print("[NET] Animal %s gutted by player %d, %d meat will spawn in 5s" % [animal_name, sender, meat_qty])
+	# Spawn meat immediately on server and notify clients - clients delay puppet removal to match animation
+	if not collect_mode:
+		var base_pos: Vector3 = animal.global_position
+		for i in range(meat_qty):
+			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
+			var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+			var mpos := base_pos + offset
+			mpos.y = 0.06
+			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, "wolf_meat_raw")
+			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
+			_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
+	# Remove the animal from server
+	if animal.has_method("_remove_corpse"):
+		animal._remove_corpse()
+	else:
+		animal.queue_free()
+	_save_world_change_silent()
+	# Notify all clients to remove the animal and spawn meat (clients delay to match animation)
+	if net.peer != null:
+		for pid in net.players.keys():
+			if pid == multiplayer.get_unique_id():
+				continue
+			if net.players[pid].get("offline", false):
+				continue
+			if net.peer.get_peer(pid) == null:
+				continue
+			net.animal_gutted.rpc_id(pid, animal_name, meat_drops)
+	print("[NET] Animal %s gutted by player %d, %d meat spawned" % [animal_name, sender, meat_drops.size()])
 
 func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
-	# Remove the puppet animal
-	if puppet_animals.has(animal_name):
-		var puppet: Node3D = puppet_animals[animal_name]
-		if is_instance_valid(puppet):
-			puppet.queue_free()
-		puppet_animals.erase(animal_name)
-	# Also remove from net.animals so it doesn't respawn
-	if net != null and net.animals.has(animal_name):
-		net.animals.erase(animal_name)
-	# Spawn meat drops on this client
-	for drop in meat_drops:
-		var mid: String = str(drop.get("id", ""))
-		var mname: String = str(drop.get("name", "Carne cruda"))
-		var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
-		var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
-		if not world_actions_by_id.has(mid):
-			_spawn_raw_meat_visual(mid, mname, mpos)
-	print("[NET] Animal %s gutted remotely, %d meat spawned" % [animal_name, meat_drops.size()])
+	# Delay removal and meat spawning by 5s to match the gutting animation
+	var animal_name_ref: String = animal_name
+	var meat_drops_ref: Array = meat_drops
+	var t := get_tree().create_timer(5.0)
+	t.timeout.connect(func():
+		# Remove the puppet animal
+		if puppet_animals.has(animal_name_ref):
+			var puppet: Node3D = puppet_animals[animal_name_ref]
+			if is_instance_valid(puppet):
+				puppet.queue_free()
+			puppet_animals.erase(animal_name_ref)
+		# Also remove from net.animals so it doesn't respawn
+		if net != null and net.animals.has(animal_name_ref):
+			net.animals.erase(animal_name_ref)
+		# Spawn meat drops on this client
+		for drop in meat_drops_ref:
+			var mid: String = str(drop.get("id", ""))
+			var mname: String = str(drop.get("name", "Carne cruda"))
+			var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
+			var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
+			if not world_actions_by_id.has(mid):
+				_spawn_raw_meat_visual(mid, mname, mpos)
+		print("[NET] Animal %s gutted remotely, %d meat spawned" % [animal_name_ref, meat_drops_ref.size()])
+	)
 
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
 	if net == null or not net.is_host:
