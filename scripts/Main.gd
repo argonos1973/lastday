@@ -1071,6 +1071,20 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.stats.changed.emit()
 	# Restore rotation
 	player.rotation.y = rot
+	# Reset velocity to prevent floating/jumping on reconnect
+	player.velocity = Vector3.ZERO
+	if "_is_falling_from_height" in player:
+		player._is_falling_from_height = false
+	if "_fall_height" in player:
+		player._fall_height = 0.0
+	if "_max_fall_height" in player:
+		player._max_fall_height = 0.0
+	if "is_jumping" in player:
+		player.is_jumping = false
+	if "_jump_velocity" in player:
+		player._jump_velocity = 0.0
+	if "_jump_apex" in player:
+		player._jump_apex = false
 	# Restore sleeping state
 	if sleeping and not player.is_sleeping:
 		player.start_sleep()
