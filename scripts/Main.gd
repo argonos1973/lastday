@@ -1965,26 +1965,26 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	_create_house_overgrowth(origin, label)
 	_create_house_foundation(origin, label)
 	_create_house_floor(origin, label)
-	# Back wall with two window holes (windows at x=-3.2 and x=3.2, y=1.68, 1.18×0.88)
+	# Back wall with two window holes (windows at x=-3.2 and x=3.2, y=2.2, 1.5×1.2)
 	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -4.7), Vector3(11.4, 3.65, 0.35), Vector3.ZERO, [
-		[-3.2, 1.68, 1.18, 0.88],
-		[3.2, 1.68, 1.18, 0.88],
+		[-3.2, 2.2, 1.5, 1.2],
+		[3.2, 2.2, 1.5, 1.2],
 	])
-	# Left wall with one window hole (z=-1.55, y=1.68, 1.18×0.88)
+	# Left wall with one window hole (z=-1.55, y=2.2, 1.5×1.2)
 	_create_textured_wall_with_openings(label + " Left", origin + Vector3(-5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
-		[-1.55, 1.68, 1.18, 0.88],
+		[-1.55, 2.2, 1.5, 1.2],
 	])
 	# Right wall with one window hole
 	_create_textured_wall_with_openings(label + " Right", origin + Vector3(5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
-		[-1.55, 1.68, 1.18, 0.88],
+		[-1.55, 2.2, 1.5, 1.2],
 	])
-	# FrontA with window hole (window centered in wall at x=-4.35, y=1.75, 1.25×0.95)
+	# FrontA with window hole (window centered in wall at x=-4.35, y=2.2, 1.5×1.2)
 	_create_textured_wall_with_openings(label + " FrontA", origin + Vector3(-4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
-		[0.0, 1.75, 1.25, 0.95],
+		[0.0, 2.2, 1.5, 1.2],
 	])
 	# FrontB with window hole (window centered in wall at x=4.35)
 	_create_textured_wall_with_openings(label + " FrontB", origin + Vector3(4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
-		[0.0, 1.75, 1.25, 0.95],
+		[0.0, 2.2, 1.5, 1.2],
 	])
 	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
 	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
