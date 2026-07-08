@@ -3140,6 +3140,10 @@ func _melee_attack() -> void:
 					closest_target.set_meta("proxy_dead", true)
 					closest_target.remove_from_group("net_player_proxy")
 					print("[NET] Player %d proxy killed by melee at %s" % [peer_id, closest_target.global_position])
+					# Broadcast death to all clients
+					var scene_node := get_tree().current_scene
+					if scene_node != null and scene_node.has_method("_broadcast_player_death"):
+						scene_node._broadcast_player_death(peer_id, closest_target)
 				else:
 					# Send damage to the client if connected
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")

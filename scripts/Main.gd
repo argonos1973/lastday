@@ -1206,9 +1206,32 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.set_meta("proxy_dead", true)
 			proxy.remove_from_group("net_player_proxy")
 			print("[NET] Player %d killed by player %d at %s" % [target_peer_id, sender, proxy.global_position])
+			_broadcast_player_death(target_peer_id, proxy)
 		# Send damage to the target client if connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+
+func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
+	if net == null or net.peer == null:
+		return
+	# Update player list entry
+	if net.players.has(peer_id):
+		net.players[peer_id]["anim"] = "dead"
+	# Send death state to all connected clients
+	var pos: Vector3 = proxy.global_position
+	var rot: float = proxy.rotation.y
+	var clothing: String = proxy.get_meta("saved_clothing", "")
+	var held: String = proxy.get_meta("saved_held_item", "")
+	var backpack: String = proxy.get_meta("saved_backpack", "")
+	for pid in net.players.keys():
+		if pid == multiplayer.get_unique_id() or pid == peer_id:
+			continue
+		if net.players[pid].get("offline", false):
+			continue
+		if net.peer.get_peer(pid) == null:
+			continue
+		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack)
+	print("[NET] Broadcast death state for player %d to all clients" % peer_id)
 
 func _update_server_proxies(delta: float) -> void:
 	if net == null or not net.is_dedicated_server:

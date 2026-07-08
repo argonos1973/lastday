@@ -344,6 +344,9 @@ func _wolf_ai(delta: float) -> Dictionary:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
 								print("[NET] Player %d proxy died while disconnected at %s" % [peer_id, _player.global_position])
+								var scene_node := get_tree().current_scene
+								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
+									scene_node._broadcast_player_death(peer_id, _player)
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null:
