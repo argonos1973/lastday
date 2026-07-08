@@ -1241,7 +1241,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var mpos := base_pos + offset
 			mpos.y = 0.06
 			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
-			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid)
+			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, "wolf_meat_raw")
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
 			_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
 	# Remove the animal from server
@@ -2575,7 +2575,7 @@ func _create_cut_log_action(pos: Vector3) -> void:
 	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
 	action.set_meta("visual_name", visual_name)
 
-func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "") -> void:
+func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "") -> void:
 	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
@@ -2589,7 +2589,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var ground_node := get_node_or_null(visual_name)
 	if ground_node != null:
 		_remove_collision_from_node(ground_node)
-	var action = _create_world_action(id, "pickup_item", item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"
+	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
 	action.set_meta("item_type", item_type)

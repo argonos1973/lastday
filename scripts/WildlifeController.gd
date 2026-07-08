@@ -798,7 +798,7 @@ func _spawn_gut_pickups() -> void:
 		pos.y = 0.06
 		var drop_id := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 		if scene.has_method("_spawn_ground_pickup"):
-			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id)
+			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id, "wolf_meat_raw")
 
 func _remove_corpse() -> void:
 	remove_from_group("interactable")
