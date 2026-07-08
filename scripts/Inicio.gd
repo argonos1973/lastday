@@ -39,6 +39,9 @@ func _ready() -> void:
 			print("[CLIENT] Error al conectar a %s" % ip)
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	# Forzar ventana al frente (necesario en macOS al lanzar desde terminal)
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, false)
 
 	# Start UDP discovery listener to auto-find server on local network
 	_discovery = PacketPeerUDP.new()

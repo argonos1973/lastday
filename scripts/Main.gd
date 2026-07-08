@@ -362,6 +362,10 @@ const NO_GRASS_AREAS := [
 
 const WORLD_SEED := 1337
 
+var _loading_overlay: CanvasLayer = null
+var _loading_label: Label = null
+var _loading_countdown: float = 3.0
+
 func _ready() -> void:
 	seed(WORLD_SEED)
 	# Get NetworkManager (autoload)
@@ -379,13 +383,50 @@ func _ready() -> void:
 		_create_map()
 		print("[NET] Servidor dedicado listo. Mundo cargado.")
 		return
+	# Loading overlay with countdown: hide everything until world + player are ready
+	_loading_overlay = CanvasLayer.new()
+	_loading_overlay.name = "LoadingOverlay"
+	_loading_overlay.layer = 100
+	var _loading_rect := ColorRect.new()
+	_loading_rect.color = Color(0.02, 0.02, 0.03)
+	_loading_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading_overlay.add_child(_loading_rect)
+	_loading_label = Label.new()
+	_loading_label.text = "Cargando... 3"
+	_loading_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_loading_label.add_theme_font_size_override("font_size", 72)
+	_loading_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
+	_loading_overlay.add_child(_loading_label)
+	add_child(_loading_overlay)
 	_create_environment()
 	_create_day_night()
 	_create_map()
 	_create_player()
 	_create_audio()
 	_create_hud()
+	# Start countdown after everything is created
+	call_deferred("_start_loading_countdown")
 	hud.show_notice("Haz clic en la ventana para capturar el raton. Empiezas en la carretera.")
+
+func _start_loading_countdown() -> void:
+	_loading_countdown = 3.0
+	set_process(true)
+
+func _process_loading_countdown(delta: float) -> void:
+	if _loading_overlay == null:
+		return
+	_loading_countdown -= delta
+	if _loading_countdown <= 0.0:
+		_loading_overlay.queue_free()
+		_loading_overlay = null
+		_loading_label = null
+		set_process(false)
+		return
+	var secs := ceili(_loading_countdown)
+	if _loading_label != null:
+		_loading_label.text = "Cargando... %d" % secs
 
 func _exit_tree() -> void:
 	for cached_scene in external_scene_cache.values():
@@ -426,6 +467,8 @@ func _input(event: InputEvent) -> void:
 	pass
 
 func _process(delta: float) -> void:
+	if _loading_overlay != null:
+		_process_loading_countdown(delta)
 	if _quit_active:
 		_quit_countdown -= delta
 		if _quit_countdown <= 0.0:
