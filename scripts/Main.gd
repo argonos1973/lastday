@@ -3750,12 +3750,12 @@ func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vecto
 	door.setup("Puerta", size, color, open_angle, door_model)
 
 func _create_house_windows(origin: Vector3, label: String) -> void:
-	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-4.35, 1.8, 4.7), 1.5, 1.2)
-	_create_front_window(label + " FrontWindowRight", origin + Vector3(4.35, 1.8, 4.7), 1.5, 1.2)
-	_create_front_window(label + " BackWindowA", origin + Vector3(-3.2, 1.8, -4.7), 1.5, 1.2)
-	_create_front_window(label + " BackWindowB", origin + Vector3(3.2, 1.8, -4.7), 1.5, 1.2)
-	_create_side_window(label + " LeftSideWindow", origin + Vector3(-5.7, 1.8, -1.55), 1.5, 1.2)
-	_create_side_window(label + " RightSideWindow", origin + Vector3(5.7, 1.8, -1.55), 1.5, 1.2)
+	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-4.35, 2.2, 4.7), 1.5, 1.2)
+	_create_front_window(label + " FrontWindowRight", origin + Vector3(4.35, 2.2, 4.7), 1.5, 1.2)
+	_create_front_window(label + " BackWindowA", origin + Vector3(-3.2, 2.2, -4.7), 1.5, 1.2)
+	_create_front_window(label + " BackWindowB", origin + Vector3(3.2, 2.2, -4.7), 1.5, 1.2)
+	_create_side_window(label + " LeftSideWindow", origin + Vector3(-5.7, 2.2, -1.55), 1.5, 1.2)
+	_create_side_window(label + " RightSideWindow", origin + Vector3(5.7, 2.2, -1.55), 1.5, 1.2)
 
 func _create_front_window(node_name: String, center: Vector3, width: float, height: float) -> void:
 	var frame := Color(0.19, 0.12, 0.065)
