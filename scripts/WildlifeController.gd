@@ -784,6 +784,7 @@ func _spawn_gut_pickups() -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	print("[WILDLIFE] Spawning gutted pickups for %s at %s" % [animal_type, global_position])
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	var base_pos := global_position
 	var meat := _meat_name()
