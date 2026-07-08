@@ -4223,8 +4223,9 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	if _is_in_river(pos):
-		return false
+	# Allow wildlife to cross the river
+	# if _is_in_river(pos):
+	# 	return false
 	return true
 
 func _is_near_river(pos: Vector3, margin: float) -> bool:
