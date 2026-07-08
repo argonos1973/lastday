@@ -875,6 +875,18 @@ func _on_remote_player_connected(id: int) -> void:
 
 func _on_remote_player_disconnected(id: int) -> void:
 	print("[NET] _on_remote_player_disconnected: id=%d, has_remote=%s" % [id, remote_players.has(id)])
+	# On client: don't remove puppet if player is still in list as offline
+	if net != null and not net.is_host and net.players.has(id) and net.players[id].get("offline", false):
+		# Player is offline but kept in list — update puppet position and keep it
+		if remote_players.has(id):
+			var rp: Node3D = remote_players[id]
+			var target_pos: Vector3 = net.players[id].get("pos", rp.global_position)
+			if rp.has_method("puppet_apply"):
+				rp.puppet_apply(target_pos, net.players[id].get("rot", 0.0), "idle")
+			else:
+				rp.global_position = target_pos
+		print("[NET] Player %d went offline, keeping puppet at %s" % [id, net.players[id].get("pos", Vector3.ZERO)])
+		return
 	if remote_players.has(id):
 		var rp: Node3D = remote_players[id]
 		rp.queue_free()
@@ -894,12 +906,13 @@ func _on_remote_player_disconnected(id: int) -> void:
 			net.players[id]["equipped_backpack"] = sp.get_meta("saved_backpack", "")
 			net.players[id]["held_item"] = sp.get_meta("saved_held_item", "")
 			net.players[id]["anim"] = "idle"
-			# Sync updated list to all remaining clients
-			net._sync_player_list.rpc(net.players.duplicate(true))
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
 		print("[NET] Player %d disconnected, proxy kept alive at %s, in_group=%s, has_real_pos=%s, protection=%s" % [id, sp.global_position, sp.is_in_group("net_player_proxy"), sp.get_meta("has_real_pos", false), sp.get_meta("protection_timer", 0.0)])
+	# Always sync player list to all remaining clients (even if no proxy)
+	if net != null and net.is_host:
+		net._sync_player_list.rpc(net.players.duplicate(true))
 
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state

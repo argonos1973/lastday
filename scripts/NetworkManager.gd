@@ -192,7 +192,10 @@ func _on_peer_disconnected(id: int) -> void:
 		if players.has(id):
 			players[id]["offline"] = true
 	else:
-		players.erase(id)
+		# On client: don't erase if player is marked offline (server keeps them)
+		# The _sync_player_list RPC will update the list authoritatively
+		if players.has(id) and not players[id].get("offline", false):
+			players.erase(id)
 	player_disconnected.emit(id)
 
 func _on_connected_to_server() -> void:
