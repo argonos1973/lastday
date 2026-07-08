@@ -1129,7 +1129,13 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 			world_actions_by_id.erase(action_id)
 	for drop in dropped_items:
 		if not world_actions_by_id.has(str(drop["id"])):
-			_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), drop["pos"])
+			var drop_at := str(drop.get("action_type", ""))
+			if drop_at == "wolf_meat_raw":
+				var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
+				var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2])) if mpos_arr is Array else Vector3(drop["pos"].x, drop["pos"].y, drop["pos"].z)
+				_spawn_raw_meat_visual(str(drop["id"]), str(drop["name"]), mpos)
+			else:
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), drop["pos"])
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -1239,7 +1245,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
-			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "visual": mvis})
+			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "visual": mvis, "action_type": "wolf_meat_raw"})
+			_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
 		animal._remove_corpse()
@@ -1272,24 +1279,13 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 	if net != null and net.animals.has(animal_name):
 		net.animals.erase(animal_name)
 	# Spawn meat drops on this client
-	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	for drop in meat_drops:
 		var mid: String = str(drop.get("id", ""))
 		var mname: String = str(drop.get("name", "Carne cruda"))
-		var mvis: String = str(drop.get("visual", "Pickup_" + mid))
 		var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
 		var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
 		if not world_actions_by_id.has(mid):
-			_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
-			_mark_world_action_visual(mvis)
-			var maction = _create_world_action(mid, "wolf_meat_raw", mname, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-			if maction != null:
-				maction.set_meta("visual_name", mvis)
-				maction.set_meta("item_name", mname)
-				maction.set_meta("item_type", "food")
-				maction.set_meta("item_weight", 0.3)
-				maction.set_meta("item_quantity", 1)
-				maction.set_meta("item_use_value", 15.0)
+			_spawn_raw_meat_visual(mid, mname, mpos)
 	print("[NET] Animal %s gutted remotely, %d meat spawned" % [animal_name, meat_drops.size()])
 
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
@@ -1666,6 +1662,20 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	if net != null:
 		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
 
+func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
+	var visual_name := "Pickup_" + drop_id
+	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
+	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+	_mark_world_action_visual(visual_name)
+	var maction = _create_world_action(drop_id, "wolf_meat_raw", item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	if maction != null:
+		maction.set_meta("visual_name", visual_name)
+		maction.set_meta("item_name", item_name)
+		maction.set_meta("item_type", "food")
+		maction.set_meta("item_weight", 0.3)
+		maction.set_meta("item_quantity", 1)
+		maction.set_meta("item_use_value", 15.0)
+
 func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
@@ -1724,7 +1734,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
-			if item_name == "Carne cruda de lobo":
+			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
 			return [ROOT_CANNED_FOOD_MODEL]
 		"backpack":
