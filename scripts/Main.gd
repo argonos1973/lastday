@@ -901,11 +901,11 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	_send_world_state_to_client(peer_id)
 
-func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int) -> void:
+func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
-		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx)
+		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, rot)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -953,7 +953,9 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_backpack: String = existing.get_meta("saved_backpack", "")
 			var saved_held: String = existing.get_meta("saved_held_item", "")
 			var saved_held_idx: int = existing.get_meta("saved_held_idx", 0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx)
+			var saved_sleeping: bool = existing.get_meta("saved_sleeping", false)
+			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_rot)
 			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
@@ -1015,7 +1017,7 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
 
 # Server: store player inventory/stats/equipment on their proxy
-func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
+func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
 	if server_proxies.has(peer_id):
 		var proxy: Node3D = server_proxies[peer_id]
 		proxy.set_meta("saved_inventory", items_data)
@@ -1026,9 +1028,11 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 		proxy.set_meta("saved_backpack", equipped_backpack)
 		proxy.set_meta("saved_held_item", held_item)
 		proxy.set_meta("saved_held_idx", held_idx)
+		proxy.set_meta("saved_sleeping", sleeping)
+		proxy.set_meta("saved_rot", rot)
 
 # Client: restore inventory/stats/equipment from server on reconnect
-func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
+func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
 	if player == null:
 		return
 	var ItemScript = load("res://scripts/Item.gd")
@@ -1045,6 +1049,11 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.stats.hunger = hunger
 		player.stats.thirst = thirst
 		player.stats.changed.emit()
+	# Restore rotation
+	player.rotation.y = rot
+	# Restore sleeping state
+	if sleeping and not player.is_sleeping:
+		player.start_sleep()
 	# Restore equipped items
 	if not equipped_backpack.is_empty():
 		player.equip_backpack(equipped_backpack)
@@ -1064,10 +1073,14 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 func _send_world_state_to_client(peer_id: int) -> void:
 	if net == null:
 		return
-	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires)
-	print("[NET] Sent world state to client %d: %d depleted, %d dropped, %d campfires, %d lit" % [peer_id, _depleted_action_ids.size(), _dropped_items.size(), _built_campfires.size(), _lit_campfires.size()])
+	var open_doors: Array = []
+	for door in get_tree().get_nodes_in_group("doors"):
+		if door is Door and door.is_open:
+			open_doors.append(door.name)
+	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors)
+	print("[NET] Sent world state to client %d: %d depleted, %d dropped, %d campfires, %d lit, %d open doors" % [peer_id, _depleted_action_ids.size(), _dropped_items.size(), _built_campfires.size(), _lit_campfires.size(), open_doors.size()])
 
-func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array) -> void:
+func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array) -> void:
 	for action_id in depleted_ids:
 		if world_actions_by_id.has(action_id):
 			var action = world_actions_by_id[action_id]
@@ -1089,7 +1102,13 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				action.action_type = "cook"
 				action.display_name = "Fogata encendida"
 				action.repeatable = true
-	print("[NET] World state synced: %d depleted, %d dropped, %d campfires, %d lit" % [depleted_ids.size(), dropped_items.size(), campfires.size(), lit_campfires.size()])
+	# Apply open door states
+	for door_name in open_doors:
+		var door := get_node_or_null(door_name)
+		if door != null and door is Door and not door.is_open:
+			door.is_open = true
+			door.rotation_degrees.y = door.open_yaw
+	print("[NET] World state synced: %d depleted, %d dropped, %d campfires, %d lit, %d open doors" % [depleted_ids.size(), dropped_items.size(), campfires.size(), lit_campfires.size(), open_doors.size()])
 
 func _net_item_picked_up(action_id: String) -> void:
 	print("[NET] Recibido item_picked_up: %s (tiene: %s)" % [action_id, world_actions_by_id.has(action_id)])
@@ -1103,6 +1122,19 @@ func _net_item_picked_up(action_id: String) -> void:
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
 		print("[NET] Item picked up by another player: %s" % action_id)
+
+func _net_door_state_changed(door_name: String, is_open: bool) -> void:
+	var door := get_node_or_null(door_name)
+	if door != null and door is Door:
+		if door.is_open != is_open:
+			door.is_open = is_open
+			var target_yaw: float = door.open_yaw if is_open else door.closed_yaw
+			if door._tween != null:
+				door._tween.kill()
+			door._tween = door.create_tween()
+			door._tween.set_trans(Tween.TRANS_SINE)
+			door._tween.set_ease(Tween.EASE_OUT)
+			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
@@ -1176,15 +1208,6 @@ func _spawn_remote_player(id: int) -> void:
 	avatar.is_puppet = true
 	add_child(avatar)
 	remote_players[id] = avatar
-	# Name label
-	var label := Label3D.new()
-	label.text = "Jugador %d" % id
-	label.font_size = 48
-	label.outline_size = 12
-	label.outline_modulate = Color.BLACK
-	label.position = Vector3(0, 2.0, 0)
-	label.no_depth_test = true
-	avatar.add_child(label)
 	# Defer setup — if local player hasn't loaded model yet, _pending_puppets will retry
 	_pending_puppets.append(avatar)
 	print("[NET] Spawned puppet player for id %d (pending setup)" % id)
@@ -1267,7 +1290,9 @@ func _sync_local_player_inventory() -> void:
 	if player.inventory != null and player.inventory.items.size() > 0:
 		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
 		held = player.inventory.items[hi].item_name
-	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index)
+	var sleeping: bool = player.is_sleeping
+	var rot: float = player.rotation.y
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, rot)
 
 func _update_remote_players() -> void:
 	if net == null:

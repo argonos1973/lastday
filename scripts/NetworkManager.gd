@@ -318,17 +318,17 @@ func set_client_spawn_pos(pos: Vector3) -> void:
 		scene.call("_apply_net_spawn_pos", pos)
 
 @rpc("any_peer", "reliable")
-func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
+func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
-		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx)
+		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, rot)
 
 @rpc("authority", "reliable")
-func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int) -> void:
+func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, rot: float) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
-		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx)
+		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, rot)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
@@ -422,10 +422,22 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 
 # Server sends world state to a newly connected client
 @rpc("authority", "reliable")
-func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array) -> void:
+func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_sync_world_state"):
-		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires)
+		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors)
+
+# Client tells server a door was toggled (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func door_state_changed(door_name: String, is_open: bool) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
+				if peer.get_peer(pid) != null:
+					door_state_changed.rpc_id(pid, door_name, is_open)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_door_state_changed"):
+		scene._net_door_state_changed(door_name, is_open)
 
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()

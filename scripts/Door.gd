@@ -30,6 +30,10 @@ func interact(player) -> void:
 	_tween.set_ease(Tween.EASE_OUT)
 	_tween.tween_property(self, "rotation_degrees:y", target_yaw, 0.28)
 	player.notice.emit("Puerta abierta." if is_open else "Puerta cerrada.")
+	# Sync door state to other clients via server
+	var net = get_node_or_null("/root/NetworkManager")
+	if net != null and net.is_connected and not net.is_host:
+		net.door_state_changed.rpc(name, is_open)
 
 func get_interaction_text(_player = null) -> String:
 	return "Cerrar puerta" if is_open else "Abrir puerta"
