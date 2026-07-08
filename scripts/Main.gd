@@ -1604,10 +1604,13 @@ func _update_puppet_animals() -> void:
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
 			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
-	# Remove puppets that no longer exist on the server
+	# Remove puppets that no longer exist on the server (unless dead - those are removed by _net_animal_gutted after animation)
 	var stale := []
 	for aid in puppet_animals.keys():
 		if not net.animals.has(aid):
+			var puppet_node = puppet_animals[aid]
+			if is_instance_valid(puppet_node) and puppet_node.get("_is_dead"):
+				continue
 			stale.append(aid)
 	for aid in stale:
 		if is_instance_valid(puppet_animals[aid]):
