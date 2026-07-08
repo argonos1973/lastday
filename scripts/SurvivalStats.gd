@@ -65,7 +65,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
 
 	if sheltered:
-		target_temperature = max(target_temperature, 34.0)
+		target_temperature = clamp(target_temperature, 34.0, 37.0)
 	# Hot food bonus: increases body temp, decays over time
 	if hot_food_charges > 0:
 		target_temperature += hot_food_temp_bonus

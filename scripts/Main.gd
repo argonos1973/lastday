@@ -503,12 +503,16 @@ func _process(delta: float) -> void:
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
 	var in_house := _is_player_in_house(player.global_position)
 	player.set_meta("in_house", in_house)
+	var is_sheltered: bool = player.in_shelter or in_house
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Blend real weather temp with game cycle temp (50/50) so real weather
 	# influences but doesn't override the day/night cycle temperature
 	if hud != null and hud._real_temp_parsed != -999.0:
 		ambient_temp = (ambient_temp + hud._real_temp_parsed) * 0.5
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, player.in_shelter, 0.0, day_cycle.is_night())
+	# Houses protect from extreme temperatures
+	if in_house:
+		ambient_temp = clamp(ambient_temp, 12.0, 28.0)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night())
 	_apply_campfire_effect(player, delta)
 	_update_door_open_cache()
 	_update_water_night_amount()

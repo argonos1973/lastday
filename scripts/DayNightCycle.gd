@@ -30,7 +30,7 @@ func get_cold_factor() -> float:
 
 func get_ambient_temperature() -> float:
 	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
-	return lerp(2.0, 22.0, day_amount)
+	return lerp(2.0, 35.0, day_amount)
 
 func get_hour_text() -> String:
 	var hour := int(floor(time_of_day))
