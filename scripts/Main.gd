@@ -505,10 +505,9 @@ func _process(delta: float) -> void:
 	player.set_meta("in_house", in_house)
 	var is_sheltered: bool = player.in_shelter or in_house
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
-	# Blend real weather temp with game cycle temp (50/50) so real weather
-	# influences but doesn't override the day/night cycle temperature
+	# Use real weather temperature when available
 	if hud != null and hud._real_temp_parsed != -999.0:
-		ambient_temp = (ambient_temp + hud._real_temp_parsed) * 0.5
+		ambient_temp = hud._real_temp_parsed
 	# Houses protect from extreme temperatures
 	if in_house:
 		ambient_temp = clamp(ambient_temp, 12.0, 28.0)
