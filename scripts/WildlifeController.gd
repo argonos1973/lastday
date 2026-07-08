@@ -495,22 +495,53 @@ func _lie_corpse_flat() -> void:
 	# Make interactable
 	add_to_group("interactable")
 
+func _animal_name() -> String:
+	match animal_type:
+		"wolf": return "lobo"
+		"deer": return "ciervo"
+		"fox": return "zorro"
+		_: return "animal"
+
+func _animal_name_cap() -> String:
+	match animal_type:
+		"wolf": return "Lobo"
+		"deer": return "Ciervo"
+		"fox": return "Zorro"
+		_: return "Animal"
+
+func _meat_name() -> String:
+	match animal_type:
+		"wolf": return "Carne cruda de lobo"
+		"deer": return "Carne cruda de ciervo"
+		"fox": return "Carne cruda de zorro"
+		_: return "Carne cruda"
+
+func _corpse_item_name() -> String:
+	match animal_type:
+		"wolf": return "Lobo muerto"
+		"deer": return "Ciervo muerto"
+		"fox": return "Zorro muerto"
+		_: return "Animal muerto"
+
 func get_interaction_text(player = null) -> String:
 	if not _is_dead:
 		return ""
+	var an := _animal_name()
+	var an_cap := _animal_name_cap()
 	if _gutted:
-		return "[E] Lobo vacio"
+		return "[E] %s vacio" % an_cap
 	var has_knife := _player_has_knife(player)
 	if has_knife:
-		return "[E] Destripar lobo  |  [C] Coger lobo entero (necesitas mochila)"
-	return "[E] Necesitas un cuchillo o hacha  |  [C] Coger lobo (necesitas mochila)"
+		return "[E] Destripar %s  |  [C] Coger %s entero (necesitas mochila)" % [an, an]
+	return "[E] Necesitas un cuchillo o hacha  |  [C] Coger %s (necesitas mochila)" % an
 
 func interact(player: Node) -> void:
 	if not _is_dead:
 		return
+	var an := _animal_name()
 	if _gutted:
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("El lobo ya esta vacio.")
+			player.notice.emit("El %s ya esta vacio." % an)
 		return
 	var has_knife := _player_has_knife(player)
 	if not has_knife:
@@ -522,16 +553,17 @@ func interact(player: Node) -> void:
 	if player != null and player.has_method("play_action_animation"):
 		player.play_action_animation("plant", 5.0)
 	if player != null and player.has_signal("notice"):
-		player.notice.emit("Destripando al lobo...")
+		player.notice.emit("Destripando al %s..." % an)
 	# Spawn meat and remove corpse after the 5-second animation finishes
 	var player_ref: Node = player
+	var an_ref := an
 	var timer := Timer.new()
 	timer.wait_time = 5.0
 	timer.one_shot = true
 	timer.timeout.connect(func():
 		_spawn_gut_pickups()
 		if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
-			player_ref.notice.emit("Destripar al lobo: +5 carne cruda, +1 piel.")
+			player_ref.notice.emit("Destripar al %s: +5 carne cruda, +1 piel." % an_ref)
 		_remove_corpse()
 	)
 	add_child(timer)
@@ -540,28 +572,30 @@ func interact(player: Node) -> void:
 func collect(player: Node) -> void:
 	if not _is_dead:
 		return
+	var an := _animal_name()
+	var corpse_name := _corpse_item_name()
 	if _gutted:
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("El lobo ya esta vacio, no hay nada que coger.")
+			player.notice.emit("El %s ya esta vacio, no hay nada que coger." % an)
 		return
-	# Need backpack to carry a whole wolf
+	# Need backpack to carry a whole animal
 	if not _player_has_backpack(player):
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("Necesitas una mochila para cargar el lobo entero.")
+			player.notice.emit("Necesitas una mochila para cargar el %s entero." % an)
 		return
 	var inventory = player.get("inventory") if player != null else null
 	if inventory == null or not inventory.has_method("add_item"):
 		return
 	var ItemScript = load("res://scripts/Item.gd")
-	var whole_wolf = ItemScript.create("Lobo muerto", "material", 8.0, 1, 0.0)
-	var added: bool = inventory.add_item(whole_wolf)
+	var whole_animal = ItemScript.create(corpse_name, "material", 8.0, 1, 0.0)
+	var added: bool = inventory.add_item(whole_animal)
 	if added:
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("Coges el lobo entero.")
+			player.notice.emit("Coges el %s entero." % an)
 		_remove_corpse()
 	else:
 		if player != null and player.has_signal("notice"):
-			player.notice.emit("No puedes cargar con el lobo, demasiado peso.")
+			player.notice.emit("No puedes cargar con el %s, demasiado peso." % an)
 
 func _player_has_knife(player: Node) -> bool:
 	if player == null:
@@ -594,6 +628,7 @@ func _spawn_gut_pickups() -> void:
 		return
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	var base_pos := global_position
+	var meat := _meat_name()
 	# Spawn 5 meat pieces scattered around the corpse
 	for i in range(5):
 		var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
@@ -605,10 +640,10 @@ func _spawn_gut_pickups() -> void:
 		if scene.has_method("_try_instance_external_scene"):
 			scene.call("_try_instance_external_scene", [meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
 		if scene.has_method("_create_world_action"):
-			var action = scene.call("_create_world_action", drop_id, "wolf_meat_raw", "Carne cruda de lobo", pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+			var action = scene.call("_create_world_action", drop_id, "wolf_meat_raw", meat, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 			if action != null:
 				action.set_meta("visual_name", visual_name)
-				action.set_meta("item_name", "Carne cruda de lobo")
+				action.set_meta("item_name", meat)
 				action.set_meta("item_type", "food")
 				action.set_meta("item_weight", 0.3)
 				action.set_meta("item_quantity", 1)

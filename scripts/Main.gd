@@ -1525,17 +1525,28 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		if net != null and net.is_connected and not net.is_host:
 			net.campfire_built.rpc_id(1, cf_id, pos)
 		return
-	# Dropping a whole wolf corpse spawns the wolf model lying on the ground
-	if item_name == "Lobo muerto":
+	# Dropping a whole animal corpse spawns the model lying on the ground
+	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
+		var animal_kind := "wolf"
+		if item_name == "Ciervo muerto":
+			animal_kind = "deer"
+		elif item_name == "Zorro muerto":
+			animal_kind = "fox"
+		var model_path := "res://assets/external/wolf/WolfAnimated.glb"
+		if animal_kind == "deer":
+			model_path = "res://assets/external/deer/DeerAnimated.glb"
+		elif animal_kind == "fox":
+			model_path = "res://assets/external/fox/FoxAnimated.glb"
 		var p := pos
 		p.y = 0.1
-		var drop_id := "wolf_drop_%d" % Time.get_ticks_msec()
+		var drop_id := "animal_drop_%d" % Time.get_ticks_msec()
 		var visual_name := "Pickup_" + drop_id
-		_try_instance_external_scene(["res://assets/external/wolf/WolfAnimated.glb"], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, 0.06)
+		_try_instance_external_scene([model_path], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, 0.06)
 		_mark_world_action_visual(visual_name)
-		var action = _create_world_action(drop_id, "gut_wolf", "Lobo muerto", p, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+		var action = _create_world_action(drop_id, "gut_wolf", item_name, p, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 		action.set_meta("visual_name", visual_name)
-		action.set_meta("item_name", "Lobo muerto")
+		action.set_meta("item_name", item_name)
+		action.set_meta("animal_type", animal_kind)
 		action.set_meta("item_type", "material")
 		action.set_meta("item_weight", 8.0)
 		action.set_meta("item_quantity", 1)
@@ -2508,39 +2519,53 @@ func handle_world_action(action, actor) -> void:
 	match action.action_type:
 		"gut_wolf":
 			if action.get_meta("gutted", false):
-				actor.notice.emit("El lobo ya esta vacio.")
+				var an_name: String = action.get_meta("item_name", "Animal muerto")
+				actor.notice.emit("El %s ya esta vacio." % an_name.to_lower().replace(" muerto", ""))
 				return
 			var held_g = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_g == null or (held_g.item_type != "weapon" and held_g.item_name != "Hacha"):
 				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para destripar.")
 				return
+			var animal_kind: String = action.get_meta("animal_type", "wolf")
+			var an_lower := "lobo"
+			var meat_name := "Carne cruda de lobo"
+			match animal_kind:
+				"deer":
+					an_lower = "ciervo"
+					meat_name = "Carne cruda de ciervo"
+				"fox":
+					an_lower = "zorro"
+					meat_name = "Carne cruda de zorro"
+				_:
+					an_lower = "lobo"
+					meat_name = "Carne cruda de lobo"
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
-				hud.show_countdown("Destripando lobo", 5.0)
+				hud.show_countdown("Destripando %s" % an_lower, 5.0)
 			await get_tree().create_timer(5.0).timeout
 			action.set_meta("gutted", true)
-			# Spawn 5 meat pieces and 1 skin around the wolf
-			var wolf_pos: Vector3 = action.global_position
+			# Spawn 5 meat pieces and 1 skin around the animal
+			var animal_pos: Vector3 = action.global_position
 			var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 			var gut_spawns: Array = []
 			for i in range(5):
 				var angle := TAU * float(i) / 5.0 + randf_range(-0.3, 0.3)
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
-				var mpos := wolf_pos + offset
+				var mpos := animal_pos + offset
 				mpos.y = 0.06
 				var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 				var mvis := "Pickup_" + mid
 				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
 				_mark_world_action_visual(mvis)
-				var maction = _create_world_action(mid, "wolf_meat_raw", "Carne cruda de lobo", mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+				var maction = _create_world_action(mid, "wolf_meat_raw", meat_name, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 				maction.set_meta("visual_name", mvis)
-				maction.set_meta("item_name", "Carne cruda de lobo")
+				maction.set_meta("item_name", meat_name)
 				maction.set_meta("item_type", "food")
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
-				gut_spawns.append({"id": mid, "name": "Carne cruda de lobo", "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
-			actor.notice.emit("Destripar al lobo: +5 carne cruda.")
+				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
+			actor.notice.emit("Destripar al %s: +5 carne cruda." % an_lower)
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action
