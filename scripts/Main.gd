@@ -1220,6 +1220,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			return
 	# Mark as gutted
 	animal.set("_gutted", true)
+	animal.set("_rot_timer", 5.1)
 	var meat_drops: Array = []
 	var meat_name := "Carne cruda de lobo"
 	var meat_qty := 5
@@ -1266,6 +1267,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	print("[NET] Animal %s gutted by player %d, %d meat spawned" % [animal_name, sender, meat_drops.size()])
 
 func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
+	print("[NET] _net_animal_gutted received: animal=%s, drops=%d" % [animal_name, meat_drops.size()])
 	# Fix key: animal_name may be "Puppet_X" but puppet_animals is keyed by "X"
 	var puppet_key := animal_name.replacen("Puppet_", "")
 	# Delay removal and meat spawning by 5s to match the gutting animation
