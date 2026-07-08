@@ -948,6 +948,8 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			print("[NET] Client %s proxy was dead, respawning fresh" % cid)
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
+			# Send spawn position and clear reconnecting flag so server accepts updates
+			call_deferred("_delayed_send_new_player_state", peer_id)
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):

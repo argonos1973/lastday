@@ -338,15 +338,21 @@ var _puppet_held := ""
 var _puppet_backpack := ""
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
-	if not is_dead:
-		global_position = pos
+	if is_dead:
+		return
+	global_position = pos
 	rotation.y = rot
 	_puppet_anim = anim
-	if anim.to_lower().find("dead") >= 0 and not is_dead:
+	if anim.to_lower().find("dead") >= 0:
 		is_dead = true
 		death_pose_time = 0.0
 		_puppet_death_remove_timer = 0.0
 		flashlight.visible = false
+		if third_person_animation_player != null and not third_person_dying_animation.is_empty():
+			third_person_animation_player.speed_scale = 1.0
+			third_person_animation_player.play(third_person_dying_animation, 0.05)
+			_puppet_current_anim = anim
+		return
 	if third_person_animation_player != null and anim != _puppet_current_anim:
 		var target := ""
 		# Try exact animation name first (both clients load same animations)
