@@ -573,11 +573,11 @@ func _prey_ai(delta: float) -> Dictionary:
 			_prey_flee_timer = 3.0
 			_play_animation_by_name("gallop")
 			return {"target": target, "speed": speed}
-	# Flee timer active but no threat nearby — keep running a bit more
+	# Flee timer active but no threat nearby — move to next patrol point
 	if _prey_flee_timer > 0.0:
-		target = global_position + (global_position - patrol_points[target_index]).normalized() * 15.0
-		speed = flee_speed * 0.8
-		_play_animation_by_name("gallop")
+		target = patrol_points[target_index]
+		speed = flee_speed * 0.6
+		_play_animation_by_name("trot")
 		return {"target": target, "speed": speed}
 	target = patrol_points[target_index]
 	speed = move_speed * 1.0

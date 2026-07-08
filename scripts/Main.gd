@@ -4310,9 +4310,10 @@ func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 		var door = blocker.get("door", null)
 		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
 		# When a house door is closed, use rectangular bounds to trap wolves inside
+		# and prevent wildlife from entering through walls
 		if not door_is_open and blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
-			var expanded_bounds := bounds.grow(2.0)
+			var expanded_bounds := bounds.grow(3.5)
 			if expanded_bounds.has_point(p):
 				return true
 			continue
