@@ -1114,12 +1114,11 @@ func _play_wolf_sound(sound_type: String) -> void:
 			return
 		var path := "res://assets/external/audio/downloaded/aullidos.mp3"
 		var stream: AudioStream = null
-		if ResourceLoader.exists(path):
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamMP3.load_from_file(disk_path)
+		if stream == null and ResourceLoader.has_cached(path):
 			stream = load(path)
-		if stream == null:
-			var disk_path := ProjectSettings.globalize_path(path)
-			if FileAccess.file_exists(disk_path):
-				stream = AudioStreamMP3.load_from_file(disk_path)
 		if stream == null:
 			return
 		if stream is AudioStreamMP3:
@@ -1159,12 +1158,11 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_:
 			return
 	var stream: AudioStream = null
-	if ResourceLoader.exists(path):
+	var disk_path := ProjectSettings.globalize_path(path)
+	if FileAccess.file_exists(disk_path):
+		stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null and ResourceLoader.has_cached(path):
 		stream = load(path)
-	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
