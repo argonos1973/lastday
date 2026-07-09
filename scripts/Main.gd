@@ -1391,8 +1391,8 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	var drops: Array = []
 	for i in range(saved_inv.size()):
 		var d: Dictionary = saved_inv[i]
-		var iname: String = str(d.get("item_name", ""))
-		var itype: String = str(d.get("item_type", ""))
+		var iname: String = str(d.get("name", d.get("item_name", "")))
+		var itype: String = str(d.get("type", d.get("item_type", "")))
 		var iweight: float = float(d.get("weight", 0.1))
 		var iqty: int = int(d.get("quantity", 1))
 		var iuse: float = float(d.get("use_value", 0.0))
