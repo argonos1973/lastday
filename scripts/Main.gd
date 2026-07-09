@@ -405,7 +405,8 @@ func _ready() -> void:
 	_create_day_night()
 	_create_map()
 	_create_player()
-	_create_audio()
+	if net == null or not net.is_dedicated_server:
+		_create_audio()
 	_create_hud()
 	# Start countdown after everything is created
 	call_deferred("_start_loading_countdown")
@@ -1171,6 +1172,11 @@ func _net_item_picked_up(action_id: String) -> void:
 	if net != null and net.is_dedicated_server:
 		if not _depleted_action_ids.has(action_id):
 			_depleted_action_ids.append(action_id)
+		# Remove from _dropped_items so it doesn't sync to new clients
+		for i in range(_dropped_items.size() - 1, -1, -1):
+			if str(_dropped_items[i].get("id", "")) == action_id:
+				_dropped_items.remove_at(i)
+				break
 	# Remove the picked up item from this client's world
 	if world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -1222,7 +1228,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	animal.set("_gutted", true)
 	var meat_drops: Array = []
 	var meat_name := "Carne cruda de lobo"
-	var meat_qty := 5
+	var meat_qty := 4
 	if not collect_mode:
 		var animal_type: String = animal.get("animal_type")
 		match animal_type:
@@ -1234,7 +1240,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 				meat_qty = 3
 			_:
 				meat_name = "Carne cruda de lobo"
-				meat_qty = 5
+				meat_qty = 4
 	# Spawn meat immediately on server and notify clients - clients delay puppet removal to match animation
 	if not collect_mode:
 		var base_pos: Vector3 = animal.global_position
@@ -1314,8 +1320,8 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 		if hp <= 0.0:
 			proxy.set_meta("proxy_dead", true)
 			proxy.remove_from_group("net_player_proxy")
-			print("[NET] Player %d killed by player %d at %s" % [target_peer_id, sender, proxy.global_position])
-			_drop_player_loot(target_peer_id, proxy)
+			proxy.add_to_group("interactable")
+			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
 			_broadcast_player_death(target_peer_id, proxy)
 		# Send damage to the target client if connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
@@ -1331,8 +1337,8 @@ func _net_player_died(peer_id: int) -> void:
 		return
 	proxy.set_meta("proxy_dead", true)
 	proxy.remove_from_group("net_player_proxy")
-	print("[NET] Player %d died (client notification)" % peer_id)
-	_drop_player_loot(peer_id, proxy)
+	proxy.add_to_group("interactable")
+	print("[NET] Player %d died (client notification), corpse remains as lootable" % peer_id)
 	_broadcast_player_death(peer_id, proxy)
 
 func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
@@ -1399,6 +1405,45 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack)
 	print("[NET] Broadcast death state for player %d to all clients" % peer_id)
+
+func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
+	if net == null or not net.is_host:
+		return
+	if not server_proxies.has(dead_peer_id):
+		return
+	var proxy: Node3D = server_proxies[dead_peer_id]
+	if not proxy.get_meta("proxy_dead", false):
+		return
+	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
+	if net.peer != null and net.peer.get_peer(requester_id) != null:
+		net.send_loot.rpc_id(requester_id, dead_peer_id, saved_inv)
+	print("[NET] Sent loot inventory of dead player %d to requester %d (%d items)" % [dead_peer_id, requester_id, saved_inv.size()])
+
+func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
+	if net == null or not net.is_host:
+		return
+	if not server_proxies.has(dead_peer_id):
+		return
+	var proxy: Node3D = server_proxies[dead_peer_id]
+	if not proxy.get_meta("proxy_dead", false):
+		return
+	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
+	if item_index < 0 or item_index >= saved_inv.size():
+		return
+	# Verify taker is close enough to the corpse
+	if server_proxies.has(taker_id):
+		var taker_proxy: Node3D = server_proxies[taker_id]
+		var dist := taker_proxy.global_position.distance_to(proxy.global_position)
+		if dist > 5.0:
+			print("[NET] Player %d too far from corpse %d to loot (%.1fm)" % [taker_id, dead_peer_id, dist])
+			return
+	var item_data: Dictionary = saved_inv[item_index]
+	saved_inv.remove_at(item_index)
+	proxy.set_meta("saved_inventory", saved_inv)
+	print("[NET] Player %d took item '%s' from corpse %d (remaining: %d)" % [taker_id, str(item_data.get("item_name", "")), dead_peer_id, saved_inv.size()])
+	# Notify the taker's client to add the item to their inventory
+	if net.peer != null and net.peer.get_peer(taker_id) != null:
+		net.add_looted_item.rpc_id(taker_id, item_data)
 
 func _update_server_proxies(delta: float) -> void:
 	if net == null or not net.is_dedicated_server:
@@ -1576,6 +1621,10 @@ func _update_remote_players() -> void:
 			continue
 		var data: Dictionary = net.players[pid]
 		var rp: Node3D = remote_players[pid]
+		if not is_instance_valid(rp):
+			remote_players.erase(pid)
+			_spawn_remote_player(pid)
+			continue
 		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
@@ -1685,7 +1734,7 @@ func _on_player_died() -> void:
 	game_over = true
 	if player != null and player.has_method("die"):
 		player.die()
-	# Notify server so it drops our inventory as loot
+	# Notify server so it keeps our corpse as lootable
 	if net != null and net.is_connected and not net.is_host:
 		net.notify_death.rpc_id(1)
 	SaveSystemScript.delete_save()
@@ -1696,6 +1745,107 @@ func _on_player_died() -> void:
 		tw.tween_await(death_timer.timeout)
 		tw.tween_callback(func(): get_tree().quit())
 		await tw.finished
+
+var _loot_dead_peer_id := -1
+var _loot_items: Array = []
+var _loot_panel: PanelContainer = null
+
+func _net_receive_loot(dead_peer_id: int, items_data: Array) -> void:
+	_loot_dead_peer_id = dead_peer_id
+	_loot_items = items_data
+	_show_loot_ui()
+
+func _show_loot_ui() -> void:
+	if hud == null:
+		return
+	_close_loot_ui()
+	_loot_panel = PanelContainer.new()
+	_loot_panel.custom_minimum_size = Vector2(360, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.05, 0.04, 0.96)
+	style.border_color = Color(0.72, 0.74, 0.40, 0.95)
+	style.border_width_left = 2
+	style.border_width_right = 2
+	style.border_width_top = 2
+	style.border_width_bottom = 2
+	_loot_panel.add_theme_stylebox_override("panel", style)
+	_loot_panel.position = Vector2(280, 120)
+	_loot_panel.z_index = 50
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_loot_panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "Cuerpo del jugador - [I] para cerrar"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
+	vbox.add_child(title)
+	if _loot_items.is_empty():
+		var empty := Label.new()
+		empty.text = "No hay nada que coger."
+		empty.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
+		vbox.add_child(empty)
+	else:
+		for i in range(_loot_items.size()):
+			var item_data: Dictionary = _loot_items[i]
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			vbox.add_child(row)
+			var name_label := Label.new()
+			var iname := str(item_data.get("item_name", "???"))
+			var iqty := int(item_data.get("quantity", 1))
+			name_label.text = "%s x%d" % [iname, iqty]
+			name_label.custom_minimum_size = Vector2(220, 24)
+			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+			row.add_child(name_label)
+			var take_btn := Button.new()
+			take_btn.text = "Coger"
+			take_btn.custom_minimum_size = Vector2(80, 28)
+			var idx := i
+			take_btn.pressed.connect(func(): _take_loot_item(idx))
+			row.add_child(take_btn)
+	hud.add_child(_loot_panel)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _close_loot_ui() -> void:
+	if _loot_panel != null:
+		_loot_panel.queue_free()
+		_loot_panel = null
+	_loot_dead_peer_id = -1
+	_loot_items = []
+	if player != null and not player.is_dead:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _take_loot_item(item_index: int) -> void:
+	if _loot_dead_peer_id < 0:
+		return
+	if net != null and net.is_connected:
+		net.take_loot.rpc_id(1, _loot_dead_peer_id, item_index)
+	# Remove from local list
+	if item_index >= 0 and item_index < _loot_items.size():
+		_loot_items.remove_at(item_index)
+	# Refresh UI
+	_show_loot_ui()
+
+func _net_add_looted_item(item_data: Dictionary) -> void:
+	if player == null:
+		return
+	var ItemScript = load("res://scripts/Item.gd")
+	var item = ItemScript.from_dict(item_data)
+	if item == null:
+		return
+	if player.inventory != null and player.inventory.has_method("add_item"):
+		var added: bool = player.inventory.add_item(item)
+		if added:
+			if hud != null:
+				hud.show_notice("Has cogido: %s" % item.item_name)
+		else:
+			if hud != null:
+				hud.show_notice("No puedes cargar mas peso.")
+	else:
+		if player.has_node("Inventory"):
+			var inv = player.get_node("Inventory")
+			if inv != null and inv.has_method("add_item"):
+				inv.add_item(item)
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
 	if item_name == "campfire":
@@ -2669,6 +2819,18 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_weight", weight)
 	action.set_meta("item_quantity", qty)
 	action.set_meta("item_use_value", use_value)
+	# On server: persist the pickup so it survives client disconnects and syncs to new clients
+	if net != null and net.is_dedicated_server:
+		_dropped_items.append({
+			"id": id,
+			"name": item_name,
+			"type": item_type,
+			"weight": weight,
+			"qty": qty,
+			"use": use_value,
+			"pos": [pos.x, pos.y, pos.z],
+			"action_type": actual_action_type
+		})
 
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
 	if net != null and net.is_dedicated_server:
@@ -2953,18 +3115,18 @@ func handle_world_action(action, actor) -> void:
 					actor.inventory.remove_index(i)
 					break
 			if cooked:
-				var cooked_item = ItemScript.create("Carne asada en palo", "food", 0.4, 1, 35.0)
+				var cooked_item = ItemScript.create("Carne cocinada", "food", 0.4, 1, 35.0)
 				if actor.inventory.add_item(cooked_item):
 					if actor.stats.has_method("add_hot_food"):
 						actor.stats.add_hot_food(2)
 					actor.inventory.changed.emit()
-					_equip_actor_item(actor, "Carne asada en palo")
+					_equip_actor_item(actor, "Carne cocinada")
 					if actor.has_method("_sync_held_item"):
 						actor._sync_held_item()
-					actor.notice.emit("Has cocinado carne asada en palo. Segura para comer. Caliente!")
+					actor.notice.emit("Has cocinado carne. Segura para comer. Caliente!")
 				else:
 					actor.inventory.changed.emit()
-					actor.notice.emit("No tienes espacio para la carne asada.")
+					actor.notice.emit("No tienes espacio para la carne cocinada.")
 		"hunt":
 			_play_actor_action(actor, "interact", 1.0)
 			if hud != null:

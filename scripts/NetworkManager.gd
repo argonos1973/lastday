@@ -318,7 +318,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
 
 @rpc("authority", "reliable")
-func set_client_spawn_pos(pos: Vector3) -> void:
+func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_net_spawn_pos"):
 		scene.call("_apply_net_spawn_pos", pos)
@@ -480,3 +480,33 @@ func door_state_changed(door_name: String, is_open: bool) -> void:
 
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()
+
+# Client requests loot inventory from a dead player corpse
+@rpc("any_peer", "reliable")
+func request_loot(dead_peer_id: int) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_request_loot"):
+		scene._net_request_loot(sender, dead_peer_id)
+
+# Server sends corpse inventory to requesting client
+@rpc("authority", "reliable")
+func send_loot(dead_peer_id: int, items_data: Array) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_receive_loot"):
+		scene._net_receive_loot(dead_peer_id, items_data)
+
+# Client takes an item from a dead player corpse
+@rpc("any_peer", "reliable")
+func take_loot(dead_peer_id: int, item_index: int) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_take_loot"):
+		scene._net_take_loot(sender, dead_peer_id, item_index)
+
+# Server sends a single looted item to the taker's client
+@rpc("authority", "reliable")
+func add_looted_item(item_data: Dictionary) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_add_looted_item"):
+		scene._net_add_looted_item(item_data)

@@ -91,6 +91,7 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
 		_prey_flee_timer = 8.0
+		print("[WILDLIFE] %s took %.0f damage, health=%.0f, fleeing for 8s" % [animal_type, amount, health])
 		_spawn_blood_splatter()
 		_play_wolf_pain_sound()
 		if health <= 0.0:
@@ -228,13 +229,16 @@ func _process(delta: float) -> void:
 			if _wolf_hunger >= 100.0 or _wolf_eating_timer <= 0.0:
 				_wolf_eating_timer = 0.0
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
-					_wolf_eating_target._gutted = true
-					_wolf_eating_target._rot_timer = 3600.0
-					_wolf_eating_target._spawn_gut_pickups()
+					if _wolf_eating_target is WildlifeController:
+						_wolf_eating_target._gutted = true
+						_wolf_eating_target._spawn_gut_pickups()
+						_broadcast_wolf_meat_drops(_wolf_eating_target)
+						_wolf_eating_target._remove_corpse()
+					elif "action_type" in _wolf_eating_target and str(_wolf_eating_target.action_type) == "wolf_meat_raw":
+						_consume_meat_pickup(_wolf_eating_target)
 				_wolf_eating_target = null
 			return
-	if animal_type != "wolf":
-		_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
+	_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
 	var target: Vector3
 	var speed: float
 	if animal_type == "wolf":
@@ -294,6 +298,21 @@ func _wolf_ai(delta: float) -> Dictionary:
 	if is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
+	# Flee from player when attacked
+	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
+		var flee_dist := global_position.distance_to(_player.global_position)
+		if flee_dist < 30.0:
+			var away := global_position - _player.global_position
+			away.y = 0.0
+			if away.length() < 0.01:
+				away = Vector3.RIGHT
+			target = global_position + away.normalized() * 30.0
+			speed = move_speed * 3.0
+			_state = "patrol"
+			_chase_target = null
+			_chase_cooldown = _prey_flee_timer
+			_play_animation_by_name("run")
+			return {"target": target, "speed": speed}
 	# State: wait_near
 	if _state == "wait_near" and _wait_near_timer > 0.0:
 		_wait_near_timer -= delta
@@ -362,7 +381,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_chase_target = _player
 			_noise_attract_timer = 0.0
 			speed = move_speed * 3.5
-			if height_diff >= 1.5 and not _can_reach_player():
+			if height_diff >= 2.0 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 2.0:
 					_state = "patrol"
@@ -378,7 +397,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist < 2.0 and height_diff < 1.5:
+			elif flat_dist < 2.0 and height_diff < 2.0:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 5.0
 					_attack_timer = randf_range(8.0, 15.0)
@@ -395,7 +414,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
-								print("[NET] Player %d proxy died while disconnected at %s" % [peer_id, _player.global_position])
+								_player.add_to_group("interactable")
+								print("[NET] Player %d proxy died while disconnected at %s, corpse lootable" % [peer_id, _player.global_position])
 								var scene_node := get_tree().current_scene
 								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
 									scene_node._broadcast_player_death(peer_id, _player)
@@ -409,7 +429,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
-								print("[NET] Player %d killed by wolf at %s" % [peer_id, _player.global_position])
+								_player.add_to_group("interactable")
+								print("[NET] Player %d killed by wolf at %s, corpse lootable" % [peer_id, _player.global_position])
 								var scene_node := get_tree().current_scene
 								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
 									scene_node._broadcast_player_death(peer_id, _player)
@@ -519,6 +540,13 @@ func _find_nearest_corpse() -> Node3D:
 				if d < nearest_dist:
 					nearest_dist = d
 					nearest = p as Node3D
+	# Also search for gutted meat pickups on the ground
+	var meat := _find_nearest_meat_pickup()
+	if meat != null:
+		var d := global_position.distance_to(meat.global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+			nearest = meat
 	return nearest
 
 func _find_nearest_prey() -> Node3D:
@@ -634,10 +662,10 @@ func _meat_name() -> String:
 
 func _meat_count() -> int:
 	match animal_type:
-		"wolf": return 5
+		"wolf": return 4
 		"deer": return 8
 		"fox": return 3
-		_: return 5
+		_: return 4
 
 func _corpse_item_name() -> String:
 	match animal_type:
@@ -800,6 +828,87 @@ func _spawn_gut_pickups() -> void:
 		if scene.has_method("_spawn_ground_pickup"):
 			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id, "wolf_meat_raw")
 
+func _broadcast_wolf_meat_drops(corpse: Node3D) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var net_node := scene.get_node_or_null("/root/NetworkManager")
+	if net_node == null or net_node.peer == null:
+		return
+	# Find all wolf_meat_raw actions that were just spawned near the corpse
+	var base_pos := corpse.global_position
+	var meat_name := ""
+	if corpse is WildlifeController:
+		meat_name = corpse._meat_name()
+	var drops: Array = []
+	var actions_dict: Dictionary = scene.get("world_actions_by_id") if scene.get("world_actions_by_id") != null else {}
+	for action_id in actions_dict.keys():
+		var action = actions_dict[action_id]
+		if not action is Node3D:
+			continue
+		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
+			continue
+		var d := base_pos.distance_to((action as Node3D).global_position)
+		if d > 5.0:
+			continue
+		var drop_id := str(action.action_id)
+		var dname := str(action.get_meta("item_name", meat_name))
+		var dpos := (action as Node3D).global_position
+		drops.append({"id": drop_id, "name": dname, "type": "food", "pos": [dpos.x, dpos.y, dpos.z], "weight": 0.3, "qty": 1, "use": 15.0})
+	# Broadcast to all clients using animal_gutted so they create wolf_meat_raw actions
+	var animal_name: String = corpse.name if corpse != null else "wolf_corpse"
+	for pid in net_node.players.keys():
+		if pid == multiplayer.get_unique_id():
+			continue
+		if net_node.players[pid].get("offline", false):
+			continue
+		if net_node.peer.get_peer(pid) == null:
+			continue
+		net_node.animal_gutted.rpc_id(pid, animal_name, drops)
+
+func _consume_meat_pickup(action: Node3D) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var net_node := scene.get_node_or_null("/root/NetworkManager")
+	var action_id := ""
+	if "action_id" in action:
+		action_id = str(action.action_id)
+	# Remove the meat pickup from the world
+	if not action_id.is_empty() and scene.has_method("_net_item_picked_up"):
+		scene._net_item_picked_up(action_id)
+	# Notify all clients to remove it
+	if net_node != null and net_node.peer != null:
+		for pid in net_node.players.keys():
+			if pid == multiplayer.get_unique_id():
+				continue
+			if net_node.players[pid].get("offline", false):
+				continue
+			if net_node.peer.get_peer(pid) == null:
+				continue
+			net_node.item_picked_up.rpc_id(pid, action_id)
+
+func _find_nearest_meat_pickup() -> Node3D:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return null
+	var nearest: Node3D = null
+	var nearest_dist := 9999.0
+	var actions_dict: Dictionary = scene.get("world_actions_by_id") if scene.get("world_actions_by_id") != null else {}
+	for action_id in actions_dict.keys():
+		var action = actions_dict[action_id]
+		if not action is Node3D:
+			continue
+		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
+			continue
+		if action.get("depleted"):
+			continue
+		var d := global_position.distance_to((action as Node3D).global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+			nearest = action as Node3D
+	return nearest
+
 func _remove_corpse() -> void:
 	remove_from_group("interactable")
 	if is_instance_valid(_corpse_body):
@@ -820,6 +929,9 @@ func _find_skeleton(root: Node) -> Skeleton3D:
 	return null
 
 func _spawn_blood_splatter() -> void:
+	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if _net != null and _net.is_dedicated_server:
+		return
 	var particles := GPUParticles3D.new()
 	particles.name = "WolfBloodSplatter"
 	particles.amount = 40
@@ -847,6 +959,9 @@ func _spawn_blood_splatter() -> void:
 	get_tree().create_timer(2.0).timeout.connect(func(): particles.queue_free())
 
 func _play_wolf_pain_sound() -> void:
+	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if _net != null and _net.is_dedicated_server:
+		return
 	if _wolf_pain_player == null:
 		_wolf_pain_player = AudioStreamPlayer3D.new()
 		_wolf_pain_player.name = "WolfPainSound"
@@ -933,6 +1048,9 @@ func _update_wolf_sounds(delta: float) -> void:
 			_growl_timer = randf_range(10.0, 20.0)
 
 func _play_wolf_sound(sound_type: String) -> void:
+	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if _net != null and _net.is_dedicated_server:
+		return
 	if sound_type == "howl":
 		if _wolf_howl_2d_player == null:
 			_wolf_howl_2d_player = AudioStreamPlayer.new()
@@ -1232,7 +1350,7 @@ func _can_reach_player() -> bool:
 	if _player == null or not is_instance_valid(_player):
 		return false
 	var height_diff := absf(_player.global_position.y - global_position.y)
-	if height_diff >= 1.5:
+	if height_diff >= 2.0:
 		return false
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):

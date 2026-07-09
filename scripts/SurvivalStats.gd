@@ -20,8 +20,8 @@ var dead := false
 var hot_food_charges := 0
 var hot_food_temp_bonus := 0.0
 
-var hunger_decay := 0.08
-var thirst_decay := 0.11
+var hunger_decay := 0.12
+var thirst_decay := 0.22
 var energy_decay := 0.06
 var sleep_decay := 0.04
 var cold_decay := 0.012
@@ -60,7 +60,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
 		var heat_retention := 1.0 + protection * 0.8
-		target_temperature += (ambient_temperature - 28.0) * 0.03 * heat_retention
+		target_temperature += (ambient_temperature - 28.0) * 0.08 * heat_retention
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
@@ -73,7 +73,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
-	body_temperature = lerp(body_temperature, target_temperature, delta * 0.025)
+	body_temperature = lerp(body_temperature, target_temperature, delta * 0.08)
 
 	if hunger <= 0.0:
 		health -= 0.8 * delta
@@ -84,8 +84,8 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if body_temperature < 35.0:
 		health -= (35.0 - body_temperature) * 0.16 * delta
 	if body_temperature > 38.0:
-		health -= (body_temperature - 38.0) * 0.12 * delta
-		thirst = max(0.0, thirst - thirst_decay * 3.0 * delta)
+		health -= (body_temperature - 38.0) * 0.20 * delta
+		thirst = max(0.0, thirst - thirst_decay * 4.0 * delta)
 	if body_temperature >= 40.0:
 		health -= (body_temperature - 40.0) * 2.5 * delta + 5.0 * delta
 
