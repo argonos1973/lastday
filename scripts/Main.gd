@@ -1343,10 +1343,11 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.remove_from_group("net_player_proxy")
 			proxy.add_to_group("interactable")
 			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
+			# Drop loot immediately on server using saved inventory
+			_drop_player_loot(target_peer_id, proxy)
 			proxy.set_meta("death_broadcasted", true)
 			_broadcast_player_death(target_peer_id, proxy)
 			# Force death on the target client (don't send damage, would cause double death)
-			# Client will sync inventory and send notify_death, then server drops loot
 			if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 				net.force_death_to_client.rpc_id(target_peer_id)
 		else:

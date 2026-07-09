@@ -349,6 +349,7 @@ func sync_animals(data: Dictionary) -> void:
 # Server tells specific client to apply damage
 @rpc("authority", "reliable")
 func apply_damage_to_client(amount: float) -> void:
+	print("[NET] apply_damage_to_client received: amount=%f" % amount)
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount)
@@ -356,6 +357,7 @@ func apply_damage_to_client(amount: float) -> void:
 # Server tells specific client that they are dead (HP reached 0 on server)
 @rpc("authority", "reliable")
 func force_death_to_client() -> void:
+	print("[NET] force_death_to_client RPC received!")
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_force_death"):
 		scene._net_force_death()
