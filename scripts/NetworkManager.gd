@@ -418,11 +418,11 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 
 # Client tells server its player died (server drops inventory as loot)
 @rpc("any_peer", "reliable")
-func notify_death() -> void:
+func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0.0, thirst: float = 0.0, clothing: String = "", backpack: String = "", held: String = "", held_index: int = 0, sleeping: bool = false, sitting: bool = false, rot: float = 0.0) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_died"):
-		scene._net_player_died(sender)
+		scene._net_player_died(sender, inventory_data)
 
 func get_player_list() -> Dictionary:
 	return players

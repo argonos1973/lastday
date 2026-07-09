@@ -1347,14 +1347,18 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 				net.apply_damage_to_client.rpc_id(target_peer_id, amount)
 
-func _net_player_died(peer_id: int) -> void:
+func _net_player_died(peer_id: int, inventory_data: Array = []) -> void:
 	if net == null or not net.is_host:
 		return
-	print("[NET] _net_player_died: peer_id=%d" % peer_id)
+	print("[NET] _net_player_died: peer_id=%d, inv_items=%d" % [peer_id, inventory_data.size()])
 	if not server_proxies.has(peer_id):
 		print("[NET] _net_player_died: no proxy for peer %d" % peer_id)
 		return
 	var proxy: Node3D = server_proxies[peer_id]
+	# Update saved inventory from the death notification if provided
+	if not inventory_data.is_empty():
+		proxy.set_meta("saved_inventory", inventory_data)
+		print("[NET] _net_player_died: updated saved_inventory with %d items from client" % inventory_data.size())
 	if proxy.get_meta("loot_dropped", false):
 		print("[NET] _net_player_died: loot already dropped for peer %d" % peer_id)
 		return
@@ -1759,10 +1763,39 @@ func _on_player_died() -> void:
 	game_over = true
 	if player != null and player.has_method("die"):
 		player.die()
-	# Notify server so it keeps our corpse as lootable
+	# Notify server with inventory data so it can drop loot
 	if net != null and net.is_connected and not net.is_host:
-		_sync_local_player_inventory()
-		net.notify_death.rpc_id(1)
+		var items_data: Array = []
+		if player != null and player.inventory != null:
+			for item in player.inventory.items:
+				if item != null:
+					items_data.append(item.to_dict())
+		var hp := 0.0
+		var hunger := 0.0
+		var thirst := 0.0
+		if player != null and player.stats != null:
+			hp = player.stats.health
+			hunger = player.stats.hunger
+			thirst = player.stats.thirst
+		var clothing := ""
+		if player != null and player._equipped_slots != null and not player._equipped_slots.is_empty():
+			var clothing_items: Array = []
+			for slot in player._equipped_slots.keys():
+				var item_name: String = str(player._equipped_slots[slot])
+				if not item_name.is_empty():
+					clothing_items.append(item_name)
+			clothing = ",".join(clothing_items)
+		var backpack := ""
+		var held := ""
+		var held_idx := 0
+		if player != null:
+			backpack = player.equipped_backpack
+			held_idx = player.held_index
+			if player.inventory != null and player.inventory.items.size() > 0:
+				held = player.inventory.items[held_idx].item_name
+		var rot_y := player.rotation.y if player != null else 0.0
+		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
+		print("[NET] Sent notify_death with %d inventory items" % items_data.size())
 	SaveSystemScript.delete_save()
 	if hud != null:
 		hud.show_notice("Has muerto. El juego se cerrara...")
