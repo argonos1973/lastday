@@ -617,7 +617,7 @@ func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
 	var flee_dist := _flee_distance()
-	var flee_speed := move_speed * (3.2 if animal_type == "fox" else 2.6)
+	var flee_speed := move_speed * (2.4 if animal_type == "fox" else 2.6)
 	# Flee from wolves (larger distance if already fleeing)
 	var nearest_wolf := _find_nearest_animal("wolf")
 	if nearest_wolf != null and is_instance_valid(nearest_wolf):
