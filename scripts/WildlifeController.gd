@@ -91,7 +91,6 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
 		_prey_flee_timer = 8.0
-		print("[WILDLIFE] %s took %.0f damage, health=%.0f, fleeing for 8s" % [animal_type, amount, health])
 		_spawn_blood_splatter()
 		_play_wolf_pain_sound()
 		if health <= 0.0:
@@ -369,6 +368,25 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_state = "seek_corpse"
 				target = corpse.global_position
 				speed = move_speed * 2.0
+				_play_animation_by_name("trot")
+				return {"target": target, "speed": speed}
+	# Priority 0.5: detect gutted meat pickups from far away (60m)
+	if is_hungry:
+		var meat := _find_nearest_meat_pickup()
+		if meat != null:
+			var dist_to_meat := global_position.distance_to(meat.global_position)
+			if dist_to_meat < 2.0:
+				_wolf_eating_timer = 8.0
+				_wolf_eating_target = meat
+				_state = "eating"
+				target = global_position
+				speed = 0.0
+				_play_animation_by_name("idle")
+				return {"target": target, "speed": speed}
+			elif dist_to_meat < 60.0:
+				_state = "seek_corpse"
+				target = meat.global_position
+				speed = move_speed * 2.5
 				_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
 	# Priority 1: chase player (only when hungry)

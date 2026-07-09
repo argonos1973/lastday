@@ -384,7 +384,7 @@ func _ready() -> void:
 		_create_map()
 		print("[NET] Servidor dedicado listo. Mundo cargado.")
 		return
-	# Loading overlay with countdown: hide everything until world + player are ready
+	# Loading overlay with countdown: show it BEFORE heavy world generation
 	_loading_overlay = CanvasLayer.new()
 	_loading_overlay.name = "LoadingOverlay"
 	_loading_overlay.layer = 100
@@ -393,7 +393,7 @@ func _ready() -> void:
 	_loading_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_loading_overlay.add_child(_loading_rect)
 	_loading_label = Label.new()
-	_loading_label.text = "Cargando... 3"
+	_loading_label.text = "Cargando..."
 	_loading_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -401,6 +401,8 @@ func _ready() -> void:
 	_loading_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
 	_loading_overlay.add_child(_loading_label)
 	add_child(_loading_overlay)
+	# Force a render of the overlay before heavy world generation
+	await get_tree().process_frame
 	_create_environment()
 	_create_day_night()
 	_create_map()
