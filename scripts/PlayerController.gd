@@ -456,7 +456,7 @@ func _puppet_swap_to_naked() -> void:
 	naked.visible = true
 	naked.position = Vector3.ZERO
 	naked.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-	naked.scale = THIRD_PERSON_DEFAULT_SCALE if not _is_mixamo_root_asset(naked_path) else MIXAMO_CHARACTER_SCALE
+	naked.scale = Vector3.ONE * (THIRD_PERSON_DEFAULT_SCALE if not _is_mixamo_root_asset(naked_path) else MIXAMO_CHARACTER_SCALE)
 	add_child(naked)
 	third_person_model = naked
 	_hide_third_person_held_props(naked)
