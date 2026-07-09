@@ -1036,7 +1036,9 @@ func _net_apply_damage(amount: float) -> void:
 func _net_force_death() -> void:
 	if player == null or not is_instance_valid(player):
 		return
+	print("[NET] _net_force_death received, is_dead=%s game_over=%s" % [player.get("is_dead"), game_over])
 	if player.get("is_dead") == true:
+		print("[NET] _net_force_death: already dead, ignoring")
 		return
 	print("[NET] Forced death by server (PvP kill)")
 	if player.has_method("die"):
@@ -1761,7 +1763,9 @@ func _update_puppet_animals() -> void:
 		puppet_animals.erase(aid)
 
 func _on_player_died() -> void:
+	print("[NET] _on_player_died called, game_over=%s" % game_over)
 	if game_over:
+		print("[NET] _on_player_died: already game_over, ignoring")
 		return
 	game_over = true
 	if player != null and player.has_method("die"):
