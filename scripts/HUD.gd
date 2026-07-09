@@ -44,6 +44,7 @@ var selected_slot_index := -1
 var slot_action_label: Label = null
 var _inv_refresh_timer := 0.0
 var _debug_temp_timer := 0.0
+var _weather_retry_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
@@ -71,6 +72,12 @@ func _process(delta: float) -> void:
 	if _weather_timer >= 600.0:
 		_weather_timer = 0.0
 		_fetch_weather()
+	# Retry weather fetch if it failed
+	if _weather_retry_timer > 0.0:
+		_weather_retry_timer -= delta
+		if _weather_retry_timer <= 0.0 and _real_temp_parsed == -999.0:
+			_fetch_weather()
+			_weather_retry_timer = 15.0
 	_update_damage_overlay(delta)
 	if inventory_visible:
 		_inv_refresh_timer += delta
@@ -177,15 +184,19 @@ func _build_real_clock_panel() -> void:
 	box.add_child(weather_label)
 
 	_weather_http = HTTPRequest.new()
+	_weather_http.timeout = 10.0
 	add_child(_weather_http)
 	_weather_http.request_completed.connect(_on_weather_received)
 	_fetch_weather()
+	_weather_retry_timer = 15.0
 
 func _fetch_weather() -> void:
 	if _weather_loading:
 		return
+	if not is_instance_valid(_weather_http):
+		return
 	_weather_loading = true
-	var url := "https://wttr.in/Barcelona?format=%t"
+	var url := "https://api.open-meteo.com/v1/forecast?latitude=41.38&longitude=2.17&current=temperature_2m&timezone=auto"
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
@@ -195,16 +206,25 @@ func _on_weather_received(result: int, _response_code: int, _headers: PackedStri
 	_weather_loading = false
 	if result == HTTPRequest.RESULT_SUCCESS:
 		var text := body.get_string_from_utf8().strip_edges()
-		print("[HUD] Weather received: '%s'" % text)
-		if text.length() > 0:
-			_real_temp = text
-			var cleaned := text.replace("+", "").replace("°C", "").replace("°", "").replace("C", "").strip_edges()
-			var parsed := float(cleaned)
-			if not is_nan(parsed):
-				_real_temp_parsed = parsed
+		print("[HUD] Weather received: '%s'" % text.left(120))
+		var json = JSON.new()
+		if json.parse(text) == OK:
+			var data: Dictionary = json.data
+			if data.has("current"):
+				var current: Dictionary = data["current"]
+				if current.has("temperature_2m"):
+					var temp: float = float(current["temperature_2m"])
+					_real_temp = "%.0f°C" % temp
+					_real_temp_parsed = temp
+					print("[HUD] Parsed temperature: %.1f" % temp)
+					return
+		print("[HUD] Failed to parse weather JSON")
+		_real_temp = "N/A"
+		_weather_retry_timer = 15.0
 	else:
 		print("[HUD] Weather request failed, result=%d" % result)
 		_real_temp = "N/A"
+		_weather_retry_timer = 15.0
 
 func _update_real_clock() -> void:
 	if real_clock_label == null:
