@@ -1315,11 +1315,13 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
 	if net == null or not net.is_host:
 		return
+	print("[NET] _net_damage_player: target=%d amount=%f sender=%d" % [target_peer_id, amount, sender])
 	# Verify sender is close enough to target (anti-cheat)
 	if server_proxies.has(target_peer_id):
 		var proxy: Node3D = server_proxies[target_peer_id]
 		var is_dead: bool = proxy.get_meta("proxy_dead", false)
 		if is_dead:
+			print("[NET] _net_damage_player: target %d already dead, ignoring" % target_peer_id)
 			return
 		# Check distance if sender has a proxy
 		if server_proxies.has(sender):
@@ -1348,10 +1350,13 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 func _net_player_died(peer_id: int) -> void:
 	if net == null or not net.is_host:
 		return
+	print("[NET] _net_player_died: peer_id=%d" % peer_id)
 	if not server_proxies.has(peer_id):
+		print("[NET] _net_player_died: no proxy for peer %d" % peer_id)
 		return
 	var proxy: Node3D = server_proxies[peer_id]
 	if proxy.get_meta("loot_dropped", false):
+		print("[NET] _net_player_died: loot already dropped for peer %d" % peer_id)
 		return
 	if not proxy.get_meta("proxy_dead", false):
 		proxy.set_meta("proxy_dead", true)
