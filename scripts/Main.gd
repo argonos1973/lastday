@@ -1040,10 +1040,14 @@ func _net_force_death() -> void:
 	if player.get("is_dead") == true:
 		print("[NET] _net_force_death: already dead, ignoring")
 		return
+	if game_over:
+		print("[NET] _net_force_death: game_over already set, ignoring")
+		return
 	print("[NET] Forced death by server (PvP kill)")
 	if player.has_method("die"):
 		player.die()
-	if player.stats != null:
+	# Don't emit stats.died if already dead — die() may have triggered it via apply_damage
+	if player.stats != null and not player.stats.dead:
 		player.stats.died.emit()
 
 # Called by RPC from server on client to set position on reconnect
@@ -1415,6 +1419,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
 				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
+	print("[NET] Loot drop complete: %d items sent to clients" % drops.size())
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 
