@@ -189,17 +189,22 @@ func _fetch_weather() -> void:
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
+		print("[HUD] Weather request init failed, err=%d" % err)
 
 func _on_weather_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_weather_loading = false
 	if result == HTTPRequest.RESULT_SUCCESS:
 		var text := body.get_string_from_utf8().strip_edges()
+		print("[HUD] Weather received: '%s'" % text)
 		if text.length() > 0:
 			_real_temp = text
 			var cleaned := text.replace("+", "").replace("°C", "").replace("°", "").replace("C", "").strip_edges()
 			var parsed := float(cleaned)
 			if not is_nan(parsed):
 				_real_temp_parsed = parsed
+	else:
+		print("[HUD] Weather request failed, result=%d" % result)
+		_real_temp = "N/A"
 
 func _update_real_clock() -> void:
 	if real_clock_label == null:
@@ -558,10 +563,6 @@ func _update_stats() -> void:
 		return
 	if player.inventory == null:
 		return
-	if _debug_temp_timer < 3.0:
-		_debug_temp_timer += 1.0
-		if _debug_temp_timer >= 3.0:
-			print("[HUD] body_temperature=%.2f thirst=%.1f hunger=%.1f" % [player.stats.body_temperature, player.stats.thirst, player.stats.hunger])
 	time_label.text = "%s  |  %.1f / %.1f kg" % [
 		day_cycle.get_hour_text(),
 		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
