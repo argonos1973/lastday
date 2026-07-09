@@ -2526,7 +2526,7 @@ func _create_wildlife() -> void:
 	for i in range(4):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		for _retry in range(30):
-			if not _is_near_river(center, 8.0):
+			if not _is_near_river(center, 12.0):
 				break
 			center = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		var route: Array = []
@@ -2534,6 +2534,13 @@ func _create_wildlife() -> void:
 			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
+			# Ensure waypoint is not in the river
+			for _wp_retry in range(10):
+				if not _is_near_river(wp, 6.0):
+					break
+				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp.x = clamp(wp.x, -72, 72)
+				wp.z = clamp(wp.z, -72, 72)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
 
@@ -4457,9 +4464,8 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	# Allow wildlife to cross the river
-	# if _is_in_river(pos):
-	# 	return false
+	if _is_near_river(pos, 3.0):
+		return false
 	return true
 
 func _is_near_river(pos: Vector3, margin: float) -> bool:
