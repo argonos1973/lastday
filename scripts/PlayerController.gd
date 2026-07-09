@@ -403,7 +403,12 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 		_puppet_clothing = clothing
 		var new_items: Array = []
 		if clothing.is_empty():
-			new_items = ["Camiseta", "Pantalones", "Zapatillas"]
+			if is_dead:
+				# Dead body: use naked model, no default clothes
+				_puppet_swap_to_naked()
+				new_items = []
+			else:
+				new_items = ["Camiseta", "Pantalones", "Zapatillas"]
 		else:
 			for item_name in clothing.split(","):
 				var name := item_name.strip_edges()
@@ -432,6 +437,35 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 			_build_third_person_backpack()
 		else:
 			equipped_backpack = ""
+
+func _puppet_swap_to_naked() -> void:
+	if not is_puppet:
+		return
+	# Remove current third person model
+	if third_person_model != null and is_instance_valid(third_person_model):
+		var old_scale := third_person_model.scale
+		third_person_model.queue_free()
+		third_person_model = null
+	# Load naked model
+	var naked_path := "res://assets/animations/desnudo.glb"
+	var naked: Node3D = _load_external_node3d(naked_path)
+	if naked == null:
+		print("[PUPPET] Failed to load desnudo.glb for dead body")
+		return
+	naked.name = "ThirdPersonCharacter"
+	naked.visible = true
+	naked.position = Vector3.ZERO
+	naked.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+	naked.scale = THIRD_PERSON_DEFAULT_SCALE if not _is_mixamo_root_asset(naked_path) else MIXAMO_CHARACTER_SCALE
+	add_child(naked)
+	third_person_model = naked
+	_hide_third_person_held_props(naked)
+	_hide_third_person_export_helpers(naked)
+	# Find skeleton for animation
+	_spine_skeleton = _find_skeleton(naked)
+	# Find animation player
+	third_person_animation_player = _find_animation_player(naked)
+	print("[PUPPET] Swapped to naked model for dead body")
 
 func _update_puppet_held_item(item_name: String) -> void:
 	if third_person_hand_item_root == null:
