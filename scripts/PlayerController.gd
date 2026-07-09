@@ -465,6 +465,16 @@ func _puppet_swap_to_naked() -> void:
 	_spine_skeleton = _find_skeleton(naked)
 	# Find animation player
 	third_person_animation_player = _find_animation_player(naked)
+	# Import and play death animation on the new model
+	if third_person_animation_player != null:
+		_import_external_animation(THIRD_PERSON_DYING_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DYING_ANIMATION)
+		if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_DYING_ANIMATION):
+			third_person_dying_animation = "external/" + THIRD_PERSON_EXTERNAL_DYING_ANIMATION
+			var dying_anim := third_person_animation_player.get_animation(third_person_dying_animation)
+			if dying_anim != null:
+				dying_anim.loop_mode = Animation.LOOP_NONE
+			third_person_animation_player.speed_scale = 1.0
+			third_person_animation_player.play(third_person_dying_animation, 0.05)
 	print("[PUPPET] Swapped to naked model for dead body")
 
 func _update_puppet_held_item(item_name: String) -> void:

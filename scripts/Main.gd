@@ -3417,9 +3417,8 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 	_play_actor_action(actor, action_name, duration)
 	if not actor.inventory.add_item(item):
 		return
-	if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-		actor.equip_clothing(item.item_name)
-	else:
+	# Don't auto-equip clothing from ground pickups — just add to inventory
+	if str(item.item_type) != "clothing":
 		_equip_actor_item(actor, item.item_name)
 	if actor.has_method("refresh_carry_capacity"):
 		actor.refresh_carry_capacity()
