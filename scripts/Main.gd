@@ -1165,7 +1165,13 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2])) if mpos_arr is Array else Vector3(drop["pos"].x, drop["pos"].y, drop["pos"].z)
 				_spawn_raw_meat_visual(str(drop["id"]), str(drop["name"]), mpos)
 			else:
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), drop["pos"])
+				var dpos_raw = drop["pos"]
+				var dpos: Vector3
+				if dpos_raw is Array:
+					dpos = Vector3(float(dpos_raw[0]), float(dpos_raw[1]), float(dpos_raw[2]))
+				else:
+					dpos = dpos_raw
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos)
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
