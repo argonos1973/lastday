@@ -36,6 +36,7 @@ var _wolf_hunger := 100.0
 var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
+var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
 var health := 150.0
 var max_health := 150.0
@@ -238,6 +239,10 @@ func _process(delta: float) -> void:
 				_wolf_eating_target = null
 			return
 	_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
+	_seek_corpse_timer = max(0.0, _seek_corpse_timer - delta)
+	if _seek_corpse_timer <= 0.0 and _state == "seek_corpse":
+		_state = "patrol"
+		_chase_stuck_time = 0.0
 	var target: Vector3
 	var speed: float
 	if animal_type == "wolf":
@@ -366,6 +371,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				return {"target": target, "speed": speed}
 			elif dist_to_corpse < 30.0:
 				_state = "seek_corpse"
+				_seek_corpse_timer = 15.0
 				target = corpse.global_position
 				speed = move_speed * 2.0
 				_play_animation_by_name("trot")
@@ -385,6 +391,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				return {"target": target, "speed": speed}
 			elif dist_to_meat < 60.0:
 				_state = "seek_corpse"
+				_seek_corpse_timer = 15.0
 				target = meat.global_position
 				speed = move_speed * 2.5
 				_play_animation_by_name("trot")
