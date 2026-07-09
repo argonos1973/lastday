@@ -1793,7 +1793,7 @@ func _on_player_died() -> void:
 			held_idx = player.held_index
 			if player.inventory != null and player.inventory.items.size() > 0:
 				held = player.inventory.items[held_idx].item_name
-		var rot_y := player.rotation.y if player != null else 0.0
+		var rot_y: float = player.rotation.y if player != null else 0.0
 		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
 		print("[NET] Sent notify_death with %d inventory items" % items_data.size())
 	SaveSystemScript.delete_save()
