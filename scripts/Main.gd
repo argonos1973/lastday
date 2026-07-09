@@ -1034,11 +1034,15 @@ func _net_apply_damage(amount: float) -> void:
 		player.apply_damage(amount)
 
 func _net_force_death() -> void:
-	if player != null and not player.get("is_dead"):
-		player.stats.health = 0.0
-		player.stats.dead = true
+	if player == null or not is_instance_valid(player):
+		return
+	if player.get("is_dead") == true:
+		return
+	print("[NET] Forced death by server (PvP kill)")
+	if player.has_method("die"):
+		player.die()
+	if player.stats != null:
 		player.stats.died.emit()
-		print("[NET] Forced death by server (PvP kill)")
 
 # Called by RPC from server on client to set position on reconnect
 var _has_received_spawn_pos := false
@@ -1757,11 +1761,8 @@ func _on_player_died() -> void:
 	SaveSystemScript.delete_save()
 	if hud != null:
 		hud.show_notice("Has muerto. El juego se cerrara...")
-		var death_timer := get_tree().create_timer(3.0)
-		var tw := create_tween()
-		tw.tween_await(death_timer.timeout)
-		tw.tween_callback(func(): get_tree().quit())
-		await tw.finished
+		await get_tree().create_timer(3.0).timeout
+		get_tree().quit()
 
 var _loot_dead_peer_id := -1
 var _loot_items: Array = []
