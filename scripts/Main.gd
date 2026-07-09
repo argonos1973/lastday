@@ -1324,6 +1324,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.remove_from_group("net_player_proxy")
 			proxy.add_to_group("interactable")
 			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
+			_drop_player_loot(target_peer_id, proxy)
 			_broadcast_player_death(target_peer_id, proxy)
 		# Send damage to the target client if connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
@@ -1341,6 +1342,7 @@ func _net_player_died(peer_id: int) -> void:
 	proxy.remove_from_group("net_player_proxy")
 	proxy.add_to_group("interactable")
 	print("[NET] Player %d died (client notification), corpse remains as lootable" % peer_id)
+	_drop_player_loot(peer_id, proxy)
 	_broadcast_player_death(peer_id, proxy)
 
 func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
@@ -1738,6 +1740,7 @@ func _on_player_died() -> void:
 		player.die()
 	# Notify server so it keeps our corpse as lootable
 	if net != null and net.is_connected and not net.is_host:
+		_sync_local_player_inventory()
 		net.notify_death.rpc_id(1)
 	SaveSystemScript.delete_save()
 	if hud != null:
