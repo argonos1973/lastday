@@ -43,6 +43,7 @@ var stamina_label: Label = null
 var selected_slot_index := -1
 var slot_action_label: Label = null
 var _inv_refresh_timer := 0.0
+var _debug_temp_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
@@ -557,6 +558,10 @@ func _update_stats() -> void:
 		return
 	if player.inventory == null:
 		return
+	if _debug_temp_timer < 3.0:
+		_debug_temp_timer += 1.0
+		if _debug_temp_timer >= 3.0:
+			print("[HUD] body_temperature=%.2f thirst=%.1f hunger=%.1f" % [player.stats.body_temperature, player.stats.thirst, player.stats.hunger])
 	time_label.text = "%s  |  %.1f / %.1f kg" % [
 		day_cycle.get_hour_text(),
 		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
