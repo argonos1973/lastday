@@ -299,6 +299,9 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 			# Force dead anim for dead proxies
 			if scene.server_proxies[id].get_meta("proxy_dead", false):
 				anim = "dead"
+				equipped_clothing = ""
+				held_item = ""
+				equipped_backpack = ""
 	players[id]["pos"] = pos
 	players[id]["rot"] = rot
 	players[id]["anim"] = anim

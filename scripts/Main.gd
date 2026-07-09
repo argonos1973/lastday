@@ -1439,9 +1439,10 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	# Send death state to all connected clients
 	var pos: Vector3 = proxy.global_position
 	var rot: float = proxy.rotation.y
-	var clothing: String = proxy.get_meta("saved_clothing", "")
-	var held: String = proxy.get_meta("saved_held_item", "")
-	var backpack: String = proxy.get_meta("saved_backpack", "")
+	# Send empty visuals so corpse appears naked (loot was already dropped)
+	var clothing := ""
+	var held := ""
+	var backpack := ""
 	for pid in net.players.keys():
 		if pid == multiplayer.get_unique_id():
 			continue
@@ -1680,7 +1681,14 @@ func _update_remote_players() -> void:
 		var is_offline: bool = data.get("offline", false)
 		if is_offline:
 			# Snap to exact position for offline characters
-			if rp.has_method("puppet_apply"):
+			if anim == "dead":
+				if rp.has_method("puppet_apply"):
+					rp.puppet_apply(target_pos, target_rot, anim)
+					rp.puppet_apply_visuals("", "", "")
+				else:
+					rp.global_position = target_pos
+					rp.rotation.y = target_rot
+			elif rp.has_method("puppet_apply"):
 				rp.puppet_apply(target_pos, target_rot, anim)
 				rp.puppet_apply_visuals(clothing, held, backpack)
 			else:
@@ -1688,10 +1696,13 @@ func _update_remote_players() -> void:
 				rp.rotation.y = target_rot
 		else:
 			# Smooth interpolation for active players
-			if rp.get("is_dead") == true:
+			if rp.get("is_dead") == true or anim == "dead":
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(target_pos, target_rot, anim)
-					rp.puppet_apply_visuals(clothing, held, backpack)
+					rp.puppet_apply_visuals("", "", "")
+				else:
+					rp.global_position = target_pos
+					rp.rotation.y = target_rot
 			else:
 				var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
 				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
