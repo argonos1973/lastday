@@ -647,7 +647,7 @@ func _prey_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 	# Flee timer active but no threat nearby — run away from current position
 	if _prey_flee_timer > 0.0:
-		var flee_dir := (global_position - patrol_points[target_index]).normalized()
+		var flee_dir: Vector3 = (global_position - Vector3(patrol_points[target_index])).normalized()
 		flee_dir.y = 0.0
 		if flee_dir.length() < 0.01:
 			flee_dir = Vector3.RIGHT
