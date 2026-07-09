@@ -567,6 +567,27 @@ func _find_nearest_corpse() -> Node3D:
 			nearest = meat
 	return nearest
 
+func _find_nearest_proxy() -> Node3D:
+	var nearest: Node3D = null
+	var nearest_dist := 99999.0
+	for p in get_tree().get_nodes_in_group("net_player_proxy"):
+		if not (p is Node3D) or not is_instance_valid(p):
+			continue
+		if p.get_meta("proxy_dead", false):
+			continue
+		var d: float = global_position.distance_to((p as Node3D).global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+			nearest = p as Node3D
+	# Also check "Player" node on non-server scenes
+	if nearest == null:
+		var scene := get_tree().current_scene
+		if scene != null:
+			var player_node := scene.get_node_or_null("Player")
+			if player_node != null and is_instance_valid(player_node) and not player_node.get("is_dead"):
+				nearest = player_node
+	return nearest
+
 func _find_nearest_prey() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist := 9999.0
@@ -606,11 +627,16 @@ func _prey_ai(delta: float) -> Dictionary:
 			_play_animation_by_name("gallop")
 			return {"target": target, "speed": speed}
 	# Flee from player
-	if _player != null and is_instance_valid(_player):
-		var dist_to_player := global_position.distance_to(_player.global_position)
+	var flee_from: Node3D = _player
+	if flee_from == null or not is_instance_valid(flee_from):
+		# When fleeing from damage, find nearest proxy even if _player wasn't resolved
+		if _prey_flee_timer > 0.0:
+			flee_from = _find_nearest_proxy()
+	if flee_from != null and is_instance_valid(flee_from):
+		var dist_to_player := global_position.distance_to(flee_from.global_position)
 		var player_flee_dist := flee_dist + 10.0 if _prey_flee_timer > 0.0 else flee_dist
 		if dist_to_player < player_flee_dist:
-			var away := global_position - _player.global_position
+			var away := global_position - flee_from.global_position
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
@@ -619,11 +645,15 @@ func _prey_ai(delta: float) -> Dictionary:
 			_prey_flee_timer = 3.0
 			_play_animation_by_name("gallop")
 			return {"target": target, "speed": speed}
-	# Flee timer active but no threat nearby — move to next patrol point
+	# Flee timer active but no threat nearby — run away from current position
 	if _prey_flee_timer > 0.0:
-		target = patrol_points[target_index]
-		speed = flee_speed * 0.6
-		_play_animation_by_name("trot")
+		var flee_dir := (global_position - patrol_points[target_index]).normalized()
+		flee_dir.y = 0.0
+		if flee_dir.length() < 0.01:
+			flee_dir = Vector3.RIGHT
+		target = global_position + flee_dir.normalized() * 25.0
+		speed = flee_speed
+		_play_animation_by_name("gallop")
 		return {"target": target, "speed": speed}
 	target = patrol_points[target_index]
 	speed = move_speed * 1.0
