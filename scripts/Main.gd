@@ -1337,6 +1337,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.remove_from_group("net_player_proxy")
 			proxy.add_to_group("interactable")
 			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
+			proxy.set_meta("death_broadcasted", true)
 			_broadcast_player_death(target_peer_id, proxy)
 			# Force death on the target client (don't send damage, would cause double death)
 			# Client will sync inventory and send notify_death, then server drops loot
@@ -1368,7 +1369,9 @@ func _net_player_died(peer_id: int, inventory_data: Array = []) -> void:
 		proxy.add_to_group("interactable")
 	print("[NET] Player %d died (client notification), corpse remains as lootable" % peer_id)
 	_drop_player_loot(peer_id, proxy)
-	_broadcast_player_death(peer_id, proxy)
+	if not proxy.get_meta("death_broadcasted", false):
+		proxy.set_meta("death_broadcasted", true)
+		_broadcast_player_death(peer_id, proxy)
 
 func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	if proxy.get_meta("loot_dropped", false):

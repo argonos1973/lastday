@@ -3206,7 +3206,8 @@ func _melee_attack() -> void:
 					if scene_node != null:
 						if scene_node.has_method("_drop_player_loot"):
 							scene_node._drop_player_loot(peer_id, closest_target)
-						if scene_node.has_method("_broadcast_player_death"):
+						if scene_node.has_method("_broadcast_player_death") and not closest_target.get_meta("death_broadcasted", false):
+							closest_target.set_meta("death_broadcasted", true)
 							scene_node._broadcast_player_death(peer_id, closest_target)
 					var net_node2 := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 					if net_node2 != null and net_node2.peer != null and net_node2.peer.get_peer(peer_id) != null:
