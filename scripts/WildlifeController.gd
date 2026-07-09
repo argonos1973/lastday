@@ -293,6 +293,8 @@ func attract_to_noise(pos: Vector3, radius: float) -> void:
 	_noise_attract_timer = 15.0
 
 func _wolf_ai(delta: float) -> Dictionary:
+	if _is_dead:
+		return {"target": global_position, "speed": 0.0}
 	var target: Vector3
 	var speed: float = move_speed
 	_attack_timer -= delta
