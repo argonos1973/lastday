@@ -1033,6 +1033,13 @@ func _net_apply_damage(amount: float) -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
 
+func _net_force_death() -> void:
+	if player != null and not player.get("is_dead"):
+		player.stats.health = 0.0
+		player.stats.dead = true
+		player.stats.died.emit()
+		print("[NET] Forced death by server (PvP kill)")
+
 # Called by RPC from server on client to set position on reconnect
 var _has_received_spawn_pos := false
 var _pending_spawn_pos: Vector3 = Vector3.ZERO
@@ -1326,6 +1333,9 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
 			_drop_player_loot(target_peer_id, proxy)
 			_broadcast_player_death(target_peer_id, proxy)
+			# Force death on the target client
+			if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+				net.force_death_to_client.rpc_id(target_peer_id)
 		# Send damage to the target client if connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
@@ -1401,7 +1411,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	var held: String = proxy.get_meta("saved_held_item", "")
 	var backpack: String = proxy.get_meta("saved_backpack", "")
 	for pid in net.players.keys():
-		if pid == multiplayer.get_unique_id() or pid == peer_id:
+		if pid == multiplayer.get_unique_id():
 			continue
 		if net.players[pid].get("offline", false):
 			continue

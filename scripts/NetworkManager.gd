@@ -353,6 +353,13 @@ func apply_damage_to_client(amount: float) -> void:
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount)
 
+# Server tells specific client that they are dead (HP reached 0 on server)
+@rpc("authority", "reliable")
+func force_death_to_client() -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_force_death"):
+		scene._net_force_death()
+
 # Client tells server to damage another player (PvP)
 @rpc("any_peer", "reliable")
 func damage_player(target_peer_id: int, amount: float) -> void:
