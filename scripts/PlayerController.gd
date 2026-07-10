@@ -919,10 +919,9 @@ func _init_survival_clothing(root: Node) -> void:
 		var smi: MeshInstance3D = _find_mesh_in_third_person(sn)
 		if smi != null:
 			smi.visible = false
-	# Body_arms, Body_hands, Body_legs, Body_feet from leftturn have built-in
-	# geometry that overlaps with clothing meshes — always hide them
+	# Body_arms and Body_hands from leftturn have built-in gloves, always hide them
 	# soldier_hands is also always hidden (not used, would show as gloves)
-	for bn in ["Body_arms", "Body_hands", "Body_legs", "Body_feet", "soldier_hands"]:
+	for bn in ["Body_arms", "Body_hands", "soldier_hands"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
 			bmi.visible = false
