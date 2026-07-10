@@ -1046,9 +1046,8 @@ func _net_force_death() -> void:
 	print("[NET] Forced death by server (PvP kill)")
 	if player.has_method("die"):
 		player.die()
-	# Don't emit stats.died if already dead — die() may have triggered it via apply_damage
-	if player.stats != null and not player.stats.dead:
-		player.stats.died.emit()
+	# Always trigger death handler to notify server and close game
+	_on_player_died()
 
 # Called by RPC from server on client to set position on reconnect
 var _has_received_spawn_pos := false
