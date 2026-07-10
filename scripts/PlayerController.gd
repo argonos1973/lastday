@@ -358,10 +358,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		if _death_anim_played:
 			return
 		_death_anim_played = true
-		if third_person_animation_player != null and not third_person_dying_animation.is_empty():
-			third_person_animation_player.speed_scale = 1.0
-			third_person_animation_player.play(third_person_dying_animation, 0.05)
-			_puppet_current_anim = anim
+		if third_person_animation_player != null:
+			third_person_animation_player.stop()
+		_puppet_current_anim = anim
 		return
 	if third_person_animation_player != null and anim != _puppet_current_anim:
 		var target := ""
@@ -781,6 +780,11 @@ func equip_clothing(item_name: String) -> void:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
 				dmi.visible = false
+		# Hide Body_legs/Body_feet when _full_body_mesh is shown (no overlap)
+		for bn in ["Body_legs", "Body_feet"]:
+			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+			if bmi != null:
+				bmi.visible = false
 	else:
 		# Not all equipped or has survival clothing — use _head_mesh + Desnudo_*
 		if _full_body_mesh != null:
@@ -793,6 +797,11 @@ func equip_clothing(item_name: String) -> void:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
 				dmi.visible = true
+		# Show Body_legs/Body_feet for leg geometry under clothing
+		for bn in ["Body_legs", "Body_feet"]:
+			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+			if bmi != null:
+				bmi.visible = true
 		# Hide Desnudo_* covered by equipped clothing
 		for equipped_item in equipped_check.values():
 			var eitem := str(equipped_item)
@@ -2165,10 +2174,7 @@ func die() -> void:
 	stats.health = 0.0
 	stats.dead = true
 	stats.changed.emit()
-	if third_person_animation_player != null and not third_person_dying_animation.is_empty():
-		third_person_animation_player.speed_scale = 1.0
-		third_person_animation_player.play(third_person_dying_animation, 0.05)
-	elif third_person_animation_player != null:
+	if third_person_animation_player != null:
 		third_person_animation_player.stop()
 
 func _update_death_pose(delta: float) -> void:
@@ -2176,12 +2182,7 @@ func _update_death_pose(delta: float) -> void:
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
 		return
-	if third_person_animation_player != null and not third_person_dying_animation.is_empty() and death_pose_time < 0.95:
-		character.position = character.position.lerp(Vector3(0.0, max(0.04, third_person_ground_offset * 0.18) + _water_sink * 0.25, 0.0), delta * 8.0)
-		return
-	if third_person_animation_player != null and third_person_animation_player.is_playing() and death_pose_time >= 0.95:
-		third_person_animation_player.pause()
-	var fall_ratio: float = clamp((death_pose_time - 0.65) / 0.75, 0.0, 1.0)
+	var fall_ratio: float = clamp((death_pose_time - 0.0) / 1.4, 0.0, 1.0)
 	var target_rotation := Vector3(-88.0 * fall_ratio, 180.0, 0.0)
 	var ground_y: float = max(0.045, _water_sink * 0.18)
 	var target_position := Vector3(0.0, lerp(third_person_ground_offset, ground_y, fall_ratio), -0.34 * fall_ratio)
