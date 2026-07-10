@@ -341,6 +341,9 @@ var _puppet_backpack := ""
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_dead:
+		# Still update position for dead puppets (corpse sync)
+		global_position = pos
+		rotation.y = rot
 		return
 	global_position = pos
 	rotation.y = rot
@@ -449,39 +452,47 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
 		return
-	# Remove current third person model
-	if third_person_model != null and is_instance_valid(third_person_model):
-		third_person_model.queue_free()
-		third_person_model = null
-	# Load naked model
-	var naked_path := "res://assets/animations/desnudo.glb"
-	var naked: Node3D = _load_external_node3d(naked_path)
-	if naked == null:
-		print("[PUPPET] Failed to load desnudo.glb for dead body")
+	if third_person_model == null or not is_instance_valid(third_person_model):
 		return
-	naked.name = "NakedCorpse"
-	naked.visible = true
-	naked.position = Vector3.ZERO
-	naked.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-	naked.scale = Vector3.ONE * (THIRD_PERSON_DEFAULT_SCALE if not _is_mixamo_root_asset(naked_path) else MIXAMO_CHARACTER_SCALE)
-	add_child(naked)
-	third_person_model = naked
-	_hide_third_person_held_props(naked)
-	_hide_third_person_export_helpers(naked)
-	# Find skeleton and animation player
-	_spine_skeleton = _find_skeleton(naked)
-	third_person_animation_player = _find_animation_player(naked)
-	# Import and play death animation on the new model to avoid T-pose
-	if third_person_animation_player != null:
-		_import_external_animation(THIRD_PERSON_DYING_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DYING_ANIMATION)
-		if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_DYING_ANIMATION):
-			third_person_dying_animation = "external/" + THIRD_PERSON_EXTERNAL_DYING_ANIMATION
-			var dying_anim := third_person_animation_player.get_animation(third_person_dying_animation)
-			if dying_anim != null:
-				dying_anim.loop_mode = Animation.LOOP_NONE
-			third_person_animation_player.speed_scale = 1.0
-			third_person_animation_player.play(third_person_dying_animation, 0.05)
-	print("[PUPPET] Swapped to naked model for dead body")
+	# Mark as naked corpse to prevent re-triggering
+	third_person_model.name = "NakedCorpse"
+	# Hide all default clothing meshes
+	for body_name in ["Tops", "Bottoms", "Shoes"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+		if bmi != null:
+			bmi.visible = false
+	# Hide all survival clothing meshes
+	for cloth_name in ["cloth_torso", "cloth_legs", "cloth_hands", "cloth_feet"]:
+		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
+		if cmi != null:
+			cmi.visible = false
+	# Hide soldier parts
+	for soldier_name in ["soldier_torso", "soldier_legs"]:
+		var smi: MeshInstance3D = _find_mesh_in_third_person(soldier_name)
+		if smi != null:
+			smi.visible = false
+	# Show all Desnudo_* parts (naked body)
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			dmi.visible = true
+	# Show Body_torso (includes neck)
+	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
+	if bt != null:
+		bt.visible = true
+	# Hide full body mesh, show head
+	if _full_body_mesh != null:
+		_full_body_mesh.visible = false
+	if _head_mesh != null:
+		_head_mesh.visible = true
+	# Remove any worn visual garments
+	for child in third_person_model.get_children():
+		if child.name.begins_with("Worn_"):
+			child.free()
+	# Clear equipped slots
+	_equipped_slots.clear()
+	_puppet_clothing = ""
+	print("[PUPPET] Stripped clothing for naked dead body (keeping original head)")
 
 func _update_puppet_held_item(item_name: String) -> void:
 	if third_person_hand_item_root == null:
