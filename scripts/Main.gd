@@ -430,6 +430,9 @@ func _process_loading_countdown(delta: float) -> void:
 		_loading_label.text = "Cargando... %d" % secs
 
 func _exit_tree() -> void:
+	# Force final inventory sync before disconnecting
+	if net != null and net.is_connected and not net.is_dedicated_server:
+		_sync_local_player_inventory()
 	for cached_scene in external_scene_cache.values():
 		if cached_scene is Node:
 			(cached_scene as Node).free()
@@ -524,7 +527,7 @@ func _process(delta: float) -> void:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
 		_inv_sync_timer += delta
-		if _inv_sync_timer >= 5.0:
+		if _inv_sync_timer >= 2.0:
 			_inv_sync_timer = 0.0
 			_sync_local_player_inventory()
 		_update_remote_players()
@@ -1109,9 +1112,17 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	if not equipped_backpack.is_empty():
 		player.equip_backpack(equipped_backpack)
 	if not equipped_clothing.is_empty():
-		# Clear existing slots to prevent equip_clothing from dropping old items
+		# Unequip all default clothing first to clear their meshes
 		if "_equipped_slots" in player:
+			var old_slots := player._equipped_slots.duplicate()
 			player._equipped_slots.clear()
+			for old_item in old_slots.values():
+				var oitem := str(old_item)
+				if not oitem.is_empty():
+					player.unequip_clothing(oitem)
+		# Also unequip any default items that were equipped at _ready
+		for default_item in ["Camiseta", "Pantalones", "Zapatillas"]:
+			player.unequip_clothing(default_item)
 		var slots := equipped_clothing.split(",")
 		for slot_name in slots:
 			if not slot_name.is_empty():
