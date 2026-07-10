@@ -1114,7 +1114,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	if not equipped_clothing.is_empty():
 		# Unequip all default clothing first to clear their meshes
 		if "_equipped_slots" in player:
-			var old_slots := player._equipped_slots.duplicate()
+			var old_slots: Dictionary = player._equipped_slots.duplicate()
 			player._equipped_slots.clear()
 			for old_item in old_slots.values():
 				var oitem := str(old_item)
