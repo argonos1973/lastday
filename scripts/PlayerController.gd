@@ -814,7 +814,7 @@ func equip_clothing(item_name: String) -> void:
 			for body_name in DEFAULT_BODY_HIDES[item_name]:
 				var body_mi: MeshInstance3D = _find_mesh_in_third_person(body_name)
 				if body_mi != null:
-					body_mi.visible = true
+					body_mi.visible = false
 	elif SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, true)
 	else:
@@ -2179,7 +2179,7 @@ func _update_death_pose(delta: float) -> void:
 		character.position = character.position.lerp(Vector3(0.0, max(0.04, third_person_ground_offset * 0.18) + _water_sink * 0.25, 0.0), delta * 8.0)
 		return
 	if third_person_animation_player != null and third_person_animation_player.is_playing() and death_pose_time >= 0.95:
-		third_person_animation_player.stop()
+		third_person_animation_player.pause()
 	var fall_ratio: float = clamp((death_pose_time - 0.65) / 0.75, 0.0, 1.0)
 	var target_rotation := Vector3(-88.0 * fall_ratio, 180.0, 0.0)
 	var ground_y: float = max(0.045, _water_sink * 0.18)
