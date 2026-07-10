@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://deltxm8ieuef"
-path="res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-ad016789f1826370b83160885188babc.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-abff19786f9b0e2c882d379b8ee839ed.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "284f900d87397ac911e2964b8c5ab39d"
@@ -13,12 +14,12 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Ch36_1001_Glossiness.png"
-dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-ad016789f1826370b83160885188babc.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Ch36_1001_Glossiness.png"
+dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-abff19786f9b0e2c882d379b8ee839ed.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

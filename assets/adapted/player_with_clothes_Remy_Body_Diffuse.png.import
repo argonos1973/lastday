@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cmg68kifioisa"
-path="res://.godot/imported/player_with_clothes_Remy_Body_Diffuse.png-f4a11875710904670446e2c28caf6c01.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Body_Diffuse.png-cb53037e883c945a66d85b0c46a9609b.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "bcdec5b42733481b9e3b44189a0c2fb7"
@@ -13,12 +14,12 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Remy_Body_Diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Diffuse.png-f4a11875710904670446e2c28caf6c01.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Remy_Body_Diffuse.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Diffuse.png-cb53037e883c945a66d85b0c46a9609b.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
