@@ -493,7 +493,6 @@ func _process(delta: float) -> void:
 		_update_puppet_animals()
 		if _client_animal_debug_timer < 100:
 			_client_animal_debug_timer += 1
-			if _client_animal_debug_timer == 100:
 	if player == null or day_cycle == null:
 		_process_pending_puppets()
 		return
