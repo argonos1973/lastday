@@ -234,6 +234,8 @@ func _process(delta: float) -> void:
 						_wolf_eating_target._spawn_gut_pickups()
 						_broadcast_wolf_meat_drops(_wolf_eating_target)
 						_wolf_eating_target._remove_corpse()
+					elif _wolf_eating_target.has_meta("proxy_dead") and _wolf_eating_target.get_meta("proxy_dead", false):
+						_gut_player_corpse(_wolf_eating_target)
 					elif "action_type" in _wolf_eating_target and str(_wolf_eating_target.action_type) == "wolf_meat_raw":
 						_consume_meat_pickup(_wolf_eating_target)
 				_wolf_eating_target = null
@@ -563,7 +565,7 @@ func _find_nearest_corpse() -> Node3D:
 			nearest = other
 	if nearest == null:
 		for p in get_tree().get_nodes_in_group("net_player_proxy"):
-			if p is Node3D and p.get_meta("proxy_dead", false):
+			if p is Node3D and p.get_meta("proxy_dead", false) and not p.get_meta("gutted", false):
 				var d := global_position.distance_to((p as Node3D).global_position)
 				if d < nearest_dist:
 					nearest_dist = d
@@ -922,6 +924,38 @@ func _broadcast_wolf_meat_drops(corpse: Node3D) -> void:
 		if net_node.peer.get_peer(pid) == null:
 			continue
 		net_node.animal_gutted.rpc_id(pid, animal_name, drops)
+
+func _gut_player_corpse(proxy: Node3D) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	# Mark corpse as gutted so wolves don't eat it again
+	proxy.set_meta("gutted", true)
+	var base_pos: Vector3 = proxy.global_position
+	var meat_name := "Carne humana"
+	var meat_qty := 6
+	var drops: Array = []
+	for i in range(meat_qty):
+		var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
+		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+		var mpos := base_pos + offset
+		mpos.y = 0.06
+		var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+		if scene.has_method("_spawn_ground_pickup"):
+			scene.call("_spawn_ground_pickup", meat_name, "food", mpos, 0.3, 1, 12.0, mid, "wolf_meat_raw")
+		drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 12.0})
+	# Broadcast to all clients
+	var net_node := scene.get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.peer != null:
+		var animal_name: String = proxy.name
+		for pid in net_node.players.keys():
+			if pid == multiplayer.get_unique_id():
+				continue
+			if net_node.players[pid].get("offline", false):
+				continue
+			if net_node.peer.get_peer(pid) == null:
+				continue
+			net_node.animal_gutted.rpc_id(pid, animal_name, drops)
 
 func _consume_meat_pickup(action: Node3D) -> void:
 	var scene := get_tree().current_scene
