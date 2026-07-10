@@ -260,6 +260,7 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 @rpc("authority", "reliable")
 func _sync_player_list(list: Dictionary) -> void:
 	for pid in list.keys():
+		pass
 	players = list
 	if players.size() >= 1:
 		all_players_ready.emit()
