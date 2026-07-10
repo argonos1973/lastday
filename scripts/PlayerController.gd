@@ -395,6 +395,11 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String) -> void:
 	if not is_puppet:
 		return
+	# If dead and naked swap not yet done, ensure pending is active
+	if is_dead and clothing.is_empty() and not _puppet_naked_pending:
+		if third_person_model != null and third_person_model.name != "NakedCorpse":
+			_puppet_naked_pending = true
+			_puppet_naked_timer = 0.0
 	# Update clothing
 	if clothing != _puppet_clothing:
 		var old_items: Array = []
@@ -454,7 +459,7 @@ func _puppet_swap_to_naked() -> void:
 	if naked == null:
 		print("[PUPPET] Failed to load desnudo.glb for dead body")
 		return
-	naked.name = "ThirdPersonCharacter"
+	naked.name = "NakedCorpse"
 	naked.visible = true
 	naked.position = Vector3.ZERO
 	naked.rotation_degrees = Vector3(0.0, 180.0, 0.0)
