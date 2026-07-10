@@ -79,8 +79,8 @@ const DEFAULT_SKIN_HIDES := {
 
 const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
-	"Pantalones": [],
-	"Zapatillas": [],
+	"Pantalones": ["Body_legs"],
+	"Zapatillas": ["Body_feet"],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
@@ -770,25 +770,41 @@ func equip_clothing(item_name: String) -> void:
 		if SURVIVAL_CLOTHING.has(eitem) and not SURVIVAL_CLOTHING[eitem]["skin_hides"].is_empty():
 			has_survival_skin_hide = true
 			break
-	# Always use _head_mesh + Desnudo_* + clothing meshes (never _full_body_mesh)
-	if _full_body_mesh != null:
-		_full_body_mesh.visible = false
-		_full_body_mesh.material_override = null
-	if _head_mesh != null:
-		_head_mesh.visible = true
-	# Show all Desnudo_* parts
-	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
-		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
-		if dmi != null:
-			dmi.visible = true
-	# Hide Desnudo_* covered by equipped clothing
-	for equipped_item in equipped_check.values():
-		var eitem := str(equipped_item)
-		if DEFAULT_SKIN_HIDES.has(eitem):
-			for skin_name in DEFAULT_SKIN_HIDES[eitem]:
-				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
-				if skin_mi != null:
-					skin_mi.visible = false
+	if all_equipped and not has_survival_skin_hide:
+		if _full_body_mesh != null:
+			_full_body_mesh.visible = true
+			_full_body_mesh.material_override = null
+		if _head_mesh != null:
+			_head_mesh.visible = false
+		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+			if dmi != null:
+				dmi.visible = false
+		for bn in ["Body_legs", "Body_feet"]:
+			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+			if bmi != null:
+				bmi.visible = false
+	else:
+		if _full_body_mesh != null:
+			_full_body_mesh.visible = false
+			_full_body_mesh.material_override = null
+		if _head_mesh != null:
+			_head_mesh.visible = true
+		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+			if dmi != null:
+				dmi.visible = true
+		for bn in ["Body_legs", "Body_feet"]:
+			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+			if bmi != null:
+				bmi.visible = true
+		for equipped_item in equipped_check.values():
+			var eitem := str(equipped_item)
+			if DEFAULT_SKIN_HIDES.has(eitem):
+				for skin_name in DEFAULT_SKIN_HIDES[eitem]:
+					var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+					if skin_mi != null:
+						skin_mi.visible = false
 	if DEFAULT_CLOTHING.has(item_name):
 		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
 		if bn != null:
@@ -856,6 +872,11 @@ func unequip_clothing(item_name: String) -> void:
 		_full_body_mesh.material_override = null
 	if _head_mesh != null:
 		_head_mesh.visible = true
+	# Show Body_legs/Body_feet for leg geometry (since _full_body_mesh is hidden)
+	for bn in ["Body_legs", "Body_feet"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi != null:
+			bmi.visible = true
 	# Show all Desnudo_* parts (naked skin)
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
