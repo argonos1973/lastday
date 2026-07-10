@@ -348,6 +348,13 @@ func force_death_to_client() -> void:
 	if scene != null and scene.has_method("_net_force_death"):
 		scene._net_force_death()
 
+# Server reliably broadcasts player death to all clients
+@rpc("authority", "reliable")
+func broadcast_player_death(peer_id: int, pos: Vector3, rot: float) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_player_death_broadcast"):
+		scene._net_player_death_broadcast(peer_id, pos, rot)
+
 # Client tells server to damage another player (PvP)
 @rpc("any_peer", "reliable")
 func damage_player(target_peer_id: int, amount: float) -> void:

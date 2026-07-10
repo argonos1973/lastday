@@ -471,15 +471,20 @@ func _puppet_swap_to_naked() -> void:
 		var smi: MeshInstance3D = _find_mesh_in_third_person(soldier_name)
 		if smi != null:
 			smi.visible = false
+	# Hide all Body_* parts except Body_torso (which has neck)
+	for body_part in ["Body_legs", "Body_arms", "Body_hands", "Body_feet"]:
+		var bpmi: MeshInstance3D = _find_mesh_in_third_person(body_part)
+		if bpmi != null:
+			bpmi.visible = false
+	# Show Body_torso (includes neck)
+	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
+	if bt != null:
+		bt.visible = true
 	# Show all Desnudo_* parts (naked body)
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
 			dmi.visible = true
-	# Show Body_torso (includes neck)
-	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
-	if bt != null:
-		bt.visible = true
 	# Hide full body mesh, show head
 	if _full_body_mesh != null:
 		_full_body_mesh.visible = false

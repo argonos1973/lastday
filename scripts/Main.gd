@@ -1368,7 +1368,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		if iname.is_empty():
 			continue
 		var angle := TAU * float(i) / float(max(1, saved_inv.size())) + randf_range(-0.3, 0.3)
-		var offset := Vector3(cos(angle) * randf_range(0.4, 1.0), 0.0, sin(angle) * randf_range(0.4, 1.0))
+		var offset := Vector3(cos(angle) * randf_range(1.5, 3.0), 0.0, sin(angle) * randf_range(1.5, 3.0))
 		var dpos := pos + offset
 		dpos.y = 0.06
 		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
@@ -1398,10 +1398,18 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	# Update player list entry
 	if net.players.has(peer_id):
 		net.players[peer_id]["anim"] = "dead"
-	# Send death state to all connected clients
 	var pos: Vector3 = proxy.global_position
 	var rot: float = proxy.rotation.y
-	# Send empty visuals so corpse appears naked (loot was already dropped)
+	# Send reliable death broadcast to all clients
+	for pid in net.players.keys():
+		if pid == multiplayer.get_unique_id():
+			continue
+		if net.players[pid].get("offline", false):
+			continue
+		if net.peer.get_peer(pid) == null:
+			continue
+		net.broadcast_player_death.rpc_id(pid, peer_id, pos, rot)
+	# Also send via sync_player_state as backup
 	var clothing := ""
 	var held := ""
 	var backpack := ""
@@ -1413,6 +1421,17 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 		if net.peer.get_peer(pid) == null:
 			continue
 		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack)
+
+func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float) -> void:
+	# Reliable death notification from server — apply immediately to puppet
+	if not remote_players.has(peer_id):
+		return
+	var rp: Node3D = remote_players[peer_id]
+	if not is_instance_valid(rp):
+		return
+	if rp.has_method("puppet_apply"):
+		rp.puppet_apply(pos, rot, "dead")
+		rp.puppet_apply_visuals("", "", "")
 
 func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
 	if net == null or not net.is_host:
