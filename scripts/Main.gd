@@ -382,7 +382,6 @@ func _ready() -> void:
 	if net != null and net.is_dedicated_server:
 		# Server only needs collision + nav grid + wildlife AI — skip all visuals
 		_create_map()
-		print("[NET] Servidor dedicado listo. Mundo cargado.")
 		return
 	# Loading overlay with countdown: show it BEFORE heavy world generation
 	_loading_overlay = CanvasLayer.new()
@@ -416,7 +415,6 @@ func _ready() -> void:
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
-	print("[LOADING] Countdown started, overlay=%s" % (_loading_overlay != null))
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -496,7 +494,6 @@ func _process(delta: float) -> void:
 		if _client_animal_debug_timer < 100:
 			_client_animal_debug_timer += 1
 			if _client_animal_debug_timer == 100:
-				print("[NET] Client animal sync: net.animals=%d puppet_animals=%d" % [net.animals.size(), puppet_animals.size()])
 	if player == null or day_cycle == null:
 		_process_pending_puppets()
 		return
@@ -868,7 +865,6 @@ func _create_player() -> void:
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
 		_has_pending_spawn_pos = false
-		print("[NET] Applied pending spawn position after player creation: %s" % _pending_spawn_pos)
 
 func _on_remote_player_connected(id: int) -> void:
 	if net == null:
@@ -883,7 +879,6 @@ func _on_remote_player_connected(id: int) -> void:
 		_spawn_remote_player(id)
 
 func _on_remote_player_disconnected(id: int) -> void:
-	print("[NET] _on_remote_player_disconnected: id=%d, has_remote=%s" % [id, remote_players.has(id)])
 	# On client: don't remove puppet if player is still in list as offline
 	if net != null and not net.is_host and net.players.has(id) and net.players[id].get("offline", false):
 		# Player is offline but kept in list — update puppet position and keep it
@@ -894,7 +889,6 @@ func _on_remote_player_disconnected(id: int) -> void:
 				rp.puppet_apply(target_pos, net.players[id].get("rot", 0.0), net.players[id].get("anim", "idle"))
 			else:
 				rp.global_position = target_pos
-		print("[NET] Player %d went offline, keeping puppet at %s" % [id, net.players[id].get("pos", Vector3.ZERO)])
 		return
 	if remote_players.has(id):
 		var rp: Node3D = remote_players[id]
@@ -919,7 +913,6 @@ func _on_remote_player_disconnected(id: int) -> void:
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
-		print("[NET] Player %d disconnected, proxy kept alive at %s, in_group=%s, has_real_pos=%s, protection=%s" % [id, sp.global_position, sp.is_in_group("net_player_proxy"), sp.get_meta("has_real_pos", false), sp.get_meta("protection_timer", 0.0)])
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
 		net._sync_player_list.rpc(net.players.duplicate(true))
@@ -937,7 +930,6 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
-		print("[NET] Sent reconnect state to client %d: pos=%s, %d items, backpack=%s" % [peer_id, pos, inv.size(), backpack])
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
@@ -946,7 +938,6 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
-		print("[NET] Sent new player spawn pos to client %d" % peer_id)
 
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
@@ -955,7 +946,6 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		proxy_by_client_id.erase(cid)
 		var was_dead: bool = existing.get_meta("proxy_dead", false)
 		if was_dead:
-			print("[NET] Client %s proxy was dead, respawning fresh" % cid)
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
 			# Send spawn position and clear reconnecting flag so server accepts updates
@@ -988,7 +978,6 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_sitting: bool = existing.get_meta("saved_sitting", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
 			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
-			print("[NET] Client %s reconnected as peer %d, proxy restored at %s" % [cid, peer_id, existing.global_position])
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
@@ -1026,7 +1015,6 @@ func _spawn_server_proxy(id: int) -> void:
 	for w in wolves:
 		if w is Node3D and w.has_method("_wolf_ai"):
 			w.set("_chase_cooldown", 8.0)
-	print("[NET] Created server proxy for player %d (protection 60s, wolf cooldown 8s)" % id)
 
 # Called by RPC from server on client to apply wolf damage
 func _net_apply_damage(amount: float) -> void:
@@ -1036,14 +1024,10 @@ func _net_apply_damage(amount: float) -> void:
 func _net_force_death() -> void:
 	if player == null or not is_instance_valid(player):
 		return
-	print("[NET] _net_force_death received, is_dead=%s game_over=%s" % [player.get("is_dead"), game_over])
 	if player.get("is_dead") == true:
-		print("[NET] _net_force_death: already dead, ignoring")
 		return
 	if game_over:
-		print("[NET] _net_force_death: game_over already set, ignoring")
 		return
-	print("[NET] Forced death by server (PvP kill)")
 	if player.has_method("die"):
 		player.die()
 	# Always trigger death handler to notify server and close game
@@ -1058,11 +1042,9 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 	_has_received_spawn_pos = true
 	if player != null:
 		player.global_position = pos
-		print("[NET] Applied reconnect spawn position: %s" % pos)
 	else:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
-		print("[NET] Stored pending spawn position: %s (player not ready)" % pos)
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
@@ -1136,7 +1118,6 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 				player.equip_clothing(slot_name)
 	player.held_index = clampi(held_idx, 0, max(0, player.inventory.items.size() - 1))
 	player._sync_held_item()
-	print("[NET] Restored inventory: %d items, HP=%.0f, backpack=%s" % [items_data.size(), health, equipped_backpack])
 
 # Called by RPC from client on server to damage a real animal
 func _send_world_state_to_client(peer_id: int) -> void:
@@ -1147,7 +1128,6 @@ func _send_world_state_to_client(peer_id: int) -> void:
 		if door is Door and door.is_open:
 			open_doors.append(door.name)
 	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors)
-	print("[NET] Sent world state to client %d: %d depleted, %d dropped, %d campfires, %d lit, %d open doors" % [peer_id, _depleted_action_ids.size(), _dropped_items.size(), _built_campfires.size(), _lit_campfires.size(), open_doors.size()])
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array) -> void:
 	for action_id in depleted_ids:
@@ -1189,10 +1169,8 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 		if door != null and door is Door and not door.is_open:
 			door.is_open = true
 			door.rotation_degrees.y = door.open_yaw
-	print("[NET] World state synced: %d depleted, %d dropped, %d campfires, %d lit, %d open doors" % [depleted_ids.size(), dropped_items.size(), campfires.size(), lit_campfires.size(), open_doors.size()])
 
 func _net_item_picked_up(action_id: String) -> void:
-	print("[NET] Recibido item_picked_up: %s (tiene: %s)" % [action_id, world_actions_by_id.has(action_id)])
 	if net != null and net.is_dedicated_server:
 		if not _depleted_action_ids.has(action_id):
 			_depleted_action_ids.append(action_id)
@@ -1207,11 +1185,9 @@ func _net_item_picked_up(action_id: String) -> void:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-		print("[NET] Item picked up by another player: %s" % action_id)
 
 func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 	var door := get_node_or_null(door_name)
-	print("[NET] _net_door_state_changed: door=%s open=%s found=%s" % [door_name, is_open, door != null])
 	if door != null and door is Door:
 		if door.is_open != is_open:
 			door.is_open = is_open
@@ -1293,10 +1269,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			if net.peer.get_peer(pid) == null:
 				continue
 			net.animal_gutted.rpc_id(pid, animal_name, meat_drops)
-	print("[NET] Animal %s gutted by player %d, %d meat spawned" % [animal_name, sender, meat_drops.size()])
 
 func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
-	print("[NET] _net_animal_gutted received: animal=%s, drops=%d" % [animal_name, meat_drops.size()])
 	# Fix key: animal_name may be "Puppet_X" but puppet_animals is keyed by "X"
 	var puppet_key := animal_name.replacen("Puppet_", "")
 	# Delay removal and meat spawning by 5s to match the gutting animation
@@ -1320,19 +1294,16 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 			var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
 			if not world_actions_by_id.has(mid):
 				_spawn_raw_meat_visual(mid, mname, mpos)
-		print("[NET] Animal %s gutted remotely, %d meat spawned" % [puppet_key, meat_drops_ref.size()])
 	)
 
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
 	if net == null or not net.is_host:
 		return
-	print("[NET] _net_damage_player: target=%d amount=%f sender=%d" % [target_peer_id, amount, sender])
 	# Verify sender is close enough to target (anti-cheat)
 	if server_proxies.has(target_peer_id):
 		var proxy: Node3D = server_proxies[target_peer_id]
 		var is_dead: bool = proxy.get_meta("proxy_dead", false)
 		if is_dead:
-			print("[NET] _net_damage_player: target %d already dead, ignoring" % target_peer_id)
 			return
 		# Check distance if sender has a proxy
 		if server_proxies.has(sender):
@@ -1347,7 +1318,6 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 			proxy.set_meta("proxy_dead", true)
 			proxy.remove_from_group("net_player_proxy")
 			proxy.add_to_group("interactable")
-			print("[NET] Player %d killed by player %d at %s, corpse remains as lootable" % [target_peer_id, sender, proxy.global_position])
 			# Drop loot immediately on server using saved inventory
 			_drop_player_loot(target_peer_id, proxy)
 			proxy.set_meta("death_broadcasted", true)
@@ -1363,23 +1333,18 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 func _net_player_died(peer_id: int, inventory_data: Array = []) -> void:
 	if net == null or not net.is_host:
 		return
-	print("[NET] _net_player_died: peer_id=%d, inv_items=%d" % [peer_id, inventory_data.size()])
 	if not server_proxies.has(peer_id):
-		print("[NET] _net_player_died: no proxy for peer %d" % peer_id)
 		return
 	var proxy: Node3D = server_proxies[peer_id]
 	# Update saved inventory from the death notification if provided
 	if not inventory_data.is_empty():
 		proxy.set_meta("saved_inventory", inventory_data)
-		print("[NET] _net_player_died: updated saved_inventory with %d items from client" % inventory_data.size())
 	if proxy.get_meta("loot_dropped", false):
-		print("[NET] _net_player_died: loot already dropped for peer %d" % peer_id)
 		return
 	if not proxy.get_meta("proxy_dead", false):
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
 		proxy.add_to_group("interactable")
-	print("[NET] Player %d died (client notification), corpse remains as lootable" % peer_id)
 	_drop_player_loot(peer_id, proxy)
 	if not proxy.get_meta("death_broadcasted", false):
 		proxy.set_meta("death_broadcasted", true)
@@ -1391,7 +1356,6 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	proxy.set_meta("loot_dropped", true)
 	var pos: Vector3 = proxy.global_position
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
-	print("[NET] Player %d dropping %d items as loot at %s" % [peer_id, saved_inv.size(), pos])
 	# Drop each item as a pickup on the server and notify all clients
 	var drops: Array = []
 	for i in range(saved_inv.size()):
@@ -1425,7 +1389,6 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
 				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
-	print("[NET] Loot drop complete: %d items sent to clients" % drops.size())
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 
@@ -1450,7 +1413,6 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 		if net.peer.get_peer(pid) == null:
 			continue
 		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack)
-	print("[NET] Broadcast death state for player %d to all clients" % peer_id)
 
 func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
 	if net == null or not net.is_host:
@@ -1463,7 +1425,6 @@ func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
 	if net.peer != null and net.peer.get_peer(requester_id) != null:
 		net.send_loot.rpc_id(requester_id, dead_peer_id, saved_inv)
-	print("[NET] Sent loot inventory of dead player %d to requester %d (%d items)" % [dead_peer_id, requester_id, saved_inv.size()])
 
 func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
 	if net == null or not net.is_host:
@@ -1481,12 +1442,10 @@ func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
 		var taker_proxy: Node3D = server_proxies[taker_id]
 		var dist := taker_proxy.global_position.distance_to(proxy.global_position)
 		if dist > 5.0:
-			print("[NET] Player %d too far from corpse %d to loot (%.1fm)" % [taker_id, dead_peer_id, dist])
 			return
 	var item_data: Dictionary = saved_inv[item_index]
 	saved_inv.remove_at(item_index)
 	proxy.set_meta("saved_inventory", saved_inv)
-	print("[NET] Player %d took item '%s' from corpse %d (remaining: %d)" % [taker_id, str(item_data.get("item_name", "")), dead_peer_id, saved_inv.size()])
 	# Notify the taker's client to add the item to their inventory
 	if net.peer != null and net.peer.get_peer(taker_id) != null:
 		net.add_looted_item.rpc_id(taker_id, item_data)
@@ -1542,9 +1501,7 @@ func _update_server_proxies(delta: float) -> void:
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
-		print("[NET] _spawn_remote_player: already has puppet for %d, skipping" % id)
 		return
-	print("[NET] _spawn_remote_player: creating puppet for %d" % id)
 	# PlayerController puppet — model loads from cache (instant if local player already loaded)
 	var avatar = PlayerControllerScript.new()
 	avatar.name = "RemotePlayer_%d" % id
@@ -1559,7 +1516,6 @@ func _spawn_remote_player(id: int) -> void:
 	remote_players[id] = avatar
 	# Defer setup — if local player hasn't loaded model yet, _pending_puppets will retry
 	_pending_puppets.append(avatar)
-	print("[NET] Spawned puppet player for id %d (pending setup)" % id)
 
 var _pending_puppets: Array = []
 
@@ -1579,7 +1535,6 @@ func _process_pending_puppets() -> void:
 			if avatar.third_person_model != null:
 				avatar.third_person_model.position.y = player.third_person_ground_offset
 			ready.append(avatar)
-			print("[NET] Puppet setup complete for %s (ground_offset=%.3f)" % [avatar.name, player.third_person_ground_offset])
 	for avatar in ready:
 		_pending_puppets.erase(avatar)
 
@@ -1657,8 +1612,6 @@ func _update_remote_players() -> void:
 		if is_instance_valid(stale):
 			stale.queue_free()
 		remote_players.erase(pid)
-		print("[NET] Removed stale remote player %d (no longer in player list)" % pid)
-	print("[NET] _update_remote_players: players=%s remote=%s" % [net.players.keys(), remote_players.keys()])
 	for pid in net.players.keys():
 		if pid == net.get_my_id():
 			continue
@@ -1737,7 +1690,6 @@ func _broadcast_animals() -> void:
 	_animal_debug_timer += 1
 	if _animal_debug_timer >= 50:
 		_animal_debug_timer = 0
-		print("[NET] Broadcasting %d animales a %d peers" % [data.size(), multiplayer.get_peers().size()])
 	# Split into chunks to stay under MTU
 	var keys := data.keys()
 	var half := int(ceil(float(keys.size()) / 2.0))
@@ -1785,9 +1737,7 @@ func _update_puppet_animals() -> void:
 		puppet_animals.erase(aid)
 
 func _on_player_died() -> void:
-	print("[NET] _on_player_died called, game_over=%s" % game_over)
 	if game_over:
-		print("[NET] _on_player_died: already game_over, ignoring")
 		return
 	game_over = true
 	if player != null and player.has_method("die"):
@@ -1824,7 +1774,6 @@ func _on_player_died() -> void:
 				held = player.inventory.items[held_idx].item_name
 		var rot_y: float = player.rotation.y if player != null else 0.0
 		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
-		print("[NET] Sent notify_death with %d inventory items" % items_data.size())
 	SaveSystemScript.delete_save()
 	if hud != null:
 		hud.show_notice("Has muerto. El juego se cerrara...")
@@ -2201,19 +2150,15 @@ func _create_map() -> void:
 		_create_leafy_floor_ground()
 	if not is_client and not is_server:
 		_create_grass_ground_cover()
-		print("TIME grass_ground_cover: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_client and not is_server:
 		_create_terrain_variation()
-		print("TIME terrain_variation: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_backdrop()
-		print("TIME mountain_backdrop: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_river()
-		print("TIME mountain_river: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
@@ -2222,27 +2167,21 @@ func _create_map() -> void:
 		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
 		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
 		_create_radio_point(Vector3(-42, 0, -42))
-		print("TIME structures: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_world_details()
-		print("TIME world_details: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_client and not is_server:
 		_create_ground_clutter()
-		print("TIME ground_clutter: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_client and not is_server:
 		_create_tall_grass_fields()
-		print("TIME tall_grass_fields: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_dense_vegetation_zones()
-		print("TIME dense_vegetation: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_forest()
-		print("TIME forest: %dms" % (Time.get_ticks_msec() - _tm))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_survival_objectives()
@@ -2253,7 +2192,6 @@ func _create_map() -> void:
 		_create_wildlife()
 	if not is_server:
 		_flush_grass_batches()
-	print("TIME objectives+nav+wildlife+flush: %dms" % (Time.get_ticks_msec() - _tm))
 
 func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	var blocker_idx := _register_wildlife_blocker(origin, 8.2)
@@ -3429,7 +3367,6 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 	# Notify other clients to remove this item from world
 	if net != null and net.is_connected and not net.is_host:
 		var picked_id: String = action.action_id
-		print("[NET] Enviando item_picked_up RPC: %s" % picked_id)
 		net.item_picked_up.rpc_id(1, picked_id)
 
 func _net_notify_pickup(action) -> void:

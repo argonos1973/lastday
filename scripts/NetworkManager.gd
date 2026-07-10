@@ -59,9 +59,6 @@ func start_dedicated_server() -> bool:
 	is_connected = true
 	is_dedicated_server = true
 	_start_broadcast()
-	print("[NET] Servidor dedicado iniciado en puerto %d" % PORT)
-	print("[NET] IP local: %s" % _get_local_ip())
-	print("[NET] Esperando jugadores...")
 	return true
 
 func host_game() -> bool:
@@ -80,8 +77,6 @@ func host_game() -> bool:
 		"rot": 0.0,
 		"ready": true
 	}
-	print("[NET] Servidor iniciado en puerto %d" % PORT)
-	print("[NET] IP local: %s" % _get_local_ip())
 	return true
 
 func _start_broadcast() -> void:
@@ -93,7 +88,6 @@ func _start_broadcast() -> void:
 	# Listener socket on DISCOVERY_PORT for responding to probes
 	_probe_listener = PacketPeerUDP.new()
 	_probe_listener.bind(DISCOVERY_PORT)
-	print("[NET] Broadcast de descubrimiento activo en puerto %d" % DISCOVERY_PORT)
 
 func _get_local_ip() -> String:
 	var ips := IP.get_local_addresses()
@@ -133,7 +127,6 @@ func _process(_delta: float) -> void:
 					_broadcast_server.put_packet(response.to_utf8_buffer())
 					# Reset back to broadcast mode
 					_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
-					print("[NET] Respondido probe de %s:%d con IPs: %s" % [sender_ip, sender_port, ",".join(all_ips)])
 				count -= 1
 		# Periodic broadcast
 		if _broadcast_server != null:
@@ -161,7 +154,6 @@ func join_game(ip: String) -> bool:
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
-	print("[NET] Conectando a %s:%d..." % [ip, PORT])
 	return true
 
 func close_connection() -> void:
@@ -174,7 +166,6 @@ func close_connection() -> void:
 	players.clear()
 
 func _on_peer_connected(id: int) -> void:
-	print("[NET] Peer conectado: %d" % id)
 	# Only server has direct ENet connections to all peers — set timeout there
 	if is_host and peer != null:
 		var enet_peer := peer.get_peer(id)
@@ -185,7 +176,6 @@ func _on_peer_connected(id: int) -> void:
 	player_connected.emit(id)
 
 func _on_peer_disconnected(id: int) -> void:
-	print("[NET] Peer desconectado: %d" % id)
 	if is_host:
 		# On server: keep player in list but mark as offline (don't erase)
 		# so other clients still see the character in the world
@@ -199,7 +189,6 @@ func _on_peer_disconnected(id: int) -> void:
 	player_disconnected.emit(id)
 
 func _on_connected_to_server() -> void:
-	print("[NET] Conectado al servidor")
 	# Generous timeout so we don't drop the server while loading the world
 	if peer != null:
 		var server_peer := peer.get_peer(1)
@@ -217,12 +206,10 @@ func _on_connected_to_server() -> void:
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
-	print("[NET] Fallo de conexion")
 	is_connected = false
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
-	print("[NET] Servidor desconectado")
 	is_connected = false
 	players.clear()
 	connection_failed.emit()
@@ -247,7 +234,6 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 				old_pid_to_remove = pid
 				break
 		if old_pid_to_remove != -1:
-			print("[NET] Removing old offline entry for peer %d (same client_id %s)" % [old_pid_to_remove, cid])
 			players.erase(old_pid_to_remove)
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_match_proxy_to_client"):
@@ -273,9 +259,7 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 
 @rpc("authority", "reliable")
 func _sync_player_list(list: Dictionary) -> void:
-	print("[NET] Recibida lista de jugadores: %d jugadores" % list.size())
 	for pid in list.keys():
-		print("[NET]   jugador: %d" % pid)
 	players = list
 	if players.size() >= 1:
 		all_players_ready.emit()
@@ -352,7 +336,6 @@ func sync_animals(data: Dictionary) -> void:
 # Server tells specific client to apply damage
 @rpc("authority", "reliable")
 func apply_damage_to_client(amount: float) -> void:
-	print("[NET] apply_damage_to_client received: amount=%f" % amount)
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount)
@@ -360,7 +343,6 @@ func apply_damage_to_client(amount: float) -> void:
 # Server tells specific client that they are dead (HP reached 0 on server)
 @rpc("authority", "reliable")
 func force_death_to_client() -> void:
-	print("[NET] force_death_to_client RPC received!")
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_force_death"):
 		scene._net_force_death()
@@ -480,7 +462,6 @@ func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Arra
 @rpc("any_peer", "reliable")
 func door_state_changed(door_name: String, is_open: bool) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	print("[NET] door_state_changed: door=%s open=%s from=%d" % [door_name, is_open, sender])
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):

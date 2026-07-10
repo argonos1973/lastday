@@ -492,7 +492,6 @@ func _puppet_swap_to_naked() -> void:
 	# Clear equipped slots
 	_equipped_slots.clear()
 	_puppet_clothing = ""
-	print("[PUPPET] Stripped clothing for naked dead body (keeping original head)")
 
 func _update_puppet_held_item(item_name: String) -> void:
 	if third_person_hand_item_root == null:
@@ -3266,7 +3265,6 @@ func _melee_attack() -> void:
 				if hp <= 0.0:
 					closest_target.set_meta("proxy_dead", true)
 					closest_target.remove_from_group("net_player_proxy")
-					print("[NET] Player %d proxy killed by melee at %s" % [peer_id, closest_target.global_position])
 					# Drop loot, broadcast death, and force death on client
 					var scene_node := get_tree().current_scene
 					if scene_node != null:
