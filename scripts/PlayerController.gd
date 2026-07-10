@@ -353,7 +353,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		is_dead = true
 		death_pose_time = 0.0
 		_puppet_death_remove_timer = 0.0
-		flashlight.visible = false
+		if flashlight != null:
+			flashlight.visible = false
 		add_to_group("interactable")
 		if _death_anim_played:
 			return
