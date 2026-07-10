@@ -2182,7 +2182,7 @@ func _update_death_pose(delta: float) -> void:
 	if third_person_animation_player != null and not third_person_dying_animation.is_empty() and death_pose_time < 0.95:
 		character.position = character.position.lerp(Vector3(0.0, max(0.04, third_person_ground_offset * 0.18) + _water_sink * 0.25, 0.0), delta * 8.0)
 		return
-	if third_person_animation_player != null and third_person_animation_player.is_playing():
+	if third_person_animation_player != null and third_person_animation_player.is_playing() and death_pose_time >= 0.95:
 		third_person_animation_player.stop()
 	var fall_ratio: float = clamp((death_pose_time - 0.65) / 0.75, 0.0, 1.0)
 	var target_rotation := Vector3(-88.0 * fall_ratio, 180.0, 0.0)

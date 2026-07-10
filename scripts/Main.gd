@@ -1029,7 +1029,8 @@ func _net_force_death() -> void:
 		return
 	if player.has_method("die"):
 		player.die()
-	# Always trigger death handler to notify server and close game
+	# Trigger death handler to notify server and close game
+	# (game_over guard in _on_player_died prevents double call if stats.died already triggered it)
 	_on_player_died()
 
 # Called by RPC from server on client to set position on reconnect
@@ -1739,8 +1740,9 @@ func _on_player_died() -> void:
 	if game_over:
 		return
 	game_over = true
-	if player != null and player.has_method("die"):
-		player.die()
+	if player != null and is_instance_valid(player) and not player.get("is_dead"):
+		if player.has_method("die"):
+			player.die()
 	# Notify server with inventory data so it can drop loot
 	if net != null and net.is_connected and not net.is_host:
 		var items_data: Array = []
