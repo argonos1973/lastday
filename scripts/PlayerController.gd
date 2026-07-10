@@ -794,10 +794,11 @@ func equip_clothing(item_name: String) -> void:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
 				dmi.visible = true
+		# Hide Body_legs/Body_feet — they overlap with Desnudo_legs/feet
 		for bn in ["Body_legs", "Body_feet"]:
 			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 			if bmi != null:
-				bmi.visible = true
+				bmi.visible = false
 		for equipped_item in equipped_check.values():
 			var eitem := str(equipped_item)
 			if DEFAULT_SKIN_HIDES.has(eitem):
@@ -872,11 +873,11 @@ func unequip_clothing(item_name: String) -> void:
 		_full_body_mesh.material_override = null
 	if _head_mesh != null:
 		_head_mesh.visible = true
-	# Show Body_legs/Body_feet for leg geometry (since _full_body_mesh is hidden)
+	# Hide Body_legs/Body_feet — they overlap with Desnudo_legs/feet
 	for bn in ["Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
-			bmi.visible = true
+			bmi.visible = false
 	# Show all Desnudo_* parts (naked skin)
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
