@@ -2996,11 +2996,18 @@ func handle_world_action(action, actor) -> void:
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
 			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
 			actor.stats.changed.emit()
-			actor.notice.emit("Comes %s." % str(action.get_meta("item_name")) if action.has_meta("item_name") else "Comes algo.")
+			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
+			actor.notice.emit("Comes %s." % eaten_name)
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
 			_net_notify_pickup(action)
+			if eaten_name == "Carne humana":
+				actor.notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
+				actor.stats.health = 0.0
+				actor.stats.changed.emit()
+				if actor.has_method("die"):
+					actor.die()
 		"forage":
 			_play_actor_action(actor, "forage", 0.9)
 			if not actor.inventory.add_item(ItemScript.create("Bayas silvestres", "food", 0.08, 2, 12.0)):

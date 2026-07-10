@@ -2439,6 +2439,13 @@ func _eat_held_item() -> void:
 		inventory.changed.emit()
 		_sync_held_item()
 		notice.emit("Comes %s. +%d hambre." % [item_name, int(food_value)])
+		if item_name == "Carne humana":
+			notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
+			if stats != null:
+				stats.health = 0.0
+				stats.changed.emit()
+			if has_method("die"):
+				die()
 	)
 	add_child(eat_timer)
 	eat_timer.start()
