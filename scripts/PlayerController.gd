@@ -276,6 +276,7 @@ var _jump_velocity := 0.0
 var _jump_apex := false
 var _jump_animation_timer := 0.0
 var is_dead := false
+var _death_anim_played := false
 var death_pose_time := 0.0
 var _puppet_death_remove_timer := 0.0
 var _puppet_naked_pending := false
@@ -354,6 +355,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		_puppet_death_remove_timer = 0.0
 		flashlight.visible = false
 		add_to_group("interactable")
+		if _death_anim_played:
+			return
+		_death_anim_played = true
 		if third_person_animation_player != null and not third_person_dying_animation.is_empty():
 			third_person_animation_player.speed_scale = 1.0
 			third_person_animation_player.play(third_person_dying_animation, 0.05)
@@ -456,38 +460,24 @@ func _puppet_swap_to_naked() -> void:
 		return
 	# Mark as naked corpse to prevent re-triggering
 	third_person_model.name = "NakedCorpse"
-	# Hide all default clothing meshes
-	for body_name in ["Tops", "Bottoms", "Shoes"]:
-		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
-		if bmi != null:
-			bmi.visible = false
-	# Hide all survival clothing meshes
-	for cloth_name in ["cloth_torso", "cloth_legs", "cloth_hands", "cloth_feet"]:
-		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
-		if cmi != null:
-			cmi.visible = false
-	# Hide soldier parts
-	for soldier_name in ["soldier_torso", "soldier_legs"]:
-		var smi: MeshInstance3D = _find_mesh_in_third_person(soldier_name)
-		if smi != null:
-			smi.visible = false
-	# Hide all Body_* parts except Body_torso (which has neck)
-	for body_part in ["Body_legs", "Body_arms", "Body_hands", "Body_feet"]:
-		var bpmi: MeshInstance3D = _find_mesh_in_third_person(body_part)
-		if bpmi != null:
-			bpmi.visible = false
-	# Show Body_torso (includes neck)
-	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
-	if bt != null:
-		bt.visible = true
-	# Show all Desnudo_* parts (naked body)
+	# Hide ALL MeshInstance3D in the model first
+	var stack: Array = [third_person_model]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D:
+			(node as MeshInstance3D).visible = false
+		for c in node.get_children():
+			stack.append(c)
+	# Show only Desnudo_* parts (naked body)
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
 			dmi.visible = true
-	# Hide full body mesh, show head
-	if _full_body_mesh != null:
-		_full_body_mesh.visible = false
+	# Show Body_torso (includes neck)
+	var bt: MeshInstance3D = _find_mesh_in_third_person("Body_torso")
+	if bt != null:
+		bt.visible = true
+	# Show head
 	if _head_mesh != null:
 		_head_mesh.visible = true
 	# Remove any worn visual garments
@@ -2166,6 +2156,7 @@ func die() -> void:
 	if is_dead:
 		return
 	is_dead = true
+	_death_anim_played = true
 	death_pose_time = 0.0
 	_apply_view_mode()
 	flashlight.visible = false
