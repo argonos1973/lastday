@@ -79,8 +79,8 @@ const DEFAULT_SKIN_HIDES := {
 
 const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
-	"Pantalones": ["Body_legs"],
-	"Zapatillas": ["Body_feet"],
+	"Pantalones": [],
+	"Zapatillas": [],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
