@@ -278,6 +278,8 @@ var _jump_animation_timer := 0.0
 var is_dead := false
 var death_pose_time := 0.0
 var _puppet_death_remove_timer := 0.0
+var _puppet_naked_pending := false
+var _puppet_naked_timer := 0.0
 var is_sprinting := false
 var is_crouching := false
 var in_shelter := false
@@ -404,8 +406,9 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 		var new_items: Array = []
 		if clothing.is_empty():
 			if is_dead:
-				# Dead body: use naked model, no default clothes
-				_puppet_swap_to_naked()
+				# Dead body: delay naked swap until death animation finishes
+				_puppet_naked_pending = true
+				_puppet_naked_timer = 0.0
 				new_items = []
 			else:
 				new_items = ["Camiseta", "Pantalones", "Zapatillas"]
@@ -523,6 +526,11 @@ func _process(delta: float) -> void:
 		_update_backpack_socket()
 		if is_dead:
 			_update_death_pose(delta)
+			if _puppet_naked_pending:
+				_puppet_naked_timer += delta
+				if _puppet_naked_timer >= 2.0:
+					_puppet_naked_pending = false
+					_puppet_swap_to_naked()
 
 func _ready() -> void:
 	if is_puppet:
