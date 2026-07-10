@@ -786,11 +786,6 @@ func equip_clothing(item_name: String) -> void:
 			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 			if bmi != null:
 				bmi.visible = false
-		# Hide Tops/Bottoms/Shoes — _full_body_mesh has clothing baked in
-		for cn in ["Tops", "Bottoms", "Shoes"]:
-			var cmi: MeshInstance3D = _survival_body_nodes.get(cn)
-			if cmi != null:
-				cmi.visible = false
 	else:
 		# Not all equipped or has survival clothing — use _head_mesh + Desnudo_*
 		if _full_body_mesh != null:
