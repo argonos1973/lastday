@@ -3019,7 +3019,20 @@ func handle_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
+			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
+				# Equip directly from ground — adds to inventory, equips (drops old to ground)
+				_play_actor_action(actor, "pickup", 0.8)
+				if not actor.inventory.add_item(item):
+					return
+				actor.equip_clothing(item.item_name)
+				actor.notice.emit("Equipas %s." % item.item_name)
+				_hide_action_visual(action)
+				action.mark_depleted()
+				_save_world_change_silent()
+				if net != null and net.is_connected and not net.is_host:
+					net.item_picked_up.rpc_id(1, action.action_id)
+			else:
+				_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
 			_play_actor_action(actor, "plant", 1.2)
 			if hud != null:
@@ -3207,7 +3220,20 @@ func handle_world_action(action, actor) -> void:
 			else:
 				actor.notice.emit("El animal escapa entre la maleza.")
 		"coat":
-			_finish_pickup_action(action, actor, ItemScript.create("Chaqueta de abrigo", "clothing", 1.1, 1, 0.65), "Encuentras una chaqueta vieja. Usala desde el inventario.")
+			var coat_item = ItemScript.create("Chaqueta de abrigo", "clothing", 1.1, 1, 0.65)
+			if actor.has_method("equip_clothing"):
+				_play_actor_action(actor, "pickup", 0.8)
+				if not actor.inventory.add_item(coat_item):
+					return
+				actor.equip_clothing("Chaqueta de abrigo")
+				actor.notice.emit("Encuentras una chaqueta vieja y te la pones.")
+				_hide_action_visual(action)
+				action.mark_depleted()
+				_save_world_change_silent()
+				if net != null and net.is_connected and not net.is_host:
+					net.item_picked_up.rpc_id(1, action.action_id)
+			else:
+				_finish_pickup_action(action, actor, coat_item, "Encuentras una chaqueta vieja. Usala desde el inventario.")
 		"axe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0), "Recoges un hacha. Ya puedes talar arboles.")
 		"matches_tool":
