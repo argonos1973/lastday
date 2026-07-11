@@ -906,8 +906,10 @@ func _on_remote_player_disconnected(id: int) -> void:
 	if server_proxies.has(id):
 		var sp: Node3D = server_proxies[id]
 		sp.set_meta("disconnected", true)
-		sp.set_meta("protection_timer", 999999.0)
-		sp.remove_from_group("net_player_proxy")
+		sp.set_meta("protection_timer", 0.0)
+		# Keep in net_player_proxy group so wolves can still attack
+		if not sp.is_in_group("net_player_proxy"):
+			sp.add_to_group("net_player_proxy")
 		var cid: String = sp.get_meta("client_id", "")
 		# Update net.players with proxy position and equipment for other clients to see
 		if net != null and net.is_host and net.players.has(id):
@@ -1327,36 +1329,53 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
 	if net == null or not net.is_host:
 		return
-	# Verify sender is close enough to target (anti-cheat)
+	# Find target proxy: check active proxies first, then disconnected ones
+	var proxy: Node3D = null
 	if server_proxies.has(target_peer_id):
-		var proxy: Node3D = server_proxies[target_peer_id]
-		var is_dead: bool = proxy.get_meta("proxy_dead", false)
-		if is_dead:
+		proxy = server_proxies[target_peer_id]
+	else:
+		for cid in proxy_by_client_id.keys():
+			var dp: Node3D = proxy_by_client_id[cid]
+			if dp.get_meta("peer_id", 0) == target_peer_id:
+				proxy = dp
+				break
+	if proxy == null:
+		return
+	var is_dead: bool = proxy.get_meta("proxy_dead", false)
+	if is_dead:
+		return
+	# Check distance if sender has a proxy
+	var sender_proxy: Node3D = null
+	if server_proxies.has(sender):
+		sender_proxy = server_proxies[sender]
+	else:
+		for cid2 in proxy_by_client_id.keys():
+			var sp2: Node3D = proxy_by_client_id[cid2]
+			if sp2.get_meta("peer_id", 0) == sender:
+				sender_proxy = sp2
+				break
+	if sender_proxy != null:
+		var dist := sender_proxy.global_position.distance_to(proxy.global_position)
+		if dist > 5.0:
 			return
-		# Check distance if sender has a proxy
-		if server_proxies.has(sender):
-			var sender_proxy: Node3D = server_proxies[sender]
-			var dist := sender_proxy.global_position.distance_to(proxy.global_position)
-			if dist > 5.0:
-				return
-		var hp: float = proxy.get_meta("proxy_health", 100.0)
-		hp = max(0.0, hp - amount)
-		proxy.set_meta("proxy_health", hp)
-		if hp <= 0.0:
-			proxy.set_meta("proxy_dead", true)
-			proxy.remove_from_group("net_player_proxy")
-			proxy.add_to_group("interactable")
-			# Drop loot immediately on server using saved inventory
-			_drop_player_loot(target_peer_id, proxy)
-			proxy.set_meta("death_broadcasted", true)
-			_broadcast_player_death(target_peer_id, proxy)
-			# Force death on the target client (don't send damage, would cause double death)
-			if net.peer != null and net.peer.get_peer(target_peer_id) != null:
-				net.force_death_to_client.rpc_id(target_peer_id)
-		else:
-			# Send damage to the target client if still alive
-			if net.peer != null and net.peer.get_peer(target_peer_id) != null:
-				net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+	var hp: float = proxy.get_meta("proxy_health", 100.0)
+	hp = max(0.0, hp - amount)
+	proxy.set_meta("proxy_health", hp)
+	if hp <= 0.0:
+		proxy.set_meta("proxy_dead", true)
+		proxy.remove_from_group("net_player_proxy")
+		proxy.add_to_group("interactable")
+		# Drop loot immediately on server using saved inventory
+		_drop_player_loot(target_peer_id, proxy)
+		proxy.set_meta("death_broadcasted", true)
+		_broadcast_player_death(target_peer_id, proxy)
+		# Force death on the target client if connected
+		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+			net.force_death_to_client.rpc_id(target_peer_id)
+	else:
+		# Send damage to the target client if still connected
+		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
 
 func _net_player_died(peer_id: int, inventory_data: Array = []) -> void:
 	if net == null or not net.is_host:
@@ -1547,6 +1566,32 @@ func _update_server_proxies(delta: float) -> void:
 			if net.peer != null and net.peer.get_peer(connected_pid) == null:
 				continue
 			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack)
+	# Tick survival stats for disconnected proxies (hunger, thirst, health decay)
+	for cid in proxy_by_client_id.keys():
+		var dp: Node3D = proxy_by_client_id[cid]
+		if dp.get_meta("proxy_dead", false):
+			continue
+		var d_hunger: float = dp.get_meta("saved_hunger", 100.0)
+		var d_thirst: float = dp.get_meta("saved_thirst", 100.0)
+		var d_hp: float = dp.get_meta("proxy_health", 100.0)
+		# Decay rates: hunger -0.5/s, thirst -0.7/s (slower than active player)
+		d_hunger = max(0.0, d_hunger - 0.5 * delta)
+		d_thirst = max(0.0, d_thirst - 0.7 * delta)
+		# Health damage from starvation/dehydration
+		if d_hunger <= 0.0:
+			d_hp = max(0.0, d_hp - 1.0 * delta)
+		if d_thirst <= 0.0:
+			d_hp = max(0.0, d_hp - 1.5 * delta)
+		dp.set_meta("saved_hunger", d_hunger)
+		dp.set_meta("saved_thirst", d_thirst)
+		dp.set_meta("proxy_health", d_hp)
+		if d_hp <= 0.0:
+			dp.set_meta("proxy_dead", true)
+			dp.remove_from_group("net_player_proxy")
+			dp.add_to_group("interactable")
+			print("[PERSIST] Player cid=%s died from starvation/dehydration while disconnected" % cid)
+			_drop_player_loot(dp.get_meta("peer_id", 0), dp)
+			_broadcast_player_death(dp.get_meta("peer_id", 0), dp)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
