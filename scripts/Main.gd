@@ -39,6 +39,7 @@ var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
 var _dropped_items: Array = []
 var _built_campfires: Array = []
+var _built_shelters: Array = []
 var _lit_campfires: Array = []
 var _tree_id_counter := 0
 var _bush_id_counter := 0
@@ -1138,9 +1139,9 @@ func _send_world_state_to_client(peer_id: int) -> void:
 	for door in get_tree().get_nodes_in_group("doors"):
 		if door is Door and door.is_open:
 			open_doors.append(door.name)
-	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors)
+	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters)
 
-func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array) -> void:
+func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
 	for action_id in depleted_ids:
 		if world_actions_by_id.has(action_id):
 			var action = world_actions_by_id[action_id]
@@ -1180,6 +1181,10 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 		if door != null and door is Door and not door.is_open:
 			door.is_open = true
 			door.rotation_degrees.y = door.open_yaw
+	# Spawn shelters built by other players
+	for sh in shelters:
+		if not world_actions_by_id.has(str(sh["id"])):
+			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"])
 
 func _net_item_picked_up(action_id: String) -> void:
 	if net != null and net.is_dedicated_server:
@@ -1918,6 +1923,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_spawn_player_campfire_with_id(cf_id, pos)
 		if net != null and net.is_connected and not net.is_host:
 			net.campfire_built.rpc_id(1, cf_id, pos)
+		return
+	if item_name == "shelter":
+		var sh_id := "player_shelter_%d" % randi()
+		_spawn_player_shelter_with_id(sh_id, pos)
+		if net != null and net.is_connected and not net.is_host:
+			net.shelter_built.rpc_id(1, sh_id, pos)
 		return
 	# Dropping a whole animal corpse spawns the model lying on the ground
 	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
@@ -3565,6 +3576,54 @@ func _net_campfire_built(cf_id: String, pos: Vector3) -> void:
 	if world_actions_by_id.has(cf_id):
 		return
 	_spawn_player_campfire_with_id(cf_id, pos)
+
+func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
+	var stick_path := "res://assets/models/props/wood_stick.glb"
+	# Two vertical support poles at the back end, left and right
+	_try_instance_external_scene([stick_path], "PlayerShelter_%s_SupportA" % sh_id, pos + Vector3(-0.9, 0.3, -2.0), Vector3(1.0, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	_try_instance_external_scene([stick_path], "PlayerShelter_%s_SupportB" % sh_id, pos + Vector3(0.9, 0.3, -2.0), Vector3(1.0, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	# 9 long thin roof sticks leaning from front to back
+	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
+	for i in range(9):
+		_try_instance_external_scene([stick_path], "PlayerShelter_%s_Roof_%d" % [sh_id, i], pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
+	# Apply camouflage material
+	_apply_shelter_camouflage(sh_id)
+	# Register as world action so it syncs
+	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
+	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
+
+func _apply_shelter_camouflage(sh_id: String) -> void:
+	var ground_tex := _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
+	var camo_mat := StandardMaterial3D.new()
+	if ground_tex != null:
+		camo_mat.albedo_texture = ground_tex
+		camo_mat.albedo_color = Color(0.22, 0.26, 0.16)
+		camo_mat.uv1_scale = Vector3(3.0, 3.0, 1.0)
+	else:
+		camo_mat.albedo_color = Color(0.18, 0.20, 0.12)
+	camo_mat.roughness = 0.95
+	camo_mat.metallic = 0.0
+	var stick_names := [
+		"PlayerShelter_%s_SupportA" % sh_id,
+		"PlayerShelter_%s_SupportB" % sh_id,
+	]
+	for i in range(9):
+		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+	for node_name in stick_names:
+		var node := get_node_or_null(NodePath(node_name))
+		if node == null:
+			continue
+		var meshes: Array = []
+		_collect_mesh_instances(node, meshes)
+		for mi in meshes:
+			(mi as MeshInstance3D).material_override = camo_mat
+
+func _net_shelter_built(sh_id: String, pos: Vector3) -> void:
+	if net != null and net.is_dedicated_server:
+		_built_shelters.append({"id": sh_id, "pos": pos})
+	if world_actions_by_id.has(sh_id):
+		return
+	_spawn_player_shelter_with_id(sh_id, pos)
 
 func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 	if net != null and net.is_dedicated_server:

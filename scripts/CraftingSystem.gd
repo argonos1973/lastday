@@ -50,6 +50,11 @@ const RECIPES := [
 		"output": { "name": "Fogata", "type": "campfire", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir fogata"
 	},
+	{
+		"inputs": { "Palo": 11 },
+		"output": { "name": "Refugio", "type": "shelter", "weight": 0.0, "use_value": 0.0 },
+		"label": "Construir refugio con palos"
+	},
 ]
 
 # Returns all recipes that can be crafted with the given inventory items

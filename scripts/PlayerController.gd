@@ -2384,6 +2384,26 @@ func _craft_campfire() -> void:
 	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
+func _craft_shelter() -> void:
+	if inventory == null:
+		return
+	if not inventory.has_item_name("Palo", 11):
+		notice.emit("Necesitas 11 palos para construir un refugio.")
+		return
+	inventory.consume_item_name("Palo", 11)
+	play_action_animation("plant", 3.0)
+	notice.emit("Construyendo refugio...")
+	var parent_node := get_parent()
+	if parent_node != null and parent_node.has_node("HUD"):
+		var hud_node := parent_node.get_node("HUD")
+		if hud_node != null and hud_node.has_method("show_countdown"):
+			hud_node.show_countdown("Construyendo refugio", 3.0)
+	await get_tree().create_timer(3.0).timeout
+	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 2.0)
+	pos.y = 0.0
+	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos)
+	notice.emit("Has construido un refugio.")
+
 func craft_recipe(recipe: Dictionary) -> void:
 	if inventory == null:
 		return
@@ -2391,6 +2411,9 @@ func craft_recipe(recipe: Dictionary) -> void:
 	# Fogata uses the full campfire flow with animation + spawn
 	if out["type"] == "campfire":
 		_craft_campfire()
+		return
+	if out["type"] == "shelter":
+		_craft_shelter()
 		return
 	if not CraftingSystemScript.craft(recipe, inventory):
 		notice.emit("No tienes los materiales necesarios.")
