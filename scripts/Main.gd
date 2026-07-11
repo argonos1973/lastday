@@ -2183,6 +2183,12 @@ func _create_map() -> void:
 		_create_grass_ground_cover()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
+		_create_mountain_backdrop()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
+		_create_mountain_river()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
 		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
 		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
 		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
@@ -2207,6 +2213,10 @@ func _create_map() -> void:
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_dense_vegetation_zones()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
+		_create_forest()
+	_create_river_drink_zones()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
 		_build_nav_grid()
