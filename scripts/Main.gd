@@ -4494,6 +4494,33 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
 		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
+	# Apply darkened ground texture to all camp sticks for camouflage
+	_apply_camp_camouflage(pos)
+
+func _apply_camp_camouflage(_camp_pos: Vector3) -> void:
+	# Extract the ground texture from the terrain model
+	var ground_tex := _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
+	var camo_mat := StandardMaterial3D.new()
+	if ground_tex != null:
+		camo_mat.albedo_texture = ground_tex
+		camo_mat.albedo_color = Color(0.22, 0.26, 0.16)  # darkened green-brown
+		camo_mat.uv1_scale = Vector3(3.0, 3.0, 1.0)
+	else:
+		camo_mat.albedo_color = Color(0.18, 0.20, 0.12)
+	camo_mat.roughness = 0.95
+	camo_mat.metallic = 0.0
+	# Find all camp stick nodes and apply the material
+	var stick_names := ["CampSupportPoleA", "CampSupportPoleB"]
+	for i in range(9):
+		stick_names.append("CampRoofStick_%d" % i)
+	for node_name in stick_names:
+		var node := get_node_or_null(NodePath(node_name))
+		if node == null:
+			continue
+		var meshes: Array = []
+		_collect_mesh_instances(node, meshes)
+		for mi in meshes:
+			(mi as MeshInstance3D).material_override = camo_mat
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
