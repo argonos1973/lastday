@@ -4487,12 +4487,12 @@ func _create_scrap_pile(pos: Vector3) -> void:
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
 	var stick_path := "res://assets/models/props/wood_stick.glb"
-	# Short vertical support pole
-	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.3, -1.5), Vector3(0.6, 0.6, 0.6), Vector3(0, 0, 90), false, 0.0)
-	# 9 long roof sticks leaning back, tops meet top of support pole
+	# Vertical support pole at the front edge of shelter
+	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.3, 0.8), Vector3(0.6, 0.6, 0.6), Vector3(0, 0, 90), false, 0.0)
+	# 9 long thin roof sticks leaning back from support pole to ground behind
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
-		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 1.5, 1.5), Vector3(-50, 0, 90), false, 0.0)
+		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.0), Vector3(0.4, 1.5, 0.4), Vector3(-50, 0, 90), false, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
