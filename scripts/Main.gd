@@ -2461,7 +2461,7 @@ func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(16, 0, 32), Vector3(16, 0, 48), 6)
-	_create_abandoned_camp(Vector3(-56, 0, 28))
+	_create_abandoned_camp(Vector3(15, 0, -5))
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -4488,16 +4488,14 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
 	# Lean-to shelter: one vertical support pole + long sticks leaning on it
 	var stick_path := "res://assets/models/props/wood_stick_01.glb"
-	# Vertical support pole (rotate 90 X to stand upright, scale up for length)
-	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0, -1.8), Vector3(1.5, 3.0, 1.5), Vector3(90, 0, 0), true, 0.0)
-	# Long sticks leaning from ground up against the support pole to form roof
-	# Rotated so they go from ground (z=0.5) up to top of pole (z=-1.8, y~2.5)
-	var roof_y := 2.2
-	var roof_z := -1.0
-	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-1.4, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, 15, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.5, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, -5, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.5, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, 5, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(1.4, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, -15, 0), true, 0.0)
+	# Try all 3 axis rotations for support pole — use 90 Z to stand upright
+	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 1.0, -1.5), Vector3(2.0, 2.0, 2.0), Vector3(0, 0, 90), true, 0.0)
+	# Long sticks leaning from ground up to top of support pole
+	# Try rotation in X to lean them forward, Z to tilt sideways
+	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-1.2, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.4, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.4, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(1.2, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
