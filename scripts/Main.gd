@@ -2197,7 +2197,10 @@ func _create_map() -> void:
 		_create_radio_point(Vector3(-42, 0, -42))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		# Light posts and power lines only
+		_create_world_details()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
+		# Light posts and power lines
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
@@ -2216,6 +2219,9 @@ func _create_map() -> void:
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_forest()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
+		_create_survival_objectives()
 	_create_river_drink_zones()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
