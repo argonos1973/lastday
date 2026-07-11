@@ -503,9 +503,11 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	_process_pending_puppets()
-	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5
+	var near_built_shelter := _is_near_built_shelter(player.global_position)
+	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5 or near_built_shelter
 	var in_house := _is_player_in_house(player.global_position)
 	player.set_meta("in_house", in_house)
+	player.set_meta("in_built_shelter", near_built_shelter)
 	var is_sheltered: bool = player.in_shelter or in_house
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Use real weather temperature when available
@@ -514,6 +516,9 @@ func _process(delta: float) -> void:
 	# Houses protect from extreme temperatures
 	if in_house:
 		ambient_temp = clamp(ambient_temp, 12.0, 28.0)
+	# Built shelters protect from extreme temperatures
+	if near_built_shelter:
+		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night())
 	_apply_campfire_effect(player, delta)
 	_update_door_open_cache()
@@ -1509,6 +1514,8 @@ func _update_server_proxies(delta: float) -> void:
 		if data.has("pos"):
 			proxy.set_meta("has_real_pos", true)
 		proxy.global_position = received_pos
+		# Update shelter meta so wolf AI can protect sheltered players
+		proxy.set_meta("in_built_shelter", _is_near_built_shelter(received_pos))
 		# Decrement spawn protection timer using real delta
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
@@ -3857,6 +3864,13 @@ const HOUSE_POSITIONS := [
 func _is_player_in_house(pos: Vector3) -> bool:
 	for house_pos in HOUSE_POSITIONS:
 		if abs(pos.x - house_pos.x) < 5.7 and abs(pos.z - house_pos.z) < 4.7:
+			return true
+	return false
+
+func _is_near_built_shelter(pos: Vector3) -> bool:
+	for sh in _built_shelters:
+		var sh_pos: Vector3 = sh["pos"]
+		if pos.distance_to(sh_pos) < 3.5:
 			return true
 	return false
 

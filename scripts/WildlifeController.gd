@@ -401,7 +401,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
 	# Priority 1: chase player (only when hungry)
-	if is_hungry and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false):
+	if is_hungry and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
@@ -1418,6 +1418,9 @@ func _resolve_player() -> void:
 				continue
 			# Skip dead proxies
 			if p.get_meta("proxy_dead", false):
+				continue
+			# Skip proxies inside a built shelter (protected from animals)
+			if p.get_meta("in_built_shelter", false):
 				continue
 			var d: float = global_position.distance_to((p as Node3D).global_position)
 			if d < nearest_dist:
