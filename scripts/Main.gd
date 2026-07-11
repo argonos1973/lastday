@@ -985,7 +985,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_sitting: bool = existing.get_meta("saved_sitting", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
 			print("[PERSIST] Found saved proxy for cid=%s: pos=%s inv_items=%d hp=%.1f" % [cid, saved_pos, saved_inv.size(), saved_hp])
-		call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
 	else:
 		print("[PERSIST] No saved proxy for cid=%s, sending new player state" % cid)
 		# No existing proxy — set client_id on the freshly created proxy if it exists
