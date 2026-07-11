@@ -4486,16 +4486,14 @@ func _create_scrap_pile(pos: Vector3) -> void:
 
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
-	# Lean-to shelter: one vertical support pole + long sticks leaning on it
-	var stick_path := "res://assets/models/props/wood_stick_01.glb"
-	# Try all 3 axis rotations for support pole — use 90 Z to stand upright
-	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 1.0, -1.5), Vector3(2.0, 2.0, 2.0), Vector3(0, 0, 90), true, 0.0)
-	# Long sticks leaning from ground up to top of support pole
-	# Try rotation in X to lean them forward, Z to tilt sideways
-	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-1.2, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.4, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.4, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(1.2, 0.8, 0.0), Vector3(2.0, 2.5, 2.0), Vector3(50, 0, 90), true, 0.0)
+	var stick_path := "res://assets/models/props/wood_stick.glb"
+	# Vertical support pole in the center
+	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.8, -1.0), Vector3(1.5, 1.5, 1.5), Vector3(90, 0, 0), true, 0.0)
+	# Roof sticks leaning against the support pole, close together, low height
+	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-0.5, 0.5, 0.0), Vector3(1.5, 1.5, 1.5), Vector3(45, 0, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.15, 0.5, 0.0), Vector3(1.5, 1.5, 1.5), Vector3(45, 0, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.15, 0.5, 0.0), Vector3(1.5, 1.5, 1.5), Vector3(45, 0, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(0.5, 0.5, 0.0), Vector3(1.5, 1.5, 1.5), Vector3(45, 0, 0), true, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
