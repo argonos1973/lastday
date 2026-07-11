@@ -348,17 +348,17 @@ const HOUSE_INTERIOR_PROPS := [
 	K_SURVIVAL + "box-large-open.glb"
 ]
 const NO_GRASS_AREAS := [
-	{"center": Vector3(-25, 0, -18), "half": Vector2(7.4, 6.6)},
-	{"center": Vector3(-38, 0, 18), "half": Vector2(7.4, 6.6)},
-	{"center": Vector3(23, 0, 18), "half": Vector2(7.4, 6.6)},
-	{"center": Vector3(42, 0, 26), "half": Vector2(7.4, 6.6)},
-	{"center": Vector3(-12, 0, 42), "half": Vector2(7.4, 6.6)},
-	{"center": Vector3(33, 0, -30), "half": Vector2(6.6, 5.2)},
-	{"center": Vector3(45, 0, 0), "half": Vector2(6.8, 5.6)},
-	{"center": Vector3(-42, 0, -42), "half": Vector2(4.2, 4.2)},
-	{"center": Vector3(14, 0, -50), "half": Vector2(4.0, 7.0)},
-	{"center": Vector3(56, 0, 38), "half": Vector2(4.0, 7.0)},
-	{"center": Vector3(58, 0, -52), "half": Vector2(4.0, 7.0)}
+	{"center": Vector3(-25, 0, -18), "half": Vector2(3.0, 2.5)},
+	{"center": Vector3(-38, 0, 18), "half": Vector2(3.0, 2.5)},
+	{"center": Vector3(23, 0, 18), "half": Vector2(3.0, 2.5)},
+	{"center": Vector3(42, 0, 26), "half": Vector2(3.0, 2.5)},
+	{"center": Vector3(-12, 0, 42), "half": Vector2(3.0, 2.5)},
+	{"center": Vector3(33, 0, -30), "half": Vector2(2.0, 1.5)},
+	{"center": Vector3(45, 0, 0), "half": Vector2(2.0, 1.5)},
+	{"center": Vector3(-42, 0, -42), "half": Vector2(1.5, 1.5)},
+	{"center": Vector3(14, 0, -50), "half": Vector2(1.5, 2.0)},
+	{"center": Vector3(56, 0, 38), "half": Vector2(1.5, 2.0)},
+	{"center": Vector3(58, 0, -52), "half": Vector2(1.5, 2.0)}
 ]
 
 const WORLD_SEED := 1337
@@ -2179,10 +2179,10 @@ func _create_map() -> void:
 	var is_server: bool = net != null and net.is_dedicated_server
 	if not is_server:
 		_create_leafy_floor_ground()
-	if not is_client and not is_server:
+	if not is_server:
 		_create_grass_ground_cover()
 	_tm = Time.get_ticks_msec()
-	if not is_client and not is_server:
+	if not is_server:
 		_create_terrain_variation()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -2202,11 +2202,14 @@ func _create_map() -> void:
 	if not is_server:
 		_create_world_details()
 	_tm = Time.get_ticks_msec()
-	if not is_client and not is_server:
+	if not is_server:
 		_create_ground_clutter()
 	_tm = Time.get_ticks_msec()
-	if not is_client and not is_server:
+	if not is_server:
 		_create_tall_grass_fields()
+	_tm = Time.get_ticks_msec()
+	if not is_server:
+		_create_grass_carpet()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_dense_vegetation_zones()
