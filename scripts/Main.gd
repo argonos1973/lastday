@@ -2194,7 +2194,6 @@ func _create_map() -> void:
 		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
 		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
 		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
-		_create_radio_point(Vector3(-42, 0, -42))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_world_details()
