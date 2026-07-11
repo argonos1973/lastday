@@ -2328,33 +2328,39 @@ func _create_house_overgrowth(origin: Vector3, label: String) -> void:
 	for spot in spots:
 		_create_house_grass_asset(label + " OvergrownGrass", origin + spot, randf_range(0.30, 0.55))
 	# Dense side grass along the walls
-	for i in range(28):
+	for i in range(60):
 		var side := -1.0 if i % 2 == 0 else 1.0
 		var pos := origin + Vector3(side * randf_range(5.9, 6.65), 0.055, randf_range(-4.6, 4.8))
 		_create_house_grass_asset(label + " SideGrass", pos, randf_range(0.22, 0.45))
 	# Front and back wall base weeds
-	for i in range(20):
+	for i in range(50):
 		var fb := 1.0 if i % 2 == 0 else -1.0
 		var pos := origin + Vector3(randf_range(-5.5, 5.5), 0.055, fb * randf_range(4.9, 5.65))
 		_create_house_grass_asset(label + " WallWeed", pos, randf_range(0.20, 0.42))
-	# Inner tall grass ring — dense, close to the house (5.5 to 7.5 units)
-	for i in range(140):
+	# Inner tall grass ring — very dense, close to the house (5.5 to 7.5 units)
+	for i in range(400):
 		var angle := randf_range(0.0, TAU)
 		var dist := randf_range(5.5, 7.5)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
 		_create_grass_clump(pos, randf_range(0.7, 1.25), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 	# Outer tall grass ring — wider, wilder (7.5 to 12 units)
-	for i in range(200):
+	for i in range(600):
 		var angle := randf_range(0.0, TAU)
 		var dist := randf_range(7.5, 12.0)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
 		_create_grass_clump(pos, randf_range(0.5, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 	# Scattered wild grass patches further out (12 to 18 units) — gives overgrown field feel
-	for i in range(160):
+	for i in range(500):
 		var angle := randf_range(0.0, TAU)
 		var dist := randf_range(12.0, 18.0)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
 		_create_grass_clump(pos, randf_range(0.4, 0.95), Color(0.18, 0.32, 0.12).lerp(Color(0.35, 0.43, 0.15), randf()))
+	# Far wild grass field (18 to 25 units) — thick overgrown surrounding
+	for i in range(400):
+		var angle := randf_range(0.0, TAU)
+		var dist := randf_range(18.0, 25.0)
+		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
+		_create_grass_clump(pos, randf_range(0.4, 0.9), Color(0.18, 0.32, 0.12).lerp(Color(0.35, 0.43, 0.15), randf()))
 
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), randf()))
