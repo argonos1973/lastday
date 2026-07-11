@@ -4487,14 +4487,13 @@ func _create_scrap_pile(pos: Vector3) -> void:
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
 	var stick_path := "res://assets/models/props/wood_stick.glb"
-	var s := 0.4
-	# Vertical support pole — try 90 Z to stand upright, no snap
-	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.3, -0.8), Vector3(s, s, s), Vector3(0, 0, 90), false, 0.0)
-	# Roof sticks leaning (60 Z), no snap
-	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-0.3, 0.25, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.1, 0.25, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.1, 0.25, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(0.3, 0.25, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
+	var s := 0.7
+	# Vertical support pole
+	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.5, -0.8), Vector3(s, s, s), Vector3(0, 0, 90), false, 0.0)
+	# 7 roof sticks leaning against support
+	var offsets := [-0.45, -0.3, -0.15, 0.0, 0.15, 0.3, 0.45]
+	for i in range(7):
+		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
