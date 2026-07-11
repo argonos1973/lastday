@@ -4493,17 +4493,17 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
 		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
-	# Grass covering on top of the roof — distribute tufts along the inclined surface
-	# Roof goes from (z=0.8, y=0) at front to (z=-1.5, y~0.8) at back
-	for i in range(40):
+	# Grass thatched directly onto the roof sticks — dense, small tufts hugging the surface
+	# Roof goes from (z=0.8, y=0.1) at front to (z=-1.5, y=0.9) at back
+	for i in range(120):
 		var t := randf()
 		var z := lerpf(0.8, -1.5, t)
-		var y := lerpf(0.1, 0.9, t) + 0.1
-		var x := randf_range(-0.9, 0.9)
+		var y := lerpf(0.15, 1.0, t)
+		var x := randf_range(-0.85, 0.85)
 		var grass_pos := pos + Vector3(x, y, z)
-		var height := randf_range(0.3, 0.6)
-		var radius := randf_range(0.15, 0.3)
-		var color := Color(0.18, randf_range(0.35, 0.55), 0.12)
+		var height := randf_range(0.15, 0.35)
+		var radius := randf_range(0.08, 0.15)
+		var color := Color(0.15, randf_range(0.30, 0.48), 0.10)
 		_queue_grass_instance(grass_pos, height, radius, color)
 
 func _create_military_leftovers(pos: Vector3) -> void:
