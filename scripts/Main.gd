@@ -4488,8 +4488,8 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
 	var stick_path := "res://assets/models/props/wood_stick.glb"
 	# Two vertical support poles at the back end of the shelter, left and right
-	_try_instance_external_scene([stick_path], "CampSupportPoleA", pos + Vector3(-0.9, 0.3, -1.5), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
-	_try_instance_external_scene([stick_path], "CampSupportPoleB", pos + Vector3(0.9, 0.3, -1.5), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	_try_instance_external_scene([stick_path], "CampSupportPoleA", pos + Vector3(-0.9, 0.3, -2.0), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	_try_instance_external_scene([stick_path], "CampSupportPoleB", pos + Vector3(0.9, 0.3, -2.0), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
 	# 9 long thin roof sticks leaning from front pole to back pole
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
