@@ -4310,6 +4310,15 @@ func _create_broken_road_details() -> void:
 			_create_grass_clump(hole_pos + Vector3(randf_range(-0.25, 0.25), 0.02, randf_range(-0.25, 0.25)), randf_range(0.22, 0.42), Color(0.11, 0.22, 0.07))
 	for z in [-48, -36, -19, -2, 13, 31, 49]:
 		_create_visual_box("FadedRoadLineBreak", Vector3(8, 0.096, z + randf_range(-2.0, 2.0)), Vector3(0.34, 0.020, randf_range(1.2, 3.0)), Color(0.035, 0.036, 0.032), Vector3(0, randf_range(-5.0, 5.0), 0))
+	# Dense grass growing through cracks all over the abandoned road
+	for i in range(800):
+		var grass_pos := Vector3(randf_range(3.0, 13.0), 0.09, randf_range(-60.0, 60.0))
+		_create_grass_clump(grass_pos, randf_range(0.25, 0.65), Color(0.13, 0.26, 0.08).lerp(Color(0.28, 0.38, 0.12), randf()))
+	# Grass encroaching from road edges inward
+	for i in range(400):
+		var side := -1.0 if i % 2 == 0 else 1.0
+		var grass_pos := Vector3(8.0 + side * randf_range(2.0, 5.4), 0.05, randf_range(-60.0, 60.0))
+		_create_grass_clump(grass_pos, randf_range(0.35, 0.85), Color(0.15, 0.28, 0.09).lerp(Color(0.30, 0.40, 0.13), randf()))
 
 func _create_wrecked_car(pos: Vector3, yaw: float, color: Color) -> void:
 	if not _is_vehicle_spawn_clear(pos):
@@ -4512,7 +4521,8 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
-	if abs(pos.x - 8.0) < 5.4:
+	# Allow grass on road edges — only block the very center of the road
+	if abs(pos.x - 8.0) < 2.0:
 		return false
 	if _is_in_house_doorway(pos):
 		return false
@@ -4790,7 +4800,7 @@ func _create_grass_carpet() -> void:
 			var px := -coverage + float(cx) * spacing + randf_range(-0.6, 0.6)
 			var pz := -coverage + float(cz) * spacing + randf_range(-0.6, 0.6)
 			var pos := Vector3(px, 0.012, pz)
-			if abs(pos.x - 8.0) < 5.4:
+			if abs(pos.x - 8.0) < 2.0:
 				continue
 			if _is_in_no_grass_area(pos, 0.65):
 				continue
