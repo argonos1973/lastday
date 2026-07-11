@@ -3422,6 +3422,43 @@ func handle_world_action(action, actor) -> void:
 			_save_world_change_silent()
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
+		"shelter":
+			_play_actor_action(actor, "forage", 3.0)
+			if hud != null:
+				hud.show_countdown("Desmontando refugio", 3.0)
+			await get_tree().create_timer(3.0).timeout
+			var sh_id: String = action.action_id
+			# Remove shelter stick visuals
+			var stick_names := [
+				"PlayerShelter_%s_SupportA" % sh_id,
+				"PlayerShelter_%s_SupportB" % sh_id,
+			]
+			for i in range(9):
+				stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+			for sn in stick_names:
+				var sn_node := get_node_or_null(sn)
+				if sn_node != null:
+					sn_node.queue_free()
+			# Give back 11 palos
+			var palo_item = ItemScript.create("Palo", "material", 0.3, 1, 0.0)
+			for _i in range(11):
+				actor.inventory.add_item(palo_item.duplicate())
+			if actor.has_method("refresh_carry_capacity"):
+				actor.refresh_carry_capacity()
+			actor.inventory.changed.emit()
+			# Remove from _built_shelters
+			for i in range(_built_shelters.size() - 1, -1, -1):
+				if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
+					_built_shelters.remove_at(i)
+			# Remove the world action
+			_hide_action_visual(action)
+			action.mark_depleted()
+			world_actions_by_id.erase(sh_id)
+			_save_world_change_silent()
+			actor.notice.emit("Desmontas el refugio. Recuperas 11 palos.")
+			# Notify server to remove shelter for other clients
+			if net != null and net.is_connected and not net.is_host:
+				net.shelter_dismantled.rpc_id(1, sh_id)
 
 func _play_actor_action(actor, action_name: String, duration: float) -> void:
 	if actor != null and actor.has_method("play_action_animation"):
@@ -3638,6 +3675,30 @@ func _net_shelter_built(sh_id: String, pos: Vector3) -> void:
 	if world_actions_by_id.has(sh_id):
 		return
 	_spawn_player_shelter_with_id(sh_id, pos)
+
+func _net_shelter_dismantled(sh_id: String) -> void:
+	if net != null and net.is_dedicated_server:
+		for i in range(_built_shelters.size() - 1, -1, -1):
+			if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
+				_built_shelters.remove_at(i)
+	# Remove stick visuals
+	var stick_names := [
+		"PlayerShelter_%s_SupportA" % sh_id,
+		"PlayerShelter_%s_SupportB" % sh_id,
+	]
+	for i in range(9):
+		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+	for sn in stick_names:
+		var sn_node := get_node_or_null(sn)
+		if sn_node != null:
+			sn_node.queue_free()
+	# Remove world action
+	if world_actions_by_id.has(sh_id):
+		var action = world_actions_by_id[sh_id]
+		if action != null and is_instance_valid(action):
+			_hide_action_visual(action)
+			action.mark_depleted()
+		world_actions_by_id.erase(sh_id)
 
 func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 	if net != null and net.is_dedicated_server:

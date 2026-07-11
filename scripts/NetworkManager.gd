@@ -459,6 +459,17 @@ func shelter_built(sh_id: String, pos: Vector3) -> void:
 	if scene != null and scene.has_method("_net_shelter_built"):
 		scene._net_shelter_built(sh_id, pos)
 
+# Client tells server it dismantled a shelter (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func shelter_dismantled(sh_id: String) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != multiplayer.get_unique_id():
+				shelter_dismantled.rpc_id(pid, sh_id)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_shelter_dismantled"):
+		scene._net_shelter_dismantled(sh_id)
+
 # Client tells server it lit a campfire (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:

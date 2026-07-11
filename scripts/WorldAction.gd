@@ -117,6 +117,8 @@ func get_interaction_text(_player = null) -> String:
 			return "Encender fogata - E (cerillas)"
 		"cook":
 			return "Cocinar carne ensartada - E"
+		"shelter":
+			return "Desmontar refugio - E (recuperar 11 palos)"
 	return "%s - E" % display_name
 
 func to_dict() -> Dictionary:

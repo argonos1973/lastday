@@ -48,6 +48,7 @@ var _weather_retry_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
+var _context_menu_has_eat := false
 var _context_menu_has_drink := false
 
 func setup(new_player, new_day_cycle) -> void:
@@ -966,6 +967,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	selected_slot_index = slot_index
 	_context_menu_slot_index = slot_index
 	_context_menu_has_drink = false
+	_context_menu_has_eat = false
 	_context_menu = PanelContainer.new()
 	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
@@ -993,6 +995,14 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 		drink_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(drink_btn)
 		_context_menu_has_drink = true
+	# Add Comer button for food items
+	if str(item.item_type) == "food":
+		var eat_btn := Button.new()
+		eat_btn.text = "Comer"
+		eat_btn.add_theme_font_size_override("font_size", 14)
+		eat_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(eat_btn)
+		_context_menu_has_eat = true
 	var drop_btn := Button.new()
 	drop_btn.text = "Soltar"
 	drop_btn.add_theme_font_size_override("font_size", 14)
@@ -1035,21 +1045,35 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 	if rect.has_point(mouse_pos):
 		var vbox = _context_menu.get_child(0)
 		# child 0 = name label, child 1 = use_btn
-		# if _context_menu_has_drink: child 2 = drink_btn, child 3 = drop_btn, child 4 = store_btn, child 5+ = combine
-		# else: child 2 = drop_btn, child 3 = store_btn, child 4+ = combine
-		var use_btn = vbox.get_child(1)
-		var drink_index := 2 if _context_menu_has_drink else -1
-		var drop_index := 3 if _context_menu_has_drink else 2
-		var store_index := 4 if _context_menu_has_drink else 3
-		var combine_start := 5 if _context_menu_has_drink else 4
+		# Dynamic indices based on which optional buttons exist
+		var idx := 2
+		var drink_index := -1
+		var eat_index := -1
+		if _context_menu_has_drink:
+			drink_index = idx
+			idx += 1
+		if _context_menu_has_eat:
+			eat_index = idx
+			idx += 1
+		var drop_index := idx
+		idx += 1
+		var store_index := idx
+		idx += 1
+		var combine_start := idx
 		if button_index == MOUSE_BUTTON_LEFT:
+			var use_btn = vbox.get_child(1)
 			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
 				_on_use_pressed()
 				return true
-			elif drink_index >= 0:
+			if drink_index >= 0:
 				var drink_btn = vbox.get_child(drink_index)
 				if drink_btn is Button and drink_btn.get_global_rect().has_point(mouse_pos):
 					_on_drink_pressed()
+					return true
+			if eat_index >= 0:
+				var eat_btn = vbox.get_child(eat_index)
+				if eat_btn is Button and eat_btn.get_global_rect().has_point(mouse_pos):
+					_on_eat_pressed()
 					return true
 			var drop_btn = vbox.get_child(drop_index)
 			if drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
@@ -1081,6 +1105,23 @@ func _on_combine_pressed(recipe: Dictionary) -> void:
 		toggle_inventory()
 	if player.has_method("craft_recipe"):
 		player.craft_recipe(recipe)
+
+func _on_eat_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	player.held_index = selected_slot_index
+	var item = player.inventory.items[selected_slot_index]
+	if str(item.item_type) != "food":
+		return
+	# Close inventory so animation is visible
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+	# Put food in hand and eat immediately
+	player._use_inventory_index(selected_slot_index)
+	if player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
+		player._eat_held_item()
+	selected_slot_index = -1
 
 func _on_use_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
