@@ -916,6 +916,9 @@ func _on_remote_player_disconnected(id: int) -> void:
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
+			print("[PERSIST] Player %d disconnected, proxy saved for cid=%s, inv_items=%d" % [id, cid, (sp.get_meta("saved_inventory", []) as Array).size()])
+		else:
+			print("[PERSIST] Player %d disconnected with NO client_id, proxy not saved" % id)
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
 		net._sync_player_list.rpc(net.players.duplicate(true))
@@ -944,6 +947,7 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
+	print("[PERSIST] _match_proxy_to_client peer_id=%d cid=%s, proxy_by_client_id has %d entries" % [peer_id, cid, proxy_by_client_id.size()])
 	if proxy_by_client_id.has(cid):
 		var existing: Node3D = proxy_by_client_id[cid]
 		proxy_by_client_id.erase(cid)
@@ -980,8 +984,10 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_sleeping: bool = existing.get_meta("saved_sleeping", false)
 			var saved_sitting: bool = existing.get_meta("saved_sitting", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
+			print("[PERSIST] Found saved proxy for cid=%s: pos=%s inv_items=%d hp=%.1f" % [cid, saved_pos, saved_inv.size(), saved_hp])
+		call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot)
 	else:
+		print("[PERSIST] No saved proxy for cid=%s, sending new player state" % cid)
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("client_id", cid)
@@ -1054,6 +1060,7 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
 	if server_proxies.has(peer_id):
 		var proxy: Node3D = server_proxies[peer_id]
+		print("[PERSIST] Storing inventory for peer %d: %d items, cid=%s" % [peer_id, items_data.size(), proxy.get_meta("client_id", "")])
 		proxy.set_meta("saved_inventory", items_data)
 		proxy.set_meta("saved_health", health)
 		proxy.set_meta("saved_hunger", hunger)
