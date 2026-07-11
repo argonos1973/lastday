@@ -2316,51 +2316,22 @@ func _create_house_floor(origin: Vector3, label: String) -> void:
 	add_child(body)
 
 func _create_house_overgrowth(origin: Vector3, label: String) -> void:
-	# Dense overgrown spots hugging the house walls (creeping weeds)
-	var spots := [
-		Vector3(-5.25, 0.055, 5.55), Vector3(-3.65, 0.055, 5.85), Vector3(3.55, 0.055, 5.70), Vector3(5.20, 0.055, 5.45),
-		Vector3(-5.65, 0.055, 2.9), Vector3(5.75, 0.055, 2.4), Vector3(-5.85, 0.055, -2.4), Vector3(5.85, 0.055, -2.9),
-		Vector3(-4.75, 0.055, -5.35), Vector3(-1.7, 0.055, -5.55), Vector3(1.85, 0.055, -5.45), Vector3(4.85, 0.055, -5.30),
-		# Extra close-to-wall weeds
-		Vector3(-5.95, 0.055, 4.2), Vector3(5.95, 0.055, -4.2), Vector3(-4.5, 0.055, -5.85), Vector3(4.5, 0.055, 5.85),
-		Vector3(-5.95, 0.055, -1.0), Vector3(5.95, 0.055, 1.0), Vector3(-2.0, 0.055, 5.95), Vector3(2.0, 0.055, -5.95),
-	]
-	for spot in spots:
-		_create_house_grass_asset(label + " OvergrownGrass", origin + spot, randf_range(0.30, 0.55))
-	# Dense side grass along the walls
-	for i in range(120):
+	# Dense uniform grass fill around the house — no rings, just thick coverage
+	# Close wall weeds (hugging the base)
+	for i in range(80):
 		var side := -1.0 if i % 2 == 0 else 1.0
 		var pos := origin + Vector3(side * randf_range(5.9, 6.65), 0.055, randf_range(-4.6, 4.8))
 		_create_house_grass_asset(label + " SideGrass", pos, randf_range(0.22, 0.45))
-	# Front and back wall base weeds
-	for i in range(100):
+	for i in range(60):
 		var fb := 1.0 if i % 2 == 0 else -1.0
 		var pos := origin + Vector3(randf_range(-5.5, 5.5), 0.055, fb * randf_range(4.9, 5.65))
 		_create_house_grass_asset(label + " WallWeed", pos, randf_range(0.20, 0.42))
-	# Inner tall grass ring — very dense, close to the house (5.5 to 7.5 units)
-	for i in range(800):
+	# Dense grass fill from 5.5 to 25 units in all directions
+	for i in range(3000):
 		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(5.5, 7.5)
+		var dist := randf_range(5.5, 25.0)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
-		_create_grass_clump(pos, randf_range(0.7, 1.25), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
-	# Outer tall grass ring — wider, wilder (7.5 to 12 units)
-	for i in range(1200):
-		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(7.5, 12.0)
-		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
-		_create_grass_clump(pos, randf_range(0.5, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
-	# Scattered wild grass patches further out (12 to 18 units) — gives overgrown field feel
-	for i in range(1000):
-		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(12.0, 18.0)
-		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
-		_create_grass_clump(pos, randf_range(0.4, 0.95), Color(0.18, 0.32, 0.12).lerp(Color(0.35, 0.43, 0.15), randf()))
-	# Far wild grass field (18 to 25 units) — thick overgrown surrounding
-	for i in range(800):
-		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(18.0, 25.0)
-		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
-		_create_grass_clump(pos, randf_range(0.4, 0.9), Color(0.18, 0.32, 0.12).lerp(Color(0.35, 0.43, 0.15), randf()))
+		_create_grass_clump(pos, randf_range(0.4, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), randf()))
@@ -4722,23 +4693,27 @@ func _update_door_open_cache() -> void:
 					_door_open_cache[cell] = true
 
 func _create_ground_clutter() -> void:
-	for i in range(360):
-		var pos := Vector3(randf_range(-70, 70), 0.02, randf_range(-70, 70))
+	for i in range(1500):
+		var pos := Vector3(randf_range(-85, 85), 0.02, randf_range(-85, 85))
 		if not _can_place_ground_vegetation(pos):
 			continue
 		if i % 5 < 4:
-			_create_grass_clump(pos, randf_range(0.18, 0.42), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
+			_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
 		else:
 			_create_static_box_rotated("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
 
 func _create_tall_grass_fields() -> void:
 	var fields := [
-		{"center": Vector3(-48, 0, 18), "radius": Vector2(31, 37), "count": 240},
-		{"center": Vector3(36, 0, 48), "radius": Vector2(34, 28), "count": 195},
-		{"center": Vector3(-20, 0, -52), "radius": Vector2(35, 22), "count": 165},
-		{"center": Vector3(58, 0, -44), "radius": Vector2(23, 31), "count": 155},
-		{"center": Vector3(-2, 0, 10), "radius": Vector2(55, 48), "count": 240},
-		{"center": Vector3(8, 0, 0), "radius": Vector2(10, 62), "count": 500}
+		{"center": Vector3(-48, 0, 18), "radius": Vector2(31, 37), "count": 600},
+		{"center": Vector3(36, 0, 48), "radius": Vector2(34, 28), "count": 500},
+		{"center": Vector3(-20, 0, -52), "radius": Vector2(35, 22), "count": 400},
+		{"center": Vector3(58, 0, -44), "radius": Vector2(23, 31), "count": 400},
+		{"center": Vector3(-2, 0, 10), "radius": Vector2(55, 48), "count": 600},
+		{"center": Vector3(8, 0, 0), "radius": Vector2(10, 62), "count": 800},
+		{"center": Vector3(-65, 0, -30), "radius": Vector2(25, 35), "count": 350},
+		{"center": Vector3(65, 0, 20), "radius": Vector2(28, 30), "count": 350},
+		{"center": Vector3(0, 0, 65), "radius": Vector2(40, 25), "count": 400},
+		{"center": Vector3(-40, 0, 60), "radius": Vector2(30, 25), "count": 300},
 	]
 	for field in fields:
 		var center: Vector3 = field["center"]
@@ -4754,11 +4729,13 @@ func _create_tall_grass_fields() -> void:
 
 func _create_dense_vegetation_zones() -> void:
 	var zones := [
-		{"center": Vector3(-56, 0, -8), "radius": Vector2(16, 24), "count": 120},
-		{"center": Vector3(-48, 0, 44), "radius": Vector2(20, 16), "count": 115},
-		{"center": Vector3(48, 0, 48), "radius": Vector2(18, 18), "count": 125},
-		{"center": Vector3(58, 0, -18), "radius": Vector2(14, 22), "count": 105},
-		{"center": Vector3(-18, 0, -62), "radius": Vector2(28, 10), "count": 110}
+		{"center": Vector3(-56, 0, -8), "radius": Vector2(16, 24), "count": 300},
+		{"center": Vector3(-48, 0, 44), "radius": Vector2(20, 16), "count": 280},
+		{"center": Vector3(48, 0, 48), "radius": Vector2(18, 18), "count": 300},
+		{"center": Vector3(58, 0, -18), "radius": Vector2(14, 22), "count": 250},
+		{"center": Vector3(-18, 0, -62), "radius": Vector2(28, 10), "count": 260},
+		{"center": Vector3(70, 0, 50), "radius": Vector2(20, 20), "count": 200},
+		{"center": Vector3(-70, 0, 40), "radius": Vector2(18, 22), "count": 200},
 	]
 	for zone in zones:
 		var center: Vector3 = zone["center"]
@@ -4776,12 +4753,15 @@ func _create_dense_vegetation_zones() -> void:
 
 func _create_grass_ground_cover() -> void:
 	var patches := [
-		{"center": Vector3(-42, 0, 22), "radius": Vector2(50, 54), "count": 300},
-		{"center": Vector3(38, 0, 38), "radius": Vector2(44, 42), "count": 220},
-		{"center": Vector3(-26, 0, -42), "radius": Vector2(52, 37), "count": 220},
-		{"center": Vector3(50, 0, -42), "radius": Vector2(32, 40), "count": 160},
-		{"center": Vector3(-6, 0, 20), "radius": Vector2(44, 42), "count": 230},
-		{"center": Vector3(8, 0, 0), "radius": Vector2(68, 66), "count": 310}
+		{"center": Vector3(-42, 0, 22), "radius": Vector2(50, 54), "count": 800},
+		{"center": Vector3(38, 0, 38), "radius": Vector2(44, 42), "count": 600},
+		{"center": Vector3(-26, 0, -42), "radius": Vector2(52, 37), "count": 600},
+		{"center": Vector3(50, 0, -42), "radius": Vector2(32, 40), "count": 400},
+		{"center": Vector3(-6, 0, 20), "radius": Vector2(44, 42), "count": 600},
+		{"center": Vector3(8, 0, 0), "radius": Vector2(68, 66), "count": 800},
+		{"center": Vector3(-65, 0, -20), "radius": Vector2(30, 35), "count": 400},
+		{"center": Vector3(65, 0, 30), "radius": Vector2(28, 30), "count": 350},
+		{"center": Vector3(0, 0, 70), "radius": Vector2(45, 25), "count": 400},
 	]
 	for patch in patches:
 		var center: Vector3 = patch["center"]
@@ -4797,25 +4777,25 @@ func _create_grass_ground_cover() -> void:
 
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
-	var coverage := 60.0
-	var spacing := 4.0
+	var coverage := 85.0
+	var spacing := 1.8
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
 	for cx in range(cells_x):
 		for cz in range(cells_z):
-			if randf() < 0.5:
+			if randf() < 0.15:
 				continue
-			var px := -coverage + float(cx) * spacing + randf_range(-0.8, 0.8)
-			var pz := -coverage + float(cz) * spacing + randf_range(-0.8, 0.8)
+			var px := -coverage + float(cx) * spacing + randf_range(-0.6, 0.6)
+			var pz := -coverage + float(cz) * spacing + randf_range(-0.6, 0.6)
 			var pos := Vector3(px, 0.012, pz)
 			if abs(pos.x - 8.0) < 5.4:
 				continue
 			if _is_in_no_grass_area(pos, 0.65):
 				continue
-			var h := randf_range(0.10, 0.22)
-			var r := randf_range(0.28, 0.45)
+			var h := randf_range(0.12, 0.32)
+			var r := randf_range(0.25, 0.48)
 			var c := base_color.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
 			_queue_grass_instance(pos, h, r, c)
 
