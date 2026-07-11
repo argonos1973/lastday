@@ -4487,24 +4487,13 @@ func _create_scrap_pile(pos: Vector3) -> void:
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
 	var stick_path := "res://assets/models/props/wood_stick.glb"
-	# Vertical support pole at back of shelter (shorter than roof sticks)
-	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.3, -1.5), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
-	# 9 long thin roof sticks leaning from ground (front) up to top of support pole (back)
+	# Two vertical support poles at each end of the roof
+	_try_instance_external_scene([stick_path], "CampSupportPoleA", pos + Vector3(0, 0.3, 0.8), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	_try_instance_external_scene([stick_path], "CampSupportPoleB", pos + Vector3(0, 0.3, -1.5), Vector3(0.8, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
+	# 9 long thin roof sticks leaning from front pole to back pole
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
 		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
-	# Grass thatched directly onto the roof sticks — dense, small tufts hugging the surface
-	# Roof goes from (z=0.8, y=0.1) at front to (z=-1.5, y=0.9) at back
-	for i in range(120):
-		var t := randf()
-		var z := lerpf(0.8, -1.5, t)
-		var y := lerpf(0.15, 1.0, t)
-		var x := randf_range(-0.85, 0.85)
-		var grass_pos := pos + Vector3(x, y, z)
-		var height := randf_range(0.15, 0.35)
-		var radius := randf_range(0.08, 0.15)
-		var color := Color(0.15, randf_range(0.30, 0.48), 0.10)
-		_queue_grass_instance(grass_pos, height, radius, color)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
