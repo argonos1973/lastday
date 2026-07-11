@@ -2486,7 +2486,6 @@ func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(16, 0, 32), Vector3(16, 0, 48), 6)
-	_create_abandoned_camp(Vector3(15, 0, -5))
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
