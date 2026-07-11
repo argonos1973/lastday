@@ -411,7 +411,7 @@ func _ready() -> void:
 	_create_hud()
 	# Start countdown after everything is created
 	call_deferred("_start_loading_countdown")
-	hud.show_notice("Haz clic en la ventana para capturar el raton. Empiezas en la carretera.")
+	hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
@@ -4521,9 +4521,6 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
-	# Allow grass on road edges — only block the very center of the road
-	if abs(pos.x - 8.0) < 2.0:
-		return false
 	if _is_in_house_doorway(pos):
 		return false
 	if river_margin >= 0.0 and _is_inside_river_band(pos, river_margin):
@@ -4800,8 +4797,6 @@ func _create_grass_carpet() -> void:
 			var px := -coverage + float(cx) * spacing + randf_range(-0.6, 0.6)
 			var pz := -coverage + float(cz) * spacing + randf_range(-0.6, 0.6)
 			var pos := Vector3(px, 0.012, pz)
-			if abs(pos.x - 8.0) < 2.0:
-				continue
 			if _is_in_no_grass_area(pos, 0.65):
 				continue
 			var h := randf_range(0.12, 0.32)
