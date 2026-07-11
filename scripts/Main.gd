@@ -4490,10 +4490,10 @@ func _create_abandoned_camp(pos: Vector3) -> void:
 	var s := 0.7
 	# Vertical support pole
 	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0.5, -0.8), Vector3(s, s, s), Vector3(0, 0, 90), false, 0.0)
-	# 7 roof sticks leaning against support
+	# 7 roof sticks: 90 Z to stand up, then 50 X to lean forward towards support pole
 	var offsets := [-0.45, -0.3, -0.15, 0.0, 0.15, 0.3, 0.45]
 	for i in range(7):
-		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.4, 0.0), Vector3(s, s, s), Vector3(0, 0, 60), false, 0.0)
+		_try_instance_external_scene([stick_path], "CampRoofStick_%d" % i, pos + Vector3(offsets[i], 0.35, 0.1), Vector3(s, s, s), Vector3(50, 0, 90), false, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
