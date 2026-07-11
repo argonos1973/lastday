@@ -2459,15 +2459,10 @@ func _create_new_world_props() -> void:
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaB", Vector3(30.0, 0.0, -35.0), sofa_s, Vector3(0, -20, 0), true, 0.0)
 
 func _create_world_details() -> void:
-	_try_instance_external_scene([ROOT_JUNK_MODEL], "RootJunkPile", Vector3(-30.5, 0.05, -8.7), Vector3.ONE * 0.72, Vector3(0, 37, 0), true, 0.02)
 	_create_new_world_props()
-	_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(16, 0, 32), Vector3(16, 0, 48), 6)
-	_create_scrap_pile(Vector3(14, 0, -17))
-	_create_scrap_pile(Vector3(-31, 0, -10))
 	_create_abandoned_camp(Vector3(-56, 0, 28))
-	_create_military_leftovers(Vector3(25, 0, -12))
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -4492,17 +4487,9 @@ func _create_scrap_pile(pos: Vector3) -> void:
 
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
-	#_create_label("Campamento abandonado", pos + Vector3(0, 2.1, 0))
-	_spawn_external(K_SURVIVAL + "tent-canvas.glb", "KCampTent", pos + Vector3(-1.1, 0, 0.6), Vector3.ONE * 1.2, Vector3(0, -25, 0), Vector3(2.3, 1.6, 2.2))
-	_spawn_external(K_SURVIVAL + "bedroll.glb", "KCampBedroll", pos + Vector3(1.0, 0, 0.8), Vector3.ONE, Vector3(0, 18, 0), Vector3(1.8, 0.25, 0.8))
-	_spawn_external(K_SURVIVAL + "campfire-pit.glb", "KCampfirePit", pos + Vector3(0.9, 0, -0.8), Vector3.ONE, Vector3(0, 0, 0), Vector3(0.9, 0.2, 0.9))
-	_spawn_external(K_SURVIVAL + "box-large.glb", "KCampBox", pos + Vector3(1.65, 0, -0.25), Vector3.ONE, Vector3(0, 45, 0), Vector3(1.0, 0.8, 1.0))
 	_create_static_box_rotated("CampTarpPoleA", pos + Vector3(-1.9, 0, -1.3), Vector3(0.12, 1.6, 0.12), Color(0.10, 0.08, 0.055), Vector3(0, 0, 0))
 	_create_static_box_rotated("CampTarpPoleB", pos + Vector3(1.9, 0, 1.3), Vector3(0.12, 1.35, 0.12), Color(0.10, 0.08, 0.055), Vector3(0, 0, 0))
 	_create_visual_box("CampTarp", pos + Vector3(0, 1.45, 0), Vector3(4.6, 0.08, 3.1), Color(0.10, 0.14, 0.10), Vector3(0, -18, -8))
-	_create_static_box("CampBedroll", pos + Vector3(-0.8, 0, 0.3), Vector3(1.8, 0.18, 0.75), Color(0.17, 0.18, 0.13))
-	_create_static_cylinder("CampFireRingA", pos + Vector3(0.9, 0, -0.8), 0.48, 0.08, Color(0.05, 0.045, 0.04))
-	_create_visual_box("CampColdAsh", pos + Vector3(0.9, 0.08, -0.8), Vector3(0.55, 0.025, 0.35), Color(0.09, 0.085, 0.075), Vector3(0, 25, 0))
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
