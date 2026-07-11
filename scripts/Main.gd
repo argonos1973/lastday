@@ -4486,18 +4486,21 @@ func _create_scrap_pile(pos: Vector3) -> void:
 
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
-	# Lean-to shelter made of long sticks
+	# Lean-to shelter: one vertical support pole + long sticks leaning on it
 	var stick_path := "res://assets/models/props/wood_stick_01.glb"
-	# One vertical support stick
-	_try_instance_external_scene([stick_path], "CampSupportStick", pos + Vector3(0, 0, -1.5), Vector3.ONE * 2.0, Vector3(0, 0, 0), true, 0.0)
-	# Long sticks leaning against support for roof
-	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-1.2, 0, 0.3), Vector3.ONE * 2.2, Vector3(65, 10, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.4, 0, 0.4), Vector3.ONE * 2.2, Vector3(65, -5, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.4, 0, 0.4), Vector3.ONE * 2.2, Vector3(65, 5, 0), true, 0.0)
-	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(1.2, 0, 0.3), Vector3.ONE * 2.2, Vector3(65, -10, 0), true, 0.0)
+	# Vertical support pole (rotate 90 X to stand upright, scale up for length)
+	_try_instance_external_scene([stick_path], "CampSupportPole", pos + Vector3(0, 0, -1.8), Vector3(1.5, 3.0, 1.5), Vector3(90, 0, 0), true, 0.0)
+	# Long sticks leaning from ground up against the support pole to form roof
+	# Rotated so they go from ground (z=0.5) up to top of pole (z=-1.8, y~2.5)
+	var roof_y := 2.2
+	var roof_z := -1.0
+	_try_instance_external_scene([stick_path], "CampRoofStickA", pos + Vector3(-1.4, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, 15, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickB", pos + Vector3(-0.5, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, -5, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickC", pos + Vector3(0.5, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, 5, 0), true, 0.0)
+	_try_instance_external_scene([stick_path], "CampRoofStickD", pos + Vector3(1.4, roof_y * 0.5, roof_z), Vector3(1.5, 3.5, 1.5), Vector3(55, -15, 0), true, 0.0)
 	# Scattered sticks on ground
 	for i in range(4):
-		var stick_pos := pos + Vector3(randf_range(-2.0, 2.0), 0.02, randf_range(-1.5, 1.5))
+		var stick_pos := pos + Vector3(randf_range(-2.0, 2.0), 0.02, randf_range(0.5, 2.0))
 		_try_instance_external_scene([stick_path], "CampGroundStick_%d" % i, stick_pos, Vector3.ONE * randf_range(0.8, 1.2), Vector3(0, randf_range(0, 360), 0), true, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
