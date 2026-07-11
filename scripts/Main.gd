@@ -4487,9 +4487,23 @@ func _create_scrap_pile(pos: Vector3) -> void:
 
 func _create_abandoned_camp(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 5.6)
-	_create_static_box_rotated("CampTarpPoleA", pos + Vector3(-1.9, 0, -1.3), Vector3(0.12, 1.6, 0.12), Color(0.10, 0.08, 0.055), Vector3(0, 0, 0))
-	_create_static_box_rotated("CampTarpPoleB", pos + Vector3(1.9, 0, 1.3), Vector3(0.12, 1.35, 0.12), Color(0.10, 0.08, 0.055), Vector3(0, 0, 0))
-	_create_visual_box("CampTarp", pos + Vector3(0, 1.45, 0), Vector3(4.6, 0.08, 3.1), Color(0.10, 0.14, 0.10), Vector3(0, -18, -8))
+	# Lean-to shelter made of logs and sticks
+	var log_scale := Vector3.ONE * 1.0
+	# Two support logs vertical
+	_try_instance_external_scene([K_SURVIVAL + "tree-log.glb"], "CampSupportLogA", pos + Vector3(-1.8, 0, -1.2), log_scale, Vector3(0, 0, 80), true, 0.0)
+	_try_instance_external_scene([K_SURVIVAL + "tree-log.glb"], "CampSupportLogB", pos + Vector3(1.8, 0, -1.2), log_scale, Vector3(0, 0, 80), true, 0.0)
+	# Roof logs leaning against supports
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampRoofLogA", pos + Vector3(-1.2, 1.2, 0.2), log_scale, Vector3(70, 0, 0), true, 0.0)
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampRoofLogB", pos + Vector3(0, 1.3, 0.2), log_scale, Vector3(70, 0, 0), true, 0.0)
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampRoofLogC", pos + Vector3(1.2, 1.2, 0.2), log_scale, Vector3(70, 0, 0), true, 0.0)
+	# Scattered sticks
+	for i in range(6):
+		var stick_pos := pos + Vector3(randf_range(-2.5, 2.5), 0.02, randf_range(-2.0, 2.0))
+		_try_instance_external_scene(["res://assets/models/props/wood_stick_01.glb"], "CampStick_%d" % i, stick_pos, Vector3.ONE * randf_range(0.7, 1.1), Vector3(0, randf_range(0, 360), randf_range(-10, 10)), true, 0.0)
+	# Firewood logs stacked
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampFirewoodA", pos + Vector3(1.5, 0, -1.0), log_scale, Vector3(0, 35, 0), true, 0.0)
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampFirewoodB", pos + Vector3(1.7, 0.15, -0.8), log_scale, Vector3(0, -20, 0), true, 0.0)
+	_try_instance_external_scene([K_SURVIVAL + "tree-log-small.glb"], "CampFirewoodC", pos + Vector3(1.6, 0.3, -0.9), log_scale, Vector3(0, 60, 0), true, 0.0)
 
 func _create_military_leftovers(pos: Vector3) -> void:
 	_register_wildlife_blocker(pos, 4.5)
