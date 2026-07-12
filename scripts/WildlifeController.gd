@@ -214,7 +214,7 @@ func _process(delta: float) -> void:
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
-		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.3)
+		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.08)
 		if _wolf_hunger <= 0.0:
 			health = max(0.0, health - delta * 5.0)
 			if health <= 0.0 and not _is_dead:

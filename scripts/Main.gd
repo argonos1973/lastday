@@ -59,6 +59,7 @@ var _shared_foliage_green_mat: StandardMaterial3D = null
 var _display_props_stripped := {}
 var river_segments_data: Array = []
 var wildlife_blockers: Array = []
+var _wildlife_respawn_timer := 0.0
 var campfire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
 var _nav_grid: Dictionary = {}
@@ -492,6 +493,11 @@ func _process(delta: float) -> void:
 			_broadcast_animals()
 		# Tick campfire fires on server
 		_tick_campfire_fires()
+		# Respawn wildlife periodically
+		_wildlife_respawn_timer += delta
+		if _wildlife_respawn_timer >= 120.0:
+			_wildlife_respawn_timer = 0.0
+			_check_wildlife_respawn()
 		return
 	if net != null and net.is_connected and not net.is_host:
 		_update_puppet_animals()
@@ -2657,6 +2663,46 @@ func _create_wildlife() -> void:
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
 			# Ensure waypoint is not in the river
+			for _wp_retry in range(10):
+				if not _is_near_river(wp, 6.0):
+					break
+				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp.x = clamp(wp.x, -72, 72)
+				wp.z = clamp(wp.z, -72, 72)
+			route.append(wp)
+		_create_wildlife_animal("wolf", route)
+
+func _check_wildlife_respawn() -> void:
+	var alive_deer := 0
+	var alive_fox := 0
+	var alive_wolf := 0
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node is WildlifeController and not node._is_dead:
+			match node.animal_type:
+				"deer":
+					alive_deer += 1
+				"fox":
+					alive_fox += 1
+				"wolf":
+					alive_wolf += 1
+	print("[WILDLIFE] Respawn check: deer=%d fox=%d wolf=%d" % [alive_deer, alive_fox, alive_wolf])
+	if alive_deer < 4:
+		var deer_route := _build_circular_route(45.0, randf() * TAU, 10, 6.0)
+		_create_deer_pair(deer_route)
+	if alive_fox < 2:
+		var fox_route := _build_circular_route(28.0, randf() * TAU, 8, 4.0)
+		_create_wildlife_animal("fox", fox_route)
+	if alive_wolf < 4:
+		var center := Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
+		for _retry in range(30):
+			if not _is_near_river(center, 12.0):
+				break
+			center = Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
+		var route: Array = []
+		for j in range(8):
+			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			wp.x = clamp(wp.x, -72, 72)
+			wp.z = clamp(wp.z, -72, 72)
 			for _wp_retry in range(10):
 				if not _is_near_river(wp, 6.0):
 					break
