@@ -283,6 +283,7 @@ var _puppet_naked_pending := false
 var _puppet_naked_timer := 0.0
 var is_sprinting := false
 var is_crouching := false
+var is_moving := false
 var in_shelter := false
 var is_in_water := false
 var wetness := 0.0
@@ -1278,9 +1279,14 @@ func _physics_process(delta: float) -> void:
 		return
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
-	# Gradually wear equipped clothing
+	# Gradually wear equipped clothing (faster when moving)
 	if not is_dead and inventory != null:
-		_clothing_wear_timer += delta
+		var wear_rate := 1.0
+		if is_moving:
+			wear_rate = 2.5
+		if is_sprinting:
+			wear_rate = 4.0
+		_clothing_wear_timer += delta * wear_rate
 		if _clothing_wear_timer >= 60.0:
 			_clothing_wear_timer = 0.0
 			for item in inventory.items:
@@ -1326,6 +1332,7 @@ func _physics_process(delta: float) -> void:
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
+	is_moving = input_dir.length() > 0.1 and not is_dead
 	if _sit_cooldown > 0.0:
 		_sit_cooldown = max(0.0, _sit_cooldown - delta)
 	if is_sitting:
@@ -2563,10 +2570,11 @@ func drop_inventory_item(index: int) -> void:
 		unequip_clothing(item_name)
 	if DEFAULT_CLOTHING.has(item_name):
 		unequip_clothing(item_name)
+	var drop_qty := int(item.quantity) if item.has_method("get") and "quantity" in item else 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
-	item_dropped.emit(item_name, item_type, float(item.weight), 1, float(item.use_value), drop_pos)
-	inventory.remove_index(index, 1)
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos)
+	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)
 	_sync_held_item()

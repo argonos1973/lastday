@@ -31,13 +31,14 @@ func add_hot_food(charges: int) -> void:
 	hot_food_temp_bonus = 2.5
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false) -> void:
 	if dead:
 		return
 	var sprint_multiplier := 3.0 if sprinting else 1.0
-	hunger = max(0.0, hunger - hunger_decay * delta)
-	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier)
-	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier)
+	var move_multiplier := 2.0 if moving else 1.0
+	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier)
+	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier)
+	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier)
 	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
 	var sleep_mult := sprint_multiplier
 	if energy < 30.0:
