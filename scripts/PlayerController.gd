@@ -581,6 +581,8 @@ func _input(event: InputEvent) -> void:
 		_capture_mouse()
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_melee_attack()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			_quick_use_held_item()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
 			if camera != null:
@@ -646,6 +648,12 @@ func _input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_S and not is_sleeping:
 			_toggle_sit()
+		if event.keycode == KEY_M:
+			_eat_action()
+			return
+		if event.keycode == KEY_N:
+			_light_action()
+			return
 	if event.is_action_pressed("quick_use_1"):
 		held_index = 0
 		_use_inventory_index(0)
@@ -3421,3 +3429,42 @@ func from_dict(data: Dictionary) -> void:
 	if not equipped_clothing.is_empty():
 		_wear_clothing_visual(equipped_clothing)
 	_sync_held_item()
+
+func _quick_use_held_item() -> void:
+	if inventory == null or inventory.items.is_empty():
+		return
+	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	var item = inventory.items[held_index]
+	if item == null:
+		return
+	match item.item_type:
+		"food":
+			_eat_held_item()
+		"water":
+			_drink_held_item()
+		_:
+			if item.item_name == "Cerillas":
+				var target = _get_interaction_target()
+				if target != null and target is WorldAction and target.action_type == "light_campfire":
+					target.interact(self)
+
+func _eat_action() -> void:
+	if inventory != null and not inventory.items.is_empty():
+		held_index = clampi(held_index, 0, inventory.items.size() - 1)
+		var item = inventory.items[held_index]
+		if item != null and item.item_type == "food":
+			_eat_held_item()
+			return
+	var target = _get_interaction_target()
+	if target != null and target is WorldAction:
+		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw":
+			var main := get_tree().current_scene
+			if main != null and main.has_method("handle_world_action_eat"):
+				main.handle_world_action_eat(target, self)
+			else:
+				target.interact(self)
+
+func _light_action() -> void:
+	var target = _get_interaction_target()
+	if target != null and target is WorldAction and target.action_type == "light_campfire":
+		target.interact(self)

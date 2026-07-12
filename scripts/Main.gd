@@ -3574,20 +3574,23 @@ func handle_world_action_collect(action, actor) -> void:
 			_save_world_change_silent()
 			_net_notify_pickup(action)
 		"wolf_meat_raw":
-			_play_actor_action(actor, "plant", 3.0)
-			if hud != null:
-				hud.show_countdown("Comiendo carne cruda", 3.0)
-			await get_tree().create_timer(3.0).timeout
-			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
-			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-			if actor.stats.has_method("get_sick"):
-				actor.stats.get_sick(60.0)
-			actor.stats.changed.emit()
-			actor.notice.emit("Comes %s. Te sientes mal del estomago." % str(action.get_meta("item_name", "carne cruda")))
-			_hide_action_visual(action)
-			action.mark_depleted()
-			_save_world_change_silent()
-			_net_notify_pickup(action)
+			var raw_meat_item = ItemScript.create(
+				str(action.get_meta("item_name", "Carne cruda")),
+				"food",
+				float(action.get_meta("item_weight", 0.3)),
+				int(action.get_meta("item_quantity", 1)),
+				float(action.get_meta("item_use_value", 15.0))
+			)
+			_finish_pickup_action(action, actor, raw_meat_item, "Coges %s." % raw_meat_item.item_name)
+		"eat_food":
+			var eat_item = ItemScript.create(
+				str(action.get_meta("item_name")),
+				str(action.get_meta("item_type")),
+				float(action.get_meta("item_weight")),
+				int(action.get_meta("item_quantity")),
+				float(action.get_meta("item_use_value"))
+			)
+			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool":
 			if not action.has_meta("item_name"):
 				handle_world_action(action, actor)
@@ -3611,6 +3614,44 @@ func handle_world_action_collect(action, actor) -> void:
 			_net_notify_pickup(action)
 		_:
 			handle_world_action(action, actor)
+
+func handle_world_action_eat(action, actor) -> void:
+	match action.action_type:
+		"eat_food":
+			_play_actor_action(actor, "plant", 1.2)
+			if hud != null:
+				hud.show_countdown("Comiendo", 1.2)
+			await get_tree().create_timer(1.2).timeout
+			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
+			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
+			actor.stats.changed.emit()
+			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
+			actor.notice.emit("Comes %s." % eaten_name)
+			_hide_action_visual(action)
+			action.mark_depleted()
+			_save_world_change_silent()
+			_net_notify_pickup(action)
+			if eaten_name == "Carne humana":
+				actor.notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
+				actor.stats.health = 0.0
+				actor.stats.changed.emit()
+				if actor.has_method("die"):
+					actor.die()
+		"wolf_meat_raw":
+			_play_actor_action(actor, "plant", 3.0)
+			if hud != null:
+				hud.show_countdown("Comiendo carne cruda", 3.0)
+			await get_tree().create_timer(3.0).timeout
+			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
+			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + raw_food_value)
+			if actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(60.0)
+			actor.stats.changed.emit()
+			actor.notice.emit("Comes %s. Te sientes mal del estomago." % str(action.get_meta("item_name", "carne cruda")))
+			_hide_action_visual(action)
+			action.mark_depleted()
+			_save_world_change_silent()
+			_net_notify_pickup(action)
 
 func _handle_farm_plot(action, actor) -> void:
 	match action.action_state:

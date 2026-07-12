@@ -71,63 +71,63 @@ func get_interaction_text(_player = null) -> String:
 	if action_type == "farm_plot":
 		match action_state:
 			"planted":
-				return "%s creciendo - E" % display_name
+				return "%s creciendo" % display_name
 			"ready":
-				return "%s listo para cosechar - E" % display_name
+				return "%s - [E] Cosechar" % display_name
 			_:
-				return "%s plantar semillas - E" % display_name
+				return "%s - [E] Plantar semillas" % display_name
 	match action_type:
 		"gut_wolf":
 			if get_meta("gutted", false):
 				return "%s vacio" % display_name
 			if not _player_has_blade(_player):
 				return ""
-			return "Destripar %s - E (cuchillo/hacha) | Coger - C (mochila)" % display_name.to_lower()
+			return "Destripar - [E] | Coger - [C] (mochila)"
 		"wolf_meat_raw":
-			return "%s - [E] Recoger | [C] Comer (cruda)" % display_name
+			return "%s - [C] Coger | [M] Comer (cruda)" % display_name
 		"fell_tree":
 			if not _player_has_axe(_player):
 				return ""
-			return "%s - talar con hacha - E (10s)" % display_name
+			return "%s - [E] Talar (10s)" % display_name
 		"fell_bush":
 			if not _player_has_blade(_player):
 				return ""
-			return "%s - cortar con cuchillo/hacha - E (5s)" % display_name
+			return "%s - [E] Cortar (5s)" % display_name
 		"cut_log":
 			if not _player_has_axe(_player):
 				return ""
-			return "%s - cortar con hacha - E" % display_name
+			return "%s - [E] Cortar" % display_name
 		"build_cabin":
-			return "%s - construir cabana - E" % display_name
+			return "%s - [E] Construir cabana" % display_name
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "backpack_pickup", "coat":
 			if _is_clothing():
 				return "%s - [E] Equipar | [C] Coger" % display_name
-			return "%s - [E] Recoger | [C] Coger" % display_name
+			return "%s - [C] Coger" % display_name
 		"eat_food":
-			return "%s - comer - E" % display_name
+			return "%s - [M] Comer | [C] Coger" % display_name
 		"wood", "stone":
-			return "%s - [E] Recoger | [C] Coger" % display_name
+			return "%s - [C] Coger" % display_name
 		"forage":
 			return "%s - [E] Recolectar | [C] Coger" % display_name
 		"fish":
-			return "%s - pescar - E" % display_name
+			return "%s - [E] Pescar" % display_name
 		"hunt":
-			return "%s - rastrear - E" % display_name
+			return "%s - [E] Rastrear" % display_name
 		"drink_water":
 			if _player != null and _player.has_method("get_held_item"):
 				var held = _player.get_held_item()
 				if held != null and held.item_name == "Botella de plastico":
-					return "Llenar botella - E"
+					return "Llenar botella - [E]"
 				if held != null and held.item_name == "Botella de agua" and held.has_method("is_broken") and not held.is_broken() and float(held.durability) < float(held.max_durability):
-					return "Llenar botella - E"
-			return "Beber agua - E"
+					return "Llenar botella - [E]"
+			return "Beber agua - [E]"
 		"light_campfire":
-			return "Encender fogata - E (cerillas)"
+			return "Encender fogata - [N] (cerillas)"
 		"cook":
-			return "Cocinar carne ensartada - E"
+			return "Cocinar carne ensartada - [E]"
 		"shelter":
-			return "Desmontar refugio - E (recuperar 11 palos)"
-	return "%s - E" % display_name
+			return "Desmontar refugio - [E] (recuperar 11 palos)"
+	return "%s - [E]" % display_name
 
 func to_dict() -> Dictionary:
 	var meta_dict := {}
