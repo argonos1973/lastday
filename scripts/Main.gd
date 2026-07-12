@@ -1571,6 +1571,8 @@ func _update_server_proxies(delta: float) -> void:
 		var dp: Node3D = proxy_by_client_id[cid]
 		if dp.get_meta("proxy_dead", false):
 			continue
+		# Update shelter meta so wolf AI protects disconnected players inside shelters
+		dp.set_meta("in_built_shelter", _is_near_built_shelter(dp.global_position))
 		var d_hunger: float = dp.get_meta("saved_hunger", 100.0)
 		var d_thirst: float = dp.get_meta("saved_thirst", 100.0)
 		var d_hp: float = dp.get_meta("proxy_health", 100.0)
