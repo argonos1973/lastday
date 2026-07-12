@@ -2677,7 +2677,7 @@ func _create_wildlife() -> void:
 	for i in range(4):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		for _retry in range(30):
-			if not _is_near_river(center, 12.0):
+			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		var route: Array = []
@@ -2685,9 +2685,9 @@ func _create_wildlife() -> void:
 			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
-			# Ensure waypoint is not in the river
+			# Ensure waypoint is not in the river or inside a house
 			for _wp_retry in range(10):
-				if not _is_near_river(wp, 6.0):
+				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
 				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 				wp.x = clamp(wp.x, -72, 72)
@@ -2718,7 +2718,7 @@ func _check_wildlife_respawn() -> void:
 	if alive_wolf < 4:
 		var center := Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
 		for _retry in range(30):
-			if not _is_near_river(center, 12.0):
+			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
 		var route: Array = []
@@ -2727,7 +2727,7 @@ func _check_wildlife_respawn() -> void:
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
 			for _wp_retry in range(10):
-				if not _is_near_river(wp, 6.0):
+				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
 				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 				wp.x = clamp(wp.x, -72, 72)
