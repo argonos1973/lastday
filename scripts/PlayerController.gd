@@ -1279,9 +1279,11 @@ func _physics_process(delta: float) -> void:
 		return
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
-	# Gradually wear equipped clothing (faster when moving)
+	# Gradually wear equipped clothing (faster when moving, slower when sleeping)
 	if not is_dead and inventory != null:
 		var wear_rate := 1.0
+		if is_sleeping:
+			wear_rate = 0.3
 		if is_moving:
 			wear_rate = 2.5
 		if is_sprinting:

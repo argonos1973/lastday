@@ -31,14 +31,18 @@ func add_hot_food(charges: int) -> void:
 	hot_food_temp_bonus = 2.5
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false) -> void:
 	if dead:
 		return
+	var sleep_factor := 0.3 if sleeping else 1.0
 	var sprint_multiplier := 3.0 if sprinting else 1.0
 	var move_multiplier := 2.0 if moving else 1.0
-	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier)
-	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier)
-	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier)
+	if sleeping:
+		sprint_multiplier = 1.0
+		move_multiplier = 1.0
+	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sleep_factor)
+	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
+	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
 	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
 	var sleep_mult := sprint_multiplier
 	if energy < 30.0:
@@ -77,23 +81,23 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	body_temperature = lerp(body_temperature, target_temperature, delta * 0.08)
 
 	if hunger <= 0.0:
-		health -= 0.8 * delta
+		health -= 0.8 * delta * sleep_factor
 	if thirst <= 0.0:
-		health -= 1.25 * delta
+		health -= 1.25 * delta * sleep_factor
 	if sleep <= 0.0:
-		health -= 0.6 * delta
+		health -= 0.6 * delta * sleep_factor
 	if body_temperature < 35.0:
-		health -= (35.0 - body_temperature) * 0.16 * delta
+		health -= (35.0 - body_temperature) * 0.16 * delta * sleep_factor
 	if body_temperature > 38.0:
-		health -= (body_temperature - 38.0) * 0.20 * delta
-		thirst = max(0.0, thirst - thirst_decay * 4.0 * delta)
+		health -= (body_temperature - 38.0) * 0.20 * delta * sleep_factor
+		thirst = max(0.0, thirst - thirst_decay * 4.0 * delta * sleep_factor)
 	if body_temperature >= 40.0:
-		health -= (body_temperature - 40.0) * 2.5 * delta + 5.0 * delta
+		health -= ((body_temperature - 40.0) * 2.5 * delta + 5.0 * delta) * sleep_factor
 
 	if sick:
 		sick_timer -= delta
-		health -= 2.0 * delta
-		thirst = max(0.0, thirst - thirst_decay * 2.5 * delta)
+		health -= 2.0 * delta * sleep_factor
+		thirst = max(0.0, thirst - thirst_decay * 2.5 * delta * sleep_factor)
 		if sick_timer <= 0.0:
 			sick = false
 		health = clamp(health, 0.0, max_health)

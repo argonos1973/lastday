@@ -519,7 +519,7 @@ func _process(delta: float) -> void:
 	# Built shelters protect from extreme temperatures
 	if near_built_shelter:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping)
 	_apply_campfire_effect(player, delta)
 	_update_door_open_cache()
 	_update_water_night_amount()
