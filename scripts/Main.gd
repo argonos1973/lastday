@@ -2308,12 +2308,27 @@ func _create_map() -> void:
 	if not is_server:
 		_create_survival_objectives()
 	_create_river_drink_zones()
+	# Server needs wildlife blockers registered for nav grid (no visuals)
+	if is_server:
+		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
 		_build_nav_grid()
 		_create_wildlife()
 	if not is_server:
 		_flush_grass_batches()
+
+func _register_server_house_blockers() -> void:
+	var house_origins := [
+		Vector3(-25, 0, -18),
+		Vector3(-38, 0, 18),
+		Vector3(23, 0, 18),
+		Vector3(42, 0, 26),
+		Vector3(-12, 0, 42)
+	]
+	for origin in house_origins:
+		var idx := _register_wildlife_blocker(origin, 8.2)
+		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
 
 func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	var blocker_idx := _register_wildlife_blocker(origin, 8.2)
@@ -4505,10 +4520,7 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " PeeledPlasterFrontB", origin + Vector3(3.05, 1.35, 3.955), Vector3(1.1, 1.25, 0.06), Color(0.115, 0.105, 0.08), Vector3(0, 0, 0))
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
-	# Bed for sleeping
-	var bed_pos := origin + Vector3(3.0, 0.0, -2.0)
-	var bed_action = _create_world_action("house_bed", "sleep", "Cama para dormir", bed_pos, Vector3(1.5, 0.8, 1.5), Color(0.15, 0.10, 0.06), false, false)
-	bed_action.set_meta("visual_name", label + " Bed")
+	pass
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
