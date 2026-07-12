@@ -4402,10 +4402,6 @@ func _create_house_details(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " BrokenGlassA", origin + Vector3(-3.35, 1.6, 5.00), Vector3(0.12, 0.32, 0.035), Color(0.50, 0.62, 0.66, 0.72), Vector3(0, 0, -18))
 	_create_visual_box(label + " RoofHole", origin + Vector3(-2.35, 4.05, 1.8), Vector3(1.2, 0.08, 0.75), Color(0.035, 0.025, 0.02), Vector3(0, 22, -12))
 	_create_visual_box(label + " BigRustRoofPatch", origin + Vector3(2.1, 4.28, 1.35), Vector3(2.25, 0.09, 1.15), Color(0.34, 0.13, 0.055), Vector3(0, -13, 10))
-	_create_visual_box(label + " WallStainA", origin + Vector3(-4.2, 1.35, -4.92), Vector3(1.35, 1.55, 0.055), Color(0.11, 0.10, 0.075), Vector3.ZERO)
-	_create_visual_box(label + " MissingPlasterA", origin + Vector3(-5.92, 1.3, 1.45), Vector3(0.055, 1.25, 1.15), Color(0.105, 0.10, 0.082), Vector3.ZERO)
-	_create_static_box(label + " FallenShelf", origin + Vector3(-2.65, 0, 0.95), Vector3(1.5, 0.20, 0.42), Color(0.13, 0.08, 0.045))
-	_create_visual_box(label + " OldCurtain", origin + Vector3(-3.9, 1.45, 5.01), Vector3(0.18, 0.92, 0.035), Color(0.26, 0.18, 0.14), Vector3(0, 0, 5))
 
 func _create_house_doorway(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, 1.275, 4.87), Vector3(0.18, 2.55, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
@@ -4494,9 +4490,6 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_house_grass_asset(label + " FrontGrassSide", origin + Vector3(0.0, 0.055, 6.65), 0.26)
 	_create_visual_box(label + " RoofEaveFront", origin + Vector3(0, 3.58, 5.22), Vector3(12.9, 0.16, 0.32), Color(0.095, 0.055, 0.035), Vector3.ZERO)
 	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, 3.58, -5.22), Vector3(12.9, 0.16, 0.32), Color(0.085, 0.05, 0.035), Vector3.ZERO)
-	_create_visual_box(label + " PorchStep", origin + Vector3(0, 0.18, 6.05), Vector3(2.8, 0.22, 0.62), Color(0.12, 0.105, 0.085), Vector3.ZERO)
-	_create_visual_box(label + " VisibleRustPlateDoor", origin + Vector3(1.12, 1.38, 5.15), Vector3(0.72, 1.85, 0.10), Color(0.42, 0.15, 0.055), Vector3(0, 0, 2))
-	_create_visual_box(label + " VisibleRustPlateRoofA", origin + Vector3(-2.8, 4.32, 1.2), Vector3(2.2, 0.10, 1.05), Color(0.38, 0.15, 0.06), Vector3(0, 18, -10))
 	return
 	_try_instance_external_scene([K_SURVIVAL + "structure-metal-wall.glb"], label + " ExteriorMetalWallLeft", origin + Vector3(-4.28, 1.15, -1.2), Vector3(1.8, 1.8, 1.8), Vector3(0, 90, 0))
 	_try_instance_external_scene([K_SURVIVAL + "structure-metal-wall.glb"], label + " ExteriorMetalWallRight", origin + Vector3(4.28, 1.12, 1.15), Vector3(1.55, 1.55, 1.55), Vector3(0, -90, 0))
@@ -4507,17 +4500,9 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_try_instance_external_scene([K_SURVIVAL + "fence.glb"], label + " BrokenPorchFenceA", origin + Vector3(-3.05, 0.04, 4.55), Vector3(0.95, 1.0, 0.95), Vector3(0, 6, 0), true, origin.y)
 	_try_instance_external_scene([K_SURVIVAL + "fence-fortified.glb"], label + " BrokenPorchFenceB", origin + Vector3(3.05, 0.04, 4.5), Vector3(0.9, 0.95, 0.9), Vector3(0, -10, 0), true, origin.y)
 	_create_visual_box(label + " ClearEntryPath", origin + Vector3(0.0, 0.031, 2.35), Vector3(2.2, 0.035, 2.9), Color(0.10, 0.095, 0.075), Vector3.ZERO)
-	_create_visual_box(label + " ExteriorPlankA", origin + Vector3(-2.55, 1.74, 3.98), Vector3(1.45, 0.16, 0.08), Color(0.26, 0.16, 0.08), Vector3(0, 0, 17))
-	_create_visual_box(label + " ExteriorPlankB", origin + Vector3(2.55, 1.61, 3.98), Vector3(1.35, 0.16, 0.08), Color(0.22, 0.13, 0.07), Vector3(0, 0, -14))
 	_create_visual_box(label + " RoofEaveFront", origin + Vector3(0, 2.72, 4.05), Vector3(9.4, 0.16, 0.28), Color(0.095, 0.055, 0.035), Vector3.ZERO)
 	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, 2.72, -4.05), Vector3(9.4, 0.16, 0.28), Color(0.085, 0.05, 0.035), Vector3.ZERO)
-	_create_visual_box(label + " PorchStep", origin + Vector3(0, 0.18, 4.95), Vector3(2.2, 0.22, 0.55), Color(0.12, 0.105, 0.085), Vector3.ZERO)
 	_create_visual_box(label + " FrontDirtMat", origin + Vector3(0.0, 0.025, 4.1), Vector3(1.3, 0.035, 0.75), Color(0.065, 0.055, 0.04), Vector3.ZERO)
-	_create_visual_box(label + " VisibleRustPlateDoor", origin + Vector3(1.00, 1.15, 3.96), Vector3(0.82, 1.62, 0.10), Color(0.42, 0.15, 0.055), Vector3(0, 0, 2))
-	_create_visual_box(label + " VisibleRustPlateRoofA", origin + Vector3(-2.15, 3.36, 0.9), Vector3(2.2, 0.10, 1.05), Color(0.38, 0.15, 0.06), Vector3(0, 18, -10))
-	_create_visual_box(label + " VisibleRustPlateRoofB", origin + Vector3(2.35, 3.26, -1.05), Vector3(1.75, 0.10, 0.9), Color(0.25, 0.26, 0.23), Vector3(0, -16, 8))
-	_create_visual_box(label + " PeeledPlasterFrontA", origin + Vector3(-3.15, 1.05, 3.955), Vector3(1.25, 1.55, 0.06), Color(0.10, 0.095, 0.075), Vector3(0, 0, 0))
-	_create_visual_box(label + " PeeledPlasterFrontB", origin + Vector3(3.05, 1.35, 3.955), Vector3(1.1, 1.25, 0.06), Color(0.115, 0.105, 0.08), Vector3(0, 0, 0))
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
 	pass
