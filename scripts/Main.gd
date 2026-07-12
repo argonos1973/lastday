@@ -871,7 +871,7 @@ func _make_celestial_material(albedo: Color, emission: Color, energy: float) -> 
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = Vector3(8.0, 0.4, 2.5)
+	player.position = _get_random_spawn_pos()
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -950,10 +950,20 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
 
+var _spawn_zones: Array = [
+	Vector3(15.0, 0.4, -35.0),
+	Vector3(-55.0, 0.4, -40.0),
+	Vector3(55.0, 0.4, 45.0),
+	Vector3(-50.0, 0.4, 50.0)
+]
+
+func _get_random_spawn_pos() -> Vector3:
+	return _spawn_zones[randi() % _spawn_zones.size()]
+
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if net != null and net.peer != null:
-		net.set_client_spawn_pos.rpc_id(peer_id, Vector3(8.0, 0.4, 2.5))
+		net.set_client_spawn_pos.rpc_id(peer_id, _get_random_spawn_pos())
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -1014,7 +1024,7 @@ func _spawn_server_proxy(id: int) -> void:
 		return
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_%d" % id
-	proxy.position = Vector3(8.0, 0.4, 2.5)
+	proxy.position = _get_random_spawn_pos()
 	# Store peer_id as metadata
 	proxy.set_meta("peer_id", id)
 	# Spawn protection: wolves won't target this proxy for 20 seconds
