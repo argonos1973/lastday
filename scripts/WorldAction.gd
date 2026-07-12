@@ -80,14 +80,22 @@ func get_interaction_text(_player = null) -> String:
 		"gut_wolf":
 			if get_meta("gutted", false):
 				return "%s vacio" % display_name
+			if not _player_has_blade(_player):
+				return ""
 			return "Destripar %s - E (cuchillo/hacha) | Coger - C (mochila)" % display_name.to_lower()
 		"wolf_meat_raw":
 			return "%s - [E] Recoger | [C] Comer (cruda)" % display_name
 		"fell_tree":
+			if not _player_has_axe(_player):
+				return ""
 			return "%s - talar con hacha - E (10s)" % display_name
 		"fell_bush":
+			if not _player_has_blade(_player):
+				return ""
 			return "%s - cortar con cuchillo/hacha - E (5s)" % display_name
 		"cut_log":
+			if not _player_has_axe(_player):
+				return ""
 			return "%s - cortar con hacha - E" % display_name
 		"build_cabin":
 			return "%s - construir cabana - E" % display_name
@@ -216,4 +224,30 @@ func _clear_visual_children() -> void:
 func _is_clothing() -> bool:
 	if action_type == "pickup_item" and has_meta("item_type"):
 		return str(get_meta("item_type")) == "clothing"
+	return false
+
+func _player_has_axe(player) -> bool:
+	if player == null or not player.has_method("get_held_item"):
+		return false
+	var held = player.get_held_item()
+	if held == null:
+		return false
+	if held.item_type == "tool_axe":
+		return true
+	if held.item_type == "tool" and held.item_name == "Hacha":
+		return true
+	return false
+
+func _player_has_blade(player) -> bool:
+	if player == null or not player.has_method("get_held_item"):
+		return false
+	var held = player.get_held_item()
+	if held == null:
+		return false
+	if held.item_type == "weapon":
+		return true
+	if held.item_type == "tool_axe":
+		return true
+	if held.item_type == "tool" and held.item_name == "Hacha":
+		return true
 	return false

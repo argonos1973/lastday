@@ -51,7 +51,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		sleep_mult *= 1.4
 	if night:
 		sleep_mult *= 2.0
-	sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult)
+	sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult * sleep_factor)
 
 	# Wet clothes dry faster when it's warm, slower when cold
 	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
