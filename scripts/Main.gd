@@ -3682,13 +3682,61 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
 		_try_instance_external_scene([stick_path], "PlayerShelter_%s_Roof_%d" % [sh_id, i], pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
-	# Camouflage net draped over the roof
-	_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "PlayerShelter_%s_Net" % sh_id, pos + Vector3(0.0, 0.62, -0.55), Vector3(0.55, 1.0, 0.95), Vector3(-50, 0, 0), false, 0.0)
+	# Camouflage net draped over the roof (fitted to the real stick geometry)
+	_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "PlayerShelter_%s_Net" % sh_id, pos + Vector3(0.0, 1.0, 0.0), Vector3(1.0, 1.0, 1.0), Vector3(0, 0, 0), false, 0.0)
+	_fit_shelter_net(sh_id)
 	# Apply camouflage material
 	_apply_shelter_camouflage(sh_id)
 	# Register as world action so it syncs
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
+
+func _fit_shelter_net(sh_id: String) -> void:
+	var net_node := get_node_or_null("PlayerShelter_%s_Net" % sh_id) as Node3D
+	if net_node == null:
+		return
+	var center_roof := get_node_or_null("PlayerShelter_%s_Roof_4" % sh_id) as Node3D
+	if center_roof == null:
+		return
+	# Combined global AABB of the 9 roof sticks
+	var have_bounds := false
+	var bmin := Vector3.ZERO
+	var bmax := Vector3.ZERO
+	for i in range(9):
+		var stick := get_node_or_null("PlayerShelter_%s_Roof_%d" % [sh_id, i]) as Node3D
+		if stick == null:
+			continue
+		var meshes: Array = []
+		_collect_mesh_instances(stick, meshes)
+		for mi in meshes:
+			var aabb: AABB = (mi as MeshInstance3D).get_aabb()
+			var gt: Transform3D = (mi as MeshInstance3D).global_transform
+			for ci in range(8):
+				var corner := gt * aabb.get_endpoint(ci)
+				if not have_bounds:
+					bmin = corner
+					bmax = corner
+					have_bounds = true
+				else:
+					bmin = bmin.min(corner)
+					bmax = bmax.max(corner)
+	if not have_bounds:
+		return
+	var roof_center := (bmin + bmax) * 0.5
+	var bsize := bmax - bmin
+	# Slope direction: long axis of the central roof stick (model local X)
+	var d := center_roof.global_transform.basis.x.normalized()
+	if d.y < 0.0:
+		d = -d
+	var n := Vector3.RIGHT.cross(d).normalized()
+	if n.y < 0.0:
+		n = -n
+	# Net source size: 4m (X) x 3m (Z). Slight overhang over the roof.
+	var slope_len: float = sqrt(bsize.y * bsize.y + bsize.z * bsize.z)
+	var sx: float = (bsize.x * 1.15) / 4.0
+	var sz: float = (slope_len * 1.15) / 3.0
+	var net_basis := Basis(Vector3.RIGHT * sx, n, -d * sz)
+	net_node.global_transform = Transform3D(net_basis, roof_center + n * 0.12)
 
 func _apply_shelter_camouflage(sh_id: String) -> void:
 	var ground_tex := _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
