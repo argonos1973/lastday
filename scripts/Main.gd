@@ -3637,7 +3637,7 @@ func handle_world_action_collect(action, actor) -> void:
 				float(action.get_meta("item_use_value"))
 			)
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
-		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool":
+		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool":
 			if not action.has_meta("item_name"):
 				handle_world_action(action, actor)
 				return

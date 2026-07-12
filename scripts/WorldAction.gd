@@ -99,7 +99,7 @@ func get_interaction_text(_player = null) -> String:
 			return "%s - [E] Cortar" % display_name
 		"build_cabin":
 			return "%s - [E] Construir cabana" % display_name
-		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "backpack_pickup", "coat":
+		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat":
 			if _is_clothing():
 				return "%s - [E] Equipar | [C] Coger" % display_name
 			return "%s - [C] Coger" % display_name
