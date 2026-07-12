@@ -31,6 +31,18 @@ func add_hot_food(charges: int) -> void:
 	hot_food_temp_bonus = 2.5
 	changed.emit()
 
+func consume_food(value: float) -> void:
+	if dead:
+		return
+	hunger = min(max_stat, hunger + value)
+	changed.emit()
+
+func consume_water(value: float) -> void:
+	if dead:
+		return
+	thirst = min(max_stat, thirst + value)
+	changed.emit()
+
 func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false) -> void:
 	if dead:
 		return
