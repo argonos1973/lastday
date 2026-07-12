@@ -5007,12 +5007,13 @@ func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var door = blocker.get("door", null)
 		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
-		# When a house door is closed, use rectangular bounds to trap wolves inside
-		# and prevent wildlife from entering through walls
-		if not door_is_open and blocker.has("house_bounds"):
+		# House bounds: always block walls, allow doorway passage when door is open
+		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
 			var expanded_bounds := bounds.grow(3.5)
 			if expanded_bounds.has_point(p):
+				if door_is_open and _is_in_doorway_passage(pos, blocker_pos):
+					continue
 				return true
 			continue
 		var radius := float(blocker.get("radius", 1.8)) + extra_margin
@@ -5041,6 +5042,23 @@ func _update_door_open_cache() -> void:
 		if door.get("is_open") != true:
 			continue
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		# For house_bounds blockers, unblock doorway passage cells
+		if blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			var expanded := bounds.grow(3.5)
+			var min_cell := _world_to_grid(Vector3(expanded.position.x, 0.0, expanded.position.y))
+			var max_cell := _world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
+			for gx in range(min_cell.x, max_cell.x + 1):
+				for gy in range(min_cell.y, max_cell.y + 1):
+					if gx < 0 or gx >= _nav_grid_size or gy < 0 or gy >= _nav_grid_size:
+						continue
+					var cell := Vector2i(gx, gy)
+					if not _nav_grid.has(cell):
+						continue
+					var world_pos := _grid_to_world(cell)
+					if _is_in_doorway_passage(world_pos, blocker_pos):
+						_door_open_cache[cell] = true
+			continue
 		var radius: float = float(blocker.get("radius", 1.8))
 		var center_cell := _world_to_grid(blocker_pos)
 		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
@@ -6909,6 +6927,17 @@ func _build_nav_grid() -> void:
 	for blocker in wildlife_blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var radius: float = float(blocker.get("radius", 1.8))
+		# Block rectangular house bounds (walls)
+		if blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			var expanded := bounds.grow(3.5)
+			var min_cell := _world_to_grid(Vector3(expanded.position.x, 0.0, expanded.position.y))
+			var max_cell := _world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
+			for gx in range(min_cell.x, max_cell.x + 1):
+				for gy in range(min_cell.y, max_cell.y + 1):
+					if gx >= 0 and gx < _nav_grid_size and gy >= 0 and gy < _nav_grid_size:
+						_nav_grid[Vector2i(gx, gy)] = true
+			continue
 		var center_cell := _world_to_grid(blocker_pos)
 		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
 		for dx in range(-cell_radius, cell_radius + 1):
