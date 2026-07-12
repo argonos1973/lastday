@@ -1544,13 +1544,11 @@ func _update_server_proxies(delta: float) -> void:
 			continue
 		var data: Dictionary = net.players[pid]
 		var proxy: Node3D = server_proxies[pid]
-		var received_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
 		# Only update proxy position if client has sent real position data
 		if data.has("pos"):
 			proxy.set_meta("has_real_pos", true)
-		proxy.global_position = received_pos
-		# Update shelter meta so wolf AI can protect sheltered players
-		proxy.set_meta("in_built_shelter", _is_near_built_shelter(received_pos))
+			proxy.global_position = data["pos"]
+			proxy.set_meta("in_built_shelter", _is_near_built_shelter(proxy.global_position))
 		# Decrement spawn protection timer using real delta
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
