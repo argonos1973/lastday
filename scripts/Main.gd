@@ -3479,6 +3479,7 @@ func handle_world_action(action, actor) -> void:
 			]
 			for i in range(9):
 				stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+			stick_names.append("PlayerShelter_%s_Net" % sh_id)
 			for sn in stick_names:
 				var sn_node := get_node_or_null(sn)
 				if sn_node != null:
@@ -3681,6 +3682,8 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
 	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 	for i in range(9):
 		_try_instance_external_scene([stick_path], "PlayerShelter_%s_Roof_%d" % [sh_id, i], pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
+	# Camouflage net draped over the roof
+	_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "PlayerShelter_%s_Net" % sh_id, pos + Vector3(0.0, 0.62, -0.55), Vector3(0.55, 1.0, 0.95), Vector3(-50, 0, 0), false, 0.0)
 	# Apply camouflage material
 	_apply_shelter_camouflage(sh_id)
 	# Register as world action so it syncs
@@ -3732,6 +3735,7 @@ func _net_shelter_dismantled(sh_id: String) -> void:
 	]
 	for i in range(9):
 		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+	stick_names.append("PlayerShelter_%s_Net" % sh_id)
 	for sn in stick_names:
 		var sn_node := get_node_or_null(sn)
 		if sn_node != null:
