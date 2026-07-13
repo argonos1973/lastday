@@ -2631,9 +2631,9 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_north", "fish", "Zona de pesca", Vector3(-35, 0.05, -57), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
-	_create_backpack_pickup("small_backpack_pickup", Vector3(9.5, 0.05, 3.5))
-	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", Vector3(7.0, 0.05, 1.5), 1.2, Vector3(0, 45, 0))
-	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", Vector3(7.5, 0.05, 2.0), 0.0005, Vector3(0, 30, 0))
+	_create_backpack_pickup("small_backpack_pickup", _find_safe_loot_pos())
+	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", _find_safe_loot_pos(), 1.2, Vector3(0, 45, 0))
+	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", _find_safe_loot_pos(), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
 	for i in range(4):
 		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
@@ -2832,22 +2832,54 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 func _create_loose_survival_pickups() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
-		{"id": "loose_life_jacket_0", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "pos": Vector3(17.6, 0.06, 60.2), "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
-		{"id": "loose_armor_vest_0", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "pos": Vector3(44.0, 0.06, 1.8), "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
-		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(-43.6, 0.06, -39.1), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "pos": Vector3(10.5, 0.06, -15.0), "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "surv_jacket_0", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "pos": Vector3(6.4, 0.06, 3.6), "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
-		{"id": "surv_jeans_0", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "pos": Vector3(5.2, 0.06, 4.4), "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
-		{"id": "surv_gloves_0", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(7.1, 0.06, 4.6), "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
-		{"id": "surv_boots_0", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "pos": Vector3(6.0, 0.06, 5.2), "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		{"id": "soldier_torso_0", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "pos": Vector3(9.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
-		{"id": "soldier_legs_0", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "pos": Vector3(12.0, 0.06, 3.0), "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
-		{"id": "soldier_hands_0", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "pos": Vector3(9.0, 0.06, 6.0), "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
-		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": Vector3(8.0, 0.06, 2.5), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
-		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": Vector3(-42.0, 0.06, -38.0), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_life_jacket", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
+		{"id": "loose_armor_vest", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
+		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"id": "surv_jacket", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
+		{"id": "surv_jeans", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
+		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		{"id": "soldier_torso", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
+		{"id": "soldier_legs", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
+		{"id": "soldier_hands", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
+		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_bottle_2", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_bottle_3", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 140, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
 	for pickup in pickups:
+		pickup["pos"] = _find_safe_loot_pos()
 		_create_pickup_item(pickup)
+
+func _find_safe_loot_pos() -> Vector3:
+	for _attempt in range(60):
+		var pos := Vector3(randf_range(-65, 65), 0.06, randf_range(-65, 65))
+		if _is_pos_safe_for_loot(pos):
+			return pos
+	return Vector3(randf_range(-65, 65), 0.06, randf_range(-65, 65))
+
+func _is_pos_safe_for_loot(pos: Vector3) -> bool:
+	if _is_near_river(pos, 5.0):
+		return false
+	if _is_near_wildlife_blocker(pos, 3.0):
+		return false
+	if _is_near_car_or_container(pos, 4.0):
+		return false
+	return true
+
+func _is_near_car_or_container(pos: Vector3, margin: float) -> bool:
+	var car_positions := [Vector3(33.0, 0.0, 2.0), Vector3(-48.0, 0.0, -32.0)]
+	var cont_positions := [Vector3(14.0, 0.0, -50.0), Vector3(56.0, 0.0, 38.0), Vector3(58.0, 0.0, -52.0)]
+	var p := Vector2(pos.x, pos.z)
+	for cp in car_positions:
+		if p.distance_to(Vector2(cp.x, cp.z)) <= 5.0 + margin:
+			return true
+	for cp in cont_positions:
+		if p.distance_to(Vector2(cp.x, cp.z)) <= 7.0 + margin:
+			return true
+	return false
 
 func _apply_black_material_recursive(node: Node3D) -> void:
 	var black_mat := StandardMaterial3D.new()
