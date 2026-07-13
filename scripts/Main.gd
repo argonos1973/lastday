@@ -2832,8 +2832,6 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 func _create_loose_survival_pickups() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
-		{"id": "loose_life_jacket", "name": "Chaleco salvavidas", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.10, "paths": [POLY_LIFE_JACKET_MODEL], "scale": 0.72, "rot": Vector3(0, -62, 0), "color": Color(0.55, 0.20, 0.04)},
-		{"id": "loose_armor_vest", "name": "Chaleco tactico", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.12, "paths": [ROOT_VEST_MODEL], "scale": 0.014, "rot": Vector3(0, 98, 0), "color": Color(0.08, 0.09, 0.07)},
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
