@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://7je7id8mu1qs"
-path.s3tc="res://.godot/imported/pickup_soldier_feet_Soldier_Body_normal.png-f2d90b16126b4005dd54148f7fbf7b9b.s3tc.ctex"
+path.s3tc="res://.godot/imported/pickup_soldier_feet_Soldier_Body_normal.png-6c7eea81034e07bfc9ac7849692bdeef.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/adapted/pickup_soldier_feet_Soldier_Body_normal.png"
-dest_files=["res://.godot/imported/pickup_soldier_feet_Soldier_Body_normal.png-f2d90b16126b4005dd54148f7fbf7b9b.s3tc.ctex"]
+source_file="res://assets/characters/adapted/pickup_soldier_feet_Soldier_Body_normal.png"
+dest_files=["res://.godot/imported/pickup_soldier_feet_Soldier_Body_normal.png-6c7eea81034e07bfc9ac7849692bdeef.s3tc.ctex"]
 
 [params]
 
