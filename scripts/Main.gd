@@ -168,6 +168,7 @@ const TEX_RUST_DIFF := TEX_DIR + "rusty_metal_03/rusty_metal_03_diff_4k.jpg"
 const TEX_WOOD_FLOOR_DIFF := TEX_DIR + "wood_floor_deck/wood_floor_deck_diff_4k.jpg"
 const TEX_CONCRETE_DIFF := TEX_DIR + "concrete_floor_02/concrete_floor_02_diff_4k.jpg"
 const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
+const BED_MODEL_PATH := "res://assets/models/props/post_apocalyptic_bed.glb"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
 const PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
@@ -2364,8 +2365,7 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	# Door lintel: wall segment above the door gap (door is 2.55m tall, wall is 3.65m)
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, 2.55, 4.7), Vector3(3.0, 1.1, 0.35), Vector3.ZERO)
 	_create_house_details(origin, label)
-	if id_prefix == "house_1":
-		_create_house_interior(origin, label, id_prefix)
+	_create_house_interior(origin, label, id_prefix)
 	# Roof collision: flat box at wall top height to block player from jumping through roof
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, 3.65, 0), Vector3(11.4, 0.7, 9.4))
 	# Link door to wildlife blocker so wolves can enter when door is open
@@ -4584,7 +4584,8 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " FrontDirtMat", origin + Vector3(0.0, 0.025, 4.1), Vector3(1.3, 0.035, 0.75), Color(0.065, 0.055, 0.04), Vector3.ZERO)
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
-	pass
+	# Bed against the back-left corner
+	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", origin + Vector3(-3.5, 0, -3.0), Vector3.ONE, Vector3(0, 0, 0), true, 0.0)
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
@@ -4846,7 +4847,7 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var count := 4
-	var pole_path := "res://telephone_pole_scene.glb"
+	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var positions: Array = []
 	for i in range(count):
 		var t := float(i) / float(count - 1)
