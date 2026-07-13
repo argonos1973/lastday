@@ -4847,9 +4847,6 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var count := 4
 	var pole_path := "res://telephone_pole_scene.glb"
-	var crossbar_y := 5.2
-	var wire_y := crossbar_y + 0.15
-	var crossbar_len := 2.8
 	var positions: Array = []
 	for i in range(count):
 		var t := float(i) / float(count - 1)
@@ -4857,15 +4854,6 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 		positions.append(pos)
 		_spawn_external(pole_path, "TelephonePole_%d" % i, pos, Vector3.ONE, Vector3.ZERO, Vector3(0.5, 6.0, 0.5))
 		_register_wildlife_blocker(pos, 1.2)
-	for i in range(count - 1):
-		var a: Vector3 = positions[i]
-		var b: Vector3 = positions[i + 1]
-		var wire_len := a.distance_to(b)
-		var yaw_deg := rad_to_deg(atan2((b - a).x, (b - a).z))
-		var mid_a := a.lerp(b, 0.5) + Vector3(-crossbar_len * 0.4, wire_y, 0)
-		_create_visual_box("PowerWireA_%d" % i, mid_a, Vector3(0.04, 0.04, wire_len), Color(0.02, 0.02, 0.02), Vector3(0, yaw_deg, 0))
-		var mid_b := a.lerp(b, 0.5) + Vector3(crossbar_len * 0.4, wire_y, 0)
-		_create_visual_box("PowerWireB_%d" % i, mid_b, Vector3(0.04, 0.04, wire_len), Color(0.02, 0.02, 0.02), Vector3(0, yaw_deg, 0))
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
 	for i in range(posts):
