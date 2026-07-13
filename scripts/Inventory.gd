@@ -45,6 +45,9 @@ func use_index(index: int, stats) -> bool:
 	var item = items[index]
 	match item.item_type:
 		"food":
+			if item.item_name == "Lata de comida" and item.durability > 0.0:
+				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha antes de comer.")
+				return false
 			if item.item_name == "Carne cruda de lobo":
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
 				if stats.has_method("get_sick"):

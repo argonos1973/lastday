@@ -19,7 +19,10 @@ static func create(new_name: String, new_type: String, new_weight: float, new_qu
 	return item
 
 func duplicate_stack():
-	return load("res://scripts/Item.gd").create(item_name, item_type, weight, quantity, use_value)
+	var dup = load("res://scripts/Item.gd").create(item_name, item_type, weight, quantity, use_value)
+	dup.durability = durability
+	dup.max_durability = max_durability
+	return dup
 
 func can_stack_with(other) -> bool:
 	return other != null and item_name == other.item_name and item_type == other.item_type and use_value == other.use_value

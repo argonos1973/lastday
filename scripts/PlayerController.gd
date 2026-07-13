@@ -2460,6 +2460,16 @@ func _eat_held_item() -> void:
 	if item.item_type != "food":
 		notice.emit("No tienes comida en la mano.")
 		return
+	# Canned food must be opened with knife/axe before eating
+	if item.item_name == "Lata de comida" and item.durability > 0.0:
+		if not _inventory_has_blade():
+			notice.emit("Necesitas un cuchillo o hacha para abrir la lata.")
+			return
+		item.durability = 0.0
+		item.item_name = "Lata de comida abierta"
+		inventory.changed.emit()
+		notice.emit("Abres la lata con el cuchillo. Ahora puedes comer.")
+		return
 	# Play eating animation (same as campfire crafting)
 	play_action_animation("plant", 2.0)
 	notice.emit("Comiendo %s..." % item.item_name)
@@ -3431,6 +3441,16 @@ func from_dict(data: Dictionary) -> void:
 	_sync_held_item()
 
 func _quick_use_held_item() -> void:
+
+func _inventory_has_blade() -> bool:
+	if inventory == null:
+		return false
+	for item in inventory.items:
+		if item != null and (item.item_type == "weapon" or item.item_name == "Hacha"):
+			return true
+	return false
+
+func _quick_use_held_item_impl() -> void:
 	if inventory == null or inventory.items.is_empty():
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)

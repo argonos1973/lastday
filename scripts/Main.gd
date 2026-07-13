@@ -172,6 +172,8 @@ const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
 const PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const ROOT_CANNED_FOOD_MODEL := ROOT_GLB_DIR + "canned_food_pack_opened__low_poly_game_asset.glb"
+const CANNED_FOOD_LOW_MODEL := "res://assets/models/props/canned_food_low.glb"
+const FOOD_CAN_415G_MODEL := "res://assets/models/props/food_can_415g.glb"
 const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
 const ROOT_KNIFE_MODEL := ROOT_GLB_DIR + "knife.glb"
 const ROOT_WEAPON_KNIFE_MODEL := ROOT_GLB_DIR + "call_of_duty_black_ops_cold_war_-_america_knife.glb"
@@ -2075,7 +2077,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
 			_apply_black_material_recursive(boot_node as Node3D)
-	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and item_name != "Lata de comida") else "pickup_item"
 	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
@@ -2847,6 +2849,10 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_2", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_3", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 140, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"id": "loose_canned_food_0", "name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.3, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"id": "loose_canned_food_1", "name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 0.3, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
+		{"id": "loose_canned_food_2", "name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.3, "rot": Vector3(0, 80, 0), "color": Color(0.35, 0.25, 0.10)},
+		{"id": "loose_canned_food_3", "name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 0.3, "rot": Vector3(0, 120, 0), "color": Color(0.40, 0.28, 0.14)},
 	]
 	for pickup in pickups:
 		pickup["pos"] = _find_safe_loot_pos()
@@ -2857,6 +2863,8 @@ func _create_house_loot() -> void:
 	var house_loot_pool := [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.3, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"name": "Lata de comida", "type": "food", "weight": 0.4, "qty": 1, "use": 25.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 0.3, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
@@ -2967,7 +2975,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
 			_apply_black_material_recursive(boot_node as Node3D)
-	var action_kind := "eat_food" if item_type == "food" else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and item_name != "Lata de comida") else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
 	action.set_meta("visual_name", stored_visual_name)
