@@ -6657,7 +6657,8 @@ func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3,
 		if instance is Node3D:
 			var node := instance as Node3D
 			if not _display_props_stripped.has(path_str):
-				_strip_display_props(node)
+				if not path_str.contains("telephone_pole"):
+					_strip_display_props(node)
 				_display_props_stripped[path_str] = true
 			node.name = node_name
 			node.add_to_group("world_action_visual")
