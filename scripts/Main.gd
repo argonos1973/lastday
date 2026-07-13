@@ -2865,10 +2865,14 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
 		{"name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
+		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
 	]
 	var house_origins := [
 		Vector3(-25, 0, -18),
@@ -2879,7 +2883,7 @@ func _create_house_loot() -> void:
 	]
 	var loot_idx := 0
 	for origin in house_origins:
-		var num_items := 1 + randi() % 2
+		var num_items := 2 + randi() % 3
 		for _j in range(num_items):
 			var template: Dictionary = house_loot_pool[randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
