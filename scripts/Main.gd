@@ -2635,6 +2635,7 @@ func _create_survival_objectives() -> void:
 	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", _find_safe_loot_pos(), 1.2, Vector3(0, 45, 0))
 	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", _find_safe_loot_pos(), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
+	_create_house_loot()
 	for i in range(4):
 		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
 		_create_world_action("farm_plot_%d" % i, "farm_plot", "Parcela de cultivo", plot_pos, Vector3(2.0, 0.16, 1.8), Color(0.20, 0.12, 0.055), true, true)
@@ -2850,6 +2851,42 @@ func _create_loose_survival_pickups() -> void:
 	for pickup in pickups:
 		pickup["pos"] = _find_safe_loot_pos()
 		_create_pickup_item(pickup)
+
+func _create_house_loot() -> void:
+	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
+	var house_loot_pool := [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
+		{"name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
+		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+	]
+	var house_origins := [
+		Vector3(-25, 0, -18),
+		Vector3(-38, 0, 18),
+		Vector3(23, 0, 18),
+		Vector3(42, 0, 26),
+		Vector3(-12, 0, 42)
+	]
+	var loot_idx := 0
+	for origin in house_origins:
+		var num_items := 1 + randi() % 2
+		for _j in range(num_items):
+			var template: Dictionary = house_loot_pool[randi() % house_loot_pool.size()]
+			var loot_data: Dictionary = template.duplicate()
+			loot_data["id"] = "house_loot_%d" % loot_idx
+			loot_idx += 1
+			loot_data["pos"] = _find_pos_inside_house(origin)
+			_create_pickup_item(loot_data)
+
+func _find_pos_inside_house(origin: Vector3) -> Vector3:
+	var pos := Vector3(
+		origin.x + randf_range(-4.0, 4.0),
+		0.06,
+		origin.z + randf_range(-3.5, 3.5)
+	)
+	return pos
 
 func _find_safe_loot_pos() -> Vector3:
 	for _attempt in range(60):
