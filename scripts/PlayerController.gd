@@ -3441,6 +3441,7 @@ func from_dict(data: Dictionary) -> void:
 	_sync_held_item()
 
 func _quick_use_held_item() -> void:
+	pass
 
 func _inventory_has_blade() -> bool:
 	if inventory == null:
