@@ -2282,6 +2282,7 @@ func _create_map() -> void:
 		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
 		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
 		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
+		_create_stick_house(Vector3(-55, 0, -35), "Casa de palos 1")
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_world_details()
@@ -2326,7 +2327,8 @@ func _register_server_house_blockers() -> void:
 		Vector3(-38, 0, 18),
 		Vector3(23, 0, 18),
 		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42)
+		Vector3(-12, 0, 42),
+		Vector3(-55, 0, -35)
 	]
 	for origin in house_origins:
 		var idx := _register_wildlife_blocker(origin, 8.2)
@@ -2373,6 +2375,69 @@ func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
 	if door_node != null:
 		wildlife_blockers[blocker_idx]["door"] = door_node
 		wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
+
+func _create_stick_house(origin: Vector3, label: String) -> void:
+	var blocker_idx := _register_wildlife_blocker(origin, 8.2)
+	# Floor (same as brick houses)
+	_create_house_floor(origin, label)
+	# Log walls — same dimensions as brick houses but with bark texture
+	# Back wall (no windows, solid logs)
+	_create_log_wall(label + " Back", origin + Vector3(0, 0, -4.7), Vector3(11.4, 3.65, 0.35))
+	# Left wall
+	_create_log_wall(label + " Left", origin + Vector3(-5.7, 0, 0), Vector3(0.35, 3.65, 9.4))
+	# Right wall
+	_create_log_wall(label + " Right", origin + Vector3(5.7, 0, 0), Vector3(0.35, 3.65, 9.4))
+	# Front walls with door gap (1.8m wide, centered)
+	_create_log_wall(label + " FrontLeft", origin + Vector3(-3.6, 0, 4.7), Vector3(4.2, 3.65, 0.35))
+	_create_log_wall(label + " FrontRight", origin + Vector3(3.6, 0, 4.7), Vector3(4.2, 3.65, 0.35))
+	# Door lintel above door gap
+	_create_log_wall(label + " DoorLintel", origin + Vector3(0, 2.55, 4.7), Vector3(3.0, 1.1, 0.35))
+	# Roof: flat log roof
+	_create_log_roof(origin, label)
+	# Roof collision
+	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, 3.65, 0), Vector3(11.4, 0.7, 9.4))
+	# Register house bounds
+	wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
+
+func _create_log_wall(node_name: String, pos: Vector3, size: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.name = node_name
+	body.position = pos
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = _get_shared_box_mesh()
+	mesh_instance.scale = size
+	mesh_instance.position.y = size.y * 0.5
+	var uv_scale := Vector3(max(size.x, size.z) / 1.4, size.y / 1.4, 1.0)
+	mesh_instance.material_override = _make_textured_material(node_name + POLY_PINE_BARK_DIFF, POLY_PINE_BARK_DIFF, Color(0.35, 0.22, 0.12), uv_scale)
+	body.add_child(mesh_instance)
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+	collision.position.y = size.y * 0.5
+	body.add_child(collision)
+	add_child(body)
+	return body
+
+func _create_log_roof(origin: Vector3, label: String) -> void:
+	# Flat roof made of horizontal logs (simplified as a textured box)
+	var roof_mat := StandardMaterial3D.new()
+	roof_mat.albedo_color = Color(0.25, 0.16, 0.08)
+	roof_mat.roughness = 0.95
+	var roof_tex = _load_texture_from_path(POLY_PINE_BARK_DIFF)
+	if roof_tex != null:
+		roof_mat.albedo_texture = roof_tex
+		roof_mat.uv1_scale = Vector3(4.0, 3.0, 1.0)
+	var body := StaticBody3D.new()
+	body.name = label + " Roof"
+	body.position = origin + Vector3(0, 3.65, 0)
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = _get_shared_box_mesh()
+	mesh_instance.scale = Vector3(11.4, 0.3, 9.4)
+	mesh_instance.position.y = 0.15
+	mesh_instance.material_override = roof_mat
+	body.add_child(mesh_instance)
+	add_child(body)
 
 func _create_house_foundation(origin: Vector3, label: String) -> void:
 	# Concrete skirting (perimeter beams) under the brick walls, so the houses
@@ -2879,7 +2944,8 @@ func _create_house_loot() -> void:
 		Vector3(-38, 0, 18),
 		Vector3(23, 0, 18),
 		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42)
+		Vector3(-12, 0, 42),
+		Vector3(-55, 0, -35)
 	]
 	var loot_idx := 0
 	for origin in house_origins:
@@ -4206,7 +4272,8 @@ const HOUSE_POSITIONS := [
 	Vector3(-38, 0, 18),
 	Vector3(23, 0, 18),
 	Vector3(42, 0, 26),
-	Vector3(-12, 0, 42)
+	Vector3(-12, 0, 42),
+	Vector3(-55, 0, -35)
 ]
 
 func _is_player_in_house(pos: Vector3) -> bool:
