@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://1dg0xfyfimny"
-path="res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"
+uid="uid://7tul31k72y7x"
+path="res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "309deb11032868e9404063bdcbc8c519"
+"md5": "3c609a543dc5f1f32fc5c33be2b4db0d"
 }
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Soldier_Body_specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"]
+source_file="res://assets/models/props/post_apocalyptic_bed_0.jpg"
+dest_files=["res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.ctex"]
 
 [params]
 

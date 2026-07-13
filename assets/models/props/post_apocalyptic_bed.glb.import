@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://dqreppiv58ubc"
-path="res://.godot/imported/pickup_default_tops.glb-9f1c58b6d5f715694044f86e80d7ba87.scn"
+uid="uid://cd01a4g7ftjdt"
+path="res://.godot/imported/post_apocalyptic_bed.glb-01302b7fcd234e51f61db4d41c3fb376.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_default_tops.glb"
-dest_files=["res://.godot/imported/pickup_default_tops.glb-9f1c58b6d5f715694044f86e80d7ba87.scn"]
+source_file="res://assets/models/props/post_apocalyptic_bed.glb"
+dest_files=["res://.godot/imported/post_apocalyptic_bed.glb-01302b7fcd234e51f61db4d41c3fb376.scn"]
 
 [params]
 

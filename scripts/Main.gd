@@ -4846,15 +4846,12 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 	_create_visual_box("RoadCrackBranch", pos + Vector3(randf_range(-0.4, 0.4), 0.01, randf_range(-0.4, 0.4)), Vector3(0.8, 0.025, 0.06), Color(0.015, 0.015, 0.015), Vector3(0, yaw + randf_range(35, 70), 0))
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
-	var count := 4
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
-	var positions: Array = []
-	for i in range(count):
-		var t := float(i) / float(count - 1)
-		var pos := start.lerp(end, t)
-		positions.append(pos)
-		_spawn_external(pole_path, "TelephonePole_%d" % i, pos, Vector3.ONE, Vector3.ZERO, Vector3(0.5, 6.0, 0.5))
-		_register_wildlife_blocker(pos, 1.2)
+	var center := start.lerp(end, 0.5)
+	# Model AABB: poles ~49.5m tall, scene ~65m wide. Scale to ~6m pole height.
+	var pole_scale := 6.0 / 49.45
+	_spawn_external(pole_path, "TelephonePoleScene", center, Vector3.ONE * pole_scale, Vector3.ZERO, Vector3(2.0, 6.0, 2.0))
+	_register_wildlife_blocker(center, 4.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
 	for i in range(posts):
