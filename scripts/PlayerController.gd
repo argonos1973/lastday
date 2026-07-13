@@ -2461,12 +2461,12 @@ func _eat_held_item() -> void:
 		notice.emit("No tienes comida en la mano.")
 		return
 	# Canned food must be opened with knife/axe before eating
-	if item.item_name == "Lata de comida" and item.durability > 0.0:
+	if item.item_name.begins_with("Lata de ") and item.durability > 0.0:
 		if not _inventory_has_blade():
 			notice.emit("Necesitas un cuchillo o hacha para abrir la lata.")
 			return
 		item.durability = 0.0
-		item.item_name = "Lata de comida abierta"
+		item.item_name = item.item_name + " abierta"
 		inventory.changed.emit()
 		notice.emit("Abres la lata con el cuchillo. Ahora puedes comer.")
 		return
