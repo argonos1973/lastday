@@ -4585,7 +4585,7 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
 	# Bed against the back-left corner
-	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", origin + Vector3(-3.5, 0, -3.0), Vector3.ONE, Vector3(0, 0, 0), true, 0.0)
+	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", origin + Vector3(-3.5, 0, -3.0), Vector3.ONE * 1.5, Vector3(0, 0, 0), true, 0.0)
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
@@ -4848,13 +4848,11 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
-	var pole_scale := 6.0 / 49.45
-	# Model origin is at center of first pole; scene spans -65.47m in X. Offset to center the row.
+	# Model AABB: poles ~49.5m tall, scene ~65m wide. Scale to ~8m pole height.
+	var pole_scale := 8.0 / 49.45
+	# Center the scene: model spans -65.47m in X
 	var x_offset := 65.47 * 0.5 * pole_scale
-	# Model origin is at vertical center; raise by half height to put base at ground
-	var y_offset := 49.45 * 0.5 * pole_scale
-	_try_instance_external_scene([pole_path], "TelephonePoleScene", center + Vector3(x_offset, y_offset, 0), Vector3.ONE * pole_scale, Vector3.ZERO, false, 0.0)
-	_create_invisible_collision_box("TelephonePoleCollision", center + Vector3(x_offset, y_offset * 0.5, 0), Vector3(8.0, 6.0, 2.0))
+	_spawn_external(pole_path, "TelephonePoleScene", center + Vector3(x_offset, 0, 0), Vector3.ONE * pole_scale, Vector3.ZERO, Vector3(8.0, 8.0, 2.0))
 	_register_wildlife_blocker(center, 4.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
