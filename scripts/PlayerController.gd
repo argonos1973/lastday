@@ -615,8 +615,6 @@ func _input(event: InputEvent) -> void:
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_close_loot_ui") and scene._loot_panel != null:
 			scene._close_loot_ui()
-		else:
-			_interact_with_dead_player()
 		return
 	if event.is_action_pressed("toggle_inventory"):
 		notice.emit("Inventario alternado.")
@@ -3017,39 +3015,11 @@ func _interact() -> void:
 		tw.chain().tween_property(camera, "fov", 75.0, 0.18).set_ease(Tween.EASE_IN_OUT)
 	target.interact(self)
 
-func _interact_with_dead_player() -> void:
-	var target = _get_interaction_target()
-	if target == null:
-		return
-	# Check if target is a dead player puppet
-	if target is PlayerController and target.is_dead and target.is_puppet:
-		var dead_peer_id: int = target.get_meta("peer_id", 0)
-		if dead_peer_id == 0:
-			return
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-		if net_node != null and net_node.is_connected:
-			net_node.request_loot.rpc_id(1, dead_peer_id)
-			notice.emit("Registrando cuerpo...")
-		return
-	# Also check if target is a dead player proxy on the server
-	if target.has_meta("proxy_dead") and target.get_meta("proxy_dead", false):
-		var dead_peer_id: int = target.get_meta("peer_id", 0)
-		if dead_peer_id == 0:
-			return
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-		if net_node != null and net_node.is_connected:
-			net_node.request_loot.rpc_id(1, dead_peer_id)
-			notice.emit("Registrando cuerpo...")
-
 func get_interaction_text(_player = null) -> String:
-	if is_dead and is_puppet:
-		return "[I] Registrar cuerpo"
 	return ""
 
-func interact(player: Node) -> void:
-	if is_dead and is_puppet:
-		if player != null and player.has_method("_interact_with_dead_player"):
-			player._interact_with_dead_player()
+func interact(_player: Node) -> void:
+	pass
 
 func _collect() -> void:
 	var target = _get_interaction_target()
