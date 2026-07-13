@@ -2403,13 +2403,33 @@ func _create_log_wall(node_name: String, pos: Vector3, size: Vector3) -> StaticB
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.position = pos
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = _get_shared_box_mesh()
-	mesh_instance.scale = size
-	mesh_instance.position.y = size.y * 0.5
-	var uv_scale := Vector3(max(size.x, size.z) / 1.4, size.y / 1.4, 1.0)
-	mesh_instance.material_override = _make_textured_material(node_name + POLY_PINE_BARK_DIFF, POLY_PINE_BARK_DIFF, Color(0.35, 0.22, 0.12), uv_scale)
-	body.add_child(mesh_instance)
+	# Determine wall orientation: if size.x > size.z, wall runs along X (horizontal logs lie along X)
+	var is_x_wall := size.x > size.z
+	var wall_length: float = size.x if is_x_wall else size.z
+	var wall_height: float = size.y
+	var wall_thickness: float = size.z if is_x_wall else size.x
+	var log_radius: float = 0.18
+	var log_spacing: float = log_radius * 2.0  # diameter
+	var num_logs: int = int(wall_height / log_spacing)
+	var log_length: float = wall_length + log_radius * 2.0  # extend slightly past corners
+	for i in range(num_logs):
+		var y_pos: float = log_spacing * (i + 0.5)
+		var log_name := node_name + " Log%d" % i
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = log_name
+		mesh_instance.mesh = _get_shared_trunk_cylinder_mesh()
+		if is_x_wall:
+			mesh_instance.scale = Vector3(log_radius, log_length, log_radius)
+			mesh_instance.rotation_degrees = Vector3(0, 0, 90)
+			mesh_instance.position = Vector3(0, y_pos, 0)
+		else:
+			mesh_instance.scale = Vector3(log_radius, log_length, log_radius)
+			mesh_instance.rotation_degrees = Vector3(90, 0, 0)
+			mesh_instance.position = Vector3(0, y_pos, 0)
+		var uv_scale := Vector3(2.0, log_length / 2.0, 1.0)
+		mesh_instance.material_override = _make_textured_material(log_name + POLY_PINE_BARK_DIFF, POLY_PINE_BARK_DIFF, Color(0.32, 0.20, 0.10), uv_scale)
+		body.add_child(mesh_instance)
+	# Single box collision for the whole wall
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
@@ -2420,23 +2440,27 @@ func _create_log_wall(node_name: String, pos: Vector3, size: Vector3) -> StaticB
 	return body
 
 func _create_log_roof(origin: Vector3, label: String) -> void:
-	# Flat roof made of horizontal logs (simplified as a textured box)
-	var roof_mat := StandardMaterial3D.new()
-	roof_mat.albedo_color = Color(0.25, 0.16, 0.08)
-	roof_mat.roughness = 0.95
-	var roof_tex = _load_texture_from_path(POLY_PINE_BARK_DIFF)
-	if roof_tex != null:
-		roof_mat.albedo_texture = roof_tex
-		roof_mat.uv1_scale = Vector3(4.0, 3.0, 1.0)
+	# Roof made of horizontal logs running along X, spaced across Z
 	var body := StaticBody3D.new()
 	body.name = label + " Roof"
 	body.position = origin + Vector3(0, 3.65, 0)
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = _get_shared_box_mesh()
-	mesh_instance.scale = Vector3(11.4, 0.3, 9.4)
-	mesh_instance.position.y = 0.15
-	mesh_instance.material_override = roof_mat
-	body.add_child(mesh_instance)
+	var roof_length: float = 11.4 + 0.4  # overhang
+	var roof_depth: float = 9.4 + 0.4
+	var log_radius: float = 0.18
+	var log_spacing: float = log_radius * 2.0
+	var num_roof_logs: int = int(roof_depth / log_spacing) + 1
+	for i in range(num_roof_logs):
+		var z_off: float = -roof_depth * 0.5 + log_spacing * (i + 0.5)
+		var log_name := label + " RoofLog%d" % i
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = log_name
+		mesh_instance.mesh = _get_shared_trunk_cylinder_mesh()
+		mesh_instance.scale = Vector3(log_radius, roof_length, log_radius)
+		mesh_instance.rotation_degrees = Vector3(0, 0, 90)
+		mesh_instance.position = Vector3(0, 0.15, z_off)
+		var uv_scale := Vector3(2.0, roof_length / 2.0, 1.0)
+		mesh_instance.material_override = _make_textured_material(log_name + POLY_PINE_BARK_DIFF, POLY_PINE_BARK_DIFF, Color(0.28, 0.17, 0.08), uv_scale)
+		body.add_child(mesh_instance)
 	add_child(body)
 
 func _create_house_foundation(origin: Vector3, label: String) -> void:
