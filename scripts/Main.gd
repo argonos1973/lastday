@@ -4848,14 +4848,17 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
-	# Model has Sketchfab_model rot=-90°X making poles horizontal. Rotate +90°X to cancel.
 	var pole_scale := 8.0 / 49.45
-	# After +90°X on root cancels -90°X on child, poles are vertical in Y as originally authored.
-	# Original AABB (no rotation): X=[-63.77, 18.74] Y=[-5.08, 44.38] Z=[-8.83, 8.55]
-	# X center offset = -(-22.52) * scale, Y base offset = -(-5.08) * scale
+	# Model AABB (unscaled, no rotation): X=[-63.77, 18.74] Y=[-5.08, 44.38] Z=[-8.83, 8.55]
 	var x_off := 22.52 * pole_scale
 	var y_off := 5.08 * pole_scale
-	_try_instance_external_scene([pole_path], "TelephonePoleScene", center + Vector3(x_off, y_off, 0), Vector3.ONE * pole_scale, Vector3(90, 0, 0), false, 0.0)
+	_try_instance_external_scene([pole_path], "TelephonePoleScene", center + Vector3(x_off, y_off, 0), Vector3.ONE * pole_scale, Vector3.ZERO, false, 0.0)
+	# Fix orientation: Sketchfab_model child has rot=-90°X making poles horizontal. Reset to 0.
+	var pole_node := get_node_or_null("TelephonePoleScene")
+	if pole_node is Node3D:
+		for child in pole_node.get_children():
+			if child is Node3D and child.name.begins_with("Sketchfab_model"):
+				(child as Node3D).rotation_degrees = Vector3.ZERO
 	_create_invisible_collision_box("TelephonePoleCollision", center + Vector3(x_off, 4.0, 0), Vector3(14.0, 8.0, 3.0))
 	_register_wildlife_blocker(center, 4.0)
 
