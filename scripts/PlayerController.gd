@@ -808,6 +808,14 @@ func equip_clothing(item_name: String) -> void:
 			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 			if bmi != null:
 				bmi.visible = false
+		# Restore Body_legs/Body_feet for default clothing still equipped in those slots
+		for slot_key in ["legs", "feet"]:
+			var slot_item := str(equipped_check.get(slot_key, ""))
+			if DEFAULT_CLOTHING.has(slot_item):
+				var body_name: String = DEFAULT_CLOTHING[slot_item]
+				var body_mi: MeshInstance3D = _survival_body_nodes.get(body_name)
+				if body_mi != null:
+					body_mi.visible = true
 		for equipped_item in equipped_check.values():
 			var eitem := str(equipped_item)
 			if DEFAULT_SKIN_HIDES.has(eitem):
