@@ -4861,7 +4861,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			node.add_to_group("world_action_visual")
 			node.position = pos + Vector3(0, base_offset, 0)
 			node.scale = Vector3.ONE * pole_scale
-			node.rotation_degrees = Vector3.ZERO
+			node.rotation_degrees = Vector3(0, 90, 0)
 			add_child(node)
 	_register_wildlife_blocker(center, 1.0)
 
