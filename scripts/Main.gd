@@ -4846,30 +4846,23 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 	_create_visual_box("RoadCrackBranch", pos + Vector3(randf_range(-0.4, 0.4), 0.01, randf_range(-0.4, 0.4)), Vector3(0.8, 0.025, 0.06), Color(0.015, 0.015, 0.015), Vector3(0, yaw + randf_range(35, 70), 0))
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
+	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
 	var post_count := 9
-	var pole_height := 5.0
-	for i in range(post_count):
-		var t := float(i) / float(post_count - 1)
-		var pos := start.lerp(end, t)
-		_create_static_cylinder("TelephonePole_%d" % i, pos, 0.14, pole_height, Color(0.075, 0.055, 0.04))
-		_create_visual_box("TelephoneCrossbar_%d" % i, pos + Vector3(0, 4.75, 0), Vector3(1.8, 0.12, 0.12), Color(0.06, 0.045, 0.035), Vector3.ZERO)
-		for insulator in range(2):
-			var insulator_x := (float(insulator) - 0.5) * 0.45
-			_create_visual_cylinder("TelephoneInsulator_%d_%d" % [i, insulator], pos + Vector3(insulator_x, 4.84, 0), 0.06, 0.18, Color(0.16, 0.17, 0.15), Vector3.ZERO)
-	var cable_segments := 8
-	var cable_color := Color(0.012, 0.012, 0.012)
-	for cable in range(2):
-		var cable_offset := (float(cable) - 0.5) * 0.45
-		for segment in range(cable_segments):
-			var t0 := float(segment) / float(cable_segments)
-			var t1 := float(segment + 1) / float(cable_segments)
-			var p0 := start.lerp(end, t0) + Vector3(cable_offset, 4.92 - 0.75 * sin(PI * t0), 0)
-			var p1 := start.lerp(end, t1) + Vector3(cable_offset, 4.92 - 0.75 * sin(PI * t1), 0)
-			var midpoint := p0.lerp(p1, 0.5)
-			var cable_length := p0.distance_to(p1)
-			var cable_angle := rad_to_deg(atan2(-(p1.y - p0.y), p1.z - p0.z))
-			_create_visual_box("TelephoneCable_%d_%d" % [cable, segment], midpoint, Vector3(0.045, 0.045, cable_length), cable_color, Vector3(cable_angle, 0, 0))
+	var pole_scale := 5.0 / 49.45
+	var base_offset := 5.08 * pole_scale
+	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
+	if pole_scene is Node3D:
+		for i in range(post_count):
+			var t := float(i) / float(post_count - 1)
+			var pos := start.lerp(end, t)
+			var node := (pole_scene as Node3D).duplicate() as Node3D
+			node.name = "TelephonePoleGLB_%d" % i
+			node.add_to_group("world_action_visual")
+			node.position = pos + Vector3(0, base_offset, 0)
+			node.scale = Vector3.ONE * pole_scale
+			node.rotation_degrees = Vector3.ZERO
+			add_child(node)
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
