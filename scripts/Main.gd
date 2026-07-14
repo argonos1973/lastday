@@ -4848,8 +4848,8 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
-	var post_count := 9
-	var pole_scale := 5.0 / 49.45
+	var post_count := 5
+	var pole_scale := 9.0 / 49.45
 	var base_offset := 5.08 * pole_scale
 	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
 	if pole_scene is Node3D:
