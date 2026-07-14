@@ -4850,6 +4850,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var center := start.lerp(end, 0.5)
 	var pole_scale := 8.0 / 49.45
 	var longitudinal_scale := 40.0 / 82.51
+	var thickness_scale := 0.35 / 17.4
 	# Load via GLTFDocument to avoid PackedScene rotation baking issues
 	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
 	if pole_scene is Node3D:
@@ -4859,13 +4860,13 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			node.add_to_group("world_action_visual")
 			var segment_center := center + Vector3(0, 0, (float(segment) - 0.5) * 40.0)
 			var z_off := -22.52 * longitudinal_scale
-			var y_off := 5.08 * pole_scale
+			var y_off := 0.0
 			node.position = segment_center + Vector3(0, y_off, z_off)
-			node.scale = Vector3(longitudinal_scale, pole_scale, pole_scale)
+			node.scale = Vector3(longitudinal_scale, pole_scale, thickness_scale)
 			node.rotation_degrees = Vector3(0, 90, 0)
 			add_child(node)
-	_create_invisible_collision_box("TelephonePoleCollision", center, Vector3(3.0, 8.0, 80.0))
-	_register_wildlife_blocker(center, 4.0)
+	# No continuous collision: the line remains traversable by the player.
+	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
 	for i in range(posts):
