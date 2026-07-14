@@ -4848,11 +4848,17 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var center := start.lerp(end, 0.5)
 	var post_count := 9
+	var pole_height := 5.0
 	for i in range(post_count):
 		var t := float(i) / float(post_count - 1)
 		var pos := start.lerp(end, t)
-		_create_static_cylinder("TelephonePole_%d" % i, pos, 0.18, 8.0, Color(0.075, 0.055, 0.04))
-		_create_visual_box("TelephoneCrossbar_%d" % i, pos + Vector3(0, 7.65, 0), Vector3(2.4, 0.16, 0.16), Color(0.06, 0.045, 0.035), Vector3.ZERO)
+		_create_static_cylinder("TelephonePole_%d" % i, pos, 0.14, pole_height, Color(0.075, 0.055, 0.04))
+		_create_visual_box("TelephoneCrossbar_%d" % i, pos + Vector3(0, 4.75, 0), Vector3(1.8, 0.12, 0.12), Color(0.06, 0.045, 0.035), Vector3.ZERO)
+	var cable_midpoint := start.lerp(end, 0.5) + Vector3(0, 4.92, 0)
+	var cable_length := start.distance_to(end)
+	for cable in range(3):
+		var cable_offset := (float(cable) - 1.0) * 0.45
+		_create_visual_box("TelephoneCable_%d" % cable, cable_midpoint + Vector3(cable_offset, 0, 0), Vector3(0.045, 0.045, cable_length), Color(0.012, 0.012, 0.012), Vector3.ZERO)
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
