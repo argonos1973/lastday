@@ -4848,9 +4848,8 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
-	var post_count := 5
+	var post_count := 3
 	var pole_scale := 9.0 / 49.45
-	var base_offset := 5.08 * pole_scale
 	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
 	if pole_scene is Node3D:
 		for i in range(post_count):
@@ -4859,10 +4858,11 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			var node := (pole_scene as Node3D).duplicate() as Node3D
 			node.name = "TelephonePoleGLB_%d" % i
 			node.add_to_group("world_action_visual")
-			node.position = pos + Vector3(0, base_offset, 0)
+			node.position = pos
 			node.scale = Vector3.ONE * pole_scale
 			node.rotation_degrees = Vector3(0, 90, 0)
 			add_child(node)
+			_snap_node_bottom_to_y_cached(node, pos.y, pole_path, Vector3.ONE * pole_scale)
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
