@@ -844,8 +844,22 @@ func equip_clothing(item_name: String) -> void:
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_sync_held_item()
+	_debug_leg_meshes("equip " + item_name)
 	if inventory != null:
 		inventory.changed.emit()
+
+func _debug_leg_meshes(context: String) -> void:
+	var names := ["Body_legs", "Desnudo_legs", "Bottoms", "cloth_legs", "soldier_legs", "Body_feet", "Desnudo_feet", "Shoes", "cloth_feet", "soldier_feet"]
+	var report := "[LEGDBG] %s | slots=%s | full_body=%s" % [
+		context, str(_equipped_slots),
+		("null" if _full_body_mesh == null else str(_full_body_mesh.visible))]
+	for n in names:
+		var mi: MeshInstance3D = _find_mesh_in_third_person(n)
+		if mi == null:
+			report += " | %s=MISSING" % n
+		else:
+			report += " | %s=%s" % [n, str(mi.visible)]
+	print(report)
 
 func unequip_clothing(item_name: String) -> void:
 	if DEFAULT_CLOTHING.has(item_name):
