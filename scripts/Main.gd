@@ -4846,26 +4846,13 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 	_create_visual_box("RoadCrackBranch", pos + Vector3(randf_range(-0.4, 0.4), 0.01, randf_range(-0.4, 0.4)), Vector3(0.8, 0.025, 0.06), Color(0.015, 0.015, 0.015), Vector3(0, yaw + randf_range(35, 70), 0))
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
-	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
-	var pole_scale := 8.0 / 49.45
-	var longitudinal_scale := 40.0 / 82.51
-	var thickness_scale := 0.35 / 17.4
-	# Load via GLTFDocument to avoid PackedScene rotation baking issues
-	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
-	if pole_scene is Node3D:
-		for segment in range(2):
-			var node := (pole_scene as Node3D).duplicate() as Node3D
-			node.name = "TelephonePoleScene_%d" % segment
-			node.add_to_group("world_action_visual")
-			var segment_center := center + Vector3(0, 0, (float(segment) - 0.5) * 40.0)
-			var z_off := -22.52 * longitudinal_scale
-			var y_off := 0.0
-			node.position = segment_center + Vector3(0, y_off, z_off)
-			node.scale = Vector3(longitudinal_scale, pole_scale, thickness_scale)
-			node.rotation_degrees = Vector3(0, 90, 0)
-			add_child(node)
-	# No continuous collision: the line remains traversable by the player.
+	var post_count := 9
+	for i in range(post_count):
+		var t := float(i) / float(post_count - 1)
+		var pos := start.lerp(end, t)
+		_create_static_cylinder("TelephonePole_%d" % i, pos, 0.18, 8.0, Color(0.075, 0.055, 0.04))
+		_create_visual_box("TelephoneCrossbar_%d" % i, pos + Vector3(0, 7.65, 0), Vector3(2.4, 0.16, 0.16), Color(0.06, 0.045, 0.035), Vector3.ZERO)
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
