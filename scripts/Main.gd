@@ -4854,13 +4854,13 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 		var pos := start.lerp(end, t)
 		_create_static_cylinder("TelephonePole_%d" % i, pos, 0.14, pole_height, Color(0.075, 0.055, 0.04))
 		_create_visual_box("TelephoneCrossbar_%d" % i, pos + Vector3(0, 4.75, 0), Vector3(1.8, 0.12, 0.12), Color(0.06, 0.045, 0.035), Vector3.ZERO)
-		for insulator in range(3):
-			var insulator_x := (float(insulator) - 1.0) * 0.45
+		for insulator in range(2):
+			var insulator_x := (float(insulator) - 0.5) * 0.45
 			_create_visual_cylinder("TelephoneInsulator_%d_%d" % [i, insulator], pos + Vector3(insulator_x, 4.84, 0), 0.06, 0.18, Color(0.16, 0.17, 0.15), Vector3.ZERO)
 	var cable_segments := 8
 	var cable_color := Color(0.012, 0.012, 0.012)
-	for cable in range(3):
-		var cable_offset := (float(cable) - 1.0) * 0.45
+	for cable in range(2):
+		var cable_offset := (float(cable) - 0.5) * 0.45
 		for segment in range(cable_segments):
 			var t0 := float(segment) / float(cable_segments)
 			var t1 := float(segment + 1) / float(cable_segments)
