@@ -849,17 +849,24 @@ func equip_clothing(item_name: String) -> void:
 		inventory.changed.emit()
 
 func _debug_leg_meshes(context: String) -> void:
-	var names := ["Body_legs", "Desnudo_legs", "Bottoms", "cloth_legs", "soldier_legs", "Body_feet", "Desnudo_feet", "Shoes", "cloth_feet", "soldier_feet"]
-	var report := "[LEGDBG] %s | slots=%s | full_body=%s" % [
-		context, str(_equipped_slots),
-		("null" if _full_body_mesh == null else str(_full_body_mesh.visible))]
+	var names := ["Desnudo_legs", "Bottoms", "Tops", "Desnudo_arms"]
+	var report := "[LEGDBG] %s" % context
+	if _full_body_mesh != null:
+		report += " | full_body vis=%s size=%s" % [str(_full_body_mesh.visible), str(_mesh_world_size(_full_body_mesh))]
 	for n in names:
 		var mi: MeshInstance3D = _find_mesh_in_third_person(n)
 		if mi == null:
 			report += " | %s=MISSING" % n
 		else:
-			report += " | %s=%s" % [n, str(mi.visible)]
+			report += " | %s vis=%s size=%s skin=%s" % [n, str(mi.visible), str(_mesh_world_size(mi)), str(mi.skin != null)]
 	print(report)
+
+func _mesh_world_size(mi: MeshInstance3D) -> Vector3:
+	if mi == null or mi.mesh == null:
+		return Vector3.ZERO
+	var aabb := mi.get_aabb()
+	var world := mi.global_transform * aabb
+	return world.size.round()
 
 func unequip_clothing(item_name: String) -> void:
 	if DEFAULT_CLOTHING.has(item_name):
