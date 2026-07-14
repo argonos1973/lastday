@@ -1019,12 +1019,13 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 			var skin_mi: MeshInstance3D = _find_mesh_in_third_person(String(skin_name))
 			if skin_mi != null:
 				skin_mi.visible = not worn
-	# Show/hide leftturn Body_* parts: visible when clothed, hidden when bare
+	# Hide the default Body_* parts while the survival garment is worn, so they
+	# don't overlap the garment mesh (e.g. Body_feet clipping through cloth_feet).
 	if cfg.has("body_hides"):
 		for body_name in cfg["body_hides"]:
 			var body_mi: MeshInstance3D = _find_mesh_in_third_person(String(body_name))
 			if body_mi != null:
-				body_mi.visible = worn
+				body_mi.visible = not worn
 
 # Attaches and fits a clothing model onto the body relative to its measured
 # bounding box, so the player is visibly wearing it (e.g. the life vest on the
