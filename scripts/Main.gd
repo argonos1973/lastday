@@ -4856,13 +4856,13 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 		node.name = "TelephonePoleScene"
 		node.add_to_group("world_action_visual")
 		# Model AABB (unscaled): X=[-63.77, 18.74] Y=[-5.08, 44.38] Z=[-8.83, 8.55]
-		var x_off := 22.52 * pole_scale
+		var z_off := -22.52 * pole_scale
 		var y_off := 5.08 * pole_scale
-		node.position = center + Vector3(x_off, y_off, 0)
+		node.position = center + Vector3(0, y_off, z_off)
 		node.scale = Vector3.ONE * pole_scale
-		node.rotation_degrees = Vector3.ZERO
+		node.rotation_degrees = Vector3(0, 90, 0)
 		add_child(node)
-	_create_invisible_collision_box("TelephonePoleCollision", center + Vector3(22.52 * pole_scale, 4.0, 0), Vector3(14.0, 8.0, 3.0))
+	_create_invisible_collision_box("TelephonePoleCollision", center + Vector3(0, 4.0, -22.52 * pole_scale), Vector3(3.0, 8.0, 14.0))
 	_register_wildlife_blocker(center, 4.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
