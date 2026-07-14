@@ -4849,20 +4849,22 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
 	var pole_scale := 8.0 / 49.45
+	var longitudinal_scale := 40.0 / 82.51
 	# Load via GLTFDocument to avoid PackedScene rotation baking issues
 	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
 	if pole_scene is Node3D:
-		var node := (pole_scene as Node3D).duplicate() as Node3D
-		node.name = "TelephonePoleScene"
-		node.add_to_group("world_action_visual")
-		# Model AABB (unscaled): X=[-63.77, 18.74] Y=[-5.08, 44.38] Z=[-8.83, 8.55]
-		var z_off := -22.52 * pole_scale
-		var y_off := 5.08 * pole_scale
-		node.position = center + Vector3(0, y_off, z_off)
-		node.scale = Vector3.ONE * pole_scale
-		node.rotation_degrees = Vector3(0, 90, 0)
-		add_child(node)
-	_create_invisible_collision_box("TelephonePoleCollision", center + Vector3(0, 4.0, -22.52 * pole_scale), Vector3(3.0, 8.0, 14.0))
+		for segment in range(2):
+			var node := (pole_scene as Node3D).duplicate() as Node3D
+			node.name = "TelephonePoleScene_%d" % segment
+			node.add_to_group("world_action_visual")
+			var segment_center := center + Vector3(0, 0, (float(segment) - 0.5) * 40.0)
+			var z_off := -22.52 * longitudinal_scale
+			var y_off := 5.08 * pole_scale
+			node.position = segment_center + Vector3(0, y_off, z_off)
+			node.scale = Vector3(longitudinal_scale, pole_scale, pole_scale)
+			node.rotation_degrees = Vector3(0, 90, 0)
+			add_child(node)
+	_create_invisible_collision_box("TelephonePoleCollision", center, Vector3(3.0, 8.0, 80.0))
 	_register_wildlife_blocker(center, 4.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
