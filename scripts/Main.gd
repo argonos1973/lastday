@@ -4850,7 +4850,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var center := start.lerp(end, 0.5)
 	var pole_scale := 8.0 / 49.45
 	# Load via GLTFDocument to avoid PackedScene rotation baking issues
-	var pole_scene := _load_gltf_scene_from_file(pole_path)
+	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
 	if pole_scene is Node3D:
 		var node := (pole_scene as Node3D).duplicate() as Node3D
 		node.name = "TelephonePoleScene"
