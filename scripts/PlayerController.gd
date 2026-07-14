@@ -66,7 +66,7 @@ const DEFAULT_CLOTHING := {
 
 const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
-	"Pantalones": ["Desnudo_legs"],
+	"Pantalones": [],
 	"Zapatillas": ["Desnudo_feet"],
 	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
@@ -844,31 +844,8 @@ func equip_clothing(item_name: String) -> void:
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_sync_held_item()
-	_debug_leg_meshes("equip " + item_name)
 	if inventory != null:
 		inventory.changed.emit()
-
-func _debug_leg_meshes(context: String) -> void:
-	var names := ["Desnudo_legs", "Bottoms", "Tops", "Desnudo_arms"]
-	print("[LEGDBG] %s" % context)
-	if _full_body_mesh != null:
-		print("   full_body: %s" % _mesh_tree_report(_full_body_mesh))
-	for n in names:
-		var mi: MeshInstance3D = _find_mesh_in_third_person(n)
-		if mi == null:
-			print("   %s = MISSING" % n)
-		else:
-			print("   %s: %s" % [n, _mesh_tree_report(mi)])
-
-func _mesh_tree_report(mi: MeshInstance3D) -> String:
-	var s := "vis=%s in_tree=%s parent=%s" % [str(mi.visible), str(mi.is_visible_in_tree()), str(mi.get_parent().name if mi.get_parent() else "?")]
-	# Walk up ancestors, report any hidden ones
-	var node: Node = mi.get_parent()
-	while node != null:
-		if node is Node3D and not (node as Node3D).visible:
-			s += " | HIDDEN_ANCESTOR=%s" % node.name
-		node = node.get_parent()
-	return s
 
 func unequip_clothing(item_name: String) -> void:
 	if DEFAULT_CLOTHING.has(item_name):
