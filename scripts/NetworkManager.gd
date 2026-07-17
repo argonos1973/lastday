@@ -45,7 +45,9 @@ func _ready() -> void:
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 	# Auto-start dedicated server if --server argument is passed
 	var args := OS.get_cmdline_args()
-	if args.has("--server"):
+	var user_args := OS.get_cmdline_user_args()
+	if args.has("--server") or user_args.has("--server"):
+		print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
 
 func start_dedicated_server() -> bool:

@@ -66,7 +66,7 @@ const DEFAULT_CLOTHING := {
 
 const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
-	"Pantalones": [],
+	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
 	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
@@ -79,7 +79,7 @@ const DEFAULT_SKIN_HIDES := {
 
 const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
-	"Pantalones": ["Body_legs"],
+	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
 }
 
@@ -256,6 +256,9 @@ var third_person_sleep_animation := ""
 var third_person_sit_animation := ""
 var third_person_drink_animation := ""
 var is_sleeping := false
+var is_sleeping_on_bed := false
+var _saved_collision_mask := 0xFFFFFFFF
+var _bed_sleep_position := Vector3.ZERO
 var is_sitting := false
 var _sit_cooldown := 0.0
 var _auto_sleep_triggered := false
@@ -622,7 +625,7 @@ func _input(event: InputEvent) -> void:
 		if is_on_floor() and not is_in_water and not is_jumping and stats.energy >= min_jump_stamina:
 			var base_jump := sprint_jump_force if is_sprinting else jump_force
 			var carry := _get_carry_weight_ratio()
-			_jump_velocity = base_jump * (1.0 - carry * 0.6)
+			velocity.y = base_jump * (1.0 - carry * 0.6)
 			stats.energy = max(0.0, stats.energy - jump_stamina_cost)
 			stats.changed.emit()
 			is_jumping = true
@@ -814,6 +817,18 @@ func equip_clothing(item_name: String) -> void:
 				var body_mi: MeshInstance3D = _survival_body_nodes.get(body_name)
 				if body_mi != null:
 					body_mi.visible = true
+				# Also restore the Body_* part for this slot unless DEFAULT_BODY_HIDES lists it
+				var body_part: String = "Body_" + slot_key
+				var hide_it := false
+				if DEFAULT_BODY_HIDES.has(slot_item):
+					for hn in DEFAULT_BODY_HIDES[slot_item]:
+						if str(hn) == body_part:
+							hide_it = true
+							break
+				if not hide_it:
+					var bpmi: MeshInstance3D = _find_mesh_in_third_person(body_part)
+					if bpmi != null:
+						bpmi.visible = true
 		for equipped_item in equipped_check.values():
 			var eitem := str(equipped_item)
 			if DEFAULT_SKIN_HIDES.has(eitem):
@@ -1338,14 +1353,21 @@ func _physics_process(delta: float) -> void:
 	if is_sleeping:
 		velocity.x = 0.0
 		velocity.z = 0.0
-		if not is_on_floor():
-			velocity.y -= _gravity * delta
+		if is_sleeping_on_bed:
+			velocity = Vector3.ZERO
+			global_position = _bed_sleep_position
+			if Engine.get_physics_frames() % 60 == 0:
+				print("[SLEEP] global_position=", global_position, " _bed_sleep_position=", _bed_sleep_position, " collision_mask=", collision_mask)
 		else:
-			velocity.y = 0.0
-		move_and_slide()
+			if not is_on_floor():
+				velocity.y -= _gravity * delta
+			else:
+				velocity.y = 0.0
+			move_and_slide()
 		stats.do_sleep(delta)
 		_update_backpack_socket()
 		_update_hand_socket()
+		_update_interaction_prompt()
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
@@ -1384,12 +1406,11 @@ func _physics_process(delta: float) -> void:
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	if is_jumping:
-		velocity.y = _jump_velocity
-		_jump_velocity -= _gravity * delta
+		velocity.y -= _gravity * delta
 		move_and_slide()
 		if not is_on_floor():
 			_jump_apex = true
-		if _jump_apex and is_on_floor() and _jump_velocity < 0.0:
+		if _jump_apex and is_on_floor() and velocity.y <= 0.0:
 			is_jumping = false
 			_jump_velocity = 0.0
 			velocity.y = 0.0
@@ -2351,10 +2372,16 @@ func get_held_item():
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	return inventory.items[held_index]
 
-func start_sleep() -> void:
+func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 	if is_dead or is_sleeping:
 		return
 	is_sleeping = true
+	if on_bed:
+		is_sleeping_on_bed = true
+		_bed_sleep_position = bed_pos
+		global_position = bed_pos
+		_saved_collision_mask = collision_mask
+		collision_mask = 0
 	_sync_held_item()
 	if third_person_animation_player != null and not third_person_sleep_animation.is_empty():
 		third_person_animation_player.play(third_person_sleep_animation, 0.3)
@@ -2365,6 +2392,9 @@ func stop_sleep() -> void:
 	if not is_sleeping:
 		return
 	is_sleeping = false
+	if is_sleeping_on_bed:
+		collision_mask = _saved_collision_mask
+	is_sleeping_on_bed = false
 	_auto_sleep_triggered = false
 	if third_person_animation_player != null and not third_person_idle_animation.is_empty():
 		third_person_animation_player.play(third_person_idle_animation, 0.3)
@@ -3030,6 +3060,9 @@ func _collect() -> void:
 		target.collect(self)
 
 func _update_interaction_prompt() -> void:
+	if is_sleeping:
+		prompt_changed.emit("")
+		return
 	var target = _get_interaction_target()
 	if target != null:
 		if raycast != null and raycast.has_method("get_default_text"):

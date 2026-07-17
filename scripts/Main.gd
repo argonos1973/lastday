@@ -41,6 +41,7 @@ var _dropped_items: Array = []
 var _built_campfires: Array = []
 var _built_shelters: Array = []
 var _lit_campfires: Array = []
+var _server_door_states: Dictionary = {}
 var _tree_id_counter := 0
 var _bush_id_counter := 0
 var material_cache := {}
@@ -182,7 +183,9 @@ const ROOT_VEST_MODEL := ROOT_GLB_DIR + "vest_armor_holster_lowpoly_gameready_pa
 const ROOT_BARRIER_MODEL := ROOT_GLB_DIR + "concrete_road_barrier.glb"
 const ROOT_BENCH_MODEL := ROOT_GLB_DIR + "city_bench.glb"
 const ROOT_JUNK_MODEL := ROOT_GLB_DIR + "junk_props.glb"
-const ROOT_RUSTY_CAR_MODEL := ROOT_GLB_DIR + "old_rusty_car.glb"
+const ABANDONED_JUNK_CAR_MODEL := "res://abandoned_junk_car.glb"
+const SCRAP_BARRICADE_CAR_MODEL := "res://scrap_barricade_car_free_raw_scan.glb"
+const SCRAP_CAR_Y_CORRECTION := -0.6
 const ROOT_CONTAINER_MODEL := ROOT_GLB_DIR + "shipping_container_anos.glb"
 const ROOT_FURNITURE_MODEL := ROOT_GLB_DIR + "tinylivingpack.glb"
 const ROOT_AXE_CS2_MODEL := ROOT_GLB_DIR + "tool__axe_weapon_model_cs2.glb"
@@ -949,6 +952,8 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot)
+		# Also sync world state (open doors, depleted resources, etc.) to reconnecting client
+		_send_world_state_to_client(peer_id)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -1135,7 +1140,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player._jump_apex = false
 	# Restore sleeping state
 	if sleeping and not player.is_sleeping:
-		player.start_sleep()
+		player.start_sleep(player.global_position, true)
 	# Restore sitting state
 	if sitting and not player.is_sitting:
 		player.is_sitting = true
@@ -1169,9 +1174,16 @@ func _send_world_state_to_client(peer_id: int) -> void:
 	if net == null:
 		return
 	var open_doors: Array = []
-	for door in get_tree().get_nodes_in_group("doors"):
-		if door is Door and door.is_open:
-			open_doors.append(door.name)
+	# On dedicated server, doors don't exist as nodes — use the tracked state dictionary
+	if net.is_dedicated_server:
+		for door_name in _server_door_states.keys():
+			if _server_door_states[door_name]:
+				open_doors.append(door_name)
+	else:
+		for door in get_tree().get_nodes_in_group("doors"):
+			if door is Door and door.is_open:
+				open_doors.append(door.name)
+	print("[DOOR] _send_world_state_to_client peer_id=%d open_doors=%s" % [peer_id, open_doors])
 	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters)
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
@@ -1209,11 +1221,13 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				action.display_name = "Fogata encendida"
 				action.repeatable = true
 	# Apply open door states
+	print("[DOOR] _net_sync_world_state received open_doors=%s" % str(open_doors))
 	for door_name in open_doors:
-		var door := get_node_or_null(door_name)
-		if door != null and door is Door and not door.is_open:
-			door.is_open = true
-			door.rotation_degrees.y = door.open_yaw
+		for d in get_tree().get_nodes_in_group("doors"):
+			if d is Door and d.name == door_name and not d.is_open:
+				d.is_open = true
+				d.rotation_degrees.y = d.open_yaw
+				break
 	# Spawn shelters built by other players
 	for sh in shelters:
 		if not world_actions_by_id.has(str(sh["id"])):
@@ -1236,8 +1250,16 @@ func _net_item_picked_up(action_id: String) -> void:
 		world_actions_by_id.erase(action_id)
 
 func _net_door_state_changed(door_name: String, is_open: bool) -> void:
-	var door := get_node_or_null(door_name)
-	if door != null and door is Door:
+	print("[DOOR] _net_door_state_changed name=%s is_open=%s" % [door_name, is_open])
+	_server_door_states[door_name] = is_open
+	# Also update the visual door if it exists (non-dedicated server or client)
+	var door: Door = null
+	for d in get_tree().get_nodes_in_group("doors"):
+		if d is Door and d.name == door_name:
+			door = d
+			break
+	if door != null:
+		print("[DOOR] Found door, current is_open=%s, updating to %s" % [door.is_open, is_open])
 		if door.is_open != is_open:
 			door.is_open = is_open
 			var target_yaw: float = door.open_yaw if is_open else door.closed_yaw
@@ -2278,6 +2300,8 @@ func _create_map() -> void:
 		_create_mountain_river()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
+		_create_road()
+	if not is_server:
 		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
 		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
 		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
@@ -2320,6 +2344,184 @@ func _create_map() -> void:
 		_create_wildlife()
 	if not is_server:
 		_flush_grass_batches()
+
+const ROAD_MODEL := "res://road_03.glb"
+
+const ROAD_HALF_WIDTH := 5.0
+const ROAD_START_Z := -52.0
+const ROAD_END_Z := 52.0
+
+func _is_on_road(pos: Vector3) -> bool:
+	return abs(pos.x) <= ROAD_HALF_WIDTH and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
+
+func _create_road() -> void:
+	var road_x := 9.0
+	var road_z_start := -57.0
+	var road_z_end := 57.0
+	var road_width := 10.0
+	var road_length := road_z_end - road_z_start
+	var space_state := get_world_3d().direct_space_state
+	# Raycast for ground height at road center
+	var mid_z := (road_z_start + road_z_end) * 0.5
+	var ray_origin := Vector3(road_x, 100.0, mid_z)
+	var ray_end := Vector3(road_x, -200.0, mid_z)
+	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
+	query.collide_with_bodies = true
+	query.collide_with_areas = false
+	var hit := space_state.intersect_ray(query)
+	var ground_y := 0.0
+	if not hit.is_empty():
+		ground_y = float(hit["position"].y)
+	# Create dirt road as a flat plane with proper UV tiling
+	var tile_size := 2.0
+	var tiles_x := int(road_width / tile_size)
+	var tiles_z := int(road_length / tile_size)
+	var road_plane := PlaneMesh.new()
+	road_plane.size = Vector2(road_width, road_length)
+	road_plane.orientation = PlaneMesh.FACE_Y
+	road_plane.subdivide_width = max(1, tiles_x - 1)
+	road_plane.subdivide_depth = max(1, tiles_z - 1)
+	var road_mi := MeshInstance3D.new()
+	road_mi.mesh = road_plane
+	road_mi.name = "DirtRoad"
+	var road_mat := StandardMaterial3D.new()
+	road_mat.roughness = 1.0
+	road_mat.metallic = 0.0
+	road_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	road_mat.texture_repeat = true
+	# Load Ground032 textures (now imported by Godot)
+	var tex_dir := "res://assets/textures/ground032/"
+	var color_tex := load(tex_dir + "Ground032_4K-JPG_Color.jpg")
+	if color_tex != null:
+		road_mat.albedo_texture = color_tex
+		road_mat.albedo_color = Color(0.45, 0.38, 0.30)
+		print("[ROAD] Color texture loaded OK, type=", color_tex.get_class())
+	else:
+		push_warning("[ROAD] Failed to load color texture")
+		road_mat.albedo_color = Color(0.45, 0.32, 0.2)
+	var normal_tex := load(tex_dir + "Ground032_4K-JPG_NormalGL.jpg")
+	if normal_tex != null:
+		road_mat.normal_texture = normal_tex
+		road_mat.normal_enabled = true
+		print("[ROAD] Normal texture loaded OK")
+	var rough_tex := load(tex_dir + "Ground032_4K-JPG_Roughness.jpg")
+	if rough_tex != null:
+		road_mat.roughness_texture = rough_tex
+		road_mat.roughness_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_GREEN
+	var ao_tex := load(tex_dir + "Ground032_4K-JPG_AmbientOcclusion.jpg")
+	if ao_tex != null:
+		road_mat.ao_texture = ao_tex
+		road_mat.ao_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_RED
+	# Set UV1 scale for tiling (for 2D UVs: .x = U across width, .y = V along length)
+	road_mat.uv1_scale = Vector3(float(tiles_x), float(tiles_z), 1.0)
+	print("[ROAD] Ground032 texture loaded, tiles=", tiles_x, "x", tiles_z, " uv1_scale=", road_mat.uv1_scale)
+	road_mi.material_override = road_mat
+	add_child(road_mi)
+	road_mi.global_position = Vector3(road_x, ground_y + 0.02, mid_z)
+	# Static body for collision
+	var road_body := StaticBody3D.new()
+	road_body.name = "RoadCollision"
+	add_child(road_body)
+	road_body.global_position = Vector3(road_x, ground_y + 0.02, mid_z)
+	var col_shape := BoxShape3D.new()
+	col_shape.size = Vector3(road_width, 0.1, road_length)
+	var col := CollisionShape3D.new()
+	col.shape = col_shape
+	road_body.add_child(col)
+	# Procedural grass along both road edges, dense at edge, fading to merge with existing grass
+	var grass_depth := 20.0
+	var tuft_spacing := 0.18
+	var num_tufts := int(road_length / tuft_spacing)
+	var grass_base := Color(0.20, 0.34, 0.12)
+	var color_var := Color(0.34, 0.46, 0.16)
+	for side in [-1, 1]:
+		for i in range(num_tufts):
+			var z_pos: float = road_z_start + (i + 0.5) * tuft_spacing + randf_range(-0.08, 0.08)
+			# Dense near road, gradually thinning to merge with existing grass
+			var blade_count := 18
+			for j in range(blade_count):
+				# Bias towards near-road but with long tail for seamless merge
+				var t: float = pow(randf(), 2.5) # 0 = near road, 1 = far, strongly biased towards 0
+				var offset_x: float = t * grass_depth + randf_range(-0.25, 0.25)
+				var edge_x: float = road_x + side * (road_width * 0.5 + 0.05 + offset_x)
+				var pos := Vector3(edge_x, 0.02, z_pos + randf_range(-0.15, 0.15))
+				# Height decreases very gradually towards outside
+				var h := randf_range(0.15, 0.35) * (1.0 - t * 0.3)
+				var r := randf_range(0.18, 0.38)
+				var c := grass_base.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
+				_queue_grass_instance(pos, h, r, c)
+	print("[ROAD] Created dirt road with seamless grass edges")
+
+func _get_mesh_global_min_y(mi: MeshInstance3D) -> float:
+	var aabb := mi.get_aabb()
+	var min_y := INF
+	for cx in [aabb.position.x, aabb.end.x]:
+		for cy in [aabb.position.y, aabb.end.y]:
+			for cz in [aabb.position.z, aabb.end.z]:
+				var wc := mi.global_transform * Vector3(cx, cy, cz)
+				min_y = min(min_y, wc.y)
+	return min_y
+
+func _get_mesh_global_max_y(mi: MeshInstance3D) -> float:
+	var aabb := mi.get_aabb()
+	var max_y := -INF
+	for cx in [aabb.position.x, aabb.end.x]:
+		for cy in [aabb.position.y, aabb.end.y]:
+			for cz in [aabb.position.z, aabb.end.z]:
+				var wc := mi.global_transform * Vector3(cx, cy, cz)
+				max_y = max(max_y, wc.y)
+	return max_y
+
+func _get_bounds_in_node_space(
+	mesh_instance: MeshInstance3D,
+	target_space: Node3D
+) -> AABB:
+	var source_aabb := mesh_instance.get_aabb()
+	var mesh_to_target := (
+		target_space.global_transform.affine_inverse()
+		* mesh_instance.global_transform
+	)
+	var minimum := Vector3(INF, INF, INF)
+	var maximum := Vector3(-INF, -INF, -INF)
+	for x in [source_aabb.position.x, source_aabb.end.x]:
+		for y in [source_aabb.position.y, source_aabb.end.y]:
+			for z in [source_aabb.position.z, source_aabb.end.z]:
+				var point := mesh_to_target * Vector3(x, y, z)
+				minimum.x = min(minimum.x, point.x)
+				minimum.y = min(minimum.y, point.y)
+				minimum.z = min(minimum.z, point.z)
+				maximum.x = max(maximum.x, point.x)
+				maximum.y = max(maximum.y, point.y)
+				maximum.z = max(maximum.z, point.z)
+	return AABB(minimum, maximum - minimum)
+
+func _print_mesh_hierarchy(node: Node, indent: String) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		print(indent, "MESH: ", mi.name, " | AABB: ", mi.get_aabb())
+	for child in node.get_children():
+		_print_mesh_hierarchy(child, indent + "  ")
+
+func _get_world_y_extent(model_root: Node) -> float:
+	var meshes: Array = []
+	_collect_mesh_instances(model_root, meshes)
+	var minimum_y := INF
+	var maximum_y := -INF
+	for mn in meshes:
+		var mi := mn as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var aabb := mi.get_aabb()
+		for cx in [aabb.position.x, aabb.end.x]:
+			for cy in [aabb.position.y, aabb.end.y]:
+				for cz in [aabb.position.z, aabb.end.z]:
+					var wc := mi.global_transform * Vector3(cx, cy, cz)
+					minimum_y = min(minimum_y, wc.y)
+					maximum_y = max(maximum_y, wc.y)
+	if minimum_y == INF:
+		return INF
+	return maximum_y - minimum_y
 
 func _register_server_house_blockers() -> void:
 	var house_origins := [
@@ -2497,22 +2699,75 @@ func _create_radio_point(origin: Vector3) -> void:
 	_create_static_box("RadioMast", origin + Vector3(3.6, 0, -1.5), Vector3(0.35, 8, 0.35), Color(0.12, 0.12, 0.12))
 
 func _create_new_world_props() -> void:
-	var car_s := Vector3.ONE * 0.013
-	var car_positions := [
-		{"pos": Vector3(33.0, 0.0, 2.0), "rot": Vector3(0, -60, 0)},
-		{"pos": Vector3(-48.0, 0.0, -32.0), "rot": Vector3(0, 110, 0)}
-	]
-	for i in range(car_positions.size()):
-		var cp = car_positions[i]
-		if _try_instance_external_scene([ROOT_RUSTY_CAR_MODEL], "RustyCar%d" % i, cp["pos"], car_s, cp["rot"], true, 0.0):
-			var rusty_node := get_node_or_null("RustyCar%d" % i)
-			var rusty_height := 2.5
-			if rusty_node != null and rusty_node is Node3D:
-				rusty_height = _get_node_world_aabb_height(rusty_node as Node3D)
-				rusty_height += 0.15
-				if rusty_height < 0.5:
-					rusty_height = 2.5
-			_create_invisible_collision_box_rotated("RustyCarCollision%d" % i, cp["pos"], Vector3(3.0, rusty_height, 5.0), float(cp["rot"].y))
+	print("[WORLD_PROPS] _create_new_world_props START")
+	var _dbg_file := FileAccess.open("user://scrap_car_debug.txt", FileAccess.WRITE)
+	if _dbg_file:
+		_dbg_file.store_line("=== _create_new_world_props START ===")
+	var space_state := get_world_3d().direct_space_state
+	# Abandoned junk car on the road (angled across road)
+	var car_s := Vector3.ONE * 2.0
+	var car_pos := Vector3(9.0, 0.0, -30.0)
+	var car_rot := Vector3(0, 70, 0)
+	var car_ground_y := _raycast_ground_y(space_state, car_pos)
+	if _try_instance_external_scene([ABANDONED_JUNK_CAR_MODEL], "JunkCar0", car_pos, car_s, car_rot, true, car_ground_y):
+		var junk_node := get_node_or_null("JunkCar0")
+		var junk_height := 1.5
+		var junk_coll_pos := car_pos
+		if junk_node != null and junk_node is Node3D:
+			var jn := junk_node as Node3D
+			jn.force_update_transform()
+			junk_height = _get_node_world_aabb_height(jn) + 0.15
+			if junk_height < 0.5:
+				junk_height = 1.5
+			if junk_height > 3.0:
+				junk_height = 2.0
+			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
+			print("[JUNK_CAR] pos=", jn.global_position, " height=", junk_height)
+		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(3.0, junk_height, 5.0), float(car_rot.y))
+	# Scrap barricade car abandoned on the road (different angle)
+	var scrap_s := Vector3.ONE * 0.5
+	var scrap_pos := Vector3(9.0, 0.0, 20.0)
+	var scrap_rot := Vector3(0, -40, 0)
+	var scrap_ground_y := _raycast_ground_y(space_state, scrap_pos)
+	print("[WORLD_PROPS] scrap_ground_y=", scrap_ground_y, " pos=", scrap_pos)
+	if _dbg_file:
+		_dbg_file.store_line("scrap_ground_y=" + str(scrap_ground_y) + " pos=" + str(scrap_pos) + " scale=" + str(scrap_s))
+		_dbg_file.close()
+	var scrap_ok := _try_instance_external_scene([SCRAP_BARRICADE_CAR_MODEL], "ScrapBarricadeCar", scrap_pos, scrap_s, scrap_rot, true, scrap_ground_y)
+	print("[WORLD_PROPS] scrap_ok=", scrap_ok)
+	_dbg_file = FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE)
+	if _dbg_file:
+		_dbg_file.seek_end()
+		_dbg_file.store_line("scrap_ok=" + str(scrap_ok))
+	if scrap_ok:
+		var scrap_node := get_node_or_null("ScrapBarricadeCar")
+		var scrap_height := 2.5
+		if scrap_node != null and scrap_node is Node3D:
+			var sn := scrap_node as Node3D
+			sn.force_update_transform()
+			sn.position.y += SCRAP_CAR_Y_CORRECTION
+			print("[SCRAP_CAR] final pos=", sn.global_position, " ground_y=", scrap_ground_y)
+			if _dbg_file:
+				_dbg_file.store_line("final_pos=" + str(sn.global_position) + " ground_y=" + str(scrap_ground_y))
+			scrap_height = 1.5
+			print("[SCRAP_CAR] height=", scrap_height)
+			if _dbg_file:
+				_dbg_file.store_line("height=" + str(scrap_height))
+		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(3.0, scrap_height, 5.0), float(scrap_rot.y))
+		if _dbg_file:
+			_dbg_file.store_line("=== MESH HIERARCHY DUMP ===")
+			var _meshes := []
+			_collect_mesh_instances(scrap_node, _meshes)
+			for _mi in _meshes:
+				var _mi3d := _mi as MeshInstance3D
+				if _mi3d and _mi3d.mesh:
+					_mi3d.force_update_transform()
+					var _aabb := _mi3d.get_aabb()
+					var _waabb := _mi3d.global_transform * _aabb
+					_dbg_file.store_line("  mesh=" + str(_mi3d.name) + " local_aabb=" + str(_aabb) + " world_aabb=" + str(_waabb) + " parent_path=" + str(_mi3d.get_parent().get_path()))
+	if _dbg_file:
+		_dbg_file.store_line("=== _create_new_world_props END ===")
+		_dbg_file.close()
 	var cont_s := Vector3.ONE * 1.0
 	var cont_positions := [
 		{"pos": Vector3(14.0, 0.0, -50.0), "rot": Vector3(0, 0, 0)},
@@ -2586,11 +2841,6 @@ func _spawn_interaction_item(scene_path: String, pos: Vector3, rot: Vector3) -> 
 
 func _create_survival_objectives() -> void:
 	#_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
-	_create_world_action("cabin_site", "build_cabin", "Base de cabana", Vector3(-54, 0.02, 48), Vector3(3.8, 0.65, 3.0), Color(0.28, 0.22, 0.13), false, false)
-	_create_static_box_rotated("CabinFoundationLogsA", Vector3(-54, 0.12, 46.45), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
-	_create_static_box_rotated("CabinFoundationLogsB", Vector3(-54, 0.12, 49.55), Vector3(4.2, 0.22, 0.22), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
-	_create_static_box_rotated("CabinFoundationLogsC", Vector3(-56.1, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
-	_create_static_box_rotated("CabinFoundationLogsD", Vector3(-51.9, 0.12, 48), Vector3(0.22, 0.22, 3.3), Color(0.18, 0.11, 0.055), Vector3(0, 0, 0))
 	for i in range(5):
 		var wood_pos := Vector3(randf_range(-62, -28), 0.04, randf_range(12, 62))
 		var log_a_name := "HarvestableLogA_%d" % i
@@ -2638,9 +2888,6 @@ func _create_survival_objectives() -> void:
 	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", _find_safe_loot_pos(), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
 	_create_house_loot()
-	for i in range(4):
-		var plot_pos := Vector3(-58.0 + float(i % 2) * 2.7, 0.045, 40.5 + float(i / 2) * 2.5)
-		_create_world_action("farm_plot_%d" % i, "farm_plot", "Parcela de cultivo", plot_pos, Vector3(2.0, 0.16, 1.8), Color(0.20, 0.12, 0.055), true, true)
 
 func _create_river_drink_zones() -> void:
 	var segments := _default_river_segments()
@@ -4585,7 +4832,26 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 
 func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
 	# Bed against the back-left corner
-	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", origin + Vector3(-3.5, 0, -3.0), Vector3.ONE * 2.0, Vector3(0, 0, 0), true, 0.0)
+	var bed_pos := origin + Vector3(-3.5, 0, -3.0)
+	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", bed_pos, Vector3.ONE * 2.0, Vector3(0, 0, 0), true, 0.0)
+	# Remove collision from the bed model so it doesn't push the player through the roof
+	var bed_node := get_node_or_null(label + " Bed")
+	if bed_node != null:
+		_remove_collision_from_node(bed_node)
+	else:
+		push_warning("Bed node not found: " + label + " Bed")
+	# Add interactable area so the player can sleep in the bed
+	var bed_area := Area3D.new()
+	bed_area.name = label + " BedInteractable"
+	var bed_col := CollisionShape3D.new()
+	var bed_shape := BoxShape3D.new()
+	bed_shape.size = Vector3(3.0, 2.0, 4.0)
+	bed_col.shape = bed_shape
+	bed_area.add_child(bed_col)
+	bed_area.set_script(load("res://scripts/BedInteractable.gd"))
+	bed_area.position = bed_pos + Vector3(0, 0.8, 0)
+	bed_area.set("bed_position", bed_pos + Vector3(0, 0.9, 0))
+	add_child(bed_area)
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
@@ -4949,6 +5215,8 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
 	if _is_in_house_doorway(pos):
+		return false
+	if _is_on_road(pos):
 		return false
 	if river_margin >= 0.0 and _is_inside_river_band(pos, river_margin):
 		return false
@@ -6707,7 +6975,7 @@ func _remove_collision_from_node(root: Node) -> void:
 			(node as Node).queue_free()
 
 func _collect_collision_nodes(node: Node, result: Array) -> void:
-	if node is CollisionShape3D or node is StaticBody3D:
+	if node is CollisionShape3D or node is StaticBody3D or node is RigidBody3D or node is AnimatableBody3D:
 		result.append(node)
 		return
 	for child in node.get_children():
@@ -6843,13 +7111,25 @@ func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 		node.force_update_transform()
 
 func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, scale_value: Vector3) -> void:
+	print("[SNAP] path=", path, " ground_y=", ground_y, " scale=", scale_value, " node_pos=", node.global_position)
+	var _snap_dbg := FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE) if path.contains("scrap_barricade") else null
+	if _snap_dbg:
+		_snap_dbg.seek_end()
+		_snap_dbg.store_line("[SNAP] path=" + path + " ground_y=" + str(ground_y) + " scale=" + str(scale_value) + " node_pos=" + str(node.global_position))
 	if _snap_offset_cache.has(path):
 		var unit_offset: float = float(_snap_offset_cache[path])
 		node.position.y += ground_y - unit_offset * scale_value.y
+		print("[SNAP] cached unit_offset=", unit_offset, " new_pos_y=", node.position.y)
+		if _snap_dbg:
+			_snap_dbg.store_line("[SNAP] cached unit_offset=" + str(unit_offset) + " new_pos_y=" + str(node.position.y))
+			_snap_dbg.close()
 		return
 	node.force_update_transform()
 	var meshes := []
 	_collect_mesh_instances(node, meshes)
+	print("[SNAP] mesh_count=", meshes.size())
+	if _snap_dbg:
+		_snap_dbg.store_line("[SNAP] mesh_count=" + str(meshes.size()))
 	var min_local_y := 1000000.0
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
@@ -6860,16 +7140,37 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 		var world_aabb: AABB = mesh_instance.global_transform * local_aabb
 		var local_bottom := world_aabb.position.y - node.global_position.y
 		min_local_y = min(min_local_y, local_bottom)
+	print("[SNAP] min_local_y=", min_local_y)
+	if _snap_dbg:
+		_snap_dbg.store_line("[SNAP] min_local_y=" + str(min_local_y))
 	if min_local_y < 999999.0:
 		var unit_offset := min_local_y / scale_value.y
 		_snap_offset_cache[path] = unit_offset
 		node.position.y += ground_y - min_local_y
+		print("[SNAP] adjusted pos_y=", node.position.y, " unit_offset=", unit_offset)
+		if _snap_dbg:
+			_snap_dbg.store_line("[SNAP] adjusted pos_y=" + str(node.position.y) + " unit_offset=" + str(unit_offset))
+			_snap_dbg.close()
+	else:
+		print("[SNAP] WARNING: no valid meshes found for ", path)
+		if _snap_dbg:
+			_snap_dbg.store_line("[SNAP] WARNING: no valid meshes found for " + path)
+			_snap_dbg.close()
 
 func _collect_mesh_instances(root: Node, result: Array) -> void:
 	if root is MeshInstance3D:
 		result.append(root)
 	for child in root.get_children():
 		_collect_mesh_instances(child, result)
+
+func _raycast_ground_y(space_state: PhysicsDirectSpaceState3D, pos: Vector3) -> float:
+	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, 100.0, pos.z), Vector3(pos.x, -200.0, pos.z))
+	query.collide_with_bodies = true
+	query.collide_with_areas = false
+	var hit := space_state.intersect_ray(query)
+	if not hit.is_empty():
+		return float(hit["position"].y)
+	return 0.0
 
 func _get_node_world_aabb_height(node: Node3D) -> float:
 	node.force_update_transform()
@@ -6887,6 +7188,22 @@ func _get_node_world_aabb_height(node: Node3D) -> float:
 		max_y = max(max_y, world_aabb.position.y + world_aabb.size.y)
 	if max_y > min_y:
 		return max_y - min_y
+	return 0.0
+
+func _get_node_world_aabb_min_y(node: Node3D) -> float:
+	node.force_update_transform()
+	var meshes := []
+	_collect_mesh_instances(node, meshes)
+	var min_y := 1000000.0
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
+		min_y = min(min_y, world_aabb.position.y)
+	if min_y < 1000000.0:
+		return min_y
 	return 0.0
 
 func _shuffled_paths(paths: Array) -> Array:

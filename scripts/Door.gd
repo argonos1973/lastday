@@ -12,13 +12,13 @@ var _collision: CollisionShape3D
 func setup(label: String, size: Vector3, color: Color, open_angle: float, model_path: String = "") -> void:
 	display_name = label
 	open_yaw = open_angle
+	add_to_group("doors")
+	add_to_group("interactable")
 	var disk_path := ProjectSettings.globalize_path(model_path) if model_path.begins_with("res://") else model_path
 	if model_path != "" and FileAccess.file_exists(disk_path):
 		await _make_door_from_glb(size, model_path)
 	else:
 		_make_door(size, color)
-	add_to_group("doors")
-	add_to_group("interactable")
 
 func interact(player) -> void:
 	is_open = not is_open
