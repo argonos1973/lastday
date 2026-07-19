@@ -378,7 +378,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
-			speed = move_speed * 4.0
+			if dist_to_player < 5.0:
+				speed = move_speed * 1.5
+			else:
+				speed = move_speed * 4.0
 			if height_diff >= 2.0 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 2.0:
@@ -395,11 +398,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist < 2.0 and height_diff < 2.0:
+			elif flat_dist < 3.5 and height_diff < 2.0:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
-					print("[WOLF] %s attacking player at dist=%s wolf_pos=%s player_pos=%s is_dead=%s" % [name, flat_dist, global_position, _player.global_position, _is_dead])
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
 						var is_disconnected: bool = _player.get_meta("disconnected", false)
