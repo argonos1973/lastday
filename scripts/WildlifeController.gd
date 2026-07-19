@@ -1136,7 +1136,8 @@ func _update_animation_speed(speed: float) -> void:
 func _update_wolf_sounds(delta: float) -> void:
 	_howl_timer -= delta
 	_growl_timer -= delta
-	if _howl_timer <= 0.0:
+	var is_hungry := _wolf_hunger < _wolf_hunger_threshold
+	if is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(20.0, 45.0)
 	if _growl_timer <= 0.0:

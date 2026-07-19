@@ -1108,7 +1108,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.set_meta("client_id", cid)
 			existing.set_meta("disconnected", false)
 			existing.set_meta("reconnecting", true)
-			existing.set_meta("protection_timer", 20.0)
+			existing.set_meta("protection_timer", 10.0)
 			existing.add_to_group("net_player_proxy")
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
@@ -1145,7 +1145,7 @@ func _spawn_server_proxy(id: int) -> void:
 	# Store peer_id as metadata
 	proxy.set_meta("peer_id", id)
 	# Spawn protection: wolves won't target this proxy for 20 seconds
-	proxy.set_meta("protection_timer", 60.0)
+	proxy.set_meta("protection_timer", 10.0)
 	proxy.set_meta("has_real_pos", false)
 	proxy.set_meta("disconnected", false)
 	proxy.set_meta("reconnecting", true)
@@ -1920,6 +1920,8 @@ func _broadcast_animals() -> void:
 		var animal := node as Node3D
 		var aid := str(animal.name)
 		var pos := animal.global_position
+		var hunger_val = animal.get("_wolf_hunger")
+		var threshold_val = animal.get("_wolf_hunger_threshold")
 		data[aid] = {
 			"t": str(animal.get("animal_type")),
 			"x": round(pos.x * 100.0) / 100.0,
@@ -1928,7 +1930,9 @@ func _broadcast_animals() -> void:
 			"r": round(animal.rotation.y * 100.0) / 100.0,
 			"a": str(animal.get("current_anim_keyword")),
 			"d": bool(animal.get("_is_dead")),
-			"g": bool(animal.get("_gutted"))
+			"g": bool(animal.get("_gutted")),
+			"h": round(float(hunger_val) * 10.0) / 10.0 if hunger_val != null else 0.0,
+			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0
 		}
 	net.animals = data
 	_animal_debug_timer += 1
@@ -1967,6 +1971,9 @@ func _update_puppet_animals() -> void:
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
 			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
+			if p.animal_type == "wolf":
+				p._wolf_hunger = float(d.get("h", p._wolf_hunger))
+				p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
 	# Remove puppets that no longer exist on the server (unless dead/gutted - those are removed by _net_animal_gutted after animation)
 	var stale := []
 	for aid in puppet_animals.keys():
