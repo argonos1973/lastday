@@ -191,6 +191,11 @@ func _escape_if_trapped(delta: float) -> bool:
 	_animate_legs(delta)
 	return true
 
+func _exit_tree() -> void:
+	_scene_cache.clear()
+	_shared_sphere = null
+	_shared_cylinder = null
+
 func _process(delta: float) -> void:
 	if is_puppet:
 		if animal_type == "wolf" and not _is_dead:
@@ -309,20 +314,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 	if is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
-	# Flee from player when not hungry (wolves that have eaten avoid the player)
-	if not is_hungry and _player != null and is_instance_valid(_player):
-		var flee_dist := global_position.distance_to(_player.global_position)
-		if flee_dist < 30.0:
-			var away := global_position - _player.global_position
-			away.y = 0.0
-			if away.length() < 0.01:
-				away = Vector3.RIGHT
-			target = global_position + away.normalized() * 30.0
-			speed = move_speed * 2.5
-			_state = "patrol"
-			_chase_target = null
-			_play_animation_by_name("run")
-			return {"target": target, "speed": speed}
+	# (Removed: non-hungry wolves flee — now they always attack if player is close)
 	# Flee from player when attacked
 	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
 		var flee_dist := global_position.distance_to(_player.global_position)
@@ -343,7 +335,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_wait_near_timer -= delta
 		if _player != null and is_instance_valid(_player):
 			var dist_to_player := global_position.distance_to(_player.global_position)
-			if dist_to_player < 20.0 and _can_reach_player() and is_hungry:
+			if dist_to_player < 20.0 and _can_reach_player():
 				_chase_stuck_time = 0.0
 				_state = "chase_player"
 				_chase_target = _player
@@ -378,7 +370,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_chase_stuck_time = 0.0
 		_chase_cooldown = 5.0
 	# Priority 0: chase player (highest priority)
-	if is_hungry and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
+	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()

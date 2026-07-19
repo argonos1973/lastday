@@ -2852,7 +2852,6 @@ func _create_radio_point(origin: Vector3) -> void:
 	_create_static_box("RadioMast", origin + Vector3(3.6, 0, -1.5), Vector3(0.35, 8, 0.35), Color(0.12, 0.12, 0.12))
 
 func _create_new_world_props() -> void:
-	print("[WORLD_PROPS] _create_new_world_props START")
 	var _dbg_file := FileAccess.open("user://scrap_car_debug.txt", FileAccess.WRITE)
 	if _dbg_file:
 		_dbg_file.store_line("=== _create_new_world_props START ===")
@@ -2870,19 +2869,16 @@ func _create_new_world_props() -> void:
 			var jn := junk_node as Node3D
 			jn.force_update_transform()
 			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
-			print("[JUNK_CAR] pos=", jn.global_position, " height=", junk_height)
 		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(2.0, junk_height, 4.0), float(car_rot.y))
 	# Scrap barricade car abandoned on the road (different angle)
 	var scrap_s := Vector3.ONE * 0.5
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
 	var scrap_rot := Vector3(0, -40, 0)
 	var scrap_ground_y := _raycast_ground_y(space_state, scrap_pos)
-	print("[WORLD_PROPS] scrap_ground_y=", scrap_ground_y, " pos=", scrap_pos)
 	if _dbg_file:
 		_dbg_file.store_line("scrap_ground_y=" + str(scrap_ground_y) + " pos=" + str(scrap_pos) + " scale=" + str(scrap_s))
 		_dbg_file.close()
 	var scrap_ok := _try_instance_external_scene([SCRAP_BARRICADE_CAR_MODEL], "ScrapBarricadeCar", scrap_pos, scrap_s, scrap_rot, true, scrap_ground_y)
-	print("[WORLD_PROPS] scrap_ok=", scrap_ok)
 	_dbg_file = FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE)
 	if _dbg_file:
 		_dbg_file.seek_end()
@@ -2894,11 +2890,9 @@ func _create_new_world_props() -> void:
 			var sn := scrap_node as Node3D
 			sn.force_update_transform()
 			sn.position.y += SCRAP_CAR_Y_CORRECTION
-			print("[SCRAP_CAR] final pos=", sn.global_position, " ground_y=", scrap_ground_y)
 			if _dbg_file:
 				_dbg_file.store_line("final_pos=" + str(sn.global_position) + " ground_y=" + str(scrap_ground_y))
 			scrap_height = 1.0
-			print("[SCRAP_CAR] height=", scrap_height)
 			if _dbg_file:
 				_dbg_file.store_line("height=" + str(scrap_height))
 		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(2.0, scrap_height, 4.0), float(scrap_rot.y))
@@ -5196,20 +5190,10 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 				# Verify final placement
 				var final_fridge_aabb := _compute_node_world_aabb(fridge_ref)
 				var final_cabinet_aabb := _compute_node_world_aabb(cabinet_node)
-				print("[SINK_CABINET] %s Fridge AABB: pos=%s size=%s" % [label, final_fridge_aabb.position, final_fridge_aabb.size])
-				print("[SINK_CABINET] %s Cabinet AABB: pos=%s size=%s" % [label, final_cabinet_aabb.position, final_cabinet_aabb.size])
-				print("[SINK_CABINET] %s Cabinet transform: pos=%s rot=%s scale=%s" % [label, cabinet_node.position, cabinet_node.rotation_degrees, cabinet_node.scale])
-				print("[SINK_CABINET] %s Fridge transform: pos=%s rot=%s scale=%s" % [label, fridge_ref.position, fridge_ref.rotation_degrees, fridge_ref.scale])
 				# Log each mesh child to find origin offsets
 				var cabinet_meshes := []
 				_collect_mesh_instances(cabinet_node, cabinet_meshes)
-				for i in range(cabinet_meshes.size()):
-					var mi := cabinet_meshes[i] as MeshInstance3D
-					if mi.mesh != null:
-						var local_aabb := mi.get_aabb()
-						print("[SINK_CABINET] %s Mesh[%d] local_pos=%s local_aabb=%s" % [label, i, mi.position, local_aabb])
 				var actual_gap := final_fridge_aabb.position.z - (final_cabinet_aabb.position.z + final_cabinet_aabb.size.z)
-				print("[SINK_CABINET] %s Gap between cabinet and fridge: %.4f m" % [label, actual_gap])
 				if actual_gap < -0.001:
 					push_warning("[SINK_CABINET] %s OVERLAP detected! Gap=%.4f" % [label, actual_gap])
 				elif actual_gap > 0.06:
@@ -5233,8 +5217,8 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 					var final_stove_aabb := _compute_node_world_aabb(stove_ref)
 					var final_cab_aabb := _compute_node_world_aabb(cabinet_node)
 					var stove_actual_gap := final_cab_aabb.position.z - (final_stove_aabb.position.z + final_stove_aabb.size.z)
-					print("[STOVE] %s Stove AABB: pos=%s size=%s" % [label, final_stove_aabb.position, final_stove_aabb.size])
-					print("[STOVE] %s Gap between stove and cabinet: %.4f m" % [label, stove_actual_gap])
+					if stove_actual_gap < -0.001:
+						push_warning("[STOVE] %s OVERLAP with cabinet! Gap=%.4f" % [label, stove_actual_gap])
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
