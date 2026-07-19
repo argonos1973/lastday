@@ -32,7 +32,8 @@ var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
 var _wolf_pain_player: AudioStreamPlayer3D = null
 var _wolf_howl_2d_player: AudioStreamPlayer = null
-var _wolf_hunger := 100.0
+var _wolf_hunger := 40.0
+var _wolf_hunger_threshold := 70.0
 var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
@@ -91,7 +92,7 @@ func take_damage(amount: float, from_knife: bool) -> void:
 			return
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
-		_prey_flee_timer = 8.0
+		_prey_flee_timer = 3.0
 		_spawn_blood_splatter()
 		_play_wolf_pain_sound()
 		if health <= 0.0:
@@ -112,6 +113,8 @@ func setup(kind: String, points: Array) -> void:
 	add_to_group("wildlife")
 	if animal_type == "wolf":
 		add_to_group("wildlife_wolf")
+		_wolf_hunger = randf_range(40.0, 80.0)
+		_wolf_hunger_threshold = randf_range(50.0, 80.0)
 	# Set health based on animal type
 	match animal_type:
 		"wolf":
@@ -134,7 +137,7 @@ func setup(kind: String, points: Array) -> void:
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
 	if animal_type == "wolf":
-		_chase_cooldown = 5.0
+		_chase_cooldown = 2.0
 	_build_animal()
 	call_deferred("_sanitize_patrol_points")
 
@@ -214,7 +217,7 @@ func _process(delta: float) -> void:
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
-		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.08)
+		_wolf_hunger = max(0.0, _wolf_hunger - delta * 0.15)
 		if _wolf_hunger <= 0.0:
 			health = max(0.0, health - delta * 5.0)
 			if health <= 0.0 and not _is_dead:
@@ -225,8 +228,8 @@ func _process(delta: float) -> void:
 				_lie_corpse_flat()
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
-			_wolf_hunger = min(100.0, _wolf_hunger + delta * 12.5)
-			if _wolf_hunger >= 100.0 or _wolf_eating_timer <= 0.0:
+			_wolf_hunger = min(60.0, _wolf_hunger + delta * 5.0)
+			if _wolf_hunger >= 60.0 or _wolf_eating_timer <= 0.0:
 				_wolf_eating_timer = 0.0
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
 					if _wolf_eating_target is WildlifeController:
@@ -302,12 +305,12 @@ func _wolf_ai(delta: float) -> Dictionary:
 	_attack_timer -= delta
 	if _noise_attract_timer > 0.0:
 		_noise_attract_timer -= delta
-	var is_hungry := _wolf_hunger < 30.0
+	var is_hungry := _wolf_hunger < _wolf_hunger_threshold
 	if is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
-	# Flee from player when attacked
-	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
+	# Flee from player when not hungry (wolves that have eaten avoid the player)
+	if not is_hungry and _player != null and is_instance_valid(_player):
 		var flee_dist := global_position.distance_to(_player.global_position)
 		if flee_dist < 30.0:
 			var away := global_position - _player.global_position
@@ -315,10 +318,24 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
 			target = global_position + away.normalized() * 30.0
-			speed = move_speed * 3.0
+			speed = move_speed * 2.5
 			_state = "patrol"
 			_chase_target = null
-			_chase_cooldown = _prey_flee_timer
+			_play_animation_by_name("run")
+			return {"target": target, "speed": speed}
+	# Flee from player when attacked
+	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
+		var flee_dist := global_position.distance_to(_player.global_position)
+		if flee_dist < 15.0:
+			var away := global_position - _player.global_position
+			away.y = 0.0
+			if away.length() < 0.01:
+				away = Vector3.RIGHT
+			target = global_position + away.normalized() * 15.0
+			speed = move_speed * 2.5
+			_state = "patrol"
+			_chase_target = null
+			_chase_cooldown = 2.0
 			_play_animation_by_name("run")
 			return {"target": target, "speed": speed}
 	# State: wait_near
@@ -360,56 +377,16 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_state = "patrol"
 		_chase_stuck_time = 0.0
 		_chase_cooldown = 5.0
-	# Priority 0: eat nearby corpse when hungry
-	if is_hungry:
-		var corpse := _find_nearest_corpse()
-		if corpse != null:
-			var dist_to_corpse := global_position.distance_to(corpse.global_position)
-			if dist_to_corpse < 2.0:
-				_wolf_eating_timer = 8.0
-				_wolf_eating_target = corpse
-				_state = "eating"
-				target = global_position
-				speed = 0.0
-				_play_animation_by_name("idle")
-				return {"target": target, "speed": speed}
-			elif dist_to_corpse < 30.0:
-				_state = "seek_corpse"
-				_seek_corpse_timer = 15.0
-				target = corpse.global_position
-				speed = move_speed * 2.0
-				_play_animation_by_name("trot")
-				return {"target": target, "speed": speed}
-	# Priority 0.5: detect gutted meat pickups from far away (60m)
-	if is_hungry:
-		var meat := _find_nearest_meat_pickup()
-		if meat != null:
-			var dist_to_meat := global_position.distance_to(meat.global_position)
-			if dist_to_meat < 2.0:
-				_wolf_eating_timer = 8.0
-				_wolf_eating_target = meat
-				_state = "eating"
-				target = global_position
-				speed = 0.0
-				_play_animation_by_name("idle")
-				return {"target": target, "speed": speed}
-			elif dist_to_meat < 60.0:
-				_state = "seek_corpse"
-				_seek_corpse_timer = 15.0
-				target = meat.global_position
-				speed = move_speed * 2.5
-				_play_animation_by_name("trot")
-				return {"target": target, "speed": speed}
-	# Priority 1: chase player (only when hungry)
+	# Priority 0: chase player (highest priority)
 	if is_hungry and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		if dist_to_player < 30.0:
+		if dist_to_player < 45.0:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
-			speed = move_speed * 3.5
+			speed = move_speed * 4.0
 			if height_diff >= 2.0 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 2.0:
@@ -428,8 +405,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_play_animation_by_name("run")
 			elif flat_dist < 2.0 and height_diff < 2.0:
 				if _attack_cooldown <= 0.0:
-					_attack_cooldown = 5.0
-					_attack_timer = randf_range(8.0, 15.0)
+					_attack_cooldown = 2.5
+					_attack_timer = randf_range(5.0, 10.0)
 					print("[WOLF] %s attacking player at dist=%s wolf_pos=%s player_pos=%s is_dead=%s" % [name, flat_dist, global_position, _player.global_position, _is_dead])
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
@@ -439,7 +416,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 							pass
 						elif is_disconnected and peer_id != 0:
 							var hp: float = _player.get_meta("proxy_health", 100.0)
-							hp = max(0.0, hp - 15.0)
+							hp = max(0.0, hp - 25.0)
 							_player.set_meta("proxy_health", hp)
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
@@ -452,9 +429,9 @@ func _wolf_ai(delta: float) -> Dictionary:
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null:
-								net_node.apply_damage_to_client.rpc_id(peer_id, 15.0)
+								net_node.apply_damage_to_client.rpc_id(peer_id, 25.0)
 							var hp: float = _player.get_meta("proxy_health", 100.0)
-							hp = max(0.0, hp - 15.0)
+							hp = max(0.0, hp - 25.0)
 							_player.set_meta("proxy_health", hp)
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
@@ -465,7 +442,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
 									scene_node._broadcast_player_death(peer_id, _player)
 					elif _player.has_method("apply_damage"):
-						_player.apply_damage(15.0)
+						_player.apply_damage(25.0)
 					_play_wolf_sound("attack")
 				_play_animation_by_name("run")
 				var away_dir := (global_position - _player.global_position).normalized()
@@ -488,11 +465,11 @@ func _wolf_ai(delta: float) -> Dictionary:
 						_chase_stuck_time += delta
 					else:
 						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
-				if _chase_stuck_time > 5.0:
+				if _chase_stuck_time > 8.0:
 					_state = "patrol"
 					_chase_stuck_time = 0.0
 					_chase_target = null
-					_chase_cooldown = 5.0
+					_chase_cooldown = 2.0
 					_play_wolf_sound("growl")
 					var farthest_patrol: Vector3 = patrol_points[0]
 					var farthest_dist := 0.0
@@ -508,6 +485,46 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if sep.length() > 0.01:
 				target += sep
 			return {"target": target, "speed": speed}
+	# Priority 1: eat nearby corpse when hungry (lower priority than chasing player)
+	if is_hungry:
+		var corpse := _find_nearest_corpse()
+		if corpse != null:
+			var dist_to_corpse := global_position.distance_to(corpse.global_position)
+			if dist_to_corpse < 2.0:
+				_wolf_eating_timer = 8.0
+				_wolf_eating_target = corpse
+				_state = "eating"
+				target = global_position
+				speed = 0.0
+				_play_animation_by_name("idle")
+				return {"target": target, "speed": speed}
+			elif dist_to_corpse < 30.0:
+				_state = "seek_corpse"
+				_seek_corpse_timer = 15.0
+				target = corpse.global_position
+				speed = move_speed * 2.0
+				_play_animation_by_name("trot")
+				return {"target": target, "speed": speed}
+	# Priority 1.5: detect gutted meat pickups from far away (60m)
+	if is_hungry:
+		var meat := _find_nearest_meat_pickup()
+		if meat != null:
+			var dist_to_meat := global_position.distance_to(meat.global_position)
+			if dist_to_meat < 2.0:
+				_wolf_eating_timer = 8.0
+				_wolf_eating_target = meat
+				_state = "eating"
+				target = global_position
+				speed = 0.0
+				_play_animation_by_name("idle")
+				return {"target": target, "speed": speed}
+			elif dist_to_meat < 60.0:
+				_state = "seek_corpse"
+				_seek_corpse_timer = 15.0
+				target = meat.global_position
+				speed = move_speed * 2.5
+				_play_animation_by_name("trot")
+				return {"target": target, "speed": speed}
 	# Priority 2: investigate noise (only when hungry)
 	if is_hungry and _noise_attract_timer > 0.0:
 		_state = "investigate"

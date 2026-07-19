@@ -26,7 +26,7 @@ func setup(id: String, type: String, label: String, size: Vector3, color: Color,
 	add_to_group("interactable")
 
 func disable_collision() -> void:
-	if action_type == "fell_bush":
+	if action_type == "fell_bush" or action_type == "fell_tree":
 		collision_layer = 0
 		collision_mask = 0
 		if _collision != null:

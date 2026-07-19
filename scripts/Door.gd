@@ -1,6 +1,8 @@
 extends StaticBody3D
 class_name Door
 
+const TEX_WOOD_FLOOR_DIFF := "res://assets/external/textures/wood_floor_deck/wood_floor_deck_diff_4k.jpg"
+
 @export var display_name := "Puerta"
 @export var is_open := false
 @export var closed_yaw := 0.0
@@ -44,10 +46,7 @@ func _make_door(size: Vector3, color: Color) -> void:
 	box.size = size
 	mesh_instance.mesh = box
 	mesh_instance.position = Vector3(size.x * 0.5, size.y * 0.5, 0.0)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.96
-	mesh_instance.material_override = material
+	mesh_instance.material_override = _make_wood_floor_material()
 	add_child(mesh_instance)
 
 	var collision := CollisionShape3D.new()
@@ -135,6 +134,43 @@ func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 	collision.position = Vector3(size.x * 0.5, size.y * 0.5, 0.0)
 	add_child(collision)
 	_collision = collision
+	# Apply wood floor texture to all door meshes
+	var wood_mat := _make_wood_floor_material()
+	_apply_material_to_meshes(model, wood_mat)
+	# Add door handle
+	_add_door_handle(size)
+
+func _make_wood_floor_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.78, 0.70, 0.58)
+	mat.roughness = 0.9
+	mat.uv1_scale = Vector3(4.0, 3.3, 1.0)
+	var disk_path := ProjectSettings.globalize_path(TEX_WOOD_FLOOR_DIFF)
+	if FileAccess.file_exists(disk_path):
+		var image := Image.load_from_file(disk_path)
+		if image != null and not image.is_empty():
+			image.generate_mipmaps()
+			mat.albedo_texture = ImageTexture.create_from_image(image)
+	return mat
+
+func _apply_material_to_meshes(node: Node, mat: Material) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_override = mat
+	for c in node.get_children():
+		_apply_material_to_meshes(c, mat)
+
+func _add_door_handle(size: Vector3) -> void:
+	var handle := MeshInstance3D.new()
+	handle.name = "Handle"
+	var handle_mesh := BoxMesh.new()
+	handle_mesh.size = Vector3(0.08, 0.10, 0.08)
+	handle.mesh = handle_mesh
+	handle.position = Vector3(size.x * 0.84, size.y * 0.52, -size.z * 0.58)
+	var handle_material := StandardMaterial3D.new()
+	handle_material.albedo_color = Color(0.42, 0.31, 0.16)
+	handle_material.roughness = 0.75
+	handle.material_override = handle_material
+	add_child(handle)
 
 func _strip_non_door_panels(root: Node) -> void:
 	var door_node: Node = _find_first_door_node(root)

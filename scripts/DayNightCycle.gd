@@ -67,6 +67,10 @@ func _update_lighting() -> void:
 			sky_material.sky_horizon_color = Color(0.055, 0.06, 0.08).lerp(Color(0.62, 0.78, 0.94), day_amount)
 			sky_material.ground_bottom_color = Color(0.025, 0.025, 0.025).lerp(Color(0.17, 0.19, 0.14), day_amount)
 			sky_material.ground_horizon_color = Color(0.055, 0.055, 0.06).lerp(Color(0.30, 0.36, 0.30), day_amount)
+		elif sky != null and sky.sky_material is ShaderMaterial:
+			# +Z of the sun node points toward the sun (light travels along -Z).
+			var sun_dir := sun.global_transform.basis.z.normalized()
+			(sky.sky_material as ShaderMaterial).set_shader_parameter("sun_direction", sun_dir)
 
 func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}

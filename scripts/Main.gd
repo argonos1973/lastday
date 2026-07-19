@@ -183,11 +183,17 @@ const ROOT_VEST_MODEL := ROOT_GLB_DIR + "vest_armor_holster_lowpoly_gameready_pa
 const ROOT_BARRIER_MODEL := ROOT_GLB_DIR + "concrete_road_barrier.glb"
 const ROOT_BENCH_MODEL := ROOT_GLB_DIR + "city_bench.glb"
 const ROOT_JUNK_MODEL := ROOT_GLB_DIR + "junk_props.glb"
-const ABANDONED_JUNK_CAR_MODEL := "res://abandoned_junk_car.glb"
-const SCRAP_BARRICADE_CAR_MODEL := "res://scrap_barricade_car_free_raw_scan.glb"
+const ABANDONED_JUNK_CAR_MODEL := ROOT_GLB_DIR + "abandoned_junk_car.glb"
+const SCRAP_BARRICADE_CAR_MODEL := ROOT_GLB_DIR + "scrap_barricade_car_free_raw_scan.glb"
 const SCRAP_CAR_Y_CORRECTION := -0.6
 const ROOT_CONTAINER_MODEL := ROOT_GLB_DIR + "shipping_container_anos.glb"
 const ROOT_FURNITURE_MODEL := ROOT_GLB_DIR + "tinylivingpack.glb"
+const POST_APO_FURNITURE_MODEL := "res://assets/models/props/post_apocalyptic_furniture.glb"
+const POST_APO_FRIDGE_MODEL := "res://assets/models/props/post_apocalyptic_fridge.glb"
+const TOILET_MODEL := "res://assets/models/props/souce_toilet_dirty_2.glb"
+const BATHROOM_SINK_MODEL := "res://assets/models/props/source_bathroom_sink.glb"
+const KITCHEN_STOVE_MODEL := "res://assets/models/props/old_rusty_kitchen_stove__dirty_damaged.glb"
+const SINK_CABINET_MODEL := "res://assets/models/props/clogged_old_sink_cabinet.glb"
 const ROOT_AXE_CS2_MODEL := ROOT_GLB_DIR + "tool__axe_weapon_model_cs2.glb"
 const ROOT_SOFA_MODEL := ROOT_GLB_DIR + "trashy_backyard_sofa.glb"
 const ROOT_FRIDGE_MODEL := ROOT_GLB_DIR + "old_rusty_fridge.glb"
@@ -501,7 +507,7 @@ func _process(delta: float) -> void:
 		_tick_campfire_fires()
 		# Respawn wildlife periodically
 		_wildlife_respawn_timer += delta
-		if _wildlife_respawn_timer >= 120.0:
+		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
 		return
@@ -515,6 +521,17 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	_process_pending_puppets()
+	# Keep the star/moon dome centered on the player and refresh the real
+	# star positions periodically so the sky slowly rotates like the real one.
+	if day_cycle != null and player != null:
+		if day_cycle.star_field != null:
+			day_cycle.star_field.global_position = player.global_position
+		if day_cycle.moon_field != null:
+			day_cycle.moon_field.global_position = player.global_position
+	_star_update_accum += delta
+	if _star_update_accum >= 2.0:
+		_star_update_accum = 0.0
+		_update_real_star_positions()
 	var near_built_shelter := _is_near_built_shelter(player.global_position)
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5 or near_built_shelter
 	var in_house := _is_player_in_house(player.global_position)
@@ -658,10 +675,6 @@ func _update_water_night_amount() -> void:
 	for node in get_tree().get_nodes_in_group("river_water"):
 		if node is RiverWater and node.has_method("set_night_amount"):
 			node.set_night_amount(night_amount)
-	if day_cycle.star_field != null:
-		day_cycle.star_field.visible = night_amount > 0.38
-	if day_cycle.moon_field != null:
-		day_cycle.moon_field.visible = night_amount > 0.34
 
 func save_current_game() -> void:
 	pass
@@ -704,14 +717,23 @@ func _create_environment() -> void:
 	sky_material.sun_angle_max = 4.0
 	sky_material.sun_curve = 0.12
 	var sky := Sky.new()
-	var hdri_sky_material = _make_hdri_sky_material()
-	if hdri_sky_material != null:
-		sky.sky_material = hdri_sky_material
+	var shader_sky_material := _make_shader_sky_material()
+	if shader_sky_material != null:
+		sky.sky_material = shader_sky_material
+		# Clouds animate and the sun moves, so refresh reflections gradually.
+		sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
+		sky.radiance_size = Sky.RADIANCE_SIZE_128
 	else:
-		sky.sky_material = sky_material
+		var hdri_sky_material = _make_hdri_sky_material()
+		if hdri_sky_material != null:
+			sky.sky_material = hdri_sky_material
+		else:
+			sky.sky_material = sky_material
 	environment.sky = sky
 	environment.background_mode = Environment.BG_SKY
 	environment.background_color = Color(0.56, 0.76, 0.96)
+	# Ambient is driven explicitly by DayNightCycle for a stable day/night feel.
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.86, 0.90, 0.92)
 	environment.ambient_light_energy = 0.95
 	environment.fog_enabled = true
@@ -751,40 +773,127 @@ func _create_day_night() -> void:
 			hud.show_notice("La radio crepita: \"%s\"" % message)
 	)
 
+# Observer location: Barcelona (used to compute the real visible night sky).
+const BCN_LAT_DEG := 41.3874
+const BCN_LON_DEG := 2.1686
+const STAR_DOME_RADIUS := 380.0
+
+# Real bright-star catalogue: [right ascension (hours), declination (deg), apparent magnitude].
+# J2000 positions of the naked-eye stars that form the recognisable constellations.
+const BRIGHT_STAR_CATALOG := [
+	[6.7525, -16.7161, -1.46], [14.2610, 19.1825, -0.05], [18.6156, 38.7837, 0.03],
+	[5.2782, 45.9980, 0.08], [5.2423, -8.2016, 0.13], [7.6550, 5.2250, 0.34],
+	[5.9195, 7.4071, 0.42], [19.8464, 8.8683, 0.77], [4.5987, 16.5093, 0.85],
+	[13.4199, -11.1613, 1.04], [16.4901, -26.4320, 1.09], [7.7553, 28.0262, 1.14],
+	[22.9608, -29.6222, 1.16], [20.6905, 45.2803, 1.25], [10.1395, 11.9672, 1.35],
+	[6.9770, -28.9721, 1.50], [7.5766, 31.8883, 1.58], [5.4188, 6.3497, 1.64],
+	[5.4382, 28.6076, 1.65], [5.6036, -1.2019, 1.69], [5.6793, -1.9426, 1.74],
+	[12.9005, 55.9598, 1.76], [11.0621, 61.7510, 1.79], [3.4054, 49.8612, 1.79],
+	[7.1399, -26.3932, 1.83], [18.4029, -34.3846, 1.85], [13.7923, 49.3133, 1.85],
+	[5.9924, 44.9474, 1.90], [6.6285, 16.3993, 1.93], [2.5303, 89.2641, 1.98],
+	[6.3783, -17.9559, 1.98], [9.4597, -8.6586, 1.98], [2.1195, 23.4624, 2.00],
+	[0.7265, -17.9866, 2.04], [18.9211, -26.2967, 2.05], [0.1398, 29.0904, 2.06],
+	[1.1622, 35.6206, 2.05], [5.7959, -9.6696, 2.06], [14.8451, 74.1555, 2.08],
+	[17.5822, 12.5600, 2.08], [3.1361, 40.9556, 2.09], [2.0650, 42.3297, 2.10],
+	[11.8177, 14.5720, 2.11], [5.5334, -0.2991, 2.23], [15.5781, 26.7147, 2.22],
+	[13.3987, 54.9254, 2.23], [20.3705, 40.2567, 2.23], [0.6751, 56.5373, 2.24],
+	[17.9434, 51.4889, 2.24], [0.1529, 59.1498, 2.28], [11.0307, 56.3824, 2.37],
+	[14.7498, 27.0742, 2.35], [21.7364, 9.8750, 2.39], [11.8972, 53.6948, 2.44],
+	[23.0629, 28.0828, 2.44], [21.3097, 62.5856, 2.45], [23.0793, 15.2053, 2.49],
+	[0.9451, 60.7167, 2.47], [3.0380, 4.0897, 2.53], [1.4304, 60.2353, 2.68],
+	[12.2570, 57.0326, 3.31], [1.9066, 63.6701, 3.35], [15.3455, 71.8340, 3.05],
+	[3.7914, 24.1051, 2.87], [5.6274, 21.1425, 2.97], [19.5121, 27.9597, 3.05],
+	[19.7495, 45.1308, 2.87], [20.7702, 33.9703, 2.46], [19.7710, 10.6133, 2.72],
+	[17.2442, 14.3903, 3.37], [17.1729, -15.7249, 2.43], [16.0056, -22.6217, 2.29],
+	[1.9107, 20.8080, 2.64], [14.0731, 64.3758, 3.65], [13.4204, 54.9880, 3.99],
+	[10.3328, 19.8415, 2.08], [11.2351, 20.5237, 2.56], [0.2206, 15.1836, 2.83],
+	[18.8347, 33.3627, 3.52], [18.9824, 32.6896, 3.24], [19.9219, 6.4066, 3.71],
+	[17.5601, -37.1038, 1.62], [7.4014, -29.3032, 2.45], [7.4527, 8.2893, 2.89],
+	[15.0323, 40.3906, 3.49], [9.7141, -1.1426, 3.11], [10.8227, 41.4995, 3.45],
+	[4.9484, 33.1661, 3.17], [3.4131, 24.3671, 3.42], [4.4767, 15.6276, 3.53],
+]
+
+var _real_star_nodes: Array = []
+var _real_star_radec: Array = []
+var _star_update_accum := 0.0
+
+func _julian_date_now() -> float:
+	return Time.get_unix_time_from_system() / 86400.0 + 2440587.5
+
+func _local_sidereal_deg() -> float:
+	var d := _julian_date_now() - 2451545.0
+	var gmst := 280.46061837 + 360.98564736629 * d
+	return fposmod(gmst + BCN_LON_DEG, 360.0)
+
+# Converts equatorial (RA/Dec in radians) to a world-space direction on the sky
+# dome for the given local sidereal time and latitude. World axes: +X east,
+# +Y up (zenith), -Z north. The returned vector's Y is the sine of altitude,
+# so Y > 0 means the star is above the horizon.
+func _radec_to_world_dir(ra_rad: float, dec_rad: float, lst_rad: float, lat_rad: float) -> Vector3:
+	var ha := lst_rad - ra_rad
+	var sin_alt: float = clamp(sin(dec_rad) * sin(lat_rad) + cos(dec_rad) * cos(lat_rad) * cos(ha), -1.0, 1.0)
+	var alt := asin(sin_alt)
+	var cos_alt := cos(alt)
+	var az := 0.0
+	if cos_alt > 0.0001:
+		var sin_az := -cos(dec_rad) * sin(ha) / cos_alt
+		var cos_az := (sin(dec_rad) - sin_alt * sin(lat_rad)) / (cos_alt * cos(lat_rad))
+		az = atan2(sin_az, cos_az)
+	return Vector3(cos_alt * sin(az), sin_alt, -cos_alt * cos(az))
+
 func _create_star_field() -> void:
 	var root := Node3D.new()
 	root.name = "StarField"
 	root.visible = false
 	root.position = Vector3.ZERO
 	add_child(root)
+	_real_star_nodes.clear()
+	_real_star_radec.clear()
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.96, 0.98, 1.0, 1.0)
+	material.albedo_color = Color(0.97, 0.98, 1.0, 1.0)
 	material.emission_enabled = true
-	material.emission = Color(0.86, 0.90, 1.0)
-	material.emission_energy_multiplier = 7.0
+	material.emission = Color(0.90, 0.93, 1.0)
+	material.emission_energy_multiplier = 6.0
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.no_depth_test = true
 	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	var star_count := 420
 	var star_mesh := QuadMesh.new()
-	star_mesh.size = Vector2(0.22, 0.22)
-	for i in range(star_count):
-		var angle := randf_range(0.0, TAU)
-		var radius := randf_range(105.0, 148.0)
-		var height := randf_range(34.0, 82.0)
+	star_mesh.size = Vector2(0.32, 0.32)
+	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	var lst_rad := deg_to_rad(_local_sidereal_deg())
+	for entry in BRIGHT_STAR_CATALOG:
+		var ra_rad: float = deg_to_rad(float(entry[0]) * 15.0)
+		var dec_rad: float = deg_to_rad(float(entry[1]))
+		var mag: float = float(entry[2])
 		var star := MeshInstance3D.new()
-		star.name = "NightStar"
-		star.position = Vector3(cos(angle) * radius, height, sin(angle) * radius)
-		var star_size := randf_range(0.7, 1.7)
-		if randf() < 0.10:
-			star_size *= 2.2
-		star.scale = Vector3.ONE * star_size
+		star.name = "RealStar"
 		star.mesh = star_mesh
 		star.material_override = material
+		var size_factor: float = clamp(2.6 - mag * 0.55, 0.5, 3.4)
+		star.scale = Vector3.ONE * size_factor
 		star.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var dir := _radec_to_world_dir(ra_rad, dec_rad, lst_rad, lat_rad)
+		star.position = dir * STAR_DOME_RADIUS
+		star.visible = dir.y > 0.02
 		root.add_child(star)
+		_real_star_nodes.append(star)
+		_real_star_radec.append(Vector2(ra_rad, dec_rad))
+
+func _update_real_star_positions() -> void:
+	if _real_star_nodes.is_empty():
+		return
+	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	var lst_rad := deg_to_rad(_local_sidereal_deg())
+	for i in range(_real_star_nodes.size()):
+		var node = _real_star_nodes[i]
+		if not is_instance_valid(node):
+			continue
+		var rd: Vector2 = _real_star_radec[i]
+		var dir := _radec_to_world_dir(rd.x, rd.y, lst_rad, lat_rad)
+		node.position = dir * STAR_DOME_RADIUS
+		node.visible = dir.y > 0.02
 
 func _create_moon_field() -> void:
 	var root := Node3D.new()
@@ -2302,14 +2411,30 @@ func _create_map() -> void:
 	if not is_server:
 		_create_road()
 	if not is_server:
-		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1")
-		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2")
-		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3")
-		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4")
-		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5")
+		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1", 11.4, 9.4, 3.65)
+		await get_tree().process_frame
+		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2", 14.0, 11.0, 4.2)
+		await get_tree().process_frame
+		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3", 9.0, 7.5, 3.2)
+		await get_tree().process_frame
+		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4", 12.5, 10.0, 3.8)
+		await get_tree().process_frame
+		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5", 8.0, 7.0, 3.0)
+		await get_tree().process_frame
+		_create_house(Vector3(-35, 0, -40), "Casa abandonada 6", "house_6", 10.5, 8.5, 3.4)
+		await get_tree().process_frame
+		_create_house(Vector3(30, 0, -35), "Casa abandonada 7", "house_7", 13.0, 10.0, 4.0)
+		await get_tree().process_frame
+		_create_house(Vector3(-45, 0, -5), "Casa abandonada 8", "house_8", 9.5, 8.0, 3.2)
+		await get_tree().process_frame
+		_create_house(Vector3(35, 0, -8), "Casa abandonada 9", "house_9", 11.0, 9.0, 3.6)
+		await get_tree().process_frame
+		_create_house(Vector3(-20, 0, 30), "Casa abandonada 10", "house_10", 7.5, 6.5, 2.9)
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_world_details()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		# Light posts and power lines
@@ -2319,18 +2444,23 @@ func _create_map() -> void:
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_ground_clutter()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_tall_grass_fields()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_grass_carpet()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_dense_vegetation_zones()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_forest()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_survival_objectives()
@@ -2524,68 +2654,90 @@ func _get_world_y_extent(model_root: Node) -> float:
 	return maximum_y - minimum_y
 
 func _register_server_house_blockers() -> void:
-	var house_origins := [
-		Vector3(-25, 0, -18),
-		Vector3(-38, 0, 18),
-		Vector3(23, 0, 18),
-		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42)
+	var house_data := [
+		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
+		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
+		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
+		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
+		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
+		{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
+		{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
+		{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
+		{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
+		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
 	]
-	for origin in house_origins:
-		var idx := _register_wildlife_blocker(origin, 8.2)
-		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
+	for hd in house_data:
+		var origin: Vector3 = hd["origin"]
+		var half_w: float = hd["w"] * 0.5
+		var half_d: float = hd["d"] * 0.5
+		var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
+		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, hd["w"] + 0.6, hd["d"] + 1.0)
 
-func _create_house(origin: Vector3, label: String, id_prefix: String) -> void:
-	var blocker_idx := _register_wildlife_blocker(origin, 8.2)
+func _create_house(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float) -> void:
+	var half_w := width * 0.5
+	var half_d := depth * 0.5
+	var door_w := 3.0
+	var return_w: float = min(2.0, half_w * 0.32)
+	var front_seg_w: float = half_w - door_w * 0.5 - return_w + 0.5
+	var front_seg_c: float = half_w - front_seg_w * 0.5
+	var return_c: float = door_w * 0.5 + return_w * 0.5
+	var door_h := 2.55
+	var wall_t := 0.35
+	var win_y := height * 0.6
+	var win_w: float = min(1.5, front_seg_w * 0.72)
+	var win_h: float = win_w * 0.8
+	var blocker_idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 	#_create_label(label, origin + Vector3(0, 4.05, -4.65))
-	_create_house_overgrowth(origin, label)
-	_create_house_foundation(origin, label)
-	_create_house_floor(origin, label)
-	# Back wall with two window holes (windows at x=-3.2 and x=3.2, y=2.2, 1.5×1.2)
-	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -4.7), Vector3(11.4, 3.65, 0.35), Vector3.ZERO, [
-		[-3.2, 2.2, 1.5, 1.2],
-		[3.2, 2.2, 1.5, 1.2],
+	_create_house_overgrowth(origin, label, half_w, half_d)
+	_create_house_foundation(origin, label, half_w, half_d, front_seg_c, front_seg_w)
+	_create_house_floor(origin, label, width, depth)
+	# Back wall with two window holes (closer to center for smaller houses)
+	var back_win_x := width * 0.22
+	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -half_d), Vector3(width, height, wall_t), Vector3.ZERO, [
+		[-back_win_x, win_y, win_w, win_h],
+		[back_win_x, win_y, win_w, win_h],
 	])
-	# Left wall with one window hole (z=-1.55, y=2.2, 1.5×1.2)
-	_create_textured_wall_with_openings(label + " Left", origin + Vector3(-5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
-		[-1.55, 2.2, 1.5, 1.2],
+	# Left wall with one window hole (closer to front/door)
+	var side_win_z := depth * 0.28
+	_create_textured_wall_with_openings(label + " Left", origin + Vector3(-half_w, 0, 0), Vector3(wall_t, height, depth), Vector3.ZERO, [
+		[side_win_z, win_y, win_w, win_h],
 	])
 	# Right wall with one window hole
-	_create_textured_wall_with_openings(label + " Right", origin + Vector3(5.7, 0, 0), Vector3(0.35, 3.65, 9.4), Vector3.ZERO, [
-		[-1.55, 2.2, 1.5, 1.2],
+	_create_textured_wall_with_openings(label + " Right", origin + Vector3(half_w, 0, 0), Vector3(wall_t, height, depth), Vector3.ZERO, [
+		[side_win_z, win_y, win_w, win_h],
 	])
-	# FrontA with window hole (window centered in wall at x=-4.35, y=2.2, 1.5×1.2)
-	_create_textured_wall_with_openings(label + " FrontA", origin + Vector3(-4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
-		[0.0, 2.2, 1.5, 1.2],
+	# FrontA with window hole
+	_create_textured_wall_with_openings(label + " FrontA", origin + Vector3(-front_seg_c, 0, half_d), Vector3(front_seg_w, height, wall_t), Vector3.ZERO, [
+		[0.0, win_y, win_w, win_h],
 	])
-	# FrontB with window hole (window centered in wall at x=4.35)
-	_create_textured_wall_with_openings(label + " FrontB", origin + Vector3(4.35, 0, 4.7), Vector3(2.7, 3.65, 0.35), Vector3.ZERO, [
-		[0.0, 2.2, 1.5, 1.2],
+	# FrontB with window hole
+	_create_textured_wall_with_openings(label + " FrontB", origin + Vector3(front_seg_c, 0, half_d), Vector3(front_seg_w, height, wall_t), Vector3.ZERO, [
+		[0.0, win_y, win_w, win_h],
 	])
-	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
-	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(2.5, 0, 4.7), Vector3(2.0, 3.65, 0.35), Vector3.ZERO)
-	# Door lintel: wall segment above the door gap (door is 2.55m tall, wall is 3.65m)
-	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, 2.55, 4.7), Vector3(3.0, 1.1, 0.35), Vector3.ZERO)
-	_create_house_details(origin, label)
-	_create_house_interior(origin, label, id_prefix)
-	# Roof collision: flat box at wall top height to block player from jumping through roof
-	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, 3.65, 0), Vector3(11.4, 0.7, 9.4))
+	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
+	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
+	# Door lintel
+	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
+	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
+	_create_house_interior(origin, label, id_prefix, width, depth, height)
+	# Roof collision
+	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth))
 	# Link door to wildlife blocker so wolves can enter when door is open
 	var door_node := get_node_or_null(label + " Door")
 	if door_node != null:
 		wildlife_blockers[blocker_idx]["door"] = door_node
-		wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - 6.0, origin.z - 5.2, 12.0, 10.4)
+		wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, width + 0.6, depth + 1.0)
 
-func _create_house_foundation(origin: Vector3, label: String) -> void:
+func _create_house_foundation(origin: Vector3, label: String, half_w: float, half_d: float, front_seg_c: float, front_seg_w: float) -> void:
 	# Concrete skirting (perimeter beams) under the brick walls, so the houses
 	# read as "brick over a concrete base" without covering the wooden floor.
 	# Front is split (FrontLeft/FrontRight) to leave the doorway gap clear.
 	var beams := [
-		{"pos": Vector3(0, 0, -4.78), "size": Vector3(12.3, 0.5, 0.6)},
-		{"pos": Vector3(-4.35, 0, 4.78), "size": Vector3(3.6, 0.5, 0.6)},
-		{"pos": Vector3(4.35, 0, 4.78), "size": Vector3(3.6, 0.5, 0.6)},
-		{"pos": Vector3(-5.78, 0, 0), "size": Vector3(0.6, 0.5, 10.2)},
-		{"pos": Vector3(5.78, 0, 0), "size": Vector3(0.6, 0.5, 10.2)}
+		{"pos": Vector3(0, 0, -(half_d + 0.08)), "size": Vector3(half_w * 2.0 + 0.9, 0.5, 0.6)},
+		{"pos": Vector3(-front_seg_c, 0, half_d + 0.08), "size": Vector3(front_seg_w + 0.9, 0.5, 0.6)},
+		{"pos": Vector3(front_seg_c, 0, half_d + 0.08), "size": Vector3(front_seg_w + 0.9, 0.5, 0.6)},
+		{"pos": Vector3(-(half_w + 0.08), 0, 0), "size": Vector3(0.6, 0.5, half_d * 2.0 + 0.8)},
+		{"pos": Vector3(half_w + 0.08, 0, 0), "size": Vector3(0.6, 0.5, half_d * 2.0 + 0.8)}
 	]
 	for i in range(beams.size()):
 		var beam: Dictionary = beams[i]
@@ -2599,7 +2751,7 @@ func _create_house_foundation(origin: Vector3, label: String) -> void:
 		mesh_instance.material_override = _make_textured_material("ConcreteBase" + TEX_CONCRETE_DIFF, TEX_CONCRETE_DIFF, Color(0.55, 0.54, 0.52), uv_scale)
 		add_child(mesh_instance)
 
-func _create_house_floor(origin: Vector3, label: String) -> void:
+func _create_house_floor(origin: Vector3, label: String, width: float, depth: float) -> void:
 	var floor_mat := StandardMaterial3D.new()
 	floor_mat.albedo_color = Color(0.28, 0.20, 0.10)
 	floor_mat.roughness = 0.9
@@ -2613,33 +2765,34 @@ func _create_house_floor(origin: Vector3, label: String) -> void:
 	body.position = origin
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _get_shared_box_mesh()
-	mesh_instance.scale = Vector3(11.0, 0.08, 9.0)
+	mesh_instance.scale = Vector3(width - 0.4, 0.08, depth - 0.4)
 	mesh_instance.position.y = 0.04
 	mesh_instance.material_override = floor_mat
 	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(11.0, 0.08, 9.0)
+	shape.size = Vector3(width - 0.4, 0.08, depth - 0.4)
 	collision.shape = shape
 	collision.position.y = 0.04
 	body.add_child(collision)
 	add_child(body)
 
-func _create_house_overgrowth(origin: Vector3, label: String) -> void:
+func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, half_d: float) -> void:
 	# Dense uniform grass fill around the house — no rings, just thick coverage
 	# Close wall weeds (hugging the base)
 	for i in range(80):
 		var side := -1.0 if i % 2 == 0 else 1.0
-		var pos := origin + Vector3(side * randf_range(5.9, 6.65), 0.055, randf_range(-4.6, 4.8))
+		var pos := origin + Vector3(side * randf_range(half_w + 0.2, half_w + 0.95), 0.055, randf_range(-(half_d - 0.1), half_d + 0.1))
 		_create_house_grass_asset(label + " SideGrass", pos, randf_range(0.22, 0.45))
 	for i in range(60):
 		var fb := 1.0 if i % 2 == 0 else -1.0
-		var pos := origin + Vector3(randf_range(-5.5, 5.5), 0.055, fb * randf_range(4.9, 5.65))
+		var pos := origin + Vector3(randf_range(-(half_w - 0.2), half_w - 0.2), 0.055, fb * randf_range(half_d + 0.2, half_d + 0.95))
 		_create_house_grass_asset(label + " WallWeed", pos, randf_range(0.20, 0.42))
-	# Dense grass fill from 5.5 to 25 units in all directions
+	# Dense grass fill from house edge to 25 units in all directions
+	var grass_radius: float = max(half_w, half_d) + 2.0
 	for i in range(3000):
 		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(5.5, 25.0)
+		var dist := randf_range(grass_radius, 25.0)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
 		_create_grass_clump(pos, randf_range(0.4, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 
@@ -2711,19 +2864,14 @@ func _create_new_world_props() -> void:
 	var car_ground_y := _raycast_ground_y(space_state, car_pos)
 	if _try_instance_external_scene([ABANDONED_JUNK_CAR_MODEL], "JunkCar0", car_pos, car_s, car_rot, true, car_ground_y):
 		var junk_node := get_node_or_null("JunkCar0")
-		var junk_height := 1.5
+		var junk_height := 2.0
 		var junk_coll_pos := car_pos
 		if junk_node != null and junk_node is Node3D:
 			var jn := junk_node as Node3D
 			jn.force_update_transform()
-			junk_height = _get_node_world_aabb_height(jn) + 0.15
-			if junk_height < 0.5:
-				junk_height = 1.5
-			if junk_height > 3.0:
-				junk_height = 2.0
 			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
 			print("[JUNK_CAR] pos=", jn.global_position, " height=", junk_height)
-		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(3.0, junk_height, 5.0), float(car_rot.y))
+		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(2.0, junk_height, 4.0), float(car_rot.y))
 	# Scrap barricade car abandoned on the road (different angle)
 	var scrap_s := Vector3.ONE * 0.5
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
@@ -2749,11 +2897,11 @@ func _create_new_world_props() -> void:
 			print("[SCRAP_CAR] final pos=", sn.global_position, " ground_y=", scrap_ground_y)
 			if _dbg_file:
 				_dbg_file.store_line("final_pos=" + str(sn.global_position) + " ground_y=" + str(scrap_ground_y))
-			scrap_height = 1.5
+			scrap_height = 1.0
 			print("[SCRAP_CAR] height=", scrap_height)
 			if _dbg_file:
 				_dbg_file.store_line("height=" + str(scrap_height))
-		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(3.0, scrap_height, 5.0), float(scrap_rot.y))
+		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(2.0, scrap_height, 4.0), float(scrap_rot.y))
 		if _dbg_file:
 			_dbg_file.store_line("=== MESH HIERARCHY DUMP ===")
 			var _meshes := []
@@ -2912,19 +3060,21 @@ func _create_wildlife() -> void:
 	# Second deer herd on a different offset
 	var deer_route_2 := _build_circular_route(38.0, PI, 10, 5.0)
 	_create_deer_pair(deer_route_2)
-	# Foxes: smaller inner ring, offset rotation
-	var fox_route_1 := _build_circular_route(28.0, PI * 0.5, 8, 4.0)
+	# Foxes: territorial patrols in distinct zones, away from deer routes
+	var fox_route_1 := _build_zigzag_route(Vector3(-35, 0, -20), Vector3(-15, 0, 10), 6, 5.0)
 	_create_wildlife_animal("fox", fox_route_1)
-	var fox_route_2 := _build_circular_route(32.0, PI * 1.5, 8, 4.0)
+	var fox_route_2 := _build_zigzag_route(Vector3(20, 0, 30), Vector3(40, 0, 5), 6, 5.0)
 	_create_wildlife_animal("fox", fox_route_2)
 	# Wolves: spread across all quadrants of the map, patrolling everywhere
 	var wolf_quadrants := [
-		Vector3(-50, 0, -50),
-		Vector3(50, 0, -50),
-		Vector3(-50, 0, 50),
-		Vector3(50, 0, 50)
+		Vector3(-30, 0, -30),
+		Vector3(30, 0, -30),
+		Vector3(-30, 0, 30),
+		Vector3(30, 0, 30),
+		Vector3(-15, 0, -20),
+		Vector3(20, 0, 15),
 	]
-	for i in range(4):
+	for i in range(6):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		for _retry in range(30):
 			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
@@ -2932,14 +3082,14 @@ func _create_wildlife() -> void:
 			center = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
 		var route: Array = []
 		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			var wp: Vector3 = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
 			# Ensure waypoint is not in the river or inside a house
 			for _wp_retry in range(10):
 				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 				wp.x = clamp(wp.x, -72, 72)
 				wp.z = clamp(wp.z, -72, 72)
 			route.append(wp)
@@ -2958,32 +3108,33 @@ func _check_wildlife_respawn() -> void:
 					alive_fox += 1
 				"wolf":
 					alive_wolf += 1
-	print("[WILDLIFE] Respawn check: deer=%d fox=%d wolf=%d" % [alive_deer, alive_fox, alive_wolf])
-	if alive_deer < 4:
-		var deer_route := _build_circular_route(45.0, randf() * TAU, 10, 6.0)
-		_create_deer_pair(deer_route)
-	if alive_fox < 2:
-		var fox_route := _build_circular_route(28.0, randf() * TAU, 8, 4.0)
-		_create_wildlife_animal("fox", fox_route)
-	if alive_wolf < 4:
-		var center := Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
+	# Respawn one animal at a time, prioritizing the most depleted species
+	if alive_wolf < 6 and alive_wolf <= alive_fox and alive_wolf <= alive_deer:
+		var center := Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 		for _retry in range(30):
 			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = Vector3(randf_range(-50, 50), 0.0, randf_range(-50, 50))
+			center = Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 		var route: Array = []
 		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			var wp: Vector3 = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 			wp.x = clamp(wp.x, -72, 72)
 			wp.z = clamp(wp.z, -72, 72)
 			for _wp_retry in range(10):
 				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 				wp.x = clamp(wp.x, -72, 72)
 				wp.z = clamp(wp.z, -72, 72)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
+	elif alive_deer < 4 and alive_deer <= alive_fox:
+		var deer_route := _build_circular_route(45.0, randf() * TAU, 10, 6.0)
+		_create_deer_pair(deer_route)
+	elif alive_fox < 2:
+		var fox_zone := Vector3(randf_range(-40, 40), 0.0, randf_range(-30, 30))
+		var fox_route := _build_zigzag_route(fox_zone, fox_zone + Vector3(15, 0, 10), 6, 5.0)
+		_create_wildlife_animal("fox", fox_route)
 
 # Build a circular patrol route around the map center.
 # radius: distance from center, angle_offset: starting angle in radians,
@@ -2997,6 +3148,21 @@ func _build_circular_route(radius: float, angle_offset: float, num_points: int, 
 		pos.x = clamp(pos.x, -65.0, 65.0)
 		pos.z = clamp(pos.z, -65.0, 65.0)
 		# Sanitize: push point away from blocked areas
+		if not is_wildlife_allowed_at(pos):
+			pos = _find_allowed_near(pos, 3.0)
+		route.append(pos)
+	return route
+
+func _build_zigzag_route(corner_a: Vector3, corner_b: Vector3, num_points: int, jitter: float) -> Array:
+	var route: Array = []
+	for i in range(num_points):
+		var t := float(i) / float(num_points - 1) if num_points > 1 else 0.0
+		var base := corner_a.lerp(corner_b, t)
+		var perp := (corner_b - corner_a).cross(Vector3.UP).normalized() if (corner_b - corner_a).length() > 0.01 else Vector3.RIGHT
+		var offset := perp * randf_range(-jitter, jitter)
+		var pos := base + offset
+		pos.x = clamp(pos.x, -65.0, 65.0)
+		pos.z = clamp(pos.z, -65.0, 65.0)
 		if not is_wildlife_allowed_at(pos):
 			pos = _find_allowed_near(pos, 3.0)
 		route.append(pos)
@@ -3121,29 +3287,32 @@ func _create_house_loot() -> void:
 		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
 	]
-	var house_origins := [
-		Vector3(-25, 0, -18),
-		Vector3(-38, 0, 18),
-		Vector3(23, 0, 18),
-		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42)
+	var house_loot_data := [
+		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
+		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
+		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
+		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
+		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
 	]
 	var loot_idx := 0
-	for origin in house_origins:
+	for hd in house_loot_data:
+		var origin: Vector3 = hd["origin"]
+		var half_w: float = hd["w"] * 0.5
+		var half_d: float = hd["d"] * 0.5
 		var num_items := 2 + randi() % 3
 		for _j in range(num_items):
 			var template: Dictionary = house_loot_pool[randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
 			loot_data["id"] = "house_loot_%d" % loot_idx
 			loot_idx += 1
-			loot_data["pos"] = _find_pos_inside_house(origin)
+			loot_data["pos"] = _find_pos_inside_house(origin, half_w, half_d)
 			_create_pickup_item(loot_data)
 
-func _find_pos_inside_house(origin: Vector3) -> Vector3:
+func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
-		origin.x + randf_range(-4.0, 4.0),
+		origin.x + randf_range(-half_w + 1.0, half_w - 1.0),
 		0.06,
-		origin.z + randf_range(-3.5, 3.5)
+		origin.z + randf_range(-half_d + 1.0, half_d - 1.0)
 	)
 	return pos
 
@@ -4397,6 +4566,9 @@ func get_structures_for_minimap() -> Array:
 func get_day_cycle():
 	return day_cycle
 
+func get_hud():
+	return hud
+
 func get_river_depth_at(world_pos: Vector3) -> float:
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]
@@ -4448,17 +4620,20 @@ func get_forest_audio_point(world_pos: Vector3) -> Dictionary:
 		"distance": distance
 	}
 
-const HOUSE_POSITIONS := [
-	Vector3(-25, 0, -18),
-	Vector3(-38, 0, 18),
-	Vector3(23, 0, 18),
-	Vector3(42, 0, 26),
-	Vector3(-12, 0, 42)
+const HOUSE_DATA := [
+	{"pos": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
+	{"pos": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
+	{"pos": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
+	{"pos": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
+	{"pos": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
 ]
 
 func _is_player_in_house(pos: Vector3) -> bool:
-	for house_pos in HOUSE_POSITIONS:
-		if abs(pos.x - house_pos.x) < 5.7 and abs(pos.z - house_pos.z) < 4.7:
+	for hd in HOUSE_DATA:
+		var house_pos: Vector3 = hd["pos"]
+		var half_w: float = hd["w"] * 0.5
+		var half_d: float = hd["d"] * 0.5
+		if abs(pos.x - house_pos.x) < half_w and abs(pos.z - house_pos.z) < half_d:
 			return true
 	return false
 
@@ -4719,21 +4894,27 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.material_override = _make_material(color, true)
 	add_child(mesh_instance)
 
-func _create_house_details(origin: Vector3, label: String) -> void:
-	_create_visual_gable_roof(label + " Roof", origin + Vector3(0, 3.55, 0), 12.6, 10.2, 1.85, Color(0.14, 0.065, 0.035))
-	_create_house_exterior_assets(origin, label)
-	_create_static_box(label + " Chimney", origin + Vector3(3.45, 4.0, -1.8), Vector3(0.62, 1.25, 0.62), Color(0.11, 0.08, 0.065))
-	_create_house_doorway(origin, label)
-	_create_house_windows(origin, label)
-	_create_visual_box(label + " BrokenGlassA", origin + Vector3(-3.35, 1.6, 5.00), Vector3(0.12, 0.32, 0.035), Color(0.50, 0.62, 0.66, 0.72), Vector3(0, 0, -18))
-	_create_visual_box(label + " RoofHole", origin + Vector3(-2.35, 4.05, 1.8), Vector3(1.2, 0.08, 0.75), Color(0.035, 0.025, 0.02), Vector3(0, 22, -12))
-	_create_visual_box(label + " BigRustRoofPatch", origin + Vector3(2.1, 4.28, 1.35), Vector3(2.25, 0.09, 1.15), Color(0.34, 0.13, 0.055), Vector3(0, -13, 10))
+func _create_house_details(origin: Vector3, label: String, width: float, depth: float, height: float, half_w: float, half_d: float, front_seg_c: float) -> void:
+	var return_w: float = min(2.0, half_w * 0.32)
+	var front_seg_w: float = half_w - 3.0 * 0.5 - return_w + 0.5
+	var win_w: float = min(1.5, front_seg_w * 0.72)
+	var win_h: float = win_w * 0.8
+	_create_visual_gable_roof(label + " Roof", origin + Vector3(0, height - 0.1, 0), width + 1.2, depth + 0.8, 1.85, Color(0.14, 0.065, 0.035))
+	_create_house_exterior_assets(origin, label, half_w, half_d, height)
+	_create_static_box(label + " Chimney", origin + Vector3(half_w * 0.6, height + 0.35, -(half_d * 0.38)), Vector3(0.62, 1.25, 0.62), Color(0.11, 0.08, 0.065))
+	_create_house_doorway(origin, label, half_d, height)
+	_create_house_windows(origin, label, half_w, half_d, front_seg_c, height, win_w, win_h)
+	_create_visual_box(label + " BrokenGlassA", origin + Vector3(-front_seg_c, height * 0.44, half_d + 0.3), Vector3(0.12, 0.32, 0.035), Color(0.50, 0.62, 0.66, 0.72), Vector3(0, 0, -18))
+	_create_visual_box(label + " RoofHole", origin + Vector3(-(half_w * 0.41), height + 0.4, half_d * 0.38), Vector3(1.2, 0.08, 0.75), Color(0.035, 0.025, 0.02), Vector3(0, 22, -12))
+	_create_visual_box(label + " BigRustRoofPatch", origin + Vector3(half_w * 0.37, height + 0.63, half_d * 0.29), Vector3(2.25, 0.09, 1.15), Color(0.34, 0.13, 0.055), Vector3(0, -13, 10))
 
-func _create_house_doorway(origin: Vector3, label: String) -> void:
-	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, 1.275, 4.87), Vector3(0.18, 2.55, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameRight", origin + Vector3(1.34, 1.275, 4.87), Vector3(0.18, 2.55, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, 2.64, 4.87), Vector3(2.86, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
-	_create_interactive_door(label + " Door", origin + Vector3(-1.25, 0.0, 4.8), Vector3(2.5, 2.55, 0.11), Color(0.13, 0.075, 0.04), -96.0)
+func _create_house_doorway(origin: Vector3, label: String, half_d: float, height: float) -> void:
+	var door_h := 2.55
+	var dz := half_d + 0.17
+	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameRight", origin + Vector3(1.34, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.045, dz), Vector3(2.86, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
+	_create_interactive_door(label + " Door", origin + Vector3(-1.25, 0.0, half_d + 0.1), Vector3(2.5, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
 
 func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vector3, color: Color, open_angle: float) -> void:
 	var door = DoorScript.new()
@@ -4743,13 +4924,16 @@ func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vecto
 	var door_model: String = DOOR_MODELS[randi() % DOOR_MODELS.size()]
 	door.setup("Puerta", size, color, open_angle, door_model)
 
-func _create_house_windows(origin: Vector3, label: String) -> void:
-	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-4.35, 2.2, 4.7), 1.5, 1.2)
-	_create_front_window(label + " FrontWindowRight", origin + Vector3(4.35, 2.2, 4.7), 1.5, 1.2)
-	_create_front_window(label + " BackWindowA", origin + Vector3(-3.2, 2.2, -4.7), 1.5, 1.2)
-	_create_front_window(label + " BackWindowB", origin + Vector3(3.2, 2.2, -4.7), 1.5, 1.2)
-	_create_side_window(label + " LeftSideWindow", origin + Vector3(-5.7, 2.2, -1.55), 1.5, 1.2)
-	_create_side_window(label + " RightSideWindow", origin + Vector3(5.7, 2.2, -1.55), 1.5, 1.2)
+func _create_house_windows(origin: Vector3, label: String, half_w: float, half_d: float, front_seg_c: float, height: float, win_w: float, win_h: float) -> void:
+	var win_y := height * 0.6
+	var back_win_x := half_w * 0.44
+	var side_win_z := half_d * 0.56
+	_create_front_window(label + " FrontWindowLeft", origin + Vector3(-front_seg_c, win_y, half_d), win_w, win_h)
+	_create_front_window(label + " FrontWindowRight", origin + Vector3(front_seg_c, win_y, half_d), win_w, win_h)
+	_create_front_window(label + " BackWindowA", origin + Vector3(-back_win_x, win_y, -half_d), win_w, win_h)
+	_create_front_window(label + " BackWindowB", origin + Vector3(back_win_x, win_y, -half_d), win_w, win_h)
+	_create_side_window(label + " LeftSideWindow", origin + Vector3(-half_w, win_y, side_win_z), win_w, win_h)
+	_create_side_window(label + " RightSideWindow", origin + Vector3(half_w, win_y, side_win_z), win_w, win_h)
 
 func _create_front_window(node_name: String, center: Vector3, width: float, height: float) -> void:
 	var frame := Color(0.19, 0.12, 0.065)
@@ -4810,12 +4994,12 @@ func _create_glass_panel(node_name: String, pos: Vector3, size: Vector3, is_side
 	mesh_instance.material_override = mat
 	add_child(mesh_instance)
 
-func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
-	_create_house_grass_asset(label + " FrontGrassLeft", origin + Vector3(-1.75, 0.055, 5.75), 0.34)
-	_create_house_grass_asset(label + " FrontGrassRight", origin + Vector3(1.75, 0.055, 5.65), 0.30)
-	_create_house_grass_asset(label + " FrontGrassSide", origin + Vector3(0.0, 0.055, 6.65), 0.26)
-	_create_visual_box(label + " RoofEaveFront", origin + Vector3(0, 3.58, 5.22), Vector3(12.9, 0.16, 0.32), Color(0.095, 0.055, 0.035), Vector3.ZERO)
-	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, 3.58, -5.22), Vector3(12.9, 0.16, 0.32), Color(0.085, 0.05, 0.035), Vector3.ZERO)
+func _create_house_exterior_assets(origin: Vector3, label: String, half_w: float, half_d: float, height: float) -> void:
+	_create_house_grass_asset(label + " FrontGrassLeft", origin + Vector3(-1.75, 0.055, half_d + 1.05), 0.34)
+	_create_house_grass_asset(label + " FrontGrassRight", origin + Vector3(1.75, 0.055, half_d + 0.95), 0.30)
+	_create_house_grass_asset(label + " FrontGrassSide", origin + Vector3(0.0, 0.055, half_d + 1.95), 0.26)
+	_create_visual_box(label + " RoofEaveFront", origin + Vector3(0, height - 0.07, half_d + 0.52), Vector3(half_w * 2.0 + 1.5, 0.16, 0.32), Color(0.095, 0.055, 0.035), Vector3.ZERO)
+	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, height - 0.07, -(half_d + 0.52)), Vector3(half_w * 2.0 + 1.5, 0.16, 0.32), Color(0.085, 0.05, 0.035), Vector3.ZERO)
 	return
 	_try_instance_external_scene([K_SURVIVAL + "structure-metal-wall.glb"], label + " ExteriorMetalWallLeft", origin + Vector3(-4.28, 1.15, -1.2), Vector3(1.8, 1.8, 1.8), Vector3(0, 90, 0))
 	_try_instance_external_scene([K_SURVIVAL + "structure-metal-wall.glb"], label + " ExteriorMetalWallRight", origin + Vector3(4.28, 1.12, 1.15), Vector3(1.55, 1.55, 1.55), Vector3(0, -90, 0))
@@ -4830,9 +5014,11 @@ func _create_house_exterior_assets(origin: Vector3, label: String) -> void:
 	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, 2.72, -4.05), Vector3(9.4, 0.16, 0.28), Color(0.085, 0.05, 0.035), Vector3.ZERO)
 	_create_visual_box(label + " FrontDirtMat", origin + Vector3(0.0, 0.025, 4.1), Vector3(1.3, 0.035, 0.75), Color(0.065, 0.055, 0.04), Vector3.ZERO)
 
-func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -> void:
+func _create_house_interior(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float) -> void:
+	var half_w := width * 0.5
+	var half_d := depth * 0.5
 	# Bed against the back-left corner
-	var bed_pos := origin + Vector3(-3.5, 0, -3.0)
+	var bed_pos := origin + Vector3(-half_w + 2.2, 0, -half_d + 1.7)
 	_try_instance_external_scene([BED_MODEL_PATH], label + " Bed", bed_pos, Vector3.ONE * 2.0, Vector3(0, 0, 0), true, 0.0)
 	# Remove collision from the bed model so it doesn't push the player through the roof
 	var bed_node := get_node_or_null(label + " Bed")
@@ -4852,6 +5038,203 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String) -
 	bed_area.position = bed_pos + Vector3(0, 0.8, 0)
 	bed_area.set("bed_position", bed_pos + Vector3(0, 0.9, 0))
 	add_child(bed_area)
+	# Post-apocalyptic furniture: different placement per house (relative to house dimensions)
+	# Bed is at back-left corner (-half_w + 2.2, -half_d + 1.7), furniture goes back-right
+	var furniture_layouts := {
+		"house_1": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.6},
+		"house_2": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.4},
+		"house_3": {"pos": Vector3(half_w - 0.8, 0, -half_d + 2.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.3},
+		"house_4": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.6},
+		"house_5": {"pos": Vector3(half_w - 0.8, 0, -half_d + 2.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.2},
+		"house_6": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.5},
+		"house_7": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.5},
+		"house_8": {"pos": Vector3(half_w - 0.8, 0, -half_d + 2.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.3},
+		"house_9": {"pos": Vector3(half_w - 1.0, 0, -half_d + 2.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.5},
+		"house_10": {"pos": Vector3(half_w - 0.7, 0, -half_d + 1.8), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 2.0},
+	}
+	# Fridge on front-right area, with clearance from wall, away from windows, furniture and bed
+	var fridge_layouts := {
+		"house_1": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.35, 0.45, 0.35)},
+		"house_2": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.32, 0.42, 0.32)},
+		"house_3": {"pos": Vector3(half_w - 0.9, 0, half_d - 1.2), "rot": Vector3(0, -90, 0), "scale": Vector3(0.30, 0.39, 0.30)},
+		"house_4": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.35, 0.45, 0.35)},
+		"house_5": {"pos": Vector3(half_w - 0.9, 0, half_d - 1.2), "rot": Vector3(0, -90, 0), "scale": Vector3(0.28, 0.37, 0.28)},
+		"house_6": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.33, 0.43, 0.33)},
+		"house_7": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.34, 0.44, 0.34)},
+		"house_8": {"pos": Vector3(half_w - 0.9, 0, half_d - 1.2), "rot": Vector3(0, -90, 0), "scale": Vector3(0.30, 0.39, 0.30)},
+		"house_9": {"pos": Vector3(half_w - 1.1, 0, half_d - 1.5), "rot": Vector3(0, -90, 0), "scale": Vector3(0.33, 0.43, 0.33)},
+		"house_10": {"pos": Vector3(half_w - 0.8, 0, half_d - 1.0), "rot": Vector3(0, -90, 0), "scale": Vector3(0.26, 0.35, 0.26)},
+	}
+	# Bathroom: toilet + sink together in front-left corner, away from bed (back-left), furniture (back-right), fridge (front-right)
+	var toilet_layouts := {
+		"house_1": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.7},
+		"house_2": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.6},
+		"house_3": {"pos": Vector3(-half_w + 0.4, 0, half_d - 1.9), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.4},
+		"house_4": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.7},
+		"house_5": {"pos": Vector3(-half_w + 0.4, 0, half_d - 1.9), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.3},
+		"house_6": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.6},
+		"house_7": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.7},
+		"house_8": {"pos": Vector3(-half_w + 0.4, 0, half_d - 1.9), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.4},
+		"house_9": {"pos": Vector3(-half_w + 0.5, 0, half_d - 2.1), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.6},
+		"house_10": {"pos": Vector3(-half_w + 0.3, 0, half_d - 1.6), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.2},
+	}
+	var sink_layouts := {
+		"house_1": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 2.1},
+		"house_2": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.9},
+		"house_3": {"pos": Vector3(-half_w + 0.4, 0.1, half_d - 2.6), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.7},
+		"house_4": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 2.1},
+		"house_5": {"pos": Vector3(-half_w + 0.4, 0.1, half_d - 2.6), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.6},
+		"house_6": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 2.0},
+		"house_7": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 2.1},
+		"house_8": {"pos": Vector3(-half_w + 0.4, 0.1, half_d - 2.6), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.7},
+		"house_9": {"pos": Vector3(-half_w + 0.5, 0.1, half_d - 3.0), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 2.0},
+		"house_10": {"pos": Vector3(-half_w + 0.3, 0.1, half_d - 2.2), "rot": Vector3(0, 90, 0), "scale": Vector3.ONE * 1.5},
+	}
+	# Kitchen stove next to the sink cabinet, against the same (+X) wall
+	var stove_layouts := {
+		"house_1": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.5},
+		"house_2": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.4},
+		"house_3": {"pos": Vector3(half_w - 0.9, 0, half_d - 4.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.3},
+		"house_4": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.5},
+		"house_5": {"pos": Vector3(half_w - 0.9, 0, half_d - 4.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.2},
+		"house_6": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.4},
+		"house_7": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.5},
+		"house_8": {"pos": Vector3(half_w - 0.9, 0, half_d - 4.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.3},
+		"house_9": {"pos": Vector3(half_w - 1.1, 0, half_d - 4.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.4},
+		"house_10": {"pos": Vector3(half_w - 0.8, 0, half_d - 3.5), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 1.1},
+	}
+	# Sink cabinet to the left of fridge, against the same (+X) wall
+	var sink_cabinet_layouts := {
+		"house_1": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.042},
+		"house_2": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.04},
+		"house_3": {"pos": Vector3(half_w - 0.9, 0, half_d - 2.6), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.038},
+		"house_4": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.042},
+		"house_5": {"pos": Vector3(half_w - 0.9, 0, half_d - 2.6), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.035},
+		"house_6": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.04},
+		"house_7": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.042},
+		"house_8": {"pos": Vector3(half_w - 0.9, 0, half_d - 2.6), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.038},
+		"house_9": {"pos": Vector3(half_w - 1.1, 0, half_d - 3.0), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.04},
+		"house_10": {"pos": Vector3(half_w - 0.8, 0, half_d - 2.2), "rot": Vector3(0, -90, 0), "scale": Vector3.ONE * 0.032},
+	}
+	if furniture_layouts.has(id_prefix):
+		var fl: Dictionary = furniture_layouts[id_prefix]
+		var furn_pos: Vector3 = origin + fl.pos
+		var furn_scale: Vector3 = fl.scale
+		var furn_rot: Vector3 = fl.rot
+		_try_instance_external_scene([POST_APO_FURNITURE_MODEL], label + " Furniture", furn_pos, furn_scale, furn_rot, true, 0.0)
+		var furn_node := get_node_or_null(label + " Furniture")
+		if furn_node != null:
+			_remove_collision_from_node(furn_node)
+	if fridge_layouts.has(id_prefix):
+		var frl: Dictionary = fridge_layouts[id_prefix]
+		var fridge_pos: Vector3 = origin + frl.pos
+		var fridge_scale: Vector3 = frl.scale
+		var fridge_rot: Vector3 = frl.rot
+		_try_instance_external_scene([POST_APO_FRIDGE_MODEL], label + " Fridge", fridge_pos, fridge_scale, fridge_rot, true, 0.0)
+		var fridge_node := get_node_or_null(label + " Fridge")
+		if fridge_node != null:
+			_remove_collision_from_node(fridge_node)
+	if toilet_layouts.has(id_prefix):
+		var tl: Dictionary = toilet_layouts[id_prefix]
+		var toilet_pos: Vector3 = origin + tl.pos
+		var toilet_scale: Vector3 = tl.scale
+		var toilet_rot: Vector3 = tl.rot
+		_try_instance_external_scene([TOILET_MODEL], label + " Toilet", toilet_pos, toilet_scale, toilet_rot, true, 0.0)
+		var toilet_node := get_node_or_null(label + " Toilet")
+		if toilet_node != null:
+			_remove_collision_from_node(toilet_node)
+	if sink_layouts.has(id_prefix):
+		var sl: Dictionary = sink_layouts[id_prefix]
+		var sink_pos: Vector3 = origin + sl.pos
+		var sink_scale: Vector3 = sl.scale
+		var sink_rot: Vector3 = sl.rot
+		_try_instance_external_scene([BATHROOM_SINK_MODEL], label + " Sink", sink_pos, sink_scale, sink_rot, true, 0.0)
+		var sink_node := get_node_or_null(label + " Sink")
+		if sink_node != null:
+			_remove_collision_from_node(sink_node)
+	if stove_layouts.has(id_prefix):
+		var stl: Dictionary = stove_layouts[id_prefix]
+		var stove_pos: Vector3 = origin + stl.pos
+		var stove_scale: Vector3 = stl.scale
+		var stove_rot: Vector3 = stl.rot
+		_try_instance_external_scene([KITCHEN_STOVE_MODEL], label + " Stove", stove_pos, stove_scale, stove_rot, true, 0.0)
+		var stove_node := get_node_or_null(label + " Stove")
+		if stove_node != null:
+			_remove_collision_from_node(stove_node)
+	if sink_cabinet_layouts.has(id_prefix):
+		var scl: Dictionary = sink_cabinet_layouts[id_prefix]
+		var cabinet_pos: Vector3 = origin + scl.pos
+		var cabinet_scale: Vector3 = scl.scale
+		var cabinet_rot: Vector3 = scl.rot
+		_try_instance_external_scene([SINK_CABINET_MODEL], label + " SinkCabinet", cabinet_pos, cabinet_scale, cabinet_rot, true, 0.0)
+		var cabinet_node := get_node_or_null(label + " SinkCabinet")
+		if cabinet_node != null:
+			_remove_collision_from_node(cabinet_node)
+			var fridge_ref := get_node_or_null(label + " Fridge")
+			if fridge_ref != null:
+				fridge_ref.force_update_transform()
+				cabinet_node.force_update_transform()
+				var fridge_aabb: AABB = _compute_node_world_aabb(fridge_ref)
+				var cabinet_aabb: AABB = _compute_node_world_aabb(cabinet_node)
+				var gap := 0.05
+				# Both are against the +X wall: align back faces (max X) to same wall plane
+				var fridge_back_x := fridge_aabb.position.x + fridge_aabb.size.x
+				var cabinet_back_x := cabinet_aabb.position.x + cabinet_aabb.size.x
+				var delta_x := fridge_back_x - cabinet_back_x
+				cabinet_node.position.x += delta_x
+				# Place cabinet to the LEFT of the fridge along the wall (-Z side): cabinet max Z = fridge min Z - gap
+				var fridge_left_z := fridge_aabb.position.z
+				var cabinet_max_z := cabinet_aabb.position.z + cabinet_aabb.size.z
+				var delta_z := (fridge_left_z - gap) - cabinet_max_z
+				cabinet_node.position.z += delta_z
+				# Align bases (min Y) to same floor height
+				var fridge_bottom_y := fridge_aabb.position.y
+				var cabinet_bottom_y := cabinet_aabb.position.y
+				var delta_y := fridge_bottom_y - cabinet_bottom_y
+				cabinet_node.position.y += delta_y
+				cabinet_node.force_update_transform()
+				# Verify final placement
+				var final_fridge_aabb := _compute_node_world_aabb(fridge_ref)
+				var final_cabinet_aabb := _compute_node_world_aabb(cabinet_node)
+				print("[SINK_CABINET] %s Fridge AABB: pos=%s size=%s" % [label, final_fridge_aabb.position, final_fridge_aabb.size])
+				print("[SINK_CABINET] %s Cabinet AABB: pos=%s size=%s" % [label, final_cabinet_aabb.position, final_cabinet_aabb.size])
+				print("[SINK_CABINET] %s Cabinet transform: pos=%s rot=%s scale=%s" % [label, cabinet_node.position, cabinet_node.rotation_degrees, cabinet_node.scale])
+				print("[SINK_CABINET] %s Fridge transform: pos=%s rot=%s scale=%s" % [label, fridge_ref.position, fridge_ref.rotation_degrees, fridge_ref.scale])
+				# Log each mesh child to find origin offsets
+				var cabinet_meshes := []
+				_collect_mesh_instances(cabinet_node, cabinet_meshes)
+				for i in range(cabinet_meshes.size()):
+					var mi := cabinet_meshes[i] as MeshInstance3D
+					if mi.mesh != null:
+						var local_aabb := mi.get_aabb()
+						print("[SINK_CABINET] %s Mesh[%d] local_pos=%s local_aabb=%s" % [label, i, mi.position, local_aabb])
+				var actual_gap := final_fridge_aabb.position.z - (final_cabinet_aabb.position.z + final_cabinet_aabb.size.z)
+				print("[SINK_CABINET] %s Gap between cabinet and fridge: %.4f m" % [label, actual_gap])
+				if actual_gap < -0.001:
+					push_warning("[SINK_CABINET] %s OVERLAP detected! Gap=%.4f" % [label, actual_gap])
+				elif actual_gap > 0.06:
+					push_warning("[SINK_CABINET] %s Gap too large: %.4f m (expected 0.05)" % [label, actual_gap])
+				# Place the stove to the LEFT of the sink cabinet, against the same (+X) wall
+				var stove_ref := get_node_or_null(label + " Stove")
+				if stove_ref != null:
+					stove_ref.force_update_transform()
+					var stove_aabb: AABB = _compute_node_world_aabb(stove_ref)
+					var cab_aabb2: AABB = _compute_node_world_aabb(cabinet_node)
+					var stove_gap := 0.05
+					# Align back faces (max X) to same wall plane as cabinet
+					var cab_back_x := cab_aabb2.position.x + cab_aabb2.size.x
+					var stove_back_x := stove_aabb.position.x + stove_aabb.size.x
+					stove_ref.position.x += cab_back_x - stove_back_x
+					# Place stove to the LEFT of the cabinet (-Z side): stove max Z = cabinet min Z - gap
+					var cab_left_z := cab_aabb2.position.z
+					var stove_max_z := stove_aabb.position.z + stove_aabb.size.z
+					stove_ref.position.z += (cab_left_z - stove_gap) - stove_max_z
+					stove_ref.force_update_transform()
+					var final_stove_aabb := _compute_node_world_aabb(stove_ref)
+					var final_cab_aabb := _compute_node_world_aabb(cabinet_node)
+					var stove_actual_gap := final_cab_aabb.position.z - (final_stove_aabb.position.z + final_stove_aabb.size.z)
+					print("[STOVE] %s Stove AABB: pos=%s size=%s" % [label, final_stove_aabb.position, final_stove_aabb.size])
+					print("[STOVE] %s Gap between stove and cabinet: %.4f m" % [label, stove_actual_gap])
 
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
@@ -5554,17 +5937,6 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 		add_child(plane)
 	return true
 
-func _create_clouds() -> void:
-	var cloud_textures := _get_cloud_billboard_textures()
-	if cloud_textures.is_empty():
-		for i in range(10):
-			var base := Vector3(randf_range(-88, 88), randf_range(32, 44), randf_range(-92, 70))
-			_create_cloud_layer(base, randf_range(13.0, 24.0), randf_range(5.0, 11.0), randf_range(0, 180))
-		return
-	for i in range(7):
-		var base := Vector3(randf_range(-95, 95), randf_range(42, 55), randf_range(-95, 85))
-		_create_cloud_billboard(base, _shuffled_paths(cloud_textures), randf_range(15.0, 28.0), randf_range(6.0, 12.0), randf_range(0, 180))
-
 func _create_forest() -> void:
 	#_create_label("Bosque", Vector3(-48, 2.2, 20))
 	#_create_label("Bosque denso norte", Vector3(40, 2.2, -55))
@@ -5579,6 +5951,10 @@ func _create_forest() -> void:
 			continue
 		if Vector3(x, 0, z).distance_to(Vector3(-42, 0, -42)) < 8.0:
 			continue
+		if Vector3(x, 0, z).distance_to(Vector3(-45, 0, -5)) < 8.0:
+			continue
+		if Vector3(x, 0, z).distance_to(Vector3(-20, 0, 30)) < 7.0:
+			continue
 		_create_tree(Vector3(x, 0, z))
 	for i in range(180):
 		var x := randf_range(15, 72)
@@ -5591,6 +5967,8 @@ func _create_forest() -> void:
 		var z := randf_range(-72, -45)
 		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
+		if Vector3(x, 0, z).distance_to(Vector3(30, 0, -35)) < 9.0:
+			continue
 		_create_tree(Vector3(x, 0, z))
 	for i in range(120):
 		var x := randf_range(45, 72)
@@ -5602,6 +5980,8 @@ func _create_forest() -> void:
 		var x := randf_range(-72, -20)
 		var z := randf_range(-72, -40)
 		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
+			continue
+		if Vector3(x, 0, z).distance_to(Vector3(-35, 0, -40)) < 8.0:
 			continue
 		_create_tree(Vector3(x, 0, z))
 	for i in range(400):
@@ -6064,41 +6444,6 @@ func _create_cutout_plant(node_name: String, pos: Vector3, height: float, textur
 		root.add_child(mesh_instance)
 	return true
 
-func _create_cloud_billboard(pos: Vector3, texture_paths: Array, width: float, depth: float, yaw: float) -> bool:
-	var texture_path := ""
-	for candidate in texture_paths:
-		if _resource_path_exists(candidate):
-			texture_path = candidate
-			break
-	if texture_path.is_empty():
-		return false
-	var material := _make_cloud_billboard_material(texture_path)
-	if material.albedo_texture == null:
-		return false
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.name = "CloudBillboard"
-	mesh_instance.position = pos
-	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
-	var mesh := PlaneMesh.new()
-	mesh.size = Vector2(width, depth)
-	mesh.subdivide_width = 1
-	mesh.subdivide_depth = 1
-	mesh_instance.mesh = mesh
-	mesh_instance.material_override = material
-	add_child(mesh_instance)
-	return true
-
-func _create_cloud_layer(pos: Vector3, width: float, depth: float, yaw: float) -> void:
-	for i in range(5):
-		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.name = "SoftCloud"
-		mesh_instance.position = pos + Vector3(randf_range(-width * 0.35, width * 0.35), randf_range(-0.35, 0.45), randf_range(-depth * 0.55, depth * 0.55))
-		mesh_instance.rotation_degrees = Vector3(randf_range(-2.0, 2.0), yaw + randf_range(-10.0, 10.0), randf_range(-3.0, 3.0))
-		mesh_instance.scale = Vector3(width * randf_range(0.12, 0.24), randf_range(0.28, 0.52), depth * randf_range(0.24, 0.48))
-		mesh_instance.mesh = _get_shared_visual_sphere_mesh()
-		mesh_instance.material_override = _make_cloud_material()
-		add_child(mesh_instance)
-
 func _create_static_box(node_name: String, pos: Vector3, size: Vector3, color: Color) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
@@ -6236,19 +6581,11 @@ func _create_tree_collision(node_name: String, pos: Vector3) -> StaticBody3D:
 
 	var trunk_collision := CollisionShape3D.new()
 	var trunk_shape := CylinderShape3D.new()
-	trunk_shape.radius = 0.92
+	trunk_shape.radius = 0.5
 	trunk_shape.height = 6.8
 	trunk_collision.shape = trunk_shape
 	trunk_collision.position.y = trunk_shape.height * 0.5
 	body.add_child(trunk_collision)
-
-	var root_collision := CollisionShape3D.new()
-	var root_shape := CylinderShape3D.new()
-	root_shape.radius = 1.35
-	root_shape.height = 1.15
-	root_collision.shape = root_shape
-	root_collision.position.y = root_shape.height * 0.5
-	body.add_child(root_collision)
 
 	add_child(body)
 	return body
@@ -6756,6 +7093,18 @@ void fragment() {
 	material_cache["river_water"] = material
 	return material
 
+const REALISTIC_SKY_SHADER := "res://shaders/realistic_sky.gdshader"
+
+func _make_shader_sky_material() -> ShaderMaterial:
+	if not ResourceLoader.exists(REALISTIC_SKY_SHADER):
+		return null
+	var shader = load(REALISTIC_SKY_SHADER)
+	if shader == null or not (shader is Shader):
+		return null
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
+
 func _make_hdri_sky_material() -> PanoramaSkyMaterial:
 	for texture_path in SKY_HDRI_CANDIDATES:
 		if not _resource_path_exists(texture_path):
@@ -6798,27 +7147,6 @@ func _get_billboard_textures(kind: String) -> Array:
 			textures = TREE_BILLBOARD_TEXTURES.duplicate()
 	textures.sort()
 	billboard_texture_cache[kind] = textures
-	return textures.duplicate()
-
-func _get_cloud_billboard_textures() -> Array:
-	if billboard_texture_cache.has("cloud"):
-		return billboard_texture_cache["cloud"].duplicate()
-	var textures := []
-	for folder in ["res://assets/external/clouds", "res://assets/external/clouds/png"]:
-		var dir := DirAccess.open(folder)
-		if dir == null:
-			continue
-		dir.list_dir_begin()
-		var file_name := dir.get_next()
-		while file_name != "":
-			if not dir.current_is_dir():
-				var extension := file_name.get_extension().to_lower()
-				if extension == "png" or extension == "webp" or extension == "jpg" or extension == "jpeg":
-					textures.append(folder + "/" + file_name)
-			file_name = dir.get_next()
-		dir.list_dir_end()
-	textures.sort()
-	billboard_texture_cache["cloud"] = textures
 	return textures.duplicate()
 
 func _resource_path_exists(path: String) -> bool:
@@ -6875,34 +7203,6 @@ func _make_cutout_material(key: String, texture_path: String, alpha_path: String
 	material.alpha_scissor_threshold = 0.12
 	material.albedo_texture = _load_texture_from_path(texture_path)
 	material_cache[cache_key] = material
-	return material
-
-func _make_cloud_billboard_material(texture_path: String) -> StandardMaterial3D:
-	var key := "cloud_billboard_" + texture_path
-	if material_cache.has(key):
-		return material_cache[key]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1, 1, 1, 0.88)
-	material.roughness = 1.0
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	material.albedo_texture = _load_texture_from_path(texture_path)
-	material_cache[key] = material
-	return material
-
-func _make_cloud_material() -> StandardMaterial3D:
-	if material_cache.has("cloud_layer"):
-		return material_cache["cloud_layer"]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.88, 0.91, 0.91, 0.22)
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	material_cache["cloud_layer"] = material
 	return material
 
 func _create_loot_container(id: String, label: String, pos: Vector3, size: Vector3, color: Color, model_paths: Array = []):
@@ -7111,7 +7411,6 @@ func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 		node.force_update_transform()
 
 func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, scale_value: Vector3) -> void:
-	print("[SNAP] path=", path, " ground_y=", ground_y, " scale=", scale_value, " node_pos=", node.global_position)
 	var _snap_dbg := FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE) if path.contains("scrap_barricade") else null
 	if _snap_dbg:
 		_snap_dbg.seek_end()
@@ -7119,7 +7418,6 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 	if _snap_offset_cache.has(path):
 		var unit_offset: float = float(_snap_offset_cache[path])
 		node.position.y += ground_y - unit_offset * scale_value.y
-		print("[SNAP] cached unit_offset=", unit_offset, " new_pos_y=", node.position.y)
 		if _snap_dbg:
 			_snap_dbg.store_line("[SNAP] cached unit_offset=" + str(unit_offset) + " new_pos_y=" + str(node.position.y))
 			_snap_dbg.close()
@@ -7127,7 +7425,6 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 	node.force_update_transform()
 	var meshes := []
 	_collect_mesh_instances(node, meshes)
-	print("[SNAP] mesh_count=", meshes.size())
 	if _snap_dbg:
 		_snap_dbg.store_line("[SNAP] mesh_count=" + str(meshes.size()))
 	var min_local_y := 1000000.0
@@ -7140,19 +7437,16 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 		var world_aabb: AABB = mesh_instance.global_transform * local_aabb
 		var local_bottom := world_aabb.position.y - node.global_position.y
 		min_local_y = min(min_local_y, local_bottom)
-	print("[SNAP] min_local_y=", min_local_y)
 	if _snap_dbg:
 		_snap_dbg.store_line("[SNAP] min_local_y=" + str(min_local_y))
 	if min_local_y < 999999.0:
 		var unit_offset := min_local_y / scale_value.y
 		_snap_offset_cache[path] = unit_offset
 		node.position.y += ground_y - min_local_y
-		print("[SNAP] adjusted pos_y=", node.position.y, " unit_offset=", unit_offset)
 		if _snap_dbg:
 			_snap_dbg.store_line("[SNAP] adjusted pos_y=" + str(node.position.y) + " unit_offset=" + str(unit_offset))
 			_snap_dbg.close()
 	else:
-		print("[SNAP] WARNING: no valid meshes found for ", path)
 		if _snap_dbg:
 			_snap_dbg.store_line("[SNAP] WARNING: no valid meshes found for " + path)
 			_snap_dbg.close()
@@ -7205,6 +7499,27 @@ func _get_node_world_aabb_min_y(node: Node3D) -> float:
 	if min_y < 1000000.0:
 		return min_y
 	return 0.0
+
+func _compute_node_world_aabb(node: Node3D) -> AABB:
+	node.force_update_transform()
+	var meshes := []
+	_collect_mesh_instances(node, meshes)
+	var combined := AABB()
+	var first := true
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
+		if first:
+			combined = world_aabb
+			first = false
+		else:
+			combined = combined.merge(world_aabb)
+	if first:
+		return AABB(node.global_position, Vector3.ZERO)
+	return combined
 
 func _shuffled_paths(paths: Array) -> Array:
 	var shuffled := paths.duplicate()

@@ -70,7 +70,21 @@ func _physics_process(delta: float) -> void:
 	_apply_gravity(delta)
 	move_and_slide()
 
-	stats.tick(delta, is_running, is_resting, ambient_temperature, inventory.get_equipped_warmth())
+	var effective_temp: float = ambient_temperature
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("get_hud"):
+		var hud = scene.call("get_hud")
+		if hud != null and hud.get("_real_temp_parsed") != null and float(hud.get("_real_temp_parsed")) != -999.0:
+			effective_temp = float(hud.get("_real_temp_parsed"))
+		elif scene.has_method("get_day_cycle"):
+			var dc = scene.call("get_day_cycle")
+			if dc != null and dc.has_method("get_ambient_temperature"):
+				effective_temp = float(dc.call("get_ambient_temperature"))
+	elif scene != null and scene.has_method("get_day_cycle"):
+		var dc = scene.call("get_day_cycle")
+		if dc != null and dc.has_method("get_ambient_temperature"):
+			effective_temp = float(dc.call("get_ambient_temperature"))
+	stats.tick(delta, is_running, is_resting, effective_temp, inventory.get_equipped_warmth())
 	if interactor != null:
 		interactor.update_prompt(self)
 

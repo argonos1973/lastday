@@ -1356,8 +1356,6 @@ func _physics_process(delta: float) -> void:
 		if is_sleeping_on_bed:
 			velocity = Vector3.ZERO
 			global_position = _bed_sleep_position
-			if Engine.get_physics_frames() % 60 == 0:
-				print("[SLEEP] global_position=", global_position, " _bed_sleep_position=", _bed_sleep_position, " collision_mask=", collision_mask)
 		else:
 			if not is_on_floor():
 				velocity.y -= _gravity * delta
@@ -1368,6 +1366,11 @@ func _physics_process(delta: float) -> void:
 		_update_backpack_socket()
 		_update_hand_socket()
 		_update_interaction_prompt()
+		if camera != null:
+			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
+			camera.position = camera.position.lerp(sleep_cam_pos, delta * 5.0)
+			_pitch = lerp(_pitch, deg_to_rad(-12.0), delta * 5.0)
+			camera.rotation.x = _pitch
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
@@ -1500,6 +1503,10 @@ func _update_water_state(delta: float) -> void:
 			var dc = scene.call("get_day_cycle")
 			if dc != null and dc.has_method("get_ambient_temperature"):
 				ambient = float(dc.call("get_ambient_temperature"))
+		if scene != null and scene.has_method("get_hud"):
+			var hud = scene.call("get_hud")
+			if hud != null and hud.get("_real_temp_parsed") != null and float(hud.get("_real_temp_parsed")) != -999.0:
+				ambient = float(hud.get("_real_temp_parsed"))
 		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008
 		wetness = max(0.0, wetness - delta * dry_rate)
 		stats.wetness = wetness
