@@ -429,17 +429,6 @@ func _wolf_ai(delta: float) -> Dictionary:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null:
 								net_node.apply_damage_to_client.rpc_id(peer_id, 25.0)
-							var hp: float = _player.get_meta("proxy_health", 100.0)
-							hp = max(0.0, hp - 25.0)
-							_player.set_meta("proxy_health", hp)
-							if hp <= 0.0:
-								_player.set_meta("proxy_dead", true)
-								_player.remove_from_group("net_player_proxy")
-								_player.add_to_group("interactable")
-								print("[NET] Player %d killed by wolf at %s, corpse lootable" % [peer_id, _player.global_position])
-								var scene_node := get_tree().current_scene
-								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
-									scene_node._broadcast_player_death(peer_id, _player)
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(25.0)
 					_play_wolf_sound("attack")
