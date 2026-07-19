@@ -1108,7 +1108,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.set_meta("client_id", cid)
 			existing.set_meta("disconnected", false)
 			existing.set_meta("reconnecting", true)
-			existing.set_meta("protection_timer", 10.0)
+			existing.set_meta("protection_timer", 30.0)
 			existing.add_to_group("net_player_proxy")
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
@@ -1145,7 +1145,7 @@ func _spawn_server_proxy(id: int) -> void:
 	# Store peer_id as metadata
 	proxy.set_meta("peer_id", id)
 	# Spawn protection: wolves won't target this proxy for 20 seconds
-	proxy.set_meta("protection_timer", 10.0)
+	proxy.set_meta("protection_timer", 30.0)
 	proxy.set_meta("has_real_pos", false)
 	proxy.set_meta("disconnected", false)
 	proxy.set_meta("reconnecting", true)

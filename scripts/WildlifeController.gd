@@ -39,6 +39,7 @@ var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
 var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
+var _wolf_ai_debug_timer := 0.0
 var health := 150.0
 var max_health := 150.0
 var _is_dead := false
@@ -219,6 +220,7 @@ func _process(delta: float) -> void:
 	_update_stuck_timer(delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	_chase_cooldown = max(0.0, _chase_cooldown - delta)
+	_wolf_ai_debug_timer = max(0.0, _wolf_ai_debug_timer - delta)
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf":
 		_update_wolf_sounds(delta)
@@ -374,6 +376,9 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
+		if _wolf_ai_debug_timer <= 0.0:
+			_wolf_ai_debug_timer = 5.0
+			print("[WOLF-DBG] %s chasing dist=%.1f flat=%.1f height=%.1f cooldown=%.1f" % [name, dist_to_player, flat_dist, height_diff, _chase_cooldown])
 		if dist_to_player < 45.0:
 			_state = "chase_player"
 			_chase_target = _player
@@ -1440,7 +1445,14 @@ func _resolve_player() -> void:
 				nearest = p as Node3D
 		if nearest != null:
 			_player = nearest
+			if _wolf_ai_debug_timer <= 0.0:
+				_wolf_ai_debug_timer = 5.0
+				print("[WOLF-DBG] %s resolved player=%s dist=%.1f prot=%.1f real_pos=%s" % [name, _player.name, global_position.distance_to(_player.global_position), _player.get_meta("protection_timer", 0.0), _player.get_meta("has_real_pos", false)])
 			return
+		else:
+			if _wolf_ai_debug_timer <= 0.0:
+				_wolf_ai_debug_timer = 5.0
+				print("[WOLF-DBG] %s no proxy found, proxies=%d" % [name, proxies.size()])
 	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
 
