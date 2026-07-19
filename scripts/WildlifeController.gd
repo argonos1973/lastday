@@ -376,6 +376,18 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
+		# Skip if player is near a lit campfire
+		if _is_near_lit_campfire(_player.global_position, 10.0):
+			_state = "patrol"
+			_chase_target = null
+			_chase_cooldown = 3.0
+			_play_wolf_sound("growl")
+			var away := (global_position - _player.global_position).normalized()
+			away.y = 0.0
+			target = global_position + away * 20.0
+			speed = move_speed * 2.0
+			_play_animation_by_name("trot")
+			return {"target": target, "speed": speed}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
 			print("[WOLF-DBG] %s chasing dist=%.1f flat=%.1f height=%.1f cooldown=%.1f" % [name, dist_to_player, flat_dist, height_diff, _chase_cooldown])
@@ -1396,6 +1408,17 @@ func _flee_distance() -> float:
 	if animal_type == "wolf":
 		return 0.0
 	return 16.0 if animal_type == "fox" else 13.0
+
+func _is_near_lit_campfire(pos: Vector3, radius: float) -> bool:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return false
+	# Check campfire_positions on Main
+	if scene.has_method("get_lit_campfire_positions"):
+		for cf_pos in scene.get_lit_campfire_positions():
+			if pos.distance_to(cf_pos) < radius:
+				return true
+	return false
 
 func _resolve_player() -> void:
 	if _player != null and is_instance_valid(_player):

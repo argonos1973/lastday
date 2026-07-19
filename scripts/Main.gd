@@ -627,6 +627,16 @@ func _tick_campfire_fires() -> void:
 			player.notice.emit("La fogata se ha apagado.")
 		_save_world_change_silent()
 
+func get_lit_campfire_positions() -> Array:
+	var positions := []
+	var now := Time.get_ticks_msec()
+	for fire_name in campfire_fire_timers.keys():
+		if now < campfire_fire_timers[fire_name]:
+			var light_node := get_node_or_null(fire_name + "Light")
+			if light_node != null and light_node is Node3D:
+				positions.append((light_node as Node3D).global_position)
+	return positions
+
 func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 	if campfire_positions.is_empty():
 		return
