@@ -1302,7 +1302,6 @@ func _send_world_state_to_client(peer_id: int) -> void:
 		for door in get_tree().get_nodes_in_group("doors"):
 			if door is Door and door.is_open:
 				open_doors.append(door.name)
-	print("[DOOR] _send_world_state_to_client peer_id=%d open_doors=%s" % [peer_id, open_doors])
 	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters)
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
@@ -1340,7 +1339,6 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				action.display_name = "Fogata encendida"
 				action.repeatable = true
 	# Apply open door states
-	print("[DOOR] _net_sync_world_state received open_doors=%s" % str(open_doors))
 	for door_name in open_doors:
 		for d in get_tree().get_nodes_in_group("doors"):
 			if d is Door and d.name == door_name and not d.is_open:
@@ -1369,7 +1367,6 @@ func _net_item_picked_up(action_id: String) -> void:
 		world_actions_by_id.erase(action_id)
 
 func _net_door_state_changed(door_name: String, is_open: bool) -> void:
-	print("[DOOR] _net_door_state_changed name=%s is_open=%s" % [door_name, is_open])
 	_server_door_states[door_name] = is_open
 	# Also update the visual door if it exists (non-dedicated server or client)
 	var door: Door = null
@@ -1378,7 +1375,6 @@ func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 			door = d
 			break
 	if door != null:
-		print("[DOOR] Found door, current is_open=%s, updating to %s" % [door.is_open, is_open])
 		if door.is_open != is_open:
 			door.is_open = is_open
 			var target_yaw: float = door.open_yaw if is_open else door.closed_yaw
@@ -5674,7 +5670,7 @@ func _is_inside_closed_house(pos: Vector3) -> bool:
 	var p := Vector2(pos.x, pos.z)
 	for blocker in wildlife_blockers:
 		var door = blocker.get("door", null)
-		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		var door_is_open := _check_door_open(door, blocker)
 		if not door_is_open and blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
 			if bounds.has_point(p):
@@ -5687,7 +5683,7 @@ func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 	for blocker in wildlife_blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var door = blocker.get("door", null)
-		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		var door_is_open := _check_door_open(door, blocker)
 		# When a house door is closed, push wolf toward house center if near bounds edge
 		if not door_is_open and blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
@@ -5722,12 +5718,22 @@ func _register_wildlife_blocker(pos: Vector3, radius := 1.8) -> int:
 	})
 	return idx
 
+func _check_door_open(door, blocker: Dictionary) -> bool:
+	if door != null and is_instance_valid(door) and door.get("is_open") == true:
+		return true
+	# Fallback: check _server_door_states by door name
+	if door != null and is_instance_valid(door):
+		var door_name: String = door.name
+		if _server_door_states.has(door_name):
+			return bool(_server_door_states[door_name])
+	return false
+
 func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 	var p := Vector2(pos.x, pos.z)
 	for blocker in wildlife_blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var door = blocker.get("door", null)
-		var door_is_open: bool = door != null and is_instance_valid(door) and door.get("is_open") == true
+		var door_is_open := _check_door_open(door, blocker)
 		# House bounds: always block walls, allow doorway passage when door is open
 		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
