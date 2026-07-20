@@ -415,7 +415,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist < 3.5 and height_diff < 2.0:
+			elif flat_dist <= 4.0 and height_diff < 2.0:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
@@ -439,7 +439,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 									scene_node._broadcast_player_death(peer_id, _player)
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-							if net_node != null:
+							if net_node != null and net_node.multiplayer.has_peer(peer_id):
 								net_node.apply_damage_to_client.rpc_id(peer_id, 25.0)
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(25.0)
