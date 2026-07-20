@@ -40,8 +40,8 @@ var _prey_flee_timer := 0.0
 var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
 var _wolf_ai_debug_timer := 0.0
-var health := 150.0
-var max_health := 150.0
+var health := 240.0
+var max_health := 240.0
 var _is_dead := false
 var is_puppet := false
 var current_anim_keyword := "walk"
@@ -60,8 +60,8 @@ func setup_puppet(kind: String) -> void:
 	add_to_group("wildlife")
 	match animal_type:
 		"wolf":
-			health = 150.0
-			max_health = 150.0
+			health = 240.0
+			max_health = 240.0
 		"deer":
 			health = 80.0
 			max_health = 80.0
@@ -85,7 +85,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 	elif not dead:
 		_play_animation_by_name(anim)
 
-# Puppet take_damage: forward to server via RPC
+# Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool) -> void:
 	if not is_puppet:
 		# Real animal — apply damage directly
@@ -103,11 +103,24 @@ func take_damage(amount: float, from_knife: bool) -> void:
 				_animation_player.stop()
 			_lie_corpse_flat()
 		return
-	# Puppet: send RPC to server to damage the real animal
+	# Puppet: apply damage locally for immediate visual feedback
+	if _is_dead:
+		return
+	health = max(0.0, health - amount)
+	_hit_flash_timer = 0.3
+	_prey_flee_timer = 3.0
+	_spawn_blood_splatter()
+	_play_wolf_pain_sound()
+	if health <= 0.0:
+		_is_dead = true
+		_hit_flash_timer = 2.0
+		if _animation_player != null:
+			_animation_player.stop()
+		_lie_corpse_flat()
+	# Also notify the server
 	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if net_node != null:
 		net_node.damage_animal.rpc_id(1, name, amount, from_knife)
-	_spawn_blood_splatter()
 
 func setup(kind: String, points: Array) -> void:
 	animal_type = kind
@@ -119,8 +132,8 @@ func setup(kind: String, points: Array) -> void:
 	# Set health based on animal type
 	match animal_type:
 		"wolf":
-			health = 150.0
-			max_health = 150.0
+			health = 240.0
+			max_health = 240.0
 		"deer":
 			health = 80.0
 			max_health = 80.0
@@ -1521,6 +1534,7 @@ func _build_animal() -> void:
 	if net_node != null and net_node.is_dedicated_server:
 		return
 	if _try_build_external_animal():
+		_create_hitbox()
 		return
 	var scale_value := 1.0 if animal_type == "deer" else 0.48
 	var body_color := Color(0.30, 0.20, 0.11) if animal_type == "deer" else Color(0.32, 0.28, 0.22)
@@ -1539,6 +1553,32 @@ func _build_animal() -> void:
 			var leg := _mesh_cylinder("WildlifeLeg", Vector3(x * scale_value, 0.20 * scale_value, z * scale_value), 0.045 * scale_value, 0.45 * scale_value, body_color.darkened(0.14))
 			add_child(leg)
 			_legs.append(leg)
+	_create_hitbox()
+
+func _create_hitbox() -> void:
+	var body_height := 1.2 if animal_type == "deer" else (0.9 if animal_type == "wolf" else 0.4)
+	var body_center := body_height * 0.5
+	var head_y := body_height * 0.85
+	var head_radius := 0.22 if animal_type == "deer" else 0.16
+	var body_area := Area3D.new()
+	body_area.name = "BodyHitbox"
+	var body_col := CollisionShape3D.new()
+	var body_shape := CapsuleShape3D.new()
+	body_shape.radius = 0.35 if animal_type == "deer" else 0.25
+	body_shape.height = body_height
+	body_col.shape = body_shape
+	body_col.position.y = body_center
+	body_area.add_child(body_col)
+	add_child(body_area)
+	var head_area := Area3D.new()
+	head_area.name = "HeadHitbox"
+	var head_col := CollisionShape3D.new()
+	var head_shape := SphereShape3D.new()
+	head_shape.radius = head_radius
+	head_col.shape = head_shape
+	head_col.position.y = head_y
+	head_area.add_child(head_col)
+	add_child(head_area)
 
 func _try_build_external_animal() -> bool:
 	var candidates := _animal_asset_candidates()

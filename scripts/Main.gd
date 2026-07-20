@@ -348,7 +348,7 @@ const WORLD_SEED := 1337
 
 var _loading_overlay: CanvasLayer = null
 var _loading_label: Label = null
-var _loading_countdown: float = 3.0
+var _loading_countdown: float = 0.0
 
 func _ready() -> void:
 	seed(WORLD_SEED)
@@ -375,7 +375,7 @@ func _ready() -> void:
 	_loading_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_loading_overlay.add_child(_loading_rect)
 	_loading_label = Label.new()
-	_loading_label.text = "Cargando..."
+	_loading_label.text = "Generando mundo..."
 	_loading_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -387,7 +387,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_create_environment()
 	_create_day_night()
-	_create_map()
+	await _create_map()
 	_create_player()
 	if net == null or not net.is_dedicated_server:
 		_create_audio()
@@ -402,6 +402,8 @@ func _start_loading_countdown() -> void:
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
 		return
+	if _loading_countdown <= 0.0:
+		return
 	_loading_countdown -= delta
 	if _loading_countdown <= 0.0:
 		_loading_overlay.queue_free()
@@ -410,7 +412,7 @@ func _process_loading_countdown(delta: float) -> void:
 		return
 	var secs := ceili(_loading_countdown)
 	if _loading_label != null:
-		_loading_label.text = "Cargando... %d" % secs
+		_loading_label.text = "Iniciando... %d" % secs
 
 func _exit_tree() -> void:
 	# Force final inventory sync before disconnecting
@@ -2223,6 +2225,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
 			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+		"weapon_rifle":
+			return ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"]
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
@@ -2298,6 +2302,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 1.0
 		"weapon":
 			return 0.8
+		"weapon_rifle":
+			return 0.068
 		"food":
 			if item_name == "Carne cruda de lobo":
 				return 1.0
@@ -2375,20 +2381,28 @@ func _create_map() -> void:
 	var is_server: bool = net != null and net.is_dedicated_server
 	if not is_server:
 		_create_leafy_floor_ground()
+		if _loading_label != null:
+			_loading_label.text = "Generando terreno..."
+		await get_tree().process_frame
 	if not is_server:
-		_create_grass_ground_cover()
+		await _create_grass_ground_cover()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_backdrop()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_river()
+		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_road()
+		await get_tree().process_frame
 	if not is_server:
 		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1", 11.4, 9.4, 3.65)
 		await get_tree().process_frame
+		if _loading_label != null:
+			_loading_label.text = "Construyendo casas..."
 		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2", 14.0, 11.0, 4.2)
 		await get_tree().process_frame
 		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3", 9.0, 7.5, 3.2)
@@ -2409,47 +2423,81 @@ func _create_map() -> void:
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
+		print("[DBG-MAP] world_details start")
 		_create_world_details()
+		print("[DBG-MAP] world_details done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
+		print("[DBG-MAP] streetlights start")
 		# Light posts and power lines
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
+		print("[DBG-MAP] streetlights done")
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_ground_clutter()
+		print("[DBG-MAP] ground_clutter start")
+		if _loading_label != null:
+			_loading_label.text = "Generando vegetacion..."
+		await _create_ground_clutter()
+		print("[DBG-MAP] ground_clutter done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_tall_grass_fields()
+		print("[DBG-MAP] tall_grass start")
+		await _create_tall_grass_fields()
+		print("[DBG-MAP] tall_grass done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_grass_carpet()
+		print("[DBG-MAP] grass_carpet start")
+		await _create_grass_carpet()
+		print("[DBG-MAP] grass_carpet done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_dense_vegetation_zones()
+		print("[DBG-MAP] dense_veg start")
+		await _create_dense_vegetation_zones()
+		print("[DBG-MAP] dense_veg done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_forest()
+		print("[DBG-MAP] forest start")
+		if _loading_label != null:
+			_loading_label.text = "Plantando bosque..."
+		await _create_forest()
+		print("[DBG-MAP] forest done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
+		print("[DBG-MAP] survival_obj start")
 		_create_survival_objectives()
+		print("[DBG-MAP] survival_obj done")
+		await get_tree().process_frame
 	_create_river_drink_zones()
+	print("[DBG-MAP] river_drink done")
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
+		print("[DBG-MAP] nav_grid start")
 		_build_nav_grid()
+		print("[DBG-MAP] nav_grid done")
+		await get_tree().process_frame
+		print("[DBG-MAP] wildlife start")
+		if _loading_label != null:
+			_loading_label.text = "Generando fauna..."
 		_create_wildlife()
+		print("[DBG-MAP] wildlife done")
+		await get_tree().process_frame
 	if not is_server:
+		print("[DBG-MAP] flush_grass start")
 		_flush_grass_batches()
+		print("[DBG-MAP] flush_grass done")
+		await get_tree().process_frame
+	print("[DBG-MAP] _create_map COMPLETE")
 
 
 const ROAD_HALF_WIDTH := 5.0
@@ -2663,9 +2711,13 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	var win_h: float = win_w * 0.8
 	var blocker_idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 	#_create_label(label, origin + Vector3(0, 4.05, -4.65))
+	print("[DBG-HOUSE] %s start" % label)
 	_create_house_overgrowth(origin, label, half_w, half_d)
+	print("[DBG-HOUSE] %s overgrowth done" % label)
 	_create_house_foundation(origin, label, half_w, half_d, front_seg_c, front_seg_w)
+	print("[DBG-HOUSE] %s foundation done" % label)
 	_create_house_floor(origin, label, width, depth)
+	print("[DBG-HOUSE] %s floor done" % label)
 	# Back wall with two window holes (closer to center for smaller houses)
 	var back_win_x := width * 0.22
 	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -half_d), Vector3(width, height, wall_t), Vector3.ZERO, [
@@ -2693,8 +2745,11 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
 	# Door lintel
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
+	print("[DBG-HOUSE] %s walls done" % label)
 	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
+	print("[DBG-HOUSE] %s details done" % label)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
+	print("[DBG-HOUSE] %s interior done" % label)
 	# Roof collision
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth))
 	# Link door to wildlife blocker so wolves can enter when door is open
@@ -3011,6 +3066,7 @@ func _create_wildlife() -> void:
 				wp.z = clamp(wp.z, -72, 72)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
+		await get_tree().process_frame
 
 func _check_wildlife_respawn() -> void:
 	var alive_deer := 0
@@ -5721,6 +5777,8 @@ func _create_ground_clutter() -> void:
 			_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
 		else:
 			_create_static_box_rotated("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
+		if i % 200 == 0:
+			await get_tree().process_frame
 
 func _create_tall_grass_fields() -> void:
 	var fields := [
@@ -5746,6 +5804,8 @@ func _create_tall_grass_fields() -> void:
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.34, 0.72), Color(0.18, 0.32, 0.11).lerp(Color(0.32, 0.42, 0.14), randf()))
+			if i % 200 == 0:
+				await get_tree().process_frame
 
 func _create_dense_vegetation_zones() -> void:
 	var zones := [
@@ -5770,6 +5830,8 @@ func _create_dense_vegetation_zones() -> void:
 			_create_grass_clump(pos, randf_range(0.48, 1.05), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), randf()))
 			if randf() < 0.30:
 				_create_bush(pos + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), randf_range(0.55, 0.95))
+			if i % 150 == 0:
+				await get_tree().process_frame
 
 func _create_grass_ground_cover() -> void:
 	var patches := [
@@ -5794,6 +5856,8 @@ func _create_grass_ground_cover() -> void:
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.22, 0.48), Color(0.18, 0.32, 0.12).lerp(Color(0.34, 0.44, 0.16), randf()))
+			if i % 200 == 0:
+				await get_tree().process_frame
 
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
@@ -5816,6 +5880,8 @@ func _create_grass_carpet() -> void:
 			var r := randf_range(0.25, 0.48)
 			var c := base_color.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
 			_queue_grass_instance(pos, h, r, c)
+		if cx % 10 == 0:
+			await get_tree().process_frame
 
 func _create_billboard_underbrush_fields() -> void:
 	for i in range(8):
@@ -5873,12 +5939,16 @@ func _create_forest() -> void:
 		if Vector3(x, 0, z).distance_to(Vector3(-20, 0, 30)) < 7.0:
 			continue
 		_create_tree(Vector3(x, 0, z))
+		if i % 100 == 0:
+			await get_tree().process_frame
 	for i in range(180):
 		var x := randf_range(15, 72)
 		var z := randf_range(30, 72)
 		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
 		_create_tree(Vector3(x, 0, z))
+		if i % 100 == 0:
+			await get_tree().process_frame
 	for i in range(160):
 		var x := randf_range(-10, 72)
 		var z := randf_range(-72, -45)
@@ -5887,12 +5957,16 @@ func _create_forest() -> void:
 		if Vector3(x, 0, z).distance_to(Vector3(30, 0, -35)) < 9.0:
 			continue
 		_create_tree(Vector3(x, 0, z))
+		if i % 100 == 0:
+			await get_tree().process_frame
 	for i in range(120):
 		var x := randf_range(45, 72)
 		var z := randf_range(-15, 25)
 		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
 			continue
 		_create_tree(Vector3(x, 0, z))
+		if i % 100 == 0:
+			await get_tree().process_frame
 	for i in range(100):
 		var x := randf_range(-72, -20)
 		var z := randf_range(-72, -40)
@@ -5901,6 +5975,8 @@ func _create_forest() -> void:
 		if Vector3(x, 0, z).distance_to(Vector3(-35, 0, -40)) < 8.0:
 			continue
 		_create_tree(Vector3(x, 0, z))
+		if i % 100 == 0:
+			await get_tree().process_frame
 	for i in range(400):
 		var edge := randi() % 4
 		var pos := Vector3.ZERO
@@ -5916,6 +5992,8 @@ func _create_forest() -> void:
 		if not _can_place_ground_vegetation(pos, 1.5):
 			continue
 		_create_tree(pos)
+		if i % 100 == 0:
+			await get_tree().process_frame
 
 func _create_tree(pos: Vector3) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
@@ -6285,6 +6363,7 @@ func _flush_grass_batches() -> void:
 		add_child(mm_instance)
 		transforms.clear()
 		colors.clear()
+		await get_tree().process_frame
 	if not _tall_grass_meshes.is_empty():
 		for variant in range(_tall_grass_meshes.size()):
 			var t_transforms: Array = _tall_grass_transforms[variant]

@@ -16,14 +16,21 @@ var patrol_index := 0
 var player
 var attack_cooldown := 0.0
 var warned := false
+var health := 240.0
+var max_health := 240.0
+var is_dead := false
+var _hit_flash_timer := 0.0
 var _gravity := ProjectSettings.get_setting("physics/3d/default_gravity") as float
 
 func setup(new_player, points: Array[Vector3]) -> void:
 	player = new_player
 	patrol_points = points
+	add_to_group("npc")
 	_create_body()
 
 func _physics_process(delta: float) -> void:
+	if is_dead:
+		return
 	if player == null:
 		return
 	attack_cooldown = max(0.0, attack_cooldown - delta)
@@ -41,6 +48,30 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 	move_and_slide()
+	if _hit_flash_timer > 0.0:
+		_hit_flash_timer -= delta
+		var mesh_node := get_node_or_null("HostileHumanModel")
+		if mesh_node != null and mesh_node is MeshInstance3D:
+			var mat = (mesh_node as MeshInstance3D).material_override
+			if mat is StandardMaterial3D:
+				if _hit_flash_timer > 0.0:
+					(mat as StandardMaterial3D).albedo_color = Color(1.0, 0.3, 0.3)
+				else:
+					(mat as StandardMaterial3D).albedo_color = Color(0.20, 0.11, 0.09)
+
+func take_damage(amount: float, _from_knife: bool) -> void:
+	if is_dead:
+		return
+	health = max(0.0, health - amount)
+	_hit_flash_timer = 0.3
+	if health <= 0.0:
+		is_dead = true
+		_hit_flash_timer = 2.0
+		velocity = Vector3.ZERO
+		var tween := create_tween()
+		tween.tween_property(self, "rotation_degrees:x", 90.0, 0.5)
+		npc_notice.emit("El desconocido ha muerto.")
+		set_physics_process(false)
 
 func _patrol(delta: float) -> void:
 	if patrol_points.is_empty():
@@ -90,6 +121,27 @@ func _create_body() -> void:
 	collision.shape = capsule
 	collision.position.y = 0.9
 	add_child(collision)
+	# Body hitbox for rifle raycast
+	var body_area := Area3D.new()
+	body_area.name = "BodyHitbox"
+	var body_col := CollisionShape3D.new()
+	var body_shape := CapsuleShape3D.new()
+	body_shape.radius = 0.34
+	body_shape.height = 1.5
+	body_col.shape = body_shape
+	body_col.position.y = 0.9
+	body_area.add_child(body_col)
+	add_child(body_area)
+	# Head hitbox for headshots
+	var head_area := Area3D.new()
+	head_area.name = "HeadHitbox"
+	var head_col := CollisionShape3D.new()
+	var head_shape := SphereShape3D.new()
+	head_shape.radius = 0.18
+	head_col.shape = head_shape
+	head_col.position.y = 1.7
+	head_area.add_child(head_col)
+	add_child(head_area)
 
 	if _try_create_external_model():
 		return

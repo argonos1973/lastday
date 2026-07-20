@@ -125,28 +125,7 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 	"res://assets/animations/walking.glb",
 	"res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon.gltf"
 ]
-const THIRD_PERSON_RUN_ANIMATION_SOURCE := "res://assets/animations/correr.glb"
-const THIRD_PERSON_IDLE_ANIMATION_SOURCE := "res://assets/animations/idle.glb"
-const THIRD_PERSON_WALK_ANIMATION_SOURCE := "res://assets/animations/walking.glb"
-const THIRD_PERSON_SNEAK_ANIMATION_SOURCE := "res://assets/animations/agachado.glb"
-const THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE := "res://assets/animations/andarAgachado.glb"
-const THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE := "res://assets/animations/leftturn.glb"
-const THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE := "res://assets/animations/rightturn.glb"
-const THIRD_PERSON_PLANT_ANIMATION_SOURCE := "res://assets/animations/plantar.glb"
-const THIRD_PERSON_GATHER_ANIMATION_SOURCE := "res://assets/animations/recoger.glb"
-const THIRD_PERSON_FISH_ANIMATION_SOURCE := "res://assets/animations/Fishing Cast.glb"
-const THIRD_PERSON_INTERACT_ANIMATION_SOURCE := "res://assets/animations/coger.glb"
-const THIRD_PERSON_ATTACK_ANIMATION_SOURCE := "res://assets/animations/pegar.glb"
-const THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE := "res://assets/animations/malo.glb"
-const THIRD_PERSON_DYING_ANIMATION_SOURCE := "res://assets/animations/muerto.glb"
-const THIRD_PERSON_JUMP_ANIMATION_SOURCE := "res://assets/animations/saltar.glb"
-const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://assets/animations/saltarabajo2.GLB"
-const THIRD_PERSON_SLEEP_ANIMATION_SOURCE := "res://assets/animations/dormir2.glb"
-const THIRD_PERSON_SIT_ANIMATION_SOURCE := "res://assets/animations/sentarse.glb"
-const THIRD_PERSON_DRINK_ANIMATION_SOURCE := "res://assets/animations/beber.glb"
-const THIRD_PERSON_RIFLE_FIRE_ANIMATION_SOURCE := "res://assets/animations/Firing Rifle.glb"
-const THIRD_PERSON_RIFLE_LEFT_TURN_ANIMATION_SOURCE := "res://assets/animations/Turn Left 45 Degrees.glb"
-const THIRD_PERSON_RIFLE_RIGHT_TURN_ANIMATION_SOURCE := "res://assets/animations/Turning Right 45 Degrees.glb"
+const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
@@ -170,6 +149,10 @@ const THIRD_PERSON_EXTERNAL_DRINK_ANIMATION := "DrinkExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION := "RifleFireExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION := "RifleLeftTurnExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION := "RifleRightTurnExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_IDLE_ANIMATION := "RifleIdleExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_AIM_IDLE_ANIMATION := "RifleAimIdleExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_WALK_ANIMATION := "RifleWalkExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_RUN_ANIMATION := "RifleRunExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -265,6 +248,7 @@ var _max_fall_height := 0.0
 var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
 var _pain_audio_player: AudioStreamPlayer = null
+var _shoot_audio_player: AudioStreamPlayer = null
 var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
@@ -277,6 +261,19 @@ var _shoot_cooldown := 0.0
 var _rifle_fire_animation := ""
 var _rifle_left_turn_animation := ""
 var _rifle_right_turn_animation := ""
+var _rifle_idle_animation := ""
+var _rifle_aim_idle_animation := ""
+var _rifle_walk_animation := ""
+var _rifle_run_animation := ""
+var _has_rifle := false
+var _is_reloading := false
+var _is_firing := false
+var _left_hand_ik_weight := 0.0
+var _left_hand_bone_idx := -1
+var _left_hand_target: Node3D = null
+var _rifle_bone_attachment: BoneAttachment3D = null
+var _anim_debug_label: Label = null
+var _anim_debug_enabled := false
 var is_jumping := false
 var _jump_velocity := 0.0
 var _jump_apex := false
@@ -378,7 +375,17 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		else:
 			# Fall back to keyword matching
 			var lower := anim.to_lower()
-			if lower.find("run") >= 0:
+			if lower.find("riflefire") >= 0 and not _rifle_fire_animation.is_empty():
+				target = _rifle_fire_animation
+			elif lower.find("rifleaim") >= 0 and not _rifle_aim_idle_animation.is_empty():
+				target = _rifle_aim_idle_animation
+			elif lower.find("rifleidle") >= 0 and not _rifle_idle_animation.is_empty():
+				target = _rifle_idle_animation
+			elif lower.find("riflewalk") >= 0 and not _rifle_walk_animation.is_empty():
+				target = _rifle_walk_animation
+			elif lower.find("riflerun") >= 0 and not _rifle_run_animation.is_empty():
+				target = _rifle_run_animation
+			elif lower.find("run") >= 0:
 				target = third_person_run_animation
 			elif lower.find("walk") >= 0:
 				target = third_person_walk_animation
@@ -550,6 +557,9 @@ func _process(delta: float) -> void:
 				if _puppet_naked_timer >= 2.0:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
+		return
+	if _anim_debug_enabled:
+		_update_anim_debug_label()
 
 func _ready() -> void:
 	if is_puppet:
@@ -669,6 +679,9 @@ func _input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_N:
 			_light_action()
+			return
+		if event.keycode == KEY_F7:
+			toggle_anim_debug()
 			return
 	if event.is_action_pressed("quick_use_1"):
 		held_index = 0
@@ -1407,6 +1420,10 @@ func _physics_process(delta: float) -> void:
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
 	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
+	# Reduce speed when aiming with rifle for careful movement
+	if _is_aiming and _has_rifle_equipped():
+		speed = crouch_speed * 0.8
+		is_sprinting = false
 	# Lock movement while attacking
 	if third_person_action_timer > 0.0 and third_person_action_animation == third_person_attack_animation:
 		direction = Vector3.ZERO
@@ -1761,28 +1778,27 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		character.add_child(created)
 		created.root_node = created.get_path_to(character)
 		third_person_animation_player = created
-	_import_external_animation(THIRD_PERSON_IDLE_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_IDLE_ANIMATION)
-	_import_external_animation(THIRD_PERSON_WALK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_WALK_ANIMATION)
-	_import_external_animation(THIRD_PERSON_RUN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RUN_ANIMATION)
-	_import_external_animation(THIRD_PERSON_SNEAK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SNEAK_ANIMATION)
-	_import_external_animation(THIRD_PERSON_SNEAK_WALK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SNEAK_WALK_ANIMATION)
-	_import_external_animation(THIRD_PERSON_LEFT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_LEFT_TURN_ANIMATION)
-	_import_external_animation(THIRD_PERSON_RIGHT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIGHT_TURN_ANIMATION)
-	_import_external_animation(THIRD_PERSON_PLANT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_PLANT_ANIMATION)
-	_import_external_animation(THIRD_PERSON_GATHER_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_GATHER_ANIMATION)
-	_import_external_animation(THIRD_PERSON_FISH_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_FISH_ANIMATION)
-	_import_external_animation(THIRD_PERSON_INTERACT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION)
-	_import_external_animation(THIRD_PERSON_ATTACK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION)
-	_import_external_animation(THIRD_PERSON_LOW_HEALTH_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION)
-	_import_external_animation(THIRD_PERSON_DYING_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DYING_ANIMATION)
-	_import_external_animation(THIRD_PERSON_JUMP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_ANIMATION)
-	_import_external_animation(THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION)
-	_import_external_animation(THIRD_PERSON_SLEEP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, true)
-	_import_external_animation(THIRD_PERSON_SIT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, true)
-	_import_external_animation(THIRD_PERSON_DRINK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DRINK_ANIMATION)
-	_import_external_animation(THIRD_PERSON_RIFLE_FIRE_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION)
-	_import_external_animation(THIRD_PERSON_RIFLE_LEFT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION)
-	_import_external_animation(THIRD_PERSON_RIFLE_RIGHT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION)
+	# Load pre-built AnimationLibrary and retarget each animation to the character skeleton
+	var lib: AnimationLibrary = AnimationLibrary.new()
+	var skip_post_process := [THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, THIRD_PERSON_EXTERNAL_SIT_ANIMATION]
+	for anim_name in THIRD_PERSON_ANIMATION_LIBRARY.get_animation_list():
+		var src_anim: Animation = THIRD_PERSON_ANIMATION_LIBRARY.get_animation(anim_name)
+		if src_anim == null:
+			continue
+		var copied := src_anim.duplicate(true)
+		copied.loop_mode = Animation.LOOP_NONE
+		copied.step = 0.0166667
+		_retarget_animation_to_character_skeleton(copied)
+		var skel := _find_skeleton(third_person_model)
+		if anim_name in skip_post_process:
+			if copied.length > 5.0:
+				copied = _trim_animation(copied, 0.0, 5.0)
+				copied.loop_mode = Animation.LOOP_LINEAR
+		else:
+			_remove_root_motion_drift(copied, skel)
+			_smooth_loop_boundary(copied)
+		lib.add_animation(anim_name, copied)
+	third_person_animation_player.add_animation_library("external", lib)
 	# Warm the rifle model cache at startup so selecting it later is instant.
 	if not is_puppet:
 		var warm_rifle := _load_external_node3d(REAL_RIFLE_MODEL)
@@ -1868,6 +1884,26 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		_rifle_left_turn_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION):
 		_rifle_right_turn_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_IDLE_ANIMATION):
+		_rifle_idle_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_IDLE_ANIMATION
+		var rifle_idle_anim := third_person_animation_player.get_animation(_rifle_idle_animation)
+		if rifle_idle_anim != null:
+			rifle_idle_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_AIM_IDLE_ANIMATION):
+		_rifle_aim_idle_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_AIM_IDLE_ANIMATION
+		var rifle_aim_anim := third_person_animation_player.get_animation(_rifle_aim_idle_animation)
+		if rifle_aim_anim != null:
+			rifle_aim_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_WALK_ANIMATION):
+		_rifle_walk_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_WALK_ANIMATION
+		var rifle_walk_anim := third_person_animation_player.get_animation(_rifle_walk_animation)
+		if rifle_walk_anim != null:
+			rifle_walk_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_RUN_ANIMATION):
+		_rifle_run_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_RUN_ANIMATION
+		var rifle_run_anim := third_person_animation_player.get_animation(_rifle_run_animation)
+		if rifle_run_anim != null:
+			rifle_run_anim.loop_mode = Animation.LOOP_LINEAR
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION):
 		third_person_sleep_animation = "external/" + THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION
 		var sleep_anim := third_person_animation_player.get_animation(third_person_sleep_animation)
@@ -1893,52 +1929,6 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		third_person_animation_player.play(third_person_idle_animation)
 	else:
 		third_person_animation_player.stop()
-
-func _import_external_animation(source_path: String, animation_name: String, skip_post_process := false) -> void:
-	if third_person_animation_player == null or not _resource_path_exists(source_path):
-		return
-	var source_scene := _load_external_node3d(source_path)
-	if source_scene == null:
-		return
-	var source_player := _find_animation_player(source_scene)
-	if source_player == null:
-		source_scene.queue_free()
-		return
-	var source_names := source_player.get_animation_list()
-	if source_names.is_empty():
-		source_scene.queue_free()
-		return
-	var source_animation: Animation = null
-	var best_track_count := 0
-	for source_name in source_names:
-		var candidate := source_player.get_animation(source_name)
-		if candidate != null and candidate.get_track_count() > best_track_count:
-			source_animation = candidate
-			best_track_count = candidate.get_track_count()
-	if source_animation != null:
-		var copied_animation := source_animation.duplicate(true) as Animation
-		copied_animation.loop_mode = Animation.LOOP_NONE
-		copied_animation.step = 0.0166667
-		_retarget_animation_to_character_skeleton(copied_animation)
-		var skeleton := _find_skeleton(third_person_model)
-		if not skip_post_process:
-			_remove_root_motion_drift(copied_animation, skeleton)
-			_smooth_loop_boundary(copied_animation)
-		else:
-			# For sleep animation: trim to the lying-still portion (first 5s)
-			if copied_animation.length > 5.0:
-				copied_animation = _trim_animation(copied_animation, 0.0, 5.0)
-				copied_animation.loop_mode = Animation.LOOP_LINEAR
-		var library: AnimationLibrary
-		if third_person_animation_player.has_animation_library("external"):
-			library = third_person_animation_player.get_animation_library("external")
-		else:
-			library = AnimationLibrary.new()
-			third_person_animation_player.add_animation_library("external", library)
-		if library.has_animation(animation_name):
-			library.remove_animation(animation_name)
-		library.add_animation(animation_name, copied_animation)
-	source_scene.queue_free()
 
 func _trim_animation(animation: Animation, start_time: float, end_time: float) -> Animation:
 	var trimmed := Animation.new()
@@ -2706,6 +2696,9 @@ func _sync_third_person_equipment(held_item) -> void:
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
+		# Clean up IK when clearing held items
+		_left_hand_target = null
+		_left_hand_ik_weight = 0.0
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
 	if not equip_has_bp:
 		for child in third_person_back_item_root.get_children():
@@ -2808,9 +2801,24 @@ func _build_third_person_rifle() -> void:
 	# 16.97 (native length along Z) * 0.068 ~= 1.15 units long.
 	wrapper.scale = Vector3.ONE * 0.068
 	# Barrel runs along the model's Z axis; orient it forward in the grip.
-	wrapper.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+	wrapper.rotation_degrees = Vector3(0.0, -90.0, 0.0)
 	wrapper.position = Vector3(0.02, 0.02, -0.08)
 	third_person_hand_item_root.add_child(wrapper)
+	# Add a left-hand IK target on the rifle forearm area
+	var left_target := Node3D.new()
+	left_target.name = "LeftHandTarget"
+	left_target.position = Vector3(-0.12, 0.0, -0.35)
+	wrapper.add_child(left_target)
+	_left_hand_target = left_target
+	_setup_left_hand_ik()
+
+func _setup_left_hand_ik() -> void:
+	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
+		return
+	_left_hand_bone_idx = _spine_skeleton.find_bone("mixamorig:LeftHand")
+	if _left_hand_bone_idx < 0:
+		_left_hand_bone_idx = _spine_skeleton.find_bone("mixamorig_LeftHand")
+	_left_hand_ik_weight = 0.0
 
 func _build_third_person_flashlight() -> void:
 	pass
@@ -3037,6 +3045,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			return
 		elif third_person_action_timer <= 0.0:
 			third_person_action_animation = ""
+			_is_firing = false
 		if is_sitting and third_person_action_timer <= 0.0 and not third_person_sit_animation.is_empty():
 			if third_person_animation_player.current_animation != third_person_sit_animation:
 				third_person_animation_player.play(third_person_sit_animation, 0.1)
@@ -3044,11 +3053,54 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			return
 		var target_animation := ""
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
-		if moving:
+		# Update rifle equipped state
+		_has_rifle = _has_rifle_equipped()
+		if _has_rifle and not _is_aiming and not is_sprinting:
+			# Rifle locomotion: use rifle-specific animations
+			if moving:
+				if is_crouching and not third_person_sneak_walk_animation.is_empty():
+					target_animation = third_person_sneak_walk_animation
+				elif is_crouching:
+					target_animation = third_person_sneak_animation
+				elif not _rifle_walk_animation.is_empty():
+					target_animation = _rifle_walk_animation
+				else:
+					target_animation = third_person_walk_animation
+			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
+				target_animation = _rifle_left_turn_animation
+			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
+				target_animation = _rifle_right_turn_animation
+			elif is_crouching and not third_person_sneak_animation.is_empty():
+				target_animation = third_person_sneak_animation
+			elif not _rifle_idle_animation.is_empty():
+				target_animation = _rifle_idle_animation
+			elif third_person_has_real_idle:
+				target_animation = third_person_idle_animation
+		elif _has_rifle and _is_aiming:
+			# Aiming with rifle: use aim idle when stationary, walk when moving
+			if moving:
+				if not _rifle_walk_animation.is_empty():
+					target_animation = _rifle_walk_animation
+				else:
+					target_animation = third_person_walk_animation
+			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
+				target_animation = _rifle_left_turn_animation
+			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
+				target_animation = _rifle_right_turn_animation
+			elif not _rifle_aim_idle_animation.is_empty():
+				target_animation = _rifle_aim_idle_animation
+			elif not _rifle_idle_animation.is_empty():
+				target_animation = _rifle_idle_animation
+			elif third_person_has_real_idle:
+				target_animation = third_person_idle_animation
+		elif moving:
 			if low_health:
 				target_animation = third_person_low_health_animation
 			elif is_sprinting:
-				target_animation = third_person_run_animation
+				if _has_rifle and not _rifle_run_animation.is_empty():
+					target_animation = _rifle_run_animation
+				else:
+					target_animation = third_person_run_animation
 			elif is_crouching and not third_person_sneak_walk_animation.is_empty():
 				target_animation = third_person_sneak_walk_animation
 			elif is_crouching:
@@ -3118,6 +3170,51 @@ func _get_current_anim() -> String:
 	if third_person_animation_player != null:
 		return third_person_animation_player.current_animation
 	return "idle"
+
+func toggle_anim_debug() -> void:
+	_anim_debug_enabled = not _anim_debug_enabled
+	if _anim_debug_enabled:
+		_create_anim_debug_label()
+	else:
+		if _anim_debug_label != null and is_instance_valid(_anim_debug_label):
+			_anim_debug_label.queue_free()
+		_anim_debug_label = null
+
+func _create_anim_debug_label() -> void:
+	if _anim_debug_label != null and is_instance_valid(_anim_debug_label):
+		return
+	var label := Label.new()
+	label.name = "AnimDebugLabel"
+	label.position = Vector2(10, 10)
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(1, 1, 0.3))
+	label.z_index = 100
+	get_tree().current_scene.add_child(label)
+	_anim_debug_label = label
+
+func _update_anim_debug_label() -> void:
+	if _anim_debug_label == null or not is_instance_valid(_anim_debug_label):
+		return
+	var ik_weight := _left_hand_ik_weight
+	var lines := [
+		"== Animation Debug ==",
+		"has_rifle: %s" % str(_has_rifle),
+		"is_aiming: %s" % str(_is_aiming),
+		"is_reloading: %s" % str(_is_reloading),
+		"is_firing: %s" % str(_is_firing),
+		"is_crouching: %s" % str(is_crouching),
+		"is_sprinting: %s" % str(is_sprinting),
+		"moving: %s" % str(velocity.length() > 0.5),
+		"current_anim: %s" % _get_current_anim(),
+		"rifle_idle: %s" % str(not _rifle_idle_animation.is_empty()),
+		"rifle_aim: %s" % str(not _rifle_aim_idle_animation.is_empty()),
+		"rifle_walk: %s" % str(not _rifle_walk_animation.is_empty()),
+		"rifle_run: %s" % str(not _rifle_run_animation.is_empty()),
+		"rifle_fire: %s" % str(not _rifle_fire_animation.is_empty()),
+		"ik_weight: %.2f" % ik_weight,
+		"ik_target: %s" % str(_left_hand_target != null and is_instance_valid(_left_hand_target)),
+	]
+	_anim_debug_label.text = "\n".join(lines)
 
 func _interact() -> void:
 	var target = _get_interaction_target()
@@ -3375,6 +3472,19 @@ func _melee_attack() -> void:
 			continue
 		closest_target = animal
 		closest_dist = d
+	# Check NPCs (NPCController class)
+	for node in get_tree().get_nodes_in_group("npc"):
+		if not (node is Node3D) or not is_instance_valid(node):
+			continue
+		var npc_node := node as Node3D
+		var d := global_position.distance_to(npc_node.global_position)
+		if d > closest_dist:
+			continue
+		var dir := (npc_node.global_position - global_position).normalized()
+		if fwd.dot(dir) < 0.3:
+			continue
+		closest_target = npc_node
+		closest_dist = d
 	# Check server proxies (net_player_proxy group)
 	for node in get_tree().get_nodes_in_group("net_player_proxy"):
 		if not (node is Node3D) or not is_instance_valid(node):
@@ -3495,6 +3605,7 @@ func _shoot_rifle() -> void:
 	_shoot_cooldown = 1.5
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
+	_is_firing = true
 	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
 		var fire_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
 		if fire_anim != null:
@@ -3503,24 +3614,72 @@ func _shoot_rifle() -> void:
 		third_person_action_timer = 1.0
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	notice.emit("Bang!")
-	var ray_origin := camera.global_position
+	_play_shoot_sound()
 	var ray_dir := -camera.global_transform.basis.z.normalized()
+	var ray_origin := camera.global_position + ray_dir * 0.5
 	var space_state := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * 200.0)
-	query.exclude = [self]
+	var exclude_arr: Array = [self.get_rid()]
+	for child in find_children("*", "CollisionObject3D", true, false):
+		exclude_arr.append(child.get_rid())
+	query.exclude = exclude_arr
+	query.collide_with_areas = true
+	query.collide_with_bodies = true
 	var result := space_state.intersect_ray(query)
 	if result.is_empty():
 		return
 	var collider = result["collider"]
 	var damage := 80.0
+	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D
-		if node.has_method("take_damage"):
-			node.take_damage(damage, false)
-		elif node.is_in_group("wildlife"):
-			if node.has_method("apply_damage"):
-				node.apply_damage(damage)
-		elif node.is_in_group("net_player_proxy"):
+		# Check if we hit a head hitbox (child Area3D named HeadHitbox)
+		if node.name == "HeadHitbox":
+			is_headshot = true
+			# Walk up to find the parent wildlife or NPC
+			var parent: Node = node.get_parent()
+			while parent != null:
+				if parent.has_method("take_damage"):
+					if is_headshot:
+						parent.take_damage(9999.0, false)
+					else:
+						parent.take_damage(damage, false)
+					break
+				elif parent.is_in_group("wildlife") and parent.has_method("apply_damage"):
+					if is_headshot:
+						parent.apply_damage(9999.0)
+					else:
+						parent.apply_damage(damage)
+					break
+				parent = parent.get_parent()
+			_spawn_blood_splatter()
+			return
+		# Check if we hit a body hitbox
+		if node.name == "BodyHitbox":
+			var parent: Node = node.get_parent()
+			while parent != null:
+				if parent.has_method("take_damage"):
+					parent.take_damage(damage, false)
+					break
+				elif parent.is_in_group("wildlife") and parent.has_method("apply_damage"):
+					parent.apply_damage(damage)
+					break
+				parent = parent.get_parent()
+			_spawn_blood_splatter()
+			return
+		var walked: Node = node
+		while walked != null:
+			if walked.has_method("take_damage"):
+				walked.take_damage(damage, false)
+				break
+			elif walked.is_in_group("wildlife") and walked.has_method("take_damage"):
+				walked.take_damage(damage, false)
+				break
+			walked = walked.get_parent()
+		if walked != null:
+			_spawn_blood_splatter()
+			return
+		if node.is_in_group("net_player_proxy"):
 			var peer_id: int = node.get_meta("peer_id", 0)
 			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
 			if not is_proxy_dead and peer_id != 0:
@@ -3543,7 +3702,7 @@ func _shoot_rifle() -> void:
 						net_node.apply_damage_to_client.rpc_id(peer_id, damage)
 		elif node.has_method("apply_damage"):
 			node.apply_damage(damage)
-	_spawn_blood_splatter()
+		_spawn_blood_splatter()
 
 func _spawn_blood_splatter() -> void:
 	var particles := GPUParticles3D.new()
@@ -3578,6 +3737,26 @@ func _spawn_blood_splatter() -> void:
 	particles.global_position = global_position + Vector3(0, 1.2, 0)
 	particles.emitting = true
 	get_tree().create_timer(2.5).timeout.connect(func(): particles.queue_free())
+
+func _play_shoot_sound() -> void:
+	if _shoot_audio_player == null:
+		_shoot_audio_player = AudioStreamPlayer.new()
+		_shoot_audio_player.name = "ShootSound"
+		add_child(_shoot_audio_player)
+	var path := "res://disparo.wav"
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null:
+		return
+	_shoot_audio_player.stream = stream
+	_shoot_audio_player.volume_db = 3.0
+	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
+	_shoot_audio_player.play()
 
 func _play_pain_sound() -> void:
 	if _pain_sound_timer > 0.0:
