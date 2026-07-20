@@ -54,4 +54,4 @@ if [ -z "$GODOT" ]; then
 fi
 
 echo "Usando Godot: $GODOT"
-exec "$GODOT" --path "$SCRIPT_DIR"
+exec "$GODOT" --path "$(cd "$SCRIPT_DIR/.." && pwd)"
