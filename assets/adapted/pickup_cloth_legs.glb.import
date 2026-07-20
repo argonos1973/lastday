@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://cgvyumbiqx1w3"
-path="res://.godot/imported/pickup_cloth_legs.glb-2f6707fc5dd2890aa168d5216b87ab6f.scn"
+path="res://.godot/imported/pickup_cloth_legs.glb-0b02aa1a9114fd10af773e9943ef9a73.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_cloth_legs.glb"
-dest_files=["res://.godot/imported/pickup_cloth_legs.glb-2f6707fc5dd2890aa168d5216b87ab6f.scn"]
+source_file="res://assets/characters/adapted/pickup_cloth_legs.glb"
+dest_files=["res://.godot/imported/pickup_cloth_legs.glb-0b02aa1a9114fd10af773e9943ef9a73.scn"]
 
 [params]
 

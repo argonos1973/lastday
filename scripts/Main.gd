@@ -173,16 +173,9 @@ const BED_MODEL_PATH := "res://assets/models/props/post_apocalyptic_bed.glb"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
 const PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
-const ROOT_CANNED_FOOD_MODEL := ROOT_GLB_DIR + "canned_food_pack_opened__low_poly_game_asset.glb"
 const CANNED_FOOD_LOW_MODEL := "res://assets/models/props/canned_food_low.glb"
 const FOOD_CAN_415G_MODEL := "res://assets/models/props/food_can_415g.glb"
 const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
-const ROOT_KNIFE_MODEL := ROOT_GLB_DIR + "knife.glb"
-const ROOT_WEAPON_KNIFE_MODEL := ROOT_GLB_DIR + "call_of_duty_black_ops_cold_war_-_america_knife.glb"
-const ROOT_VEST_MODEL := ROOT_GLB_DIR + "vest_armor_holster_lowpoly_gameready_pack.glb"
-const ROOT_BARRIER_MODEL := ROOT_GLB_DIR + "concrete_road_barrier.glb"
-const ROOT_BENCH_MODEL := ROOT_GLB_DIR + "city_bench.glb"
-const ROOT_JUNK_MODEL := ROOT_GLB_DIR + "junk_props.glb"
 const ABANDONED_JUNK_CAR_MODEL := ROOT_GLB_DIR + "abandoned_junk_car.glb"
 const SCRAP_BARRICADE_CAR_MODEL := ROOT_GLB_DIR + "scrap_barricade_car_free_raw_scan.glb"
 const SCRAP_CAR_Y_CORRECTION := -0.6
@@ -232,18 +225,6 @@ const POLY_FURNITURE_MODELS := [
 ]
 const SKY_HDRI_CANDIDATES := [
 	"res://assets/hdri/kloofendal_48d_partly_cloudy_4k.exr",
-	"res://assets/external/polyhaven/skies/rogland_overcast_1k.hdr",
-	"res://assets/external/polyhaven/skies/misty_farm_road_1k.hdr",
-	"res://assets/external/polyhaven/skies/quarry_cloudy_1k.hdr",
-	"res://assets/external/polyhaven/skies/overcast_soil_1k.hdr",
-	"res://assets/external/polyhaven/skies/kiara_9_dusk_1k.hdr",
-	"res://assets/external/polyhaven/skies/spruit_dawn_1k.hdr",
-	"res://rogland_overcast_1k.hdr",
-	"res://misty_farm_road_1k.hdr",
-	"res://quarry_cloudy_1k.hdr",
-	"res://overcast_soil_1k.hdr",
-	"res://kiara_9_dusk_1k.hdr",
-	"res://spruit_dawn_1k.hdr"
 ]
 const UPRIGHT_GRASS_ASSET_MODELS := [
 	Q_NATURE + "Grass_Wispy_Tall.gltf",
@@ -308,20 +289,8 @@ const REAL_CAR_MODELS := [
 	"res://assets/external/quaternius_zombie_apocalypse/Vehicles/glTF/Vehicle_Sports_Armored.gltf",
 	"res://assets/external/quaternius_zombie_apocalypse/Vehicles/glTF/Vehicle_Pickup.gltf",
 	"res://assets/external/quaternius_zombie_apocalypse/Vehicles/glTF/Vehicle_Truck.gltf",
-	"res://assets/external/realistic/abandoned_car.glb",
-	"res://assets/external/realistic/rusty_car.glb",
-	"res://assets/external/realistic/wrecked_car.glb"
 ]
 const REAL_VAN_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Vehicles/glTF/Vehicle_Truck.gltf"
-const REAL_HOUSE_MODELS := [
-	"res://assets/external/realistic/abandoned_house_01.glb",
-	"res://assets/external/realistic/abandoned_house_02.glb",
-	"res://assets/external/realistic/ruined_house.glb"
-]
-const REAL_SHELTER_MODEL := "res://assets/external/realistic/player_shelter.glb"
-const REAL_GAS_STATION_MODEL := "res://assets/external/realistic/gas_station.glb"
-const REAL_POLICE_STATION_MODEL := "res://assets/external/realistic/police_station.glb"
-const REAL_RADIO_POINT_MODEL := "res://assets/external/realistic/radio_point.glb"
 
 const DOOR_MODELS := [
 	"res://assets/external/doors/simple_room_door.glb",
@@ -2253,13 +2222,13 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return ["res://assets/models/props/wood_stick.glb"]
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
-			return [ROOT_KNIFE_MODEL, ROOT_WEAPON_KNIFE_MODEL, "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
 			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
-			return [ROOT_CANNED_FOOD_MODEL]
+			return [CANNED_FOOD_LOW_MODEL, FOOD_CAN_415G_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
 		"tool_axe":
@@ -2274,8 +2243,6 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"clothing":
 			match item_name:
-				"Piel de lobo":
-					return ["res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb"]
 				"Botas de goma":
 					return [POLY_RUBBER_BOOTS_MODEL]
 				"Guantes de trabajo":
@@ -2284,8 +2251,6 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [POLY_FISHERMANS_HAT_MODEL]
 				"Chaleco salvavidas":
 					return [POLY_LIFE_JACKET_MODEL]
-				"Chaleco tactico":
-					return [ROOT_VEST_MODEL]
 				"Chaqueta de abrigo":
 					return [POLY_LIFE_JACKET_MODEL]
 				"Camiseta":
@@ -2345,8 +2310,6 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 0.0005
 		"clothing":
 			match item_name:
-				"Chaleco tactico":
-					return 0.05
 				"Chaleco salvavidas":
 					return 0.8
 				"Chaqueta de abrigo":
@@ -2488,7 +2451,6 @@ func _create_map() -> void:
 	if not is_server:
 		_flush_grass_batches()
 
-const ROAD_MODEL := "res://road_03.glb"
 
 const ROAD_HALF_WIDTH := 5.0
 const ROAD_START_Z := -52.0
@@ -2816,8 +2778,6 @@ func _create_gas_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 10.5)
 	_register_wildlife_blocker(origin + Vector3(0.0, 0.0, 7.0), 6.8)
 	#_create_label("Gasolinera", origin + Vector3(0, 3.3, 0))
-	if _try_instance_external_scene([REAL_GAS_STATION_MODEL], "RealGasStation", origin, Vector3.ONE, Vector3.ZERO):
-		return
 	_create_static_box("GasStationFloor", origin, Vector3(9, 0.2, 6), Color(0.16, 0.14, 0.11))
 	_create_static_box("GasStationBack", origin + Vector3(0, 0, -3), Vector3(9, 2.6, 0.35), Color(0.27, 0.24, 0.19))
 	_create_static_box("GasStationLeft", origin + Vector3(-4.5, 0, 0), Vector3(0.35, 2.6, 6), Color(0.25, 0.22, 0.18))
@@ -2836,8 +2796,6 @@ func _create_gas_station(origin: Vector3) -> void:
 func _create_police_station(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 8.7)
 	#_create_label("Comisaria", origin + Vector3(0, 3.5, 0))
-	if _try_instance_external_scene([REAL_POLICE_STATION_MODEL], "RealPoliceStation", origin, Vector3.ONE, Vector3.ZERO):
-		return
 	_create_static_box("PoliceFloor", origin, Vector3(10, 0.2, 7), Color(0.12, 0.13, 0.14))
 	_create_static_box("PoliceBack", origin + Vector3(0, 0, -3.5), Vector3(10, 3.0, 0.35), Color(0.18, 0.20, 0.22))
 	_create_static_box("PoliceLeft", origin + Vector3(-5, 0, 0), Vector3(0.35, 3.0, 7), Color(0.18, 0.20, 0.22))
@@ -2854,8 +2812,6 @@ func _create_radio_point(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 6.0)
 	_register_wildlife_blocker(origin + Vector3(3.6, 0.0, -1.5), 2.8)
 	#_create_label("Punto de radio", origin + Vector3(0, 4.0, 0))
-	if _try_instance_external_scene([REAL_RADIO_POINT_MODEL], "RealRadioPoint", origin, Vector3.ONE, Vector3.ZERO):
-		return
 	_create_static_box("RadioShedFloor", origin, Vector3(5, 0.2, 5), Color(0.11, 0.11, 0.10))
 	_create_static_box("RadioShedBack", origin + Vector3(0, 0, -2.5), Vector3(5, 2.4, 0.3), Color(0.17, 0.17, 0.15))
 	_create_static_box("RadioShedLeft", origin + Vector3(-2.5, 0, 0), Vector3(0.3, 2.4, 5), Color(0.16, 0.16, 0.14))
@@ -7365,11 +7321,7 @@ func _load_gltf_scene_from_file(path: String):
 	return null
 
 func _create_concrete_barrier(node_name: String, pos: Vector3, rot: Vector3) -> void:
-	if not _try_instance_external_scene([ROOT_BARRIER_MODEL], node_name, pos, Vector3.ONE * 0.0042, rot, true, 0.0):
-		return
-	var node := get_node_or_null(NodePath(node_name)) as Node3D
-	if node != null:
-		_add_convex_collision_to_meshes(node)
+	pass
 
 func _add_convex_collision_to_meshes(root: Node) -> void:
 	var meshes: Array = []

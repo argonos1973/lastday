@@ -25,7 +25,6 @@ const POLY_LIFE_JACKET_MODEL := "res://assets/external/polyhaven/life_jacket/lif
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_RUBBER_BOOTS_MODEL := "res://assets/external/polyhaven/rubber_boots/rubber_boots_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
-const ROOT_VEST_MODEL := "res://assets/external/realistic/root_glb/vest_armor_holster_lowpoly_gameready_pack.glb"
 # Wearable visuals placed on the body relative to its measured bounding box, so
 # they fit regardless of the character model's scale/proportions.
 #   frac_y: anchor height as a fraction of body height (0 = feet, 1 = head top)
@@ -34,11 +33,9 @@ const ROOT_VEST_MODEL := "res://assets/external/realistic/root_glb/vest_armor_ho
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
 	"Chaleco salvavidas": {"path": POLY_LIFE_JACKET_MODEL, "frac_y": 0.70, "size": 0.30, "yaw": 180.0, "forward": 0.05},
-	"Chaleco tactico": {"path": ROOT_VEST_MODEL, "frac_y": 0.70, "size": 0.30, "yaw": 0.0, "forward": 0.05},
 	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.96, "size": 0.12, "yaw": 0.0, "align": "bottom"},
 	"Botas de goma": {"path": POLY_RUBBER_BOOTS_MODEL, "frac_y": 0.0, "size": 0.20, "yaw": 0.0, "align": "bottom", "strip": ["dirty", "dirt"]},
 	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
-	"Piel de lobo": {"path": "res://assets/external/kenney_survival_kit/Models/GLB format/clothing-shirt.glb", "frac_y": 0.55, "size": 0.25, "yaw": 0.0, "forward": 0.05}
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
 # Loaded first so the deformable survival garments are available to wear.
@@ -97,11 +94,9 @@ const CLOTHING_SLOTS := {
 	"Guantes militares": "hands",
 	"Chaqueta de abrigo": "torso",
 	"Chaleco salvavidas": "torso",
-	"Chaleco tactico": "torso",
 	"Botas de goma": "feet",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
-	"Piel de lobo": "torso",
 }
 
 # Warmth value per clothing item. Higher = warmer.
@@ -119,21 +114,15 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.10,
 	"Chaqueta de abrigo": 0.45,
 	"Chaleco salvavidas": 0.06,
-	"Chaleco tactico": 0.10,
 	"Botas de goma": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
-	"Piel de lobo": 0.35,
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
 	"res://assets/characters/adapted/player_with_clothes.glb",
 	"res://assets/animations/inicio.glb",
 	"res://assets/animations/walking.glb",
-	"res://assets/animations/Walking.glb",
-	"res://assets/animations/untitled.glb",
-	"res://Walking.gltf",
-	"res://assets/animations/Walking.fbx",
 	"res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon.gltf"
 ]
 const THIRD_PERSON_RUN_ANIMATION_SOURCE := "res://assets/animations/correr.glb"

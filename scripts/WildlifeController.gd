@@ -1600,8 +1600,7 @@ func _animal_asset_candidates() -> Array:
 		]
 	if animal_type == "fox":
 		return [
-			"res://assets/external/quaternius_animals/glTF/Fox.gltf",
-			"res://assets/external/realistic/root_glb/fox_-_realistic_3d_model_demo_free.glb"
+			"res://assets/external/quaternius_animals/glTF/Fox.gltf"
 		]
 	if animal_type == "wolf":
 		return [

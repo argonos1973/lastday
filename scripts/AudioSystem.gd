@@ -3,42 +3,26 @@ class_name AudioSystem
 
 const AMBIENT_DAY_PATHS := []
 const AMBIENT_NIGHT_PATHS := [
-	"res://assets/external/audio/ambient_night.ogg",
-	"res://assets/external/audio/ambient_night.wav",
-	"res://assets/external/audio/night_wind.ogg",
-	"res://assets/external/audio/night_wind.wav"
+	"res://assets/external/audio/ambient_night.wav"
 ]
 const WIND_PATHS := [
-	"res://assets/external/audio/wind_loop.ogg",
 	"res://assets/external/audio/wind_loop.wav"
 ]
 const RIVER_WATER_PATHS := [
 	"res://assets/external/audio/downloaded/rio.mp3",
-	"res://assets/external/audio/river_water_loop.ogg",
-	"res://assets/external/audio/river_water_loop.wav",
-	"res://assets/external/audio/water_river_loop.ogg",
-	"res://assets/external/audio/water_river_loop.wav"
+	"res://assets/external/audio/river_water_loop.wav"
 ]
 const AXE_CHOP_PATHS := [
-	"res://assets/external/audio/axe_chop.ogg",
-	"res://assets/external/audio/axe_chop.wav",
-	"res://assets/external/audio/wood_chop.ogg",
-	"res://assets/external/audio/wood_chop.wav"
+	"res://assets/external/audio/axe_chop.wav"
 ]
 const FOREST_BIRD_PATHS := [
 	"res://assets/external/audio/downloaded/pajaros.mp3"
 ]
 const ANIMAL_DEER_PATHS := [
-	"res://assets/external/audio/animal_deer_call.ogg",
-	"res://assets/external/audio/animal_deer_call.wav",
-	"res://assets/external/audio/deer_call.ogg",
-	"res://assets/external/audio/deer_call.wav"
+	"res://assets/external/audio/animal_deer_call.wav"
 ]
 const ANIMAL_FOX_PATHS := [
-	"res://assets/external/audio/animal_fox_call.ogg",
-	"res://assets/external/audio/animal_fox_call.wav",
-	"res://assets/external/audio/fox_call.ogg",
-	"res://assets/external/audio/fox_call.wav"
+	"res://assets/external/audio/animal_fox_call.wav"
 ]
 const ANIMAL_WOLF_PATHS := [
 	"res://assets/external/audio/downloaded/aullidos.mp3",
@@ -47,25 +31,16 @@ const ANIMAL_WOLF_PATHS := [
 ]
 
 const FOOTSTEP_GRASS_PATHS := [
-	"res://assets/external/audio/footstep_grass_01.ogg",
-	"res://assets/external/audio/footstep_grass_02.ogg",
-	"res://assets/external/audio/footstep_grass_03.ogg",
 	"res://assets/external/audio/footstep_grass_01.wav",
 	"res://assets/external/audio/footstep_grass_02.wav",
 	"res://assets/external/audio/footstep_grass_03.wav"
 ]
 const FOOTSTEP_ROAD_PATHS := [
-	"res://assets/external/audio/footstep_road_01.ogg",
-	"res://assets/external/audio/footstep_road_02.ogg",
-	"res://assets/external/audio/footstep_road_03.ogg",
 	"res://assets/external/audio/footstep_gravel_01.wav",
 	"res://assets/external/audio/footstep_gravel_02.wav",
 	"res://assets/external/audio/footstep_gravel_03.wav"
 ]
 const FOOTSTEP_WOOD_PATHS := [
-	"res://assets/external/audio/footstep_wood_01.ogg",
-	"res://assets/external/audio/footstep_wood_02.ogg",
-	"res://assets/external/audio/footstep_wood_03.ogg",
 	"res://assets/external/audio/footstep_wood_01.wav",
 	"res://assets/external/audio/footstep_wood_02.wav",
 	"res://assets/external/audio/footstep_wood_03.wav"

@@ -31,11 +31,6 @@ const RECIPES := [
 		"label": "Tallar tronco con cuchillo/hacha para hacer 2 palos"
 	},
 	{
-		"inputs": { "Piel de lobo": 1, "Cuchillo": 1 },
-		"output": { "name": "Cuerda", "type": "resource", "weight": 0.1, "use_value": 0.0 },
-		"label": "Cortar piel de lobo con cuchillo/hacha para hacer cuerda"
-	},
-	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de lobo": 1 },
 		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0 },
 		"label": "Ensartar carne de lobo en palo"
