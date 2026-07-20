@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bppfoxvgocgst"
-path.s3tc="res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Normal.png-2f3de90cd1be7db0b8ea81da048607b0.s3tc.ctex"
+path.s3tc="res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Normal.png-0ad498360960246fa5d3cd64efe43b85.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_default_bottoms_Remy_Bottom_Normal.png"
-dest_files=["res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Normal.png-2f3de90cd1be7db0b8ea81da048607b0.s3tc.ctex"]
+source_file="res://assets/adapted/pickup_default_bottoms_Remy_Bottom_Normal.png"
+dest_files=["res://.godot/imported/pickup_default_bottoms_Remy_Bottom_Normal.png-0ad498360960246fa5d3cd64efe43b85.s3tc.ctex"]
 
 [params]
 

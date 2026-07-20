@@ -1794,6 +1794,11 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_RIFLE_FIRE_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION)
 	_import_external_animation(THIRD_PERSON_RIFLE_LEFT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION)
 	_import_external_animation(THIRD_PERSON_RIFLE_RIGHT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION)
+	# Warm the rifle model cache at startup so selecting it later is instant.
+	if not is_puppet:
+		var warm_rifle := _load_external_node3d(REAL_RIFLE_MODEL)
+		if warm_rifle != null:
+			warm_rifle.queue_free()
 	var names := third_person_animation_player.get_animation_list()
 	var non_loop_keywords := ["jump", "attack", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar", "riflefire"]
 	for animation_name in names:
