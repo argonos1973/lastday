@@ -155,6 +155,10 @@ const THIRD_PERSON_JUMP_DOWN_ANIMATION_SOURCE := "res://assets/animations/saltar
 const THIRD_PERSON_SLEEP_ANIMATION_SOURCE := "res://assets/animations/dormir2.glb"
 const THIRD_PERSON_SIT_ANIMATION_SOURCE := "res://assets/animations/sentarse.glb"
 const THIRD_PERSON_DRINK_ANIMATION_SOURCE := "res://assets/animations/beber.glb"
+const THIRD_PERSON_RIFLE_FIRE_ANIMATION_SOURCE := "res://Firing Rifle.glb"
+const THIRD_PERSON_RIFLE_LEFT_TURN_ANIMATION_SOURCE := "res://Turn Left 45 Degrees.glb"
+const THIRD_PERSON_RIFLE_RIGHT_TURN_ANIMATION_SOURCE := "res://Turning Right 45 Degrees.glb"
+const REAL_RIFLE_MODEL := "res://modern_sniper_rifle__free_lowpoly.glb"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -174,6 +178,9 @@ const THIRD_PERSON_EXTERNAL_JUMP_DOWN_ANIMATION := "JumpDownExternal"
 const THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION := "SleepExternal"
 const THIRD_PERSON_EXTERNAL_SIT_ANIMATION := "SitExternal"
 const THIRD_PERSON_EXTERNAL_DRINK_ANIMATION := "DrinkExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION := "RifleFireExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION := "RifleLeftTurnExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION := "RifleRightTurnExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -274,6 +281,13 @@ var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
 var _attack_cooldown := 0.0
+var _is_aiming := false
+var _scope_overlay: Control = null
+var _rifle_model_node: Node3D = null
+var _shoot_cooldown := 0.0
+var _rifle_fire_animation := ""
+var _rifle_left_turn_animation := ""
+var _rifle_right_turn_animation := ""
 var is_jumping := false
 var _jump_velocity := 0.0
 var _jump_apex := false
@@ -505,6 +519,8 @@ func _update_puppet_held_item(item_name: String) -> void:
 	match item_name:
 		"Cuchillo":
 			_build_third_person_knife()
+		"Rifle francotirador":
+			_build_third_person_rifle()
 		"Hacha":
 			_build_third_person_axe()
 		"Pala":
@@ -582,10 +598,17 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.pressed:
 		_capture_mouse()
+		var has_rifle := _has_rifle_equipped()
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			_melee_attack()
+			if has_rifle and _is_aiming:
+				_shoot_rifle()
+			else:
+				_melee_attack()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			_quick_use_held_item()
+			if has_rifle:
+				_toggle_aim()
+			else:
+				_quick_use_held_item()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
 			if camera != null:
@@ -594,6 +617,9 @@ func _input(event: InputEvent) -> void:
 			_camera_fov = clamp(_camera_fov + 4.0, 30.0, 90.0)
 			if camera != null:
 				camera.fov = _camera_fov
+	elif event is InputEventMouseButton and not event.pressed:
+		if event.button_index == MOUSE_BUTTON_RIGHT and _is_aiming:
+			_toggle_aim()
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
@@ -1309,6 +1335,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	_shoot_cooldown = max(0.0, _shoot_cooldown - delta)
 	# Gradually wear equipped clothing (faster when moving, slower when sleeping)
 	if not is_dead and inventory != null:
 		var wear_rate := 1.0
@@ -1574,6 +1601,7 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
+	inventory.add_item(ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -1761,8 +1789,11 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	_import_external_animation(THIRD_PERSON_SLEEP_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, true)
 	_import_external_animation(THIRD_PERSON_SIT_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, true)
 	_import_external_animation(THIRD_PERSON_DRINK_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_DRINK_ANIMATION)
+	_import_external_animation(THIRD_PERSON_RIFLE_FIRE_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION)
+	_import_external_animation(THIRD_PERSON_RIFLE_LEFT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION)
+	_import_external_animation(THIRD_PERSON_RIFLE_RIGHT_TURN_ANIMATION_SOURCE, THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION)
 	var names := third_person_animation_player.get_animation_list()
-	var non_loop_keywords := ["jump", "attack", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar"]
+	var non_loop_keywords := ["jump", "attack", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar", "riflefire"]
 	for animation_name in names:
 		var name_text := String(animation_name)
 		var animation := third_person_animation_player.get_animation(animation_name)
@@ -1832,6 +1863,15 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var jump_down_animation := third_person_animation_player.get_animation(third_person_jump_down_animation)
 		if jump_down_animation != null:
 			jump_down_animation.loop_mode = Animation.LOOP_NONE
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION):
+		_rifle_fire_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_FIRE_ANIMATION
+		var rifle_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
+		if rifle_anim != null:
+			rifle_anim.loop_mode = Animation.LOOP_NONE
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION):
+		_rifle_left_turn_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_LEFT_TURN_ANIMATION
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION):
+		_rifle_right_turn_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_RIGHT_TURN_ANIMATION
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION):
 		third_person_sleep_animation = "external/" + THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION
 		var sleep_anim := third_person_animation_player.get_animation(third_person_sleep_animation)
@@ -2218,6 +2258,9 @@ func die() -> void:
 	if is_dead:
 		return
 	is_dead = true
+	_is_aiming = false
+	_remove_scope_overlay()
+	mouse_sensitivity = 0.0025
 	_death_anim_played = true
 	death_pose_time = 0.0
 	_apply_view_mode()
@@ -2682,6 +2725,8 @@ func _sync_third_person_equipment(held_item) -> void:
 	match held_item.item_type:
 		"weapon":
 			_build_third_person_knife()
+		"weapon_rifle":
+			_build_third_person_rifle()
 		"tool":
 			_build_third_person_flashlight()
 		"food":
@@ -2746,6 +2791,9 @@ func _build_third_person_backpack() -> void:
 
 func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
+
+func _build_third_person_rifle() -> void:
+	_try_add_model_to_parent(third_person_hand_item_root, REAL_RIFLE_MODEL, "ThirdPersonRifle", Vector3(0.0, 0.12, -0.25), Vector3(0, 90, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_flashlight() -> void:
 	pass
@@ -2985,9 +3033,15 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			else:
 				target_animation = third_person_walk_animation
 		elif _turn_input < -2.0 and not third_person_left_turn_animation.is_empty():
-			target_animation = third_person_left_turn_animation
+			if _is_aiming and not _rifle_left_turn_animation.is_empty():
+				target_animation = _rifle_left_turn_animation
+			else:
+				target_animation = third_person_left_turn_animation
 		elif _turn_input > 2.0 and not third_person_right_turn_animation.is_empty():
-			target_animation = third_person_right_turn_animation
+			if _is_aiming and not _rifle_right_turn_animation.is_empty():
+				target_animation = _rifle_right_turn_animation
+			else:
+				target_animation = third_person_right_turn_animation
 		elif is_crouching and not third_person_sneak_animation.is_empty():
 			target_animation = third_person_sneak_animation
 		elif low_health:
@@ -3362,6 +3416,136 @@ func _melee_attack() -> void:
 			held.reduce_durability(5.0)
 			if held.is_broken():
 				notice.emit("%s se ha roto!" % str(held.item_name))
+
+func _has_rifle_equipped() -> bool:
+	if inventory == null or inventory.items.is_empty():
+		return false
+	var held = inventory.items[held_index]
+	return held != null and held.item_type == "weapon_rifle"
+
+func _toggle_aim() -> void:
+	_is_aiming = not _is_aiming
+	if _is_aiming:
+		_create_scope_overlay()
+		if camera != null:
+			camera.fov = 20.0
+		mouse_sensitivity = 0.0008
+		if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
+			third_person_animation_player.play(_rifle_fire_animation, 0.1, 0.0)
+	else:
+		_remove_scope_overlay()
+		if camera != null:
+			camera.fov = _camera_fov
+		mouse_sensitivity = 0.0025
+
+func _create_scope_overlay() -> void:
+	_remove_scope_overlay()
+	_scope_overlay = Control.new()
+	_scope_overlay.name = "ScopeOverlay"
+	_scope_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_scope_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var scope_bg := ColorRect.new()
+	scope_bg.name = "ScopeBg"
+	scope_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scope_bg.color = Color(0.0, 0.0, 0.0, 0.85)
+	_scope_overlay.add_child(scope_bg)
+	var scope_circle := ColorRect.new()
+	scope_circle.name = "ScopeCircle"
+	var circle_size := 400
+	scope_circle.size = Vector2(circle_size, circle_size)
+	scope_circle.position = Vector2(
+		(get_viewport().get_visible_rect().size.x - circle_size) * 0.5,
+		(get_viewport().get_visible_rect().size.y - circle_size) * 0.5
+	)
+	scope_circle.color = Color(0.0, 0.0, 0.0, 0.0)
+	_scope_overlay.add_child(scope_circle)
+	var crosshair_v := ColorRect.new()
+	crosshair_v.name = "CrosshairV"
+	crosshair_v.size = Vector2(2, circle_size)
+	crosshair_v.position = Vector2(
+		get_viewport().get_visible_rect().size.x * 0.5 - 1.0,
+		get_viewport().get_visible_rect().size.y * 0.5 - circle_size * 0.5
+	)
+	crosshair_v.color = Color(0.0, 0.0, 0.0, 0.8)
+	_scope_overlay.add_child(crosshair_v)
+	var crosshair_h := ColorRect.new()
+	crosshair_h.name = "CrosshairH"
+	crosshair_h.size = Vector2(circle_size, 2)
+	crosshair_h.position = Vector2(
+		get_viewport().get_visible_rect().size.x * 0.5 - circle_size * 0.5,
+		get_viewport().get_visible_rect().size.y * 0.5 - 1.0
+	)
+	crosshair_h.color = Color(0.0, 0.0, 0.0, 0.8)
+	_scope_overlay.add_child(crosshair_h)
+	var center_dot := ColorRect.new()
+	center_dot.name = "CenterDot"
+	center_dot.size = Vector2(4, 4)
+	center_dot.position = Vector2(
+		get_viewport().get_visible_rect().size.x * 0.5 - 2.0,
+		get_viewport().get_visible_rect().size.y * 0.5 - 2.0
+	)
+	center_dot.color = Color(1.0, 0.0, 0.0, 0.9)
+	_scope_overlay.add_child(center_dot)
+	get_tree().current_scene.add_child(_scope_overlay)
+
+func _remove_scope_overlay() -> void:
+	if _scope_overlay != null and is_instance_valid(_scope_overlay):
+		_scope_overlay.queue_free()
+	_scope_overlay = null
+
+func _shoot_rifle() -> void:
+	if _shoot_cooldown > 0.0:
+		return
+	if stats.energy < 3.0:
+		notice.emit("Estas demasiado cansado para disparar.")
+		return
+	_shoot_cooldown = 1.5
+	stats.energy = max(0.0, stats.energy - 3.0)
+	stats.changed.emit()
+	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
+		third_person_animation_player.play(_rifle_fire_animation, 0.05, 1.0)
+	notice.emit("Bang!")
+	var ray_origin := camera.global_position
+	var ray_dir := -camera.global_transform.basis.z.normalized()
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * 200.0)
+	query.exclude = [self]
+	var result := space_state.intersect_ray(query)
+	if result.is_empty():
+		return
+	var collider = result["collider"]
+	var damage := 80.0
+	if collider is Node3D:
+		var node: Node3D = collider as Node3D
+		if node.has_method("take_damage"):
+			node.take_damage(damage, false)
+		elif node.is_in_group("wildlife"):
+			if node.has_method("apply_damage"):
+				node.apply_damage(damage)
+		elif node.is_in_group("net_player_proxy"):
+			var peer_id: int = node.get_meta("peer_id", 0)
+			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
+			if not is_proxy_dead and peer_id != 0:
+				var hp: float = node.get_meta("proxy_health", 100.0)
+				hp = max(0.0, hp - damage)
+				node.set_meta("proxy_health", hp)
+				if hp <= 0.0:
+					node.set_meta("proxy_dead", true)
+					node.remove_from_group("net_player_proxy")
+					var scene_node := get_tree().current_scene
+					if scene_node != null:
+						if scene_node.has_method("_drop_player_loot"):
+							scene_node._drop_player_loot(peer_id, node)
+						if scene_node.has_method("_broadcast_player_death") and not node.get_meta("death_broadcasted", false):
+							node.set_meta("death_broadcasted", true)
+							scene_node._broadcast_player_death(peer_id, node)
+				else:
+					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+					if net_node != null and net_node.multiplayer.has_peer(peer_id):
+						net_node.apply_damage_to_client.rpc_id(peer_id, damage)
+		elif node.has_method("apply_damage"):
+			node.apply_damage(damage)
+	_spawn_blood_splatter()
 
 func _spawn_blood_splatter() -> void:
 	var particles := GPUParticles3D.new()
