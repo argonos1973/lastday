@@ -401,15 +401,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 4.0
 			if height_diff >= 2.0 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
-				if _chase_stuck_time > 2.0:
+				if _chase_stuck_time > 1.5:
 					_state = "patrol"
 					_chase_stuck_time = 0.0
 					_chase_target = null
-					_chase_cooldown = 5.0
+					_chase_cooldown = 10.0
 					_play_wolf_sound("growl")
 					var away := (global_position - _player.global_position).normalized()
 					away.y = 0.0
-					target = global_position + away * 30.0
+					target = global_position + away * 40.0
 					speed = move_speed * 2.5
 					_play_animation_by_name("trot")
 				else:
@@ -465,11 +465,11 @@ func _wolf_ai(delta: float) -> Dictionary:
 						_chase_stuck_time += delta
 					else:
 						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
-				if _chase_stuck_time > 8.0:
+				if _chase_stuck_time > 4.0:
 					_state = "patrol"
 					_chase_stuck_time = 0.0
 					_chase_target = null
-					_chase_cooldown = 2.0
+					_chase_cooldown = 10.0
 					_play_wolf_sound("growl")
 					var farthest_patrol: Vector3 = patrol_points[0]
 					var farthest_dist := 0.0
