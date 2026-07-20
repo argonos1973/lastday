@@ -2774,52 +2774,6 @@ func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, hal
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), randf()))
 
-func _create_gas_station(origin: Vector3) -> void:
-	_register_wildlife_blocker(origin, 10.5)
-	_register_wildlife_blocker(origin + Vector3(0.0, 0.0, 7.0), 6.8)
-	#_create_label("Gasolinera", origin + Vector3(0, 3.3, 0))
-	_create_static_box("GasStationFloor", origin, Vector3(9, 0.2, 6), Color(0.16, 0.14, 0.11))
-	_create_static_box("GasStationBack", origin + Vector3(0, 0, -3), Vector3(9, 2.6, 0.35), Color(0.27, 0.24, 0.19))
-	_create_static_box("GasStationLeft", origin + Vector3(-4.5, 0, 0), Vector3(0.35, 2.6, 6), Color(0.25, 0.22, 0.18))
-	_create_static_box("GasStationRight", origin + Vector3(4.5, 0, 0), Vector3(0.35, 2.6, 6), Color(0.25, 0.22, 0.18))
-	_create_static_box("GasStationFrontA", origin + Vector3(-3, 0, 3), Vector3(3, 2.6, 0.35), Color(0.26, 0.23, 0.18))
-	_create_static_box("GasStationFrontB", origin + Vector3(3, 0, 3), Vector3(3, 2.6, 0.35), Color(0.26, 0.23, 0.18))
-	_create_visual_box("GasWindowLeft", origin + Vector3(-2.6, 1.35, 3.21), Vector3(1.2, 0.72, 0.06), Color(0.05, 0.07, 0.08), Vector3.ZERO)
-	_create_visual_box("GasWindowRight", origin + Vector3(2.6, 1.35, 3.21), Vector3(1.2, 0.72, 0.06), Color(0.05, 0.07, 0.08), Vector3.ZERO)
-	_create_visual_box("GasDirtyStripe", origin + Vector3(0, 2.05, 3.22), Vector3(7.2, 0.18, 0.055), Color(0.42, 0.10, 0.07), Vector3.ZERO)
-	_create_static_box("PumpA", origin + Vector3(-3.2, 0, 7), Vector3(0.8, 1.8, 0.8), Color(0.36, 0.08, 0.06))
-	_create_static_box("PumpB", origin + Vector3(2.5, 0, 7), Vector3(0.8, 1.8, 0.8), Color(0.36, 0.08, 0.06))
-	_create_static_box("GasStationCanopy", origin + Vector3(-0.4, 2.6, 7), Vector3(9.5, 0.25, 5.5), Color(0.19, 0.16, 0.12))
-	_create_static_box("GasStationSign", origin + Vector3(-5.8, 0, 4.7), Vector3(0.35, 3.4, 1.8), Color(0.39, 0.09, 0.06))
-	_create_scrap_pile(origin + Vector3(-6.5, 0, -4.8))
-
-func _create_police_station(origin: Vector3) -> void:
-	_register_wildlife_blocker(origin, 8.7)
-	#_create_label("Comisaria", origin + Vector3(0, 3.5, 0))
-	_create_static_box("PoliceFloor", origin, Vector3(10, 0.2, 7), Color(0.12, 0.13, 0.14))
-	_create_static_box("PoliceBack", origin + Vector3(0, 0, -3.5), Vector3(10, 3.0, 0.35), Color(0.18, 0.20, 0.22))
-	_create_static_box("PoliceLeft", origin + Vector3(-5, 0, 0), Vector3(0.35, 3.0, 7), Color(0.18, 0.20, 0.22))
-	_create_static_box("PoliceRight", origin + Vector3(5, 0, 0), Vector3(0.35, 3.0, 7), Color(0.18, 0.20, 0.22))
-	_create_static_box("PoliceFrontA", origin + Vector3(-3.3, 0, 3.5), Vector3(3.4, 3.0, 0.35), Color(0.17, 0.19, 0.21))
-	_create_static_box("PoliceFrontB", origin + Vector3(3.3, 0, 3.5), Vector3(3.4, 3.0, 0.35), Color(0.17, 0.19, 0.21))
-	_create_static_box("PoliceFlatRoof", origin + Vector3(0, 3.0, 0), Vector3(10.6, 0.35, 7.6), Color(0.09, 0.10, 0.105))
-	_create_visual_box("PoliceWindowA", origin + Vector3(-3.0, 1.45, 3.72), Vector3(1.25, 0.82, 0.06), Color(0.035, 0.045, 0.055), Vector3.ZERO)
-	_create_visual_box("PoliceWindowB", origin + Vector3(3.0, 1.45, 3.72), Vector3(1.25, 0.82, 0.06), Color(0.035, 0.045, 0.055), Vector3.ZERO)
-	_create_static_box("PoliceDesk", origin + Vector3(-1.2, 0, 0.8), Vector3(2.0, 0.8, 0.9), Color(0.13, 0.12, 0.10))
-	_create_static_box("PoliceBars", origin + Vector3(3.2, 0, -1.1), Vector3(0.25, 2.2, 2.6), Color(0.08, 0.09, 0.10))
-
-func _create_radio_point(origin: Vector3) -> void:
-	_register_wildlife_blocker(origin, 6.0)
-	_register_wildlife_blocker(origin + Vector3(3.6, 0.0, -1.5), 2.8)
-	#_create_label("Punto de radio", origin + Vector3(0, 4.0, 0))
-	_create_static_box("RadioShedFloor", origin, Vector3(5, 0.2, 5), Color(0.11, 0.11, 0.10))
-	_create_static_box("RadioShedBack", origin + Vector3(0, 0, -2.5), Vector3(5, 2.4, 0.3), Color(0.17, 0.17, 0.15))
-	_create_static_box("RadioShedLeft", origin + Vector3(-2.5, 0, 0), Vector3(0.3, 2.4, 5), Color(0.16, 0.16, 0.14))
-	_create_static_box("RadioShedRight", origin + Vector3(2.5, 0, 0), Vector3(0.3, 2.4, 5), Color(0.16, 0.16, 0.14))
-	_create_static_box("RadioShedFrontA", origin + Vector3(-1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
-	_create_static_box("RadioShedFrontB", origin + Vector3(1.7, 0, 2.5), Vector3(1.6, 2.4, 0.3), Color(0.15, 0.15, 0.13))
-	_create_static_box("RadioMast", origin + Vector3(3.6, 0, -1.5), Vector3(0.35, 8, 0.35), Color(0.12, 0.12, 0.12))
-
 func _create_new_world_props() -> void:
 	var _dbg_file := FileAccess.open("user://scrap_car_debug.txt", FileAccess.WRITE)
 	if _dbg_file:
