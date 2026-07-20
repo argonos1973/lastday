@@ -2986,7 +2986,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	if _is_aiming:
 		# First-person eye position so the scope looks down the barrel
 		var aim_height: float = (1.25 if is_crouching else 1.65) + vertical_bob * 0.2
-		target_position = Vector3(0.25, aim_height + _water_sink, 0.15)
+		target_position = Vector3(0.0, aim_height + _water_sink, 0.0)
 		camera.position = camera.position.lerp(target_position, delta * 18.0)
 	else:
 		camera.position = camera.position.lerp(target_position, delta * 10.0)
@@ -3441,11 +3441,15 @@ func _toggle_aim() -> void:
 		if camera != null:
 			camera.fov = 20.0
 		mouse_sensitivity = 0.0008
+		if third_person_model != null:
+			third_person_model.visible = false
 	else:
 		_remove_scope_overlay()
 		if camera != null:
 			camera.fov = _camera_fov
 		mouse_sensitivity = 0.0025
+		if third_person_model != null:
+			third_person_model.visible = true
 
 func _cancel_aim() -> void:
 	if not _is_aiming:
@@ -3455,6 +3459,8 @@ func _cancel_aim() -> void:
 	if camera != null:
 		camera.fov = _camera_fov
 	mouse_sensitivity = 0.0025
+	if third_person_model != null:
+		third_person_model.visible = true
 
 func _create_scope_overlay() -> void:
 	_remove_scope_overlay()
