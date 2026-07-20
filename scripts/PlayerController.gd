@@ -730,6 +730,8 @@ func _inventory_index_for_key(keycode: Key) -> int:
 func _use_inventory_index(index: int) -> void:
 	if inventory == null or index < 0 or index >= inventory.items.size():
 		return
+	if _is_aiming and index != held_index:
+		_cancel_aim()
 	var item = inventory.items[index]
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
@@ -2426,6 +2428,7 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 	if is_dead or is_sleeping:
 		return
 	is_sleeping = true
+	_cancel_aim()
 	if on_bed:
 		is_sleeping_on_bed = true
 		_bed_sleep_position = bed_pos
@@ -2457,6 +2460,8 @@ func clear_hands() -> void:
 func _cycle_held_item() -> void:
 	if inventory.items.is_empty():
 		return
+	if _is_aiming:
+		_cancel_aim()
 	held_index = (held_index + 1) % inventory.items.size()
 	_sync_held_item()
 	var item = inventory.items[held_index]
@@ -2978,7 +2983,13 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
 	target_position = Vector3(side_bob * 0.45, third_height, THIRD_PERSON_CAMERA_POS.z)
 	target_position.y += _water_sink
-	camera.position = camera.position.lerp(target_position, delta * 10.0)
+	if _is_aiming:
+		# First-person eye position so the scope looks down the barrel
+		var aim_height: float = (1.25 if is_crouching else 1.65) + vertical_bob * 0.2
+		target_position = Vector3(0.25, aim_height + _water_sink, 0.15)
+		camera.position = camera.position.lerp(target_position, delta * 18.0)
+	else:
+		camera.position = camera.position.lerp(target_position, delta * 10.0)
 	camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	_update_third_person_animation(moving, delta)
 
@@ -3430,62 +3441,26 @@ func _toggle_aim() -> void:
 		if camera != null:
 			camera.fov = 20.0
 		mouse_sensitivity = 0.0008
-		if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
-			third_person_animation_player.play(_rifle_fire_animation, 0.1, 0.0)
 	else:
 		_remove_scope_overlay()
 		if camera != null:
 			camera.fov = _camera_fov
 		mouse_sensitivity = 0.0025
 
+func _cancel_aim() -> void:
+	if not _is_aiming:
+		return
+	_is_aiming = false
+	_remove_scope_overlay()
+	if camera != null:
+		camera.fov = _camera_fov
+	mouse_sensitivity = 0.0025
+
 func _create_scope_overlay() -> void:
 	_remove_scope_overlay()
-	_scope_overlay = Control.new()
+	var scope_script: GDScript = load("res://scripts/ScopeOverlay.gd")
+	_scope_overlay = scope_script.new()
 	_scope_overlay.name = "ScopeOverlay"
-	_scope_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_scope_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var scope_bg := ColorRect.new()
-	scope_bg.name = "ScopeBg"
-	scope_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	scope_bg.color = Color(0.0, 0.0, 0.0, 0.85)
-	_scope_overlay.add_child(scope_bg)
-	var scope_circle := ColorRect.new()
-	scope_circle.name = "ScopeCircle"
-	var circle_size := 400
-	scope_circle.size = Vector2(circle_size, circle_size)
-	scope_circle.position = Vector2(
-		(get_viewport().get_visible_rect().size.x - circle_size) * 0.5,
-		(get_viewport().get_visible_rect().size.y - circle_size) * 0.5
-	)
-	scope_circle.color = Color(0.0, 0.0, 0.0, 0.0)
-	_scope_overlay.add_child(scope_circle)
-	var crosshair_v := ColorRect.new()
-	crosshair_v.name = "CrosshairV"
-	crosshair_v.size = Vector2(2, circle_size)
-	crosshair_v.position = Vector2(
-		get_viewport().get_visible_rect().size.x * 0.5 - 1.0,
-		get_viewport().get_visible_rect().size.y * 0.5 - circle_size * 0.5
-	)
-	crosshair_v.color = Color(0.0, 0.0, 0.0, 0.8)
-	_scope_overlay.add_child(crosshair_v)
-	var crosshair_h := ColorRect.new()
-	crosshair_h.name = "CrosshairH"
-	crosshair_h.size = Vector2(circle_size, 2)
-	crosshair_h.position = Vector2(
-		get_viewport().get_visible_rect().size.x * 0.5 - circle_size * 0.5,
-		get_viewport().get_visible_rect().size.y * 0.5 - 1.0
-	)
-	crosshair_h.color = Color(0.0, 0.0, 0.0, 0.8)
-	_scope_overlay.add_child(crosshair_h)
-	var center_dot := ColorRect.new()
-	center_dot.name = "CenterDot"
-	center_dot.size = Vector2(4, 4)
-	center_dot.position = Vector2(
-		get_viewport().get_visible_rect().size.x * 0.5 - 2.0,
-		get_viewport().get_visible_rect().size.y * 0.5 - 2.0
-	)
-	center_dot.color = Color(1.0, 0.0, 0.0, 0.9)
-	_scope_overlay.add_child(center_dot)
 	get_tree().current_scene.add_child(_scope_overlay)
 
 func _remove_scope_overlay() -> void:
@@ -3503,7 +3478,12 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
-		third_person_animation_player.play(_rifle_fire_animation, 0.05, 1.0)
+		var fire_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
+		if fire_anim != null:
+			fire_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = _rifle_fire_animation
+		third_person_action_timer = 1.0
+		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	notice.emit("Bang!")
 	var ray_origin := camera.global_position
 	var ray_dir := -camera.global_transform.basis.z.normalized()
