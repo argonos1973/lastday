@@ -2792,7 +2792,25 @@ func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
 
 func _build_third_person_rifle() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_RIFLE_MODEL, "ThirdPersonRifle", Vector3(0.0, 0.12, -0.25), Vector3(0, 90, 0), Vector3.ONE * 0.5)
+	if third_person_hand_item_root == null:
+		return
+	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	if model == null:
+		return
+	# The source model is huge (native AABB ~1.5 x 5.25 x 16.97 units, centered
+	# near (0.014, 0.69, 0.025) in model space). Wrap it so we can recenter the
+	# pivot and scale it down to a realistic rifle length (~1.15 units).
+	var wrapper := Node3D.new()
+	wrapper.name = "ThirdPersonRifle"
+	model.name = "RifleModel"
+	model.position = Vector3(-0.014, -0.69, -0.025)
+	wrapper.add_child(model)
+	# 16.97 (native length along Z) * 0.068 ~= 1.15 units long.
+	wrapper.scale = Vector3.ONE * 0.068
+	# Barrel runs along the model's Z axis; orient it forward in the grip.
+	wrapper.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+	wrapper.position = Vector3(0.02, 0.02, -0.08)
+	third_person_hand_item_root.add_child(wrapper)
 
 func _build_third_person_flashlight() -> void:
 	pass
