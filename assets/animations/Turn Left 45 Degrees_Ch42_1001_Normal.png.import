@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://w2ltj77ntfhh"
-path="res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Normal.png-b77608b695ebed291905812f0919fd84.ctex"
+uid="uid://qa3t4tnu16j5"
+path="res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Normal.png-f458dff63a900219e034c90e71aed95b.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://Turn Left 45 Degrees_Ch42_1001_Normal.png"
-dest_files=["res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Normal.png-b77608b695ebed291905812f0919fd84.ctex"]
+source_file="res://assets/animations/Turn Left 45 Degrees_Ch42_1001_Normal.png"
+dest_files=["res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Normal.png-f458dff63a900219e034c90e71aed95b.ctex"]
 
 [params]
 

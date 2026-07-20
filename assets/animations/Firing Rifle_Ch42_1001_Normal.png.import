@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfm03fmhet1lg"
-path="res://.godot/imported/Firing Rifle_Ch42_1001_Normal.png-91984dfaaf0dfc974de3bc3d0dc77d52.ctex"
+uid="uid://0dc3piyb8d40"
+path="res://.godot/imported/Firing Rifle_Ch42_1001_Normal.png-3c68bbdf4acca4bc2b2eabb0de2d8dbe.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://Firing Rifle_Ch42_1001_Normal.png"
-dest_files=["res://.godot/imported/Firing Rifle_Ch42_1001_Normal.png-91984dfaaf0dfc974de3bc3d0dc77d52.ctex"]
+source_file="res://assets/animations/Firing Rifle_Ch42_1001_Normal.png"
+dest_files=["res://.godot/imported/Firing Rifle_Ch42_1001_Normal.png-3c68bbdf4acca4bc2b2eabb0de2d8dbe.ctex"]
 
 [params]
 

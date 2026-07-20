@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c2cl6cwd6k5th"
-path="res://.godot/imported/modern_sniper_rifle__free_lowpoly_1.png-5e0693d56d859ffee898aa2e1132aa26.ctex"
+uid="uid://bipllp8s2yl5b"
+path="res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "444e52443f55560ebec0114bc64be7df"
+"md5": "4ad87e44009388bd0838b13574c67305"
 }
 
 [deps]
 
-source_file="res://modern_sniper_rifle__free_lowpoly_1.png"
-dest_files=["res://.godot/imported/modern_sniper_rifle__free_lowpoly_1.png-5e0693d56d859ffee898aa2e1132aa26.ctex"]
+source_file="res://assets/animations/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png"
+dest_files=["res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.ctex"]
 
 [params]
 

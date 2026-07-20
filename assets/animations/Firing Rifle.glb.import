@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://bmea2dqs5dhrl"
-path="res://.godot/imported/modern_sniper_rifle__free_lowpoly.glb-3a3ed6c021207e1f422cfbe24a0e985d.scn"
+uid="uid://d136jc3kpnmp4"
+path="res://.godot/imported/Firing Rifle.glb-15605b9c1354ad4bf411b8cffad17212.scn"
 
 [deps]
 
-source_file="res://modern_sniper_rifle__free_lowpoly.glb"
-dest_files=["res://.godot/imported/modern_sniper_rifle__free_lowpoly.glb-3a3ed6c021207e1f422cfbe24a0e985d.scn"]
+source_file="res://assets/animations/Firing Rifle.glb"
+dest_files=["res://.godot/imported/Firing Rifle.glb-15605b9c1354ad4bf411b8cffad17212.scn"]
 
 [params]
 

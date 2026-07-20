@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://v2w6kgo02kav"
-path="res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Diffuse.png-ef25e97330f135db73def26854eedb66.ctex"
+uid="uid://dqabtbx1v1qcs"
+path="res://.godot/imported/Firing Rifle_Ch42_1002_Diffuse.png-fc4b9d6ea66a8759b63a03a3f199ed8c.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "aa21e0f61dbf18c0816094accc6d366e"
+"md5": "d69a73bc1fb208a922ffb23e184459cf"
 }
 
 [deps]
 
-source_file="res://Turn Left 45 Degrees_Ch42_1001_Diffuse.png"
-dest_files=["res://.godot/imported/Turn Left 45 Degrees_Ch42_1001_Diffuse.png-ef25e97330f135db73def26854eedb66.ctex"]
+source_file="res://assets/animations/Firing Rifle_Ch42_1002_Diffuse.png"
+dest_files=["res://.godot/imported/Firing Rifle_Ch42_1002_Diffuse.png-fc4b9d6ea66a8759b63a03a3f199ed8c.ctex"]
 
 [params]
 

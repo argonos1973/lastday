@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bcny4cb674goa"
-path="res://.godot/imported/Firing Rifle_Ch42_1002_Diffuse.png-7842f7162b552a48e777355eaf55c607.ctex"
+uid="uid://db8acoi6hu52w"
+path="res://.godot/imported/modern_sniper_rifle__free_lowpoly_0.png-3518f84d9a43efbdc938b9720aecdb5b.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "d69a73bc1fb208a922ffb23e184459cf"
+"md5": "b862b3d01d3f612a9299e1bcab49594e"
 }
 
 [deps]
 
-source_file="res://Firing Rifle_Ch42_1002_Diffuse.png"
-dest_files=["res://.godot/imported/Firing Rifle_Ch42_1002_Diffuse.png-7842f7162b552a48e777355eaf55c607.ctex"]
+source_file="res://assets/models/weapons/modern_sniper_rifle__free_lowpoly_0.png"
+dest_files=["res://.godot/imported/modern_sniper_rifle__free_lowpoly_0.png-3518f84d9a43efbdc938b9720aecdb5b.ctex"]
 
 [params]
 

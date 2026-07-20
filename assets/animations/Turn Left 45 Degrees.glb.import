@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://co0taeq0bnnoh"
-path="res://.godot/imported/Turn Left 45 Degrees.glb-dd74bb3dc54c3290d0e12ee932cc1e70.scn"
+path="res://.godot/imported/Turn Left 45 Degrees.glb-13536348aaf842220e1339116fe57be9.scn"
 
 [deps]
 
-source_file="res://Turn Left 45 Degrees.glb"
-dest_files=["res://.godot/imported/Turn Left 45 Degrees.glb-dd74bb3dc54c3290d0e12ee932cc1e70.scn"]
+source_file="res://assets/animations/Turn Left 45 Degrees.glb"
+dest_files=["res://.godot/imported/Turn Left 45 Degrees.glb-13536348aaf842220e1339116fe57be9.scn"]
 
 [params]
 

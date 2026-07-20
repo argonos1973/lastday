@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://skhh5qgr0wyp"
-path="res://.godot/imported/Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-192225d7180a6a3207207c6d36a9d7ff.ctex"
+uid="uid://didmr5bdxmen4"
+path="res://.godot/imported/Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-32db91404cb3fd15ef794268ccc4996e.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png"
-dest_files=["res://.godot/imported/Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-192225d7180a6a3207207c6d36a9d7ff.ctex"]
+source_file="res://assets/animations/Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png"
+dest_files=["res://.godot/imported/Turning Right 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-32db91404cb3fd15ef794268ccc4996e.ctex"]
 
 [params]
 
