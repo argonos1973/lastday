@@ -1337,6 +1337,12 @@ func _net_item_picked_up(action_id: String) -> void:
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
 
+func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
+	if remote_players.has(shooter_id):
+		var rp: Node3D = remote_players[shooter_id]
+		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
+			rp.play_rifle_shot_remote(origin, dir)
+
 func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 	_server_door_states[door_name] = is_open
 	# Also update the visual door if it exists (non-dedicated server or client)
@@ -1362,6 +1368,19 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) ->
 	var animal := get_node_or_null(real_name)
 	if animal != null and animal.has_method("take_damage"):
 		animal.take_damage(amount, from_knife)
+	# Server broadcasts hit to all clients so puppets play pain sound
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if pid != net.get_my_id() and not net.players[pid].get("offline", false):
+				if net.peer.get_peer(pid) != null:
+					net.animal_hit.rpc_id(pid, real_name)
+
+func _net_animal_hit(animal_name: String) -> void:
+	# Find the puppet for this animal and play pain sound
+	var puppet_name := "Puppet_" + animal_name
+	var puppet := get_node_or_null(puppet_name)
+	if puppet != null and puppet.has_method("_play_wolf_pain_sound"):
+		puppet._play_wolf_pain_sound()
 
 func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = false) -> void:
 	if net == null or not net.is_host:

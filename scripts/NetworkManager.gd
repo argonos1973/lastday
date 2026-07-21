@@ -372,6 +372,13 @@ func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void
 	if scene != null and scene.has_method("_net_damage_animal"):
 		scene._net_damage_animal(animal_name, amount, from_knife)
 
+# Server broadcasts animal hit to all clients so they play pain sound on puppets
+@rpc("authority", "reliable")
+func animal_hit(animal_name: String) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_animal_hit"):
+		scene._net_animal_hit(animal_name)
+
 # Client tells server to gut an animal (server processes and relays to all clients)
 @rpc("any_peer", "reliable")
 func gut_animal(animal_name: String, collect_mode: bool = false) -> void:
@@ -505,6 +512,18 @@ func door_state_changed(door_name: String, is_open: bool) -> void:
 
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()
+
+# Client tells server it fired the rifle (server relays to all other clients)
+@rpc("any_peer", "reliable")
+func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != shooter_id and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
+				if peer.get_peer(pid) != null:
+					player_shot_rifle.rpc_id(pid, shooter_id, origin, dir)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_player_shot_rifle"):
+		scene._net_player_shot_rifle(shooter_id, origin, dir)
 
 # Client requests loot inventory from a dead player corpse
 @rpc("any_peer", "reliable")

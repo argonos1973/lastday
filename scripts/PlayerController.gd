@@ -127,6 +127,7 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 ]
 const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
+const RIFLE_RANGE := 150.0
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -274,6 +275,7 @@ var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _anim_debug_label: Label = null
 var _anim_debug_enabled := false
+var _crosshair_check_timer := 0.0
 var is_jumping := false
 var _jump_velocity := 0.0
 var _jump_apex := false
@@ -560,6 +562,12 @@ func _process(delta: float) -> void:
 		return
 	if _anim_debug_enabled:
 		_update_anim_debug_label()
+	_crosshair_check_timer += delta
+	if _crosshair_check_timer >= 0.5:
+		_crosshair_check_timer = 0.0
+		var main := get_tree().current_scene
+		if main != null and main.hud != null:
+			_update_crosshair(_has_rifle_equipped())
 
 func _ready() -> void:
 	if is_puppet:
@@ -599,7 +607,7 @@ func _input(event: InputEvent) -> void:
 		_capture_mouse()
 		var has_rifle := _has_rifle_equipped()
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			if has_rifle and _is_aiming:
+			if has_rifle:
 				_shoot_rifle()
 			else:
 				_melee_attack()
@@ -2679,10 +2687,12 @@ func drop_inventory_item(index: int) -> void:
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
 		_sync_third_person_equipment(null)
+		_update_crosshair(false)
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	var held_item = inventory.items[held_index]
 	_sync_third_person_equipment(held_item)
+	_update_crosshair(_has_rifle_equipped())
 
 func _sync_third_person_equipment(held_item) -> void:
 	if third_person_hand_item_root == null or third_person_back_item_root == null:
@@ -3554,7 +3564,18 @@ func _has_rifle_equipped() -> bool:
 	if inventory == null or inventory.items.is_empty():
 		return false
 	var held = inventory.items[held_index]
-	return held != null and held.item_type == "weapon_rifle"
+	if held == null:
+		return false
+	return held.item_type == "weapon_rifle"
+
+func _update_crosshair(is_rifle: bool) -> void:
+	if is_puppet:
+		return
+	var main := get_tree().current_scene
+	if main != null and main.hud != null and main.hud.has_method("set_crosshair_rifle"):
+		main.hud.set_crosshair_rifle(is_rifle)
+	else:
+		print("DEBUG CROSSHAIR: main=", main, " hud=", main.hud if main != null else "null", " is_rifle=", is_rifle)
 
 func _toggle_aim() -> void:
 	_is_aiming = not _is_aiming
@@ -3615,10 +3636,18 @@ func _shoot_rifle() -> void:
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	notice.emit("Bang!")
 	_play_shoot_sound()
-	var ray_dir := -camera.global_transform.basis.z.normalized()
-	var ray_origin := camera.global_position + ray_dir * 0.5
+	var vp := camera.get_viewport()
+	var aim_point := vp.get_visible_rect().size * 0.5 + _aim_screen_offset
+	var ray_origin := camera.project_ray_origin(aim_point)
+	var ray_dir := camera.project_ray_normal(aim_point)
+	# Sync rifle shot with other clients
+	if not is_puppet:
+		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null and net_node.is_connected:
+			var my_id: int = net_node.get_my_id()
+			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
 	var space_state := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * 200.0)
+	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * RIFLE_RANGE)
 	var exclude_arr: Array = [self.get_rid()]
 	for child in find_children("*", "CollisionObject3D", true, false):
 		exclude_arr.append(child.get_rid())
@@ -3629,56 +3658,51 @@ func _shoot_rifle() -> void:
 	if result.is_empty():
 		return
 	var collider = result["collider"]
+	var hit_pos: Vector3 = result.get("position", global_position + Vector3(0, 1.2, 0))
+	print("DEBUG SHOOT: hit=", collider.name, " class=", collider.get_class(), " pos=", hit_pos)
 	var damage := 80.0
 	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D
-		# Check if we hit a head hitbox (child Area3D named HeadHitbox)
+		# Find the damageable entity by walking up the tree, skipping self
+		var target_node: Node = null
 		if node.name == "HeadHitbox":
 			is_headshot = true
-			# Walk up to find the parent wildlife or NPC
 			var parent: Node = node.get_parent()
 			while parent != null:
-				if parent.has_method("take_damage"):
-					if is_headshot:
-						parent.take_damage(9999.0, false)
-					else:
-						parent.take_damage(damage, false)
+				if parent == self:
 					break
-				elif parent.is_in_group("wildlife") and parent.has_method("apply_damage"):
-					if is_headshot:
-						parent.apply_damage(9999.0)
-					else:
-						parent.apply_damage(damage)
+				if parent.has_method("take_damage") and (parent.is_in_group("wildlife") or parent.is_in_group("npc") or parent.is_in_group("net_player_proxy")):
+					target_node = parent
 					break
 				parent = parent.get_parent()
-			_spawn_blood_splatter()
-			return
-		# Check if we hit a body hitbox
-		if node.name == "BodyHitbox":
+		elif node.name == "BodyHitbox":
 			var parent: Node = node.get_parent()
 			while parent != null:
-				if parent.has_method("take_damage"):
-					parent.take_damage(damage, false)
+				if parent == self:
 					break
-				elif parent.is_in_group("wildlife") and parent.has_method("apply_damage"):
-					parent.apply_damage(damage)
+				if parent.has_method("take_damage") and (parent.is_in_group("wildlife") or parent.is_in_group("npc") or parent.is_in_group("net_player_proxy")):
+					target_node = parent
 					break
 				parent = parent.get_parent()
-			_spawn_blood_splatter()
+		else:
+			var walked: Node = node
+			while walked != null:
+				if walked == self:
+					break
+				if walked.has_method("take_damage") and (walked.is_in_group("wildlife") or walked.is_in_group("npc") or walked.is_in_group("net_player_proxy")):
+					target_node = walked
+					break
+				walked = walked.get_parent()
+		if target_node != null:
+			print("DEBUG SHOOT: target=", target_node.name, " is_wildlife=", target_node.is_in_group("wildlife"))
+			if is_headshot:
+				target_node.take_damage(9999.0, false)
+			else:
+				target_node.take_damage(damage, false)
+			_spawn_blood_splatter(hit_pos)
 			return
-		var walked: Node = node
-		while walked != null:
-			if walked.has_method("take_damage"):
-				walked.take_damage(damage, false)
-				break
-			elif walked.is_in_group("wildlife") and walked.has_method("take_damage"):
-				walked.take_damage(damage, false)
-				break
-			walked = walked.get_parent()
-		if walked != null:
-			_spawn_blood_splatter()
-			return
+		# Handle net_player_proxy directly
 		if node.is_in_group("net_player_proxy"):
 			var peer_id: int = node.get_meta("peer_id", 0)
 			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
@@ -3698,13 +3722,13 @@ func _shoot_rifle() -> void:
 							scene_node._broadcast_player_death(peer_id, node)
 				else:
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node != null and net_node.multiplayer.has_peer(peer_id):
+					if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
 						net_node.apply_damage_to_client.rpc_id(peer_id, damage)
 		elif node.has_method("apply_damage"):
 			node.apply_damage(damage)
-		_spawn_blood_splatter()
+		_spawn_blood_splatter(hit_pos)
 
-func _spawn_blood_splatter() -> void:
+func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
 	var particles := GPUParticles3D.new()
 	particles.name = "BloodSplatter"
 	particles.amount = 60
@@ -3734,7 +3758,10 @@ func _spawn_blood_splatter() -> void:
 	sphere.material = blood_mat
 	particles.draw_pass_1 = sphere
 	get_tree().current_scene.add_child(particles)
-	particles.global_position = global_position + Vector3(0, 1.2, 0)
+	if at_pos != Vector3.ZERO:
+		particles.global_position = at_pos
+	else:
+		particles.global_position = global_position + Vector3(0, 1.2, 0)
 	particles.emitting = true
 	get_tree().create_timer(2.5).timeout.connect(func(): particles.queue_free())
 
@@ -3757,6 +3784,22 @@ func _play_shoot_sound() -> void:
 	_shoot_audio_player.volume_db = 3.0
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
+
+func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
+	if is_puppet:
+		if _puppet_held != "Rifle francotirador":
+			return
+	else:
+		if not _has_rifle_equipped():
+			return
+	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
+		var fire_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
+		if fire_anim != null:
+			fire_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = _rifle_fire_animation
+		third_person_action_timer = 1.0
+		third_person_animation_player.play(_rifle_fire_animation, 0.05)
+	_play_shoot_sound()
 
 func _play_pain_sound() -> void:
 	if _pain_sound_timer > 0.0:

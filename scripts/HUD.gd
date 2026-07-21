@@ -26,6 +26,7 @@ var prompt_label: Label
 var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
 var crosshair_ring_v: ColorRect
+var _crosshair_rifle_mode := false
 var notice_label: Label
 var objective_label: Label
 var equipment_hand_label: Label
@@ -567,17 +568,15 @@ func _build_center_messages() -> void:
 func _apply_aim_layout() -> void:
 	if player == null or not player.has_method("get_aim_screen_offset"):
 		return
-	var vp_size := get_viewport().get_visible_rect().size
-	var center := vp_size * 0.5
-	var aim: Vector2 = center + player.get_aim_screen_offset()
+	var aim_offset: Vector2 = player.get_aim_screen_offset()
 	if crosshair_ring_h != null:
-		crosshair_ring_h.position = aim - crosshair_ring_h.size * 0.5
+		crosshair_ring_h.position = aim_offset - crosshair_ring_h.size * 0.5
 	if crosshair_ring_v != null:
-		crosshair_ring_v.position = aim - crosshair_ring_v.size * 0.5
+		crosshair_ring_v.position = aim_offset - crosshair_ring_v.size * 0.5
 	if crosshair_dot != null:
-		crosshair_dot.position = aim - crosshair_dot.size * 0.5
+		crosshair_dot.position = aim_offset - crosshair_dot.size * 0.5
 	if prompt_label != null:
-		prompt_label.position = aim + Vector2(-250.0, 24.0)
+		prompt_label.position = aim_offset + Vector2(-250.0, 24.0)
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:
@@ -878,16 +877,26 @@ func _set_prompt(text: String) -> void:
 		span = 28.0
 	elif text.to_lower().find("plantar") >= 0 or text.to_lower().find("cosechar") >= 0:
 		span = 26.0
-	if crosshair_ring_h != null:
-		crosshair_ring_h.size = Vector2(span, thickness)
-		crosshair_ring_h.visible = false
-	if crosshair_ring_v != null:
-		crosshair_ring_v.size = Vector2(thickness, span)
-		crosshair_ring_v.visible = false
-	if crosshair_dot != null:
-		crosshair_dot.size = Vector2(dot_size, dot_size)
-	if crosshair_dot != null:
-		crosshair_dot.color = color
+	if _crosshair_rifle_mode:
+		if crosshair_dot != null:
+			crosshair_dot.visible = false
+		if crosshair_ring_h != null:
+			crosshair_ring_h.size = Vector2(16.0, 2.0)
+			crosshair_ring_h.visible = true
+		if crosshair_ring_v != null:
+			crosshair_ring_v.size = Vector2(2.0, 16.0)
+			crosshair_ring_v.visible = true
+	else:
+		if crosshair_ring_h != null:
+			crosshair_ring_h.size = Vector2(span, thickness)
+			crosshair_ring_h.visible = false
+		if crosshair_ring_v != null:
+			crosshair_ring_v.size = Vector2(thickness, span)
+			crosshair_ring_v.visible = false
+		if crosshair_dot != null:
+			crosshair_dot.size = Vector2(dot_size, dot_size)
+		if crosshair_dot != null:
+			crosshair_dot.color = color
 	if crosshair_ring_h != null:
 		crosshair_ring_h.color = Color(color.r, color.g, color.b, 0.68 if active else 0.34)
 	if crosshair_ring_v != null:
@@ -1180,3 +1189,19 @@ func _on_store_pressed() -> void:
 	_close_context_menu()
 	if inventory_visible:
 		toggle_inventory()
+
+func set_crosshair_rifle(active: bool) -> void:
+	_crosshair_rifle_mode = active
+	if crosshair_dot == null or crosshair_ring_h == null or crosshair_ring_v == null:
+		print("DEBUG CROSSHAIR RIFLE: null nodes dot=", crosshair_dot, " h=", crosshair_ring_h, " v=", crosshair_ring_v)
+		return
+	crosshair_dot.visible = not active
+	if active:
+		crosshair_ring_h.size = Vector2(16.0, 2.0)
+		crosshair_ring_v.size = Vector2(2.0, 16.0)
+		crosshair_ring_h.color = Color(0.96, 0.94, 0.84, 0.92)
+		crosshair_ring_v.color = Color(0.96, 0.94, 0.84, 0.92)
+	crosshair_ring_h.visible = active
+	crosshair_ring_v.visible = active
+	print("DEBUG CROSSHAIR RIFLE: active=", active, " dot.visible=", crosshair_dot.visible, " h.visible=", crosshair_ring_h.visible, " v.visible=", crosshair_ring_v.visible, " h.pos=", crosshair_ring_h.position, " h.size=", crosshair_ring_h.size)
+	_apply_aim_layout()

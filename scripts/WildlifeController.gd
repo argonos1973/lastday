@@ -30,7 +30,7 @@ var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
-var _wolf_pain_player: AudioStreamPlayer3D = null
+var _wolf_pain_player: AudioStreamPlayer = null
 var _wolf_howl_2d_player: AudioStreamPlayer = null
 var _wolf_hunger := 40.0
 var _wolf_hunger_threshold := 70.0
@@ -74,19 +74,22 @@ func setup_puppet(kind: String) -> void:
 	_build_animal()
 
 func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool) -> void:
-	global_position = global_position.lerp(pos, 0.2)
-	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
 	if dead and not _is_dead:
 		_is_dead = true
 		_gutted = gutted
 		if _animation_player != null:
 			_animation_player.stop()
 		_lie_corpse_flat()
-	elif not dead:
+	if _is_dead:
+		return
+	global_position = global_position.lerp(pos, 0.2)
+	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
+	if not dead:
 		_play_animation_by_name(anim)
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool) -> void:
+	print("DEBUG WILDLIFE take_damage: is_puppet=", is_puppet, " amount=", amount, " name=", name)
 	if not is_puppet:
 		# Real animal — apply damage directly
 		if _is_dead:
@@ -452,7 +455,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 									scene_node._broadcast_player_death(peer_id, _player)
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-							if net_node != null and net_node.multiplayer.has_peer(peer_id):
+							if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
 								net_node.apply_damage_to_client.rpc_id(peer_id, 25.0)
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(25.0)
@@ -1083,27 +1086,30 @@ func _play_wolf_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		return
+	print("DEBUG WOLF PAIN: playing for ", name, " animal_type=", animal_type)
 	if _wolf_pain_player == null:
-		_wolf_pain_player = AudioStreamPlayer3D.new()
+		_wolf_pain_player = AudioStreamPlayer.new()
 		_wolf_pain_player.name = "WolfPainSound"
-		_wolf_pain_player.unit_size = 3.0
-		_wolf_pain_player.max_distance = 40.0
 		add_child(_wolf_pain_player)
-	var path := "res://assets/external/audio/downloaded/wolf_growl.wav"
+	var path := "res://loboherido.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)
+		print("DEBUG WOLF PAIN: ResourceLoader.exists=true stream=", stream)
 	if stream == null:
 		var disk_path := ProjectSettings.globalize_path(path)
 		if FileAccess.file_exists(disk_path):
 			stream = AudioStreamWAV.load_from_file(disk_path)
+			print("DEBUG WOLF PAIN: AudioStreamWAV.load_from_file stream=", stream)
 	if stream == null:
+		print("DEBUG WOLF PAIN: stream is null, cannot play")
 		return
 	_wolf_pain_player.stop()
 	_wolf_pain_player.stream = stream
 	_wolf_pain_player.volume_db = 2.0
 	_wolf_pain_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_pain_player.play()
+	print("DEBUG WOLF PAIN: playing started")
 
 func _find_nearest_animal(kind: String) -> Node3D:
 	var nearest: Node3D = null
