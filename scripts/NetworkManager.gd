@@ -24,6 +24,9 @@ var client_id := ""
 var players: Dictionary = {}
 
 func _load_or_generate_client_id() -> void:
+	# Dedicated server doesn't need a client_id — skip to avoid overwriting client's file
+	if is_dedicated_server:
+		return
 	var path := "user://client_id.txt"
 	if FileAccess.file_exists(path):
 		var f := FileAccess.open(path, FileAccess.READ)
@@ -37,15 +40,17 @@ func _load_or_generate_client_id() -> void:
 		f2.store_string(client_id)
 
 func _ready() -> void:
+	# Auto-start dedicated server if --server argument is passed
+	var args := OS.get_cmdline_args()
+	var user_args := OS.get_cmdline_user_args()
+	if args.has("--server") or user_args.has("--server"):
+		is_dedicated_server = true
 	_load_or_generate_client_id()
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
-	# Auto-start dedicated server if --server argument is passed
-	var args := OS.get_cmdline_args()
-	var user_args := OS.get_cmdline_user_args()
 	if args.has("--server") or user_args.has("--server"):
 		print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
@@ -220,6 +225,7 @@ func _on_server_disconnected() -> void:
 func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	if not is_host:
 		return
+	print("[PERSIST] _register_player: id=%d name=%s cid=%s" % [id, player_name, cid])
 	players[id] = {
 		"name": player_name,
 		"pos": SPAWN_POS,
@@ -314,17 +320,38 @@ func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = 
 		scene.call("_apply_net_spawn_pos", pos)
 
 @rpc("any_peer", "reliable")
-func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
+func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
-		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot)
+		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
 
 @rpc("authority", "reliable")
-func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float) -> void:
+func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
-		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot)
+		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
+
+# Client sends final position to server reliably before quitting
+@rpc("any_peer", "reliable")
+func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f" % [sender, pos, rot])
+	if not players.has(sender):
+		print("[PERSIST] final_player_state: peer %d not in players dict, ignoring" % sender)
+		return
+	players[sender]["pos"] = pos
+	players[sender]["rot"] = rot
+	players[sender]["anim"] = anim
+	players[sender]["equipped_clothing"] = equipped_clothing
+	players[sender]["held_item"] = held_item
+	players[sender]["equipped_backpack"] = equipped_backpack
+	var scene := get_tree().current_scene
+	if scene != null and scene.server_proxies.has(sender):
+		scene.server_proxies[sender].global_position = pos
+		print("[PERSIST] final_player_state: updated proxy for peer %d to pos=%s" % [sender, pos])
+	else:
+		print("[PERSIST] final_player_state: no server proxy for peer %d" % sender)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }

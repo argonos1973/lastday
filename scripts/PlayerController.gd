@@ -154,6 +154,9 @@ const THIRD_PERSON_EXTERNAL_RIFLE_IDLE_ANIMATION := "RifleIdleExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_AIM_IDLE_ANIMATION := "RifleAimIdleExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_WALK_ANIMATION := "RifleWalkExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_RUN_ANIMATION := "RifleRunExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION := "RifleSitExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION := "RifleProneExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION := "RifleGetupExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -240,6 +243,7 @@ var is_sleeping_on_bed := false
 var _saved_collision_mask := 0xFFFFFFFF
 var _bed_sleep_position := Vector3.ZERO
 var is_sitting := false
+var is_prone := false
 var _sit_cooldown := 0.0
 var _auto_sleep_triggered := false
 var _clothing_wear_timer := 0.0
@@ -266,6 +270,9 @@ var _rifle_idle_animation := ""
 var _rifle_aim_idle_animation := ""
 var _rifle_walk_animation := ""
 var _rifle_run_animation := ""
+var _rifle_sit_animation := ""
+var _rifle_prone_animation := ""
+var _rifle_getup_animation := ""
 var _has_rifle := false
 var _is_reloading := false
 var _is_firing := false
@@ -288,6 +295,7 @@ var _puppet_naked_pending := false
 var _puppet_naked_timer := 0.0
 var is_sprinting := false
 var is_crouching := false
+var _force_crouch := false
 var is_moving := false
 var in_shelter := false
 var is_in_water := false
@@ -1416,14 +1424,22 @@ func _physics_process(delta: float) -> void:
 	is_moving = input_dir.length() > 0.1 and not is_dead
 	if _sit_cooldown > 0.0:
 		_sit_cooldown = max(0.0, _sit_cooldown - delta)
-	if is_sitting:
+	if is_sitting or is_prone:
 		if _sit_cooldown <= 0.0 and input_dir.length() > 0.1:
 			is_sitting = false
+			is_prone = false
 		else:
 			velocity.x = 0.0
 			velocity.z = 0.0
 			direction = Vector3.ZERO
-	is_crouching = Input.is_action_pressed("crouch")
+	var crouch_input := Input.is_action_pressed("crouch")
+	if crouch_input:
+		_force_crouch = false
+	if _force_crouch and not crouch_input and input_dir.length() < 0.1:
+		is_crouching = true
+	else:
+		is_crouching = crouch_input
+		_force_crouch = false
 	_update_crouch_collision()
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
@@ -1927,6 +1943,21 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var drink_anim := third_person_animation_player.get_animation(third_person_drink_animation)
 		if drink_anim != null:
 			drink_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
+		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
+		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
+		if rifle_sit_anim != null:
+			rifle_sit_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION):
+		_rifle_prone_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION
+		var rifle_prone_anim := third_person_animation_player.get_animation(_rifle_prone_animation)
+		if rifle_prone_anim != null:
+			rifle_prone_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION):
+		_rifle_getup_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION
+		var rifle_getup_anim := third_person_animation_player.get_animation(_rifle_getup_animation)
+		if rifle_getup_anim != null:
+			rifle_getup_anim.loop_mode = Animation.LOOP_NONE
 	if third_person_run_animation.is_empty():
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
@@ -2525,15 +2556,37 @@ func craft_recipe(recipe: Dictionary) -> void:
 	notice.emit("Has crafteado: %s." % out["name"])
 
 func _toggle_sit() -> void:
-	if is_sitting:
+	var has_rifle := _has_rifle_equipped()
+	if is_prone:
+		is_prone = false
 		is_sitting = false
+		_sit_cooldown = 0.3
+		if has_rifle and not _rifle_getup_animation.is_empty():
+			third_person_action_animation = _rifle_getup_animation
+			third_person_action_timer = 2.0
+			third_person_animation_player.play(_rifle_getup_animation, 0.1)
+		elif not third_person_sit_animation.is_empty():
+			third_person_animation_player.play(third_person_sit_animation, 0.1)
 		notice.emit("Te levantas.")
+	elif is_sitting:
+		if has_rifle and not _rifle_prone_animation.is_empty():
+			is_prone = true
+			is_sitting = false
+			_sit_cooldown = 0.3
+			third_person_animation_player.play(_rifle_prone_animation, 0.1)
+			notice.emit("Te estiras. Pulsa S para levantarte.")
+		else:
+			is_sitting = false
+			_sit_cooldown = 0.3
+			notice.emit("Te levantas.")
 	else:
 		is_sitting = true
 		_sit_cooldown = 0.3
-		if not third_person_sit_animation.is_empty():
+		if has_rifle and not _rifle_sit_animation.is_empty():
+			third_person_animation_player.play(_rifle_sit_animation, 0.1)
+		elif not third_person_sit_animation.is_empty():
 			third_person_animation_player.play(third_person_sit_animation, 0.1)
-		notice.emit("Te sientas. Pulsa S para levantarte.")
+		notice.emit("Te sientas. Pulsa S para tumbarte.")
 
 func _eat_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
@@ -3056,11 +3109,18 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		elif third_person_action_timer <= 0.0:
 			third_person_action_animation = ""
 			_is_firing = false
-		if is_sitting and third_person_action_timer <= 0.0 and not third_person_sit_animation.is_empty():
-			if third_person_animation_player.current_animation != third_person_sit_animation:
-				third_person_animation_player.play(third_person_sit_animation, 0.1)
+		if is_prone and third_person_action_timer <= 0.0 and not _rifle_prone_animation.is_empty():
+			if third_person_animation_player.current_animation != _rifle_prone_animation:
+				third_person_animation_player.play(_rifle_prone_animation, 0.1)
 			third_person_animation_player.speed_scale = 1.0
 			return
+		if is_sitting and third_person_action_timer <= 0.0:
+			var sit_anim := _rifle_sit_animation if _has_rifle_equipped() and not _rifle_sit_animation.is_empty() else third_person_sit_animation
+			if not sit_anim.is_empty():
+				if third_person_animation_player.current_animation != sit_anim:
+					third_person_animation_player.play(sit_anim, 0.1)
+				third_person_animation_player.speed_scale = 1.0
+				return
 		var target_animation := ""
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state
@@ -3640,13 +3700,27 @@ func _shoot_rifle() -> void:
 	var aim_point := vp.get_visible_rect().size * 0.5 + _aim_screen_offset
 	var ray_origin := camera.project_ray_origin(aim_point)
 	var ray_dir := camera.project_ray_normal(aim_point)
-	# Sync rifle shot with other clients
-	if not is_puppet:
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-		if net_node != null and net_node.is_connected:
-			var my_id: int = net_node.get_my_id()
-			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
+	# Realistic spread: wider when moving, narrower when crouching/aiming
+	var spread_deg := 2.0
+	if is_crouching:
+		spread_deg = 0.5
+	if _is_aiming:
+		spread_deg *= 0.3
+	if is_moving:
+		spread_deg *= 2.5
+	if not is_on_floor():
+		spread_deg *= 4.0
+	spread_deg = min(spread_deg, 12.0)
+	if spread_deg > 0.01:
+		var spread_rad := deg_to_rad(spread_deg)
+		ray_dir = ray_dir.rotated(Vector3.UP, randf_range(-spread_rad, spread_rad))
+		var right := ray_dir.cross(Vector3.UP).normalized()
+		ray_dir = ray_dir.rotated(right, randf_range(-spread_rad, spread_rad))
+		ray_dir = ray_dir.normalized()
+	# Bullet drop: apply gravity over the trajectory
+	var hit_dist := RIFLE_RANGE
 	var space_state := get_world_3d().direct_space_state
+	# First ray to find hit distance
 	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * RIFLE_RANGE)
 	var exclude_arr: Array = [self.get_rid()]
 	for child in find_children("*", "CollisionObject3D", true, false):
@@ -3655,12 +3729,39 @@ func _shoot_rifle() -> void:
 	query.collide_with_areas = true
 	query.collide_with_bodies = true
 	var result := space_state.intersect_ray(query)
+	var hit_pos: Vector3 = ray_origin + ray_dir * RIFLE_RANGE
+	if not result.is_empty():
+		hit_dist = ray_origin.distance_to(result["position"])
+		hit_pos = result["position"]
+	# Apply bullet drop: offset the hit point downward based on distance
+	var bullet_drop := 0.5 * 9.8 * (hit_dist / 200.0) * (hit_dist / 200.0)
+	# Re-cast with adjusted target if distance is significant
+	if hit_dist > 10.0 and bullet_drop > 0.05:
+		var adjusted_target := ray_origin + ray_dir * hit_dist + Vector3(0, -bullet_drop, 0)
+		var drop_query := PhysicsRayQueryParameters3D.create(ray_origin, adjusted_target)
+		drop_query.exclude = exclude_arr
+		drop_query.collide_with_areas = true
+		drop_query.collide_with_bodies = true
+		var drop_result := space_state.intersect_ray(drop_query)
+		if not drop_result.is_empty():
+			result = drop_result
+			hit_pos = drop_result["position"]
+			hit_dist = ray_origin.distance_to(hit_pos)
+	# Sync rifle shot with other clients
+	if not is_puppet:
+		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null and net_node.is_connected:
+			var my_id: int = net_node.get_my_id()
+			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
 	if result.is_empty():
 		return
 	var collider = result["collider"]
-	var hit_pos: Vector3 = result.get("position", global_position + Vector3(0, 1.2, 0))
-	print("DEBUG SHOOT: hit=", collider.name, " class=", collider.get_class(), " pos=", hit_pos)
+	print("DEBUG SHOOT: hit=", collider.name, " class=", collider.get_class(), " pos=", hit_pos, " dist=", hit_dist)
+	# Damage falloff: full damage up to 50m, linear falloff to 20% at max range
 	var damage := 80.0
+	if hit_dist > 50.0:
+		var falloff: float = clamp(1.0 - (hit_dist - 50.0) / (RIFLE_RANGE - 50.0), 0.2, 1.0)
+		damage *= falloff
 	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D
@@ -3770,7 +3871,7 @@ func _play_shoot_sound() -> void:
 		_shoot_audio_player = AudioStreamPlayer.new()
 		_shoot_audio_player.name = "ShootSound"
 		add_child(_shoot_audio_player)
-	var path := "res://disparo.wav"
+	var path := "res://assets/audio/disparo.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)

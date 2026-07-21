@@ -28,6 +28,9 @@ const SOURCES := {
 	"RifleAimIdleExternal": "res://assets/animations/Rifle Aiming Idle.glb",
 	"RifleWalkExternal": "res://assets/animations/Walk With Rifle.glb",
 	"RifleRunExternal": "res://assets/animations/Rifle Run.glb",
+	"RifleSitExternal": "res://.godot/imported/rifle_sit.fbx-9d3fba28234b568168b6e41c50a708bb.scn",
+	"RifleProneExternal": "res://.godot/imported/rifle_prone.fbx-60f3c27a8d1d78c4aed34c9ab0bdb629.scn",
+	"RifleGetupExternal": "res://.godot/imported/rifle_getup.fbx-554f459efebd89e1d1a539718d5ec76f.scn",
 }
 
 const OUTPUT := "res://assets/animations/third_person_animations.res"
@@ -101,10 +104,14 @@ func _apply_rest_pose_correction(animation: Animation, ref_skel: Skeleton3D, sou
 		if src_pos.length() > 0.001 or ref_pos.length() > 0.001:
 			pos_corrections[bone_name] = ref_pos
 			pos_scales[bone_name] = global_scale
+	var tracks_to_remove: Array[int] = []
 	for track_index in range(animation.get_track_count()):
 		var path_text := str(animation.track_get_path(track_index))
 		var bone_name := _extract_bone_name(path_text)
 		if bone_name.is_empty():
+			continue
+		if bone_name.find("$AssimpFbx$") >= 0:
+			tracks_to_remove.append(track_index)
 			continue
 		var track_type := animation.track_get_type(track_index)
 		if track_type == Animation.TYPE_ROTATION_3D and rot_corrections.has(bone_name):
@@ -123,6 +130,9 @@ func _apply_rest_pose_correction(animation: Animation, ref_skel: Skeleton3D, sou
 				if value is Vector3:
 					var corrected: Vector3 = q_corr * ((value as Vector3) - src_rest_pos) * scale + p_corr
 					animation.track_set_key_value(track_index, key_index, corrected)
+	tracks_to_remove.reverse()
+	for idx in tracks_to_remove:
+		animation.remove_track(idx)
 
 func _extract_bone_name(path_text: String) -> String:
 	var colon_index := path_text.find(":mixamorig")

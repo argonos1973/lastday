@@ -455,7 +455,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 									scene_node._broadcast_player_death(peer_id, _player)
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-							if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
+							if net_node != null and net_node.players.has(peer_id):
 								net_node.apply_damage_to_client.rpc_id(peer_id, 25.0)
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(25.0)
@@ -1091,7 +1091,7 @@ func _play_wolf_pain_sound() -> void:
 		_wolf_pain_player = AudioStreamPlayer.new()
 		_wolf_pain_player.name = "WolfPainSound"
 		add_child(_wolf_pain_player)
-	var path := "res://loboherido.wav"
+	var path := "res://assets/audio/loboherido.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)

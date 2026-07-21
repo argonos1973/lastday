@@ -569,6 +569,8 @@ func _apply_aim_layout() -> void:
 	if player == null or not player.has_method("get_aim_screen_offset"):
 		return
 	var aim_offset: Vector2 = player.get_aim_screen_offset()
+	if aim_offset == Vector2.ZERO:
+		return
 	if crosshair_ring_h != null:
 		crosshair_ring_h.position = aim_offset - crosshair_ring_h.size * 0.5
 	if crosshair_ring_v != null:
@@ -897,10 +899,11 @@ func _set_prompt(text: String) -> void:
 			crosshair_dot.size = Vector2(dot_size, dot_size)
 		if crosshair_dot != null:
 			crosshair_dot.color = color
-	if crosshair_ring_h != null:
-		crosshair_ring_h.color = Color(color.r, color.g, color.b, 0.68 if active else 0.34)
-	if crosshair_ring_v != null:
-		crosshair_ring_v.color = Color(color.r, color.g, color.b, 0.68 if active else 0.34)
+	if not _crosshair_rifle_mode:
+		if crosshair_ring_h != null:
+			crosshair_ring_h.color = Color(color.r, color.g, color.b, 0.68 if active else 0.34)
+		if crosshair_ring_v != null:
+			crosshair_ring_v.color = Color(color.r, color.g, color.b, 0.68 if active else 0.34)
 	_apply_aim_layout()
 
 func _get_crosshair_action_color(text: String, active: bool) -> Color:
@@ -1197,8 +1200,14 @@ func set_crosshair_rifle(active: bool) -> void:
 		return
 	crosshair_dot.visible = not active
 	if active:
-		crosshair_ring_h.size = Vector2(16.0, 2.0)
-		crosshair_ring_v.size = Vector2(2.0, 16.0)
+		crosshair_ring_h.offset_left = -8
+		crosshair_ring_h.offset_top = -1
+		crosshair_ring_h.offset_right = 8
+		crosshair_ring_h.offset_bottom = 1
+		crosshair_ring_v.offset_left = -1
+		crosshair_ring_v.offset_top = -8
+		crosshair_ring_v.offset_right = 1
+		crosshair_ring_v.offset_bottom = 8
 		crosshair_ring_h.color = Color(0.96, 0.94, 0.84, 0.92)
 		crosshair_ring_v.color = Color(0.96, 0.94, 0.84, 0.92)
 	crosshair_ring_h.visible = active
