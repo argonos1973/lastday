@@ -287,7 +287,6 @@ var _left_upper_arm_bone_idx := -1
 var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
-var _left_hand_ik_node: SkeletonIK3D = null
 
 @export_group("Rifle Placement")
 @export var rifle_offset_pos := Vector3(0.02, 0.02, -0.08)
@@ -1562,9 +1561,6 @@ func _update_hand_socket() -> void:
 	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset
 	var euler := bone_local.basis.get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
-	# Update left hand IK target every frame from Marker3D on the rifle
-	if _left_hand_ik_node != null and is_instance_valid(_left_hand_ik_node) and _left_hand_target != null and is_instance_valid(_left_hand_target):
-		_left_hand_ik_node.target = _left_hand_target.global_transform
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -2899,49 +2895,30 @@ func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
 
 func _build_third_person_rifle() -> void:
-	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
+	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
 		return
 	_clear_rifle_attachment()
-	# 1) BoneAttachment3D tracks the right hand bone exactly
-	var bone_name := _resolve_bone_name_safe(right_hand_bone_name)
-	if bone_name.is_empty():
-		push_warning("PlayerController: right hand bone not found for rifle")
-		return
-	_rifle_bone_attachment = BoneAttachment3D.new()
-	_rifle_bone_attachment.name = "BoneAttachment3D_RightHand"
-	_rifle_bone_attachment.bone_name = bone_name
-	_spine_skeleton.add_child(_rifle_bone_attachment)
-	# 2) WeaponOffset: compensate pivot and allow fine-tuning via exports
-	_rifle_weapon_offset = Node3D.new()
-	_rifle_weapon_offset.name = "WeaponOffset"
-	_rifle_bone_attachment.add_child(_rifle_weapon_offset)
-	# 3) Load model
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
 	if model == null:
 		return
-	# 4) Rifle node: all transform exported for easy tweaking in inspector
-	var rifle_node := Node3D.new()
-	rifle_node.name = "Rifle"
-	rifle_node.position = rifle_offset_pos
-	rifle_node.rotation_degrees = rifle_offset_rot_deg
-	rifle_node.scale = rifle_scale
-	_rifle_weapon_offset.add_child(rifle_node)
+	# WeaponOffset parented to hand socket (tracked per-frame via _update_hand_socket)
+	_rifle_weapon_offset = Node3D.new()
+	_rifle_weapon_offset.name = "WeaponOffset"
+	_rifle_weapon_offset.position = rifle_offset_pos
+	_rifle_weapon_offset.rotation_degrees = rifle_offset_rot_deg
+	third_person_hand_item_root.add_child(_rifle_weapon_offset)
 	model.name = "RifleModel"
-	rifle_node.add_child(model)
-	# 5) LeftHandTarget Marker3D at handguard position
+	model.scale = rifle_scale
+	model.rotation_degrees = Vector3(0.0, -90.0, 0.0)
+	_rifle_weapon_offset.add_child(model)
+	# Marker3D reference for the left hand (no IK - avoids arm deformation)
 	var left_target := Marker3D.new()
 	left_target.name = "LeftHandTarget"
 	left_target.position = rifle_left_hand_target_pos
-	rifle_node.add_child(left_target)
+	model.add_child(left_target)
 	_left_hand_target = left_target
-	# 6) Left arm IK
-	_setup_left_hand_ik()
 
 func _clear_rifle_attachment() -> void:
-	if _left_hand_ik_node != null and is_instance_valid(_left_hand_ik_node):
-		_left_hand_ik_node.stop()
-		_left_hand_ik_node.queue_free()
-	_left_hand_ik_node = null
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		_rifle_bone_attachment.queue_free()
 	_rifle_bone_attachment = null
@@ -2968,10 +2945,6 @@ func _resolve_bone_name_safe(preferred: String) -> String:
 func _setup_left_hand_ik() -> void:
 	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
 		return
-	if _left_hand_ik_node != null and is_instance_valid(_left_hand_ik_node):
-		_left_hand_ik_node.stop()
-		_left_hand_ik_node.queue_free()
-	_left_hand_ik_node = null
 	_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name)
 	if _left_hand_bone_idx < 0:
 		_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name.replace(":", "_"))
@@ -2981,22 +2954,7 @@ func _setup_left_hand_ik() -> void:
 	_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name)
 	if _left_upper_arm_bone_idx < 0:
 		_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name.replace(":", "_"))
-	var root_name := _resolve_bone_name_safe(left_upper_arm_bone_name)
-	var tip_name := _resolve_bone_name_safe(left_hand_bone_name)
-	if root_name.is_empty() or tip_name.is_empty():
-		push_warning("PlayerController: left arm bones not found for rifle IK")
-		_left_hand_ik_weight = 0.0
-		return
-	var ik := SkeletonIK3D.new()
-	ik.name = "LeftHandIK"
-	ik.root_bone = root_name
-	ik.tip_bone = tip_name
-	ik.interpolation = 1.0
-	ik.use_magnet = false
-	_spine_skeleton.add_child(ik)
-	_left_hand_ik_node = ik
-	_left_hand_ik_weight = 1.0
-	ik.start()
+	_left_hand_ik_weight = 0.0
 
 func _build_third_person_flashlight() -> void:
 	pass
