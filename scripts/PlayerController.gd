@@ -290,8 +290,8 @@ var _rifle_weapon_offset: Node3D = null
 
 @export_group("Rifle Placement")
 @export var rifle_offset_pos := Vector3(0.02, 0.02, -0.08)
-@export var rifle_offset_rot_deg := Vector3(0.0, -90.0, 0.0)
-@export var rifle_scale := Vector3.ONE * 0.15
+@export var rifle_offset_rot_deg := Vector3(0.0, 0.0, 0.0)
+@export var rifle_scale := Vector3.ONE * 0.068
 @export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
 @export var right_hand_bone_name := "mixamorig:RightHand"
 @export var left_hand_bone_name := "mixamorig:LeftHand"
@@ -2912,11 +2912,11 @@ func _build_third_person_rifle() -> void:
 	_rifle_weapon_offset.position = rifle_offset_pos
 	_rifle_weapon_offset.rotation_degrees = rifle_offset_rot_deg
 	third_person_hand_item_root.add_child(_rifle_weapon_offset)
-	# The source model is huge; recenter pivot and scale down.
+	# The source model is huge; scale it down.
 	var wrapper := Node3D.new()
 	wrapper.name = "ThirdPersonRifle"
 	model.name = "RifleModel"
-	model.position = Vector3(-0.014, -0.69, -0.025)
+	model.position = Vector3.ZERO
 	wrapper.add_child(model)
 	wrapper.scale = rifle_scale
 	# Barrel runs along the model's Z axis; orient it forward in the grip.
