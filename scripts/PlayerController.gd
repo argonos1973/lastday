@@ -282,8 +282,23 @@ var _is_reloading := false
 var _is_firing := false
 var _left_hand_ik_weight := 0.0
 var _left_hand_bone_idx := -1
+var _left_forearm_bone_idx := -1
+var _left_upper_arm_bone_idx := -1
 var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
+var _rifle_weapon_offset: Node3D = null
+
+@export_group("Rifle Placement")
+@export var rifle_offset_pos := Vector3(0.02, 0.02, -0.08)
+@export var rifle_offset_rot_deg := Vector3(0.0, -90.0, 0.0)
+@export var rifle_scale := Vector3.ONE * 0.15
+@export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
+@export var right_hand_bone_name := "mixamorig:RightHand"
+@export var left_hand_bone_name := "mixamorig:LeftHand"
+@export var left_forearm_bone_name := "mixamorig:LeftForeArm"
+@export var left_upper_arm_bone_name := "mixamorig:LeftArm"
+@export var ik_blend_speed := 6.0
+
 var _anim_debug_label: Label = null
 var _anim_debug_enabled := false
 var _crosshair_check_timer := 0.0
@@ -2768,14 +2783,14 @@ func _sync_third_person_equipment(held_item) -> void:
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
+		_clear_rifle_attachment()
 		return
 	if hands == null or not hands.has_item_in_hands():
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
 		# Clean up IK when clearing held items
-		_left_hand_target = null
-		_left_hand_ik_weight = 0.0
+		_clear_rifle_attachment()
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
 	if not equip_has_bp:
 		for child in third_person_back_item_root.get_children():
@@ -2794,49 +2809,65 @@ func _sync_third_person_equipment(held_item) -> void:
 	match held_item.item_type:
 		"weapon":
 			_build_third_person_knife()
+			_clear_rifle_attachment()
 		"weapon_rifle":
 			_build_third_person_rifle()
 		"tool":
 			_build_third_person_flashlight()
+			_clear_rifle_attachment()
 		"food":
 			var fname := str(held_item.item_name)
 			if fname.find("ensartada") >= 0 or fname.find("asada") >= 0:
 				_build_third_person_can()
 			else:
 				_build_third_person_pack()
+			_clear_rifle_attachment()
 		"water":
 			var wname := str(held_item.item_name)
 			if wname == "Botella de agua":
 				_build_third_person_plastic_bottle()
 			else:
 				_build_third_person_bottle()
+			_clear_rifle_attachment()
 		"medical":
 			_build_third_person_bandage()
+			_clear_rifle_attachment()
 		"battery":
 			_build_third_person_battery()
+			_clear_rifle_attachment()
 		"resource":
 			_build_third_person_resource(str(held_item.item_name))
+			_clear_rifle_attachment()
 		"seed":
 			_build_third_person_seed_bag()
+			_clear_rifle_attachment()
 		"clothing":
 			_build_third_person_clothing_bundle()
+			_clear_rifle_attachment()
 		"misc":
 			if str(held_item.item_name) == "Botella de plastico":
 				_build_third_person_plastic_bottle()
 			else:
 				_build_third_person_pack()
+			_clear_rifle_attachment()
 		"tool_axe":
 			_build_third_person_axe()
+			_clear_rifle_attachment()
 		"tool_hoe":
 			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08))
+			_clear_rifle_attachment()
 		"tool_shovel":
 			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12))
+			_clear_rifle_attachment()
 		"tool_hammer":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
+			_clear_rifle_attachment()
 		"tool_pickaxe":
 			_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10))
+			_clear_rifle_attachment()
 		_:
 			_build_third_person_pack()
+			_clear_rifle_attachment()
 
 func _build_third_person_backpack() -> void:
 	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
@@ -2862,39 +2893,83 @@ func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
 
 func _build_third_person_rifle() -> void:
-	if third_person_hand_item_root == null:
+	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
 		return
+	# Remove old attachment before rebuilding
+	_clear_rifle_attachment()
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
 	if model == null:
 		return
-	# The source model is huge (native AABB ~1.5 x 5.25 x 16.97 units, centered
-	# near (0.014, 0.69, 0.025) in model space). Wrap it so we can recenter the
-	# pivot and scale it down to a realistic rifle length (~1.15 units).
+	# Resolve the right hand bone name (handles colon vs underscore prefixes)
+	var bone_name := _resolve_bone_name_safe(right_hand_bone_name)
+	if bone_name.is_empty():
+		push_warning("PlayerController: right hand bone not found for rifle")
+		return
+	# Attach a BoneAttachment3D to the right hand bone for automatic tracking
+	_rifle_bone_attachment = BoneAttachment3D.new()
+	_rifle_bone_attachment.name = "RightHandRifleAttach"
+	_rifle_bone_attachment.bone_name = bone_name
+	_spine_skeleton.add_child(_rifle_bone_attachment)
+	# WeaponOffset allows inspector-tuning of position/rotation/scale
+	_rifle_weapon_offset = Node3D.new()
+	_rifle_weapon_offset.name = "WeaponOffset"
+	_rifle_weapon_offset.position = rifle_offset_pos
+	_rifle_weapon_offset.rotation_degrees = rifle_offset_rot_deg
+	_rifle_bone_attachment.add_child(_rifle_weapon_offset)
+	# The source model is huge; recenter pivot and scale down.
 	var wrapper := Node3D.new()
 	wrapper.name = "ThirdPersonRifle"
 	model.name = "RifleModel"
 	model.position = Vector3(-0.014, -0.69, -0.025)
 	wrapper.add_child(model)
-	# 16.97 (native length along Z) * 0.068 ~= 1.15 units long.
-	wrapper.scale = Vector3.ONE * 0.068
+	wrapper.scale = rifle_scale
 	# Barrel runs along the model's Z axis; orient it forward in the grip.
 	wrapper.rotation_degrees = Vector3(0.0, -90.0, 0.0)
-	wrapper.position = Vector3(0.02, 0.02, -0.08)
-	third_person_hand_item_root.add_child(wrapper)
-	# Add a left-hand IK target on the rifle forearm area
-	var left_target := Node3D.new()
+	_rifle_weapon_offset.add_child(wrapper)
+	# Add a left-hand IK target on the rifle guard area
+	var left_target := Marker3D.new()
 	left_target.name = "LeftHandTarget"
-	left_target.position = Vector3(-0.12, 0.0, -0.35)
+	left_target.position = rifle_left_hand_target_pos
 	wrapper.add_child(left_target)
 	_left_hand_target = left_target
 	_setup_left_hand_ik()
 
+func _clear_rifle_attachment() -> void:
+	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
+		_rifle_bone_attachment.queue_free()
+	_rifle_bone_attachment = null
+	_rifle_weapon_offset = null
+	_left_hand_target = null
+	_left_hand_ik_weight = 0.0
+
+func _resolve_bone_name_safe(preferred: String) -> String:
+	if _spine_skeleton == null:
+		return ""
+	var idx := _spine_skeleton.find_bone(preferred)
+	if idx >= 0:
+		return preferred
+	var alt := preferred.replace(":", "_")
+	idx = _spine_skeleton.find_bone(alt)
+	if idx >= 0:
+		return alt
+	var short_name := preferred.split(":")[-1] if preferred.find(":") >= 0 else preferred
+	idx = _spine_skeleton.find_bone(short_name)
+	if idx >= 0:
+		return short_name
+	return ""
+
 func _setup_left_hand_ik() -> void:
 	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
 		return
-	_left_hand_bone_idx = _spine_skeleton.find_bone("mixamorig:LeftHand")
+	_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name)
 	if _left_hand_bone_idx < 0:
-		_left_hand_bone_idx = _spine_skeleton.find_bone("mixamorig_LeftHand")
+		_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name.replace(":", "_"))
+	_left_forearm_bone_idx = _spine_skeleton.find_bone(left_forearm_bone_name)
+	if _left_forearm_bone_idx < 0:
+		_left_forearm_bone_idx = _spine_skeleton.find_bone(left_forearm_bone_name.replace(":", "_"))
+	_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name)
+	if _left_upper_arm_bone_idx < 0:
+		_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name.replace(":", "_"))
 	_left_hand_ik_weight = 0.0
 
 func _build_third_person_flashlight() -> void:

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Lanzar Todo
+Comment=Lanza servidor dedicado y cliente
+Exec=bash -c '/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/tools/lanzar_todo.sh'
+Icon=applications-games
+Terminal=false
+Categories=Game;

@@ -154,7 +154,7 @@ func setup(kind: String, points: Array) -> void:
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
 	if animal_type == "wolf":
-		_chase_cooldown = 2.0
+		_chase_cooldown = 15.0
 	_build_animal()
 	call_deferred("_sanitize_patrol_points")
 
@@ -307,9 +307,10 @@ func _process(delta: float) -> void:
 		else:
 			move_target = waypoint
 	_move_towards(move_target, speed, delta, 8.0)
-	_walk_time += delta * speed * 4.8
-	_animate_legs(delta)
-	_update_animation_speed(speed)
+	if global_position.distance_to(_last_position) > 0.01:
+		_walk_time += delta * speed * 4.8
+		_animate_legs(delta)
+		_update_animation_speed(speed)
 
 func attract_to_noise(pos: Vector3, radius: float) -> void:
 	if _is_dead or animal_type != "wolf":
@@ -1291,8 +1292,9 @@ func _try_flee_from_player(delta: float) -> bool:
 		else:
 			move_target = waypoint
 	_move_towards(move_target, flee_speed, delta, 8.0)
-	_walk_time += delta * flee_speed * 4.8
-	_animate_legs(delta)
+	if global_position.distance_to(_last_position) > 0.01:
+		_walk_time += delta * flee_speed * 4.8
+		_animate_legs(delta)
 	return true
 
 func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: float) -> void:

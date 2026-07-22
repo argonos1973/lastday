@@ -33,6 +33,9 @@ const SOURCES := {
 	"RifleGetupExternal": "res://assets/animations/Rifle Prone To Kneel.fbx",
 	"RifleSitFireExternal": "res://assets/animations/Fire Rifle.fbx",
 	"RifleProneFireExternal": "res://assets/animations/Prone Firing Rifle.fbx",
+	"CrouchTurnLeftExternal": "res://assets/animations/Crouching Turn 90 Left.fbx",
+	"CrouchTurnRightExternal": "res://assets/animations/Crouching Turn 90 Right.fbx",
+	"RifleStandupExternal": "res://assets/animations/Rifle Kneel To Stand.fbx",
 }
 
 const OUTPUT := "res://assets/animations/third_person_animations.res"
@@ -60,6 +63,7 @@ func _run() -> void:
 		var source_skeleton := _find_skeleton(instance)
 		if source_skeleton != null and ref_skeleton != null:
 			_apply_rest_pose_correction(copied, ref_skeleton, source_skeleton)
+			_normalize_hips_ground_y(copied, ref_skeleton)
 		output_library.add_animation(animation_name, copied)
 		instance.free()
 	var error := ResourceSaver.save(output_library, OUTPUT)
@@ -135,6 +139,43 @@ func _apply_rest_pose_correction(animation: Animation, ref_skel: Skeleton3D, sou
 	tracks_to_remove.reverse()
 	for idx in tracks_to_remove:
 		animation.remove_track(idx)
+
+func _normalize_hips_ground_y(animation: Animation, ref_skel: Skeleton3D) -> void:
+	# Find the Hips position track and ensure the minimum Y across all
+	# keyframes matches the reference Hips rest Y so the character does
+	# not sink below the ground during transition animations.
+	var hips_idx := ref_skel.find_bone("mixamorig_Hips")
+	if hips_idx < 0:
+		return
+	var ref_hips_y := ref_skel.get_bone_rest(hips_idx).origin.y
+	var hips_track_idx := -1
+	for track_index in range(animation.get_track_count()):
+		var path_text := str(animation.track_get_path(track_index))
+		var bone_name := _extract_bone_name(path_text)
+		if bone_name == "mixamorig_Hips" and animation.track_get_type(track_index) == Animation.TYPE_POSITION_3D:
+			hips_track_idx = track_index
+			break
+	if hips_track_idx < 0:
+		return
+	# Find the minimum Y value across all keyframes
+	var min_y := 1000000.0
+	for key_index in range(animation.track_get_key_count(hips_track_idx)):
+		var value: Variant = animation.track_get_key_value(hips_track_idx, key_index)
+		if value is Vector3:
+			min_y = min(min_y, (value as Vector3).y)
+	if min_y >= 999999.0:
+		return
+	# Shift all Hips position keyframes so min_y matches ref_hips_y
+	var y_offset := ref_hips_y - min_y
+	if abs(y_offset) < 0.001:
+		return
+	for key_index in range(animation.track_get_key_count(hips_track_idx)):
+		var value: Variant = animation.track_get_key_value(hips_track_idx, key_index)
+		if value is Vector3:
+			var v: Vector3 = value as Vector3
+			v.y += y_offset
+			animation.track_set_key_value(hips_track_idx, key_index, v)
+
 
 func _extract_bone_name(path_text: String) -> String:
 	var colon_index := path_text.find(":mixamorig")
