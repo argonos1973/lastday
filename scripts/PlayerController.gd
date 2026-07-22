@@ -157,6 +157,8 @@ const THIRD_PERSON_EXTERNAL_RIFLE_RUN_ANIMATION := "RifleRunExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION := "RifleSitExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION := "RifleProneExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION := "RifleGetupExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION := "RifleSitFireExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION := "RifleProneFireExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -273,6 +275,8 @@ var _rifle_run_animation := ""
 var _rifle_sit_animation := ""
 var _rifle_prone_animation := ""
 var _rifle_getup_animation := ""
+var _rifle_sit_fire_animation := ""
+var _rifle_prone_fire_animation := ""
 var _has_rifle := false
 var _is_reloading := false
 var _is_firing := false
@@ -1958,6 +1962,16 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var rifle_getup_anim := third_person_animation_player.get_animation(_rifle_getup_animation)
 		if rifle_getup_anim != null:
 			rifle_getup_anim.loop_mode = Animation.LOOP_NONE
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION):
+		_rifle_sit_fire_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION
+		var sit_fire_anim := third_person_animation_player.get_animation(_rifle_sit_fire_animation)
+		if sit_fire_anim != null:
+			sit_fire_anim.loop_mode = Animation.LOOP_LINEAR
+	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION):
+		_rifle_prone_fire_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION
+		var prone_fire_anim := third_person_animation_player.get_animation(_rifle_prone_fire_animation)
+		if prone_fire_anim != null:
+			prone_fire_anim.loop_mode = Animation.LOOP_LINEAR
 	if third_person_run_animation.is_empty():
 		third_person_run_animation = third_person_walk_animation
 	if third_person_sneak_animation.is_empty():
@@ -3687,13 +3701,21 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
-	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
-		var fire_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
-		if fire_anim != null:
-			fire_anim.loop_mode = Animation.LOOP_NONE
-		third_person_action_animation = _rifle_fire_animation
-		third_person_action_timer = 1.0
-		third_person_animation_player.play(_rifle_fire_animation, 0.05)
+	if third_person_animation_player != null:
+		var fire_anim_name := ""
+		if is_prone and not _rifle_prone_fire_animation.is_empty():
+			fire_anim_name = _rifle_prone_fire_animation
+		elif is_sitting and not _rifle_sit_fire_animation.is_empty():
+			fire_anim_name = _rifle_sit_fire_animation
+		elif not _rifle_fire_animation.is_empty():
+			fire_anim_name = _rifle_fire_animation
+		if not fire_anim_name.is_empty():
+			var fire_anim := third_person_animation_player.get_animation(fire_anim_name)
+			if fire_anim != null:
+				fire_anim.loop_mode = Animation.LOOP_NONE
+			third_person_action_animation = fire_anim_name
+			third_person_action_timer = 1.0
+			third_person_animation_player.play(fire_anim_name, 0.05)
 	notice.emit("Bang!")
 	_play_shoot_sound()
 	var vp := camera.get_viewport()

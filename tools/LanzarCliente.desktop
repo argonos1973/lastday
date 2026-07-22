@@ -2,7 +2,7 @@
 Type=Application
 Name=Lanzar Cliente
 Comment=Lanza el cliente del juego
-Exec=/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/tools/lanzar_cliente.sh
+Exec=bash -c '/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/tools/lanzar_cliente.sh'
 Icon=applications-games
 Terminal=false
 Categories=Game;

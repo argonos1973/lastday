@@ -334,9 +334,9 @@ func restore_player_inventory(items_data: Array, health: float, hunger: float, t
 
 # Client sends final position to server reliably before quitting
 @rpc("any_peer", "reliable")
-func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String) -> void:
+func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f" % [sender, pos, rot])
+	print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f sitting=%s prone=%s crouching=%s" % [sender, pos, rot, sitting, prone, crouching])
 	if not players.has(sender):
 		print("[PERSIST] final_player_state: peer %d not in players dict, ignoring" % sender)
 		return
@@ -348,8 +348,27 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	players[sender]["equipped_backpack"] = equipped_backpack
 	var scene := get_tree().current_scene
 	if scene != null and scene.server_proxies.has(sender):
-		scene.server_proxies[sender].global_position = pos
-		print("[PERSIST] final_player_state: updated proxy for peer %d to pos=%s" % [sender, pos])
+		var proxy: Node3D = scene.server_proxies[sender]
+		proxy.global_position = pos
+		proxy.set_meta("saved_sleeping", sleeping)
+		proxy.set_meta("saved_sitting", sitting)
+		proxy.set_meta("saved_prone", prone)
+		proxy.set_meta("saved_crouching", crouching)
+		proxy.set_meta("saved_rot", rot)
+		print("[PERSIST] final_player_state: updated proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
+	elif scene != null:
+		# Proxy may have already been moved to proxy_by_client_id on disconnect
+		for cid in scene.proxy_by_client_id:
+			var p: Node3D = scene.proxy_by_client_id[cid]
+			if p != null and p.get_meta("peer_id", -1) == sender:
+				p.global_position = pos
+				p.set_meta("saved_sleeping", sleeping)
+				p.set_meta("saved_sitting", sitting)
+				p.set_meta("saved_prone", prone)
+				p.set_meta("saved_crouching", crouching)
+				p.set_meta("saved_rot", rot)
+				print("[PERSIST] final_player_state: updated disconnected proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
+				break
 	else:
 		print("[PERSIST] final_player_state: no server proxy for peer %d" % sender)
 

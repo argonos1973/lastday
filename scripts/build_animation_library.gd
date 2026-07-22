@@ -28,9 +28,11 @@ const SOURCES := {
 	"RifleAimIdleExternal": "res://assets/animations/Rifle Aiming Idle.glb",
 	"RifleWalkExternal": "res://assets/animations/Walk With Rifle.glb",
 	"RifleRunExternal": "res://assets/animations/Rifle Run.glb",
-	"RifleSitExternal": "res://.godot/imported/rifle_sit.fbx-9d3fba28234b568168b6e41c50a708bb.scn",
-	"RifleProneExternal": "res://.godot/imported/rifle_prone.fbx-60f3c27a8d1d78c4aed34c9ab0bdb629.scn",
-	"RifleGetupExternal": "res://.godot/imported/rifle_getup.fbx-554f459efebd89e1d1a539718d5ec76f.scn",
+	"RifleSitExternal": "res://assets/animations/Rifle Kneel Idle.fbx",
+	"RifleProneExternal": "res://assets/animations/Prone Idle.fbx",
+	"RifleGetupExternal": "res://assets/animations/Rifle Prone To Kneel.fbx",
+	"RifleSitFireExternal": "res://assets/animations/Fire Rifle.fbx",
+	"RifleProneFireExternal": "res://assets/animations/Prone Firing Rifle.fbx",
 }
 
 const OUTPUT := "res://assets/animations/third_person_animations.res"

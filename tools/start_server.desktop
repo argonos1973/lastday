@@ -2,7 +2,7 @@
 Type=Application
 Name=Iniciar Servidor
 Comment=Lanza el servidor dedicado de Godot
-Exec=bash -c '/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/tools/start_server.sh; read'
+Exec=bash -c '/home/sami/Documentos/lastday2/quiero-crear-un-prototipo-de-juego/quiero-crear-un-prototipo-de-juego/tools/start_server.sh'
 Icon=utilities-terminal
-Terminal=true
+Terminal=false
 Categories=Game;

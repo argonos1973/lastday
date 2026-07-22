@@ -461,9 +461,13 @@ func _send_final_state() -> void:
 		if player.inventory.items[hi] != null:
 			held = player.inventory.items[hi].item_name
 	var backpack: String = player.equipped_backpack
-	print("[PERSIST] _send_final_state: pos=%s rot=%.2f held=%s" % [pos, rot, held])
-	# Send reliable final position to server
-	net.final_player_state.rpc_id(1, pos, rot, anim, clothing, held, backpack)
+	var sleeping: bool = player.is_sleeping
+	var sitting: bool = player.is_sitting
+	var prone: bool = player.is_prone
+	var crouching: bool = player.is_crouching
+	print("[PERSIST] _send_final_state: pos=%s rot=%.2f held=%s sitting=%s prone=%s crouching=%s" % [pos, rot, held, sitting, prone, crouching])
+	# Send reliable final position and state to server
+	net.final_player_state.rpc_id(1, pos, rot, anim, clothing, held, backpack, sleeping, sitting, prone, crouching)
 	# Also send final inventory
 	_sync_local_player_inventory()
 
@@ -1059,6 +1063,7 @@ func _on_remote_player_disconnected(id: int) -> void:
 	if server_proxies.has(id):
 		var sp: Node3D = server_proxies[id]
 		sp.set_meta("disconnected", true)
+		sp.set_meta("peer_id", id)
 		sp.set_meta("protection_timer", 300.0)
 		# Keep in net_player_proxy group so wolves can still attack
 		if not sp.is_in_group("net_player_proxy"):
@@ -1247,22 +1252,31 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+	var proxy: Node3D = null
 	if server_proxies.has(peer_id):
-		var proxy: Node3D = server_proxies[peer_id]
-		print("[PERSIST] Storing inventory for peer %d: %d items, cid=%s, sitting=%s prone=%s crouching=%s" % [peer_id, items_data.size(), proxy.get_meta("client_id", ""), sitting, prone, crouching])
-		proxy.set_meta("saved_inventory", items_data)
-		proxy.set_meta("saved_health", health)
-		proxy.set_meta("saved_hunger", hunger)
-		proxy.set_meta("saved_thirst", thirst)
-		proxy.set_meta("saved_clothing", equipped_clothing)
-		proxy.set_meta("saved_backpack", equipped_backpack)
-		proxy.set_meta("saved_held_item", held_item)
-		proxy.set_meta("saved_held_idx", held_idx)
-		proxy.set_meta("saved_sleeping", sleeping)
-		proxy.set_meta("saved_sitting", sitting)
-		proxy.set_meta("saved_prone", prone)
-		proxy.set_meta("saved_crouching", crouching)
-		proxy.set_meta("saved_rot", rot)
+		proxy = server_proxies[peer_id]
+	else:
+		for cid in proxy_by_client_id:
+			var p: Node3D = proxy_by_client_id[cid]
+			if p != null and p.get_meta("peer_id", -1) == peer_id:
+				proxy = p
+				break
+	if proxy == null:
+		return
+	print("[PERSIST] Storing inventory for peer %d: %d items, cid=%s, sitting=%s prone=%s crouching=%s" % [peer_id, items_data.size(), proxy.get_meta("client_id", ""), sitting, prone, crouching])
+	proxy.set_meta("saved_inventory", items_data)
+	proxy.set_meta("saved_health", health)
+	proxy.set_meta("saved_hunger", hunger)
+	proxy.set_meta("saved_thirst", thirst)
+	proxy.set_meta("saved_clothing", equipped_clothing)
+	proxy.set_meta("saved_backpack", equipped_backpack)
+	proxy.set_meta("saved_held_item", held_item)
+	proxy.set_meta("saved_held_idx", held_idx)
+	proxy.set_meta("saved_sleeping", sleeping)
+	proxy.set_meta("saved_sitting", sitting)
+	proxy.set_meta("saved_prone", prone)
+	proxy.set_meta("saved_crouching", crouching)
+	proxy.set_meta("saved_rot", rot)
 
 func _apply_pending_restore() -> void:
 	if _pending_restore_data.is_empty():
