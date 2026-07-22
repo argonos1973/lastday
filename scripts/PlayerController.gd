@@ -2893,29 +2893,25 @@ func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
 
 func _build_third_person_rifle() -> void:
+	print("DEBUG RIFLE BUILD: start")
+	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
+		print("DEBUG RIFLE BUILD: no hand root")
+		return
 	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
+		print("DEBUG RIFLE BUILD: no skeleton")
 		return
 	# Remove old attachment before rebuilding
 	_clear_rifle_attachment()
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	print("DEBUG RIFLE BUILD: model=", model)
 	if model == null:
 		return
-	# Resolve the right hand bone name (handles colon vs underscore prefixes)
-	var bone_name := _resolve_bone_name_safe(right_hand_bone_name)
-	if bone_name.is_empty():
-		push_warning("PlayerController: right hand bone not found for rifle")
-		return
-	# Attach a BoneAttachment3D to the right hand bone for automatic tracking
-	_rifle_bone_attachment = BoneAttachment3D.new()
-	_rifle_bone_attachment.name = "RightHandRifleAttach"
-	_rifle_bone_attachment.bone_name = bone_name
-	_spine_skeleton.add_child(_rifle_bone_attachment)
-	# WeaponOffset allows inspector-tuning of position/rotation/scale
+	# WeaponOffset is parented to the existing hand socket so it tracks the bone
 	_rifle_weapon_offset = Node3D.new()
 	_rifle_weapon_offset.name = "WeaponOffset"
 	_rifle_weapon_offset.position = rifle_offset_pos
 	_rifle_weapon_offset.rotation_degrees = rifle_offset_rot_deg
-	_rifle_bone_attachment.add_child(_rifle_weapon_offset)
+	third_person_hand_item_root.add_child(_rifle_weapon_offset)
 	# The source model is huge; recenter pivot and scale down.
 	var wrapper := Node3D.new()
 	wrapper.name = "ThirdPersonRifle"
@@ -2926,6 +2922,7 @@ func _build_third_person_rifle() -> void:
 	# Barrel runs along the model's Z axis; orient it forward in the grip.
 	wrapper.rotation_degrees = Vector3(0.0, -90.0, 0.0)
 	_rifle_weapon_offset.add_child(wrapper)
+	print("DEBUG RIFLE BUILD: wrapper pos=", wrapper.position, " global=", wrapper.global_position, " scale=", wrapper.scale, " visible=", wrapper.visible)
 	# Add a left-hand IK target on the rifle guard area
 	var left_target := Marker3D.new()
 	left_target.name = "LeftHandTarget"
