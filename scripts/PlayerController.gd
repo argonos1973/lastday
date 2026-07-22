@@ -288,10 +288,13 @@ var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
 
+# rifle_scale: 0.085 = ~0.7m barrel. Si parece gigante baja a 0.05, si muy pequeño sube a 0.12
+# rifle_offset_pos: X mueve el grip adelante/atras, Y sube/baja, Z lateralmente
+# rifle_offset_rot_deg: ajusta si el rifle sale girado
 @export_group("Rifle Placement")
-@export var rifle_offset_pos := Vector3(0.02, 0.02, -0.08)
+@export var rifle_offset_pos := Vector3(-0.10, -0.03, 0.02)
 @export var rifle_offset_rot_deg := Vector3(0.0, 0.0, 0.0)
-@export var rifle_scale := Vector3.ONE * 0.068
+@export var rifle_scale := Vector3.ONE * 0.085
 @export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
 @export var right_hand_bone_name := "mixamorig:RightHand"
 @export var left_hand_bone_name := "mixamorig:LeftHand"
