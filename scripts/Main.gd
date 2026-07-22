@@ -1164,7 +1164,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			existing.add_to_group("net_player_proxy")
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
-			var saved_pos: Vector3 = existing.global_position
+			var saved_pos: Vector3 = existing.get_meta("saved_pos", existing.global_position)
 			var saved_inv: Array = existing.get_meta("saved_inventory", [])
 			var saved_hp: float = existing.get_meta("saved_health", 100.0)
 			var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
@@ -1277,6 +1277,7 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 	proxy.set_meta("saved_prone", prone)
 	proxy.set_meta("saved_crouching", crouching)
 	proxy.set_meta("saved_rot", rot)
+	proxy.set_meta("saved_pos", proxy.global_position)
 
 func _apply_pending_restore() -> void:
 	if _pending_restore_data.is_empty():

@@ -350,6 +350,7 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	if scene != null and scene.server_proxies.has(sender):
 		var proxy: Node3D = scene.server_proxies[sender]
 		proxy.global_position = pos
+		proxy.set_meta("saved_pos", pos)
 		proxy.set_meta("saved_sleeping", sleeping)
 		proxy.set_meta("saved_sitting", sitting)
 		proxy.set_meta("saved_prone", prone)
@@ -362,6 +363,7 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 			var p: Node3D = scene.proxy_by_client_id[cid]
 			if p != null and p.get_meta("peer_id", -1) == sender:
 				p.global_position = pos
+				p.set_meta("saved_pos", pos)
 				p.set_meta("saved_sleeping", sleeping)
 				p.set_meta("saved_sitting", sitting)
 				p.set_meta("saved_prone", prone)
