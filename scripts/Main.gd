@@ -428,8 +428,7 @@ func _process_loading_countdown(delta: float) -> void:
 func _exit_tree() -> void:
 	# Force final state + inventory sync before disconnecting
 	if net != null and net.is_connected and not net.is_dedicated_server:
-		if not _quit_final_sent:
-			_send_final_state()
+		_send_final_state()
 	for cached_scene in external_scene_cache.values():
 		if cached_scene is Node:
 			(cached_scene as Node).free()
@@ -471,25 +470,11 @@ func _send_final_state() -> void:
 	# Also send final inventory
 	_sync_local_player_inventory()
 
-var _quit_countdown := 0.0
-var _quit_active := false
-var _quit_final_sent := false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Q and event.shift_pressed:
-		if not _quit_active:
-			_quit_active = true
-			_quit_countdown = 5.0
-			_quit_final_sent = false
-			if hud != null:
-				hud.show_notice("Saliendo en 5...")
-		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE and _quit_active:
-		_quit_active = false
-		_quit_countdown = 0.0
-		_quit_final_sent = false
-		if hud != null:
-			hud.show_notice("Salida cancelada.")
+		_send_final_state()
+		get_tree().quit()
 		return
 	if game_over:
 		return
@@ -509,17 +494,6 @@ func _input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if _loading_overlay != null:
 		_process_loading_countdown(delta)
-	if _quit_active:
-		_quit_countdown -= delta
-		if not _quit_final_sent and _quit_countdown <= 1.0:
-			_quit_final_sent = true
-			_send_final_state()
-		if _quit_countdown <= 0.0:
-			_quit_active = false
-			get_tree().quit()
-			return
-		if hud != null:
-			hud.show_notice("Saliendo en %d..." % int(ceil(_quit_countdown)))
 	if net != null and net.is_dedicated_server:
 		# Update proxy positions from client sync data
 		_update_server_proxies(delta)

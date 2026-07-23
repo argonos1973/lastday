@@ -285,13 +285,16 @@ var _rifle_weapon_offset: Node3D = null
 var _rifle_left_hand_target: Node3D = null
 var _rifle_left_arm_pole: Marker3D = null
 var _rifle_left_arm_ik: TwoBoneIK3D = null
+var _rifle_right_hand_target: Node3D = null
+var _rifle_right_arm_pole: Marker3D = null
+var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _last_rifle_animation_debug := ""
 
 @export_group("Rifle Placement")
-@export var weapon_position_offset := Vector3(0.02, 0.0, -0.05)
-@export var weapon_rotation_offset := Vector3(0.0, 90.0, 0.0)
-@export var weapon_scale: float = 8.5
-@export var left_hand_target_position := Vector3.ZERO
+@export var weapon_position_offset := Vector3(0.0, 0.15, 0.0)
+@export var weapon_rotation_offset := Vector3(0.0, -60.0, 0.0)
+@export var weapon_scale: float = 12.0
+@export var left_hand_target_position := Vector3(-3.0, 0.0, 0.0)
 @export var right_hand_bone_name := "mixamorig:RightHand"
 
 var _anim_debug_label: Label = null
@@ -592,7 +595,84 @@ func _process(delta: float) -> void:
 		var main := get_tree().current_scene
 		if main != null and main.hud != null:
 			_update_crosshair(_has_rifle_equipped())
-	# Rifle animations provide the authored arm pose; do not override the bones procedurally.
+	# Update rifle orientation every frame
+	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset) and _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
+		var skel := _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
+		if skel != null:
+			_rifle_bone_attachment.force_update_transform()
+			var hand_pos := _rifle_bone_attachment.global_position
+			var char_basis := global_transform.basis.orthonormalized()
+			var skel_scale := skel.global_transform.basis.get_scale().x
+			var effective_scale := weapon_scale * skel_scale
+			# Rifle attached to right hand. Rotation: diagonal across body
+			# flip 180° Y: model +Z (barrel) → char -Z (forward)
+			# yaw -35°: barrel goes left-forward (diagonal, not fully sideways)
+			# pitch -20°: barrel tilts down, buttstock goes up
+			var flip := Basis.from_euler(Vector3(0.0, PI, 0.0))
+			var yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-60.0), 0.0))
+			var pitch := Basis.from_euler(Vector3(deg_to_rad(-15.0), 0.0, 0.0))
+			var rifle_rot := pitch * yaw * flip
+			var rot_basis := char_basis * rifle_rot
+			_rifle_weapon_offset.global_basis = rot_basis.orthonormalized()
+			# Position: grip at right hand, then adjust so buttstock aligns with elbow
+			var rifle_basis_orn := _rifle_weapon_offset.global_basis.orthonormalized()
+			var r_elbow_pos := hand_pos
+			var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skel)
+			if not r_elbow_bone.is_empty():
+				var r_elbow_idx := skel.find_bone(r_elbow_bone)
+				if r_elbow_idx >= 0:
+					r_elbow_pos = (skel.global_transform * skel.get_bone_global_pose(r_elbow_idx)).origin
+			# Buttstock world offset from grip
+			var bs_model := Vector3(0.0, 0.0, -8.46)
+			var bs_local := rifle_rot * bs_model
+			var bs_offset := rifle_basis_orn * (bs_local * effective_scale)
+			# Position: buttstock at right elbow
+			_rifle_weapon_offset.global_position = r_elbow_pos - bs_offset + char_basis * weapon_position_offset
+			# Dynamic IK target: project left hand onto rifle axis, then lerp toward hand
+			if _rifle_left_hand_target != null and is_instance_valid(_rifle_left_hand_target):
+				var rifle_pos := _rifle_weapon_offset.global_position
+				var rifle_basis := _rifle_weapon_offset.global_basis.orthonormalized()
+				var ik_rifle_z := rifle_basis.z.normalized()
+				var lh_bone_name := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
+				if not lh_bone_name.is_empty():
+					var lh_idx := skel.find_bone(lh_bone_name)
+					if lh_idx >= 0:
+						var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
+						var to_hand := lh_pos - rifle_pos
+						var proj := to_hand.dot(ik_rifle_z)
+						proj = clampf(proj, 0.02, 0.4)
+						var closest_on_rifle := rifle_pos + ik_rifle_z * proj
+						_rifle_left_hand_target.global_position = closest_on_rifle.lerp(lh_pos, 0.95)
+			# Right hand IK target at grip (rifle origin = grip, model Z=0)
+			if _rifle_right_hand_target != null and is_instance_valid(_rifle_right_hand_target):
+				_rifle_right_hand_target.global_position = _rifle_weapon_offset.global_position
+			# Diagnostics
+				var lh_bone := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
+				if not lh_bone.is_empty():
+					var lh_idx := skel.find_bone(lh_bone)
+					if lh_idx >= 0:
+						var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
+						var target_pos := _rifle_left_hand_target.global_position if _rifle_left_hand_target != null and is_instance_valid(_rifle_left_hand_target) else Vector3.ZERO
+						var ik_dist := target_pos.distance_to(lh_pos)
+						var barrel_dir := (_rifle_weapon_offset.global_basis.orthonormalized() * Vector3.BACK).normalized()
+						var diag_basis := _rifle_weapon_offset.global_basis.orthonormalized()
+						var diag_bs_model := Vector3(0.0, 0.0, -8.46)
+						var diag_bs_local := rifle_rot * diag_bs_model
+						var bs_world := _rifle_weapon_offset.global_position + diag_basis * (diag_bs_local * effective_scale)
+						var rh_bone := _resolve_bone_name_safe("mixamorig:RightHand", skel)
+						var rh_pos := Vector3.ZERO
+						if not rh_bone.is_empty():
+							var rh_idx := skel.find_bone(rh_bone)
+							if rh_idx >= 0:
+								rh_pos = (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
+						var grip_dist := _rifle_weapon_offset.global_position.distance_to(rh_pos)
+						var re_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skel)
+						var re_pos := Vector3.ZERO
+						if not re_bone.is_empty():
+							var re_idx := skel.find_bone(re_bone)
+							if re_idx >= 0:
+								re_pos = (skel.global_transform * skel.get_bone_global_pose(re_idx)).origin
+						print("[RIFLE_IK_LIVE] frame=", Engine.get_process_frames(), " ik_dist=", ik_dist, " grip_dist=", grip_dist, " buttstock_elbow=", bs_world.distance_to(re_pos), " barrel=", barrel_dir)
 
 func _ready() -> void:
 	if is_puppet:
@@ -2462,6 +2542,10 @@ func _load_gltf_node3d(path: String) -> Node3D:
 
 func _select_default_held_item() -> void:
 	for i in range(inventory.items.size()):
+		if inventory.items[i].item_type == "weapon_rifle":
+			held_index = i
+			return
+	for i in range(inventory.items.size()):
 		if inventory.items[i].item_type == "weapon":
 			held_index = i
 			return
@@ -2926,14 +3010,13 @@ func _build_third_person_rifle() -> void:
 	_rifle_bone_attachment.name = "BoneAttachment3D_RHand"
 	_rifle_bone_attachment.bone_name = resolved_bone
 	skeleton.add_child(_rifle_bone_attachment)
-	# WeaponOffset carries all rifle transforms; RifleModel remains at identity.
+	# WeaponOffset is top_level so its rotation is independent of bone animation
 	_rifle_weapon_offset = Node3D.new()
 	_rifle_weapon_offset.name = "WeaponOffset"
-	_rifle_weapon_offset.position = weapon_position_offset
+	_rifle_weapon_offset.top_level = true
 	# All correction remains on WeaponOffset; no skeleton or bone pose is modified.
 	var rifle_raw_aabb := _hierarchy_local_aabb(model)
-	_rifle_weapon_offset.quaternion = Quaternion.from_euler(weapon_rotation_offset * deg_to_rad(1.0))
-	_rifle_weapon_offset.scale = Vector3.ONE * weapon_scale
+	_rifle_weapon_offset.quaternion = Quaternion.IDENTITY
 	_rifle_bone_attachment.add_child(_rifle_weapon_offset)
 	model.name = "Rifle"
 	model.position = Vector3.ZERO
@@ -2952,11 +3035,61 @@ func _build_third_person_rifle() -> void:
 	_rifle_weapon_offset.add_child(model)
 	_rifle_left_hand_target = Node3D.new()
 	_rifle_left_hand_target.name = "LeftHandTarget"
-	_rifle_left_hand_target.position = left_hand_target_position if left_hand_target_position != Vector3.ZERO else _rifle_guard_target_position(rifle_raw_aabb)
-	model.add_child(_rifle_left_hand_target)
+	_rifle_left_hand_target.top_level = true
+	skeleton.add_child(_rifle_left_hand_target)
+	_rifle_right_hand_target = Node3D.new()
+	_rifle_right_hand_target.name = "RightHandTarget"
+	_rifle_right_hand_target.top_level = true
+	skeleton.add_child(_rifle_right_hand_target)
+	model.force_update_transform()
+	_rifle_weapon_offset.force_update_transform()
+	# Initialize global transform for top_level WeaponOffset
+	_rifle_bone_attachment.force_update_transform()
+	var init_hand_pos := _rifle_bone_attachment.global_position
+	var init_char_basis := global_transform.basis.orthonormalized()
+	var init_skel_scale := skeleton.global_transform.basis.get_scale().x
+	var init_effective_scale := weapon_scale * init_skel_scale
+	model.scale = Vector3.ONE * init_effective_scale
+	# Get right elbow for diagnostics
+	var init_elbow_pos := init_hand_pos
+	var init_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skeleton)
+	if not init_elbow_bone.is_empty():
+		var init_elbow_idx := skeleton.find_bone(init_elbow_bone)
+		if init_elbow_idx >= 0:
+			init_elbow_pos = (skeleton.global_transform * skeleton.get_bone_global_pose(init_elbow_idx)).origin
+	# Fixed diagonal rotation: flip + yaw + pitch
+	var init_flip := Basis.from_euler(Vector3(0.0, PI, 0.0))
+	var init_yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-60.0), 0.0))
+	var init_pitch := Basis.from_euler(Vector3(deg_to_rad(-15.0), 0.0, 0.0))
+	var init_rifle_rot := init_pitch * init_yaw * init_flip
+	var init_rot := init_char_basis * init_rifle_rot
+	_rifle_weapon_offset.global_basis = init_rot.orthonormalized()
+	# Position: buttstock at right elbow
+	var init_rifle_basis_orn := _rifle_weapon_offset.global_basis.orthonormalized()
+	var init_bs_model := Vector3(0.0, 0.0, -8.46)
+	var init_bs_local := init_rifle_rot * init_bs_model
+	var init_bs_offset := init_rifle_basis_orn * (init_bs_local * init_effective_scale)
+	_rifle_weapon_offset.global_position = init_elbow_pos - init_bs_offset + init_char_basis * weapon_position_offset
 	model.force_update_transform()
 	_rifle_weapon_offset.force_update_transform()
 	_setup_rifle_left_arm_ik(skeleton, _rifle_left_hand_target)
+	# Right hand IK target at grip (rifle origin = grip position)
+	_rifle_right_hand_target.global_position = _rifle_weapon_offset.global_position
+	_setup_rifle_right_arm_ik(skeleton, _rifle_right_hand_target)
+	# IK diagnostics
+	model.force_update_transform()
+	_rifle_weapon_offset.force_update_transform()
+	if _rifle_left_hand_target != null and is_instance_valid(_rifle_left_hand_target):
+		_rifle_left_hand_target.force_update_transform()
+		var target_world := _rifle_left_hand_target.global_position
+		var left_hand_bone := _resolve_bone_name_safe("mixamorig:LeftHand", skeleton)
+		var left_hand_world := Vector3.ZERO
+		if not left_hand_bone.is_empty():
+			var lh_idx := skeleton.find_bone(left_hand_bone)
+			if lh_idx >= 0:
+				left_hand_world = (skeleton.global_transform * skeleton.get_bone_global_pose(lh_idx)).origin
+		var ik_dist := target_world.distance_to(left_hand_world)
+		print("[RIFLE_IK] target_world=", target_world, " left_hand_world=", left_hand_world, " distance=", ik_dist, " ik_active=", _rifle_left_arm_ik.active if _rifle_left_arm_ik != null else false, " target_local=", _rifle_left_hand_target.position)
 	var rifle_world_aabb := _visual_aabb_global(model)
 	var hand_world_pos := Vector3.ZERO
 	var hand_bone_idx := skeleton.find_bone(resolved_bone)
@@ -2964,10 +3097,60 @@ func _build_third_person_rifle() -> void:
 		hand_world_pos = (skeleton.global_transform * skeleton.get_bone_global_pose(hand_bone_idx)).origin
 	var rifle_world_center := rifle_world_aabb.position + rifle_world_aabb.size * 0.5
 	print("[RIFLE_VERIFY] attachment=", _rifle_bone_attachment.get_path(), " bone=", resolved_bone, " weapon_offset=", _rifle_weapon_offset.get_path(), " idle=", _rifle_idle_animation, " model_visible=", model.visible, " mesh_count=", rifle_mesh_count, " global_pos=", model.global_position, " global_scale=", model.global_transform.basis.get_scale(), " world_aabb_pos=", rifle_world_aabb.position, " world_aabb_size=", rifle_world_aabb.size, " hand_world=", hand_world_pos, " rifle_center=", rifle_world_center, " center_delta=", rifle_world_center - hand_world_pos)
+	var hand_world_basis := (skeleton.global_transform * skeleton.get_bone_global_pose(hand_bone_idx)).basis.orthonormalized() if hand_bone_idx >= 0 else Basis()
+	var skel_basis := skeleton.global_transform.basis.orthonormalized()
+	print("[RIFLE_ORIENT] hand_X=", hand_world_basis.x, " hand_Y=", hand_world_basis.y, " hand_Z=", hand_world_basis.z, " skel_fwd(-Z)=", -skel_basis.z, " skel_up(Y)=", skel_basis.y, " skel_right(X)=", skel_basis.x, " raw_aabb_size=", rifle_raw_aabb.size)
+	var barrel_dir := (model.global_transform.basis * Vector3.BACK).normalized()
+	var model_up := (model.global_transform.basis * Vector3.UP).normalized()
+	var char_fwd := -global_transform.basis.z.normalized()
+	print("[RIFLE_BARREL] barrel_world_dir=", barrel_dir, " model_up_world=", model_up, " char_fwd=", char_fwd, " barrel_matches_fwd=", barrel_dir.dot(char_fwd) > 0.9)
+	# Log right elbow and hand positions for buttstock placement
+	var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skeleton)
+	var r_hand_bone := _resolve_bone_name_safe("mixamorig:RightHand", skeleton)
+	if not r_elbow_bone.is_empty() and not r_hand_bone.is_empty():
+		var r_elbow_idx := skeleton.find_bone(r_elbow_bone)
+		var r_hand_idx := skeleton.find_bone(r_hand_bone)
+		if r_elbow_idx >= 0 and r_hand_idx >= 0:
+			var r_elbow_pos := (skeleton.global_transform * skeleton.get_bone_global_pose(r_elbow_idx)).origin
+			var r_hand_pos := (skeleton.global_transform * skeleton.get_bone_global_pose(r_hand_idx)).origin
+			print("[RIFLE_BONES] right_elbow=", r_elbow_pos, " right_hand=", r_hand_pos, " elbow_hand_dist=", r_elbow_pos.distance_to(r_hand_pos), " raw_aabb_pos=", rifle_raw_aabb.position, " raw_aabb_size=", rifle_raw_aabb.size)
+
+func _apply_rifle_orientation(skeleton: Skeleton3D, model: Node3D, raw_aabb: AABB) -> void:
+	if _rifle_weapon_offset == null or _rifle_bone_attachment == null:
+		return
+	_rifle_bone_attachment.force_update_transform()
+	# Use the Player/controller node's actual forward and up in world space,
+	# not the skeleton's local axes (which may be rotated 90° on import).
+	var char_forward := -global_transform.basis.z.normalized()
+	var char_up := global_transform.basis.y.normalized()
+	# Transform world directions into the bone attachment's local space.
+	var ba_basis := _rifle_bone_attachment.global_transform.basis.orthonormalized()
+	var ba_inv := ba_basis.inverse()
+	var fwd_local := (ba_inv * char_forward).normalized()
+	var up_local := (ba_inv * char_up).normalized()
+	# Rifle barrel runs along +Z in model space; top is +Y.
+	# Build a basis that maps model +Z -> fwd_local and model +Y -> up_local.
+	var target_z := fwd_local
+	var target_y := up_local
+	var target_x := target_y.cross(target_z)
+	if target_x.length() < 0.001:
+		target_y = (ba_inv * global_transform.basis.x).normalized()
+		target_x = target_y.cross(target_z)
+	target_x = target_x.normalized()
+	target_y = target_z.cross(target_x).normalized()
+	var correction := Basis(target_x, target_y, target_z)
+	var fine_tune := Quaternion.from_euler(weapon_rotation_offset * deg_to_rad(1.0))
+	_rifle_weapon_offset.quaternion = correction.get_rotation_quaternion() * fine_tune
+	# Diagnostic: barrel direction in world space after orientation
+	model.force_update_transform()
+	_rifle_weapon_offset.force_update_transform()
+	var barrel_world_dir := (model.global_transform.basis * Vector3.BACK).normalized()
+	var model_up_world := (model.global_transform.basis * Vector3.UP).normalized()
+	print("[RIFLE_ORIENT_APPLIED] char_fwd=", char_forward, " char_up=", char_up, " fwd_local=", fwd_local, " up_local=", up_local, " final_quat=", _rifle_weapon_offset.quaternion, " barrel_world_dir=", barrel_world_dir, " model_up_world=", model_up_world)
 
 func _clear_rifle_attachment() -> void:
 	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
-		_rifle_left_arm_ik.enabled = false
+		_rifle_left_arm_ik.active = false
 		_rifle_left_arm_ik.queue_free()
 	if _rifle_left_arm_pole != null and is_instance_valid(_rifle_left_arm_pole):
 		_rifle_left_arm_pole.queue_free()
@@ -2991,17 +3174,22 @@ func _rifle_guard_target_position(raw_aabb: AABB) -> Vector3:
 	var size := raw_aabb.size
 	var center := raw_aabb.position + size * 0.5
 	if size.y >= size.x and size.y >= size.z:
-		center.y = raw_aabb.position.y + size.y * 0.56
+		center.y = raw_aabb.position.y + size.y * 0.65
 	elif size.x >= size.z:
-		center.x = raw_aabb.position.x + size.x * 0.56
+		center.x = raw_aabb.position.x + size.x * 0.65
 	else:
-		center.z = raw_aabb.position.z + size.z * 0.56
+		# Z is longest axis (barrel). With 180° Y flip, -Z in model = forward in world.
+		# Place target at 35% from the back (negative Z end) so left hand reaches forward.
+		center.z = raw_aabb.position.z + size.z * 0.35
 	return center
 
 func _setup_rifle_left_arm_ik(skeleton: Skeleton3D, target: Node3D) -> void:
-	var upper_arm := _resolve_bone_name_safe("mixamorig:LeftUpArm", skeleton)
+	var upper_arm := _resolve_bone_name_safe("mixamorig:LeftArm", skeleton)
+	var forearm := _resolve_bone_name_safe("mixamorig:LeftForeArm", skeleton)
 	var left_hand := _resolve_bone_name_safe("mixamorig:LeftHand", skeleton)
+	print("[RIFLE_IK_SETUP] upper_arm=", upper_arm, " forearm=", forearm, " left_hand=", left_hand)
 	if upper_arm.is_empty() or left_hand.is_empty():
+		print("[RIFLE_IK_SETUP] FAILED: missing bones")
 		return
 	_rifle_left_arm_pole = Marker3D.new()
 	_rifle_left_arm_pole.name = "LeftArmIKPole"
@@ -3011,13 +3199,50 @@ func _setup_rifle_left_arm_ik(skeleton: Skeleton3D, target: Node3D) -> void:
 	skeleton.add_child(_rifle_left_arm_pole)
 	_rifle_left_arm_ik = TwoBoneIK3D.new()
 	_rifle_left_arm_ik.name = "TwoBoneIK3D_LeftArm"
+	_rifle_left_arm_ik.process_priority = 100
 	skeleton.add_child(_rifle_left_arm_ik)
 	_rifle_left_arm_ik.set_root_bone_name(0, upper_arm)
 	_rifle_left_arm_ik.set_middle_bone_name(0, _resolve_bone_name_safe("mixamorig:LeftForeArm", skeleton))
 	_rifle_left_arm_ik.set_end_bone_name(0, left_hand)
 	_rifle_left_arm_ik.set_target_node(0, skeleton.get_path_to(target))
 	_rifle_left_arm_ik.set_pole_node(0, skeleton.get_path_to(_rifle_left_arm_pole))
-	_rifle_left_arm_ik.enabled = true
+	_rifle_left_arm_ik.active = true
+	_rifle_left_arm_ik.set("influence", 1.0)
+	# List properties to find the correct enable mechanism
+	var props := _rifle_left_arm_ik.get_property_list()
+	var prop_names := []
+	for p in props:
+		if p.usage & PROPERTY_USAGE_EDITOR:
+			prop_names.append(p.name)
+	print("[RIFLE_IK_PROPS] ", prop_names)
+	print("[RIFLE_IK_SETUP] SUCCESS: ik_created=true active=", _rifle_left_arm_ik.active, " influence=", _rifle_left_arm_ik.get("influence"), " target_path=", skeleton.get_path_to(target), " pole_path=", skeleton.get_path_to(_rifle_left_arm_pole))
+
+func _setup_rifle_right_arm_ik(skeleton: Skeleton3D, target: Node3D) -> void:
+	var upper_arm := _resolve_bone_name_safe("mixamorig:RightArm", skeleton)
+	var forearm := _resolve_bone_name_safe("mixamorig:RightForeArm", skeleton)
+	var right_hand := _resolve_bone_name_safe("mixamorig:RightHand", skeleton)
+	print("[RIFLE_IK_SETUP_R] upper_arm=", upper_arm, " forearm=", forearm, " right_hand=", right_hand)
+	if upper_arm.is_empty() or right_hand.is_empty():
+		print("[RIFLE_IK_SETUP_R] FAILED: missing bones")
+		return
+	_rifle_right_arm_pole = Marker3D.new()
+	_rifle_right_arm_pole.name = "RightArmIKPole"
+	var upper_idx := skeleton.find_bone(upper_arm)
+	var upper_world := skeleton.global_transform * skeleton.get_bone_global_pose(upper_idx)
+	_rifle_right_arm_pole.global_position = upper_world.origin + skeleton.global_transform.basis * Vector3(0.35, 0.05, 0.25)
+	skeleton.add_child(_rifle_right_arm_pole)
+	_rifle_right_arm_ik = TwoBoneIK3D.new()
+	_rifle_right_arm_ik.name = "TwoBoneIK3D_RightArm"
+	_rifle_right_arm_ik.process_priority = 100
+	skeleton.add_child(_rifle_right_arm_ik)
+	_rifle_right_arm_ik.set_root_bone_name(0, upper_arm)
+	_rifle_right_arm_ik.set_middle_bone_name(0, forearm)
+	_rifle_right_arm_ik.set_end_bone_name(0, right_hand)
+	_rifle_right_arm_ik.set_target_node(0, skeleton.get_path_to(target))
+	_rifle_right_arm_ik.set_pole_node(0, skeleton.get_path_to(_rifle_right_arm_pole))
+	_rifle_right_arm_ik.active = true
+	_rifle_right_arm_ik.set("influence", 1.0)
+	print("[RIFLE_IK_SETUP_R] SUCCESS: active=", _rifle_right_arm_ik.active, " influence=", _rifle_right_arm_ik.get("influence"))
 
 func _resolve_bone_name_safe(preferred: String, skeleton: Skeleton3D = null) -> String:
 	var target_skeleton := skeleton if skeleton != null else _spine_skeleton
