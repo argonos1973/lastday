@@ -289,13 +289,14 @@ var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
 var _debug_force_rifle_idle_timer := 0.0
 
-# rifle_scale: 0.085 = ~0.7m barrel. Si parece gigante baja a 0.05, si muy pequeño sube a 0.12
-# rifle_offset_pos: X adelante/atras del grip, Y sube/baja, Z lateral
-# rifle_offset_rot_deg: ajusta si el rifle sale girado (prueba 0,0,0 o 0,90,0 o 0,-90,0)
+# rifle_scale: ajusta el tamaño del rifle. Si parece gigante baja, si muy pequeño sube.
+# rifle_offset_pos (espacio del hueso de la mano derecha):
+#   X = arriba/abajo, Y = izquierda/derecha (positivo=hacia el cuerpo), Z = adelante/atras
+# rifle_offset_rot_deg: ajusta si el rifle sale girado
 @export_group("Rifle Placement")
-@export var rifle_offset_pos := Vector3(0.01, 0.0, -0.12)
+@export var rifle_offset_pos := Vector3(0.01, -0.12, -0.05)
 @export var rifle_offset_rot_deg := Vector3(0.0, 0.0, 0.0)
-@export var rifle_scale := Vector3.ONE * 0.085
+@export var rifle_scale := Vector3.ONE * 0.095
 @export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
 @export var right_hand_bone_name := "mixamorig:RightHand"
 @export var left_hand_bone_name := "mixamorig:LeftHand"
@@ -601,6 +602,7 @@ func _process(delta: float) -> void:
 		var main := get_tree().current_scene
 		if main != null and main.hud != null:
 			_update_crosshair(_has_rifle_equipped())
+	_update_left_hand_ik(delta)
 
 func _ready() -> void:
 	if is_puppet:
@@ -2934,12 +2936,13 @@ func _build_third_person_rifle() -> void:
 	model.rotation = Vector3.ZERO
 	model.scale = Vector3.ONE
 	_rifle_weapon_offset.add_child(model)
-	# Marker3D reference for the left hand (no IK - avoids arm deformation)
+	# Marker3D reference for the left hand (IK target)
 	var left_target := Marker3D.new()
 	left_target.name = "LeftHandTarget"
 	left_target.position = rifle_left_hand_target_pos
 	model.add_child(left_target)
 	_left_hand_target = left_target
+	_setup_left_hand_ik()
 	# Debug: force rifle idle animation for 5 seconds to inspect pose
 	_debug_force_rifle_idle_timer = 5.0
 	print("[RIFLE_DEBUG] Rifle built. Will force '", _rifle_idle_animation, "' for 5s. is_puppet=", is_puppet)
@@ -2981,6 +2984,67 @@ func _setup_left_hand_ik() -> void:
 	if _left_upper_arm_bone_idx < 0:
 		_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name.replace(":", "_"))
 	_left_hand_ik_weight = 0.0
+
+func _update_left_hand_ik(delta: float) -> void:
+	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
+		return
+	var want_ik := _has_rifle and _left_hand_target != null and is_instance_valid(_left_hand_target)
+	var target_weight := 1.0 if want_ik else 0.0
+	_left_hand_ik_weight = move_toward(_left_hand_ik_weight, target_weight, ik_blend_speed * delta)
+	if _left_hand_ik_weight <= 0.001:
+		if _left_upper_arm_bone_idx >= 0:
+			_spine_skeleton.set_bone_global_pose_override(_left_upper_arm_bone_idx, Transform3D(), 0.0)
+		if _left_forearm_bone_idx >= 0:
+			_spine_skeleton.set_bone_global_pose_override(_left_forearm_bone_idx, Transform3D(), 0.0)
+		if _left_hand_bone_idx >= 0:
+			_spine_skeleton.set_bone_global_pose_override(_left_hand_bone_idx, Transform3D(), 0.0)
+		return
+	if _left_upper_arm_bone_idx < 0 or _left_forearm_bone_idx < 0 or _left_hand_bone_idx < 0:
+		return
+
+	var skel := _spine_skeleton
+	var target_global := _left_hand_target.global_position
+	var target_local := skel.global_transform.affine_inverse() * target_global
+
+	var shoulder_pose := skel.get_bone_global_pose(_left_upper_arm_bone_idx)
+	var elbow_pose := skel.get_bone_global_pose(_left_forearm_bone_idx)
+	var hand_pose := skel.get_bone_global_pose(_left_hand_bone_idx)
+	var shoulder_pos := shoulder_pose.origin
+	var elbow_pos := elbow_pose.origin
+	var hand_pos := hand_pose.origin
+
+	var l1 := shoulder_pos.distance_to(elbow_pos)
+	var l2 := elbow_pos.distance_to(hand_pos)
+	if l1 <= 0.001 or l2 <= 0.001:
+		return
+
+	var to_target := target_local - shoulder_pos
+	var target_dist := to_target.length()
+	if target_dist < 0.001:
+		return
+	target_dist = clampf(target_dist, 0.001, l1 + l2 - 0.001)
+	var target_dir := to_target / target_dist
+
+	var cos_alpha := (l1 * l1 + target_dist * target_dist - l2 * l2) / (2.0 * l1 * target_dist)
+	cos_alpha = clampf(cos_alpha, -1.0, 1.0)
+	var alpha := acos(cos_alpha)
+
+	var plane_n := (elbow_pos - shoulder_pos).cross(hand_pos - shoulder_pos).normalized()
+	if plane_n.length_squared() < 0.0001:
+		plane_n = Vector3.UP
+	if absf(plane_n.dot(target_dir)) > 0.99:
+		plane_n = Vector3.RIGHT
+	var side_axis := plane_n.cross(target_dir).normalized()
+	if side_axis.length_squared() < 0.0001:
+		side_axis = Vector3.RIGHT
+
+	var elbow_target := shoulder_pos + l1 * (cos(alpha) * target_dir + sin(alpha) * side_axis)
+	var new_hand_pose := Transform3D(hand_pose.basis, target_local)
+	var new_elbow_pose := Transform3D(elbow_pose.basis, elbow_target)
+
+	skel.set_bone_global_pose_override(_left_upper_arm_bone_idx, shoulder_pose, _left_hand_ik_weight)
+	skel.set_bone_global_pose_override(_left_forearm_bone_idx, new_elbow_pose, _left_hand_ik_weight)
+	skel.set_bone_global_pose_override(_left_hand_bone_idx, new_hand_pose, _left_hand_ik_weight)
 
 func _build_third_person_flashlight() -> void:
 	pass
