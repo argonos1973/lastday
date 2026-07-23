@@ -2917,11 +2917,12 @@ func _build_third_person_rifle() -> void:
 	_rifle_weapon_offset = Node3D.new()
 	_rifle_weapon_offset.name = "WeaponOffset"
 	_rifle_weapon_offset.position = rifle_offset_pos
-	# Base rotation: model -Z=barrel, +Y=scope; bone +X=back, +Y=left, +Z=down
+	# Base rotation: model -Z=barrel forward, +Y=scope up, +X=right side
+	# Bone rest pose: +X=up, +Y=left, +Z=back → -X=down, -Y=right, -Z=forward
 	var base_basis := Basis(
 		Vector3(0, -1, 0),  # model X → bone -Y (right)
-		Vector3(0, 0, -1),  # model Y → bone -Z (up)
-		Vector3(1, 0, 0)    # model Z → bone +X (back), so -Z points forward
+		Vector3(1, 0, 0),   # model Y → bone +X (up)
+		Vector3(0, 0, 1)    # model Z → bone +Z (back), so -Z → bone -Z (forward)
 	)
 	var offset_quat := Quaternion(base_basis)
 	var base_quat := Quaternion.from_euler(rifle_offset_rot_deg * deg_to_rad(1.0))
