@@ -280,29 +280,19 @@ var _rifle_prone_fire_animation := ""
 var _has_rifle := false
 var _is_reloading := false
 var _is_firing := false
-var _left_hand_ik_weight := 0.0
-var _left_hand_bone_idx := -1
-var _left_forearm_bone_idx := -1
-var _left_upper_arm_bone_idx := -1
-var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
-var _debug_force_rifle_idle_timer := 0.0
+var _last_rifle_animation_debug := ""
 
 # rifle_scale: ajusta el tamaño del rifle. Si parece gigante baja, si muy pequeño sube.
 # rifle_offset_pos (espacio del hueso de la mano derecha):
 #   X = arriba/abajo, Y = izquierda/derecha (positivo=hacia el cuerpo), Z = adelante/atras
 # rifle_offset_rot_deg: ajusta si el rifle sale girado
 @export_group("Rifle Placement")
-@export var rifle_offset_pos := Vector3(0.01, -0.12, -0.05)
-@export var rifle_offset_rot_deg := Vector3(0.0, 0.0, 0.0)
-@export var rifle_scale := Vector3.ONE * 0.095
-@export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
+@export var rifle_offset_pos := Vector3(0.02, 0.0, -0.05)
+@export var rifle_offset_rot_deg := Vector3(0.0, 90.0, 0.0)
+@export var rifle_scale := Vector3.ONE * 9.5
 @export var right_hand_bone_name := "mixamorig:RightHand"
-@export var left_hand_bone_name := "mixamorig:LeftHand"
-@export var left_forearm_bone_name := "mixamorig:LeftForeArm"
-@export var left_upper_arm_bone_name := "mixamorig:LeftArm"
-@export var ik_blend_speed := 6.0
 
 var _anim_debug_label: Label = null
 var _anim_debug_enabled := false
@@ -602,7 +592,7 @@ func _process(delta: float) -> void:
 		var main := get_tree().current_scene
 		if main != null and main.hud != null:
 			_update_crosshair(_has_rifle_equipped())
-	_update_left_hand_ik(delta)
+	# Rifle animations provide the authored arm pose; do not override the bones procedurally.
 
 func _ready() -> void:
 	if is_puppet:
@@ -2794,12 +2784,16 @@ func _sync_held_item() -> void:
 
 func _sync_third_person_equipment(held_item) -> void:
 	if third_person_hand_item_root == null or third_person_back_item_root == null:
+		if held_item != null and str(held_item.item_type) == "weapon_rifle":
+			print("[RIFLE_VERIFY] sync blocked: hand_root=", third_person_hand_item_root, " back_root=", third_person_back_item_root)
 		return
 	if is_sleeping:
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
 		_clear_rifle_attachment()
+		if held_item != null and str(held_item.item_type) == "weapon_rifle":
+			print("[RIFLE_VERIFY] sync blocked: player sleeping")
 		return
 	if hands == null or not hands.has_item_in_hands():
 		for child in third_person_hand_item_root.get_children():
@@ -2816,6 +2810,8 @@ func _sync_third_person_equipment(held_item) -> void:
 	if inventory != null and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
 	if hands != null and hands.has_item_in_hands():
+		if held_item != null and str(held_item.item_type) == "weapon_rifle":
+			print("[RIFLE_VERIFY] sync blocked: PlayerHands already contains ", hands.get_current_hand_item())
 		return
 	if held_item == null or held_item.item_type == "backpack":
 		return
@@ -2914,137 +2910,77 @@ func _build_third_person_rifle() -> void:
 	_clear_rifle_attachment()
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
 	if model == null:
+		print("[RIFLE_VERIFY] model load failed: ", REAL_RIFLE_MODEL)
 		return
-	# WeaponOffset carries all transform; RifleModel stays at identity for debugging
+	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
+	if skeleton == null or not is_instance_valid(skeleton):
+		model.queue_free()
+		print("[RIFLE_VERIFY] skeleton not found for model: ", third_person_model)
+		return
+	var resolved_bone := _resolve_bone_name_safe(right_hand_bone_name, skeleton)
+	if resolved_bone.is_empty():
+		model.queue_free()
+		print("[RIFLE_VERIFY] Right-hand bone not found: ", right_hand_bone_name, " skeleton=", skeleton.get_path())
+		return
+	_rifle_bone_attachment = BoneAttachment3D.new()
+	_rifle_bone_attachment.name = "RifleRightHandAttachment"
+	_rifle_bone_attachment.bone_name = resolved_bone
+	skeleton.add_child(_rifle_bone_attachment)
+	# WeaponOffset carries all rifle transforms; RifleModel remains at identity.
 	_rifle_weapon_offset = Node3D.new()
 	_rifle_weapon_offset.name = "WeaponOffset"
 	_rifle_weapon_offset.position = rifle_offset_pos
-	# Base rotation: model -Z=barrel forward, +Y=scope up, +X=right side
-	# Bone rest pose: +X=up, +Y=left, +Z=back → -X=down, -Y=right, -Z=forward
-	var base_basis := Basis(
-		Vector3(0, -1, 0),  # model X → bone -Y (right)
-		Vector3(1, 0, 0),   # model Y → bone +X (up)
-		Vector3(0, 0, 1)    # model Z → bone +Z (back), so -Z → bone -Z (forward)
-	)
-	var offset_quat := Quaternion(base_basis)
-	var base_quat := Quaternion.from_euler(rifle_offset_rot_deg * deg_to_rad(1.0))
-	_rifle_weapon_offset.quaternion = base_quat * offset_quat
+	# All correction remains on WeaponOffset; no skeleton or bone pose is modified.
+	_rifle_weapon_offset.quaternion = Quaternion.from_euler(rifle_offset_rot_deg * deg_to_rad(1.0))
 	_rifle_weapon_offset.scale = rifle_scale
-	third_person_hand_item_root.add_child(_rifle_weapon_offset)
+	_rifle_bone_attachment.add_child(_rifle_weapon_offset)
 	model.name = "RifleModel"
 	model.position = Vector3.ZERO
 	model.rotation = Vector3.ZERO
 	model.scale = Vector3.ONE
+	model.visible = true
+	var rifle_mesh_count := 0
+	var rifle_mesh_stack: Array[Node] = [model]
+	while not rifle_mesh_stack.is_empty():
+		var rifle_node: Node = rifle_mesh_stack.pop_back()
+		if rifle_node is MeshInstance3D:
+			rifle_mesh_count += 1
+			(rifle_node as MeshInstance3D).visible = true
+		for rifle_child in rifle_node.get_children():
+			rifle_mesh_stack.append(rifle_child)
 	_rifle_weapon_offset.add_child(model)
-	# Marker3D reference for the left hand (IK target)
-	var left_target := Marker3D.new()
-	left_target.name = "LeftHandTarget"
-	left_target.position = rifle_left_hand_target_pos
-	model.add_child(left_target)
-	_left_hand_target = left_target
-	_setup_left_hand_ik()
-	# Debug: force rifle idle animation for 5 seconds to inspect pose
-	_debug_force_rifle_idle_timer = 5.0
-	print("[RIFLE_DEBUG] Rifle built. Will force '", _rifle_idle_animation, "' for 5s. is_puppet=", is_puppet)
+	model.force_update_transform()
+	_rifle_weapon_offset.force_update_transform()
+	var rifle_world_aabb := _visual_aabb_global(model)
+	var hand_world_pos := Vector3.ZERO
+	var hand_bone_idx := skeleton.find_bone(resolved_bone)
+	if hand_bone_idx >= 0:
+		hand_world_pos = (skeleton.global_transform * skeleton.get_bone_global_pose(hand_bone_idx)).origin
+	var rifle_world_center := rifle_world_aabb.position + rifle_world_aabb.size * 0.5
+	print("[RIFLE_VERIFY] attachment=", _rifle_bone_attachment.get_path(), " bone=", resolved_bone, " weapon_offset=", _rifle_weapon_offset.get_path(), " idle=", _rifle_idle_animation, " model_visible=", model.visible, " mesh_count=", rifle_mesh_count, " global_pos=", model.global_position, " global_scale=", model.global_transform.basis.get_scale(), " world_aabb_pos=", rifle_world_aabb.position, " world_aabb_size=", rifle_world_aabb.size, " hand_world=", hand_world_pos, " rifle_center=", rifle_world_center, " center_delta=", rifle_world_center - hand_world_pos)
 
 func _clear_rifle_attachment() -> void:
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		_rifle_bone_attachment.queue_free()
 	_rifle_bone_attachment = null
 	_rifle_weapon_offset = null
-	_left_hand_target = null
-	_left_hand_ik_weight = 0.0
 
-func _resolve_bone_name_safe(preferred: String) -> String:
-	if _spine_skeleton == null:
+func _resolve_bone_name_safe(preferred: String, skeleton: Skeleton3D = null) -> String:
+	var target_skeleton := skeleton if skeleton != null else _spine_skeleton
+	if target_skeleton == null:
 		return ""
-	var idx := _spine_skeleton.find_bone(preferred)
+	var idx := target_skeleton.find_bone(preferred)
 	if idx >= 0:
 		return preferred
 	var alt := preferred.replace(":", "_")
-	idx = _spine_skeleton.find_bone(alt)
+	idx = target_skeleton.find_bone(alt)
 	if idx >= 0:
 		return alt
 	var short_name := preferred.split(":")[-1] if preferred.find(":") >= 0 else preferred
-	idx = _spine_skeleton.find_bone(short_name)
+	idx = target_skeleton.find_bone(short_name)
 	if idx >= 0:
 		return short_name
 	return ""
-
-func _setup_left_hand_ik() -> void:
-	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
-		return
-	_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name)
-	if _left_hand_bone_idx < 0:
-		_left_hand_bone_idx = _spine_skeleton.find_bone(left_hand_bone_name.replace(":", "_"))
-	_left_forearm_bone_idx = _spine_skeleton.find_bone(left_forearm_bone_name)
-	if _left_forearm_bone_idx < 0:
-		_left_forearm_bone_idx = _spine_skeleton.find_bone(left_forearm_bone_name.replace(":", "_"))
-	_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name)
-	if _left_upper_arm_bone_idx < 0:
-		_left_upper_arm_bone_idx = _spine_skeleton.find_bone(left_upper_arm_bone_name.replace(":", "_"))
-	_left_hand_ik_weight = 0.0
-
-func _update_left_hand_ik(delta: float) -> void:
-	if _spine_skeleton == null or not is_instance_valid(_spine_skeleton):
-		return
-	var want_ik := _has_rifle and _left_hand_target != null and is_instance_valid(_left_hand_target)
-	var target_weight := 1.0 if want_ik else 0.0
-	_left_hand_ik_weight = move_toward(_left_hand_ik_weight, target_weight, ik_blend_speed * delta)
-	if _left_hand_ik_weight <= 0.001:
-		if _left_upper_arm_bone_idx >= 0:
-			_spine_skeleton.set_bone_global_pose_override(_left_upper_arm_bone_idx, Transform3D(), 0.0)
-		if _left_forearm_bone_idx >= 0:
-			_spine_skeleton.set_bone_global_pose_override(_left_forearm_bone_idx, Transform3D(), 0.0)
-		if _left_hand_bone_idx >= 0:
-			_spine_skeleton.set_bone_global_pose_override(_left_hand_bone_idx, Transform3D(), 0.0)
-		return
-	if _left_upper_arm_bone_idx < 0 or _left_forearm_bone_idx < 0 or _left_hand_bone_idx < 0:
-		return
-
-	var skel := _spine_skeleton
-	var target_global := _left_hand_target.global_position
-	var target_local := skel.global_transform.affine_inverse() * target_global
-
-	var shoulder_pose := skel.get_bone_global_pose(_left_upper_arm_bone_idx)
-	var elbow_pose := skel.get_bone_global_pose(_left_forearm_bone_idx)
-	var hand_pose := skel.get_bone_global_pose(_left_hand_bone_idx)
-	var shoulder_pos := shoulder_pose.origin
-	var elbow_pos := elbow_pose.origin
-	var hand_pos := hand_pose.origin
-
-	var l1 := shoulder_pos.distance_to(elbow_pos)
-	var l2 := elbow_pos.distance_to(hand_pos)
-	if l1 <= 0.001 or l2 <= 0.001:
-		return
-
-	var to_target := target_local - shoulder_pos
-	var target_dist := to_target.length()
-	if target_dist < 0.001:
-		return
-	target_dist = clampf(target_dist, 0.001, l1 + l2 - 0.001)
-	var target_dir := to_target / target_dist
-
-	var cos_alpha := (l1 * l1 + target_dist * target_dist - l2 * l2) / (2.0 * l1 * target_dist)
-	cos_alpha = clampf(cos_alpha, -1.0, 1.0)
-	var alpha := acos(cos_alpha)
-
-	var plane_n := (elbow_pos - shoulder_pos).cross(hand_pos - shoulder_pos).normalized()
-	if plane_n.length_squared() < 0.0001:
-		plane_n = Vector3.UP
-	if absf(plane_n.dot(target_dir)) > 0.99:
-		plane_n = Vector3.RIGHT
-	var side_axis := plane_n.cross(target_dir).normalized()
-	if side_axis.length_squared() < 0.0001:
-		side_axis = Vector3.RIGHT
-
-	var elbow_target := shoulder_pos + l1 * (cos(alpha) * target_dir + sin(alpha) * side_axis)
-	var new_hand_pose := Transform3D(hand_pose.basis, target_local)
-	var new_elbow_pose := Transform3D(elbow_pose.basis, elbow_target)
-
-	skel.set_bone_global_pose_override(_left_upper_arm_bone_idx, shoulder_pose, _left_hand_ik_weight)
-	skel.set_bone_global_pose_override(_left_forearm_bone_idx, new_elbow_pose, _left_hand_ik_weight)
-	skel.set_bone_global_pose_override(_left_hand_bone_idx, new_hand_pose, _left_hand_ik_weight)
 
 func _build_third_person_flashlight() -> void:
 	pass
@@ -3288,16 +3224,6 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state
 		_has_rifle = _has_rifle_equipped()
-		# DEBUG: force rifle idle animation for a few seconds after equipping
-		if _debug_force_rifle_idle_timer > 0.0 and not _rifle_idle_animation.is_empty() and third_person_animation_player != null:
-			_debug_force_rifle_idle_timer -= delta
-			if third_person_animation_player.current_animation != _rifle_idle_animation:
-				print("[RIFLE_DEBUG] FORCING animation: requested=", _rifle_idle_animation, " current=", third_person_animation_player.current_animation, " is_puppet=", is_puppet, " _has_rifle=", _has_rifle)
-				third_person_animation_player.play(_rifle_idle_animation, 0.1)
-			else:
-				print("[RIFLE_DEBUG] HOLDING animation: ", _rifle_idle_animation, " is_puppet=", is_puppet)
-			third_person_animation_player.speed_scale = 1.0
-			return
 		if _has_rifle and not _is_aiming and not is_sprinting:
 			# Rifle locomotion: use rifle-specific animations
 			if moving:
@@ -3374,6 +3300,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.seek(0.0, true)
 					third_person_animation_player.stop()
 			return
+		if _has_rifle and target_animation != _last_rifle_animation_debug:
+			print("[RIFLE_VERIFY] requested=", target_animation, " active_before=", third_person_animation_player.current_animation, " playing=", third_person_animation_player.is_playing(), " rifle=", _has_rifle)
+			_last_rifle_animation_debug = target_animation
 		if not target_animation.is_empty() and third_person_animation_player.current_animation != target_animation:
 			third_person_animation_player.play(target_animation, 0.15)
 		elif not target_animation.is_empty() and not third_person_animation_player.is_playing():
@@ -3438,7 +3367,6 @@ func _create_anim_debug_label() -> void:
 func _update_anim_debug_label() -> void:
 	if _anim_debug_label == null or not is_instance_valid(_anim_debug_label):
 		return
-	var ik_weight := _left_hand_ik_weight
 	var lines := [
 		"== Animation Debug ==",
 		"has_rifle: %s" % str(_has_rifle),
@@ -3454,8 +3382,6 @@ func _update_anim_debug_label() -> void:
 		"rifle_walk: %s" % str(not _rifle_walk_animation.is_empty()),
 		"rifle_run: %s" % str(not _rifle_run_animation.is_empty()),
 		"rifle_fire: %s" % str(not _rifle_fire_animation.is_empty()),
-		"ik_weight: %.2f" % ik_weight,
-		"ik_target: %s" % str(_left_hand_target != null and is_instance_valid(_left_hand_target)),
 	]
 	_anim_debug_label.text = "\n".join(lines)
 
