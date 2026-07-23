@@ -291,7 +291,7 @@ var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _last_rifle_animation_debug := ""
 
 @export_group("Rifle Placement")
-@export var weapon_position_offset := Vector3(0.0, 0.15, 0.0)
+@export var weapon_position_offset := Vector3(0.03, 0.18, 0.0)
 @export var weapon_rotation_offset := Vector3(0.0, -60.0, 0.0)
 @export var weapon_scale: float = 12.0
 @export var left_hand_target_position := Vector3(-3.0, 0.0, 0.0)
@@ -606,11 +606,11 @@ func _process(delta: float) -> void:
 			var effective_scale := weapon_scale * skel_scale
 			# Rifle attached to right hand. Rotation: diagonal across body
 			# flip 180° Y: model +Z (barrel) → char -Z (forward)
-			# yaw -35°: barrel goes left-forward (diagonal, not fully sideways)
-			# pitch -20°: barrel tilts down, buttstock goes up
+			# yaw -40°: barrel goes left-forward (diagonal, less lateral protrusion)
+			# pitch -40°: barrel tilts clearly down, buttstock goes up to elbow
 			var flip := Basis.from_euler(Vector3(0.0, PI, 0.0))
-			var yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-60.0), 0.0))
-			var pitch := Basis.from_euler(Vector3(deg_to_rad(-15.0), 0.0, 0.0))
+			var yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-40.0), 0.0))
+			var pitch := Basis.from_euler(Vector3(deg_to_rad(-40.0), 0.0, 0.0))
 			var rifle_rot := pitch * yaw * flip
 			var rot_basis := char_basis * rifle_rot
 			_rifle_weapon_offset.global_basis = rot_basis.orthonormalized()
