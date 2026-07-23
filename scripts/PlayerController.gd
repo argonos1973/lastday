@@ -292,7 +292,7 @@ var _rifle_weapon_offset: Node3D = null
 # rifle_offset_pos: X adelante/atras del grip, Y sube/baja, Z lateral
 # rifle_offset_rot_deg: ajusta si el rifle sale girado (prueba 0,0,0 o 0,90,0 o 0,-90,0)
 @export_group("Rifle Placement")
-@export var rifle_offset_pos := Vector3(0.12, -0.03, 0.0)
+@export var rifle_offset_pos := Vector3(0.01, 0.0, -0.12)
 @export var rifle_offset_rot_deg := Vector3(0.0, 0.0, 0.0)
 @export var rifle_scale := Vector3.ONE * 0.085
 @export var rifle_left_hand_target_pos := Vector3(-0.12, 0.0, -0.35)
@@ -2920,7 +2920,7 @@ func _build_third_person_rifle() -> void:
 	third_person_hand_item_root.add_child(_rifle_weapon_offset)
 	model.name = "RifleModel"
 	model.scale = rifle_scale
-	model.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+	model.rotation_degrees = Vector3(0.0, 0.0, -90.0)
 	_rifle_weapon_offset.add_child(model)
 	# Marker3D reference for the left hand (no IK - avoids arm deformation)
 	var left_target := Marker3D.new()
