@@ -1828,6 +1828,14 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		created.root_node = created.get_path_to(character)
 		third_person_animation_player = created
 	# Load pre-built AnimationLibrary and retarget each animation to the character skeleton
+	var skel := _find_skeleton(character)
+	if skel != null:
+		var root_node := third_person_animation_player.root_node
+		var animation_root := third_person_animation_player.get_node_or_null(root_node) if not root_node.is_empty() else third_person_animation_player
+		if animation_root == null:
+			animation_root = third_person_animation_player
+		var skel_path := str(animation_root.get_path_to(skel))
+		print("[RIFLE_DEBUG] AnimPlayer root_node=", root_node, " skel_path=", skel_path, " anim_count=", third_person_animation_player.get_animation_list().size())
 	var lib: AnimationLibrary = AnimationLibrary.new()
 	var skip_post_process := [THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, THIRD_PERSON_EXTERNAL_SIT_ANIMATION]
 	for anim_name in THIRD_PERSON_ANIMATION_LIBRARY.get_animation_list():
