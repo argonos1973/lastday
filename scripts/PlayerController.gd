@@ -2920,7 +2920,7 @@ func _build_third_person_rifle() -> void:
 		Vector3(-1, 0, 0),  # model Y → bone -X (forward)
 		Vector3(0, 0, -1)   # model Z → bone -Z (up)
 	)
-	model.rotation = Quaternion(model_basis)
+	model.quaternion = Quaternion(model_basis)
 	_rifle_weapon_offset.add_child(model)
 	# Marker3D reference for the left hand (no IK - avoids arm deformation)
 	var left_target := Marker3D.new()
