@@ -1550,7 +1550,6 @@ func _update_backpack_socket() -> void:
 	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
 
 var _hand_socket_offset := Vector3(0.10, 0.0, 0.0)
-var _hand_debug_timer := 0.0
 
 func _update_hand_socket() -> void:
 	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
@@ -1565,13 +1564,6 @@ func _update_hand_socket() -> void:
 	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset
 	var euler := bone_local.basis.get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
-	# DEBUG: print hand bone world axes once every 3s while rifle equipped
-	if _has_rifle and _rifle_weapon_offset != null:
-		_hand_debug_timer -= get_process_delta_time()
-		if _hand_debug_timer <= 0.0:
-			_hand_debug_timer = 3.0
-			var b := bone_world.basis
-			print("HAND_BONE_AXES | +X=", b.x.snapped(Vector3.ONE * 0.01), " +Y=", b.y.snapped(Vector3.ONE * 0.01), " +Z=", b.z.snapped(Vector3.ONE * 0.01))
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -2920,7 +2912,15 @@ func _build_third_person_rifle() -> void:
 	third_person_hand_item_root.add_child(_rifle_weapon_offset)
 	model.name = "RifleModel"
 	model.scale = rifle_scale
-	model.rotation_degrees = Vector3(0.0, 0.0, -90.0)
+	# Bone axes in game (from debug): +X=forward, +Y=left, +Z=down
+	# Model: +Z=barrel, +Y=scope. Need: barrel→bone+X, scope→-bone+Z(up)
+	# Model local basis in bone space: X→bone+Y, Y→-bone+X, Z→-bone+Z
+	var model_basis := Basis(
+		Vector3(0, 1, 0),   # model X → bone +Y (left)
+		Vector3(-1, 0, 0),  # model Y → bone -X (forward)
+		Vector3(0, 0, -1)   # model Z → bone -Z (up)
+	)
+	model.rotation = Quaternion(model_basis)
 	_rifle_weapon_offset.add_child(model)
 	# Marker3D reference for the left hand (no IK - avoids arm deformation)
 	var left_target := Marker3D.new()
