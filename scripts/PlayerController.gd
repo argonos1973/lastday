@@ -2913,11 +2913,12 @@ func _build_third_person_rifle() -> void:
 	model.name = "RifleModel"
 	model.scale = rifle_scale
 	# Bone axes in game (from debug): +X=back, +Y=left, +Z=down
-	# Model: +Z=barrel, +Y=scope. Need: barrel→-bone+X(forward), scope→-bone+Z(up)
+	# Model AABB: barrel along -Z (tip z=-1.09, stock z=0.78), scope/top along +Y
+	# Need: model -Z → forward, model +Y → up, model +X → right
 	var model_basis := Basis(
-		Vector3(0, 1, 0),   # model X → bone +Y (left)
+		Vector3(0, -1, 0),  # model X → bone -Y (right)
 		Vector3(0, 0, -1),  # model Y → bone -Z (up)
-		Vector3(-1, 0, 0)   # model Z → bone -X (forward)
+		Vector3(1, 0, 0)    # model Z → bone +X (back), so -Z points forward
 	)
 	model.quaternion = Quaternion(model_basis)
 	_rifle_weapon_offset.add_child(model)
