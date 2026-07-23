@@ -287,6 +287,7 @@ var _left_upper_arm_bone_idx := -1
 var _left_hand_target: Node3D = null
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
+var _debug_force_rifle_idle_timer := 0.0
 
 # rifle_scale: 0.085 = ~0.7m barrel. Si parece gigante baja a 0.05, si muy pequeño sube a 0.12
 # rifle_offset_pos: X adelante/atras del grip, Y sube/baja, Z lateral
@@ -2904,23 +2905,25 @@ func _build_third_person_rifle() -> void:
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
 	if model == null:
 		return
-	# WeaponOffset parented to hand socket (tracked per-frame via _update_hand_socket)
+	# WeaponOffset carries all transform; RifleModel stays at identity for debugging
 	_rifle_weapon_offset = Node3D.new()
 	_rifle_weapon_offset.name = "WeaponOffset"
 	_rifle_weapon_offset.position = rifle_offset_pos
-	_rifle_weapon_offset.rotation_degrees = rifle_offset_rot_deg
-	third_person_hand_item_root.add_child(_rifle_weapon_offset)
-	model.name = "RifleModel"
-	model.scale = rifle_scale
-	# Bone axes in game (from debug): +X=back, +Y=left, +Z=down
-	# Model AABB: barrel along -Z (tip z=-1.09, stock z=0.78), scope/top along +Y
-	# Need: model -Z → forward, model +Y → up, model +X → right
-	var model_basis := Basis(
+	# Base rotation: model -Z=barrel, +Y=scope; bone +X=back, +Y=left, +Z=down
+	var base_basis := Basis(
 		Vector3(0, -1, 0),  # model X → bone -Y (right)
 		Vector3(0, 0, -1),  # model Y → bone -Z (up)
 		Vector3(1, 0, 0)    # model Z → bone +X (back), so -Z points forward
 	)
-	model.quaternion = Quaternion(model_basis)
+	var offset_quat := Quaternion(base_basis)
+	var base_quat := Quaternion.from_euler(rifle_offset_rot_deg * deg_to_rad(1.0))
+	_rifle_weapon_offset.quaternion = base_quat * offset_quat
+	_rifle_weapon_offset.scale = rifle_scale
+	third_person_hand_item_root.add_child(_rifle_weapon_offset)
+	model.name = "RifleModel"
+	model.position = Vector3.ZERO
+	model.rotation = Vector3.ZERO
+	model.scale = Vector3.ONE
 	_rifle_weapon_offset.add_child(model)
 	# Marker3D reference for the left hand (no IK - avoids arm deformation)
 	var left_target := Marker3D.new()
@@ -2928,6 +2931,9 @@ func _build_third_person_rifle() -> void:
 	left_target.position = rifle_left_hand_target_pos
 	model.add_child(left_target)
 	_left_hand_target = left_target
+	# Debug: force rifle idle animation for 5 seconds to inspect pose
+	_debug_force_rifle_idle_timer = 5.0
+	print("[RIFLE_DEBUG] Rifle built. Will force '", _rifle_idle_animation, "' for 5s. is_puppet=", is_puppet)
 
 func _clear_rifle_attachment() -> void:
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
@@ -3209,6 +3215,16 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state
 		_has_rifle = _has_rifle_equipped()
+		# DEBUG: force rifle idle animation for a few seconds after equipping
+		if _debug_force_rifle_idle_timer > 0.0 and not _rifle_idle_animation.is_empty() and third_person_animation_player != null:
+			_debug_force_rifle_idle_timer -= delta
+			if third_person_animation_player.current_animation != _rifle_idle_animation:
+				print("[RIFLE_DEBUG] FORCING animation: requested=", _rifle_idle_animation, " current=", third_person_animation_player.current_animation, " is_puppet=", is_puppet, " _has_rifle=", _has_rifle)
+				third_person_animation_player.play(_rifle_idle_animation, 0.1)
+			else:
+				print("[RIFLE_DEBUG] HOLDING animation: ", _rifle_idle_animation, " is_puppet=", is_puppet)
+			third_person_animation_player.speed_scale = 1.0
+			return
 		if _has_rifle and not _is_aiming and not is_sprinting:
 			# Rifle locomotion: use rifle-specific animations
 			if moving:
