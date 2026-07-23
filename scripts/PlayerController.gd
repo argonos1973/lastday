@@ -2912,13 +2912,12 @@ func _build_third_person_rifle() -> void:
 	third_person_hand_item_root.add_child(_rifle_weapon_offset)
 	model.name = "RifleModel"
 	model.scale = rifle_scale
-	# Bone axes in game (from debug): +X=forward, +Y=left, +Z=down
-	# Model: +Z=barrel, +Y=scope. Need: barrel→bone+X, scope→-bone+Z(up)
-	# Model local basis in bone space: X→bone+Y, Y→-bone+X, Z→-bone+Z
+	# Bone axes in game (from debug): +X=back, +Y=left, +Z=down
+	# Model: +Z=barrel, +Y=scope. Need: barrel→-bone+X(forward), scope→-bone+Z(up)
 	var model_basis := Basis(
 		Vector3(0, 1, 0),   # model X → bone +Y (left)
-		Vector3(-1, 0, 0),  # model Y → bone -X (forward)
-		Vector3(0, 0, -1)   # model Z → bone -Z (up)
+		Vector3(0, 0, -1),  # model Y → bone -Z (up)
+		Vector3(-1, 0, 0)   # model Z → bone -X (forward)
 	)
 	model.quaternion = Quaternion(model_basis)
 	_rifle_weapon_offset.add_child(model)
