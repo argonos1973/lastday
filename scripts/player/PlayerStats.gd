@@ -160,6 +160,7 @@ func _update_temperature(delta: float, ambient_temperature: float, warmth: float
 	temperature = lerp(temperature, target_temperature, delta * 0.025)
 
 func _apply_survival_damage(delta: float) -> void:
+	return # INVULNERABLE: no survival damage
 	if hunger <= 0.0:
 		health = max(0.0, health - starvation_damage_per_second * delta)
 	if thirst <= 0.0:
@@ -200,6 +201,7 @@ func _emit_state_messages() -> void:
 	_message_cooldown = 10.0
 
 func _check_death() -> void:
+	return # INVULNERABLE: never die
 	if health > 0.0 or is_dead:
 		return
 	is_dead = true

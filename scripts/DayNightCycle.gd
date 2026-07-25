@@ -14,7 +14,7 @@ var moon_field: Node3D
 
 func _process(delta: float) -> void:
 	var now := Time.get_time_dict_from_system()
-	time_of_day = float(now.hour) + float(now.minute) / 60.0 + float(now.second) / 3600.0
+	time_of_day = fmod(float(now.hour) + float(now.minute) / 60.0 + float(now.second) / 3600.0 - 4.0 + 24.0, 24.0)
 	var night := is_night()
 	if night and not last_was_night:
 		night_started.emit()

@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://b1i4jj5rmr0bc"
-path="res://.godot/imported/gear_backpack.glb-df5c755aabdaf35678675d08e84ab9f2.scn"
+path="res://.godot/imported/gear_backpack.glb-475f59454530a6630cbd55726c175739.scn"
 
 [deps]
 
-source_file="res://assets/characters/adapted/gear_backpack.glb"
-dest_files=["res://.godot/imported/gear_backpack.glb-df5c755aabdaf35678675d08e84ab9f2.scn"]
+source_file="res://assets/adapted/gear_backpack.glb"
+dest_files=["res://.godot/imported/gear_backpack.glb-475f59454530a6630cbd55726c175739.scn"]
 
 [params]
 
