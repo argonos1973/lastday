@@ -43,7 +43,7 @@ func equip_item(item) -> bool:
 	if slot.is_empty():
 		return false
 	if equipped_slots.has(slot):
-		print("Ya tienes una mochila equipada" if slot == "backpack" else "Slot ocupado: %s" % slot)
+		pass # print("Ya tienes una mochila equipada" if slot == "backpack" else "Slot ocupado: %s" % slot)
 		equip_failed.emit(slot, "slot_ocupado")
 		return false
 	var equipped_model := str(item.equipped_model)
@@ -73,7 +73,7 @@ func _attach_visual(slot: String, item_name: String, visual: Node3D) -> bool:
 	visual.scale = socket_scales.get(slot, Vector3.ONE)
 	socket.add_child(visual)
 	equipped_slots[slot] = {"name": item_name, "visual": visual}
-	print("%s equipada en slot %s" % [item_name, slot])
+	pass # print("%s equipada en slot %s" % [item_name, slot])
 	equipped.emit(slot, item_name)
 	return true
 

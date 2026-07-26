@@ -31,7 +31,7 @@ func clear_hands() -> void:
 
 func put_item_in_hands(item) -> bool:
 	if has_item_in_hands():
-		print("Ya tienes un objeto en las manos")
+		pass # print("Ya tienes un objeto en las manos")
 		return false
 	if hands_socket == null or item == null:
 		return false
@@ -47,7 +47,7 @@ func put_item_in_hands(item) -> bool:
 	visual.rotation_degrees = local_rotation
 	visual.scale = local_scale
 	hands_socket.add_child(visual)
-	print("%s en manos" % str(item.item_name))
+	pass # print("%s en manos" % str(item.item_name))
 	hands_changed.emit(str(item.item_name))
 	return true
 

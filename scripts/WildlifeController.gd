@@ -89,7 +89,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool) -> void:
-	print("DEBUG WILDLIFE take_damage: is_puppet=", is_puppet, " amount=", amount, " name=", name)
+	pass # print("DEBUG WILDLIFE take_damage: is_puppet=", is_puppet, " amount=", amount, " name=", name)
 	if not is_puppet:
 		# Real animal — apply damage directly
 		if _is_dead:
@@ -407,7 +407,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-			print("[WOLF-DBG] %s chasing dist=%.1f flat=%.1f height=%.1f cooldown=%.1f" % [name, dist_to_player, flat_dist, height_diff, _chase_cooldown])
+			pass # print("[WOLF-DBG] %s chasing dist=%.1f flat=%.1f height=%.1f cooldown=%.1f" % [name, dist_to_player, flat_dist, height_diff, _chase_cooldown])
 		if dist_to_player < 45.0:
 			_state = "chase_player"
 			_chase_target = _player
@@ -450,7 +450,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
 								_player.add_to_group("interactable")
-								print("[NET] Player %d proxy died while disconnected at %s, corpse lootable" % [peer_id, _player.global_position])
+								pass # print("[NET] Player %d proxy died while disconnected at %s, corpse lootable" % [peer_id, _player.global_position])
 								var scene_node := get_tree().current_scene
 								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
 									scene_node._broadcast_player_death(peer_id, _player)
@@ -905,7 +905,7 @@ func _spawn_gut_pickups() -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	print("[WILDLIFE] Spawning gutted pickups for %s at %s" % [animal_type, global_position])
+	pass # print("[WILDLIFE] Spawning gutted pickups for %s at %s" % [animal_type, global_position])
 	var base_pos := global_position
 	var meat := _meat_name()
 	var meat_qty := _meat_count()
@@ -1087,7 +1087,7 @@ func _play_wolf_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		return
-	print("DEBUG WOLF PAIN: playing for ", name, " animal_type=", animal_type)
+	pass # print("DEBUG WOLF PAIN: playing for ", name, " animal_type=", animal_type)
 	if _wolf_pain_player == null:
 		_wolf_pain_player = AudioStreamPlayer.new()
 		_wolf_pain_player.name = "WolfPainSound"
@@ -1096,21 +1096,21 @@ func _play_wolf_pain_sound() -> void:
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)
-		print("DEBUG WOLF PAIN: ResourceLoader.exists=true stream=", stream)
+		pass # print("DEBUG WOLF PAIN: ResourceLoader.exists=true stream=", stream)
 	if stream == null:
 		var disk_path := ProjectSettings.globalize_path(path)
 		if FileAccess.file_exists(disk_path):
 			stream = AudioStreamWAV.load_from_file(disk_path)
-			print("DEBUG WOLF PAIN: AudioStreamWAV.load_from_file stream=", stream)
+			pass # print("DEBUG WOLF PAIN: AudioStreamWAV.load_from_file stream=", stream)
 	if stream == null:
-		print("DEBUG WOLF PAIN: stream is null, cannot play")
+		pass # print("DEBUG WOLF PAIN: stream is null, cannot play")
 		return
 	_wolf_pain_player.stop()
 	_wolf_pain_player.stream = stream
 	_wolf_pain_player.volume_db = 2.0
 	_wolf_pain_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_pain_player.play()
-	print("DEBUG WOLF PAIN: playing started")
+	pass # print("DEBUG WOLF PAIN: playing started")
 
 func _find_nearest_animal(kind: String) -> Node3D:
 	var nearest: Node3D = null
@@ -1480,12 +1480,12 @@ func _resolve_player() -> void:
 			_player = nearest
 			if _wolf_ai_debug_timer <= 0.0:
 				_wolf_ai_debug_timer = 5.0
-				print("[WOLF-DBG] %s resolved player=%s dist=%.1f prot=%.1f real_pos=%s" % [name, _player.name, global_position.distance_to(_player.global_position), _player.get_meta("protection_timer", 0.0), _player.get_meta("has_real_pos", false)])
+				pass # print("[WOLF-DBG] %s resolved player=%s dist=%.1f prot=%.1f real_pos=%s" % [name, _player.name, global_position.distance_to(_player.global_position), _player.get_meta("protection_timer", 0.0), _player.get_meta("has_real_pos", false)])
 			return
 		else:
 			if _wolf_ai_debug_timer <= 0.0:
 				_wolf_ai_debug_timer = 5.0
-				print("[WOLF-DBG] %s no proxy found, proxies=%d" % [name, proxies.size()])
+				pass # print("[WOLF-DBG] %s no proxy found, proxies=%d" % [name, proxies.size()])
 	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
 

@@ -31,11 +31,11 @@ func _ready() -> void:
 		_net.connection_succeeded.connect(_on_net_connected)
 		_net.connection_failed.connect(_on_net_failed)
 		if _net.join_game(ip):
-			print("[CLIENT] Conectando a %s..." % ip)
+			pass # print("[CLIENT] Conectando a %s..." % ip)
 			_mode = "join"
 			get_tree().create_timer(1.0).timeout.connect(_start_game)
 		else:
-			print("[CLIENT] Error al conectar a %s" % ip)
+			pass # print("[CLIENT] Error al conectar a %s" % ip)
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	# Forzar ventana al frente (necesario en macOS al lanzar desde terminal)
@@ -46,9 +46,9 @@ func _ready() -> void:
 	_discovery = PacketPeerUDP.new()
 	var bind_err := _discovery.bind(DISCOVERY_PORT)
 	if bind_err == OK:
-		print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % DISCOVERY_PORT)
+		pass # print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % DISCOVERY_PORT)
 	else:
-		print("[DISCOVERY] No se pudo bind puerto %d: %d" % [DISCOVERY_PORT, bind_err])
+		pass # print("[DISCOVERY] No se pudo bind puerto %d: %d" % [DISCOVERY_PORT, bind_err])
 		_discovery = null
 
 	# Background color (dark) in case image fails
@@ -159,7 +159,7 @@ func _process(_delta: float) -> void:
 							_ip_edit.text = str(_discovered_ips[0])
 						if _status_label != null:
 							_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
-						print("[DISCOVERY] Servidor encontrado: %s" % str(_discovered_ips))
+						pass # print("[DISCOVERY] Servidor encontrado: %s" % str(_discovered_ips))
 			count -= 1
 	# Active scan fallback: probe IPs on local subnet if no server found yet
 	if _discovered_ips.is_empty() and not _scanning:
@@ -176,7 +176,7 @@ func _start_active_scan() -> void:
 	_scan_probe = PacketPeerUDP.new()
 	_scan_probe.bind(0)
 	_scan_subnet = _get_local_subnet_prefix()
-	print("[DISCOVERY] Iniciando scan activo de red local (%s.x)..." % _scan_subnet)
+	pass # print("[DISCOVERY] Iniciando scan activo de red local (%s.x)..." % _scan_subnet)
 
 func _get_local_subnet_prefix() -> String:
 	for addr in IP.get_local_addresses():
@@ -198,7 +198,7 @@ func _process_scan(_delta: float) -> void:
 				_scan_probe.close()
 				_scan_probe = null
 			if _discovered_ips.is_empty():
-				print("[DISCOVERY] Scan completado, servidor no encontrado")
+				pass # print("[DISCOVERY] Scan completado, servidor no encontrado")
 			return
 		var ip := "%s.%d" % [_scan_subnet, _scan_index]
 		_scan_probe.set_dest_address(ip, DISCOVERY_PORT)
@@ -219,7 +219,7 @@ func _process_scan(_delta: float) -> void:
 						_ip_edit.text = str(_discovered_ips[0])
 					if _status_label != null:
 						_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
-					print("[DISCOVERY] Servidor encontrado via scan: %s" % str(_discovered_ips))
+					pass # print("[DISCOVERY] Servidor encontrado via scan: %s" % str(_discovered_ips))
 				_scanning = false
 				if _scan_probe != null:
 					_scan_probe.close()

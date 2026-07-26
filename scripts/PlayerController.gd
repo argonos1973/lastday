@@ -128,6 +128,10 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
 const RIFLE_RANGE := 150.0
+const RIFLE_NAME := "Rifle francotirador"
+const RIFLE_AMMO_TYPE := "7.62x54mm"
+const RIFLE_MAG_SIZE := 5
+const RIFLE_DAMAGE := 80.0
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -280,6 +284,8 @@ var _rifle_prone_fire_animation := ""
 var _has_rifle := false
 var _is_reloading := false
 var _is_firing := false
+var _rifle_magazine := 0
+var _rifle_reserve_ammo := 0
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
 var _rifle_root: Node3D = null
@@ -298,6 +304,9 @@ var _rifle_left_elbow_pole: Marker3D = null
 var _rifle_left_arm_ik: TwoBoneIK3D = null
 var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _rifle_right_elbow_pole: Marker3D = null
+var _rifle_cached_basis: Basis = Basis.IDENTITY
+var _rifle_cached_rg_local: Vector3 = Vector3.ZERO
+var _rifle_has_cache: bool = false
 var _rifle_debug_spheres: Dictionary = {}
 var _rifle_current_ik_weight := 1.0
 var _rifle_target_ik_weight := 1.0
@@ -346,7 +355,7 @@ var _root_align_round := 0
 @export_group("Rifle Placement")
 @export var weapon_scale: float = 12.0
 @export_range(0.0, 1.0) var left_hand_ik_weight := 1.0
-@export var weapon_debug_visuals: bool = true
+@export var weapon_debug_visuals: bool = false
 @export var right_hand_bone_name := "mixamorig:RightHand"
 @export_subgroup("WeaponOffset")
 @export var weapon_offset_pos := Vector3(0.0, 0.0, 0.0) # rifle anchored via BoneAttachment3D; adjust RifleRoot local if needed
@@ -357,6 +366,8 @@ var _root_align_round := 0
 
 var _frontal_camera := false
 var _side_camera := false
+var _left_camera := false
+var _rear_camera := false
 var _anim_debug_label: Label = null
 var _anim_debug_enabled := false
 var _crosshair_check_timer := 0.0
@@ -554,6 +565,16 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 		else:
 			equipped_backpack = ""
 
+func puppet_set_aiming(aiming: bool) -> void:
+	if not is_puppet:
+		return
+	_is_aiming = aiming
+
+func puppet_set_rifle(has_rifle: bool) -> void:
+	if not is_puppet:
+		return
+	_has_rifle = has_rifle
+
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
 		return
@@ -661,17 +682,26 @@ func _process(delta: float) -> void:
 		if skel != null:
 			_update_rifle_ik(skel, delta)
 	# Debug camera overrides
-	if camera != null and (_frontal_camera or _side_camera):
+	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera):
 		var char_forward := -global_basis.z.normalized()
 		var char_right := global_basis.x.normalized()
 		var char_up := global_basis.y.normalized()
 		if _frontal_camera:
-			camera.global_position = global_position + char_forward * 3.0 + char_up * 2.6 + char_right * 0.0
+			camera.global_position = global_position + char_forward * 3.0 + char_up * 2.6
 			camera.look_at(global_position + char_up * 1.3, char_up)
 			camera.fov = 40.0
 		elif _side_camera:
 			camera.global_position = global_position + char_right * 4.0 + char_up * 1.6
 			camera.look_at(global_position + char_up * 1.3, char_up)
+			camera.fov = 40.0
+		elif _left_camera:
+			camera.global_position = global_position - char_right * 4.0 + char_up * 1.6
+			camera.look_at(global_position + char_up * 1.3, char_up)
+			camera.fov = 40.0
+		elif _rear_camera:
+			camera.global_position = global_position - char_forward * 3.0 + char_up * 2.6
+			camera.look_at(global_position + char_up * 1.3, char_up)
+			camera.fov = 40.0
 
 func _ready() -> void:
 	if is_puppet:
@@ -751,14 +781,31 @@ func _input(event: InputEvent) -> void:
 		_store_held_item()
 	if event.is_action_pressed("flashlight"):
 		_toggle_flashlight()
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F8:
 		_frontal_camera = not _frontal_camera
 		_side_camera = false
-		print("[CAMERA] frontal=%s side=%s" % [_frontal_camera, _side_camera])
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_B:
+		_left_camera = false
+		_rear_camera = false
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
 		_side_camera = not _side_camera
 		_frontal_camera = false
-		print("[CAMERA] frontal=%s side=%s" % [_frontal_camera, _side_camera])
+		_left_camera = false
+		_rear_camera = false
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F10:
+		_left_camera = not _left_camera
+		_frontal_camera = false
+		_side_camera = false
+		_rear_camera = false
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
+		_rear_camera = not _rear_camera
+		_frontal_camera = false
+		_side_camera = false
+		_left_camera = false
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F12:
+		_frontal_camera = false
+		_side_camera = false
+		_left_camera = false
+		_rear_camera = false
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_I:
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_close_loot_ui") and scene._loot_panel != null:
@@ -799,6 +846,9 @@ func _input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_N:
 			_light_action()
+			return
+		if event.keycode == KEY_T and _has_rifle_equipped():
+			_reload_rifle()
 			return
 		if event.keycode == KEY_F7:
 			toggle_anim_debug()
@@ -1497,7 +1547,7 @@ func _physics_process(delta: float) -> void:
 		_update_death_pose(delta)
 		return
 	# Auto-sleep when sleep reaches minimum
-	if not is_sleeping and stats.sleep <= 0.0 and not _auto_sleep_triggered:
+	if not is_sleeping and stats.sleep <= 0.0 and not _auto_sleep_triggered and not is_in_water:
 		_auto_sleep_triggered = true
 		start_sleep()
 		notice.emit("Te quedas dormido del cansancio. Pulsa D para despertar.")
@@ -1737,7 +1787,6 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
-	inventory.add_item(ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -1914,7 +1963,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		if debug_anim_root == null:
 			debug_anim_root = third_person_animation_player
 		var debug_skel_path := str(debug_anim_root.get_path_to(debug_skel))
-		print("[RIFLE_DEBUG] AnimPlayer root_node=", debug_root, " skel_path=", debug_skel_path, " anim_count=", third_person_animation_player.get_animation_list().size())
+		# print("[RIFLE_DEBUG] AnimPlayer root_node=", debug_root, " skel_path=", debug_skel_path, " anim_count=", third_person_animation_player.get_animation_list().size())
 	var lib: AnimationLibrary = AnimationLibrary.new()
 	var skip_post_process := [THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, THIRD_PERSON_EXTERNAL_SIT_ANIMATION]
 	for anim_name in THIRD_PERSON_ANIMATION_LIBRARY.get_animation_list():
@@ -2576,6 +2625,9 @@ func get_held_item():
 func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 	if is_dead or is_sleeping:
 		return
+	if is_in_water:
+		notice.emit("No puedes dormir en el agua.")
+		return
 	is_sleeping = true
 	_cancel_aim()
 	if on_bed:
@@ -2876,7 +2928,7 @@ func _sync_held_item() -> void:
 func _sync_third_person_equipment(held_item) -> void:
 	if third_person_hand_item_root == null or third_person_back_item_root == null:
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
-			print("[RIFLE_VERIFY] sync blocked: hand_root=", third_person_hand_item_root, " back_root=", third_person_back_item_root)
+			pass # print("[RIFLE_VERIFY] sync blocked: hand_root=", third_person_hand_item_root, " back_root=", third_person_back_item_root)
 		return
 	if is_sleeping:
 		for child in third_person_hand_item_root.get_children():
@@ -2884,7 +2936,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			child.free()
 		_clear_rifle_attachment()
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
-			print("[RIFLE_VERIFY] sync blocked: player sleeping")
+			pass # print("[RIFLE_VERIFY] sync blocked: player sleeping")
 		return
 	if hands == null or not hands.has_item_in_hands():
 		for child in third_person_hand_item_root.get_children():
@@ -2902,7 +2954,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_build_third_person_backpack()
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
-			print("[RIFLE_VERIFY] sync blocked: PlayerHands already contains ", hands.get_current_hand_item())
+			pass # print("[RIFLE_VERIFY] sync blocked: PlayerHands already contains ", hands.get_current_hand_item())
 		return
 	if held_item == null or held_item.item_type == "backpack":
 		return
@@ -2915,6 +2967,9 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 		"weapon_rifle":
 			_build_third_person_rifle()
+			if _rifle_magazine == 0 and _rifle_reserve_ammo == 0:
+				_rifle_magazine = RIFLE_MAG_SIZE
+				_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
 		"tool":
 			_build_third_person_flashlight()
 			_clear_rifle_attachment()
@@ -3009,8 +3064,8 @@ func _traverse_mesh_aabb(node: Node, accumulated: Transform3D, state: Dictionary
 				state["aabb"] = (state["aabb"] as AABB).merge(world_aabb)
 			state["mesh_count"] = state["mesh_count"] + 1
 			var mc: int = state["mesh_count"]
-			print("[RIFLE_AABB] mesh #%d name=%s local_pos=%s local_size=%s acc_origin=%s" % [mc, mi.name, str(local_aabb.position), str(local_aabb.size), str(accumulated.origin)])
-			print("[RIFLE_AABB]   -> world_aabb pos=%s size=%s" % [str(world_aabb.position), str(world_aabb.size)])
+			# print("[RIFLE_AABB] mesh #%d name=%s local_pos=%s local_size=%s acc_origin=%s" % [mc, mi.name, str(local_aabb.position), str(local_aabb.size), str(accumulated.origin)])
+			# print("[RIFLE_AABB]   -> world_aabb pos=%s size=%s" % [str(world_aabb.position), str(world_aabb.size)])
 	for child in node.get_children():
 		if child is Node3D:
 			var child_acc := accumulated * (child as Node3D).transform
@@ -3024,17 +3079,17 @@ func _build_third_person_rifle() -> void:
 	_clear_rifle_attachment()
 	var model := _load_external_node3d(REAL_RIFLE_MODEL)
 	if model == null:
-		print("[RIFLE_VERIFY] model load failed: ", REAL_RIFLE_MODEL)
+		pass # print("[RIFLE_VERIFY] model load failed: ", REAL_RIFLE_MODEL)
 		return
 	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
 	if skeleton == null or not is_instance_valid(skeleton):
 		model.queue_free()
-		print("[RIFLE_VERIFY] skeleton not found for model: ", third_person_model)
+		# print("[RIFLE_VERIFY] skeleton not found for model: ", third_person_model)
 		return
 	var resolved_bone := _resolve_bone_name_safe(right_hand_bone_name, skeleton)
 	if resolved_bone.is_empty():
 		model.queue_free()
-		print("[RIFLE_VERIFY] Right-hand bone not found: ", right_hand_bone_name, " skeleton=", skeleton.get_path())
+		# print("[RIFLE_VERIFY] Right-hand bone not found: ", right_hand_bone_name, " skeleton=", skeleton.get_path())
 		return
 	# 1. BoneAttachment3D on right hand bone — rifle follows right hand animation
 	_rifle_bone_attachment = BoneAttachment3D.new()
@@ -3086,10 +3141,10 @@ func _build_third_person_rifle() -> void:
 		stock_y = combined_aabb.get_center().y
 		muzzle_x = combined_aabb.get_center().x
 		muzzle_y = combined_aabb.get_center().y
-		print("[RIFLE_AABB] meshes found=%d" % mesh_count)
-		print("[RIFLE_AABB] combined_aabb position=%s size=%s" % [str(combined_aabb.position), str(combined_aabb.size)])
-		print("[RIFLE_AABB] stock (max Z) = (%.4f, %.4f, %.4f)" % [stock_x, stock_y, stock_z])
-		print("[RIFLE_AABB] muzzle (min Z) = (%.4f, %.4f, %.4f)" % [muzzle_x, muzzle_y, muzzle_z])
+		# print("[RIFLE_AABB] meshes found=%d" % mesh_count)
+		# print("[RIFLE_AABB] combined_aabb position=%s size=%s" % [str(combined_aabb.position), str(combined_aabb.size)])
+		# print("[RIFLE_AABB] stock (max Z) = (%.4f, %.4f, %.4f)" % [stock_x, stock_y, stock_z])
+		# print("[RIFLE_AABB] muzzle (min Z) = (%.4f, %.4f, %.4f)" % [muzzle_x, muzzle_y, muzzle_z])
 	# 4. Reference markers inside RifleRoot (positions in model-local space, scaled by weapon_scale)
 	# RightGrip: centro de la empuñadura/palma, sobre el gatillo, ligeramente a la derecha del eje del rifle
 	_rifle_right_grip = Marker3D.new()
@@ -3183,70 +3238,70 @@ func _build_third_person_rifle() -> void:
 		if re_idx >= 0:
 			re_world = (skeleton.global_transform * skeleton.get_bone_global_pose(re_idx)).origin
 			re_dist = re_world.distance_to(stock_world)
-	print("[RIFLE_FASE5] rifle_global_pos=", _rifle_root.global_position)
-	print("[RIFLE_FASE5] rifle_global_rot=", _rifle_root.global_rotation_degrees)
-	print("[RIFLE_FASE5] rifle_global_scale=", _rifle_root.global_transform.basis.get_scale())
-	print("[RIFLE_FASE5] grip_world=", grip_world, " rh_world=", rh_world)
-	print("[RIFLE_FASE5] dist_rightHand_to_RightGrip=", rh_dist)
-	print("[RIFLE_FASE5] dist_rightElbow_to_Stock=", re_dist)
-	print("[RIFLE_FASE5] muzzle_world=", muzzle_world, " stock_world=", stock_world)
-	print("[RIFLE_FASE5] ik_enabled=", ik_enabled, " ik_influence=", _rifle_left_arm_ik.influence if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik) else "N/A")
+	# print("[RIFLE_FASE5] rifle_global_pos=", _rifle_root.global_position)
+	# print("[RIFLE_FASE5] rifle_global_rot=", _rifle_root.global_rotation_degrees)
+	# print("[RIFLE_FASE5] rifle_global_scale=", _rifle_root.global_transform.basis.get_scale())
+	# print("[RIFLE_FASE5] grip_world=", grip_world, " rh_world=", rh_world)
+	# print("[RIFLE_FASE5] dist_rightHand_to_RightGrip=", rh_dist)
+	# print("[RIFLE_FASE5] dist_rightElbow_to_Stock=", re_dist)
+	# print("[RIFLE_FASE5] muzzle_world=", muzzle_world, " stock_world=", stock_world)
+	# print("[RIFLE_FASE5] ik_enabled=", ik_enabled, " ik_influence=", _rifle_left_arm_ik.influence if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik) else "N/A")
 	# Orientation diagnostics
 	var barrel_dir := (muzzle_world - grip_world).normalized()
 	var char_forward := -global_basis.z
 	var char_right := global_basis.x
 	var stock_rel := stock_world - rh_world
 	var muzzle_rel := muzzle_world - rh_world
-	print("[RIFLE_ORIENT] stock_rel_RH=", stock_rel, " muzzle_rel_RH=", muzzle_rel)
-	print("[RIFLE_ORIENT] barrel_dot_forward=", barrel_dir.dot(char_forward), " barrel_dot_right=", barrel_dir.dot(char_right))
+	# print("[RIFLE_ORIENT] stock_rel_RH=", stock_rel, " muzzle_rel_RH=", muzzle_rel)
+	# print("[RIFLE_ORIENT] barrel_dot_forward=", barrel_dir.dot(char_forward), " barrel_dot_right=", barrel_dir.dot(char_right))
 	# Basis diagnostics: check inherited rotation from bone
 	var ba_basis := _rifle_bone_attachment.global_basis.orthonormalized()
 	var wo_basis := _rifle_weapon_offset.global_basis.orthonormalized()
 	var wo_local_basis := _rifle_weapon_offset.basis.orthonormalized()
-	print("[RIFLE_BASIS] BoneAttachment global_basis:")
-	print("  x=", ba_basis.x, " y=", ba_basis.y, " z=", ba_basis.z)
-	print("[RIFLE_BASIS] WeaponOffset global_basis:")
-	print("  x=", wo_basis.x, " y=", wo_basis.y, " z=", wo_basis.z)
-	print("[RIFLE_BASIS] WeaponOffset local_basis (relative to bone):")
-	print("  x=", wo_local_basis.x, " y=", wo_local_basis.y, " z=", wo_local_basis.z)
+	# print("[RIFLE_BASIS] BoneAttachment global_basis:")
+	# print("  x=", ba_basis.x, " y=", ba_basis.y, " z=", ba_basis.z)
+	# print("[RIFLE_BASIS] WeaponOffset global_basis:")
+	# print("  x=", wo_basis.x, " y=", wo_basis.y, " z=", wo_basis.z)
+	# print("[RIFLE_BASIS] WeaponOffset local_basis (relative to bone):")
+	# print("  x=", wo_local_basis.x, " y=", wo_local_basis.y, " z=", wo_local_basis.z)
 	# What direction does model +Z point in world space?
 	var model_z_world := wo_basis.z
-	print("[RIFLE_BASIS] model_+Z_world=", model_z_world, " (this is barrel direction)")
+	# print("[RIFLE_BASIS] model_+Z_world=", model_z_world, " (this is barrel direction)")
 	var model_y_world := wo_basis.y
-	print("[RIFLE_BASIS] model_+Y_world=", model_y_world, " (this is rifle up direction)")
+	# print("[RIFLE_BASIS] model_+Y_world=", model_y_world, " (this is rifle up direction)")
 	# Diagnostic completo de jerarquía y transformaciones (solo lectura)
 	_diagnose_rifle_hierarchy_and_transforms(skeleton, true)
 
 func _print_node_tree(node: Node, indent: String = "") -> void:
 	var type_str := node.get_class()
-	print("[RIFLE_HIERARCHY] %s%s (%s)" % [indent, node.name, type_str])
+	# print("[RIFLE_HIERARCHY] %s%s (%s)" % [indent, node.name, type_str])
 	for c in node.get_children():
 		_print_node_tree(c, indent + "  ")
 
 func _print_node_transforms_diagnostics(node: Node, label: String) -> void:
 	if node == null or not is_instance_valid(node):
-		print("[RIFLE_DIAG] %s: null or invalid" % label)
+		pass # print("[RIFLE_DIAG] %s: null or invalid" % label)
 		return
 	if not (node is Node3D):
-		print("[RIFLE_DIAG] %s: not Node3D" % label)
+		pass # print("[RIFLE_DIAG] %s: not Node3D" % label)
 		return
 	var n3d := node as Node3D
 	var local_t: Transform3D = n3d.transform
 	var global_t: Transform3D = n3d.global_transform
 	var global_scale: Vector3 = global_t.basis.get_scale()
-	print("[RIFLE_DIAG] === %s (%s) ===" % [label, node.get_class()])
-	print("[RIFLE_DIAG]   path=%s" % str(node.get_path()))
-	print("[RIFLE_DIAG]   top_level=%s" % str(n3d.top_level))
+	# print("[RIFLE_DIAG] === %s (%s) ===" % [label, node.get_class()])
+	# print("[RIFLE_DIAG]   path=%s" % str(node.get_path()))
+	# print("[RIFLE_DIAG]   top_level=%s" % str(n3d.top_level))
 	var local_euler := local_t.basis.get_euler()
 	var global_euler := global_t.basis.get_euler()
-	print("[RIFLE_DIAG]   local_position=%s" % str(local_t.origin))
-	print("[RIFLE_DIAG]   local_rotation_degrees=%s" % str(Vector3(rad_to_deg(local_euler.x), rad_to_deg(local_euler.y), rad_to_deg(local_euler.z))))
-	print("[RIFLE_DIAG]   local_scale=%s" % str(local_t.basis.get_scale()))
-	print("[RIFLE_DIAG]   local_transform=%s" % str(local_t))
-	print("[RIFLE_DIAG]   global_position=%s" % str(global_t.origin))
-	print("[RIFLE_DIAG]   global_rotation_degrees=%s" % str(Vector3(rad_to_deg(global_euler.x), rad_to_deg(global_euler.y), rad_to_deg(global_euler.z))))
-	print("[RIFLE_DIAG]   global_scale=%s" % str(global_scale))
-	print("[RIFLE_DIAG]   global_transform=%s" % str(global_t))
+	# print("[RIFLE_DIAG]   local_position=%s" % str(local_t.origin))
+	# print("[RIFLE_DIAG]   local_rotation_degrees=%s" % str(Vector3(rad_to_deg(local_euler.x), rad_to_deg(local_euler.y), rad_to_deg(local_euler.z))))
+	# print("[RIFLE_DIAG]   local_scale=%s" % str(local_t.basis.get_scale()))
+	# print("[RIFLE_DIAG]   local_transform=%s" % str(local_t))
+	# print("[RIFLE_DIAG]   global_position=%s" % str(global_t.origin))
+	# print("[RIFLE_DIAG]   global_rotation_degrees=%s" % str(Vector3(rad_to_deg(global_euler.x), rad_to_deg(global_euler.y), rad_to_deg(global_euler.z))))
+	# print("[RIFLE_DIAG]   global_scale=%s" % str(global_scale))
+	# print("[RIFLE_DIAG]   global_transform=%s" % str(global_t))
 
 func _relative_transform(parent: Node3D, child: Node3D) -> Transform3D:
 	if parent == null or child == null or not is_instance_valid(parent) or not is_instance_valid(child):
@@ -3268,7 +3323,7 @@ func _diagnose_rifle_hierarchy_and_transforms(skel: Skeleton3D, full: bool = fal
 		return
 
 	# 1. Jerarquía real
-	print("\n[RIFLE_HIERARCHY] === JERARQUIA REAL ===")
+	# print("\n[RIFLE_HIERARCHY] === JERARQUIA REAL ===")
 	_print_node_tree(self)
 
 	# 2. Nodos obligatorios
@@ -3277,13 +3332,13 @@ func _diagnose_rifle_hierarchy_and_transforms(skel: Skeleton3D, full: bool = fal
 	if not rh_bone_name.is_empty():
 		rh_idx = skel.find_bone(rh_bone_name)
 
-	print("\n[RIFLE_DIAG] === INFORMACIÓN DEL BONE ATTACHMENT ===")
-	print("[RIFLE_DIAG] bone_name=%s" % _rifle_bone_attachment.bone_name if _rifle_bone_attachment != null else "N/A")
-	print("[RIFLE_DIAG] bone_index=%d" % skel.find_bone(_rifle_bone_attachment.bone_name) if _rifle_bone_attachment != null else -1)
+	# print("\n[RIFLE_DIAG] === INFORMACIÓN DEL BONE ATTACHMENT ===")
+	# print("[RIFLE_DIAG] bone_name=%s" % _rifle_bone_attachment.bone_name if _rifle_bone_attachment != null else "N/A")
+	# print("[RIFLE_DIAG] bone_index=%d" % skel.find_bone(_rifle_bone_attachment.bone_name) if _rifle_bone_attachment != null else -1)
 	if rh_idx >= 0:
-		print("[RIFLE_DIAG] mixamorig:RightHand global_transform=%s" % str(skel.global_transform * skel.get_bone_global_pose(rh_idx)))
+		pass # print("[RIFLE_DIAG] mixamorig:RightHand global_transform=%s" % str(skel.global_transform * skel.get_bone_global_pose(rh_idx)))
 	else:
-		print("[RIFLE_DIAG] mixamorig:RightHand no encontrado")
+		pass # print("[RIFLE_DIAG] mixamorig:RightHand no encontrado")
 
 	_print_node_transforms_diagnostics(skel, "Skeleton3D")
 	_print_node_transforms_diagnostics(_rifle_bone_attachment, "BoneAttachment3D_RightHand")
@@ -3302,22 +3357,22 @@ func _diagnose_rifle_hierarchy_and_transforms(skel: Skeleton3D, full: bool = fal
 		var rh_world := skel.global_transform * skel.get_bone_global_pose(rh_idx)
 		var grip_t := _rifle_right_grip.global_transform
 		var dist_rg := rh_world.origin.distance_to(grip_t.origin)
-		print("\n[RIFLE_DIAG] === RELACIÓN RightHand -> RightGrip ===")
-		print("[RIFLE_DIAG] RightHand origin=%s" % str(rh_world.origin))
-		print("[RIFLE_DIAG] RightGrip origin=%s" % str(grip_t.origin))
-		print("[RIFLE_DIAG] dist_RightGrip_RightHand=%.6f" % dist_rg)
-		print("[RIFLE_DIAG] relative_RightHand_to_RightGrip=%s" % str(rh_world.affine_inverse() * grip_t))
+		# print("\n[RIFLE_DIAG] === RELACIÓN RightHand -> RightGrip ===")
+		# print("[RIFLE_DIAG] RightHand origin=%s" % str(rh_world.origin))
+		# print("[RIFLE_DIAG] RightGrip origin=%s" % str(grip_t.origin))
+		# print("[RIFLE_DIAG] dist_RightGrip_RightHand=%.6f" % dist_rg)
+		# print("[RIFLE_DIAG] relative_RightHand_to_RightGrip=%s" % str(rh_world.affine_inverse() * grip_t))
 
 	# 4. Transformaciones relativas
-	print("\n[RIFLE_DIAG] === TRANSFORMACIONES RELATIVAS ===")
-	print("[RIFLE_DIAG] BoneAttachment -> WeaponOffset = %s" % str(_relative_transform(_rifle_bone_attachment, _rifle_weapon_offset)))
-	print("[RIFLE_DIAG] WeaponOffset -> RifleRoot = %s" % str(_relative_transform(_rifle_weapon_offset, _rifle_root)))
-	print("[RIFLE_DIAG] RifleRoot -> GLBRoot = %s" % str(_relative_transform(_rifle_root, _rifle_model)))
+	# print("\n[RIFLE_DIAG] === TRANSFORMACIONES RELATIVAS ===")
+	# print("[RIFLE_DIAG] BoneAttachment -> WeaponOffset = %s" % str(_relative_transform(_rifle_bone_attachment, _rifle_weapon_offset)))
+	# print("[RIFLE_DIAG] WeaponOffset -> RifleRoot = %s" % str(_relative_transform(_rifle_weapon_offset, _rifle_root)))
+	# print("[RIFLE_DIAG] RifleRoot -> GLBRoot = %s" % str(_relative_transform(_rifle_root, _rifle_model)))
 	if _rifle_model != null and main_mesh != null:
-		print("[RIFLE_DIAG] GLBRoot -> MeshInstance3D = %s" % str(_relative_transform(_rifle_model, main_mesh)))
+		pass # print("[RIFLE_DIAG] GLBRoot -> MeshInstance3D = %s" % str(_relative_transform(_rifle_model, main_mesh)))
 
 	# 5. Detección de transformaciones duplicadas / errores
-	print("\n[RIFLE_DIAG] === DETECCIÓN DE DUPLICADOS ===")
+	# print("\n[RIFLE_DIAG] === DETECCIÓN DE DUPLICADOS ===")
 	var errors: Array[String] = []
 	if _rifle_weapon_offset != null and not _rifle_weapon_offset.top_level:
 		errors.append("ERROR: WeaponOffset.top_level = false")
@@ -3343,25 +3398,25 @@ func _diagnose_rifle_hierarchy_and_transforms(skel: Skeleton3D, full: bool = fal
 		if not mesh_scale.is_equal_approx(Vector3.ONE):
 			errors.append("ADVERTENCIA: MeshInstance3D principal tiene escala %s" % str(mesh_scale))
 	if _rifle_right_grip != null and not _rifle_right_grip.position.is_equal_approx(Vector3.ZERO):
-		print("[RIFLE_DIAG] RightGrip local position=%s (desplazado del origen)" % str(_rifle_right_grip.position))
+		pass # print("[RIFLE_DIAG] RightGrip local position=%s (desplazado del origen)" % str(_rifle_right_grip.position))
 	for e in errors:
-		print("[RIFLE_DIAG] %s" % e)
+		pass # print("[RIFLE_DIAG] %s" % e)
 	if errors.is_empty():
-		print("[RIFLE_DIAG] No se detectaron duplicados obvios.")
+		pass # print("[RIFLE_DIAG] No se detectaron duplicados obvios.")
 
 	# 6. Per-frame RifleIdle diagnostics
 	if full:
 		return
-	print("\n[RIFLE_HIERARCHY] === PER-FRAME RIFLE IDLE ===")
-	print("[RIFLE_HIERARCHY] RightHand global_transform = %s" % (str(skel.global_transform * skel.get_bone_global_pose(rh_idx)) if rh_idx >= 0 else "N/A"))
-	print("[RIFLE_HIERARCHY] BoneAttachment global_transform = %s" % str(_rifle_bone_attachment.global_transform if _rifle_bone_attachment != null else "N/A"))
-	print("[RIFLE_HIERARCHY] WeaponOffset global_transform = %s" % str(_rifle_weapon_offset.global_transform if _rifle_weapon_offset != null else "N/A"))
-	print("[RIFLE_HIERARCHY] RifleRoot global_transform = %s" % str(_rifle_root.global_transform))
-	print("[RIFLE_HIERARCHY] GLBRoot global_transform = %s" % str(_rifle_model.global_transform if _rifle_model != null else "N/A"))
-	print("[RIFLE_HIERARCHY] RightGrip global_transform = %s" % str(_rifle_right_grip.global_transform))
-	print("[RIFLE_HIERARCHY] Muzzle global_transform = %s" % str(_rifle_muzzle.global_transform if _rifle_muzzle != null else "N/A"))
-	print("[RIFLE_HIERARCHY] StockReference global_transform = %s" % str(_rifle_stock_ref.global_transform if _rifle_stock_ref != null else "N/A"))
-	print("[RIFLE_HIERARCHY] Pitch=%.2f Yaw=%.2f Roll=%.2f" % [rad_to_deg(_rifle_root.global_rotation.x), rad_to_deg(_rifle_root.global_rotation.y), rad_to_deg(_rifle_root.global_rotation.z)])
+	# print("\n[RIFLE_HIERARCHY] === PER-FRAME RIFLE IDLE ===")
+	# print("[RIFLE_HIERARCHY] RightHand global_transform = %s" % (str(skel.global_transform * skel.get_bone_global_pose(rh_idx)) if rh_idx >= 0 else "N/A"))
+	# print("[RIFLE_HIERARCHY] BoneAttachment global_transform = %s" % str(_rifle_bone_attachment.global_transform if _rifle_bone_attachment != null else "N/A"))
+	# print("[RIFLE_HIERARCHY] WeaponOffset global_transform = %s" % str(_rifle_weapon_offset.global_transform if _rifle_weapon_offset != null else "N/A"))
+	# print("[RIFLE_HIERARCHY] RifleRoot global_transform = %s" % str(_rifle_root.global_transform))
+	# print("[RIFLE_HIERARCHY] GLBRoot global_transform = %s" % str(_rifle_model.global_transform if _rifle_model != null else "N/A"))
+	# print("[RIFLE_HIERARCHY] RightGrip global_transform = %s" % str(_rifle_right_grip.global_transform))
+	# print("[RIFLE_HIERARCHY] Muzzle global_transform = %s" % str(_rifle_muzzle.global_transform if _rifle_muzzle != null else "N/A"))
+	# print("[RIFLE_HIERARCHY] StockReference global_transform = %s" % str(_rifle_stock_ref.global_transform if _rifle_stock_ref != null else "N/A"))
+	# print("[RIFLE_HIERARCHY] Pitch=%.2f Yaw=%.2f Roll=%.2f" % [rad_to_deg(_rifle_root.global_rotation.x), rad_to_deg(_rifle_root.global_rotation.y), rad_to_deg(_rifle_root.global_rotation.z)])
 
 func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# Rifle placed by the animation hands and right shoulder; IK disabled.
@@ -3404,6 +3459,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var rg_local := _rifle_right_grip.position
 	var lg_local := _rifle_left_hand_grip.position
 	var stock_local := _rifle_stock_ref.position
+
 	var v_world_dir := (lh_pos - rh_pos).normalized()
 	var v_local_dir := (lg_local - rg_local).normalized()
 	if v_world_dir.length_squared() < 0.0001 or v_local_dir.length_squared() < 0.0001:
@@ -3463,6 +3519,14 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	_rifle_weapon_offset.force_update_transform()
 	_rifle_root.force_update_transform()
 
+	# Apply -5° pitch when aiming (local rotation around the right grip pivot).
+	if _is_aiming:
+		weapon_basis = weapon_basis * Basis(Vector3(1.0, 0.0, 0.0), deg_to_rad(-5.0))
+		_rifle_weapon_offset.global_basis = weapon_basis
+		_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
+		_rifle_weapon_offset.force_update_transform()
+		_rifle_root.force_update_transform()
+
 	# Shift the whole rifle 3 cm along the real barrel line (from muzzle toward stock)
 	# without changing rotation or scale. Direction is taken from the actual Muzzle/Stock markers.
 	if _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
@@ -3513,10 +3577,10 @@ func _measure_right_hand_to_grip(skel: Skeleton3D, delta: float) -> void:
 	var avg := sum / n if n > 0.0 else 0.0
 	_rh_grip_last_dist = avg
 	_rh_grip_logged = true
-	print("[RIFLE_PHASE1] RifleIdle estable 2s | dist_RH (mano der - RightGrip) = %.6f m (objetivo < 0.02)" % avg)
-	print("[RIFLE_PHASE1] rh_world=(%.3f,%.3f,%.3f) rg_world=(%.3f,%.3f,%.3f)" % [rh_pos.x, rh_pos.y, rh_pos.z, rg_pos.x, rg_pos.y, rg_pos.z])
-	print("[RIFLE_PHASE1] weapon_offset_pos=(0,0,0) fijo | rifle_root_offset=%s" % str(rifle_root_offset))
-	print("[RIFLE_PHASE1] Si dist_RH >= 0.02, ajusta rifle_root_offset en pasos <=5 unidades. No actives IK todavia.")
+	# print("[RIFLE_PHASE1] RifleIdle estable 2s | dist_RH (mano der - RightGrip) = %.6f m (objetivo < 0.02)" % avg)
+	# print("[RIFLE_PHASE1] rh_world=(%.3f,%.3f,%.3f) rg_world=(%.3f,%.3f,%.3f)" % [rh_pos.x, rh_pos.y, rh_pos.z, rg_pos.x, rg_pos.y, rg_pos.z])
+	# print("[RIFLE_PHASE1] weapon_offset_pos=(0,0,0) fijo | rifle_root_offset=%s" % str(rifle_root_offset))
+	# print("[RIFLE_PHASE1] Si dist_RH >= 0.02, ajusta rifle_root_offset en pasos <=5 unidades. No actives IK todavia.")
 
 func _root_align_search(skel: Skeleton3D, delta: float) -> void:
 	if _rifle_right_grip == null or not is_instance_valid(_rifle_right_grip):
@@ -3554,9 +3618,9 @@ func _root_align_search(skel: Skeleton3D, delta: float) -> void:
 	_root_align_timer = 0.0
 	var axis_names := ["X", "Z", "Y"]
 	var axis_name: String = axis_names[_root_align_axis]
-	print("[ROOT_ALIGN] round=%d axis=%s phase=%d avg_dist_RH=%.6f rifle_root_offset=%s samples=%d" % [
-		_root_align_round, axis_name, _root_align_phase, avg, str(rifle_root_offset), n_int
-	])
+	# print("[ROOT_ALIGN] round=%d axis=%s phase=%d avg_dist_RH=%.6f rifle_root_offset=%s samples=%d" % [
+		# _root_align_round, axis_name, _root_align_phase, avg, str(rifle_root_offset), n_int
+	# ])
 	match _root_align_phase:
 		0: # base measurement
 			_root_align_best_dist = avg
@@ -3564,38 +3628,38 @@ func _root_align_search(skel: Skeleton3D, delta: float) -> void:
 			# try +step on current axis
 			_apply_root_offset_delta(_root_align_axis, _root_align_step)
 			_root_align_phase = 1
-			print("[ROOT_ALIGN] Trying %s +%.1f" % [axis_name, _root_align_step])
+			# print("[ROOT_ALIGN] Trying %s +%.1f" % [axis_name, _root_align_step])
 		1: # after +
 			if avg < _root_align_best_dist:
 				_root_align_best_dist = avg
 				_root_align_best_offset = rifle_root_offset
-				print("[ROOT_ALIGN] %s + IMPROVED to %.6f" % [axis_name, avg])
+				# print("[ROOT_ALIGN] %s + IMPROVED to %.6f" % [axis_name, avg])
 				# continue in same direction
 				_apply_root_offset_delta(_root_align_axis, _root_align_step)
 				_root_align_phase = 1
 			else:
-				print("[ROOT_ALIGN] %s + did NOT improve (%.6f >= %.6f)" % [axis_name, avg, _root_align_best_dist])
+				pass # print("[ROOT_ALIGN] %s + did NOT improve (%.6f >= %.6f)" % [axis_name, avg, _root_align_best_dist])
 				rifle_root_offset = _root_align_best_offset
 				_apply_root_offset_delta(_root_align_axis, -_root_align_step)
 				_root_align_phase = 2
-				print("[ROOT_ALIGN] Trying %s -%.1f" % [axis_name, _root_align_step])
+				# print("[ROOT_ALIGN] Trying %s -%.1f" % [axis_name, _root_align_step])
 		2: # after -
 			if avg < _root_align_best_dist:
 				_root_align_best_dist = avg
 				_root_align_best_offset = rifle_root_offset
-				print("[ROOT_ALIGN] %s - IMPROVED to %.6f" % [axis_name, avg])
+				# print("[ROOT_ALIGN] %s - IMPROVED to %.6f" % [axis_name, avg])
 				_apply_root_offset_delta(_root_align_axis, -_root_align_step)
 				_root_align_phase = 2
 			else:
-				print("[ROOT_ALIGN] %s - did NOT improve (%.6f >= %.6f)" % [axis_name, avg, _root_align_best_dist])
+				pass # print("[ROOT_ALIGN] %s - did NOT improve (%.6f >= %.6f)" % [axis_name, avg, _root_align_best_dist])
 				rifle_root_offset = _root_align_best_offset
 				_next_root_axis()
 	# convergence check
 	if _root_align_best_dist < 0.02:
 		rifle_root_offset = _root_align_best_offset
 		_root_align_converged = true
-		print("[ROOT_ALIGN] CONVERGED! dist_RH=%.6f < 0.02" % _root_align_best_dist)
-		print("[ROOT_ALIGN] FINAL rifle_root_offset = Vector3(%.4f, %.4f, %.4f)" % [rifle_root_offset.x, rifle_root_offset.y, rifle_root_offset.z])
+		# print("[ROOT_ALIGN] CONVERGED! dist_RH=%.6f < 0.02" % _root_align_best_dist)
+		# print("[ROOT_ALIGN] FINAL rifle_root_offset = Vector3(%.4f, %.4f, %.4f)" % [rifle_root_offset.x, rifle_root_offset.y, rifle_root_offset.z])
 		# also log other distances at this stable pose for info (no adjustments)
 		var lh_bone := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
 		var lh_pos := Vector3.ZERO
@@ -3609,11 +3673,11 @@ func _root_align_search(skel: Skeleton3D, delta: float) -> void:
 			var re_idx := skel.find_bone(re_bone)
 			if re_idx >= 0:
 				re_pos = (skel.global_transform * skel.get_bone_global_pose(re_idx)).origin
-		print("[ROOT_ALIGN] dist_RH=%.4f | dist_LH=%.4f | dist_stock_elbow=%.4f" % [
-			_root_align_best_dist,
-			lh_pos.distance_to(_rifle_left_hand_grip.global_position),
-			re_pos.distance_to(_rifle_stock_ref.global_position)
-		])
+		# print("[ROOT_ALIGN] dist_RH=%.4f | dist_LH=%.4f | dist_stock_elbow=%.4f" % [
+			# _root_align_best_dist,
+			# lh_pos.distance_to(_rifle_left_hand_grip.global_position),
+			# re_pos.distance_to(_rifle_stock_ref.global_position)
+		# ])
 
 func _apply_root_offset_delta(axis: int, delta: float) -> void:
 	match axis:
@@ -3630,9 +3694,9 @@ func _next_root_axis() -> void:
 		_root_align_step *= 0.5
 		if _root_align_step < 0.25:
 			_root_align_step = 0.25
-	print("[ROOT_ALIGN] Best so far: dist_RH=%.6f at %s | next axis step=%.2f" % [
-		_root_align_best_dist, str(_root_align_best_offset), _root_align_step
-	])
+	# print("[ROOT_ALIGN] Best so far: dist_RH=%.6f at %s | next axis step=%.2f" % [
+		# _root_align_best_dist, str(_root_align_best_offset), _root_align_step
+	# ])
 
 func _log_ik_diagnostics(skel: Skeleton3D) -> void:
 	var rh_bone := _resolve_bone_name_safe(right_hand_bone_name, skel)
@@ -3661,10 +3725,10 @@ func _log_ik_diagnostics(skel: Skeleton3D) -> void:
 	var dist_stock := re_pos.distance_to(stock_pos)
 	var left_inf := _rifle_left_arm_ik.influence if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik) else 0.0
 	var right_inf := _rifle_right_arm_ik.influence if _rifle_right_arm_ik != null and is_instance_valid(_rifle_right_arm_ik) else 0.0
-	print("[RIFLE_IK] L_inf=%.2f R_inf=%.2f | dist_RH=%.4f dist_LH=%.4f dist_stock=%.4f | RH=(%.3f,%.3f,%.3f) RG=(%.3f,%.3f,%.3f)" % [
-		left_inf, right_inf, dist_rh, dist_lh, dist_stock,
-		rh_pos.x, rh_pos.y, rh_pos.z, rg_pos.x, rg_pos.y, rg_pos.z
-	])
+	# print("[RIFLE_IK] L_inf=%.2f R_inf=%.2f | dist_RH=%.4f dist_LH=%.4f dist_stock=%.4f | RH=(%.3f,%.3f,%.3f) RG=(%.3f,%.3f,%.3f)" % [
+		# left_inf, right_inf, dist_rh, dist_lh, dist_stock,
+		# rh_pos.x, rh_pos.y, rh_pos.z, rg_pos.x, rg_pos.y, rg_pos.z
+	# ])
 
 func _manual_offset_search(skel: Skeleton3D, delta: float) -> void:
 	if not _manual_search_enabled or _manual_search_converged:
@@ -3702,10 +3766,10 @@ func _manual_offset_search(skel: Skeleton3D, delta: float) -> void:
 	_manual_search_samples.clear()
 	_manual_search_timer = 0.0
 	var axis_name: String = ["X", "Z", "Y"][_manual_search_axis]
-	print("[MANUAL_SEARCH] round=%d axis=%s phase=%d avg_dist_RH=%.6f weapon_offset_pos=(%.2f,%.2f,%.2f) samples=%d" % [
-		_manual_search_round, axis_name, _manual_search_phase, avg_dist,
-		weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z, n_samples
-	])
+	# print("[MANUAL_SEARCH] round=%d axis=%s phase=%d avg_dist_RH=%.6f weapon_offset_pos=(%.2f,%.2f,%.2f) samples=%d" % [
+		# _manual_search_round, axis_name, _manual_search_phase, avg_dist,
+		# weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z, n_samples
+	# ])
 	match _manual_search_phase:
 		0: # Measure current
 			_manual_search_best_dist = avg_dist
@@ -3714,32 +3778,32 @@ func _manual_offset_search(skel: Skeleton3D, delta: float) -> void:
 			# Try +step
 			_manual_search_set_axis(_manual_search_axis, _manual_search_step)
 			_manual_search_phase = 1
-			print("[MANUAL_SEARCH] Trying %s + %.1f" % [axis_name, _manual_search_step])
+			# print("[MANUAL_SEARCH] Trying %s + %.1f" % [axis_name, _manual_search_step])
 		1: # Measured +step
 			if avg_dist < _manual_search_best_dist:
 				_manual_search_best_dist = avg_dist
 				_manual_search_best_pos = weapon_offset_pos
-				print("[MANUAL_SEARCH] %s + %.1f IMPROVED to %.6f" % [axis_name, _manual_search_step, avg_dist])
+				# print("[MANUAL_SEARCH] %s + %.1f IMPROVED to %.6f" % [axis_name, _manual_search_step, avg_dist])
 				# Try larger step in same direction
 				_manual_search_set_axis(_manual_search_axis, _manual_search_step * 2.0)
 				_manual_search_phase = 4 # continue in same direction
 			else:
-				print("[MANUAL_SEARCH] %s + %.1f did NOT improve (%.6f >= %.6f)" % [axis_name, _manual_search_step, avg_dist, _manual_search_best_dist])
+				pass # print("[MANUAL_SEARCH] %s + %.1f did NOT improve (%.6f >= %.6f)" % [axis_name, _manual_search_step, avg_dist, _manual_search_best_dist])
 				# Revert and try -step
 				weapon_offset_pos = _manual_search_best_pos
 				_manual_search_set_axis(_manual_search_axis, -_manual_search_step)
 				_manual_search_phase = 2
-				print("[MANUAL_SEARCH] Trying %s - %.1f" % [axis_name, _manual_search_step])
+				# print("[MANUAL_SEARCH] Trying %s - %.1f" % [axis_name, _manual_search_step])
 		2: # Measured -step
 			if avg_dist < _manual_search_best_dist:
 				_manual_search_best_dist = avg_dist
 				_manual_search_best_pos = weapon_offset_pos
-				print("[MANUAL_SEARCH] %s - %.1f IMPROVED to %.6f" % [axis_name, _manual_search_step, avg_dist])
+				# print("[MANUAL_SEARCH] %s - %.1f IMPROVED to %.6f" % [axis_name, _manual_search_step, avg_dist])
 				# Try larger step in same direction
 				_manual_search_set_axis(_manual_search_axis, -_manual_search_step * 2.0)
 				_manual_search_phase = 5 # continue in same direction
 			else:
-				print("[MANUAL_SEARCH] %s - %.1f did NOT improve (%.6f >= %.6f)" % [axis_name, _manual_search_step, avg_dist, _manual_search_best_dist])
+				pass # print("[MANUAL_SEARCH] %s - %.1f did NOT improve (%.6f >= %.6f)" % [axis_name, _manual_search_step, avg_dist, _manual_search_best_dist])
 				# Revert to best, move to next axis
 				weapon_offset_pos = _manual_search_best_pos
 				_manual_search_next_axis()
@@ -3747,32 +3811,32 @@ func _manual_offset_search(skel: Skeleton3D, delta: float) -> void:
 			if avg_dist < _manual_search_best_dist:
 				_manual_search_best_dist = avg_dist
 				_manual_search_best_pos = weapon_offset_pos
-				print("[MANUAL_SEARCH] %s + larger IMPROVED to %.6f" % [axis_name, avg_dist])
+				# print("[MANUAL_SEARCH] %s + larger IMPROVED to %.6f" % [axis_name, avg_dist])
 				# Keep going
 				_manual_search_set_axis(_manual_search_axis, _manual_search_step)
 				_manual_search_phase = 4
 			else:
-				print("[MANUAL_SEARCH] %s + larger did NOT improve, reverting" % axis_name)
+				pass # print("[MANUAL_SEARCH] %s + larger did NOT improve, reverting" % axis_name)
 				weapon_offset_pos = _manual_search_best_pos
 				_manual_search_next_axis()
 		5: # Continuing -direction with larger step
 			if avg_dist < _manual_search_best_dist:
 				_manual_search_best_dist = avg_dist
 				_manual_search_best_pos = weapon_offset_pos
-				print("[MANUAL_SEARCH] %s - larger IMPROVED to %.6f" % [axis_name, avg_dist])
+				# print("[MANUAL_SEARCH] %s - larger IMPROVED to %.6f" % [axis_name, avg_dist])
 				# Keep going
 				_manual_search_set_axis(_manual_search_axis, -_manual_search_step)
 				_manual_search_phase = 5
 			else:
-				print("[MANUAL_SEARCH] %s - larger did NOT improve, reverting" % axis_name)
+				pass # print("[MANUAL_SEARCH] %s - larger did NOT improve, reverting" % axis_name)
 				weapon_offset_pos = _manual_search_best_pos
 				_manual_search_next_axis()
 	# Check convergence
 	if _manual_search_best_dist < 0.02:
 		weapon_offset_pos = _manual_search_best_pos
 		_manual_search_converged = true
-		print("[MANUAL_SEARCH] CONVERGED! dist_RH=%.6f < 0.02" % _manual_search_best_dist)
-		print("[MANUAL_SEARCH] FINAL weapon_offset_pos = Vector3(%.4f, %.4f, %.4f)" % [weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z])
+		# print("[MANUAL_SEARCH] CONVERGED! dist_RH=%.6f < 0.02" % _manual_search_best_dist)
+		# print("[MANUAL_SEARCH] FINAL weapon_offset_pos = Vector3(%.4f, %.4f, %.4f)" % [weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z])
 		# Log all distances
 		var lh_bone2 := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
 		var lh_pos2 := Vector3.ZERO
@@ -3786,11 +3850,11 @@ func _manual_offset_search(skel: Skeleton3D, delta: float) -> void:
 			var re_idx2 := skel.find_bone(re_bone2)
 			if re_idx2 >= 0:
 				re_pos2 = (skel.global_transform * skel.get_bone_global_pose(re_idx2)).origin
-		print("[MANUAL_SEARCH] dist_RH=%.4f dist_LH=%.4f dist_stock_elbow=%.4f" % [
-			_manual_search_best_dist,
-			lh_pos2.distance_to(_rifle_left_hand_grip.global_position),
-			re_pos2.distance_to(_rifle_stock_ref.global_position)
-		])
+		# print("[MANUAL_SEARCH] dist_RH=%.4f dist_LH=%.4f dist_stock_elbow=%.4f" % [
+			# _manual_search_best_dist,
+			# lh_pos2.distance_to(_rifle_left_hand_grip.global_position),
+			# re_pos2.distance_to(_rifle_stock_ref.global_position)
+		# ])
 
 func _manual_search_set_axis(axis: int, value: float) -> void:
 	match axis:
@@ -3808,10 +3872,10 @@ func _manual_search_next_axis() -> void:
 		_manual_search_step *= 0.5
 		if _manual_search_step < 0.1:
 			_manual_search_step = 0.1
-		print("[MANUAL_SEARCH] Starting new round with step=%.2f" % _manual_search_step)
-	print("[MANUAL_SEARCH] Best so far: dist_RH=%.6f pos=(%.2f,%.2f,%.2f)" % [
-		_manual_search_best_dist, _manual_search_best_pos.x, _manual_search_best_pos.y, _manual_search_best_pos.z
-	])
+		# print("[MANUAL_SEARCH] Starting new round with step=%.2f" % _manual_search_step)
+	# print("[MANUAL_SEARCH] Best so far: dist_RH=%.6f pos=(%.2f,%.2f,%.2f)" % [
+		# _manual_search_best_dist, _manual_search_best_pos.x, _manual_search_best_pos.y, _manual_search_best_pos.z
+	# ])
 
 func _log_ik_calibration(skel: Skeleton3D, influence: float) -> void:
 	# Left hand position
@@ -3854,17 +3918,17 @@ func _log_ik_calibration(skel: Skeleton3D, influence: float) -> void:
 	var pole_pos := _rifle_left_elbow_pole.global_position
 	# IK target position
 	var ik_target_pos := _rifle_left_hand_grip.global_position
-	print("[IK_CAL] influence=%.2f | LH=(%.3f,%.3f,%.3f) LGrip=(%.3f,%.3f,%.3f) IKTarget=(%.3f,%.3f,%.3f) dist_LH=%.4f | RH_dist=%.4f | elbow=(%.3f,%.3f,%.3f) near_torso=%s | pole=(%.3f,%.3f,%.3f)" % [
-		influence,
-		lh_pos.x, lh_pos.y, lh_pos.z,
-		lgrip_pos.x, lgrip_pos.y, lgrip_pos.z,
-		ik_target_pos.x, ik_target_pos.y, ik_target_pos.z,
-		dist_lh,
-		dist_rh,
-		le_pos.x, le_pos.y, le_pos.z,
-		str(elbow_near_torso),
-		pole_pos.x, pole_pos.y, pole_pos.z
-	])
+	# print("[IK_CAL] influence=%.2f | LH=(%.3f,%.3f,%.3f) LGrip=(%.3f,%.3f,%.3f) IKTarget=(%.3f,%.3f,%.3f) dist_LH=%.4f | RH_dist=%.4f | elbow=(%.3f,%.3f,%.3f) near_torso=%s | pole=(%.3f,%.3f,%.3f)" % [
+		# influence,
+		# lh_pos.x, lh_pos.y, lh_pos.z,
+		# lgrip_pos.x, lgrip_pos.y, lgrip_pos.z,
+		# ik_target_pos.x, ik_target_pos.y, ik_target_pos.z,
+		# dist_lh,
+		# dist_rh,
+		# le_pos.x, le_pos.y, le_pos.z,
+		# str(elbow_near_torso),
+		# pole_pos.x, pole_pos.y, pole_pos.z
+	# ])
 
 func _clear_rifle_attachment() -> void:
 	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
@@ -3908,7 +3972,7 @@ func _setup_rifle_left_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	var forearm := _resolve_bone_name_safe("mixamorig:LeftForeArm", skel)
 	var left_hand := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
 	if upper_arm.is_empty() or left_hand.is_empty():
-		print("[RIFLE_IK_SETUP] FAILED: missing bones")
+		pass # print("[RIFLE_IK_SETUP] FAILED: missing bones")
 		return
 	_rifle_left_arm_ik = TwoBoneIK3D.new()
 	_rifle_left_arm_ik.name = "TwoBoneIK3D_LeftArm"
@@ -3924,14 +3988,14 @@ func _setup_rifle_left_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	_rifle_left_arm_ik.set_pole_node(0, pole_path)
 	_rifle_left_arm_ik.active = true
 	_rifle_left_arm_ik.influence = 0.0
-	print("[RIFLE_IK_SETUP] SUCCESS: active=", _rifle_left_arm_ik.active, " target=", target_path, " pole=", pole_path, " bones=", upper_arm, "/", forearm, "/", left_hand)
+	# print("[RIFLE_IK_SETUP] SUCCESS: active=", _rifle_left_arm_ik.active, " target=", target_path, " pole=", pole_path, " bones=", upper_arm, "/", forearm, "/", left_hand)
 
 func _setup_rifle_right_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	var upper_arm := _resolve_bone_name_safe("mixamorig:RightArm", skel)
 	var forearm := _resolve_bone_name_safe("mixamorig:RightForeArm", skel)
 	var right_hand := _resolve_bone_name_safe("mixamorig:RightHand", skel)
 	if upper_arm.is_empty() or right_hand.is_empty():
-		print("[RIFLE_IK_SETUP] FAILED: missing right arm bones")
+		pass # print("[RIFLE_IK_SETUP] FAILED: missing right arm bones")
 		return
 	_rifle_right_arm_ik = TwoBoneIK3D.new()
 	_rifle_right_arm_ik.name = "TwoBoneIK3D_RightArm"
@@ -3945,7 +4009,7 @@ func _setup_rifle_right_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	_rifle_right_arm_ik.set_pole_node(0, _rifle_right_elbow_pole.get_path())
 	_rifle_right_arm_ik.active = true
 	_rifle_right_arm_ik.influence = 0.0
-	print("[RIFLE_IK_SETUP] RIGHT SUCCESS: active=", _rifle_right_arm_ik.active, " target=", skel.get_path_to(target), " bones=", upper_arm, "/", forearm, "/", right_hand)
+	# print("[RIFLE_IK_SETUP] RIGHT SUCCESS: active=", _rifle_right_arm_ik.active, " target=", skel.get_path_to(target), " bones=", upper_arm, "/", forearm, "/", right_hand)
 
 func _auto_align_step(skel: Skeleton3D, delta: float) -> void:
 	if not _auto_align_enabled or _auto_align_converged:
@@ -4014,17 +4078,17 @@ func _auto_align_step(skel: Skeleton3D, delta: float) -> void:
 	var dist_left := avg_left.length()
 	var dist_right := avg_right.length()
 	_auto_align_iteration += 1
-	print("[AUTO_ALIGN] Iteracion %d (muestras=%d)" % [_auto_align_iteration, _auto_align_samples.size()])
-	print("[AUTO_ALIGN] Error culata-codo = %.6f m (objetivo < 0.05)" % dist_stock)
-	print("[AUTO_ALIGN] Error mano izq-grip = %.6f m (objetivo < 0.03)" % dist_left)
-	print("[AUTO_ALIGN] Error mano der-grip = %.6f m (objetivo < 0.02)" % dist_right)
+	# print("[AUTO_ALIGN] Iteracion %d (muestras=%d)" % [_auto_align_iteration, _auto_align_samples.size()])
+	# print("[AUTO_ALIGN] Error culata-codo = %.6f m (objetivo < 0.05)" % dist_stock)
+	# print("[AUTO_ALIGN] Error mano izq-grip = %.6f m (objetivo < 0.03)" % dist_left)
+	# print("[AUTO_ALIGN] Error mano der-grip = %.6f m (objetivo < 0.02)" % dist_right)
 	# Check convergence with user-specified thresholds
 	if dist_stock < 0.05 and dist_left < 0.03 and dist_right < 0.02:
-		print("[AUTO_ALIGN] CONVERGIDO! Todos los errores dentro de tolerancia")
-		print("[AUTO_ALIGN] weapon_offset_pos = %s" % str(weapon_offset_pos))
-		print("[AUTO_ALIGN] StockRef = %s (FIJO)" % str(_rifle_stock_ref.position))
-		print("[AUTO_ALIGN] RightGrip = %s (FIJO)" % str(_rifle_right_grip.position))
-		print("[AUTO_ALIGN] LeftGrip = %s (FIJO)" % str(_rifle_left_hand_grip.position))
+		pass # print("[AUTO_ALIGN] CONVERGIDO! Todos los errores dentro de tolerancia")
+		# print("[AUTO_ALIGN] weapon_offset_pos = %s" % str(weapon_offset_pos))
+		# print("[AUTO_ALIGN] StockRef = %s (FIJO)" % str(_rifle_stock_ref.position))
+		# print("[AUTO_ALIGN] RightGrip = %s (FIJO)" % str(_rifle_right_grip.position))
+		# print("[AUTO_ALIGN] LeftGrip = %s (FIJO)" % str(_rifle_left_hand_grip.position))
 		_auto_align_converged = true
 		return
 	# Strategy: only adjust weapon_offset_pos to minimize all three errors.
@@ -4042,9 +4106,9 @@ func _auto_align_step(skel: Skeleton3D, delta: float) -> void:
 	var total_weight := w_stock + w_right + w_left
 	var combined_error := (avg_stock * w_stock + avg_right * w_right + avg_left * w_left) / total_weight
 	weapon_offset_pos += combined_error / skel_scale_align
-	print("[AUTO_ALIGN] Ajustando weapon_offset_pos:")
-	print("[AUTO_ALIGN] weapon_offset_pos = Vector3(%.4f, %.4f, %.4f)" % [weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z])
-	print("[AUTO_ALIGN] Markers FIJOS: StockRef=%s RightGrip=%s LeftGrip=%s" % [str(_rifle_stock_ref.position), str(_rifle_right_grip.position), str(_rifle_left_hand_grip.position)])
+	# print("[AUTO_ALIGN] Ajustando weapon_offset_pos:")
+	# print("[AUTO_ALIGN] weapon_offset_pos = Vector3(%.4f, %.4f, %.4f)" % [weapon_offset_pos.x, weapon_offset_pos.y, weapon_offset_pos.z])
+	# print("[AUTO_ALIGN] Markers FIJOS: StockRef=%s RightGrip=%s LeftGrip=%s" % [str(_rifle_stock_ref.position), str(_rifle_right_grip.position), str(_rifle_left_hand_grip.position)])
 	# Reset for next iteration
 	_auto_align_rifleidle_timer = 0.0
 	_auto_align_samples.clear()
@@ -4144,8 +4208,8 @@ func _update_rifle_debug_label(skel: Skeleton3D) -> void:
 			re_pos = (skel.global_transform * skel.get_bone_global_pose(re_idx)).origin
 	var stock_pos := _rifle_stock_ref.global_position if _rifle_stock_ref != null else Vector3.ZERO
 	var stock_dist := stock_pos.distance_to(re_pos)
-	print("[RIFLE_DEBUG] grip_dist=%.4f ik_dist=%.4f stock_elbow=%.4f ik_weight=%.2f ik_active=%s" % [grip_dist, ik_dist, stock_dist, _rifle_current_ik_weight, _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik) and _rifle_left_arm_ik.active])
-	print("[RIFLE_DEBUG] char_right_elbow=%s stock=%s | char_left_hand=%s left_grip=%s | rh_grip=%s" % [str(re_pos), str(stock_pos), str(lh_pos), str(lg_pos), str(rh_pos)])
+	# print("[RIFLE_DEBUG] grip_dist=%.4f ik_dist=%.4f stock_elbow=%.4f ik_weight=%.2f ik_active=%s" % [grip_dist, ik_dist, stock_dist, _rifle_current_ik_weight, _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik) and _rifle_left_arm_ik.active])
+	# print("[RIFLE_DEBUG] char_right_elbow=%s stock=%s | char_left_hand=%s left_grip=%s | rh_grip=%s" % [str(re_pos), str(stock_pos), str(lh_pos), str(lg_pos), str(rh_pos)])
 
 func _resolve_bone_name_safe(preferred: String, skeleton: Skeleton3D = null) -> String:
 	var target_skeleton := skeleton if skeleton != null else _spine_skeleton
@@ -4348,12 +4412,22 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	target_position = Vector3(side_bob * 0.45, third_height, THIRD_PERSON_CAMERA_POS.z)
 	target_position.y += _water_sink
 	if _is_aiming:
-		# First-person eye position so the scope looks down the barrel
-		var aim_height: float = (1.25 if is_crouching else 1.65) + vertical_bob * 0.2
-		target_position = Vector3(0.0, aim_height + _water_sink, 0.0)
+		# First-person eye position looking down the rifle barrel.
+		# Height adapts to stance.
+		var aim_height: float = 1.65
+		if is_crouching:
+			aim_height = 1.25
+		elif is_prone:
+			aim_height = 0.45
+		aim_height += vertical_bob * 0.2
+		# Position the camera at the player's eye level, slightly forward
+		target_position = Vector3(0.0, aim_height + _water_sink, 0.15)
 		camera.position = camera.position.lerp(target_position, delta * 18.0)
+		# Use _pitch for vertical aim control (mouse up/down)
+		camera.rotation.x = _pitch
 	else:
 		camera.position = camera.position.lerp(target_position, delta * 10.0)
+		camera.rotation.x = _pitch
 	camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	_update_third_person_animation(moving, delta)
 
@@ -4483,7 +4557,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.stop()
 			return
 		if _has_rifle and target_animation != _last_rifle_animation_debug:
-			print("[RIFLE_VERIFY] requested=", target_animation, " active_before=", third_person_animation_player.current_animation, " playing=", third_person_animation_player.is_playing(), " rifle=", _has_rifle)
+			pass # print("[RIFLE_VERIFY] requested=", target_animation, " active_before=", third_person_animation_player.current_animation, " playing=", third_person_animation_player.is_playing(), " rifle=", _has_rifle)
 			_last_rifle_animation_debug = target_animation
 		if not target_animation.is_empty() and third_person_animation_player.current_animation != target_animation:
 			third_person_animation_player.play(target_animation, 0.15)
@@ -4914,7 +4988,7 @@ func _update_crosshair(is_rifle: bool) -> void:
 	if main != null and main.hud != null and main.hud.has_method("set_crosshair_rifle"):
 		main.hud.set_crosshair_rifle(is_rifle)
 	else:
-		print("DEBUG CROSSHAIR: main=", main, " hud=", main.hud if main != null else "null", " is_rifle=", is_rifle)
+		pass # print("DEBUG CROSSHAIR: main=", main, " hud=", main.hud if main != null else "null", " is_rifle=", is_rifle)
 
 func _toggle_aim() -> void:
 	_is_aiming = not _is_aiming
@@ -4956,12 +5030,44 @@ func _remove_scope_overlay() -> void:
 		_scope_overlay.queue_free()
 	_scope_overlay = null
 
+func _reload_rifle() -> void:
+	if _is_reloading:
+		return
+	var needed := RIFLE_MAG_SIZE - _rifle_magazine
+	if needed <= 0:
+		notice.emit("Cargador lleno.")
+		return
+	if _rifle_reserve_ammo <= 0:
+		notice.emit("Sin municion de reserva.")
+		return
+	_is_reloading = true
+	var to_load: int = min(needed, _rifle_reserve_ammo)
+	_rifle_reserve_ammo -= to_load
+	_rifle_magazine += to_load
+	_is_reloading = false
+	notice.emit("Recargado: %d/%d en cargador, %d en reserva." % [_rifle_magazine, RIFLE_MAG_SIZE, _rifle_reserve_ammo])
+
+func get_rifle_info() -> Dictionary:
+	return {
+		"name": RIFLE_NAME,
+		"ammo_type": RIFLE_AMMO_TYPE,
+		"magazine": _rifle_magazine,
+		"mag_size": RIFLE_MAG_SIZE,
+		"reserve": _rifle_reserve_ammo,
+		"damage": RIFLE_DAMAGE,
+		"range": RIFLE_RANGE,
+	}
+
 func _shoot_rifle() -> void:
 	if _shoot_cooldown > 0.0:
+		return
+	if _rifle_magazine <= 0:
+		notice.emit("Sin municion. Pulsa T para recargar.")
 		return
 	if stats.energy < 3.0:
 		notice.emit("Estas demasiado cansado para disparar.")
 		return
+	_rifle_magazine -= 1
 	_shoot_cooldown = 1.5
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
@@ -5043,7 +5149,7 @@ func _shoot_rifle() -> void:
 	if result.is_empty():
 		return
 	var collider = result["collider"]
-	print("DEBUG SHOOT: hit=", collider.name, " class=", collider.get_class(), " pos=", hit_pos, " dist=", hit_dist)
+	# print("DEBUG SHOOT: hit=", collider.name, " class=", collider.get_class(), " pos=", hit_pos, " dist=", hit_dist)
 	# Damage falloff: full damage up to 50m, linear falloff to 20% at max range
 	var damage := 80.0
 	if hit_dist > 50.0:
@@ -5083,7 +5189,7 @@ func _shoot_rifle() -> void:
 					break
 				walked = walked.get_parent()
 		if target_node != null:
-			print("DEBUG SHOOT: target=", target_node.name, " is_wildlife=", target_node.is_in_group("wildlife"))
+			pass # print("DEBUG SHOOT: target=", target_node.name, " is_wildlife=", target_node.is_in_group("wildlife"))
 			if is_headshot:
 				target_node.take_damage(9999.0, false)
 			else:

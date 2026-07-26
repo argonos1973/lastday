@@ -52,7 +52,7 @@ func _ready() -> void:
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 	if args.has("--server") or user_args.has("--server"):
-		print("[NETWORK] Starting dedicated server...")
+		pass # print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
 
 func start_dedicated_server() -> bool:
@@ -225,7 +225,7 @@ func _on_server_disconnected() -> void:
 func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	if not is_host:
 		return
-	print("[PERSIST] _register_player: id=%d name=%s cid=%s" % [id, player_name, cid])
+	pass # print("[PERSIST] _register_player: id=%d name=%s cid=%s" % [id, player_name, cid])
 	players[id] = {
 		"name": player_name,
 		"pos": SPAWN_POS,
@@ -280,7 +280,7 @@ func _check_all_ready() -> void:
 # Position sync — called by each client for their own player
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
-func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String) -> void:
+func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false) -> void:
 	if not players.has(id):
 		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
 	# Ignore position updates from reconnecting clients (they're still at spawn pos)
@@ -301,6 +301,8 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["equipped_clothing"] = equipped_clothing
 	players[id]["held_item"] = held_item
 	players[id]["equipped_backpack"] = equipped_backpack
+	players[id]["is_aiming"] = is_aiming
+	players[id]["has_rifle"] = has_rifle
 	# Server relays to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
@@ -311,7 +313,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				# Skip peers that are not actually connected
 				if peer.get_peer(pid) == null:
 					continue
-				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack)
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle)
 
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
@@ -336,9 +338,9 @@ func restore_player_inventory(items_data: Array, health: float, hunger: float, t
 @rpc("any_peer", "reliable")
 func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f sitting=%s prone=%s crouching=%s" % [sender, pos, rot, sitting, prone, crouching])
+	pass # print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f sitting=%s prone=%s crouching=%s" % [sender, pos, rot, sitting, prone, crouching])
 	if not players.has(sender):
-		print("[PERSIST] final_player_state: peer %d not in players dict, ignoring" % sender)
+		pass # print("[PERSIST] final_player_state: peer %d not in players dict, ignoring" % sender)
 		return
 	players[sender]["pos"] = pos
 	players[sender]["rot"] = rot
@@ -356,7 +358,7 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 		proxy.set_meta("saved_prone", prone)
 		proxy.set_meta("saved_crouching", crouching)
 		proxy.set_meta("saved_rot", rot)
-		print("[PERSIST] final_player_state: updated proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
+		pass # print("[PERSIST] final_player_state: updated proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
 	elif scene != null:
 		# Proxy may have already been moved to proxy_by_client_id on disconnect
 		for cid in scene.proxy_by_client_id:
@@ -369,10 +371,10 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 				p.set_meta("saved_prone", prone)
 				p.set_meta("saved_crouching", crouching)
 				p.set_meta("saved_rot", rot)
-				print("[PERSIST] final_player_state: updated disconnected proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
+				pass # print("[PERSIST] final_player_state: updated disconnected proxy for peer %d to pos=%s sitting=%s prone=%s" % [sender, pos, sitting, prone])
 				break
 	else:
-		print("[PERSIST] final_player_state: no server proxy for peer %d" % sender)
+		pass # print("[PERSIST] final_player_state: no server proxy for peer %d" % sender)
 
 # Animal state broadcast — server sends to all clients
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }

@@ -202,13 +202,13 @@ func _fetch_weather() -> void:
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
-		print("[HUD] Weather request init failed, err=%d" % err)
+		pass # print("[HUD] Weather request init failed, err=%d" % err)
 
 func _on_weather_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_weather_loading = false
 	if result == HTTPRequest.RESULT_SUCCESS:
 		var text := body.get_string_from_utf8().strip_edges()
-		print("[HUD] Weather received: '%s'" % text.left(120))
+		pass # print("[HUD] Weather received: '%s'" % text.left(120))
 		var json = JSON.new()
 		if json.parse(text) == OK:
 			var data: Dictionary = json.data
@@ -218,13 +218,13 @@ func _on_weather_received(result: int, _response_code: int, _headers: PackedStri
 					var temp: float = float(current["temperature_2m"])
 					_real_temp = "%.0f°C" % temp
 					_real_temp_parsed = temp
-					print("[HUD] Parsed temperature: %.1f" % temp)
+					pass # print("[HUD] Parsed temperature: %.1f" % temp)
 					return
-		print("[HUD] Failed to parse weather JSON")
+		pass # print("[HUD] Failed to parse weather JSON")
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
 	else:
-		print("[HUD] Weather request failed, result=%d" % result)
+		pass # print("[HUD] Weather request failed, result=%d" % result)
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
 
@@ -1196,7 +1196,7 @@ func _on_store_pressed() -> void:
 func set_crosshair_rifle(active: bool) -> void:
 	_crosshair_rifle_mode = active
 	if crosshair_dot == null or crosshair_ring_h == null or crosshair_ring_v == null:
-		print("DEBUG CROSSHAIR RIFLE: null nodes dot=", crosshair_dot, " h=", crosshair_ring_h, " v=", crosshair_ring_v)
+		pass # print("DEBUG CROSSHAIR RIFLE: null nodes dot=", crosshair_dot, " h=", crosshair_ring_h, " v=", crosshair_ring_v)
 		return
 	crosshair_dot.visible = not active
 	if active:
@@ -1212,5 +1212,5 @@ func set_crosshair_rifle(active: bool) -> void:
 		crosshair_ring_v.color = Color(0.96, 0.94, 0.84, 0.92)
 	crosshair_ring_h.visible = active
 	crosshair_ring_v.visible = active
-	print("DEBUG CROSSHAIR RIFLE: active=", active, " dot.visible=", crosshair_dot.visible, " h.visible=", crosshair_ring_h.visible, " v.visible=", crosshair_ring_v.visible, " h.pos=", crosshair_ring_h.position, " h.size=", crosshair_ring_h.size)
+	pass # print("DEBUG CROSSHAIR RIFLE: active=", active, " dot.visible=", crosshair_dot.visible, " h.visible=", crosshair_ring_h.visible, " v.visible=", crosshair_ring_v.visible, " h.pos=", crosshair_ring_h.position, " h.size=", crosshair_ring_h.size)
 	_apply_aim_layout()
