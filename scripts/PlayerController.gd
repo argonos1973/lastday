@@ -410,12 +410,20 @@ var _aim_screen_offset := Vector2.ZERO
 var is_puppet := false
 var _puppet_anim := "idle"
 var _puppet_current_anim := ""
+var is_custom_character: bool = false
+var _custom_body_mesh_name: String = ""
+var _custom_clothing_mesh_names: Dictionary = {}
+var puppet_model_path: String = ""
 
 func setup_as_puppet() -> void:
 	is_puppet = true
 	# Disable physics entirely — puppet position is set via puppet_apply
 	set_physics_process(false)
 	# Lightweight puppet: only load 3D model + animations, skip everything heavy
+	if puppet_model_path.is_empty():
+		var gs := get_node_or_null("/root/GameState")
+		if gs != null:
+			puppet_model_path = gs.get_selected_model_path()
 	_create_third_person_model()
 	if third_person_model != null:
 		third_person_model.visible = true
@@ -535,7 +543,8 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 				_puppet_naked_timer = 0.0
 				new_items = []
 			else:
-				new_items = ["Camiseta", "Pantalones", "Zapatillas"]
+				# Living puppet with no clothing: show naked body
+				new_items = []
 		else:
 			for item_name in clothing.split(","):
 				var name := item_name.strip_edges()
@@ -1790,49 +1799,80 @@ func _add_starting_items() -> void:
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
-	for candidate in THIRD_PERSON_MODEL_CANDIDATES:
-		character = _load_external_node3d(candidate)
+	# Check GameState for a selected custom character (Remy, personaje2, etc.)
+	if not is_puppet:
+		var gs := get_node_or_null("/root/GameState")
+		if gs != null:
+			var custom_path: String = gs.get_selected_model_path()
+			if not custom_path.is_empty():
+				character = _load_external_node3d(custom_path)
+				if character != null:
+					third_person_loaded_path = custom_path
+	# Puppet: use puppet_model_path if set
+	if character == null and is_puppet and not puppet_model_path.is_empty():
+		character = _load_external_node3d(puppet_model_path)
 		if character != null:
-			third_person_loaded_path = candidate
-			break
+			third_person_loaded_path = puppet_model_path
+	# Fallback: try default candidates
+	if character == null:
+		for candidate in THIRD_PERSON_MODEL_CANDIDATES:
+			character = _load_external_node3d(candidate)
+			if character != null:
+				third_person_loaded_path = candidate
+				break
 	if character != null:
 		character.name = "ThirdPersonCharacter"
 		character.visible = false
 		character.position = Vector3.ZERO
 		character.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-		var character_scale := MIXAMO_CHARACTER_SCALE if _is_mixamo_root_asset(third_person_loaded_path) else THIRD_PERSON_DEFAULT_SCALE
-		character.scale = Vector3.ONE * character_scale
+		var is_clothing_model := third_person_loaded_path.find("player_with_clothes") >= 0
 		add_child(character)
 		third_person_model = character
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
-		# Always init survival clothing (hides soldier nodes, shows default clothing)
-		_init_survival_clothing(character)
-		if not is_puppet:
-			# Ensure default clothing is in inventory and equipped
-			if inventory != null:
-				var has_camiseta := false
-				var has_pantalones := false
-				var has_zapatillas := false
-				for item in inventory.items:
-					if str(item.item_name) == "Camiseta": has_camiseta = true
-					if str(item.item_name) == "Pantalones": has_pantalones = true
-					if str(item.item_name) == "Zapatillas": has_zapatillas = true
-				if not has_camiseta:
-					inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.0))
-				if not has_pantalones:
-					inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
-				if not has_zapatillas:
-					inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
-				# Equip default clothing items
-				for item in inventory.items:
-					if DEFAULT_CLOTHING.has(str(item.item_name)):
-						equip_clothing(str(item.item_name))
+		is_custom_character = not is_clothing_model
+		# Calculate and apply scale after adding to scene tree so skeleton poses are valid
+		var character_scale: float
+		if is_clothing_model:
+			character_scale = MIXAMO_CHARACTER_SCALE
 		else:
-			# Puppet: equip default clothing directly without inventory
-			equip_clothing("Camiseta")
-			equip_clothing("Pantalones")
-			equip_clothing("Zapatillas")
+			# Temporarily make visible so _collect_mesh_instances finds meshes for AABB fallback
+			character.visible = true
+			character_scale = _calculate_character_scale(character, 2.2)
+			character.visible = false
+		character.scale = Vector3.ONE * character_scale
+		# Only init survival clothing for the adapted player_with_clothes model.
+		# Custom characters (Remy, personaje2) are complete models without the
+		# survival clothing node structure.
+		if is_clothing_model:
+			_init_survival_clothing(character)
+		if not is_puppet:
+			if is_clothing_model:
+				# Ensure default clothing is in inventory and equipped
+				if inventory != null:
+					var has_camiseta := false
+					var has_pantalones := false
+					var has_zapatillas := false
+					for item in inventory.items:
+						if str(item.item_name) == "Camiseta": has_camiseta = true
+						if str(item.item_name) == "Pantalones": has_pantalones = true
+						if str(item.item_name) == "Zapatillas": has_zapatillas = true
+					if not has_camiseta:
+						inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.0))
+					if not has_pantalones:
+						inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
+					if not has_zapatillas:
+						inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
+					# Equip default clothing items
+					for item in inventory.items:
+						if DEFAULT_CLOTHING.has(str(item.item_name)):
+							equip_clothing(str(item.item_name))
+		else:
+			if is_clothing_model:
+				# Puppet: equip default clothing directly without inventory
+				equip_clothing("Camiseta")
+				equip_clothing("Pantalones")
+				equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
 		else:
@@ -1849,6 +1889,8 @@ func _create_third_person_model() -> void:
 				third_person_model.add_child(third_person_back_item_root)
 		_setup_third_person_animation(character)
 		_align_third_person_model_to_ground()
+		if not is_puppet and third_person_model != null:
+			third_person_model.visible = true
 		return
 	_create_procedural_third_person_model()
 
@@ -1975,12 +2017,27 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		copied.step = 0.0166667
 		_retarget_animation_to_character_skeleton(copied)
 		var skel := _find_skeleton(third_person_model)
+		# For custom characters, retarget rotation tracks to account for
+		# different rest pose rotations between source and target skeletons
+		if is_custom_character:
+			_retarget_rotation_tracks(copied)
+		# For custom characters, remove non-Hips position tracks to prevent
+		# bone stretching from mismatched skeleton proportions
+		if is_custom_character:
+			var _allow_hips_y := anim_name in skip_post_process
+			var _sit_fraction := 0.0
+			if anim_name == THIRD_PERSON_EXTERNAL_SIT_ANIMATION:
+				_sit_fraction = 0.20
+			elif anim_name == THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION:
+				_sit_fraction = 0.10
+			_remove_non_hips_position_tracks(copied, _allow_hips_y, _sit_fraction)
 		if anim_name in skip_post_process:
 			if copied.length > 5.0:
 				copied = _trim_animation(copied, 0.0, 5.0)
 				copied.loop_mode = Animation.LOOP_LINEAR
 		else:
-			_remove_root_motion_drift(copied, skel)
+			if not is_custom_character:
+				_remove_root_motion_drift(copied, skel)
 			_smooth_loop_boundary(copied)
 		lib.add_animation(anim_name, copied)
 	third_person_animation_player.add_animation_library("external", lib)
@@ -2137,6 +2194,20 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		third_person_sneak_walk_animation = third_person_sneak_animation
 	if third_person_has_real_idle and not third_person_idle_animation.is_empty():
 		third_person_animation_player.play(third_person_idle_animation)
+		# DEBUG: verify animation is playing and track types
+		var _dbg_anim := third_person_animation_player.get_animation(third_person_idle_animation)
+		if _dbg_anim != null:
+			var _pos_count := 0
+			var _rot_count := 0
+			var _scale_count := 0
+			for _ti in range(_dbg_anim.get_track_count()):
+				var _tt := _dbg_anim.track_get_type(_ti)
+				if _tt == Animation.TYPE_POSITION_3D:
+					_pos_count += 1
+				elif _tt == Animation.TYPE_ROTATION_3D:
+					_rot_count += 1
+				elif _tt == Animation.TYPE_SCALE_3D:
+					_scale_count += 1
 	else:
 		third_person_animation_player.stop()
 
@@ -2172,6 +2243,134 @@ func _trim_animation(animation: Animation, start_time: float, end_time: float) -
 				trimmed.track_insert_key(track_index, new_time, key_value)
 	trimmed.length = duration
 	return trimmed
+
+func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool = false, sit_fraction: float = 0.0) -> void:
+	# For custom characters, retarget position tracks to the target skeleton's
+	# rest pose. Animations from a different Mixamo skeleton have bone offsets
+	# that don't match Remy's proportions, causing deformation.
+	# We keep rotation tracks (universal) and replace position values with
+	# the target bone's rest pose position.
+	# When allow_hips_y is true (sit/sleep), preserve the Hips Y offset from
+	# the animation so the character lowers their body.
+	var skeleton := _find_skeleton(third_person_model)
+	if skeleton == null:
+		return
+	# First pass: replace non-Hips position values with rest pose
+	for track_index in range(animation.get_track_count()):
+		var track_type := animation.track_get_type(track_index)
+		if track_type != Animation.TYPE_POSITION_3D:
+			continue
+		var path_text := str(animation.track_get_path(track_index))
+		var is_hips := path_text.find("mixamorig_Hips") >= 0 or path_text.find("mixamorig:Hips") >= 0
+		if is_hips:
+			# Lock Hips to rest pose position (no root motion)
+			# But preserve Y offset for sit/sleep animations
+			var bone_name := "mixamorig_Hips"
+			var bone_idx := skeleton.find_bone(bone_name)
+			if bone_idx == -1:
+				bone_idx = skeleton.find_bone("mixamorig:Hips")
+			if bone_idx != -1:
+				var rest_pos := skeleton.get_bone_rest(bone_idx).origin
+				var key_count := animation.track_get_key_count(track_index)
+				if allow_hips_y and sit_fraction > 0.0:
+					# For sit/sleep, set Hips Y to a fraction of standing height
+					# This avoids coordinate system mismatches between source/target skeletons
+					var target_y := rest_pos.y * sit_fraction
+					for key_index in range(key_count):
+						animation.track_set_key_value(track_index, key_index, Vector3(rest_pos.x, target_y, rest_pos.z))
+				else:
+					for key_index in range(key_count):
+						animation.track_set_key_value(track_index, key_index, rest_pos)
+			continue
+		# Non-Hips: replace with rest pose
+		var bone_name := _extract_mixamo_bone_name(path_text)
+		if bone_name.is_empty():
+			continue
+		bone_name = _resolve_mixamo_bone_name(skeleton, bone_name)
+		if bone_name.is_empty():
+			continue
+		var bone_idx := skeleton.find_bone(bone_name)
+		if bone_idx == -1:
+			continue
+		var rest_pos := skeleton.get_bone_rest(bone_idx).origin
+		var key_count := animation.track_get_key_count(track_index)
+		for key_index in range(key_count):
+			animation.track_set_key_value(track_index, key_index, rest_pos)
+	# Second pass: remove all SCALE_3D tracks
+	for track_index in range(animation.get_track_count() - 1, -1, -1):
+		if animation.track_get_type(track_index) == Animation.TYPE_SCALE_3D:
+			animation.remove_track(track_index)
+
+# Cache for source skeleton rest rotations (from player_with_clothes.glb)
+var _source_skeleton_rest_cache: Dictionary = {}
+var _source_skeleton_rest_pos_cache: Dictionary = {}
+
+func _get_source_skeleton_rest_rot(bone_name: String) -> Quaternion:
+	_load_source_skeleton_cache()
+	if _source_skeleton_rest_cache.has(bone_name):
+		return _source_skeleton_rest_cache[bone_name]
+	return Quaternion.IDENTITY
+
+func _get_source_skeleton_rest_pos(bone_name: String) -> Vector3:
+	_load_source_skeleton_cache()
+	if _source_skeleton_rest_pos_cache.has(bone_name):
+		return _source_skeleton_rest_pos_cache[bone_name]
+	return Vector3.ZERO
+
+func _load_source_skeleton_cache() -> void:
+	if not _source_skeleton_rest_cache.is_empty():
+		return
+	var src_model: Node3D = load(ADAPTED_PLAYER_MODEL).instantiate()
+	if src_model == null:
+		return
+	add_child(src_model)
+	var src_skel := _find_skeleton(src_model)
+	if src_skel != null:
+		for i in range(src_skel.get_bone_count()):
+			var bn := src_skel.get_bone_name(i)
+			_source_skeleton_rest_cache[bn] = src_skel.get_bone_rest(i).basis.get_rotation_quaternion()
+			_source_skeleton_rest_pos_cache[bn] = src_skel.get_bone_rest(i).origin
+			if bn.begins_with("mixamorig_"):
+				_source_skeleton_rest_cache["mixamorig:" + bn.substr("mixamorig_".length())] = src_skel.get_bone_rest(i).basis.get_rotation_quaternion()
+				_source_skeleton_rest_pos_cache["mixamorig:" + bn.substr("mixamorig_".length())] = src_skel.get_bone_rest(i).origin
+			elif bn.begins_with("mixamorig:"):
+				_source_skeleton_rest_cache["mixamorig_" + bn.substr("mixamorig:".length())] = src_skel.get_bone_rest(i).basis.get_rotation_quaternion()
+				_source_skeleton_rest_pos_cache["mixamorig_" + bn.substr("mixamorig:".length())] = src_skel.get_bone_rest(i).origin
+	src_model.queue_free()
+
+func _retarget_rotation_tracks(animation: Animation) -> void:
+	# For custom characters, adjust rotation keyframes to account for
+	# different rest pose rotations between source and target skeletons.
+	# For each bone: new_rot = target_rest * source_rest.inverse() * original_rot
+	var skeleton := _find_skeleton(third_person_model)
+	if skeleton == null:
+		return
+	for track_index in range(animation.get_track_count()):
+		if animation.track_get_type(track_index) != Animation.TYPE_ROTATION_3D:
+			continue
+		var path_text := str(animation.track_get_path(track_index))
+		var bone_name := _extract_mixamo_bone_name(path_text)
+		if bone_name.is_empty():
+			continue
+		var resolved_name := _resolve_mixamo_bone_name(skeleton, bone_name)
+		if resolved_name.is_empty():
+			continue
+		var target_idx := skeleton.find_bone(resolved_name)
+		if target_idx == -1:
+			continue
+		var target_rest_rot := skeleton.get_bone_rest(target_idx).basis.get_rotation_quaternion()
+		var source_rest_rot := _get_source_skeleton_rest_rot(bone_name)
+		if source_rest_rot == Quaternion.IDENTITY and target_rest_rot == Quaternion.IDENTITY:
+			continue
+		# Compute offset: target_rest * source_rest.inverse()
+		var offset := target_rest_rot * source_rest_rot.inverse()
+		if offset == Quaternion.IDENTITY:
+			continue
+		var key_count := animation.track_get_key_count(track_index)
+		for key_index in range(key_count):
+			var original_rot: Quaternion = animation.track_get_key_value(track_index, key_index)
+			var new_rot := offset * original_rot
+			animation.track_set_key_value(track_index, key_index, new_rot)
 
 func _retarget_animation_to_character_skeleton(animation: Animation) -> void:
 	var skeleton := _find_skeleton(third_person_model)
@@ -2331,12 +2530,16 @@ func _find_skeleton(root: Node) -> Skeleton3D:
 
 func _remove_root_motion_drift(animation: Animation, skeleton: Skeleton3D = null) -> void:
 	var rest_hips_y := 0.0
+	var rest_hips_x := 0.0
+	var rest_hips_z := 0.0
 	if skeleton != null:
 		var hips_bone := skeleton.find_bone("mixamorig_Hips")
 		if hips_bone == -1:
 			hips_bone = skeleton.find_bone("mixamorig:Hips")
 		if hips_bone != -1:
 			rest_hips_y = skeleton.get_bone_rest(hips_bone).origin.y
+			rest_hips_x = skeleton.get_bone_rest(hips_bone).origin.x
+			rest_hips_z = skeleton.get_bone_rest(hips_bone).origin.z
 	for track_index in range(animation.get_track_count()):
 		if animation.track_get_type(track_index) != Animation.TYPE_POSITION_3D:
 			continue
@@ -2365,14 +2568,20 @@ func _remove_root_motion_drift(animation: Animation, skeleton: Skeleton3D = null
 			if value is Vector3:
 				var locked_position := value as Vector3
 				if lock_x:
-					locked_position.x = first_position.x
+					if is_root_hips:
+						locked_position.x = rest_hips_x
+					else:
+						locked_position.x = first_position.x
 				if lock_y:
 					if is_root_hips:
 						locked_position.y = rest_hips_y
 					else:
 						locked_position.y = first_position.y
 				if lock_z:
-					locked_position.z = first_position.z
+					if is_root_hips:
+						locked_position.z = rest_hips_z
+					else:
+						locked_position.z = first_position.z
 				animation.track_set_key_value(track_index, key_index, locked_position)
 
 func _smooth_loop_boundary(animation: Animation) -> void:
@@ -2467,6 +2676,11 @@ func die() -> void:
 	stats.changed.emit()
 	if third_person_animation_player != null:
 		third_person_animation_player.stop()
+	# Unequip all clothing so the body shows naked parts
+	for slot in _equipped_slots.keys():
+		var equipped_item := str(_equipped_slots[slot])
+		if not equipped_item.is_empty():
+			unequip_clothing(equipped_item)
 
 func _update_death_pose(delta: float) -> void:
 	death_pose_time += delta
@@ -2508,6 +2722,46 @@ func _hide_third_person_export_helpers(root: Node) -> void:
 func _is_third_person_export_helper_name(lower_name: String) -> bool:
 	return lower_name == "cube" or lower_name.find("placeholder") >= 0 or lower_name.find("floor") >= 0
 
+func _calculate_character_scale(character: Node3D, target_height: float) -> float:
+	# Measure model height using skeleton bone global poses (in skeleton space)
+	var skeleton := _find_skeleton(character)
+	if skeleton != null:
+		var min_y := 1000000.0
+		var max_y := -1000000.0
+		# First try: use foot and head/neck bones
+		for i in range(skeleton.get_bone_count()):
+			var bone_name := skeleton.get_bone_name(i)
+			if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0 \
+					or bone_name.find("Head") >= 0 or bone_name.find("head") >= 0:
+				var gp := skeleton.get_bone_global_pose(i)
+				min_y = min(min_y, gp.origin.y)
+				max_y = max(max_y, gp.origin.y)
+		# If range too small, use all bones
+		if max_y - min_y < 0.5:
+			min_y = 1000000.0
+			max_y = -1000000.0
+			for i in range(skeleton.get_bone_count()):
+				var gp := skeleton.get_bone_global_pose(i)
+				min_y = min(min_y, gp.origin.y)
+				max_y = max(max_y, gp.origin.y)
+		if max_y > min_y:
+			return target_height / (max_y - min_y)
+	# Fallback: use mesh AABB (skip Body for custom characters - distorted AABB)
+	var meshes := []
+	_collect_mesh_instances(character, meshes)
+	var aabb_min_y := 1000000.0
+	var aabb_max_y := -1000000.0
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if is_custom_character and mi.name == "Body":
+			continue
+		var aabb := mi.get_aabb()
+		aabb_min_y = min(aabb_min_y, aabb.position.y)
+		aabb_max_y = max(aabb_max_y, aabb.position.y + aabb.size.y)
+	if aabb_max_y > aabb_min_y:
+		return target_height / (aabb_max_y - aabb_min_y)
+	return MIXAMO_CHARACTER_SCALE
+
 func _is_mixamo_root_asset(path: String) -> bool:
 	var file_name := path.get_file().to_lower()
 	return file_name.find("player_with_clothes") >= 0 \
@@ -2518,24 +2772,47 @@ func _is_mixamo_root_asset(path: String) -> bool:
 		or file_name.find("pike") >= 0 \
 		or file_name.find("run") >= 0 \
 		or file_name.find("leftturn") >= 0 \
-		or file_name.find("rightturn") >= 0
+		or file_name.find("rightturn") >= 0 \
+		or file_name.find("remy") >= 0 \
+		or file_name.find("personaje") >= 0
 
 func _align_third_person_model_to_ground() -> void:
 	if third_person_model == null:
 		return
 	third_person_ground_offset = 0.0
 	third_person_model.position = Vector3.ZERO
-	var meshes := []
-	_collect_mesh_instances(third_person_model, meshes)
+	# For custom characters, use skeleton foot bone global positions
+	# which are more accurate than mesh AABB (which reflects T-pose, not actual pose)
 	var min_y := 1000000.0
-	for mesh_node in meshes:
-		var mesh_instance := mesh_node as MeshInstance3D
-		var world_aabb: AABB = mesh_instance.global_transform * mesh_instance.get_aabb()
-		min_y = min(min_y, world_aabb.position.y)
+	if is_custom_character:
+		var skeleton := _find_skeleton(third_person_model)
+		if skeleton != null:
+			for i in range(skeleton.get_bone_count()):
+				var bone_name := skeleton.get_bone_name(i)
+				if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0:
+					var gp := skeleton.get_bone_global_pose(i)
+					min_y = min(min_y, gp.origin.y)
+			# Also check Toe bones
+			for i in range(skeleton.get_bone_count()):
+				var bone_name := skeleton.get_bone_name(i)
+				if bone_name.find("Toe") >= 0 or bone_name.find("toe") >= 0:
+					var gp := skeleton.get_bone_global_pose(i)
+					min_y = min(min_y, gp.origin.y)
+	# Fallback: use global AABB of non-Body meshes
+	if min_y > 999999.0:
+		var was_visible := third_person_model.visible
+		third_person_model.visible = true
+		var meshes := []
+		_collect_mesh_instances(third_person_model, meshes)
+		for mesh_node in meshes:
+			var mesh_instance := mesh_node as MeshInstance3D
+			if is_custom_character and mesh_instance.name == "Body":
+				continue
+			var world_aabb: AABB = mesh_instance.global_transform * mesh_instance.get_aabb()
+			min_y = min(min_y, world_aabb.position.y)
+		third_person_model.visible = was_visible
 	if min_y < 999999.0:
-		third_person_ground_offset = -min_y
-		if _is_mixamo_root_asset(third_person_loaded_path):
-			third_person_ground_offset += MIXAMO_GROUND_CORRECTION
+		third_person_ground_offset = -min_y + 0.06
 		third_person_model.position.y = third_person_ground_offset
 
 func _collect_mesh_instances(root: Node, result: Array) -> void:
@@ -2901,9 +3178,7 @@ func drop_inventory_item(index: int) -> void:
 	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
 		equipped_clothing = ""
 		_recalculate_carry_capacity()
-	if item_name in ["Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival", "Chaqueta militar", "Pantalones militares", "Guantes militares"]:
-		unequip_clothing(item_name)
-	if DEFAULT_CLOTHING.has(item_name):
+	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
 	var drop_qty := int(item.quantity) if item.has_method("get") and "quantity" in item else 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
@@ -4439,7 +4714,23 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
 	var crouch_lift := 0.25 if is_crouching else 0.0
-	character.position = character.position.lerp(Vector3(0.0, third_person_ground_offset + bob + crouch_lift + _water_sink * 0.55, 0.0), delta * 10.0)
+	var target_y := third_person_ground_offset + bob + crouch_lift + _water_sink * 0.55
+	if third_person_action_timer > 0.0 and is_custom_character and third_person_model != null:
+		var skel := _find_skeleton(third_person_model)
+		if skel != null:
+			skel.force_update_all_bone_transforms()
+			var min_foot_model_y := 1000000.0
+			for i in range(skel.get_bone_count()):
+				var bn := skel.get_bone_name(i)
+				if bn.find("Foot") >= 0 or bn.find("Toe") >= 0:
+					var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
+					var bone_model := third_person_model.to_local(bone_world)
+					if bone_model.y < min_foot_model_y:
+						min_foot_model_y = bone_model.y
+			if min_foot_model_y < 999999.0:
+				var rest_foot_y := -third_person_ground_offset + 0.06
+				target_y = third_person_ground_offset + (rest_foot_y - min_foot_model_y)
+	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
 		if is_jumping and not third_person_jump_animation.is_empty():

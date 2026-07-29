@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dsv0v63kasmcy"
-path="res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.ctex"
+path.s3tc="res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "819dbcd5e1b85789c0c00ec4a1710a89"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/wolf/WolfAnimated_T_Wolf.png"
-dest_files=["res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.ctex"]
+dest_files=["res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

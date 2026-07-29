@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Lanzar Todo
+Comment=Inicia servidor y cliente
+Exec=bash -c "$(dirname %k)/lanzar_todo.sh"
+Terminal=true
+Categories=Game;

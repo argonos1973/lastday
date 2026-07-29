@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c0smxmi1cgcjl"
-path="res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.ctex"
+path.s3tc="res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "62f3ec8a3c80671717d775110c65d53f"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/leafy_floor_0.jpg"
-dest_files=["res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.ctex"]
+dest_files=["res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

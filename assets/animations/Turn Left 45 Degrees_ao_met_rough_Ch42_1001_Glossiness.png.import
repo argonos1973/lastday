@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bipllp8s2yl5b"
-path="res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.ctex"
+path.s3tc="res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4ad87e44009388bd0838b13574c67305"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png"
-dest_files=["res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.ctex"]
+dest_files=["res://.godot/imported/Turn Left 45 Degrees_ao_met_rough_Ch42_1001_Glossiness.png-18ddb9a250c82978a5256d33c4de0570.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

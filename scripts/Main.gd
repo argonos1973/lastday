@@ -1714,6 +1714,20 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
+	# Clear saved clothing and strip the proxy's visual clothing
+	var dead_clothing: String = proxy.get_meta("saved_clothing", "")
+	if not dead_clothing.is_empty():
+		proxy.set_meta("saved_clothing", "")
+		if net.players.has(peer_id):
+			net.players[peer_id]["equipped_clothing"] = ""
+		var rp: Node = proxy.get_node_or_null("PlayerController")
+		if rp == null:
+			for child in proxy.get_children():
+				if child is CharacterBody3D and child.has_method("puppet_apply_visuals"):
+					rp = child
+					break
+		if rp != null and rp.has_method("puppet_apply_visuals"):
+			rp.puppet_apply_visuals("", rp.get("_puppet_held") if rp.get("_puppet_held") != null else "", proxy.get_meta("saved_backpack", ""))
 
 func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	if net == null or net.peer == null:
@@ -4308,9 +4322,13 @@ func handle_world_action_collect(action, actor) -> void:
 			_play_actor_action(actor, "pickup", 0.8)
 			if not actor.inventory.add_item(item):
 				return
+			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
+				actor.equip_clothing(item.item_name)
+				actor.notice.emit("Equipas %s." % item.item_name)
+			else:
+				actor.notice.emit("Coges %s." % item.item_name)
 			if actor.has_method("refresh_carry_capacity"):
 				actor.refresh_carry_capacity()
-			actor.notice.emit("Coges %s." % item.item_name)
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()

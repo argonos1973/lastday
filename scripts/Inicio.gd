@@ -17,6 +17,11 @@ var _scan_probe: PacketPeerUDP = null
 var _scanning := false
 var _scan_subnet := "192.168.0"
 
+var _char_index := 0
+var _char_name_label: Label = null
+var _char_preview_anchor: Node3D = null
+var _char_preview_cam: Camera3D = null
+
 func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
 	var net_check = get_node_or_null("/root/NetworkManager")
@@ -95,10 +100,79 @@ func _ready() -> void:
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.add_theme_constant_override("separation", 12)
 	vbox.anchors_preset = Control.PRESET_CENTER
-	vbox.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 120, 180)
+	vbox.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 280, 180)
 	vbox.custom_minimum_size = Vector2(240, 0)
 	add_child(vbox)
 
+	# --- Character selection (right side) ---
+	var char_panel := VBoxContainer.new()
+	char_panel.alignment = BoxContainer.ALIGNMENT_CENTER
+	char_panel.add_theme_constant_override("separation", 8)
+	char_panel.position = Vector2(get_viewport().get_visible_rect().size.x - 360, 120)
+	char_panel.custom_minimum_size = Vector2(300, 0)
+	add_child(char_panel)
+
+	var char_title := Label.new()
+	char_title.text = "PERSONAJE"
+	char_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	char_title.add_theme_font_size_override("font_size", 22)
+	char_title.add_theme_color_override("font_color", Color(1, 0.9, 0.3))
+	char_panel.add_child(char_title)
+
+	_char_name_label = Label.new()
+	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_char_name_label.add_theme_font_size_override("font_size", 18)
+	char_panel.add_child(_char_name_label)
+
+	var viewport_container := SubViewportContainer.new()
+	viewport_container.custom_minimum_size = Vector2(300, 400)
+	viewport_container.stretch = false
+	char_panel.add_child(viewport_container)
+
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(300, 400)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport_container.add_child(viewport)
+
+	var world_env := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.2, 0.22, 0.25)
+	world_env.environment = env
+	viewport.add_child(world_env)
+
+	var light := DirectionalLight3D.new()
+	light.position = Vector3(2.0, 3.0, 2.0)
+	light.look_at_from_position(light.position, Vector3.ZERO)
+	viewport.add_child(light)
+
+	_char_preview_cam = Camera3D.new()
+	_char_preview_cam.position = Vector3(0.0, 1.0, 3.5)
+	_char_preview_cam.fov = 35.0
+	viewport.add_child(_char_preview_cam)
+
+	_char_preview_anchor = Node3D.new()
+	_char_preview_anchor.name = "PreviewAnchor"
+	viewport.add_child(_char_preview_anchor)
+
+	var nav_hbox := HBoxContainer.new()
+	char_panel.add_child(nav_hbox)
+
+	var prev_btn := Button.new()
+	prev_btn.text = "< Anterior"
+	prev_btn.custom_minimum_size = Vector2(140, 36)
+	prev_btn.pressed.connect(_on_char_prev)
+	nav_hbox.add_child(prev_btn)
+
+	var next_btn := Button.new()
+	next_btn.text = "Siguiente >"
+	next_btn.custom_minimum_size = Vector2(140, 36)
+	next_btn.pressed.connect(_on_char_next)
+	nav_hbox.add_child(next_btn)
+
+	_update_char_view()
+
+	# --- Main buttons (left side) ---
 	var btn_single := Button.new()
 	btn_single.text = "Un jugador"
 	btn_single.custom_minimum_size = Vector2(240, 44)
@@ -238,12 +312,14 @@ func _exit_tree() -> void:
 func _on_single_player() -> void:
 	if _started:
 		return
+	_apply_char_selection()
 	_mode = "single"
 	_start_game()
 
 func _on_host() -> void:
 	if _started:
 		return
+	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	if _net.host_game():
 		_status_label.text = "Servidor iniciado en puerto %d" % NetworkManagerScript.PORT
@@ -266,6 +342,7 @@ func _on_join() -> void:
 		_status_label.text = "Introduce una IP"
 		return
 	_save_ip(ip)
+	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
@@ -301,3 +378,104 @@ func _start_game() -> void:
 		return
 	_started = true
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
+
+func _apply_char_selection() -> void:
+	var gs := get_node_or_null("/root/GameState")
+	if gs != null:
+		gs.select_character(_char_index)
+
+func _on_char_next() -> void:
+	var gs := get_node_or_null("/root/GameState")
+	if gs == null:
+		return
+	var chars: Array = gs.get_available_characters()
+	if chars.is_empty():
+		return
+	_char_index = (_char_index + 1) % chars.size()
+	_update_char_view()
+
+func _on_char_prev() -> void:
+	var gs := get_node_or_null("/root/GameState")
+	if gs == null:
+		return
+	var chars: Array = gs.get_available_characters()
+	if chars.is_empty():
+		return
+	_char_index = (_char_index - 1 + chars.size()) % chars.size()
+	_update_char_view()
+
+func _update_char_view() -> void:
+	var gs := get_node_or_null("/root/GameState")
+	if gs == null:
+		return
+	var chars: Array = gs.get_available_characters()
+	if chars.is_empty():
+		if _char_name_label != null:
+			_char_name_label.text = "No hay personajes"
+		return
+	_char_index = clampi(_char_index, 0, chars.size() - 1)
+	var sel: Dictionary = chars[_char_index]
+	if _char_name_label != null:
+		_char_name_label.text = String(sel.get("name", "?"))
+	if _char_preview_anchor == null:
+		return
+	for child in _char_preview_anchor.get_children():
+		child.queue_free()
+	var model_path := String(sel.get("model", ""))
+	if model_path.is_empty():
+		return
+	var packed := load(model_path)
+	if packed is PackedScene:
+		var instance := (packed as PackedScene).instantiate()
+		if instance is Node3D:
+			var model := instance as Node3D
+			model.position = Vector3.ZERO
+			model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+			model.scale = Vector3.ONE
+			_char_preview_anchor.add_child(model)
+			_fit_char_preview(model)
+
+func _fit_char_preview(model: Node3D) -> void:
+	await get_tree().process_frame
+	if not is_instance_valid(model):
+		return
+	var meshes: Array = []
+	_collect_meshes(model, meshes)
+	var min_y := 999999.0
+	var max_y := -999999.0
+	for mi in meshes:
+		if not is_instance_valid(mi):
+			continue
+		var mesh: MeshInstance3D = mi as MeshInstance3D
+		var aabb: AABB = mesh.get_aabb()
+		var world_aabb: AABB = mesh.global_transform * aabb
+		min_y = min(min_y, world_aabb.position.y)
+		max_y = max(max_y, world_aabb.end.y)
+	if min_y < 999999.0 and max_y > -999999.0:
+		var height := max_y - min_y
+		if height > 0.01:
+			var s := 2.0 / height
+			model.scale = Vector3.ONE * s
+			await get_tree().process_frame
+			if not is_instance_valid(model):
+				return
+			min_y = 999999.0
+			max_y = -999999.0
+			for mi2 in meshes:
+				if not is_instance_valid(mi2):
+					continue
+				var mesh2: MeshInstance3D = mi2 as MeshInstance3D
+				var aabb2: AABB = mesh2.get_aabb()
+				var world_aabb2: AABB = mesh2.global_transform * aabb2
+				min_y = min(min_y, world_aabb2.position.y)
+				max_y = max(max_y, world_aabb2.end.y)
+			if min_y < 999999.0:
+				model.position.y = -min_y
+	if _char_preview_cam != null:
+		_char_preview_cam.look_at_from_position(_char_preview_cam.position, Vector3(0.0, 1.0, 0.0))
+
+func _collect_meshes(root: Node, result: Array) -> void:
+	if root is MeshInstance3D:
+		result.append(root)
+	for c in root.get_children():
+		_collect_meshes(c, result)

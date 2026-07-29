@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://7tul31k72y7x"
-path="res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.ctex"
+path.s3tc="res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "3c609a543dc5f1f32fc5c33be2b4db0d"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/post_apocalyptic_bed_0.jpg"
-dest_files=["res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.ctex"]
+dest_files=["res://.godot/imported/post_apocalyptic_bed_0.jpg-d7a8d38cd0312d98d5d184adbd74b2fc.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

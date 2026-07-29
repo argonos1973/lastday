@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b8urvfaamo1m"
-path="res://.godot/imported/tinylivingpack_2.png-b8b6aae6b035d59d0ecb4c6142dd3b79.ctex"
+path.s3tc="res://.godot/imported/tinylivingpack_2.png-b8b6aae6b035d59d0ecb4c6142dd3b79.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "15e13de0868353b08670f3bee66b33f1"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/tinylivingpack_2.png"
-dest_files=["res://.godot/imported/tinylivingpack_2.png-b8b6aae6b035d59d0ecb4c6142dd3b79.ctex"]
+dest_files=["res://.godot/imported/tinylivingpack_2.png-b8b6aae6b035d59d0ecb4c6142dd3b79.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

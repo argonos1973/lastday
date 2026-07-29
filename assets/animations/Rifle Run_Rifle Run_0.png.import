@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b1igo3vme7rsw"
-path="res://.godot/imported/Rifle Run_Rifle Run_0.png-ffbd9e0256ebccea3ba6b9101a96c477.ctex"
+path.s3tc="res://.godot/imported/Rifle Run_Rifle Run_0.png-ffbd9e0256ebccea3ba6b9101a96c477.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a36569e35a9bee4bee72c11ccef50428"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Rifle Run_Rifle Run_0.png"
-dest_files=["res://.godot/imported/Rifle Run_Rifle Run_0.png-ffbd9e0256ebccea3ba6b9101a96c477.ctex"]
+dest_files=["res://.godot/imported/Rifle Run_Rifle Run_0.png-ffbd9e0256ebccea3ba6b9101a96c477.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

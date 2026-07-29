@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b00ul0amuw34a"
-path="res://.godot/imported/coger_Remy_Shoes_Gloss.png-8f0ea721329f877f4dd0f69da6d6a40f.ctex"
+path.s3tc="res://.godot/imported/coger_Remy_Shoes_Gloss.png-8f0ea721329f877f4dd0f69da6d6a40f.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "317dbe30cbbd0ebf9f429b9c0b31a8c3"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/coger_Remy_Shoes_Gloss.png"
-dest_files=["res://.godot/imported/coger_Remy_Shoes_Gloss.png-8f0ea721329f877f4dd0f69da6d6a40f.ctex"]
+dest_files=["res://.godot/imported/coger_Remy_Shoes_Gloss.png-8f0ea721329f877f4dd0f69da6d6a40f.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

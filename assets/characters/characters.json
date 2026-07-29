@@ -1,0 +1,12 @@
+[
+	{
+		"name": "Remy",
+		"model": "res://assets/characters/Remy.glb",
+		"type": "default"
+	},
+	{
+		"name": "Personaje 2",
+		"model": "res://assets/characters/personaje2.glb",
+		"type": "default"
+	}
+]

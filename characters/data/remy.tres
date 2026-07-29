@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="CharacterDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/CharacterDefinition.gd" id="1_5k8"]
+[ext_resource type="PackedScene" path="res://assets/characters/Remy.glb" id="2_7v2"]
+
+[resource]
+script = ExtResource("1_5k8")
+character_id = "remy"
+character_name = "Remy"
+character_scene = ExtResource("2_7v2")

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Launch Server
+Comment=Inicia el servidor dedicado
+Exec=bash -c "$(dirname %k)/launch_server.sh"
+Terminal=true
+Categories=Game;

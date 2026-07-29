@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Launch Client
+Comment=Inicia el cliente del juego
+Exec=bash -c "$(dirname %k)/launch_client.sh"
+Terminal=true
+Categories=Game;

@@ -17,6 +17,8 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 [autoload]
 
 NetworkManager="*res://scripts/NetworkManager.gd"
+GameState="*res://scripts/GameState.gd"
+GameSession="*res://scripts/GameSession.gd"
 
 [display]
 
