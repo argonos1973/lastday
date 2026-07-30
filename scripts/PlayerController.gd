@@ -55,6 +55,17 @@ const SURVIVAL_CLOTHING := {
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 }
 
+# Maps clothing slot to possible mesh names in custom character models.
+# Any clothing item equipped in a slot will show the corresponding mesh.
+const CUSTOM_SLOT_MESHES := {
+	"torso": ["Tops", "Ch42_Shirt"],
+	"legs": ["Bottoms", "Ch42_Shorts"],
+	"feet": ["Shoes", "Ch42_Sneakers"],
+	"hands": [],
+}
+
+const CUSTOM_BODY_MESHES := ["Body", "Ch42_Body1"]
+
 const DEFAULT_CLOTHING := {
 	"Camiseta": "Tops",
 	"Pantalones": "Bottoms",
@@ -63,7 +74,7 @@ const DEFAULT_CLOTHING := {
 
 const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
-	"Pantalones": ["Desnudo_legs"],
+	"Pantalones": [],
 	"Zapatillas": ["Desnudo_feet"],
 	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
@@ -78,6 +89,26 @@ const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
+}
+
+# Map of body zones covered by each clothing item.
+# Used for debug messages and to know which body regions to restore on unequip.
+const CLOTHING_COVERED_ZONES := {
+	"Camiseta": ["torso"],
+	"Pantalones": ["cadera", "piernas"],
+	"Zapatillas": ["pies"],
+	"Chaqueta survival": ["torso", "brazos_superiores"],
+	"Chaqueta militar": ["torso", "brazos_superiores"],
+	"Vaqueros survival": ["cadera", "piernas"],
+	"Pantalones militares": ["cadera", "piernas"],
+	"Guantes survival": ["manos"],
+	"Guantes militares": ["manos"],
+	"Botas survival": ["pies"],
+	"Chaqueta de abrigo": ["torso", "brazos_superiores"],
+	"Chaleco salvavidas": ["torso"],
+	"Botas de goma": ["pies"],
+	"Guantes de trabajo": ["manos"],
+	"Sombrero de pescador": ["cabeza"],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
@@ -1065,6 +1096,21 @@ func equip_clothing(item_name: String) -> void:
 		_wear_clothing_visual(item_name)
 	if not slot.is_empty():
 		_equipped_slots[slot] = item_name
+	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
+	if is_custom_character and not slot.is_empty():
+		var cloth_mi := _find_custom_slot_mesh(slot)
+		if cloth_mi != null:
+			cloth_mi.visible = true
+			print("[CLOTHING] Equipada: ", item_name, " | slot=", slot, " | mesh=", cloth_mi.name)
+			if CLOTHING_COVERED_ZONES.has(item_name):
+				print("[CLOTHING] Zonas cubiertas: ", CLOTHING_COVERED_ZONES[item_name])
+		# Hide Desnudo_* parts covered by this clothing item
+		if DEFAULT_SKIN_HIDES.has(item_name):
+			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
+				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+				if skin_mi != null:
+					skin_mi.visible = false
+					print("[CLOTHING] Ocultando: ", skin_name)
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_sync_held_item()
@@ -1072,6 +1118,9 @@ func equip_clothing(item_name: String) -> void:
 		inventory.changed.emit()
 
 func unequip_clothing(item_name: String) -> void:
+	var slot := ""
+	if CLOTHING_SLOTS.has(item_name):
+		slot = CLOTHING_SLOTS[item_name]
 	if DEFAULT_CLOTHING.has(item_name):
 		var bn: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
 		if bn != null:
@@ -1096,7 +1145,6 @@ func unequip_clothing(item_name: String) -> void:
 		if worn != null:
 			worn.free()
 	if CLOTHING_SLOTS.has(item_name):
-		var slot: String = CLOTHING_SLOTS[item_name]
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
 	if equipped_clothing == item_name:
@@ -1130,6 +1178,21 @@ func unequip_clothing(item_name: String) -> void:
 				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
 				if skin_mi != null:
 					skin_mi.visible = false
+	# Custom character: hide the clothing mesh, show Desnudo_* for uncovered zones
+	if is_custom_character and not slot.is_empty():
+		var cloth_mi := _find_custom_slot_mesh(slot)
+		if cloth_mi != null:
+			cloth_mi.visible = false
+			print("[CLOTHING] Retirada: ", item_name, " | slot=", slot, " | mesh=", cloth_mi.name)
+		# Show Desnudo_* parts that were covered by this clothing item
+		if DEFAULT_SKIN_HIDES.has(item_name):
+			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
+				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
+				if skin_mi != null:
+					skin_mi.visible = true
+					print("[CLOTHING] Restaurando: ", skin_name)
+		if CLOTHING_COVERED_ZONES.has(item_name):
+			print("[CLOTHING] Zonas restauradas: ", CLOTHING_COVERED_ZONES[item_name])
 	# If torso is still equipped, _head_mesh shows nothing below head,
 	# so we need Desnudo_arms/hands for arms
 	# (they're already shown above and not hidden by Camiseta's SKIN_HIDES)
@@ -1211,6 +1274,125 @@ func _find_mesh_in_third_person(mesh_name: String) -> MeshInstance3D:
 		for c in node.get_children():
 			stack.append(c)
 	return null
+
+func _find_custom_slot_mesh(slot: String) -> MeshInstance3D:
+	if not CUSTOM_SLOT_MESHES.has(slot):
+		return null
+	for mesh_name in CUSTOM_SLOT_MESHES[slot]:
+		var mi := _find_mesh_in_third_person(mesh_name)
+		if mi != null:
+			return mi
+	return null
+
+func _find_custom_body_mesh() -> MeshInstance3D:
+	for body_name in CUSTOM_BODY_MESHES:
+		var mi := _find_mesh_in_third_person(body_name)
+		if mi != null:
+			return mi
+	return null
+
+# Loads the Desnudo_* meshes from player_with_clothes.glb and attaches them
+# to the custom character's skeleton so the existing equip/unequip Desnudo_*
+# logic works identically for custom characters.
+func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
+	if third_person_model == null:
+		return
+	# Use the custom model's own Body as the nude body
+	var body_mi := _find_custom_body_mesh()
+	if body_mi != null:
+		_full_body_mesh = body_mi
+		_full_body_mesh.visible = true
+	var src_path := "res://assets/adapted/player_with_clothes.glb"
+	var src_scene: Node = load(src_path).instantiate()
+	if src_scene == null:
+		return
+	var dst_skel: Skeleton3D = _find_skeleton(third_person_model)
+	if dst_skel == null:
+		src_scene.free()
+		return
+	var src_skel: Skeleton3D = _find_skeleton(src_scene)
+	if src_skel == null:
+		src_scene.free()
+		return
+	# Custom Body mesh is the head/face; the rest of the body is missing.
+	# Clone Desnudo_* from player_with_clothes.glb and build a HeadMesh from Body.
+	var desnudo_names := ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]
+	var src_meshes: Dictionary = {}
+	var stack: Array = [src_scene]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D and n.name in desnudo_names:
+			src_meshes[n.name] = n
+		for c in n.get_children():
+			stack.append(c)
+	# Build bone name -> index map for destination skeleton
+	var dst_bone_map: Dictionary = {}
+	for i in range(dst_skel.get_bone_count()):
+		dst_bone_map[dst_skel.get_bone_name(i)] = i
+	# The source model is in cm, the custom character's skeleton is in meters.
+	# Scale factor converts source bind poses to match destination skeleton units.
+	var src_hip_idx := src_skel.find_bone("mixamorig_Hips")
+	var dst_hip_idx := dst_skel.find_bone("mixamorig_Hips")
+	var scale_factor := 0.01
+	if src_hip_idx >= 0 and dst_hip_idx >= 0:
+		var src_hip_y := src_skel.get_bone_rest(src_hip_idx).origin.y
+		var dst_hip_y := dst_skel.get_bone_rest(dst_hip_idx).origin.y
+		if src_hip_y > 0.0 and dst_hip_y > 0.0:
+			scale_factor = dst_hip_y / src_hip_y
+	print("[DESNUDO-CUSTOM] scale_factor=", scale_factor, " character_scale=", character_scale)
+	for desnudo_name in desnudo_names:
+		if not src_meshes.has(desnudo_name):
+			continue
+		var src_mi: MeshInstance3D = src_meshes[desnudo_name]
+		var clone := MeshInstance3D.new()
+		var src_mesh: ArrayMesh = src_mi.mesh
+		if src_mesh != null:
+			var scaled_mesh := ArrayMesh.new()
+			for surf_idx in range(src_mesh.get_surface_count()):
+				var arrays := src_mesh.surface_get_arrays(surf_idx)
+				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				for vi in range(verts.size()):
+					verts[vi] *= scale_factor
+				arrays[Mesh.ARRAY_VERTEX] = verts
+				scaled_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				scaled_mesh.surface_set_material(surf_idx, src_mesh.surface_get_material(surf_idx))
+			clone.mesh = scaled_mesh
+		clone.name = desnudo_name
+		clone.visible = false
+		if src_mi.skin != null:
+			var new_skin := Skin.new()
+			var src_skin: Skin = src_mi.skin
+			var bone_count := src_skin.get_bind_count()
+			for bi in range(bone_count):
+				var bind_bone := src_skin.get_bind_bone(bi)
+				var bone_name: StringName = src_skin.get_bind_name(bi)
+				if bind_bone >= 0:
+					bone_name = src_skel.get_bone_name(bind_bone)
+				if bone_name.is_empty():
+					continue
+				var dst_bone_idx: int = dst_bone_map.get(bone_name, -1)
+				if dst_bone_idx < 0:
+					continue
+				# Convert source bind pose from cm to m while preserving rotation.
+				# The mesh vertices are already scaled by scale_factor, so only
+				# the origin (translation) needs scaling; the basis (rotation)
+				# must stay unchanged to avoid deformation.
+				var bind_pose: Transform3D = src_skin.get_bind_pose(bi)
+				bind_pose.origin *= scale_factor
+				new_skin.add_bind(dst_bone_idx, bind_pose)
+			clone.skin = new_skin
+		dst_skel.add_child(clone)
+		clone.skeleton = dst_skel.get_path()
+		print("[CLOTHING-INIT] Desnudo añadido: ", desnudo_name, " has_skin=", clone.skin != null)
+	# Split the custom Body so only the head remains visible; Desnudo_* cover the rest.
+	_add_custom_head_mesh()
+	# Hide custom character's built-in clothing meshes — survival clothing replaces them
+	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt"]:
+		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
+		if cmi != null:
+			cmi.visible = false
+			print("[CLOTHING-INIT] Hidden built-in clothing mesh: ", cloth_name)
+	src_scene.free()
 
 func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 	if not SURVIVAL_CLOTHING.has(item_name):
@@ -1836,18 +2018,21 @@ func _create_third_person_model() -> void:
 		if is_clothing_model:
 			character_scale = MIXAMO_CHARACTER_SCALE
 		else:
-			# Temporarily make visible so _collect_mesh_instances finds meshes for AABB fallback
-			character.visible = true
-			character_scale = _calculate_character_scale(character, 2.2)
-			character.visible = false
+			# Custom characters use the same scale as player_with_clothes.glb
+			# so Desnudo_* meshes match exactly without recalculating.
+			character_scale = MIXAMO_CHARACTER_SCALE
 		character.scale = Vector3.ONE * character_scale
+		if is_custom_character:
+			# Custom characters Body mesh lacks geometry under clothing (head-only).
+			# Clone Desnudo_* meshes from player_with_clothes.glb as the nude body.
+			_create_custom_desnudo_meshes(character_scale)
 		# Only init survival clothing for the adapted player_with_clothes model.
 		# Custom characters (Remy, personaje2) are complete models without the
 		# survival clothing node structure.
 		if is_clothing_model:
 			_init_survival_clothing(character)
 		if not is_puppet:
-			if is_clothing_model:
+			if is_clothing_model or is_custom_character:
 				# Ensure default clothing is in inventory and equipped
 				if inventory != null:
 					var has_camiseta := false
@@ -1873,6 +2058,11 @@ func _create_third_person_model() -> void:
 				equip_clothing("Camiseta")
 				equip_clothing("Pantalones")
 				equip_clothing("Zapatillas")
+			elif is_custom_character:
+				# Custom character puppet: equip default clothing
+				equip_clothing("Camiseta")
+				equip_clothing("Pantalones")
+				equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
 		else:
@@ -1891,6 +2081,8 @@ func _create_third_person_model() -> void:
 		_align_third_person_model_to_ground()
 		if not is_puppet and third_person_model != null:
 			third_person_model.visible = true
+		if is_custom_character and not is_puppet:
+			get_tree().create_timer(0.5).timeout.connect(_debug_drop_and_screenshot)
 		return
 	_create_procedural_third_person_model()
 
@@ -2516,6 +2708,106 @@ func _add_head_mesh() -> void:
 			if bmi != null:
 				bmi.visible = false
 	src_model.queue_free()
+
+func _add_custom_head_mesh() -> void:
+	if third_person_model == null:
+		return
+	var skeleton := _find_skeleton(third_person_model)
+	if skeleton == null:
+		return
+	var body_mi := _find_custom_body_mesh()
+	if body_mi == null:
+		return
+	var src_body := body_mi
+	print("[HEAD-CUSTOM] body_mi=", src_body.name, " mesh=", src_body.mesh, " skin=", src_body.skin)
+	var head_dup := src_body.duplicate() as MeshInstance3D
+	if head_dup == null:
+		return
+	head_dup.name = "HeadMesh"
+	var mesh_res := src_body.mesh
+	if mesh_res != null and mesh_res.get_surface_count() > 0:
+		var orig_mat := mesh_res.surface_get_material(0)
+		var mdt := MeshDataTool.new()
+		mdt.create_from_surface(mesh_res, 0)
+		var aabb := mesh_res.get_aabb()
+		var cy_threshold := aabb.position.y + aabb.size.y * 0.92
+		var cx_threshold := aabb.size.x * 0.08
+		print("[HEAD-CUSTOM] AABB pos=", aabb.position, " size=", aabb.size, " cy_thresh=", cy_threshold, " cx_thresh=", cx_threshold)
+		print("[HEAD-CUSTOM] face_count=", mdt.get_face_count())
+		var head_faces: PackedInt32Array = []
+		for face_idx in range(mdt.get_face_count()):
+			var v0 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 0))
+			var v1 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 1))
+			var v2 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 2))
+			var cy := (v0.y + v1.y + v2.y) / 3.0
+			var cx := (v0.x + v1.x + v2.x) / 3.0
+			if cy >= cy_threshold and absf(cx) < cx_threshold:
+				head_faces.append(face_idx)
+		var verts: PackedVector3Array = []
+		var normals: PackedVector3Array = []
+		var uvs: PackedVector2Array = []
+		var bones_arr: PackedInt32Array = []
+		var weights_arr: PackedFloat32Array = []
+		var indices: PackedInt32Array = []
+		var vert_map := {}
+		for face_idx in head_faces:
+			for fv in range(3):
+				var orig_vi := mdt.get_face_vertex(face_idx, fv)
+				var key := orig_vi
+				if not vert_map.has(key):
+					var new_idx := verts.size()
+					vert_map[key] = new_idx
+					verts.append(mdt.get_vertex(orig_vi))
+					normals.append(mdt.get_vertex_normal(orig_vi))
+					uvs.append(mdt.get_vertex_uv(orig_vi))
+					var bs: PackedInt32Array = mdt.get_vertex_bones(orig_vi)
+					var ws: PackedFloat32Array = mdt.get_vertex_weights(orig_vi)
+					for b in range(4):
+						if b < bs.size():
+							bones_arr.append(bs[b])
+						else:
+							bones_arr.append(0)
+					for w in range(4):
+						if w < ws.size():
+							weights_arr.append(ws[w])
+						else:
+							weights_arr.append(0.0)
+				indices.append(vert_map[key])
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		arrays[Mesh.ARRAY_BONES] = bones_arr
+		arrays[Mesh.ARRAY_WEIGHTS] = weights_arr
+		arrays[Mesh.ARRAY_INDEX] = indices
+		var head_mesh := ArrayMesh.new()
+		head_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		if head_mesh.get_surface_count() > 0 and orig_mat != null:
+			head_mesh.surface_set_material(0, orig_mat)
+		# Use the original full Body mesh but clip it to the head in the shader.
+		# This preserves the original skinning and material, avoiding the fan artefact.
+		var shader := Shader.new()
+		shader.code = "shader_type spatial;\n" + "uniform sampler2D albedo_texture : source_color;\n" + "uniform vec4 albedo_color : source_color = vec4(1.0);\n" + "uniform float clip_y = 3.45;\n" + "varying float v_local_y;\n" + "void vertex() {\n" + "\tv_local_y = VERTEX.y;\n" + "}\n" + "void fragment() {\n" + "\tif (v_local_y < clip_y) { discard; }\n" + "\tvec4 tex = texture(albedo_texture, UV);\n" + "\tALBEDO = (tex * albedo_color).rgb;\n" + "}\n"
+		var head_mat := ShaderMaterial.new()
+		head_mat.shader = shader
+		if orig_mat is StandardMaterial3D:
+			head_mat.set_shader_parameter("albedo_texture", orig_mat.albedo_texture)
+			head_mat.set_shader_parameter("albedo_color", orig_mat.albedo_color)
+		else:
+			head_mat.set_shader_parameter("albedo_color", Color.WHITE)
+		head_mat.set_shader_parameter("clip_y", cy_threshold)
+		head_dup.material_override = head_mat
+		head_dup.mesh = mesh_res
+		print("[HEAD-CUSTOM] head_faces=", head_faces.size(), " head_mesh_surfaces=", head_mesh.get_surface_count())
+	src_body.get_parent().add_child(head_dup)
+	# Ensure HeadMesh uses the same skeleton and skin as the original Body
+	head_dup.skeleton = src_body.skeleton
+	head_dup.skin = src_body.skin
+	_full_body_mesh = src_body
+	_head_mesh = head_dup
+	_head_mesh.visible = true
+	src_body.visible = false
 
 func _find_skeleton(root: Node) -> Skeleton3D:
 	if root == null:
@@ -5697,3 +5989,26 @@ func _light_action() -> void:
 	var target = _get_interaction_target()
 	if target != null and target is WorldAction and target.action_type == "light_campfire":
 		target.interact(self)
+
+func _debug_drop_and_screenshot() -> void:
+	if not is_custom_character or is_puppet:
+		return
+	# Drop all default clothing to show nude state
+	for slot in _equipped_slots.keys():
+		var item := str(_equipped_slots[slot])
+		if not item.is_empty():
+			unequip_clothing(item)
+	# Equip only Pantalones to verify legs
+	await get_tree().create_timer(0.2).timeout
+	equip_clothing("Pantalones")
+	await get_tree().create_timer(0.2).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var viewport_texture := get_viewport().get_texture()
+	var img := viewport_texture.get_image()
+	if img != null and img.get_width() > 0:
+		var path := ProjectSettings.globalize_path("res://godot_shot.png")
+		img.save_png(path)
+		print("[DEBUG-SCREENSHOT] saved to ", path)
+	else:
+		print("[DEBUG-SCREENSHOT] image was null or empty")

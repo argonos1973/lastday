@@ -2329,7 +2329,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
-	if net != null:
+	if net != null and net.is_connected:
 		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
