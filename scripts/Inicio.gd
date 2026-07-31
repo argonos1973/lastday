@@ -36,6 +36,12 @@ func _ready() -> void:
 			gs_debug.select_character(0)
 		get_tree().create_timer(2.0).timeout.connect(_start_game)
 		return
+	if args.has("--test-clothing"):
+		var gs_debug2 := get_node_or_null("/root/GameState")
+		if gs_debug2 != null:
+			gs_debug2.select_character(0)
+		get_tree().create_timer(2.0).timeout.connect(_start_game)
+		return
 	if args.size() >= 2 and args[0] == "--client":
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")

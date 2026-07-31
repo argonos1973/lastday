@@ -27,3 +27,12 @@ exports/
 *.log
 __MACOSX/
 Wolf 2.0/
+
+# Debug screenshots
+debug_clothing_*.png
+debug_clothing_*.png.import
+debug_shot_*.png
+debug_shot_*.png.import
+godot_shot_repo.png
+godot_shot_repo.png.import
+test_drop_*.png.import

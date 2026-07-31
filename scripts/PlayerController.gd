@@ -1097,7 +1097,8 @@ func equip_clothing(item_name: String) -> void:
 	if not slot.is_empty():
 		_equipped_slots[slot] = item_name
 	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
-	if is_custom_character and not slot.is_empty():
+	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
+	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
 		var cloth_mi := _find_custom_slot_mesh(slot)
 		if cloth_mi != null:
 			cloth_mi.visible = true
@@ -1183,7 +1184,8 @@ func unequip_clothing(item_name: String) -> void:
 				if skin_mi != null:
 					skin_mi.visible = false
 	# Custom character: hide the clothing mesh, show Desnudo_* for uncovered zones
-	if is_custom_character and not slot.is_empty():
+	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
+	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
 		var cloth_mi := _find_custom_slot_mesh(slot)
 		if cloth_mi != null:
 			cloth_mi.visible = false
@@ -1400,12 +1402,116 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 		dst_skel.add_child(clone)
 		clone.skeleton = dst_skel.get_path()
 		print("[CLOTHING-INIT] Desnudo añadido: ", desnudo_name, " has_skin=", clone.skin != null)
+
+	print("[CLOTHING-INIT] === Starting survival/soldier clothing cloning ===")
+	# --- Clone survival clothing meshes (cloth_*) from player_with_clothes.glb ---
+	var survival_mesh_names := ["cloth_torso", "cloth_legs", "cloth_hands", "cloth_feet"]
+	var src_survival_meshes: Dictionary = {}
+	var sstack: Array = [src_scene]
+	while not sstack.is_empty():
+		var sn: Node = sstack.pop_back()
+		if sn is MeshInstance3D and sn.name in survival_mesh_names:
+			src_survival_meshes[sn.name] = sn
+		for sc in sn.get_children():
+			sstack.append(sc)
+	for smesh_name in survival_mesh_names:
+		if not src_survival_meshes.has(smesh_name):
+			print("[CLOTHING-INIT] Survival mesh not found in src: ", smesh_name)
+			continue
+		var s_mi: MeshInstance3D = src_survival_meshes[smesh_name]
+		var s_clone := MeshInstance3D.new()
+		var s_src_mesh: ArrayMesh = s_mi.mesh
+		if s_src_mesh != null:
+			s_clone.mesh = s_src_mesh
+		s_clone.name = smesh_name
+		s_clone.visible = false
+		if s_mi.skin != null:
+			var s_new_skin := Skin.new()
+			var s_src_skin: Skin = s_mi.skin
+			var s_matched := 0
+			var s_unmatched := 0
+			for bi in range(s_src_skin.get_bind_count()):
+				var s_bind_bone := s_src_skin.get_bind_bone(bi)
+				var s_bone_name: StringName = s_src_skin.get_bind_name(bi)
+				if s_bind_bone >= 0:
+					s_bone_name = src_skel.get_bone_name(s_bind_bone)
+				if s_bone_name.is_empty():
+					s_unmatched += 1
+					continue
+				var s_dst_idx: int = dst_bone_map.get(s_bone_name, -1)
+				if s_dst_idx < 0:
+					s_unmatched += 1
+					continue
+				s_matched += 1
+				var s_bind := s_src_skin.get_bind_pose(bi)
+				var s_scaled_bind := Transform3D(s_bind.basis * 0.01, s_bind.origin * 0.01)
+				s_new_skin.add_bind(s_dst_idx, s_scaled_bind)
+			print("[CLOTHING-INIT] ", smesh_name, " survival bones: matched=", s_matched, " unmatched=", s_unmatched, " total=", s_src_skin.get_bind_count())
+			s_clone.skin = s_new_skin
+		dst_skel.add_child(s_clone)
+		s_clone.skeleton = dst_skel.get_path()
+		_survival_cloth_nodes[smesh_name] = s_clone
+		print("[CLOTHING-INIT] Survival cloth añadido: ", smesh_name, " has_skin=", s_clone.skin != null)
+
+	# --- Clone soldier meshes (soldier_*) from player_with_clothes.glb ---
+	# These meshes are already in src_scene with correct scale and same skin as survival
+	var soldier_mesh_names := ["soldier_torso", "soldier_legs", "soldier_hands", "soldier_feet"]
+	var src_soldier_meshes: Dictionary = {}
+	var sol_stack: Array = [src_scene]
+	while not sol_stack.is_empty():
+		var soln: Node = sol_stack.pop_back()
+		if soln is MeshInstance3D and soln.name in soldier_mesh_names:
+			src_soldier_meshes[soln.name] = soln
+		for solc in soln.get_children():
+			sol_stack.append(solc)
+	for sol_mesh_name in soldier_mesh_names:
+		if not src_soldier_meshes.has(sol_mesh_name):
+			print("[CLOTHING-INIT] Soldier mesh not found in src: ", sol_mesh_name)
+			continue
+		var sol_mi: MeshInstance3D = src_soldier_meshes[sol_mesh_name]
+		var sol_clone := MeshInstance3D.new()
+		var sol_src_mesh: ArrayMesh = sol_mi.mesh
+		if sol_src_mesh != null:
+			sol_clone.mesh = sol_src_mesh
+		sol_clone.name = sol_mesh_name + "_001"
+		sol_clone.visible = false
+		if sol_mi.skin != null:
+			var sol_new_skin := Skin.new()
+			var sol_src_skin: Skin = sol_mi.skin
+			var sol_matched := 0
+			var sol_unmatched := 0
+			for bi in range(sol_src_skin.get_bind_count()):
+				var sol_bind_bone := sol_src_skin.get_bind_bone(bi)
+				var sol_bone_name: StringName = sol_src_skin.get_bind_name(bi)
+				if sol_bind_bone >= 0:
+					sol_bone_name = src_skel.get_bone_name(sol_bind_bone)
+				if sol_bone_name.is_empty():
+					sol_unmatched += 1
+					continue
+				var sol_dst_idx: int = dst_bone_map.get(sol_bone_name, -1)
+				if sol_dst_idx < 0:
+					sol_unmatched += 1
+					continue
+				sol_matched += 1
+				var sol_bind := sol_src_skin.get_bind_pose(bi)
+				var sol_scaled_bind := Transform3D(sol_bind.basis * 0.01, sol_bind.origin * 0.01)
+				sol_new_skin.add_bind(sol_dst_idx, sol_scaled_bind)
+			print("[CLOTHING-INIT] ", sol_mesh_name, " soldier bones: matched=", sol_matched, " unmatched=", sol_unmatched, " total=", sol_src_skin.get_bind_count())
+			sol_clone.skin = sol_new_skin
+		dst_skel.add_child(sol_clone)
+		sol_clone.skeleton = dst_skel.get_path()
+		var cloth_key: String = sol_mesh_name
+		_survival_cloth_nodes[cloth_key] = sol_clone
+		print("[CLOTHING-INIT] Soldier cloth añadido: ", cloth_key, " has_skin=", sol_clone.skin != null)
+
+	# Also cache the custom character's built-in body meshes as _survival_body_nodes
 	# Split the custom Body so only the head remains visible; Desnudo_* cover the rest.
 	_add_custom_head_mesh()
 	# Hide custom character's built-in clothing meshes — survival clothing replaces them
 	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt", "Ch42_Shirt", "Ch42_Shorts", "Ch42_Sneakers"]:
 		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
 		if cmi != null:
+			_survival_body_nodes[cloth_name] = cmi
 			cmi.visible = false
 			print("[CLOTHING-INIT] Hidden built-in clothing mesh: ", cloth_name)
 	src_scene.free()
@@ -2092,6 +2198,8 @@ func _create_third_person_model() -> void:
 			_create_third_person_item_slots()
 			if OS.get_cmdline_user_args().has("--test-drop"):
 				get_tree().create_timer(3.0).timeout.connect(_test_drop_clothing)
+			if OS.get_cmdline_user_args().has("--test-clothing"):
+				get_tree().create_timer(3.0).timeout.connect(_debug_clothing_test)
 		else:
 			# Puppet: create minimal hand socket for held items
 			if third_person_model != null:
@@ -6112,3 +6220,81 @@ func _debug_mesh_aabb() -> void:
 				print("[AABB] ", mi.name, " pos=", gp, " aabb_pos=", aabb.position, " aabb_size=", aabb.size, " scale=", mi.scale)
 		for c in node.get_children():
 			stack.append(c)
+
+func _debug_clothing_test() -> void:
+	print("[CLOTHING-TEST] Starting clothing test")
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	var cam_orig_pos := Vector3.ZERO
+	var cam_orig_fov := 75.0
+	if cam != null:
+		cam_orig_pos = cam.global_position
+		cam_orig_fov = cam.fov
+	# Ensure default clothing is equipped as baseline
+	for def_item in ["Camiseta", "Pantalones", "Zapatillas"]:
+		equip_clothing(def_item)
+		await get_tree().create_timer(0.3).timeout
+	# Add military and survival clothing to inventory for testing
+	if inventory != null:
+		for test_item in ["Chaqueta militar", "Pantalones militares", "Guantes militares",
+				"Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival"]:
+			var found := false
+			for inv_item in inventory.items:
+				if str(inv_item.item_name) == test_item:
+					found = true
+					break
+			if not found:
+				inventory.add_item(ItemScript.create(test_item, "clothing", 0.3, 1, 0.05))
+	await get_tree().create_timer(0.5).timeout
+	# Position camera in front of character
+	if cam != null:
+		var char_pos := global_position
+		cam.global_position = char_pos + Vector3(0, 1.5, 3.5)
+		cam.look_at(char_pos + Vector3(0, 1.0, 0))
+		cam.fov = 35.0
+	await get_tree().create_timer(0.5).timeout
+	await _test_shot("res://debug_clothing_00_baseline.png")
+	print("[CLOTHING-TEST] _survival_cloth_nodes keys: ", _survival_cloth_nodes.keys())
+	print("[CLOTHING-TEST] _survival_body_nodes keys: ", _survival_body_nodes.keys())
+	_debug_mesh_aabb()
+	var all_items := [
+		"Chaqueta militar", "Pantalones militares", "Guantes militares",
+		"Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival",
+	]
+	var step := 1
+	for item_name in all_items:
+		print("[CLOTHING-TEST] Equipping ", item_name)
+		equip_clothing(item_name)
+		await get_tree().create_timer(0.5).timeout
+		var padded := str(step)
+		if step < 10:
+			padded = "0" + padded
+		await _test_shot("res://debug_clothing_" + padded + "_equip_" + item_name.replace(" ", "_") + ".png")
+		# Print visibility of relevant meshes
+		if SURVIVAL_CLOTHING.has(item_name):
+			var mesh_name := String(SURVIVAL_CLOTHING[item_name]["mesh"])
+			var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
+			if mi != null:
+				print("[CLOTHING-TEST] ", mesh_name, " visible=", mi.visible, " has_skin=", mi.skin != null)
+			else:
+				print("[CLOTHING-TEST] WARNING: ", mesh_name, " not found in _survival_cloth_nodes!")
+		_debug_mesh_aabb()
+		# Unequip
+		unequip_clothing(item_name)
+		await get_tree().create_timer(0.3).timeout
+		# Restore default for this slot
+		var slot := ""
+		if CLOTHING_SLOTS.has(item_name):
+			slot = CLOTHING_SLOTS[item_name]
+		if slot == "torso":
+			equip_clothing("Camiseta")
+		elif slot == "legs":
+			equip_clothing("Pantalones")
+		elif slot == "feet":
+			equip_clothing("Zapatillas")
+		await get_tree().create_timer(0.3).timeout
+		step += 1
+	# Restore camera
+	if cam != null:
+		cam.global_position = cam_orig_pos
+		cam.fov = cam_orig_fov
+	print("[CLOTHING-TEST] Test complete!")

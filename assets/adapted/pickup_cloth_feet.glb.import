@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://dinix6e0iyohs"
-path="res://.godot/imported/pickup_cloth_feet.glb-3818d085d8ac52f3abe87741eed7f5bb.scn"
+path="res://.godot/imported/pickup_cloth_feet.glb-e94aaf0c5897917833aeff8892bf74a8.scn"
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_cloth_feet.glb"
-dest_files=["res://.godot/imported/pickup_cloth_feet.glb-3818d085d8ac52f3abe87741eed7f5bb.scn"]
+source_file="res://assets/adapted/pickup_cloth_feet.glb"
+dest_files=["res://.godot/imported/pickup_cloth_feet.glb-e94aaf0c5897917833aeff8892bf74a8.scn"]
 
 [params]
 
