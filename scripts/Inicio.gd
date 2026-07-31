@@ -28,8 +28,14 @@ func _ready() -> void:
 	if net_check != null and net_check.is_dedicated_server:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
-	# Check for --client IP PORT command line args
+	# TEMP: auto-start for testing
 	var args := OS.get_cmdline_user_args()
+	if args.has("--test-drop"):
+		var gs_debug := get_node_or_null("/root/GameState")
+		if gs_debug != null:
+			gs_debug.select_character(0)
+		get_tree().create_timer(2.0).timeout.connect(_start_game)
+		return
 	if args.size() >= 2 and args[0] == "--client":
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")

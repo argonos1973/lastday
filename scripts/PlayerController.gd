@@ -1170,6 +1170,10 @@ func unequip_clothing(item_name: String) -> void:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
 			dmi.visible = true
+			var aabb := dmi.get_aabb()
+			print("[CLOTHING-DEBUG] Showed ", dn, " visible=", dmi.visible, " mesh=", dmi.mesh != null, " skin=", dmi.skin != null, " gpos=", dmi.global_position, " aabb_pos=", aabb.position, " aabb_size=", aabb.size)
+		else:
+			print("[CLOTHING-DEBUG] WARNING: ", dn, " not found in third_person_model!")
 	# Hide Desnudo_* parts that are covered by still-equipped clothing
 	for equipped_item in _equipped_slots.values():
 		var eitem := str(equipped_item)
@@ -1263,6 +1267,17 @@ func _init_survival_clothing(root: Node) -> void:
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
+func _skeleton_height(skel: Skeleton3D) -> float:
+	if skel == null:
+		return 0.0
+	var min_y := 1e9
+	var max_y := -1e9
+	for i in range(skel.get_bone_count()):
+		var gp := skel.get_bone_global_pose(i)
+		min_y = min(min_y, gp.origin.y)
+		max_y = max(max_y, gp.origin.y)
+	return max_y - min_y
+
 func _find_mesh_in_third_person(mesh_name: String) -> MeshInstance3D:
 	if third_person_model == null:
 		return null
@@ -1329,17 +1344,13 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	var dst_bone_map: Dictionary = {}
 	for i in range(dst_skel.get_bone_count()):
 		dst_bone_map[dst_skel.get_bone_name(i)] = i
-	# The source model is in cm, the custom character's skeleton is in meters.
-	# Scale factor converts source bind poses to match destination skeleton units.
-	var src_hip_idx := src_skel.find_bone("mixamorig_Hips")
-	var dst_hip_idx := dst_skel.find_bone("mixamorig_Hips")
-	var scale_factor := 0.01
-	if src_hip_idx >= 0 and dst_hip_idx >= 0:
-		var src_hip_y := src_skel.get_bone_rest(src_hip_idx).origin.y
-		var dst_hip_y := dst_skel.get_bone_rest(dst_hip_idx).origin.y
-		if src_hip_y > 0.0 and dst_hip_y > 0.0:
-			scale_factor = dst_hip_y / src_hip_y
-	print("[DESNUDO-CUSTOM] scale_factor=", scale_factor, " character_scale=", character_scale)
+	# The source and destination meshes are in the same unit system
+	# (Desnudo width 0.82 vs Remy Bottoms width 0.82). Vertices don't need scaling.
+	# Bind pose = inverse(dst_bone_rest) for correct skinning on destination skeleton.
+	var scale_factor := 1.0
+	var src_height := _skeleton_height(src_skel)
+	var dst_height := _skeleton_height(dst_skel)
+	print("[DESNUDO-CUSTOM] scale_factor=", scale_factor, " character_scale=", character_scale, " src_height=", src_height, " dst_height=", dst_height)
 	for desnudo_name in desnudo_names:
 		if not src_meshes.has(desnudo_name):
 			continue
@@ -1363,6 +1374,8 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 			var new_skin := Skin.new()
 			var src_skin: Skin = src_mi.skin
 			var bone_count := src_skin.get_bind_count()
+			var matched := 0
+			var unmatched := 0
 			for bi in range(bone_count):
 				var bind_bone := src_skin.get_bind_bone(bi)
 				var bone_name: StringName = src_skin.get_bind_name(bi)
@@ -1372,14 +1385,17 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 					continue
 				var dst_bone_idx: int = dst_bone_map.get(bone_name, -1)
 				if dst_bone_idx < 0:
+					unmatched += 1
+					if unmatched <= 3:
+						print("[CLOTHING-INIT] BONE MISMATCH: src bone '", bone_name, "' not found in dst skeleton")
 					continue
-				# Convert source bind pose from cm to m while preserving rotation.
-				# The mesh vertices are already scaled by scale_factor, so only
-				# the origin (translation) needs scaling; the basis (rotation)
-				# must stay unchanged to avoid deformation.
-				var bind_pose: Transform3D = src_skin.get_bind_pose(bi)
-				bind_pose.origin *= scale_factor
-				new_skin.add_bind(dst_bone_idx, bind_pose)
+				matched += 1
+				var src_bind_pose := src_skin.get_bind_pose(bi)
+				# Source skin bind poses are in cm (basis has 100x scale, origin in cm)
+				# Scale entire transform by 0.01 to convert to meters
+				var scaled_bind := Transform3D(src_bind_pose.basis * 0.01, src_bind_pose.origin * 0.01)
+				new_skin.add_bind(dst_bone_idx, scaled_bind)
+			print("[CLOTHING-INIT] ", desnudo_name, " bones: matched=", matched, " unmatched=", unmatched, " total=", bone_count)
 			clone.skin = new_skin
 		dst_skel.add_child(clone)
 		clone.skeleton = dst_skel.get_path()
@@ -1387,7 +1403,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	# Split the custom Body so only the head remains visible; Desnudo_* cover the rest.
 	_add_custom_head_mesh()
 	# Hide custom character's built-in clothing meshes — survival clothing replaces them
-	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt"]:
+	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt", "Ch42_Shirt", "Ch42_Shorts", "Ch42_Sneakers"]:
 		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
 		if cmi != null:
 			cmi.visible = false
@@ -2018,9 +2034,18 @@ func _create_third_person_model() -> void:
 		if is_clothing_model:
 			character_scale = MIXAMO_CHARACTER_SCALE
 		else:
-			# Custom characters use the same scale as player_with_clothes.glb
-			# so Desnudo_* meshes match exactly without recalculating.
-			character_scale = MIXAMO_CHARACTER_SCALE
+			# Custom characters: calculate scale from skeleton height so they match
+			# Remy's visual height (skeleton_height * 0.72). This ensures personaje2
+			# and any future custom character are the same size as Remy.
+			var skel := _find_skeleton(character)
+			if skel != null:
+				var skel_height := _skeleton_height(skel)
+				if skel_height > 0.01:
+					character_scale = (3.69 * MIXAMO_CHARACTER_SCALE) / skel_height
+				else:
+					character_scale = MIXAMO_CHARACTER_SCALE
+			else:
+				character_scale = MIXAMO_CHARACTER_SCALE
 		character.scale = Vector3.ONE * character_scale
 		if is_custom_character:
 			# Custom characters Body mesh lacks geometry under clothing (head-only).
@@ -2065,6 +2090,8 @@ func _create_third_person_model() -> void:
 				equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
+			if OS.get_cmdline_user_args().has("--test-drop"):
+				get_tree().create_timer(3.0).timeout.connect(_test_drop_clothing)
 		else:
 			# Puppet: create minimal hand socket for held items
 			if third_person_model != null:
@@ -2081,9 +2108,7 @@ func _create_third_person_model() -> void:
 		_align_third_person_model_to_ground()
 		if not is_puppet and third_person_model != null:
 			third_person_model.visible = true
-		if is_custom_character and not is_puppet:
-			get_tree().create_timer(0.5).timeout.connect(_debug_drop_and_screenshot)
-		return
+	return
 	_create_procedural_third_person_model()
 
 func _create_procedural_third_person_model() -> void:
@@ -5990,25 +6015,100 @@ func _light_action() -> void:
 	if target != null and target is WorldAction and target.action_type == "light_campfire":
 		target.interact(self)
 
-func _debug_drop_and_screenshot() -> void:
-	if not is_custom_character or is_puppet:
-		return
-	# Drop all default clothing to show nude state
-	for slot in _equipped_slots.keys():
-		var item := str(_equipped_slots[slot])
-		if not item.is_empty():
-			unequip_clothing(item)
-	# Equip only Pantalones to verify legs
-	await get_tree().create_timer(0.2).timeout
-	equip_clothing("Pantalones")
-	await get_tree().create_timer(0.2).timeout
+func _test_shot(path: String) -> void:
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	var viewport_texture := get_viewport().get_texture()
-	var img := viewport_texture.get_image()
+	var vt := get_viewport().get_texture()
+	var img := vt.get_image()
 	if img != null and img.get_width() > 0:
-		var path := ProjectSettings.globalize_path("res://godot_shot.png")
-		img.save_png(path)
-		print("[DEBUG-SCREENSHOT] saved to ", path)
-	else:
-		print("[DEBUG-SCREENSHOT] image was null or empty")
+		img.save_png(ProjectSettings.globalize_path(path))
+		print("[TEST] saved ", path)
+
+func _test_drop_clothing() -> void:
+	print("[TEST-DROP] Starting drop clothing test via drop_inventory_item")
+	# Zoom camera to see character up close
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	var cam_orig_pos := Vector3.ZERO
+	var cam_orig_fov := 75.0
+	if cam != null:
+		cam_orig_pos = cam.global_position
+		cam_orig_fov = cam.fov
+		# Position camera closer and in front of character
+		var char_pos := global_position
+		cam.global_position = char_pos + Vector3(0, 1.5, 3.5)
+		cam.look_at(char_pos + Vector3(0, 1.0, 0))
+		cam.fov = 35.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_drop_00_default.png")
+	print("[TEST-DROP] Equipped slots: ", _equipped_slots)
+	if inventory != null:
+		for i in range(inventory.items.size()):
+			print("[TEST-DROP] inv[", i, "] = ", inventory.items[i].item_name)
+	# Print AABB info for all visible meshes
+	_debug_mesh_aabb()
+	var items_to_drop := ["Camiseta", "Pantalones", "Zapatillas"]
+	var step := 1
+	for item_name in items_to_drop:
+		print("[TEST-DROP] Dropping ", item_name, " via drop_inventory_item")
+		var found_idx := -1
+		if inventory != null:
+			for i in range(inventory.items.size()):
+				if str(inventory.items[i].item_name) == item_name:
+					found_idx = i
+					break
+		if found_idx >= 0:
+			drop_inventory_item(found_idx)
+		else:
+			print("[TEST-DROP] WARNING: ", item_name, " not found in inventory!")
+		await get_tree().create_timer(1.0).timeout
+		var padded := str(step)
+		if step < 10:
+			padded = "0" + padded
+		await _test_shot("res://test_drop_" + padded + "_no_" + item_name.replace(" ", "_") + ".png")
+		print("[TEST-DROP] Equipped slots after ", item_name, ": ", _equipped_slots)
+		_debug_mesh_aabb()
+		step += 1
+	# Capture side view of fully nude character
+	if cam != null:
+		var char_pos := global_position
+		cam.global_position = char_pos + Vector3(3.5, 1.5, 0)
+		cam.look_at(char_pos + Vector3(0, 1.0, 0))
+		cam.fov = 35.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_drop_04_nude_side.png")
+	# Capture front view closer
+	if cam != null:
+		var char_pos2 := global_position
+		cam.global_position = char_pos2 + Vector3(0, 1.2, 2.0)
+		cam.look_at(char_pos2 + Vector3(0, 1.0, 0))
+		cam.fov = 25.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_drop_05_nude_front_close.png")
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			print("[TEST-DROP] ", dn, " visible=", dmi.visible)
+		else:
+			print("[TEST-DROP] ", dn, " NOT FOUND")
+	for bn in ["Tops", "Bottoms", "Shoes"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi != null:
+			print("[TEST-DROP] ", bn, " visible=", bmi.visible)
+		else:
+			print("[TEST-DROP] ", bn, " NOT FOUND")
+	print("[TEST-DROP] Test complete!")
+
+func _debug_mesh_aabb() -> void:
+	if third_person_model == null:
+		return
+	var stack: Array = [third_person_model]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D:
+			var mi: MeshInstance3D = node as MeshInstance3D
+			if mi.visible:
+				var aabb := mi.get_aabb()
+				var gp := mi.global_position
+				print("[AABB] ", mi.name, " pos=", gp, " aabb_pos=", aabb.position, " aabb_size=", aabb.size, " scale=", mi.scale)
+		for c in node.get_children():
+			stack.append(c)

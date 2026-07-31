@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ibykqoqg0ogr"
-path.s3tc="res://.godot/imported/pickup_default_tops_Remy_Top_Diffuse.png-b0f8d31a9f3dbdb40e3543f8223f4b7a.s3tc.ctex"
+path.s3tc="res://.godot/imported/pickup_default_tops_Remy_Top_Diffuse.png-da0ce12c7b28824c3eb5fc31b6d68bf8.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/adapted/pickup_default_tops_Remy_Top_Diffuse.png"
-dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Diffuse.png-b0f8d31a9f3dbdb40e3543f8223f4b7a.s3tc.ctex"]
+source_file="res://assets/characters/adapted/pickup_default_tops_Remy_Top_Diffuse.png"
+dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Diffuse.png-da0ce12c7b28824c3eb5fc31b6d68bf8.s3tc.ctex"]
 
 [params]
 
