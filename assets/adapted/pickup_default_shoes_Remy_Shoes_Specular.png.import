@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://2fq2e1x2xlmm"
-path="res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.ctex"
+path="res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-ffdc96d77e53709e514e2506f7d8bed7.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_default_shoes_Remy_Shoes_Specular.png"
-dest_files=["res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.ctex"]
+source_file="res://assets/adapted/pickup_default_shoes_Remy_Shoes_Specular.png"
+dest_files=["res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-ffdc96d77e53709e514e2506f7d8bed7.ctex"]
 
 [params]
 

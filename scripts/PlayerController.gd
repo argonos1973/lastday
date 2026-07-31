@@ -1263,17 +1263,6 @@ func _init_survival_clothing(root: Node) -> void:
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
-func _skeleton_height(skel: Skeleton3D) -> float:
-	if skel == null:
-		return 0.0
-	var min_y := 1e9
-	var max_y := -1e9
-	for i in range(skel.get_bone_count()):
-		var gp := skel.get_bone_global_pose(i)
-		min_y = min(min_y, gp.origin.y)
-		max_y = max(max_y, gp.origin.y)
-	return max_y - min_y
-
 func _find_mesh_in_third_person(mesh_name: String) -> MeshInstance3D:
 	if third_person_model == null:
 		return null
@@ -1342,11 +1331,14 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 		dst_bone_map[dst_skel.get_bone_name(i)] = i
 	# The source model is in cm, the custom character's skeleton is in meters.
 	# Scale factor converts source bind poses to match destination skeleton units.
-	var src_height := _skeleton_height(src_skel)
-	var dst_height := _skeleton_height(dst_skel)
+	var src_hip_idx := src_skel.find_bone("mixamorig_Hips")
+	var dst_hip_idx := dst_skel.find_bone("mixamorig_Hips")
 	var scale_factor := 0.01
-	if src_height > 0.01 and dst_height > 0.01:
-		scale_factor = dst_height / src_height
+	if src_hip_idx >= 0 and dst_hip_idx >= 0:
+		var src_hip_y := src_skel.get_bone_rest(src_hip_idx).origin.y
+		var dst_hip_y := dst_skel.get_bone_rest(dst_hip_idx).origin.y
+		if src_hip_y > 0.0 and dst_hip_y > 0.0:
+			scale_factor = dst_hip_y / src_hip_y
 	print("[DESNUDO-CUSTOM] scale_factor=", scale_factor, " character_scale=", character_scale)
 	for desnudo_name in desnudo_names:
 		if not src_meshes.has(desnudo_name):
@@ -1395,7 +1387,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	# Split the custom Body so only the head remains visible; Desnudo_* cover the rest.
 	_add_custom_head_mesh()
 	# Hide custom character's built-in clothing meshes — survival clothing replaces them
-	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt", "Ch42_Shirt", "Ch42_Shorts", "Ch42_Sneakers"]:
+	for cloth_name in ["Bottoms", "Tops", "Shoes", "Pants", "Shirt", "Jacket", "Dress", "Skirt"]:
 		var cmi: MeshInstance3D = _find_mesh_in_third_person(cloth_name)
 		if cmi != null:
 			cmi.visible = false
@@ -2026,18 +2018,9 @@ func _create_third_person_model() -> void:
 		if is_clothing_model:
 			character_scale = MIXAMO_CHARACTER_SCALE
 		else:
-			# Custom characters: calculate scale from skeleton height so they match
-			# Remy's visual height (skeleton_height * 0.72). This ensures personaje2
-			# and any future custom character are the same size as Remy.
-			var skel := _find_skeleton(character)
-			if skel != null:
-				var skel_height := _skeleton_height(skel)
-				if skel_height > 0.01:
-					character_scale = (3.69 * MIXAMO_CHARACTER_SCALE) / skel_height
-				else:
-					character_scale = MIXAMO_CHARACTER_SCALE
-			else:
-				character_scale = MIXAMO_CHARACTER_SCALE
+			# Custom characters use the same scale as player_with_clothes.glb
+			# so Desnudo_* meshes match exactly without recalculating.
+			character_scale = MIXAMO_CHARACTER_SCALE
 		character.scale = Vector3.ONE * character_scale
 		if is_custom_character:
 			# Custom characters Body mesh lacks geometry under clothing (head-only).
