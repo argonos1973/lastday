@@ -1,7 +1,7 @@
 [
 	{
 		"name": "Remy",
-		"model": "res://assets/characters/Remy.glb",
+		"model": "res://assets/characters/adapted/player_with_clothes.glb",
 		"type": "default"
 	},
 	{

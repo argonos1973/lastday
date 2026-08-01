@@ -242,6 +242,7 @@ var _collision_shape: CollisionShape3D
 var third_person_model: Node3D
 var _full_body_mesh: MeshInstance3D = null
 var _head_mesh: MeshInstance3D = null
+var _body_no_head_mesh: MeshInstance3D = null
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _spine_skeleton: Skeleton3D = null
@@ -442,6 +443,7 @@ var is_puppet := false
 var _puppet_anim := "idle"
 var _puppet_current_anim := ""
 var is_custom_character: bool = false
+var is_clothing_model: bool = false
 var _custom_body_mesh_name: String = ""
 var _custom_clothing_mesh_names: Dictionary = {}
 var puppet_model_path: String = ""
@@ -773,6 +775,16 @@ func _ready() -> void:
 	call_deferred("_capture_mouse")
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F12:
+		var ss_path := "res://screenshot_f12.png"
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var vt := get_viewport().get_texture()
+		var img := vt.get_image()
+		if img != null and img.get_width() > 0:
+			img.save_png(ProjectSettings.globalize_path(ss_path))
+			print("[F12] Screenshot saved: ", ss_path)
+		return
 	if is_puppet or is_dead:
 		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -1020,12 +1032,13 @@ func equip_clothing(item_name: String) -> void:
 		if SURVIVAL_CLOTHING.has(eitem) and not SURVIVAL_CLOTHING[eitem]["skin_hides"].is_empty():
 			has_survival_skin_hide = true
 			break
-	if all_equipped and not has_survival_skin_hide:
+	if all_equipped and not has_survival_skin_hide and not is_custom_character:
 		if _full_body_mesh != null:
-			_full_body_mesh.visible = true
-			_full_body_mesh.material_override = null
+			_full_body_mesh.visible = false
+		if _body_no_head_mesh != null:
+			_body_no_head_mesh.visible = true
 		if _head_mesh != null:
-			_head_mesh.visible = false
+			_head_mesh.visible = true
 		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
@@ -1038,6 +1051,8 @@ func equip_clothing(item_name: String) -> void:
 		if _full_body_mesh != null:
 			_full_body_mesh.visible = false
 			_full_body_mesh.material_override = null
+		if _body_no_head_mesh != null:
+			_body_no_head_mesh.visible = false
 		if _head_mesh != null:
 			_head_mesh.visible = true
 		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
@@ -1159,6 +1174,8 @@ func unequip_clothing(item_name: String) -> void:
 	if _full_body_mesh != null:
 		_full_body_mesh.visible = false
 		_full_body_mesh.material_override = null
+	if _body_no_head_mesh != null:
+		_body_no_head_mesh.visible = false
 	if _head_mesh != null:
 		_head_mesh.visible = true
 	# Hide Body_legs/Body_feet — they overlap with Desnudo_legs/feet
@@ -2129,7 +2146,7 @@ func _create_third_person_model() -> void:
 		character.visible = false
 		character.position = Vector3.ZERO
 		character.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-		var is_clothing_model := third_person_loaded_path.find("player_with_clothes") >= 0
+		is_clothing_model = third_person_loaded_path.find("player_with_clothes") >= 0
 		add_child(character)
 		third_person_model = character
 		_hide_third_person_held_props(character)
@@ -2200,6 +2217,10 @@ func _create_third_person_model() -> void:
 				get_tree().create_timer(3.0).timeout.connect(_test_drop_clothing)
 			if OS.get_cmdline_user_args().has("--test-clothing"):
 				get_tree().create_timer(3.0).timeout.connect(_debug_clothing_test)
+			if OS.get_cmdline_user_args().has("--test-unequip"):
+				get_tree().create_timer(3.0).timeout.connect(_test_unequip_clothing)
+			if OS.get_cmdline_user_args().has("--test-live"):
+				get_tree().create_timer(5.0).timeout.connect(_test_live_capture)
 		else:
 			# Puppet: create minimal hand socket for held items
 			if third_person_model != null:
@@ -2831,6 +2852,65 @@ func _add_head_mesh() -> void:
 				if head_mesh.get_surface_count() > 0 and orig_mat != null:
 					head_mesh.surface_set_material(0, orig_mat)
 				head_dup.mesh = head_mesh
+				# Create body-without-head mesh from the same inicio.glb Body
+				var body_nh_dup := src_body.duplicate() as MeshInstance3D
+				if body_nh_dup != null:
+					body_nh_dup.name = "BodyNoHead"
+					var mdt2 := MeshDataTool.new()
+					mdt2.create_from_surface(mesh_res, 0)
+					var head_face_set := {}
+					for hf in head_faces:
+						head_face_set[hf] = true
+					var verts2: PackedVector3Array = []
+					var normals2: PackedVector3Array = []
+					var uvs2: PackedVector2Array = []
+					var bones_arr2: PackedInt32Array = []
+					var weights_arr2: PackedFloat32Array = []
+					var indices2: PackedInt32Array = []
+					var vert_map2 := {}
+					for face_idx in range(mdt2.get_face_count()):
+						if head_face_set.has(face_idx):
+							continue
+						for fv in range(3):
+							var orig_vi := mdt2.get_face_vertex(face_idx, fv)
+							var key := orig_vi
+							if not vert_map2.has(key):
+								var new_idx := verts2.size()
+								vert_map2[key] = new_idx
+								verts2.append(mdt2.get_vertex(orig_vi))
+								normals2.append(mdt2.get_vertex_normal(orig_vi))
+								uvs2.append(mdt2.get_vertex_uv(orig_vi))
+								var bs2: PackedInt32Array = mdt2.get_vertex_bones(orig_vi)
+								var ws2: PackedFloat32Array = mdt2.get_vertex_weights(orig_vi)
+								for b in range(4):
+									if b < bs2.size():
+										bones_arr2.append(bs2[b])
+									else:
+										bones_arr2.append(0)
+								for w in range(4):
+									if w < ws2.size():
+										weights_arr2.append(ws2[w])
+									else:
+										weights_arr2.append(0.0)
+							indices2.append(vert_map2[key])
+					var arrays2: Array = []
+					arrays2.resize(Mesh.ARRAY_MAX)
+					arrays2[Mesh.ARRAY_VERTEX] = verts2
+					arrays2[Mesh.ARRAY_NORMAL] = normals2
+					arrays2[Mesh.ARRAY_TEX_UV] = uvs2
+					arrays2[Mesh.ARRAY_BONES] = bones_arr2
+					arrays2[Mesh.ARRAY_WEIGHTS] = weights_arr2
+					arrays2[Mesh.ARRAY_INDEX] = indices2
+					var body_nh_mesh := ArrayMesh.new()
+					body_nh_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays2)
+					if body_nh_mesh.get_surface_count() > 0 and orig_mat != null:
+						body_nh_mesh.surface_set_material(0, orig_mat)
+					body_nh_dup.mesh = body_nh_mesh
+					body_nh_dup.skeleton = src_body.skeleton
+					body_nh_dup.skin = src_body.skin
+					body_nh_dup.visible = false
+					skeleton.add_child(body_nh_dup)
+					_body_no_head_mesh = body_nh_dup
 			skeleton.add_child(head_dup)
 			_head_mesh = head_dup
 			_head_mesh.visible = false
@@ -2929,18 +3009,77 @@ func _add_custom_head_mesh() -> void:
 			head_mat.set_shader_parameter("albedo_color", orig_mat.albedo_color)
 		else:
 			head_mat.set_shader_parameter("albedo_color", Color.WHITE)
-		head_mat.set_shader_parameter("clip_y", cy_threshold)
-		head_dup.material_override = head_mat
-		head_dup.mesh = mesh_res
+		head_dup.mesh = head_mesh
 		print("[HEAD-CUSTOM] head_faces=", head_faces.size(), " head_mesh_surfaces=", head_mesh.get_surface_count())
+		# Create body-without-head mesh (inverse of head extraction)
+		var body_nh_dup := src_body.duplicate() as MeshInstance3D
+		if body_nh_dup != null:
+			body_nh_dup.name = "BodyNoHead"
+			var mdt2 := MeshDataTool.new()
+			mdt2.create_from_surface(mesh_res, 0)
+			var head_face_set := {}
+			for hf in head_faces:
+				head_face_set[hf] = true
+			var verts2: PackedVector3Array = []
+			var normals2: PackedVector3Array = []
+			var uvs2: PackedVector2Array = []
+			var bones_arr2: PackedInt32Array = []
+			var weights_arr2: PackedFloat32Array = []
+			var indices2: PackedInt32Array = []
+			var vert_map2 := {}
+			for face_idx in range(mdt2.get_face_count()):
+				if head_face_set.has(face_idx):
+					continue
+				for fv in range(3):
+					var orig_vi := mdt2.get_face_vertex(face_idx, fv)
+					var key := orig_vi
+					if not vert_map2.has(key):
+						var new_idx := verts2.size()
+						vert_map2[key] = new_idx
+						verts2.append(mdt2.get_vertex(orig_vi))
+						normals2.append(mdt2.get_vertex_normal(orig_vi))
+						uvs2.append(mdt2.get_vertex_uv(orig_vi))
+						var bs: PackedInt32Array = mdt2.get_vertex_bones(orig_vi)
+						var ws: PackedFloat32Array = mdt2.get_vertex_weights(orig_vi)
+						for b in range(4):
+							if b < bs.size():
+								bones_arr2.append(bs[b])
+							else:
+								bones_arr2.append(0)
+						for w in range(4):
+							if w < ws.size():
+								weights_arr2.append(ws[w])
+							else:
+								weights_arr2.append(0.0)
+					indices2.append(vert_map2[key])
+			var arrays2: Array = []
+			arrays2.resize(Mesh.ARRAY_MAX)
+			arrays2[Mesh.ARRAY_VERTEX] = verts2
+			arrays2[Mesh.ARRAY_NORMAL] = normals2
+			arrays2[Mesh.ARRAY_TEX_UV] = uvs2
+			arrays2[Mesh.ARRAY_BONES] = bones_arr2
+			arrays2[Mesh.ARRAY_WEIGHTS] = weights_arr2
+			arrays2[Mesh.ARRAY_INDEX] = indices2
+			var body_nh_mesh := ArrayMesh.new()
+			body_nh_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays2)
+			if body_nh_mesh.get_surface_count() > 0 and orig_mat != null:
+				body_nh_mesh.surface_set_material(0, orig_mat)
+			body_nh_dup.mesh = body_nh_mesh
+			body_nh_dup.skeleton = src_body.skeleton
+			body_nh_dup.skin = src_body.skin
+			body_nh_dup.visible = false
+			src_body.get_parent().add_child(body_nh_dup)
+			_body_no_head_mesh = body_nh_dup
+			print("[HEAD-CUSTOM] BodyNoHead created, faces=", indices2.size() / 3)
 	src_body.get_parent().add_child(head_dup)
 	# Ensure HeadMesh uses the same skeleton and skin as the original Body
 	head_dup.skeleton = src_body.skeleton
 	head_dup.skin = src_body.skin
 	_full_body_mesh = src_body
+	_full_body_mesh.visible = false
 	_head_mesh = head_dup
 	_head_mesh.visible = true
-	src_body.visible = false
+	print("[HEAD-CUSTOM] HeadMesh added, visible=true, full_body hidden")
 
 func _find_skeleton(root: Node) -> Skeleton3D:
 	if root == null:
@@ -3206,23 +3345,23 @@ func _align_third_person_model_to_ground() -> void:
 		return
 	third_person_ground_offset = 0.0
 	third_person_model.position = Vector3.ZERO
-	# For custom characters, use skeleton foot bone global positions
+	# For custom characters and clothing model, use skeleton foot bone global positions
 	# which are more accurate than mesh AABB (which reflects T-pose, not actual pose)
 	var min_y := 1000000.0
-	if is_custom_character:
+	if is_custom_character or is_clothing_model:
 		var skeleton := _find_skeleton(third_person_model)
 		if skeleton != null:
 			for i in range(skeleton.get_bone_count()):
 				var bone_name := skeleton.get_bone_name(i)
-				if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0:
+				if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0 or bone_name.find("Toe") >= 0 or bone_name.find("toe") >= 0:
 					var gp := skeleton.get_bone_global_pose(i)
-					min_y = min(min_y, gp.origin.y)
-			# Also check Toe bones
-			for i in range(skeleton.get_bone_count()):
-				var bone_name := skeleton.get_bone_name(i)
-				if bone_name.find("Toe") >= 0 or bone_name.find("toe") >= 0:
-					var gp := skeleton.get_bone_global_pose(i)
-					min_y = min(min_y, gp.origin.y)
+					# For clothing model, bone poses are in skeleton local space (cm).
+					# Convert to world space via skeleton.global_transform (includes model scale).
+					if is_clothing_model:
+						var world_pos: Vector3 = skeleton.global_transform * gp.origin
+						min_y = min(min_y, world_pos.y)
+					else:
+						min_y = min(min_y, gp.origin.y)
 	# Fallback: use global AABB of non-Body meshes
 	if min_y > 999999.0:
 		var was_visible := third_person_model.visible
@@ -3237,8 +3376,9 @@ func _align_third_person_model_to_ground() -> void:
 			min_y = min(min_y, world_aabb.position.y)
 		third_person_model.visible = was_visible
 	if min_y < 999999.0:
-		third_person_ground_offset = -min_y + 0.06
+		third_person_ground_offset = -min_y + 0.45
 		third_person_model.position.y = third_person_ground_offset
+		print("[ALIGN-GROUND] min_y=", min_y, " offset=", third_person_ground_offset, " is_custom=", is_custom_character, " is_clothing=", is_clothing_model)
 
 func _collect_mesh_instances(root: Node, result: Array) -> void:
 	if root is MeshInstance3D:
@@ -6298,3 +6438,110 @@ func _debug_clothing_test() -> void:
 		cam.global_position = cam_orig_pos
 		cam.fov = cam_orig_fov
 	print("[CLOTHING-TEST] Test complete!")
+
+func _test_unequip_clothing() -> void:
+	print("[TEST-UNEQUIP] Starting unequip test with normal camera")
+	# Capture with normal game camera (what the player sees)
+	await _test_shot("res://test_unequip_00_default.png")
+	print("[TEST-UNEQUIP] equipped_slots=", _equipped_slots)
+	# Log mesh state
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			print("[TEST-UNEQUIP] ", dn, " visible=", dmi.visible)
+	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi != null:
+			print("[TEST-UNEQUIP] ", bn, " visible=", bmi.visible)
+	if _head_mesh != null:
+		print("[TEST-UNEQUIP] HeadMesh visible=", _head_mesh.visible)
+	if _full_body_mesh != null:
+		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
+	# Now unequip Pantalones
+	print("[TEST-UNEQUIP] === Unequipping Pantalones ===")
+	unequip_clothing("Pantalones")
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_unequip_01_no_pantalones.png")
+	# Log mesh state after unequip
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi2: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi2 != null:
+			print("[TEST-UNEQUIP] ", dn, " visible=", dmi2.visible, " gpos=", dmi2.global_position)
+			if dmi2.visible:
+				var aabb2 := dmi2.get_aabb()
+				print("[TEST-UNEQUIP]   aabb=", aabb2)
+	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
+		var bmi2: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi2 != null:
+			print("[TEST-UNEQUIP] ", bn, " visible=", bmi2.visible)
+	if _head_mesh != null:
+		print("[TEST-UNEQUIP] HeadMesh visible=", _head_mesh.visible)
+	if _full_body_mesh != null:
+		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
+	# Re-equip Pantalones
+	print("[TEST-UNEQUIP] === Re-equipping Pantalones ===")
+	equip_clothing("Pantalones")
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_unequip_02_re_pantalones.png")
+	# Now unequip Camiseta
+	print("[TEST-UNEQUIP] === Unequipping Camiseta ===")
+	unequip_clothing("Camiseta")
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_unequip_03_no_camiseta.png")
+	# Log mesh state after unequip Camiseta
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi3: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi3 != null:
+			print("[TEST-UNEQUIP] ", dn, " visible=", dmi3.visible, " gpos=", dmi3.global_position)
+			if dmi3.visible:
+				var aabb3 := dmi3.get_aabb()
+				print("[TEST-UNEQUIP]   aabb=", aabb3)
+	print("[TEST-UNEQUIP] Test complete!")
+	get_tree().quit()
+
+func _test_live_capture() -> void:
+	print("[TEST-LIVE] Capturing live game screenshots")
+	# Log mesh state
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi != null:
+			print("[TEST-LIVE] ", dn, " visible=", dmi.visible)
+	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi != null:
+			print("[TEST-LIVE] ", bn, " visible=", bmi.visible)
+	if _head_mesh != null:
+		print("[TEST-LIVE] HeadMesh visible=", _head_mesh.visible, " gpos=", _head_mesh.global_position)
+		var head_aabb := _head_mesh.get_aabb()
+		print("[TEST-LIVE] HeadMesh aabb=", head_aabb)
+	if _full_body_mesh != null:
+		print("[TEST-LIVE] FullBodyMesh visible=", _full_body_mesh.visible)
+	# Capture normal camera view
+	await _test_shot("res://test_live_00.png")
+	# Capture closer front view
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam != null:
+		var char_pos := global_position
+		print("[TEST-LIVE] char_pos=", char_pos, " cam_pos=", cam.global_position)
+		cam.global_position = char_pos + Vector3(0, 1.5, 3.5)
+		cam.look_at(char_pos + Vector3(0, 1.0, 0))
+		cam.fov = 35.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_live_01_front.png")
+	# Capture side view
+	if cam != null:
+		cam.global_position = global_position + Vector3(3.5, 1.5, 0)
+		cam.look_at(global_position + Vector3(0, 1.0, 0))
+		cam.fov = 35.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_live_02_side.png")
+	# Log bone poses
+	var skel := _find_skeleton(third_person_model)
+	if skel != null:
+		for bn in ["mixamorig_Hips", "mixamorig_Spine", "mixamorig_Head", "mixamorig_LeftArm", "mixamorig_RightArm", "mixamorig_LeftUpLeg", "mixamorig_RightUpLeg"]:
+			var bi := skel.find_bone(bn)
+			if bi >= 0:
+				var gp := skel.get_bone_global_pose(bi)
+				print("[TEST-LIVE] bone ", bn, " global_pose=", gp.origin)
+	print("[TEST-LIVE] Test complete!")
+	get_tree().quit()

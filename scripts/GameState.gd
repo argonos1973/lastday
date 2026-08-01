@@ -1,7 +1,7 @@
 extends Node
 
 const DEFAULT_CHARACTERS := [
-	{"name": "Remy", "model": "res://assets/characters/Remy.glb", "type": "default"},
+	{"name": "Remy", "model": "res://assets/characters/adapted/player_with_clothes.glb", "type": "default"},
 	{"name": "Personaje 2", "model": "res://assets/characters/personaje2.glb", "type": "default"},
 ]
 
