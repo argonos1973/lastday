@@ -390,6 +390,8 @@ func _ready() -> void:
 	_create_day_night()
 	await _create_map()
 	_create_player()
+	if net != null and net.is_host and not net.is_dedicated_server:
+		_send_character_appearance()
 	if net == null or not net.is_dedicated_server:
 		_create_audio()
 		_create_hud()
@@ -1249,6 +1251,22 @@ func _apply_net_spawn_pos(pos: Vector3) -> void:
 	else:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
+	_send_character_appearance()
+
+func _send_character_appearance() -> void:
+	if net == null or not net.is_connected or net.is_dedicated_server:
+		return
+	var gs := get_node_or_null("/root/GameSession")
+	if gs == null:
+		return
+	var char_name: String = gs.selected_character_id
+	# Find name from Inicio CHAR_CONFIGS or CharacterSelect
+	var char_name_str := gs.selected_character_id
+	if gs.has_meta("char_name"):
+		char_name_str = gs.get_meta("char_name")
+	var top_camo := gs.has_meta("top_camo") and gs.get_meta("top_camo", false)
+	var bottom_camo := gs.has_meta("bottom_camo") and gs.get_meta("bottom_camo", false)
+	net.sync_character_appearance.rpc(char_name_str, gs.selected_top_color, gs.selected_bottom_color, gs.selected_shoes_color, gs.selected_hair_color, gs.selected_skin_color, top_camo, bottom_camo)
 
 # Server: store player inventory/stats/equipment on their proxy
 func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
@@ -1917,6 +1935,12 @@ func _process_pending_puppets() -> void:
 			avatar.third_person_ground_offset = player.third_person_ground_offset
 			if avatar.third_person_model != null:
 				avatar.third_person_model.position.y = player.third_person_ground_offset
+			# Apply pending appearance if available
+			var pid: int = avatar.get_meta("peer_id", -1)
+			if pid >= 0 and net != null and net.players.has(pid):
+				var pdata2: Dictionary = net.players[pid]
+				if pdata2.has("top_color") and avatar.has_method("puppet_apply_appearance"):
+					avatar.puppet_apply_appearance(pdata2.get("char_name", ""), pdata2.get("top_color", Color(0.5,0.5,0.5)), pdata2.get("bottom_color", Color(0.3,0.3,0.3)), pdata2.get("shoes_color", Color(0.15,0.15,0.15)), pdata2.get("hair_color", Color(0.2,0.15,0.1)), pdata2.get("skin_color", Color(0.8,0.7,0.6)), pdata2.get("top_camo", false), pdata2.get("bottom_camo", false))
 			ready.append(avatar)
 	for avatar in ready:
 		_pending_puppets.erase(avatar)
@@ -2023,6 +2047,9 @@ func _update_remote_players() -> void:
 		var is_offline: bool = data.get("offline", false)
 		var remote_aiming: bool = data.get("is_aiming", false)
 		var remote_has_rifle: bool = data.get("has_rifle", false)
+		# Apply character appearance if available and not yet applied
+		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and not rp.get("_applied_appearance"):
+			rp.puppet_apply_appearance(data.get("char_name", ""), data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
 		if rp.has_method("puppet_set_aiming"):
 			rp.puppet_set_aiming(remote_aiming)
 		if rp.has_method("puppet_set_rifle"):

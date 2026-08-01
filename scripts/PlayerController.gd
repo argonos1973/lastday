@@ -477,6 +477,15 @@ func setup_as_puppet() -> void:
 var _puppet_clothing := ""
 var _puppet_held := ""
 var _puppet_backpack := ""
+var _applied_appearance := false
+var _puppet_char_name := ""
+var _puppet_top_color := Color(0.5, 0.5, 0.5)
+var _puppet_bottom_color := Color(0.3, 0.3, 0.3)
+var _puppet_shoes_color := Color(0.15, 0.15, 0.15)
+var _puppet_hair_color := Color(0.2, 0.15, 0.1)
+var _puppet_skin_color := Color(0.8, 0.7, 0.6)
+var _puppet_top_camo := false
+var _puppet_bottom_camo := false
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_dead:
@@ -606,6 +615,83 @@ func puppet_set_aiming(aiming: bool) -> void:
 	if not is_puppet:
 		return
 	_is_aiming = aiming
+
+func puppet_apply_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	if not is_puppet:
+		return
+	_applied_appearance = true
+	_puppet_char_name = char_name
+	_puppet_top_color = top_color
+	_puppet_bottom_color = bottom_color
+	_puppet_shoes_color = shoes_color
+	_puppet_hair_color = hair_color
+	_puppet_skin_color = skin_color
+	_puppet_top_camo = top_camo
+	_puppet_bottom_camo = bottom_camo
+	_apply_puppet_appearance()
+
+func _apply_puppet_appearance() -> void:
+	if third_person_model == null:
+		return
+	# Apply Tops
+	var top_mi: MeshInstance3D = _find_mesh_in_third_person("Tops")
+	if top_mi != null:
+		var tmat := StandardMaterial3D.new()
+		tmat.roughness = 0.8
+		if _puppet_top_camo:
+			tmat.albedo_texture = _make_camo_texture()
+		else:
+			tmat.albedo_color = _puppet_top_color
+		top_mi.material_override = tmat
+	# Apply Bottoms
+	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
+	if bot_mi != null:
+		var bmat := StandardMaterial3D.new()
+		bmat.roughness = 0.8
+		if _puppet_bottom_camo:
+			bmat.albedo_texture = _make_camo_texture()
+		else:
+			bmat.albedo_color = _puppet_bottom_color
+		bot_mi.material_override = bmat
+	# Apply Shoes
+	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
+	if shoes_mi != null:
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color = _puppet_shoes_color
+		smat.roughness = 0.8
+		shoes_mi.material_override = smat
+	# Apply skin color
+	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
+			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+		if bmi != null:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = _puppet_skin_color
+			mat.roughness = 0.9
+			bmi.material_override = mat
+	# Apply hair color
+	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
+	if hair_mi != null:
+		var hmat2 := StandardMaterial3D.new()
+		hmat2.albedo_color = _puppet_hair_color
+		hmat2.roughness = 0.8
+		hair_mi.material_override = hmat2
+	# Apply skin to head/full body
+	if _head_mesh != null:
+		var hmat := StandardMaterial3D.new()
+		hmat.albedo_color = _puppet_skin_color
+		hmat.roughness = 0.9
+		_head_mesh.material_override = hmat
+	if _full_body_mesh != null:
+		var fbmat := StandardMaterial3D.new()
+		fbmat.albedo_color = _puppet_skin_color
+		fbmat.roughness = 0.9
+		_full_body_mesh.material_override = fbmat
+	if _body_no_head_mesh != null:
+		var bnhmat := StandardMaterial3D.new()
+		bnhmat.albedo_color = _puppet_skin_color
+		bnhmat.roughness = 0.9
+		_body_no_head_mesh.material_override = bnhmat
 
 func puppet_set_rifle(has_rifle: bool) -> void:
 	if not is_puppet:

@@ -542,6 +542,7 @@ func _apply_char_selection() -> void:
 		gsess.selected_shoes_color = cfg["shoes"]
 		gsess.selected_hair_color = cfg["hair"]
 		gsess.selected_skin_color = cfg["skin"]
+		gsess.set_meta("char_name", cfg["name"])
 
 func _on_char_next() -> void:
 	_char_index = (_char_index + 1) % CHAR_CONFIGS.size()

@@ -263,6 +263,9 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 				continue
 			var pdata: Dictionary = players[pid]
 			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""))
+			# Send character appearance if available
+			if pdata.has("top_color"):
+				sync_character_appearance_remote.rpc_id(id, pid, pdata.get("char_name", ""), pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
 	_check_all_ready()
 
 @rpc("authority", "reliable")
@@ -604,3 +607,41 @@ func add_looted_item(item_data: Dictionary) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_add_looted_item"):
 		scene._net_add_looted_item(item_data)
+
+# Client sends character appearance to server (name, colors, camo flags)
+@rpc("any_peer", "reliable")
+func sync_character_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not players.has(sender):
+		return
+	players[sender]["char_name"] = char_name
+	players[sender]["top_color"] = top_color
+	players[sender]["bottom_color"] = bottom_color
+	players[sender]["shoes_color"] = shoes_color
+	players[sender]["hair_color"] = hair_color
+	players[sender]["skin_color"] = skin_color
+	players[sender]["top_camo"] = top_camo
+	players[sender]["bottom_camo"] = bottom_camo
+	# Relay to all other clients
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != sender and pid != multiplayer.get_unique_id():
+				if players[pid].get("offline", false):
+					continue
+				if peer.get_peer(pid) == null:
+					continue
+				sync_character_appearance_remote.rpc_id(pid, sender, char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
+
+# Server relays character appearance to a specific client
+@rpc("authority", "reliable")
+func sync_character_appearance_remote(peer_id: int, char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	if not players.has(peer_id):
+		players[peer_id] = {"name": "Jugador_%d" % peer_id, "pos": SPAWN_POS, "rot": 0.0, "ready": true}
+	players[peer_id]["char_name"] = char_name
+	players[peer_id]["top_color"] = top_color
+	players[peer_id]["bottom_color"] = bottom_color
+	players[peer_id]["shoes_color"] = shoes_color
+	players[peer_id]["hair_color"] = hair_color
+	players[peer_id]["skin_color"] = skin_color
+	players[peer_id]["top_camo"] = top_camo
+	players[peer_id]["bottom_camo"] = bottom_camo
