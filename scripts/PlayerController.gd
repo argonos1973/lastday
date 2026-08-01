@@ -291,7 +291,7 @@ var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _last_rifle_animation_debug := ""
 
 @export_group("Rifle Placement")
-@export var weapon_position_offset := Vector3(0.03, 0.18, -0.08)
+@export var weapon_position_offset := Vector3(-0.25, 0.45, -0.05)
 @export var weapon_rotation_offset := Vector3(0.0, -60.0, 0.0)
 @export var weapon_scale: float = 12.0
 @export var left_hand_target_position := Vector3(-3.0, 0.0, 0.0)
@@ -617,7 +617,7 @@ func _process(delta: float) -> void:
 			# Position: grip at right hand, then adjust so buttstock aligns with elbow
 			var rifle_basis_orn := _rifle_weapon_offset.global_basis.orthonormalized()
 			var r_elbow_pos := hand_pos
-			var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skel)
+			var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightShoulder", skel)
 			if not r_elbow_bone.is_empty():
 				var r_elbow_idx := skel.find_bone(r_elbow_bone)
 				if r_elbow_idx >= 0:
@@ -3040,7 +3040,7 @@ func _build_third_person_rifle() -> void:
 	model.scale = Vector3.ONE * init_effective_scale
 	# Get right elbow for diagnostics
 	var init_elbow_pos := init_hand_pos
-	var init_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skeleton)
+	var init_elbow_bone := _resolve_bone_name_safe("mixamorig:RightShoulder", skeleton)
 	if not init_elbow_bone.is_empty():
 		var init_elbow_idx := skeleton.find_bone(init_elbow_bone)
 		if init_elbow_idx >= 0:
