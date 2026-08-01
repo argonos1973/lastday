@@ -159,7 +159,6 @@ const POLY_BOULDER_DIFF := "res://assets/external/polyhaven/namaqualand_boulder_
 const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
 const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabinet/textures/painted_wooden_cabinet_diff_4k.jpg"
 const POLY_EQUIPMENT_DIR := "res://assets/external/polyhaven/"
-const POLY_RUBBER_BOOTS_MODEL := POLY_EQUIPMENT_DIR + "rubber_boots/rubber_boots_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_LIFE_JACKET_MODEL := POLY_EQUIPMENT_DIR + "life_jacket/life_jacket_1k.gltf"
@@ -2369,6 +2368,18 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
 			_apply_black_material_recursive(boot_node as Node3D)
+	# Apply character clothing color to dropped default clothing
+	if item_name in ["Camiseta", "Pantalones", "Zapatillas"]:
+		var cloth_node := get_node_or_null(NodePath(visual_name))
+		if cloth_node is Node3D:
+			var gsess := get_node_or_null("/root/GameSession")
+			if gsess != null:
+				var drop_color: Color = gsess.selected_top_color
+				if item_name == "Pantalones":
+					drop_color = gsess.selected_bottom_color
+				elif item_name == "Zapatillas":
+					drop_color = gsess.selected_shoes_color
+				_apply_color_material_recursive(cloth_node, drop_color)
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
 	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -2423,8 +2434,6 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"clothing":
 			match item_name:
-				"Botas de goma":
-					return [POLY_RUBBER_BOOTS_MODEL]
 				"Guantes de trabajo":
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
@@ -3506,6 +3515,18 @@ func _apply_black_material_recursive(node: Node3D) -> void:
 		var n: Node = stack.pop_back()
 		if n is MeshInstance3D:
 			(n as MeshInstance3D).material_override = black_mat
+		for c in n.get_children():
+			stack.append(c)
+
+func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.8
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			(n as MeshInstance3D).material_override = mat
 		for c in n.get_children():
 			stack.append(c)
 

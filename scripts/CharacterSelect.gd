@@ -1,7 +1,5 @@
 extends Control
 
-const DATA_DIR := "res://characters/data"
-
 var _definitions: Array[CharacterDefinition] = []
 var _current_index: int = 0
 
@@ -17,23 +15,33 @@ func _ready() -> void:
 
 func _load_definitions() -> void:
 	_definitions.clear()
-	var dir := DirAccess.open(DATA_DIR)
-	if dir == null:
-		push_warning("No se pudo abrir el directorio de personajes: %s" % DATA_DIR)
+	var remy_scene := ResourceLoader.load("res://assets/characters/Remy.glb", "PackedScene") as PackedScene
+	if remy_scene == null:
+		push_warning("No se pudo cargar Remy.glb para preview")
+		print("[CHAR-SELECT] ERROR: Failed to load Remy.glb")
 		return
-	dir.list_dir_begin()
-	var file := dir.get_next()
-	while file != "":
-		if file.ends_with(".tres"):
-			var path := DATA_DIR.path_join(file)
-			var res := load(path)
-			if res is CharacterDefinition:
-				_definitions.append(res)
-		file = dir.get_next()
-	dir.list_dir_end()
-	_definitions.sort_custom(func(a: CharacterDefinition, b: CharacterDefinition) -> bool:
-		return a.character_id < b.character_id
-	)
+	print("[CHAR-SELECT] Remy.glb loaded OK, creating definitions")
+	var configs := [
+		{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
+		{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
+		{"id": "marc", "name": "Marc", "top": Color(0.2, 0.5, 0.3), "bottom": Color(0.35, 0.3, 0.15), "shoes": Color(0.5, 0.25, 0.15), "hair": Color(0.75, 0.6, 0.3), "skin": Color(0.7, 0.58, 0.45)},
+		{"id": "elena", "name": "Edu", "top": Color(0.5, 0.45, 0.2), "bottom": Color(0.2, 0.2, 0.5), "shoes": Color(0.35, 0.15, 0.1), "hair": Color(0.65, 0.25, 0.1), "skin": Color(0.82, 0.68, 0.55)},
+		{"id": "soldado", "name": "Soldado", "top": "camo", "bottom": "camo", "shoes": Color(0.15, 0.12, 0.08), "hair": Color(0.05, 0.04, 0.03), "skin": Color(0.75, 0.62, 0.48)},
+		{"id": "dris", "name": "Dris", "top": Color(0.8, 0.7, 0.6), "bottom": Color(0.3, 0.3, 0.35), "shoes": Color(0.1, 0.1, 0.12), "hair": Color(0.02, 0.02, 0.02), "skin": Color(0.25, 0.18, 0.12)},
+	]
+	for cfg in configs:
+		var def := CharacterDefinition.new()
+		def.character_id = cfg["id"]
+		def.character_name = cfg["name"]
+		def.character_scene = remy_scene
+		var top_val: Variant = cfg["top"]
+		var bottom_val: Variant = cfg["bottom"]
+		def.top_color = top_val if top_val is Color else Color(0.2, 0.25, 0.12)
+		def.bottom_color = bottom_val if bottom_val is Color else Color(0.2, 0.25, 0.12)
+		def.shoes_color = cfg["shoes"]
+		def.hair_color = cfg["hair"]
+		def.skin_color = cfg["skin"]
+		_definitions.append(def)
 
 func _build_ui() -> void:
 	var bg := ColorRect.new()
@@ -128,6 +136,7 @@ func _build_ui() -> void:
 func _update_view() -> void:
 	if _definitions.is_empty():
 		_name_label.text = "No hay personajes"
+		print("[CHAR-SELECT] No definitions loaded!")
 		if _confirm_button != null:
 			_confirm_button.disabled = true
 		return
@@ -135,10 +144,12 @@ func _update_view() -> void:
 	_current_index = clampi(_current_index, 0, _definitions.size() - 1)
 	var def := _definitions[_current_index]
 	_name_label.text = def.character_name
+	print("[CHAR-SELECT] Showing character: ", def.character_name, " scene=", def.character_scene)
 	if _confirm_button != null:
 		_confirm_button.disabled = false
 
 	if _preview_anchor == null or def.character_scene == null:
+		print("[CHAR-SELECT] preview_anchor=", _preview_anchor, " scene=", def.character_scene)
 		return
 
 	for child in _preview_anchor.get_children():
@@ -154,6 +165,7 @@ func _update_view() -> void:
 	model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
 	model.scale = Vector3.ONE
 	_preview_anchor.add_child(model)
+	_apply_preview_colors(model, def)
 	await _fit_preview_model(model)
 
 func _fit_preview_model(model: Node3D) -> void:
@@ -204,6 +216,22 @@ func _collect_meshes(root: Node, result: Array) -> void:
 		result.append(root)
 	for c in root.get_children():
 		_collect_meshes(c, result)
+
+func _apply_preview_colors(model: Node3D, def: CharacterDefinition) -> void:
+	var meshes: Array = []
+	_collect_meshes(model, meshes)
+	for mi in meshes:
+		var mesh_inst := mi as MeshInstance3D
+		var mat := StandardMaterial3D.new()
+		mat.roughness = 0.8
+		var name_lower := mesh_inst.name.to_lower()
+		if name_lower.find("hair") >= 0 or name_lower.find("head") >= 0:
+			mat.albedo_color = def.hair_color
+		elif name_lower.find("body") >= 0 or name_lower.find("skin") >= 0:
+			mat.albedo_color = def.skin_color
+		else:
+			mat.albedo_color = def.clothing_color
+		mesh_inst.material_override = mat
 
 func _on_next() -> void:
 	if _definitions.is_empty():

@@ -23,7 +23,6 @@ const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.gl
 const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const POLY_LIFE_JACKET_MODEL := "res://assets/external/polyhaven/life_jacket/life_jacket_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
-const POLY_RUBBER_BOOTS_MODEL := "res://assets/external/polyhaven/rubber_boots/rubber_boots_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
 # Wearable visuals placed on the body relative to its measured bounding box, so
 # they fit regardless of the character model's scale/proportions.
@@ -34,7 +33,6 @@ const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves
 const CLOTHING_VISUALS := {
 	"Chaleco salvavidas": {"path": POLY_LIFE_JACKET_MODEL, "frac_y": 0.70, "size": 0.30, "yaw": 180.0, "forward": 0.05},
 	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.96, "size": 0.12, "yaw": 0.0, "align": "bottom"},
-	"Botas de goma": {"path": POLY_RUBBER_BOOTS_MODEL, "frac_y": 0.0, "size": 0.20, "yaw": 0.0, "align": "bottom", "strip": ["dirty", "dirt"]},
 	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
@@ -106,7 +104,6 @@ const CLOTHING_COVERED_ZONES := {
 	"Botas survival": ["pies"],
 	"Chaqueta de abrigo": ["torso", "brazos_superiores"],
 	"Chaleco salvavidas": ["torso"],
-	"Botas de goma": ["pies"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
 }
@@ -125,7 +122,6 @@ const CLOTHING_SLOTS := {
 	"Guantes militares": "hands",
 	"Chaqueta de abrigo": "torso",
 	"Chaleco salvavidas": "torso",
-	"Botas de goma": "feet",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
 }
@@ -145,7 +141,6 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.10,
 	"Chaqueta de abrigo": 0.45,
 	"Chaleco salvavidas": 0.06,
-	"Botas de goma": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
 }
@@ -1036,21 +1031,33 @@ func equip_clothing(item_name: String) -> void:
 		if _full_body_mesh != null:
 			_full_body_mesh.visible = false
 		if _body_no_head_mesh != null:
-			_body_no_head_mesh.visible = true
+			_body_no_head_mesh.visible = false
 		if _head_mesh != null:
 			_head_mesh.visible = true
 		for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
 				dmi.visible = false
-		for bn in ["Body_legs", "Body_feet"]:
+		# Show individual Body_* parts from player_with_clothes.glb
+		for bn in ["Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 			if bmi != null:
-				bmi.visible = false
+				bmi.visible = true
+		# Hide Body_* parts covered by equipped clothing (e.g. Body_feet for Zapatillas)
+		for equipped_item in equipped_check.values():
+			var eitem := str(equipped_item)
+			if DEFAULT_BODY_HIDES.has(eitem):
+				for body_name in DEFAULT_BODY_HIDES[eitem]:
+					var body_mi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+					if body_mi != null:
+						body_mi.visible = false
 	else:
 		if _full_body_mesh != null:
 			_full_body_mesh.visible = false
-			_full_body_mesh.material_override = null
+			var fbmat2 := StandardMaterial3D.new()
+			fbmat2.albedo_color = _char_skin_color
+			fbmat2.roughness = 0.9
+			_full_body_mesh.material_override = fbmat2
 		if _body_no_head_mesh != null:
 			_body_no_head_mesh.visible = false
 		if _head_mesh != null:
@@ -1059,8 +1066,8 @@ func equip_clothing(item_name: String) -> void:
 			var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 			if dmi != null:
 				dmi.visible = true
-		# Hide Body_legs/Body_feet — they overlap with Desnudo_legs/feet
-		for bn in ["Body_legs", "Body_feet"]:
+		# Hide all Body_* parts — they overlap with Desnudo_*
+		for bn in ["Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 			var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 			if bmi != null:
 				bmi.visible = false
@@ -1173,13 +1180,16 @@ func unequip_clothing(item_name: String) -> void:
 	var hide_torso := not (_equipped_slots.has("torso") and not str(_equipped_slots["torso"]).is_empty())
 	if _full_body_mesh != null:
 		_full_body_mesh.visible = false
-		_full_body_mesh.material_override = null
+		var fbmat := StandardMaterial3D.new()
+		fbmat.albedo_color = _char_skin_color
+		fbmat.roughness = 0.9
+		_full_body_mesh.material_override = fbmat
 	if _body_no_head_mesh != null:
 		_body_no_head_mesh.visible = false
 	if _head_mesh != null:
 		_head_mesh.visible = true
-	# Hide Body_legs/Body_feet — they overlap with Desnudo_legs/feet
-	for bn in ["Body_legs", "Body_feet"]:
+	# Hide all Body_* parts — they overlap with Desnudo_* and _body_no_head_mesh
+	for bn in ["Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
 			bmi.visible = false
@@ -1283,6 +1293,117 @@ func _init_survival_clothing(root: Node) -> void:
 			dmi.visible = true
 	# Add the head/face from inicio.glb (player_with_clothes.glb lacks face geometry)
 	_add_head_mesh()
+
+# Applies the selected character's colors (clothing, hair, skin) to the
+# player_with_clothes.glb meshes. Colors are read from GameSession.
+func _apply_character_colors() -> void:
+	var top_color := Color(0.5, 0.5, 0.5)
+	var bottom_color := Color(0.3, 0.3, 0.3)
+	var shoes_color := Color(0.15, 0.15, 0.15)
+	var hair_color := Color(0.2, 0.15, 0.1)
+	var skin_color := Color(0.8, 0.7, 0.6)
+	var top_camo := false
+	var bottom_camo := false
+	var gs := get_node_or_null("/root/GameSession")
+	if gs != null:
+		top_color = gs.selected_top_color
+		bottom_color = gs.selected_bottom_color
+		shoes_color = gs.selected_shoes_color
+		hair_color = gs.selected_hair_color
+		skin_color = gs.selected_skin_color
+		top_camo = gs.get_meta("top_camo", false) if gs.has_meta("top_camo") else false
+		bottom_camo = gs.get_meta("bottom_camo", false) if gs.has_meta("bottom_camo") else false
+	# Apply Tops
+	var top_mi: MeshInstance3D = _find_mesh_in_third_person("Tops")
+	if top_mi != null:
+		var tmat := StandardMaterial3D.new()
+		tmat.roughness = 0.8
+		if top_camo:
+			tmat.albedo_texture = _make_camo_texture()
+		else:
+			tmat.albedo_color = top_color
+		top_mi.material_override = tmat
+	# Apply Bottoms
+	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
+	if bot_mi != null:
+		var bmat := StandardMaterial3D.new()
+		bmat.roughness = 0.8
+		if bottom_camo:
+			bmat.albedo_texture = _make_camo_texture()
+		else:
+			bmat.albedo_color = bottom_color
+		bot_mi.material_override = bmat
+	# Apply Shoes
+	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
+	if shoes_mi != null:
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color = shoes_color
+		smat.roughness = 0.8
+		shoes_mi.material_override = smat
+	# Apply skin color to Desnudo_* (bare skin) and Body_* (base body)
+	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
+			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
+		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
+		if bmi != null:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = skin_color
+			mat.roughness = 0.9
+			bmi.material_override = mat
+	# Apply hair color to Hair mesh if it exists in the model
+	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
+	if hair_mi != null:
+		var hmat2 := StandardMaterial3D.new()
+		hmat2.albedo_color = hair_color
+		hmat2.roughness = 0.8
+		hair_mi.material_override = hmat2
+	# Apply skin color to head mesh (face)
+	if _head_mesh != null:
+		var hmat := StandardMaterial3D.new()
+		hmat.albedo_color = skin_color
+		hmat.roughness = 0.9
+		_head_mesh.material_override = hmat
+	if _full_body_mesh != null:
+		var fbmat := StandardMaterial3D.new()
+		fbmat.albedo_color = skin_color
+		fbmat.roughness = 0.9
+		_full_body_mesh.material_override = fbmat
+	if _body_no_head_mesh != null:
+		var bnhmat := StandardMaterial3D.new()
+		bnhmat.albedo_color = skin_color
+		bnhmat.roughness = 0.9
+		_body_no_head_mesh.material_override = bnhmat
+	# Store colors so they can be re-applied after unequip
+	_char_top_color = top_color
+	_char_bottom_color = bottom_color
+	_char_shoes_color = shoes_color
+	_char_hair_color = hair_color
+	_char_skin_color = skin_color
+
+var _char_top_color: Color = Color(0.5, 0.5, 0.5)
+var _char_bottom_color: Color = Color(0.3, 0.3, 0.3)
+var _char_shoes_color: Color = Color(0.15, 0.15, 0.15)
+var _char_hair_color: Color = Color(0.2, 0.15, 0.1)
+var _char_skin_color: Color = Color(0.8, 0.7, 0.6)
+
+func _make_camo_texture() -> ImageTexture:
+	var size := 256
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var camo_colors := [Color(0.25, 0.3, 0.15), Color(0.15, 0.18, 0.1), Color(0.35, 0.32, 0.18), Color(0.1, 0.12, 0.08)]
+	img.fill(camo_colors[0])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for blob in range(80):
+		var cx := rng.randi_range(0, size - 1)
+		var cy := rng.randi_range(0, size - 1)
+		var radius := rng.randi_range(10, 35)
+		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
+		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
+			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
+				var dx := x - cx
+				var dy := y - cy
+				if dx * dx + dy * dy <= radius * radius:
+					img.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(img)
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
@@ -2120,22 +2241,16 @@ func _add_starting_items() -> void:
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
-	# Check GameState for a selected custom character (Remy, personaje2, etc.)
-	if not is_puppet:
-		var gs := get_node_or_null("/root/GameState")
-		if gs != null:
-			var custom_path: String = gs.get_selected_model_path()
-			if not custom_path.is_empty():
-				character = _load_external_node3d(custom_path)
-				if character != null:
-					third_person_loaded_path = custom_path
+	# Always use player_with_clothes.glb for the in-game model
+	var model_path := ADAPTED_PLAYER_MODEL
 	# Puppet: use puppet_model_path if set
-	if character == null and is_puppet and not puppet_model_path.is_empty():
-		character = _load_external_node3d(puppet_model_path)
-		if character != null:
-			third_person_loaded_path = puppet_model_path
-	# Fallback: try default candidates
+	if is_puppet and not puppet_model_path.is_empty():
+		model_path = puppet_model_path
+	character = _load_external_node3d(model_path)
+	if character != null:
+		third_person_loaded_path = model_path
 	if character == null:
+		# Fallback: try default candidates
 		for candidate in THIRD_PERSON_MODEL_CANDIDATES:
 			character = _load_external_node3d(candidate)
 			if character != null:
@@ -2146,29 +2261,14 @@ func _create_third_person_model() -> void:
 		character.visible = false
 		character.position = Vector3.ZERO
 		character.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-		is_clothing_model = third_person_loaded_path.find("player_with_clothes") >= 0
+		is_clothing_model = true
 		add_child(character)
 		third_person_model = character
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
-		is_custom_character = not is_clothing_model
+		is_custom_character = false
 		# Calculate and apply scale after adding to scene tree so skeleton poses are valid
-		var character_scale: float
-		if is_clothing_model:
-			character_scale = MIXAMO_CHARACTER_SCALE
-		else:
-			# Custom characters: calculate scale from skeleton height so they match
-			# Remy's visual height (skeleton_height * 0.72). This ensures personaje2
-			# and any future custom character are the same size as Remy.
-			var skel := _find_skeleton(character)
-			if skel != null:
-				var skel_height := _skeleton_height(skel)
-				if skel_height > 0.01:
-					character_scale = (3.69 * MIXAMO_CHARACTER_SCALE) / skel_height
-				else:
-					character_scale = MIXAMO_CHARACTER_SCALE
-			else:
-				character_scale = MIXAMO_CHARACTER_SCALE
+		var character_scale: float = MIXAMO_CHARACTER_SCALE
 		character.scale = Vector3.ONE * character_scale
 		if is_custom_character:
 			# Custom characters Body mesh lacks geometry under clothing (head-only).
@@ -2179,6 +2279,7 @@ func _create_third_person_model() -> void:
 		# survival clothing node structure.
 		if is_clothing_model:
 			_init_survival_clothing(character)
+			_apply_character_colors()
 		if not is_puppet:
 			if is_clothing_model or is_custom_character:
 				# Ensure default clothing is in inventory and equipped
@@ -6496,6 +6597,27 @@ func _test_unequip_clothing() -> void:
 			if dmi3.visible:
 				var aabb3 := dmi3.get_aabb()
 				print("[TEST-UNEQUIP]   aabb=", aabb3)
+	# Now unequip Zapatillas
+	print("[TEST-UNEQUIP] === Unequipping Zapatillas ===")
+	unequip_clothing("Zapatillas")
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://test_unequip_04_no_zapatillas.png")
+	# Log mesh state after unequip Zapatillas
+	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
+		var dmi4: MeshInstance3D = _find_mesh_in_third_person(dn)
+		if dmi4 != null:
+			print("[TEST-UNEQUIP] ", dn, " visible=", dmi4.visible, " gpos=", dmi4.global_position)
+			if dmi4.visible:
+				var aabb4 := dmi4.get_aabb()
+				print("[TEST-UNEQUIP]   aabb=", aabb4)
+	for bn in ["Tops", "Bottoms", "Shoes", "Body", "Body_feet", "Body_legs"]:
+		var bmi4: MeshInstance3D = _find_mesh_in_third_person(bn)
+		if bmi4 != null:
+			print("[TEST-UNEQUIP] ", bn, " visible=", bmi4.visible)
+	if _body_no_head_mesh != null:
+		print("[TEST-UNEQUIP] BodyNoHead visible=", _body_no_head_mesh.visible)
+	if _full_body_mesh != null:
+		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
 	print("[TEST-UNEQUIP] Test complete!")
 	get_tree().quit()
 

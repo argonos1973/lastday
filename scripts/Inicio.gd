@@ -22,6 +22,16 @@ var _char_name_label: Label = null
 var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
 
+const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
+const CHAR_CONFIGS := [
+	{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
+	{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
+	{"id": "marc", "name": "Marc", "top": Color(0.2, 0.5, 0.3), "bottom": Color(0.35, 0.3, 0.15), "shoes": Color(0.5, 0.25, 0.15), "hair": Color(0.75, 0.6, 0.3), "skin": Color(0.7, 0.58, 0.45)},
+	{"id": "elena", "name": "Edu", "top": Color(0.5, 0.45, 0.2), "bottom": Color(0.2, 0.2, 0.5), "shoes": Color(0.35, 0.15, 0.1), "hair": Color(0.65, 0.25, 0.1), "skin": Color(0.82, 0.68, 0.55)},
+	{"id": "soldado", "name": "Soldado", "top": "camo", "bottom": "camo", "shoes": Color(0.15, 0.12, 0.08), "hair": Color(0.05, 0.04, 0.03), "skin": Color(0.75, 0.62, 0.48)},
+	{"id": "dris", "name": "Dris", "top": Color(0.8, 0.7, 0.6), "bottom": Color(0.3, 0.3, 0.35), "shoes": Color(0.1, 0.1, 0.12), "hair": Color(0.02, 0.02, 0.02), "skin": Color(0.25, 0.18, 0.12)},
+]
+
 func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
 	var net_check = get_node_or_null("/root/NetworkManager")
@@ -40,6 +50,18 @@ func _ready() -> void:
 		var gs_debug2 := get_node_or_null("/root/GameState")
 		if gs_debug2 != null:
 			gs_debug2.select_character(0)
+		get_tree().create_timer(2.0).timeout.connect(_start_game)
+		return
+	if args.has("--test-unequip"):
+		var gs_debug4 := get_node_or_null("/root/GameState")
+		if gs_debug4 != null:
+			gs_debug4.select_character(0)
+		get_tree().create_timer(2.0).timeout.connect(_start_game)
+		return
+	if args.has("--test-live"):
+		var gs_debug5 := get_node_or_null("/root/GameState")
+		if gs_debug5 != null:
+			gs_debug5.select_character(0)
 		get_tree().create_timer(2.0).timeout.connect(_start_game)
 		return
 	if args.size() >= 2 and args[0] == "--client":
@@ -68,9 +90,12 @@ func _ready() -> void:
 		pass # print("[DISCOVERY] No se pudo bind puerto %d: %d" % [DISCOVERY_PORT, bind_err])
 		_discovery = null
 
-	# Background color (dark) in case image fails
+	var screen_w := get_viewport().get_visible_rect().size.x
+	var screen_h := get_viewport().get_visible_rect().size.y
+
+	# Background color (dark)
 	var bg := ColorRect.new()
-	bg.color = Color(0.05, 0.05, 0.06)
+	bg.color = Color(0.03, 0.03, 0.05)
 	bg.anchors_preset = Control.PRESET_FULL_RECT
 	bg.anchor_right = 1.0
 	bg.anchor_bottom = 1.0
@@ -97,105 +122,84 @@ func _ready() -> void:
 	tex_rect.anchor_bottom = 1.0
 	add_child(tex_rect)
 
-	# Title
-	var title := Label.new()
-	title.text = "UN DIA MAS"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 48)
-	title.add_theme_color_override("font_color", Color(1, 0.9, 0.3, 1.0))
-	title.position = Vector2(0, 60)
-	title.size = Vector2(get_viewport().get_visible_rect().size.x, 60)
-	add_child(title)
+	# --- Left panel: Main menu ---
+	var left_panel := PanelContainer.new()
+	var left_panel_w := 280
+	var char_panel_w := 340
+	var total_w := left_panel_w + char_panel_w + 40
+	left_panel.position = Vector2(screen_w * 0.5 - total_w * 0.5, screen_h - 440)
+	left_panel.custom_minimum_size = Vector2(left_panel_w, 0)
+	var left_bg := StyleBoxFlat.new()
+	left_bg.bg_color = Color(0.08, 0.08, 0.12, 0.85)
+	left_bg.border_width_left = 2
+	left_bg.border_width_right = 2
+	left_bg.border_width_top = 2
+	left_bg.border_width_bottom = 2
+	left_bg.border_color = Color(0.2, 0.2, 0.3, 0.8)
+	left_bg.corner_radius_top_left = 12
+	left_bg.corner_radius_top_right = 12
+	left_bg.corner_radius_bottom_left = 12
+	left_bg.corner_radius_bottom_right = 12
+	left_bg.content_margin_left = 20
+	left_bg.content_margin_right = 20
+	left_bg.content_margin_top = 20
+	left_bg.content_margin_bottom = 20
+	left_panel.add_theme_stylebox_override("panel", left_bg)
+	add_child(left_panel)
 
-	# Button container
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", 12)
-	vbox.anchors_preset = Control.PRESET_CENTER
-	vbox.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 280, 180)
-	vbox.custom_minimum_size = Vector2(240, 0)
-	add_child(vbox)
+	vbox.add_theme_constant_override("separation", 14)
+	left_panel.add_child(vbox)
 
-	# --- Character selection (right side) ---
-	var char_panel := VBoxContainer.new()
-	char_panel.alignment = BoxContainer.ALIGNMENT_CENTER
-	char_panel.add_theme_constant_override("separation", 8)
-	char_panel.position = Vector2(get_viewport().get_visible_rect().size.x - 360, 120)
-	char_panel.custom_minimum_size = Vector2(300, 0)
-	add_child(char_panel)
+	var menu_title := Label.new()
+	menu_title.text = "MENU PRINCIPAL"
+	menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_title.add_theme_font_size_override("font_size", 20)
+	menu_title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
+	vbox.add_child(menu_title)
 
-	var char_title := Label.new()
-	char_title.text = "PERSONAJE"
-	char_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	char_title.add_theme_font_size_override("font_size", 22)
-	char_title.add_theme_color_override("font_color", Color(1, 0.9, 0.3))
-	char_panel.add_child(char_title)
+	var sep1 := HSeparator.new()
+	sep1.add_theme_constant_override("separation", 8)
+	vbox.add_child(sep1)
 
-	_char_name_label = Label.new()
-	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_char_name_label.add_theme_font_size_override("font_size", 18)
-	char_panel.add_child(_char_name_label)
-
-	var viewport_container := SubViewportContainer.new()
-	viewport_container.custom_minimum_size = Vector2(300, 400)
-	viewport_container.stretch = false
-	char_panel.add_child(viewport_container)
-
-	var viewport := SubViewport.new()
-	viewport.size = Vector2i(300, 400)
-	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	viewport_container.add_child(viewport)
-
-	var world_env := WorldEnvironment.new()
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.2, 0.22, 0.25)
-	world_env.environment = env
-	viewport.add_child(world_env)
-
-	var light := DirectionalLight3D.new()
-	light.position = Vector3(2.0, 3.0, 2.0)
-	light.look_at_from_position(light.position, Vector3.ZERO)
-	viewport.add_child(light)
-
-	_char_preview_cam = Camera3D.new()
-	_char_preview_cam.position = Vector3(0.0, 1.0, 3.5)
-	_char_preview_cam.fov = 35.0
-	viewport.add_child(_char_preview_cam)
-
-	_char_preview_anchor = Node3D.new()
-	_char_preview_anchor.name = "PreviewAnchor"
-	viewport.add_child(_char_preview_anchor)
-
-	var nav_hbox := HBoxContainer.new()
-	char_panel.add_child(nav_hbox)
-
-	var prev_btn := Button.new()
-	prev_btn.text = "< Anterior"
-	prev_btn.custom_minimum_size = Vector2(140, 36)
-	prev_btn.pressed.connect(_on_char_prev)
-	nav_hbox.add_child(prev_btn)
-
-	var next_btn := Button.new()
-	next_btn.text = "Siguiente >"
-	next_btn.custom_minimum_size = Vector2(140, 36)
-	next_btn.pressed.connect(_on_char_next)
-	nav_hbox.add_child(next_btn)
-
-	_update_char_view()
-
-	# --- Main buttons (left side) ---
+	# --- Main buttons ---
 	var btn_single := Button.new()
-	btn_single.text = "Un jugador"
-	btn_single.custom_minimum_size = Vector2(240, 44)
+	btn_single.text = "  Un jugador"
+	btn_single.custom_minimum_size = Vector2(240, 48)
 	btn_single.add_theme_font_size_override("font_size", 18)
+	var btn_style := StyleBoxFlat.new()
+	btn_style.bg_color = Color(0.15, 0.2, 0.3, 0.9)
+	btn_style.border_color = Color(0.3, 0.4, 0.5)
+	btn_style.border_width_left = 1
+	btn_style.border_width_right = 1
+	btn_style.border_width_top = 1
+	btn_style.border_width_bottom = 1
+	btn_style.corner_radius_top_left = 8
+	btn_style.corner_radius_top_right = 8
+	btn_style.corner_radius_bottom_left = 8
+	btn_style.corner_radius_bottom_right = 8
+	btn_style.content_margin_left = 16
+	btn_style.content_margin_right = 16
+	btn_style.content_margin_top = 8
+	btn_style.content_margin_bottom = 8
+	btn_single.add_theme_stylebox_override("normal", btn_style)
+	var btn_hover := btn_style.duplicate() as StyleBoxFlat
+	btn_hover.bg_color = Color(0.2, 0.3, 0.45, 1.0)
+	btn_single.add_theme_stylebox_override("hover", btn_hover)
+	var btn_pressed := btn_style.duplicate() as StyleBoxFlat
+	btn_pressed.bg_color = Color(0.1, 0.15, 0.25, 1.0)
+	btn_single.add_theme_stylebox_override("pressed", btn_pressed)
 	btn_single.pressed.connect(_on_single_player)
 	vbox.add_child(btn_single)
 
 	var btn_join := Button.new()
-	btn_join.text = "Conectar por IP"
-	btn_join.custom_minimum_size = Vector2(240, 44)
+	btn_join.text = "  Conectar por IP"
+	btn_join.custom_minimum_size = Vector2(240, 48)
 	btn_join.add_theme_font_size_override("font_size", 18)
+	btn_join.add_theme_stylebox_override("normal", btn_style)
+	btn_join.add_theme_stylebox_override("hover", btn_hover)
+	btn_join.add_theme_stylebox_override("pressed", btn_pressed)
 	btn_join.pressed.connect(_on_show_join)
 	vbox.add_child(btn_join)
 
@@ -203,15 +207,32 @@ func _ready() -> void:
 	_ip_edit = LineEdit.new()
 	_ip_edit.placeholder_text = "IP del host (ej: 192.168.1.100)"
 	_ip_edit.text = _load_saved_ip()
-	_ip_edit.custom_minimum_size = Vector2(240, 36)
+	_ip_edit.custom_minimum_size = Vector2(240, 38)
 	_ip_edit.visible = false
 	_ip_edit.add_theme_font_size_override("font_size", 16)
+	var ip_style := StyleBoxFlat.new()
+	ip_style.bg_color = Color(0.05, 0.05, 0.08, 0.9)
+	ip_style.border_color = Color(0.3, 0.3, 0.4)
+	ip_style.border_width_left = 1
+	ip_style.border_width_right = 1
+	ip_style.border_width_top = 1
+	ip_style.border_width_bottom = 1
+	ip_style.corner_radius_top_left = 6
+	ip_style.corner_radius_top_right = 6
+	ip_style.corner_radius_bottom_left = 6
+	ip_style.corner_radius_bottom_right = 6
+	ip_style.content_margin_left = 10
+	ip_style.content_margin_right = 10
+	_ip_edit.add_theme_stylebox_override("normal", ip_style)
 	vbox.add_child(_ip_edit)
 
 	var btn_connect := Button.new()
-	btn_connect.text = "Conectar"
-	btn_connect.custom_minimum_size = Vector2(240, 36)
+	btn_connect.text = "  Conectar"
+	btn_connect.custom_minimum_size = Vector2(240, 40)
 	btn_connect.add_theme_font_size_override("font_size", 16)
+	btn_connect.add_theme_stylebox_override("normal", btn_style)
+	btn_connect.add_theme_stylebox_override("hover", btn_hover)
+	btn_connect.add_theme_stylebox_override("pressed", btn_pressed)
 	btn_connect.visible = false
 	btn_connect.pressed.connect(_on_join)
 	vbox.add_child(btn_connect)
@@ -221,14 +242,119 @@ func _ready() -> void:
 	_status_label = Label.new()
 	_status_label.text = ""
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.add_theme_font_size_override("font_size", 16)
-	_status_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
+	_status_label.add_theme_font_size_override("font_size", 15)
+	_status_label.add_theme_color_override("font_color", Color(0.95, 0.8, 0.3))
 	_status_label.custom_minimum_size = Vector2(240, 24)
 	vbox.add_child(_status_label)
+
+	# --- Right panel: Character selection ---
+	var char_panel := PanelContainer.new()
+	char_panel.position = Vector2(screen_w * 0.5 - total_w * 0.5 + left_panel_w + 40, screen_h - 440)
+	char_panel.custom_minimum_size = Vector2(char_panel_w, 0)
+	var char_bg := StyleBoxFlat.new()
+	char_bg.bg_color = Color(0.08, 0.08, 0.12, 0.85)
+	char_bg.border_width_left = 2
+	char_bg.border_width_right = 2
+	char_bg.border_width_top = 2
+	char_bg.border_width_bottom = 2
+	char_bg.border_color = Color(0.2, 0.2, 0.3, 0.8)
+	char_bg.corner_radius_top_left = 12
+	char_bg.corner_radius_top_right = 12
+	char_bg.corner_radius_bottom_left = 12
+	char_bg.corner_radius_bottom_right = 12
+	char_bg.content_margin_left = 20
+	char_bg.content_margin_right = 20
+	char_bg.content_margin_top = 16
+	char_bg.content_margin_bottom = 16
+	char_panel.add_theme_stylebox_override("panel", char_bg)
+	add_child(char_panel)
+
+	var char_vbox := VBoxContainer.new()
+	char_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	char_vbox.add_theme_constant_override("separation", 8)
+	char_panel.add_child(char_vbox)
+
+	var char_title := Label.new()
+	char_title.text = "SELECCIONA PERSONAJE"
+	char_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	char_title.add_theme_font_size_override("font_size", 20)
+	char_title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
+	char_vbox.add_child(char_title)
+
+	_char_name_label = Label.new()
+	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_char_name_label.add_theme_font_size_override("font_size", 22)
+	_char_name_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	char_vbox.add_child(_char_name_label)
+
+	var viewport_container := SubViewportContainer.new()
+	viewport_container.custom_minimum_size = Vector2(220, 220)
+	viewport_container.stretch = false
+	viewport_container.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	char_vbox.add_child(viewport_container)
+
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(220, 220)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.transparent_bg = true
+	viewport_container.add_child(viewport)
+
+	var light := DirectionalLight3D.new()
+	light.position = Vector3(2.0, 3.0, 2.0)
+	light.light_energy = 1.2
+	light.look_at_from_position(light.position, Vector3.ZERO)
+	viewport.add_child(light)
+
+	var fill_light := DirectionalLight3D.new()
+	fill_light.position = Vector3(-2.0, 2.0, -1.0)
+	fill_light.light_energy = 0.4
+	fill_light.look_at_from_position(fill_light.position, Vector3.ZERO)
+	viewport.add_child(fill_light)
+
+	_char_preview_cam = Camera3D.new()
+	_char_preview_cam.position = Vector3(0.0, 0.0, 2.5)
+	_char_preview_cam.fov = 35.0
+	viewport.add_child(_char_preview_cam)
+
+	_char_preview_anchor = Node3D.new()
+	_char_preview_anchor.name = "PreviewAnchor"
+	viewport.add_child(_char_preview_anchor)
+
+	var nav_hbox := HBoxContainer.new()
+	nav_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	nav_hbox.add_theme_constant_override("separation", 12)
+	char_vbox.add_child(nav_hbox)
+
+	var prev_btn := Button.new()
+	prev_btn.text = "<"
+	prev_btn.custom_minimum_size = Vector2(50, 40)
+	prev_btn.add_theme_font_size_override("font_size", 20)
+	prev_btn.add_theme_stylebox_override("normal", btn_style)
+	prev_btn.add_theme_stylebox_override("hover", btn_hover)
+	prev_btn.add_theme_stylebox_override("pressed", btn_pressed)
+	prev_btn.pressed.connect(_on_char_prev)
+	nav_hbox.add_child(prev_btn)
+
+	var next_btn := Button.new()
+	next_btn.text = ">"
+	next_btn.custom_minimum_size = Vector2(50, 40)
+	next_btn.add_theme_font_size_override("font_size", 20)
+	next_btn.add_theme_stylebox_override("normal", btn_style)
+	next_btn.add_theme_stylebox_override("hover", btn_hover)
+	next_btn.add_theme_stylebox_override("pressed", btn_pressed)
+	next_btn.pressed.connect(_on_char_next)
+	nav_hbox.add_child(next_btn)
+
+	_update_char_view()
 
 func _process(_delta: float) -> void:
 	if _started:
 		return
+	# Rotate preview character
+	if _char_preview_anchor != null and _char_preview_anchor.get_child_count() > 0:
+		var model := _char_preview_anchor.get_child(0) as Node3D
+		if model != null:
+			model.rotation_degrees.y += 30.0 * _delta
 	# Passive: listen for broadcast from server
 	if _discovery != null:
 		var count := _discovery.get_available_packet_count()
@@ -394,49 +520,47 @@ func _start_game() -> void:
 func _apply_char_selection() -> void:
 	var gs := get_node_or_null("/root/GameState")
 	if gs != null:
-		gs.select_character(_char_index)
+		gs.select_character(0)
+	var gsess := get_node_or_null("/root/GameSession")
+	if gsess != null and _char_index >= 0 and _char_index < CHAR_CONFIGS.size():
+		var cfg: Dictionary = CHAR_CONFIGS[_char_index]
+		gsess.selected_character_id = cfg["id"]
+		var top_val: Variant = cfg["top"]
+		var bottom_val: Variant = cfg["bottom"]
+		if top_val is String and top_val == "camo":
+			gsess.selected_top_color = Color(0.2, 0.25, 0.12)
+			gsess.set_meta("top_camo", true)
+		else:
+			gsess.selected_top_color = top_val as Color
+			gsess.set_meta("top_camo", false)
+		if bottom_val is String and bottom_val == "camo":
+			gsess.selected_bottom_color = Color(0.2, 0.25, 0.12)
+			gsess.set_meta("bottom_camo", true)
+		else:
+			gsess.selected_bottom_color = bottom_val as Color
+			gsess.set_meta("bottom_camo", false)
+		gsess.selected_shoes_color = cfg["shoes"]
+		gsess.selected_hair_color = cfg["hair"]
+		gsess.selected_skin_color = cfg["skin"]
 
 func _on_char_next() -> void:
-	var gs := get_node_or_null("/root/GameState")
-	if gs == null:
-		return
-	var chars: Array = gs.get_available_characters()
-	if chars.is_empty():
-		return
-	_char_index = (_char_index + 1) % chars.size()
+	_char_index = (_char_index + 1) % CHAR_CONFIGS.size()
 	_update_char_view()
 
 func _on_char_prev() -> void:
-	var gs := get_node_or_null("/root/GameState")
-	if gs == null:
-		return
-	var chars: Array = gs.get_available_characters()
-	if chars.is_empty():
-		return
-	_char_index = (_char_index - 1 + chars.size()) % chars.size()
+	_char_index = (_char_index - 1 + CHAR_CONFIGS.size()) % CHAR_CONFIGS.size()
 	_update_char_view()
 
 func _update_char_view() -> void:
-	var gs := get_node_or_null("/root/GameState")
-	if gs == null:
-		return
-	var chars: Array = gs.get_available_characters()
-	if chars.is_empty():
-		if _char_name_label != null:
-			_char_name_label.text = "No hay personajes"
-		return
-	_char_index = clampi(_char_index, 0, chars.size() - 1)
-	var sel: Dictionary = chars[_char_index]
+	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
+	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
 	if _char_name_label != null:
-		_char_name_label.text = String(sel.get("name", "?"))
+		_char_name_label.text = String(cfg.get("name", "?"))
 	if _char_preview_anchor == null:
 		return
 	for child in _char_preview_anchor.get_children():
 		child.queue_free()
-	var model_path := String(sel.get("model", ""))
-	if model_path.is_empty():
-		return
-	var packed := load(model_path)
+	var packed := load(REMY_PREVIEW_SCENE)
 	if packed is PackedScene:
 		var instance := (packed as PackedScene).instantiate()
 		if instance is Node3D:
@@ -445,7 +569,29 @@ func _update_char_view() -> void:
 			model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
 			model.scale = Vector3.ONE
 			_char_preview_anchor.add_child(model)
+			_apply_preview_colors(model, cfg)
 			_fit_char_preview(model)
+			_play_preview_animation(model)
+
+func _play_preview_animation(model: Node3D) -> void:
+	var anim_player := _find_animation_player(model)
+	if anim_player != null:
+		var anims := anim_player.get_animation_list()
+		for anim_name in anims:
+			if anim_name.find("idle") >= 0 or anim_name.find("Idle") >= 0 or anim_name.find("IDLE") >= 0:
+				anim_player.play(anim_name)
+				return
+		if anims.size() > 0:
+			anim_player.play(anims[0])
+
+func _find_animation_player(root: Node) -> AnimationPlayer:
+	if root is AnimationPlayer:
+		return root as AnimationPlayer
+	for c in root.get_children():
+		var result := _find_animation_player(c)
+		if result != null:
+			return result
+	return null
 
 func _fit_char_preview(model: Node3D) -> void:
 	await get_tree().process_frame
@@ -466,7 +612,7 @@ func _fit_char_preview(model: Node3D) -> void:
 	if min_y < 999999.0 and max_y > -999999.0:
 		var height := max_y - min_y
 		if height > 0.01:
-			var s := 2.0 / height
+			var s := 1.9 / height
 			model.scale = Vector3.ONE * s
 			await get_tree().process_frame
 			if not is_instance_valid(model):
@@ -482,12 +628,68 @@ func _fit_char_preview(model: Node3D) -> void:
 				min_y = min(min_y, world_aabb2.position.y)
 				max_y = max(max_y, world_aabb2.end.y)
 			if min_y < 999999.0:
-				model.position.y = -min_y
+				var mid_y := (min_y + max_y) * 0.5
+				model.position.y = -mid_y
 	if _char_preview_cam != null:
-		_char_preview_cam.look_at_from_position(_char_preview_cam.position, Vector3(0.0, 1.0, 0.0))
+		_char_preview_cam.position = Vector3(0.0, 0.0, 3.0)
+		_char_preview_cam.look_at_from_position(_char_preview_cam.position, Vector3.ZERO)
 
 func _collect_meshes(root: Node, result: Array) -> void:
 	if root is MeshInstance3D:
 		result.append(root)
 	for c in root.get_children():
 		_collect_meshes(c, result)
+
+func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
+	var top_val: Variant = cfg.get("top", Color(0.5, 0.5, 0.5))
+	var bottom_val: Variant = cfg.get("bottom", Color(0.3, 0.3, 0.3))
+	var shoes_color: Color = cfg.get("shoes", Color(0.15, 0.15, 0.15))
+	var hair_color: Color = cfg.get("hair", Color(0.2, 0.15, 0.1))
+	var skin_color: Color = cfg.get("skin", Color(0.8, 0.7, 0.6))
+	var camo_tex := _make_camo_texture()
+	var meshes: Array = []
+	_collect_meshes(model, meshes)
+	for mi in meshes:
+		var mesh_inst := mi as MeshInstance3D
+		var mat := StandardMaterial3D.new()
+		mat.roughness = 0.8
+		var name_lower := mesh_inst.name.to_lower()
+		if name_lower.find("hair") >= 0:
+			mat.albedo_color = hair_color
+		elif name_lower.find("shoes") >= 0:
+			mat.albedo_color = shoes_color
+		elif name_lower.find("bottoms") >= 0:
+			if bottom_val is String and bottom_val == "camo":
+				mat.albedo_texture = camo_tex
+			else:
+				mat.albedo_color = bottom_val as Color
+		elif name_lower.find("tops") >= 0:
+			if top_val is String and top_val == "camo":
+				mat.albedo_texture = camo_tex
+			else:
+				mat.albedo_color = top_val as Color
+		elif name_lower.find("body") >= 0 or name_lower.find("skin") >= 0 or name_lower.find("head") >= 0:
+			mat.albedo_color = skin_color
+		else:
+			mat.albedo_color = skin_color
+		mesh_inst.material_override = mat
+
+func _make_camo_texture() -> ImageTexture:
+	var size := 256
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var camo_colors := [Color(0.25, 0.3, 0.15), Color(0.15, 0.18, 0.1), Color(0.35, 0.32, 0.18), Color(0.1, 0.12, 0.08)]
+	img.fill(camo_colors[0])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for blob in range(80):
+		var cx := rng.randi_range(0, size - 1)
+		var cy := rng.randi_range(0, size - 1)
+		var radius := rng.randi_range(10, 35)
+		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
+		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
+			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
+				var dx := x - cx
+				var dy := y - cy
+				if dx * dx + dy * dy <= radius * radius:
+					img.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(img)
