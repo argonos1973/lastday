@@ -1259,13 +1259,11 @@ func _send_character_appearance() -> void:
 	var gs := get_node_or_null("/root/GameSession")
 	if gs == null:
 		return
-	var char_name: String = gs.selected_character_id
-	# Find name from Inicio CHAR_CONFIGS or CharacterSelect
-	var char_name_str := gs.selected_character_id
+	var char_name_str: String = gs.selected_character_id
 	if gs.has_meta("char_name"):
-		char_name_str = gs.get_meta("char_name")
-	var top_camo := gs.has_meta("top_camo") and gs.get_meta("top_camo", false)
-	var bottom_camo := gs.has_meta("bottom_camo") and gs.get_meta("bottom_camo", false)
+		char_name_str = str(gs.get_meta("char_name"))
+	var top_camo: bool = gs.has_meta("top_camo") and bool(gs.get_meta("top_camo", false))
+	var bottom_camo: bool = gs.has_meta("bottom_camo") and bool(gs.get_meta("bottom_camo", false))
 	net.sync_character_appearance.rpc(char_name_str, gs.selected_top_color, gs.selected_bottom_color, gs.selected_shoes_color, gs.selected_hair_color, gs.selected_skin_color, top_camo, bottom_camo)
 
 # Server: store player inventory/stats/equipment on their proxy

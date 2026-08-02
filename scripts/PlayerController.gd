@@ -49,7 +49,7 @@ const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
 	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
-	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
+	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms", "Shoes"], "skin_hides": ["Desnudo_legs", "Desnudo_feet"], "body_hides": ["Body_legs", "Body_feet"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 }
 
@@ -77,7 +77,7 @@ const DEFAULT_SKIN_HIDES := {
 	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
 	"Vaqueros survival": ["Desnudo_legs"],
-	"Pantalones militares": ["Desnudo_legs"],
+	"Pantalones militares": ["Desnudo_legs", "Desnudo_feet"],
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
 	"Botas survival": ["Desnudo_feet"],
@@ -87,6 +87,7 @@ const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
+	"Pantalones militares": ["Body_legs", "Body_feet"],
 }
 
 # Map of body zones covered by each clothing item.
@@ -1364,7 +1365,7 @@ func _init_survival_clothing(root: Node) -> void:
 			smi.visible = false
 	# Body_arms and Body_hands from leftturn have built-in gloves, always hide them
 	# soldier_hands is also always hidden (not used, would show as gloves)
-	for bn in ["Body_arms", "Body_hands", "soldier_hands"]:
+	for bn in ["Body_arms", "Body_hands", "soldier_hands", "soldier_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
 			bmi.visible = false
