@@ -49,7 +49,7 @@ const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
 	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
-	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms", "Shoes"], "skin_hides": ["Desnudo_legs", "Desnudo_feet"], "body_hides": ["Body_legs", "Body_feet"]},
+	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 }
 
@@ -77,7 +77,7 @@ const DEFAULT_SKIN_HIDES := {
 	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
 	"Vaqueros survival": ["Desnudo_legs"],
-	"Pantalones militares": ["Desnudo_legs", "Desnudo_feet"],
+	"Pantalones militares": ["Desnudo_legs"],
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
 	"Botas survival": ["Desnudo_feet"],
@@ -87,7 +87,6 @@ const DEFAULT_BODY_HIDES := {
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
-	"Pantalones militares": ["Body_legs", "Body_feet"],
 }
 
 # Map of body zones covered by each clothing item.
