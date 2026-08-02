@@ -38,32 +38,7 @@ func _ready() -> void:
 	if net_check != null and net_check.is_dedicated_server:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
-	# TEMP: auto-start for testing
 	var args := OS.get_cmdline_user_args()
-	if args.has("--test-drop"):
-		var gs_debug := get_node_or_null("/root/GameState")
-		if gs_debug != null:
-			gs_debug.select_character(0)
-		get_tree().create_timer(2.0).timeout.connect(_start_game)
-		return
-	if args.has("--test-clothing"):
-		var gs_debug2 := get_node_or_null("/root/GameState")
-		if gs_debug2 != null:
-			gs_debug2.select_character(0)
-		get_tree().create_timer(2.0).timeout.connect(_start_game)
-		return
-	if args.has("--test-unequip"):
-		var gs_debug4 := get_node_or_null("/root/GameState")
-		if gs_debug4 != null:
-			gs_debug4.select_character(0)
-		get_tree().create_timer(2.0).timeout.connect(_start_game)
-		return
-	if args.has("--test-live"):
-		var gs_debug5 := get_node_or_null("/root/GameState")
-		if gs_debug5 != null:
-			gs_debug5.select_character(0)
-		get_tree().create_timer(2.0).timeout.connect(_start_game)
-		return
 	if args.size() >= 2 and args[0] == "--client":
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")
@@ -504,11 +479,13 @@ func _load_saved_ip() -> String:
 	return ""
 
 func _on_net_connected() -> void:
-	_status_label.text = "Conectado!"
+	if _status_label != null:
+		_status_label.text = "Conectado!"
 	get_tree().create_timer(0.3).timeout.connect(_start_game)
 
 func _on_net_failed() -> void:
-	_status_label.text = "Fallo de conexion"
+	if _status_label != null:
+		_status_label.text = "Fallo de conexion"
 	_net = null
 
 func _start_game() -> void:
