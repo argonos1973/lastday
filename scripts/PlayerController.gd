@@ -2080,6 +2080,24 @@ func _physics_process(delta: float) -> void:
 		_update_hand_socket()
 		_update_head_worn_items()
 		_update_interaction_prompt()
+		# Align sleeping model vertically so it stays on top of bed
+		if third_person_model != null:
+			var sleep_character: Node3D = third_person_model
+			var sleep_skel := _find_skeleton(sleep_character)
+			if sleep_skel != null:
+				sleep_skel.force_update_all_bone_transforms()
+				var min_foot_model_y := 1000000.0
+				for i in range(sleep_skel.get_bone_count()):
+					var bn := sleep_skel.get_bone_name(i)
+					if bn.find("Foot") >= 0 or bn.find("Toe") >= 0 or bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0:
+						var bone_world := sleep_skel.global_transform * sleep_skel.get_bone_global_pose(i).origin
+						var bone_model := sleep_character.to_local(bone_world)
+						if bone_model.y < min_foot_model_y:
+							min_foot_model_y = bone_model.y
+				if min_foot_model_y < 999999.0:
+					var rest_foot_y := -third_person_ground_offset + 0.086
+					var sleep_target_y := third_person_ground_offset + (rest_foot_y - min_foot_model_y)
+					sleep_character.position = sleep_character.position.lerp(Vector3(0.0, sleep_target_y, 0.0), delta * 10.0)
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
 			camera.position = camera.position.lerp(sleep_cam_pos, delta * 5.0)
