@@ -27,14 +27,14 @@ const SOURCES := {
 	"RifleAimIdleExternal": "res://assets/animations/Rifle Aiming Idle.glb",
 	"RifleWalkExternal": "res://assets/animations/Walk With Rifle.glb",
 	"RifleRunExternal": "res://assets/animations/Rifle Run.glb",
-	"RifleSitExternal": "res://assets/animations/Rifle Kneel Idle.fbx",
-	"RifleProneExternal": "res://assets/animations/Prone Idle.fbx",
-	"RifleGetupExternal": "res://assets/animations/Rifle Prone To Kneel.fbx",
-	"RifleSitFireExternal": "res://assets/animations/Fire Rifle.fbx",
-	"RifleProneFireExternal": "res://assets/animations/Prone Firing Rifle.fbx",
-	"CrouchTurnLeftExternal": "res://assets/animations/Crouching Turn 90 Left.fbx",
-	"CrouchTurnRightExternal": "res://assets/animations/Crouching Turn 90 Right.fbx",
-	"RifleStandupExternal": "res://assets/animations/Rifle Kneel To Stand.fbx",
+	"RifleSitExternal": "res://assets/animations/Rifle Kneel Idle.glb",
+	"RifleProneExternal": "res://assets/animations/Prone Idle.glb",
+	"RifleGetupExternal": "res://assets/animations/Rifle Prone To Kneel.glb",
+	"RifleSitFireExternal": "res://assets/animations/Fire Rifle.glb",
+	"RifleProneFireExternal": "res://assets/animations/Prone Firing Rifle.glb",
+	"CrouchTurnLeftExternal": "res://assets/animations/Crouching Turn 90 Left.glb",
+	"CrouchTurnRightExternal": "res://assets/animations/Crouching Turn 90 Right.glb",
+	"RifleStandupExternal": "res://assets/animations/Rifle Kneel To Stand.glb",
 }
 
 const OUTPUT := "res://assets/animations/third_person_animations.res"
