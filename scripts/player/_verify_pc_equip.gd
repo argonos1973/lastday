@@ -19,24 +19,24 @@ func _run() -> void:
 
 	var ok := true
 	# torso
-	p.equip_clothing("Chaqueta survival")
-	var torso = p._survival_cloth_nodes.get("cloth_torso")
+	p.equip_clothing("Chaqueta militar")
+	var torso = p._survival_cloth_nodes.get("soldier_torso")
 	var tops = p._survival_body_nodes.get("Tops")
 	if torso != null and torso.visible:
-		print("OK  equip Chaqueta -> cloth_torso visible")
+		print("OK  equip Chaqueta militar -> soldier_torso visible")
 	else:
-		print("FAIL cloth_torso not visible after equip"); ok = false
+		print("FAIL soldier_torso not visible after equip"); ok = false
 	if tops != null and not tops.visible:
 		print("OK  default Tops hidden")
 	else:
 		print("FAIL Tops still visible"); ok = false
 
-	p.equip_clothing("Vaqueros survival")
-	var legs = p._survival_cloth_nodes.get("cloth_legs")
+	p.equip_clothing("Pantalones militares")
+	var legs = p._survival_cloth_nodes.get("soldier_legs")
 	if legs != null and legs.visible:
-		print("OK  equip Vaqueros -> cloth_legs visible")
+		print("OK  equip Pantalones militares -> soldier_legs visible")
 	else:
-		print("FAIL cloth_legs not visible"); ok = false
+		print("FAIL soldier_legs not visible"); ok = false
 
 	p.equip_clothing("Botas survival")
 	var feet = p._survival_cloth_nodes.get("cloth_feet")

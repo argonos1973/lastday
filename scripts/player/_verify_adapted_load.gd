@@ -25,7 +25,7 @@ func _init() -> void:
 	print("OK  MeshInstance3D nodes (", meshes.size(), "):")
 	for m in meshes:
 		print("    - '", m.name, "' visible=", m.visible)
-	var wanted := ["cloth_torso", "cloth_legs", "cloth_hands", "cloth_feet", "Tops", "Bottoms", "Shoes", "Body"]
+	var wanted := ["cloth_hands", "cloth_feet", "Tops", "Bottoms", "Shoes", "Body"]
 	for w in wanted:
 		var found := false
 		for m in meshes:

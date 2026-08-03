@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cn5r7bink1jxy"
-path.s3tc="res://.godot/imported/player_with_clothes_Soldier_Body_diffuse.png-055ffc5f69b92a1d57b96f43d8636d52.s3tc.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Soldier_Body_diffuse.png-4cd18e38fa60b27f019996d05c10becf.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Soldier_Body_diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_diffuse.png-055ffc5f69b92a1d57b96f43d8636d52.s3tc.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Soldier_Body_diffuse.png"
+dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_diffuse.png-4cd18e38fa60b27f019996d05c10becf.s3tc.ctex"]
 
 [params]
 

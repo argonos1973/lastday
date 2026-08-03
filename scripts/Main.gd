@@ -161,7 +161,6 @@ const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabin
 const POLY_EQUIPMENT_DIR := "res://assets/external/polyhaven/"
 const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
-const POLY_LIFE_JACKET_MODEL := POLY_EQUIPMENT_DIR + "life_jacket/life_jacket_1k.gltf"
 const ROOT_GLB_DIR := "res://assets/external/realistic/root_glb/"
 const TEX_DIR := "res://assets/external/textures/"
 const TEX_PLASTER_DIFF := TEX_DIR + "plaster_brick_01/plaster_brick_01_diff_4k.jpg"
@@ -2376,7 +2375,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Chaqueta survival", "Vaqueros survival", "Botas survival"]
+	var lay_flat := item_name in ["Botas survival"]
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	if lay_flat:
@@ -2463,20 +2462,6 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
 					return [POLY_FISHERMANS_HAT_MODEL]
-				"Chaleco salvavidas":
-					return [POLY_LIFE_JACKET_MODEL]
-				"Chaqueta de abrigo":
-					return [POLY_LIFE_JACKET_MODEL]
-				"Camiseta":
-					return ["res://assets/characters/adapted/pickup_default_tops.glb"]
-				"Pantalones":
-					return ["res://assets/characters/adapted/pickup_default_bottoms.glb"]
-				"Zapatillas":
-					return ["res://assets/characters/adapted/pickup_default_shoes.glb"]
-				"Chaqueta survival":
-					return ["res://assets/characters/adapted/pickup_cloth_torso.glb"]
-				"Vaqueros survival":
-					return ["res://assets/characters/adapted/pickup_cloth_legs.glb"]
 				"Guantes survival":
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Botas survival":
@@ -2526,20 +2511,12 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 0.0005
 		"clothing":
 			match item_name:
-				"Chaleco salvavidas":
-					return 0.8
-				"Chaqueta de abrigo":
-					return 0.8
 				"Camiseta":
 					return 0.5
 				"Pantalones":
 					return 0.5
 				"Zapatillas":
 					return 0.7
-				"Chaqueta survival":
-					return 0.5
-				"Vaqueros survival":
-					return 0.5
 				"Guantes survival":
 					return 1.2
 				"Botas survival":
@@ -3435,8 +3412,6 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "surv_jacket", "name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
-		{"id": "surv_jeans", "name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
 		{"id": "soldier_torso", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
@@ -3454,6 +3429,37 @@ func _create_loose_survival_pickups() -> void:
 	for pickup in pickups:
 		pickup["pos"] = _find_safe_loot_pos()
 		_create_pickup_item(pickup)
+	# Place sombrero de pescador and rifle near each spawn zone
+	for i in range(_spawn_zones.size()):
+		var sp: Vector3 = _spawn_zones[i]
+		var hat_data := {
+			"id": "spawn_hat_%d" % i,
+			"name": "Sombrero de pescador",
+			"type": "clothing",
+			"weight": 0.2,
+			"qty": 1,
+			"use": 0.07,
+			"paths": [POLY_FISHERMANS_HAT_MODEL],
+			"scale": 1.0,
+			"rot": Vector3(0, 0, 0),
+			"color": Color(0.3, 0.25, 0.15),
+			"pos": sp + Vector3(1.5, 0.06, 0.0),
+		}
+		_create_pickup_item(hat_data)
+		var rifle_data := {
+			"id": "spawn_rifle_%d" % i,
+			"name": "Rifle francotirador",
+			"type": "weapon_rifle",
+			"weight": 3.5,
+			"qty": 1,
+			"use": 0.0,
+			"paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"],
+			"scale": 0.068,
+			"rot": Vector3(0, 30, 0),
+			"color": Color(0.25, 0.22, 0.15),
+			"pos": sp + Vector3(-1.5, 0.06, 0.0),
+		}
+		_create_pickup_item(rifle_data)
 
 func _create_house_loot() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
@@ -3465,8 +3471,6 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
-		{"name": "Chaqueta survival", "type": "clothing", "weight": 1.6, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_cloth_torso.glb"], "scale": 0.5, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.20, 0.16, 0.10)},
-		{"name": "Vaqueros survival", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_cloth_legs.glb"], "scale": 0.5, "rot": Vector3(0, -15, 0), "flat": true, "color": Color(0.14, 0.18, 0.26)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
 		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
@@ -4052,21 +4056,6 @@ func handle_world_action(action, actor) -> void:
 					actor.notice.emit("Sigues el rastro y consigues carne.")
 			else:
 				actor.notice.emit("El animal escapa entre la maleza.")
-		"coat":
-			var coat_item = ItemScript.create("Chaqueta de abrigo", "clothing", 1.1, 1, 0.65)
-			if actor.has_method("equip_clothing"):
-				_play_actor_action(actor, "pickup", 0.8)
-				if not actor.inventory.add_item(coat_item):
-					return
-				actor.equip_clothing("Chaqueta de abrigo")
-				actor.notice.emit("Encuentras una chaqueta vieja y te la pones.")
-				_hide_action_visual(action)
-				action.mark_depleted()
-				_save_world_change_silent()
-				if net != null and net.is_connected and not net.is_host:
-					net.item_picked_up.rpc_id(1, action.action_id)
-			else:
-				_finish_pickup_action(action, actor, coat_item, "Encuentras una chaqueta vieja. Usala desde el inventario.")
 		"axe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0), "Recoges un hacha. Ya puedes talar arboles.")
 		"matches_tool":

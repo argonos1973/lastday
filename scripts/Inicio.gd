@@ -39,6 +39,10 @@ func _ready() -> void:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
 	var args := OS.get_cmdline_user_args()
+	if args.has("--auto-single"):
+		# Auto-start single player after a short delay so UI is ready
+		get_tree().create_timer(1.0).timeout.connect(_on_single_player)
+		return
 	if args.size() >= 2 and args[0] == "--client":
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")

@@ -29,8 +29,8 @@ func _init() -> void:
 
 	# equip each survival garment and verify visibility + body hiding
 	var cases := {
-		"Chaqueta survival": {"mesh": "cloth_torso", "hide": "Tops"},
-		"Vaqueros survival": {"mesh": "cloth_legs", "hide": "Bottoms"},
+		"Chaqueta militar": {"mesh": "soldier_torso", "hide": "Tops"},
+		"Pantalones militares": {"mesh": "soldier_legs", "hide": "Bottoms"},
 		"Guantes survival": {"mesh": "cloth_hands", "hide": ""},
 		"Botas survival": {"mesh": "cloth_feet", "hide": "Shoes"},
 	}
@@ -50,11 +50,11 @@ func _init() -> void:
 				print("OK  default '%s' hidden while %s worn" % [c["hide"], item_name])
 
 	# unequip torso restores the default Tops
-	pc._wear_survival_clothing("Chaqueta survival", false)
-	var torso: MeshInstance3D = pc._survival_cloth_nodes.get("cloth_torso")
+	pc._wear_survival_clothing("Chaqueta militar", false)
+	var torso: MeshInstance3D = pc._survival_cloth_nodes.get("soldier_torso")
 	var tops: MeshInstance3D = pc._survival_body_nodes.get("Tops")
 	if torso != null and torso.visible:
-		print("FAIL: cloth_torso still visible after unequip"); ok = false
+		print("FAIL: soldier_torso still visible after unequip"); ok = false
 	if tops != null and not tops.visible:
 		print("FAIL: Tops not restored after unequip"); ok = false
 	else:

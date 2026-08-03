@@ -3,7 +3,7 @@ extends SceneTree
 # can confirm they are laid flat (small Y height) and pick sensible world scales.
 
 func _init() -> void:
-	for n in ["pickup_cloth_torso", "pickup_cloth_legs", "pickup_cloth_feet"]:
+	for n in ["pickup_cloth_feet"]:
 		var path := "res://assets/characters/adapted/%s.glb" % n
 		var doc := GLTFDocument.new()
 		var state := GLTFState.new()

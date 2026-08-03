@@ -21,7 +21,6 @@ const REAL_PICKAXE_MODEL := "res://assets/external/kenney_survival_kit/Models/GL
 const REAL_BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
 const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
-const POLY_LIFE_JACKET_MODEL := "res://assets/external/polyhaven/life_jacket/life_jacket_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
 # Wearable visuals placed on the body relative to its measured bounding box, so
@@ -31,8 +30,7 @@ const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves
 #   forward: shift toward the front of the body (fraction of depth)
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
-	"Chaleco salvavidas": {"path": POLY_LIFE_JACKET_MODEL, "frac_y": 0.70, "size": 0.30, "yaw": 180.0, "forward": 0.05},
-	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.96, "size": 0.12, "yaw": 0.0, "align": "bottom"},
+	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.07, "yaw": 0.0, "align": "bottom"},
 	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
@@ -44,8 +42,6 @@ const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
-	"Chaqueta survival": {"mesh": "cloth_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
-	"Vaqueros survival": {"mesh": "cloth_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
 	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
@@ -72,11 +68,9 @@ const DEFAULT_CLOTHING := {
 
 const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
-	"Pantalones": [],
+	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
-	"Chaqueta survival": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
-	"Vaqueros survival": ["Desnudo_legs"],
 	"Pantalones militares": ["Desnudo_legs"],
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
@@ -95,15 +89,11 @@ const CLOTHING_COVERED_ZONES := {
 	"Camiseta": ["torso"],
 	"Pantalones": ["cadera", "piernas"],
 	"Zapatillas": ["pies"],
-	"Chaqueta survival": ["torso", "brazos_superiores"],
 	"Chaqueta militar": ["torso", "brazos_superiores"],
-	"Vaqueros survival": ["cadera", "piernas"],
 	"Pantalones militares": ["cadera", "piernas"],
 	"Guantes survival": ["manos"],
 	"Guantes militares": ["manos"],
 	"Botas survival": ["pies"],
-	"Chaqueta de abrigo": ["torso", "brazos_superiores"],
-	"Chaleco salvavidas": ["torso"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
 }
@@ -113,15 +103,11 @@ const CLOTHING_SLOTS := {
 	"Camiseta": "torso",
 	"Pantalones": "legs",
 	"Zapatillas": "feet",
-	"Chaqueta survival": "torso",
-	"Vaqueros survival": "legs",
 	"Guantes survival": "hands",
 	"Botas survival": "feet",
 	"Chaqueta militar": "torso",
 	"Pantalones militares": "legs",
 	"Guantes militares": "hands",
-	"Chaqueta de abrigo": "torso",
-	"Chaleco salvavidas": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
 }
@@ -132,15 +118,11 @@ const CLOTHING_WARMTH := {
 	"Camiseta": 0.05,
 	"Pantalones": 0.08,
 	"Zapatillas": 0.05,
-	"Chaqueta survival": 0.22,
-	"Vaqueros survival": 0.16,
 	"Guantes survival": 0.08,
 	"Botas survival": 0.18,
 	"Chaqueta militar": 0.28,
 	"Pantalones militares": 0.20,
 	"Guantes militares": 0.10,
-	"Chaqueta de abrigo": 0.45,
-	"Chaleco salvavidas": 0.06,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
 }
@@ -189,7 +171,7 @@ const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION := "RifleProneExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION := "RifleGetupExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION := "RifleSitFireExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION := "RifleProneFireExternal"
-const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.65, 5.15)
+const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
 const MIXAMO_GROUND_CORRECTION := 0.38
@@ -228,7 +210,7 @@ var inventory
 var equipment
 var hands
 var camera: Camera3D
-var _camera_fov := 75.0
+var _camera_fov := 85.0
 var audio_listener: AudioListener3D
 var raycast
 var flashlight: SpotLight3D
@@ -244,6 +226,8 @@ var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
 var _hand_skeleton: Skeleton3D = null
 var _hand_bone_idx: int = -1
+var _head_skeleton: Skeleton3D = null
+var _head_bone_idx: int = -1
 var _backpack_rest_pos: Vector3 = Vector3(0.0, -0.05, -0.18)
 var _backpack_crouch_offset: Vector3 = Vector3(0.0, -0.12, -0.06)
 var _backpack_action_offset: Vector3 = Vector3(0.0, -0.18, -0.10)
@@ -472,6 +456,13 @@ func setup_as_puppet() -> void:
 				for bone_name in ["mixamorig:RightHand", "mixamorig:LeftHand", "mixamorig_RightHand", "mixamorig_LeftHand", "RightHand", "LeftHand"]:
 					_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 					if _hand_bone_idx != -1:
+						break
+			_head_skeleton = _spine_skeleton
+			_head_bone_idx = -1
+			if _head_skeleton != null:
+				for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head"]:
+					_head_bone_idx = _head_skeleton.find_bone(bone_name)
+					if _head_bone_idx != -1:
 						break
 	set_process(true)
 	set_process_input(false)
@@ -766,6 +757,7 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
 		_update_backpack_socket()
+		_update_head_worn_items()
 		if is_dead:
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
@@ -791,25 +783,25 @@ func _process(delta: float) -> void:
 		var char_right := global_basis.x.normalized()
 		var char_up := global_basis.y.normalized()
 		if _frontal_camera:
-			camera.global_position = global_position + char_forward * 3.0 + char_up * 2.6
+			camera.global_position = global_position + char_forward * 6.5 + char_up * 2.8
 			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = 40.0
+			camera.fov = _camera_fov
 		elif _side_camera:
-			camera.global_position = global_position + char_right * 4.0 + char_up * 1.6
+			camera.global_position = global_position + char_right * 6.5 + char_up * 2.8
 			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = 40.0
+			camera.fov = _camera_fov
 		elif _left_camera:
-			camera.global_position = global_position - char_right * 4.0 + char_up * 1.6
+			camera.global_position = global_position - char_right * 6.5 + char_up * 2.8
 			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = 40.0
+			camera.fov = _camera_fov
 		elif _rear_camera:
-			camera.global_position = global_position - char_forward * 3.0 + char_up * 2.6
+			camera.global_position = global_position - char_forward * 6.5 + char_up * 2.8
 			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = 40.0
+			camera.fov = _camera_fov
 		elif _top_camera:
 			camera.global_position = global_position + char_up * 8.0
 			camera.look_at(global_position, char_forward)
-			camera.fov = 50.0
+			camera.fov = _camera_fov
 
 func _ready() -> void:
 	if is_puppet:
@@ -1213,6 +1205,7 @@ func unequip_clothing(item_name: String) -> void:
 		var worn := third_person_model.get_node_or_null("Worn_" + item_name)
 		if worn != null:
 			worn.free()
+		_head_worn_rel.erase("Worn_" + item_name)
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
@@ -1252,6 +1245,25 @@ func unequip_clothing(item_name: String) -> void:
 				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
 				if skin_mi != null:
 					skin_mi.visible = false
+	# Restore Body_* parts and survival clothing for still-equipped DEFAULT_CLOTHING items
+	for slot_key in ["legs", "feet", "torso"]:
+		var slot_item := str(_equipped_slots.get(slot_key, ""))
+		if DEFAULT_CLOTHING.has(slot_item):
+			var body_name: String = DEFAULT_CLOTHING[slot_item]
+			var body_mi: MeshInstance3D = _survival_body_nodes.get(body_name)
+			if body_mi != null:
+				body_mi.visible = true
+			var body_part: String = "Body_" + slot_key
+			var hide_it := false
+			if DEFAULT_BODY_HIDES.has(slot_item):
+				for hn in DEFAULT_BODY_HIDES[slot_item]:
+					if str(hn) == body_part:
+						hide_it = true
+						break
+			if not hide_it:
+				var bpmi: MeshInstance3D = _find_mesh_in_third_person(body_part)
+				if bpmi != null:
+					bpmi.visible = true
 	# Custom character: hide the clothing mesh, show Desnudo_* for uncovered zones
 	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
 	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
@@ -1576,7 +1588,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 
 	print("[CLOTHING-INIT] === Starting survival/soldier clothing cloning ===")
 	# --- Clone survival clothing meshes (cloth_*) from player_with_clothes.glb ---
-	var survival_mesh_names := ["cloth_torso", "cloth_legs", "cloth_hands", "cloth_feet"]
+	var survival_mesh_names := ["cloth_hands", "cloth_feet"]
 	var src_survival_meshes: Dictionary = {}
 	var sstack: Array = [src_scene]
 	while not sstack.is_empty():
@@ -1780,6 +1792,16 @@ func _wear_clothing_visual(item_name: String) -> void:
 			mat.roughness = 0.9
 			mat.metallic = 0.0
 			mi.material_override = mat
+	# If this is a head-slot item and we have a head bone, store the relative
+	# transform so _update_head_worn_items() can follow the bone each frame.
+	if CLOTHING_SLOTS.get(item_name, "") == "head" and _head_skeleton != null and _head_bone_idx >= 0:
+		var bone_pose := _head_skeleton.get_bone_global_pose(_head_bone_idx)
+		var skel_global := _head_skeleton.global_transform
+		var bone_world := skel_global * bone_pose
+		var local_to_model := third_person_model.global_transform.affine_inverse()
+		var bone_local := local_to_model * bone_world
+		_head_worn_rel[worn_name] = bone_local.affine_inverse() * node.transform
+		_update_head_worn_items()
 
 # Body AABB collected directly from get_aabb() without going through
 # global_transform.  This is correct for Mixamo GLTF models because the
@@ -2056,6 +2078,7 @@ func _physics_process(delta: float) -> void:
 		stats.do_sleep(delta)
 		_update_backpack_socket()
 		_update_hand_socket()
+		_update_head_worn_items()
 		_update_interaction_prompt()
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
@@ -2147,6 +2170,7 @@ func _physics_process(delta: float) -> void:
 	_update_flashlight(delta)
 	_update_backpack_socket()
 	_update_hand_socket()
+	_update_head_worn_items()
 
 func _update_backpack_socket() -> void:
 	if _spine_skeleton == null or _spine_bone_idx < 0 or third_person_back_item_root == null:
@@ -2170,6 +2194,7 @@ func _update_backpack_socket() -> void:
 	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
 
 var _hand_socket_offset := Vector3(0.10, 0.0, 0.0)
+var _head_worn_rel: Dictionary = {}
 
 func _update_hand_socket() -> void:
 	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
@@ -2184,6 +2209,30 @@ func _update_hand_socket() -> void:
 	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset
 	var euler := bone_local.basis.get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+# Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
+# animations (walking, looking up/down, sitting, etc.) instead of staying
+# fixed relative to the character root.
+func _update_head_worn_items() -> void:
+	if _head_worn_rel.is_empty() or third_person_model == null:
+		return
+	if _head_skeleton == null or _head_bone_idx < 0 or not is_instance_valid(_head_skeleton):
+		return
+	var bone_pose := _head_skeleton.get_bone_global_pose(_head_bone_idx)
+	var skel_global := _head_skeleton.global_transform
+	var bone_world := skel_global * bone_pose
+	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var bone_local := local_to_model * bone_world
+	var stale: Array = []
+	for worn_name in _head_worn_rel.keys():
+		var node := third_person_model.get_node_or_null(String(worn_name))
+		if node == null or not is_instance_valid(node):
+			stale.append(worn_name)
+			continue
+		var rel: Transform3D = _head_worn_rel[worn_name]
+		node.transform = bone_local * rel
+	for worn_name in stale:
+		_head_worn_rel.erase(worn_name)
 
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
@@ -2445,6 +2494,13 @@ func _create_third_person_item_slots() -> void:
 			_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 			if _hand_bone_idx != -1:
 				break
+	_head_skeleton = _spine_skeleton
+	_head_bone_idx = -1
+	if _head_skeleton != null:
+		for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head"]:
+			_head_bone_idx = _head_skeleton.find_bone(bone_name)
+			if _head_bone_idx != -1:
+				break
 
 	var head_socket := _create_equipment_socket("HeadSocket", Vector3(0.0, 1.72, -0.02), Vector3.ZERO)
 	var chest_socket := _create_equipment_socket("ChestSocket", Vector3(0.0, 1.24, -0.18), Vector3.ZERO)
@@ -2492,7 +2548,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 			debug_anim_root = third_person_animation_player
 		var debug_skel_path := str(debug_anim_root.get_path_to(debug_skel))
 	var lib: AnimationLibrary = AnimationLibrary.new()
-	var skip_post_process := [THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, THIRD_PERSON_EXTERNAL_SIT_ANIMATION]
+	var skip_post_process := [THIRD_PERSON_EXTERNAL_SLEEP_ANIMATION, THIRD_PERSON_EXTERNAL_SIT_ANIMATION, THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION, THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION, THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION, THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION, THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION]
 	for anim_name in THIRD_PERSON_ANIMATION_LIBRARY.get_animation_list():
 		var src_anim: Animation = THIRD_PERSON_ANIMATION_LIBRARY.get_animation(anim_name)
 		if src_anim == null:
@@ -3864,9 +3920,6 @@ func drop_inventory_item(index: int) -> void:
 	if item_type == "backpack":
 		equipped_backpack = ""
 		_recalculate_carry_capacity()
-	if item_name == "Chaqueta de abrigo" and not equipped_clothing.is_empty():
-		equipped_clothing = ""
-		_recalculate_carry_capacity()
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
 	var drop_qty := int(item.quantity) if item.has_method("get") and "quantity" in item else 1
@@ -4276,7 +4329,8 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 
 	# Shift the whole rifle along the real barrel line (from muzzle toward stock)
 	# without changing rotation or scale. Direction is taken from the actual Muzzle/Stock markers.
-	if _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
+	# Skip when sitting or prone to avoid the rifle sinking into the ground.
+	if not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
 		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
 		_rifle_root.global_position += barrel_dir * 0.40
 
@@ -5137,14 +5191,14 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
-	var crouch_lift := 0.25 if is_crouching else 0.0
+	var crouch_lift := 0.0
 	var sit_drop := 0.0
 	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink * 0.55
-	if third_person_model != null and (third_person_action_timer > 0.0 or is_sitting or is_prone):
+	if third_person_model != null and (third_person_action_timer > 0.0 or is_sitting or is_prone or is_crouching):
 		var skel := _find_skeleton(third_person_model)
 		if skel != null:
 			skel.force_update_all_bone_transforms()
-			if is_sitting or is_prone:
+			if (is_sitting or is_prone) and not ((is_sitting or is_prone) and _has_rifle_equipped()):
 				# Align by hip/pelvis bone — feet are off ground when sitting
 				var hip_model_y := 0.0
 				var found_hip := false
@@ -5157,9 +5211,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 						found_hip = true
 						break
 				if found_hip:
-					# Target hip height above ground: sitting ~0.45, prone ~0.15
-					var target_hip_ground_y := 0.45 if is_sitting else 0.15
-					# model.position.y + hip_model_y = target_hip_ground_y (in world space relative to player)
+					# Target hip height above ground: sitting ~0.6, prone ~0.2
+					var has_rifle := _has_rifle_equipped()
+					var target_hip_ground_y := (0.6 if has_rifle else 0.45) if is_sitting else (0.2 if has_rifle else 0.15)
 					target_y = target_hip_ground_y - hip_model_y
 			else:
 				# Action timer (transitions): align by feet
@@ -5172,7 +5226,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 						if bone_model.y < min_foot_model_y:
 							min_foot_model_y = bone_model.y
 				if min_foot_model_y < 999999.0:
-					var rest_foot_y := -third_person_ground_offset + 0.06
+					var rest_foot_y := -third_person_ground_offset + 0.086
 					target_y = third_person_ground_offset + (rest_foot_y - min_foot_model_y)
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
@@ -5199,13 +5253,24 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		elif third_person_action_timer <= 0.0:
 			third_person_action_animation = ""
 			_is_firing = false
-		if is_prone and third_person_action_timer <= 0.0 and not _rifle_prone_animation.is_empty():
-			if third_person_animation_player.current_animation != _rifle_prone_animation:
-				third_person_animation_player.play(_rifle_prone_animation, 0.1)
-			third_person_animation_player.speed_scale = 1.0
-			return
+		if is_prone and third_person_action_timer <= 0.0:
+			var prone_anim := _rifle_prone_animation
+			if _has_rifle_equipped() and not _rifle_prone_animation.is_empty():
+				prone_anim = _rifle_prone_animation
+			elif _has_rifle_equipped() and not _rifle_aim_idle_animation.is_empty():
+				prone_anim = _rifle_aim_idle_animation
+			if not prone_anim.is_empty():
+				if third_person_animation_player.current_animation != prone_anim:
+					third_person_animation_player.play(prone_anim, 0.1)
+				third_person_animation_player.speed_scale = 1.0
+				return
 		if is_sitting and third_person_action_timer <= 0.0:
-			var sit_anim := _rifle_sit_animation if _has_rifle_equipped() and not _rifle_sit_animation.is_empty() else third_person_sit_animation
+			var sit_anim := third_person_sit_animation
+			if _has_rifle_equipped():
+				if not _rifle_sit_animation.is_empty():
+					sit_anim = _rifle_sit_animation
+				elif not _rifle_aim_idle_animation.is_empty():
+					sit_anim = _rifle_aim_idle_animation
 			if not sit_anim.is_empty():
 				if third_person_animation_player.current_animation != sit_anim:
 					third_person_animation_player.play(sit_anim, 0.1)
@@ -5226,12 +5291,12 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					target_animation = _rifle_walk_animation
 				else:
 					target_animation = third_person_walk_animation
+			elif is_crouching and not _rifle_sit_animation.is_empty():
+				target_animation = _rifle_sit_animation
 			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
 				target_animation = _rifle_left_turn_animation
 			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
 				target_animation = _rifle_right_turn_animation
-			elif is_crouching and not third_person_sneak_animation.is_empty():
-				target_animation = third_person_sneak_animation
 			elif not _rifle_idle_animation.is_empty():
 				target_animation = _rifle_idle_animation
 			elif third_person_has_real_idle:
@@ -5277,6 +5342,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_right_turn_animation
 			else:
 				target_animation = third_person_right_turn_animation
+		elif is_crouching and not _rifle_idle_animation.is_empty():
+			target_animation = _rifle_idle_animation
 		elif is_crouching and not third_person_sneak_animation.is_empty():
 			target_animation = third_person_sneak_animation
 		elif low_health:
@@ -6208,7 +6275,7 @@ func _debug_clothing_test() -> void:
 	# Add military and survival clothing to inventory for testing
 	if inventory != null:
 		for test_item in ["Chaqueta militar", "Pantalones militares", "Guantes militares",
-				"Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival"]:
+				"Guantes survival", "Botas survival"]:
 			var found := false
 			for inv_item in inventory.items:
 				if str(inv_item.item_name) == test_item:
@@ -6230,7 +6297,7 @@ func _debug_clothing_test() -> void:
 	_debug_mesh_aabb()
 	var all_items := [
 		"Chaqueta militar", "Pantalones militares", "Guantes militares",
-		"Chaqueta survival", "Vaqueros survival", "Guantes survival", "Botas survival",
+		"Guantes survival", "Botas survival",
 	]
 	var step := 1
 	for item_name in all_items:

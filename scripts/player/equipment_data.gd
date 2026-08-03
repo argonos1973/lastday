@@ -4,7 +4,7 @@ class_name ClothingEquipmentData
 ## Static definitions for the survival-character equipment, adapted to the Mixamo
 ## rig by the Blender pipeline (clothing_pipeline/). Two kinds of equipment:
 ##
-##  * CLOTHING (deformable): cloth_torso / cloth_legs / cloth_hands / cloth_feet.
+##  * CLOTHING (deformable): cloth_hands / cloth_feet.
 ##    These meshes are skinned to the SAME Mixamo Skeleton3D inside
 ##    player_with_clothes.glb, so they deform with every animation automatically.
 ##    Equipping/unequipping is just toggling MeshInstance3D.visible -- NEVER use
@@ -24,16 +24,6 @@ const GEAR_MANIFEST_PATH := "res://assets/characters/adapted/gear_manifest.json"
 ## hide while the garment is worn (prevents the default Mixamo clothes clipping
 ## through the survival garment).
 const CLOTHING := {
-	"torso": {
-		"mesh": "cloth_torso",
-		"label": "Chaqueta",
-		"hides_body": ["Tops"],
-	},
-	"legs": {
-		"mesh": "cloth_legs",
-		"label": "Vaqueros",
-		"hides_body": ["Bottoms"],
-	},
 	"hands": {
 		"mesh": "cloth_hands",
 		"label": "Guantes",
