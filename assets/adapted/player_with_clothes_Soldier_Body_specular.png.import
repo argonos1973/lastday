@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://1dg0xfyfimny"
-path="res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"
+path="res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-a6be9d193ef5e13bdbe50d29d5b6bfab.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Soldier_Body_specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Soldier_Body_specular.png"
+dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-a6be9d193ef5e13bdbe50d29d5b6bfab.ctex"]
 
 [params]
 
