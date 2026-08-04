@@ -30,7 +30,7 @@ const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves
 #   forward: shift toward the front of the body (fraction of depth)
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
-	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.07, "yaw": 0.0, "align": "bottom"},
+	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
 	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
@@ -125,6 +125,12 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
+}
+
+# Heat protection: reduces body temperature gain in hot environments.
+# Hats and headwear shield from the sun; other clothing has no heat protection.
+const CLOTHING_HEAT_PROTECTION := {
+	"Sombrero de pescador": 0.35,
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
@@ -672,6 +678,14 @@ func puppet_set_rifle(has_rifle: bool) -> void:
 		return
 	_has_rifle = has_rifle
 
+func puppet_set_state_flags(sleeping: bool, sitting: bool, prone: bool, crouching: bool) -> void:
+	if not is_puppet:
+		return
+	is_sleeping = sleeping
+	is_sitting = sitting
+	is_prone = prone
+	is_crouching = crouching
+
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
 		return
@@ -778,6 +792,8 @@ func _process(delta: float) -> void:
 		if skel != null:
 			_update_rifle_ik(skel, delta)
 	# Camera overrides
+	if camera != null and _is_aiming and not (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
+		camera.rotation.x = _pitch
 	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
 		var char_forward := -global_basis.z.normalized()
 		var char_right := global_basis.x.normalized()
@@ -1174,6 +1190,7 @@ func equip_clothing(item_name: String) -> void:
 					skin_mi.visible = false
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
+	_recalculate_heat_protection()
 	_sync_held_item()
 	if inventory != null:
 		inventory.changed.emit()
@@ -1213,6 +1230,7 @@ func unequip_clothing(item_name: String) -> void:
 		equipped_clothing = ""
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
+	_recalculate_heat_protection()
 	# Hide _full_body_mesh, show _head_mesh (face stays visible).
 	# Show Desnudo_* for exposed areas.
 	var hide_legs := not (_equipped_slots.has("legs") and not str(_equipped_slots["legs"]).is_empty())
@@ -1989,6 +2007,17 @@ func _recalculate_warmth() -> void:
 	stats.warmth_bonus = total
 	stats.changed.emit()
 
+func _recalculate_heat_protection() -> void:
+	if stats == null:
+		return
+	var total := 0.0
+	for slot in _equipped_slots:
+		var item_name: String = str(_equipped_slots[slot])
+		if CLOTHING_HEAT_PROTECTION.has(item_name):
+			total += CLOTHING_HEAT_PROTECTION[item_name]
+	stats.heat_protection_bonus = total
+	stats.changed.emit()
+
 func _get_carry_weight_ratio() -> float:
 	if inventory == null or inventory.max_weight <= 0.0:
 		return 0.0
@@ -2095,8 +2124,7 @@ func _physics_process(delta: float) -> void:
 						if bone_model.y < min_foot_model_y:
 							min_foot_model_y = bone_model.y
 				if min_foot_model_y < 999999.0:
-					var rest_foot_y := -third_person_ground_offset + 0.086
-					var sleep_target_y := third_person_ground_offset + (rest_foot_y - min_foot_model_y)
+					var sleep_target_y := 0.086 - min_foot_model_y
 					sleep_character.position = sleep_character.position.lerp(Vector3(0.0, sleep_target_y, 0.0), delta * 10.0)
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
@@ -4104,6 +4132,15 @@ func _traverse_mesh_aabb(node: Node, accumulated: Transform3D, state: Dictionary
 		else:
 			_traverse_mesh_aabb(child, accumulated, state)
 
+func _disable_collision_recursive(node: Node) -> void:
+	if node is CollisionShape3D:
+		(node as CollisionShape3D).disabled = true
+	elif node is CollisionObject3D:
+		(node as CollisionObject3D).collision_layer = 0
+		(node as CollisionObject3D).collision_mask = 0
+	for child in node.get_children():
+		_disable_collision_recursive(child)
+
 func _build_third_person_rifle() -> void:
 	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
 		return
@@ -4146,6 +4183,7 @@ func _build_third_person_rifle() -> void:
 	model.visible = true
 	_rifle_root.add_child(model)
 	_rifle_model = model
+	_disable_collision_recursive(model)
 	# Make all meshes visible and compute AABB in RifleRoot local space
 	# Traverse hierarchy accumulating transforms relative to RifleRoot
 	var stock_z: float = 0.0
@@ -5187,9 +5225,9 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		# Height adapts to stance.
 		var aim_height: float = 1.65
 		if is_crouching:
-			aim_height = 1.25
+			aim_height = 1.35
 		elif is_prone:
-			aim_height = 0.45
+			aim_height = 0.7
 		aim_height += vertical_bob * 0.2
 		# Position the camera at the player's eye level, slightly forward
 		target_position = Vector3(0.0, aim_height + _water_sink, 0.15)
@@ -5212,11 +5250,11 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var crouch_lift := 0.0
 	var sit_drop := 0.0
 	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink * 0.55
-	if third_person_model != null and (third_person_action_timer > 0.0 or is_sitting or is_prone or is_crouching):
+	if third_person_model != null:
 		var skel := _find_skeleton(third_person_model)
 		if skel != null:
 			skel.force_update_all_bone_transforms()
-			if (is_sitting or is_prone) and not ((is_sitting or is_prone) and _has_rifle_equipped()):
+			if is_prone and third_person_action_timer <= 0.0 and not is_crouching:
 				# Align by hip/pelvis bone — feet are off ground when sitting
 				var hip_model_y := 0.0
 				var found_hip := false
@@ -5231,10 +5269,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				if found_hip:
 					# Target hip height above ground: sitting ~0.6, prone ~0.2
 					var has_rifle := _has_rifle_equipped()
-					var target_hip_ground_y := (0.6 if has_rifle else 0.45) if is_sitting else (0.2 if has_rifle else 0.15)
+					var target_hip_ground_y := (0.85 if has_rifle else 0.25) if is_sitting else (0.2 if has_rifle else 0.15)
 					target_y = target_hip_ground_y - hip_model_y
 			else:
-				# Action timer (transitions): align by feet
+				# Standing, crouching, walking, or transitions: align by feet
 				var min_foot_model_y := 1000000.0
 				for i in range(skel.get_bone_count()):
 					var bn := skel.get_bone_name(i)
@@ -5244,8 +5282,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 						if bone_model.y < min_foot_model_y:
 							min_foot_model_y = bone_model.y
 				if min_foot_model_y < 999999.0:
-					var rest_foot_y := -third_person_ground_offset + 0.086
-					target_y = third_person_ground_offset + (rest_foot_y - min_foot_model_y)
+					# Target: feet at ground level (capsule bottom = 0.025)
+					target_y = 0.025 - min_foot_model_y
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
@@ -5309,6 +5347,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					target_animation = _rifle_walk_animation
 				else:
 					target_animation = third_person_walk_animation
+			elif is_crouching and not third_person_sneak_animation.is_empty():
+				target_animation = third_person_sneak_animation
 			elif is_crouching and not _rifle_sit_animation.is_empty():
 				target_animation = _rifle_sit_animation
 			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
@@ -5477,11 +5517,19 @@ func _get_aim_collider():
 	var query := PhysicsRayQueryParameters3D.create(origin, end)
 	query.collide_with_areas = true
 	query.collide_with_bodies = true
-	query.exclude = [self]
+	var exclude_rids: Array[RID] = [self.get_rid()]
+	_collect_child_collision_rids(self, exclude_rids)
+	query.exclude = exclude_rids
 	var result := camera.get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return null
 	return result.get("collider", null)
+
+func _collect_child_collision_rids(node: Node, rids: Array[RID]) -> void:
+	for child in node.get_children():
+		if child is CollisionObject3D:
+			rids.append((child as CollisionObject3D).get_rid())
+		_collect_child_collision_rids(child, rids)
 
 func _find_interactable_owner(node):
 	var cursor = node
@@ -5770,8 +5818,8 @@ func _toggle_aim() -> void:
 	if _is_aiming:
 		_create_scope_overlay()
 		if camera != null:
-			camera.fov = 20.0
-		mouse_sensitivity = 0.0008
+			camera.fov = 45.0
+		mouse_sensitivity = 0.0012
 		if third_person_model != null:
 			third_person_model.visible = false
 	else:
@@ -5866,8 +5914,32 @@ func _shoot_rifle() -> void:
 	_play_shoot_sound()
 	var vp := camera.get_viewport()
 	var aim_point := vp.get_visible_rect().size * 0.5 + _aim_screen_offset
-	var ray_origin := camera.project_ray_origin(aim_point)
-	var ray_dir := camera.project_ray_normal(aim_point)
+	var cam_ray_origin := camera.project_ray_origin(aim_point)
+	var cam_ray_dir := camera.project_ray_normal(aim_point)
+	var space_state := get_world_3d().direct_space_state
+	var exclude_arr: Array = [self.get_rid()]
+	for child in find_children("*", "CollisionObject3D", true, false):
+		exclude_arr.append(child.get_rid())
+	# In third-person, the camera is behind/above the player. Cast a ray from
+	# the camera through the crosshair to find the intended target point, then
+	# fire the actual damage ray from the player's weapon position toward that
+	# point so nearby ground-level enemies are hit correctly.
+	var cam_query := PhysicsRayQueryParameters3D.create(cam_ray_origin, cam_ray_origin + cam_ray_dir * RIFLE_RANGE)
+	cam_query.exclude = exclude_arr
+	cam_query.collide_with_areas = true
+	cam_query.collide_with_bodies = true
+	var cam_result := space_state.intersect_ray(cam_query)
+	var target_point: Vector3 = cam_ray_origin + cam_ray_dir * RIFLE_RANGE
+	if not cam_result.is_empty():
+		target_point = cam_result["position"]
+	# Weapon origin: player position at chest/shoulder height
+	var weapon_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
+	if is_crouching:
+		weapon_origin = global_position + Vector3(0.0, 1.0, 0.0)
+	elif is_prone:
+		weapon_origin = global_position + Vector3(0.0, 0.3, 0.0)
+	var ray_dir: Vector3 = (target_point - weapon_origin).normalized()
+	var ray_origin: Vector3 = weapon_origin
 	# Realistic spread: wider when moving, narrower when crouching/aiming
 	var spread_deg := 2.0
 	if is_crouching:
@@ -5887,12 +5959,8 @@ func _shoot_rifle() -> void:
 		ray_dir = ray_dir.normalized()
 	# Bullet drop: apply gravity over the trajectory
 	var hit_dist := RIFLE_RANGE
-	var space_state := get_world_3d().direct_space_state
 	# First ray to find hit distance
 	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * RIFLE_RANGE)
-	var exclude_arr: Array = [self.get_rid()]
-	for child in find_children("*", "CollisionObject3D", true, false):
-		exclude_arr.append(child.get_rid())
 	query.exclude = exclude_arr
 	query.collide_with_areas = true
 	query.collide_with_bodies = true

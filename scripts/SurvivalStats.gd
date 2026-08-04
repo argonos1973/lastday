@@ -13,6 +13,7 @@ var energy := 85.0
 var sleep := 100.0
 var body_temperature := 36.6
 var warmth_bonus := 0.0
+var heat_protection_bonus := 0.0
 var wetness := 0.0
 var sick := false
 var sick_timer := 0.0
@@ -76,8 +77,9 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
 	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
-		var heat_retention := 1.0 + protection * 0.8
-		target_temperature += (ambient_temperature - 28.0) * 0.08 * heat_retention
+		var heat_retention: float = 1.0 + protection * 0.8
+		var heat_reduction: float = 1.0 - clamp(heat_protection_bonus, 0.0, 0.8)
+		target_temperature += (ambient_temperature - 28.0) * 0.08 * heat_retention * heat_reduction
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
@@ -148,6 +150,10 @@ func equip_warmth(value: float) -> void:
 	warmth_bonus = value
 	changed.emit()
 
+func equip_heat_protection(value: float) -> void:
+	heat_protection_bonus = value
+	changed.emit()
+
 func to_dict() -> Dictionary:
 	return {
 		"health": health,
@@ -157,6 +163,7 @@ func to_dict() -> Dictionary:
 		"energy": energy,
 		"sleep": sleep,
 		"warmth_bonus": warmth_bonus,
+		"heat_protection_bonus": heat_protection_bonus,
 		"wetness": wetness,
 		"sick": sick,
 		"sick_timer": sick_timer,
@@ -173,6 +180,7 @@ func from_dict(data: Dictionary) -> void:
 	energy = float(data.get("energy", energy))
 	sleep = float(data.get("sleep", sleep))
 	warmth_bonus = float(data.get("warmth_bonus", warmth_bonus))
+	heat_protection_bonus = float(data.get("heat_protection_bonus", heat_protection_bonus))
 	wetness = float(data.get("wetness", wetness))
 	sick = bool(data.get("sick", false))
 	sick_timer = float(data.get("sick_timer", 0.0))

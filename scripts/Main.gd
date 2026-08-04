@@ -1841,6 +1841,40 @@ func _update_server_proxies(delta: float) -> void:
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
 			proxy.set_meta("protection_timer", max(0.0, pt - delta))
+		# Tick survival stats for active connected players (server-authoritative)
+		if not data.get("offline", false) and not proxy.get_meta("proxy_dead", false):
+			var proxy_in_shelter: bool = proxy.get_meta("in_built_shelter", false) or _is_player_in_house(proxy.global_position)
+			var proxy_ambient: float = 20.0
+			if day_cycle != null:
+				proxy_ambient = day_cycle.get_ambient_temperature()
+			if hud != null and hud._real_temp_parsed != -999.0:
+				proxy_ambient = hud._real_temp_parsed
+			if _is_player_in_house(proxy.global_position):
+				proxy_ambient = clamp(proxy_ambient, 12.0, 28.0)
+			if proxy.get_meta("in_built_shelter", false):
+				proxy_ambient = clamp(proxy_ambient, 10.0, 30.0)
+			var p_hunger: float = proxy.get_meta("saved_hunger", 100.0)
+			var p_thirst: float = proxy.get_meta("saved_thirst", 100.0)
+			var p_hp: float = proxy.get_meta("proxy_health", 100.0)
+			var p_sleeping: bool = data.get("sleeping", false)
+			var p_sprinting: bool = data.get("anim", "").find("sprint") >= 0
+			var p_moving: bool = data.get("anim", "idle") != "idle"
+			var sleep_factor := 0.3 if p_sleeping else 1.0
+			p_hunger = max(0.0, p_hunger - 0.12 * delta * (2.0 if p_moving else 1.0) * sleep_factor)
+			p_thirst = max(0.0, p_thirst - 0.22 * delta * (3.0 if p_sprinting else 1.0) * (2.0 if p_moving else 1.0) * sleep_factor)
+			if p_hunger <= 0.0:
+				p_hp = max(0.0, p_hp - 1.0 * delta)
+			if p_thirst <= 0.0:
+				p_hp = max(0.0, p_hp - 1.5 * delta)
+			proxy.set_meta("saved_hunger", p_hunger)
+			proxy.set_meta("saved_thirst", p_thirst)
+			proxy.set_meta("proxy_health", p_hp)
+			if p_hp <= 0.0:
+				proxy.set_meta("proxy_dead", true)
+				proxy.remove_from_group("net_player_proxy")
+				proxy.add_to_group("interactable")
+				_drop_player_loot(pid, proxy)
+				_broadcast_player_death(pid, proxy)
 	# Broadcast offline proxies to all connected clients
 	# Check both server_proxies (just disconnected) and proxy_by_client_id (fully offline)
 	var offline_proxies: Dictionary = {}
@@ -1867,7 +1901,7 @@ func _update_server_proxies(delta: float) -> void:
 			# Check if peer is actually still connected before sending RPC
 			if net.peer != null and net.peer.get_peer(connected_pid) == null:
 				continue
-			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack)
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false))
 	# Tick survival stats for disconnected proxies (hunger, thirst, health decay)
 	for cid in proxy_by_client_id.keys():
 		var dp: Node3D = proxy_by_client_id[cid]
@@ -1969,7 +2003,11 @@ func _sync_local_player_state() -> void:
 	var backpack: String = player.equipped_backpack
 	var aim_flag := bool(player._is_aiming)
 	var rifle_flag := bool(player._has_rifle_equipped())
-	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag)
+	var sleeping_flag := bool(player.is_sleeping)
+	var sitting_flag := bool(player.is_sitting)
+	var prone_flag := bool(player.is_prone)
+	var crouching_flag := bool(player.is_crouching)
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag)
 
 func _sync_local_player_inventory() -> void:
 	if net == null or player == null or not net.is_connected:
@@ -2044,6 +2082,10 @@ func _update_remote_players() -> void:
 		var is_offline: bool = data.get("offline", false)
 		var remote_aiming: bool = data.get("is_aiming", false)
 		var remote_has_rifle: bool = data.get("has_rifle", false)
+		var remote_sleeping: bool = data.get("sleeping", false)
+		var remote_sitting: bool = data.get("sitting", false)
+		var remote_prone: bool = data.get("prone", false)
+		var remote_crouching: bool = data.get("crouching", false)
 		# Apply character appearance if available and not yet applied
 		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and not rp.get("_applied_appearance"):
 			rp.puppet_apply_appearance(data.get("char_name", ""), data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
@@ -2051,6 +2093,8 @@ func _update_remote_players() -> void:
 			rp.puppet_set_aiming(remote_aiming)
 		if rp.has_method("puppet_set_rifle"):
 			rp.puppet_set_rifle(remote_has_rifle)
+		if rp.has_method("puppet_set_state_flags"):
+			rp.puppet_set_state_flags(remote_sleeping, remote_sitting, remote_prone, remote_crouching)
 		if is_offline:
 			# Snap to exact position for offline characters
 			if anim == "dead":

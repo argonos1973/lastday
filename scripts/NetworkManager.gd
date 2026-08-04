@@ -262,7 +262,7 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 			if players[pid].get("offline", false):
 				continue
 			var pdata: Dictionary = players[pid]
-			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""))
+			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false))
 			# Send character appearance if available
 			if pdata.has("top_color"):
 				sync_character_appearance_remote.rpc_id(id, pid, pdata.get("char_name", ""), pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
@@ -283,7 +283,7 @@ func _check_all_ready() -> void:
 # Position sync — called by each client for their own player
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
-func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false) -> void:
+func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false) -> void:
 	if not players.has(id):
 		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
 	# Ignore position updates from reconnecting clients (they're still at spawn pos)
@@ -306,6 +306,10 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["equipped_backpack"] = equipped_backpack
 	players[id]["is_aiming"] = is_aiming
 	players[id]["has_rifle"] = has_rifle
+	players[id]["sleeping"] = sleeping
+	players[id]["sitting"] = sitting
+	players[id]["prone"] = prone
+	players[id]["crouching"] = crouching
 	# Server relays to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
@@ -316,7 +320,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				# Skip peers that are not actually connected
 				if peer.get_peer(pid) == null:
 					continue
-				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle)
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching)
 
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
@@ -351,6 +355,10 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	players[sender]["equipped_clothing"] = equipped_clothing
 	players[sender]["held_item"] = held_item
 	players[sender]["equipped_backpack"] = equipped_backpack
+	players[sender]["sleeping"] = sleeping
+	players[sender]["sitting"] = sitting
+	players[sender]["prone"] = prone
+	players[sender]["crouching"] = crouching
 	var scene := get_tree().current_scene
 	if scene != null and scene.server_proxies.has(sender):
 		var proxy: Node3D = scene.server_proxies[sender]

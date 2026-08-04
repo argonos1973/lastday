@@ -44,7 +44,9 @@ func _get_collider_from_camera(player: Node3D, camera: Camera3D, screen_offset: 
 	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, end)
 	query.collide_with_areas = true
 	query.collide_with_bodies = true
-	query.exclude = [player]
+	var exclude_rids: Array[RID] = [player.get_rid()]
+	_collect_child_collision_rids(player, exclude_rids)
+	query.exclude = exclude_rids
 	var result: Dictionary = camera.get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return null
@@ -57,6 +59,12 @@ func _find_interactable_owner(node: Object) -> Object:
 			return cursor
 		cursor = cursor.get_parent() if cursor is Node else null
 	return null
+
+func _collect_child_collision_rids(node: Node, rids: Array[RID]) -> void:
+	for child in node.get_children():
+		if child is CollisionObject3D:
+			rids.append((child as CollisionObject3D).get_rid())
+		_collect_child_collision_rids(child, rids)
 
 func _is_close_enough(player: Node3D, target: Object) -> bool:
 	if player == null or not target is Node3D:
