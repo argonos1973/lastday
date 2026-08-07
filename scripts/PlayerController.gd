@@ -4484,20 +4484,32 @@ func _build_rifle_strap() -> void:
 					# The rendered character faces -Z in world. With 180° Y on the model,
 					# its local +Z (Vector3.BACK) maps to world -Z (the front).
 					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
-					var mesh_half_z: float = aabb.size.z * 0.5 * third_person_model.global_scale.z
-					# Place the mesh so its front face sits at front_offset + 6cm (same as bone z_off)
-					target_world += forward_dir * (front_offset + 0.06 - mesh_half_z)
+					var mesh_half_z: float = aabb.size.z * 0.5 * third_person_model.scale.z
+					var current_global := sling_root.global_position
+					var base_z := front_offset + 0.06
+					# Three variants for A/B/C depth test (all in world space)
+					var target_A := chest_world + forward_dir * base_z
+					var target_B := chest_world + forward_dir * (base_z + mesh_half_z)
+					var target_C := chest_world + forward_dir * (base_z - mesh_half_z)
+					_strap_test_positions = [
+						current_global + (target_A - sling_center_world),
+						current_global + (target_B - sling_center_world),
+						current_global + (target_C - sling_center_world),
+					]
+					# Apply C as initial (closest to torso)
+					target_world = target_C
+					var correction := target_C - sling_center_world
+					var new_global := current_global + correction
+					sling_root.global_position = new_global
 					print("[STRAP] Chest world (mesh AABB center) = (%.4f, %.4f, %.4f)" % [chest_world.x, chest_world.y, chest_world.z])
 					print("[STRAP] Forward dir = (%.4f, %.4f, %.4f)" % [forward_dir.x, forward_dir.y, forward_dir.z])
-					print("[STRAP] Target world (chest + front_offset + 6cm - half_z) = (%.4f, %.4f, %.4f)" % [target_world.x, target_world.y, target_world.z])
+					print("[STRAP] mesh_half_z = %.4f" % mesh_half_z)
+					print("[STRAP] Test pos A (no corr) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[0].x, _strap_test_positions[0].y, _strap_test_positions[0].z])
+					print("[STRAP] Test pos B (+half) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[1].x, _strap_test_positions[1].y, _strap_test_positions[1].z])
+					print("[STRAP] Test pos C (-half) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[2].x, _strap_test_positions[2].y, _strap_test_positions[2].z])
 					print("[STRAP] SlingMesh AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
 					print("[STRAP] SlingMesh local center = (%.4f, %.4f, %.4f)" % [sling_center_local.x, sling_center_local.y, sling_center_local.z])
 					print("[STRAP] SlingMesh world center before = (%.4f, %.4f, %.4f)" % [sling_center_world.x, sling_center_world.y, sling_center_world.z])
-					# Correction to align mesh center with target
-					var correction := target_world - sling_center_world
-					var current_global := sling_root.global_position
-					var new_global := current_global + correction
-					sling_root.global_position = new_global
 					print("[STRAP] RifleSlingRoot position before = (%.4f, %.4f, %.4f)" % [current_global.x, current_global.y, current_global.z])
 					print("[STRAP] Correction = (%.4f, %.4f, %.4f)" % [correction.x, correction.y, correction.z])
 					print("[STRAP] RifleSlingRoot position after = (%.4f, %.4f, %.4f)" % [new_global.x, new_global.y, new_global.z])
@@ -4568,8 +4580,65 @@ func _build_rifle_strap() -> void:
 			push_warning("[STRAP] Could not find character skeleton for alignment")
 	print("[STRAP] Strap loaded and aligned to chest")
 
-func _add_strap_debug_spheres() -> void:
-	pass
+func _setup_strap_reference_visuals(strap_root: Node3D, strap_mi: MeshInstance3D) -> void:
+	if strap_root == null or not is_instance_valid(strap_root) or strap_mi == null or not is_instance_valid(strap_mi):
+		return
+	var aabb: AABB = strap_mi.get_aabb()
+	var ref_pts: Array[Vector3] = [
+		Vector3.ZERO,                                              # red: RifleSlingRoot origin
+		strap_mi.position,                                         # green: SlingMesh origin
+		aabb.get_center(),                                         # blue: AABB center
+		aabb.position + Vector3(aabb.size.x * 0.5, aabb.size.y * 0.5, aabb.size.z)  # white: AABB front face
+	]
+	var ref_colors: Array[Color] = [
+		Color(1, 0, 0, 1),  # rojo
+		Color(0, 1, 0, 1),  # verde
+		Color(0, 0, 1, 1),  # azul
+		Color(1, 1, 1, 1)   # blanco
+	]
+	for i in range(ref_pts.size()):
+		var sname := "StrapRef%d" % i
+		var sphere := strap_root.get_node_or_null(sname) as MeshInstance3D
+		if sphere == null:
+			sphere = MeshInstance3D.new()
+			sphere.name = sname
+			var smesh := SphereMesh.new()
+			smesh.radius = 0.015
+			smesh.height = 0.030
+			sphere.mesh = smesh
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = ref_colors[i]
+			mat.emission_enabled = true
+			mat.emission = ref_colors[i]
+			mat.emission_energy_multiplier = 3.0
+			mat.no_depth_test = true
+			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			sphere.material_override = mat
+			sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			strap_root.add_child(sphere)
+			_strap_reference_spheres.append(sphere)
+		sphere.position = ref_pts[i]
+		sphere.visible = false
+	var boxname := "StrapAABBBox"
+	var box_mi := strap_root.get_node_or_null(boxname) as MeshInstance3D
+	if box_mi == null:
+		box_mi = MeshInstance3D.new()
+		box_mi.name = boxname
+		var bmesh := BoxMesh.new()
+		bmesh.size = aabb.size
+		box_mi.mesh = bmesh
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(1, 0, 0, 0.15)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		box_mi.material_override = mat
+		box_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		strap_root.add_child(box_mi)
+		_strap_aabb_box = box_mi
+	box_mi.position = aabb.get_center()
+	box_mi.visible = false
 
 var _strap_orig_verts: PackedVector3Array = PackedVector3Array()
 var _strap_orig_bones: PackedInt32Array = PackedInt32Array()
@@ -4648,6 +4717,10 @@ func _apply_cpu_skinning() -> void:
 	strap_mi.mesh = new_mesh
 
 var _strap_debug_spheres: Array[MeshInstance3D] = []
+var _strap_reference_spheres: Array[MeshInstance3D] = []
+var _strap_aabb_box: MeshInstance3D = null
+var _strap_test_positions: Array[Vector3] = []
+var _strap_diagnostic_mode: bool = false
 
 func _update_strap_debug_spheres(pts: Array[Vector3], radius: float = 0.015, custom_colors = []) -> void:
 	var default_colors: Array[Color] = [
@@ -4692,6 +4765,8 @@ func _update_strap_debug_spheres(pts: Array[Vector3], radius: float = 0.015, cus
 			_strap_debug_spheres[i].position = pts[i]
 
 func _update_rifle_strap(delta: float) -> void:
+	if _strap_diagnostic_mode:
+		return
 	if _rifle_strap_system == null:
 		_rifle_strap_system = RifleStrapScript.new()
 		_rifle_strap_system.player = self
@@ -6905,6 +6980,7 @@ func _test_shot(path: String) -> void:
 
 func _debug_strap_capture() -> void:
 	print("[STRAP-DIAG] === STARTING CLEAN DIAGNOSTIC ===")
+	_strap_diagnostic_mode = true
 	global_position = Vector3(0.0, 0.0, 0.0)
 	global_rotation = Vector3(0.0, 0.0, 0.0)
 	set_physics_process(false)
@@ -7047,10 +7123,6 @@ func _debug_strap_capture() -> void:
 		diag_mat.no_depth_test = false
 		strap_mesh.material_override = diag_mat
 		print("[STRAP-DIAG] Applied yellow diagnostic material")
-	# Hide debug spheres for clean mesh shots
-	for s in _strap_debug_spheres:
-		if is_instance_valid(s):
-			s.visible = false
 	# Force one more update before capture
 	if strap_skel != null:
 		strap_skel.force_update_all_bone_transforms()
@@ -7064,42 +7136,87 @@ func _debug_strap_capture() -> void:
 	await get_tree().create_timer(1.0).timeout
 
 	# ============================================================
-	# CAPTURAS: frontal, lateral, trasera del mesh real
+	# PASO 5: ORIENTACIÓN Y REFERENCIAS
 	# ============================================================
-	print("[STRAP-DIAG] === CAPTURAS DEL MESH CENTRAL ===")
+	print("[STRAP-DIAG] === PASO 5: ORIENTACIÓN Y REFERENCIAS ===")
+	if strap_root != null and is_instance_valid(strap_root):
+		print("[STRAP-DIAG] RifleSlingRoot.global_transform=%s" % str(strap_root.global_transform))
+	if strap_mesh != null:
+		print("[STRAP-DIAG] SlingMesh.global_transform=%s" % str(strap_mesh.global_transform))
+		print("[STRAP-DIAG] SlingMesh.get_aabb()=%s" % str(strap_mesh.get_aabb()))
+		print("[STRAP-DIAG] SlingMesh.local_x_axis in world=%s" % str(strap_mesh.global_basis.x))
+		print("[STRAP-DIAG] SlingMesh.local_y_axis in world=%s" % str(strap_mesh.global_basis.y))
+		print("[STRAP-DIAG] SlingMesh.local_z_axis in world=%s" % str(strap_mesh.global_basis.z))
+	if third_person_model != null and is_instance_valid(third_person_model):
+		var char_forward := (third_person_model.global_basis * Vector3.BACK).normalized()
+		print("[STRAP-DIAG] Character forward=%s" % str(char_forward))
+
+	_setup_strap_reference_visuals(strap_root, strap_mesh)
+	await get_tree().create_timer(0.5).timeout
+
+	# ============================================================
+	# CAPTURAS A/B/C: SIN CORRECCIÓN, +HALF, -HALF
+	# ============================================================
+	print("[STRAP-DIAG] === CAPTURAS A/B/C ===")
+	# Ocultar referencias para comparar solo el mesh
+	for s in _strap_reference_spheres:
+		if is_instance_valid(s):
+			s.visible = false
+	if is_instance_valid(_strap_aabb_box):
+		_strap_aabb_box.visible = false
+	for s in _strap_debug_spheres:
+		if is_instance_valid(s):
+			s.visible = false
+
+	if _strap_test_positions.size() >= 3:
+		var mode_labels: Array[String] = ["A", "B", "C"]
+		var mode_deltas: Array[String] = ["no_corr", "+half", "-half"]
+		for i in range(3):
+			var mode := mode_labels[i]
+			print("[STRAP-DIAG] Setting mode %s (%s)" % [mode, mode_deltas[i]])
+			strap_root.global_position = _strap_test_positions[i]
+			strap_root.force_update_transform()
+			if strap_skel != null:
+				strap_skel.force_update_all_bone_transforms()
+			await get_tree().create_timer(0.5).timeout
+			# Lateral
+			if camera != null:
+				camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+				camera.fov = 45.0
+			await get_tree().create_timer(0.5).timeout
+			await _test_shot("/tmp/strap_mesh_side_%s.png" % mode)
+			# 3/4
+			if camera != null:
+				camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
+				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+				camera.fov = 45.0
+			await get_tree().create_timer(0.5).timeout
+			await _test_shot("/tmp/strap_mesh_34_%s.png" % mode)
+	else:
+		push_warning("[STRAP-DIAG] Test positions not computed")
+
+	# ============================================================
+	# CAPTURA DEBUG CON REFERENCIAS
+	# ============================================================
+	print("[STRAP-DIAG] === CAPTURA DEBUG CON REFERENCIAS ===")
+	for s in _strap_reference_spheres:
+		if is_instance_valid(s):
+			s.visible = true
+	if is_instance_valid(_strap_aabb_box):
+		_strap_aabb_box.visible = true
+	if _strap_test_positions.size() >= 3:
+		strap_root.global_position = _strap_test_positions[2]
+		strap_root.force_update_transform()
+		if strap_skel != null:
+			strap_skel.force_update_all_bone_transforms()
+		await get_tree().create_timer(0.5).timeout
 	if camera != null:
-		# Frontal close-up
-		camera.global_position = global_position + Vector3(0.0, 1.45, 1.2)
-		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-		camera.fov = 40.0
-		print("[STRAP-DIAG] Mesh front camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
-	await get_tree().create_timer(1.0).timeout
-	await _test_shot("/tmp/strap_mesh_front.png")
-	print("[STRAP-DIAG] Mesh front captured")
-	# Lateral close-up
-	if camera != null:
-		camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+		camera.global_position = global_position + Vector3(1.2, 1.45, 1.2)
 		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
 		camera.fov = 45.0
-		print("[STRAP-DIAG] Mesh side camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
-	await get_tree().create_timer(1.0).timeout
-	await _test_shot("/tmp/strap_mesh_side.png")
-	print("[STRAP-DIAG] Mesh side captured")
-	# 3/4 close-up
-	if camera != null:
-		camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
-		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-		camera.fov = 45.0
-		print("[STRAP-DIAG] Mesh 3/4 camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
-	await get_tree().create_timer(1.0).timeout
-	await _test_shot("/tmp/strap_mesh_34.png")
-	print("[STRAP-DIAG] Mesh 3/4 captured")
-	# Trasera con cámara estándar trasera
-	_rear_camera = true
-	await get_tree().create_timer(1.0).timeout
-	await _test_shot("/tmp/strap_mesh_rear.png")
-	print("[STRAP-DIAG] Mesh rear captured")
-	_rear_camera = false
+	await get_tree().create_timer(0.5).timeout
+	await _test_shot("/tmp/strap_mesh_debug.png")
 
 	print("[STRAP-DIAG] === DIAGNOSTIC COMPLETE ===")
 	get_tree().quit()
