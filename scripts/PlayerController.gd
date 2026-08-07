@@ -1,6 +1,16 @@
 extends CharacterBody3D
 class_name PlayerController
 
+@export_group("Rifle Strap")
+@export var strap_width: float = 0.10
+@export var strap_body_offset: float = 0.06
+@export var strap_segment_count: int = 128
+@export var strap_smoothing: float = 12.0
+@export var strap_curvature: float = 1.0
+@export var strap_sag: float = 0.06
+@export var strap_uv_tile: float = 4.0
+@export var strap_debug_points: bool = false
+
 const SurvivalStatsScript = preload("res://scripts/SurvivalStats.gd")
 const InventoryScript = preload("res://scripts/Inventory.gd")
 const ItemScript = preload("res://scripts/Item.gd")
@@ -8,6 +18,7 @@ const InteractionRaycastScript = preload("res://scripts/InteractionRaycast.gd")
 const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
+const RifleStrapScript = preload("res://scripts/RifleStrap.gd")
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
@@ -299,14 +310,37 @@ var _rifle_getup_animation := ""
 var _rifle_sit_fire_animation := ""
 var _rifle_prone_fire_animation := ""
 var _has_rifle := false
+var _rifle_in_hands := false
 var _is_reloading := false
 var _is_firing := false
 var _rifle_magazine := 0
 var _rifle_reserve_ammo := 0
+var _recoil_pitch := 0.0
+var _recoil_yaw := 0.0
+var _recoil_recover_speed := 3.0
+var _wind_dir := Vector3(1.0, 0.0, 0.3).normalized()
+var _wind_strength := 0.0
+var _wind_target_strength := 0.0
+var _wind_timer := 0.0
+var _breath_timer := 0.0
+var _breath_pitch_offset := 0.0
+var _breath_yaw_offset := 0.0
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
 var _rifle_root: Node3D = null
 var _rifle_model: Node3D = null
+var _rifle_on_back: Node3D = null
+var _rifle_on_back_strap: Node3D = null
+var _strap_skeleton: Skeleton3D = null
+var _strap_barrel_marker: Marker3D = null
+var _strap_stock_marker: Marker3D = null
+var _strap_guide_upper: BoneAttachment3D = null
+var _strap_guide_lower: BoneAttachment3D = null
+var _strap_upper_offset: Marker3D = null
+var _strap_lower_offset: Marker3D = null
+var _strap_prev_pts: PackedVector3Array = PackedVector3Array()
+var _strap_initialized := false
+var _rifle_strap_system: RefCounted = null
 var _rifle_right_grip: Marker3D = null
 var _rifle_left_hand_grip: Marker3D = null
 var _rifle_stock_ref: Marker3D = null
@@ -780,6 +814,31 @@ func _process(delta: float) -> void:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
 		return
+	# Recoil recovery: exponential decay back to neutral
+	if _recoil_pitch != 0.0 or _recoil_yaw != 0.0:
+		var decay := 1.0 - exp(-_recoil_recover_speed * delta)
+		_recoil_pitch = lerp(_recoil_pitch, 0.0, decay)
+		_recoil_yaw = lerp(_recoil_yaw, 0.0, decay * 0.6)
+	# Wind simulation: smoothly varying wind strength and direction
+	_wind_timer += delta
+	if _wind_timer > 3.0:
+		_wind_timer = 0.0
+		_wind_target_strength = randf_range(0.5, 3.5)
+		_wind_dir = Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0)).normalized()
+	_wind_strength = lerp(_wind_strength, _wind_target_strength, delta * 0.5)
+	# Breath sway when aiming: compute oscillation offsets
+	_breath_timer += delta
+	_breath_pitch_offset = 0.0
+	_breath_yaw_offset = 0.0
+	if _is_aiming and not is_moving:
+		_breath_pitch_offset = deg_to_rad(1.2 * sin(_breath_timer * 1.2))
+		_breath_yaw_offset = deg_to_rad(0.8 * sin(_breath_timer * 0.8))
+		if is_prone:
+			_breath_pitch_offset *= 0.3
+			_breath_yaw_offset *= 0.3
+		elif is_crouching:
+			_breath_pitch_offset *= 0.5
+			_breath_yaw_offset *= 0.5
 	_crosshair_check_timer += delta
 	if _crosshair_check_timer >= 0.5:
 		_crosshair_check_timer = 0.0
@@ -791,33 +850,36 @@ func _process(delta: float) -> void:
 		var skel := _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
 		if skel != null:
 			_update_rifle_ik(skel, delta)
+	# Update rifle strap mesh in real-time to follow animations
+	# DISABLED for diagnostic — strap stays in rest pose
+	#_update_rifle_strap(delta)
 	# Camera overrides
 	if camera != null and _is_aiming and not (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
-		camera.rotation.x = _pitch
+		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
 		var char_forward := -global_basis.z.normalized()
 		var char_right := global_basis.x.normalized()
 		var char_up := global_basis.y.normalized()
 		if _frontal_camera:
-			camera.global_position = global_position + char_forward * 6.5 + char_up * 2.8
-			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = _camera_fov
+			camera.global_position = global_position + char_forward * 3.5 + char_up * 1.5
+			camera.look_at(global_position + char_up * 1.2, char_up)
+			camera.fov = 55.0
 		elif _side_camera:
-			camera.global_position = global_position + char_right * 6.5 + char_up * 2.8
-			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = _camera_fov
+			camera.global_position = global_position + char_right * 3.5 + char_up * 1.5
+			camera.look_at(global_position + char_up * 1.2, char_up)
+			camera.fov = 55.0
 		elif _left_camera:
-			camera.global_position = global_position - char_right * 6.5 + char_up * 2.8
-			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = _camera_fov
+			camera.global_position = global_position - char_right * 3.5 + char_up * 1.5
+			camera.look_at(global_position + char_up * 1.2, char_up)
+			camera.fov = 55.0
 		elif _rear_camera:
-			camera.global_position = global_position - char_forward * 6.5 + char_up * 2.8
-			camera.look_at(global_position + char_up * 1.3, char_up)
-			camera.fov = _camera_fov
+			camera.global_position = global_position - char_forward * 3.5 + char_up * 1.5
+			camera.look_at(global_position + char_up * 1.2, char_up)
+			camera.fov = 55.0
 		elif _top_camera:
-			camera.global_position = global_position + char_up * 8.0
+			camera.global_position = global_position + char_up * 5.0
 			camera.look_at(global_position, char_forward)
-			camera.fov = _camera_fov
+			camera.fov = 55.0
 
 func _ready() -> void:
 	if is_puppet:
@@ -882,7 +944,7 @@ func _input(event: InputEvent) -> void:
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-78.0), deg_to_rad(78.0))
 		if camera != null:
-			camera.rotation.x = _pitch
+			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	if event.is_action_pressed("interact"):
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
@@ -3956,6 +4018,9 @@ func _store_held_item() -> void:
 		if inventory != null and not equip_has_bp and eq_bp_set:
 			_build_third_person_backpack()
 	notice.emit("Guardas %s en el inventario." % item.item_name)
+	_rifle_in_hands = false
+	_sync_third_person_equipment(null)
+	_update_crosshair(false)
 
 func drop_inventory_item(index: int) -> void:
 	if inventory == null or index < 0 or index >= inventory.items.size():
@@ -3989,6 +4054,7 @@ func _sync_held_item() -> void:
 	_update_crosshair(_has_rifle_equipped())
 
 func _sync_third_person_equipment(held_item) -> void:
+	_rifle_in_hands = held_item != null and str(held_item.item_type) == "weapon_rifle"
 	if third_person_hand_item_root == null or third_person_back_item_root == null:
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			return
@@ -4014,8 +4080,20 @@ func _sync_third_person_equipment(held_item) -> void:
 	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
 	if inventory != null and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
+	# Rifle on back: check if rifle is in inventory but not held in hands
+	var _has_rifle_in_inventory := false
+	if inventory != null and not inventory.items.is_empty():
+		for item in inventory.items:
+			if item != null and str(item.item_type) == "weapon_rifle":
+				_has_rifle_in_inventory = true
+				break
+	if _has_rifle_in_inventory and not _rifle_in_hands:
+		_build_rifle_on_back()
+	else:
+		_clear_rifle_on_back()
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
+			_build_third_person_rifle()
 			return
 	if held_item == null or held_item.item_type == "backpack":
 		return
@@ -4140,6 +4218,510 @@ func _disable_collision_recursive(node: Node) -> void:
 		(node as CollisionObject3D).collision_mask = 0
 	for child in node.get_children():
 		_disable_collision_recursive(child)
+
+func _build_rifle_on_back() -> void:
+	_clear_rifle_on_back()
+	if third_person_back_item_root == null or not is_instance_valid(third_person_back_item_root):
+		return
+	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
+	if skeleton == null or not is_instance_valid(skeleton):
+		return
+	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	if model == null:
+		return
+	# Rifle on back: container node
+	_rifle_on_back = Node3D.new()
+	_rifle_on_back.name = "RifleOnBack"
+	model.name = "RifleOnBackMesh"
+	# Compute AABB to center the model
+	var raw_aabb: AABB = _hierarchy_local_aabb(model)
+	if raw_aabb.size.y <= 0.0001:
+		model.queue_free()
+		_rifle_on_back.queue_free()
+		_rifle_on_back = null
+		return
+	# Scale: target ~1.8m length on the back
+	var model_length: float = max(raw_aabb.size.x, max(raw_aabb.size.y, raw_aabb.size.z))
+	var back_scale: float = 1.8 / model_length
+	model.scale = Vector3.ONE * back_scale
+	# Center the model on its midpoint
+	var center_offset := Vector3(
+		-(raw_aabb.position.x + raw_aabb.size.x * 0.5) * back_scale,
+		-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * back_scale,
+		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * back_scale
+	)
+	model.position = center_offset
+	# Rotate: barrel up (+Y), stock down (-Y). Model barrel points -Z.
+	model.rotation_degrees = Vector3(90.0, 0.0, -15.0)
+	model.visible = true
+	_rifle_on_back.add_child(model)
+	_disable_collision_recursive(model)
+	_rifle_on_back.position = Vector3(0.12, 0.05, -0.08)
+	_rifle_on_back.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+	third_person_back_item_root.add_child(_rifle_on_back)
+	# Create Marker3D for strap attachment on the rifle
+	# Barrel sling point: 1/4 from barrel end (upper). After X+90 rotation, barrel is +Y.
+	# After scale: half_len = 0.9. Barrel at +Y, tilted -15° on Z.
+	var half_len: float = 0.9
+	var barrel_local := Vector3(sin(deg_to_rad(15.0)) * half_len * 0.45, cos(deg_to_rad(15.0)) * half_len * 0.45, 0.0)
+	var stock_local := Vector3(-sin(deg_to_rad(15.0)) * half_len * 0.5, -cos(deg_to_rad(15.0)) * half_len * 0.5, 0.0)
+	_strap_barrel_marker = Marker3D.new()
+	_strap_barrel_marker.name = "StrapBarrelPoint"
+	_strap_barrel_marker.position = barrel_local
+	_rifle_on_back.add_child(_strap_barrel_marker)
+	_strap_stock_marker = Marker3D.new()
+	_strap_stock_marker.name = "StrapStockPoint"
+	_strap_stock_marker.position = stock_local
+	_rifle_on_back.add_child(_strap_stock_marker)
+	# Create BoneAttachment3D guide points on torso for natural chest curve
+	# Guide upper: Spine2 (upper chest / shoulder area)
+	var spine2_idx := skeleton.find_bone("mixamorig_Spine2")
+	if spine2_idx < 0:
+		spine2_idx = skeleton.find_bone("mixamorig_Spine1")
+	if spine2_idx >= 0:
+		_strap_guide_upper = BoneAttachment3D.new()
+		_strap_guide_upper.name = "StrapGuideUpper"
+		_strap_guide_upper.bone_name = skeleton.get_bone_name(spine2_idx)
+		_strap_guide_upper.bone_idx = spine2_idx
+		# Offset: front of chest, slightly right. Mixamo bone -Z = character front.
+		_strap_guide_upper.position = Vector3(0.08, 0.05, -0.22)
+		skeleton.add_child(_strap_guide_upper)
+		# Add a Marker3D child for the actual offset, since BoneAttachment3D may override position
+		_strap_upper_offset = Marker3D.new()
+		_strap_upper_offset.name = "StrapGuideUpperOffset"
+		_strap_upper_offset.position = Vector3(0.12, 0.08, -0.50)
+		_strap_guide_upper.add_child(_strap_upper_offset)
+	# Guide lower: Spine1 (lower chest / ribcage)
+	var spine1_idx := skeleton.find_bone("mixamorig_Spine1")
+	if spine1_idx < 0:
+		spine1_idx = skeleton.find_bone("mixamorig_Spine")
+	if spine1_idx >= 0:
+		_strap_guide_lower = BoneAttachment3D.new()
+		_strap_guide_lower.name = "StrapGuideLower"
+		_strap_guide_lower.bone_name = skeleton.get_bone_name(spine1_idx)
+		_strap_guide_lower.bone_idx = spine1_idx
+		# Offset: front of chest, slightly left. Mixamo bone -Z = character front.
+		_strap_guide_lower.position = Vector3(-0.06, -0.02, -0.20)
+		skeleton.add_child(_strap_guide_lower)
+		# Add a Marker3D child for the actual offset
+		_strap_lower_offset = Marker3D.new()
+		_strap_lower_offset.name = "StrapGuideLowerOffset"
+		_strap_lower_offset.position = Vector3(-0.10, -0.05, -0.45)
+		_strap_guide_lower.add_child(_strap_lower_offset)
+	# Create strap mesh (will be populated on first _update_rifle_strap)
+	_build_rifle_strap()
+	_strap_initialized = false
+	_strap_prev_pts = PackedVector3Array()
+
+func _create_strap_texture() -> ImageTexture:
+	var w := 256
+	var h := 256
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var base_col := Color(0.38, 0.36, 0.26, 1.0)
+	var stitch_col := Color(0.22, 0.20, 0.14, 1.0)
+	var weave_dark := Color(0.33, 0.31, 0.21, 1.0)
+	var weave_light := Color(0.43, 0.41, 0.31, 1.0)
+	for y in range(h):
+		for x in range(w):
+			var col := base_col
+			# Horizontal weave (transverse threads)
+			if y % 8 < 4:
+				col = col.lerp(weave_dark, 0.25)
+			else:
+				col = col.lerp(weave_light, 0.15)
+			# Vertical weave (longitudinal threads)
+			if x % 6 < 3:
+				col = col.lerp(weave_dark, 0.08)
+			# Double stitching near edges
+			var edge_dist := minf(x, w - 1 - x)
+			if edge_dist < 4:
+				col = stitch_col
+			elif edge_dist < 8:
+				if x % 6 < 3:
+					col = col.lerp(stitch_col, 0.6)
+			elif edge_dist < 12:
+				if x % 6 < 3:
+					col = col.lerp(stitch_col, 0.3)
+			# Deterministic micro-noise for fabric variation
+			var n := sin(x * 12.9898 + y * 78.233) * 43758.5453
+			n = n - floor(n)
+			n = (n - 0.5) * 0.05
+			col.r = clampf(col.r + n, 0.0, 1.0)
+			col.g = clampf(col.g + n, 0.0, 1.0)
+			col.b = clampf(col.b + n, 0.0, 1.0)
+			img.set_pixel(x, y, col)
+	var tex := ImageTexture.create_from_image(img)
+	return tex
+
+func _get_chest_target_from_mesh() -> Dictionary:
+	# Find a chest/torso mesh and return its AABB center in world space.
+	# This gives the actual rendered chest position, avoiding broken Skeleton3D pose data.
+	if third_person_model == null or not is_instance_valid(third_person_model):
+		return {"chest": Vector3.INF, "front_offset": 0.0}
+	var torso_names := ["Tops", "Desnudo_torso", "Body", "Torso"]
+	var torso_mi: MeshInstance3D = null
+	for mesh_name in torso_names:
+		torso_mi = _find_mesh_in_third_person(mesh_name)
+		if torso_mi != null and is_instance_valid(torso_mi) and torso_mi.mesh != null:
+			break
+	if torso_mi == null or not is_instance_valid(torso_mi) or torso_mi.mesh == null:
+		return {"chest": Vector3.INF, "front_offset": 0.0}
+	print("[STRAP] Torso mesh found: %s" % torso_mi.name)
+	var aabb: AABB = torso_mi.get_aabb()
+	print("[STRAP] Torso AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
+	var center: Vector3 = aabb.get_center()
+	# Tops is a skinned child of Skeleton3D; its to_global does not apply the 0.72 model scale.
+	# Convert the AABB center (in Tops local) to the character model's local, then to world.
+	var local_point: Vector3 = torso_mi.position + torso_mi.basis * center
+	var chest_world := third_person_model.global_transform * local_point
+	print("[STRAP] Torso AABB center local=(%.4f,%.4f,%.4f) model_local=(%.4f,%.4f,%.4f)" % [center.x, center.y, center.z, local_point.x, local_point.y, local_point.z])
+	print("[STRAP] Chest world = (%.4f,%.4f,%.4f)" % [chest_world.x, chest_world.y, chest_world.z])
+	# Distance from the AABB center to the front surface (character faces forward_dir)
+	var front_local: Vector3 = aabb.position + Vector3(aabb.size.x * 0.5, aabb.size.y * 0.5, aabb.size.z)
+	var local_point_front: Vector3 = torso_mi.position + torso_mi.basis * front_local
+	var front_world := third_person_model.global_transform * local_point_front
+	var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
+	var front_offset: float = (front_world - chest_world).dot(forward_dir)
+	front_offset = maxf(front_offset, 0.01)
+	print("[STRAP] Front world = (%.4f,%.4f,%.4f) front_offset=%.4f" % [front_world.x, front_world.y, front_world.z, front_offset])
+	return {"chest": chest_world, "front_offset": front_offset}
+
+func _get_bone_global_rest_transform(skel: Skeleton3D, bone_idx: int) -> Transform3D:
+	# Accumulate rest transforms from root to bone: root * parent1 * ... * bone
+	var chain: Array[int] = []
+	var current := bone_idx
+	while current >= 0:
+		chain.append(current)
+		current = skel.get_bone_parent(current)
+	chain.reverse()
+	var rest := Transform3D.IDENTITY
+	for b in chain:
+		rest = rest * skel.get_bone_rest(b)
+	return rest
+
+func _create_strap_skin() -> Skin:
+	# Build a Skin resource from the SlingSkeleton rest pose (inverse bind matrices)
+	var skin := Skin.new()
+	if _strap_skeleton == null or not is_instance_valid(_strap_skeleton):
+		return skin
+	var bc := _strap_skeleton.get_bone_count()
+	skin.set_bind_count(bc)
+	for i in range(bc):
+		skin.set_bind_bone(i, i)
+		skin.set_bind_name(i, _strap_skeleton.get_bone_name(i))
+		var global_rest := _get_bone_global_rest_transform(_strap_skeleton, i)
+		skin.set_bind_pose(i, global_rest.affine_inverse())
+	return skin
+
+func _build_rifle_strap() -> void:
+	if third_person_model == null or not is_instance_valid(third_person_model):
+		return
+	# Prevent double instantiation
+	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
+		print("[STRAP] Strap already exists, skipping creation")
+		return
+	# Load the rigged sling asset
+	var sling_scene := load("res://assets/models/props/rifle_sling_unfolded.tscn") as PackedScene
+	if sling_scene == null:
+		push_warning("RIFLE STRAP: could not load rifle_sling_unfolded.tscn")
+		return
+	var sling_root := sling_scene.instantiate() as Node3D
+	if sling_root == null:
+		push_warning("RIFLE STRAP: sling scene root is not Node3D")
+		return
+	sling_root.name = "RifleSlingRoot"
+	# Initial identity transforms
+	sling_root.position = Vector3.ZERO
+	sling_root.rotation = Vector3.ZERO
+	sling_root.scale = Vector3.ONE
+	third_person_model.add_child(sling_root)
+	_rifle_on_back_strap = sling_root
+	# Find the skeleton and mesh inside
+	_strap_skeleton = null
+	var strap_mi: MeshInstance3D = null
+	for child in sling_root.get_children():
+		if child is Skeleton3D:
+			_strap_skeleton = child as Skeleton3D
+		elif child is MeshInstance3D:
+			strap_mi = child as MeshInstance3D
+			child.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	if _strap_skeleton == null:
+		push_warning("RIFLE STRAP: no Skeleton3D found in sling scene")
+	elif strap_mi != null:
+		# PASO 1: assign skeleton and skin for GPU skinning
+		strap_mi.skeleton = NodePath("../SlingSkeleton")
+		strap_mi.skin = _create_strap_skin()
+		print("[STRAP] SlingMesh skeleton=%s skin_binds=%d" % [strap_mi.skeleton, strap_mi.skin.get_bind_count()])
+	# Do NOT create Skin resource / CPU skinning cache — want pure rest pose
+	_strap_mesh_cached = false
+	# PASO 2: Align SlingMesh AABB center with real chest bone position
+	if strap_mi != null and _strap_skeleton != null:
+		var char_skel: Skeleton3D = _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
+		if char_skel != null and is_instance_valid(char_skel):
+			var chest_bone_idx := -1
+			for bn in ["mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"]:
+				chest_bone_idx = char_skel.find_bone(bn)
+				if chest_bone_idx >= 0:
+					print("[STRAP] Chest bone found: %s (idx=%d)" % [bn, chest_bone_idx])
+					break
+			if chest_bone_idx >= 0:
+				# Character skeleton bone data does not match the rendered mesh in this scene
+				# (get_bone_global_pose/z=-280, y=-9). Use the actual rendered chest/torso mesh
+				# AABB center as the real, visual chest reference.
+				var chest_data := _get_chest_target_from_mesh()
+				var chest_world: Vector3 = chest_data["chest"]
+				var front_offset: float = chest_data["front_offset"]
+				var target_world := Vector3.ZERO
+				if chest_world == Vector3.INF:
+					push_warning("[STRAP] Could not find torso mesh for chest reference")
+				else:
+					target_world = chest_world
+					# Get SlingMesh AABB center in world BEFORE moving the root
+					var aabb: AABB = strap_mi.get_aabb()
+					var sling_center_local: Vector3 = aabb.get_center()
+					var sling_center_world: Vector3 = strap_mi.to_global(sling_center_local)
+					# PASO 4: Small forward offset based on character orientation
+					# The rendered character faces -Z in world. With 180° Y on the model,
+					# its local +Z (Vector3.BACK) maps to world -Z (the front).
+					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
+					var mesh_half_z: float = aabb.size.z * 0.5 * third_person_model.global_scale.z
+					# Place the mesh so its front face sits at front_offset + 6cm (same as bone z_off)
+					target_world += forward_dir * (front_offset + 0.06 - mesh_half_z)
+					print("[STRAP] Chest world (mesh AABB center) = (%.4f, %.4f, %.4f)" % [chest_world.x, chest_world.y, chest_world.z])
+					print("[STRAP] Forward dir = (%.4f, %.4f, %.4f)" % [forward_dir.x, forward_dir.y, forward_dir.z])
+					print("[STRAP] Target world (chest + front_offset + 6cm - half_z) = (%.4f, %.4f, %.4f)" % [target_world.x, target_world.y, target_world.z])
+					print("[STRAP] SlingMesh AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
+					print("[STRAP] SlingMesh local center = (%.4f, %.4f, %.4f)" % [sling_center_local.x, sling_center_local.y, sling_center_local.z])
+					print("[STRAP] SlingMesh world center before = (%.4f, %.4f, %.4f)" % [sling_center_world.x, sling_center_world.y, sling_center_world.z])
+					# Correction to align mesh center with target
+					var correction := target_world - sling_center_world
+					var current_global := sling_root.global_position
+					var new_global := current_global + correction
+					sling_root.global_position = new_global
+					print("[STRAP] RifleSlingRoot position before = (%.4f, %.4f, %.4f)" % [current_global.x, current_global.y, current_global.z])
+					print("[STRAP] Correction = (%.4f, %.4f, %.4f)" % [correction.x, correction.y, correction.z])
+					print("[STRAP] RifleSlingRoot position after = (%.4f, %.4f, %.4f)" % [new_global.x, new_global.y, new_global.z])
+				# ============================================================
+				# SKINNING PHASE: activate and test Strap_04
+				# ============================================================
+				if strap_mi == null or _strap_skeleton == null:
+					push_warning("[STRAP] Cannot enter skinning phase: missing mesh or skeleton")
+				else:
+					# Reset to rest pose and verify
+					_strap_skeleton.reset_bone_poses()
+					_strap_skeleton.force_update_all_bone_transforms()
+					# PASO 2-6: posicionar bloque 02, 03, 04, 05, 06
+					var right_dir := (third_person_model.global_basis * Vector3.RIGHT).normalized()
+					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
+					var up_dir := (third_person_model.global_basis * Vector3.UP).normalized()
+					var z_off := front_offset + 0.06
+					var bone_offsets: Dictionary = {
+						"Strap_02": Vector3(0.00,  0.24, z_off),  # hombro
+						"Strap_03": Vector3(0.00,  0.12, z_off),
+						"Strap_04": Vector3(0.00,  0.00, z_off),  # pecho centro
+						"Strap_05": Vector3(0.00, -0.12, z_off),
+						"Strap_06": Vector3(0.00, -0.22, z_off),  # costado
+					}
+					var target_pts: Array[Vector3] = []
+					var result_pts: Array[Vector3] = []
+					var bone_idx: int
+					var off: Vector3
+					var bone_target_world: Vector3
+					var target_local: Vector3
+					var parent_idx: int
+					var parent_global: Transform3D
+					var new_local_pos: Vector3
+					var bone_global: Transform3D
+					var world_result: Vector3
+					var error_cm: float
+					for bone_name in bone_offsets.keys():
+						bone_idx = _strap_skeleton.find_bone(bone_name)
+						if bone_idx < 0:
+							push_warning("[STRAP] %s not found" % bone_name)
+							continue
+						off = bone_offsets[bone_name]
+						bone_target_world = chest_world + right_dir * off.x + up_dir * off.y + forward_dir * off.z
+						target_local = _strap_skeleton.to_local(bone_target_world)
+						parent_idx = _strap_skeleton.get_bone_parent(bone_idx)
+						parent_global = _strap_skeleton.get_bone_global_pose(parent_idx)
+						new_local_pos = parent_global.affine_inverse() * target_local
+						_strap_skeleton.set_bone_pose_position(bone_idx, new_local_pos)
+						_strap_skeleton.force_update_all_bone_transforms()
+						bone_global = _strap_skeleton.get_bone_global_pose(bone_idx)
+						world_result = _strap_skeleton.global_transform * bone_global.origin
+						error_cm = world_result.distance_to(bone_target_world) * 100.0
+						print("[STRAP] %s target_world = (%.4f, %.4f, %.4f)" % [bone_name, bone_target_world.x, bone_target_world.y, bone_target_world.z])
+						print("[STRAP] %s target_local = (%.4f, %.4f, %.4f)" % [bone_name, target_local.x, target_local.y, target_local.z])
+						print("[STRAP] %s pose_local = (%.4f, %.4f, %.4f)" % [bone_name, new_local_pos.x, new_local_pos.y, new_local_pos.z])
+						print("[STRAP] %s world_result = (%.4f, %.4f, %.4f)" % [bone_name, world_result.x, world_result.y, world_result.z])
+						print("[STRAP] %s world_error = %.4f cm" % [bone_name, error_cm])
+						target_pts.append(sling_root.to_local(bone_target_world))
+						result_pts.append(sling_root.to_local(world_result))
+					# Debug markers: green (03 target), yellow (04 target), blue (05 target), red/orange/cyan results
+					var target_colors: Array[Color] = [Color(0, 1, 0, 1), Color(1, 1, 0, 1), Color(0, 0, 1, 1)]
+					var result_colors: Array[Color] = [Color(1, 0, 0, 1), Color(1, 0.5, 0, 1), Color(0, 1, 1, 1)]
+					_update_strap_debug_spheres(target_pts, 0.04, target_colors)
+					_update_strap_debug_spheres(result_pts, 0.02, result_colors)
+			else:
+				push_warning("[STRAP] Could not find chest bone for alignment")
+		else:
+			push_warning("[STRAP] Could not find character skeleton for alignment")
+	print("[STRAP] Strap loaded and aligned to chest")
+
+func _add_strap_debug_spheres() -> void:
+	pass
+
+var _strap_orig_verts: PackedVector3Array = PackedVector3Array()
+var _strap_orig_bones: PackedInt32Array = PackedInt32Array()
+var _strap_orig_weights: PackedFloat32Array = PackedFloat32Array()
+var _strap_orig_normals: PackedVector3Array = PackedVector3Array()
+var _strap_orig_tangents: PackedFloat32Array = PackedFloat32Array()
+var _strap_orig_indices: PackedInt32Array = PackedInt32Array()
+var _strap_orig_uvs: PackedVector2Array = PackedVector2Array()
+var _strap_bind_poses: Array[Transform3D] = []
+var _strap_mesh_cached: bool = false
+
+func _apply_cpu_skinning() -> void:
+	if not _strap_mesh_cached:
+		return
+	if _strap_skeleton == null or not is_instance_valid(_strap_skeleton):
+		return
+	if _rifle_on_back_strap == null or not is_instance_valid(_rifle_on_back_strap):
+		return
+	var strap_mi: MeshInstance3D = null
+	for child in _rifle_on_back_strap.get_children():
+		if child is MeshInstance3D:
+			strap_mi = child as MeshInstance3D
+			break
+	if strap_mi == null:
+		return
+	var bc := _strap_skeleton.get_bone_count()
+	# Compute skinning matrices: current_global * bind_inverse
+	var skin_mats: Array[Transform3D] = []
+	skin_mats.resize(bc)
+	for b in range(bc):
+		var current_global := _strap_skeleton.get_bone_global_pose(b)
+		skin_mats[b] = current_global * _strap_bind_poses[b].affine_inverse()
+	# Deform vertices
+	var n_verts := _strap_orig_verts.size()
+	var deformed := PackedVector3Array()
+	deformed.resize(n_verts)
+	var deformed_normals := PackedVector3Array()
+	deformed_normals.resize(n_verts)
+	for v in range(n_verts):
+		var orig_v := _strap_orig_verts[v]
+		var orig_n := _strap_orig_normals[v]
+		var def_v := Vector3.ZERO
+		var def_n := Vector3.ZERO
+		var bi0 := _strap_orig_bones[v * 4]
+		var bi1 := _strap_orig_bones[v * 4 + 1]
+		var bi2 := _strap_orig_bones[v * 4 + 2]
+		var bi3 := _strap_orig_bones[v * 4 + 3]
+		var w0 := _strap_orig_weights[v * 4]
+		var w1 := _strap_orig_weights[v * 4 + 1]
+		var w2 := _strap_orig_weights[v * 4 + 2]
+		var w3 := _strap_orig_weights[v * 4 + 3]
+		if w0 > 0.0:
+			def_v += w0 * (skin_mats[bi0] * orig_v)
+			def_n += w0 * (skin_mats[bi0].basis * orig_n)
+		if w1 > 0.0:
+			def_v += w1 * (skin_mats[bi1] * orig_v)
+			def_n += w1 * (skin_mats[bi1].basis * orig_n)
+		if w2 > 0.0:
+			def_v += w2 * (skin_mats[bi2] * orig_v)
+			def_n += w2 * (skin_mats[bi2].basis * orig_n)
+		if w3 > 0.0:
+			def_v += w3 * (skin_mats[bi3] * orig_v)
+			def_n += w3 * (skin_mats[bi3].basis * orig_n)
+		deformed[v] = def_v
+		deformed_normals[v] = def_n.normalized()
+	# Build new mesh
+	var new_mesh := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = deformed
+	arr[Mesh.ARRAY_NORMAL] = deformed_normals
+	arr[Mesh.ARRAY_TANGENT] = _strap_orig_tangents
+	arr[Mesh.ARRAY_TEX_UV] = _strap_orig_uvs
+	arr[Mesh.ARRAY_INDEX] = _strap_orig_indices
+	new_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	strap_mi.mesh = new_mesh
+
+var _strap_debug_spheres: Array[MeshInstance3D] = []
+
+func _update_strap_debug_spheres(pts: Array[Vector3], radius: float = 0.015, custom_colors = []) -> void:
+	var default_colors: Array[Color] = [
+		Color(1, 0, 0, 1),    # P0: rojo
+		Color(0, 1, 0, 1),    # P1: verde
+		Color(0, 0.5, 1, 1),  # P2: azul claro
+		Color(1, 1, 0, 1),    # P3: amarillo
+		Color(1, 0.5, 0, 1),  # P4: naranja
+		Color(0.5, 0, 1, 1),  # P5: morado
+		Color(0, 1, 1, 1),    # P6: cian
+		Color(1, 0, 1, 1),    # P7: magenta
+		Color(0.5, 1, 0.5, 1),# P8: verde claro
+		Color(1, 0.5, 0.5, 1),# P9: rosa
+		Color(1, 1, 1, 1),    # P10: blanco
+		Color(0.7, 0.7, 1, 1),# P11: azul claro claro
+	]
+	var colors: Array = default_colors if custom_colors.is_empty() else custom_colors
+	var strap_root: Node3D = _rifle_on_back_strap
+	# Crear esferas si no existen
+	while _strap_debug_spheres.size() < pts.size():
+		var idx: int = _strap_debug_spheres.size()
+		var sphere := MeshInstance3D.new()
+		sphere.name = "StrapDebugP%d" % idx
+		var smesh := SphereMesh.new()
+		smesh.radius = radius
+		smesh.height = radius * 2.0
+		sphere.mesh = smesh
+		var mat := StandardMaterial3D.new()
+		var col: Color = colors[idx % colors.size()]
+		mat.albedo_color = col
+		mat.emission_enabled = true
+		mat.emission = col
+		mat.emission_energy_multiplier = 2.0
+		mat.no_depth_test = true
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		sphere.material_override = mat
+		strap_root.add_child(sphere)
+		_strap_debug_spheres.append(sphere)
+	# Actualizar posiciones
+	for i in range(pts.size()):
+		if i < _strap_debug_spheres.size() and is_instance_valid(_strap_debug_spheres[i]):
+			_strap_debug_spheres[i].position = pts[i]
+
+func _update_rifle_strap(delta: float) -> void:
+	if _rifle_strap_system == null:
+		_rifle_strap_system = RifleStrapScript.new()
+		_rifle_strap_system.player = self
+	if _rifle_strap_system != null:
+		_rifle_strap_system._update_rifle_strap(delta)
+
+func _clear_rifle_on_back() -> void:
+	if _rifle_on_back != null and is_instance_valid(_rifle_on_back):
+		_rifle_on_back.queue_free()
+	_rifle_on_back = null
+	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
+		_rifle_on_back_strap.queue_free()
+	_rifle_on_back_strap = null
+	_strap_skeleton = null
+	if _strap_guide_upper != null and is_instance_valid(_strap_guide_upper):
+		_strap_guide_upper.queue_free()
+	_strap_guide_upper = null
+	if _strap_guide_lower != null and is_instance_valid(_strap_guide_lower):
+		_strap_guide_lower.queue_free()
+	_strap_guide_lower = null
+	_strap_upper_offset = null
+	_strap_lower_offset = null
+	_strap_barrel_marker = null
+	_strap_stock_marker = null
+	_strap_initialized = false
+	for s in _strap_debug_spheres:
+		if s != null and is_instance_valid(s):
+			s.queue_free()
+	_strap_debug_spheres.clear()
+	_strap_prev_pts = PackedVector3Array()
 
 func _build_third_person_rifle() -> void:
 	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
@@ -5198,6 +5780,8 @@ func _apply_view_mode() -> void:
 func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	if camera == null:
 		return
+	if _frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera:
+		return
 	var moving := movement_amount > 0.05 and is_on_floor()
 	var target_intensity: float = 1.0 if moving else 0.0
 	if is_sprinting:
@@ -5233,10 +5817,10 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		target_position = Vector3(0.0, aim_height + _water_sink, 0.15)
 		camera.position = camera.position.lerp(target_position, delta * 18.0)
 		# Use _pitch for vertical aim control (mouse up/down)
-		camera.rotation.x = _pitch
+		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	else:
 		camera.position = camera.position.lerp(target_position, delta * 10.0)
-		camera.rotation.x = _pitch
+		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	_update_third_person_animation(moving, delta)
 
@@ -5334,8 +5918,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				return
 		var target_animation := ""
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
-		# Update rifle equipped state
-		_has_rifle = _has_rifle_equipped()
+		# Update rifle equipped state: _rifle_in_hands is set by _sync_third_person_equipment
+		_has_rifle = _rifle_in_hands
 		if _has_rifle and not _is_aiming and not is_sprinting:
 			# Rifle locomotion: use rifle-specific animations
 			if moving:
@@ -5799,6 +6383,8 @@ func _melee_attack() -> void:
 				notice.emit("%s se ha roto!" % str(held.item_name))
 
 func _has_rifle_equipped() -> bool:
+	if not _rifle_in_hands:
+		return false
 	if inventory == null or inventory.items.is_empty():
 		return false
 	var held = inventory.items[held_index]
@@ -5895,6 +6481,19 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
+	# Recoil: strong kick camera up, less when prone/crouching/aiming
+	var recoil_kick := 8.0
+	if is_prone:
+		recoil_kick = 3.0
+	elif is_crouching:
+		recoil_kick = 5.0
+	if _is_aiming:
+		recoil_kick *= 0.7
+	_recoil_pitch -= deg_to_rad(recoil_kick)
+	_recoil_yaw += deg_to_rad(randf_range(-recoil_kick * 0.4, recoil_kick * 0.4))
+	if camera != null:
+		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+		camera.rotation.y = _recoil_yaw + _breath_yaw_offset
 	if third_person_animation_player != null:
 		var fire_anim_name := ""
 		if is_prone and not _rifle_prone_fire_animation.is_empty():
@@ -5930,8 +6529,24 @@ func _shoot_rifle() -> void:
 	cam_query.collide_with_bodies = true
 	var cam_result := space_state.intersect_ray(cam_query)
 	var target_point: Vector3 = cam_ray_origin + cam_ray_dir * RIFLE_RANGE
+	var cam_hit_collider = null
 	if not cam_result.is_empty():
 		target_point = cam_result["position"]
+		cam_hit_collider = cam_result["collider"]
+	# Sync rifle shot with other clients
+	if not is_puppet:
+		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null and net_node.is_connected:
+			var my_id: int = net_node.get_my_id()
+			net_node.player_shot_rifle.rpc_id(1, my_id, cam_ray_origin, cam_ray_dir)
+	# If camera ray hit a hitbox directly, use that result for damage (avoids parallax miss)
+	if cam_hit_collider != null and cam_hit_collider is Node3D:
+		var cam_node: Node3D = cam_hit_collider as Node3D
+		if cam_node.name == "BodyHitbox" or cam_node.name == "HeadHitbox":
+			var direct_hit_pos: Vector3 = cam_result["position"]
+			var direct_hit_dist: float = cam_ray_origin.distance_to(direct_hit_pos)
+			_apply_rifle_damage(cam_hit_collider, direct_hit_pos, direct_hit_dist)
+			return
 	# Weapon origin: player position at chest/shoulder height
 	var weapon_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
 	if is_crouching:
@@ -5944,6 +6559,8 @@ func _shoot_rifle() -> void:
 	var spread_deg := 2.0
 	if is_crouching:
 		spread_deg = 0.5
+	if is_prone:
+		spread_deg = 0.3
 	if _is_aiming:
 		spread_deg *= 0.3
 	if is_moving:
@@ -5956,6 +6573,16 @@ func _shoot_rifle() -> void:
 		ray_dir = ray_dir.rotated(Vector3.UP, randf_range(-spread_rad, spread_rad))
 		var right := ray_dir.cross(Vector3.UP).normalized()
 		ray_dir = ray_dir.rotated(right, randf_range(-spread_rad, spread_rad))
+		ray_dir = ray_dir.normalized()
+	# Breath sway: small vertical oscillation when aiming and still
+	if _is_aiming and not is_moving:
+		var breath_deg := 0.15 * sin(_breath_timer * 1.2)
+		if is_prone:
+			breath_deg *= 0.3
+		elif is_crouching:
+			breath_deg *= 0.5
+		var right2 := ray_dir.cross(Vector3.UP).normalized()
+		ray_dir = ray_dir.rotated(right2, deg_to_rad(breath_deg))
 		ray_dir = ray_dir.normalized()
 	# Bullet drop: apply gravity over the trajectory
 	var hit_dist := RIFLE_RANGE
@@ -5971,9 +6598,12 @@ func _shoot_rifle() -> void:
 		hit_pos = result["position"]
 	# Apply bullet drop: offset the hit point downward based on distance
 	var bullet_drop := 0.5 * 9.8 * (hit_dist / 200.0) * (hit_dist / 200.0)
+	# Wind deflection: lateral push proportional to distance and wind strength
+	var wind_deflect := _wind_strength * (hit_dist / 100.0) * 0.5
+	var wind_offset := _wind_dir * wind_deflect
 	# Re-cast with adjusted target if distance is significant
-	if hit_dist > 10.0 and bullet_drop > 0.05:
-		var adjusted_target := ray_origin + ray_dir * hit_dist + Vector3(0, -bullet_drop, 0)
+	if hit_dist > 10.0 and (bullet_drop > 0.05 or wind_deflect > 0.05):
+		var adjusted_target := ray_origin + ray_dir * hit_dist + Vector3(0, -bullet_drop, 0) + wind_offset
 		var drop_query := PhysicsRayQueryParameters3D.create(ray_origin, adjusted_target)
 		drop_query.exclude = exclude_arr
 		drop_query.collide_with_areas = true
@@ -5991,7 +6621,9 @@ func _shoot_rifle() -> void:
 			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
 	if result.is_empty():
 		return
-	var collider = result["collider"]
+	_apply_rifle_damage(result["collider"], hit_pos, hit_dist)
+
+func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
 	# Damage falloff: full damage up to 50m, linear falloff to 20% at max range
 	var damage := 80.0
 	if hit_dist > 50.0:
@@ -6250,12 +6882,227 @@ func _light_action() -> void:
 
 func _test_shot(path: String) -> void:
 	await get_tree().process_frame
+	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	var vt := get_viewport().get_texture()
+	var vp := get_viewport()
+	var vt := vp.get_texture()
 	var img := vt.get_image()
 	if img != null and img.get_width() > 0:
+		# Check if image is all black
+		var has_color := false
+		var min_size := mini(img.get_width() * img.get_height(), 100)
+		for i in range(min_size):
+			var c := img.get_pixel(i % img.get_width(), i / img.get_width())
+			if c.r > 0.01 or c.g > 0.01 or c.b > 0.01:
+				has_color = true
+				break
+		print("[TEST] saved ", path, " size=", img.get_width(), "x", img.get_height(), " has_color=", has_color)
+		if not has_color:
+			print("[TEST] WARNING: image appears all black! vp_size=", vp.size, " vp_visible=", vp.is_visible())
 		img.save_png(ProjectSettings.globalize_path(path))
-		print("[TEST] saved ", path)
+	else:
+		print("[TEST] FAILED: img is null or empty")
+
+func _debug_strap_capture() -> void:
+	print("[STRAP-DIAG] === STARTING CLEAN DIAGNOSTIC ===")
+	global_position = Vector3(0.0, 0.0, 0.0)
+	global_rotation = Vector3(0.0, 0.0, 0.0)
+	set_physics_process(false)
+	_is_aiming = false
+	# Stop any animation so the skeleton is in rest/idle pose for measurement
+	if third_person_animation_player != null and is_instance_valid(third_person_animation_player):
+		third_person_animation_player.stop()
+	if camera != null:
+		camera.position = THIRD_PERSON_CAMERA_POS
+		camera.rotation.x = deg_to_rad(-8.0)
+		camera.fov = _camera_fov
+	# Add rifle to inventory if not already there
+	var has_rifle := false
+	if inventory != null:
+		for item in inventory.items:
+			if item != null and str(item.item_type) == "weapon_rifle":
+				has_rifle = true
+				break
+	if not has_rifle and inventory != null:
+		inventory.add_item(ItemScript.create("Rifle de asalto", "weapon_rifle", 3.5, 1, 0.0))
+	# Unequip rifle from hands so it shows on back
+	if hands != null and hands.has_item_in_hands():
+		hands.clear_hands()
+	_sync_held_item()
+	if third_person_model != null and is_instance_valid(third_person_model):
+		third_person_model.visible = true
+	await get_tree().create_timer(3.0).timeout
+
+	# ============================================================
+	# PASO 1: VERIFICAR CORREA AISLADA (rest pose, sin deformar)
+	# ============================================================
+	print("[STRAP-DIAG] === PASO 1: VERIFICAR CORREA AISLADA ===")
+	var strap_root: Node3D = _rifle_on_back_strap
+	var strap_skel: Skeleton3D = _strap_skeleton
+	var strap_mesh: MeshInstance3D = null
+	if strap_root != null and is_instance_valid(strap_root):
+		print("[STRAP-DIAG] RifleSlingRoot name=%s children=%d" % [strap_root.name, strap_root.get_child_count()])
+		for child in strap_root.get_children():
+			if child is MeshInstance3D and child.name == "SlingMesh":
+				strap_mesh = child as MeshInstance3D
+			elif child is Skeleton3D:
+				strap_skel = child as Skeleton3D
+	if strap_skel != null and is_instance_valid(strap_skel):
+		print("[STRAP-DIAG] SlingSkeleton bone_count=%d" % strap_skel.get_bone_count())
+		for b in range(strap_skel.get_bone_count()):
+			var bname: String = strap_skel.get_bone_name(b)
+			var brest: Transform3D = strap_skel.get_bone_rest(b)
+			print("[STRAP-DIAG]   Bone %d (%s) rest_origin=(%.4f, %.4f, %.4f)" % [b, bname, brest.origin.x, brest.origin.y, brest.origin.z])
+	else:
+		print("[STRAP-DIAG] ERROR: SlingSkeleton not found!")
+	if strap_mesh != null:
+		print("[STRAP-DIAG] SlingMesh visible=%s" % str(strap_mesh.visible))
+		if strap_mesh.mesh != null:
+			var am := strap_mesh.mesh as ArrayMesh
+			if am != null and am.get_surface_count() > 0:
+				var arrays := am.surface_get_arrays(0)
+				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				print("[STRAP-DIAG] SlingMesh verts=%d" % verts.size())
+				if verts.size() > 0:
+					var aabb := AABB()
+					for v in verts:
+						aabb = aabb.expand(v)
+					print("[STRAP-DIAG] SlingMesh local AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
+	else:
+		print("[STRAP-DIAG] ERROR: SlingMesh not found!")
+
+	# ============================================================
+	# PASO 2: INSPECCIONAR TRANSFORMS
+	# ============================================================
+	print("[STRAP-DIAG] === PASO 2: INSPECCIONAR TRANSFORMS ===")
+	# Player
+	print("[STRAP-DIAG] Player.global_transform origin=(%.4f,%.4f,%.4f)" % [global_position.x, global_position.y, global_position.z])
+	print("[STRAP-DIAG] Player.basis=%s" % str(global_basis))
+	# ThirdPersonModel
+	if third_person_model != null and is_instance_valid(third_person_model):
+		print("[STRAP-DIAG] ThirdPersonModel.position=(%.4f,%.4f,%.4f)" % [third_person_model.position.x, third_person_model.position.y, third_person_model.position.z])
+		print("[STRAP-DIAG] ThirdPersonModel.rotation_deg=(%.2f,%.2f,%.2f)" % [third_person_model.rotation_degrees.x, third_person_model.rotation_degrees.y, third_person_model.rotation_degrees.z])
+		print("[STRAP-DIAG] ThirdPersonModel.scale=(%.4f,%.4f,%.4f)" % [third_person_model.scale.x, third_person_model.scale.y, third_person_model.scale.z])
+		print("[STRAP-DIAG] ThirdPersonModel.global_origin=(%.4f,%.4f,%.4f)" % [third_person_model.global_position.x, third_person_model.global_position.y, third_person_model.global_position.z])
+	# Character skeleton
+	var char_skel: Skeleton3D = _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
+	if char_skel != null and is_instance_valid(char_skel):
+		print("[STRAP-DIAG] CharacterSkeleton.global_origin=(%.4f,%.4f,%.4f)" % [char_skel.global_position.x, char_skel.global_position.y, char_skel.global_position.z])
+		print("[STRAP-DIAG] CharacterSkeleton.position=(%.4f,%.4f,%.4f)" % [char_skel.position.x, char_skel.position.y, char_skel.position.z])
+		print("[STRAP-DIAG] CharacterSkeleton.scale=(%.4f,%.4f,%.4f)" % [char_skel.scale.x, char_skel.scale.y, char_skel.scale.z])
+	# Strap root
+	if strap_root != null and is_instance_valid(strap_root):
+		print("[STRAP-DIAG] RifleSlingRoot.position=(%.4f,%.4f,%.4f)" % [strap_root.position.x, strap_root.position.y, strap_root.position.z])
+		print("[STRAP-DIAG] RifleSlingRoot.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_root.rotation_degrees.x, strap_root.rotation_degrees.y, strap_root.rotation_degrees.z])
+		print("[STRAP-DIAG] RifleSlingRoot.scale=(%.4f,%.4f,%.4f)" % [strap_root.scale.x, strap_root.scale.y, strap_root.scale.z])
+		print("[STRAP-DIAG] RifleSlingRoot.global_origin=(%.4f,%.4f,%.4f)" % [strap_root.global_position.x, strap_root.global_position.y, strap_root.global_position.z])
+		print("[STRAP-DIAG] RifleSlingRoot.parent=%s" % str(strap_root.get_parent().name if strap_root.get_parent() else "NULL"))
+	# Strap skeleton
+	if strap_skel != null and is_instance_valid(strap_skel):
+		print("[STRAP-DIAG] SlingSkeleton.position=(%.4f,%.4f,%.4f)" % [strap_skel.position.x, strap_skel.position.y, strap_skel.position.z])
+		print("[STRAP-DIAG] SlingSkeleton.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_skel.rotation_degrees.x, strap_skel.rotation_degrees.y, strap_skel.rotation_degrees.z])
+		print("[STRAP-DIAG] SlingSkeleton.scale=(%.4f,%.4f,%.4f)" % [strap_skel.scale.x, strap_skel.scale.y, strap_skel.scale.z])
+		print("[STRAP-DIAG] SlingSkeleton.global_origin=(%.4f,%.4f,%.4f)" % [strap_skel.global_position.x, strap_skel.global_position.y, strap_skel.global_position.z])
+		print("[STRAP-DIAG] SlingSkeleton.parent=%s" % str(strap_skel.get_parent().name if strap_skel.get_parent() else "NULL"))
+	# Strap mesh
+	if strap_mesh != null:
+		print("[STRAP-DIAG] SlingMesh.position=(%.4f,%.4f,%.4f)" % [strap_mesh.position.x, strap_mesh.position.y, strap_mesh.position.z])
+		print("[STRAP-DIAG] SlingMesh.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_mesh.rotation_degrees.x, strap_mesh.rotation_degrees.y, strap_mesh.rotation_degrees.z])
+		print("[STRAP-DIAG] SlingMesh.scale=(%.4f,%.4f,%.4f)" % [strap_mesh.scale.x, strap_mesh.scale.y, strap_mesh.scale.z])
+		print("[STRAP-DIAG] SlingMesh.global_origin=(%.4f,%.4f,%.4f)" % [strap_mesh.global_position.x, strap_mesh.global_position.y, strap_mesh.global_position.z])
+		print("[STRAP-DIAG] SlingMesh.parent=%s" % str(strap_mesh.get_parent().name if strap_mesh.get_parent() else "NULL"))
+
+	# ============================================================
+	# PASO 3: VERIFICAR ESTRUCTURA DE PARENTADO
+	# ============================================================
+	print("[STRAP-DIAG] === PASO 3: VERIFICAR PARENTADO ===")
+	if strap_root != null and strap_root.get_parent() != null:
+		var p: Node = strap_root.get_parent()
+		print("[STRAP-DIAG] RifleSlingRoot parent=%s (expected: ThirdPersonCharacter)" % p.name)
+		if p is Skeleton3D:
+			print("[STRAP-DIAG] ERROR: RifleSlingRoot is child of Skeleton3D! This is WRONG.")
+		else:
+			print("[STRAP-DIAG] OK: RifleSlingRoot is NOT child of Skeleton3D")
+	if strap_skel != null and strap_skel.get_parent() != null:
+		var sp: Node = strap_skel.get_parent()
+		print("[STRAP-DIAG] SlingSkeleton parent=%s (expected: RifleSlingRoot)" % sp.name)
+		if sp is Skeleton3D:
+			print("[STRAP-DIAG] ERROR: SlingSkeleton is child of another Skeleton3D! This is WRONG.")
+		else:
+			print("[STRAP-DIAG] OK: SlingSkeleton is NOT child of another Skeleton3D")
+
+	# ============================================================
+	# PASO 4: SKINNING TEST — Strap_04 en target
+	# ============================================================
+	print("[STRAP-DIAG] === PASO 4: SKINNING TEST — Strap_03/04/05 ===")
+	# Apply bright yellow diagnostic material for maximum visibility
+	if strap_mesh != null:
+		var diag_mat := StandardMaterial3D.new()
+		diag_mat.albedo_color = Color(1.0, 0.95, 0.0, 1.0)
+		diag_mat.emission_enabled = true
+		diag_mat.emission = Color(1.0, 0.95, 0.0, 1.0)
+		diag_mat.emission_energy_multiplier = 8.0
+		diag_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		diag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		diag_mat.no_depth_test = false
+		strap_mesh.material_override = diag_mat
+		print("[STRAP-DIAG] Applied yellow diagnostic material")
+	# Hide debug spheres for clean mesh shots
+	for s in _strap_debug_spheres:
+		if is_instance_valid(s):
+			s.visible = false
+	# Force one more update before capture
+	if strap_skel != null:
+		strap_skel.force_update_all_bone_transforms()
+	# Print Strap_04 world result again
+	if strap_skel != null:
+		var b04 := strap_skel.find_bone("Strap_04")
+		if b04 >= 0:
+			var b04_world := strap_skel.global_transform * strap_skel.get_bone_global_pose(b04).origin
+			print("[STRAP-DIAG] Strap_04 world result=(%.4f,%.4f,%.4f)" % [b04_world.x, b04_world.y, b04_world.z])
+
+	await get_tree().create_timer(1.0).timeout
+
+	# ============================================================
+	# CAPTURAS: frontal, lateral, trasera del mesh real
+	# ============================================================
+	print("[STRAP-DIAG] === CAPTURAS DEL MESH CENTRAL ===")
+	if camera != null:
+		# Frontal close-up
+		camera.global_position = global_position + Vector3(0.0, 1.45, 1.2)
+		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+		camera.fov = 40.0
+		print("[STRAP-DIAG] Mesh front camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("/tmp/strap_mesh_front.png")
+	print("[STRAP-DIAG] Mesh front captured")
+	# Lateral close-up
+	if camera != null:
+		camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+		camera.fov = 45.0
+		print("[STRAP-DIAG] Mesh side camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("/tmp/strap_mesh_side.png")
+	print("[STRAP-DIAG] Mesh side captured")
+	# 3/4 close-up
+	if camera != null:
+		camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
+		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+		camera.fov = 45.0
+		print("[STRAP-DIAG] Mesh 3/4 camera at (%.4f,%.4f,%.4f)" % [camera.global_position.x, camera.global_position.y, camera.global_position.z])
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("/tmp/strap_mesh_34.png")
+	print("[STRAP-DIAG] Mesh 3/4 captured")
+	# Trasera con cámara estándar trasera
+	_rear_camera = true
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("/tmp/strap_mesh_rear.png")
+	print("[STRAP-DIAG] Mesh rear captured")
+	_rear_camera = false
+
+	print("[STRAP-DIAG] === DIAGNOSTIC COMPLETE ===")
+	get_tree().quit()
 
 func _test_drop_clothing() -> void:
 	print("[TEST-DROP] Starting drop clothing test via drop_inventory_item")
