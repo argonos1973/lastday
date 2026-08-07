@@ -4384,7 +4384,7 @@ func _get_chest_target_from_mesh() -> Dictionary:
 	var front_offset: float = (front_world - chest_world).dot(forward_dir)
 	front_offset = maxf(front_offset, 0.01)
 	print("[STRAP] Front world = (%.4f,%.4f,%.4f) front_offset=%.4f" % [front_world.x, front_world.y, front_world.z, front_offset])
-	return {"chest": chest_world, "front_offset": front_offset}
+	return {"chest": chest_world, "front_offset": front_offset, "front_world": front_world, "torso_mi": torso_mi}
 
 func _get_bone_global_rest_transform(skel: Skeleton3D, bone_idx: int) -> Transform3D:
 	# Accumulate rest transforms from root to bone: root * parent1 * ... * bone
@@ -4465,115 +4465,54 @@ func _build_rifle_strap() -> void:
 					print("[STRAP] Chest bone found: %s (idx=%d)" % [bn, chest_bone_idx])
 					break
 			if chest_bone_idx >= 0:
-				# Character skeleton bone data does not match the rendered mesh in this scene
-				# (get_bone_global_pose/z=-280, y=-9). Use the actual rendered chest/torso mesh
-				# AABB center as the real, visual chest reference.
 				var chest_data := _get_chest_target_from_mesh()
 				var chest_world: Vector3 = chest_data["chest"]
-				var front_offset: float = chest_data["front_offset"]
-				var target_world := Vector3.ZERO
-				if chest_world == Vector3.INF:
+				var front_world: Vector3 = chest_data.get("front_world", Vector3.INF)
+				var torso_mi: MeshInstance3D = chest_data.get("torso_mi", null)
+				if chest_world == Vector3.INF or front_world == Vector3.INF:
 					push_warning("[STRAP] Could not find torso mesh for chest reference")
 				else:
-					target_world = chest_world
-					# Get SlingMesh AABB center in world BEFORE moving the root
+					# === FASE 1: Rigid placement 2-3cm from Tops front surface ===
+					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
+					# Verify which AABB face is the real front by checking both +Z and -Z faces
+					var torso_aabb: AABB = torso_mi.get_aabb()
+					var front_plus_z_local := torso_aabb.position + Vector3(torso_aabb.size.x * 0.5, torso_aabb.size.y * 0.5, torso_aabb.size.z)
+					var front_minus_z_local := torso_aabb.position + Vector3(torso_aabb.size.x * 0.5, torso_aabb.size.y * 0.5, 0.0)
+					var front_plus_z_world := third_person_model.global_transform * (torso_mi.position + torso_mi.basis * front_plus_z_local)
+					var front_minus_z_world := third_person_model.global_transform * (torso_mi.position + torso_mi.basis * front_minus_z_local)
+					var plus_z_dot := (front_plus_z_world - chest_world).normalized().dot(forward_dir)
+					var minus_z_dot := (front_minus_z_world - chest_world).normalized().dot(forward_dir)
+					var actual_front_world: Vector3 = front_plus_z_world if plus_z_dot > minus_z_dot else front_minus_z_world
+					print("[STRAP] Tops +Z face dot_fwd=%.4f, -Z face dot_fwd=%.4f → using %s" % [
+						plus_z_dot, minus_z_dot, "Z+" if plus_z_dot > minus_z_dot else "Z-"])
+					# chest_surface_world = front face + 2.5cm forward
+					var chest_surface_world := actual_front_world + forward_dir * 0.025
+					print("[STRAP] Actual front world = (%.4f, %.4f, %.4f)" % [actual_front_world.x, actual_front_world.y, actual_front_world.z])
+					print("[STRAP] chest_surface_world (front+2.5cm) = (%.4f, %.4f, %.4f)" % [chest_surface_world.x, chest_surface_world.y, chest_surface_world.z])
+					# Align SlingMesh AABB CENTER to chest_surface_world
 					var aabb: AABB = strap_mi.get_aabb()
 					var sling_center_local: Vector3 = aabb.get_center()
 					var sling_center_world: Vector3 = strap_mi.to_global(sling_center_local)
-					# PASO 4: Small forward offset based on character orientation
-					# The rendered character faces -Z in world. With 180° Y on the model,
-					# its local +Z (Vector3.BACK) maps to world -Z (the front).
-					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
-					var mesh_half_z: float = aabb.size.z * 0.5 * third_person_model.scale.z
 					var current_global := sling_root.global_position
-					var base_z := front_offset + 0.06
-					# Three variants for A/B/C depth test (all in world space)
-					var target_A := chest_world + forward_dir * base_z
-					var target_B := chest_world + forward_dir * (base_z + mesh_half_z)
-					var target_C := chest_world + forward_dir * (base_z - mesh_half_z)
-					_strap_test_positions = [
-						current_global + (target_A - sling_center_world),
-						current_global + (target_B - sling_center_world),
-						current_global + (target_C - sling_center_world),
-					]
-					# Apply C as initial (closest to torso)
-					target_world = target_C
-					var correction := target_C - sling_center_world
+					var correction := chest_surface_world - sling_center_world
 					var new_global := current_global + correction
 					sling_root.global_position = new_global
-					print("[STRAP] Chest world (mesh AABB center) = (%.4f, %.4f, %.4f)" % [chest_world.x, chest_world.y, chest_world.z])
-					print("[STRAP] Forward dir = (%.4f, %.4f, %.4f)" % [forward_dir.x, forward_dir.y, forward_dir.z])
-					print("[STRAP] mesh_half_z = %.4f" % mesh_half_z)
-					print("[STRAP] Test pos A (no corr) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[0].x, _strap_test_positions[0].y, _strap_test_positions[0].z])
-					print("[STRAP] Test pos B (+half) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[1].x, _strap_test_positions[1].y, _strap_test_positions[1].z])
-					print("[STRAP] Test pos C (-half) = (%.4f, %.4f, %.4f)" % [_strap_test_positions[2].x, _strap_test_positions[2].y, _strap_test_positions[2].z])
-					print("[STRAP] SlingMesh AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
-					print("[STRAP] SlingMesh local center = (%.4f, %.4f, %.4f)" % [sling_center_local.x, sling_center_local.y, sling_center_local.z])
+					sling_root.force_update_transform()
+					print("[STRAP] SlingMesh AABB center local = (%.4f, %.4f, %.4f)" % [sling_center_local.x, sling_center_local.y, sling_center_local.z])
 					print("[STRAP] SlingMesh world center before = (%.4f, %.4f, %.4f)" % [sling_center_world.x, sling_center_world.y, sling_center_world.z])
-					print("[STRAP] RifleSlingRoot position before = (%.4f, %.4f, %.4f)" % [current_global.x, current_global.y, current_global.z])
-					print("[STRAP] Correction = (%.4f, %.4f, %.4f)" % [correction.x, correction.y, correction.z])
 					print("[STRAP] RifleSlingRoot position after = (%.4f, %.4f, %.4f)" % [new_global.x, new_global.y, new_global.z])
-				# ============================================================
-				# SKINNING PHASE: activate and test Strap_04
-				# ============================================================
-				if strap_mi == null or _strap_skeleton == null:
-					push_warning("[STRAP] Cannot enter skinning phase: missing mesh or skeleton")
-				else:
-					# Reset to rest pose and verify
+					# Store for debug capture
+					_strap_test_positions = [new_global]
+					# === FASE 2: Print global poses of all 8 bones in REST ===
 					_strap_skeleton.reset_bone_poses()
 					_strap_skeleton.force_update_all_bone_transforms()
-					# PASO 2-6: posicionar bloque 02, 03, 04, 05, 06
-					var right_dir := (third_person_model.global_basis * Vector3.RIGHT).normalized()
-					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
-					var up_dir := (third_person_model.global_basis * Vector3.UP).normalized()
-					var z_off := front_offset + 0.06
-					var bone_offsets: Dictionary = {
-						"Strap_02": Vector3(0.00,  0.24, z_off),  # hombro
-						"Strap_03": Vector3(0.00,  0.12, z_off),
-						"Strap_04": Vector3(0.00,  0.00, z_off),  # pecho centro
-						"Strap_05": Vector3(0.00, -0.12, z_off),
-						"Strap_06": Vector3(0.00, -0.22, z_off),  # costado
-					}
-					var target_pts: Array[Vector3] = []
-					var result_pts: Array[Vector3] = []
-					var bone_idx: int
-					var off: Vector3
-					var bone_target_world: Vector3
-					var target_local: Vector3
-					var parent_idx: int
-					var parent_global: Transform3D
-					var new_local_pos: Vector3
-					var bone_global: Transform3D
-					var world_result: Vector3
-					var error_cm: float
-					for bone_name in bone_offsets.keys():
-						bone_idx = _strap_skeleton.find_bone(bone_name)
-						if bone_idx < 0:
-							push_warning("[STRAP] %s not found" % bone_name)
-							continue
-						off = bone_offsets[bone_name]
-						bone_target_world = chest_world + right_dir * off.x + up_dir * off.y + forward_dir * off.z
-						target_local = _strap_skeleton.to_local(bone_target_world)
-						parent_idx = _strap_skeleton.get_bone_parent(bone_idx)
-						parent_global = _strap_skeleton.get_bone_global_pose(parent_idx)
-						new_local_pos = parent_global.affine_inverse() * target_local
-						_strap_skeleton.set_bone_pose_position(bone_idx, new_local_pos)
-						_strap_skeleton.force_update_all_bone_transforms()
-						bone_global = _strap_skeleton.get_bone_global_pose(bone_idx)
-						world_result = _strap_skeleton.global_transform * bone_global.origin
-						error_cm = world_result.distance_to(bone_target_world) * 100.0
-						print("[STRAP] %s target_world = (%.4f, %.4f, %.4f)" % [bone_name, bone_target_world.x, bone_target_world.y, bone_target_world.z])
-						print("[STRAP] %s target_local = (%.4f, %.4f, %.4f)" % [bone_name, target_local.x, target_local.y, target_local.z])
-						print("[STRAP] %s pose_local = (%.4f, %.4f, %.4f)" % [bone_name, new_local_pos.x, new_local_pos.y, new_local_pos.z])
-						print("[STRAP] %s world_result = (%.4f, %.4f, %.4f)" % [bone_name, world_result.x, world_result.y, world_result.z])
-						print("[STRAP] %s world_error = %.4f cm" % [bone_name, error_cm])
-						target_pts.append(sling_root.to_local(bone_target_world))
-						result_pts.append(sling_root.to_local(world_result))
-					# Debug markers: green (03 target), yellow (04 target), blue (05 target), red/orange/cyan results
-					var target_colors: Array[Color] = [Color(0, 1, 0, 1), Color(1, 1, 0, 1), Color(0, 0, 1, 1)]
-					var result_colors: Array[Color] = [Color(1, 0, 0, 1), Color(1, 0.5, 0, 1), Color(0, 1, 1, 1)]
-					_update_strap_debug_spheres(target_pts, 0.04, target_colors)
-					_update_strap_debug_spheres(result_pts, 0.02, result_colors)
+					print("[STRAP] === FASE 2: BONE GLOBAL POSES IN REST ===")
+					for b in range(_strap_skeleton.get_bone_count()):
+						var bname2: String = _strap_skeleton.get_bone_name(b)
+						var bgp: Transform3D = _strap_skeleton.get_bone_global_pose(b)
+						var bworld: Vector3 = _strap_skeleton.global_transform * bgp.origin
+						print("[STRAP]   Bone %d (%s) global_pose_origin=(%.4f, %.4f, %.4f) world=(%.4f, %.4f, %.4f)" % [
+							b, bname2, bgp.origin.x, bgp.origin.y, bgp.origin.z, bworld.x, bworld.y, bworld.z])
 			else:
 				push_warning("[STRAP] Could not find chest bone for alignment")
 		else:
@@ -7155,10 +7094,9 @@ func _debug_strap_capture() -> void:
 	await get_tree().create_timer(0.5).timeout
 
 	# ============================================================
-	# CAPTURAS A/B/C: SIN CORRECCIÓN, +HALF, -HALF
+	# FASE 1: RIGID STRAP CAPTURES (bones in REST, 2.5cm from Tops)
 	# ============================================================
-	print("[STRAP-DIAG] === CAPTURAS A/B/C ===")
-	# Ocultar referencias para comparar solo el mesh
+	print("[STRAP-DIAG] === FASE 1: RIGID STRAP CAPTURES ===")
 	for s in _strap_reference_spheres:
 		if is_instance_valid(s):
 			s.visible = false
@@ -7167,56 +7105,107 @@ func _debug_strap_capture() -> void:
 	for s in _strap_debug_spheres:
 		if is_instance_valid(s):
 			s.visible = false
-
-	if _strap_test_positions.size() >= 3:
-		var mode_labels: Array[String] = ["A", "B", "C"]
-		var mode_deltas: Array[String] = ["no_corr", "+half", "-half"]
-		for i in range(3):
-			var mode := mode_labels[i]
-			print("[STRAP-DIAG] Setting mode %s (%s)" % [mode, mode_deltas[i]])
-			strap_root.global_position = _strap_test_positions[i]
-			strap_root.force_update_transform()
-			if strap_skel != null:
-				strap_skel.force_update_all_bone_transforms()
-			await get_tree().create_timer(0.5).timeout
-			# Lateral
-			if camera != null:
-				camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
-				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-				camera.fov = 45.0
-			await get_tree().create_timer(0.5).timeout
-			await _test_shot("/tmp/strap_mesh_side_%s.png" % mode)
-			# 3/4
-			if camera != null:
-				camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
-				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-				camera.fov = 45.0
-			await get_tree().create_timer(0.5).timeout
-			await _test_shot("/tmp/strap_mesh_34_%s.png" % mode)
-	else:
-		push_warning("[STRAP-DIAG] Test positions not computed")
-
-	# ============================================================
-	# CAPTURA DEBUG CON REFERENCIAS
-	# ============================================================
-	print("[STRAP-DIAG] === CAPTURA DEBUG CON REFERENCIAS ===")
-	for s in _strap_reference_spheres:
-		if is_instance_valid(s):
-			s.visible = true
-	if is_instance_valid(_strap_aabb_box):
-		_strap_aabb_box.visible = true
-	if _strap_test_positions.size() >= 3:
-		strap_root.global_position = _strap_test_positions[2]
-		strap_root.force_update_transform()
-		if strap_skel != null:
-			strap_skel.force_update_all_bone_transforms()
-		await get_tree().create_timer(0.5).timeout
+	if strap_skel != null:
+		strap_skel.reset_bone_poses()
+		strap_skel.force_update_all_bone_transforms()
+	await get_tree().create_timer(0.5).timeout
+	# Frontal
 	if camera != null:
-		camera.global_position = global_position + Vector3(1.2, 1.45, 1.2)
+		camera.global_position = global_position + Vector3(0.0, 1.45, 1.5)
 		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
 		camera.fov = 45.0
 	await get_tree().create_timer(0.5).timeout
-	await _test_shot("/tmp/strap_mesh_debug.png")
+	await _test_shot("/tmp/strap_rigid_front.png")
+	# Lateral
+	if camera != null:
+		camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+		camera.fov = 45.0
+	await get_tree().create_timer(0.5).timeout
+	await _test_shot("/tmp/strap_rigid_side.png")
+	# 3/4
+	if camera != null:
+		camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
+		camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+		camera.fov = 45.0
+	await get_tree().create_timer(0.5).timeout
+	await _test_shot("/tmp/strap_rigid_34.png")
+
+	# ============================================================
+	# FASE 2: PRINT GLOBAL POSES IN REST
+	# ============================================================
+	print("[STRAP-DIAG] === FASE 2: BONE GLOBAL POSES IN REST ===")
+	if strap_skel != null:
+		for b in range(strap_skel.get_bone_count()):
+			var bname_f2: String = strap_skel.get_bone_name(b)
+			var bgp_f2: Transform3D = strap_skel.get_bone_global_pose(b)
+			var bworld_f2: Vector3 = strap_skel.global_transform * bgp_f2.origin
+			print("[STRAP-DIAG]   Bone %d (%s) global_origin=(%.4f, %.4f, %.4f) world=(%.4f, %.4f, %.4f)" % [
+				b, bname_f2, bgp_f2.origin.x, bgp_f2.origin.y, bgp_f2.origin.z,
+				bworld_f2.x, bworld_f2.y, bworld_f2.z])
+
+	# ============================================================
+	# FASE 3: DIAGONAL TARGETS FOR Strap_02...06
+	# ============================================================
+	print("[STRAP-DIAG] === FASE 3: DIAGONAL TARGETS ===")
+	var chest_data_f3 := _get_chest_target_from_mesh()
+	var chest_world_f3: Vector3 = chest_data_f3["chest"]
+	var front_world_f3: Vector3 = chest_data_f3.get("front_world", Vector3.INF)
+	if chest_world_f3 != Vector3.INF and front_world_f3 != Vector3.INF and strap_skel != null:
+		var right_dir_f3 := (third_person_model.global_basis * Vector3.RIGHT).normalized()
+		var forward_dir_f3 := (third_person_model.global_basis * Vector3.BACK).normalized()
+		var up_dir_f3 := (third_person_model.global_basis * Vector3.UP).normalized()
+		var z_base_f3: float = (front_world_f3 - chest_world_f3).dot(forward_dir_f3) + 0.025
+		var bone_offsets_f3: Dictionary = {
+			"Strap_02": Vector3(-0.17,  0.24, z_base_f3 + 0.02),
+			"Strap_03": Vector3(-0.10,  0.12, z_base_f3),
+			"Strap_04": Vector3(-0.03,  0.00, z_base_f3),
+			"Strap_05": Vector3( 0.06, -0.12, z_base_f3),
+			"Strap_06": Vector3( 0.15, -0.22, z_base_f3 - 0.02),
+		}
+		for bone_name in bone_offsets_f3.keys():
+			var bone_idx_f3: int = strap_skel.find_bone(bone_name)
+			if bone_idx_f3 < 0:
+				push_warning("[STRAP-DIAG] %s not found" % bone_name)
+				continue
+			var off_f3: Vector3 = bone_offsets_f3[bone_name]
+			var bone_target_f3: Vector3 = chest_world_f3 + right_dir_f3 * off_f3.x + up_dir_f3 * off_f3.y + forward_dir_f3 * off_f3.z
+			var target_local_f3: Vector3 = strap_skel.to_local(bone_target_f3)
+			var parent_idx_f3: int = strap_skel.get_bone_parent(bone_idx_f3)
+			var parent_global_f3: Transform3D = strap_skel.get_bone_global_pose(parent_idx_f3)
+			var new_local_f3: Vector3 = parent_global_f3.affine_inverse() * target_local_f3
+			strap_skel.set_bone_pose_position(bone_idx_f3, new_local_f3)
+			strap_skel.force_update_all_bone_transforms()
+			var bone_global_f3: Transform3D = strap_skel.get_bone_global_pose(bone_idx_f3)
+			var world_result_f3: Vector3 = strap_skel.global_transform * bone_global_f3.origin
+			var error_f3: float = world_result_f3.distance_to(bone_target_f3) * 100.0
+			print("[STRAP-DIAG] %s target=(%.4f, %.4f, %.4f) result=(%.4f, %.4f, %.4f) err=%.2fcm" % [
+				bone_name, bone_target_f3.x, bone_target_f3.y, bone_target_f3.z,
+				world_result_f3.x, world_result_f3.y, world_result_f3.z, error_f3])
+		await get_tree().create_timer(0.5).timeout
+		# Frontal
+		if camera != null:
+			camera.global_position = global_position + Vector3(0.0, 1.45, 1.5)
+			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+			camera.fov = 45.0
+		await get_tree().create_timer(0.5).timeout
+		await _test_shot("/tmp/strap_diag_front.png")
+		# Lateral
+		if camera != null:
+			camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+			camera.fov = 45.0
+		await get_tree().create_timer(0.5).timeout
+		await _test_shot("/tmp/strap_diag_side.png")
+		# 3/4
+		if camera != null:
+			camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
+			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+			camera.fov = 45.0
+		await get_tree().create_timer(0.5).timeout
+		await _test_shot("/tmp/strap_diag_34.png")
+	else:
+		push_warning("[STRAP-DIAG] Cannot compute diagonal targets: missing chest data or skeleton")
 
 	print("[STRAP-DIAG] === DIAGNOSTIC COMPLETE ===")
 	get_tree().quit()
