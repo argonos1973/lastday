@@ -7145,9 +7145,11 @@ func _debug_strap_capture() -> void:
 				bworld_f2.x, bworld_f2.y, bworld_f2.z])
 
 	# ============================================================
-	# FASE 3: DIAGONAL TARGETS FOR Strap_02...06
+	# FASE 3: DIAGONAL TARGETS — CORRECTED BONE ORDER
+	# Strap_07 = TOP, Strap_00 = BOTTOM
+	# Active: Strap_06 (shoulder) → Strap_02 (opposite side)
 	# ============================================================
-	print("[STRAP-DIAG] === FASE 3: DIAGONAL TARGETS ===")
+	print("[STRAP-DIAG] === FASE 3: DIAGONAL TARGETS (CORRECTED ORDER) ===")
 	var chest_data_f3 := _get_chest_target_from_mesh()
 	var chest_world_f3: Vector3 = chest_data_f3["chest"]
 	var front_world_f3: Vector3 = chest_data_f3.get("front_world", Vector3.INF)
@@ -7156,54 +7158,103 @@ func _debug_strap_capture() -> void:
 		var forward_dir_f3 := (third_person_model.global_basis * Vector3.BACK).normalized()
 		var up_dir_f3 := (third_person_model.global_basis * Vector3.UP).normalized()
 		var z_base_f3: float = (front_world_f3 - chest_world_f3).dot(forward_dir_f3) + 0.025
+		# CORRECTED MAPPING: Strap_06 = highest Y (shoulder), Strap_02 = lowest Y (side)
+		# X monotonic: +0.17 → -0.15 (right shoulder to left side)
 		var bone_offsets_f3: Dictionary = {
-			"Strap_02": Vector3(-0.17,  0.24, z_base_f3 + 0.02),
-			"Strap_03": Vector3(-0.10,  0.12, z_base_f3),
-			"Strap_04": Vector3(-0.03,  0.00, z_base_f3),
-			"Strap_05": Vector3( 0.06, -0.12, z_base_f3),
-			"Strap_06": Vector3( 0.15, -0.22, z_base_f3 - 0.02),
+			"Strap_06": Vector3( 0.17,  0.24, z_base_f3 + 0.02),
+			"Strap_05": Vector3( 0.10,  0.12, z_base_f3),
+			"Strap_04": Vector3( 0.03,  0.00, z_base_f3),
+			"Strap_03": Vector3(-0.06, -0.12, z_base_f3),
+			"Strap_02": Vector3(-0.15, -0.22, z_base_f3 - 0.02),
 		}
+		# Compute all targets first
+		var target_worlds_f3: Dictionary = {}
 		for bone_name in bone_offsets_f3.keys():
-			var bone_idx_f3: int = strap_skel.find_bone(bone_name)
-			if bone_idx_f3 < 0:
-				push_warning("[STRAP-DIAG] %s not found" % bone_name)
-				continue
 			var off_f3: Vector3 = bone_offsets_f3[bone_name]
-			var bone_target_f3: Vector3 = chest_world_f3 + right_dir_f3 * off_f3.x + up_dir_f3 * off_f3.y + forward_dir_f3 * off_f3.z
-			var target_local_f3: Vector3 = strap_skel.to_local(bone_target_f3)
-			var parent_idx_f3: int = strap_skel.get_bone_parent(bone_idx_f3)
-			var parent_global_f3: Transform3D = strap_skel.get_bone_global_pose(parent_idx_f3)
-			var new_local_f3: Vector3 = parent_global_f3.affine_inverse() * target_local_f3
-			strap_skel.set_bone_pose_position(bone_idx_f3, new_local_f3)
-			strap_skel.force_update_all_bone_transforms()
-			var bone_global_f3: Transform3D = strap_skel.get_bone_global_pose(bone_idx_f3)
-			var world_result_f3: Vector3 = strap_skel.global_transform * bone_global_f3.origin
-			var error_f3: float = world_result_f3.distance_to(bone_target_f3) * 100.0
-			print("[STRAP-DIAG] %s target=(%.4f, %.4f, %.4f) result=(%.4f, %.4f, %.4f) err=%.2fcm" % [
-				bone_name, bone_target_f3.x, bone_target_f3.y, bone_target_f3.z,
-				world_result_f3.x, world_result_f3.y, world_result_f3.z, error_f3])
-		await get_tree().create_timer(0.5).timeout
-		# Frontal
-		if camera != null:
-			camera.global_position = global_position + Vector3(0.0, 1.45, 1.5)
-			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-			camera.fov = 45.0
-		await get_tree().create_timer(0.5).timeout
-		await _test_shot("/tmp/strap_diag_front.png")
-		# Lateral
-		if camera != null:
-			camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
-			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-			camera.fov = 45.0
-		await get_tree().create_timer(0.5).timeout
-		await _test_shot("/tmp/strap_diag_side.png")
-		# 3/4
-		if camera != null:
-			camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
-			camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
-			camera.fov = 45.0
-		await get_tree().create_timer(0.5).timeout
-		await _test_shot("/tmp/strap_diag_34.png")
+			target_worlds_f3[bone_name] = chest_world_f3 + right_dir_f3 * off_f3.x + up_dir_f3 * off_f3.y + forward_dir_f3 * off_f3.z
+		# Print REST world positions for all 8 bones
+		print("[STRAP-DIAG] --- REST WORLD POSITIONS (all 8 bones) ---")
+		var rest_ys: Array[float] = []
+		for b in range(strap_skel.get_bone_count()):
+			var bname_r: String = strap_skel.get_bone_name(b)
+			var bgp_r: Transform3D = strap_skel.get_bone_global_pose(b)
+			var bworld_r: Vector3 = strap_skel.global_transform * bgp_r.origin
+			rest_ys.append(bworld_r.y)
+			print("[STRAP-DIAG]   REST Bone %d (%s) world=(%.4f, %.4f, %.4f)" % [
+				b, bname_r, bworld_r.x, bworld_r.y, bworld_r.z])
+		# Validate REST Y ordering: Y07 > Y06 > Y05 > Y04 > Y03 > Y02 > Y01 > Y00
+		var rest_order_ok := true
+		for i in range(rest_ys.size() - 1, 0, -1):
+			if rest_ys[i] <= rest_ys[i - 1]:
+				rest_order_ok = false
+				print("[STRAP-DIAG]   REST ORDER FAIL: Y%02d=%.4f <= Y%02d=%.4f" % [i, rest_ys[i], i - 1, rest_ys[i - 1]])
+		if rest_order_ok:
+			print("[STRAP-DIAG]   REST ORDER OK: Y07 > Y06 > Y05 > Y04 > Y03 > Y02 > Y01 > Y00")
+		else:
+			push_warning("[STRAP-DIAG] REST Y ordering is NOT monotonic — rig may be invalid")
+		# Print target world positions
+		print("[STRAP-DIAG] --- TARGET WORLD POSITIONS ---")
+		var target_order := ["Strap_06", "Strap_05", "Strap_04", "Strap_03", "Strap_02"]
+		var target_ys: Array[float] = []
+		for bname_t in target_order:
+			var tw: Vector3 = target_worlds_f3[bname_t]
+			target_ys.append(tw.y)
+			print("[STRAP-DIAG]   target %s world=(%.4f, %.4f, %.4f)" % [bname_t, tw.x, tw.y, tw.z])
+		# Validate pose Y ordering: Y06 > Y05 > Y04 > Y03 > Y02
+		var pose_order_ok := true
+		for i in range(target_ys.size() - 1):
+			if target_ys[i] <= target_ys[i + 1]:
+				pose_order_ok = false
+				print("[STRAP-DIAG]   POSE ORDER FAIL: Y_%s=%.4f <= Y_%s=%.4f" % [
+					target_order[i], target_ys[i], target_order[i + 1], target_ys[i + 1]])
+		if pose_order_ok:
+			print("[STRAP-DIAG]   POSE ORDER OK: Y06 > Y05 > Y04 > Y03 > Y02")
+		else:
+			push_warning("[STRAP-DIAG] POSE Y ordering is NOT monotonic — NOT applying poses!")
+		# Only apply poses if both validations pass
+		if pose_order_ok and rest_order_ok:
+			for bone_name in target_order:
+				var bone_idx_f3: int = strap_skel.find_bone(bone_name)
+				if bone_idx_f3 < 0:
+					push_warning("[STRAP-DIAG] %s not found" % bone_name)
+					continue
+				var bone_target_f3: Vector3 = target_worlds_f3[bone_name]
+				var target_local_f3: Vector3 = strap_skel.to_local(bone_target_f3)
+				var parent_idx_f3: int = strap_skel.get_bone_parent(bone_idx_f3)
+				var parent_global_f3: Transform3D = strap_skel.get_bone_global_pose(parent_idx_f3)
+				var new_local_f3: Vector3 = parent_global_f3.affine_inverse() * target_local_f3
+				strap_skel.set_bone_pose_position(bone_idx_f3, new_local_f3)
+				strap_skel.force_update_all_bone_transforms()
+				var bone_global_f3: Transform3D = strap_skel.get_bone_global_pose(bone_idx_f3)
+				var world_result_f3: Vector3 = strap_skel.global_transform * bone_global_f3.origin
+				var error_f3: float = world_result_f3.distance_to(bone_target_f3) * 100.0
+				print("[STRAP-DIAG] %s target=(%.4f, %.4f, %.4f) result=(%.4f, %.4f, %.4f) err=%.2fcm" % [
+					bone_name, bone_target_f3.x, bone_target_f3.y, bone_target_f3.z,
+					world_result_f3.x, world_result_f3.y, world_result_f3.z, error_f3])
+			await get_tree().create_timer(0.5).timeout
+			# Frontal
+			if camera != null:
+				camera.global_position = global_position + Vector3(0.0, 1.45, 1.5)
+				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+				camera.fov = 45.0
+			await get_tree().create_timer(0.5).timeout
+			await _test_shot("/tmp/strap_diag_front.png")
+			# Lateral
+			if camera != null:
+				camera.global_position = global_position + Vector3(1.5, 1.45, 0.0)
+				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+				camera.fov = 45.0
+			await get_tree().create_timer(0.5).timeout
+			await _test_shot("/tmp/strap_diag_side.png")
+			# 3/4
+			if camera != null:
+				camera.global_position = global_position + Vector3(1.0, 1.45, 1.0)
+				camera.look_at(global_position + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+				camera.fov = 45.0
+			await get_tree().create_timer(0.5).timeout
+			await _test_shot("/tmp/strap_diag_34.png")
+		else:
+			print("[STRAP-DIAG] SKIPPING pose application and captures — validation failed")
 	else:
 		push_warning("[STRAP-DIAG] Cannot compute diagonal targets: missing chest data or skeleton")
 
