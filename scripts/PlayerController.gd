@@ -156,7 +156,7 @@ const RIFLE_RANGE := 150.0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
-const RIFLE_DAMAGE := 80.0
+const RIFLE_DAMAGE := 100.0
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -325,6 +325,9 @@ var _wind_timer := 0.0
 var _breath_timer := 0.0
 var _breath_pitch_offset := 0.0
 var _breath_yaw_offset := 0.0
+var _breath_hold_timer := 0.0
+var _breath_hold_active := false
+var _breath_hold_recover := 0.0
 var _rifle_bone_attachment: BoneAttachment3D = null
 var _rifle_weapon_offset: Node3D = null
 var _rifle_root: Node3D = null
@@ -830,9 +833,31 @@ func _process(delta: float) -> void:
 	_breath_timer += delta
 	_breath_pitch_offset = 0.0
 	_breath_yaw_offset = 0.0
+	# Breath hold: press Shift while aiming to steady aim, limited duration
+	if _is_aiming and Input.is_key_pressed(KEY_SHIFT) and _breath_hold_recover <= 0.0:
+		if not _breath_hold_active:
+			_breath_hold_active = true
+			_breath_hold_timer = 0.0
+	if _breath_hold_active:
+		_breath_hold_timer += delta
+		if _breath_hold_timer > 5.0:
+			_breath_hold_active = false
+			_breath_hold_recover = 4.0
+	if _breath_hold_recover > 0.0:
+		_breath_hold_recover -= delta
 	if _is_aiming and not is_moving:
-		_breath_pitch_offset = deg_to_rad(1.2 * sin(_breath_timer * 1.2))
-		_breath_yaw_offset = deg_to_rad(0.8 * sin(_breath_timer * 0.8))
+		# Fatigue increases breath amplitude: less energy = more sway
+		var fatigue_mult := 1.0
+		if stats != null:
+			fatigue_mult = 1.0 + (1.0 - clamp(stats.energy / 100.0, 0.0, 1.0)) * 1.5
+		var breath_amp_pitch := 2.5 * fatigue_mult
+		var breath_amp_yaw := 1.8 * fatigue_mult
+		if _breath_hold_active:
+			var hold_factor: float = 1.0 - clamp(_breath_hold_timer / 5.0, 0.0, 1.0)
+			breath_amp_pitch *= 0.1 * hold_factor
+			breath_amp_yaw *= 0.1 * hold_factor
+		_breath_pitch_offset = deg_to_rad(breath_amp_pitch * sin(_breath_timer * 1.2))
+		_breath_yaw_offset = deg_to_rad(breath_amp_yaw * sin(_breath_timer * 0.8))
 		if is_prone:
 			_breath_pitch_offset *= 0.3
 			_breath_yaw_offset *= 0.3
@@ -852,9 +877,7 @@ func _process(delta: float) -> void:
 			_update_rifle_ik(skel, delta)
 	# Update rifle strap mesh in real-time to follow animations
 	_update_rifle_strap(delta)
-	# Camera overrides
-	if camera != null and _is_aiming and not (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
-		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+	# Camera overrides for debug views only
 	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
 		var char_forward := -global_basis.z.normalized()
 		var char_right := global_basis.x.normalized()
@@ -923,7 +946,7 @@ func _input(event: InputEvent) -> void:
 			else:
 				_melee_attack()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			if has_rifle:
+			if has_rifle and not _is_aiming:
 				_toggle_aim()
 			else:
 				_quick_use_held_item()
@@ -944,6 +967,8 @@ func _input(event: InputEvent) -> void:
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-78.0), deg_to_rad(78.0))
 		if camera != null:
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+			if _is_aiming:
+				camera.rotation.y = _breath_yaw_offset * 0.5
 	if event.is_action_pressed("interact"):
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
@@ -5832,16 +5857,42 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		# Height adapts to stance.
 		var aim_height: float = 1.65
 		if is_crouching:
-			aim_height = 1.35
+			aim_height = 1.15
 		elif is_prone:
-			aim_height = 0.7
+			aim_height = 0.45
 		aim_height += vertical_bob * 0.2
+		# Slight lateral offset to align with rifle scope (right eye)
+		var aim_side: float = 0.12
+		# Add breathing lateral sway
+		var breath_sway_x: float = 0.0
+		var breath_sway_y: float = 0.0
+		var fatigue_mult := 1.0
+		if stats != null:
+			fatigue_mult = 1.0 + (1.0 - clamp(stats.energy / 100.0, 0.0, 1.0)) * 1.5
+		if not is_moving:
+			breath_sway_x = sin(_breath_timer * 0.8) * 0.02 * fatigue_mult
+			breath_sway_y = sin(_breath_timer * 1.2) * 0.015 * fatigue_mult
+			if _breath_hold_active:
+				var hf: float = 1.0 - clamp(_breath_hold_timer / 5.0, 0.0, 1.0)
+				breath_sway_x *= 0.1 * hf
+				breath_sway_y *= 0.1 * hf
+		else:
+			# Weapon sway when moving while aiming: more intense bob
+			var move_sway: float = 0.02 * _walk_intensity
+			breath_sway_x = sin(_walk_bob * 0.5) * move_sway
+			breath_sway_y = abs(sin(_walk_bob)) * move_sway * 0.7
+			if not is_on_floor():
+				breath_sway_x *= 2.0
+				breath_sway_y *= 2.0
 		# Position the camera at the player's eye level, slightly forward
-		target_position = Vector3(0.0, aim_height + _water_sink, 0.15)
+		target_position = Vector3(aim_side + breath_sway_x, aim_height + breath_sway_y + _water_sink, 0.15)
 		if not _debug_cam_active:
 			camera.position = camera.position.lerp(target_position, delta * 18.0)
 			# Use _pitch for vertical aim control (mouse up/down)
+			# Breath sway adds small offsets to pitch only (yaw handled by body rotation)
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+			# Small lateral sway via rotation.y (offset from body, not absolute)
+			camera.rotation.y = _breath_yaw_offset * 0.5
 	else:
 		if not _debug_cam_active:
 			camera.position = camera.position.lerp(target_position, delta * 10.0)
@@ -6430,10 +6481,13 @@ func _toggle_aim() -> void:
 	if _is_aiming:
 		_create_scope_overlay()
 		if camera != null:
-			camera.fov = 45.0
-		mouse_sensitivity = 0.0012
+			camera.fov = 25.0
+		mouse_sensitivity = 0.0008
 		if third_person_model != null:
 			third_person_model.visible = false
+		_breath_hold_active = false
+		_breath_hold_timer = 0.0
+		_breath_hold_recover = 0.0
 	else:
 		_remove_scope_overlay()
 		if camera != null:
@@ -6441,6 +6495,7 @@ func _toggle_aim() -> void:
 		mouse_sensitivity = 0.0025
 		if third_person_model != null:
 			third_person_model.visible = true
+		_breath_hold_active = false
 
 func _cancel_aim() -> void:
 	if not _is_aiming:
@@ -6493,6 +6548,13 @@ func get_rifle_info() -> Dictionary:
 		"range": RIFLE_RANGE,
 	}
 
+func get_wind_info() -> Dictionary:
+	return {
+		"strength": _wind_strength,
+		"direction": _wind_dir,
+		"target_strength": _wind_target_strength,
+	}
+
 func _shoot_rifle() -> void:
 	if _shoot_cooldown > 0.0:
 		return
@@ -6507,6 +6569,15 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
+	# Notify nearby wildlife of gunshot — wolves flee, prey scatters
+	var gunshot_pos := global_position
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == null or not is_instance_valid(w):
+			continue
+		if w.has_method("flee_from_gunshot"):
+			w.flee_from_gunshot(gunshot_pos, 80.0)
+		elif w.has_method("attract_to_noise"):
+			w.attract_to_noise(gunshot_pos, 80.0)
 	# Recoil: strong kick camera up, less when prone/crouching/aiming
 	var recoil_kick := 8.0
 	if is_prone:
@@ -6622,13 +6693,14 @@ func _shoot_rifle() -> void:
 	if not result.is_empty():
 		hit_dist = ray_origin.distance_to(result["position"])
 		hit_pos = result["position"]
-	# Apply bullet drop: offset the hit point downward based on distance
-	var bullet_drop := 0.5 * 9.8 * (hit_dist / 200.0) * (hit_dist / 200.0)
+	# Apply bullet drop: gravity-based drop over trajectory (realistic for 7.62mm)
+	var bullet_drop := 0.5 * 9.8 * (hit_dist / 180.0) * (hit_dist / 180.0)
 	# Wind deflection: lateral push proportional to distance and wind strength
-	var wind_deflect := _wind_strength * (hit_dist / 100.0) * 0.5
+	# Stronger effect: 3.5 m/s wind can deflect ~1m at 100m
+	var wind_deflect := _wind_strength * (hit_dist / 100.0) * 1.2
 	var wind_offset := _wind_dir * wind_deflect
 	# Re-cast with adjusted target if distance is significant
-	if hit_dist > 10.0 and (bullet_drop > 0.05 or wind_deflect > 0.05):
+	if hit_dist > 5.0 and (bullet_drop > 0.02 or wind_deflect > 0.02):
 		var adjusted_target := ray_origin + ray_dir * hit_dist + Vector3(0, -bullet_drop, 0) + wind_offset
 		var drop_query := PhysicsRayQueryParameters3D.create(ray_origin, adjusted_target)
 		drop_query.exclude = exclude_arr
@@ -6650,8 +6722,15 @@ func _shoot_rifle() -> void:
 	_apply_rifle_damage(result["collider"], hit_pos, hit_dist)
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
-	# Damage falloff: full damage up to 50m, linear falloff to 20% at max range
-	var damage := 80.0
+	# Damage: lethal at close range, falloff at long range
+	# Base 200: close-range body shot (200*1.5=300) kills NPC (240hp)
+	var damage := 200.0
+	# Close range bonus: 1.5x within 15m, scaling down to 1.0 at 50m
+	if hit_dist < 15.0:
+		damage *= 1.5
+	elif hit_dist < 50.0:
+		damage *= lerp(1.5, 1.0, (hit_dist - 15.0) / 35.0)
+	# Long range falloff: linear from 50m to 20% at max range
 	if hit_dist > 50.0:
 		var falloff: float = clamp(1.0 - (hit_dist - 50.0) / (RIFLE_RANGE - 50.0), 0.2, 1.0)
 		damage *= falloff

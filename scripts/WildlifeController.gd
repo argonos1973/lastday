@@ -96,7 +96,8 @@ func take_damage(amount: float, from_knife: bool) -> void:
 			return
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
-		_prey_flee_timer = 3.0
+		_prey_flee_timer = 8.0
+		_chase_cooldown = 10.0
 		_spawn_blood_splatter()
 		_play_wolf_pain_sound()
 		if health <= 0.0:
@@ -111,7 +112,8 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		return
 	health = max(0.0, health - amount)
 	_hit_flash_timer = 0.3
-	_prey_flee_timer = 3.0
+	_prey_flee_timer = 8.0
+	_chase_cooldown = 10.0
 	_spawn_blood_splatter()
 	_play_wolf_pain_sound()
 	if health <= 0.0:
@@ -321,6 +323,17 @@ func attract_to_noise(pos: Vector3, radius: float) -> void:
 	_noise_attract_pos = pos
 	_noise_attract_timer = 15.0
 
+func flee_from_gunshot(pos: Vector3, radius: float) -> void:
+	if _is_dead:
+		return
+	var dist := global_position.distance_to(pos)
+	if dist > radius:
+		return
+	_prey_flee_timer = 6.0
+	_chase_cooldown = 8.0
+	_chase_target = null
+	_state = "patrol"
+
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
@@ -334,19 +347,19 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
 	# (Removed: non-hungry wolves flee — now they always attack if player is close)
-	# Flee from player when attacked
+	# Flee from player when attacked or when gunshot heard nearby
 	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
 		var flee_dist := global_position.distance_to(_player.global_position)
-		if flee_dist < 15.0:
+		if flee_dist < 50.0:
 			var away := global_position - _player.global_position
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = global_position + away.normalized() * 15.0
-			speed = move_speed * 2.5
+			target = global_position + away.normalized() * 30.0
+			speed = move_speed * 3.0
 			_state = "patrol"
 			_chase_target = null
-			_chase_cooldown = 2.0
+			_chase_cooldown = 10.0
 			_play_animation_by_name("run")
 			return {"target": target, "speed": speed}
 	# State: wait_near
