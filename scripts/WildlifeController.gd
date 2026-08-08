@@ -40,6 +40,7 @@ var _prey_flee_timer := 0.0
 var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
 var _wolf_ai_debug_timer := 0.0
+var _resolve_player_timer := 0.0
 var health := 240.0
 var max_health := 240.0
 var _is_dead := false
@@ -231,7 +232,13 @@ func _process(delta: float) -> void:
 		return
 	if patrol_points.size() < 2:
 		return
-	_resolve_player()
+	if _player != null and is_instance_valid(_player) and not _player.is_in_group("net_player_proxy"):
+		pass
+	else:
+		_resolve_player_timer += delta
+		if _resolve_player_timer >= 0.5:
+			_resolve_player_timer = 0.0
+			_resolve_player()
 	if _escape_if_trapped(delta):
 		return
 	_update_stuck_timer(delta)

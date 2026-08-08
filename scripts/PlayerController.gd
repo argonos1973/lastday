@@ -369,6 +369,10 @@ var _rifle_has_cache: bool = false
 var _rifle_current_ik_weight := 1.0
 var _rifle_target_ik_weight := 1.0
 var _last_rifle_animation_debug := ""
+var _cached_exclude_rids: Array[RID] = []
+var _cached_rids_dirty := true
+var _interaction_prompt_timer := 0.0
+var _stats_emit_timer := 0.0
 var _auto_align_enabled := false
 var _auto_align_iteration := 0
 var _auto_align_rifleidle_timer := 0.0
@@ -2232,10 +2236,16 @@ func _physics_process(delta: float) -> void:
 		is_sprinting = false
 	if is_sprinting:
 		stats.energy = max(0.0, stats.energy - (3.0 + carry * 7.0) * delta)
-		stats.changed.emit()
+		_stats_emit_timer += delta
+		if _stats_emit_timer >= 0.25:
+			_stats_emit_timer = 0.0
+			stats.changed.emit()
 	elif not is_jumping and is_on_floor():
 		stats.energy = min(stats.max_stat, stats.energy + (8.0 - carry * 4.0) * delta)
-		stats.changed.emit()
+		_stats_emit_timer += delta
+		if _stats_emit_timer >= 0.25:
+			_stats_emit_timer = 0.0
+			stats.changed.emit()
 	_update_water_state(delta)
 	if is_in_water:
 		speed = crouch_speed if is_crouching else walk_speed
@@ -2276,7 +2286,10 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	_update_walk_motion(delta, input_dir.length())
-	_update_interaction_prompt()
+	_interaction_prompt_timer += delta
+	if _interaction_prompt_timer >= 0.1:
+		_interaction_prompt_timer = 0.0
+		_update_interaction_prompt()
 	_update_flashlight(delta)
 	_update_backpack_socket()
 	_update_hand_socket()
@@ -2390,6 +2403,7 @@ func _create_body() -> void:
 	_collision_shape.shape = capsule
 	_collision_shape.position.y = 0.9
 	add_child(_collision_shape)
+	_cached_rids_dirty = true
 
 	var mesh := MeshInstance3D.new()
 	var capsule_mesh := CapsuleMesh.new()
@@ -5974,9 +5988,11 @@ func _get_aim_collider():
 	var query := PhysicsRayQueryParameters3D.create(origin, end)
 	query.collide_with_areas = true
 	query.collide_with_bodies = true
-	var exclude_rids: Array[RID] = [self.get_rid()]
-	_collect_child_collision_rids(self, exclude_rids)
-	query.exclude = exclude_rids
+	if _cached_rids_dirty:
+		_cached_exclude_rids = [self.get_rid()]
+		_collect_child_collision_rids(self, _cached_exclude_rids)
+		_cached_rids_dirty = false
+	query.exclude = _cached_exclude_rids
 	var result := camera.get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return null

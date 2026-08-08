@@ -34,6 +34,10 @@ var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is 
 var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
+var _water_night_timer := 0.0
+var _shelter_check_timer := 0.0
+var _cached_in_house := false
+var _cached_near_shelter := false
 var _animal_debug_timer := 0
 var _client_animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
@@ -557,9 +561,14 @@ func _process(delta: float) -> void:
 		if celestial._star_update_accum >= 2.0:
 			celestial._star_update_accum = 0.0
 			celestial.update_real_star_positions()
-	var near_built_shelter := _is_near_built_shelter(player.global_position)
+	_shelter_check_timer += delta
+	if _shelter_check_timer >= 0.5:
+		_shelter_check_timer = 0.0
+		_cached_near_shelter = _is_near_built_shelter(player.global_position)
+		_cached_in_house = _is_player_in_house(player.global_position)
+	var near_built_shelter := _cached_near_shelter
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5 or near_built_shelter
-	var in_house := _is_player_in_house(player.global_position)
+	var in_house := _cached_in_house
 	player.set_meta("in_house", in_house)
 	player.set_meta("in_built_shelter", near_built_shelter)
 	var is_sheltered: bool = player.in_shelter or in_house
@@ -577,7 +586,10 @@ func _process(delta: float) -> void:
 	_apply_campfire_effect(player, delta)
 	_update_door_open_cache()
 	_apply_pending_doors()
-	_update_water_night_amount()
+	_water_night_timer += delta
+	if _water_night_timer >= 2.0:
+		_water_night_timer = 0.0
+		_update_water_night_amount()
 	_tick_world_actions(delta)
 	_tick_drink_hold(delta)
 	_tick_campfire_fires()
