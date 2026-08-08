@@ -851,8 +851,7 @@ func _process(delta: float) -> void:
 		if skel != null:
 			_update_rifle_ik(skel, delta)
 	# Update rifle strap mesh in real-time to follow animations
-	# DISABLED for diagnostic — strap stays in rest pose
-	#_update_rifle_strap(delta)
+	_update_rifle_strap(delta)
 	# Camera overrides
 	if camera != null and _is_aiming and not (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
 		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
@@ -2434,6 +2433,7 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
+	inventory.add_item(ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -2518,6 +2518,8 @@ func _create_third_person_model() -> void:
 				get_tree().create_timer(3.0).timeout.connect(_test_unequip_clothing)
 			if OS.get_cmdline_user_args().has("--test-live"):
 				get_tree().create_timer(5.0).timeout.connect(_test_live_capture)
+			if OS.get_cmdline_user_args().has("--test-strap-shot") or OS.get_cmdline_args().has("--test-strap-shot"):
+				get_tree().create_timer(6.0).timeout.connect(_test_strap_shot_action)
 		else:
 			# Puppet: create minimal hand socket for held items
 			if third_person_model != null:
@@ -2583,11 +2585,6 @@ func _create_third_person_item_slots() -> void:
 	if hands != null and hands.has_method("register_socket"):
 		hands.register_socket(third_person_hand_item_root, Vector3(0.0, 0.0, -0.10), Vector3(0.0, 0.0, 0.0), Vector3.ONE * 0.55)
 
-	third_person_back_item_root = Node3D.new()
-	third_person_back_item_root.name = "BackpackSocket"
-	third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
-	third_person_back_item_root.rotation_degrees = Vector3(0.0, 0.0, 0.0)
-	third_person_model.add_child(third_person_back_item_root)
 	_spine_skeleton = _find_skeleton(third_person_model)
 	_spine_bone_idx = -1
 	if _spine_skeleton != null:
@@ -2595,6 +2592,14 @@ func _create_third_person_item_slots() -> void:
 			_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
 			if _spine_bone_idx != -1:
 				break
+
+	# NOTE: Don't use BoneAttachment3D — the bone-local axes differ from model-local.
+	# Keep BackpackSocket as a direct child of third_person_model with known position.
+	third_person_back_item_root = Node3D.new()
+	third_person_back_item_root.name = "BackpackSocket"
+	third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
+	third_person_back_item_root.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+	third_person_model.add_child(third_person_back_item_root)
 	_hand_skeleton = _spine_skeleton
 	_hand_bone_idx = -1
 	if _hand_skeleton != null:
@@ -3727,15 +3732,7 @@ func _load_gltf_node3d(path: String) -> Node3D:
 	return null
 
 func _select_default_held_item() -> void:
-	for i in range(inventory.items.size()):
-		if inventory.items[i].item_type == "weapon_rifle":
-			held_index = i
-			return
-	for i in range(inventory.items.size()):
-		if inventory.items[i].item_type == "weapon":
-			held_index = i
-			return
-	held_index = 0
+	held_index = -1
 
 func equip_item_by_name(item_name: String) -> void:
 	if inventory == null:
@@ -3747,7 +3744,7 @@ func equip_item_by_name(item_name: String) -> void:
 			return
 
 func get_held_item():
-	if inventory == null or inventory.items.is_empty():
+	if inventory == null or inventory.items.is_empty() or held_index == -1:
 		return null
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	return inventory.items[held_index]
@@ -4256,15 +4253,15 @@ func _build_rifle_on_back() -> void:
 	model.visible = true
 	_rifle_on_back.add_child(model)
 	_disable_collision_recursive(model)
-	_rifle_on_back.position = Vector3(0.12, 0.05, -0.08)
+	_rifle_on_back.position = Vector3(0.12, 0.05, -0.25)
 	_rifle_on_back.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+	print("[STRAP-SHOT] _rifle_on_back local_pos=%s" % str(_rifle_on_back.position))
 	third_person_back_item_root.add_child(_rifle_on_back)
 	# Create Marker3D for strap attachment on the rifle
 	# Barrel sling point: 1/4 from barrel end (upper). After X+90 rotation, barrel is +Y.
 	# After scale: half_len = 0.9. Barrel at +Y, tilted -15° on Z.
-	var half_len: float = 0.9
-	var barrel_local := Vector3(sin(deg_to_rad(15.0)) * half_len * 0.45, cos(deg_to_rad(15.0)) * half_len * 0.45, 0.0)
-	var stock_local := Vector3(-sin(deg_to_rad(15.0)) * half_len * 0.5, -cos(deg_to_rad(15.0)) * half_len * 0.5, 0.0)
+	var barrel_local := Vector3(-0.10, 0.40, -0.05)
+	var stock_local := Vector3(0.12, -0.40, -0.05)
 	_strap_barrel_marker = Marker3D.new()
 	_strap_barrel_marker.name = "StrapBarrelPoint"
 	_strap_barrel_marker.position = barrel_local
@@ -4273,6 +4270,9 @@ func _build_rifle_on_back() -> void:
 	_strap_stock_marker.name = "StrapStockPoint"
 	_strap_stock_marker.position = stock_local
 	_rifle_on_back.add_child(_strap_stock_marker)
+	_rifle_on_back.force_update_transform()
+	_strap_barrel_marker.force_update_transform()
+	_strap_stock_marker.force_update_transform()
 	# Create BoneAttachment3D guide points on torso for natural chest curve
 	# Guide upper: Spine2 (upper chest / shoulder area)
 	var spine2_idx := skeleton.find_bone("mixamorig_Spine2")
@@ -4317,38 +4317,41 @@ func _create_strap_texture() -> ImageTexture:
 	var w := 256
 	var h := 256
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var base_col := Color(0.38, 0.36, 0.26, 1.0)
-	var stitch_col := Color(0.22, 0.20, 0.14, 1.0)
-	var weave_dark := Color(0.33, 0.31, 0.21, 1.0)
-	var weave_light := Color(0.43, 0.41, 0.31, 1.0)
+	var base_col := Color(0.28, 0.31, 0.22, 1.0) # Military Olive Drab / Khaki
+	var stitch_col := Color(0.12, 0.14, 0.08, 1.0) # Dark tactical thread
+	var weave_dark := Color(0.20, 0.23, 0.16, 1.0)
+	var weave_light := Color(0.35, 0.38, 0.28, 1.0)
+	var steel_col := Color(0.18, 0.20, 0.22, 1.0) # Gunmetal buckle clip ends
 	for y in range(h):
 		for x in range(w):
 			var col := base_col
-			# Horizontal weave (transverse threads)
-			if y % 8 < 4:
-				col = col.lerp(weave_dark, 0.25)
+			if y < 16 or y > (h - 17):
+				col = steel_col
+				if x < 10 or x > (w - 11):
+					col = steel_col.darkened(0.3)
+				elif (y >= 6 and y <= 10) or (y >= (h - 11) and y <= (h - 7)):
+					col = steel_col.lightened(0.25)
 			else:
-				col = col.lerp(weave_light, 0.15)
-			# Vertical weave (longitudinal threads)
-			if x % 6 < 3:
-				col = col.lerp(weave_dark, 0.08)
-			# Double stitching near edges
-			var edge_dist := minf(x, w - 1 - x)
-			if edge_dist < 4:
-				col = stitch_col
-			elif edge_dist < 8:
-				if x % 6 < 3:
-					col = col.lerp(stitch_col, 0.6)
-			elif edge_dist < 12:
-				if x % 6 < 3:
-					col = col.lerp(stitch_col, 0.3)
-			# Deterministic micro-noise for fabric variation
-			var n := sin(x * 12.9898 + y * 78.233) * 43758.5453
-			n = n - floor(n)
-			n = (n - 0.5) * 0.05
-			col.r = clampf(col.r + n, 0.0, 1.0)
-			col.g = clampf(col.g + n, 0.0, 1.0)
-			col.b = clampf(col.b + n, 0.0, 1.0)
+				if (x + y) % 8 < 4:
+					col = col.lerp(weave_dark, 0.25)
+				else:
+					col = col.lerp(weave_light, 0.15)
+				if (x - y + h) % 6 < 3:
+					col = col.lerp(weave_dark, 0.10)
+				var edge_dist := minf(x, w - 1 - x)
+				if edge_dist < 4:
+					col = stitch_col
+				elif edge_dist >= 8 and edge_dist <= 12:
+					if y % 6 < 3:
+						col = stitch_col
+				elif edge_dist < 8:
+					col = col.lerp(weave_dark, 0.4)
+				var n := sin(x * 12.9898 + y * 78.233) * 43758.5453
+				n = n - floor(n)
+				n = (n - 0.5) * 0.04
+				col.r = clampf(col.r + n, 0.0, 1.0)
+				col.g = clampf(col.g + n, 0.0, 1.0)
+				col.b = clampf(col.b + n, 0.0, 1.0)
 			img.set_pixel(x, y, col)
 	var tex := ImageTexture.create_from_image(img)
 	return tex
@@ -4451,6 +4454,16 @@ func _build_rifle_strap() -> void:
 		# PASO 1: assign skeleton and skin for GPU skinning
 		strap_mi.skeleton = NodePath("../SlingSkeleton")
 		strap_mi.skin = _create_strap_skin()
+
+		var strap_mat := StandardMaterial3D.new()
+		strap_mat.resource_name = "MilitaryRifleSlingMaterial"
+		strap_mat.albedo_texture = _create_strap_texture()
+		strap_mat.roughness = 0.65
+		strap_mat.metallic = 0.15
+		strap_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		strap_mi.material_override = strap_mat
+		strap_mi.custom_aabb = AABB(Vector3(-10.0, -10.0, -10.0), Vector3(20.0, 20.0, 20.0))
+
 		print("[STRAP] SlingMesh skeleton=%s skin_binds=%d" % [strap_mi.skeleton, strap_mi.skin.get_bind_count()])
 	# Do NOT create Skin resource / CPU skinning cache — want pure rest pose
 	_strap_mesh_cached = false
@@ -4693,8 +4706,6 @@ func _update_strap_debug_spheres(pts: Array[Vector3], radius: float = 0.015, cus
 			_strap_debug_spheres[i].position = pts[i]
 
 func _update_rifle_strap(delta: float) -> void:
-	if _strap_diagnostic_mode:
-		return
 	if _rifle_strap_system == null:
 		_rifle_strap_system = RifleStrapScript.new()
 		_rifle_strap_system.player = self
@@ -4816,9 +4827,21 @@ func _build_third_person_rifle() -> void:
 	_rifle_root.add_child(_rifle_stock_ref)
 	# Muzzle: extremo delantero fisico del cañon (min Z del AABB — model barrel points -Z)
 	_rifle_muzzle = Marker3D.new()
-	_rifle_muzzle.name = "Muzzle"
 	_rifle_muzzle.position = Vector3(muzzle_x, muzzle_y, muzzle_z)
 	_rifle_root.add_child(_rifle_muzzle)
+
+	# Strap attachment markers on held rifle
+	_strap_barrel_marker = Marker3D.new()
+	_strap_barrel_marker.name = "StrapBarrelPoint"
+	_strap_barrel_marker.position = Vector3(muzzle_x * 0.75 + stock_x * 0.25, muzzle_y + 0.05, muzzle_z * 0.75 + stock_z * 0.25)
+	_rifle_root.add_child(_strap_barrel_marker)
+
+	_strap_stock_marker = Marker3D.new()
+	_strap_stock_marker.name = "StrapStockPoint"
+	_strap_stock_marker.position = Vector3(stock_x, stock_y + 0.05, stock_z * 0.90 + muzzle_z * 0.10)
+	_rifle_root.add_child(_strap_stock_marker)
+
+	_build_rifle_strap()
 	# Two-point alignment targets. No IK targets, poles, or arm solvers are created.
 	_rifle_stock_target = Marker3D.new()
 	_rifle_stock_target.name = "StockTarget"
@@ -6902,9 +6925,100 @@ func _test_shot(path: String) -> void:
 		print("[TEST] saved ", path, " size=", img.get_width(), "x", img.get_height(), " has_color=", has_color)
 		if not has_color:
 			print("[TEST] WARNING: image appears all black! vp_size=", vp.size, " vp_visible=", vp.is_visible())
-		img.save_png(ProjectSettings.globalize_path(path))
+		var save_path := path
+		if path.begins_with("res://") or path.begins_with("user://"):
+			save_path = ProjectSettings.globalize_path(path)
+		img.save_png(save_path)
 	else:
 		print("[TEST] FAILED: img is null or empty")
+
+func _test_strap_shot_action() -> void:
+	print("[STRAP-SHOT] === STARTING STRAP SCREENSHOT CAPTURE ===")
+	set_process(false)
+	set_physics_process(false)
+
+	# Ensure rifle in inventory
+	var has_rifle := false
+	if inventory != null:
+		for item in inventory.items:
+			if item != null and str(item.item_type) == "weapon_rifle":
+				has_rifle = true
+				break
+	if not has_rifle and inventory != null:
+		inventory.add_item(ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0))
+
+	# Elevate player slightly in clear air to avoid ground foliage/trees
+	global_position.y += 3.0
+	force_update_transform()
+
+	# Clear hands to force rifle to be holstered on player's back
+	if hands != null:
+		hands.clear_hands()
+	_rifle_in_hands = false
+	_sync_third_person_equipment(null)
+
+	# Force idle animation — rifle is on back, not held
+	if third_person_animation_player != null and not third_person_idle_animation.is_empty():
+		if third_person_animation_player.has_animation(third_person_idle_animation):
+			third_person_animation_player.play(third_person_idle_animation, 0.0)
+
+	# Wait a couple of frames for bone transforms to settle
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if _spine_skeleton != null and is_instance_valid(_spine_skeleton):
+		_spine_skeleton.force_update_all_bone_transforms()
+	_update_backpack_socket()
+	_update_rifle_strap(0.016)
+	if third_person_model != null and is_instance_valid(third_person_model):
+		third_person_model.visible = true
+
+	# --- Diagnostics ---
+	print("[STRAP-SHOT] _rifle_in_hands = %s" % str(_rifle_in_hands))
+	print("[STRAP-SHOT] _rifle_on_back = %s" % str(_rifle_on_back != null and is_instance_valid(_rifle_on_back)))
+	print("[STRAP-SHOT] _rifle_on_back_strap = %s" % str(_rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap)))
+	print("[STRAP-SHOT] _strap_skeleton = %s" % str(_strap_skeleton != null and is_instance_valid(_strap_skeleton)))
+	print("[STRAP-SHOT] _strap_barrel_marker = %s" % str(_strap_barrel_marker != null and is_instance_valid(_strap_barrel_marker)))
+	print("[STRAP-SHOT] _strap_stock_marker = %s" % str(_strap_stock_marker != null and is_instance_valid(_strap_stock_marker)))
+	if _rifle_on_back != null and is_instance_valid(_rifle_on_back):
+		print("[STRAP-SHOT] RifleOnBack global_pos = %s" % str(_rifle_on_back.global_position))
+		print("[STRAP-SHOT] RifleOnBack visible = %s" % str(_rifle_on_back.visible))
+		print("[STRAP-SHOT] RifleOnBack child_count = %d" % _rifle_on_back.get_child_count())
+		for ch in _rifle_on_back.get_children():
+			print("[STRAP-SHOT]   child: %s  visible=%s" % [ch.name, ch.visible if ch is Node3D else "n/a"])
+	else:
+		print("[STRAP-SHOT] WARNING: _rifle_on_back is null or invalid!")
+	if third_person_back_item_root != null and is_instance_valid(third_person_back_item_root):
+		print("[STRAP-SHOT] BackpackSocket global_pos = %s" % str(third_person_back_item_root.global_position))
+		print("[STRAP-SHOT] BackpackSocket child_count = %d" % third_person_back_item_root.get_child_count())
+		for ch in third_person_back_item_root.get_children():
+			print("[STRAP-SHOT]   back_child: %s" % ch.name)
+	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
+		print("[STRAP-SHOT] RifleSlingRoot global_pos = %s" % str(_rifle_on_back_strap.global_position))
+		var mi: MeshInstance3D = _rifle_on_back_strap.find_child("SlingMesh", true, false) as MeshInstance3D
+		if mi != null:
+			print("[STRAP-SHOT] SlingMesh found! Visible=%s AABB=%s global_pos=%s" % [mi.visible, mi.get_aabb(), mi.global_position])
+		else:
+			print("[STRAP-SHOT] WARNING: SlingMesh child not found!")
+
+	# --- Camera 1: Direct Front View (Full Torso & Strap) ---
+	if camera != null:
+		camera.global_position = global_position + global_transform.basis * Vector3(0.0, 1.55, -2.2)
+		camera.look_at(global_position + Vector3(0.0, 1.35, 0.0), Vector3.UP)
+		camera.fov = 55.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://strap_front.png")
+	print("[STRAP-SHOT] Front view saved to res://strap_front.png")
+
+	# --- Camera 2: Direct Back View (Rifle on Back) ---
+	if camera != null:
+		camera.global_position = global_position + global_transform.basis * Vector3(0.0, 1.55, 2.2)
+		camera.look_at(global_position + Vector3(0.0, 1.35, 0.0), Vector3.UP)
+		camera.fov = 55.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://strap_profile.png")
+	print("[STRAP-SHOT] Profile view saved to res://strap_profile.png")
+	get_tree().quit()
 
 func _debug_strap_capture() -> void:
 	print("[STRAP-DIAG] === STARTING CLEAN DIAGNOSTIC ===")

@@ -1,17 +1,20 @@
 #!/bin/bash
-# launch_client.sh — Lanza el cliente de Godot en macOS
-# Uso: ./launch_client.sh
+# launch_client.command — Lanza el cliente de Godot (Linux / macOS)
 
-GODOT="/Volumes/copia/lastday2/work/godot4.7/Godot.app/Contents/MacOS/Godot"
-PROJECT="/Volumes/copia/lastday2"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ ! -x "$GODOT" ]; then
-    echo "ERROR: No se encuentra el binario de Godot en: $GODOT"
+if command -v godot4 &> /dev/null; then
+    GODOT_CMD="godot4"
+elif command -v godot &> /dev/null; then
+    GODOT_CMD="godot"
+elif flatpak info org.godotengine.Godot &> /dev/null; then
+    GODOT_CMD="flatpak run org.godotengine.Godot"
+elif [ -x "/Volumes/copia/lastday2/work/godot4.7/Godot.app/Contents/MacOS/Godot" ]; then
+    GODOT_CMD="/Volumes/copia/lastday2/work/godot4.7/Godot.app/Contents/MacOS/Godot"
+else
+    echo "ERROR: No se encontró Godot 4 instalado en el sistema."
     exit 1
 fi
 
-"$GODOT" --path "$PROJECT" 2>&1 | while IFS= read -r line; do
-    case "$line" in
-        *"[RIFLE_VERIFY]"*) printf '%s\n' "$line" ;;
-    esac
-done
+echo "Ejecutando cliente con: $GODOT_CMD"
+$GODOT_CMD --path "$SCRIPT_DIR" "$@"
