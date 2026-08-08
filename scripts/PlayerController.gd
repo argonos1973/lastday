@@ -374,23 +374,25 @@ var _cached_rids_dirty := true
 var _interaction_prompt_timer := 0.0
 var _stats_emit_timer := 0.0
 var _ik_bone_cache: Dictionary = {}
+# Cache del skeleton del modelo 3P para evitar búsquedas cada frame
+var _anim_skel_cache: Skeleton3D = null
+var _anim_skel_dirty := true
+# Cache de materiales reutilizables para skin/ropa (evita new() cada equip/unequip)
+var _skin_mat_cache: Dictionary = {}
+# Throttle de bone transform update: solo forzar cuando cambia la animación
+var _prev_anim_name := ""
+var _bone_update_pending := false
+# Alineación de RifleRoot (debug/calibración)
 var _auto_align_enabled := false
 var _auto_align_iteration := 0
 var _auto_align_rifleidle_timer := 0.0
 var _auto_align_converged := false
 var _auto_align_samples: Array = []
-var _ik_calibration_enabled := false
-var _ik_calibration_levels := [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
-var _ik_calibration_idx := 0
-var _ik_calibration_timer := 0.0
-var _ik_calibration_stable_influence := 0.0
-var _ik_calibration_log_timer := 0.0
-# Phase 1 measurement state (right hand only)
+# Medición de agarre mano derecha
 var _rh_grip_measure_timer := 0.0
 var _rh_grip_measure_samples: Array = []
 var _rh_grip_last_dist := 0.0
 var _rh_grip_logged := false
-# Controlled small-step alignment for RifleRoot local (right hand only)
 var _rifle_two_point_log_timer := 0.0
 var _rifle_two_point_logged := false
 var _root_align_enabled := false
@@ -2483,6 +2485,8 @@ func _create_third_person_model() -> void:
 		is_clothing_model = true
 		add_child(character)
 		third_person_model = character
+		_anim_skel_dirty = true  # Invalida cache al cambiar el modelo
+		_prev_anim_name = ""
 		_hide_third_person_held_props(character)
 		_hide_third_person_export_helpers(character)
 		is_custom_character = false
@@ -2558,6 +2562,8 @@ func _create_procedural_third_person_model() -> void:
 	rig.visible = false
 	add_child(rig)
 	third_person_model = rig
+	_anim_skel_dirty = true  # Invalida cache al cambiar el modelo
+	_prev_anim_name = ""
 
 	_add_held_box(rig, "RigTorso", Vector3(0.42, 0.72, 0.24), Vector3(0.0, 1.18, 0.0), Color(0.62, 0.45, 0.20), Vector3.ZERO)
 	_add_held_sphere(rig, "RigHead", Vector3(0.18, 0.18, 0.18), Vector3(0.0, 1.68, 0.0), Color(0.45, 0.34, 0.25), Vector3.ZERO)
@@ -5495,8 +5501,9 @@ func _find_bone_cached(cache_key: String, bone_name: String, skeleton: Skeleton3
 		_ik_bone_cache[cache_key] = idx
 	return idx
 
+# Linterna: no se muestra en tercera persona (efecto de luz es suficiente)
 func _build_third_person_flashlight() -> void:
-	pass
+	return
 
 func _build_third_person_can() -> void:
 	_build_third_person_meat_on_stick()
@@ -5526,11 +5533,13 @@ func _build_third_person_plastic_bottle() -> void:
 func _build_third_person_drink_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
 
+# Vendaje: sin modelo 3P (no es necesario, el efecto es instantáneo)
 func _build_third_person_bandage() -> void:
-	pass
+	return
 
+# Batería: sin modelo 3P
 func _build_third_person_battery() -> void:
-	pass
+	return
 
 func _build_third_person_resource(item_name: String) -> void:
 	if item_name == "Tronco" or item_name == "Madera" or item_name == "Ramas":
@@ -5538,11 +5547,13 @@ func _build_third_person_resource(item_name: String) -> void:
 	elif item_name == "Piedra":
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.5)
 
+# Semillas: sin modelo 3P diferenciado, usa pack genérico
 func _build_third_person_seed_bag() -> void:
-	pass
+	_build_third_person_pack()
 
+# Bundle de ropa: sin modelo 3P diferenciado, usa pack genérico
 func _build_third_person_clothing_bundle() -> void:
-	pass
+	_build_third_person_pack()
 
 func _build_third_person_tool(path: String, node_name: String, _fallback_color: Color) -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, path, node_name, Vector3(0.0, -0.02, -0.11), Vector3(82, 0, 18), Vector3.ONE * 0.44)
@@ -5573,8 +5584,11 @@ func _collect_meshes_recursive(root: Node, result: Array) -> void:
 	for child in root.get_children():
 		_collect_meshes_recursive(child, result)
 
+# Pack genérico (caja marrón pequeña) para objetos sin modelo 3P específico
 func _build_third_person_pack() -> void:
-	pass
+	_add_held_box(third_person_hand_item_root, "ThirdPersonPack",
+		Vector3(0.08, 0.05, 0.12), Vector3(0.0, 0.0, -0.08),
+		Color(0.5, 0.35, 0.18), Vector3.ZERO)
 
 func _add_held_box(parent: Node, node_name: String, size: Vector3, pos: Vector3, color: Color, rot: Vector3) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
@@ -5739,9 +5753,18 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var sit_drop := 0.0
 	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink * 0.55
 	if third_person_model != null:
-		var skel := _find_skeleton(third_person_model)
+		# Cache del skeleton para evitar búsqueda recursiva cada frame
+		if _anim_skel_dirty or _anim_skel_cache == null or not is_instance_valid(_anim_skel_cache):
+			_anim_skel_cache = _find_skeleton(third_person_model)
+			_anim_skel_dirty = false
+		var skel := _anim_skel_cache
 		if skel != null:
-			skel.force_update_all_bone_transforms()
+			# Solo forzar update de bones cuando cambia la animación o hay cambio de postura
+			var cur_anim := third_person_animation_player.current_animation if third_person_animation_player != null else ""
+			if _bone_update_pending or cur_anim != _prev_anim_name:
+				skel.force_update_all_bone_transforms()
+				_prev_anim_name = cur_anim
+				_bone_update_pending = false
 			if is_prone and third_person_action_timer <= 0.0 and not is_crouching:
 				# Align by hip/pelvis bone — feet are off ground when sitting
 				var hip_model_y := 0.0
@@ -6442,9 +6465,12 @@ func _shoot_rifle() -> void:
 	var cam_ray_origin := camera.project_ray_origin(aim_point)
 	var cam_ray_dir := camera.project_ray_normal(aim_point)
 	var space_state := get_world_3d().direct_space_state
-	var exclude_arr: Array = [self.get_rid()]
-	for child in find_children("*", "CollisionObject3D", true, false):
-		exclude_arr.append(child.get_rid())
+	# Usar RIDs cacheados para evitar recorrer el árbol en cada disparo
+	if _cached_rids_dirty:
+		_cached_exclude_rids = [self.get_rid()]
+		_collect_child_collision_rids(self, _cached_exclude_rids)
+		_cached_rids_dirty = false
+	var exclude_arr: Array[RID] = _cached_exclude_rids
 	# In third-person, the camera is behind/above the player. Cast a ray from
 	# the camera through the crosshair to find the intended target point, then
 	# fire the actual damage ray from the player's weapon position toward that
@@ -6764,8 +6790,9 @@ func from_dict(data: Dictionary) -> void:
 		_wear_clothing_visual(equipped_clothing)
 	_sync_held_item()
 
+# Uso rápido del objeto en mano: delega a la implementación real
 func _quick_use_held_item() -> void:
-	pass
+	_quick_use_held_item_impl()
 
 func _inventory_has_blade() -> bool:
 	if inventory == null:

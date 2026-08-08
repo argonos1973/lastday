@@ -54,6 +54,13 @@ static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
 static var _shared_cylinder: CylinderMesh = null
 
+# LOD de IA: reduce frecuencia de actualización para animales lejanos
+var _ai_lod_timer := 0.0
+const AI_LOD_NEAR := 40.0   # Distancia: IA completa cada frame
+const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
+const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
+const AI_LOD_CULL := 150.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
+
 # Puppet mode: visual-only animal controlled by network sync (no AI)
 func setup_puppet(kind: String) -> void:
 	animal_type = kind
@@ -232,15 +239,35 @@ func _process(delta: float) -> void:
 		return
 	if patrol_points.size() < 2:
 		return
-	if _player != null and is_instance_valid(_player) and not _player.is_in_group("net_player_proxy"):
-		pass
-	else:
+	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy"):
 		_resolve_player_timer += delta
 		if _resolve_player_timer >= 0.5:
 			_resolve_player_timer = 0.0
 			_resolve_player()
 	if _escape_if_trapped(delta):
 		return
+	# ---- LOD de IA por distancia al jugador ----
+	var dist_to_player := 0.0
+	if _player != null and is_instance_valid(_player):
+		dist_to_player = global_position.distance_to(_player.global_position)
+		# Animales fuera de rango de cull: solo cuenta rot_timer de cadáver (ya retorna antes si _is_dead)
+		if dist_to_player > AI_LOD_CULL and animal_type != "wolf":
+			# Lobos siempre activos (agresivos). El resto se duerme.
+			return
+		# LOD: actualizar IA a frecuencia reducida si están lejos
+		if dist_to_player > AI_LOD_MID:
+			_ai_lod_timer += delta
+			if _ai_lod_timer < 1.0:
+				return
+			_ai_lod_timer = 0.0
+		elif dist_to_player > AI_LOD_NEAR:
+			_ai_lod_timer += delta
+			if _ai_lod_timer < 0.25:
+				return
+			_ai_lod_timer = 0.0
+		else:
+			_ai_lod_timer = 0.0
+	# -------------------------------------------
 	_update_stuck_timer(delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	_chase_cooldown = max(0.0, _chase_cooldown - delta)

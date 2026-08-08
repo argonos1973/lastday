@@ -508,8 +508,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hud != null and (event.is_action_pressed("toggle_inventory") or tab_pressed):
 		hud.toggle_inventory()
 
-func _input(event: InputEvent) -> void:
-	pass
+# _input manejado por el HUD y el PlayerController; Main no procesa input directo
+func _input(_event: InputEvent) -> void:
+	return
 
 func _process(delta: float) -> void:
 	if _loading_overlay != null:
@@ -723,6 +724,7 @@ func _tick_world_actions(delta: float) -> void:
 		if action != null and action.has_method("tick_growth"):
 			action.tick_growth(delta)
 
+# Sistema celestial (sol/luna) sigue al jugador; actualmente deshabilitado
 func _update_celestial_follow() -> void:
 	return
 
@@ -735,8 +737,9 @@ func _update_water_night_amount() -> void:
 		if node is RiverWater and node.has_method("set_night_amount"):
 			node.set_night_amount(night_amount)
 
+# Guardado de partida: pendiente de implementar (actualmente no persiste)
 func save_current_game() -> void:
-	pass
+	return
 
 func _build_save_data() -> Dictionary:
 	var data := {
@@ -5325,20 +5328,21 @@ func _make_fire_ramp() -> GradientTexture1D:
 	tex.gradient = grad
 	return tex
 
+# Interior de casas: pendiente de implementar (placeholder para futura expansión)
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
-	pass
+	return
 
-func _create_extra_house_furniture(origin: Vector3, label: String) -> void:
-	pass
+func _create_extra_house_furniture(_origin: Vector3, _label: String) -> void:
+	return
 
-func _create_house_living_room(origin: Vector3, label: String) -> void:
-	pass
+func _create_house_living_room(_origin: Vector3, _label: String) -> void:
+	return
 
-func _create_house_bedroom(origin: Vector3, label: String) -> void:
-	pass
+func _create_house_bedroom(_origin: Vector3, _label: String) -> void:
+	return
 
-func _create_house_warehouse(origin: Vector3, label: String) -> void:
-	pass
+func _create_house_warehouse(_origin: Vector3, _label: String) -> void:
+	return
 
 func _create_road_checkpoint(origin: Vector3) -> void:
 	_register_wildlife_blocker(origin, 5.7)
@@ -7385,8 +7389,9 @@ func _load_gltf_scene_from_file(path: String):
 		generated_scene.queue_free()
 	return null
 
-func _create_concrete_barrier(node_name: String, pos: Vector3, rot: Vector3) -> void:
-	pass
+# Barrera de hormigón: pendiente de implementar asset 3D
+func _create_concrete_barrier(_node_name: String, _pos: Vector3, _rot: Vector3) -> void:
+	return
 
 func _add_convex_collision_to_meshes(root: Node) -> void:
 	var meshes: Array = []
