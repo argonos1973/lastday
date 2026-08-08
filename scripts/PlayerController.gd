@@ -2541,8 +2541,10 @@ func _create_third_person_model() -> void:
 				get_tree().create_timer(3.0).timeout.connect(_test_unequip_clothing)
 			if OS.get_cmdline_user_args().has("--test-live"):
 				get_tree().create_timer(5.0).timeout.connect(_test_live_capture)
-			if OS.get_cmdline_user_args().has("--test-strap-shot") or OS.get_cmdline_args().has("--test-strap-shot"):
+			if OS.get_cmdline_user_args().has("--test-strap-shot"):
 				get_tree().create_timer(6.0).timeout.connect(_test_strap_shot_action)
+			if OS.get_cmdline_user_args().has("--test-equip-rifle"):
+				get_tree().create_timer(3.0).timeout.connect(_test_equip_rifle_shot_action)
 		else:
 			# Puppet: create minimal hand socket for held items
 			if third_person_model != null:
@@ -7045,6 +7047,43 @@ func _test_strap_shot_action() -> void:
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://strap_profile.png")
 	print("[STRAP-SHOT] Profile view saved to res://strap_profile.png")
+	get_tree().quit()
+
+func _test_equip_rifle_shot_action() -> void:
+	print("[EQUIP-RIFLE-SHOT] === STARTING RIFLE IN HANDS CAPTURE ===")
+	var rifle_idx := -1
+	if inventory != null:
+		for i in range(inventory.items.size()):
+			if inventory.items[i] != null and str(inventory.items[i].item_type) == "weapon_rifle":
+				rifle_idx = i
+				break
+	if rifle_idx == -1 and inventory != null:
+		inventory.add_item(ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0))
+		rifle_idx = inventory.items.size() - 1
+
+	held_index = rifle_idx
+	_sync_held_item()
+
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	print("[EQUIP-RIFLE-SHOT] held_index=%d, _rifle_in_hands=%s, hands_has_item=%s" % [held_index, _rifle_in_hands, hands.has_item_in_hands() if hands != null else false])
+
+	if camera != null:
+		camera.global_position = global_position + global_transform.basis * Vector3(0.0, 1.45, -2.0)
+		camera.look_at(global_position + Vector3(0.0, 1.25, 0.0), Vector3.UP)
+		camera.fov = 55.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://equip_rifle_front.png")
+	print("[EQUIP-RIFLE-SHOT] Front view saved to res://equip_rifle_front.png")
+
+	if camera != null:
+		camera.global_position = global_position + global_transform.basis * Vector3(-1.8, 1.45, -0.8)
+		camera.look_at(global_position + Vector3(0.0, 1.25, 0.0), Vector3.UP)
+		camera.fov = 55.0
+	await get_tree().create_timer(1.0).timeout
+	await _test_shot("res://equip_rifle_profile.png")
+	print("[EQUIP-RIFLE-SHOT] Profile view saved to res://equip_rifle_profile.png")
 	get_tree().quit()
 
 func _debug_strap_capture() -> void:
