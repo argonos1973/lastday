@@ -373,6 +373,7 @@ var _cached_exclude_rids: Array[RID] = []
 var _cached_rids_dirty := true
 var _interaction_prompt_timer := 0.0
 var _stats_emit_timer := 0.0
+var _ik_bone_cache: Dictionary = {}
 var _auto_align_enabled := false
 var _auto_align_iteration := 0
 var _auto_align_rifleidle_timer := 0.0
@@ -2367,7 +2368,10 @@ func _update_water_state(delta: float) -> void:
 		stats.wetness = wetness
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + river_depth))
 		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + river_depth))
-		stats.changed.emit()
+		_stats_emit_timer += delta
+		if _stats_emit_timer >= 0.25:
+			_stats_emit_timer = 0.0
+			stats.changed.emit()
 		if _water_notice_cooldown <= 0.0:
 			notice.emit("Te mojas. La ropa fria te roba calor.")
 			_water_notice_cooldown = 8.0
@@ -2387,7 +2391,10 @@ func _update_water_state(delta: float) -> void:
 		stats.wetness = wetness
 		if wetness > 0.05:
 			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.008 * wetness)
-			stats.changed.emit()
+			_stats_emit_timer += delta
+			if _stats_emit_timer >= 0.25:
+				_stats_emit_timer = 0.0
+				stats.changed.emit()
 
 func _query_river_depth() -> float:
 	var scene := get_tree().current_scene
@@ -4890,16 +4897,16 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if _rifle_stock_ref == null or not is_instance_valid(_rifle_stock_ref):
 		return
 
-	var rh_bone_name := _resolve_bone_name_safe(right_hand_bone_name, skel)
-	var lh_bone_name := _resolve_bone_name_safe("mixamorig:LeftHand", skel)
-	var shoulder_bone_name := _resolve_bone_name_safe("mixamorig:RightShoulder", skel)
+	var rh_bone_name := _resolve_bone_name_cached("rh", right_hand_bone_name, skel)
+	var lh_bone_name := _resolve_bone_name_cached("lh", "mixamorig:LeftHand", skel)
+	var shoulder_bone_name := _resolve_bone_name_cached("sh", "mixamorig:RightShoulder", skel)
 	if shoulder_bone_name.is_empty():
-		shoulder_bone_name = _resolve_bone_name_safe("mixamorig:RightArm", skel)
+		shoulder_bone_name = _resolve_bone_name_cached("sh_alt", "mixamorig:RightArm", skel)
 	if rh_bone_name.is_empty() or lh_bone_name.is_empty() or shoulder_bone_name.is_empty():
 		return
-	var rh_idx := skel.find_bone(rh_bone_name)
-	var lh_idx := skel.find_bone(lh_bone_name)
-	var sh_idx := skel.find_bone(shoulder_bone_name)
+	var rh_idx := _find_bone_cached("rh_idx", rh_bone_name, skel)
+	var lh_idx := _find_bone_cached("lh_idx", lh_bone_name, skel)
+	var sh_idx := _find_bone_cached("sh_idx", shoulder_bone_name, skel)
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return
 
@@ -4970,19 +4977,13 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 
 	# Build the world transform for WeaponOffset
 	var weapon_basis := r.scaled(Vector3.ONE * s)
-	_rifle_weapon_offset.global_basis = weapon_basis
 	_rifle_root.position = Vector3.ZERO
-	_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
-	_rifle_weapon_offset.force_update_transform()
-	_rifle_root.force_update_transform()
-
 	# Apply -15° pitch when aiming (local rotation around the right grip pivot).
 	if _is_aiming:
 		weapon_basis = weapon_basis * Basis(Vector3(1.0, 0.0, 0.0), deg_to_rad(-15.0))
-		_rifle_weapon_offset.global_basis = weapon_basis
-		_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
-		_rifle_weapon_offset.force_update_transform()
-		_rifle_root.force_update_transform()
+	_rifle_weapon_offset.global_basis = weapon_basis
+	_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
+	_rifle_weapon_offset.force_update_transform()
 
 	# Shift the whole rifle along the real barrel line (from muzzle toward stock)
 	# without changing rotation or scale. Direction is taken from the actual Muzzle/Stock markers.
@@ -5011,12 +5012,12 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# Store references for the skeleton_updated callback
 	_ik_skel = skel
 	_ik_lh_idx = lh_idx
-	var ua_bone_name := _resolve_bone_name_safe("mixamorig:LeftArm", skel)
-	var fa_bone_name := _resolve_bone_name_safe("mixamorig:LeftForeArm", skel)
+	var ua_bone_name := _resolve_bone_name_cached("ua", "mixamorig:LeftArm", skel)
+	var fa_bone_name := _resolve_bone_name_cached("fa", "mixamorig:LeftForeArm", skel)
 	if not ua_bone_name.is_empty():
-		_ik_upper_arm_idx = skel.find_bone(ua_bone_name)
+		_ik_upper_arm_idx = _find_bone_cached("ua_idx", ua_bone_name, skel)
 	if not fa_bone_name.is_empty():
-		_ik_forearm_idx = skel.find_bone(fa_bone_name)
+		_ik_forearm_idx = _find_bone_cached("fa_idx", fa_bone_name, skel)
 	if not _ik_skeleton_connected and skel != null:
 		skel.skeleton_updated.connect(_on_skeleton_updated)
 		_ik_skeleton_connected = true
@@ -5477,6 +5478,22 @@ func _resolve_bone_name_safe(preferred: String, skeleton: Skeleton3D = null) -> 
 	if idx >= 0:
 		return short_name
 	return ""
+
+func _resolve_bone_name_cached(cache_key: String, preferred: String, skeleton: Skeleton3D) -> String:
+	if _ik_bone_cache.has(cache_key):
+		return _ik_bone_cache[cache_key]
+	var resolved := _resolve_bone_name_safe(preferred, skeleton)
+	if not resolved.is_empty():
+		_ik_bone_cache[cache_key] = resolved
+	return resolved
+
+func _find_bone_cached(cache_key: String, bone_name: String, skeleton: Skeleton3D) -> int:
+	if _ik_bone_cache.has(cache_key):
+		return _ik_bone_cache[cache_key]
+	var idx := skeleton.find_bone(bone_name)
+	if idx >= 0:
+		_ik_bone_cache[cache_key] = idx
+	return idx
 
 func _build_third_person_flashlight() -> void:
 	pass

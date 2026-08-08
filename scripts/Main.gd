@@ -38,6 +38,8 @@ var _water_night_timer := 0.0
 var _shelter_check_timer := 0.0
 var _cached_in_house := false
 var _cached_near_shelter := false
+var _door_cache_timer := 0.0
+var _campfire_emit_timer := 0.0
 var _animal_debug_timer := 0
 var _client_animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
@@ -584,7 +586,10 @@ func _process(delta: float) -> void:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping)
 	_apply_campfire_effect(player, delta)
-	_update_door_open_cache()
+	_door_cache_timer += delta
+	if _door_cache_timer >= 0.5:
+		_door_cache_timer = 0.0
+		_update_door_open_cache()
 	_apply_pending_doors()
 	_water_night_timer += delta
 	if _water_night_timer >= 2.0:
@@ -679,17 +684,23 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 	if campfire_positions.is_empty():
 		return
 	var ppos := player_node.global_position
+	var emit_stats := false
 	for fire_pos in campfire_positions:
 		var dist := ppos.distance_to(Vector3(fire_pos.x, ppos.y, fire_pos.z))
 		if dist < 1.2:
 			player_node.stats.health -= 5.0 * delta
-			player_node.stats.changed.emit()
+			emit_stats = true
 			if randf() < delta * 2.0:
 				player_node.notice.emit("Te quemas al estar demasiado cerca del fuego.")
 		elif dist < 4.0:
 			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
 			player_node.stats.body_temperature = min(38.0, player_node.stats.body_temperature + warmth_factor * 3.0 * delta)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
+			emit_stats = true
+	if emit_stats:
+		_campfire_emit_timer += delta
+		if _campfire_emit_timer >= 0.25:
+			_campfire_emit_timer = 0.0
 			player_node.stats.changed.emit()
 
 func _tick_drink_hold(delta: float) -> void:
