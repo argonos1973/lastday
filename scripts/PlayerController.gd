@@ -1020,8 +1020,13 @@ func _input(event: InputEvent) -> void:
 			return
 		var inventory_index := _inventory_index_for_key(event.keycode)
 		if inventory_index >= 0:
-			held_index = inventory_index
-			_use_inventory_index(inventory_index)
+			if held_index == inventory_index:
+				held_index = -1
+				_sync_held_item()
+				notice.emit("Guardas el arma en la espalda.")
+			else:
+				held_index = inventory_index
+				_use_inventory_index(inventory_index)
 			return
 		if event.keycode == KEY_B:
 			_craft_campfire()
@@ -4042,11 +4047,19 @@ func drop_inventory_item(index: int) -> void:
 
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
+		if hands != null:
+			hands.clear_hands()
 		_sync_third_person_equipment(null)
 		_update_crosshair(false)
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var held_item = inventory.items[held_index]
+	var held_item = get_held_item()
+	if hands != null:
+		if held_item != null:
+			if hands.get_current_hand_item() != held_item:
+				hands.clear_hands()
+				hands.put_item_in_hands(held_item)
+		else:
+			hands.clear_hands()
 	_sync_third_person_equipment(held_item)
 	_update_crosshair(_has_rifle_equipped())
 
