@@ -1145,6 +1145,10 @@ func _on_use_pressed() -> void:
 	# Items that should go to hand instead of being consumed
 	var to_hand := item_name.find("ensartada") >= 0 or item_name.find("asada") >= 0 or (item_name == "Palo") or (item_name == "Palo afilado")
 	match item_type:
+		"weapon_rifle":
+			# The rifle can be hanging from the procedural sling; using it from
+			# the inventory must draw it before rebuilding the hand attachment.
+			player._use_inventory_index(selected_slot_index)
 		"food", "water", "medical", "clothing":
 			if to_hand and item_type == "food":
 				player._use_inventory_index(selected_slot_index)

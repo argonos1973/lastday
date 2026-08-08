@@ -476,11 +476,7 @@ func _send_final_state() -> void:
 			if not item_name.is_empty():
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
-	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var held: String = _player_network_held_name(player)
 	var backpack: String = player.equipped_backpack
 	var sleeping: bool = player.is_sleeping
 	var sitting: bool = player.is_sitting
@@ -491,6 +487,18 @@ func _send_final_state() -> void:
 	net.final_player_state.rpc_id(1, pos, rot, anim, clothing, held, backpack, sleeping, sitting, prone, crouching)
 	# Also send final inventory
 	_sync_local_player_inventory()
+
+
+func _player_network_held_name(actor) -> String:
+	if actor == null:
+		return ""
+	if actor.has_method("get_network_held_item_name"):
+		return str(actor.get_network_held_item_name())
+	if actor.inventory != null and actor.inventory.items.size() > 0:
+		var index: int = clampi(actor.held_index, 0, actor.inventory.items.size() - 1)
+		if actor.inventory.items[index] != null:
+			return str(actor.inventory.items[index].item_name)
+	return ""
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1343,6 +1351,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 			if not slot_name.is_empty():
 				player.equip_clothing(slot_name)
 	player.held_index = clampi(held_idx, 0, max(0, player.inventory.items.size() - 1))
+	if player.has_method("restore_network_held_state"):
+		player.restore_network_held_state(held_item)
 	player._sync_held_item()
 	# Restore sitting/prone/crouching state AFTER equipment so animations are correct
 	if prone and not player.is_prone:
@@ -1922,11 +1932,7 @@ func _sync_local_player_state() -> void:
 			if not item_name.is_empty():
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
-	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var held: String = _player_network_held_name(player)
 	var backpack: String = player.equipped_backpack
 	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack)
 
@@ -1956,11 +1962,7 @@ func _sync_local_player_inventory() -> void:
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
 	var backpack: String = player.equipped_backpack
-	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var held: String = _player_network_held_name(player)
 	var sleeping: bool = player.is_sleeping
 	var sitting: bool = player.is_sitting
 	var prone: bool = player.is_prone
@@ -2148,8 +2150,7 @@ func _on_player_died() -> void:
 		if player != null:
 			backpack = player.equipped_backpack
 			held_idx = player.held_index
-			if player.inventory != null and player.inventory.items.size() > 0:
-				held = player.inventory.items[held_idx].item_name
+			held = _player_network_held_name(player)
 		var rot_y: float = player.rotation.y if player != null else 0.0
 		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
 	SaveSystemScript.delete_save()

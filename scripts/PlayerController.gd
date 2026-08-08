@@ -8,6 +8,8 @@ const InteractionRaycastScript = preload("res://scripts/InteractionRaycast.gd")
 const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
+const ProceduralRifleSlingScript = preload("res://scripts/player/ProceduralRifleSling.gd")
+const NETWORK_STOWED_RIFLE := "__rifle_stowed__"
 const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
@@ -289,6 +291,8 @@ var _rifle_right_hand_target: Node3D = null
 var _rifle_right_arm_pole: Marker3D = null
 var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _last_rifle_animation_debug := ""
+var _rifle_stowed := false
+var _stowed_rifle_rig: Node3D = null
 
 @export_group("Rifle Placement")
 @export var weapon_position_offset := Vector3.ZERO
@@ -534,14 +538,20 @@ func _update_puppet_held_item(item_name: String) -> void:
 		return
 	# Always clean up rifle bone attachment when switching items
 	_clear_rifle_attachment()
+	_clear_stowed_rifle()
+	_rifle_stowed = item_name == NETWORK_STOWED_RIFLE or item_name.begins_with(NETWORK_STOWED_RIFLE + "|")
 	# Clear current held item
 	for child in third_person_hand_item_root.get_children():
 		third_person_hand_item_root.remove_child(child)
 		child.free()
-	if item_name.is_empty():
+	var visible_held_item := item_name
+	if _rifle_stowed:
+		_build_stowed_rifle()
+		visible_held_item = item_name.trim_prefix(NETWORK_STOWED_RIFLE).trim_prefix("|")
+	if visible_held_item.is_empty():
 		return
 	# Build visual based on item name
-	match item_name:
+	match visible_held_item:
 		"Cuchillo":
 			_build_third_person_knife()
 		"Rifle francotirador":
@@ -841,6 +851,13 @@ func _use_inventory_index(index: int) -> void:
 	var item_type := str(item.item_type)
 	if item.has_method("is_broken") and item.is_broken() and item_type != "food" and item_type != "water":
 		notice.emit("%s esta roto y no se puede usar." % item_name)
+		return
+	if item_type == "weapon_rifle" and _rifle_stowed:
+		_draw_stowed_rifle()
+	if item_type == "weapon_rifle":
+		held_index = index
+		_sync_held_item()
+		notice.emit("Tienes %s en la mano." % item_name)
 		return
 	# Food items: first put in hand, then eat with animation when used again
 	if item_type == "food":
@@ -2545,6 +2562,8 @@ func equip_item_by_name(item_name: String) -> void:
 		return
 	for i in range(inventory.items.size()):
 		if inventory.items[i].item_name == item_name:
+			if str(inventory.items[i].item_type) == "weapon_rifle":
+				_draw_stowed_rifle()
 			held_index = i
 			_sync_held_item()
 			return
@@ -2594,6 +2613,8 @@ func _cycle_held_item() -> void:
 	if _is_aiming:
 		_cancel_aim()
 	held_index = (held_index + 1) % inventory.items.size()
+	if str(inventory.items[held_index].item_type) == "weapon_rifle":
+		_draw_stowed_rifle()
 	_sync_held_item()
 	var item = inventory.items[held_index]
 	notice.emit("En mano: %s." % item.item_name)
@@ -2791,6 +2812,9 @@ func _drop_held_item() -> void:
 		notice.emit("No tienes nada que soltar.")
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
+	if str(inventory.items[held_index].item_type) == "weapon_rifle":
+		_rifle_stowed = false
+		_clear_stowed_rifle()
 	drop_inventory_item(held_index)
 
 func _store_held_item() -> void:
@@ -2799,6 +2823,16 @@ func _store_held_item() -> void:
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	var item = inventory.items[held_index]
+	var is_rifle := str(item.item_type) == "weapon_rifle"
+	if is_rifle and _rifle_stowed:
+		_draw_stowed_rifle()
+		_sync_held_item()
+		notice.emit("Descolgas %s de la espalda." % item.item_name)
+		return
+	if is_rifle:
+		_cancel_aim()
+		_clear_rifle_attachment()
+		_rifle_stowed = true
 	# Clear hands visual - item stays in inventory but is not shown in hand
 	if hands != null:
 		hands.clear_hands()
@@ -2817,7 +2851,11 @@ func _store_held_item() -> void:
 				child.free()
 		if inventory != null and not equip_has_bp and eq_bp_set:
 			_build_third_person_backpack()
-	notice.emit("Guardas %s en el inventario." % item.item_name)
+	if is_rifle:
+		_build_stowed_rifle()
+		notice.emit("Cuelgas %s a la espalda." % item.item_name)
+	else:
+		notice.emit("Guardas %s en el inventario." % item.item_name)
 
 func drop_inventory_item(index: int) -> void:
 	if inventory == null or index < 0 or index >= inventory.items.size():
@@ -2825,6 +2863,9 @@ func drop_inventory_item(index: int) -> void:
 	var item = inventory.items[index]
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
+	if item_type == "weapon_rifle":
+		_rifle_stowed = false
+		_clear_stowed_rifle()
 	if item_type == "backpack":
 		equipped_backpack = ""
 		_recalculate_carry_capacity()
@@ -2847,11 +2888,29 @@ func drop_inventory_item(index: int) -> void:
 
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
+		_rifle_stowed = false
+		_clear_stowed_rifle()
 		_sync_third_person_equipment(null)
 		_update_crosshair(false)
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	var held_item = inventory.items[held_index]
+	if _rifle_stowed:
+		if not _inventory_has_rifle():
+			_rifle_stowed = false
+			_clear_stowed_rifle()
+		else:
+			_build_stowed_rifle()
+			if held_item != null and str(held_item.item_type) == "weapon_rifle":
+				if hands != null and hands.has_item_in_hands():
+					hands.clear_hands()
+				if third_person_hand_item_root != null:
+					for child in third_person_hand_item_root.get_children():
+						third_person_hand_item_root.remove_child(child)
+						child.free()
+				_clear_rifle_attachment()
+				_update_crosshair(false)
+				return
 	_sync_third_person_equipment(held_item)
 	_update_crosshair(_has_rifle_equipped())
 
@@ -2973,6 +3032,84 @@ func _build_third_person_backpack() -> void:
 	bp_node.position = center_offset
 	bp_node.rotation_degrees = Vector3(0, 180, 0)
 	third_person_back_item_root.add_child(bp_node)
+
+
+func _build_stowed_rifle() -> void:
+	if not _rifle_stowed:
+		return
+	if _stowed_rifle_rig != null and is_instance_valid(_stowed_rifle_rig):
+		return
+	if third_person_model == null or not is_instance_valid(third_person_model):
+		return
+	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
+	if skeleton == null or not is_instance_valid(skeleton):
+		push_warning("[RIFLE_SLING] No skeleton available for procedural sling")
+		return
+	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	if model == null:
+		push_warning("[RIFLE_SLING] Could not load stowed rifle: %s" % REAL_RIFLE_MODEL)
+		return
+	_strip_model_lights(model)
+	var stack: Array[Node] = [model]
+	while not stack.is_empty():
+		var node := stack.pop_back()
+		if node is MeshInstance3D:
+			(node as MeshInstance3D).visible = true
+		for child in node.get_children():
+			stack.append(child)
+	var raw_aabb := _hierarchy_local_aabb(model)
+	var rig = ProceduralRifleSlingScript.new()
+	rig.name = "ProceduralStowedRifleRig"
+	third_person_model.add_child(rig)
+	if not rig.setup(skeleton, self, third_person_model, model, raw_aabb, weapon_scale):
+		rig.queue_free()
+		model.queue_free()
+		push_warning("[RIFLE_SLING] Procedural sling setup failed")
+		return
+	_stowed_rifle_rig = rig
+	print("[RIFLE_SLING] Procedural sling active")
+
+
+func _clear_stowed_rifle() -> void:
+	if _stowed_rifle_rig != null and is_instance_valid(_stowed_rifle_rig):
+		_stowed_rifle_rig.queue_free()
+	_stowed_rifle_rig = null
+
+
+func _draw_stowed_rifle() -> void:
+	if not _rifle_stowed:
+		return
+	_rifle_stowed = false
+	_clear_stowed_rifle()
+
+
+func _inventory_has_rifle() -> bool:
+	if inventory == null:
+		return false
+	for item in inventory.items:
+		if item != null and str(item.item_type) == "weapon_rifle":
+			return true
+	return false
+
+
+func get_network_held_item_name() -> String:
+	var held := get_held_item()
+	var held_name := str(held.item_name) if held != null else ""
+	if _rifle_stowed:
+		if held != null and str(held.item_type) != "weapon_rifle" and not held_name.is_empty():
+			return NETWORK_STOWED_RIFLE + "|" + held_name
+		return NETWORK_STOWED_RIFLE
+	return held_name
+
+
+func restore_network_held_state(held_item_name: String) -> void:
+	_rifle_stowed = held_item_name == NETWORK_STOWED_RIFLE or held_item_name.begins_with(NETWORK_STOWED_RIFLE + "|")
+	if _rifle_stowed:
+		_clear_rifle_attachment()
+		_build_stowed_rifle()
+	else:
+		_clear_stowed_rifle()
+
 
 func _build_third_person_knife() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
@@ -3153,9 +3290,21 @@ func _clear_rifle_attachment() -> void:
 		_rifle_left_arm_ik.queue_free()
 	if _rifle_left_arm_pole != null and is_instance_valid(_rifle_left_arm_pole):
 		_rifle_left_arm_pole.queue_free()
+	if _rifle_left_hand_target != null and is_instance_valid(_rifle_left_hand_target):
+		_rifle_left_hand_target.queue_free()
 	_rifle_left_arm_ik = null
 	_rifle_left_arm_pole = null
 	_rifle_left_hand_target = null
+	if _rifle_right_arm_ik != null and is_instance_valid(_rifle_right_arm_ik):
+		_rifle_right_arm_ik.active = false
+		_rifle_right_arm_ik.queue_free()
+	if _rifle_right_arm_pole != null and is_instance_valid(_rifle_right_arm_pole):
+		_rifle_right_arm_pole.queue_free()
+	if _rifle_right_hand_target != null and is_instance_valid(_rifle_right_hand_target):
+		_rifle_right_hand_target.queue_free()
+	_rifle_right_arm_ik = null
+	_rifle_right_arm_pole = null
+	_rifle_right_hand_target = null
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		_rifle_bone_attachment.queue_free()
 	_rifle_bone_attachment = null
@@ -4052,6 +4201,8 @@ func _melee_attack() -> void:
 				notice.emit("%s se ha roto!" % str(held.item_name))
 
 func _has_rifle_equipped() -> bool:
+	if _rifle_stowed:
+		return false
 	if inventory == null or inventory.items.is_empty():
 		return false
 	var held = inventory.items[held_index]
@@ -4379,6 +4530,7 @@ func to_dict() -> Dictionary:
 		"inventory_max_weight": inventory.max_weight,
 		"equipped_clothing": equipped_clothing,
 		"equipped_backpack": equipped_backpack,
+		"rifle_stowed": _rifle_stowed,
 		"flashlight_charge": flashlight_charge,
 		"wetness": wetness
 	}
@@ -4396,6 +4548,7 @@ func from_dict(data: Dictionary) -> void:
 		inventory.from_array(data["inventory"])
 	equipped_clothing = str(data.get("equipped_clothing", equipped_clothing))
 	equipped_backpack = str(data.get("equipped_backpack", equipped_backpack))
+	_rifle_stowed = bool(data.get("rifle_stowed", false))
 	flashlight_charge = float(data.get("flashlight_charge", flashlight_charge))
 	wetness = float(data.get("wetness", wetness))
 	_recalculate_carry_capacity()
