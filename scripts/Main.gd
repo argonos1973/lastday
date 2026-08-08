@@ -2402,10 +2402,13 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var lay_flat := item_name in ["Botas survival"]
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
-	if lay_flat:
+	var is_rifle := item_type == "weapon_rifle"
+	if is_rifle:
+		rot.z += 90.0
+	elif lay_flat:
 		rot.x += 90.0
 	if not paths.is_empty():
-		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, not lay_flat, 0.06)
+		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.06)
 		if lay_flat or pre_flat:
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
@@ -2482,6 +2485,12 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"clothing":
 			match item_name:
+				"Camiseta":
+					return ["res://assets/characters/adapted/pickup_default_tops.glb"]
+				"Pantalones":
+					return ["res://assets/characters/adapted/pickup_default_bottoms.glb"]
+				"Zapatillas":
+					return ["res://assets/characters/adapted/pickup_default_shoes.glb"]
 				"Guantes de trabajo":
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":

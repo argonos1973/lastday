@@ -44,7 +44,7 @@ const RIFLE_STRAP_THICKNESS: float = 0.0035
 
 # Distancia aproximada desde el centro de los huesos
 # hasta la superficie frontal de la camiseta.
-const RIFLE_STRAP_FRONT_OFFSET: float = 0.235
+const RIFLE_STRAP_FRONT_OFFSET: float = 0.31
 
 # Separación en la espalda.
 const RIFLE_STRAP_BACK_OFFSET: float = 0.175
@@ -502,28 +502,18 @@ func _update_rifle_strap(_delta: float) -> void:
 	# ANCLAJE DEL CAÑÓN
 	# ============================================================
 
-	points.append(
-		barrel_anchor
-	)
-
-
-	# ============================================================
-	# P1
-	# DETRÁS DEL HOMBRO
-	#
-	# Muy cerca del hombro.
-	# Evita crear el palo largo que aparecía antes.
-	# ============================================================
-
 	var p1: Vector3 = (
 		shoulder_pos
 		+ back_dir * 0.050
 		+ Vector3.UP * 0.020
 	)
 
-	points.append(
-		p1
-	)
+	var p0a: Vector3 = barrel_anchor.lerp(p1, 0.33)
+	var p0b: Vector3 = barrel_anchor.lerp(p1, 0.66)
+
+	points.append(p0a)
+	points.append(p0b)
+	points.append(p1)
 
 
 	# ============================================================
@@ -642,8 +632,8 @@ func _update_rifle_strap(_delta: float) -> void:
 
 	var p7: Vector3 = (
 		lower_torso
-		+ opposite_dir * 0.150
-		+ front_dir * 0.120
+		+ opposite_dir * 0.160
+		+ front_dir * 0.250
 	)
 
 	points.append(
@@ -661,8 +651,8 @@ func _update_rifle_strap(_delta: float) -> void:
 	var p8: Vector3 = (
 		lower_torso
 		+ opposite_dir
-			* RIFLE_STRAP_SIDE_OFFSET
-		+ front_dir * 0.015
+			* (RIFLE_STRAP_SIDE_OFFSET + 0.020)
+		+ front_dir * 0.080
 	)
 
 	points.append(
@@ -706,19 +696,13 @@ func _update_rifle_strap(_delta: float) -> void:
 		0.55
 	)
 
-	points.append(
-		p10
-	)
+	var p9b: Vector3 = p9.lerp(p10, 0.5)
+	var p10b: Vector3 = p10.lerp(stock_anchor, 0.5)
 
-
-	# ============================================================
-	# P11
-	# ANCLAJE REAL DE LA CULATA
-	# ============================================================
-
-	points.append(
-		stock_anchor
-	)
+	points.append(p9b)
+	points.append(p10)
+	points.append(p10b)
+	points.append(stock_anchor)
 
 
 	# ============================================================
@@ -752,7 +736,7 @@ func _update_rifle_strap(_delta: float) -> void:
 	# DEBUG: ESFERAS EN CADA PUNTO DE CONTROL
 	# ============================================================
 
-	if player.has_method("_update_strap_debug_spheres"):
+	if player.has_method("_update_strap_debug_spheres") and player.get("_strap_diagnostic_mode") == true:
 		player._update_strap_debug_spheres(points)
 
 
@@ -789,9 +773,12 @@ func _update_rifle_strap(_delta: float) -> void:
 					[b, strap_skel.get_bone_name(b), rest_t.origin.x, rest_t.origin.y, rest_t.origin.z])
 
 	# ============================================================
-	# POSICIONAR HUESOS DE LA CORREA RIGGEADA
+	# PROCEDURAL RIBBON MESH (100% continuo, sin cortes ni brechas)
 	# ============================================================
 
+	_update_procedural_mesh(smooth_points, torso_center)
+
+	# Posicionar huesos por compatibilidad
 	_position_strap_bones(
 		strap_skel,
 		smooth_points,
@@ -1113,11 +1100,7 @@ func _position_strap_bones(
 		if parent_idx >= 0:
 			rest_total_length += strap_skel.get_bone_rest(b).origin.length()
 
-	if rest_total_length < 0.001:
-		rest_total_length = 1.0
-
-	# Factor de escala: el path es más largo que el rest pose
-	var path_rest_ratio: float = total_length / rest_total_length
+	var path_rest_ratio: float = total_length / max(0.01, rest_total_length)
 
 	# Mover el strap_root al centro del camino (dentro de third_person_model)
 	# y escalarlo para que la malla cubra el path sin estirar los huesos
@@ -1136,8 +1119,8 @@ func _position_strap_bones(
 	var skel_local: Transform3D = strap_skel.transform
 	var skel_local_inv: Transform3D = skel_local.affine_inverse()
 
-	# Calcular rotaciones: el eje Y del hueso debe seguir la tangente
-	# El eje Z debe seguir la normal (hacia fuera del cuerpo)
+
+
 	# El eje X = Y cross Z
 	var local_rotations: Array[Quaternion] = []
 	local_rotations.resize(n_bones)
@@ -1200,4 +1183,90 @@ func _position_strap_bones(
 				[b, strap_skel.get_bone_name(b), bp.x, bp.y, bp.z, bgp.origin.x, bgp.origin.y, bgp.origin.z])
 		print("[STRAP-BONES] strap_root_node.position=", strap_root_node.position, " scale=", strap_root_node.scale)
 		print("[STRAP-BONES] strap_skel.global_position=", strap_skel.global_position)
-		print("[STRAP-BONES] rest_total_length=", rest_total_length, " path_length=", total_length, " ratio=", path_rest_ratio)
+		print("[STRAP-BONES] rest_total_length=", rest_total_length, " path_length=", total_length)
+
+
+# ================================================================
+# GENERAR MALLA PROCEDURAL CONTINUA (100% SIN CORTES)
+# ================================================================
+
+func _update_procedural_mesh(smooth_points: Array[Vector3], torso_center: Vector3) -> void:
+	if player == null or player.third_person_model == null or not is_instance_valid(player.third_person_model):
+		return
+	if smooth_points.size() < 2:
+		return
+
+	var parent_node: Node3D = player.third_person_model
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var strap_width: float = RIFLE_STRAP_WIDTH # 0.055
+	var n_pts: int = smooth_points.size()
+
+	for i in range(n_pts):
+		var p: Vector3 = smooth_points[i]
+
+		var t: Vector3 = Vector3.FORWARD
+		if i < n_pts - 1:
+			t = (smooth_points[i + 1] - smooth_points[i]).normalized()
+		elif i > 0:
+			t = (smooth_points[i] - smooth_points[i - 1]).normalized()
+
+		var n: Vector3 = (p - torso_center)
+		n.y = 0.0
+		if n.length_squared() < 0.0001:
+			n = Vector3.UP
+		else:
+			n = n.normalized()
+
+		var side: Vector3 = t.cross(n)
+		if side.length_squared() < 0.0001:
+			side = Vector3.RIGHT
+		else:
+			side = side.normalized()
+
+		var half_w: Vector3 = side * (strap_width * 0.5)
+		var uv_y: float = float(i) / float(n_pts - 1) * 8.0
+
+		st.set_normal(n)
+		st.set_uv(Vector2(0.0, uv_y))
+		st.add_vertex(p - half_w)
+
+		st.set_normal(n)
+		st.set_uv(Vector2(1.0, uv_y))
+		st.add_vertex(p + half_w)
+
+	for i in range(n_pts - 1):
+		var idx: int = i * 2
+		st.add_index(idx)
+		st.add_index(idx + 1)
+		st.add_index(idx + 2)
+
+		st.add_index(idx + 1)
+		st.add_index(idx + 3)
+		st.add_index(idx + 2)
+
+	var new_mesh: Mesh = st.commit()
+
+	var proc_mi: MeshInstance3D = parent_node.find_child("ProceduralStrapMesh", true, false) as MeshInstance3D
+	if proc_mi == null:
+		proc_mi = MeshInstance3D.new()
+		proc_mi.name = "ProceduralStrapMesh"
+		parent_node.add_child(proc_mi)
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.08, 0.08, 0.08, 1.0)
+		mat.roughness = 0.8
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		proc_mi.material_override = mat
+
+	proc_mi.position = Vector3.ZERO
+	proc_mi.rotation = Vector3.ZERO
+	proc_mi.scale = Vector3.ONE
+	proc_mi.mesh = new_mesh
+	proc_mi.custom_aabb = AABB(Vector3(-5, -5, -5), Vector3(10, 10, 10))
+	proc_mi.visible = true
+
+	if player._rifle_on_back_strap != null and is_instance_valid(player._rifle_on_back_strap):
+		player._rifle_on_back_strap.visible = false

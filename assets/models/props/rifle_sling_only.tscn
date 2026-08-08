@@ -1,22 +1,12 @@
 [gd_scene format=4]
 
-[ext_resource type="Texture2D" path="res://ar-15-custom_24.png" id="1_e6h6q"]
-[ext_resource type="Texture2D" path="res://ar-15-custom_25.png" id="2_tyfbu"]
-[ext_resource type="Texture2D" path="res://ar-15-custom_26.png" id="3_kf73m"]
-
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_8wyhd"]
 resource_name = "SLING"
-transparency = 4
 cull_mode = 2
-albedo_texture = ExtResource("1_e6h6q")
-metallic = 1.0
-metallic_texture = ExtResource("2_tyfbu")
-metallic_texture_channel = 2
-roughness_texture = ExtResource("2_tyfbu")
-roughness_texture_channel = 1
-normal_enabled = true
-normal_texture = ExtResource("3_kf73m")
-metadata/_gltf_primary_texture_coord = 0
+albedo_color = Color(0.25, 0.28, 0.2, 1)
+roughness = 0.85
+metallic = 0.1
+
 
 [sub_resource type="ArrayMesh" id="ArrayMesh_vdjat"]
 _surfaces = [{
