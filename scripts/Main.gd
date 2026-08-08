@@ -401,13 +401,11 @@ func _ready() -> void:
 		_loading_overlay.queue_free()
 		_loading_overlay = null
 		_loading_label = null
-		pass # print("[PERSIST] Loading overlay removed immediately after map load")
 	if hud != null:
 		hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
-	pass # print("[PERSIST] _start_loading_countdown: countdown=3.0 overlay=%s" % [_loading_overlay != null])
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -419,7 +417,6 @@ func _process_loading_countdown(delta: float) -> void:
 		_loading_overlay.queue_free()
 		_loading_overlay = null
 		_loading_label = null
-		pass # print("[PERSIST] Loading overlay removed")
 		return
 	var secs := ceili(_loading_countdown)
 	if _loading_label != null:
@@ -465,7 +462,6 @@ func _send_final_state() -> void:
 	var sitting: bool = player.is_sitting
 	var prone: bool = player.is_prone
 	var crouching: bool = player.is_crouching
-	pass # print("[PERSIST] _send_final_state: pos=%s rot=%.2f held=%s sitting=%s prone=%s crouching=%s" % [pos, rot, held, sitting, prone, crouching])
 	# Send reliable final position and state to server
 	net.final_player_state.rpc_id(1, pos, rot, anim, clothing, held, backpack, sleeping, sitting, prone, crouching)
 	# Also send final inventory
@@ -1082,9 +1078,8 @@ func _on_remote_player_disconnected(id: int) -> void:
 		server_proxies.erase(id)
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
-			pass # print("[PERSIST] Player %d disconnected, proxy saved for cid=%s, pos=%s, inv_items=%d, proxy_by_client_id now has %d entries" % [id, cid, sp.global_position, (sp.get_meta("saved_inventory", []) as Array).size(), proxy_by_client_id.size()])
 		else:
-			pass # print("[PERSIST] Player %d disconnected with NO client_id, proxy not saved" % id)
+			pass
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
 		net._sync_player_list.rpc(net.players.duplicate(true))
@@ -1096,7 +1091,6 @@ func _delayed_send_world_state(peer_id: int) -> void:
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
 	await get_tree().create_timer(2.0).timeout
-	pass # print("[PERSIST] _delayed_send_reconnect_state: peer_id=%d pos=%s rot=%.2f inv_items=%d sitting=%s prone=%s crouching=%s sleeping=%s" % [peer_id, pos, rot, inv.size(), sitting, prone, crouching, sleeping])
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
@@ -1126,7 +1120,6 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
-	pass # print("[PERSIST] _match_proxy_to_client peer_id=%d cid=%s, proxy_by_client_id has %d entries" % [peer_id, cid, proxy_by_client_id.size()])
 	if proxy_by_client_id.has(cid):
 		var existing: Node3D = proxy_by_client_id[cid]
 		proxy_by_client_id.erase(cid)
@@ -1179,10 +1172,8 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_prone: bool = existing.get_meta("saved_prone", false)
 			var saved_crouching: bool = existing.get_meta("saved_crouching", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
-			pass # print("[PERSIST] Found saved proxy for cid=%s: pos=%s inv_items=%d hp=%.1f" % [cid, saved_pos, saved_inv.size(), saved_hp])
 			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching)
 	else:
-		pass # print("[PERSIST] No saved proxy for cid=%s, sending new player state" % cid)
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("client_id", cid)
@@ -1278,7 +1269,6 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 				break
 	if proxy == null:
 		return
-	pass # print("[PERSIST] Storing inventory for peer %d: %d items, cid=%s, sitting=%s prone=%s crouching=%s" % [peer_id, items_data.size(), proxy.get_meta("client_id", ""), sitting, prone, crouching])
 	proxy.set_meta("saved_inventory", items_data)
 	proxy.set_meta("saved_health", health)
 	proxy.set_meta("saved_hunger", hunger)
@@ -1297,7 +1287,6 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 func _apply_pending_restore() -> void:
 	if _pending_restore_data.is_empty():
 		return
-	pass # print("[PERSIST] _apply_pending_restore: applying stored restore data with %d items" % [_pending_restore_data[0].size()])
 	var d = _pending_restore_data
 	_pending_restore_data = []
 	_apply_restored_inventory(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12])
@@ -1305,10 +1294,8 @@ func _apply_pending_restore() -> void:
 # Client: restore inventory/stats/equipment from server on reconnect
 func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
 	if player == null:
-		pass # print("[PERSIST] _apply_restored_inventory: player is null, storing pending restore data")
 		_pending_restore_data = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching]
 		return
-	pass # print("[PERSIST] _apply_restored_inventory: sitting=%s prone=%s crouching=%s sleeping=%s rot=%.2f" % [sitting, prone, crouching, sleeping, rot])
 	var ItemScript = load("res://scripts/Item.gd")
 	if player.has_node("Inventory"):
 		var inv = player.get_node("Inventory")
@@ -1372,7 +1359,6 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 			player.third_person_animation_player.play(player._rifle_prone_animation, 0.1)
 		elif not player.third_person_sit_animation.is_empty():
 			player.third_person_animation_player.play(player.third_person_sit_animation, 0.1)
-		pass # print("[PERSIST] Restored prone state after equipment")
 	elif sitting and not player.is_sitting:
 		player.is_sitting = true
 		player._sit_cooldown = 0.3
@@ -1380,12 +1366,10 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 			player.third_person_animation_player.play(player._rifle_sit_animation, 0.1)
 		elif not player.third_person_sit_animation.is_empty():
 			player.third_person_animation_player.play(player.third_person_sit_animation, 0.1)
-		pass # print("[PERSIST] Restored sitting state after equipment")
 	if crouching and not player.is_crouching and not prone and not sitting and not sleeping:
 		player._force_crouch = true
 		player.is_crouching = true
 		player._update_crouch_collision()
-		pass # print("[PERSIST] Restored crouching state after equipment")
 
 # Called by RPC from client on server to damage a real animal
 func _send_world_state_to_client(peer_id: int) -> void:
@@ -1402,10 +1386,8 @@ func _send_world_state_to_client(peer_id: int) -> void:
 			if door is Door and door.is_open:
 				open_doors.append(door.name)
 	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters)
-	pass # print("[PERSIST] _send_world_state_to_client: peer_id=%d open_doors=%s door_states=%s" % [peer_id, open_doors, _server_door_states])
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
-	pass # print("[PERSIST] _net_sync_world_state: open_doors=%s depleted=%d dropped=%d campfires=%d shelters=%d" % [open_doors, depleted_ids.size(), dropped_items.size(), campfires.size(), shelters.size()])
 	for action_id in depleted_ids:
 		if world_actions_by_id.has(action_id):
 			var action = world_actions_by_id[action_id]
@@ -1927,7 +1909,6 @@ func _update_server_proxies(delta: float) -> void:
 			dp.set_meta("proxy_dead", true)
 			dp.remove_from_group("net_player_proxy")
 			dp.add_to_group("interactable")
-			pass # print("[PERSIST] Player cid=%s died from starvation/dehydration while disconnected" % cid)
 			_drop_player_loot(dp.get_meta("peer_id", 0), dp)
 			_broadcast_player_death(dp.get_meta("peer_id", 0), dp)
 
@@ -2045,7 +2026,6 @@ func _sync_local_player_inventory() -> void:
 	var prone: bool = player.is_prone
 	var crouching: bool = player.is_crouching
 	var rot: float = player.rotation.y
-	pass # print("[PERSIST] _sync_local_player_inventory: sitting=%s prone=%s crouching=%s sleeping=%s" % [sitting, prone, crouching, sleeping])
 	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching)
 
 func _update_remote_players() -> void:
@@ -2592,7 +2572,6 @@ func _create_hud() -> void:
 	hud = HUDScript.new()
 	add_child(hud)
 	hud.setup(player, day_cycle)
-	pass # print("[PERSIST] _create_hud: player=%s day_cycle=%s hud=%s" % [player != null, day_cycle != null, hud != null])
 
 func _create_npc() -> void:
 	var npc = NPCControllerScript.new()
@@ -2655,81 +2634,57 @@ func _create_map() -> void:
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] world_details start")
 		_create_world_details()
-		pass # print("[DBG-MAP] world_details done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] streetlights start")
 		# Light posts and power lines
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
-		pass # print("[DBG-MAP] streetlights done")
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] ground_clutter start")
 		if _loading_label != null:
 			_loading_label.text = "Generando vegetacion..."
 		await _create_ground_clutter()
-		pass # print("[DBG-MAP] ground_clutter done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] tall_grass start")
 		await _create_tall_grass_fields()
-		pass # print("[DBG-MAP] tall_grass done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] grass_carpet start")
 		await _create_grass_carpet()
-		pass # print("[DBG-MAP] grass_carpet done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] dense_veg start")
 		await _create_dense_vegetation_zones()
-		pass # print("[DBG-MAP] dense_veg done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] forest start")
 		if _loading_label != null:
 			_loading_label.text = "Plantando bosque..."
 		await _create_forest()
-		pass # print("[DBG-MAP] forest done")
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		pass # print("[DBG-MAP] survival_obj start")
 		_create_survival_objectives()
-		pass # print("[DBG-MAP] survival_obj done")
 		await get_tree().process_frame
 	_create_river_drink_zones()
-	pass # print("[DBG-MAP] river_drink done")
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
-		pass # print("[DBG-MAP] nav_grid start")
 		_build_nav_grid()
-		pass # print("[DBG-MAP] nav_grid done")
 		await get_tree().process_frame
-		pass # print("[DBG-MAP] wildlife start")
 		if _loading_label != null:
 			_loading_label.text = "Generando fauna..."
 		_create_wildlife()
-		pass # print("[DBG-MAP] wildlife done")
 		await get_tree().process_frame
 	if not is_server:
-		pass # print("[DBG-MAP] flush_grass start")
 		_flush_grass_batches()
-		pass # print("[DBG-MAP] flush_grass done")
 		await get_tree().process_frame
-	pass # print("[DBG-MAP] _create_map COMPLETE")
 
 
 const ROAD_HALF_WIDTH := 5.0
@@ -2780,7 +2735,6 @@ func _create_road() -> void:
 	if color_tex != null:
 		road_mat.albedo_texture = color_tex
 		road_mat.albedo_color = Color(0.45, 0.38, 0.30)
-		pass # print("[ROAD] Color texture loaded OK, type=", color_tex.get_class())
 	else:
 		push_warning("[ROAD] Failed to load color texture")
 		road_mat.albedo_color = Color(0.45, 0.32, 0.2)
@@ -2788,7 +2742,6 @@ func _create_road() -> void:
 	if normal_tex != null:
 		road_mat.normal_texture = normal_tex
 		road_mat.normal_enabled = true
-		pass # print("[ROAD] Normal texture loaded OK")
 	var rough_tex := load(tex_dir + "Ground032_4K-JPG_Roughness.jpg")
 	if rough_tex != null:
 		road_mat.roughness_texture = rough_tex
@@ -2799,7 +2752,6 @@ func _create_road() -> void:
 		road_mat.ao_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_RED
 	# Set UV1 scale for tiling (for 2D UVs: .x = U across width, .y = V along length)
 	road_mat.uv1_scale = Vector3(float(tiles_x), float(tiles_z), 1.0)
-	pass # print("[ROAD] Ground032 texture loaded, tiles=", tiles_x, "x", tiles_z, " uv1_scale=", road_mat.uv1_scale)
 	road_mi.material_override = road_mat
 	add_child(road_mi)
 	road_mi.global_position = Vector3(road_x, ground_y + 0.02, mid_z)
@@ -2835,7 +2787,6 @@ func _create_road() -> void:
 				var r := randf_range(0.18, 0.38)
 				var c := grass_base.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
 				_queue_grass_instance(pos, h, r, c)
-	pass # print("[ROAD] Created dirt road with seamless grass edges")
 
 func _get_mesh_global_min_y(mi: MeshInstance3D) -> float:
 	var aabb := mi.get_aabb()
@@ -2883,7 +2834,6 @@ func _get_bounds_in_node_space(
 func _print_mesh_hierarchy(node: Node, indent: String) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
-		pass # print(indent, "MESH: ", mi.name, " | AABB: ", mi.get_aabb())
 	for child in node.get_children():
 		_print_mesh_hierarchy(child, indent + "  ")
 
@@ -2943,13 +2893,9 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	var win_h: float = win_w * 0.8
 	var blocker_idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 	#_create_label(label, origin + Vector3(0, 4.05, -4.65))
-	pass # print("[DBG-HOUSE] %s start" % label)
 	_create_house_overgrowth(origin, label, half_w, half_d)
-	pass # print("[DBG-HOUSE] %s overgrowth done" % label)
 	_create_house_foundation(origin, label, half_w, half_d, front_seg_c, front_seg_w)
-	pass # print("[DBG-HOUSE] %s foundation done" % label)
 	_create_house_floor(origin, label, width, depth)
-	pass # print("[DBG-HOUSE] %s floor done" % label)
 	# Back wall with two window holes (closer to center for smaller houses)
 	var back_win_x := width * 0.22
 	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -half_d), Vector3(width, height, wall_t), Vector3.ZERO, [
@@ -2977,11 +2923,8 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
 	# Door lintel
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
-	pass # print("[DBG-HOUSE] %s walls done" % label)
 	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
-	pass # print("[DBG-HOUSE] %s details done" % label)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
-	pass # print("[DBG-HOUSE] %s interior done" % label)
 	# Roof collision
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth))
 	# Link door to wildlife blocker so wolves can enter when door is open

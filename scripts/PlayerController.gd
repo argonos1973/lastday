@@ -1615,7 +1615,6 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	var scale_factor := 1.0
 	var src_height := _skeleton_height(src_skel)
 	var dst_height := _skeleton_height(dst_skel)
-	print("[DESNUDO-CUSTOM] scale_factor=", scale_factor, " character_scale=", character_scale, " src_height=", src_height, " dst_height=", dst_height)
 	for desnudo_name in desnudo_names:
 		if not src_meshes.has(desnudo_name):
 			continue
@@ -1652,7 +1651,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 				if dst_bone_idx < 0:
 					unmatched += 1
 					if unmatched <= 3:
-						print("[CLOTHING-INIT] BONE MISMATCH: src bone '", bone_name, "' not found in dst skeleton")
+						pass
 					continue
 				matched += 1
 				var src_bind_pose := src_skin.get_bind_pose(bi)
@@ -1660,13 +1659,10 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 				# Scale entire transform by 0.01 to convert to meters
 				var scaled_bind := Transform3D(src_bind_pose.basis * 0.01, src_bind_pose.origin * 0.01)
 				new_skin.add_bind(dst_bone_idx, scaled_bind)
-			print("[CLOTHING-INIT] ", desnudo_name, " bones: matched=", matched, " unmatched=", unmatched, " total=", bone_count)
 			clone.skin = new_skin
 		dst_skel.add_child(clone)
 		clone.skeleton = dst_skel.get_path()
-		print("[CLOTHING-INIT] Desnudo añadido: ", desnudo_name, " has_skin=", clone.skin != null)
 
-	print("[CLOTHING-INIT] === Starting survival/soldier clothing cloning ===")
 	# --- Clone survival clothing meshes (cloth_*) from player_with_clothes.glb ---
 	var survival_mesh_names := ["cloth_hands", "cloth_feet"]
 	var src_survival_meshes: Dictionary = {}
@@ -1679,7 +1675,6 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 			sstack.append(sc)
 	for smesh_name in survival_mesh_names:
 		if not src_survival_meshes.has(smesh_name):
-			print("[CLOTHING-INIT] Survival mesh not found in src: ", smesh_name)
 			continue
 		var s_mi: MeshInstance3D = src_survival_meshes[smesh_name]
 		var s_clone := MeshInstance3D.new()
@@ -1709,12 +1704,10 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 				var s_bind := s_src_skin.get_bind_pose(bi)
 				var s_scaled_bind := Transform3D(s_bind.basis * 0.01, s_bind.origin * 0.01)
 				s_new_skin.add_bind(s_dst_idx, s_scaled_bind)
-			print("[CLOTHING-INIT] ", smesh_name, " survival bones: matched=", s_matched, " unmatched=", s_unmatched, " total=", s_src_skin.get_bind_count())
 			s_clone.skin = s_new_skin
 		dst_skel.add_child(s_clone)
 		s_clone.skeleton = dst_skel.get_path()
 		_survival_cloth_nodes[smesh_name] = s_clone
-		print("[CLOTHING-INIT] Survival cloth añadido: ", smesh_name, " has_skin=", s_clone.skin != null)
 
 	# --- Clone soldier meshes (soldier_*) from player_with_clothes.glb ---
 	# These meshes are already in src_scene with correct scale and same skin as survival
@@ -1729,7 +1722,6 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 			sol_stack.append(solc)
 	for sol_mesh_name in soldier_mesh_names:
 		if not src_soldier_meshes.has(sol_mesh_name):
-			print("[CLOTHING-INIT] Soldier mesh not found in src: ", sol_mesh_name)
 			continue
 		var sol_mi: MeshInstance3D = src_soldier_meshes[sol_mesh_name]
 		var sol_clone := MeshInstance3D.new()
@@ -1759,13 +1751,11 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 				var sol_bind := sol_src_skin.get_bind_pose(bi)
 				var sol_scaled_bind := Transform3D(sol_bind.basis * 0.01, sol_bind.origin * 0.01)
 				sol_new_skin.add_bind(sol_dst_idx, sol_scaled_bind)
-			print("[CLOTHING-INIT] ", sol_mesh_name, " soldier bones: matched=", sol_matched, " unmatched=", sol_unmatched, " total=", sol_src_skin.get_bind_count())
 			sol_clone.skin = sol_new_skin
 		dst_skel.add_child(sol_clone)
 		sol_clone.skeleton = dst_skel.get_path()
 		var cloth_key: String = sol_mesh_name
 		_survival_cloth_nodes[cloth_key] = sol_clone
-		print("[CLOTHING-INIT] Soldier cloth añadido: ", cloth_key, " has_skin=", sol_clone.skin != null)
 
 	# Also cache the custom character's built-in body meshes as _survival_body_nodes
 	# Split the custom Body so only the head remains visible; Desnudo_* cover the rest.
@@ -1776,7 +1766,6 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 		if cmi != null:
 			_survival_body_nodes[cloth_name] = cmi
 			cmi.visible = false
-			print("[CLOTHING-INIT] Hidden built-in clothing mesh: ", cloth_name)
 	src_scene.free()
 
 func _wear_survival_clothing(item_name: String, worn: bool) -> void:
@@ -3221,7 +3210,6 @@ func _add_custom_head_mesh() -> void:
 	if body_mi == null:
 		return
 	var src_body := body_mi
-	print("[HEAD-CUSTOM] body_mi=", src_body.name, " mesh=", src_body.mesh, " skin=", src_body.skin)
 	var head_dup := src_body.duplicate() as MeshInstance3D
 	if head_dup == null:
 		return
@@ -3234,8 +3222,6 @@ func _add_custom_head_mesh() -> void:
 		var aabb := mesh_res.get_aabb()
 		var cy_threshold := aabb.position.y + aabb.size.y * 0.92
 		var cx_threshold := aabb.size.x * 0.08
-		print("[HEAD-CUSTOM] AABB pos=", aabb.position, " size=", aabb.size, " cy_thresh=", cy_threshold, " cx_thresh=", cx_threshold)
-		print("[HEAD-CUSTOM] face_count=", mdt.get_face_count())
 		var head_faces: PackedInt32Array = []
 		for face_idx in range(mdt.get_face_count()):
 			var v0 := mdt.get_vertex(mdt.get_face_vertex(face_idx, 0))
@@ -3299,7 +3285,6 @@ func _add_custom_head_mesh() -> void:
 		else:
 			head_mat.set_shader_parameter("albedo_color", Color.WHITE)
 		head_dup.mesh = head_mesh
-		print("[HEAD-CUSTOM] head_faces=", head_faces.size(), " head_mesh_surfaces=", head_mesh.get_surface_count())
 		# Create body-without-head mesh (inverse of head extraction)
 		var body_nh_dup := src_body.duplicate() as MeshInstance3D
 		if body_nh_dup != null:
@@ -3359,7 +3344,6 @@ func _add_custom_head_mesh() -> void:
 			body_nh_dup.visible = false
 			src_body.get_parent().add_child(body_nh_dup)
 			_body_no_head_mesh = body_nh_dup
-			print("[HEAD-CUSTOM] BodyNoHead created, faces=", indices2.size() / 3)
 	src_body.get_parent().add_child(head_dup)
 	# Ensure HeadMesh uses the same skeleton and skin as the original Body
 	head_dup.skeleton = src_body.skeleton
@@ -3368,7 +3352,6 @@ func _add_custom_head_mesh() -> void:
 	_full_body_mesh.visible = false
 	_head_mesh = head_dup
 	_head_mesh.visible = true
-	print("[HEAD-CUSTOM] HeadMesh added, visible=true, full_body hidden")
 
 func _find_skeleton(root: Node) -> Skeleton3D:
 	if root == null:
@@ -3584,8 +3567,7 @@ func _calculate_character_scale(character: Node3D, target_height: float) -> floa
 		# First try: use foot and head/neck bones
 		for i in range(skeleton.get_bone_count()):
 			var bone_name := skeleton.get_bone_name(i)
-			if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0 \
-					or bone_name.find("Head") >= 0 or bone_name.find("head") >= 0:
+			if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0 or bone_name.find("Head") >= 0 or bone_name.find("head") >= 0:
 				var gp := skeleton.get_bone_global_pose(i)
 				min_y = min(min_y, gp.origin.y)
 				max_y = max(max_y, gp.origin.y)
@@ -4366,16 +4348,12 @@ func _get_chest_target_from_mesh() -> Dictionary:
 			break
 	if torso_mi == null or not is_instance_valid(torso_mi) or torso_mi.mesh == null:
 		return {"chest": Vector3.INF, "front_offset": 0.0}
-	print("[STRAP] Torso mesh found: %s" % torso_mi.name)
 	var aabb: AABB = torso_mi.get_aabb()
-	print("[STRAP] Torso AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
 	var center: Vector3 = aabb.get_center()
 	# Tops is a skinned child of Skeleton3D; its to_global does not apply the 0.72 model scale.
 	# Convert the AABB center (in Tops local) to the character model's local, then to world.
 	var local_point: Vector3 = torso_mi.position + torso_mi.basis * center
 	var chest_world := third_person_model.global_transform * local_point
-	print("[STRAP] Torso AABB center local=(%.4f,%.4f,%.4f) model_local=(%.4f,%.4f,%.4f)" % [center.x, center.y, center.z, local_point.x, local_point.y, local_point.z])
-	print("[STRAP] Chest world = (%.4f,%.4f,%.4f)" % [chest_world.x, chest_world.y, chest_world.z])
 	# Distance from the AABB center to the front surface (character faces forward_dir)
 	var front_local: Vector3 = aabb.position + Vector3(aabb.size.x * 0.5, aabb.size.y * 0.5, aabb.size.z)
 	var local_point_front: Vector3 = torso_mi.position + torso_mi.basis * front_local
@@ -4383,7 +4361,6 @@ func _get_chest_target_from_mesh() -> Dictionary:
 	var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
 	var front_offset: float = (front_world - chest_world).dot(forward_dir)
 	front_offset = maxf(front_offset, 0.01)
-	print("[STRAP] Front world = (%.4f,%.4f,%.4f) front_offset=%.4f" % [front_world.x, front_world.y, front_world.z, front_offset])
 	return {"chest": chest_world, "front_offset": front_offset, "front_world": front_world, "torso_mi": torso_mi}
 
 func _get_bone_global_rest_transform(skel: Skeleton3D, bone_idx: int) -> Transform3D:
@@ -4418,7 +4395,6 @@ func _build_rifle_strap() -> void:
 		return
 	# Prevent double instantiation
 	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
-		print("[STRAP] Strap already exists, skipping creation")
 		return
 	# Load the rigged sling asset
 	var sling_scene := load("res://assets/models/props/rifle_sling_unfolded.tscn") as PackedScene
@@ -4451,7 +4427,6 @@ func _build_rifle_strap() -> void:
 		# PASO 1: assign skeleton and skin for GPU skinning
 		strap_mi.skeleton = NodePath("../SlingSkeleton")
 		strap_mi.skin = _create_strap_skin()
-		print("[STRAP] SlingMesh skeleton=%s skin_binds=%d" % [strap_mi.skeleton, strap_mi.skin.get_bind_count()])
 	# Do NOT create Skin resource / CPU skinning cache — want pure rest pose
 	_strap_mesh_cached = false
 	# PASO 2: Align SlingMesh AABB center with real chest bone position
@@ -4462,7 +4437,6 @@ func _build_rifle_strap() -> void:
 			for bn in ["mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"]:
 				chest_bone_idx = char_skel.find_bone(bn)
 				if chest_bone_idx >= 0:
-					print("[STRAP] Chest bone found: %s (idx=%d)" % [bn, chest_bone_idx])
 					break
 			if chest_bone_idx >= 0:
 				var chest_data := _get_chest_target_from_mesh()
@@ -4477,7 +4451,6 @@ func _build_rifle_strap() -> void:
 					# Do NOT use Tops AABB for depth — it's unreliable for skinned mesh
 					var forward_dir := (third_person_model.global_basis * Vector3.BACK).normalized()
 					var chest_surface_world := Vector3(0.011, 1.798, -0.0342) + forward_dir * 0.025
-					print("[STRAP] Using VISUAL reference chest_surface_world = (%.4f, %.4f, %.4f)" % [chest_surface_world.x, chest_surface_world.y, chest_surface_world.z])
 					# Align SlingMesh AABB CENTER to chest_surface_world
 					var aabb: AABB = strap_mi.get_aabb()
 					var sling_center_local: Vector3 = aabb.get_center()
@@ -4487,26 +4460,17 @@ func _build_rifle_strap() -> void:
 					var new_global := current_global + correction
 					sling_root.global_position = new_global
 					sling_root.force_update_transform()
-					print("[STRAP] SlingMesh AABB center local = (%.4f, %.4f, %.4f)" % [sling_center_local.x, sling_center_local.y, sling_center_local.z])
-					print("[STRAP] SlingMesh world center before = (%.4f, %.4f, %.4f)" % [sling_center_world.x, sling_center_world.y, sling_center_world.z])
-					print("[STRAP] RifleSlingRoot position after = (%.4f, %.4f, %.4f)" % [new_global.x, new_global.y, new_global.z])
 					# Store for debug capture
 					_strap_test_positions = [new_global]
-					# === FASE 2: Print global poses of all 8 bones in REST ===
+					# === FASE 2: ===
 					_strap_skeleton.reset_bone_poses()
 					_strap_skeleton.force_update_all_bone_transforms()
-					print("[STRAP] === FASE 2: BONE GLOBAL POSES IN REST ===")
 					for b in range(_strap_skeleton.get_bone_count()):
-						var bname2: String = _strap_skeleton.get_bone_name(b)
-						var bgp: Transform3D = _strap_skeleton.get_bone_global_pose(b)
-						var bworld: Vector3 = _strap_skeleton.global_transform * bgp.origin
-						print("[STRAP]   Bone %d (%s) global_pose_origin=(%.4f, %.4f, %.4f) world=(%.4f, %.4f, %.4f)" % [
-							b, bname2, bgp.origin.x, bgp.origin.y, bgp.origin.z, bworld.x, bworld.y, bworld.z])
+						pass
 			else:
 				push_warning("[STRAP] Could not find chest bone for alignment")
 		else:
 			push_warning("[STRAP] Could not find character skeleton for alignment")
-	print("[STRAP] Strap loaded and aligned to chest")
 
 func _setup_strap_reference_visuals(strap_root: Node3D, strap_mi: MeshInstance3D) -> void:
 	if strap_root == null or not is_instance_valid(strap_root) or strap_mi == null or not is_instance_valid(strap_mi):
@@ -5783,8 +5747,7 @@ func _apply_view_mode() -> void:
 func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	if camera == null:
 		return
-	if _frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera:
-		return
+	var _debug_cam_active := _frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera
 	var moving := movement_amount > 0.05 and is_on_floor()
 	var target_intensity: float = 1.0 if moving else 0.0
 	if is_sprinting:
@@ -5818,13 +5781,16 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		aim_height += vertical_bob * 0.2
 		# Position the camera at the player's eye level, slightly forward
 		target_position = Vector3(0.0, aim_height + _water_sink, 0.15)
-		camera.position = camera.position.lerp(target_position, delta * 18.0)
-		# Use _pitch for vertical aim control (mouse up/down)
-		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+		if not _debug_cam_active:
+			camera.position = camera.position.lerp(target_position, delta * 18.0)
+			# Use _pitch for vertical aim control (mouse up/down)
+			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	else:
-		camera.position = camera.position.lerp(target_position, delta * 10.0)
-		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
-	camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
+		if not _debug_cam_active:
+			camera.position = camera.position.lerp(target_position, delta * 10.0)
+			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+	if not _debug_cam_active:
+		camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	_update_third_person_animation(moving, delta)
 
 func _update_third_person_animation(moving: bool, delta: float) -> void:
@@ -6899,15 +6865,13 @@ func _test_shot(path: String) -> void:
 			if c.r > 0.01 or c.g > 0.01 or c.b > 0.01:
 				has_color = true
 				break
-		print("[TEST] saved ", path, " size=", img.get_width(), "x", img.get_height(), " has_color=", has_color)
 		if not has_color:
-			print("[TEST] WARNING: image appears all black! vp_size=", vp.size, " vp_visible=", vp.is_visible())
+			pass
 		img.save_png(ProjectSettings.globalize_path(path))
 	else:
-		print("[TEST] FAILED: img is null or empty")
+		pass
 
 func _debug_strap_capture() -> void:
-	print("[STRAP-DIAG] === STARTING CLEAN DIAGNOSTIC ===")
 	_strap_diagnostic_mode = true
 	global_position = Vector3(0.0, 0.0, 0.0)
 	global_rotation = Vector3(0.0, 0.0, 0.0)
@@ -6940,105 +6904,74 @@ func _debug_strap_capture() -> void:
 	# ============================================================
 	# PASO 1: VERIFICAR CORREA AISLADA (rest pose, sin deformar)
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 1: VERIFICAR CORREA AISLADA ===")
 	var strap_root: Node3D = _rifle_on_back_strap
 	var strap_skel: Skeleton3D = _strap_skeleton
 	var strap_mesh: MeshInstance3D = null
 	if strap_root != null and is_instance_valid(strap_root):
-		print("[STRAP-DIAG] RifleSlingRoot name=%s children=%d" % [strap_root.name, strap_root.get_child_count()])
 		for child in strap_root.get_children():
 			if child is MeshInstance3D and child.name == "SlingMesh":
 				strap_mesh = child as MeshInstance3D
 			elif child is Skeleton3D:
 				strap_skel = child as Skeleton3D
 	if strap_skel != null and is_instance_valid(strap_skel):
-		print("[STRAP-DIAG] SlingSkeleton bone_count=%d" % strap_skel.get_bone_count())
 		for b in range(strap_skel.get_bone_count()):
 			var bname: String = strap_skel.get_bone_name(b)
 			var brest: Transform3D = strap_skel.get_bone_rest(b)
-			print("[STRAP-DIAG]   Bone %d (%s) rest_origin=(%.4f, %.4f, %.4f)" % [b, bname, brest.origin.x, brest.origin.y, brest.origin.z])
 	else:
-		print("[STRAP-DIAG] ERROR: SlingSkeleton not found!")
+		pass
 	if strap_mesh != null:
-		print("[STRAP-DIAG] SlingMesh visible=%s" % str(strap_mesh.visible))
 		if strap_mesh.mesh != null:
 			var am := strap_mesh.mesh as ArrayMesh
 			if am != null and am.get_surface_count() > 0:
 				var arrays := am.surface_get_arrays(0)
 				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-				print("[STRAP-DIAG] SlingMesh verts=%d" % verts.size())
 				if verts.size() > 0:
 					var aabb := AABB()
 					for v in verts:
 						aabb = aabb.expand(v)
-					print("[STRAP-DIAG] SlingMesh local AABB pos=(%.4f,%.4f,%.4f) size=(%.4f,%.4f,%.4f)" % [aabb.position.x, aabb.position.y, aabb.position.z, aabb.size.x, aabb.size.y, aabb.size.z])
 	else:
-		print("[STRAP-DIAG] ERROR: SlingMesh not found!")
+		pass
 
 	# ============================================================
 	# PASO 2: INSPECCIONAR TRANSFORMS
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 2: INSPECCIONAR TRANSFORMS ===")
 	# Player
-	print("[STRAP-DIAG] Player.global_transform origin=(%.4f,%.4f,%.4f)" % [global_position.x, global_position.y, global_position.z])
-	print("[STRAP-DIAG] Player.basis=%s" % str(global_basis))
 	# ThirdPersonModel
 	if third_person_model != null and is_instance_valid(third_person_model):
-		print("[STRAP-DIAG] ThirdPersonModel.position=(%.4f,%.4f,%.4f)" % [third_person_model.position.x, third_person_model.position.y, third_person_model.position.z])
-		print("[STRAP-DIAG] ThirdPersonModel.rotation_deg=(%.2f,%.2f,%.2f)" % [third_person_model.rotation_degrees.x, third_person_model.rotation_degrees.y, third_person_model.rotation_degrees.z])
-		print("[STRAP-DIAG] ThirdPersonModel.scale=(%.4f,%.4f,%.4f)" % [third_person_model.scale.x, third_person_model.scale.y, third_person_model.scale.z])
-		print("[STRAP-DIAG] ThirdPersonModel.global_origin=(%.4f,%.4f,%.4f)" % [third_person_model.global_position.x, third_person_model.global_position.y, third_person_model.global_position.z])
+		pass
 	# Character skeleton
 	var char_skel: Skeleton3D = _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
 	if char_skel != null and is_instance_valid(char_skel):
-		print("[STRAP-DIAG] CharacterSkeleton.global_origin=(%.4f,%.4f,%.4f)" % [char_skel.global_position.x, char_skel.global_position.y, char_skel.global_position.z])
-		print("[STRAP-DIAG] CharacterSkeleton.position=(%.4f,%.4f,%.4f)" % [char_skel.position.x, char_skel.position.y, char_skel.position.z])
-		print("[STRAP-DIAG] CharacterSkeleton.scale=(%.4f,%.4f,%.4f)" % [char_skel.scale.x, char_skel.scale.y, char_skel.scale.z])
+		pass
 	# Strap root
 	if strap_root != null and is_instance_valid(strap_root):
-		print("[STRAP-DIAG] RifleSlingRoot.position=(%.4f,%.4f,%.4f)" % [strap_root.position.x, strap_root.position.y, strap_root.position.z])
-		print("[STRAP-DIAG] RifleSlingRoot.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_root.rotation_degrees.x, strap_root.rotation_degrees.y, strap_root.rotation_degrees.z])
-		print("[STRAP-DIAG] RifleSlingRoot.scale=(%.4f,%.4f,%.4f)" % [strap_root.scale.x, strap_root.scale.y, strap_root.scale.z])
-		print("[STRAP-DIAG] RifleSlingRoot.global_origin=(%.4f,%.4f,%.4f)" % [strap_root.global_position.x, strap_root.global_position.y, strap_root.global_position.z])
-		print("[STRAP-DIAG] RifleSlingRoot.parent=%s" % str(strap_root.get_parent().name if strap_root.get_parent() else "NULL"))
+		pass
 	# Strap skeleton
 	if strap_skel != null and is_instance_valid(strap_skel):
-		print("[STRAP-DIAG] SlingSkeleton.position=(%.4f,%.4f,%.4f)" % [strap_skel.position.x, strap_skel.position.y, strap_skel.position.z])
-		print("[STRAP-DIAG] SlingSkeleton.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_skel.rotation_degrees.x, strap_skel.rotation_degrees.y, strap_skel.rotation_degrees.z])
-		print("[STRAP-DIAG] SlingSkeleton.scale=(%.4f,%.4f,%.4f)" % [strap_skel.scale.x, strap_skel.scale.y, strap_skel.scale.z])
-		print("[STRAP-DIAG] SlingSkeleton.global_origin=(%.4f,%.4f,%.4f)" % [strap_skel.global_position.x, strap_skel.global_position.y, strap_skel.global_position.z])
-		print("[STRAP-DIAG] SlingSkeleton.parent=%s" % str(strap_skel.get_parent().name if strap_skel.get_parent() else "NULL"))
+		pass
 	# Strap mesh
 	if strap_mesh != null:
-		print("[STRAP-DIAG] SlingMesh.position=(%.4f,%.4f,%.4f)" % [strap_mesh.position.x, strap_mesh.position.y, strap_mesh.position.z])
-		print("[STRAP-DIAG] SlingMesh.rotation_deg=(%.2f,%.2f,%.2f)" % [strap_mesh.rotation_degrees.x, strap_mesh.rotation_degrees.y, strap_mesh.rotation_degrees.z])
-		print("[STRAP-DIAG] SlingMesh.scale=(%.4f,%.4f,%.4f)" % [strap_mesh.scale.x, strap_mesh.scale.y, strap_mesh.scale.z])
-		print("[STRAP-DIAG] SlingMesh.global_origin=(%.4f,%.4f,%.4f)" % [strap_mesh.global_position.x, strap_mesh.global_position.y, strap_mesh.global_position.z])
-		print("[STRAP-DIAG] SlingMesh.parent=%s" % str(strap_mesh.get_parent().name if strap_mesh.get_parent() else "NULL"))
+		pass
 
 	# ============================================================
 	# PASO 3: VERIFICAR ESTRUCTURA DE PARENTADO
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 3: VERIFICAR PARENTADO ===")
 	if strap_root != null and strap_root.get_parent() != null:
 		var p: Node = strap_root.get_parent()
-		print("[STRAP-DIAG] RifleSlingRoot parent=%s (expected: ThirdPersonCharacter)" % p.name)
 		if p is Skeleton3D:
-			print("[STRAP-DIAG] ERROR: RifleSlingRoot is child of Skeleton3D! This is WRONG.")
+			pass
 		else:
-			print("[STRAP-DIAG] OK: RifleSlingRoot is NOT child of Skeleton3D")
+			pass
 	if strap_skel != null and strap_skel.get_parent() != null:
 		var sp: Node = strap_skel.get_parent()
-		print("[STRAP-DIAG] SlingSkeleton parent=%s (expected: RifleSlingRoot)" % sp.name)
 		if sp is Skeleton3D:
-			print("[STRAP-DIAG] ERROR: SlingSkeleton is child of another Skeleton3D! This is WRONG.")
+			pass
 		else:
-			print("[STRAP-DIAG] OK: SlingSkeleton is NOT child of another Skeleton3D")
+			pass
 
 	# ============================================================
 	# PASO 4: SKINNING TEST — Strap_04 en target
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 4: SKINNING TEST — Strap_03/04/05 ===")
 	# Apply bright yellow diagnostic material for maximum visibility
 	if strap_mesh != null:
 		var diag_mat := StandardMaterial3D.new()
@@ -7050,7 +6983,6 @@ func _debug_strap_capture() -> void:
 		diag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		diag_mat.no_depth_test = false
 		strap_mesh.material_override = diag_mat
-		print("[STRAP-DIAG] Applied yellow diagnostic material")
 	# Force one more update before capture
 	if strap_skel != null:
 		strap_skel.force_update_all_bone_transforms()
@@ -7059,25 +6991,18 @@ func _debug_strap_capture() -> void:
 		var b04 := strap_skel.find_bone("Strap_04")
 		if b04 >= 0:
 			var b04_world := strap_skel.global_transform * strap_skel.get_bone_global_pose(b04).origin
-			print("[STRAP-DIAG] Strap_04 world result=(%.4f,%.4f,%.4f)" % [b04_world.x, b04_world.y, b04_world.z])
 
 	await get_tree().create_timer(1.0).timeout
 
 	# ============================================================
 	# PASO 5: ORIENTACIÓN Y REFERENCIAS
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 5: ORIENTACIÓN Y REFERENCIAS ===")
 	if strap_root != null and is_instance_valid(strap_root):
-		print("[STRAP-DIAG] RifleSlingRoot.global_transform=%s" % str(strap_root.global_transform))
+		pass
 	if strap_mesh != null:
-		print("[STRAP-DIAG] SlingMesh.global_transform=%s" % str(strap_mesh.global_transform))
-		print("[STRAP-DIAG] SlingMesh.get_aabb()=%s" % str(strap_mesh.get_aabb()))
-		print("[STRAP-DIAG] SlingMesh.local_x_axis in world=%s" % str(strap_mesh.global_basis.x))
-		print("[STRAP-DIAG] SlingMesh.local_y_axis in world=%s" % str(strap_mesh.global_basis.y))
-		print("[STRAP-DIAG] SlingMesh.local_z_axis in world=%s" % str(strap_mesh.global_basis.z))
+		pass
 	if third_person_model != null and is_instance_valid(third_person_model):
 		var char_forward := (third_person_model.global_basis * Vector3.BACK).normalized()
-		print("[STRAP-DIAG] Character forward=%s" % str(char_forward))
 
 	_setup_strap_reference_visuals(strap_root, strap_mesh)
 	await get_tree().create_timer(0.5).timeout
@@ -7087,7 +7012,6 @@ func _debug_strap_capture() -> void:
 	# Known visual reference: chest surface at (0.011, 1.798, -0.0342)
 	# 2.5cm forward: (0.011, 1.798, -0.0592)
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 2: DEPTH REFERENCE SPHERES ===")
 	# Hide all previous reference visuals
 	for s in _strap_reference_spheres:
 		if is_instance_valid(s):
@@ -7133,8 +7057,6 @@ func _debug_strap_capture() -> void:
 	red_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(red_sphere)
 	red_sphere.global_position = Vector3(0.011, 1.798, -0.0592)
-	print("[STRAP-DIAG] GREEN sphere at (0.011, 1.798, -0.0342) — chest surface")
-	print("[STRAP-DIAG] RED sphere at (0.011, 1.798, -0.0592) — 2.5cm forward")
 	# Hide strap mesh for clean sphere validation
 	if strap_mesh != null:
 		strap_mesh.visible = false
@@ -7146,14 +7068,12 @@ func _debug_strap_capture() -> void:
 		camera.fov = 30.0
 	await get_tree().create_timer(0.5).timeout
 	await _test_shot("/tmp/strap_depth_refs.png")
-	print("[STRAP-DIAG] Depth reference capture saved")
 
 	# ============================================================
 	# PASO 3: CORRECTED Z TARGETS — using visual reference, NOT AABB
 	# Keep X/Y from previous run, change ONLY Z
 	# Chest surface Z ≈ -0.0342, strap at 2-3cm forward ≈ -0.059
 	# ============================================================
-	print("[STRAP-DIAG] === PASO 3: CORRECTED Z TARGETS ===")
 	# Restore strap mesh visibility
 	if strap_mesh != null:
 		strap_mesh.visible = true
@@ -7173,13 +7093,11 @@ func _debug_strap_capture() -> void:
 		diag_mat_z.cull_mode = BaseMaterial3D.CULL_DISABLED
 		diag_mat_z.no_depth_test = false
 		strap_mesh.material_override = diag_mat_z
-		print("[STRAP-DIAG] Applied yellow material with DEPTH TEST NORMAL")
 	# Reset bones to rest first
 	if strap_skel != null:
 		strap_skel.reset_bone_poses()
 		strap_skel.force_update_all_bone_transforms()
 	# Print REST world positions for all 8 bones
-	print("[STRAP-DIAG] --- REST WORLD POSITIONS (all 8 bones) ---")
 	var rest_ys: Array[float] = []
 	if strap_skel != null:
 		for b in range(strap_skel.get_bone_count()):
@@ -7187,16 +7105,13 @@ func _debug_strap_capture() -> void:
 			var bgp_r: Transform3D = strap_skel.get_bone_global_pose(b)
 			var bworld_r: Vector3 = strap_skel.global_transform * bgp_r.origin
 			rest_ys.append(bworld_r.y)
-			print("[STRAP-DIAG]   REST Bone %d (%s) world=(%.4f, %.4f, %.4f)" % [
-				b, bname_r, bworld_r.x, bworld_r.y, bworld_r.z])
 	# Validate REST Y ordering
 	var rest_order_ok := true
 	for i in range(rest_ys.size() - 1, 0, -1):
 		if rest_ys[i] <= rest_ys[i - 1]:
 			rest_order_ok = false
-			print("[STRAP-DIAG]   REST ORDER FAIL: Y%02d=%.4f <= Y%02d=%.4f" % [i, rest_ys[i], i - 1, rest_ys[i - 1]])
 	if rest_order_ok:
-		print("[STRAP-DIAG]   REST ORDER OK: Y07 > Y06 > Y05 > Y04 > Y03 > Y02 > Y01 > Y00")
+		pass
 	else:
 		push_warning("[STRAP-DIAG] REST Y ordering is NOT monotonic — rig may be invalid")
 	# Use known visual chest reference for X/Y center, but Z from visual reference
@@ -7217,22 +7132,17 @@ func _debug_strap_capture() -> void:
 		"Strap_02": chest_ref + right_dir_z * 0.161 + up_dir_z * (-0.220) + forward_dir_z * 0.018,  # side, 1.8cm
 	}
 	# Print target world positions
-	print("[STRAP-DIAG] --- TARGET WORLD POSITIONS (Z-corrected) ---")
 	var target_order_z := ["Strap_06", "Strap_05", "Strap_04", "Strap_03", "Strap_02"]
 	var target_ys_z: Array[float] = []
 	for bname_t in target_order_z:
 		var tw: Vector3 = bone_targets_z[bname_t]
 		target_ys_z.append(tw.y)
-		print("[STRAP-DIAG]   target %s world=(%.4f, %.4f, %.4f)" % [bname_t, tw.x, tw.y, tw.z])
-	# Validate pose Y ordering
 	var pose_order_ok_z := true
 	for i in range(target_ys_z.size() - 1):
 		if target_ys_z[i] <= target_ys_z[i + 1]:
 			pose_order_ok_z = false
-			print("[STRAP-DIAG]   POSE ORDER FAIL: Y_%s=%.4f <= Y_%s=%.4f" % [
-				target_order_z[i], target_ys_z[i], target_order_z[i + 1], target_ys_z[i + 1]])
 	if pose_order_ok_z:
-		print("[STRAP-DIAG]   POSE ORDER OK: Y06 > Y05 > Y04 > Y03 > Y02")
+		pass
 	else:
 		push_warning("[STRAP-DIAG] POSE Y ordering is NOT monotonic — NOT applying poses!")
 	# Apply poses if validation passes
@@ -7252,17 +7162,11 @@ func _debug_strap_capture() -> void:
 			var bone_global_z: Transform3D = strap_skel.get_bone_global_pose(bone_idx_z)
 			var world_result_z: Vector3 = strap_skel.global_transform * bone_global_z.origin
 			var error_z: float = world_result_z.distance_to(bone_target_z) * 100.0
-			print("[STRAP-DIAG] %s target=(%.4f, %.4f, %.4f) result=(%.4f, %.4f, %.4f) err=%.2fcm" % [
-				bone_name, bone_target_z.x, bone_target_z.y, bone_target_z.z,
-				world_result_z.x, world_result_z.y, world_result_z.z, error_z])
 		# Print final Z values
-		print("[STRAP-DIAG] --- FINAL Z VALUES ---")
 		for bname_z in target_order_z:
 			var bidx_z: int = strap_skel.find_bone(bname_z)
 			if bidx_z >= 0:
-				var bgp_z: Transform3D = strap_skel.get_bone_global_pose(bidx_z)
-				var bw_z: Vector3 = strap_skel.global_transform * bgp_z.origin
-				print("[STRAP-DIAG]   %s final Z = %.4f" % [bname_z, bw_z.z])
+				pass
 		await get_tree().create_timer(0.5).timeout
 		# Frontal
 		if camera != null:
@@ -7293,13 +7197,11 @@ func _debug_strap_capture() -> void:
 		await get_tree().create_timer(0.5).timeout
 		await _test_shot("/tmp/strap_diag_rear.png")
 	else:
-		print("[STRAP-DIAG] SKIPPING pose application and captures — validation failed")
+		pass
 
-	print("[STRAP-DIAG] === DIAGNOSTIC COMPLETE ===")
 	get_tree().quit()
 
 func _test_drop_clothing() -> void:
-	print("[TEST-DROP] Starting drop clothing test via drop_inventory_item")
 	# Zoom camera to see character up close
 	var cam: Camera3D = get_viewport().get_camera_3d()
 	var cam_orig_pos := Vector3.ZERO
@@ -7314,16 +7216,14 @@ func _test_drop_clothing() -> void:
 		cam.fov = 35.0
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://test_drop_00_default.png")
-	print("[TEST-DROP] Equipped slots: ", _equipped_slots)
 	if inventory != null:
 		for i in range(inventory.items.size()):
-			print("[TEST-DROP] inv[", i, "] = ", inventory.items[i].item_name)
+			pass
 	# Print AABB info for all visible meshes
 	_debug_mesh_aabb()
 	var items_to_drop := ["Camiseta", "Pantalones", "Zapatillas"]
 	var step := 1
 	for item_name in items_to_drop:
-		print("[TEST-DROP] Dropping ", item_name, " via drop_inventory_item")
 		var found_idx := -1
 		if inventory != null:
 			for i in range(inventory.items.size()):
@@ -7333,13 +7233,12 @@ func _test_drop_clothing() -> void:
 		if found_idx >= 0:
 			drop_inventory_item(found_idx)
 		else:
-			print("[TEST-DROP] WARNING: ", item_name, " not found in inventory!")
+			pass
 		await get_tree().create_timer(1.0).timeout
 		var padded := str(step)
 		if step < 10:
 			padded = "0" + padded
 		await _test_shot("res://test_drop_" + padded + "_no_" + item_name.replace(" ", "_") + ".png")
-		print("[TEST-DROP] Equipped slots after ", item_name, ": ", _equipped_slots)
 		_debug_mesh_aabb()
 		step += 1
 	# Capture side view of fully nude character
@@ -7361,16 +7260,15 @@ func _test_drop_clothing() -> void:
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
-			print("[TEST-DROP] ", dn, " visible=", dmi.visible)
+			pass
 		else:
-			print("[TEST-DROP] ", dn, " NOT FOUND")
+			pass
 	for bn in ["Tops", "Bottoms", "Shoes"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
-			print("[TEST-DROP] ", bn, " visible=", bmi.visible)
+			pass
 		else:
-			print("[TEST-DROP] ", bn, " NOT FOUND")
-	print("[TEST-DROP] Test complete!")
+			pass
 
 func _debug_mesh_aabb() -> void:
 	if third_person_model == null:
@@ -7383,12 +7281,10 @@ func _debug_mesh_aabb() -> void:
 			if mi.visible:
 				var aabb := mi.get_aabb()
 				var gp := mi.global_position
-				print("[AABB] ", mi.name, " pos=", gp, " aabb_pos=", aabb.position, " aabb_size=", aabb.size, " scale=", mi.scale)
 		for c in node.get_children():
 			stack.append(c)
 
 func _debug_clothing_test() -> void:
-	print("[CLOTHING-TEST] Starting clothing test")
 	var cam: Camera3D = get_viewport().get_camera_3d()
 	var cam_orig_pos := Vector3.ZERO
 	var cam_orig_fov := 75.0
@@ -7419,8 +7315,6 @@ func _debug_clothing_test() -> void:
 		cam.fov = 35.0
 	await get_tree().create_timer(0.5).timeout
 	await _test_shot("res://debug_clothing_00_baseline.png")
-	print("[CLOTHING-TEST] _survival_cloth_nodes keys: ", _survival_cloth_nodes.keys())
-	print("[CLOTHING-TEST] _survival_body_nodes keys: ", _survival_body_nodes.keys())
 	_debug_mesh_aabb()
 	var all_items := [
 		"Chaqueta militar", "Pantalones militares", "Guantes militares",
@@ -7428,7 +7322,6 @@ func _debug_clothing_test() -> void:
 	]
 	var step := 1
 	for item_name in all_items:
-		print("[CLOTHING-TEST] Equipping ", item_name)
 		equip_clothing(item_name)
 		await get_tree().create_timer(0.5).timeout
 		var padded := str(step)
@@ -7440,9 +7333,9 @@ func _debug_clothing_test() -> void:
 			var mesh_name := String(SURVIVAL_CLOTHING[item_name]["mesh"])
 			var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
 			if mi != null:
-				print("[CLOTHING-TEST] ", mesh_name, " visible=", mi.visible, " has_skin=", mi.skin != null)
+				pass
 			else:
-				print("[CLOTHING-TEST] WARNING: ", mesh_name, " not found in _survival_cloth_nodes!")
+				pass
 		_debug_mesh_aabb()
 		# Unequip
 		unequip_clothing(item_name)
@@ -7463,28 +7356,24 @@ func _debug_clothing_test() -> void:
 	if cam != null:
 		cam.global_position = cam_orig_pos
 		cam.fov = cam_orig_fov
-	print("[CLOTHING-TEST] Test complete!")
 
 func _test_unequip_clothing() -> void:
-	print("[TEST-UNEQUIP] Starting unequip test with normal camera")
 	# Capture with normal game camera (what the player sees)
 	await _test_shot("res://test_unequip_00_default.png")
-	print("[TEST-UNEQUIP] equipped_slots=", _equipped_slots)
 	# Log mesh state
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
-			print("[TEST-UNEQUIP] ", dn, " visible=", dmi.visible)
+			pass
 	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
-			print("[TEST-UNEQUIP] ", bn, " visible=", bmi.visible)
+			pass
 	if _head_mesh != null:
-		print("[TEST-UNEQUIP] HeadMesh visible=", _head_mesh.visible)
+		pass
 	if _full_body_mesh != null:
-		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
+		pass
 	# Now unequip Pantalones
-	print("[TEST-UNEQUIP] === Unequipping Pantalones ===")
 	unequip_clothing("Pantalones")
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://test_unequip_01_no_pantalones.png")
@@ -7492,25 +7381,21 @@ func _test_unequip_clothing() -> void:
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi2: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi2 != null:
-			print("[TEST-UNEQUIP] ", dn, " visible=", dmi2.visible, " gpos=", dmi2.global_position)
 			if dmi2.visible:
 				var aabb2 := dmi2.get_aabb()
-				print("[TEST-UNEQUIP]   aabb=", aabb2)
 	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
 		var bmi2: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi2 != null:
-			print("[TEST-UNEQUIP] ", bn, " visible=", bmi2.visible)
+			pass
 	if _head_mesh != null:
-		print("[TEST-UNEQUIP] HeadMesh visible=", _head_mesh.visible)
+		pass
 	if _full_body_mesh != null:
-		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
+		pass
 	# Re-equip Pantalones
-	print("[TEST-UNEQUIP] === Re-equipping Pantalones ===")
 	equip_clothing("Pantalones")
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://test_unequip_02_re_pantalones.png")
 	# Now unequip Camiseta
-	print("[TEST-UNEQUIP] === Unequipping Camiseta ===")
 	unequip_clothing("Camiseta")
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://test_unequip_03_no_camiseta.png")
@@ -7518,12 +7403,9 @@ func _test_unequip_clothing() -> void:
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi3: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi3 != null:
-			print("[TEST-UNEQUIP] ", dn, " visible=", dmi3.visible, " gpos=", dmi3.global_position)
 			if dmi3.visible:
 				var aabb3 := dmi3.get_aabb()
-				print("[TEST-UNEQUIP]   aabb=", aabb3)
 	# Now unequip Zapatillas
-	print("[TEST-UNEQUIP] === Unequipping Zapatillas ===")
 	unequip_clothing("Zapatillas")
 	await get_tree().create_timer(1.0).timeout
 	await _test_shot("res://test_unequip_04_no_zapatillas.png")
@@ -7531,45 +7413,38 @@ func _test_unequip_clothing() -> void:
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi4: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi4 != null:
-			print("[TEST-UNEQUIP] ", dn, " visible=", dmi4.visible, " gpos=", dmi4.global_position)
 			if dmi4.visible:
 				var aabb4 := dmi4.get_aabb()
-				print("[TEST-UNEQUIP]   aabb=", aabb4)
 	for bn in ["Tops", "Bottoms", "Shoes", "Body", "Body_feet", "Body_legs"]:
 		var bmi4: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi4 != null:
-			print("[TEST-UNEQUIP] ", bn, " visible=", bmi4.visible)
+			pass
 	if _body_no_head_mesh != null:
-		print("[TEST-UNEQUIP] BodyNoHead visible=", _body_no_head_mesh.visible)
+		pass
 	if _full_body_mesh != null:
-		print("[TEST-UNEQUIP] FullBodyMesh visible=", _full_body_mesh.visible)
-	print("[TEST-UNEQUIP] Test complete!")
+		pass
 	get_tree().quit()
 
 func _test_live_capture() -> void:
-	print("[TEST-LIVE] Capturing live game screenshots")
 	# Log mesh state
 	for dn in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet"]:
 		var dmi: MeshInstance3D = _find_mesh_in_third_person(dn)
 		if dmi != null:
-			print("[TEST-LIVE] ", dn, " visible=", dmi.visible)
+			pass
 	for bn in ["Tops", "Bottoms", "Shoes", "Body"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(bn)
 		if bmi != null:
-			print("[TEST-LIVE] ", bn, " visible=", bmi.visible)
+			pass
 	if _head_mesh != null:
-		print("[TEST-LIVE] HeadMesh visible=", _head_mesh.visible, " gpos=", _head_mesh.global_position)
 		var head_aabb := _head_mesh.get_aabb()
-		print("[TEST-LIVE] HeadMesh aabb=", head_aabb)
 	if _full_body_mesh != null:
-		print("[TEST-LIVE] FullBodyMesh visible=", _full_body_mesh.visible)
+		pass
 	# Capture normal camera view
 	await _test_shot("res://test_live_00.png")
 	# Capture closer front view
 	var cam: Camera3D = get_viewport().get_camera_3d()
 	if cam != null:
 		var char_pos := global_position
-		print("[TEST-LIVE] char_pos=", char_pos, " cam_pos=", cam.global_position)
 		cam.global_position = char_pos + Vector3(0, 1.5, 3.5)
 		cam.look_at(char_pos + Vector3(0, 1.0, 0))
 		cam.fov = 35.0
@@ -7589,6 +7464,4 @@ func _test_live_capture() -> void:
 			var bi := skel.find_bone(bn)
 			if bi >= 0:
 				var gp := skel.get_bone_global_pose(bi)
-				print("[TEST-LIVE] bone ", bn, " global_pose=", gp.origin)
-	print("[TEST-LIVE] Test complete!")
 	get_tree().quit()

@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://sa1qdiph7ohe"
-path="res://.godot/imported/pickup_soldier_hands.glb-fd51b406c30215fe9e253edc5311f23b.scn"
+path="res://.godot/imported/pickup_soldier_hands.glb-bbb537bec7c42a8029c196e699b7c0e2.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_soldier_hands.glb"
-dest_files=["res://.godot/imported/pickup_soldier_hands.glb-fd51b406c30215fe9e253edc5311f23b.scn"]
+source_file="res://assets/characters/adapted/pickup_soldier_hands.glb"
+dest_files=["res://.godot/imported/pickup_soldier_hands.glb-bbb537bec7c42a8029c196e699b7c0e2.scn"]
 
 [params]
 
