@@ -1062,14 +1062,26 @@ func _capture_mouse() -> void:
 
 func _inventory_index_for_key(keycode: Key) -> int:
 	match keycode:
-		KEY_6:
+		KEY_1, KEY_KP_1:
 			return 0
-		KEY_7:
+		KEY_2, KEY_KP_2:
 			return 1
-		KEY_8:
+		KEY_3, KEY_KP_3:
 			return 2
-		KEY_9:
+		KEY_4, KEY_KP_4:
 			return 3
+		KEY_5, KEY_KP_5:
+			return 4
+		KEY_6, KEY_KP_6:
+			return 5
+		KEY_7, KEY_KP_7:
+			return 6
+		KEY_8, KEY_KP_8:
+			return 7
+		KEY_9, KEY_KP_9:
+			return 8
+		KEY_0, KEY_KP_0:
+			return 9
 		_:
 			return -1
 
@@ -1107,6 +1119,12 @@ func _use_inventory_index(index: int) -> void:
 		held_index = index
 		_sync_held_item()
 		notice.emit("Tienes la botella en la mano. Ve al rio y pulsa E para llenarla.")
+		return
+	# Weapons and tools: equip directly in hands
+	if item_type == "weapon_rifle" or item_type == "weapon" or item_type.begins_with("tool"):
+		held_index = index
+		_sync_held_item()
+		notice.emit("En mano: %s." % item_name)
 		return
 	var used: bool = inventory.use_index(index, stats)
 	if used:
@@ -6280,9 +6298,7 @@ func _melee_attack() -> void:
 		third_person_action_timer = 0.8
 		third_person_animation_player.play(third_person_attack_animation, 0.08)
 	# Determine damage and energy cost based on held item
-	var held = null
-	if inventory != null and not inventory.items.is_empty():
-		held = inventory.items[held_index]
+	var held = get_held_item()
 	var base_damage := 5.0  # bare fists
 	var energy_cost := 8.0
 	var attack_range := 3.0
@@ -6424,12 +6440,10 @@ func _melee_attack() -> void:
 func _has_rifle_equipped() -> bool:
 	if not _rifle_in_hands:
 		return false
-	if inventory == null or inventory.items.is_empty():
-		return false
-	var held = inventory.items[held_index]
+	var held = get_held_item()
 	if held == null:
 		return false
-	return held.item_type == "weapon_rifle"
+	return str(held.item_type) == "weapon_rifle"
 
 func _update_crosshair(is_rifle: bool) -> void:
 	if is_puppet:
