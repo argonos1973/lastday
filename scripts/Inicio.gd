@@ -140,6 +140,9 @@ func _ready() -> void:
 	_status_label.custom_minimum_size = Vector2(240, 24)
 	vbox.add_child(_status_label)
 
+	# Auto-start single player for rifle positioning tests
+	get_tree().create_timer(1.5).timeout.connect(_on_single_player)
+
 func _process(_delta: float) -> void:
 	if _started:
 		return

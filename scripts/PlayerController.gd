@@ -291,9 +291,9 @@ var _rifle_right_arm_ik: TwoBoneIK3D = null
 var _last_rifle_animation_debug := ""
 
 @export_group("Rifle Placement")
-@export var weapon_position_offset := Vector3(-0.25, 0.45, -0.05)
+@export var weapon_position_offset := Vector3.ZERO
 @export var weapon_rotation_offset := Vector3(0.0, -60.0, 0.0)
-@export var weapon_scale: float = 12.0
+@export var weapon_scale: float = 5.94
 @export var left_hand_target_position := Vector3(-3.0, 0.0, 0.0)
 @export var right_hand_bone_name := "mixamorig:RightHand"
 
@@ -609,15 +609,13 @@ func _process(delta: float) -> void:
 			# yaw -40°: barrel goes left-forward (diagonal, less lateral protrusion)
 			# pitch -40°: barrel tilts clearly down, buttstock goes up to elbow
 			var flip := Basis.from_euler(Vector3(0.0, PI, 0.0))
-			var yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-40.0), 0.0))
-			var pitch := Basis.from_euler(Vector3(deg_to_rad(-40.0), 0.0, 0.0))
-			var rifle_rot := pitch * yaw * flip
+			var rifle_rot := flip
 			var rot_basis := char_basis * rifle_rot
 			_rifle_weapon_offset.global_basis = rot_basis.orthonormalized()
 			# Position: grip at right hand, then adjust so buttstock aligns with elbow
 			var rifle_basis_orn := _rifle_weapon_offset.global_basis.orthonormalized()
 			var r_elbow_pos := hand_pos
-			var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightShoulder", skel)
+			var r_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skel)
 			if not r_elbow_bone.is_empty():
 				var r_elbow_idx := skel.find_bone(r_elbow_bone)
 				if r_elbow_idx >= 0:
@@ -783,6 +781,9 @@ func _input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_F7:
 			toggle_anim_debug()
+			return
+		if event.keycode == KEY_0:
+			cycle_debug_camera()
 			return
 	if event.is_action_pressed("quick_use_1"):
 		held_index = 0
@@ -3040,16 +3041,15 @@ func _build_third_person_rifle() -> void:
 	model.scale = Vector3.ONE * init_effective_scale
 	# Get right elbow for diagnostics
 	var init_elbow_pos := init_hand_pos
-	var init_elbow_bone := _resolve_bone_name_safe("mixamorig:RightShoulder", skeleton)
+	var init_elbow_bone := _resolve_bone_name_safe("mixamorig:RightForeArm", skeleton)
 	if not init_elbow_bone.is_empty():
 		var init_elbow_idx := skeleton.find_bone(init_elbow_bone)
 		if init_elbow_idx >= 0:
 			init_elbow_pos = (skeleton.global_transform * skeleton.get_bone_global_pose(init_elbow_idx)).origin
+	print("[RIFLE_SCALE] skel_scale=", init_skel_scale, " weapon_scale=", weapon_scale, " effective_scale=", init_effective_scale, " bs_to_grip=", 8.46 * init_effective_scale, " elbow_hand_dist=", init_elbow_pos.distance_to(init_hand_pos))
 	# Fixed diagonal rotation: flip + yaw + pitch
 	var init_flip := Basis.from_euler(Vector3(0.0, PI, 0.0))
-	var init_yaw := Basis.from_euler(Vector3(0.0, deg_to_rad(-40.0), 0.0))
-	var init_pitch := Basis.from_euler(Vector3(deg_to_rad(-40.0), 0.0, 0.0))
-	var init_rifle_rot := init_pitch * init_yaw * init_flip
+	var init_rifle_rot := init_flip
 	var init_rot := init_char_basis * init_rifle_rot
 	_rifle_weapon_offset.global_basis = init_rot.orthonormalized()
 	# Position: buttstock at right elbow
@@ -3059,10 +3059,22 @@ func _build_third_person_rifle() -> void:
 	_rifle_weapon_offset.global_position = init_elbow_pos - init_bs_offset + init_char_basis * weapon_position_offset
 	model.force_update_transform()
 	_rifle_weapon_offset.force_update_transform()
+	# Set left hand target before IK setup to avoid pulling arm to (0,0,0)
+	var init_rifle_pos := _rifle_weapon_offset.global_position
+	var init_rifle_basis := _rifle_weapon_offset.global_basis.orthonormalized()
+	_rifle_left_hand_target.global_position = init_rifle_pos + init_rifle_basis.z.normalized() * 0.24 - init_rifle_basis.y.normalized() * 0.025
 	_setup_rifle_left_arm_ik(skeleton, _rifle_left_hand_target)
 	# Right hand IK target at grip (rifle origin = grip position)
 	_rifle_right_hand_target.global_position = _rifle_weapon_offset.global_position
 	_setup_rifle_right_arm_ik(skeleton, _rifle_right_hand_target)
+	# Debug spheres for rifle positioning
+	_add_held_sphere(_rifle_right_hand_target, "RHandDebug", Vector3(0.08, 0.08, 0.08), Vector3.ZERO, Color(1, 0, 0), Vector3.ZERO)
+	_add_held_sphere(_rifle_left_hand_target, "LHandDebug", Vector3(0.08, 0.08, 0.08), Vector3.ZERO, Color(0, 1, 0), Vector3.ZERO)
+	_add_held_sphere(_rifle_weapon_offset, "GripDebug", Vector3(0.08, 0.08, 0.08), Vector3.ZERO, Color(1, 1, 0), Vector3.ZERO)
+	_add_held_sphere(_rifle_weapon_offset, "ButtstockDebug", Vector3(0.08, 0.08, 0.08), init_bs_model * init_effective_scale, Color(1, 0.5, 0), Vector3.ZERO)
+	_add_held_sphere(skeleton, "RightElbowDebug", Vector3(0.08, 0.08, 0.08), skeleton.to_local(init_elbow_pos), Color(0, 0.5, 1), Vector3.ZERO)
+	# Debug cameras: frontal and profile
+	call_deferred("_setup_debug_cameras", init_hand_pos, init_elbow_pos)
 	# IK diagnostics
 	model.force_update_transform()
 	_rifle_weapon_offset.force_update_transform()
@@ -3361,6 +3373,60 @@ func _add_held_cylinder(parent: Node, node_name: String, radius: float, height: 
 	mesh_instance.material_override = material
 	parent.add_child(mesh_instance)
 	return mesh_instance
+
+var _debug_cam_front: Camera3D = null
+var _debug_cam_profile: Camera3D = null
+var _debug_cam_index := 0
+
+func _setup_debug_cameras(hand_pos: Vector3, elbow_pos: Vector3) -> void:
+	if _debug_cam_front != null and is_instance_valid(_debug_cam_front):
+		return
+	var center := (hand_pos + elbow_pos) * 0.5
+	var up := Vector3.UP
+	# Frontal camera: looking at character from front
+	_debug_cam_front = Camera3D.new()
+	_debug_cam_front.name = "DebugCamFront"
+	var front_pos := center + global_transform.basis.z * 3.0 + Vector3.UP * 0.5
+	_debug_cam_front.global_position = front_pos
+	_debug_cam_front.look_at(center + Vector3.UP * 0.3, up)
+	_debug_cam_front.fov = 50.0
+	add_child(_debug_cam_front)
+	# Profile camera: looking from the right side
+	_debug_cam_profile = Camera3D.new()
+	_debug_cam_profile.name = "DebugCamProfile"
+	var profile_pos := center + global_transform.basis.x * 3.0 + Vector3.UP * 0.5
+	_debug_cam_profile.global_position = profile_pos
+	_debug_cam_profile.look_at(center + Vector3.UP * 0.3, up)
+	_debug_cam_profile.fov = 50.0
+	add_child(_debug_cam_profile)
+	print("[DEBUG_CAM] front=", _debug_cam_front.global_position, " profile=", _debug_cam_profile.global_position, " center=", center)
+	# Start cycle: front camera
+	_debug_cam_index = 0
+	# Don't auto-activate; game camera stays active. Press KEY_0 to cycle.
+
+func _process_debug_cameras() -> void:
+	pass
+
+func cycle_debug_camera() -> void:
+	if _debug_cam_front == null or not is_instance_valid(_debug_cam_front):
+		print("[DEBUG_CAM] No debug cameras available")
+		return
+	_debug_cam_index = (_debug_cam_index + 1) % 3
+	if _debug_cam_index == 0:
+		# Back to normal game camera
+		var game_cam := get_viewport().get_camera_3d()
+		if game_cam != null and game_cam != _debug_cam_front and game_cam != _debug_cam_profile:
+			game_cam.make_current()
+			print("[DEBUG_CAM] Switched to GAME camera")
+		else:
+			_debug_cam_front.make_current()
+			print("[DEBUG_CAM] Switched to FRONT")
+	elif _debug_cam_index == 1:
+		_debug_cam_front.make_current()
+		print("[DEBUG_CAM] Switched to FRONT")
+	else:
+		_debug_cam_profile.make_current()
+		print("[DEBUG_CAM] Switched to PROFILE")
 
 func _add_held_sphere(parent: Node, node_name: String, scale_value: Vector3, pos: Vector3, color: Color, rot: Vector3) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()

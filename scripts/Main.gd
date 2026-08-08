@@ -402,6 +402,28 @@ func _ready() -> void:
 		_loading_overlay = null
 		_loading_label = null
 		print("[PERSIST] Loading overlay removed immediately after map load")
+	if net == null or not net.is_dedicated_server:
+		await get_tree().create_timer(1.0).timeout
+		await get_tree().process_frame
+		# Capture game camera view
+		var img := get_viewport().get_texture().get_image()
+		img.save_png("/home/sami/rifle_game.png")
+		print("[SCREENSHOT] Saved rifle_game.png")
+		# Switch to frontal debug camera
+		if player != null and player.has_method("cycle_debug_camera"):
+			player.cycle_debug_camera() # -> frontal
+			await get_tree().create_timer(1.0).timeout
+			await get_tree().process_frame
+			var img2 := get_viewport().get_texture().get_image()
+			img2.save_png("/home/sami/rifle_front.png")
+			print("[SCREENSHOT] Saved rifle_front.png")
+			player.cycle_debug_camera() # -> profile
+			await get_tree().create_timer(1.0).timeout
+			await get_tree().process_frame
+			var img3 := get_viewport().get_texture().get_image()
+			img3.save_png("/home/sami/rifle_profile.png")
+			print("[SCREENSHOT] Saved rifle_profile.png")
+			player.cycle_debug_camera() # -> back to game
 	if hud != null:
 		hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
 
