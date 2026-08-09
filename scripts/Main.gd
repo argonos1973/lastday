@@ -4964,12 +4964,12 @@ func _create_house_details(origin: Vector3, label: String, width: float, depth: 
 func _create_house_doorway(origin: Vector3, label: String, half_d: float, height: float) -> void:
 	var door_h := 3.2
 	var door_w := 1.8
-	var dz := half_d + 0.17
+	var dz := half_d
 	var frame_offset := door_w * 0.5 + 0.09
 	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
 	_create_visual_box(label + " DoorFrameRight", origin + Vector3(frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
 	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.045, dz), Vector3(door_w + 0.36, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
-	_create_interactive_door(label + " Door", origin + Vector3(-door_w * 0.5, 0.0, half_d + 0.1), Vector3(door_w, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
+	_create_interactive_door(label + " Door", origin + Vector3(-door_w * 0.5, 0.0, half_d), Vector3(door_w, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
 
 func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vector3, color: Color, open_angle: float) -> void:
 	var door = DoorScript.new()
