@@ -2452,7 +2452,9 @@ func _create_map() -> void:
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_backdrop()
-		await get_tree().process_frame
+		# Esperamos frames de física para asegurar que las colisiones del terreno se registren en el servidor de físicas
+		await get_tree().physics_frame
+		await get_tree().physics_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_river()
@@ -4557,7 +4559,7 @@ func _create_rocky_foothills() -> void:
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
 		var near_spawn := false
 		for sz in _spawn_zones:
-			if Vector2(pos.x - sz.x, pos.z - sz.z).length() < (max(radius_x, radius_z) + 15.0):
+			if Vector2(pos.x - sz.x, pos.z - sz.z).length() < (max(radius_x, radius_z) + 25.0):
 				near_spawn = true
 				break
 		if near_spawn:
@@ -4950,11 +4952,19 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			var b: Vector3 = current[(s + 1) % segments]
 			var c: Vector3 = next[s]
 			var d: Vector3 = next[(s + 1) % segments]
+			# Proyección planar UV de textura desde arriba (X, Z) escalada para el terreno
+			st.set_uv(Vector2(a.x, a.z) * 0.088)
 			st.add_vertex(a)
+			st.set_uv(Vector2(c.x, c.z) * 0.088)
 			st.add_vertex(c)
+			st.set_uv(Vector2(b.x, b.z) * 0.088)
 			st.add_vertex(b)
+			
+			st.set_uv(Vector2(b.x, b.z) * 0.088)
 			st.add_vertex(b)
+			st.set_uv(Vector2(c.x, c.z) * 0.088)
 			st.add_vertex(c)
+			st.set_uv(Vector2(d.x, d.z) * 0.088)
 			st.add_vertex(d)
 	st.generate_normals()
 	var mesh := st.commit()
@@ -5896,6 +5906,8 @@ func _update_door_open_cache() -> void:
 
 func _get_ground_height(pos: Vector3) -> float:
 	var space_state := get_world_3d().direct_space_state
+	if space_state == null:
+		return 0.0
 	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, 200.0, pos.z), Vector3(pos.x, -5.0, pos.z))
 	query.collision_mask = 1 # Capa 1: Entorno
 	var result := space_state.intersect_ray(query)
@@ -6739,6 +6751,9 @@ func _create_leafy_floor_ground() -> void:
 	var leafy_texture = _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
 	if leafy_texture == null:
 		_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0), Color(0.17, 0.20, 0.145))
+		var ts := get_node_or_null("TerrainSurface") as MeshInstance3D
+		if ts != null:
+			_cached_leafy_material = ts.material_override as StandardMaterial3D
 		return
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "TerrainSurface"
