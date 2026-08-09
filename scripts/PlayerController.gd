@@ -5763,7 +5763,25 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
-	target_position = Vector3(side_bob * 0.45, third_height, THIRD_PERSON_CAMERA_POS.z)
+	var desired_z := THIRD_PERSON_CAMERA_POS.z
+	
+	# Camera collision: raycast from player to desired camera position
+	var space_state := get_world_3d().direct_space_state
+	if space_state != null:
+		var camera_origin := global_position + Vector3(0, third_height, 0)
+		var camera_target := camera_origin + global_transform.basis.z * desired_z
+		var query := PhysicsRayQueryParameters3D.create(camera_origin, camera_target)
+		query.collide_with_bodies = true
+		query.collide_with_areas = false
+		query.exclude = [self]
+		var hit := space_state.intersect_ray(query)
+		if not hit.is_empty():
+			# Obstacle detected, bring camera closer
+			var hit_point: Vector3 = hit["position"]
+			var hit_distance := camera_origin.distance_to(hit_point)
+			desired_z = max(hit_distance - 0.3, 1.0)  # Keep 0.3m margin, minimum 1m distance
+	
+	target_position = Vector3(side_bob * 0.45, third_height, desired_z)
 	target_position.y += _water_sink
 	if _is_aiming:
 		# First-person eye position looking down the rifle barrel.
