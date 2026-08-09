@@ -5924,21 +5924,21 @@ func _update_door_open_cache() -> void:
 func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0
 	for hill in _generated_hills:
-		var dx_world := pos.x - hill.pos.x
-		var dz_world := pos.z - hill.pos.z
+		var dx_world: float = pos.x - hill.pos.x
+		var dz_world: float = pos.z - hill.pos.z
 		
 		# Rotación inversa para alinear con los ejes locales de la colina
-		var cos_y := cos(-hill.yaw_rad)
-		var sin_y := sin(-hill.yaw_rad)
-		var dx := dx_world * cos_y - dz_world * sin_y
-		var dz := dx_world * sin_y + dz_world * cos_y
+		var cos_y: float = cos(-hill.yaw_rad)
+		var sin_y: float = sin(-hill.yaw_rad)
+		var dx: float = dx_world * cos_y - dz_world * sin_y
+		var dz: float = dx_world * sin_y + dz_world * cos_y
 		
 		var rx: float = hill.radius_x
 		var rz: float = hill.radius_z
-		var dist_sq := (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz)
+		var dist_sq: float = (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz)
 		if dist_sq < 1.0:
-			var pct := sqrt(dist_sq)
-			var h := hill.height * cos(pct * PI * 0.5)
+			var pct: float = sqrt(dist_sq)
+			var h: float = hill.height * cos(pct * PI * 0.5)
 			if h > max_h:
 				max_h = h
 	return max_h
