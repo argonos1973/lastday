@@ -5886,10 +5886,8 @@ func _create_ground_clutter() -> void:
 		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.02, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		if not _can_place_ground_vegetation(pos):
 			continue
-		if i % 5 < 4:
-			_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
-		else:
-			_create_visual_box("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
+		# Solo generamos pequeños manojos de hierba extra, eliminados todos los escombros (LooseDebris)
+		_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
 		if i % 200 == 0:
 			await get_tree().process_frame
 
@@ -6007,7 +6005,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque denso en los bordes y zonas montañosas
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.02) # Densidad reducida para mejorar FPS
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.045) # Doble de densidad de árboles
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	for i in range(total_trees):
 		var x := randf_range(-MAP_EXTENT, MAP_EXTENT)
