@@ -3403,39 +3403,6 @@ func _create_loose_survival_pickups() -> void:
 	for pickup in pickups:
 		pickup["pos"] = _find_safe_loot_pos()
 		_create_pickup_item(pickup)
-	# Place sombrero de pescador and rifle near each spawn zone
-	for i in range(_spawn_zones.size()):
-		var sp: Vector3 = _spawn_zones[i]
-		var hat_data := {
-			"id": "spawn_hat_%d" % i,
-			"name": "Sombrero de pescador",
-			"type": "clothing",
-			"weight": 0.2,
-			"qty": 1,
-			"use": 0.07,
-			"paths": [POLY_FISHERMANS_HAT_MODEL],
-			"scale": 1.0,
-			"rot": Vector3(-90, 0, 0),
-			"flat": true,
-			"color": Color(0.3, 0.25, 0.15),
-			"pos": sp + Vector3(1.5, 0.06, 0.0),
-		}
-		_create_pickup_item(hat_data)
-		var rifle_data := {
-			"id": "spawn_rifle_%d" % i,
-			"name": "Rifle francotirador",
-			"type": "weapon_rifle",
-			"weight": 3.5,
-			"qty": 1,
-			"use": 0.0,
-			"paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"],
-			"scale": 0.068,
-			"rot": Vector3(-90, 30, 180),
-			"flat": true,
-			"color": Color(0.25, 0.22, 0.15),
-			"pos": sp + Vector3(-1.5, 0.06, 0.0),
-		}
-		_create_pickup_item(rifle_data)
 
 func _create_house_loot() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
@@ -3497,6 +3464,9 @@ func _is_pos_safe_for_loot(pos: Vector3) -> bool:
 		return false
 	if _is_near_car_or_container(pos, 4.0):
 		return false
+	for sz in _spawn_zones:
+		if Vector2(pos.x - sz.x, pos.z - sz.z).length() < 20.0:
+			return false
 	return true
 
 func _is_near_car_or_container(pos: Vector3, margin: float) -> bool:
@@ -6216,7 +6186,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.035)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.06)
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
