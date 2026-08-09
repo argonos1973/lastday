@@ -62,6 +62,7 @@ var texture_path_cache := {}
 var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
 var _cached_leafy_material: StandardMaterial3D = null
+var _mountain_shared_material: StandardMaterial3D = null
 var _generated_hills: Array = []
 var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
@@ -86,6 +87,12 @@ var game_over := false
 var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
 const _DRINK_HOLD_TIME := 1.5
+
+var world_streaming_mgr: WorldStreamingManager = null
+var sector_persistence_mgr: SectorPersistenceManager = null
+var _debug_overlay: CanvasLayer = null
+var _debug_label: Label = null
+var _debug_visible: bool = false
 
 const GRASS_BATCH_VARIANTS := 10
 var grass_batch_meshes: Array = []
@@ -366,6 +373,15 @@ var _loading_countdown: float = 0.0
 #region INICIALIZACIÓN Y CICLO DE VIDA
 func _ready() -> void:
 	seed(WORLD_SEED)
+	
+	world_streaming_mgr = WorldStreamingManager.new()
+	add_child(world_streaming_mgr)
+	world_streaming_mgr.setup(self)
+
+	sector_persistence_mgr = SectorPersistenceManager.new()
+	add_child(sector_persistence_mgr)
+
+	_create_debug_overlay()
 	# Get NetworkManager (autoload)
 	net = get_node("/root/NetworkManager")
 	if net != null:
@@ -487,6 +503,9 @@ var _quit_active := false
 var _quit_final_sent := false
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_0:
+		_toggle_debug_overlay()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Q and event.shift_pressed:
 		if not _quit_active:
 			_quit_active = true
@@ -519,6 +538,18 @@ func _input(_event: InputEvent) -> void:
 	return
 
 func _process(delta: float) -> void:
+	if world_streaming_mgr != null:
+		var player_positions: Array[Vector3] = []
+		if player != null and is_instance_valid(player):
+			player_positions.append(player.global_position)
+		for r_player in remote_players.values():
+			if r_player != null and is_instance_valid(r_player):
+				player_positions.append(r_player.global_position)
+		world_streaming_mgr.update_player_positions(player_positions)
+
+	if _debug_visible and _debug_label != null:
+		_update_debug_overlay_text()
+
 	if _loading_overlay != null:
 		_process_loading_countdown(delta)
 	if _quit_active:
@@ -938,7 +969,19 @@ var _spawn_zones: Array = [
 	Vector3(15.0, 0.4, -35.0),
 	Vector3(-55.0, 0.4, -40.0),
 	Vector3(55.0, 0.4, 45.0),
-	Vector3(-50.0, 0.4, 50.0)
+	Vector3(-50.0, 0.4, 50.0),
+	Vector3(110.0, 0.4, -120.0),
+	Vector3(-120.0, 0.4, -110.0),
+	Vector3(130.0, 0.4, 110.0),
+	Vector3(-110.0, 0.4, 120.0),
+	Vector3(0.0, 0.4, -160.0),
+	Vector3(0.0, 0.4, 160.0),
+	Vector3(-160.0, 0.4, 0.0),
+	Vector3(160.0, 0.4, 0.0),
+	Vector3(85.0, 0.4, -60.0),
+	Vector3(-85.0, 0.4, 60.0),
+	Vector3(60.0, 0.4, 130.0),
+	Vector3(-60.0, 0.4, -130.0)
 ]
 
 func _get_random_spawn_pos() -> Vector3:
@@ -2418,6 +2461,79 @@ func _create_hud() -> void:
 	add_child(hud)
 	hud.setup(player, day_cycle)
 
+func _create_debug_overlay() -> void:
+	_debug_overlay = CanvasLayer.new()
+	_debug_overlay.name = "DebugOverlay"
+	_debug_overlay.layer = 110
+	_debug_overlay.visible = false
+	
+	var panel := PanelContainer.new()
+	panel.position = Vector2(20, 20)
+	panel.custom_minimum_size = Vector2(340, 260)
+	
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.08, 0.1, 0.85)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", style)
+	
+	_debug_label = Label.new()
+	_debug_label.add_theme_font_size_override("font_size", 14)
+	_debug_label.add_theme_color_override("font_color", Color(0.4, 0.95, 0.6))
+	panel.add_child(_debug_label)
+	
+	_debug_overlay.add_child(panel)
+	add_child(_debug_overlay)
+
+func _toggle_debug_overlay() -> void:
+	_debug_visible = not _debug_visible
+	if _debug_overlay != null:
+		_debug_overlay.visible = _debug_visible
+
+func _update_debug_overlay_text() -> void:
+	if _debug_label == null:
+		return
+	var fps := Engine.get_frames_per_second()
+	var process_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var mem_mb := float(OS.get_static_memory_usage()) / 1048576.0
+	var node_count := get_tree().get_node_count()
+	var draw_calls := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+	var primitives := int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+	
+	var stream_info := {}
+	if world_streaming_mgr != null:
+		stream_info = world_streaming_mgr.get_debug_info()
+	
+	var p_pos := Vector3.ZERO
+	if player != null and is_instance_valid(player):
+		p_pos = player.global_position
+	
+	var chunk_coords := Vector2i.ZERO
+	if world_streaming_mgr != null:
+		chunk_coords = world_streaming_mgr.world_to_chunk_coords(p_pos)
+	
+	var text := "=== DIAGNÓSTICO DE MUNDO ABIERTO (TECLA 0) ===\n"
+	text += "FPS: %d  |  Frame Time: %.2f ms\n" % [fps, process_ms]
+	text += "Memoria RAM: %.1f MB\n" % mem_mb
+	text += "Nodos en Árbol: %d\n" % node_count
+	text += "Draw Calls: %d  |  Primitivas: %d\n" % [draw_calls, primitives]
+	text += "----------------------------------------\n"
+	text += "Posición Jugador: (%.1f, %.1f, %.1f)\n" % [p_pos.x, p_pos.y, p_pos.z]
+	text += "Sector Actual: (%d, %d)\n" % [chunk_coords.x, chunk_coords.y]
+	if not stream_info.is_empty():
+		text += "Sectores Activos (3x3): %d\n" % stream_info.get("active_sectors", 0)
+		text += "Sectores Precargados (5x5): %d\n" % stream_info.get("preloaded_sectors", 0)
+		text += "Cola Carga: %d  |  Cola Descarga: %d\n" % [stream_info.get("queued_loads", 0), stream_info.get("queued_unloads", 0)]
+		text += "Pool de Sectores: %d\n" % stream_info.get("pool_size", 0)
+	
+	_debug_label.text = text
+
 #endregion
 
 
@@ -3057,44 +3173,53 @@ func _create_river_drink_zones() -> void:
 
 func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
-	# Deer: large outer ring route around the map
-	var deer_route := _build_circular_route(45.0, 0.0, 10, 6.0)
-	_create_deer_pair(deer_route)
-	# Second deer herd on a different offset
-	var deer_route_2 := _build_circular_route(38.0, PI, 10, 5.0)
-	_create_deer_pair(deer_route_2)
-	# Foxes: territorial patrols in distinct zones, away from deer routes
-	var fox_route_1 := _build_zigzag_route(Vector3(-35, 0, -20), Vector3(-15, 0, 10), 6, 5.0)
-	_create_wildlife_animal("fox", fox_route_1)
-	var fox_route_2 := _build_zigzag_route(Vector3(20, 0, 30), Vector3(40, 0, 5), 6, 5.0)
-	_create_wildlife_animal("fox", fox_route_2)
-	# Wolves: spread across all quadrants of the map, patrolling everywhere
-	var wolf_quadrants := [
-		Vector3(-30, 0, -30),
-		Vector3(30, 0, -30),
-		Vector3(-30, 0, 30),
-		Vector3(30, 0, 30),
-		Vector3(-15, 0, -20),
-		Vector3(20, 0, 15),
+	# Deer: large outer ring routes around the expanded map
+	var deer_routes := [
+		_build_circular_route(55.0, 0.0, 10, 6.0),
+		_build_circular_route(85.0, PI * 0.5, 10, 6.0),
+		_build_circular_route(115.0, PI, 10, 7.0),
+		_build_circular_route(140.0, PI * 1.5, 10, 8.0),
 	]
-	for i in range(6):
-		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
+	for dr in deer_routes:
+		_create_deer_pair(dr)
+	
+	# Foxes: territorial patrols in 6 distinct zones
+	var fox_zones := [
+		[Vector3(-85, 0, -60), Vector3(-45, 0, -20)],
+		[Vector3(50, 0, 80), Vector3(90, 0, 40)],
+		[Vector3(-110, 0, 70), Vector3(-70, 0, 110)],
+		[Vector3(60, 0, -100), Vector3(100, 0, -60)],
+		[Vector3(-40, 0, 120), Vector3(10, 0, 150)],
+		[Vector3(120, 0, 10), Vector3(160, 0, 50)],
+	]
+	for fz in fox_zones:
+		var fox_route := _build_zigzag_route(fz[0], fz[1], 6, 6.0)
+		_create_wildlife_animal("fox", fox_route)
+	
+	# Wolves: spread across 12 expanded quadrants of the open world
+	var wolf_quadrants := [
+		Vector3(-120, 0, -120), Vector3(0, 0, -135), Vector3(120, 0, -120),
+		Vector3(-140, 0, 0), Vector3(140, 0, 0), Vector3(-120, 0, 120),
+		Vector3(0, 0, 135), Vector3(120, 0, 120), Vector3(-60, 0, -60),
+		Vector3(60, 0, -60), Vector3(-60, 0, 60), Vector3(60, 0, 60)
+	]
+	for i in range(wolf_quadrants.size()):
+		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 		for _retry in range(30):
 			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = wolf_quadrants[i] + Vector3(randf_range(-15, 15), 0.0, randf_range(-15, 15))
+			center = wolf_quadrants[i] + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 		var route: Array = []
 		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
-			wp.x = clamp(wp.x, -72, 72)
-			wp.z = clamp(wp.z, -72, 72)
-			# Ensure waypoint is not in the river or inside a house
+			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			wp.x = clamp(wp.x, -180, 180)
+			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
 				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
-				wp.x = clamp(wp.x, -72, 72)
-				wp.z = clamp(wp.z, -72, 72)
+				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp.x = clamp(wp.x, -180, 180)
+				wp.z = clamp(wp.z, -180, 180)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
 		await get_tree().process_frame
@@ -3113,31 +3238,31 @@ func _check_wildlife_respawn() -> void:
 				"wolf":
 					alive_wolf += 1
 	# Respawn one animal at a time, prioritizing the most depleted species
-	if alive_wolf < 6 and alive_wolf <= alive_fox and alive_wolf <= alive_deer:
-		var center := Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+	if alive_wolf < 12 and alive_wolf <= alive_fox and alive_wolf <= alive_deer:
+		var center := Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		for _retry in range(30):
 			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		var route: Array = []
 		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
-			wp.x = clamp(wp.x, -72, 72)
-			wp.z = clamp(wp.z, -72, 72)
+			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+			wp.x = clamp(wp.x, -180, 180)
+			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
 				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
-				wp.x = clamp(wp.x, -72, 72)
-				wp.z = clamp(wp.z, -72, 72)
+				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp.x = clamp(wp.x, -180, 180)
+				wp.z = clamp(wp.z, -180, 180)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
-	elif alive_deer < 4 and alive_deer <= alive_fox:
-		var deer_route := _build_circular_route(45.0, randf() * TAU, 10, 6.0)
+	elif alive_deer < 8 and alive_deer <= alive_fox:
+		var deer_route := _build_circular_route(randf_range(50.0, 140.0), randf() * TAU, 10, 7.0)
 		_create_deer_pair(deer_route)
-	elif alive_fox < 2:
-		var fox_zone := Vector3(randf_range(-40, 40), 0.0, randf_range(-30, 30))
-		var fox_route := _build_zigzag_route(fox_zone, fox_zone + Vector3(15, 0, 10), 6, 5.0)
+	elif alive_fox < 6:
+		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
+		var fox_route := _build_zigzag_route(fox_zone, fox_zone + Vector3(25, 0, 15), 6, 6.0)
 		_create_wildlife_animal("fox", fox_route)
 
 # Build a circular patrol route around the map center.
@@ -4535,13 +4660,11 @@ func _create_mountain_backdrop() -> void:
 		for i in range(count):
 			var offset := step * (float(i) - float(count - 1) * 0.5)
 			var pos := center + offset + Vector3(randf_range(-12.0, 12.0), 0.0, randf_range(-10.0, 10.0))
-			var peak_height := randf_range(30.0, 75.0)
-			var radius_x := randf_range(35.0, 65.0)
-			var radius_z := randf_range(25.0, 50.0)
+			var peak_height := randf_range(14.0, 26.0)
+			var radius_x := randf_range(40.0, 75.0)
+			var radius_z := randf_range(30.0, 60.0)
 			var base_color := shadow_color.lerp(mountain_color, randf_range(0.35, 0.95))
 			_create_mountain_peak("MountainPeak", pos, radius_x, radius_z, peak_height, yaw + randf_range(-14.0, 14.0), base_color)
-			if peak_height > 50.0:
-				_create_mountain_peak("MountainSnowCap", pos + Vector3(0, peak_height * 0.58, 0), radius_x * 0.28, radius_z * 0.24, peak_height * 0.22, yaw, snow_color)
 	_create_rocky_foothills()
 
 func _create_rocky_foothills() -> void:
@@ -4570,6 +4693,14 @@ func _create_rocky_foothills() -> void:
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, randf_range(0, 360), hill_color)
+		# Añadir abundantes manojos de hierba en las colinas
+		for _hc in range(8):
+			var angle := randf_range(0.0, TAU)
+			var r_dist := randf_range(0.1, max(radius_x, radius_z) * 0.85)
+			var hpos := pos + Vector3(cos(angle) * r_dist, 0, sin(angle) * r_dist)
+			hpos.y = _get_exact_ground_y(hpos.x, hpos.z) + 0.02
+			if _can_place_ground_vegetation(hpos):
+				_create_grass_clump(hpos, randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), randf()))
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
@@ -4579,8 +4710,8 @@ func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	_create_textured_visual_sphere("PolyhavenBoulder", pos + Vector3(0, scale_value.y * 0.55, 0), scale_value, rock_texture, base_color)
 	if randf() < 0.45:
 		_create_textured_visual_sphere("PolyhavenBoulderLobe", pos + Vector3(scale_value.x * randf_range(-0.35, 0.35), scale_value.y * 0.42, scale_value.z * randf_range(-0.35, 0.35)), scale_value * Vector3(randf_range(0.45, 0.72), randf_range(0.45, 0.72), randf_range(0.45, 0.72)), rock_texture, base_color.darkened(0.05))
-	if scale_value.x > 0.65 or scale_value.z > 0.65:
-		_create_invisible_collision_box("PolyhavenBoulderCollision", pos, Vector3(max(scale_value.x, 0.6), max(scale_value.y, 0.35), max(scale_value.z, 0.6)))
+	if scale_value.x > 1.25 and scale_value.z > 1.25:
+		_create_invisible_collision_box("PolyhavenBoulderCollision", pos, Vector3(scale_value.x, scale_value.y, scale_value.z))
 
 func _create_mountain_river() -> void:
 	var segments := _default_river_segments()
@@ -4972,17 +5103,17 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			var uv_scale := 1.0 / (MAP_EXTENT * 2.0)
 			st.set_uv(Vector2(world_a.x * uv_scale + 0.5, world_a.z * uv_scale + 0.5))
 			st.add_vertex(a)
-			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
-			st.add_vertex(c)
 			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
 			st.add_vertex(b)
+			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
+			st.add_vertex(c)
 			
 			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
 			st.add_vertex(b)
-			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
-			st.add_vertex(c)
 			st.set_uv(Vector2(world_d.x * uv_scale + 0.5, world_d.z * uv_scale + 0.5))
 			st.add_vertex(d)
+			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
+			st.add_vertex(c)
 	st.generate_normals()
 	var mesh := st.commit()
 	var mesh_instance := MeshInstance3D.new()
@@ -4991,10 +5122,12 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
 	mesh_instance.mesh = mesh
 	if not node_name.contains("SnowCap") and _cached_leafy_material != null:
-		var mat := _cached_leafy_material.duplicate() as StandardMaterial3D
-		mat.albedo_color = color
-		mat.uv1_triplanar = false
-		mesh_instance.material_override = mat
+		if _mountain_shared_material == null:
+			_mountain_shared_material = _cached_leafy_material.duplicate() as StandardMaterial3D
+			_mountain_shared_material.uv1_triplanar = true
+			_mountain_shared_material.uv1_scale = Vector3(0.12, 0.12, 0.12)
+			_mountain_shared_material.albedo_color = Color(0.85, 0.95, 0.80)
+		mesh_instance.material_override = _mountain_shared_material
 	else:
 		mesh_instance.material_override = _make_material(color, true)
 	# Crear colisión para poder caminar sobre la montaña
@@ -5921,6 +6054,16 @@ func _update_door_open_cache() -> void:
 				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
 					_door_open_cache[cell] = true
 
+func _get_exact_ground_y(x: float, z: float) -> float:
+	var space_state := get_world_3d().direct_space_state
+	if space_state != null:
+		var query := PhysicsRayQueryParameters3D.create(Vector3(x, 250.0, z), Vector3(x, -50.0, z))
+		query.collision_mask = 1
+		var result := space_state.intersect_ray(query)
+		if not result.is_empty() and result.has("position"):
+			return (result["position"] as Vector3).y
+	return _get_ground_height(Vector3(x, 0, z))
+
 func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0
 	for hill in _generated_hills:
@@ -5938,7 +6081,7 @@ func _get_ground_height(pos: Vector3) -> float:
 		var dist_sq: float = (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz)
 		if dist_sq < 1.0:
 			var pct: float = sqrt(dist_sq)
-			var h: float = hill.height * cos(pct * PI * 0.5)
+			var h: float = hill.pos.y + hill.height * pow(1.0 - pct, 0.85)
 			if h > max_h:
 				max_h = h
 	return max_h
@@ -5948,7 +6091,7 @@ func _create_ground_clutter() -> void:
 	for i in range(total_clutter):
 		var rx := randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := randf_range(-MAP_EXTENT, MAP_EXTENT)
-		var pos := Vector3(rx, _get_ground_height(Vector3(rx, 0, rz)) + 0.02, rz)
+		var pos := Vector3(rx, _get_exact_ground_y(rx, rz) + 0.02, rz)
 		if not _can_place_ground_vegetation(pos):
 			continue
 		# Solo generamos pequeños manojos de hierba extra, eliminados todos los escombros (LooseDebris)
@@ -5966,7 +6109,7 @@ func _create_tall_grass_fields() -> void:
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf()) 
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
-			pos.y = _get_ground_height(pos) + 0.02
+			pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.34, 0.72), Color(0.18, 0.32, 0.11).lerp(Color(0.32, 0.42, 0.14), randf()))
@@ -5983,7 +6126,7 @@ func _create_dense_vegetation_zones() -> void:
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
-			pos.y = _get_ground_height(pos) + 0.02
+			pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.48, 1.05), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), randf()))
@@ -6002,7 +6145,7 @@ func _create_grass_ground_cover() -> void:
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
-			pos.y = _get_ground_height(pos) + 0.018
+			pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.018
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.22, 0.48), Color(0.18, 0.32, 0.12).lerp(Color(0.34, 0.44, 0.16), randf()))
@@ -6011,26 +6154,26 @@ func _create_grass_ground_cover() -> void:
 
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
-	var coverage := MAP_EXTENT
-	var spacing := 1.8
+	var coverage := MAP_EXTENT * 1.05
+	var spacing := 2.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
 	for cx in range(cells_x):
 		for cz in range(cells_z):
-			if randf() < 0.15:
+			if randf() < 0.12:
 				continue
-			var px := -coverage + float(cx) * spacing + randf_range(-0.6, 0.6)
-			var pz := -coverage + float(cz) * spacing + randf_range(-0.6, 0.6)
+			var px := -coverage + float(cx) * spacing + randf_range(-0.5, 0.5)
+			var pz := -coverage + float(cz) * spacing + randf_range(-0.5, 0.5)
 			var pos := Vector3(px, _get_ground_height(Vector3(px, 0, pz)) + 0.012, pz)
 			if _is_in_no_grass_area(pos, 0.65):
 				continue
-			var h := randf_range(0.12, 0.32)
-			var r := randf_range(0.25, 0.48)
+			var h := randf_range(0.14, 0.36)
+			var r := randf_range(0.28, 0.52)
 			var c := base_color.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
 			_queue_grass_instance(pos, h, r, c)
-		if cx % 10 == 0:
+		if cx % 15 == 0:
 			await get_tree().process_frame
 
 func _create_billboard_underbrush_fields() -> void:
@@ -6072,26 +6215,37 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 	return true
 
 func _create_forest() -> void:
-	# Generar bosque denso en los bordes y zonas montañosas
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.045) # Doble de densidad de árboles
+	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.052)
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
+	var base_color := Color(0.20, 0.34, 0.12)
+	var color_var := Color(0.34, 0.46, 0.16)
 	for i in range(total_trees):
-		var x := randf_range(-MAP_EXTENT, MAP_EXTENT)
-		var z := randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var x := randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
+		var z := randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
 		
 		# Mantener las zonas de construcción principales despejadas
 		if Vector2(x, z).length() < inner_clear_radius:
 			continue
 		
-		var pos := Vector3(x, _get_ground_height(Vector3(x, 0, z)), z)
+		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
 			
-		_create_tree(pos)
-		if i % 200 == 0:
+		var is_interactive := (pos.length() < 75.0 or randf() < 0.25)
+		_create_tree(pos, is_interactive)
+		
+		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
+		for _g in range(2):
+			var gpos := pos + Vector3(randf_range(-1.5, 1.5), 0.0, randf_range(-1.5, 1.5))
+			gpos.y = _get_ground_height(Vector3(gpos.x, 0, gpos.z)) + 0.012
+			if not _is_in_no_grass_area(gpos, 0.5):
+				_queue_grass_instance(gpos, randf_range(0.25, 0.55), randf_range(0.35, 0.65), base_color.lerp(color_var, randf()))
+				
+		if i % 300 == 0:
 			await get_tree().process_frame
 
-func _create_tree(pos: Vector3) -> void:
+func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
 	_register_wildlife_blocker(pos, 5.0)
@@ -6113,13 +6267,15 @@ func _create_tree(pos: Vector3) -> void:
 		var tree_height := aabb.size.z * tree_scale
 		if tree_height < 1.0:
 			tree_scale = 1.0 / max(0.01, aabb.size.z)
-		mi.position = pos + Vector3(0, -aabb.position.z * tree_scale, 0)
+		mi.position = pos
 		mi.rotation_degrees = Vector3(-90, 0, randf_range(0, 360))
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
+		if pos.length() > 15.0:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mi)
 		mi.add_to_group("world_action_visual")
 		made_visual = true
-	elif _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, Vector3.ONE * randf_range(1.15, 2.15), Vector3(0, randf_range(0, 360), 0), true, 0.0):
+	elif _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, Vector3.ONE * randf_range(1.15, 2.15), Vector3(0, randf_range(0, 360), 0), true, pos.y):
 		_override_tree_foliage_green(visual_name)
 		made_visual = true
 	else:
@@ -6127,17 +6283,16 @@ func _create_tree(pos: Vector3) -> void:
 	if made_visual:
 		var collision := _create_tree_collision(collision_name, pos)
 		collision.add_to_group("world_action_visual")
-		var action = _create_world_action("fell_tree_%d" % _tree_id_counter, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
-		var trunk_check := get_node_or_null(visual_name)
-		if trunk_check == null:
-			var trunk_fallback := get_node_or_null(visual_name + "_Trunk")
-			if trunk_fallback != null:
-				action.set_meta("visual_name", visual_name + "_Trunk")
+		if is_interactive:
+			var action = _create_world_action("fell_tree_%d" % _tree_id_counter, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
+			var trunk_check := get_node_or_null(visual_name)
+			if trunk_check == null:
+				var trunk_fallback := get_node_or_null(visual_name + "_Trunk")
+				if trunk_fallback != null:
+					action.set_meta("visual_name", visual_name + "_Trunk")
 			else:
 				action.set_meta("visual_name", visual_name)
-		else:
-			action.set_meta("visual_name", visual_name)
-		action.set_meta("collision_name", collision_name)
+			action.set_meta("collision_name", collision_name)
 
 func _load_forest_tree_pack() -> void:
 	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
@@ -6374,7 +6529,7 @@ func _ensure_grass_batches() -> void:
 	grass_batch_material.roughness = 0.96
 	grass_batch_material.metallic = 0.0
 	grass_batch_material.vertex_color_use_as_albedo = true
-	grass_batch_material.no_culling = true
+	grass_batch_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	grass_batch_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 	var noise := FastNoiseLite.new()
 	noise.seed = randi()
@@ -6419,7 +6574,7 @@ func _ensure_tall_grass_batches() -> void:
 	_tall_grass_material.roughness = 0.95
 	_tall_grass_material.metallic = 0.0
 	_tall_grass_material.vertex_color_use_as_albedo = true
-	_tall_grass_material.no_culling = true
+	_tall_grass_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_tall_grass_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 
 func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) -> void:
@@ -6677,7 +6832,7 @@ func _create_tree_collision(node_name: String, pos: Vector3) -> StaticBody3D:
 
 	var trunk_collision := CollisionShape3D.new()
 	var trunk_shape := CylinderShape3D.new()
-	trunk_shape.radius = 0.5
+	trunk_shape.radius = 0.20
 	trunk_shape.height = 6.8
 	trunk_collision.shape = trunk_shape
 	trunk_collision.position.y = trunk_shape.height * 0.5

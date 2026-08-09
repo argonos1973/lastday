@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://lqele7yefsfj"
-path="res://.godot/imported/pickup_default_tops_Remy_Top_Specular.png-b46b7a29fbd8e21c3359c424566bd28a.ctex"
+path="res://.godot/imported/pickup_default_tops_Remy_Top_Specular.png-388d8ccf9062015aff55dee1366d3563.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_default_tops_Remy_Top_Specular.png"
-dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Specular.png-b46b7a29fbd8e21c3359c424566bd28a.ctex"]
+source_file="res://assets/adapted/pickup_default_tops_Remy_Top_Specular.png"
+dest_files=["res://.godot/imported/pickup_default_tops_Remy_Top_Specular.png-388d8ccf9062015aff55dee1366d3563.ctex"]
 
 [params]
 
