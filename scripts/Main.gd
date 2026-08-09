@@ -941,7 +941,9 @@ var _spawn_zones: Array = [
 ]
 
 func _get_random_spawn_pos() -> Vector3:
-	return _spawn_zones[randi() % _spawn_zones.size()]
+	var base_pos = _spawn_zones[randi() % _spawn_zones.size()]
+	var h = _get_ground_height(base_pos)
+	return Vector3(base_pos.x, h + 0.4, base_pos.z)
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
@@ -4548,9 +4550,18 @@ func _create_rocky_foothills() -> void:
 		if Vector2(pos.x, pos.z).length() < 75.0:
 			continue
 		
-		var radius_x := randf_range(14.0, 32.0)
-		var radius_z := randf_range(14.0, 32.0)
-		var height := randf_range(3.0, 10.0)
+		var radius_x := randf_range(10.0, 22.0)
+		var radius_z := randf_range(10.0, 22.0)
+		var height := randf_range(1.5, 5.5) # Más bajas y suaves
+		
+		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
+		var near_spawn := false
+		for sz in _spawn_zones:
+			if Vector2(pos.x - sz.x, pos.z - sz.z).length() < (max(radius_x, radius_z) + 15.0):
+				near_spawn = true
+				break
+		if near_spawn:
+			continue
 		
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), randf())
