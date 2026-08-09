@@ -3453,7 +3453,7 @@ func _create_house_loot() -> void:
 		var num_items := 2 + _world_rng.randi() % 3
 		for _j in range(num_items):
 			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
-			if template.get("rare", false) and _world_rng.randf() > 0.15:
+			if template.get("rare", false) and _world_rng.randf() > 0.50:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
 			loot_data["id"] = "house_loot_%d" % loot_idx
