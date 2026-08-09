@@ -4666,7 +4666,7 @@ func _create_rocky_foothills() -> void:
 		var pos := Vector3(_world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, _world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
 		# Mantener el centro del mapa plano para poder construir y empujar detrás del río
-		if Vector2(pos.x, pos.z).length() < 90.0:
+		if Vector2(pos.x, pos.z).length() < 55.0:
 			continue
 		
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
@@ -4678,15 +4678,15 @@ func _create_rocky_foothills() -> void:
 		if near_spawn:
 			continue
 		
-		# ~20% de las colinas se convierten en montañas grandes con vegetación
-		var is_large_mountain := large_hill_count < 8 and _world_rng.randf() < 0.20
+		# ~25% de las colinas se convierten en montañas grandes con vegetación
+		var is_large_mountain := large_hill_count < 12 and _world_rng.randf() < 0.25
 		var radius_x: float
 		var radius_z: float
 		var height: float
 		if is_large_mountain:
-			radius_x = _world_rng.randf_range(25.0, 45.0)
-			radius_z = _world_rng.randf_range(25.0, 45.0)
-			height = _world_rng.randf_range(6.0, 14.0)
+			radius_x = _world_rng.randf_range(30.0, 60.0)
+			radius_z = _world_rng.randf_range(30.0, 60.0)
+			height = _world_rng.randf_range(10.0, 25.0)
 			large_hill_count += 1
 		else:
 			radius_x = _world_rng.randf_range(6.0, 14.0)
@@ -4708,7 +4708,7 @@ func _create_rocky_foothills() -> void:
 		
 		# En montañas grandes, añadir árboles densos y arbustos
 		if is_large_mountain:
-			var tree_count := int(radius_x * radius_z * 0.025)
+			var tree_count := int(radius_x * radius_z * 0.04)
 			for _tc in range(tree_count):
 				var t_angle := _world_rng.randf_range(0.0, TAU)
 				var t_dist := _world_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
