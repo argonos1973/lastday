@@ -38,7 +38,7 @@ func interact(player) -> void:
 		net.door_state_changed.rpc(name, is_open)
 
 func get_interaction_text(_player = null) -> String:
-	return "Cerrar puerta" if is_open else "Abrir puerta"
+	return "[E] Cerrar puerta" if is_open else "[E] Abrir puerta"
 
 func _make_door(size: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -142,9 +142,9 @@ func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 
 func _make_wood_floor_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.78, 0.70, 0.58)
-	mat.roughness = 0.9
-	mat.uv1_scale = Vector3(4.0, 3.3, 1.0)
+	mat.albedo_color = Color(0.65, 0.48, 0.35)
+	mat.roughness = 0.85
+	mat.uv1_scale = Vector3(1.2, 2.0, 1.0)
 	var disk_path := ProjectSettings.globalize_path(TEX_WOOD_FLOOR_DIFF)
 	if FileAccess.file_exists(disk_path):
 		var image := Image.load_from_file(disk_path)

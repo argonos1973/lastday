@@ -1606,6 +1606,10 @@ func _create_hitbox() -> void:
 	var head_radius := 0.22 if animal_type == "deer" else 0.16
 	var body_area := Area3D.new()
 	body_area.name = "BodyHitbox"
+	body_area.collision_layer = 1
+	body_area.collision_mask = 0
+	body_area.monitorable = true
+	body_area.monitoring = false
 	var body_col := CollisionShape3D.new()
 	var body_shape := CapsuleShape3D.new()
 	body_shape.radius = 0.35 if animal_type == "deer" else 0.25
@@ -1616,6 +1620,10 @@ func _create_hitbox() -> void:
 	add_child(body_area)
 	var head_area := Area3D.new()
 	head_area.name = "HeadHitbox"
+	head_area.collision_layer = 1
+	head_area.collision_mask = 0
+	head_area.monitorable = true
+	head_area.monitoring = false
 	var head_col := CollisionShape3D.new()
 	var head_shape := SphereShape3D.new()
 	head_shape.radius = head_radius

@@ -4962,12 +4962,14 @@ func _create_house_details(origin: Vector3, label: String, width: float, depth: 
 	_create_visual_box(label + " BigRustRoofPatch", origin + Vector3(half_w * 0.37, height + 0.63, half_d * 0.29), Vector3(2.25, 0.09, 1.15), Color(0.34, 0.13, 0.055), Vector3(0, -13, 10))
 
 func _create_house_doorway(origin: Vector3, label: String, half_d: float, height: float) -> void:
-	var door_h := 2.55
+	var door_h := 3.2
+	var door_w := 1.8
 	var dz := half_d + 0.17
-	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-1.34, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameRight", origin + Vector3(1.34, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.045, dz), Vector3(2.86, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
-	_create_interactive_door(label + " Door", origin + Vector3(-1.25, 0.0, half_d + 0.1), Vector3(2.5, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
+	var frame_offset := door_w * 0.5 + 0.09
+	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameRight", origin + Vector3(frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.045, dz), Vector3(door_w + 0.36, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
+	_create_interactive_door(label + " Door", origin + Vector3(-door_w * 0.5, 0.0, half_d + 0.1), Vector3(door_w, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
 
 func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vector3, color: Color, open_angle: float) -> void:
 	var door = DoorScript.new()
@@ -7026,11 +7028,11 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 		_roof_texture = _extract_texture_from_glb(MODULAR_ROOF_MODEL)
 	if _roof_texture != null:
 		var roof_mat := StandardMaterial3D.new()
-		roof_mat.albedo_color = Color.WHITE
+		roof_mat.albedo_color = Color(0.85, 0.75, 0.65)
 		roof_mat.albedo_texture = _roof_texture
-		roof_mat.roughness = 0.85
+		roof_mat.roughness = 0.95
 		roof_mat.metallic = 0.0
-		roof_mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+		roof_mat.uv1_scale = Vector3(2.5, 2.5, 1.0)
 		roof_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		roof_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 		mesh.surface_set_material(0, roof_mat)
