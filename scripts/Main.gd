@@ -17,6 +17,8 @@ const WildlifeControllerScript = preload("res://scripts/WildlifeController.gd")
 const SimpleObjLoaderScript = preload("res://scripts/SimpleObjLoader.gd")
 const CelestialSystemScript = preload("res://scripts/CelestialSystem.gd")
 
+const MAP_EXTENT := 250.0
+
 var player
 var hud
 var day_cycle
@@ -2434,7 +2436,7 @@ func _create_npc() -> void:
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	river_segments_data = _default_river_segments()
-	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(150, 0.2, 150))
+	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT * 2.0))
 	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
 	var is_server: bool = net != null and net.is_dedicated_server
 	if not is_server:
@@ -4511,12 +4513,12 @@ func _create_mountain_backdrop() -> void:
 	var shadow_color := Color(0.11, 0.12, 0.11)
 	var snow_color := Color(0.70, 0.72, 0.68)
 	var ridges := [
-		{"center": Vector3(-58, -0.35, -82), "count": 7, "step": Vector3(18, 0, 0), "yaw": 4.0},
-		{"center": Vector3(58, -0.35, -82), "count": 7, "step": Vector3(18, 0, 0), "yaw": -5.0},
-		{"center": Vector3(-86, -0.35, -38), "count": 6, "step": Vector3(0, 0, 20), "yaw": 88.0},
-		{"center": Vector3(86, -0.35, -34), "count": 6, "step": Vector3(0, 0, 20), "yaw": -88.0},
-		{"center": Vector3(-38, -0.35, 84), "count": 5, "step": Vector3(22, 0, 0), "yaw": 184.0},
-		{"center": Vector3(54, -0.35, 84), "count": 5, "step": Vector3(22, 0, 0), "yaw": 176.0}
+		{"center": Vector3(-MAP_EXTENT * 0.77, -0.35, -MAP_EXTENT * 1.09), "count": 12, "step": Vector3(35, 0, 0), "yaw": 4.0},
+		{"center": Vector3(MAP_EXTENT * 0.77, -0.35, -MAP_EXTENT * 1.09), "count": 12, "step": Vector3(35, 0, 0), "yaw": -5.0},
+		{"center": Vector3(-MAP_EXTENT * 1.14, -0.35, -MAP_EXTENT * 0.5), "count": 10, "step": Vector3(0, 0, 40), "yaw": 88.0},
+		{"center": Vector3(MAP_EXTENT * 1.14, -0.35, -MAP_EXTENT * 0.45), "count": 10, "step": Vector3(0, 0, 40), "yaw": -88.0},
+		{"center": Vector3(-MAP_EXTENT * 0.5, -0.35, MAP_EXTENT * 1.12), "count": 9, "step": Vector3(45, 0, 0), "yaw": 184.0},
+		{"center": Vector3(MAP_EXTENT * 0.72, -0.35, MAP_EXTENT * 1.12), "count": 9, "step": Vector3(45, 0, 0), "yaw": 176.0}
 	]
 	for ridge in ridges:
 		var center: Vector3 = ridge["center"]
@@ -4525,29 +4527,31 @@ func _create_mountain_backdrop() -> void:
 		var yaw: float = float(ridge["yaw"])
 		for i in range(count):
 			var offset := step * (float(i) - float(count - 1) * 0.5)
-			var pos := center + offset + Vector3(randf_range(-4.0, 4.0), 0.0, randf_range(-3.0, 3.0))
-			var peak_height := randf_range(12.0, 25.0)
-			var radius_x := randf_range(13.0, 23.0)
-			var radius_z := randf_range(9.0, 17.0)
+			var pos := center + offset + Vector3(randf_range(-12.0, 12.0), 0.0, randf_range(-10.0, 10.0))
+			var peak_height := randf_range(30.0, 75.0)
+			var radius_x := randf_range(35.0, 65.0)
+			var radius_z := randf_range(25.0, 50.0)
 			var base_color := shadow_color.lerp(mountain_color, randf_range(0.35, 0.95))
 			_create_mountain_peak("MountainPeak", pos, radius_x, radius_z, peak_height, yaw + randf_range(-14.0, 14.0), base_color)
-			if peak_height > 18.0:
+			if peak_height > 50.0:
 				_create_mountain_peak("MountainSnowCap", pos + Vector3(0, peak_height * 0.58, 0), radius_x * 0.28, radius_z * 0.24, peak_height * 0.22, yaw, snow_color)
 	_create_rocky_foothills()
 
 func _create_rocky_foothills() -> void:
-	for i in range(70):
+	for i in range(250):
 		var side := randi() % 4
 		var pos := Vector3.ZERO
+		var inner := MAP_EXTENT * 0.8
+		var outer := MAP_EXTENT
 		match side:
 			0:
-				pos = Vector3(randf_range(-74, 74), 0.04, randf_range(-74, -61))
+				pos = Vector3(randf_range(-outer, outer), 0.04, randf_range(-outer, -inner))
 			1:
-				pos = Vector3(randf_range(-74, 74), 0.04, randf_range(61, 74))
+				pos = Vector3(randf_range(-outer, outer), 0.04, randf_range(inner, outer))
 			2:
-				pos = Vector3(randf_range(-74, -61), 0.04, randf_range(-74, 74))
+				pos = Vector3(randf_range(-outer, -inner), 0.04, randf_range(-outer, outer))
 			_:
-				pos = Vector3(randf_range(61, 74), 0.04, randf_range(-74, 74))
+				pos = Vector3(randf_range(inner, outer), 0.04, randf_range(-outer, outer))
 		if not _can_place_ground_vegetation(pos, 1.8):
 			continue
 		var rock_scale := randf_range(1.0, 2.4)
@@ -4952,6 +4956,14 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
 	mesh_instance.mesh = mesh
 	mesh_instance.material_override = _make_material(color, true)
+	# Crear colisión para poder caminar sobre la montaña
+	if not node_name.contains("SnowCap"):
+		var static_body := StaticBody3D.new()
+		static_body.set_collision_layer_value(1, true) # Entorno
+		var coll_shape := CollisionShape3D.new()
+		coll_shape.shape = mesh.create_trimesh_shape()
+		static_body.add_child(coll_shape)
+		mesh_instance.add_child(static_body)
 	add_child(mesh_instance)
 
 func _create_house_details(origin: Vector3, label: String, width: float, depth: float, height: float, half_w: float, half_d: float, front_seg_c: float) -> void:
@@ -5869,8 +5881,9 @@ func _update_door_open_cache() -> void:
 					_door_open_cache[cell] = true
 
 func _create_ground_clutter() -> void:
-	for i in range(1500):
-		var pos := Vector3(randf_range(-85, 85), 0.02, randf_range(-85, 85))
+	var total_clutter := int(1500 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(total_clutter):
+		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.02, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		if not _can_place_ground_vegetation(pos):
 			continue
 		if i % 5 < 4:
@@ -5881,47 +5894,28 @@ func _create_ground_clutter() -> void:
 			await get_tree().process_frame
 
 func _create_tall_grass_fields() -> void:
-	var fields := [
-		{"center": Vector3(-48, 0, 18), "radius": Vector2(31, 37), "count": 600},
-		{"center": Vector3(36, 0, 48), "radius": Vector2(34, 28), "count": 500},
-		{"center": Vector3(-20, 0, -52), "radius": Vector2(35, 22), "count": 400},
-		{"center": Vector3(58, 0, -44), "radius": Vector2(23, 31), "count": 400},
-		{"center": Vector3(-2, 0, 10), "radius": Vector2(55, 48), "count": 600},
-		{"center": Vector3(8, 0, 0), "radius": Vector2(10, 62), "count": 800},
-		{"center": Vector3(-65, 0, -30), "radius": Vector2(25, 35), "count": 350},
-		{"center": Vector3(65, 0, 20), "radius": Vector2(28, 30), "count": 350},
-		{"center": Vector3(0, 0, 65), "radius": Vector2(40, 25), "count": 400},
-		{"center": Vector3(-40, 0, 60), "radius": Vector2(30, 25), "count": 300},
-	]
-	for field in fields:
-		var center: Vector3 = field["center"]
-		var radius: Vector2 = field["radius"]
-		var count: int = int(field["count"])
-		for i in range(count):
+	var total_fields := int(10 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(total_fields):
+		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
+		var radius := Vector2(randf_range(20, 55), randf_range(20, 55))
+		var count := int(radius.x * radius.y * 0.3)
+		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf()) 
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.02, sin(angle) * radius.y * dist)
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.34, 0.72), Color(0.18, 0.32, 0.11).lerp(Color(0.32, 0.42, 0.14), randf()))
-			if i % 200 == 0:
+			if j % 200 == 0:
 				await get_tree().process_frame
 
 func _create_dense_vegetation_zones() -> void:
-	var zones := [
-		{"center": Vector3(-56, 0, -8), "radius": Vector2(16, 24), "count": 300},
-		{"center": Vector3(-48, 0, 44), "radius": Vector2(20, 16), "count": 280},
-		{"center": Vector3(48, 0, 48), "radius": Vector2(18, 18), "count": 300},
-		{"center": Vector3(58, 0, -18), "radius": Vector2(14, 22), "count": 250},
-		{"center": Vector3(-18, 0, -62), "radius": Vector2(28, 10), "count": 260},
-		{"center": Vector3(70, 0, 50), "radius": Vector2(20, 20), "count": 200},
-		{"center": Vector3(-70, 0, 40), "radius": Vector2(18, 22), "count": 200},
-	]
-	for zone in zones:
-		var center: Vector3 = zone["center"]
-		var radius: Vector2 = zone["radius"]
-		var count: int = int(zone["count"])
-		for i in range(count):
+	var total_zones := int(7 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(total_zones):
+		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
+		var radius := Vector2(randf_range(15, 30), randf_range(15, 30))
+		var count := int(radius.x * radius.y * 0.5)
+		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.02, sin(angle) * radius.y * dist)
@@ -5930,38 +5924,28 @@ func _create_dense_vegetation_zones() -> void:
 			_create_grass_clump(pos, randf_range(0.48, 1.05), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), randf()))
 			if randf() < 0.30:
 				_create_bush(pos + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), randf_range(0.55, 0.95))
-			if i % 150 == 0:
+			if j % 150 == 0:
 				await get_tree().process_frame
 
 func _create_grass_ground_cover() -> void:
-	var patches := [
-		{"center": Vector3(-42, 0, 22), "radius": Vector2(50, 54), "count": 800},
-		{"center": Vector3(38, 0, 38), "radius": Vector2(44, 42), "count": 600},
-		{"center": Vector3(-26, 0, -42), "radius": Vector2(52, 37), "count": 600},
-		{"center": Vector3(50, 0, -42), "radius": Vector2(32, 40), "count": 400},
-		{"center": Vector3(-6, 0, 20), "radius": Vector2(44, 42), "count": 600},
-		{"center": Vector3(8, 0, 0), "radius": Vector2(68, 66), "count": 800},
-		{"center": Vector3(-65, 0, -20), "radius": Vector2(30, 35), "count": 400},
-		{"center": Vector3(65, 0, 30), "radius": Vector2(28, 30), "count": 350},
-		{"center": Vector3(0, 0, 70), "radius": Vector2(45, 25), "count": 400},
-	]
-	for patch in patches:
-		var center: Vector3 = patch["center"]
-		var radius: Vector2 = patch["radius"]
-		var count: int = int(patch["count"])
-		for i in range(count):
+	var total_patches := int(9 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(total_patches):
+		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
+		var radius := Vector2(randf_range(30, 65), randf_range(30, 65))
+		var count := int(radius.x * radius.y * 0.25)
+		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
 			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.018, sin(angle) * radius.y * dist)
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.22, 0.48), Color(0.18, 0.32, 0.12).lerp(Color(0.34, 0.44, 0.16), randf()))
-			if i % 200 == 0:
+			if j % 200 == 0:
 				await get_tree().process_frame
 
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
-	var coverage := 85.0
+	var coverage := MAP_EXTENT
 	var spacing := 1.8
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
@@ -5984,8 +5968,9 @@ func _create_grass_carpet() -> void:
 			await get_tree().process_frame
 
 func _create_billboard_underbrush_fields() -> void:
-	for i in range(8):
-		var pos := Vector3(randf_range(-68, 68), 0.03, randf_range(-68, 68))
+	var total_brushes := int(8 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(total_brushes):
+		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.03, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		if not _can_place_ground_vegetation(pos):
 			continue
 		if randf() < 0.55 and pos.distance_to(Vector3(-48, 0, 20)) > 34.0:
@@ -6021,78 +6006,23 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 	return true
 
 func _create_forest() -> void:
-	#_create_label("Bosque", Vector3(-48, 2.2, 20))
-	#_create_label("Bosque denso norte", Vector3(40, 2.2, -55))
-	#_create_label("Bosque frondoso este", Vector3(60, 2.2, 0))
-	#_create_label("Bosque sur", Vector3(-30, 2.2, -55))
-	for i in range(320):
-		var x := randf_range(-72, -12)
-		var z := randf_range(-4, 70)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
+	# Generar bosque denso en los bordes y zonas montañosas
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.15) # Gran densidad
+	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
+	for i in range(total_trees):
+		var x := randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var z := randf_range(-MAP_EXTENT, MAP_EXTENT)
+		
+		# Mantener las zonas de construcción principales despejadas
+		if Vector2(x, z).length() < inner_clear_radius:
 			continue
-		if Vector3(x, 0, z).distance_to(Vector3(-38, 0, 18)) < 9.0:
+		
+		var pos := Vector3(x, 0, z)
+		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
-		if Vector3(x, 0, z).distance_to(Vector3(-42, 0, -42)) < 8.0:
-			continue
-		if Vector3(x, 0, z).distance_to(Vector3(-45, 0, -5)) < 8.0:
-			continue
-		if Vector3(x, 0, z).distance_to(Vector3(-20, 0, 30)) < 7.0:
-			continue
-		_create_tree(Vector3(x, 0, z))
-		if i % 100 == 0:
-			await get_tree().process_frame
-	for i in range(180):
-		var x := randf_range(15, 72)
-		var z := randf_range(30, 72)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
-			continue
-		_create_tree(Vector3(x, 0, z))
-		if i % 100 == 0:
-			await get_tree().process_frame
-	for i in range(160):
-		var x := randf_range(-10, 72)
-		var z := randf_range(-72, -45)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
-			continue
-		if Vector3(x, 0, z).distance_to(Vector3(30, 0, -35)) < 9.0:
-			continue
-		_create_tree(Vector3(x, 0, z))
-		if i % 100 == 0:
-			await get_tree().process_frame
-	for i in range(120):
-		var x := randf_range(45, 72)
-		var z := randf_range(-15, 25)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
-			continue
-		_create_tree(Vector3(x, 0, z))
-		if i % 100 == 0:
-			await get_tree().process_frame
-	for i in range(100):
-		var x := randf_range(-72, -20)
-		var z := randf_range(-72, -40)
-		if not _can_place_ground_vegetation(Vector3(x, 0, z), 2.0):
-			continue
-		if Vector3(x, 0, z).distance_to(Vector3(-35, 0, -40)) < 8.0:
-			continue
-		_create_tree(Vector3(x, 0, z))
-		if i % 100 == 0:
-			await get_tree().process_frame
-	for i in range(400):
-		var edge := randi() % 4
-		var pos := Vector3.ZERO
-		match edge:
-			0:
-				pos = Vector3(randf_range(-74, 74), 0, randf_range(-74, -64))
-			1:
-				pos = Vector3(randf_range(-74, 74), 0, randf_range(64, 74))
-			2:
-				pos = Vector3(randf_range(-74, -64), 0, randf_range(-74, 74))
-			_:
-				pos = Vector3(randf_range(64, 74), 0, randf_range(-74, 74))
-		if not _can_place_ground_vegetation(pos, 1.5):
-			continue
+			
 		_create_tree(pos)
-		if i % 100 == 0:
+		if i % 200 == 0:
 			await get_tree().process_frame
 
 func _create_tree(pos: Vector3) -> void:
@@ -6782,31 +6712,31 @@ func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3,
 func _create_leafy_floor_ground() -> void:
 	var leafy_texture = _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
 	if leafy_texture == null:
-		_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(150, 150), Color(0.17, 0.20, 0.145))
+		_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0), Color(0.17, 0.20, 0.145))
 		return
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "TerrainSurface"
 	mesh_instance.position = Vector3(0, 0.003, 0)
 	var mesh := PlaneMesh.new()
-	mesh.size = Vector2(150, 150)
-	mesh.subdivide_width = 12
-	mesh.subdivide_depth = 12
+	mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
+	mesh.subdivide_width = int(MAP_EXTENT / 10.0)
+	mesh.subdivide_depth = int(MAP_EXTENT / 10.0)
 	mesh_instance.mesh = mesh
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color(0.45, 0.65, 0.28)
 	material.albedo_texture = leafy_texture
 	material.roughness = 0.97
 	material.metallic = 0.0
-	material.uv1_scale = Vector3(44.0, 44.0, 1.0)
+	material.uv1_scale = Vector3(MAP_EXTENT * 0.3, MAP_EXTENT * 0.3, 1.0)
 	mesh_instance.material_override = material
 	add_child(mesh_instance)
 	var dirt_mi := MeshInstance3D.new()
 	dirt_mi.name = "TerrainSurfaceDirt"
 	dirt_mi.position = Vector3(0, 0.002, 0)
 	var dirt_mesh := PlaneMesh.new()
-	dirt_mesh.size = Vector2(150, 150)
-	dirt_mesh.subdivide_width = 12
-	dirt_mesh.subdivide_depth = 12
+	dirt_mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
+	dirt_mesh.subdivide_width = int(MAP_EXTENT / 10.0)
+	dirt_mesh.subdivide_depth = int(MAP_EXTENT / 10.0)
 	dirt_mi.mesh = dirt_mesh
 	var dirt_mat := StandardMaterial3D.new()
 	dirt_mat.albedo_color = Color(0.48, 0.38, 0.26, 0.5)

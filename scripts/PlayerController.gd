@@ -2464,6 +2464,7 @@ func _query_river_depth() -> float:
 	return 0.0
 
 func _create_body() -> void:
+	floor_max_angle = deg_to_rad(65.0)
 	_collision_shape = CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.35
