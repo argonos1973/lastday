@@ -316,8 +316,8 @@ func _process(delta: float) -> void:
 		var result := _prey_ai(delta)
 		target = result["target"]
 		speed = result["speed"]
-	target.x = clamp(target.x, -55.0, 55.0)
-	target.z = clamp(target.z, -55.0, 55.0)
+	target.x = clamp(target.x, -180.0, 180.0)
+	target.z = clamp(target.z, -180.0, 180.0)
 	var to_target := target - global_position
 	to_target.y = 0.0
 	if to_target.length() < 0.55:
