@@ -5881,7 +5881,7 @@ func _update_door_open_cache() -> void:
 					_door_open_cache[cell] = true
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(1500 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.02, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		if not _can_place_ground_vegetation(pos):
@@ -5889,12 +5889,12 @@ func _create_ground_clutter() -> void:
 		if i % 5 < 4:
 			_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
 		else:
-			_create_static_box_rotated("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
+			_create_visual_box_rotated("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
 		if i % 200 == 0:
 			await get_tree().process_frame
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(10 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(20, 55), randf_range(20, 55))
@@ -5910,7 +5910,7 @@ func _create_tall_grass_fields() -> void:
 				await get_tree().process_frame
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(7 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(15, 30), randf_range(15, 30))
@@ -5928,7 +5928,7 @@ func _create_dense_vegetation_zones() -> void:
 				await get_tree().process_frame
 
 func _create_grass_ground_cover() -> void:
-	var total_patches := int(9 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_patches := int(4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_patches):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(30, 65), randf_range(30, 65))
@@ -6007,7 +6007,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque denso en los bordes y zonas montañosas
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.15) # Gran densidad
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.02) # Densidad reducida para mejorar FPS
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	for i in range(total_trees):
 		var x := randf_range(-MAP_EXTENT, MAP_EXTENT)
