@@ -2010,6 +2010,8 @@ func _local_aabb_in(frame: Node3D, root: Node, exclude_worn: bool) -> AABB:
 func _collect_body_meshes(node: Node, result: Array, exclude_worn: bool) -> void:
 	if exclude_worn and node.name.begins_with("Worn_"):
 		return
+	if exclude_worn and (node.name == "BackpackSocket" or node.name == "HandsSocket"):
+		return
 	if node is MeshInstance3D:
 		result.append(node)
 	for child in node.get_children():
@@ -2071,6 +2073,7 @@ func _collect_lights(node: Node, result: Array) -> void:
 		_collect_lights(child, result)
 
 func equip_backpack(item_name: String) -> void:
+	print("[BP] equip_backpack: ", item_name, " prev: ", equipped_backpack)
 	equipped_backpack = item_name
 	_recalculate_carry_capacity()
 	_sync_held_item()
@@ -4107,7 +4110,7 @@ func drop_inventory_item(index: int) -> void:
 		_recalculate_carry_capacity()
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
-	var drop_qty := int(item.quantity) if item.has_method("get") and "quantity" in item else 1
+	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos)
@@ -4156,6 +4159,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			third_person_back_item_root.remove_child(child)
 			child.free()
 	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
+	print("[BP] sync: equip_has_bp=", equip_has_bp, " eq_bp_set=", eq_bp_set, " inv_null=", inventory == null, " children=", third_person_back_item_root.get_child_count())
 	if inventory != null and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
 	# Rifle on back: check if rifle is in inventory but not held in hands
@@ -4245,8 +4249,10 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 
 func _build_third_person_backpack() -> void:
+	print("[BP] _build_third_person_backpack called")
 	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
 	if bp_node == null:
+		print("[BP] bp_node is NULL")
 		return
 	var raw_aabb := _hierarchy_local_aabb(bp_node)
 	if raw_aabb.size.y <= 0.0001 or raw_aabb.size.x <= 0.0001 or raw_aabb.size.z <= 0.0001:

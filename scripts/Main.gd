@@ -3279,7 +3279,8 @@ func _create_loose_survival_pickups() -> void:
 			"use": 0.07,
 			"paths": [POLY_FISHERMANS_HAT_MODEL],
 			"scale": 1.0,
-			"rot": Vector3(0, 0, 0),
+			"rot": Vector3(-90, 0, 0),
+			"flat": true,
 			"color": Color(0.3, 0.25, 0.15),
 			"pos": sp + Vector3(1.5, 0.06, 0.0),
 		}
@@ -3293,7 +3294,8 @@ func _create_loose_survival_pickups() -> void:
 			"use": 0.0,
 			"paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"],
 			"scale": 0.068,
-			"rot": Vector3(0, 30, 0),
+			"rot": Vector3(-90, 30, 180),
+			"flat": true,
 			"color": Color(0.25, 0.22, 0.15),
 			"pos": sp + Vector3(-1.5, 0.06, 0.0),
 		}
@@ -3303,7 +3305,7 @@ func _create_house_loot() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var house_loot_pool := [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(0, 30, 0), "color": Color(0.25, 0.22, 0.15), "rare": true},
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15), "rare": true},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
@@ -3412,21 +3414,17 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var lay_flat: bool = bool(data.get("flat", false))
 	if lay_flat:
 		rotation_degrees.x += 90.0
+	var space_state := get_world_3d().direct_space_state
+	var real_ground_y := _raycast_ground_y(space_state, pos)
 	var spawned := false
 	if not paths.is_empty():
-		# For lay-flat garments, skip the cached snap (it assumes unrotated mesh)
-		# and do a fresh snap after rotation below.
-		var do_snap := not lay_flat
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, do_snap, 0.06)
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
 	if not spawned:
 		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
 		return
-	# The cached ground-snap assumes the mesh is unrotated; after laying a garment
-	# flat its real lowest point changes, so re-snap from the actual world AABB.
-	if lay_flat:
-		var laid := get_node_or_null(NodePath(visual_name))
-		if laid is Node3D:
-			_snap_node_bottom_to_y(laid as Node3D, 0.06)
+	var sn := get_node_or_null(NodePath(visual_name))
+	if sn is Node3D:
+		_snap_node_bottom_to_y(sn as Node3D, real_ground_y)
 	_mark_world_action_visual(visual_name)
 	var pickup_node := get_node_or_null(visual_name)
 	if pickup_node != null:
@@ -3694,6 +3692,7 @@ func handle_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
+			print("[PICKUP] item_name=", item.item_name, " item_type=", item.item_type)
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
 				# Equip directly from ground — adds to inventory, equips (drops old to ground)
 				_play_actor_action(actor, "pickup", 0.8)
@@ -3701,6 +3700,18 @@ func handle_world_action(action, actor) -> void:
 					return
 				actor.equip_clothing(item.item_name)
 				actor.notice.emit("Equipas %s." % item.item_name)
+				_hide_action_visual(action)
+				action.mark_depleted()
+				_save_world_change_silent()
+				if net != null and net.is_connected and not net.is_host:
+					net.item_picked_up.rpc_id(1, action.action_id)
+			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
+				print("[PICKUP] backpack branch taken, calling equip_backpack")
+				_play_actor_action(actor, "pickup", 0.3)
+				if not actor.inventory.add_item(item):
+					return
+				actor.equip_backpack(item.item_name)
+				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 				_hide_action_visual(action)
 				action.mark_depleted()
 				_save_world_change_silent()
@@ -7496,7 +7507,7 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 		_snap_dbg.store_line("[SNAP] path=" + path + " ground_y=" + str(ground_y) + " scale=" + str(scale_value) + " node_pos=" + str(node.global_position))
 	if _snap_offset_cache.has(path):
 		var unit_offset: float = float(_snap_offset_cache[path])
-		node.position.y += ground_y - unit_offset * scale_value.y
+		node.global_position.y += ground_y - unit_offset * scale_value.y
 		if _snap_dbg:
 			_snap_dbg.store_line("[SNAP] cached unit_offset=" + str(unit_offset) + " new_pos_y=" + str(node.position.y))
 			_snap_dbg.close()
@@ -7521,7 +7532,7 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 	if min_local_y < 999999.0:
 		var unit_offset := min_local_y / scale_value.y
 		_snap_offset_cache[path] = unit_offset
-		node.position.y += ground_y - min_local_y
+		node.global_position.y += ground_y - min_local_y
 		if _snap_dbg:
 			_snap_dbg.store_line("[SNAP] adjusted pos_y=" + str(node.position.y) + " unit_offset=" + str(unit_offset))
 			_snap_dbg.close()
