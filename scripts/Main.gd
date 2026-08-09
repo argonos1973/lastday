@@ -55,6 +55,10 @@ var _server_door_states: Dictionary = {}
 var _pending_open_doors: Array = []
 var _pending_restore_data: Array = []
 var _tree_id_counter := 0
+var _tree_registry: Array = [] # {pos, visual_name, id, active}
+var _tree_activation_radius := 60.0
+var _tree_deactivation_radius := 80.0
+var _tree_check_timer := 0.0
 var _bush_id_counter := 0
 var material_cache := {}
 var billboard_texture_cache := {}
@@ -542,6 +546,10 @@ func _input(_event: InputEvent) -> void:
 	return
 
 func _process(delta: float) -> void:
+	_tree_check_timer += delta
+	if _tree_check_timer > 0.5:
+		_tree_check_timer = 0.0
+		_update_tree_interactions()
 	if world_streaming_mgr != null:
 		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
@@ -6247,8 +6255,7 @@ func _create_forest() -> void:
 		if _is_near_house(pos, 3.0):
 			continue
 			
-		var is_interactive := (pos.length() < 75.0 or _world_rng.randf() < 0.20)
-		_create_tree(pos, is_interactive)
+		_create_tree(pos, false)
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
 		for _g in range(1):
@@ -6262,13 +6269,57 @@ func _create_forest() -> void:
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
 
+func _update_tree_interactions() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	for entry in _tree_registry:
+		var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
+		if dist < _tree_activation_radius and not entry.active:
+			_activate_tree(entry)
+		elif dist > _tree_deactivation_radius and entry.active:
+			_deactivate_tree(entry)
+
+func _activate_tree(entry: Dictionary) -> void:
+	var visual_name: String = entry.visual_name
+	var tree_id: int = entry.id
+	var collision_name := visual_name + "_Collision"
+	var pos: Vector3 = entry.pos
+	_register_wildlife_blocker(pos, 5.0)
+	var collision := _create_tree_collision(collision_name, pos)
+	collision.add_to_group("world_action_visual")
+	var action = _create_world_action("fell_tree_%d" % tree_id, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
+	var trunk_check := get_node_or_null(visual_name)
+	if trunk_check == null:
+		var trunk_fallback := get_node_or_null(visual_name + "_Trunk")
+		if trunk_fallback != null:
+			action.set_meta("visual_name", visual_name + "_Trunk")
+	else:
+		action.set_meta("visual_name", visual_name)
+	action.set_meta("collision_name", collision_name)
+	entry.active = true
+
+func _deactivate_tree(entry: Dictionary) -> void:
+	var action_id := "fell_tree_%d" % entry.id
+	if world_actions_by_id.has(action_id):
+		var action = world_actions_by_id[action_id]
+		# Remove collision only, not the tree visual
+		var collision_name := str(action.get_meta("collision_name")) if action.has_meta("collision_name") else ""
+		if not collision_name.is_empty():
+			var col_node := get_node_or_null(collision_name)
+			if col_node != null:
+				col_node.queue_free()
+		action.mark_depleted()
+		action.queue_free()
+		world_actions_by_id.erase(action_id)
+	entry.active = false
+
 func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
-	if is_interactive:
-		_register_wildlife_blocker(pos, 5.0)
 	_tree_id_counter += 1
-	var visual_name := "Tree_%d" % _tree_id_counter
+	var tree_id := _tree_id_counter
+	var visual_name := "Tree_%d" % tree_id
 	var collision_name := visual_name + "_Collision"
 	var made_visual := false
 	if _forest_tree_meshes.is_empty():
@@ -6302,10 +6353,10 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 		made_visual = _create_living_tree_fallback(pos, visual_name)
 	if made_visual:
 		if is_interactive:
+			_register_wildlife_blocker(pos, 5.0)
 			var collision := _create_tree_collision(collision_name, pos)
 			collision.add_to_group("world_action_visual")
-		if is_interactive:
-			var action = _create_world_action("fell_tree_%d" % _tree_id_counter, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
+			var action = _create_world_action("fell_tree_%d" % tree_id, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
 			var trunk_check := get_node_or_null(visual_name)
 			if trunk_check == null:
 				var trunk_fallback := get_node_or_null(visual_name + "_Trunk")
@@ -6314,6 +6365,8 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 			else:
 				action.set_meta("visual_name", visual_name)
 			action.set_meta("collision_name", collision_name)
+		else:
+			_tree_registry.append({"pos": pos, "visual_name": visual_name, "id": tree_id, "active": false})
 
 func _load_forest_tree_pack() -> void:
 	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
@@ -6632,8 +6685,6 @@ func _flush_grass_batches() -> void:
 		mm_instance.multimesh = multimesh
 		mm_instance.material_override = grass_batch_material
 		mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mm_instance.visibility_range_end = 120.0
-		mm_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mm_instance)
 		transforms.clear()
 		colors.clear()
@@ -6657,8 +6708,6 @@ func _flush_grass_batches() -> void:
 			mm_instance.multimesh = multimesh
 			mm_instance.material_override = _tall_grass_material
 			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mm_instance.visibility_range_end = 120.0
-			mm_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mm_instance)
 			t_transforms.clear()
 			t_colors.clear()
