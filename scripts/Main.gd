@@ -3708,9 +3708,14 @@ func handle_world_action(action, actor) -> void:
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				print("[PICKUP] backpack branch taken, calling equip_backpack")
 				_play_actor_action(actor, "pickup", 0.3)
-				if not actor.inventory.add_item(item):
-					return
+				# Equip first so carry capacity expands before the weight check in
+				# add_item runs — otherwise a previous drop (which shrinks capacity
+				# without removing carried items) can make the weight check fail
+				# and silently block re-equipping the backpack.
 				actor.equip_backpack(item.item_name)
+				if not actor.inventory.add_item(item):
+					actor.equip_backpack("")
+					return
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 				_hide_action_visual(action)
 				action.mark_depleted()
@@ -3919,11 +3924,13 @@ func handle_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, ItemScript.create("Pico", "tool_pickaxe", 1.35, 1, 0.0), "Recoges un pico.")
 		"backpack_pickup":
 			_play_actor_action(actor, "pickup", 0.3)
-			if not actor.inventory.add_item(ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)):
-				return
 			if actor.has_method("equip_backpack"):
 				actor.equip_backpack("Mochila pequena")
-			elif actor.has_method("_sync_held_item"):
+			if not actor.inventory.add_item(ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)):
+				if actor.has_method("equip_backpack"):
+					actor.equip_backpack("")
+				return
+			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
 			actor.notice.emit("Recoges una mochila pequena. Puedes cargar mas.")
 			_hide_action_visual(action)
