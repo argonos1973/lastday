@@ -61,6 +61,7 @@ var billboard_texture_cache := {}
 var texture_path_cache := {}
 var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
+var _cached_leafy_material: StandardMaterial3D = null
 var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
 var _shared_visual_sphere_mesh: SphereMesh = null
@@ -4543,8 +4544,8 @@ func _create_rocky_foothills() -> void:
 	for i in range(num_hills):
 		var pos := Vector3(randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
-		# Mantener el centro del mapa plano para poder construir
-		if Vector2(pos.x, pos.z).length() < 55.0:
+		# Mantener el centro del mapa plano para poder construir y empujar detrás del río
+		if Vector2(pos.x, pos.z).length() < 75.0:
 			continue
 		
 		var radius_x := randf_range(14.0, 32.0)
@@ -4951,7 +4952,13 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_material(color, true)
+	if not node_name.contains("SnowCap") and _cached_leafy_material != null:
+		var mat := _cached_leafy_material.duplicate() as StandardMaterial3D
+		mat.albedo_color = color
+		mat.uv1_triplanar = true
+		mesh_instance.material_override = mat
+	else:
+		mesh_instance.material_override = _make_material(color, true)
 	# Crear colisión para poder caminar sobre la montaña
 	if not node_name.contains("SnowCap"):
 		var static_body := StaticBody3D.new()
@@ -5876,10 +5883,21 @@ func _update_door_open_cache() -> void:
 				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
 					_door_open_cache[cell] = true
 
+func _get_ground_height(pos: Vector3) -> float:
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, 200.0, pos.z), Vector3(pos.x, -5.0, pos.z))
+	query.collision_mask = 1 # Capa 1: Entorno
+	var result := space_state.intersect_ray(query)
+	if result:
+		return result.position.y
+	return 0.0
+
 func _create_ground_clutter() -> void:
 	var total_clutter := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
-		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.02, randf_range(-MAP_EXTENT, MAP_EXTENT))
+		var rx := randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var rz := randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var pos := Vector3(rx, _get_ground_height(Vector3(rx, 0, rz)) + 0.02, rz)
 		if not _can_place_ground_vegetation(pos):
 			continue
 		# Solo generamos pequeños manojos de hierba extra, eliminados todos los escombros (LooseDebris)
@@ -5896,7 +5914,8 @@ func _create_tall_grass_fields() -> void:
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf()) 
-			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.02, sin(angle) * radius.y * dist)
+			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
+			pos.y = _get_ground_height(pos) + 0.02
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.34, 0.72), Color(0.18, 0.32, 0.11).lerp(Color(0.32, 0.42, 0.14), randf()))
@@ -5912,7 +5931,8 @@ func _create_dense_vegetation_zones() -> void:
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
-			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.02, sin(angle) * radius.y * dist)
+			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
+			pos.y = _get_ground_height(pos) + 0.02
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.48, 1.05), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), randf()))
@@ -5930,7 +5950,8 @@ func _create_grass_ground_cover() -> void:
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
-			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.018, sin(angle) * radius.y * dist)
+			var pos := center + Vector3(cos(angle) * radius.x * dist, 0.0, sin(angle) * radius.y * dist)
+			pos.y = _get_ground_height(pos) + 0.018
 			if not _can_place_ground_vegetation(pos):
 				continue
 			_create_grass_clump(pos, randf_range(0.22, 0.48), Color(0.18, 0.32, 0.12).lerp(Color(0.34, 0.44, 0.16), randf()))
@@ -5951,7 +5972,7 @@ func _create_grass_carpet() -> void:
 				continue
 			var px := -coverage + float(cx) * spacing + randf_range(-0.6, 0.6)
 			var pz := -coverage + float(cz) * spacing + randf_range(-0.6, 0.6)
-			var pos := Vector3(px, 0.012, pz)
+			var pos := Vector3(px, _get_ground_height(Vector3(px, 0, pz)) + 0.012, pz)
 			if _is_in_no_grass_area(pos, 0.65):
 				continue
 			var h := randf_range(0.12, 0.32)
@@ -6011,7 +6032,7 @@ func _create_forest() -> void:
 		if Vector2(x, z).length() < inner_clear_radius:
 			continue
 		
-		var pos := Vector3(x, 0, z)
+		var pos := Vector3(x, _get_ground_height(Vector3(x, 0, z)), z)
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
 			
@@ -6722,6 +6743,7 @@ func _create_leafy_floor_ground() -> void:
 	material.roughness = 0.97
 	material.metallic = 0.0
 	material.uv1_scale = Vector3(MAP_EXTENT * 0.3, MAP_EXTENT * 0.3, 1.0)
+	_cached_leafy_material = material
 	mesh_instance.material_override = material
 	add_child(mesh_instance)
 	var dirt_mi := MeshInstance3D.new()
