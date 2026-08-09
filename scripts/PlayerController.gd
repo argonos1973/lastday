@@ -5830,7 +5830,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		var skel := _anim_skel_cache
 		if skel != null:
 			# Solo forzar update de bones cuando cambia la animación o hay cambio de postura
-			var cur_anim := third_person_animation_player.current_animation if third_person_animation_player != null else ""
+			var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
 			if _bone_update_pending or cur_anim != _prev_anim_name:
 				skel.force_update_all_bone_transforms()
 				_prev_anim_name = cur_anim
