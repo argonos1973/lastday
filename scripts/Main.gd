@@ -5889,7 +5889,7 @@ func _create_ground_clutter() -> void:
 		if i % 5 < 4:
 			_create_grass_clump(pos, randf_range(0.18, 0.52), Color(0.20, 0.36, 0.12).lerp(Color(0.38, 0.50, 0.17), randf()))
 		else:
-			_create_visual_box_rotated("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
+			_create_visual_box("LooseDebris", pos, Vector3(randf_range(0.35, 0.8), 0.08, randf_range(0.25, 0.6)), Color(0.13, 0.12, 0.10), Vector3(0, randf_range(0, 180), 0))
 		if i % 200 == 0:
 			await get_tree().process_frame
 
