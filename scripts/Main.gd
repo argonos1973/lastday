@@ -3181,11 +3181,13 @@ func _create_wildlife() -> void:
 		_build_circular_route(85.0, PI * 0.5, 10, 6.0),
 		_build_circular_route(115.0, PI, 10, 7.0),
 		_build_circular_route(140.0, PI * 1.5, 10, 8.0),
+		_build_circular_route(165.0, PI * 0.25, 12, 9.0),
+		_build_circular_route(180.0, PI * 0.75, 12, 10.0),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
 	
-	# Foxes: territorial patrols in 6 distinct zones
+	# Foxes: territorial patrols in 10 distinct zones across the full map
 	var fox_zones := [
 		[Vector3(-85, 0, -60), Vector3(-45, 0, -20)],
 		[Vector3(50, 0, 80), Vector3(90, 0, 40)],
@@ -3193,6 +3195,10 @@ func _create_wildlife() -> void:
 		[Vector3(60, 0, -100), Vector3(100, 0, -60)],
 		[Vector3(-40, 0, 120), Vector3(10, 0, 150)],
 		[Vector3(120, 0, 10), Vector3(160, 0, 50)],
+		[Vector3(-150, 0, -80), Vector3(-110, 0, -120)],
+		[Vector3(130, 0, -110), Vector3(170, 0, -70)],
+		[Vector3(-130, 0, 130), Vector3(-90, 0, 160)],
+		[Vector3(90, 0, 130), Vector3(130, 0, 160)],
 	]
 	for fz in fox_zones:
 		var fox_route := _build_zigzag_route(fz[0], fz[1], 6, 6.0)
@@ -3212,14 +3218,14 @@ func _create_wildlife() -> void:
 				break
 			center = wolf_quadrants[i] + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 		var route: Array = []
-		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+		for j in range(12):
+			var wp: Vector3 = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
 			wp.x = clamp(wp.x, -180, 180)
 			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
 				if not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
 				wp.x = clamp(wp.x, -180, 180)
 				wp.z = clamp(wp.z, -180, 180)
 			route.append(wp)
@@ -3247,22 +3253,22 @@ func _check_wildlife_respawn() -> void:
 				break
 			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		var route: Array = []
-		for j in range(8):
-			var wp: Vector3 = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+		for j in range(12):
+			var wp: Vector3 = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
 			wp.x = clamp(wp.x, -180, 180)
 			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
 				if not _is_near_wildlife_blocker(wp, 2.0):
 					break
-				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
+				wp = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
 				wp.x = clamp(wp.x, -180, 180)
 				wp.z = clamp(wp.z, -180, 180)
 			route.append(wp)
 		_create_wildlife_animal("wolf", route)
-	elif alive_deer < 8 and alive_deer <= alive_fox:
-		var deer_route := _build_circular_route(randf_range(50.0, 140.0), randf() * TAU, 10, 7.0)
+	elif alive_deer < 12 and alive_deer <= alive_fox:
+		var deer_route := _build_circular_route(randf_range(50.0, 180.0), randf() * TAU, 10, 7.0)
 		_create_deer_pair(deer_route)
-	elif alive_fox < 6:
+	elif alive_fox < 10:
 		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
 		var fox_route := _build_zigzag_route(fox_zone, fox_zone + Vector3(25, 0, 15), 6, 6.0)
 		_create_wildlife_animal("fox", fox_route)
@@ -3276,8 +3282,8 @@ func _build_circular_route(radius: float, angle_offset: float, num_points: int, 
 		var angle := angle_offset + TAU * float(i) / float(num_points)
 		var r := radius + randf_range(-jitter, jitter)
 		var pos := Vector3(cos(angle) * r, 0.0, sin(angle) * r)
-		pos.x = clamp(pos.x, -65.0, 65.0)
-		pos.z = clamp(pos.z, -65.0, 65.0)
+		pos.x = clamp(pos.x, -180.0, 180.0)
+		pos.z = clamp(pos.z, -180.0, 180.0)
 		# Sanitize: push point away from blocked areas
 		if not is_wildlife_allowed_at(pos):
 			pos = _find_allowed_near(pos, 3.0)
@@ -3292,8 +3298,8 @@ func _build_zigzag_route(corner_a: Vector3, corner_b: Vector3, num_points: int, 
 		var perp := (corner_b - corner_a).cross(Vector3.UP).normalized() if (corner_b - corner_a).length() > 0.01 else Vector3.RIGHT
 		var offset := perp * randf_range(-jitter, jitter)
 		var pos := base + offset
-		pos.x = clamp(pos.x, -65.0, 65.0)
-		pos.z = clamp(pos.z, -65.0, 65.0)
+		pos.x = clamp(pos.x, -180.0, 180.0)
+		pos.z = clamp(pos.z, -180.0, 180.0)
 		if not is_wildlife_allowed_at(pos):
 			pos = _find_allowed_near(pos, 3.0)
 		route.append(pos)
@@ -5854,6 +5860,28 @@ func is_wildlife_allowed_at(pos: Vector3) -> bool:
 		return false
 	return true
 
+const HOUSE_FOOTPRINTS := [
+	{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
+	{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
+	{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
+	{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
+	{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
+	{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
+	{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
+	{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
+	{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
+	{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
+]
+
+func _is_near_house(pos: Vector3, margin: float) -> bool:
+	for hd in HOUSE_FOOTPRINTS:
+		var origin: Vector3 = hd["origin"]
+		var half_w: float = float(hd["w"]) * 0.5 + margin
+		var half_d: float = float(hd["d"]) * 0.5 + margin
+		if abs(pos.x - origin.x) <= half_w and abs(pos.z - origin.z) <= half_d:
+			return true
+	return false
+
 func _is_near_river(pos: Vector3, margin: float) -> bool:
 	var p := Vector2(pos.x, pos.z)
 	for segment in river_segments_data:
@@ -6200,6 +6228,8 @@ func _create_forest() -> void:
 		
 		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
 		if not _can_place_ground_vegetation(pos, 2.0):
+			continue
+		if _is_near_house(pos, 3.0):
 			continue
 			
 		var is_interactive := (pos.length() < 75.0 or randf() < 0.20)
