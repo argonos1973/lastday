@@ -93,6 +93,7 @@ var sector_persistence_mgr: SectorPersistenceManager = null
 var _debug_overlay: CanvasLayer = null
 var _debug_label: Label = null
 var _debug_visible: bool = false
+var _streaming_positions: Array[Vector3] = []
 
 const GRASS_BATCH_VARIANTS := 10
 var grass_batch_meshes: Array = []
@@ -539,13 +540,13 @@ func _input(_event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if world_streaming_mgr != null:
-		var player_positions: Array[Vector3] = []
+		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
-			player_positions.append(player.global_position)
+			_streaming_positions.append(player.global_position)
 		for r_player in remote_players.values():
 			if r_player != null and is_instance_valid(r_player):
-				player_positions.append(r_player.global_position)
-		world_streaming_mgr.update_player_positions(player_positions)
+				_streaming_positions.append(r_player.global_position)
+		world_streaming_mgr.update_player_positions(_streaming_positions)
 
 	if _debug_visible and _debug_label != null:
 		_update_debug_overlay_text()
@@ -845,7 +846,9 @@ func _create_environment() -> void:
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.rotation_degrees = Vector3(-45, -25, 0)
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 30.0
+	sun.directional_shadow_max_distance = 45.0
+	sun.directional_shadow_blend_splits = true
+	sun.shadow_normal_bias = 1.5
 	add_child(sun)
 
 	celestial = CelestialSystemScript.new()
@@ -4669,7 +4672,7 @@ func _create_mountain_backdrop() -> void:
 
 func _create_rocky_foothills() -> void:
 	# En lugar de colinas gigantes y solapadas, generamos colinas suaves, espaciadas y de menor tamaño.
-	var num_hills := int(12 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0)) # ~130 colinas en total
+	var num_hills := int(7 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0)) # ~75 colinas en total
 	for i in range(num_hills):
 		var pos := Vector3(randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
@@ -4694,7 +4697,7 @@ func _create_rocky_foothills() -> void:
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, randf_range(0, 360), hill_color)
 		# Añadir abundantes manojos de hierba en las colinas
-		for _hc in range(8):
+		for _hc in range(4):
 			var angle := randf_range(0.0, TAU)
 			var r_dist := randf_range(0.1, max(radius_x, radius_z) * 0.85)
 			var hpos := pos + Vector3(cos(angle) * r_dist, 0, sin(angle) * r_dist)
@@ -6087,7 +6090,7 @@ func _get_ground_height(pos: Vector3) -> float:
 	return max_h
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(200 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var rx := randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -6100,11 +6103,11 @@ func _create_ground_clutter() -> void:
 			await get_tree().process_frame
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(20, 55), randf_range(20, 55))
-		var count := int(radius.x * radius.y * 0.3)
+		var count := int(radius.x * radius.y * 0.18)
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf()) 
@@ -6117,11 +6120,11 @@ func _create_tall_grass_fields() -> void:
 				await get_tree().process_frame
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(15, 30), randf_range(15, 30))
-		var count := int(radius.x * radius.y * 0.5)
+		var count := int(radius.x * radius.y * 0.3)
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
@@ -6136,11 +6139,11 @@ func _create_dense_vegetation_zones() -> void:
 				await get_tree().process_frame
 
 func _create_grass_ground_cover() -> void:
-	var total_patches := int(4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_patches := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_patches):
 		var center := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(randf_range(30, 65), randf_range(30, 65))
-		var count := int(radius.x * radius.y * 0.25)
+		var count := int(radius.x * radius.y * 0.15)
 		for j in range(count):
 			var angle := randf_range(0.0, TAU)
 			var dist := sqrt(randf())
@@ -6155,14 +6158,14 @@ func _create_grass_ground_cover() -> void:
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
 	var coverage := MAP_EXTENT * 1.05
-	var spacing := 2.0
+	var spacing := 3.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
 	for cx in range(cells_x):
 		for cz in range(cells_z):
-			if randf() < 0.12:
+			if randf() < 0.25:
 				continue
 			var px := -coverage + float(cx) * spacing + randf_range(-0.5, 0.5)
 			var pz := -coverage + float(cz) * spacing + randf_range(-0.5, 0.5)
@@ -6173,11 +6176,11 @@ func _create_grass_carpet() -> void:
 			var r := randf_range(0.28, 0.52)
 			var c := base_color.lerp(color_var, randf()).darkened(randf_range(0.0, 0.12))
 			_queue_grass_instance(pos, h, r, c)
-		if cx % 15 == 0:
+		if cx % 20 == 0:
 			await get_tree().process_frame
 
 func _create_billboard_underbrush_fields() -> void:
-	var total_brushes := int(8 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_brushes := int(4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_brushes):
 		var pos := Vector3(randf_range(-MAP_EXTENT, MAP_EXTENT), 0.03, randf_range(-MAP_EXTENT, MAP_EXTENT))
 		if not _can_place_ground_vegetation(pos):
@@ -6216,7 +6219,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.052)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.035)
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
@@ -6232,11 +6235,11 @@ func _create_forest() -> void:
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
 			
-		var is_interactive := (pos.length() < 75.0 or randf() < 0.25)
+		var is_interactive := (pos.length() < 75.0 or randf() < 0.20)
 		_create_tree(pos, is_interactive)
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
-		for _g in range(2):
+		for _g in range(1):
 			var gpos := pos + Vector3(randf_range(-1.5, 1.5), 0.0, randf_range(-1.5, 1.5))
 			gpos.y = _get_ground_height(Vector3(gpos.x, 0, gpos.z)) + 0.012
 			if not _is_in_no_grass_area(gpos, 0.5):
@@ -6272,6 +6275,8 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
 		if pos.length() > 15.0:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 180.0
+		mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mi)
 		mi.add_to_group("world_action_visual")
 		made_visual = true
@@ -6611,6 +6616,8 @@ func _flush_grass_batches() -> void:
 		mm_instance.multimesh = multimesh
 		mm_instance.material_override = grass_batch_material
 		mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mm_instance.visibility_range_end = 120.0
+		mm_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mm_instance)
 		transforms.clear()
 		colors.clear()
@@ -6634,6 +6641,8 @@ func _flush_grass_batches() -> void:
 			mm_instance.multimesh = multimesh
 			mm_instance.material_override = _tall_grass_material
 			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mm_instance.visibility_range_end = 120.0
+			mm_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mm_instance)
 			t_transforms.clear()
 			t_colors.clear()

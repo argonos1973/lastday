@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b202f01er0a80"
-path="res://.godot/imported/Crouching Turn 90 Right_Remy_Bottom_Gloss.png-2b904056fd4cb6632dcf09e15099a188.ctex"
+path.s3tc="res://.godot/imported/Crouching Turn 90 Right_Remy_Bottom_Gloss.png-2b904056fd4cb6632dcf09e15099a188.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "92071336c441bf2a2a7f969dfe618500"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Crouching Turn 90 Right_Remy_Bottom_Gloss.png"
-dest_files=["res://.godot/imported/Crouching Turn 90 Right_Remy_Bottom_Gloss.png-2b904056fd4cb6632dcf09e15099a188.ctex"]
+dest_files=["res://.godot/imported/Crouching Turn 90 Right_Remy_Bottom_Gloss.png-2b904056fd4cb6632dcf09e15099a188.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
