@@ -59,7 +59,6 @@ const RIFLE_STRAP_MAX_SEGMENT: float = 0.55
 # Con los puntos actuales es suficiente.
 const RIFLE_STRAP_SMOOTH_PASSES: int = 1
 
-
 # ================================================================
 # ACTUALIZAR CORREA
 # ================================================================
@@ -94,7 +93,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	if not is_instance_valid(player.third_person_model):
 		return
 
-
 	# ============================================================
 	# RAÍZ DE LA CORREA RIGGEADA
 	# ============================================================
@@ -104,12 +102,10 @@ func _update_rifle_strap(_delta: float) -> void:
 	if strap_root == null:
 		return
 
-
 	# TODOS los puntos se calcularán en el espacio local del
 	# third_person_model (padre del strap_root). Esto es estable
 	# y no cambia cuando _position_strap_bones mueve el strap_root.
 	var strap_space: Node3D = player.third_person_model
-
 
 	# ============================================================
 	# SKELETON DE LA CORREA
@@ -129,9 +125,7 @@ func _update_rifle_strap(_delta: float) -> void:
 		push_warning(
 			"RIFLE STRAP: no Skeleton3D en la correa riggeada"
 		)
-		print("[STRAP-RET] Early return: strap_skel is null")
 		return
-
 
 	# ============================================================
 	# OBTENER SKELETON
@@ -139,12 +133,10 @@ func _update_rifle_strap(_delta: float) -> void:
 
 	var skeleton: Skeleton3D = null
 
-
 	if player._spine_skeleton != null \
 	and is_instance_valid(player._spine_skeleton):
 
 		skeleton = player._spine_skeleton as Skeleton3D
-
 
 	if skeleton == null:
 
@@ -152,15 +144,12 @@ func _update_rifle_strap(_delta: float) -> void:
 			player.third_person_model
 		)
 
-
 	if skeleton == null:
 
 		push_warning(
 			"RIFLE STRAP: no se encontró Skeleton3D"
 		)
-		print("[STRAP-RET] Early return: character skeleton is null")
 		return
-
 
 	# ============================================================
 	# ANCLAJES REALES DEL RIFLE
@@ -170,11 +159,9 @@ func _update_rifle_strap(_delta: float) -> void:
 		player._strap_barrel_marker.global_position
 	)
 
-
 	var stock_anchor: Vector3 = strap_space.to_local(
 		player._strap_stock_marker.global_position
 	)
-
 
 	# ============================================================
 	# BUSCAR HUESOS
@@ -189,7 +176,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		]
 	)
 
-
 	var spine1_idx: int = _strap_find_first_bone(
 		skeleton,
 		[
@@ -198,7 +184,6 @@ func _update_rifle_strap(_delta: float) -> void:
 			"Spine1"
 		]
 	)
-
 
 	var spine_idx: int = _strap_find_first_bone(
 		skeleton,
@@ -209,7 +194,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		]
 	)
 
-
 	var hips_idx: int = _strap_find_first_bone(
 		skeleton,
 		[
@@ -218,7 +202,6 @@ func _update_rifle_strap(_delta: float) -> void:
 			"Hips"
 		]
 	)
-
 
 	var left_shoulder_idx: int = _strap_find_first_bone(
 		skeleton,
@@ -229,7 +212,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		]
 	)
 
-
 	var right_shoulder_idx: int = _strap_find_first_bone(
 		skeleton,
 		[
@@ -238,7 +220,6 @@ func _update_rifle_strap(_delta: float) -> void:
 			"RightShoulder"
 		]
 	)
-
 
 	# ============================================================
 	# FALLBACKS
@@ -256,15 +237,12 @@ func _update_rifle_strap(_delta: float) -> void:
 	if hips_idx < 0:
 		hips_idx = spine_idx
 
-
 	if spine2_idx < 0 or spine1_idx < 0:
 
 		push_warning(
 			"RIFLE STRAP: no se encontraron huesos Spine"
 		)
-		print("[STRAP-RET] Early return: spine bones not found, spine2=", spine2_idx, " spine1=", spine1_idx)
 		return
-
 
 	# ============================================================
 	# TRANSFORMS DE TORSO
@@ -276,13 +254,11 @@ func _update_rifle_strap(_delta: float) -> void:
 		strap_space
 	)
 
-
 	var spine1_tf: Transform3D = _strap_bone_transform(
 		skeleton,
 		spine1_idx,
 		strap_space
 	)
-
 
 	var spine_tf: Transform3D = _strap_bone_transform(
 		skeleton,
@@ -290,26 +266,22 @@ func _update_rifle_strap(_delta: float) -> void:
 		strap_space
 	)
 
-
 	var hips_tf: Transform3D = _strap_bone_transform(
 		skeleton,
 		hips_idx,
 		strap_space
 	)
 
-
 	var chest_high: Vector3 = spine2_tf.origin
 	var chest_mid: Vector3 = spine1_tf.origin
 	var chest_low: Vector3 = spine_tf.origin
 	var hips_pos: Vector3 = hips_tf.origin
-
 
 	var torso_center: Vector3 = (
 		chest_high
 		+ chest_mid
 		+ chest_low
 	) / 3.0
-
 
 	# ============================================================
 	# CALCULAR ESPALDA Y DELANTE
@@ -323,15 +295,12 @@ func _update_rifle_strap(_delta: float) -> void:
 		+ stock_anchor
 	) * 0.5
 
-
 	var back_dir: Vector3 = (
 		rifle_center
 		- torso_center
 	)
 
-
 	back_dir.y = 0.0
-
 
 	if back_dir.length_squared() < 0.000001:
 
@@ -341,12 +310,9 @@ func _update_rifle_strap(_delta: float) -> void:
 			1.0
 		)
 
-
 	back_dir = back_dir.normalized()
 
-
 	var front_dir: Vector3 = -back_dir
-
 
 	# ============================================================
 	# DERECHA / IZQUIERDA
@@ -358,14 +324,11 @@ func _update_rifle_strap(_delta: float) -> void:
 		)
 	)
 
-
 	if right_dir.length_squared() < 0.000001:
 
 		right_dir = Vector3.RIGHT
 
-
 	right_dir = right_dir.normalized()
-
 
 	# ============================================================
 	# ELEGIR EL HOMBRO MÁS CERCANO AL CAÑÓN
@@ -373,7 +336,6 @@ func _update_rifle_strap(_delta: float) -> void:
 
 	var shoulder_tf: Transform3D
 	var shoulder_found: bool = false
-
 
 	if left_shoulder_idx >= 0 \
 	and right_shoulder_idx >= 0:
@@ -384,13 +346,11 @@ func _update_rifle_strap(_delta: float) -> void:
 			strap_space
 		)
 
-
 		var right_tf: Transform3D = _strap_bone_transform(
 			skeleton,
 			right_shoulder_idx,
 			strap_space
 		)
-
 
 		var left_distance: float = (
 			barrel_anchor.distance_squared_to(
@@ -398,13 +358,11 @@ func _update_rifle_strap(_delta: float) -> void:
 			)
 		)
 
-
 		var right_distance: float = (
 			barrel_anchor.distance_squared_to(
 				right_tf.origin
 			)
 		)
-
 
 		if left_distance < right_distance:
 
@@ -414,9 +372,7 @@ func _update_rifle_strap(_delta: float) -> void:
 
 			shoulder_tf = right_tf
 
-
 		shoulder_found = true
-
 
 	elif left_shoulder_idx >= 0:
 
@@ -428,7 +384,6 @@ func _update_rifle_strap(_delta: float) -> void:
 
 		shoulder_found = true
 
-
 	elif right_shoulder_idx >= 0:
 
 		shoulder_tf = _strap_bone_transform(
@@ -439,18 +394,14 @@ func _update_rifle_strap(_delta: float) -> void:
 
 		shoulder_found = true
 
-
 	if not shoulder_found:
 
 		push_warning(
 			"RIFLE STRAP: no se encontró hombro"
 		)
-		print("[STRAP-RET] Early return: shoulder not found")
 		return
 
-
 	var shoulder_pos: Vector3 = shoulder_tf.origin
-
 
 	# ============================================================
 	# DETERMINAR LADO DEL HOMBRO
@@ -463,14 +414,11 @@ func _update_rifle_strap(_delta: float) -> void:
 		right_dir
 	)
 
-
 	var shoulder_side: float = 1.0
-
 
 	if shoulder_side_value < 0.0:
 
 		shoulder_side = -1.0
-
 
 	# Dirección hacia el lado CONTRARIO del cuerpo.
 	# Esto crea la diagonal sobre el pecho.
@@ -478,7 +426,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		-right_dir
 		* shoulder_side
 	)
-
 
 	# ============================================================
 	# PARTE BAJA DEL TORSO
@@ -489,13 +436,11 @@ func _update_rifle_strap(_delta: float) -> void:
 		0.35
 	)
 
-
 	# ============================================================
 	# PUNTOS DE CONTROL
 	# ============================================================
 
 	var points: Array[Vector3] = []
-
 
 	# ============================================================
 	# P0
@@ -515,7 +460,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(p0b)
 	points.append(p1)
 
-
 	# ============================================================
 	# P2
 	# ENCIMA DEL HOMBRO
@@ -530,7 +474,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(
 		p2
 	)
-
 
 	# ============================================================
 	# P3
@@ -553,7 +496,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		p3
 	)
 
-
 	# ============================================================
 	# P4
 	# PECHO ALTO
@@ -574,7 +516,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(
 		p4
 	)
-
 
 	# ============================================================
 	# P5
@@ -597,7 +538,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(
 		p5
 	)
-
 
 	# ============================================================
 	# P6
@@ -622,7 +562,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		p6
 	)
 
-
 	# ============================================================
 	# P7
 	# LATERAL BAJO DEL TORSO
@@ -639,7 +578,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(
 		p7
 	)
-
 
 	# ============================================================
 	# P8
@@ -659,7 +597,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		p8
 	)
 
-
 	# ============================================================
 	# P9
 	# DETRÁS DEL COSTADO
@@ -675,7 +612,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		p9
 	)
 
-
 	# ============================================================
 	# P10
 	# ESPALDA
@@ -690,7 +626,6 @@ func _update_rifle_strap(_delta: float) -> void:
 			* RIFLE_STRAP_BACK_OFFSET
 	)
 
-
 	var p10: Vector3 = back_point.lerp(
 		stock_anchor,
 		0.55
@@ -703,7 +638,6 @@ func _update_rifle_strap(_delta: float) -> void:
 	points.append(p10)
 	points.append(p10b)
 	points.append(stock_anchor)
-
 
 	# ============================================================
 	# COMPROBAR DISTANCIAS
@@ -719,7 +653,6 @@ func _update_rifle_strap(_delta: float) -> void:
 			)
 		)
 
-
 		if segment_length > RIFLE_STRAP_MAX_SEGMENT:
 
 			push_warning(
@@ -731,14 +664,12 @@ func _update_rifle_strap(_delta: float) -> void:
 				]
 			)
 
-
 	# ============================================================
 	# DEBUG: ESFERAS EN CADA PUNTO DE CONTROL
 	# ============================================================
 
 	if player.has_method("_update_strap_debug_spheres") and player.get("_strap_diagnostic_mode") == true:
 		player._update_strap_debug_spheres(points)
-
 
 	# ============================================================
 	# SUAVIZADO
@@ -754,24 +685,7 @@ func _update_rifle_strap(_delta: float) -> void:
 		)
 	)
 
-
 	# DEBUG: Imprimir puntos y rest pose (solo una vez)
-	if not player.has_meta("_strap_path_printed"):
-		player.set_meta("_strap_path_printed", true)
-		print("[STRAP-PATH] smooth_points count=", smooth_points.size())
-		var total_len: float = 0.0
-		for i in range(smooth_points.size()):
-			print("[STRAP-PATH] P%d = (%.3f, %.3f, %.3f)" % [i, smooth_points[i].x, smooth_points[i].y, smooth_points[i].z])
-			if i > 0:
-				total_len += smooth_points[i].distance_to(smooth_points[i-1])
-		print("[STRAP-PATH] total_path_length = %.3f m" % total_len)
-		if strap_skel:
-			print("[STRAP-REST] bone_count=", strap_skel.get_bone_count())
-			for b in range(strap_skel.get_bone_count()):
-				var rest_t: Transform3D = strap_skel.get_bone_rest(b)
-				print("[STRAP-REST] Bone %d (%s) rest_pos=(%.3f, %.3f, %.3f)" %
-					[b, strap_skel.get_bone_name(b), rest_t.origin.x, rest_t.origin.y, rest_t.origin.z])
-
 	# ============================================================
 	# PROCEDURAL RIBBON MESH (100% continuo, sin cortes ni brechas)
 	# ============================================================
@@ -785,8 +699,6 @@ func _update_rifle_strap(_delta: float) -> void:
 		torso_center
 	)
 
-
-
 # ================================================================
 # BUSCAR SKELETON
 # ================================================================
@@ -798,11 +710,9 @@ func _strap_find_skeleton(
 	if root == null:
 		return null
 
-
 	if root is Skeleton3D:
 
 		return root as Skeleton3D
-
 
 	for child in root.get_children():
 
@@ -816,10 +726,7 @@ func _strap_find_skeleton(
 
 			return found
 
-
 	return null
-
-
 
 # ================================================================
 # BUSCAR HUESO
@@ -833,7 +740,6 @@ func _strap_find_first_bone(
 	if skeleton == null:
 		return -1
 
-
 	for bone_name in names:
 
 		var idx: int = skeleton.find_bone(
@@ -844,10 +750,7 @@ func _strap_find_first_bone(
 
 			return idx
 
-
 	return -1
-
-
 
 # ================================================================
 # TRANSFORM DEL HUESO EN ESPACIO LOCAL DE LA CORREA
@@ -865,19 +768,15 @@ func _strap_bone_transform(
 		)
 	)
 
-
 	var bone_world: Transform3D = (
 		skeleton.global_transform
 		* bone_pose
 	)
 
-
 	return (
 		strap_space.global_transform.affine_inverse()
 		* bone_world
 	)
-
-
 
 # ================================================================
 # SUAVIZADO CHAIKIN
@@ -892,13 +791,11 @@ func _strap_chaikin_smooth(
 
 	var result: Array[Vector3] = []
 
-
 	for point in input_points:
 
 		result.append(
 			point
 		)
-
 
 	for _pass in range(
 		passes
@@ -907,15 +804,12 @@ func _strap_chaikin_smooth(
 		if result.size() < 3:
 			break
 
-
 		var next_points: Array[Vector3] = []
-
 
 		# Mantener anclaje inicial EXACTO.
 		next_points.append(
 			result[0]
 		)
-
 
 		for i in range(
 			result.size() - 1
@@ -924,18 +818,15 @@ func _strap_chaikin_smooth(
 			var a: Vector3 = result[i]
 			var b: Vector3 = result[i + 1]
 
-
 			var q: Vector3 = a.lerp(
 				b,
 				0.25
 			)
 
-
 			var r: Vector3 = a.lerp(
 				b,
 				0.75
 			)
-
 
 			next_points.append(
 				q
@@ -945,19 +836,14 @@ func _strap_chaikin_smooth(
 				r
 			)
 
-
 		# Mantener anclaje final EXACTO.
 		next_points.append(
 			result[result.size() - 1]
 		)
 
-
 		result = next_points
 
-
 	return result
-
-
 
 # ================================================================
 # POSICIONAR HUESOS DE LA CORREA RIGGEADA
@@ -984,7 +870,6 @@ func _position_strap_bones(
 	if n_bones < 2:
 		return
 
-
 	# ============================================================
 	# CALCULAR DISTANCIAS ACUMULADAS (arc-length)
 	# ============================================================
@@ -1001,7 +886,6 @@ func _position_strap_bones(
 
 	if total_length < 0.001:
 		return
-
 
 	# ============================================================
 	# SAMPLEAR N POSICIONES A INTERVALOS IGUALES
@@ -1034,7 +918,6 @@ func _position_strap_bones(
 			local_t
 		)
 
-
 	# ============================================================
 	# CALCULAR TANGENTES Y NORMALES EN CADA PUNTO
 	# ============================================================
@@ -1064,7 +947,6 @@ func _position_strap_bones(
 			normal = Vector3.FORWARD
 
 		normals[b] = normal.normalized()
-
 
 	# ============================================================
 	# COLOCAR HUESOS
@@ -1119,8 +1001,6 @@ func _position_strap_bones(
 	var skel_local: Transform3D = strap_skel.transform
 	var skel_local_inv: Transform3D = skel_local.affine_inverse()
 
-
-
 	# El eje X = Y cross Z
 	var local_rotations: Array[Quaternion] = []
 	local_rotations.resize(n_bones)
@@ -1172,20 +1052,6 @@ func _position_strap_bones(
 	strap_skel.notification(Skeleton3D.NOTIFICATION_UPDATE_SKELETON)
 
 	# DEBUG: Verificar que los huesos se aplicaron (solo una vez)
-	if not player.has_meta("_strap_bones_printed"):
-		player.set_meta("_strap_bones_printed", true)
-		print("[STRAP-BONES] === BONES APPLIED ===")
-		for b in range(n_bones):
-			var bp: Vector3 = strap_skel.get_bone_pose_position(b)
-			var br: Quaternion = strap_skel.get_bone_pose_rotation(b)
-			var bgp: Transform3D = strap_skel.get_bone_global_pose(b)
-			print("[STRAP-BONES] Bone %d (%s) pose_pos=(%.4f, %.4f, %.4f) global_pos=(%.4f, %.4f, %.4f)" %
-				[b, strap_skel.get_bone_name(b), bp.x, bp.y, bp.z, bgp.origin.x, bgp.origin.y, bgp.origin.z])
-		print("[STRAP-BONES] strap_root_node.position=", strap_root_node.position, " scale=", strap_root_node.scale)
-		print("[STRAP-BONES] strap_skel.global_position=", strap_skel.global_position)
-		print("[STRAP-BONES] rest_total_length=", rest_total_length, " path_length=", total_length)
-
-
 # ================================================================
 # GENERAR MALLA PROCEDURAL CONTINUA (100% SIN CORTES)
 # ================================================================

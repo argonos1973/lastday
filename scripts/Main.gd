@@ -358,6 +358,8 @@ var _loading_overlay: CanvasLayer = null
 var _loading_label: Label = null
 var _loading_countdown: float = 0.0
 
+
+#region INICIALIZACIÓN Y CICLO DE VIDA
 func _ready() -> void:
 	seed(WORLD_SEED)
 	# Get NetworkManager (autoload)
@@ -817,6 +819,10 @@ func _create_environment() -> void:
 	celestial.create_star_field()
 	celestial.create_moon_field()
 
+#endregion
+
+
+#region DÍA/NOCHE Y ENTORNO
 func _create_day_night() -> void:
 	day_cycle = DayNightCycleScript.new()
 	day_cycle.name = "DayNightCycle"
@@ -848,6 +854,10 @@ func _create_player() -> void:
 		player.global_position = _pending_spawn_pos
 		_has_pending_spawn_pos = false
 
+#endregion
+
+
+#region RED Y MULTIPLAYER (MultiplayerSync)
 func _on_remote_player_connected(id: int) -> void:
 	if net == null:
 		return
@@ -2402,6 +2412,10 @@ func _create_hud() -> void:
 	add_child(hud)
 	hud.setup(player, day_cycle)
 
+#endregion
+
+
+#region NPCs Y IA
 func _create_npc() -> void:
 	var npc = NPCControllerScript.new()
 	npc.name = "HostileHuman"
@@ -2413,6 +2427,10 @@ func _create_npc() -> void:
 			hud.show_notice(text)
 	)
 
+#endregion
+
+
+#region CONSTRUCCIÓN DEL MAPA Y CARRETERAS
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	river_segments_data = _default_river_segments()
@@ -3200,6 +3218,10 @@ func _create_wildlife_animal(kind: String, points: Array) -> void:
 	add_child(animal)
 	animal.setup(kind, points)
 
+#endregion
+
+
+#region ACCIONES DEL MUNDO Y PICKUPS
 func _create_world_action(id: String, action_type: String, label: String, pos: Vector3, size: Vector3, color: Color, repeatable: bool, marker_visible := true):
 	var action = WorldActionScript.new()
 	action.name = "WorldAction_" + id
@@ -4075,6 +4097,10 @@ func handle_world_action(action, actor) -> void:
 			if net != null and net.is_connected and not net.is_host:
 				net.shelter_dismantled.rpc_id(1, sh_id)
 
+#endregion
+
+
+#region ACTORES Y ANIMALES
 func _play_actor_action(actor, action_name: String, duration: float) -> void:
 	if actor != null and actor.has_method("play_action_animation"):
 		actor.play_action_animation(action_name, duration)
@@ -4577,6 +4603,10 @@ func get_day_cycle():
 func get_hud():
 	return hud
 
+#endregion
+
+
+#region API PÚBLICA DEL MUNDO
 func get_river_depth_at(world_pos: Vector3) -> float:
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]
@@ -4798,6 +4828,10 @@ func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3,
 		var texture_path: String = POLY_RIVER_PEBBLES_DIFF if randf() < 0.62 else POLY_ROCK_07_DIFF
 		_create_textured_visual_sphere("RiverPebbleClusterStone", pebble_pos, pebble_scale, texture_path, Color(0.30, 0.29, 0.25))
 
+#endregion
+
+
+#region VEGETACIÓN Y NATURALEZA (VegetationBuilder)
 func _create_fish_school(center: Vector3, size: Vector2, yaw: float) -> void:
 	var angle := deg_to_rad(yaw)
 	var along := Vector3(cos(angle), 0, -sin(angle))
@@ -5604,6 +5638,10 @@ func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
 		return false
 	return not _is_in_no_grass_area(pos, 0.65)
 
+#endregion
+
+
+#region CONSULTAS GEOGRÁFICAS
 func _is_inside_river_band(pos: Vector3, margin: float) -> bool:
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]
@@ -6423,6 +6461,10 @@ func _flush_grass_batches() -> void:
 			t_transforms.clear()
 			t_colors.clear()
 
+#endregion
+
+
+#region PRIMITIVAS Y GEOMETRÍA (PrimitiveBuilder)
 func _create_bush(pos: Vector3, radius: float) -> void:
 	if not _can_place_ground_vegetation(pos):
 		return
@@ -6985,6 +7027,10 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 		mesh_instance.material_override = _make_material(color, true)
 	add_child(mesh_instance)
 
+#endregion
+
+
+#region FÁBRICA DE MATERIALES Y TEXTURAS
 func _make_material(color: Color, noisy: bool) -> StandardMaterial3D:
 	var key := "%0.2f_%0.2f_%0.2f_%s" % [color.r, color.g, color.b, str(noisy)]
 	if material_cache.has(key):
@@ -7237,6 +7283,10 @@ func _make_cutout_material(key: String, texture_path: String, alpha_path: String
 	material_cache[cache_key] = material
 	return material
 
+#endregion
+
+
+#region RECURSOS EXTERNOS Y ESCENAS
 func _create_loot_container(id: String, label: String, pos: Vector3, size: Vector3, color: Color, model_paths: Array = []):
 	var visual_name := "LootContainer_" + id
 	var spawned := false
@@ -7788,3 +7838,5 @@ func _reconstruct_path(came_from: Dictionary, current: Vector2i, start_world: Ve
 	if path.is_empty():
 		path.append(_grid_to_world(cells[0]))
 	return path
+
+#endregion

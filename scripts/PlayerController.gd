@@ -800,6 +800,8 @@ func _update_puppet_held_item(item_name: String) -> void:
 		_:
 			_build_third_person_pack()
 
+
+#region PROCESO PRINCIPAL (_process + input)
 func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
@@ -899,6 +901,10 @@ func _process(delta: float) -> void:
 			camera.look_at(global_position, char_forward)
 			camera.fov = 55.0
 
+#endregion
+
+
+#region INICIALIZACIÓN (_ready, _create_body, etc.)
 func _ready() -> void:
 	if is_puppet:
 		return
@@ -1136,6 +1142,10 @@ func _on_inventory_changed() -> void:
 	_recalculate_carry_capacity()
 	_sync_held_item()
 
+#endregion
+
+
+#region ROPA Y APARIENCIA (PlayerAppearance)
 func equip_clothing(item_name: String) -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
@@ -2116,6 +2126,10 @@ func _update_crouch_collision() -> void:
 		capsule.height = 1.75
 		_collision_shape.position.y = bottom_y + 0.875
 
+#endregion
+
+
+#region FÍSICA Y MOVIMIENTO (_physics_process)
 func _physics_process(delta: float) -> void:
 	if is_puppet:
 		return
@@ -2298,6 +2312,10 @@ func _physics_process(delta: float) -> void:
 	_update_hand_socket()
 	_update_head_worn_items()
 
+#endregion
+
+
+#region SOCKETS Y ACCESORIOS (mochila, manos, cabeza)
 func _update_backpack_socket() -> void:
 	if _spine_skeleton == null or _spine_bone_idx < 0 or third_person_back_item_root == null:
 		return
@@ -2360,6 +2378,10 @@ func _update_head_worn_items() -> void:
 	for worn_name in stale:
 		_head_worn_rel.erase(worn_name)
 
+#endregion
+
+
+#region ENTORNO (agua, temperatura)
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
 	var river_depth := _query_river_depth()
@@ -3766,6 +3788,10 @@ func get_held_item():
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	return inventory.items[held_index]
 
+#endregion
+
+
+#region DORMIR Y DESCANSO
 func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 	if is_dead or is_sleeping:
 		return
@@ -4057,6 +4083,10 @@ func drop_inventory_item(index: int) -> void:
 	_sync_held_item()
 	notice.emit("Sueltas %s." % item_name)
 
+#endregion
+
+
+#region ITEMS EN MANO Y EQUIPAMIENTO (PlayerHeldItems)
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
 		_sync_third_person_equipment(null)
@@ -4272,7 +4302,6 @@ func _build_rifle_on_back() -> void:
 	_disable_collision_recursive(model)
 	_rifle_on_back.position = Vector3(0.12, 0.05, -0.25)
 	_rifle_on_back.rotation_degrees = Vector3(0.0, 0.0, 0.0)
-	print("[STRAP-SHOT] _rifle_on_back local_pos=%s" % str(_rifle_on_back.position))
 	third_person_back_item_root.add_child(_rifle_on_back)
 	# Create Marker3D for strap attachment on the rifle
 	var barrel_local := Vector3(-0.10, 0.40, -0.05)
@@ -4473,7 +4502,6 @@ func _build_rifle_strap() -> void:
 		strap_mi.material_override = strap_mat
 		strap_mi.custom_aabb = AABB(Vector3(-10.0, -10.0, -10.0), Vector3(20.0, 20.0, 20.0))
 
-		print("[STRAP] SlingMesh skeleton=%s skin_binds=%d" % [strap_mi.skeleton, strap_mi.skin.get_bind_count()])
 	# Do NOT create Skin resource / CPU skinning cache — want pure rest pose
 	_strap_mesh_cached = false
 	# PASO 2: Align SlingMesh AABB center with real chest bone position
@@ -4888,6 +4916,10 @@ func _build_third_person_rifle() -> void:
 		_rifle_left_arm_ik.active = true
 		_rifle_left_arm_ik.influence = 0.0
 
+#endregion
+
+
+#region RIFLE: IK Y POSICIONAMIENTO (PlayerRifle)
 func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# Rifle placed by the animation hands and right shoulder; IK disabled.
 	if _rifle_root == null or not is_instance_valid(_rifle_root):
@@ -5742,6 +5774,10 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	_update_third_person_animation(moving, delta)
 
+#endregion
+
+
+#region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
 func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
@@ -5993,6 +6029,10 @@ func _collect() -> void:
 	if target.has_method("collect"):
 		target.collect(self)
 
+#endregion
+
+
+#region INTERACCIÓN Y UI
 func _update_interaction_prompt() -> void:
 	if is_sleeping:
 		prompt_changed.emit("")
@@ -6116,6 +6156,10 @@ func _update_flashlight(delta: float) -> void:
 			_sync_held_item()
 			notice.emit("La linterna se queda sin pilas.")
 
+#endregion
+
+
+#region VIDA, DAÑO Y COMBATE
 func take_damage(amount: float, from_knife: bool = false) -> void:
 	if is_puppet:
 		# Puppet: send damage to server via RPC
@@ -6840,3 +6884,5 @@ func _light_action() -> void:
 	var target = _get_interaction_target()
 	if target != null and target is WorldAction and target.action_type == "light_campfire":
 		target.interact(self)
+
+#endregion
