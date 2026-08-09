@@ -70,76 +70,111 @@ func _make_door(size: Vector3, _color: Color) -> void:
 		panel_mat.uv1_scale = wood_mat.uv1_scale * 0.6
 
 	# Raised panel frame styling: two vertical panels (upper large, lower large)
-	# on the front face, giving a classic paneled-door look.
+	# on BOTH faces, giving a classic paneled-door look from inside and outside.
+	# Local -Z = interior face, local +Z = exterior face (faces outward from the house).
 	var panel_inset_x := size.x * 0.14
 	var panel_w := size.x - panel_inset_x * 2.0
 	var gap := size.y * 0.045
 	var panel_h_top := size.y * 0.42
 	var panel_h_bottom := size.y * 0.34
 	var panel_depth := 0.018
-	var front_z := -size.z * 0.5 - panel_depth * 0.5 + 0.002
 
-	var top_panel := MeshInstance3D.new()
-	top_panel.name = "PanelTop"
-	var top_box := BoxMesh.new()
-	top_box.size = Vector3(panel_w, panel_h_top, panel_depth)
-	top_panel.mesh = top_box
-	top_panel.position = Vector3(size.x * 0.5, size.y - gap - panel_h_top * 0.5, front_z)
-	top_panel.material_override = panel_mat
-	add_child(top_panel)
-
-	var bottom_panel := MeshInstance3D.new()
-	bottom_panel.name = "PanelBottom"
-	var bottom_box := BoxMesh.new()
-	bottom_box.size = Vector3(panel_w, panel_h_bottom, panel_depth)
-	bottom_panel.mesh = bottom_box
-	bottom_panel.position = Vector3(size.x * 0.5, gap + panel_h_bottom * 0.5, front_z)
-	bottom_panel.material_override = panel_mat
-	add_child(bottom_panel)
-
-	# Vertical stiles (raised trim strips) for a carpentered look
 	var stile_mat := StandardMaterial3D.new()
 	stile_mat.albedo_color = Color(0.30, 0.19, 0.11)
 	stile_mat.roughness = 0.8
-	for side in [-1.0, 1.0]:
-		var stile := MeshInstance3D.new()
-		stile.name = "Stile"
-		var stile_box := BoxMesh.new()
-		stile_box.size = Vector3(0.035, size.y * 0.94, 0.012)
-		stile.mesh = stile_box
-		stile.position = Vector3(size.x * 0.5 + side * (panel_w * 0.5 - 0.02), size.y * 0.5, -size.z * 0.5 - 0.006)
-		stile.material_override = stile_mat
-		add_child(stile)
 
-	# Metal doorknob with backplate — clearly visible against the wood
 	var metal_mat := StandardMaterial3D.new()
 	metal_mat.albedo_color = Color(0.72, 0.68, 0.55)
 	metal_mat.metallic = 0.85
 	metal_mat.roughness = 0.3
 
-	var backplate := MeshInstance3D.new()
-	backplate.name = "HandleBackplate"
-	var backplate_mesh := CylinderMesh.new()
-	backplate_mesh.top_radius = 0.045
-	backplate_mesh.bottom_radius = 0.045
-	backplate_mesh.height = 0.01
-	backplate.mesh = backplate_mesh
-	backplate.rotation_degrees = Vector3(90, 0, 0)
-	backplate.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.008)
-	backplate.material_override = metal_mat
-	add_child(backplate)
+	var faces: Array[float] = [-1.0, 1.0]
+	for face in faces:
+		var face_z: float = face * (size.z * 0.5 + panel_depth * 0.5 - 0.002)
+		var face_name := "Interior" if face < 0.0 else "Exterior"
 
-	var knob := MeshInstance3D.new()
-	knob.name = "Handle"
-	var knob_mesh := SphereMesh.new()
-	knob_mesh.radius = 0.045
-	knob_mesh.height = 0.09
-	knob.mesh = knob_mesh
-	knob.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.09)
-	knob.material_override = metal_mat
-	add_child(knob)
+		var top_panel := MeshInstance3D.new()
+		top_panel.name = "PanelTop" + face_name
+		var top_box := BoxMesh.new()
+		top_box.size = Vector3(panel_w, panel_h_top, panel_depth)
+		top_panel.mesh = top_box
+		top_panel.position = Vector3(size.x * 0.5, size.y - gap - panel_h_top * 0.5, face_z)
+		top_panel.material_override = panel_mat
+		add_child(top_panel)
 
-	# Small hinge plates on the opposite (hinge) side for realism
+		var bottom_panel := MeshInstance3D.new()
+		bottom_panel.name = "PanelBottom" + face_name
+		var bottom_box := BoxMesh.new()
+		bottom_box.size = Vector3(panel_w, panel_h_bottom, panel_depth)
+		bottom_panel.mesh = bottom_box
+		bottom_panel.position = Vector3(size.x * 0.5, gap + panel_h_bottom * 0.5, face_z)
+		bottom_panel.material_override = panel_mat
+		add_child(bottom_panel)
+
+		# Vertical stiles (raised trim strips) for a carpentered look
+		for side in [-1.0, 1.0]:
+			var stile := MeshInstance3D.new()
+			stile.name = "Stile" + face_name
+			var stile_box := BoxMesh.new()
+			stile_box.size = Vector3(0.035, size.y * 0.94, 0.012)
+			stile.mesh = stile_box
+			stile.position = Vector3(size.x * 0.5 + side * (panel_w * 0.5 - 0.02), size.y * 0.5, face_z + face * 0.006)
+			stile.material_override = stile_mat
+			add_child(stile)
+
+		# Doorknob with backplate on this face
+		var backplate := MeshInstance3D.new()
+		backplate.name = "HandleBackplate" + face_name
+		var backplate_mesh := CylinderMesh.new()
+		backplate_mesh.top_radius = 0.045
+		backplate_mesh.bottom_radius = 0.045
+		backplate_mesh.height = 0.01
+		backplate.mesh = backplate_mesh
+		backplate.rotation_degrees = Vector3(90, 0, 0)
+		backplate.position = Vector3(size.x * 0.88, size.y * 0.5, face_z + face * 0.008)
+		backplate.material_override = metal_mat
+		add_child(backplate)
+
+		var knob := MeshInstance3D.new()
+		knob.name = "Handle" + face_name
+		var knob_mesh := SphereMesh.new()
+		knob_mesh.radius = 0.045
+		knob_mesh.height = 0.09
+		knob.mesh = knob_mesh
+		knob.position = Vector3(size.x * 0.88, size.y * 0.5, face_z + face * 0.09)
+		knob.material_override = metal_mat
+		add_child(knob)
+
+	# Classic lock (cerradura) on the exterior face — plate + keyhole below the knob
+	var lock_plate_mat := StandardMaterial3D.new()
+	lock_plate_mat.albedo_color = Color(0.20, 0.19, 0.17)
+	lock_plate_mat.metallic = 0.7
+	lock_plate_mat.roughness = 0.4
+	var lock_plate := MeshInstance3D.new()
+	lock_plate.name = "LockPlate"
+	var lock_plate_mesh := BoxMesh.new()
+	lock_plate_mesh.size = Vector3(0.07, 0.16, 0.01)
+	lock_plate.mesh = lock_plate_mesh
+	lock_plate.position = Vector3(size.x * 0.88, size.y * 0.5 - 0.16, size.z * 0.5 + 0.007)
+	lock_plate.material_override = lock_plate_mat
+	add_child(lock_plate)
+
+	var keyhole_mat := StandardMaterial3D.new()
+	keyhole_mat.albedo_color = Color(0.03, 0.03, 0.03)
+	keyhole_mat.roughness = 0.9
+	var keyhole := MeshInstance3D.new()
+	keyhole.name = "Keyhole"
+	var keyhole_mesh := CylinderMesh.new()
+	keyhole_mesh.top_radius = 0.012
+	keyhole_mesh.bottom_radius = 0.012
+	keyhole_mesh.height = 0.012
+	keyhole.mesh = keyhole_mesh
+	keyhole.rotation_degrees = Vector3(90, 0, 0)
+	keyhole.position = Vector3(size.x * 0.88, size.y * 0.5 - 0.16, size.z * 0.5 + 0.013)
+	keyhole.material_override = keyhole_mat
+	add_child(keyhole)
+
+	# Small hinge plates on the hinge side for realism
 	var hinge_mat := StandardMaterial3D.new()
 	hinge_mat.albedo_color = Color(0.25, 0.24, 0.22)
 	hinge_mat.metallic = 0.6
@@ -250,27 +285,59 @@ func _add_door_handle(size: Vector3) -> void:
 	metal_mat.metallic = 0.85
 	metal_mat.roughness = 0.3
 
-	var backplate := MeshInstance3D.new()
-	backplate.name = "HandleBackplate"
-	var backplate_mesh := CylinderMesh.new()
-	backplate_mesh.top_radius = 0.045
-	backplate_mesh.bottom_radius = 0.045
-	backplate_mesh.height = 0.01
-	backplate.mesh = backplate_mesh
-	backplate.rotation_degrees = Vector3(90, 0, 0)
-	backplate.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.008)
-	backplate.material_override = metal_mat
-	add_child(backplate)
+	var faces: Array[float] = [-1.0, 1.0]
+	for face in faces:
+		var face_name := "Interior" if face < 0.0 else "Exterior"
+		var backplate := MeshInstance3D.new()
+		backplate.name = "HandleBackplate" + face_name
+		var backplate_mesh := CylinderMesh.new()
+		backplate_mesh.top_radius = 0.045
+		backplate_mesh.bottom_radius = 0.045
+		backplate_mesh.height = 0.01
+		backplate.mesh = backplate_mesh
+		backplate.rotation_degrees = Vector3(90, 0, 0)
+		backplate.position = Vector3(size.x * 0.88, size.y * 0.5, face * size.z * 0.5 + face * 0.008)
+		backplate.material_override = metal_mat
+		add_child(backplate)
 
-	var knob := MeshInstance3D.new()
-	knob.name = "Handle"
-	var knob_mesh := SphereMesh.new()
-	knob_mesh.radius = 0.045
-	knob_mesh.height = 0.09
-	knob.mesh = knob_mesh
-	knob.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.09)
-	knob.material_override = metal_mat
-	add_child(knob)
+		var knob := MeshInstance3D.new()
+		knob.name = "Handle" + face_name
+		var knob_mesh := SphereMesh.new()
+		knob_mesh.radius = 0.045
+		knob_mesh.height = 0.09
+		knob.mesh = knob_mesh
+		knob.position = Vector3(size.x * 0.88, size.y * 0.5, face * size.z * 0.5 + face * 0.09)
+		knob.material_override = metal_mat
+		add_child(knob)
+
+	# Classic lock (cerradura) on the exterior face — plate + keyhole below the knob
+	var lock_plate_mat := StandardMaterial3D.new()
+	lock_plate_mat.albedo_color = Color(0.20, 0.19, 0.17)
+	lock_plate_mat.metallic = 0.7
+	lock_plate_mat.roughness = 0.4
+	var lock_plate := MeshInstance3D.new()
+	lock_plate.name = "LockPlate"
+	var lock_plate_mesh := BoxMesh.new()
+	lock_plate_mesh.size = Vector3(0.07, 0.16, 0.01)
+	lock_plate.mesh = lock_plate_mesh
+	lock_plate.position = Vector3(size.x * 0.88, size.y * 0.5 - 0.16, size.z * 0.5 + 0.007)
+	lock_plate.material_override = lock_plate_mat
+	add_child(lock_plate)
+
+	var keyhole_mat := StandardMaterial3D.new()
+	keyhole_mat.albedo_color = Color(0.03, 0.03, 0.03)
+	keyhole_mat.roughness = 0.9
+	var keyhole := MeshInstance3D.new()
+	keyhole.name = "Keyhole"
+	var keyhole_mesh := CylinderMesh.new()
+	keyhole_mesh.top_radius = 0.012
+	keyhole_mesh.bottom_radius = 0.012
+	keyhole_mesh.height = 0.012
+	keyhole.mesh = keyhole_mesh
+	keyhole.rotation_degrees = Vector3(90, 0, 0)
+	keyhole.position = Vector3(size.x * 0.88, size.y * 0.5 - 0.16, size.z * 0.5 + 0.013)
+	keyhole.material_override = keyhole_mat
+	add_child(keyhole)
 
 func _strip_non_door_panels(root: Node) -> void:
 	var door_node: Node = _find_first_door_node(root)
