@@ -4965,10 +4965,14 @@ func _create_house_doorway(origin: Vector3, label: String, half_d: float, height
 	var door_h := 3.2
 	var door_w := 1.8
 	var dz := half_d
+	var frame_depth := 0.44  # protrudes past wall_t (0.35) on both faces so it's visible as trim
 	var frame_offset := door_w * 0.5 + 0.09
-	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameRight", origin + Vector3(frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h, 0.20), Color(0.20, 0.12, 0.065), Vector3.ZERO)
-	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.045, dz), Vector3(door_w + 0.36, 0.18, 0.20), Color(0.18, 0.10, 0.055), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameLeft", origin + Vector3(-frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h + 0.12, frame_depth), Color(0.22, 0.13, 0.07), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameRight", origin + Vector3(frame_offset, door_h * 0.5, dz), Vector3(0.18, door_h + 0.12, frame_depth), Color(0.22, 0.13, 0.07), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameTop", origin + Vector3(0.0, door_h + 0.09, dz), Vector3(door_w + 0.36, 0.18, frame_depth), Color(0.19, 0.11, 0.06), Vector3.ZERO)
+	# Inner trim lip (slightly darker) framing the opening edge for depth
+	_create_visual_box(label + " DoorFrameLeftInner", origin + Vector3(-door_w * 0.5 - 0.015, door_h * 0.5, dz), Vector3(0.03, door_h, frame_depth + 0.02), Color(0.10, 0.06, 0.03), Vector3.ZERO)
+	_create_visual_box(label + " DoorFrameRightInner", origin + Vector3(door_w * 0.5 + 0.015, door_h * 0.5, dz), Vector3(0.03, door_h, frame_depth + 0.02), Color(0.10, 0.06, 0.03), Vector3.ZERO)
 	_create_interactive_door(label + " Door", origin + Vector3(-door_w * 0.5, 0.0, half_d), Vector3(door_w, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
 
 func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vector3, color: Color, open_angle: float) -> void:

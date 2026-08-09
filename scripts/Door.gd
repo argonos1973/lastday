@@ -40,34 +40,119 @@ func interact(player) -> void:
 func get_interaction_text(_player = null) -> String:
 	return "[E] Cerrar puerta" if is_open else "[E] Abrir puerta"
 
-func _make_door(size: Vector3, color: Color) -> void:
+func _make_door(size: Vector3, _color: Color) -> void:
+	var door_center := Vector3(size.x * 0.5, size.y * 0.5, 0.0)
+	var wood_mat := _make_wood_floor_material()
+
+	# Main door slab
 	var mesh_instance := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = size
 	mesh_instance.mesh = box
-	mesh_instance.position = Vector3(size.x * 0.5, size.y * 0.5, 0.0)
-	mesh_instance.material_override = _make_wood_floor_material()
+	mesh_instance.position = door_center
+	mesh_instance.material_override = wood_mat
 	add_child(mesh_instance)
 
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
 	collision.shape = shape
-	collision.position = mesh_instance.position
+	collision.position = door_center
 	add_child(collision)
 	_collision = collision
 
-	var handle := MeshInstance3D.new()
-	handle.name = "Handle"
-	var handle_mesh := BoxMesh.new()
-	handle_mesh.size = Vector3(0.08, 0.10, 0.08)
-	handle.mesh = handle_mesh
-	handle.position = Vector3(size.x * 0.84, size.y * 0.52, -size.z * 0.58)
-	var handle_material := StandardMaterial3D.new()
-	handle_material.albedo_color = Color(0.42, 0.31, 0.16)
-	handle_material.roughness = 0.75
-	handle.material_override = handle_material
-	add_child(handle)
+	# Recessed panel material (slightly darker for depth contrast)
+	var panel_mat := StandardMaterial3D.new()
+	panel_mat.albedo_color = Color(0.42, 0.27, 0.16)
+	panel_mat.roughness = 0.85
+	if wood_mat.albedo_texture != null:
+		panel_mat.albedo_texture = wood_mat.albedo_texture
+		panel_mat.uv1_scale = wood_mat.uv1_scale * 0.6
+
+	# Raised panel frame styling: two vertical panels (upper large, lower large)
+	# on the front face, giving a classic paneled-door look.
+	var panel_inset_x := size.x * 0.14
+	var panel_w := size.x - panel_inset_x * 2.0
+	var gap := size.y * 0.045
+	var panel_h_top := size.y * 0.42
+	var panel_h_bottom := size.y * 0.34
+	var panel_depth := 0.018
+	var front_z := -size.z * 0.5 - panel_depth * 0.5 + 0.002
+
+	var top_panel := MeshInstance3D.new()
+	top_panel.name = "PanelTop"
+	var top_box := BoxMesh.new()
+	top_box.size = Vector3(panel_w, panel_h_top, panel_depth)
+	top_panel.mesh = top_box
+	top_panel.position = Vector3(size.x * 0.5, size.y - gap - panel_h_top * 0.5, front_z)
+	top_panel.material_override = panel_mat
+	add_child(top_panel)
+
+	var bottom_panel := MeshInstance3D.new()
+	bottom_panel.name = "PanelBottom"
+	var bottom_box := BoxMesh.new()
+	bottom_box.size = Vector3(panel_w, panel_h_bottom, panel_depth)
+	bottom_panel.mesh = bottom_box
+	bottom_panel.position = Vector3(size.x * 0.5, gap + panel_h_bottom * 0.5, front_z)
+	bottom_panel.material_override = panel_mat
+	add_child(bottom_panel)
+
+	# Vertical stiles (raised trim strips) for a carpentered look
+	var stile_mat := StandardMaterial3D.new()
+	stile_mat.albedo_color = Color(0.30, 0.19, 0.11)
+	stile_mat.roughness = 0.8
+	for side in [-1.0, 1.0]:
+		var stile := MeshInstance3D.new()
+		stile.name = "Stile"
+		var stile_box := BoxMesh.new()
+		stile_box.size = Vector3(0.035, size.y * 0.94, 0.012)
+		stile.mesh = stile_box
+		stile.position = Vector3(size.x * 0.5 + side * (panel_w * 0.5 - 0.02), size.y * 0.5, -size.z * 0.5 - 0.006)
+		stile.material_override = stile_mat
+		add_child(stile)
+
+	# Metal doorknob with backplate — clearly visible against the wood
+	var metal_mat := StandardMaterial3D.new()
+	metal_mat.albedo_color = Color(0.72, 0.68, 0.55)
+	metal_mat.metallic = 0.85
+	metal_mat.roughness = 0.3
+
+	var backplate := MeshInstance3D.new()
+	backplate.name = "HandleBackplate"
+	var backplate_mesh := CylinderMesh.new()
+	backplate_mesh.top_radius = 0.045
+	backplate_mesh.bottom_radius = 0.045
+	backplate_mesh.height = 0.01
+	backplate.mesh = backplate_mesh
+	backplate.rotation_degrees = Vector3(90, 0, 0)
+	backplate.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.008)
+	backplate.material_override = metal_mat
+	add_child(backplate)
+
+	var knob := MeshInstance3D.new()
+	knob.name = "Handle"
+	var knob_mesh := SphereMesh.new()
+	knob_mesh.radius = 0.045
+	knob_mesh.height = 0.09
+	knob.mesh = knob_mesh
+	knob.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.09)
+	knob.material_override = metal_mat
+	add_child(knob)
+
+	# Small hinge plates on the opposite (hinge) side for realism
+	var hinge_mat := StandardMaterial3D.new()
+	hinge_mat.albedo_color = Color(0.25, 0.24, 0.22)
+	hinge_mat.metallic = 0.6
+	hinge_mat.roughness = 0.5
+	for hy in [0.12, 0.5, 0.88]:
+		var hinge := MeshInstance3D.new()
+		hinge.name = "Hinge"
+		var hinge_box := BoxMesh.new()
+		hinge_box.size = Vector3(0.02, 0.16, 0.05)
+		hinge.mesh = hinge_box
+		hinge.position = Vector3(0.01, size.y * hy, -size.z * 0.5 - 0.03)
+		hinge.material_override = hinge_mat
+		add_child(hinge)
 
 func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 	var model: Node3D = null
@@ -160,17 +245,32 @@ func _apply_material_to_meshes(node: Node, mat: Material) -> void:
 		_apply_material_to_meshes(c, mat)
 
 func _add_door_handle(size: Vector3) -> void:
-	var handle := MeshInstance3D.new()
-	handle.name = "Handle"
-	var handle_mesh := BoxMesh.new()
-	handle_mesh.size = Vector3(0.08, 0.10, 0.08)
-	handle.mesh = handle_mesh
-	handle.position = Vector3(size.x * 0.84, size.y * 0.52, -size.z * 0.58)
-	var handle_material := StandardMaterial3D.new()
-	handle_material.albedo_color = Color(0.42, 0.31, 0.16)
-	handle_material.roughness = 0.75
-	handle.material_override = handle_material
-	add_child(handle)
+	var metal_mat := StandardMaterial3D.new()
+	metal_mat.albedo_color = Color(0.72, 0.68, 0.55)
+	metal_mat.metallic = 0.85
+	metal_mat.roughness = 0.3
+
+	var backplate := MeshInstance3D.new()
+	backplate.name = "HandleBackplate"
+	var backplate_mesh := CylinderMesh.new()
+	backplate_mesh.top_radius = 0.045
+	backplate_mesh.bottom_radius = 0.045
+	backplate_mesh.height = 0.01
+	backplate.mesh = backplate_mesh
+	backplate.rotation_degrees = Vector3(90, 0, 0)
+	backplate.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.008)
+	backplate.material_override = metal_mat
+	add_child(backplate)
+
+	var knob := MeshInstance3D.new()
+	knob.name = "Handle"
+	var knob_mesh := SphereMesh.new()
+	knob_mesh.radius = 0.045
+	knob_mesh.height = 0.09
+	knob.mesh = knob_mesh
+	knob.position = Vector3(size.x * 0.88, size.y * 0.5, -size.z * 0.5 - 0.09)
+	knob.material_override = metal_mat
+	add_child(knob)
 
 func _strip_non_door_panels(root: Node) -> void:
 	var door_node: Node = _find_first_door_node(root)
