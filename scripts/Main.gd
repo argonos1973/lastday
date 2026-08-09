@@ -62,6 +62,7 @@ var texture_path_cache := {}
 var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
 var _cached_leafy_material: StandardMaterial3D = null
+var _generated_hills: Array = []
 var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
 var _shared_visual_sphere_mesh: SphereMesh = null
@@ -2438,6 +2439,7 @@ func _create_npc() -> void:
 #region CONSTRUCCIÓN DEL MAPA Y CARRETERAS
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
+	_generated_hills.clear()
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT * 2.0))
 	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
@@ -4543,18 +4545,18 @@ func _create_mountain_backdrop() -> void:
 	_create_rocky_foothills()
 
 func _create_rocky_foothills() -> void:
-	# En lugar de rocas gigantes, generamos colinas a lo largo de todo el mapa para darle relieve al terreno.
-	var num_hills := int(35 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	# En lugar de colinas gigantes y solapadas, generamos colinas suaves, espaciadas y de menor tamaño.
+	var num_hills := int(12 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0)) # ~130 colinas en total
 	for i in range(num_hills):
 		var pos := Vector3(randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
 		# Mantener el centro del mapa plano para poder construir y empujar detrás del río
-		if Vector2(pos.x, pos.z).length() < 75.0:
+		if Vector2(pos.x, pos.z).length() < 90.0:
 			continue
 		
-		var radius_x := randf_range(10.0, 22.0)
-		var radius_z := randf_range(10.0, 22.0)
-		var height := randf_range(1.5, 5.5) # Más bajas y suaves
+		var radius_x := randf_range(6.0, 14.0)
+		var radius_z := randf_range(6.0, 14.0)
+		var height := randf_range(0.8, 2.8) # Muy suaves y caminables
 		
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
 		var near_spawn := false
@@ -4925,6 +4927,14 @@ func _create_dense_river_bank_vegetation(center: Vector3, size: Vector2, yaw: fl
 				_create_bush(bank_pos + across * side * randf_range(0.25, 0.9), randf_range(0.44, 0.74))
 
 func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, radius_z: float, height: float, yaw: float, color: Color) -> void:
+	if not node_name.contains("SnowCap"):
+		_generated_hills.append({
+			"pos": pos,
+			"radius_x": radius_x,
+			"radius_z": radius_z,
+			"height": height,
+			"yaw_rad": deg_to_rad(yaw)
+		})
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var segments := 18
@@ -4952,19 +4962,26 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			var b: Vector3 = current[(s + 1) % segments]
 			var c: Vector3 = next[s]
 			var d: Vector3 = next[(s + 1) % segments]
-			# Proyección planar UV de textura desde arriba (X, Z) escalada para el terreno
-			st.set_uv(Vector2(a.x, a.z) * 0.088)
+			
+			# Convertir vértice local a posición global para la proyección de textura UV
+			var world_a := pos + a.rotated(Vector3.UP, deg_to_rad(yaw))
+			var world_b := pos + b.rotated(Vector3.UP, deg_to_rad(yaw))
+			var world_c := pos + c.rotated(Vector3.UP, deg_to_rad(yaw))
+			var world_d := pos + d.rotated(Vector3.UP, deg_to_rad(yaw))
+			
+			var uv_scale := 1.0 / (MAP_EXTENT * 2.0)
+			st.set_uv(Vector2(world_a.x * uv_scale + 0.5, world_a.z * uv_scale + 0.5))
 			st.add_vertex(a)
-			st.set_uv(Vector2(c.x, c.z) * 0.088)
+			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
 			st.add_vertex(c)
-			st.set_uv(Vector2(b.x, b.z) * 0.088)
+			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
 			st.add_vertex(b)
 			
-			st.set_uv(Vector2(b.x, b.z) * 0.088)
+			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
 			st.add_vertex(b)
-			st.set_uv(Vector2(c.x, c.z) * 0.088)
+			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
 			st.add_vertex(c)
-			st.set_uv(Vector2(d.x, d.z) * 0.088)
+			st.set_uv(Vector2(world_d.x * uv_scale + 0.5, world_d.z * uv_scale + 0.5))
 			st.add_vertex(d)
 	st.generate_normals()
 	var mesh := st.commit()
@@ -4976,7 +4993,7 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	if not node_name.contains("SnowCap") and _cached_leafy_material != null:
 		var mat := _cached_leafy_material.duplicate() as StandardMaterial3D
 		mat.albedo_color = color
-		mat.uv1_triplanar = true
+		mat.uv1_triplanar = false
 		mesh_instance.material_override = mat
 	else:
 		mesh_instance.material_override = _make_material(color, true)
@@ -5905,15 +5922,26 @@ func _update_door_open_cache() -> void:
 					_door_open_cache[cell] = true
 
 func _get_ground_height(pos: Vector3) -> float:
-	var space_state := get_world_3d().direct_space_state
-	if space_state == null:
-		return 0.0
-	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, 200.0, pos.z), Vector3(pos.x, -5.0, pos.z))
-	query.collision_mask = 1 # Capa 1: Entorno
-	var result := space_state.intersect_ray(query)
-	if result:
-		return result.position.y
-	return 0.0
+	var max_h := 0.0
+	for hill in _generated_hills:
+		var dx_world := pos.x - hill.pos.x
+		var dz_world := pos.z - hill.pos.z
+		
+		# Rotación inversa para alinear con los ejes locales de la colina
+		var cos_y := cos(-hill.yaw_rad)
+		var sin_y := sin(-hill.yaw_rad)
+		var dx := dx_world * cos_y - dz_world * sin_y
+		var dz := dx_world * sin_y + dz_world * cos_y
+		
+		var rx: float = hill.radius_x
+		var rz: float = hill.radius_z
+		var dist_sq := (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz)
+		if dist_sq < 1.0:
+			var pct := sqrt(dist_sq)
+			var h := hill.height * cos(pct * PI * 0.5)
+			if h > max_h:
+				max_h = h
+	return max_h
 
 func _create_ground_clutter() -> void:
 	var total_clutter := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
