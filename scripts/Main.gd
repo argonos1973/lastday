@@ -2457,27 +2457,27 @@ func _create_map() -> void:
 		_create_road()
 		await get_tree().process_frame
 	if not is_server:
-		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1", 11.4, 9.4, 5.15)
+		_create_house(Vector3(-25, 0, -18), "Casa abandonada 1", "house_1", 11.4, 9.4, 4.35)
 		await get_tree().process_frame
 		if _loading_label != null:
 			_loading_label.text = "Construyendo casas..."
-		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2", 14.0, 11.0, 5.7)
+		_create_house(Vector3(-38, 0, 18), "Casa abandonada 2", "house_2", 14.0, 11.0, 4.9)
 		await get_tree().process_frame
-		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3", 9.0, 7.5, 4.7)
+		_create_house(Vector3(23, 0, 18), "Casa abandonada 3", "house_3", 9.0, 7.5, 3.9)
 		await get_tree().process_frame
-		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4", 12.5, 10.0, 5.3)
+		_create_house(Vector3(42, 0, 26), "Casa abandonada 4", "house_4", 12.5, 10.0, 4.5)
 		await get_tree().process_frame
-		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5", 8.0, 7.0, 4.5)
+		_create_house(Vector3(-12, 0, 42), "Casa abandonada 5", "house_5", 8.0, 7.0, 3.7)
 		await get_tree().process_frame
-		_create_house(Vector3(-35, 0, -40), "Casa abandonada 6", "house_6", 10.5, 8.5, 4.9)
+		_create_house(Vector3(-35, 0, -40), "Casa abandonada 6", "house_6", 10.5, 8.5, 4.1)
 		await get_tree().process_frame
-		_create_house(Vector3(30, 0, -35), "Casa abandonada 7", "house_7", 13.0, 10.0, 5.5)
+		_create_house(Vector3(30, 0, -35), "Casa abandonada 7", "house_7", 13.0, 10.0, 4.7)
 		await get_tree().process_frame
-		_create_house(Vector3(-45, 0, -5), "Casa abandonada 8", "house_8", 9.5, 8.0, 4.7)
+		_create_house(Vector3(-45, 0, -5), "Casa abandonada 8", "house_8", 9.5, 8.0, 3.9)
 		await get_tree().process_frame
-		_create_house(Vector3(35, 0, -8), "Casa abandonada 9", "house_9", 11.0, 9.0, 5.1)
+		_create_house(Vector3(35, 0, -8), "Casa abandonada 9", "house_9", 11.0, 9.0, 4.3)
 		await get_tree().process_frame
-		_create_house(Vector3(-20, 0, 30), "Casa abandonada 10", "house_10", 7.5, 6.5, 4.4)
+		_create_house(Vector3(-20, 0, 30), "Casa abandonada 10", "house_10", 7.5, 6.5, 3.6)
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -4999,13 +4999,14 @@ func _create_front_window(node_name: String, center: Vector3, width: float, heig
 	var frame_dark := Color(0.14, 0.085, 0.045)
 	var sill := Color(0.12, 0.09, 0.07)
 	var ft := 0.06  # frame thickness
-	var fd := 0.35  # frame depth (matches wall thickness)
+	var wall_t := 0.35
+	var fd := 0.44  # frame depth — protrudes past wall_t on both faces so it's visible as trim
 	# Sill (alféizar)
 	_create_visual_box(node_name + " Sill", center + Vector3(0, -height * 0.5 - 0.04, fd * 0.5 + 0.04), Vector3(width, 0.06, 0.16), sill, Vector3.ZERO)
-	# Glass
+	# Glass (kept at wall thickness, recessed within the frame)
 	var gw := width - ft * 2.0
 	var gh := height - ft * 2.0
-	_create_glass_panel(node_name + " Glass", center, Vector3(gw, gh, fd), false)
+	_create_glass_panel(node_name + " Glass", center, Vector3(gw, gh, wall_t), false)
 	# Frame boards — outer edge exactly at opening edge
 	_create_visual_box(node_name + " FrameTop", center + Vector3(0, height * 0.5 - ft * 0.5, 0.0), Vector3(width, ft, fd), frame, Vector3.ZERO)
 	_create_visual_box(node_name + " FrameBottom", center + Vector3(0, -height * 0.5 + ft * 0.5, 0.0), Vector3(width, ft, fd), frame, Vector3.ZERO)
@@ -5020,13 +5021,14 @@ func _create_side_window(node_name: String, center: Vector3, width: float, heigh
 	var frame_dark := Color(0.14, 0.085, 0.045)
 	var sill := Color(0.12, 0.09, 0.07)
 	var ft := 0.06
-	var fd := 0.35
+	var wall_t := 0.35
+	var fd := 0.44  # frame depth — protrudes past wall_t on both faces so it's visible as trim
 	# Sill
 	_create_visual_box(node_name + " Sill", center + Vector3(fd * 0.5 + 0.04, -height * 0.5 - 0.04, 0), Vector3(0.16, 0.06, width), sill, Vector3.ZERO)
-	# Glass
+	# Glass (kept at wall thickness, recessed within the frame)
 	var gw := width - ft * 2.0
 	var gh := height - ft * 2.0
-	_create_glass_panel(node_name + " Glass", center, Vector3(fd, gh, gw), true)
+	_create_glass_panel(node_name + " Glass", center, Vector3(wall_t, gh, gw), true)
 	# Frame boards — outer edge exactly at opening edge
 	_create_visual_box(node_name + " FrameTop", center + Vector3(0, height * 0.5 - ft * 0.5, 0), Vector3(fd, ft, width), frame, Vector3.ZERO)
 	_create_visual_box(node_name + " FrameBottom", center + Vector3(0, -height * 0.5 + ft * 0.5, 0), Vector3(fd, ft, width), frame, Vector3.ZERO)
