@@ -113,6 +113,26 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 				max_dist = interaction_distance + 1.0
 		var total_dist := flat_dist - reach
 		if total_dist < max_dist and total_dist < best_dist:
+			if not _has_line_of_sight(player, node):
+				continue
 			best_dist = total_dist
 			best = node
 	return best
+
+func _has_line_of_sight(player: Node3D, target: Node3D) -> bool:
+	var space_state := player.get_world_3d().direct_space_state
+	if space_state == null:
+		return true
+	var from: Vector3 = player.global_position + Vector3(0, 1.0, 0)
+	var to: Vector3 = target.global_position
+	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(from, to)
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	var exclude_rids: Array[RID] = [player.get_rid()]
+	_collect_child_collision_rids(player, exclude_rids)
+	if target is CollisionObject3D:
+		exclude_rids.append((target as CollisionObject3D).get_rid())
+	_collect_child_collision_rids(target, exclude_rids)
+	query.exclude = exclude_rids
+	var result: Dictionary = space_state.intersect_ray(query)
+	return result.is_empty()
