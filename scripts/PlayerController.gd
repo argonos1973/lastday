@@ -666,32 +666,50 @@ func puppet_apply_appearance(char_name: String, top_color: Color, bottom_color: 
 func _apply_puppet_appearance() -> void:
 	if third_person_model == null:
 		return
-	# Apply Tops
+	# Apply Tops — reutilizar material cacheado si existe
 	var top_mi: MeshInstance3D = _find_mesh_in_third_person("Tops")
 	if top_mi != null:
-		var tmat := StandardMaterial3D.new()
-		tmat.roughness = 0.8
+		var top_key := "puppet_top"
+		var tmat: StandardMaterial3D = _skin_mat_cache.get(top_key) as StandardMaterial3D
+		if tmat == null:
+			tmat = StandardMaterial3D.new()
+			tmat.roughness = 0.8
+			_skin_mat_cache[top_key] = tmat
 		if _puppet_top_camo:
-			tmat.albedo_texture = _make_camo_texture()
+			if tmat.albedo_texture == null:
+				tmat.albedo_texture = _make_camo_texture()
+				tmat.albedo_color = Color.WHITE
 		else:
+			tmat.albedo_texture = null
 			tmat.albedo_color = _puppet_top_color
 		top_mi.material_override = tmat
 	# Apply Bottoms
 	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
 	if bot_mi != null:
-		var bmat := StandardMaterial3D.new()
-		bmat.roughness = 0.8
+		var bot_key := "puppet_bot"
+		var bmat: StandardMaterial3D = _skin_mat_cache.get(bot_key) as StandardMaterial3D
+		if bmat == null:
+			bmat = StandardMaterial3D.new()
+			bmat.roughness = 0.8
+			_skin_mat_cache[bot_key] = bmat
 		if _puppet_bottom_camo:
-			bmat.albedo_texture = _make_camo_texture()
+			if bmat.albedo_texture == null:
+				bmat.albedo_texture = _make_camo_texture()
+				bmat.albedo_color = Color.WHITE
 		else:
+			bmat.albedo_texture = null
 			bmat.albedo_color = _puppet_bottom_color
 		bot_mi.material_override = bmat
 	# Apply Shoes
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
-		var smat := StandardMaterial3D.new()
+		var skey := "puppet_shoes"
+		var smat: StandardMaterial3D = _skin_mat_cache.get(skey) as StandardMaterial3D
+		if smat == null:
+			smat = StandardMaterial3D.new()
+			smat.roughness = 0.8
+			_skin_mat_cache[skey] = smat
 		smat.albedo_color = _puppet_shoes_color
-		smat.roughness = 0.8
 		shoes_mi.material_override = smat
 	# Apply skin color
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
@@ -705,6 +723,7 @@ func _apply_puppet_appearance() -> void:
 	_tint_mesh(_head_mesh, _puppet_skin_color, 0.9)
 	_tint_mesh(_full_body_mesh, _puppet_skin_color, 0.9)
 	_tint_mesh(_body_no_head_mesh, _puppet_skin_color, 0.9)
+
 
 func puppet_set_rifle(has_rifle: bool) -> void:
 	if not is_puppet:
@@ -1473,32 +1492,47 @@ func _apply_character_colors() -> void:
 		skin_color = gs.selected_skin_color
 		top_camo = gs.get_meta("top_camo", false) if gs.has_meta("top_camo") else false
 		bottom_camo = gs.get_meta("bottom_camo", false) if gs.has_meta("bottom_camo") else false
-	# Apply Tops
+	# Apply Tops — reutilizar material cacheado
 	var top_mi: MeshInstance3D = _find_mesh_in_third_person("Tops")
 	if top_mi != null:
-		var tmat := StandardMaterial3D.new()
-		tmat.roughness = 0.8
+		var tmat: StandardMaterial3D = _skin_mat_cache.get("char_top") as StandardMaterial3D
+		if tmat == null:
+			tmat = StandardMaterial3D.new()
+			tmat.roughness = 0.8
+			_skin_mat_cache["char_top"] = tmat
 		if top_camo:
-			tmat.albedo_texture = _make_camo_texture()
+			if tmat.albedo_texture == null:
+				tmat.albedo_texture = _make_camo_texture()
+				tmat.albedo_color = Color.WHITE
 		else:
+			tmat.albedo_texture = null
 			tmat.albedo_color = top_color
 		top_mi.material_override = tmat
 	# Apply Bottoms
 	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
 	if bot_mi != null:
-		var bmat := StandardMaterial3D.new()
-		bmat.roughness = 0.8
+		var bmat: StandardMaterial3D = _skin_mat_cache.get("char_bot") as StandardMaterial3D
+		if bmat == null:
+			bmat = StandardMaterial3D.new()
+			bmat.roughness = 0.8
+			_skin_mat_cache["char_bot"] = bmat
 		if bottom_camo:
-			bmat.albedo_texture = _make_camo_texture()
+			if bmat.albedo_texture == null:
+				bmat.albedo_texture = _make_camo_texture()
+				bmat.albedo_color = Color.WHITE
 		else:
+			bmat.albedo_texture = null
 			bmat.albedo_color = bottom_color
 		bot_mi.material_override = bmat
 	# Apply Shoes
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
-		var smat := StandardMaterial3D.new()
+		var smat: StandardMaterial3D = _skin_mat_cache.get("char_shoes") as StandardMaterial3D
+		if smat == null:
+			smat = StandardMaterial3D.new()
+			smat.roughness = 0.8
+			_skin_mat_cache["char_shoes"] = smat
 		smat.albedo_color = shoes_color
-		smat.roughness = 0.8
 		shoes_mi.material_override = smat
 	# Apply skin color to Desnudo_* (bare skin) and Body_* (base body)
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
@@ -6103,6 +6137,8 @@ func _find_nearby_world_action():
 	var eye := global_position + Vector3(0.0, 1.2, 0.0)
 	var best = null
 	var best_score := 9999.0
+	# Opt: usar distance_squared_to para el filtro rápido (evita sqrt)
+	const MAX_DIST_SQ := 4.2 * 4.2  # = 17.64
 	for node in get_tree().get_nodes_in_group("world_actions"):
 		if not node is Node3D:
 			continue
@@ -6110,15 +6146,17 @@ func _find_nearby_world_action():
 			continue
 		var action := node as Node3D
 		var to_action := action.global_position - eye
-		var distance := to_action.length()
-		if distance > 4.2:
+		# Filtro rápido sin sqrt
+		if to_action.length_squared() > MAX_DIST_SQ:
 			continue
 		var flat := Vector3(to_action.x, 0.0, to_action.z)
-		if flat.length() <= 0.05:
+		if flat.length_squared() <= 0.0025:  # 0.05 * 0.05
 			continue
 		var facing := forward.dot(flat.normalized())
 		if facing < 0.42:
 			continue
+		# Solo aquí hacemos sqrt para el score final (inevitable)
+		var distance := to_action.length()
 		var score := distance - facing * 1.6
 		if score < best_score:
 			best_score = score
@@ -6261,6 +6299,7 @@ func _melee_attack() -> void:
 	# Damage the closest target (wildlife or player) in range
 	var closest_target: Node3D = null
 	var closest_dist := attack_range
+	var closest_dist_sq := attack_range * attack_range  # Opt: comparar con sq para evitar sqrt
 	var fwd := -global_transform.basis.z.normalized()
 	# Check wildlife
 	for node in get_tree().get_nodes_in_group("wildlife"):
@@ -6269,40 +6308,43 @@ func _melee_attack() -> void:
 		var animal := node as Node3D
 		if animal == self:
 			continue
-		var d := global_position.distance_to(animal.global_position)
-		if d > closest_dist:
+		var d_sq := global_position.distance_squared_to(animal.global_position)
+		if d_sq > closest_dist_sq:
 			continue
 		var dir := (animal.global_position - global_position).normalized()
 		if fwd.dot(dir) < 0.3:
 			continue
 		closest_target = animal
-		closest_dist = d
+		closest_dist_sq = d_sq
+		closest_dist = sqrt(d_sq)
 	# Check NPCs (NPCController class)
 	for node in get_tree().get_nodes_in_group("npc"):
 		if not (node is Node3D) or not is_instance_valid(node):
 			continue
 		var npc_node := node as Node3D
-		var d := global_position.distance_to(npc_node.global_position)
-		if d > closest_dist:
+		var d_sq := global_position.distance_squared_to(npc_node.global_position)
+		if d_sq > closest_dist_sq:
 			continue
 		var dir := (npc_node.global_position - global_position).normalized()
 		if fwd.dot(dir) < 0.3:
 			continue
 		closest_target = npc_node
-		closest_dist = d
+		closest_dist_sq = d_sq
+		closest_dist = sqrt(d_sq)
 	# Check server proxies (net_player_proxy group)
 	for node in get_tree().get_nodes_in_group("net_player_proxy"):
 		if not (node is Node3D) or not is_instance_valid(node):
 			continue
 		var proxy_node := node as Node3D
-		var d := global_position.distance_to(proxy_node.global_position)
-		if d > closest_dist:
+		var d_sq := global_position.distance_squared_to(proxy_node.global_position)
+		if d_sq > closest_dist_sq:
 			continue
 		var dir := (proxy_node.global_position - global_position).normalized()
 		if fwd.dot(dir) < 0.3:
 			continue
 		closest_target = proxy_node
-		closest_dist = d
+		closest_dist_sq = d_sq
+		closest_dist = sqrt(d_sq)
 	# Check remote player avatars (puppets on clients)
 	var scene := get_tree().current_scene
 	if scene != null and scene.get("remote_players") != null:
@@ -6310,14 +6352,15 @@ func _melee_attack() -> void:
 			var rp: Node3D = scene.remote_players[pid]
 			if not is_instance_valid(rp):
 				continue
-			var d := global_position.distance_to(rp.global_position)
-			if d > closest_dist:
+			var d_sq := global_position.distance_squared_to(rp.global_position)
+			if d_sq > closest_dist_sq:
 				continue
 			var dir := (rp.global_position - global_position).normalized()
 			if fwd.dot(dir) < 0.3:
 				continue
 			closest_target = rp
-			closest_dist = d
+			closest_dist_sq = d_sq
+			closest_dist = sqrt(d_sq)
 	if closest_target != null:
 		if closest_target.has_method("take_damage"):
 			closest_target.take_damage(base_damage, is_knife)
