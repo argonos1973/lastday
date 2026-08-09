@@ -4697,7 +4697,7 @@ func _create_rocky_foothills() -> void:
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _world_rng.randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _world_rng.randf_range(0, 360), hill_color)
 		# Añadir abundantes manojos de hierba en las colinas
-		var grass_count := 4 if not is_large_mountain else 30
+		var grass_count := 4 if not is_large_mountain else 60
 		for _hc in range(grass_count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var r_dist := _world_rng.randf_range(0.1, max(radius_x, radius_z) * 0.85)
@@ -4708,7 +4708,7 @@ func _create_rocky_foothills() -> void:
 		
 		# En montañas grandes, añadir árboles densos y arbustos
 		if is_large_mountain:
-			var tree_count := int(radius_x * radius_z * 0.04)
+			var tree_count := int(radius_x * radius_z * 0.06)
 			for _tc in range(tree_count):
 				var t_angle := _world_rng.randf_range(0.0, TAU)
 				var t_dist := _world_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
@@ -4722,7 +4722,7 @@ func _create_rocky_foothills() -> void:
 					continue
 				_create_tree(tpos, false)
 			# Añadir arbustos densos
-			var bush_count := int(radius_x * radius_z * 0.015)
+			var bush_count := int(radius_x * radius_z * 0.03)
 			for _bc in range(bush_count):
 				var b_angle := _world_rng.randf_range(0.0, TAU)
 				var b_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.8)
@@ -5156,8 +5156,8 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 		if _mountain_shared_material == null:
 			_mountain_shared_material = _cached_leafy_material.duplicate() as StandardMaterial3D
 			_mountain_shared_material.uv1_triplanar = true
-			_mountain_shared_material.uv1_scale = Vector3(0.12, 0.12, 0.12)
-			_mountain_shared_material.albedo_color = Color(0.85, 0.95, 0.80)
+			_mountain_shared_material.uv1_scale = Vector3(0.08, 0.08, 0.08)
+			_mountain_shared_material.albedo_color = Color(0.35, 0.55, 0.20)
 		mesh_instance.material_override = _mountain_shared_material
 	else:
 		mesh_instance.material_override = _make_material(color, true)
