@@ -6186,7 +6186,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.06)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.12)
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
