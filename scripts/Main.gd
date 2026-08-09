@@ -4949,7 +4949,7 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 
 func _create_house_details(origin: Vector3, label: String, width: float, depth: float, height: float, half_w: float, half_d: float, front_seg_c: float) -> void:
 	var return_w: float = min(2.0, half_w * 0.32)
-	var front_seg_w: float = half_w - 3.0 * 0.5 - return_w + 0.5
+	var front_seg_w: float = half_w - 1.8 * 0.5 - return_w + 0.5
 	var win_w: float = min(1.5, front_seg_w * 0.72)
 	var win_h: float = win_w * 0.8
 	_create_visual_gable_roof(label + " Roof", origin + Vector3(0, height - 0.1, 0), width + 1.2, depth + 0.8, 1.85, Color(0.14, 0.065, 0.035))
