@@ -329,19 +329,19 @@ func _process(delta: float) -> void:
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 1.5
+		_path_recalc_timer = 3.0
 	var move_target: Vector3 = target
 	if _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
 		var to_waypoint: Vector3 = waypoint - global_position
 		to_waypoint.y = 0.0
-		if to_waypoint.length() < 1.0:
+		if to_waypoint.length() < 1.5:
 			_path_index += 1
 			if _path_index < _current_path.size():
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
-	_move_towards(move_target, speed, delta, 8.0)
+	_move_towards(move_target, speed, delta, 6.0)
 	if global_position.distance_to(_last_position) > 0.01:
 		_walk_time += delta * speed * 4.8
 		_animate_legs(delta)
@@ -1316,20 +1316,20 @@ func _try_flee_from_player(delta: float) -> bool:
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, flee_goal)
 		_path_index = 0
-		_path_recalc_timer = 1.5
+		_path_recalc_timer = 3.0
 	var flee_speed := move_speed * (2.65 if animal_type == "fox" else 2.05)
 	var move_target: Vector3 = flee_goal
 	if _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
 		var to_waypoint: Vector3 = waypoint - global_position
 		to_waypoint.y = 0.0
-		if to_waypoint.length() < 1.0:
+		if to_waypoint.length() < 1.5:
 			_path_index += 1
 			if _path_index < _current_path.size():
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
-	_move_towards(move_target, flee_speed, delta, 8.0)
+	_move_towards(move_target, flee_speed, delta, 6.0)
 	if global_position.distance_to(_last_position) > 0.01:
 		_walk_time += delta * flee_speed * 4.8
 		_animate_legs(delta)

@@ -79,7 +79,7 @@ var _wildlife_respawn_timer := 0.0
 var campfire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
 var _nav_grid: Dictionary = {}
-var _nav_grid_size := 76
+var _nav_grid_size := 182
 var _nav_cell_size := 2.0
 var _door_open_cache: Dictionary = {}
 var _nav_grid_built := false
@@ -8001,7 +8001,7 @@ func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> 
 	var queue: Array = [start_cell]
 	visited[start_cell] = true
 	var head := 0
-	var max_iterations := 4000
+	var max_iterations := 8000
 	var iterations := 0
 	while head < queue.size() and iterations < max_iterations:
 		iterations += 1
@@ -8043,6 +8043,36 @@ func _reconstruct_path(came_from: Dictionary, current: Vector2i, start_world: Ve
 		path.append(_grid_to_world(cells[i]))
 	if path.is_empty():
 		path.append(_grid_to_world(cells[0]))
-	return path
+	return _smooth_path(path)
+
+func _smooth_path(path: Array) -> Array:
+	if path.size() <= 2:
+		return path
+	var smoothed: Array = [path[0]]
+	var current_idx := 0
+	while current_idx < path.size() - 1:
+		var farthest := current_idx + 1
+		for j in range(path.size() - 1, current_idx + 1, -1):
+			if _is_path_clear_nav(path[current_idx], path[j]):
+				farthest = j
+				break
+		smoothed.append(path[farthest])
+		current_idx = farthest
+	return smoothed
+
+func _is_path_clear_nav(a: Vector3, b: Vector3) -> bool:
+	var diff := b - a
+	diff.y = 0.0
+	var dist := diff.length()
+	if dist < 0.01:
+		return true
+	var dir := diff.normalized()
+	var steps := int(ceil(dist / _nav_cell_size))
+	for i in range(1, steps):
+		var pos := a + dir * (float(i) * _nav_cell_size)
+		var cell := _world_to_grid(pos)
+		if is_nav_cell_blocked(cell):
+			return false
+	return true
 
 #endregion
