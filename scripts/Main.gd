@@ -6186,7 +6186,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.12)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.09)
 	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
@@ -6218,7 +6218,8 @@ func _create_forest() -> void:
 func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
-	_register_wildlife_blocker(pos, 5.0)
+	if is_interactive:
+		_register_wildlife_blocker(pos, 5.0)
 	_tree_id_counter += 1
 	var visual_name := "Tree_%d" % _tree_id_counter
 	var collision_name := visual_name + "_Collision"
@@ -6253,8 +6254,9 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	else:
 		made_visual = _create_living_tree_fallback(pos, visual_name)
 	if made_visual:
-		var collision := _create_tree_collision(collision_name, pos)
-		collision.add_to_group("world_action_visual")
+		if is_interactive:
+			var collision := _create_tree_collision(collision_name, pos)
+			collision.add_to_group("world_action_visual")
 		if is_interactive:
 			var action = _create_world_action("fell_tree_%d" % _tree_id_counter, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
 			var trunk_check := get_node_or_null(visual_name)
