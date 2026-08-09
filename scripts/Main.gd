@@ -2728,12 +2728,12 @@ func _register_server_house_blockers() -> void:
 func _create_house(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float) -> void:
 	var half_w := width * 0.5
 	var half_d := depth * 0.5
-	var door_w := 3.0
+	var door_w := 1.8
 	var return_w: float = min(2.0, half_w * 0.32)
 	var front_seg_w: float = half_w - door_w * 0.5 - return_w + 0.5
 	var front_seg_c: float = half_w - front_seg_w * 0.5
 	var return_c: float = door_w * 0.5 + return_w * 0.5
-	var door_h := 2.55
+	var door_h := 3.2
 	var wall_t := 0.35
 	var win_y := height * 0.6
 	var win_w: float = min(1.5, front_seg_w * 0.72)
