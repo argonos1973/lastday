@@ -2958,21 +2958,20 @@ func _create_house_floor(origin: Vector3, label: String, width: float, depth: fl
 	add_child(body)
 
 func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, half_d: float) -> void:
-	# Dense uniform grass fill around the house — no rings, just thick coverage
-	# Close wall weeds (hugging the base)
-	for i in range(80):
+	# Sparse grass around houses — just a few weeds near walls
+	for i in range(20):
 		var side := -1.0 if i % 2 == 0 else 1.0
 		var pos := origin + Vector3(side * randf_range(half_w + 0.2, half_w + 0.95), 0.055, randf_range(-(half_d - 0.1), half_d + 0.1))
 		_create_house_grass_asset(label + " SideGrass", pos, randf_range(0.22, 0.45))
-	for i in range(60):
+	for i in range(15):
 		var fb := 1.0 if i % 2 == 0 else -1.0
 		var pos := origin + Vector3(randf_range(-(half_w - 0.2), half_w - 0.2), 0.055, fb * randf_range(half_d + 0.2, half_d + 0.95))
 		_create_house_grass_asset(label + " WallWeed", pos, randf_range(0.20, 0.42))
-	# Dense grass fill from house edge to 25 units in all directions
+	# Light grass fill from house edge to 12 units
 	var grass_radius: float = max(half_w, half_d) + 2.0
-	for i in range(3000):
+	for i in range(500):
 		var angle := randf_range(0.0, TAU)
-		var dist := randf_range(grass_radius, 25.0)
+		var dist := randf_range(grass_radius, 12.0)
 		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
 		_create_grass_clump(pos, randf_range(0.4, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), randf()))
 
@@ -3209,7 +3208,7 @@ func _create_wildlife() -> void:
 	for i in range(wolf_quadrants.size()):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 		for _retry in range(30):
-			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
+			if not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = wolf_quadrants[i] + Vector3(randf_range(-20, 20), 0.0, randf_range(-20, 20))
 		var route: Array = []
@@ -3218,7 +3217,7 @@ func _create_wildlife() -> void:
 			wp.x = clamp(wp.x, -180, 180)
 			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
-				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
+				if not _is_near_wildlife_blocker(wp, 2.0):
 					break
 				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 				wp.x = clamp(wp.x, -180, 180)
@@ -3244,7 +3243,7 @@ func _check_wildlife_respawn() -> void:
 	if alive_wolf < 12 and alive_wolf <= alive_fox and alive_wolf <= alive_deer:
 		var center := Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		for _retry in range(30):
-			if not _is_near_river(center, 12.0) and not _is_near_wildlife_blocker(center, 5.0):
+			if not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		var route: Array = []
@@ -3253,7 +3252,7 @@ func _check_wildlife_respawn() -> void:
 			wp.x = clamp(wp.x, -180, 180)
 			wp.z = clamp(wp.z, -180, 180)
 			for _wp_retry in range(10):
-				if not _is_near_river(wp, 6.0) and not _is_near_wildlife_blocker(wp, 2.0):
+				if not _is_near_wildlife_blocker(wp, 2.0):
 					break
 				wp = center + Vector3(randf_range(-30, 30), 0.0, randf_range(-30, 30))
 				wp.x = clamp(wp.x, -180, 180)
@@ -5883,8 +5882,6 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	if _is_near_river(pos, 3.0):
-		return false
 	return true
 
 func _is_near_river(pos: Vector3, margin: float) -> bool:
@@ -6170,7 +6167,7 @@ func _create_grass_carpet() -> void:
 			var px := -coverage + float(cx) * spacing + randf_range(-0.5, 0.5)
 			var pz := -coverage + float(cz) * spacing + randf_range(-0.5, 0.5)
 			var pos := Vector3(px, _get_ground_height(Vector3(px, 0, pz)) + 0.012, pz)
-			if _is_in_no_grass_area(pos, 0.65):
+			if not _can_place_ground_vegetation(pos):
 				continue
 			var h := randf_range(0.14, 0.36)
 			var r := randf_range(0.28, 0.52)
@@ -6242,7 +6239,7 @@ func _create_forest() -> void:
 		for _g in range(1):
 			var gpos := pos + Vector3(randf_range(-1.5, 1.5), 0.0, randf_range(-1.5, 1.5))
 			gpos.y = _get_ground_height(Vector3(gpos.x, 0, gpos.z)) + 0.012
-			if not _is_in_no_grass_area(gpos, 0.5):
+			if not _can_place_ground_vegetation(gpos):
 				_queue_grass_instance(gpos, randf_range(0.25, 0.55), randf_range(0.35, 0.65), base_color.lerp(color_var, randf()))
 				
 		if i % 300 == 0:

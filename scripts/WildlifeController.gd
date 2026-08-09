@@ -182,8 +182,8 @@ func _nearest_allowed_point(origin: Vector3):
 		for i in range(16):
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -68.0, 68.0)
-			candidate.z = clamp(candidate.z, -68.0, 68.0)
+			candidate.x = clamp(candidate.x, -180.0, 180.0)
+			candidate.z = clamp(candidate.z, -180.0, 180.0)
 			if _is_position_allowed(candidate):
 				return candidate
 	return null
@@ -209,8 +209,8 @@ func _escape_if_trapped(delta: float) -> bool:
 	dir = dir.normalized()
 	var step := move_speed * 2.2 * delta
 	var next_pos := global_position + dir * step
-	next_pos.x = clamp(next_pos.x, -72.0, 72.0)
-	next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+	next_pos.x = clamp(next_pos.x, -180.0, 180.0)
+	next_pos.z = clamp(next_pos.z, -180.0, 180.0)
 	global_position = next_pos
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * 6.0)
 	_walk_time += delta * move_speed * 5.0
@@ -1310,8 +1310,8 @@ func _try_flee_from_player(delta: float) -> bool:
 	if away.length() < 0.01:
 		away = Vector3.RIGHT
 	var flee_goal := global_position + away.normalized() * 20.0
-	flee_goal.x = clamp(flee_goal.x, -68.0, 68.0)
-	flee_goal.z = clamp(flee_goal.z, -68.0, 68.0)
+	flee_goal.x = clamp(flee_goal.x, -180.0, 180.0)
+	flee_goal.z = clamp(flee_goal.z, -180.0, 180.0)
 	_path_recalc_timer -= delta
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, flee_goal)
@@ -1347,8 +1347,8 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 		dir = (dir + sep * 0.8).normalized()
 	var step := speed * delta
 	var next_pos: Vector3 = global_position + dir * step
-	next_pos.x = clamp(next_pos.x, -72.0, 72.0)
-	next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+	next_pos.x = clamp(next_pos.x, -180.0, 180.0)
+	next_pos.z = clamp(next_pos.z, -180.0, 180.0)
 	if not _is_position_allowed(next_pos):
 		if not _move_with_avoidance(dir, speed, delta, turn_speed):
 			return
@@ -1385,13 +1385,13 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 		candidate = candidate.normalized()
 		var step_dist := speed * delta
 		var next_pos: Vector3 = global_position + candidate * step_dist
-		next_pos.x = clamp(next_pos.x, -72.0, 72.0)
-		next_pos.z = clamp(next_pos.z, -72.0, 72.0)
+		next_pos.x = clamp(next_pos.x, -180.0, 180.0)
+		next_pos.z = clamp(next_pos.z, -180.0, 180.0)
 		if not _is_position_allowed(next_pos):
 			continue
 		var lookahead: Vector3 = global_position + candidate * step_dist * 2.5
-		lookahead.x = clamp(lookahead.x, -72.0, 72.0)
-		lookahead.z = clamp(lookahead.z, -72.0, 72.0)
+		lookahead.x = clamp(lookahead.x, -180.0, 180.0)
+		lookahead.z = clamp(lookahead.z, -180.0, 180.0)
 		if not _is_position_allowed(lookahead):
 			continue
 		global_position = next_pos
@@ -1452,8 +1452,8 @@ func _find_safe_patrol_points(source_points: Array) -> Array:
 			var angle := TAU * float(i) / 24.0
 			var radius := 6.0 + float(i % 4) * 4.0
 			var candidate := center_pos + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -68.0, 68.0)
-			candidate.z = clamp(candidate.z, -68.0, 68.0)
+			candidate.x = clamp(candidate.x, -180.0, 180.0)
+			candidate.z = clamp(candidate.z, -180.0, 180.0)
 			if _is_position_allowed(candidate):
 				safe_points.append(candidate)
 				break
