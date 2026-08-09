@@ -4538,26 +4538,22 @@ func _create_mountain_backdrop() -> void:
 	_create_rocky_foothills()
 
 func _create_rocky_foothills() -> void:
-	for i in range(250):
-		var side := randi() % 4
-		var pos := Vector3.ZERO
-		var inner := MAP_EXTENT * 0.8
-		var outer := MAP_EXTENT
-		match side:
-			0:
-				pos = Vector3(randf_range(-outer, outer), 0.04, randf_range(-outer, -inner))
-			1:
-				pos = Vector3(randf_range(-outer, outer), 0.04, randf_range(inner, outer))
-			2:
-				pos = Vector3(randf_range(-outer, -inner), 0.04, randf_range(-outer, outer))
-			_:
-				pos = Vector3(randf_range(inner, outer), 0.04, randf_range(-outer, outer))
-		if not _can_place_ground_vegetation(pos, 1.8):
+	# En lugar de rocas gigantes, generamos colinas a lo largo de todo el mapa para darle relieve al terreno.
+	var num_hills := int(35 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	for i in range(num_hills):
+		var pos := Vector3(randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
+		
+		# Mantener el centro del mapa plano para poder construir
+		if Vector2(pos.x, pos.z).length() < 55.0:
 			continue
-		var rock_scale := randf_range(1.0, 2.4)
-		if _try_instance_external_scene(_shuffled_paths(REAL_ROCK_MODELS), "FoothillRock", pos, Vector3.ONE * rock_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0):
-			continue
-		_create_polyhaven_boulder(pos, Vector3(randf_range(0.8, 2.1), randf_range(0.25, 0.8), randf_range(0.7, 1.9)))
+		
+		var radius_x := randf_range(14.0, 32.0)
+		var radius_z := randf_range(14.0, 32.0)
+		var height := randf_range(3.0, 10.0)
+		
+		# Color de tierra verdosa para las colinas
+		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), randf())
+		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, randf_range(0, 360), hill_color)
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
