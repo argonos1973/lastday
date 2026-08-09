@@ -4661,6 +4661,7 @@ func _create_mountain_backdrop() -> void:
 func _create_rocky_foothills() -> void:
 	# En lugar de colinas gigantes y solapadas, generamos colinas suaves, espaciadas y de menor tamaño.
 	var num_hills := int(7 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0)) # ~75 colinas en total
+	var large_hill_count := 0
 	for i in range(num_hills):
 		var pos := Vector3(_world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, _world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
@@ -4668,30 +4669,69 @@ func _create_rocky_foothills() -> void:
 		if Vector2(pos.x, pos.z).length() < 90.0:
 			continue
 		
-		var radius_x := _world_rng.randf_range(6.0, 14.0)
-		var radius_z := _world_rng.randf_range(6.0, 14.0)
-		var height := _world_rng.randf_range(0.8, 2.8) # Muy suaves y caminables
-		
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
 		var near_spawn := false
 		for sz in _spawn_zones:
-			if Vector2(pos.x - sz.x, pos.z - sz.z).length() < (max(radius_x, radius_z) + 25.0):
+			if Vector2(pos.x - sz.x, pos.z - sz.z).length() < (max(40.0, 25.0) + 25.0):
 				near_spawn = true
 				break
 		if near_spawn:
 			continue
 		
+		# ~20% de las colinas se convierten en montañas grandes con vegetación
+		var is_large_mountain := large_hill_count < 8 and _world_rng.randf() < 0.20
+		var radius_x: float
+		var radius_z: float
+		var height: float
+		if is_large_mountain:
+			radius_x = _world_rng.randf_range(25.0, 45.0)
+			radius_z = _world_rng.randf_range(25.0, 45.0)
+			height = _world_rng.randf_range(6.0, 14.0)
+			large_hill_count += 1
+		else:
+			radius_x = _world_rng.randf_range(6.0, 14.0)
+			radius_z = _world_rng.randf_range(6.0, 14.0)
+			height = _world_rng.randf_range(0.8, 2.8) # Muy suaves y caminables
+		
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _world_rng.randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _world_rng.randf_range(0, 360), hill_color)
 		# Añadir abundantes manojos de hierba en las colinas
-		for _hc in range(4):
+		var grass_count := 4 if not is_large_mountain else 30
+		for _hc in range(grass_count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var r_dist := _world_rng.randf_range(0.1, max(radius_x, radius_z) * 0.85)
 			var hpos := pos + Vector3(cos(angle) * r_dist, 0, sin(angle) * r_dist)
 			hpos.y = _get_exact_ground_y(hpos.x, hpos.z) + 0.02
 			if _can_place_ground_vegetation(hpos):
 				_create_grass_clump(hpos, _world_rng.randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
+		
+		# En montañas grandes, añadir árboles densos y arbustos
+		if is_large_mountain:
+			var tree_count := int(radius_x * radius_z * 0.025)
+			for _tc in range(tree_count):
+				var t_angle := _world_rng.randf_range(0.0, TAU)
+				var t_dist := _world_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
+				var tpos := pos + Vector3(cos(t_angle) * t_dist, 0, sin(t_angle) * t_dist)
+				tpos.y = _get_exact_ground_y(tpos.x, tpos.z)
+				if tpos.y < 0.05:
+					continue
+				if _is_near_house(tpos, 3.0):
+					continue
+				if not _can_place_ground_vegetation(tpos, 2.8):
+					continue
+				_create_tree(tpos, false)
+			# Añadir arbustos densos
+			var bush_count := int(radius_x * radius_z * 0.015)
+			for _bc in range(bush_count):
+				var b_angle := _world_rng.randf_range(0.0, TAU)
+				var b_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.8)
+				var bpos := pos + Vector3(cos(b_angle) * b_dist, 0, sin(b_angle) * b_dist)
+				bpos.y = _get_exact_ground_y(bpos.x, bpos.z)
+				if bpos.y < 0.05:
+					continue
+				if _can_place_ground_vegetation(bpos):
+					_create_bush(bpos, _world_rng.randf_range(0.4, 0.9))
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
