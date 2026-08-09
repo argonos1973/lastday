@@ -4702,7 +4702,7 @@ func _create_rocky_foothills() -> void:
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var r_dist := _world_rng.randf_range(0.1, max(radius_x, radius_z) * 0.85)
 			var hpos := pos + Vector3(cos(angle) * r_dist, 0, sin(angle) * r_dist)
-			hpos.y = _get_exact_ground_y(hpos.x, hpos.z) + 0.02
+			hpos.y = _get_ground_height(hpos) + 0.02
 			if _can_place_ground_vegetation(hpos):
 				_create_grass_clump(hpos, _world_rng.randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
 		
@@ -4713,7 +4713,7 @@ func _create_rocky_foothills() -> void:
 				var t_angle := _world_rng.randf_range(0.0, TAU)
 				var t_dist := _world_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
 				var tpos := pos + Vector3(cos(t_angle) * t_dist, 0, sin(t_angle) * t_dist)
-				tpos.y = _get_exact_ground_y(tpos.x, tpos.z)
+				tpos.y = _get_ground_height(tpos)
 				if tpos.y < 0.05:
 					continue
 				if _is_near_house(tpos, 3.0):
@@ -4727,7 +4727,7 @@ func _create_rocky_foothills() -> void:
 				var b_angle := _world_rng.randf_range(0.0, TAU)
 				var b_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.8)
 				var bpos := pos + Vector3(cos(b_angle) * b_dist, 0, sin(b_angle) * b_dist)
-				bpos.y = _get_exact_ground_y(bpos.x, bpos.z)
+				bpos.y = _get_ground_height(bpos)
 				if bpos.y < 0.05:
 					continue
 				if _can_place_ground_vegetation(bpos):
