@@ -108,7 +108,7 @@ const GRASS_BATCH_VARIANTS := 10
 var grass_batch_meshes: Array = []
 var grass_batch_transforms: Array = []
 var grass_batch_colors: Array = []
-var grass_batch_material: StandardMaterial3D = null
+var grass_batch_material: Material = null
 var _tall_grass_meshes: Array = []
 var _tall_grass_transforms: Array = []
 var _tall_grass_colors: Array = []
@@ -6761,12 +6761,12 @@ func _ensure_grass_batches() -> void:
 		grass_batch_meshes.append(_build_grass_variant_mesh(0x9E37 + i * 1013))
 		grass_batch_transforms.append([])
 		grass_batch_colors.append([])
-	grass_batch_material = StandardMaterial3D.new()
-	grass_batch_material.roughness = 0.96
-	grass_batch_material.metallic = 0.0
-	grass_batch_material.vertex_color_use_as_albedo = true
-	grass_batch_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	grass_batch_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
+	var std_mat := StandardMaterial3D.new()
+	std_mat.roughness = 0.96
+	std_mat.metallic = 0.0
+	std_mat.vertex_color_use_as_albedo = true
+	std_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	std_mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 	var noise := FastNoiseLite.new()
 	noise.seed = randi()
 	noise.frequency = 0.085
@@ -6775,18 +6775,18 @@ func _ensure_grass_batches() -> void:
 	texture.width = 96
 	texture.height = 96
 	texture.noise = noise
-	grass_batch_material.albedo_texture = texture
-	# Reemplazar con shader de viento preservando la textura
-	var saved_texture := grass_batch_material.albedo_texture
+	std_mat.albedo_texture = texture
+	# Crear shader de viento preservando la textura
 	_ensure_wind_shader()
-	grass_batch_material = ShaderMaterial.new()
-	(grass_batch_material as ShaderMaterial).shader = _wind_shader
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("albedo_tex", saved_texture)
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("albedo_color", Color(1, 1, 1, 1))
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_strength", 0.12)
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_speed", 1.8)
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_frequency", 1.5)
-	(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", 0.0)
+	var wind_mat := ShaderMaterial.new()
+	wind_mat.shader = _wind_shader
+	wind_mat.set_shader_parameter("albedo_tex", texture)
+	wind_mat.set_shader_parameter("albedo_color", Color(1, 1, 1, 1))
+	wind_mat.set_shader_parameter("wind_strength", 0.12)
+	wind_mat.set_shader_parameter("wind_speed", 1.8)
+	wind_mat.set_shader_parameter("wind_frequency", 1.5)
+	wind_mat.set_shader_parameter("time_var", 0.0)
+	grass_batch_material = wind_mat
 
 var _wind_shader: Shader = null
 var _wind_time: float = 0.0
