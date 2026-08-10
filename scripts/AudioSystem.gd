@@ -111,7 +111,7 @@ func _create_players() -> void:
 
 	wind_player = AudioStreamPlayer.new()
 	wind_player.name = "WindLoop"
-	wind_player.volume_db = -18.0
+	wind_player.volume_db = -8.0
 	add_child(wind_player)
 
 	river_player = AudioStreamPlayer3D.new()
@@ -260,7 +260,7 @@ func _update_ambience() -> void:
 	if ambient_night_player.stream != null:
 		ambient_night_player.volume_db = night_volume + 4.0
 	if wind_player.stream != null:
-		wind_player.volume_db = -18.0 if player.in_shelter else -10.0
+		wind_player.volume_db = -8.0 if player.in_shelter else -3.0
 
 func _update_river(delta: float) -> void:
 	if river_player == null or river_player.stream == null:

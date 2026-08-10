@@ -551,6 +551,7 @@ func _input(_event: InputEvent) -> void:
 	return
 
 func _process(delta: float) -> void:
+	_update_wind_shader_time(delta)
 	_tree_check_timer += delta
 	if _tree_check_timer > 0.5:
 		_tree_check_timer = 0.0
@@ -6775,6 +6776,57 @@ func _ensure_grass_batches() -> void:
 	texture.height = 96
 	texture.noise = noise
 	grass_batch_material.albedo_texture = texture
+	# Reemplazar con shader de viento preservando la textura
+	var saved_texture := grass_batch_material.albedo_texture
+	_ensure_wind_shader()
+	grass_batch_material = ShaderMaterial.new()
+	(grass_batch_material as ShaderMaterial).shader = _wind_shader
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("albedo_tex", saved_texture)
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("albedo_color", Color(1, 1, 1, 1))
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_strength", 0.12)
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_speed", 1.8)
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("wind_frequency", 1.5)
+	(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", 0.0)
+
+var _wind_shader: Shader = null
+var _wind_time: float = 0.0
+
+func _ensure_wind_shader() -> void:
+	if _wind_shader != null:
+		return
+	_wind_shader = Shader.new()
+	_wind_shader.code = """
+shader_type spatial;
+render_mode cull_disabled, depth_draw_opaque, diffuse_lambert, specular_disabled;
+
+uniform sampler2D albedo_tex : source_color;
+uniform vec4 albedo_color : source_color = vec4(1.0);
+uniform float wind_strength = 0.15;
+uniform float wind_speed = 1.5;
+uniform float wind_frequency = 2.0;
+uniform float time_var = 0.0;
+
+void vertex() {
+	float world_x = (MODEL_MATRIX * vec4(VERTEX, 1.0)).x;
+	float world_z = (MODEL_MATRIX * vec4(VERTEX, 1.0)).z;
+	float height_factor = VERTEX.y;
+	float wind_phase = world_x * wind_frequency + world_z * wind_frequency * 0.7 + time_var * wind_speed;
+	float sway = sin(wind_phase) * wind_strength * height_factor;
+	float sway2 = sin(wind_phase * 1.7 + 0.5) * wind_strength * 0.5 * height_factor;
+	VERTEX.x += sway;
+	VERTEX.z += sway2;
+}
+
+void fragment() {
+	vec4 tex = texture(albedo_tex, UV);
+	ALBEDO = tex.rgb * albedo_color.rgb * COLOR.rgb;
+}
+"""
+
+func _update_wind_shader_time(delta: float) -> void:
+	_wind_time += delta
+	if grass_batch_material is ShaderMaterial:
+		(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", _wind_time)
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 	_ensure_grass_batches()
