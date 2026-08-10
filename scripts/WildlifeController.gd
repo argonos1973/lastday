@@ -1130,6 +1130,12 @@ func _play_wolf_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		return
+	var player_node := get_tree().current_scene.get_node_or_null("Player")
+	var dist := 999.0
+	if player_node != null and player_node is Node3D:
+		dist = global_position.distance_to((player_node as Node3D).global_position)
+	if dist > 18.0:
+		return
 	if _wolf_pain_player == null:
 		_wolf_pain_player = AudioStreamPlayer.new()
 		_wolf_pain_player.name = "WolfPainSound"
@@ -1146,7 +1152,7 @@ func _play_wolf_pain_sound() -> void:
 		return
 	_wolf_pain_player.stop()
 	_wolf_pain_player.stream = stream
-	_wolf_pain_player.volume_db = 2.0
+	_wolf_pain_player.volume_db = -6.0 - (dist / 18.0) * 12.0
 	_wolf_pain_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_pain_player.play()
 
@@ -1219,6 +1225,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _net != null and _net.is_dedicated_server:
 		return
 	if sound_type == "howl":
+		var player_node_h := get_tree().current_scene.get_node_or_null("Player")
+		var dist_h := 999.0
+		if player_node_h != null and player_node_h is Node3D:
+			dist_h = global_position.distance_to((player_node_h as Node3D).global_position)
+		if dist_h > 25.0:
+			return
 		if _wolf_howl_2d_player == null:
 			_wolf_howl_2d_player = AudioStreamPlayer.new()
 			_wolf_howl_2d_player.name = "WolfHowl2D"
@@ -1237,18 +1249,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 		if stream is AudioStreamMP3:
 			(stream as AudioStreamMP3).loop = false
 		_wolf_howl_2d_player.stream = stream
-		var player_node := get_tree().current_scene.get_node_or_null("Player")
-		var dist := 999.0
-		if player_node != null and player_node is Node3D:
-			dist = global_position.distance_to((player_node as Node3D).global_position)
-		var vol := -15.0
-		if dist > 60.0:
-			vol = -8.0
-		elif dist > 30.0:
-			vol = -12.0
-		else:
-			vol = -18.0
-		if player_node != null and player_node.has_meta("in_house") and player_node.get_meta("in_house", false):
+		var vol := -18.0 - (dist_h / 25.0) * 18.0
+		if player_node_h != null and player_node_h.has_meta("in_house") and player_node_h.get_meta("in_house", false):
 			vol -= 20.0
 		_wolf_howl_2d_player.volume_db = vol
 		_wolf_howl_2d_player.pitch_scale = randf_range(0.85, 1.15)
@@ -1257,8 +1259,9 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _wolf_audio_player == null:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
-		_wolf_audio_player.unit_size = 8.0
-		_wolf_audio_player.max_distance = 120.0
+		_wolf_audio_player.unit_size = 1.0
+		_wolf_audio_player.max_distance = 18.0
+		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_wolf_audio_player)
 	if _wolf_audio_player.playing:
 		return
