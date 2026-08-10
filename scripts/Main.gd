@@ -2588,11 +2588,15 @@ func _create_map() -> void:
 	if not is_server:
 		_create_mountain_backdrop()
 		# Esperamos frames de física para asegurar que las colisiones del terreno se registren en el servidor de físicas
+		var _rng_state_1 := _world_rng.state
 		await get_tree().physics_frame
 		await get_tree().physics_frame
+		_world_rng.state = _rng_state_1
 		await _create_rocky_foothills()
+		_rng_state_1 = _world_rng.state
 		await get_tree().physics_frame
 		await get_tree().physics_frame
+		_world_rng.state = _rng_state_1
 		_tm = Time.get_ticks_msec()
 	if not is_server:
 		await _create_grass_ground_cover()
@@ -4706,7 +4710,9 @@ func _create_rocky_foothills() -> void:
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _world_rng.randf_range(0, 360), hill_color)
 		# Esperar a que la colisión de esta montaña se registre en el motor de física
 		if is_large_mountain:
+			var _saved_rng_state := _world_rng.state
 			await get_tree().physics_frame
+			_world_rng.state = _saved_rng_state
 		# Añadir abundantes manojos de hierba en las colinas
 		var grass_count := 4 if not is_large_mountain else 60
 		for _hc in range(grass_count):
