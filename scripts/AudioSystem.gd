@@ -151,9 +151,9 @@ func _create_players() -> void:
 
 	animal_call_player = AudioStreamPlayer3D.new()
 	animal_call_player.name = "AnimalCalls"
-	animal_call_player.unit_size = 1.0
-	animal_call_player.max_distance = 24.0
-	animal_call_player.volume_db = -18.0
+	animal_call_player.unit_size = 0.5
+	animal_call_player.max_distance = 14.0
+	animal_call_player.volume_db = -24.0
 	animal_call_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(animal_call_player)
 
@@ -314,9 +314,9 @@ func _update_animal_calls(delta: float) -> void:
 			continue
 		var animal := node as Node3D
 		var distance := animal.global_position.distance_to(player.global_position)
-		if distance > 22.0 or distance < 9.0:
+		if distance > 14.0 or distance < 6.0:
 			continue
-		if chosen == null or distance < chosen_distance or (distance < 18.0 and randf() < 0.45):
+		if chosen == null or distance < chosen_distance or (distance < 10.0 and randf() < 0.45):
 			chosen = animal
 			chosen_distance = distance
 	if chosen == null:
@@ -335,11 +335,11 @@ func _update_animal_calls(delta: float) -> void:
 	if calls.is_empty():
 		animal_call_timer = randf_range(24.0, 42.0)
 		return
-	var close := chosen_distance < 18.0
+	var close := chosen_distance < 10.0
 	if close and randf() < 0.78:
 		animal_call_timer = randf_range(14.0, 26.0)
 		return
-	_play_one_shot_at(animal_call_player, calls, chosen.global_position, -20.0 if close else -27.0, randf_range(0.96, 1.03))
+	_play_one_shot_at(animal_call_player, calls, chosen.global_position, -28.0 if close else -36.0, randf_range(0.96, 1.03))
 	animal_call_timer = randf_range(26.0, 52.0)
 
 func play_chop_at(pos: Vector3) -> void:
