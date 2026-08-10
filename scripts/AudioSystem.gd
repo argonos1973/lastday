@@ -151,9 +151,10 @@ func _create_players() -> void:
 
 	animal_call_player = AudioStreamPlayer3D.new()
 	animal_call_player.name = "AnimalCalls"
-	animal_call_player.unit_size = 2.5
-	animal_call_player.max_distance = 48.0
+	animal_call_player.unit_size = 1.0
+	animal_call_player.max_distance = 24.0
 	animal_call_player.volume_db = -18.0
+	animal_call_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(animal_call_player)
 
 	forest_player = AudioStreamPlayer.new()
@@ -313,7 +314,7 @@ func _update_animal_calls(delta: float) -> void:
 			continue
 		var animal := node as Node3D
 		var distance := animal.global_position.distance_to(player.global_position)
-		if distance > 46.0 or distance < 9.0:
+		if distance > 22.0 or distance < 9.0:
 			continue
 		if chosen == null or distance < chosen_distance or (distance < 18.0 and randf() < 0.45):
 			chosen = animal
