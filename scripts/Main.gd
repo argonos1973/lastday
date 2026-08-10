@@ -60,6 +60,7 @@ var _tree_activation_radius := 60.0
 var _tree_deactivation_radius := 80.0
 var _tree_check_timer := 0.0
 var _bush_id_counter := 0
+var _boulder_id_counter := 0
 var material_cache := {}
 var billboard_texture_cache := {}
 var texture_path_cache := {}
@@ -4737,6 +4738,69 @@ func _create_rocky_foothills() -> void:
 					continue
 				if _can_place_ground_vegetation(bpos):
 					_create_bush(bpos, _world_rng.randf_range(0.4, 0.9))
+		# Piedras gigantes procedurales en montañas grandes
+		if is_large_mountain:
+			var boulder_count := 3 + _world_rng.randi() % 4
+			for _bc in range(boulder_count):
+				var b_angle := _world_rng.randf_range(0.0, TAU)
+				var b_dist: float
+				var b_scale: Vector3
+				var is_cave_boulder := _world_rng.randf() < 0.35
+				if is_cave_boulder:
+					# Cerca de la cima, formando estructuras tipo cueva
+					b_dist = _world_rng.randf_range(0.0, max(radius_x, radius_z) * 0.3)
+					b_scale = Vector3(
+						_world_rng.randf_range(4.0, 8.0),
+						_world_rng.randf_range(5.0, 10.0),
+						_world_rng.randf_range(4.0, 8.0)
+					)
+				else:
+					# En la base de la montaña
+					b_dist = _world_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
+					b_scale = Vector3(
+						_world_rng.randf_range(3.0, 7.0),
+						_world_rng.randf_range(3.0, 6.0),
+						_world_rng.randf_range(3.0, 7.0)
+					)
+				var bpos := pos + Vector3(cos(b_angle) * b_dist, 0, sin(b_angle) * b_dist)
+				bpos.y = _get_exact_ground_y(bpos.x, bpos.z)
+				if bpos.y < 0.5:
+					continue
+				_create_giant_mountain_boulder(bpos, b_scale, is_cave_boulder)
+
+func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave: bool) -> void:
+	var base_color := Color(0.28, 0.26, 0.22)
+	var rock_texture := POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
+	var boulder_id := _boulder_id_counter
+	_boulder_id_counter += 1
+	# Lóbulo principal
+	var main_name := "GiantBoulder_%d" % boulder_id
+	_create_textured_visual_sphere(main_name, pos + Vector3(0, scale_value.y * 0.45, 0), scale_value, rock_texture, base_color)
+	# Lóbulos secundarios para dar forma irregular
+	var lobe_count := 2 + _world_rng.randi() % 3
+	for i in range(lobe_count):
+		var lobe_offset := Vector3(
+			scale_value.x * _world_rng.randf_range(-0.45, 0.45),
+			scale_value.y * _world_rng.randf_range(-0.1, 0.35),
+			scale_value.z * _world_rng.randf_range(-0.45, 0.45)
+		)
+		var lobe_scale := scale_value * Vector3(
+			_world_rng.randf_range(0.4, 0.7),
+			_world_rng.randf_range(0.4, 0.65),
+			_world_rng.randf_range(0.4, 0.7)
+		)
+		_create_textured_visual_sphere(main_name + "_Lobe%d" % i, pos + lobe_offset + Vector3(0, scale_value.y * 0.45, 0), lobe_scale, rock_texture, base_color.darkened(0.05))
+	# Si es cueva, añadir un lóbulo elevado a un lado creando un techo
+	if is_cave:
+		var cave_offset := Vector3(
+			scale_value.x * _world_rng.randf_range(-0.3, 0.3),
+			scale_value.y * 0.8,
+			scale_value.z * _world_rng.randf_range(-0.3, 0.3)
+		)
+		var cave_scale := scale_value * Vector3(0.85, 0.55, 0.85)
+		_create_textured_visual_sphere(main_name + "_CaveRoof", pos + cave_offset + Vector3(0, scale_value.y * 0.45, 0), cave_scale, rock_texture, base_color.darkened(0.08))
+	# Colisión
+	_create_invisible_collision_box("GiantBoulderCollision_%d" % boulder_id, pos, Vector3(scale_value.x * 0.9, scale_value.y, scale_value.z * 0.9))
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
