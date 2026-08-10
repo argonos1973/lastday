@@ -61,6 +61,10 @@ var _tree_deactivation_radius := 80.0
 var _tree_check_timer := 0.0
 var _bush_id_counter := 0
 var _boulder_id_counter := 0
+var _boulder_registry: Array = [] # {pos, visual_name, id, active, scale}
+var _boulder_activation_radius := 60.0
+var _boulder_deactivation_radius := 80.0
+var _boulder_check_timer := 0.0
 var material_cache := {}
 var billboard_texture_cache := {}
 var texture_path_cache := {}
@@ -551,6 +555,7 @@ func _process(delta: float) -> void:
 	if _tree_check_timer > 0.5:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
+		_update_boulder_interactions()
 	if world_streaming_mgr != null:
 		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
@@ -4740,19 +4745,22 @@ func _create_rocky_foothills() -> void:
 					_create_bush(bpos, _world_rng.randf_range(0.4, 0.9))
 		# Piedras gigantes procedurales en montañas grandes
 		if is_large_mountain:
-			var boulder_count := 3 + _world_rng.randi() % 4
+			var boulder_count := 5 + _world_rng.randi() % 5
 			for _bc in range(boulder_count):
 				var b_angle := _world_rng.randf_range(0.0, TAU)
 				var b_dist: float
 				var b_scale: Vector3
-				var is_cave_boulder := _world_rng.randf() < 0.35
+				var is_cave_boulder := _world_rng.randf() < 0.55
 				if is_cave_boulder:
-					# Cerca de la cima, formando estructuras tipo cueva
-					b_dist = _world_rng.randf_range(0.0, max(radius_x, radius_z) * 0.3)
+					# 50% cerca de la cima, 50% en la base - formando cuevas
+					if _world_rng.randf() < 0.5:
+						b_dist = _world_rng.randf_range(0.0, max(radius_x, radius_z) * 0.3)
+					else:
+						b_dist = _world_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
 					b_scale = Vector3(
-						_world_rng.randf_range(4.0, 8.0),
-						_world_rng.randf_range(5.0, 10.0),
-						_world_rng.randf_range(4.0, 8.0)
+						_world_rng.randf_range(4.0, 9.0),
+						_world_rng.randf_range(5.0, 12.0),
+						_world_rng.randf_range(4.0, 9.0)
 					)
 				else:
 					# En la base de la montaña
@@ -4771,10 +4779,10 @@ func _create_rocky_foothills() -> void:
 func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave: bool) -> void:
 	var base_color := Color(0.28, 0.26, 0.22)
 	var rock_texture := POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
-	var boulder_id := _boulder_id_counter
 	_boulder_id_counter += 1
-	# Lóbulo principal
+	var boulder_id := _boulder_id_counter
 	var main_name := "GiantBoulder_%d" % boulder_id
+	# Lóbulo principal
 	_create_textured_visual_sphere(main_name, pos + Vector3(0, scale_value.y * 0.45, 0), scale_value, rock_texture, base_color)
 	# Lóbulos secundarios para dar forma irregular
 	var lobe_count := 2 + _world_rng.randi() % 3
@@ -4790,8 +4798,9 @@ func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave:
 			_world_rng.randf_range(0.4, 0.7)
 		)
 		_create_textured_visual_sphere(main_name + "_Lobe%d" % i, pos + lobe_offset + Vector3(0, scale_value.y * 0.45, 0), lobe_scale, rock_texture, base_color.darkened(0.05))
-	# Si es cueva, añadir un lóbulo elevado a un lado creando un techo
+	# Si es cueva, añadir lóbulos elevados creando un techo/hueco
 	if is_cave:
+		# Techo principal
 		var cave_offset := Vector3(
 			scale_value.x * _world_rng.randf_range(-0.3, 0.3),
 			scale_value.y * 0.8,
@@ -4799,8 +4808,45 @@ func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave:
 		)
 		var cave_scale := scale_value * Vector3(0.85, 0.55, 0.85)
 		_create_textured_visual_sphere(main_name + "_CaveRoof", pos + cave_offset + Vector3(0, scale_value.y * 0.45, 0), cave_scale, rock_texture, base_color.darkened(0.08))
-	# Colisión
-	_create_invisible_collision_box("GiantBoulderCollision_%d" % boulder_id, pos, Vector3(scale_value.x * 0.9, scale_value.y, scale_value.z * 0.9))
+		# Segundo lóbulo de techo para crear un hueco más grande
+		var cave2_offset := Vector3(
+			scale_value.x * _world_rng.randf_range(-0.4, 0.4),
+			scale_value.y * 0.7,
+			scale_value.z * _world_rng.randf_range(-0.4, 0.4)
+		)
+		var cave2_scale := scale_value * Vector3(0.7, 0.5, 0.7)
+		_create_textured_visual_sphere(main_name + "_CaveRoof2", pos + cave2_offset + Vector3(0, scale_value.y * 0.45, 0), cave2_scale, rock_texture, base_color.darkened(0.06))
+	# Registrar para activación de colisión por proximidad
+	_boulder_registry.append({"pos": pos, "visual_name": main_name, "id": boulder_id, "active": false, "scale": scale_value})
+
+func _update_boulder_interactions() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	for entry in _boulder_registry:
+		var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
+		if dist < _boulder_activation_radius and not entry.active:
+			_activate_boulder(entry)
+		elif dist > _boulder_deactivation_radius and entry.active:
+			_deactivate_boulder(entry)
+
+func _activate_boulder(entry: Dictionary) -> void:
+	var boulder_id: int = entry.id
+	var collision_name := "GiantBoulderCollision_%d" % boulder_id
+	var pos: Vector3 = entry.pos
+	var scale_value: Vector3 = entry.scale
+	_create_invisible_collision_box(collision_name, pos, Vector3(scale_value.x * 0.9, scale_value.y, scale_value.z * 0.9))
+	var col_node := get_node_or_null(collision_name)
+	if col_node != null:
+		col_node.add_to_group("world_action_visual")
+	entry.active = true
+
+func _deactivate_boulder(entry: Dictionary) -> void:
+	var collision_name := "GiantBoulderCollision_%d" % entry.id
+	var col_node := get_node_or_null(collision_name)
+	if col_node != null:
+		col_node.queue_free()
+	entry.active = false
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
