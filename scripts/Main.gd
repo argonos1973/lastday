@@ -2580,14 +2580,16 @@ func _create_map() -> void:
 			_loading_label.text = "Generando terreno..."
 		await get_tree().process_frame
 	if not is_server:
-		await _create_grass_ground_cover()
-	_tm = Time.get_ticks_msec()
-	if not is_server:
 		_create_mountain_backdrop()
 		# Esperamos frames de física para asegurar que las colisiones del terreno se registren en el servidor de físicas
 		await get_tree().physics_frame
 		await get_tree().physics_frame
-		_create_rocky_foothills()
+		await _create_rocky_foothills()
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		_tm = Time.get_ticks_msec()
+	if not is_server:
+		await _create_grass_ground_cover()
 		_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_mountain_river()
@@ -4696,6 +4698,9 @@ func _create_rocky_foothills() -> void:
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _world_rng.randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _world_rng.randf_range(0, 360), hill_color)
+		# Esperar a que la colisión de esta montaña se registre en el motor de física
+		if is_large_mountain:
+			await get_tree().physics_frame
 		# Añadir abundantes manojos de hierba en las colinas
 		var grass_count := 4 if not is_large_mountain else 60
 		for _hc in range(grass_count):
@@ -6225,7 +6230,7 @@ func _create_grass_carpet() -> void:
 				continue
 			var px := -coverage + float(cx) * spacing + _world_rng.randf_range(-0.5, 0.5)
 			var pz := -coverage + float(cz) * spacing + _world_rng.randf_range(-0.5, 0.5)
-			var pos := Vector3(px, _get_ground_height(Vector3(px, 0, pz)) + 0.012, pz)
+			var pos := Vector3(px, _get_exact_ground_y(px, pz) + 0.012, pz)
 			if not _can_place_ground_vegetation(pos):
 				continue
 			var h := _world_rng.randf_range(0.14, 0.36)
