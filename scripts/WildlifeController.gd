@@ -49,6 +49,18 @@ var current_anim_keyword := "walk"
 var _hit_flash_timer := 0.0
 var _gutted := false
 var _corpse_body: StaticBody3D = null
+# Recuperación de atascos y movimiento natural
+var _stuck_escalation := 0
+var _unstuck_dir := Vector3.ZERO
+var _unstuck_timer := 0.0
+var _wander_offset := Vector3.ZERO
+var _wander_timer := 0.0
+var _speed_jitter := 1.0
+var _idle_timer := 0.0
+var _idle_cooldown := 0.0
+# Detección de "sin progreso": el animal se mueve pero no avanza (oscila)
+var _progress_ref_pos := Vector3.ZERO
+var _progress_timer := 0.0
 
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
@@ -160,8 +172,12 @@ func setup(kind: String, points: Array) -> void:
 		patrol_points = [Vector3.ZERO, Vector3(10, 0, 10), Vector3(-10, 0, -10)]
 	global_position = patrol_points[0]
 	_last_position = global_position
+	_progress_ref_pos = global_position
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
+	_speed_jitter = randf_range(0.85, 1.18)
+	_wander_timer = randf_range(0.0, 4.0)
+	_idle_cooldown = randf_range(4.0, 14.0)
 	if animal_type == "wolf":
 		_chase_cooldown = 15.0
 	_build_animal()
@@ -269,6 +285,15 @@ func _process(delta: float) -> void:
 			_ai_lod_timer = 0.0
 	# -------------------------------------------
 	_update_stuck_timer(delta)
+	# Salida forzada de un atasco: tiene prioridad sobre la IA normal
+	if _unstuck_timer > 0.0:
+		_unstuck_timer -= delta
+		var burst_speed := move_speed * 1.6
+		_move_towards(global_position + _unstuck_dir * 6.0, burst_speed, delta, 8.0)
+		_walk_time += delta * burst_speed * 4.8
+		_animate_legs(delta)
+		_update_animation_speed(burst_speed)
+		return
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	_chase_cooldown = max(0.0, _chase_cooldown - delta)
 	_wolf_ai_debug_timer = max(0.0, _wolf_ai_debug_timer - delta)
@@ -303,6 +328,17 @@ func _process(delta: float) -> void:
 			return
 	_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
 	_seek_corpse_timer = max(0.0, _seek_corpse_timer - delta)
+	_idle_cooldown = max(0.0, _idle_cooldown - delta)
+	# Pausa natural: el animal se detiene brevemente (pastar / vigilar)
+	if _idle_timer > 0.0:
+		_idle_timer -= delta
+		var threatened := _prey_flee_timer > 0.0 or _state != "patrol"
+		if threatened:
+			_idle_timer = 0.0
+		else:
+			_play_animation_by_name("idle")
+			rotation.y += delta * 0.35 * (1.0 if _speed_jitter > 1.0 else -1.0)
+			return
 	if _seek_corpse_timer <= 0.0 and _state == "seek_corpse":
 		_state = "patrol"
 		_chase_stuck_time = 0.0
@@ -316,20 +352,36 @@ func _process(delta: float) -> void:
 		var result := _prey_ai(delta)
 		target = result["target"]
 		speed = result["speed"]
+	# Variación natural: cada animal tiene su propio ritmo y no camina en línea recta
+	speed *= _speed_jitter
+	if _state == "patrol" and _prey_flee_timer <= 0.0:
+		_wander_timer -= delta
+		if _wander_timer <= 0.0:
+			_wander_timer = randf_range(2.5, 5.5)
+			var wander_angle := randf_range(0.0, TAU)
+			var wander_radius := randf_range(2.0, 6.0)
+			_wander_offset = Vector3(cos(wander_angle) * wander_radius, 0.0, sin(wander_angle) * wander_radius)
+		target += _wander_offset
 	target.x = clamp(target.x, -180.0, 180.0)
 	target.z = clamp(target.z, -180.0, 180.0)
 	var to_target := target - global_position
 	to_target.y = 0.0
-	if to_target.length() < 0.55:
+	if to_target.length() < 1.6:
 		target_index = (target_index + 1) % patrol_points.size()
 		_current_path.clear()
 		_path_index = 0
+		_wander_offset = Vector3.ZERO
+		_wander_timer = 0.0
+		# Pausa ocasional al llegar a un punto de ruta (más natural)
+		if _state == "patrol" and _idle_cooldown <= 0.0 and randf() < 0.35:
+			_idle_timer = randf_range(1.5, 4.0)
+			_idle_cooldown = randf_range(8.0, 18.0)
 		return
 	_path_recalc_timer -= delta
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 3.0
+		_path_recalc_timer = 1.2
 	var move_target: Vector3 = target
 	if _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
@@ -388,7 +440,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = global_position + away.normalized() * 30.0
+			target = _clamp_flee_goal(global_position, away, 30.0)
 			speed = move_speed * 3.0
 			_state = "patrol"
 			_chase_target = null
@@ -430,7 +482,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_chase_stuck_time = 0.0
 			_play_wolf_sound("growl")
 			_play_animation_by_name("trot")
-			return {"target": global_position + away * 30.0, "speed": move_speed * 2.0}
+			return {"target": _clamp_flee_goal(global_position, away, 30.0), "speed": move_speed * 2.0}
 		_state = "patrol"
 		_chase_stuck_time = 0.0
 		_chase_cooldown = 5.0
@@ -447,7 +499,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_play_wolf_sound("growl")
 			var away := (global_position - _player.global_position).normalized()
 			away.y = 0.0
-			target = global_position + away * 20.0
+			target = _clamp_flee_goal(global_position, away, 20.0)
 			speed = move_speed * 2.0
 			_play_animation_by_name("trot")
 			return {"target": target, "speed": speed}
@@ -471,7 +523,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_play_wolf_sound("growl")
 					var away := (global_position - _player.global_position).normalized()
 					away.y = 0.0
-					target = global_position + away * 40.0
+					target = _clamp_flee_goal(global_position, away, 40.0)
 					speed = move_speed * 2.5
 					_play_animation_by_name("trot")
 				else:
@@ -696,6 +748,30 @@ func _find_nearest_prey() -> Node3D:
 			nearest = other
 	return nearest
 
+# Un objetivo de huida fuera del mapa se recorta a +/-180 y el animal se queda
+# clavado contra el límite. Si el destino sale del área jugable, se gira la
+# dirección de huida hacia el interior manteniendo la distancia.
+func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
+	var limit := 176.0
+	var goal := from + away.normalized() * dist
+	if abs(goal.x) <= limit and abs(goal.z) <= limit:
+		return goal
+	var inward := (Vector3(0.0, 0.0, 0.0) - from)
+	inward.y = 0.0
+	if inward.length() < 0.01:
+		inward = Vector3.RIGHT
+	inward = inward.normalized()
+	# Componente tangencial: huir bordeando el límite en vez de contra él
+	var tangent := Vector3(-inward.z, 0.0, inward.x)
+	if tangent.dot(away) < 0.0:
+		tangent = -tangent
+	for blend in [0.35, 0.6, 0.85, 1.0]:
+		var dir: Vector3 = (tangent * (1.0 - blend) + inward * blend).normalized()
+		var candidate := from + dir * dist
+		if abs(candidate.x) <= limit and abs(candidate.z) <= limit:
+			return candidate
+	return Vector3(clamp(goal.x, -limit, limit), goal.y, clamp(goal.z, -limit, limit))
+
 func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
@@ -711,7 +787,7 @@ func _prey_ai(delta: float) -> Dictionary:
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = global_position + away.normalized() * 25.0
+			target = _clamp_flee_goal(global_position, away, 25.0)
 			speed = flee_speed
 			_prey_flee_timer = 5.0
 			_play_animation_by_name("gallop")
@@ -730,7 +806,7 @@ func _prey_ai(delta: float) -> Dictionary:
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = global_position + away.normalized() * 20.0
+			target = _clamp_flee_goal(global_position, away, 20.0)
 			speed = flee_speed
 			_prey_flee_timer = 3.0
 			_play_animation_by_name("gallop")
@@ -1229,7 +1305,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		var dist_h := 999.0
 		if player_node_h != null and player_node_h is Node3D:
 			dist_h = global_position.distance_to((player_node_h as Node3D).global_position)
-		if dist_h > 25.0:
+		if dist_h > 40.0:
 			return
 		if _wolf_howl_2d_player == null:
 			_wolf_howl_2d_player = AudioStreamPlayer.new()
@@ -1249,7 +1325,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		if stream is AudioStreamMP3:
 			(stream as AudioStreamMP3).loop = false
 		_wolf_howl_2d_player.stream = stream
-		var vol := -18.0 - (dist_h / 25.0) * 18.0
+		var vol := -6.0 - (dist_h / 40.0) * 14.0
 		if player_node_h != null and player_node_h.has_meta("in_house") and player_node_h.get_meta("in_house", false):
 			vol -= 20.0
 		_wolf_howl_2d_player.volume_db = vol
@@ -1259,8 +1335,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _wolf_audio_player == null:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
-		_wolf_audio_player.unit_size = 1.0
-		_wolf_audio_player.max_distance = 18.0
+		_wolf_audio_player.unit_size = 8.0
+		_wolf_audio_player.max_distance = 40.0
 		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_wolf_audio_player)
 	if _wolf_audio_player.playing:
@@ -1282,7 +1358,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
-	_wolf_audio_player.volume_db = -8.0 if sound_type == "attack" else -15.0
+	_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
 	_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_audio_player.play()
 
@@ -1292,16 +1368,94 @@ func _update_stuck_timer(delta: float) -> void:
 	else:
 		_stuck_time = 0.0
 		_last_position = global_position
-	if _stuck_time > 1.0:
-		_retarget_from_blocked_route()
+		_stuck_escalation = 0
+	if _stuck_time > 0.7:
 		_stuck_time = 0.0
+		_stuck_escalation += 1
 		_current_path.clear()
 		_path_index = 0
+		if _stuck_escalation <= 2:
+			# Nivel 1-2: elegir otro punto de patrulla aleatorio (no el siguiente
+			# secuencial, que suele apuntar al mismo obstáculo)
+			_retarget_from_blocked_route()
+		elif _stuck_escalation <= 5:
+			# Nivel 3-5: forzar salida en una dirección libre durante un momento
+			_begin_unstuck_burst()
+		else:
+			# Nivel 6+: reposicionar al punto permitido más cercano
+			_hard_unstuck()
+			_stuck_escalation = 0
+	# Detección de falta de progreso: un animal puede oscilar (fuerza de
+	# separación contra objetivo de ruta) moviéndose cada frame sin avanzar,
+	# lo que resetea _stuck_time y nunca escala. Se mide el desplazamiento
+	# neto en una ventana de tiempo.
+	if _idle_timer > 0.0:
+		_progress_timer = 0.0
+		_progress_ref_pos = global_position
+		return
+	_progress_timer += delta
+	if _progress_timer >= 3.0:
+		var net_moved := global_position.distance_to(_progress_ref_pos)
+		_progress_timer = 0.0
+		_progress_ref_pos = global_position
+		if net_moved < 2.0:
+			_current_path.clear()
+			_path_index = 0
+			_stuck_escalation += 1
+			if _stuck_escalation <= 3:
+				_begin_unstuck_burst()
+			else:
+				_hard_unstuck()
+				_stuck_escalation = 0
 
 func _retarget_from_blocked_route() -> void:
 	_current_path.clear()
 	_path_index = 0
-	target_index = (target_index + 1) % patrol_points.size()
+	if patrol_points.size() <= 1:
+		return
+	var new_index := target_index
+	for _try in range(6):
+		new_index = randi() % patrol_points.size()
+		if new_index != target_index:
+			break
+	target_index = new_index
+
+# Busca una dirección libre alrededor del animal y se mueve hacia ella durante
+# un breve periodo, ignorando el objetivo de patrulla. Sirve para despegarse de
+# esquinas y obstáculos donde el pathfinding no encuentra salida.
+func _begin_unstuck_burst() -> void:
+	var best_dir := Vector3.ZERO
+	var best_clearance := 0.0
+	for i in range(12):
+		var angle := TAU * float(i) / 12.0 + randf_range(-0.2, 0.2)
+		var dir := Vector3(cos(angle), 0.0, sin(angle))
+		var clearance := 0.0
+		for step in range(1, 7):
+			var probe := global_position + dir * float(step) * 1.2
+			probe.x = clamp(probe.x, -180.0, 180.0)
+			probe.z = clamp(probe.z, -180.0, 180.0)
+			if not _is_position_allowed(probe):
+				break
+			clearance = float(step) * 1.2
+		if clearance > best_clearance:
+			best_clearance = clearance
+			best_dir = dir
+	if best_dir.length() < 0.01:
+		_hard_unstuck()
+		return
+	_unstuck_dir = best_dir
+	_unstuck_timer = 1.2
+	_retarget_from_blocked_route()
+
+# Último recurso: recolocar al animal en la posición permitida más cercana.
+func _hard_unstuck() -> void:
+	var safe = _nearest_allowed_point(global_position)
+	if safe != null:
+		var safe_pos: Vector3 = safe
+		global_position = Vector3(safe_pos.x, global_position.y, safe_pos.z)
+	_unstuck_dir = Vector3.ZERO
+	_unstuck_timer = 0.0
+	_retarget_from_blocked_route()
 
 func _try_flee_from_player(delta: float) -> bool:
 	if _player == null or not is_instance_valid(_player):
@@ -1312,9 +1466,7 @@ func _try_flee_from_player(delta: float) -> bool:
 		return false
 	if away.length() < 0.01:
 		away = Vector3.RIGHT
-	var flee_goal := global_position + away.normalized() * 20.0
-	flee_goal.x = clamp(flee_goal.x, -180.0, 180.0)
-	flee_goal.z = clamp(flee_goal.z, -180.0, 180.0)
+	var flee_goal := _clamp_flee_goal(global_position, away, 20.0)
 	_path_recalc_timer -= delta
 	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, flee_goal)
@@ -1347,7 +1499,7 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	# Separation: push away from nearby animals of same type to avoid stacking
 	var sep := _get_separation_vector()
 	if sep.length() > 0.01:
-		dir = (dir + sep * 0.8).normalized()
+		dir = (dir + sep * 0.45).normalized()
 	var step := speed * delta
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -180.0, 180.0)
@@ -1384,6 +1536,8 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 		dir.rotated(Vector3.UP, deg_to_rad(-140.0)),
 		dir.rotated(Vector3.UP, deg_to_rad(180.0))
 	]
+	var fallback_dir := Vector3.ZERO
+	var fallback_pos := Vector3.ZERO
 	for candidate in candidates:
 		candidate = candidate.normalized()
 		var step_dist := speed * delta
@@ -1392,13 +1546,22 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 		next_pos.z = clamp(next_pos.z, -180.0, 180.0)
 		if not _is_position_allowed(next_pos):
 			continue
-		var lookahead: Vector3 = global_position + candidate * step_dist * 2.5
+		# Anticipación a distancia fija: permite esquivar antes de chocar
+		var lookahead: Vector3 = global_position + candidate * 1.2
 		lookahead.x = clamp(lookahead.x, -180.0, 180.0)
 		lookahead.z = clamp(lookahead.z, -180.0, 180.0)
 		if not _is_position_allowed(lookahead):
+			if fallback_dir.length() < 0.01:
+				fallback_dir = candidate
+				fallback_pos = next_pos
 			continue
 		global_position = next_pos
 		rotation.y = lerp_angle(rotation.y, atan2(candidate.x, candidate.z), delta * turn_speed)
+		return true
+	# Ningún candidato con anticipación libre: aceptar el mejor paso inmediato
+	if fallback_dir.length() > 0.01:
+		global_position = fallback_pos
+		rotation.y = lerp_angle(rotation.y, atan2(fallback_dir.x, fallback_dir.z), delta * turn_speed)
 		return true
 	return false
 

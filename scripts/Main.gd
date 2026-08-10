@@ -3206,13 +3206,13 @@ func _create_wildlife() -> void:
 		_build_circular_route(85.0, PI * 0.5, 10, 6.0),
 		_build_circular_route(115.0, PI, 10, 7.0),
 		_build_circular_route(140.0, PI * 1.5, 10, 8.0),
-		_build_circular_route(165.0, PI * 0.25, 12, 9.0),
-		_build_circular_route(180.0, PI * 0.75, 12, 10.0),
+		_build_circular_route(158.0, PI * 0.25, 12, 9.0),
+		_build_circular_route(170.0, PI * 0.75, 12, 8.0),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
 	
-	# Foxes: territorial patrols in 10 distinct zones across the full map
+	# Foxes: 10 animals starting in distinct zones, each roaming the whole map
 	var fox_zones := [
 		[Vector3(-85, 0, -60), Vector3(-45, 0, -20)],
 		[Vector3(50, 0, 80), Vector3(90, 0, 40)],
@@ -3226,7 +3226,9 @@ func _create_wildlife() -> void:
 		[Vector3(90, 0, 130), Vector3(130, 0, 160)],
 	]
 	for fz in fox_zones:
-		var fox_route := _build_zigzag_route(fz[0], fz[1], 6, 6.0)
+		# Ruta larga que recorre el mapa partiendo de la zona de origen
+		var fox_start: Vector3 = (fz[0] as Vector3).lerp(fz[1] as Vector3, 0.5)
+		var fox_route := _build_roaming_route(fox_start, 14, 35.0, 70.0)
 		_create_wildlife_animal("fox", fox_route)
 	
 	# Wolves: spread across 12 expanded quadrants of the open world
@@ -3242,18 +3244,8 @@ func _create_wildlife() -> void:
 			if not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
-		var route: Array = []
-		for j in range(12):
-			var wp: Vector3 = center + Vector3(_world_rng.randf_range(-45, 45), 0.0, _world_rng.randf_range(-45, 45))
-			wp.x = clamp(wp.x, -180, 180)
-			wp.z = clamp(wp.z, -180, 180)
-			for _wp_retry in range(10):
-				if not _is_near_wildlife_blocker(wp, 2.0):
-					break
-				wp = center + Vector3(_world_rng.randf_range(-45, 45), 0.0, _world_rng.randf_range(-45, 45))
-				wp.x = clamp(wp.x, -180, 180)
-				wp.z = clamp(wp.z, -180, 180)
-			route.append(wp)
+		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
+		var route := _build_roaming_route(center, 16, 40.0, 80.0)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -3279,25 +3271,14 @@ func _check_wildlife_respawn() -> void:
 			if not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
-		var route: Array = []
-		for j in range(12):
-			var wp: Vector3 = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
-			wp.x = clamp(wp.x, -180, 180)
-			wp.z = clamp(wp.z, -180, 180)
-			for _wp_retry in range(10):
-				if not _is_near_wildlife_blocker(wp, 2.0):
-					break
-				wp = center + Vector3(randf_range(-45, 45), 0.0, randf_range(-45, 45))
-				wp.x = clamp(wp.x, -180, 180)
-				wp.z = clamp(wp.z, -180, 180)
-			route.append(wp)
+		var route := _build_roaming_route(center, 16, 40.0, 80.0)
 		_create_wildlife_animal("wolf", route)
 	elif alive_deer < 12 and alive_deer <= alive_fox:
-		var deer_route := _build_circular_route(randf_range(50.0, 180.0), randf() * TAU, 10, 7.0)
+		var deer_route := _build_circular_route(randf_range(50.0, 175.0), randf() * TAU, 10, 7.0)
 		_create_deer_pair(deer_route)
 	elif alive_fox < 10:
 		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
-		var fox_route := _build_zigzag_route(fox_zone, fox_zone + Vector3(25, 0, 15), 6, 6.0)
+		var fox_route := _build_roaming_route(fox_zone, 14, 35.0, 70.0)
 		_create_wildlife_animal("fox", fox_route)
 
 # Build a circular patrol route around the map center.
@@ -3315,6 +3296,33 @@ func _build_circular_route(radius: float, angle_offset: float, num_points: int, 
 		if not is_wildlife_allowed_at(pos):
 			pos = _find_allowed_near(pos, 3.0)
 		route.append(pos)
+	return route
+
+# Build a long roaming route that wanders across the whole map instead of
+# staying inside a small territory. Each waypoint is a large step in a slowly
+# drifting direction, so animals cover a lot of ground while still following a
+# coherent path.
+func _build_roaming_route(start: Vector3, num_points: int, step_min: float, step_max: float) -> Array:
+	var route: Array = []
+	var cursor := start
+	var heading := _world_rng.randf_range(0.0, TAU)
+	# El movimiento de la fauna está limitado a +/-180, así que los waypoints
+	# deben quedar dentro de ese rango o serían inalcanzables.
+	var limit := 175.0
+	for _i in range(num_points):
+		heading += _world_rng.randf_range(-0.9, 0.9)
+		var step := _world_rng.randf_range(step_min, step_max)
+		var candidate := cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
+		# Si el paso sale del mapa, girar hacia el centro
+		if abs(candidate.x) > limit or abs(candidate.z) > limit:
+			heading = atan2(-cursor.z, -cursor.x) + _world_rng.randf_range(-0.6, 0.6)
+			candidate = cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
+		candidate.x = clamp(candidate.x, -limit, limit)
+		candidate.z = clamp(candidate.z, -limit, limit)
+		if not is_wildlife_allowed_at(candidate):
+			candidate = _find_allowed_near(candidate, 4.0)
+		route.append(candidate)
+		cursor = candidate
 	return route
 
 func _build_zigzag_route(corner_a: Vector3, corner_b: Vector3, num_points: int, jitter: float) -> Array:
@@ -3458,6 +3466,11 @@ func _create_house_loot() -> void:
 		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
 		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
 		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
+		{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
+		{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
+		{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
+		{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
+		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
 	]
 	var loot_idx := 0
 	for hd in house_loot_data:
@@ -3554,7 +3567,10 @@ func _create_pickup_item(data: Dictionary) -> void:
 	if lay_flat:
 		rotation_degrees.x += 90.0
 	var space_state := get_world_3d().direct_space_state
-	var real_ground_y := _raycast_ground_y(space_state, pos)
+	# Rayo desde justo encima de la posición pedida: si se lanza desde muy alto,
+	# dentro de una casa golpea la colisión del tejado y el objeto acaba en el
+	# tejado en lugar de en el suelo interior.
+	var real_ground_y := _raycast_ground_y(space_state, pos, pos.y + 2.0)
 	var spawned := false
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
@@ -8004,8 +8020,11 @@ func _collect_mesh_instances(root: Node, result: Array) -> void:
 	for child in root.get_children():
 		_collect_mesh_instances(child, result)
 
-func _raycast_ground_y(space_state: PhysicsDirectSpaceState3D, pos: Vector3) -> float:
-	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, 100.0, pos.z), Vector3(pos.x, -200.0, pos.z))
+# from_y permite empezar el rayo por debajo de techos y otras estructuras
+# elevadas. Con el valor por defecto (100) un rayo lanzado dentro de una casa
+# impactaría en la colisión del tejado en lugar del suelo.
+func _raycast_ground_y(space_state: PhysicsDirectSpaceState3D, pos: Vector3, from_y: float = 100.0) -> float:
+	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, from_y, pos.z), Vector3(pos.x, -200.0, pos.z))
 	query.collide_with_bodies = true
 	query.collide_with_areas = false
 	var hit := space_state.intersect_ray(query)
