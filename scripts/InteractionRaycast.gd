@@ -78,6 +78,13 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 			if child is CollisionShape3D and (child as CollisionShape3D).shape is BoxShape3D:
 				var box := (child as CollisionShape3D).shape as BoxShape3D
 				reach_padding = max(reach_padding, max(box.size.x, box.size.z) * 0.5)
+	# árboles y arbustos requieren estar muy cerca
+	if target is WorldAction:
+		var wa := target as WorldAction
+		if wa.action_type == "fell_tree":
+			return flat_distance <= 2.0
+		elif wa.action_type == "fell_bush":
+			return flat_distance <= 1.5
 	return flat_distance <= interaction_distance + reach_padding
 
 func _find_nearest_interactable(player: Node3D) -> Object:
@@ -85,7 +92,7 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 		return null
 	var player_pos := player.global_position
 	var best: Object = null
-	var best_dist := interaction_distance
+	var best_dist := 999.0
 	for node in player.get_tree().get_nodes_in_group("interactable"):
 		if not (node is Node3D):
 			continue
@@ -108,11 +115,29 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 		if node is WorldAction:
 			var wa2 := node as WorldAction
 			if wa2.action_type == "fell_tree":
-				max_dist = interaction_distance + 2.0
+				max_dist = 2.0
 			elif wa2.action_type == "fell_bush":
-				max_dist = interaction_distance + 1.0
+				max_dist = 1.5
 		var total_dist := flat_dist - reach
 		if total_dist < max_dist and total_dist < best_dist:
+			# Los árboles talables tienen la colisión deshabilitada, así que
+			# el raycast de línea de visión pasa a través de ellos pero puede
+			# chocar con otros árboles del bosque denso. Se omite la comprobación
+			# para árboles y arbustos: si el jugador está bastante cerca, basta.
+			if node is WorldAction:
+				var wa3 := node as WorldAction
+				if wa3.action_type == "fell_tree" or wa3.action_type == "fell_bush" or wa3.action_type == "cut_log":
+					# Verificar que el jugador está mirando hacia el árbol
+					var dir_to_node := (node_pos - player_pos).normalized()
+					dir_to_node.y = 0.0
+					var player_forward := -player.global_transform.basis.z
+					player_forward.y = 0.0
+					player_forward = player_forward.normalized()
+					if player_forward.dot(dir_to_node) < 0.6:
+						continue
+					best_dist = total_dist
+					best = node
+					continue
 			if not _has_line_of_sight(player, node):
 				continue
 			best_dist = total_dist

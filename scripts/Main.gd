@@ -117,13 +117,6 @@ var _tall_grass_material: StandardMaterial3D = null
 const SAVE_BALANCE_VERSION := 6
 const Q_NATURE := "res://assets/external/quaternius_stylized_nature_megakit/glTF/"
 const K_SURVIVAL := "res://assets/external/kenney_survival_kit/Models/GLB format/"
-const REAL_LIVING_TREE_MODELS := [
-	Q_NATURE + "TwistedTree_1.gltf",
-	Q_NATURE + "TwistedTree_2.gltf",
-	Q_NATURE + "TwistedTree_3.gltf",
-	Q_NATURE + "TwistedTree_4.gltf",
-	Q_NATURE + "TwistedTree_5.gltf"
-]
 const REAL_DEAD_TREE_MODELS := [
 	Q_NATURE + "DeadTree_1.gltf",
 	Q_NATURE + "DeadTree_2.gltf",
@@ -221,6 +214,7 @@ const ROOT_SOFA_MODEL := ROOT_GLB_DIR + "trashy_backyard_sofa.glb"
 const ROOT_FRIDGE_MODEL := ROOT_GLB_DIR + "old_rusty_fridge.glb"
 const ROOT_GASSTOVE_MODEL := ROOT_GLB_DIR + "old_russian_gasstove.glb"
 const ROOT_POWER_POLE_MODEL := "res://assets/external/power_pole.glb"
+const BARN_MODEL := "res://assets/external/buildings/old_wooden_barn_house_4.glb"
 const POLY_MODEL_DIR := "res://assets/external/polyhaven/models/"
 const POLY_TREE_MODELS := [
 	POLY_MODEL_DIR + "tree_small_02/tree_small_02_1k.gltf",
@@ -902,12 +896,14 @@ func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
 	player.position = _get_random_spawn_pos()
+	print("[SPAWN] Player initial position: ", player.position)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
+		print("[SPAWN] Player pending spawn position: ", _pending_spawn_pos)
 		_has_pending_spawn_pos = false
 
 #endregion
@@ -987,6 +983,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 			server_proxies[peer_id].set_meta("reconnecting", false)
 
 var _spawn_zones: Array = [
+	Vector3(38.0, 0.4, 110.0),  # TEMP: Near barn for testing
 	Vector3(15.0, 0.4, -35.0),
 	Vector3(-55.0, 0.4, -40.0),
 	Vector3(55.0, 0.4, 45.0),
@@ -1006,7 +1003,8 @@ var _spawn_zones: Array = [
 ]
 
 func _get_random_spawn_pos() -> Vector3:
-	var base_pos = _spawn_zones[randi() % _spawn_zones.size()]
+	# TEMP: Always spawn near barn for testing (index 0 = barn spawn)
+	var base_pos = _spawn_zones[0]
 	var h = _get_ground_height(base_pos)
 	return Vector3(base_pos.x, h + 0.4, base_pos.z)
 
@@ -1136,6 +1134,7 @@ var _has_pending_spawn_pos := false
 
 func _apply_net_spawn_pos(pos: Vector3) -> void:
 	_has_received_spawn_pos = true
+	print("[SPAWN] Net spawn pos received: ", pos)
 	if player != null:
 		player.global_position = pos
 	else:
@@ -2632,7 +2631,11 @@ func _create_map() -> void:
 		await get_tree().process_frame
 		_create_house(Vector3(-20, 0, 30), "Casa abandonada 10", "house_10", 7.5, 6.5, 3.6)
 		await get_tree().process_frame
-	_tm = Time.get_ticks_msec()
+		_tm = Time.get_ticks_msec()
+	if not is_server:
+		_create_barn(Vector3(45, 0, 120))
+		await get_tree().process_frame
+		_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_world_details()
 		await get_tree().process_frame
@@ -2641,6 +2644,8 @@ func _create_map() -> void:
 		# Light posts and power lines
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
 		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
+		_add_collision_to_prop_group(get_node_or_null("QStreetLightA"))
+		_add_collision_to_prop_group(get_node_or_null("QStreetLightB"))
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -2688,55 +2693,46 @@ func _create_map() -> void:
 
 
 const ROAD_HALF_WIDTH := 5.0
-const ROAD_START_Z := -52.0
-const ROAD_END_Z := 52.0
+const ROAD_START_Z := -250.0
+const ROAD_END_Z := 250.0
 
 func _is_on_road(pos: Vector3) -> bool:
 	return abs(pos.x) <= ROAD_HALF_WIDTH and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
 
 func _create_road() -> void:
 	var road_x := 9.0
-	var road_z_start := -57.0
-	var road_z_end := 57.0
 	var road_width := 10.0
-	var road_length := road_z_end - road_z_start
-	var space_state := get_world_3d().direct_space_state
-	# Raycast for ground height at road center
-	var mid_z := (road_z_start + road_z_end) * 0.5
-	var ray_origin := Vector3(road_x, 100.0, mid_z)
-	var ray_end := Vector3(road_x, -200.0, mid_z)
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collide_with_bodies = true
-	query.collide_with_areas = false
-	var hit := space_state.intersect_ray(query)
-	var ground_y := 0.0
-	if not hit.is_empty():
-		ground_y = float(hit["position"].y)
-	# Create dirt road as a flat plane with proper UV tiling
-	var tile_size := 2.0
-	var tiles_x := int(road_width / tile_size)
-	var tiles_z := int(road_length / tile_size)
-	var road_plane := PlaneMesh.new()
-	road_plane.size = Vector2(road_width, road_length)
-	road_plane.orientation = PlaneMesh.FACE_Y
-	road_plane.subdivide_width = max(1, tiles_x - 1)
-	road_plane.subdivide_depth = max(1, tiles_z - 1)
-	var road_mi := MeshInstance3D.new()
-	road_mi.mesh = road_plane
-	road_mi.name = "DirtRoad"
+	var seg_length := 10.0
+	# Scan terrain to find where hills/mountains start
+	var base_y := _get_exact_ground_y(road_x, 0.0)
+	var max_slope := 3.0
+	var road_z_start := ROAD_START_Z
+	var road_z_end := ROAD_END_Z
+	var _zi := 0
+	while _zi < 250:
+		var z_test := -float(_zi) * seg_length
+		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
+			road_z_start = z_test + seg_length
+			break
+		_zi += 1
+	_zi = 0
+	while _zi < 250:
+		var z_test := float(_zi) * seg_length
+		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
+			road_z_end = z_test - seg_length
+			break
+		_zi += 1
 	var road_mat := StandardMaterial3D.new()
 	road_mat.roughness = 1.0
 	road_mat.metallic = 0.0
 	road_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	road_mat.texture_repeat = true
-	# Load Ground032 textures (now imported by Godot)
 	var tex_dir := "res://assets/textures/ground032/"
 	var color_tex := load(tex_dir + "Ground032_4K-JPG_Color.jpg")
 	if color_tex != null:
 		road_mat.albedo_texture = color_tex
 		road_mat.albedo_color = Color(0.45, 0.38, 0.30)
 	else:
-		push_warning("[ROAD] Failed to load color texture")
 		road_mat.albedo_color = Color(0.45, 0.32, 0.2)
 	var normal_tex := load(tex_dir + "Ground032_4K-JPG_NormalGL.jpg")
 	if normal_tex != null:
@@ -2750,22 +2746,64 @@ func _create_road() -> void:
 	if ao_tex != null:
 		road_mat.ao_texture = ao_tex
 		road_mat.ao_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_RED
-	# Set UV1 scale for tiling (for 2D UVs: .x = U across width, .y = V along length)
+	var tiles_x := int(road_width / 2.0)
+	var tiles_z := int(seg_length / 2.0)
 	road_mat.uv1_scale = Vector3(float(tiles_x), float(tiles_z), 1.0)
-	road_mi.material_override = road_mat
-	add_child(road_mi)
-	road_mi.global_position = Vector3(road_x, ground_y + 0.02, mid_z)
-	# Static body for collision
 	var road_body := StaticBody3D.new()
 	road_body.name = "RoadCollision"
 	add_child(road_body)
-	road_body.global_position = Vector3(road_x, ground_y + 0.02, mid_z)
-	var col_shape := BoxShape3D.new()
-	col_shape.size = Vector3(road_width, 0.1, road_length)
-	var col := CollisionShape3D.new()
-	col.shape = col_shape
-	road_body.add_child(col)
-	# Procedural grass along both road edges, dense at edge, fading to merge with existing grass
+	var num_segs := int((road_z_end - road_z_start) / seg_length)
+	for si in range(num_segs):
+		var z_center := road_z_start + (float(si) + 0.5) * seg_length
+		var seg_ground_y := _get_exact_ground_y(road_x, z_center)
+		var road_plane := PlaneMesh.new()
+		road_plane.size = Vector2(road_width, seg_length)
+		road_plane.orientation = PlaneMesh.FACE_Y
+		road_plane.subdivide_width = max(1, tiles_x - 1)
+		road_plane.subdivide_depth = max(1, tiles_z - 1)
+		var road_mi := MeshInstance3D.new()
+		road_mi.mesh = road_plane
+		road_mi.name = "DirtRoad_%d" % si
+		road_mi.material_override = road_mat
+		add_child(road_mi)
+		road_mi.global_position = Vector3(road_x, seg_ground_y + 0.02, z_center)
+		var col_shape := BoxShape3D.new()
+		col_shape.size = Vector3(road_width, 0.1, seg_length)
+		var col := CollisionShape3D.new()
+		col.shape = col_shape
+		col.position = Vector3(road_x - road_body.global_position.x, seg_ground_y + 0.02 - road_body.global_position.y, z_center - road_body.global_position.z)
+		road_body.add_child(col)
+	# Utility poles along the road (same style as village)
+	var pole_spacing := 40.0
+	var streetlight_x := road_x - 6.0
+	var powerpole_x := road_x + 6.0
+	var num_poles := int((road_z_end - road_z_start) / pole_spacing)
+	for pi2 in range(num_poles):
+		var z_pole := road_z_start + (float(pi2) + 0.5) * pole_spacing
+		var light_y := _get_exact_ground_y(streetlight_x, z_pole)
+		_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % pi2, Vector3(streetlight_x, light_y, z_pole), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
+		var _lnode := get_node_or_null("RoadLight_%d" % pi2)
+		if _lnode != null:
+			_add_collision_to_prop_group(_lnode)
+	# Power/telephone poles on the right side, paired with street lights
+	var pole_scale := 9.0 / 49.45
+	var pole_path := "res://assets/external/telephone_pole_scene.glb"
+	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
+	if pole_scene is Node3D:
+		for pi3 in range(num_poles):
+			var z_pole := road_z_start + (float(pi3) + 0.5) * pole_spacing
+			var pole_y := _get_exact_ground_y(powerpole_x, z_pole)
+			var node := (pole_scene as Node3D).duplicate() as Node3D
+			node.name = "RoadTelephonePole_%d" % pi3
+			node.add_to_group("world_action_visual")
+			node.position = Vector3(powerpole_x, pole_y, z_pole)
+			node.scale = Vector3.ONE * pole_scale
+			node.rotation_degrees = Vector3(0, 90, 0)
+			add_child(node)
+			_snap_node_bottom_to_y_cached(node, pole_y, pole_path, Vector3.ONE * pole_scale)
+			_add_collision_to_prop_group(node)
+	# Procedural grass along both road edges
+	var road_length := road_z_end - road_z_start
 	var grass_depth := 20.0
 	var tuft_spacing := 0.18
 	var num_tufts := int(road_length / tuft_spacing)
@@ -2774,15 +2812,13 @@ func _create_road() -> void:
 	for side in [-1, 1]:
 		for i in range(num_tufts):
 			var z_pos: float = road_z_start + (i + 0.5) * tuft_spacing + _world_rng.randf_range(-0.08, 0.08)
-			# Dense near road, gradually thinning to merge with existing grass
-			var blade_count := 18
+			var blade_count := 8
 			for j in range(blade_count):
-				# Bias towards near-road but with long tail for seamless merge
-				var t: float = pow(_world_rng.randf(), 2.5) # 0 = near road, 1 = far, strongly biased towards 0
+				var t: float = pow(_world_rng.randf(), 2.5)
 				var offset_x: float = t * grass_depth + _world_rng.randf_range(-0.25, 0.25)
 				var edge_x: float = road_x + side * (road_width * 0.5 + 0.05 + offset_x)
-				var pos := Vector3(edge_x, 0.02, z_pos + _world_rng.randf_range(-0.15, 0.15))
-				# Height decreases very gradually towards outside
+				var z_jitter := z_pos + _world_rng.randf_range(-0.15, 0.15)
+				var pos := Vector3(edge_x, _get_exact_ground_y(edge_x, z_jitter) + 0.02, z_jitter)
 				var h := _world_rng.randf_range(0.15, 0.35) * (1.0 - t * 0.3)
 				var r := _world_rng.randf_range(0.18, 0.38)
 				var c := grass_base.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
@@ -2878,6 +2914,375 @@ func _register_server_house_blockers() -> void:
 		var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, hd["w"] + 0.6, hd["d"] + 1.0)
 
+func _create_barn(origin: Vector3) -> void:
+	var barn_path := BARN_MODEL
+	if not _resource_path_exists(barn_path):
+		print("[BARN] Model not found: ", barn_path)
+		return
+	var ground_y := _get_exact_ground_y(origin.x, origin.z)
+	print("[BARN] Ground Y: ", ground_y, " origin: ", origin)
+	# Load the scene resource
+	var scene_resource = _get_external_scene_resource(barn_path)
+	if scene_resource == null:
+		print("[BARN] Failed to load scene resource")
+		return
+	var instance: Node = null
+	if scene_resource is PackedScene:
+		instance = (scene_resource as PackedScene).instantiate()
+	elif scene_resource is Node3D:
+		instance = (scene_resource as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION)
+	if not (instance is Node3D):
+		print("[BARN] Instance is not Node3D")
+		return
+	var node := instance as Node3D
+	# Strip display props (turntable, lights, etc.)
+	if not _display_props_stripped.has(barn_path):
+		_strip_display_props(node)
+		_display_props_stripped[barn_path] = true
+	# Remove any baked-in collision shapes from the GLB import so they don't block the player
+	var pre_collision_count := 0
+	var _col_check: Array = []
+	_collect_collision_nodes(node, _col_check)
+	pre_collision_count = _col_check.size()
+	if pre_collision_count > 0:
+		print("[BARN] Removing ", pre_collision_count, " baked collision nodes")
+		_remove_collision_from_node(node)
+	node.name = "OldWoodenBarn"
+	node.add_to_group("world_action_visual")
+	node.position = Vector3(0, 0, 0)
+	node.rotation_degrees = Vector3(0, 0, 0)
+	node.scale = Vector3.ONE
+	add_child(node)
+	node.force_update_transform()
+	# Measure AABB at scale 1
+	var meshes := []
+	_collect_mesh_instances(node, meshes)
+	var combined := AABB()
+	var first := true
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
+		if first:
+			combined = world_aabb
+			first = false
+		else:
+			combined = combined.merge(world_aabb)
+	if first:
+		print("[BARN] No meshes found")
+		return
+	print("[BARN] AABB at scale 1: pos=", combined.position, " size=", combined.size)
+	# Collect individual mesh bottom Y values to find the "visible bottom"
+	# (exclude underground/foundation meshes that pull the AABB down)
+	var mesh_bottoms: Array = []
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var aabb := mi.global_transform * mi.get_aabb()
+		mesh_bottoms.append(aabb.position.y)
+	mesh_bottoms.sort()
+	# Use the 25th percentile bottom Y as the "visible bottom" to avoid outliers
+	var visible_bottom_y: float = mesh_bottoms[mesh_bottoms.size() / 4]
+	print("[BARN] Visible bottom Y (25th pct): ", visible_bottom_y, " min: ", mesh_bottoms[0])
+	# Scale to ~8m wide (uniform) - smaller barn
+	var target_w := 8.0
+	var uniform_scale := target_w / combined.size.x
+	node.scale = Vector3.ONE * uniform_scale
+	node.force_update_transform()
+	# Position node so that:
+	#   - AABB center XZ = origin XZ
+	#   - Visible bottom Y = ground_y (not absolute AABB bottom)
+	var scaled_center_xz := Vector2(combined.position.x + combined.size.x * 0.5, combined.position.z + combined.size.z * 0.5) * uniform_scale
+	var scaled_visible_bottom_y := visible_bottom_y * uniform_scale
+	node.global_position = Vector3(
+		origin.x - scaled_center_xz.x,
+		ground_y - scaled_visible_bottom_y,
+		origin.z - scaled_center_xz.y
+	)
+	node.force_update_transform()
+	print("[BARN] Scale: ", uniform_scale, " pos: ", node.global_position)
+	# Verify final AABB
+	var meshes2 := []
+	_collect_mesh_instances(node, meshes2)
+	var combined2 := AABB()
+	var first2 := true
+	for mesh_node in meshes2:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var wa: AABB = mi.global_transform * mi.get_aabb()
+		if first2:
+			combined2 = wa
+			first2 = false
+		else:
+			combined2 = combined2.merge(wa)
+	if not first2:
+		print("[BARN] Final AABB: pos=", combined2.position, " size=", combined2.size)
+	# Create wall collision boxes with door opening (no convex collision on interior)
+	var barn_w := combined2.size.x
+	var barn_d := combined2.size.z
+	var barn_h := combined2.size.y
+	var half_w := barn_w * 0.5
+	var half_d := barn_d * 0.5
+	var wall_thickness := 0.3
+	var wall_height := barn_h
+	var door_width := 3.0
+	var door_height := 3.5
+	var front_z := origin.z - half_d
+	var back_z := origin.z + half_d
+	var meshes3: Array = []
+	_collect_mesh_instances(node, meshes3)
+	# Create temporary trimesh collision on ALL meshes so we can raycast
+	# Trimesh respects actual geometry (including door holes), unlike convex hull
+	for mesh_node in meshes3:
+		var mi := mesh_node as MeshInstance3D
+		if mi != null and mi.mesh != null:
+			mi.create_trimesh_collision()
+	# Wait for physics frames so temporary collision shapes are registered
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_finalize_barn_walls(node, origin, ground_y, barn_w, barn_d, barn_h, half_w, half_d, front_z, back_z, wall_thickness, wall_height, door_width, door_height)
+
+func _raycast_find_door(origin: Vector3, wall_z: float, ground_y: float, half_w: float, door_height: float) -> Vector2:
+	# Cast rays from BOTH inside-out and outside-in at each X position.
+	# Trimesh faces are one-sided, so we need both directions to detect the wall.
+	# A position is "open" (door) if BOTH rays pass through or hit far from the wall.
+	# Returns (center_x, width) of the door opening, or Vector2(0, 0) if not found.
+	var space := get_world_3d().direct_space_state
+	var interior_z := origin.z  # center of barn
+	var ray_y := ground_y + 1.5  # chest height, below door lintel
+	var step := 0.15
+	var min_x := origin.x - half_w + 0.2
+	var max_x := origin.x + half_w - 0.2
+	var is_back_wall := wall_z > origin.z
+	var exterior_z: float = wall_z + (5.0 if is_back_wall else -5.0)
+	var open_xs: Array = []
+	var x := min_x
+	while x <= max_x:
+		# Ray 1: inside -> wall
+		var from_in := Vector3(x, ray_y, interior_z)
+		var to_in := Vector3(x, ray_y, wall_z)
+		var q_in := PhysicsRayQueryParameters3D.create(from_in, to_in)
+		q_in.hit_back_faces = true
+		var r_in := space.intersect_ray(q_in)
+		var in_blocked := false
+		if not r_in.is_empty():
+			var hp_in: Vector3 = r_in["position"]
+			if abs(hp_in.z - wall_z) <= 2.0:
+				in_blocked = true
+		# Ray 2: outside -> interior
+		var from_out := Vector3(x, ray_y, exterior_z)
+		var to_out := Vector3(x, ray_y, interior_z)
+		var q_out := PhysicsRayQueryParameters3D.create(from_out, to_out)
+		var r_out := space.intersect_ray(q_out)
+		var out_blocked := false
+		if not r_out.is_empty():
+			var hp_out: Vector3 = r_out["position"]
+			if abs(hp_out.z - wall_z) <= 2.0:
+				out_blocked = true
+		# Position is "open" if neither ray hit the wall surface
+		if not in_blocked and not out_blocked:
+			open_xs.append(x)
+		x += step
+	if open_xs.size() < 2:
+		return Vector2(0.0, 0.0)
+	# Find contiguous runs of open positions (gaps > 2 steps = break)
+	var runs: Array = []
+	var run_start: float = open_xs[0]
+	var run_end: float = open_xs[0]
+	for i in range(1, open_xs.size()):
+		var cur: float = open_xs[i]
+		if cur - run_end <= step * 2.5:
+			run_end = cur
+		else:
+			runs.append([run_start, run_end])
+			run_start = cur
+			run_end = cur
+	runs.append([run_start, run_end])
+	# Pick the widest run (the door is the largest opening in the wall)
+	var best_cx: float = 0.0
+	var best_w: float = 0.0
+	for run in runs:
+		var r_start: float = run[0]
+		var r_end: float = run[1]
+		var r_w: float = r_end - r_start + step
+		var r_cx: float = r_start + (r_end - r_start) * 0.5
+		if r_w > best_w:
+			best_w = r_w
+			best_cx = r_cx
+	print("[BARN-RAY] wall_z=", wall_z, " runs=", runs.size(), " best_cx=", best_cx, " best_w=", best_w)
+	return Vector2(best_cx, best_w)
+
+func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w: float, barn_d: float, barn_h: float, half_w: float, half_d: float, front_z: float, back_z: float, wall_thickness: float, wall_height: float, door_width: float, door_height: float) -> void:
+	# Raycast from inside to find actual door openings
+	var front_door := _raycast_find_door(origin, front_z, ground_y, half_w, door_height)
+	var back_door := _raycast_find_door(origin, back_z, ground_y, half_w, door_height)
+	print("[BARN-RAY] front=", front_door, " back=", back_door)
+	var front_door_x: float = origin.x
+	var front_door_w: float = door_width
+	var back_door_x: float = origin.x
+	var back_door_w: float = door_width
+	if front_door.y > 0.8:
+		front_door_x = front_door.x
+		front_door_w = front_door.y
+	if back_door.y > 0.8:
+		back_door_x = back_door.x
+		back_door_w = back_door.y
+	print("[BARN] Final door positions: front=", front_door_x, " w=", front_door_w, " back=", back_door_x, " w=", back_door_w)
+	# Remove temporary convex collision from all meshes
+	_remove_collision_from_node(node)
+	# Add convex collision to small interior meshes, skipping door zones
+	var door_zones := [Vector3(front_door_x, front_z, front_door_w * 0.5 + 0.5), Vector3(back_door_x, back_z, back_door_w * 0.5 + 0.5)]
+	_add_convex_collision_to_small_meshes(node, 7.0, door_zones)
+	# Front wall (south, -Z side) with door gap
+	var front_seg_w := (barn_w - front_door_w) * 0.5
+	_create_invisible_collision_box("BarnWallFrontL", Vector3(front_door_x - front_door_w * 0.5 - front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallFrontR", Vector3(front_door_x + front_door_w * 0.5 + front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallDoorTop", Vector3(front_door_x, ground_y + door_height, front_z), Vector3(front_door_w, wall_height - door_height, wall_thickness))
+	# Back wall (north, +Z side) with door gap
+	var back_seg_w := (barn_w - back_door_w) * 0.5
+	_create_invisible_collision_box("BarnWallBackL", Vector3(back_door_x - back_door_w * 0.5 - back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackR", Vector3(back_door_x + back_door_w * 0.5 + back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackDoorTop", Vector3(back_door_x, ground_y + door_height, back_z), Vector3(back_door_w, wall_height - door_height, wall_thickness))
+	# Left and right walls
+	_create_invisible_collision_box("BarnWallLeft", Vector3(origin.x - half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
+	_create_invisible_collision_box("BarnWallRight", Vector3(origin.x + half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
+	# Add all wall collision bodies to prop_collision group
+	for wall_name in ["BarnWallFrontL", "BarnWallFrontR", "BarnWallDoorTop", "BarnWallBackL", "BarnWallBackR", "BarnWallBackDoorTop", "BarnWallLeft", "BarnWallRight"]:
+		var wall_node := get_node_or_null(wall_name)
+		if wall_node != null:
+			wall_node.add_to_group("prop_collision")
+	# Register wildlife blocker — barn doors are always open (no door object)
+	var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
+	wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - half_w, origin.z - half_d, barn_w, barn_d)
+	wildlife_blockers[idx]["barn_door_always_open"] = true
+	wildlife_blockers[idx]["front_door_x"] = front_door_x
+	wildlife_blockers[idx]["front_door_w"] = front_door_w
+	wildlife_blockers[idx]["back_door_x"] = back_door_x
+	wildlife_blockers[idx]["back_door_w"] = back_door_w
+	# Short procedural grass at barn base
+	_create_barn_grass(origin, half_w, half_d, ground_y)
+
+func _find_door_gap(meshes: Array, wall_z: float, ground_y: float, max_y: float, min_x: float, max_x: float, half_w: float) -> Vector2:
+	# Scan the largest shell/wall mesh for low vertices near the wall and find the largest X gap (the door hole)
+	var best_mi: MeshInstance3D = null
+	var best_area: float = 0.0
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var wa: AABB = mi.global_transform * mi.get_aabb()
+		var area: float = wa.size.x * wa.size.z
+		if area > best_area:
+			best_area = area
+			best_mi = mi
+	if best_mi == null:
+		return Vector2(0.0, 0.0)
+	var x_points: Array = []
+	_collect_wall_x_points_low(best_mi, wall_z, ground_y, max_y, x_points)
+	if x_points.size() < 2:
+		return Vector2(0.0, 0.0)
+	x_points.sort()
+	var max_gap: float = 0.0
+	var gap_center: float = (min_x + max_x) * 0.5
+	for i in range(x_points.size() - 1):
+		var a: float = x_points[i]
+		var b: float = x_points[i + 1]
+		var gap: float = b - a
+		if gap > max_gap:
+			max_gap = gap
+			gap_center = (a + b) * 0.5
+	# Also consider outer edges: from min_x to first point and last point to max_x
+	var left_gap: float = x_points[0] - min_x
+	var right_gap: float = max_x - x_points[x_points.size() - 1]
+	if left_gap > max_gap:
+		max_gap = left_gap
+		gap_center = min_x + left_gap * 0.5
+	if right_gap > max_gap:
+		max_gap = right_gap
+		gap_center = max_x - right_gap * 0.5
+	# Only return a real door hole if the gap is significant
+	if max_gap < 0.8:
+		return Vector2(0.0, 0.0)
+	return Vector2(gap_center, max_gap)
+
+func _collect_wall_x_points_low(mi: MeshInstance3D, wall_z: float, ground_y: float, max_y: float, x_points: Array) -> void:
+	var mesh := mi.mesh
+	if mesh == null:
+		return
+	var gt := mi.global_transform
+	for surf in range(mesh.get_surface_count()):
+		var mdt := MeshDataTool.new()
+		if mdt.create_from_surface(mesh, surf) != OK:
+			continue
+		for i in range(mdt.get_vertex_count()):
+			var v := mdt.get_vertex(i)
+			var wv := gt * v
+			# Only low vertices (wall level, not roof) near the wall Z
+			if abs(wv.z - wall_z) < 1.5 and wv.y - ground_y < max_y:
+				x_points.append(wv.x)
+		mdt.clear()
+
+func _find_door_threshold(meshes: Array, wall_z: float, ground_y: float, half_w: float) -> Vector2:
+	# Find low, wide, thin-in-Z mesh near the wall that represents a door threshold/area
+	# Returns (center_x, width), or Vector2(0,0) if none
+	var best_cx: float = 0.0
+	var best_w: float = 0.0
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var wa: AABB = mi.global_transform * mi.get_aabb()
+		var dist_z: float = abs(wa.position.z + wa.size.z * 0.5 - wall_z)
+		# Must be within 2.5m of the wall in Z (allows interior threshold meshes)
+		if dist_z > 2.5:
+			continue
+		var wcx: float = wa.position.x + wa.size.x * 0.5
+		# Ignore center columns / wall-parallel beams: must span at least 1.2m in X
+		if wa.size.x < 1.2 or wa.size.x > half_w * 1.8:
+			continue
+		# Threshold should be low-ish: bottom near ground and total height not too tall
+		if wa.position.y - ground_y > 0.6 or wa.size.y > 3.0:
+			continue
+		# Prefer the widest threshold near the wall
+		if wa.size.x > best_w:
+			best_w = wa.size.x
+			best_cx = wcx
+	return Vector2(best_cx, best_w)
+
+func _find_largest_gap(x_points: Array, min_x: float, max_x: float) -> Vector2:
+	if x_points.size() < 2:
+		return Vector2((min_x + max_x) * 0.5, 3.0)
+	x_points.sort()
+	# Debug: print unique X points
+	var pstr := ""
+	var last_x := -9999.0
+	for i in range(x_points.size()):
+		var xv: float = x_points[i]
+		if xv - last_x > 0.05:
+			pstr += str(snapped(xv, 0.1)) + " "
+			last_x = xv
+	print("[BARN] X points(", x_points.size(), "): ", pstr)
+	var max_gap := 0.0
+	var gap_center := (min_x + max_x) * 0.5
+	for i in range(x_points.size() - 1):
+		var a: float = x_points[i]
+		var b: float = x_points[i + 1]
+		var gap := b - a
+		if gap > max_gap:
+			max_gap = gap
+			gap_center = (a + b) * 0.5
+	print("[BARN] Largest gap=", max_gap, " center=", gap_center)
+	if max_gap > 0.5:
+		return Vector2(gap_center, max_gap)
+	return Vector2((min_x + max_x) * 0.5, 3.0)
+
 func _create_house(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float) -> void:
 	var half_w := width * 0.5
 	var half_d := depth * 0.5
@@ -2926,7 +3331,7 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
 	# Roof collision
-	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth))
+	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth), 2)
 	# Link door to wildlife blocker so wolves can enter when door is open
 	var door_node := get_node_or_null(label + " Door")
 	if door_node != null:
@@ -2986,22 +3391,48 @@ func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, hal
 	# Sparse grass around houses — just a few weeds near walls
 	for i in range(20):
 		var side := -1.0 if i % 2 == 0 else 1.0
-		var pos := origin + Vector3(side * _world_rng.randf_range(half_w + 0.2, half_w + 0.95), 0.055, _world_rng.randf_range(-(half_d - 0.1), half_d + 0.1))
+		var pos := origin + Vector3(side * _world_rng.randf_range(half_w + 0.2, half_w + 0.95), 0.0, _world_rng.randf_range(-(half_d - 0.1), half_d + 0.1))
+		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
 		_create_house_grass_asset(label + " SideGrass", pos, _world_rng.randf_range(0.22, 0.45))
 	for i in range(15):
 		var fb := 1.0 if i % 2 == 0 else -1.0
-		var pos := origin + Vector3(_world_rng.randf_range(-(half_w - 0.2), half_w - 0.2), 0.055, fb * _world_rng.randf_range(half_d + 0.2, half_d + 0.95))
+		var pos := origin + Vector3(_world_rng.randf_range(-(half_w - 0.2), half_w - 0.2), 0.0, fb * _world_rng.randf_range(half_d + 0.2, half_d + 0.95))
+		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
 		_create_house_grass_asset(label + " WallWeed", pos, _world_rng.randf_range(0.20, 0.42))
 	# Light grass fill from house edge to 12 units
 	var grass_radius: float = max(half_w, half_d) + 2.0
 	for i in range(500):
 		var angle := _world_rng.randf_range(0.0, TAU)
 		var dist := _world_rng.randf_range(grass_radius, 12.0)
-		var pos := origin + Vector3(cos(angle) * dist, 0.04, sin(angle) * dist)
+		var pos := origin + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
 		_create_grass_clump(pos, _world_rng.randf_range(0.4, 1.15), Color(0.15, 0.30, 0.10).lerp(Color(0.32, 0.42, 0.14), _world_rng.randf()))
 
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), _world_rng.randf()))
+
+func _create_barn_grass(origin: Vector3, half_w: float, half_d: float, ground_y: float) -> void:
+	# Short procedural grass hugging barn exterior walls
+	var base_color := Color(0.18, 0.32, 0.12)
+	var color_var := Color(0.34, 0.44, 0.16)
+	# Grass along the four walls, tight to the base
+	for i in range(400):
+		var side := _world_rng.randi() % 4
+		var pos: Vector3
+		match side:
+			0: # Front wall (-Z)
+				pos = Vector3(origin.x + _world_rng.randf_range(-half_w, half_w), 0.0, origin.z - half_d + _world_rng.randf_range(-0.8, 0.3))
+			1: # Back wall (+Z)
+				pos = Vector3(origin.x + _world_rng.randf_range(-half_w, half_w), 0.0, origin.z + half_d + _world_rng.randf_range(-0.3, 0.8))
+			2: # Left wall (-X)
+				pos = Vector3(origin.x - half_w + _world_rng.randf_range(-0.8, 0.3), 0.0, origin.z + _world_rng.randf_range(-half_d, half_d))
+			3: # Right wall (+X)
+				pos = Vector3(origin.x + half_w + _world_rng.randf_range(-0.3, 0.8), 0.0, origin.z + _world_rng.randf_range(-half_d, half_d))
+		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
+		var h := _world_rng.randf_range(0.14, 0.32)
+		var r := _world_rng.randf_range(0.20, 0.40)
+		var c := base_color.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
+		_queue_grass_instance(pos, h, r, c)
 
 func _create_new_world_props() -> void:
 	var _dbg_file := FileAccess.open("user://scrap_car_debug.txt", FileAccess.WRITE)
@@ -3022,6 +3453,9 @@ func _create_new_world_props() -> void:
 			jn.force_update_transform()
 			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
 		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(2.0, junk_height, 4.0), float(car_rot.y))
+		var _jc := get_node_or_null("JunkCarCollision0")
+		if _jc != null:
+			_jc.add_to_group("prop_collision")
 	# Scrap barricade car abandoned on the road (different angle)
 	var scrap_s := Vector3.ONE * 0.5
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
@@ -3048,6 +3482,9 @@ func _create_new_world_props() -> void:
 			if _dbg_file:
 				_dbg_file.store_line("height=" + str(scrap_height))
 		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(2.0, scrap_height, 4.0), float(scrap_rot.y))
+		var _sc := get_node_or_null("ScrapBarricadeCarCollision")
+		if _sc != null:
+			_sc.add_to_group("prop_collision")
 		if _dbg_file:
 			_dbg_file.store_line("=== MESH HIERARCHY DUMP ===")
 			var _meshes := []
@@ -3104,6 +3541,9 @@ func _create_new_world_props() -> void:
 				if box_h < 0.5:
 					box_h = 2.5
 			_create_invisible_collision_box_rotated("ContainerCollision%d" % i, cp["pos"], Vector3(box_w, box_h, box_d), yaw_f)
+			var _cc := get_node_or_null("ContainerCollision%d" % i)
+			if _cc != null:
+				_cc.add_to_group("prop_collision")
 			_register_wildlife_blocker(cp["pos"], 7.0)
 	var sofa_s := Vector3.ONE * 0.009
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaA", Vector3(-24.0, 0.0, -5.0), sofa_s, Vector3(0, 45, 0), true, 0.0)
@@ -3487,6 +3927,32 @@ func _create_house_loot() -> void:
 			loot_idx += 1
 			loot_data["pos"] = _find_pos_inside_house(origin, half_w, half_d)
 			_create_pickup_item(loot_data)
+	# Barn loot — more items, barn-specific pool
+	var barn_loot_pool := [
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15), "rare": true},
+		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+	]
+	var barn_origin := Vector3(45, 0, 120)
+	var barn_half_w := 4.0
+	var barn_half_d := 9.0
+	var barn_num_items := 5 + _world_rng.randi() % 4
+	for _j in range(barn_num_items):
+		var template: Dictionary = barn_loot_pool[_world_rng.randi() % barn_loot_pool.size()]
+		if template.get("rare", false) and _world_rng.randf() > 0.40:
+			template = barn_loot_pool[_world_rng.randi() % barn_loot_pool.size()]
+		var loot_data: Dictionary = template.duplicate()
+		loot_data["id"] = "barn_loot_%d" % loot_idx
+		loot_idx += 1
+		loot_data["pos"] = _find_pos_inside_house(barn_origin, barn_half_w, barn_half_d)
+		_create_pickup_item(loot_data)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
@@ -3622,9 +4088,8 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	var collision_name := visual_name + "_Collision"
 	var scale_value := Vector3.ONE * _world_rng.randf_range(1.05, 1.75)
 	if not _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
-		if not _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
-			push_warning("No se crea arbol talable %s porque falta/carga mal el asset .glb" % id)
-			return
+		push_warning("No se crea arbol talable %s porque falta/carga mal el asset .glb" % id)
+		return
 	_override_tree_foliage_green(visual_name)
 	var collision := _create_tree_collision(collision_name, pos)
 	collision.add_to_group("world_action_visual")
@@ -4740,7 +5205,7 @@ func _create_rocky_foothills() -> void:
 			if _can_place_ground_vegetation(hpos):
 				_create_grass_clump(hpos, _world_rng.randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
 		
-		# En montañas grandes, añadir árboles densos y arbustos
+		# En montañas grandes, añadir árboles densos y hierba extra (sin arbustos)
 		if is_large_mountain:
 			var tree_count := int(radius_x * radius_z * 0.06)
 			for _tc in range(tree_count):
@@ -4755,17 +5220,15 @@ func _create_rocky_foothills() -> void:
 				if not _can_place_ground_vegetation(tpos, 2.8):
 					continue
 				_create_tree(tpos, false)
-			# Añadir arbustos densos
-			var bush_count := int(radius_x * radius_z * 0.03)
-			for _bc in range(bush_count):
-				var b_angle := _world_rng.randf_range(0.0, TAU)
-				var b_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.8)
-				var bpos := pos + Vector3(cos(b_angle) * b_dist, 0, sin(b_angle) * b_dist)
-				bpos.y = _get_exact_ground_y(bpos.x, bpos.z)
-				if bpos.y < 0.05:
-					continue
-				if _can_place_ground_vegetation(bpos):
-					_create_bush(bpos, _world_rng.randf_range(0.4, 0.9))
+			# Hierba procedural extra en lugar de arbustos
+			var extra_grass_count := int(radius_x * radius_z * 0.04)
+			for _gc in range(extra_grass_count):
+				var g_angle := _world_rng.randf_range(0.0, TAU)
+				var g_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.85)
+				var gpos := pos + Vector3(cos(g_angle) * g_dist, 0, sin(g_angle) * g_dist)
+				gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.02
+				if _can_place_ground_vegetation(gpos):
+					_create_grass_clump(gpos, _world_rng.randf_range(0.30, 0.75), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
 		# Piedras gigantes procedurales en montañas grandes
 		if is_large_mountain:
 			var boulder_count := 5 + _world_rng.randi() % 5
@@ -4998,6 +5461,7 @@ const HOUSE_DATA := [
 	{"pos": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
 	{"pos": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
 	{"pos": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
+	{"pos": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
 ]
 
 func _is_player_in_house(pos: Vector3) -> bool:
@@ -5418,9 +5882,15 @@ func _create_glass_panel(node_name: String, pos: Vector3, size: Vector3, is_side
 	add_child(mesh_instance)
 
 func _create_house_exterior_assets(origin: Vector3, label: String, half_w: float, half_d: float, height: float) -> void:
-	_create_house_grass_asset(label + " FrontGrassLeft", origin + Vector3(-1.75, 0.055, half_d + 1.05), 0.34)
-	_create_house_grass_asset(label + " FrontGrassRight", origin + Vector3(1.75, 0.055, half_d + 0.95), 0.30)
-	_create_house_grass_asset(label + " FrontGrassSide", origin + Vector3(0.0, 0.055, half_d + 1.95), 0.26)
+	var fgl_pos := origin + Vector3(-1.75, 0.0, half_d + 1.05)
+	fgl_pos.y = _get_exact_ground_y(fgl_pos.x, fgl_pos.z) + 0.02
+	_create_house_grass_asset(label + " FrontGrassLeft", fgl_pos, 0.34)
+	var fgr_pos := origin + Vector3(1.75, 0.0, half_d + 0.95)
+	fgr_pos.y = _get_exact_ground_y(fgr_pos.x, fgr_pos.z) + 0.02
+	_create_house_grass_asset(label + " FrontGrassRight", fgr_pos, 0.30)
+	var fgs_pos := origin + Vector3(0.0, 0.0, half_d + 1.95)
+	fgs_pos.y = _get_exact_ground_y(fgs_pos.x, fgs_pos.z) + 0.02
+	_create_house_grass_asset(label + " FrontGrassSide", fgs_pos, 0.26)
 	_create_visual_box(label + " RoofEaveFront", origin + Vector3(0, height - 0.07, half_d + 0.52), Vector3(half_w * 2.0 + 1.5, 0.16, 0.32), Color(0.095, 0.055, 0.035), Vector3.ZERO)
 	_create_visual_box(label + " RoofEaveBack", origin + Vector3(0, height - 0.07, -(half_d + 0.52)), Vector3(half_w * 2.0 + 1.5, 0.16, 0.32), Color(0.085, 0.05, 0.035), Vector3.ZERO)
 	return
@@ -5807,6 +6277,9 @@ func _create_wrecked_car(pos: Vector3, yaw: float, color: Color) -> void:
 			if car_height < 0.5:
 				car_height = 2.3
 		_create_invisible_collision_box("RealCarCollision", pos, Vector3(2.7, car_height, 4.5))
+		var _rcc := get_node_or_null("RealCarCollision")
+		if _rcc != null:
+			_rcc.add_to_group("prop_collision")
 		_add_vehicle_visibility_overlays(pos, yaw, color)
 		return
 	_create_static_box_rotated("WreckBody", pos + Vector3(0, 0, 0), Vector3(2.4, 0.9, 4.2), color, Vector3(0, yaw, 0))
@@ -5829,6 +6302,9 @@ func _create_visible_vehicle_asset(pos: Vector3, yaw: float, model_index: int) -
 			if vis_height < 0.5:
 				vis_height = 2.8
 		_create_invisible_collision_box("ExternalVehicleVisibleCollision", pos, Vector3(3.0, vis_height, 5.0))
+		var _evc := get_node_or_null("ExternalVehicleVisibleCollision")
+		if _evc != null:
+			_evc.add_to_group("prop_collision")
 		_add_vehicle_visibility_overlays(pos, yaw, Color(0.18, 0.11, 0.075))
 		return
 	_create_wrecked_car(pos, yaw, Color(0.18, 0.11, 0.075))
@@ -5897,6 +6373,9 @@ func _create_wrecked_van(pos: Vector3, yaw: float) -> void:
 			if van_height < 0.5:
 				van_height = 2.8
 		_create_invisible_collision_box("RealVanCollision", pos, Vector3(3.0, van_height, 5.2))
+		var _rvc := get_node_or_null("RealVanCollision")
+		if _rvc != null:
+			_rvc.add_to_group("prop_collision")
 		return
 	_create_static_box_rotated("WreckVanBody", pos, Vector3(2.8, 1.6, 5.0), Color(0.17, 0.18, 0.15), Vector3(0, yaw, 0))
 	_create_static_box_rotated("WreckVanCabinDark", pos + Vector3(0, 1.0, -1.0), Vector3(2.3, 0.6, 1.8), Color(0.06, 0.07, 0.065), Vector3(0, yaw, 0))
@@ -5926,6 +6405,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			node.rotation_degrees = Vector3(0, 90, 0)
 			add_child(node)
 			_snap_node_bottom_to_y_cached(node, pos.y, pole_path, Vector3.ONE * pole_scale)
+			_add_collision_to_prop_group(node)
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
@@ -6011,6 +6491,10 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
+	if abs(pos.x) > 285.0 or abs(pos.z) > 285.0:
+		return false
+	if _is_near_house(pos, 1.0):
+		return false
 	if _is_in_house_doorway(pos):
 		return false
 	if _is_on_road(pos):
@@ -6062,6 +6546,7 @@ const HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
 	{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
 	{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
+	{"origin": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
 ]
 
 func _is_near_house(pos: Vector3, margin: float) -> bool:
@@ -6160,6 +6645,8 @@ func _register_wildlife_blocker(pos: Vector3, radius := 1.8) -> int:
 	return idx
 
 func _check_door_open(door, blocker: Dictionary) -> bool:
+	if blocker.get("barn_door_always_open", false) == true:
+		return true
 	if door != null and is_instance_valid(door) and door.get("is_open") == true:
 		return true
 	# Fallback: check _server_door_states by door name
@@ -6180,7 +6667,10 @@ func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 			var bounds: Rect2 = blocker["house_bounds"]
 			var expanded_bounds := bounds.grow(3.5)
 			if expanded_bounds.has_point(p):
-				if door_is_open and _is_in_doorway_passage(pos, blocker_pos):
+				if door_is_open and blocker.get("barn_door_always_open", false) == true:
+					if _is_in_barn_doorway_passage(pos, blocker):
+						continue
+				elif door_is_open and _is_in_doorway_passage(pos, blocker_pos):
 					continue
 				return true
 			continue
@@ -6201,15 +6691,32 @@ func _is_in_doorway_passage(pos: Vector3, house_origin: Vector3) -> bool:
 		return true
 	return false
 
+func _is_in_barn_doorway_passage(pos: Vector3, blocker: Dictionary) -> bool:
+	var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+	var front_x: float = float(blocker.get("front_door_x", blocker_pos.x))
+	var front_w: float = float(blocker.get("front_door_w", 2.0))
+	var back_x: float = float(blocker.get("back_door_x", blocker_pos.x))
+	var back_w: float = float(blocker.get("back_door_w", 2.0))
+	var half_d: float = float(blocker.get("house_bounds", Rect2()).size.y) * 0.5
+	# Front door passage (south wall, -Z)
+	if abs(pos.x - front_x) <= front_w * 0.5 + 0.5 and pos.z <= blocker_pos.z + 1.0 and pos.z >= blocker_pos.z - half_d - 2.0:
+		return true
+	# Back door passage (north wall, +Z)
+	if abs(pos.x - back_x) <= back_w * 0.5 + 0.5 and pos.z >= blocker_pos.z - 1.0 and pos.z <= blocker_pos.z + half_d + 2.0:
+		return true
+	return false
+
 func _update_door_open_cache() -> void:
 	_door_open_cache.clear()
 	for blocker in wildlife_blockers:
-		var door = blocker.get("door", null)
-		if door == null or not is_instance_valid(door):
-			continue
-		if door.get("is_open") != true:
-			continue
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var is_barn_always_open: bool = blocker.get("barn_door_always_open", false) == true
+		var door = blocker.get("door", null)
+		if not is_barn_always_open:
+			if door == null or not is_instance_valid(door):
+				continue
+			if door.get("is_open") != true:
+				continue
 		# For house_bounds blockers, unblock doorway passage cells
 		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
@@ -6224,7 +6731,10 @@ func _update_door_open_cache() -> void:
 					if not _nav_grid.has(cell):
 						continue
 					var world_pos := _grid_to_world(cell)
-					if _is_in_doorway_passage(world_pos, blocker_pos):
+					if is_barn_always_open:
+						if _is_in_barn_doorway_passage(world_pos, blocker):
+							_door_open_cache[cell] = true
+					elif _is_in_doorway_passage(world_pos, blocker_pos):
 						_door_open_cache[cell] = true
 			continue
 		var radius: float = float(blocker.get("radius", 1.8))
@@ -6243,11 +6753,23 @@ func _update_door_open_cache() -> void:
 				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
 					_door_open_cache[cell] = true
 
-func _get_exact_ground_y(x: float, z: float) -> float:
+func _add_collision_to_prop_group(root: Node) -> void:
+	if root is CollisionObject3D:
+		root.add_to_group("prop_collision")
+	for child in root.get_children():
+		_add_collision_to_prop_group(child)
+
+func _get_exact_ground_y(x: float, z: float, from_y: float = 250.0) -> float:
 	var space_state := get_world_3d().direct_space_state
 	if space_state != null:
-		var query := PhysicsRayQueryParameters3D.create(Vector3(x, 250.0, z), Vector3(x, -50.0, z))
+		var query := PhysicsRayQueryParameters3D.create(Vector3(x, from_y, z), Vector3(x, -50.0, z))
 		query.collision_mask = 1
+		var exclude_rids: Array[RID] = []
+		for node in get_tree().get_nodes_in_group("prop_collision"):
+			if node is CollisionObject3D:
+				exclude_rids.append((node as CollisionObject3D).get_rid())
+		if not exclude_rids.is_empty():
+			query.exclude = exclude_rids
 		var result := space_state.intersect_ray(query)
 		if not result.is_empty() and result.has("position"):
 			return (result["position"] as Vector3).y
@@ -6324,7 +6846,13 @@ func _create_dense_vegetation_zones() -> void:
 				continue
 			_create_grass_clump(pos, _world_rng.randf_range(0.48, 1.05), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), _world_rng.randf()))
 			if _world_rng.randf() < 0.30:
-				_create_bush(pos + Vector3(_world_rng.randf_range(-0.4, 0.4), 0, _world_rng.randf_range(-0.4, 0.4)), _world_rng.randf_range(0.55, 0.95))
+				if _get_ground_height(pos) > 0.5:
+					var bpos := pos + Vector3(_world_rng.randf_range(-0.4, 0.4), 0, _world_rng.randf_range(-0.4, 0.4))
+					bpos.y = _get_exact_ground_y(bpos.x, bpos.z) + 0.02
+					if _can_place_ground_vegetation(bpos):
+						_create_grass_clump(bpos, _world_rng.randf_range(0.40, 0.80), Color(0.13, 0.27, 0.09).lerp(Color(0.30, 0.44, 0.14), _world_rng.randf()))
+				else:
+					_create_bush(pos + Vector3(_world_rng.randf_range(-0.4, 0.4), 0, _world_rng.randf_range(-0.4, 0.4)), _world_rng.randf_range(0.55, 0.95))
 			if j % 150 == 0:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
@@ -6378,7 +6906,9 @@ func _create_grass_carpet() -> void:
 func _create_billboard_underbrush_fields() -> void:
 	var total_brushes := int(4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_brushes):
-		var pos := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0.03, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
+		var ux := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var uz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
+		var pos := Vector3(ux, _get_exact_ground_y(ux, uz) + 0.03, uz)
 		if not _can_place_ground_vegetation(pos):
 			continue
 		if _world_rng.randf() < 0.55 and pos.distance_to(Vector3(-48, 0, 20)) > 34.0:
@@ -6438,7 +6968,7 @@ func _create_forest() -> void:
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
 		for _g in range(1):
 			var gpos := pos + Vector3(_world_rng.randf_range(-1.5, 1.5), 0.0, _world_rng.randf_range(-1.5, 1.5))
-			gpos.y = _get_ground_height(Vector3(gpos.x, 0, gpos.z)) + 0.012
+			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
 			if not _can_place_ground_vegetation(gpos):
 				_queue_grass_instance(gpos, _world_rng.randf_range(0.25, 0.55), _world_rng.randf_range(0.35, 0.65), base_color.lerp(color_var, _world_rng.randf()))
 				
@@ -6463,7 +6993,7 @@ func _activate_tree(entry: Dictionary) -> void:
 	var tree_id: int = entry.id
 	var collision_name := visual_name + "_Collision"
 	var pos: Vector3 = entry.pos
-	_register_wildlife_blocker(pos, 5.0)
+	_register_wildlife_blocker(pos, 2.0)
 	var collision := _create_tree_collision(collision_name, pos)
 	collision.add_to_group("world_action_visual")
 	var action = _create_world_action("fell_tree_%d" % tree_id, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
@@ -6493,6 +7023,7 @@ func _deactivate_tree(entry: Dictionary) -> void:
 	entry.active = false
 
 func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
+	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
 	_tree_id_counter += 1
@@ -6502,7 +7033,7 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	var made_visual := false
 	if _forest_tree_meshes.is_empty():
 		_load_forest_tree_pack()
-	if not _forest_tree_meshes.is_empty():
+	if not made_visual and not _forest_tree_meshes.is_empty():
 		var entry = _forest_tree_meshes[_world_rng.randi() % _forest_tree_meshes.size()]
 		var src_mesh: ArrayMesh = entry.mesh
 		var xform: Transform3D = entry.transform
@@ -6524,14 +7055,11 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 		add_child(mi)
 		mi.add_to_group("world_action_visual")
 		made_visual = true
-	elif _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, Vector3.ONE * _world_rng.randf_range(1.15, 2.15), Vector3(0, _world_rng.randf_range(0, 360), 0), true, pos.y):
-		_override_tree_foliage_green(visual_name)
-		made_visual = true
 	else:
 		made_visual = _create_living_tree_fallback(pos, visual_name)
 	if made_visual:
 		if is_interactive:
-			_register_wildlife_blocker(pos, 5.0)
+			_register_wildlife_blocker(pos, 2.0)
 			var collision := _create_tree_collision(collision_name, pos)
 			collision.add_to_group("world_action_visual")
 			var action = _create_world_action("fell_tree_%d" % tree_id, "fell_tree", "Arbol", pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), false, false)
@@ -6670,9 +7198,6 @@ func _create_billboard_tree(pos: Vector3, texture_paths: Array, height: float, n
 	return true
 
 func _create_living_tree_fallback(pos: Vector3, visual_name: String) -> bool:
-	if _try_instance_external_scene(_shuffled_paths(REAL_LIVING_TREE_MODELS), visual_name, pos, Vector3.ONE * _world_rng.randf_range(1.15, 1.9), Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
-		_override_tree_foliage_green(visual_name)
-		return true
 	var height := _world_rng.randf_range(6.4, 10.2)
 	var trunk_radius := _world_rng.randf_range(0.18, 0.34)
 	var use_fir := _world_rng.randf() < 0.45
@@ -6946,6 +7471,7 @@ func _flush_grass_batches() -> void:
 
 #region PRIMITIVAS Y GEOMETRÍA (PrimitiveBuilder)
 func _create_bush(pos: Vector3, radius: float) -> void:
+	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos):
 		return
 	_bush_id_counter += 1
@@ -7095,12 +7621,12 @@ func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: 
 	add_child(body)
 	return body
 
-func _create_invisible_collision_box(node_name: String, pos: Vector3, size: Vector3) -> StaticBody3D:
+func _create_invisible_collision_box(node_name: String, pos: Vector3, size: Vector3, layer: int = 1) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.position = pos
-	body.collision_layer = 1
-	body.collision_mask = 1
+	body.collision_layer = layer
+	body.collision_mask = 3
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
@@ -7110,13 +7636,13 @@ func _create_invisible_collision_box(node_name: String, pos: Vector3, size: Vect
 	add_child(body)
 	return body
 
-func _create_invisible_collision_box_rotated(node_name: String, pos: Vector3, size: Vector3, rot_y: float) -> StaticBody3D:
+func _create_invisible_collision_box_rotated(node_name: String, pos: Vector3, size: Vector3, rot_y: float, layer: int = 1) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.position = pos
 	body.rotation_degrees.y = rot_y
-	body.collision_layer = 1
-	body.collision_mask = 1
+	body.collision_layer = layer
+	body.collision_mask = 3
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
@@ -7934,6 +8460,48 @@ func _add_convex_collision_to_meshes(root: Node) -> void:
 		var mesh_instance := mesh_node as MeshInstance3D
 		if mesh_instance.mesh != null:
 			mesh_instance.create_convex_collision()
+
+func _add_convex_collision_to_small_meshes(root: Node, max_dim: float = 3.5, door_zones: Array = []) -> void:
+	var meshes: Array = []
+	_collect_mesh_instances(root, meshes)
+	print("[BARN-COL] Found ", meshes.size(), " meshes, max_dim=", max_dim)
+	for mesh_node in meshes:
+		var mesh_instance := mesh_node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		var aabb := mesh_instance.get_aabb()
+		mesh_instance.force_update_transform()
+		var world_aabb: AABB = mesh_instance.global_transform * aabb
+		print("[BARN-COL] Mesh: ", mesh_instance.name, " world_size=", world_aabb.size, " world_pos=", world_aabb.position)
+		# Use WORLD AABB size for filtering - rotated meshes can have small local AABB but large world AABB
+		if world_aabb.size.x < max_dim and world_aabb.size.z < max_dim:
+			# Skip meshes whose CENTER is within a door zone (keeps door entrance clear)
+			var center_x := world_aabb.position.x + world_aabb.size.x * 0.5
+			var center_z := world_aabb.position.z + world_aabb.size.z * 0.5
+			var in_door_zone := false
+			for dz in door_zones:
+				# dz = Vector3(center_x, center_z, half_width)
+				var dzv: Vector3 = dz
+				# Use AABB overlap test: mesh overlaps door zone if X ranges intersect
+				# and mesh is within 8m of the wall in Z (covers full doorway path)
+				var mesh_x_min := world_aabb.position.x
+				var mesh_x_max := world_aabb.position.x + world_aabb.size.x
+				var door_x_min := dzv.x - dzv.z
+				var door_x_max := dzv.x + dzv.z
+				var x_overlap := mesh_x_min < door_x_max and mesh_x_max > door_x_min
+				if x_overlap and abs(center_z - dzv.y) < 8.0:
+					in_door_zone = true
+					break
+			if in_door_zone:
+				print("[BARN-COL]   -> SKIPPED (in door zone)")
+				continue
+			mesh_instance.create_convex_collision()
+			print("[BARN-COL]   -> ADDED collision")
+			# Add to prop_collision group so ground raycast ignores it
+			if mesh_instance.get_child_count() > 0:
+				var col: Node = mesh_instance.get_child(0)
+				if col is StaticBody3D:
+					(col as StaticBody3D).add_to_group("prop_collision")
 
 func _override_tree_foliage_green(_node_name: String) -> void:
 	if get_child_count() == 0:

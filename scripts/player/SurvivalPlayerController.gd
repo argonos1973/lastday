@@ -55,7 +55,8 @@ func _physics_process(delta: float) -> void:
 
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var move_dir := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
-	is_crouching = Input.is_action_pressed("crouch")
+	if Input.is_action_just_pressed("crouch"):
+		is_crouching = not is_crouching
 	is_running = Input.is_action_pressed("sprint") and input_dir.length() > 0.1 and not is_crouching and stats.stamina > 8.0
 	is_resting = input_dir.length() < 0.05 and is_on_floor()
 	var speed := crouch_speed if is_crouching else (sprint_speed if is_running else walk_speed)

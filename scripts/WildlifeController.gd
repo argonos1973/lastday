@@ -513,7 +513,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 1.5
 			else:
 				speed = move_speed * 4.0
-			if height_diff >= 2.0 and not _can_reach_player():
+			if height_diff >= 15.0 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 1.5:
 					_state = "patrol"
@@ -529,7 +529,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist <= 4.0 and height_diff < 2.0:
+			elif flat_dist <= 4.0 and height_diff < 15.0:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
@@ -1453,6 +1453,7 @@ func _hard_unstuck() -> void:
 	if safe != null:
 		var safe_pos: Vector3 = safe
 		global_position = Vector3(safe_pos.x, global_position.y, safe_pos.z)
+		_snap_to_terrain()
 	_unstuck_dir = Vector3.ZERO
 	_unstuck_timer = 0.0
 	_retarget_from_blocked_route()
@@ -1509,7 +1510,15 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 			return
 		return
 	global_position = next_pos
+	_snap_to_terrain()
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
+
+func _snap_to_terrain() -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_get_exact_ground_y"):
+		global_position.y = float(scene.call("_get_exact_ground_y", global_position.x, global_position.z))
+	elif scene != null and scene.has_method("_get_ground_height"):
+		global_position.y = float(scene.call("_get_ground_height", global_position))
 
 func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: float) -> bool:
 	dir.y = 0.0
@@ -1556,11 +1565,13 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 				fallback_pos = next_pos
 			continue
 		global_position = next_pos
+		_snap_to_terrain()
 		rotation.y = lerp_angle(rotation.y, atan2(candidate.x, candidate.z), delta * turn_speed)
 		return true
 	# Ningún candidato con anticipación libre: aceptar el mejor paso inmediato
 	if fallback_dir.length() > 0.01:
 		global_position = fallback_pos
+		_snap_to_terrain()
 		rotation.y = lerp_angle(rotation.y, atan2(fallback_dir.x, fallback_dir.z), delta * turn_speed)
 		return true
 	return false
@@ -1701,7 +1712,7 @@ func _can_reach_player() -> bool:
 	if _player == null or not is_instance_valid(_player):
 		return false
 	var height_diff := absf(_player.global_position.y - global_position.y)
-	if height_diff >= 2.0:
+	if height_diff >= 15.0:
 		return false
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):

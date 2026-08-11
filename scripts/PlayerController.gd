@@ -2267,14 +2267,11 @@ func _physics_process(delta: float) -> void:
 			velocity.x = 0.0
 			velocity.z = 0.0
 			direction = Vector3.ZERO
-	var crouch_input := Input.is_action_pressed("crouch")
-	if crouch_input:
+	if Input.is_action_just_pressed("crouch"):
+		is_crouching = not is_crouching
 		_force_crouch = false
-	if _force_crouch and not crouch_input and input_dir.length() < 0.1:
+	if _force_crouch and input_dir.length() < 0.1:
 		is_crouching = true
-	else:
-		is_crouching = crouch_input
-		_force_crouch = false
 	_update_crouch_collision()
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
@@ -2519,6 +2516,9 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
+	inventory.add_item(ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0))
+	held_index = inventory.items.size() - 1
+	_sync_held_item()
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -3809,6 +3809,10 @@ func _select_default_held_item() -> void:
 		if inventory.items[i].item_type == "weapon":
 			held_index = i
 			return
+	for i in range(inventory.items.size()):
+		if inventory.items[i].item_type == "tool_axe":
+			held_index = i
+			return
 	held_index = 0
 
 func equip_item_by_name(item_name: String) -> void:
@@ -3988,9 +3992,28 @@ func _eat_held_item() -> void:
 		if not _inventory_has_blade():
 			notice.emit("Necesitas un cuchillo o hacha para abrir la lata.")
 			return
-		item.durability = 0.0
-		item.item_name = item.item_name + " abierta"
-		inventory.changed.emit()
+		if item.quantity > 1:
+			# Split one can from the stack, open only that one
+			item.quantity -= 1
+			var opened = ItemScript.create(item.item_name + " abierta", item.item_type, item.weight, 1, item.use_value)
+			opened.durability = 0.0
+			inventory.changed.emit()
+			if not inventory.add_item(opened):
+				# No space — revert and put it back
+				item.quantity += 1
+				inventory.changed.emit()
+				notice.emit("No tienes espacio para la lata abierta.")
+				return
+			# Find the opened can and hold it
+			for i in range(inventory.items.size()):
+				if inventory.items[i].item_name == item.item_name + " abierta" and inventory.items[i].quantity == 1:
+					held_index = i
+					break
+			_sync_held_item()
+		else:
+			item.durability = 0.0
+			item.item_name = item.item_name + " abierta"
+			inventory.changed.emit()
 		notice.emit("Abres la lata con el cuchillo. Ahora puedes comer.")
 		return
 	# Play eating animation (same as campfire crafting)
@@ -6006,10 +6029,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_right_turn_animation
 			else:
 				target_animation = third_person_right_turn_animation
-		elif is_crouching and not _rifle_idle_animation.is_empty():
-			target_animation = _rifle_idle_animation
 		elif is_crouching and not third_person_sneak_animation.is_empty():
 			target_animation = third_person_sneak_animation
+		elif is_crouching and _has_rifle and not _rifle_idle_animation.is_empty():
+			target_animation = _rifle_idle_animation
 		elif low_health:
 			target_animation = third_person_low_health_animation
 		elif third_person_has_real_idle:
