@@ -31,6 +31,7 @@ var containers_by_id := {}
 var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
+var _camo_texture_cache: Dictionary = {}
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
 var _net_sync_timer := 0.0
@@ -829,17 +830,7 @@ func _create_environment() -> void:
 	sky_material.sun_angle_max = 4.0
 	sky_material.sun_curve = 0.12
 	var sky := Sky.new()
-	var shader_sky_material := _make_shader_sky_material()
-	if shader_sky_material != null:
-		sky.sky_material = shader_sky_material
-		sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
-		sky.radiance_size = Sky.RADIANCE_SIZE_128
-	else:
-		var hdri_sky_material = _make_hdri_sky_material()
-		if hdri_sky_material != null:
-			sky.sky_material = hdri_sky_material
-		else:
-			sky.sky_material = sky_material
+	sky.sky_material = sky_material
 	environment.sky = sky
 	environment.background_mode = Environment.BG_SKY
 	environment.background_color = Color(0.56, 0.76, 0.96)
@@ -896,7 +887,6 @@ func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
 	player.position = _get_random_spawn_pos()
-	print("[SPAWN] Player initial position: ", player.position)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -982,6 +972,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
 
+var _military_tent_pos := Vector3.ZERO
 var _spawn_zones: Array = [
 	Vector3(38.0, 0.4, 110.0),  # TEMP: Near barn for testing
 	Vector3(15.0, 0.4, -35.0),
@@ -1003,9 +994,10 @@ var _spawn_zones: Array = [
 ]
 
 func _get_random_spawn_pos() -> Vector3:
-	# TEMP: Always spawn near barn for testing (index 0 = barn spawn)
-	var base_pos = _spawn_zones[0]
-	var h = _get_ground_height(base_pos)
+	var angle := _world_rng.randf() * TAU
+	var dist := _world_rng.randf_range(40.0, 120.0)
+	var base_pos := Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	var h := _get_ground_height(base_pos)
 	return Vector3(base_pos.x, h + 0.4, base_pos.z)
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
@@ -2299,7 +2291,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
 	var lay_flat := item_name in ["Botas survival"]
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares"]
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Chaqueta militar", "Pantalones militares", "Guantes militares", "Chaqueta militar azul", "Pantalones militares azules", "Chaqueta militar negra II", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var is_rifle := item_type == "weapon_rifle"
 	if is_rifle:
@@ -2330,6 +2322,25 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 				elif item_name == "Zapatillas":
 					drop_color = gsess.selected_shoes_color
 				_apply_color_material_recursive(cloth_node, drop_color)
+	# Apply tint/camo to dropped military clothing variants
+	var military_black_names := ["Chaqueta militar azul", "Pantalones militares azules", "Chaqueta militar negra II", "Pantalones militares negros II", "Guantes militares"]
+	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert"]
+	if item_name in military_black_names:
+		var mil_node := get_node_or_null(NodePath(visual_name))
+		if mil_node is Node3D:
+			if item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
+				_apply_color_material_recursive(mil_node as Node3D, Color(0.03, 0.05, 0.10))
+			elif item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
+				_apply_color_material_recursive(mil_node as Node3D, Color(0.04, 0.04, 0.04))
+			else:
+				_apply_color_material_recursive(mil_node as Node3D, Color(0.10, 0.12, 0.08))
+	elif item_name in military_camo_names:
+		var camo_node := get_node_or_null(NodePath(visual_name))
+		if camo_node is Node3D:
+			if item_name.findn("desert") >= 0:
+				_apply_camo_material_recursive(camo_node as Node3D, Color(0.35, 0.30, 0.18))
+			else:
+				_apply_camo_material_recursive(camo_node as Node3D, Color(0.20, 0.25, 0.15))
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
 	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -2398,9 +2409,9 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Botas survival":
 					return ["res://assets/characters/adapted/pickup_cloth_feet.glb"]
-				"Chaqueta militar":
+				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II":
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
-				"Pantalones militares":
+				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
 				"Guantes militares":
 					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
@@ -2453,9 +2464,9 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 1.2
 				"Botas survival":
 					return 0.9
-				"Chaqueta militar":
+				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II":
 					return 0.8
-				"Pantalones militares":
+				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return 0.8
 				"Guantes militares":
 					return 1.2
@@ -3549,10 +3560,93 @@ func _create_new_world_props() -> void:
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaA", Vector3(-24.0, 0.0, -5.0), sofa_s, Vector3(0, 45, 0), true, 0.0)
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaB", Vector3(30.0, 0.0, -35.0), sofa_s, Vector3(0, -20, 0), true, 0.0)
 
+func _find_flat_area_for_tent() -> Vector3:
+	var best_pos := Vector3.ZERO
+	var best_score := 99999.0
+	# Scan positions in a ring 160-280 units from origin
+	for angle_deg in range(0, 360, 10):
+		var angle: float = deg_to_rad(float(angle_deg))
+		for dist in [160.0, 190.0, 220.0, 250.0, 280.0]:
+			var cx: float = dist * cos(angle)
+			var cz: float = dist * sin(angle)
+			var cy: float = _get_ground_height(Vector3(cx, 0, cz))
+			# Sample 8 points around candidate at 5m radius
+			var max_diff := 0.0
+			for s in range(8):
+				var sa: float = deg_to_rad(float(s) * 45.0)
+				var sx: float = cx + 5.0 * cos(sa)
+				var sz: float = cz + 5.0 * sin(sa)
+				var sy: float = _get_ground_height(Vector3(sx, 0, sz))
+				max_diff = max(max_diff, abs(sy - cy))
+			# Score: prefer low elevation difference and distance from village
+			var score: float = max_diff + (100.0 - dist) * 0.01
+			if max_diff < 1.5 and score < best_score:
+				best_score = score
+				best_pos = Vector3(cx, 0, cz)
+	if best_pos == Vector3.ZERO:
+		# Fallback: no flat area found, use least bad
+		best_pos = Vector3(200.0, 0, 200.0)
+	_military_tent_pos = best_pos
+	print("[TENT] Placed at flat area: ", best_pos, " max_diff=", best_score)
+	return best_pos
+
 func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
 	_create_fence_line(Vector3(16, 0, 32), Vector3(16, 0, 48), 6)
+	# Military tent — find flat area far from village
+	var tent_pos := _find_flat_area_for_tent()
+	var tent_ground_y := _get_exact_ground_y(tent_pos.x, tent_pos.z)
+	_try_instance_external_scene(["res://tent_military.glb"], "MilitaryTent", Vector3(tent_pos.x, tent_ground_y, tent_pos.z), Vector3.ONE * 1.5, Vector3(0, 35, 0), true, 0.0)
+	HOUSE_FOOTPRINTS.append({"origin": tent_pos, "w": 9.0, "d": 12.0})
+	# Add box collision for tent walls, leaving a door gap on the front (-Z side)
+	var tent_node := get_node_or_null("MilitaryTent")
+	if tent_node != null:
+		_remove_collision_from_node(tent_node)
+		var _meshes: Array = []
+		_collect_mesh_instances(tent_node, _meshes)
+		for m in _meshes:
+			var mi := m as MeshInstance3D
+			if mi != null:
+				for c in mi.get_children():
+					if c is CollisionShape3D or c is StaticBody3D:
+						c.queue_free()
+		var tw := 4.5
+		var td := 6.0
+		var th := 1.5
+		var door_w := 2.0
+		var body := StaticBody3D.new()
+		body.name = "MilitaryTentCollision"
+		add_child(body)
+		body.global_position = tent_node.global_position
+		body.global_rotation = tent_node.global_rotation
+		var back := CollisionShape3D.new()
+		back.shape = BoxShape3D.new()
+		back.shape.size = Vector3(tw * 2.0, th * 2.0, 0.3)
+		back.position = Vector3(0.0, th, -td)
+		body.add_child(back)
+		var left := CollisionShape3D.new()
+		left.shape = BoxShape3D.new()
+		left.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+		left.position = Vector3(-tw, th, 0.0)
+		body.add_child(left)
+		var right := CollisionShape3D.new()
+		right.shape = BoxShape3D.new()
+		right.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+		right.position = Vector3(tw, th, 0.0)
+		body.add_child(right)
+		var front_left := CollisionShape3D.new()
+		front_left.shape = BoxShape3D.new()
+		front_left.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+		front_left.position = Vector3(-(tw + door_w) * 0.5, th, td)
+		body.add_child(front_left)
+		var front_right := CollisionShape3D.new()
+		front_right.shape = BoxShape3D.new()
+		front_right.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+		front_right.position = Vector3((tw + door_w) * 0.5, th, td)
+		body.add_child(front_right)
+		_add_collision_to_prop_group(body)
+		_create_invisible_collision_box_rotated("MilitaryTentRoofCollision", tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), 35.0, 2)
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -3622,6 +3716,7 @@ func _create_survival_objectives() -> void:
 	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", _find_safe_loot_pos(), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
 	_create_house_loot()
+	_create_mushrooms()
 
 func _create_river_drink_zones() -> void:
 	var segments := _default_river_segments()
@@ -3861,6 +3956,39 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	var action = _create_world_action(id, action_type, label, pos, Vector3(1.2, 0.75, 1.2), Color(0.10, 0.095, 0.07), false, false)
 	action.set_meta("visual_name", visual_name)
 
+func _create_mushrooms() -> void:
+	var mushroom_count := 120
+	var mushroom_idx := 0
+	for _i in range(mushroom_count):
+		var pos := _find_safe_loot_pos()
+		if pos.distance_to(Vector3.ZERO) > 90.0:
+			continue
+		var py := _get_exact_ground_y(pos.x, pos.z)
+		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
+		mushroom_idx += 1
+
+func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
+	var visual_name := "Pickup_" + id
+	var scale_value := 0.05
+	var spawned := _try_instance_external_scene(["res://amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
+	if not spawned:
+		push_warning("No se crea seta %s porque falta/carga mal el asset .glb" % id)
+		return
+	var sn := get_node_or_null(NodePath(visual_name))
+	if sn is Node3D:
+		_snap_node_bottom_to_y(sn as Node3D, pos.y)
+	_mark_world_action_visual(visual_name)
+	var pickup_node := get_node_or_null(visual_name)
+	if pickup_node != null:
+		_remove_collision_from_node(pickup_node)
+	var action = _create_world_action(id, "eat_food", "Seta amanita", pos, Vector3(0.8, 0.5, 0.8), Color(0.8, 0.15, 0.1), false, false)
+	action.set_meta("visual_name", visual_name)
+	action.set_meta("item_name", "Seta amanita")
+	action.set_meta("item_type", "food")
+	action.set_meta("item_weight", 0.1)
+	action.set_meta("item_quantity", 1)
+	action.set_meta("item_use_value", 12.0)
+
 func _create_loose_survival_pickups() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
@@ -3889,7 +4017,6 @@ func _create_house_loot() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var house_loot_pool := [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15), "rare": true},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
@@ -3937,7 +4064,6 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15), "rare": true},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 	]
 	var barn_origin := Vector3(45, 0, 120)
@@ -3952,6 +4078,62 @@ func _create_house_loot() -> void:
 		loot_data["id"] = "barn_loot_%d" % loot_idx
 		loot_idx += 1
 		loot_data["pos"] = _find_pos_inside_house(barn_origin, barn_half_w, barn_half_d)
+		_create_pickup_item(loot_data)
+	# Military tent loot — military-grade pool
+	var tent_loot_pool := [
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
+		# --- Standard green military ---
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12), "tint": Color(0.15, 0.18, 0.12)},
+		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
+		# --- Blue military variant A ---
+		{"name": "Chaqueta militar azul", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 120, 0), "flat": false, "color": Color(0.03, 0.05, 0.10), "tint": Color(0.03, 0.05, 0.10)},
+		{"name": "Pantalones militares azules", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 80, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
+		# --- Black military variant B ---
+		{"name": "Chaqueta militar negra II", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -60, 0), "flat": false, "color": Color(0.03, 0.03, 0.04), "tint": Color(0.03, 0.03, 0.04)},
+		{"name": "Pantalones militares negros II", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
+		# --- Camo military ---
+		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 100, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
+		# --- Gloves ---
+		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
+		# --- Supplies ---
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+	]
+	var tent_origin := _military_tent_pos
+	var tent_half_w := 4.0
+	var tent_half_d := 5.5
+	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
+	# Guarantee rifle spawn in tent
+	var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
+	rifle_data["id"] = "tent_loot_%d" % loot_idx
+	loot_idx += 1
+	rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+	rifle_data["pos"].y = tent_ground_y + 0.06
+	_create_pickup_item(rifle_data)
+	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
+	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
+	var guaranteed_clothing: Array = []
+	for _g in range(3):
+		var gi := _world_rng.randi() % clothing_indices.size()
+		guaranteed_clothing.append(clothing_indices[gi])
+		clothing_indices.remove_at(gi)
+	for gidx in guaranteed_clothing:
+		var g_data: Dictionary = tent_loot_pool[gidx].duplicate()
+		g_data["id"] = "tent_loot_%d" % loot_idx
+		loot_idx += 1
+		g_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		g_data["pos"].y = tent_ground_y + 0.06
+		_create_pickup_item(g_data)
+	# Additional random items
+	var tent_num_items := 2 + _world_rng.randi() % 3
+	for _j in range(tent_num_items):
+		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
+		var loot_data: Dictionary = template.duplicate()
+		loot_data["id"] = "tent_loot_%d" % loot_idx
+		loot_idx += 1
+		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		loot_data["pos"].y = tent_ground_y + 0.06
 		_create_pickup_item(loot_data)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
@@ -4017,6 +4199,46 @@ func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
 		for c in n.get_children():
 			stack.append(c)
 
+func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _make_camo_texture(base_color)
+	mat.albedo_color = Color.WHITE
+	mat.roughness = 0.85
+	mat.metallic = 0.0
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			var mi := n as MeshInstance3D
+			mi.material_override = mat
+		for c in n.get_children():
+			stack.append(c)
+
+func _make_camo_texture(base_color: Color = Color(0.2, 0.25, 0.15)) -> ImageTexture:
+	var cache_key := str(base_color)
+	if _camo_texture_cache.has(cache_key):
+		return _camo_texture_cache[cache_key]
+	var size := 128
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
+	img.fill(camo_colors[0])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for blob in range(40):
+		var cx := rng.randi_range(0, size - 1)
+		var cy := rng.randi_range(0, size - 1)
+		var radius := rng.randi_range(8, 25)
+		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
+		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
+			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
+				var dx := x - cx
+				var dy := y - cy
+				if dx * dx + dy * dy <= radius * radius:
+					img.set_pixel(x, y, color)
+	var tex := ImageTexture.create_from_image(img)
+	_camo_texture_cache[cache_key] = tex
+	return tex
+
 func _create_pickup_item(data: Dictionary) -> void:
 	var id := str(data["id"])
 	var item_name := str(data["name"])
@@ -4055,6 +4277,14 @@ func _create_pickup_item(data: Dictionary) -> void:
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
 			_apply_black_material_recursive(boot_node as Node3D)
+	# Apply tint or camo material to military clothing pickups
+	if data.has("tint"):
+		var tint_node := get_node_or_null(NodePath(visual_name))
+		if tint_node is Node3D:
+			if bool(data.get("camo", false)):
+				_apply_camo_material_recursive(tint_node as Node3D, data["tint"])
+			else:
+				_apply_color_material_recursive(tint_node as Node3D, data["tint"])
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
@@ -4312,7 +4542,6 @@ func handle_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			print("[PICKUP] item_name=", item.item_name, " item_type=", item.item_type)
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
 				# Equip directly from ground — adds to inventory, equips (drops old to ground)
 				_play_actor_action(actor, "pickup", 0.8)
@@ -4326,7 +4555,6 @@ func handle_world_action(action, actor) -> void:
 				if net != null and net.is_connected and not net.is_host:
 					net.item_picked_up.rpc_id(1, action.action_id)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
-				print("[PICKUP] backpack branch taken, calling equip_backpack")
 				_play_actor_action(actor, "pickup", 0.3)
 				# Equip first so carry capacity expands before the weight check in
 				# add_item runs — otherwise a previous drop (which shrinks capacity
@@ -6135,24 +6363,22 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	light.shadow_enabled = true
 	add_child(light)
 	# Fire particles with billboard planes
-	var particles := GPUParticles3D.new()
+	var particles := CPUParticles3D.new()
 	particles.name = node_name + "Particles"
 	particles.position = pos
 	particles.amount = 60
 	particles.lifetime = 0.6
 	particles.explosiveness = 0.4
 	particles.randomness = 0.6
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 8.0
-	mat.initial_velocity_min = 1.0
-	mat.initial_velocity_max = 2.5
-	mat.gravity = Vector3(0, 1.0, 0)
-	mat.scale_min = 0.15
-	mat.scale_max = 0.4
-	mat.color = Color(1.0, 0.6, 0.15, 1.0)
-	mat.color_ramp = _make_fire_ramp()
-	particles.process_material = mat
+	particles.direction = Vector3(0, 1, 0)
+	particles.spread = 8.0
+	particles.initial_velocity_min = 1.0
+	particles.initial_velocity_max = 2.5
+	particles.gravity = Vector3(0, 1.0, 0)
+	particles.scale_amount_min = 0.15
+	particles.scale_amount_max = 0.4
+	particles.color = Color(1.0, 0.6, 0.15, 1.0)
+	particles.color_ramp = _make_fire_gradient()
 	# Billboard plane with radial gradient flame texture
 	var quad := PlaneMesh.new()
 	quad.size = Vector2(0.3, 0.3)
@@ -6172,23 +6398,21 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	particles.draw_pass_1 = quad
 	add_child(particles)
 	# Smoke particles
-	var smoke := GPUParticles3D.new()
+	var smoke := CPUParticles3D.new()
 	smoke.name = node_name + "Smoke"
 	smoke.position = pos + Vector3(0, 0.5, 0)
 	smoke.amount = 20
 	smoke.lifetime = 3.0
 	smoke.explosiveness = 0.2
 	smoke.randomness = 0.5
-	var smoke_mat := ParticleProcessMaterial.new()
-	smoke_mat.direction = Vector3(0, 1, 0)
-	smoke_mat.spread = 15.0
-	smoke_mat.initial_velocity_min = 0.5
-	smoke_mat.initial_velocity_max = 1.5
-	smoke_mat.gravity = Vector3(0, 0.3, 0)
-	smoke_mat.scale_min = 0.3
-	smoke_mat.scale_max = 1.0
-	smoke_mat.color = Color(0.3, 0.3, 0.3, 0.4)
-	smoke.process_material = smoke_mat
+	smoke.direction = Vector3(0, 1, 0)
+	smoke.spread = 15.0
+	smoke.initial_velocity_min = 0.5
+	smoke.initial_velocity_max = 1.5
+	smoke.gravity = Vector3(0, 0.3, 0)
+	smoke.scale_amount_min = 0.3
+	smoke.scale_amount_max = 1.0
+	smoke.color = Color(0.3, 0.3, 0.3, 0.4)
 	var smoke_quad := PlaneMesh.new()
 	smoke_quad.size = Vector2(0.5, 0.5)
 	smoke_quad.orientation = PlaneMesh.FACE_Y
@@ -6212,6 +6436,14 @@ func _make_fire_ramp() -> GradientTexture1D:
 	var tex := GradientTexture1D.new()
 	tex.gradient = grad
 	return tex
+
+func _make_fire_gradient() -> Gradient:
+	var grad := Gradient.new()
+	grad.add_point(0.0, Color(1.0, 0.9, 0.3, 1.0))
+	grad.add_point(0.3, Color(1.0, 0.5, 0.1, 0.9))
+	grad.add_point(0.7, Color(0.8, 0.15, 0.02, 0.5))
+	grad.add_point(1.0, Color(0.2, 0.05, 0.0, 0.0))
+	return grad
 
 # Interior de casas: pendiente de implementar (placeholder para futura expansión)
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
@@ -6535,7 +6767,7 @@ func is_wildlife_allowed_at(pos: Vector3) -> bool:
 		return false
 	return true
 
-const HOUSE_FOOTPRINTS := [
+var HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
 	{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
 	{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
@@ -7130,7 +7362,7 @@ func _create_cut_tree_remains(pos: Vector3) -> void:
 	_spawn_wood_chips(pos + Vector3(0, 1.5, 0))
 
 func _spawn_wood_chips(origin: Vector3) -> void:
-	var particles := GPUParticles3D.new()
+	var particles := CPUParticles3D.new()
 	particles.name = "WoodChips"
 	particles.position = origin
 	particles.amount = 24
@@ -7138,31 +7370,16 @@ func _spawn_wood_chips(origin: Vector3) -> void:
 	particles.one_shot = true
 	particles.explosiveness = 0.8
 	particles.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 35.0
-	mat.initial_velocity_min = 2.5
-	mat.initial_velocity_max = 5.0
-	mat.gravity = Vector3(0, -9.8, 0)
-	mat.scale_min = 0.3
-	mat.scale_max = 1.0
-	mat.hue_variation_min = -0.05
-	mat.hue_variation_max = 0.05
-	mat.color = Color(0.42, 0.26, 0.12)
-	var scale_curve := Curve.new()
-	scale_curve.add_point(Vector2(0, 1.0))
-	scale_curve.add_point(Vector2(0.5, 0.6))
-	scale_curve.add_point(Vector2(1.0, 0.0))
-	var scale_tex := CurveTexture.new()
-	scale_tex.curve = scale_curve
-	mat.scale_curve = scale_tex
-	var rot_curve := Curve.new()
-	rot_curve.add_point(Vector2(0, 0.0))
-	rot_curve.add_point(Vector2(1.0, 12.0))
-	var rot_tex := CurveTexture.new()
-	rot_tex.curve = rot_curve
-	mat.angle_curve = rot_tex
-	particles.process_material = mat
+	particles.direction = Vector3(0, 1, 0)
+	particles.spread = 35.0
+	particles.initial_velocity_min = 2.5
+	particles.initial_velocity_max = 5.0
+	particles.gravity = Vector3(0, -9.8, 0)
+	particles.scale_amount_min = 0.3
+	particles.scale_amount_max = 1.0
+	particles.hue_variation_min = -0.05
+	particles.hue_variation_max = 0.05
+	particles.color = Color(0.42, 0.26, 0.12)
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.12, 0.06, 0.12)
 	particles.draw_pass_1 = mesh

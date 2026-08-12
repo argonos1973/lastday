@@ -83,8 +83,9 @@ func create_star_field() -> void:
 	material.no_depth_test = true
 	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.render_priority = 127
 	var star_mesh := QuadMesh.new()
-	star_mesh.size = Vector2(0.32, 0.32)
+	star_mesh.size = Vector2(3.0, 3.0)
 	var lat_rad := deg_to_rad(BCN_LAT_DEG)
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
 	for entry in BRIGHT_STAR_CATALOG:
@@ -119,6 +120,28 @@ func update_real_star_positions() -> void:
 		node.position = dir * STAR_DOME_RADIUS
 		node.visible = dir.y > 0.02
 
+func update_moon_position() -> void:
+	if moon_field == null or not is_instance_valid(moon_field):
+		return
+	var moon_dir := get_real_moon_direction()
+	var moon_pos := moon_dir * STAR_DOME_RADIUS
+	var disc_radius := 4.8
+	var phase := get_real_moon_phase_data()
+	var illumination: float = phase["illumination"]
+	var waxing: bool = phase["waxing"]
+	var offset := disc_radius * 2.0 * illumination * (-1.0 if waxing else 1.0)
+	var right_dir := Vector3(moon_dir.z, 0.0, -moon_dir.x).normalized()
+	for child in moon_field.get_children():
+		if not child is MeshInstance3D:
+			continue
+		var mi := child as MeshInstance3D
+		if mi.name == "RealPhaseMoonDisc" or mi.name == "MoonGlow":
+			mi.position = moon_pos
+			mi.visible = moon_dir.y > 0.02
+		elif mi.name == "RealPhaseMoonShadow":
+			mi.position = moon_pos + right_dir * offset
+			mi.visible = moon_dir.y > 0.02
+
 func create_moon_field() -> void:
 	moon_field = Node3D.new()
 	moon_field.name = "MoonField"
@@ -127,7 +150,8 @@ func create_moon_field() -> void:
 
 	var phase := get_real_moon_phase_data()
 	var disc_radius := 4.8
-	var moon_pos := Vector3(-38.0, 62.0, -72.0)
+	var moon_dir := get_real_moon_direction()
+	var moon_pos := moon_dir * STAR_DOME_RADIUS
 
 	var moon := MeshInstance3D.new()
 	moon.name = "RealPhaseMoonDisc"
@@ -142,7 +166,9 @@ func create_moon_field() -> void:
 	var illumination: float = phase["illumination"]
 	var waxing: bool = phase["waxing"]
 	var offset := disc_radius * 2.0 * illumination * (-1.0 if waxing else 1.0)
-	shadow.position = moon_pos + Vector3(offset, 0.0, 0.035)
+	# Offset the shadow disc perpendicular to the moon's elevation in sky
+	var right_dir := Vector3(moon_dir.z, 0.0, -moon_dir.x).normalized()
+	shadow.position = moon_pos + right_dir * offset
 	shadow.mesh = _make_disc_mesh(disc_radius * 1.02, 96)
 	shadow.material_override = _make_celestial_material(Color(0.012, 0.016, 0.035, 0.96), Color(0.0, 0.0, 0.0), 0.0)
 	shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -150,7 +176,7 @@ func create_moon_field() -> void:
 
 	var glow := MeshInstance3D.new()
 	glow.name = "MoonGlow"
-	glow.position = moon_pos + Vector3(0.0, 0.0, -0.02)
+	glow.position = moon_pos
 	glow.mesh = _make_disc_mesh(disc_radius * 1.42, 96)
 	glow.material_override = _make_celestial_material(Color(0.62, 0.68, 0.86, 0.16), Color(0.40, 0.48, 0.78), 0.75)
 	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -169,6 +195,39 @@ func get_real_moon_phase_data() -> Dictionary:
 		"illumination": illumination,
 		"waxing": age < synodic_month * 0.5
 	}
+
+# Real moon position using simplified lunar theory.
+# Returns a normalized Vector3 pointing toward the moon in world space.
+func get_real_moon_direction() -> Vector3:
+	var unix_time: float = Time.get_unix_time_from_system()
+	var jd: float = unix_time / 86400.0 + 2440587.5
+	var t: float = (jd - 2451545.0) / 36525.0
+
+	# Orbital elements (degrees, simplified)
+	var L := fposmod(218.316 + 481267.8813 * t, 360.0)
+	var M := fposmod(134.963 + 477198.8676 * t, 360.0)
+	var F := fposmod(93.272 + 483202.0175 * t, 360.0)
+
+	# Moon longitude with major perturbation
+	var lambda_deg := fposmod(L + 6.289 * sin(deg_to_rad(M)), 360.0)
+	# Moon latitude
+	var beta_deg := 5.128 * sin(deg_to_rad(F))
+
+	# Obliquity of the ecliptic
+	var eps_deg := 23.439
+
+	var lambda := deg_to_rad(lambda_deg)
+	var beta := deg_to_rad(beta_deg)
+	var eps := deg_to_rad(eps_deg)
+
+	# Convert ecliptic to equatorial
+	var ra := atan2(sin(lambda) * cos(eps) - tan(beta) * sin(eps), cos(lambda))
+	var dec := asin(clamp(sin(beta) * cos(eps) + cos(beta) * sin(eps) * sin(lambda), -1.0, 1.0))
+
+	# Convert equatorial to horizontal using local sidereal time and latitude
+	var lst_rad := deg_to_rad(_local_sidereal_deg())
+	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	return _radec_to_world_dir(ra, dec, lst_rad, lat_rad)
 
 func _make_disc_mesh(radius: float, segments: int) -> ArrayMesh:
 	var vertices := PackedVector3Array()
@@ -205,4 +264,5 @@ func _make_celestial_material(albedo: Color, emission: Color, energy: float) -> 
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	material.no_depth_test = true
 	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	material.render_priority = 127
 	return material

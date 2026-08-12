@@ -55,9 +55,15 @@ const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
 const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": []},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"]},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
+	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"], "tint": Color(0.03, 0.05, 0.10)},
+	"Pantalones militares azules": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.04, 0.08)},
+	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"], "tint": Color(0.03, 0.03, 0.04)},
+	"Pantalones militares negros II": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.02, 0.03)},
+	"Pantalones camuflaje": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.18, 0.22, 0.13)},
+	"Pantalones camuflaje desert": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.32, 0.28, 0.16)},
 }
 
 # Maps clothing slot to possible mesh names in custom character models.
@@ -83,6 +89,12 @@ const DEFAULT_SKIN_HIDES := {
 	"Zapatillas": ["Desnudo_feet"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
 	"Pantalones militares": ["Desnudo_legs"],
+	"Chaqueta militar azul": ["Desnudo_torso", "Desnudo_arms"],
+	"Pantalones militares azules": ["Desnudo_legs"],
+	"Chaqueta militar negra II": ["Desnudo_torso", "Desnudo_arms"],
+	"Pantalones militares negros II": ["Desnudo_legs"],
+	"Pantalones camuflaje": ["Desnudo_legs"],
+	"Pantalones camuflaje desert": ["Desnudo_legs"],
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
 	"Botas survival": ["Desnudo_feet"],
@@ -102,6 +114,12 @@ const CLOTHING_COVERED_ZONES := {
 	"Zapatillas": ["pies"],
 	"Chaqueta militar": ["torso", "brazos_superiores"],
 	"Pantalones militares": ["cadera", "piernas"],
+	"Chaqueta militar azul": ["torso", "brazos_superiores"],
+	"Pantalones militares azules": ["cadera", "piernas"],
+	"Chaqueta militar negra II": ["torso", "brazos_superiores"],
+	"Pantalones militares negros II": ["cadera", "piernas"],
+	"Pantalones camuflaje": ["cadera", "piernas"],
+	"Pantalones camuflaje desert": ["cadera", "piernas"],
 	"Guantes survival": ["manos"],
 	"Guantes militares": ["manos"],
 	"Botas survival": ["pies"],
@@ -119,6 +137,12 @@ const CLOTHING_SLOTS := {
 	"Chaqueta militar": "torso",
 	"Pantalones militares": "legs",
 	"Guantes militares": "hands",
+	"Chaqueta militar azul": "torso",
+	"Pantalones militares azules": "legs",
+	"Chaqueta militar negra II": "torso",
+	"Pantalones militares negros II": "legs",
+	"Pantalones camuflaje": "legs",
+	"Pantalones camuflaje desert": "legs",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
 }
@@ -133,6 +157,12 @@ const CLOTHING_WARMTH := {
 	"Botas survival": 0.18,
 	"Chaqueta militar": 0.28,
 	"Pantalones militares": 0.20,
+	"Chaqueta militar azul": 0.28,
+	"Pantalones militares azules": 0.20,
+	"Chaqueta militar negra II": 0.28,
+	"Pantalones militares negros II": 0.20,
+	"Pantalones camuflaje": 0.20,
+	"Pantalones camuflaje desert": 0.20,
 	"Guantes militares": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
@@ -467,6 +497,7 @@ var is_custom_character: bool = false
 var is_clothing_model: bool = false
 var _custom_body_mesh_name: String = ""
 var _custom_clothing_mesh_names: Dictionary = {}
+var _camo_texture_cache: Dictionary = {}
 var puppet_model_path: String = ""
 
 func setup_as_puppet() -> void:
@@ -1559,17 +1590,20 @@ var _char_shoes_color: Color = Color(0.15, 0.15, 0.15)
 var _char_hair_color: Color = Color(0.2, 0.15, 0.1)
 var _char_skin_color: Color = Color(0.8, 0.7, 0.6)
 
-func _make_camo_texture() -> ImageTexture:
-	var size := 256
+func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> ImageTexture:
+	var cache_key := str(base_color)
+	if _camo_texture_cache.has(cache_key):
+		return _camo_texture_cache[cache_key]
+	var size := 128
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var camo_colors := [Color(0.25, 0.3, 0.15), Color(0.15, 0.18, 0.1), Color(0.35, 0.32, 0.18), Color(0.1, 0.12, 0.08)]
+	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
 	img.fill(camo_colors[0])
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 42
-	for blob in range(80):
+	for blob in range(40):
 		var cx := rng.randi_range(0, size - 1)
 		var cy := rng.randi_range(0, size - 1)
-		var radius := rng.randi_range(10, 35)
+		var radius := rng.randi_range(8, 25)
 		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
 		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
 			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
@@ -1577,7 +1611,9 @@ func _make_camo_texture() -> ImageTexture:
 				var dy := y - cy
 				if dx * dx + dy * dy <= radius * radius:
 					img.set_pixel(x, y, color)
-	return ImageTexture.create_from_image(img)
+	var tex := ImageTexture.create_from_image(img)
+	_camo_texture_cache[cache_key] = tex
+	return tex
 
 # Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
 # replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
@@ -1840,6 +1876,18 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 	var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
 	if mi != null:
 		mi.visible = worn
+		if worn and (cfg.has("tint") or cfg.has("camo")):
+			var mat := StandardMaterial3D.new()
+			mat.roughness = 0.85
+			mat.metallic = 0.0
+			if cfg.has("camo"):
+				mat.albedo_texture = _make_camo_texture(cfg["camo"])
+				mat.albedo_color = Color.WHITE
+			else:
+				mat.albedo_color = cfg["tint"]
+			mi.material_override = mat
+		elif worn:
+			mi.material_override = null
 	# Build reverse map: body mesh name -> default clothing item name
 	var _body_to_default := {}
 	for dname in DEFAULT_CLOTHING:
@@ -2488,6 +2536,7 @@ func _create_body() -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera3D"
 	camera.current = true
+	camera.far = 500.0
 	camera.position = THIRD_PERSON_CAMERA_POS
 	add_child(camera)
 
@@ -2516,9 +2565,6 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
-	inventory.add_item(ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0))
-	held_index = inventory.items.size() - 1
-	_sync_held_item()
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
