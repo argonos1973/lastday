@@ -42,6 +42,7 @@ var _shelter_check_timer := 0.0
 var _cached_in_house := false
 var _cached_near_shelter := false
 var _door_cache_timer := 0.0
+var _shadow_update_timer := 0.0
 var _campfire_emit_timer := 0.0
 var _animal_debug_timer := 0
 var _client_animal_debug_timer := 0
@@ -57,15 +58,19 @@ var _pending_open_doors: Array = []
 var _pending_restore_data: Array = []
 var _tree_id_counter := 0
 var _tree_registry: Array = [] # {pos, visual_name, id, active}
-var _tree_activation_radius := 60.0
-var _tree_deactivation_radius := 80.0
+var _tree_activation_radius := 10.0
+var _tree_deactivation_radius := 15.0
 var _tree_check_timer := 0.0
+var _tree_grid: Dictionary = {} # cell_key -> Array[entry refs]
+var _tree_grid_cell_size := 20.0
 var _bush_id_counter := 0
 var _boulder_id_counter := 0
 var _boulder_registry: Array = [] # {pos, visual_name, id, active, scale}
-var _boulder_activation_radius := 60.0
-var _boulder_deactivation_radius := 80.0
+var _boulder_activation_radius := 10.0
+var _boulder_deactivation_radius := 15.0
 var _boulder_check_timer := 0.0
+var _boulder_grid: Dictionary = {} # cell_key -> Array[entry refs]
+var _boulder_grid_cell_size := 20.0
 var material_cache := {}
 var billboard_texture_cache := {}
 var texture_path_cache := {}
@@ -548,10 +553,11 @@ func _input(_event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	_update_wind_shader_time(delta)
 	_tree_check_timer += delta
-	if _tree_check_timer > 0.5:
+	if _tree_check_timer > 1.0:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
+		_update_shadow_proximity()
 	if world_streaming_mgr != null:
 		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
@@ -647,6 +653,10 @@ func _process(delta: float) -> void:
 	if _water_night_timer >= 2.0:
 		_water_night_timer = 0.0
 		_update_water_night_amount()
+	_shadow_update_timer += delta
+	if _shadow_update_timer >= 0.5:
+		_shadow_update_timer = 0.0
+		_update_shadow_proximity()
 	_tick_world_actions(delta)
 	_tick_drink_hold(delta)
 	_tick_campfire_fires()
@@ -788,6 +798,22 @@ func _update_water_night_amount() -> void:
 		if node is RiverWater and node.has_method("set_night_amount"):
 			node.set_night_amount(night_amount)
 
+func _update_shadow_proximity() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	const SHADOW_RADIUS := 10.0
+	for light in get_tree().get_nodes_in_group("omni_lights"):
+		if light is OmniLight3D:
+			var ol: OmniLight3D = light
+			var dist: float = ppos.distance_to(ol.global_position)
+			ol.shadow_enabled = dist < SHADOW_RADIUS
+	for light in get_tree().get_nodes_in_group("area_lights"):
+		if light is AreaLight3D:
+			var al: AreaLight3D = light
+			var dist: float = ppos.distance_to(al.global_position)
+			al.shadow_enabled = dist < SHADOW_RADIUS
+
 # Guardado de partida: pendiente de implementar (actualmente no persiste)
 func save_current_game() -> void:
 	return
@@ -818,17 +844,81 @@ func listen_radio() -> void:
 	var message: String = radio.listen()
 	hud.show_notice("Radio: \"%s\"" % message)
 
+func _make_cloud_noise_texture(noise: FastNoiseLite, size: int) -> ImageTexture:
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var data := PackedByteArray()
+	data.resize(size * size * 4)
+	var idx := 0
+	var R := float(size) * 0.5
+	var r := float(size) * 0.2
+	for y in range(size):
+		for x in range(size):
+			var u := float(x) / float(size) * TAU
+			var v := float(y) / float(size) * TAU
+			var px := (R + r * cos(v)) * cos(u)
+			var py := (R + r * cos(v)) * sin(u)
+			var pz := r * sin(v)
+			var n := noise.get_noise_3d(px, py, pz) * 0.5 + 0.5
+			n = clamp(n, 0.0, 1.0)
+			var val := int(n * 255.0)
+			data[idx] = val
+			data[idx + 1] = val
+			data[idx + 2] = val
+			data[idx + 3] = 255
+			idx += 4
+	img.set_data(size, size, false, Image.FORMAT_RGBA8, data)
+	return ImageTexture.create_from_image(img)
+
+func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
+	sky_material.set_shader_parameter("sky_top_color", Color(0.34, 0.62, 0.95, 1))
+	sky_material.set_shader_parameter("sky_mid_color", Color(0.55, 0.75, 0.98, 1))
+	sky_material.set_shader_parameter("sky_horizon_color", Color(0.78, 0.90, 1.0, 1))
+	sky_material.set_shader_parameter("sky_curve", 0.15)
+	sky_material.set_shader_parameter("sky_energy", 1.0)
+	sky_material.set_shader_parameter("ground_bottom_color", Color(0.20, 0.30, 0.16, 1))
+	sky_material.set_shader_parameter("ground_horizon_color", Color(0.38, 0.52, 0.28, 1))
+	sky_material.set_shader_parameter("ground_curve", 0.0627672)
+	sky_material.set_shader_parameter("ground_energy", 1.0)
+	sky_material.set_shader_parameter("cloud_uv_scale", 1.0)
+	sky_material.set_shader_parameter("cloud_uv_scale2", 1.3)
+	sky_material.set_shader_parameter("small_cloud_cover", 0.65)
+	sky_material.set_shader_parameter("large_cloud_cover", 0.55)
+	sky_material.set_shader_parameter("cloud_inner_colour", Color(1.0, 1.0, 1.0, 1))
+	sky_material.set_shader_parameter("cloud_outer_colour", Color(0.75, 0.75, 0.78, 1))
+	sky_material.set_shader_parameter("wind_direction", 0.0)
+	sky_material.set_shader_parameter("wind_strength", 0.4)
+	sky_material.set_shader_parameter("cloud_speed", 0.006)
+	sky_material.set_shader_parameter("cloud_shape_change_speed", 0.01)
+	sky_material.set_shader_parameter("stars_enabled", false)
+	sky_material.set_shader_parameter("moon_enabled", false)
+	sky_material.set_shader_parameter("volumetric_clouds", false)
+	sky_material.set_shader_parameter("day_cycle", 0.5)
+	sky_material.set_shader_parameter("cloud_shadow_strength", 0.4)
+	sky_material.set_shader_parameter("moon_cloud_illumination", 0.25)
+	sky_material.set_shader_parameter("rain_sky_tint", Vector3(0.25, 0.3, 0.4))
+	sky_material.set_shader_parameter("rain_cloud_tint", Vector3(0.4, 0.42, 0.46))
+	sky_material.set_shader_parameter("fog_depth_falloff", 0.4)
+	sky_material.set_shader_parameter("sunrise_haze", 0.3)
+	sky_material.set_shader_parameter("night_sky_brightness", 0.15)
+	var noise1 := FastNoiseLite.new()
+	noise1.frequency = 0.015
+	noise1.fractal_octaves = 4
+	noise1.fractal_weighted_strength = 0.46
+	var tex1 := _make_cloud_noise_texture(noise1, 128)
+	sky_material.set_shader_parameter("cloud_texture", tex1)
+	var noise2 := FastNoiseLite.new()
+	noise2.frequency = 0.006
+	noise2.fractal_octaves = 3
+	var tex2 := _make_cloud_noise_texture(noise2, 128)
+	sky_material.set_shader_parameter("cloud_texture2", tex2)
+
 func _create_environment() -> void:
 	var world := WorldEnvironment.new()
 	world.name = "WorldEnvironment"
 	var environment := Environment.new()
-	var sky_material := ProceduralSkyMaterial.new()
-	sky_material.sky_top_color = Color(0.34, 0.62, 0.95)
-	sky_material.sky_horizon_color = Color(0.78, 0.90, 1.0)
-	sky_material.ground_bottom_color = Color(0.20, 0.30, 0.16)
-	sky_material.ground_horizon_color = Color(0.38, 0.52, 0.28)
-	sky_material.sun_angle_max = 4.0
-	sky_material.sun_curve = 0.12
+	var sky_material := ShaderMaterial.new()
+	sky_material.shader = load("res://addons/TCA_Weather_System/shaders/weather_system_sky.gdshader")
+	_setup_tca_sky_params(sky_material)
 	var sky := Sky.new()
 	sky.sky_material = sky_material
 	environment.sky = sky
@@ -837,7 +927,7 @@ func _create_environment() -> void:
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.86, 0.90, 0.92)
 	environment.ambient_light_energy = 0.95
-	environment.fog_enabled = true
+	environment.fog_enabled = false
 	environment.fog_light_color = Color(0.78, 0.86, 0.90)
 	environment.fog_density = 0.0025
 	environment.glow_enabled = false
@@ -848,7 +938,7 @@ func _create_environment() -> void:
 	sun.name = "Sun"
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.rotation_degrees = Vector3(-45, -25, 0)
-	sun.shadow_enabled = true
+	sun.shadow_enabled = false
 	sun.directional_shadow_max_distance = 45.0
 	sun.directional_shadow_blend_splits = true
 	sun.shadow_normal_bias = 1.5
@@ -5532,18 +5622,36 @@ func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave:
 		var cave2_scale := scale_value * Vector3(0.7, 0.5, 0.7)
 		_create_textured_visual_sphere(main_name + "_CaveRoof2", pos + cave2_offset + Vector3(0, scale_value.y * 0.45, 0), cave2_scale, rock_texture, base_color.darkened(0.06))
 	# Registrar para activación de colisión por proximidad
-	_boulder_registry.append({"pos": pos, "visual_name": main_name, "id": boulder_id, "active": false, "scale": scale_value})
+	var _bentry := {"pos": pos, "visual_name": main_name, "id": boulder_id, "active": false, "scale": scale_value}
+	_boulder_registry.append(_bentry)
+	_register_boulder_in_grid(_bentry)
+
+func _boulder_grid_key(pos: Vector3) -> Vector2i:
+	return Vector2i(int(pos.x / _boulder_grid_cell_size), int(pos.z / _boulder_grid_cell_size))
+
+func _register_boulder_in_grid(entry: Dictionary) -> void:
+	var key := _boulder_grid_key(entry.pos)
+	if not _boulder_grid.has(key):
+		_boulder_grid[key] = []
+	_boulder_grid[key].append(entry)
 
 func _update_boulder_interactions() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	for entry in _boulder_registry:
-		var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
-		if dist < _boulder_activation_radius and not entry.active:
-			_activate_boulder(entry)
-		elif dist > _boulder_deactivation_radius and entry.active:
-			_deactivate_boulder(entry)
+	var pc := _boulder_grid_key(ppos)
+	var r := int(_boulder_deactivation_radius / _boulder_grid_cell_size) + 1
+	for gx in range(pc.x - r, pc.x + r + 1):
+		for gy in range(pc.y - r, pc.y + r + 1):
+			var key := Vector2i(gx, gy)
+			if not _boulder_grid.has(key):
+				continue
+			for entry in _boulder_grid[key]:
+				var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
+				if dist < _boulder_activation_radius and not entry.active:
+					_activate_boulder(entry)
+				elif dist > _boulder_deactivation_radius and entry.active:
+					_deactivate_boulder(entry)
 
 func _activate_boulder(entry: Dictionary) -> void:
 	var boulder_id: int = entry.id
@@ -6379,9 +6487,9 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	light.light_energy = 3.0
 	light.omni_range = 8.0
 	light.omni_attenuation = 1.2
-	light.shadow_enabled = true
+	light.shadow_enabled = false
+	light.add_to_group("omni_lights")
 	add_child(light)
-	# Fire particles with billboard planes
 	var particles := CPUParticles3D.new()
 	particles.name = node_name + "Particles"
 	particles.position = pos
@@ -7234,16 +7342,32 @@ func _create_forest() -> void:
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
 
+func _tree_grid_key(pos: Vector3) -> Vector2i:
+	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
+
+func _register_tree_in_grid(entry: Dictionary) -> void:
+	var key := _tree_grid_key(entry.pos)
+	if not _tree_grid.has(key):
+		_tree_grid[key] = []
+	_tree_grid[key].append(entry)
+
 func _update_tree_interactions() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	for entry in _tree_registry:
-		var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
-		if dist < _tree_activation_radius and not entry.active:
-			_activate_tree(entry)
-		elif dist > _tree_deactivation_radius and entry.active:
-			_deactivate_tree(entry)
+	var pc := _tree_grid_key(ppos)
+	var r := int(_tree_deactivation_radius / _tree_grid_cell_size) + 1
+	for gx in range(pc.x - r, pc.x + r + 1):
+		for gy in range(pc.y - r, pc.y + r + 1):
+			var key := Vector2i(gx, gy)
+			if not _tree_grid.has(key):
+				continue
+			for entry in _tree_grid[key]:
+				var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
+				if dist < _tree_activation_radius and not entry.active:
+					_activate_tree(entry)
+				elif dist > _tree_deactivation_radius and entry.active:
+					_deactivate_tree(entry)
 
 func _activate_tree(entry: Dictionary) -> void:
 	var visual_name: String = entry.visual_name
@@ -7329,7 +7453,9 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 				action.set_meta("visual_name", visual_name)
 			action.set_meta("collision_name", collision_name)
 		else:
-			_tree_registry.append({"pos": pos, "visual_name": visual_name, "id": tree_id, "active": false})
+			var _tree_entry := {"pos": pos, "visual_name": visual_name, "id": tree_id, "active": false}
+			_tree_registry.append(_tree_entry)
+			_register_tree_in_grid(_tree_entry)
 
 func _load_forest_tree_pack() -> void:
 	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
@@ -7990,7 +8116,8 @@ func _create_area_light(node_name: String, pos: Vector3, light_size: Vector2, co
 	light.size = light_size
 	light.color = color
 	light.energy = energy
-	light.shadow_enabled = true
+	light.shadow_enabled = false
+	light.add_to_group("area_lights")
 	add_child(light)
 
 func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3, texture_path: String, fallback_color: Color, rot: Vector3) -> void:

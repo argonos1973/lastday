@@ -101,7 +101,7 @@ func create_star_field() -> void:
 		star.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var dir := _radec_to_world_dir(ra_rad, dec_rad, lst_rad, lat_rad)
 		star.position = dir * STAR_DOME_RADIUS
-		star.visible = dir.y > 0.02
+		star.visible = dir.y > 0.15
 		star_field.add_child(star)
 		_real_star_nodes.append(star)
 		_real_star_radec.append(Vector2(ra_rad, dec_rad))
@@ -118,7 +118,7 @@ func update_real_star_positions() -> void:
 		var rd: Vector2 = _real_star_radec[i]
 		var dir := _radec_to_world_dir(rd.x, rd.y, lst_rad, lat_rad)
 		node.position = dir * STAR_DOME_RADIUS
-		node.visible = dir.y > 0.02
+		node.visible = dir.y > 0.15
 
 func update_moon_position() -> void:
 	if moon_field == null or not is_instance_valid(moon_field):

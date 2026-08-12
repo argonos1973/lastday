@@ -5,7 +5,8 @@ signal time_changed
 signal night_started
 
 @export var day_length_seconds := 86400.0
-var time_of_day := 7.0
+@export var fixed_time := true
+var time_of_day := 12.0
 var last_was_night := false
 var sun: DirectionalLight3D
 var world_environment: WorldEnvironment
@@ -16,10 +17,14 @@ var _real_time_initialized := false
 
 func _process(delta: float) -> void:
 	if not _real_time_initialized:
-		var dt := Time.get_time_dict_from_system()
-		time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
-		_real_time_initialized = true
-	else:
+		if fixed_time:
+			time_of_day = 12.0
+			_real_time_initialized = true
+		else:
+			var dt := Time.get_time_dict_from_system()
+			time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
+			_real_time_initialized = true
+	elif not fixed_time:
 		var hours_per_second := 24.0 / day_length_seconds
 		time_of_day += delta * hours_per_second
 		if time_of_day >= 24.0:
@@ -47,7 +52,10 @@ func get_hour_text() -> String:
 	return "%02d:%02d" % [hour, minute]
 
 func skip_to_morning() -> void:
-	time_of_day = 7.0
+	if fixed_time:
+		time_of_day = 12.0
+	else:
+		time_of_day = 7.0
 	last_was_night = false
 	_update_lighting()
 	time_changed.emit()
@@ -71,16 +79,17 @@ func _update_lighting() -> void:
 		world_environment.environment.fog_light_color = Color(0.02, 0.022, 0.03).lerp(Color(0.62, 0.70, 0.74), day_amount)
 		world_environment.environment.fog_density = lerp(0.002, 0.0008, day_amount)
 		var sky := world_environment.environment.sky
-		if sky != null and sky.sky_material is ProceduralSkyMaterial:
-			var sky_material := sky.sky_material as ProceduralSkyMaterial
-			sky_material.sky_top_color = Color(0.002, 0.003, 0.008).lerp(Color(0.34, 0.62, 0.95), day_amount)
-			sky_material.sky_horizon_color = Color(0.015, 0.018, 0.025).lerp(Color(0.78, 0.90, 1.0), day_amount)
-			sky_material.ground_bottom_color = Color(0.005, 0.005, 0.008).lerp(Color(0.17, 0.19, 0.14), day_amount)
-			sky_material.ground_horizon_color = Color(0.015, 0.016, 0.02).lerp(Color(0.30, 0.36, 0.30), day_amount)
-		elif sky != null and sky.sky_material is ShaderMaterial:
-			# +Z of the sun node points toward the sun (light travels along -Z).
+		if sky != null and sky.sky_material is ShaderMaterial:
+			var sm := sky.sky_material as ShaderMaterial
+			var day_norm := time_of_day / 24.0
+			sm.set_shader_parameter("day_cycle", day_norm)
 			var sun_dir := sun.global_transform.basis.z.normalized()
-			(sky.sky_material as ShaderMaterial).set_shader_parameter("sun_direction", sun_dir)
+			sm.set_shader_parameter("sun_direction", sun_dir)
+			sm.set_shader_parameter("sun_intensity", day_amount)
+			sm.set_shader_parameter("sky_top_color", Color(0.002, 0.003, 0.008, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
+			sm.set_shader_parameter("sky_horizon_color", Color(0.015, 0.018, 0.025, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
+			sm.set_shader_parameter("ground_bottom_color", Color(0.005, 0.005, 0.008, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
+			sm.set_shader_parameter("ground_horizon_color", Color(0.015, 0.016, 0.02, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
 
 func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}
