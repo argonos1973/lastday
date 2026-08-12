@@ -3961,7 +3961,7 @@ func _create_mushrooms() -> void:
 	var mushroom_idx := 0
 	for _i in range(mushroom_count):
 		var pos := _find_safe_loot_pos()
-		if pos.distance_to(Vector3.ZERO) > 90.0:
+		if pos.distance_to(Vector3.ZERO) < 80.0:
 			continue
 		var py := _get_exact_ground_y(pos.x, pos.z)
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
