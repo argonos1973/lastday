@@ -2613,7 +2613,7 @@ func _create_map() -> void:
 		await _create_grass_ground_cover()
 		_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_mountain_river()
+		await _create_mountain_river()
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -2704,14 +2704,15 @@ func _create_map() -> void:
 
 
 const ROAD_HALF_WIDTH := 5.0
+const ROAD_CENTER_X := 9.0
 const ROAD_START_Z := -250.0
 const ROAD_END_Z := 250.0
 
 func _is_on_road(pos: Vector3) -> bool:
-	return abs(pos.x) <= ROAD_HALF_WIDTH and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
+	return abs(pos.x - ROAD_CENTER_X) <= ROAD_HALF_WIDTH + 1.0 and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
 
 func _create_road() -> void:
-	var road_x := 9.0
+	var road_x := ROAD_CENTER_X
 	var road_width := 10.0
 	var seg_length := 10.0
 	# Scan terrain to find where hills/mountains start
@@ -5580,9 +5581,12 @@ func _create_mountain_river() -> void:
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
 		var yaw: float = float(segment["yaw"])
-		_create_river_segment(center, size, yaw)
+		await _create_river_segment(center, size, yaw)
 		_decorate_river_area(center, size, yaw)
-		_create_dense_river_bank_vegetation(center, size, yaw)
+		await _create_dense_river_bank_vegetation(center, size, yaw)
+		# Extra vegetation where river crosses the road (road at x=9)
+		if abs(center.x - ROAD_CENTER_X) < size.x * 0.5 + 5.0:
+			await _create_dense_river_bank_vegetation(center, size, yaw)
 		_create_river_seam_cover(center, size, yaw)
 		if _world_rng.randf() < 0.72:
 			_create_fish_school(center, size, yaw)
@@ -5717,7 +5721,7 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	mesh_instance.material_override = _make_river_water_material()
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
-	_create_river_edge_blend(center, size, yaw)
+	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
 
 func _make_irregular_river_mesh(size: Vector2) -> ArrayMesh:
@@ -5778,21 +5782,29 @@ func _create_river_edge_blend(center: Vector3, size: Vector2, yaw: float) -> voi
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for side_value in [-1.0, 1.0]:
 		var side: float = side_value
-		for i in range(58):
-			var edge_pos: Vector3 = center + along * _world_rng.randf_range(-size.x * 0.53, size.x * 0.53) + across * side * _world_rng.randf_range(size.y * 0.42, size.y * 0.86)
+		for i in range(120):
+			var edge_pos: Vector3 = center + along * _world_rng.randf_range(-size.x * 0.53, size.x * 0.53) + across * side * _world_rng.randf_range(size.y * 0.51, size.y * 0.92)
 			edge_pos.y = 0.041 + _world_rng.randf_range(0.0, 0.006)
 			if not _can_place_ground_vegetation(edge_pos, -1.0):
 				continue
-			if i % 2 == 0:
+			if i % 6 == 0:
 				_create_river_pebble_cluster(edge_pos, along, across, side)
-			if _world_rng.randf() < 0.94:
-				var grass_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.10, 1.15) + along * _world_rng.randf_range(-0.70, 0.70)
+			if _world_rng.randf() < 0.98:
+				var grass_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.10, 1.45) + along * _world_rng.randf_range(-0.90, 0.90)
 				grass_pos.y = 0.052
-				_create_grass_clump(grass_pos, _world_rng.randf_range(0.92, 1.68), Color(0.13, 0.30, 0.09).lerp(Color(0.36, 0.44, 0.12), _world_rng.randf()))
-			if _world_rng.randf() < 0.68:
-				var reed_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.18, 1.05)
+				_create_grass_clump(grass_pos, _world_rng.randf_range(0.7, 1.2), Color(0.13, 0.30, 0.09).lerp(Color(0.36, 0.44, 0.12), _world_rng.randf()))
+			if _world_rng.randf() < 0.85:
+				var reed_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.18, 1.35)
 				reed_pos.y = 0.052
-				_create_river_reed_cluster(reed_pos, _world_rng.randf_range(1.15, 2.05), side)
+				_create_river_reed_cluster(reed_pos, _world_rng.randf_range(0.9, 1.5), side)
+			if _world_rng.randf() < 0.60:
+				var tall_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.15, 1.25) + along * _world_rng.randf_range(-0.60, 0.60)
+				tall_pos.y = 0.052
+				_create_grass_clump(tall_pos, _world_rng.randf_range(0.8, 1.3), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+			if i % 60 == 59:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
 
 func _create_river_end_blend(center: Vector3, size: Vector2, yaw: float) -> void:
 	var angle := deg_to_rad(yaw)
@@ -5800,7 +5812,7 @@ func _create_river_end_blend(center: Vector3, size: Vector2, yaw: float) -> void
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for end_value in [-1.0, 1.0]:
 		var end: float = end_value
-		for i in range(72):
+		for i in range(120):
 			var side := -1.0 if _world_rng.randf() < 0.5 else 1.0
 			var cap_pos: Vector3 = center + along * end * _world_rng.randf_range(size.x * 0.36, size.x * 0.66) + across * _world_rng.randf_range(-size.y * 0.92, size.y * 0.92)
 			cap_pos += across * side * _world_rng.randf_range(0.0, 0.68)
@@ -5907,16 +5919,23 @@ func _create_dense_river_bank_vegetation(center: Vector3, size: Vector2, yaw: fl
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for side_value in [-1.0, 1.0]:
 		var side: float = side_value
-		for i in range(54):
-			var bank_pos := center + along * _world_rng.randf_range(-size.x * 0.56, size.x * 0.56) + across * side * _world_rng.randf_range(size.y * 0.58, size.y * 1.50)
+		for i in range(110):
+			var bank_pos := center + along * _world_rng.randf_range(-size.x * 0.56, size.x * 0.56) + across * side * _world_rng.randf_range(size.y * 0.52, size.y * 1.50)
 			bank_pos.y = 0.052
 			if not _can_place_ground_vegetation(bank_pos, -1.0):
 				continue
-			_create_grass_clump(bank_pos, _world_rng.randf_range(0.95, 1.85), Color(0.14, 0.31, 0.09))
-			if _world_rng.randf() < 0.62:
-				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-0.75, 0.75), _world_rng.randf_range(1.15, 2.20), side)
-			if _world_rng.randf() < 0.28:
+			_create_grass_clump(bank_pos, _world_rng.randf_range(0.7, 1.3), Color(0.14, 0.31, 0.09))
+			if _world_rng.randf() < 0.72:
+				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-0.75, 0.75), _world_rng.randf_range(0.9, 1.6), side)
+			if _world_rng.randf() < 0.50:
+				var tall_pos := bank_pos + across * side * _world_rng.randf_range(0.15, 0.85) + along * _world_rng.randf_range(-0.50, 0.50)
+				_create_grass_clump(tall_pos, _world_rng.randf_range(0.85, 1.35), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+			if _world_rng.randf() < 0.15:
 				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.25, 0.9), _world_rng.randf_range(0.44, 0.74))
+			if i % 60 == 59:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
 
 func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, radius_z: float, height: float, yaw: float, color: Color) -> void:
 	if not node_name.contains("SnowCap"):
@@ -6722,17 +6741,21 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 			return true
 	return false
 
-func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.45) -> bool:
+func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
 	if abs(pos.x) > 285.0 or abs(pos.z) > 285.0:
 		return false
 	if _is_near_house(pos, 1.0):
 		return false
 	if _is_in_house_doorway(pos):
 		return false
-	if _is_on_road(pos):
+	if _is_on_road(pos) and not _is_inside_river_band(pos, 3.0):
 		return false
-	if river_margin >= 0.0 and _is_inside_river_band(pos, river_margin):
-		return false
+	if river_margin >= 0.0:
+		if _is_inside_river_band(pos, river_margin):
+			return false
+	else:
+		if _is_inside_river_band(pos, 0.3):
+			return false
 	return not _is_in_no_grass_area(pos, 0.65)
 
 #endregion
@@ -7030,7 +7053,7 @@ func _get_ground_height(pos: Vector3) -> float:
 	return max_h
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(200 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(120 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var rx := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -7045,11 +7068,11 @@ func _create_ground_clutter() -> void:
 			_world_rng.state = _saved_rng_state
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(20, 55), _world_rng.randf_range(20, 55))
-		var count := int(radius.x * radius.y * 0.18)
+		var count := int(radius.x * radius.y * 0.12)
 		for j in range(count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var dist := sqrt(_world_rng.randf()) 
@@ -7064,11 +7087,11 @@ func _create_tall_grass_fields() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(1 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(15, 30), _world_rng.randf_range(15, 30))
-		var count := int(radius.x * radius.y * 0.3)
+		var count := int(radius.x * radius.y * 0.18)
 		for j in range(count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var dist := sqrt(_world_rng.randf())
@@ -7172,13 +7195,15 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 		mesh.size = Vector2(width, height)
 		plane.mesh = mesh
 		plane.material_override = material
+		plane.visibility_range_end = 100.0
+		plane.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(plane)
 	return true
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.09)
-	var inner_clear_radius := 45.0 # Mantener centro despejado para casas
+	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
 	for i in range(total_trees):
@@ -7192,7 +7217,7 @@ func _create_forest() -> void:
 		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
-		if _is_near_house(pos, 3.0):
+		if _is_near_house(pos, 8.0):
 			continue
 			
 		_create_tree(pos, false)
@@ -7410,6 +7435,8 @@ func _create_billboard_tree(pos: Vector3, texture_paths: Array, height: float, n
 		mesh.subdivide_depth = 1
 		plane.mesh = mesh
 		plane.material_override = material
+		plane.visibility_range_end = 120.0
+		plane.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(plane)
 	_create_tree_collision(node_name + "Collision", pos)
 	return true
@@ -7464,7 +7491,7 @@ func _create_grass_clump(pos: Vector3, height: float, color: Color) -> void:
 
 func _create_river_reed_cluster(pos: Vector3, height: float, side: float) -> void:
 	for i in range(3 + _world_rng.randi() % 4):
-		var reed_pos := pos + Vector3(_world_rng.randf_range(-0.55, 0.55), 0.0, _world_rng.randf_range(-0.55, 0.55))
+		var reed_pos := pos + Vector3(_world_rng.randf_range(-0.35, 0.35), 0.0, _world_rng.randf_range(-0.35, 0.35))
 		if not _can_place_ground_vegetation(reed_pos, -1.0):
 			continue
 		var reed_color := Color(0.12, 0.25, 0.08).lerp(Color(0.18, 0.32, 0.10), _world_rng.randf())
@@ -8134,6 +8161,8 @@ func _create_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3
 	mesh_instance.scale = scale_value
 	mesh_instance.mesh = _get_shared_visual_sphere_mesh()
 	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.visibility_range_end = 80.0
+	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
 
 func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3, texture_path: String, fallback_color: Color) -> void:
@@ -8144,6 +8173,8 @@ func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value
 	mesh_instance.scale = scale_value
 	mesh_instance.mesh = _get_shared_sphere_mesh()
 	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.6, 1.6, 1.0))
+	mesh_instance.visibility_range_end = 80.0
+	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
 
 func _get_shared_sphere_mesh() -> SphereMesh:
