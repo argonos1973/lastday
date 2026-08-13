@@ -106,6 +106,8 @@ func get_interaction_text(_player = null) -> String:
 			return "%s - [E] Construir cabana" % display_name
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat":
 			if _is_clothing():
+				if _player_has_knife(_player) and not _is_footwear():
+					return "%s - [E] Cortar para trapos | [C] Coger" % display_name
 				return "%s - [E] Equipar | [C] Coger" % display_name
 			return "%s - [C] Coger" % display_name
 		"eat_food":
@@ -256,3 +258,17 @@ func _player_has_blade(player) -> bool:
 	if held.item_type == "tool" and held.item_name == "Hacha":
 		return true
 	return false
+
+func _player_has_knife(player) -> bool:
+	if player == null or not player.has_method("get_held_item"):
+		return false
+	var held = player.get_held_item()
+	if held == null:
+		return false
+	return held.item_name == "Cuchillo"
+
+func _is_footwear() -> bool:
+	if not has_meta("item_name"):
+		return false
+	var n := str(get_meta("item_name"))
+	return n == "Zapatillas" or n == "Botas survival"

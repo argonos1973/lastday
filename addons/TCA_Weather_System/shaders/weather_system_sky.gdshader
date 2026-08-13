@@ -13,14 +13,14 @@ uniform vec4 ground_horizon_color : source_color = vec4(0.35,0.45,0.55,1);
 uniform float ground_curve = 0.2;
 uniform float ground_energy = 0.9;
 
-uniform float sun_glow_intensity = 1.0;
+uniform float sun_glow_intensity = 0.0;
 uniform float sunset_intensity = 0.8;
 uniform float rayleigh_scatter = 1.0;
 uniform float mie_scatter = 0.6;
 uniform float mie_g = 0.8;
 uniform vec3 sunset_color = vec3(1.0,0.4,0.2);
-uniform float sun_disk_size = 0.8;
-uniform float sun_glow_size = 8.0;
+uniform float sun_disk_size = 0.3;
+uniform float sun_glow_size = 9.0;
 
 uniform bool stars_enabled = true;
 uniform vec4 star_color = vec4(1,0.95,0.85,1);
@@ -157,21 +157,16 @@ void sky(){
         sky += sunset_color * sunrise * sunrise_haze;
         
         if(sun_angle_deg<sun_glow_size){
-            if(sun_angle_deg<sun_disk_size){
-                float disk=pow(1.0-sun_angle_deg/sun_disk_size,2.0);
-                sky+=LIGHT0_COLOR*LIGHT0_ENERGY*disk*1.5;
-            }else{
-                float glow=pow(1.0-sun_angle_deg/sun_glow_size,1.5);
-                sky+=LIGHT0_COLOR*LIGHT0_ENERGY*glow;
-            }
+            float sun_falloff=pow(1.0-sun_angle_deg/sun_glow_size,3.0);
+            sky+=LIGHT0_COLOR*LIGHT0_ENERGY*sun_falloff;
         }
     }
     if(has_sun){
-        float scat_int=sun_glow_intensity*clamp(1.0-sun_angle_deg/90.0,0.0,1.0);
+        float scat_int=sun_glow_intensity*clamp(1.0-sun_angle_deg/60.0,0.0,1.0);
         sky+=atmospheric_scattering(EYEDIR,sun_dir,sun_angle_deg)*scat_int;
-        if(sun_angle_deg>0.5&&sun_angle_deg<15.0){
-            float sunset=1.0-abs(sun_angle_deg-8.0)/8.0;
-            sky+=sunset_color*sunset*sunset_intensity;
+        if(sun_angle_deg>0.5&&sun_angle_deg<6.0){
+            float sunset=1.0-abs(sun_angle_deg-3.0)/3.0;
+            sky+=sunset_color*sunset*sunset_intensity*0.3;
         }
     }
     

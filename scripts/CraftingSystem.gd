@@ -50,6 +50,11 @@ const RECIPES := [
 		"output": { "name": "Refugio", "type": "shelter", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir refugio con palos"
 	},
+	{
+		"inputs": { "Palo": 1, "Trapos": 1 },
+		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 120.0, "max_durability": 120.0 },
+		"label": "Crear antorcha con palo y trapos"
+	},
 ]
 
 # Returns all recipes that can be crafted with the given inventory items
@@ -61,7 +66,7 @@ static func get_available_recipes(inventory_items: Array) -> Array:
 	return available
 
 # Returns all recipes that use the given item name as an input
-static func get_recipes_for_item(item_name: String) -> Array:
+static func get_recipes_for_item(item_name: String, item_type: String = "") -> Array:
 	var result := []
 	for recipe in RECIPES:
 		if recipe["inputs"].has(item_name):
@@ -69,6 +74,9 @@ static func get_recipes_for_item(item_name: String) -> Array:
 		else:
 			for input_name in recipe["inputs"]:
 				if _is_substitute(input_name, item_name):
+					result.append(recipe)
+					break
+				elif input_name == "ANY_CLOTHING" and item_type == "clothing":
 					result.append(recipe)
 					break
 	return result
@@ -81,19 +89,29 @@ static func consume_inputs(recipe: Dictionary, inventory) -> void:
 		var needed: int = recipe["inputs"][input_name]
 		if _is_tool(input_name):
 			continue
-		inventory.consume_item_name(input_name, needed)
-		inventory.changed.emit()
+		if input_name == "ANY_CLOTHING":
+			_consume_clothing(inventory, needed)
+		else:
+			inventory.consume_item_name(input_name, needed)
+			inventory.changed.emit()
 
 static func _can_craft(recipe: Dictionary, inventory_items: Array) -> bool:
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
 		var have := 0
 		for item in inventory_items:
-			if str(item.item_name) == input_name or _is_substitute(input_name, str(item.item_name)):
+			if _matches_input(input_name, item):
 				have += item.quantity
 		if have < needed:
 			return false
 	return true
+
+static func _matches_input(input_name: String, item) -> bool:
+	if input_name == "ANY_CLOTHING":
+		return str(item.item_type) == "clothing"
+	if str(item.item_name) == input_name or _is_substitute(input_name, str(item.item_name)):
+		return true
+	return false
 
 static func craft(recipe: Dictionary, inventory) -> bool:
 	if not _can_craft(recipe, inventory.items):
@@ -104,13 +122,32 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 		# Don't consume tools (knife, etc.)
 		if _is_tool(input_name):
 			continue
-		inventory.consume_item_name(input_name, needed)
+		if input_name == "ANY_CLOTHING":
+			_consume_clothing(inventory, needed)
+		else:
+			inventory.consume_item_name(input_name, needed)
 	# Create output
 	var out = recipe["output"]
 	var qty: int = int(out.get("quantity", 1))
 	var new_item = ItemScript.create(out["name"], out["type"], out["weight"], qty, out["use_value"])
+	if out.has("durability"):
+		new_item.durability = float(out["durability"])
+		new_item.max_durability = float(out.get("max_durability", out["durability"]))
 	inventory.add_item(new_item)
 	return true
+
+static func _consume_clothing(inventory, amount: int) -> void:
+	var consumed := 0
+	for item in inventory.items:
+		if consumed >= amount:
+			break
+		if str(item.item_type) == "clothing":
+			var take: int = min(item.quantity, amount - consumed)
+			item.quantity -= take
+			consumed += take
+			if item.quantity <= 0:
+				inventory.items.erase(item)
+	inventory.changed.emit()
 
 static func _is_tool(item_name: String) -> bool:
 	return item_name in ["Cuchillo", "Hacha", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]
@@ -130,6 +167,8 @@ static func get_recipe_inputs_text(recipe: Dictionary) -> String:
 		var amount: int = recipe["inputs"][input_name]
 		if _is_tool(input_name):
 			parts.append("%s (no se gasta)" % input_name)
+		elif input_name == "ANY_CLOTHING":
+			parts.append("%dx Ropa (cualquiera)" % amount)
 		else:
 			parts.append("%dx %s" % [amount, input_name])
 	return " + ".join(parts)

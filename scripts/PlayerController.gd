@@ -32,6 +32,7 @@ const REAL_PICKAXE_MODEL := "res://assets/external/kenney_survival_kit/Models/GL
 const REAL_BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
 const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
+const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
 # Wearable visuals placed on the body relative to its measured bounding box, so
@@ -218,6 +219,20 @@ const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION := "RifleProneExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION := "RifleGetupExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION := "RifleSitFireExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION := "RifleProneFireExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION := "TorchIdleExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_WALK_ANIMATION := "TorchWalkExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_RUN_ANIMATION := "TorchRunExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION := "TorchTurnLeftExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION := "TorchTurnRightExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION := "TorchCrouchTurnLeftExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION := "TorchCrouchTurnRightExternal"
+const TORCH_IDLE_FBX := "res://assets/animations/Standing Torch Idle 01.glb"
+const TORCH_WALK_FBX := "res://assets/animations/Standing Torch Walk Forward.glb"
+const TORCH_RUN_FBX := "res://assets/animations/Standing Torch Run Forward.glb"
+const TORCH_TURN_LEFT_FBX := "res://assets/animations/Standing Torch Turn Left 90.glb"
+const TORCH_TURN_RIGHT_FBX := "res://assets/animations/Standing Torch Turn Right 90.glb"
+const TORCH_CROUCH_TURN_LEFT_FBX := "res://assets/animations/Crouch Torch Turn Left 90.glb"
+const TORCH_CROUCH_TURN_RIGHT_FBX := "res://assets/animations/Crouch Torch Turn Right 90.glb"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -261,6 +276,7 @@ var _camera_fov := 85.0
 var audio_listener: AudioListener3D
 var raycast
 var flashlight: SpotLight3D
+var torch_light: OmniLight3D
 var body_mesh: MeshInstance3D
 var _collision_shape: CollisionShape3D
 var third_person_model: Node3D
@@ -269,6 +285,8 @@ var _head_mesh: MeshInstance3D = null
 var _body_no_head_mesh: MeshInstance3D = null
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
+var _torch_hand_root: Node3D
+var _left_hand_bone_idx: int = -1
 var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
 var _hand_skeleton: Skeleton3D = null
@@ -339,6 +357,15 @@ var _rifle_prone_animation := ""
 var _rifle_getup_animation := ""
 var _rifle_sit_fire_animation := ""
 var _rifle_prone_fire_animation := ""
+var _torch_idle_animation := ""
+var _torch_walk_animation := ""
+var _torch_run_animation := ""
+var _torch_turn_left_animation := ""
+var _torch_turn_right_animation := ""
+var _torch_crouch_turn_left_animation := ""
+var _torch_crouch_turn_right_animation := ""
+var _torch_animations_loaded := false
+var _torch_in_hands := false
 var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
@@ -859,6 +886,7 @@ func _update_puppet_held_item(item_name: String) -> void:
 func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
+		_update_torch_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
@@ -987,6 +1015,53 @@ func _ready() -> void:
 	_sync_held_item()
 	_apply_view_mode()
 	call_deferred("_capture_mouse")
+
+	# DEBUG: auto-craft, equip and light torch after 2 seconds
+	if not is_puppet:
+		var debug_timer := Timer.new()
+		debug_timer.name = "DebugTorchTimer"
+		debug_timer.wait_time = 2.0
+		debug_timer.one_shot = true
+		debug_timer.timeout.connect(_debug_auto_torch)
+		add_child(debug_timer)
+		debug_timer.start()
+
+func _debug_auto_torch() -> void:
+	# Craft torch: 1 palo + 1 trapos
+	var recipe := {
+		"inputs": { "Palo": 1, "Trapos": 1 },
+		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 120.0, "max_durability": 120.0 },
+		"label": "Crear antorcha con palo y trapos"
+	}
+	craft_recipe(recipe)
+	# If craft didn't work, add torch directly
+	var _has_torch := false
+	for it in inventory.items:
+		if str(it.item_type) == "tool_torch":
+			_has_torch = true
+			break
+	if not _has_torch:
+		var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
+		torch_item.durability = 120.0
+		torch_item.max_durability = 120.0
+		inventory.add_item(torch_item)
+	# Equip the torch
+	var _found_torch := false
+	for i in range(inventory.items.size()):
+		var item = inventory.items[i]
+		if str(item.item_type) == "tool_torch":
+			held_index = i
+			_found_torch = true
+			_sync_held_item()
+			break
+	# Light the torch
+	var held = get_held_item()
+	if held != null and str(held.item_type) == "tool_torch":
+		held.use()
+		if torch_light != null:
+			torch_light.visible = true
+		notice.emit("Antorcha encendida (debug)")
+	print("[DEBUG] Auto-torch equipped and lit")
 
 func _input(event: InputEvent) -> void:
 	if is_puppet or is_dead:
@@ -2281,6 +2356,7 @@ func _physics_process(delta: float) -> void:
 		stats.do_sleep(delta)
 		_update_backpack_socket()
 		_update_hand_socket()
+		_update_torch_hand_socket()
 		_update_head_worn_items()
 		_update_interaction_prompt()
 		# Align sleeping model vertically so it stays on top of bed
@@ -2394,8 +2470,10 @@ func _physics_process(delta: float) -> void:
 		_interaction_prompt_timer = 0.0
 		_update_interaction_prompt()
 	_update_flashlight(delta)
+	_update_torch(delta)
 	_update_backpack_socket()
 	_update_hand_socket()
+	_update_torch_hand_socket()
 	_update_head_worn_items()
 
 #endregion
@@ -2439,6 +2517,19 @@ func _update_hand_socket() -> void:
 	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset
 	var euler := bone_local.basis.get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+func _update_torch_hand_socket() -> void:
+	if _hand_skeleton == null or _left_hand_bone_idx < 0:
+		return
+	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(_torch_hand_root):
+		return
+	var bone_pose := _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
+	var skel_global := _hand_skeleton.global_transform
+	var bone_world := skel_global * bone_pose
+	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var bone_local := local_to_model * bone_world
+	_torch_hand_root.position = bone_local.origin
+	_torch_hand_root.rotation_degrees = Vector3.ZERO
 
 # Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
 # animations (walking, looking up/down, sitting, etc.) instead of staying
@@ -2565,12 +2656,25 @@ func _create_body() -> void:
 	flashlight.spot_angle = 35.0
 	flashlight.rotation_degrees.x = -8.0
 	camera.add_child(flashlight)
+	torch_light = OmniLight3D.new()
+	torch_light.name = "TorchLight"
+	torch_light.visible = false
+	torch_light.light_energy = 2.5
+	torch_light.omni_range = 12.0
+	torch_light.omni_attenuation = 1.2
+	torch_light.light_color = Color(1.0, 0.7, 0.3)
+	torch_light.position = Vector3(0.0, -0.3, -0.5)
+	camera.add_child(torch_light)
 	_create_third_person_model()
 
 func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
+	inventory.add_item(ItemScript.create("Cuchillo", "weapon", 0.3, 1, 0.0))
+	inventory.add_item(ItemScript.create("Cerillas", "misc", 0.05, 1, 0.0))
+	inventory.add_item(ItemScript.create("Palo", "resource", 0.1, 1, 0.0))
+	inventory.add_item(ItemScript.create("Trapos", "resource", 0.05, 1, 0.0))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -2657,6 +2761,9 @@ func _create_third_person_model() -> void:
 				third_person_hand_item_root.position = Vector3(0.29, 1.15, -0.16)
 				third_person_hand_item_root.rotation_degrees = Vector3(8.0, 188.0, -8.0)
 				third_person_model.add_child(third_person_hand_item_root)
+				_torch_hand_root = Node3D.new()
+				_torch_hand_root.name = "TorchHandSocket"
+				third_person_model.add_child(_torch_hand_root)
 				third_person_back_item_root = Node3D.new()
 				third_person_back_item_root.name = "BackpackSocket"
 				third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
@@ -2716,6 +2823,10 @@ func _create_third_person_item_slots() -> void:
 	if hands != null and hands.has_method("register_socket"):
 		hands.register_socket(third_person_hand_item_root, Vector3(0.0, 0.0, -0.10), Vector3(0.0, 0.0, 0.0), Vector3.ONE * 0.55)
 
+	_torch_hand_root = Node3D.new()
+	_torch_hand_root.name = "TorchHandSocket"
+	third_person_model.add_child(_torch_hand_root)
+
 	third_person_back_item_root = Node3D.new()
 	third_person_back_item_root.name = "BackpackSocket"
 	third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
@@ -2730,10 +2841,15 @@ func _create_third_person_item_slots() -> void:
 				break
 	_hand_skeleton = _spine_skeleton
 	_hand_bone_idx = -1
+	_left_hand_bone_idx = -1
 	if _hand_skeleton != null:
-		for bone_name in ["mixamorig:RightHand", "mixamorig:LeftHand", "mixamorig_RightHand", "mixamorig_LeftHand", "RightHand", "LeftHand"]:
+		for bone_name in ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"]:
 			_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 			if _hand_bone_idx != -1:
+				break
+		for bone_name in ["mixamorig:LeftHand", "mixamorig_LeftHand", "LeftHand"]:
+			_left_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
+			if _left_hand_bone_idx != -1:
 				break
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
@@ -2823,6 +2939,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 			_smooth_loop_boundary(copied)
 		lib.add_animation(anim_name, copied)
 	third_person_animation_player.add_animation_library("external", lib)
+	# Load torch-specific animations from FBX files
+	_load_torch_animations()
 	# Warm the rifle model cache at startup so selecting it later is instant.
 	if not is_puppet:
 		var warm_rifle := _load_external_node3d(REAL_RIFLE_MODEL)
@@ -3113,6 +3231,9 @@ func _retarget_rotation_tracks(animation: Animation) -> void:
 	var skeleton := _find_skeleton(third_person_model)
 	if skeleton == null:
 		return
+	_retarget_rotation_tracks_with_source(animation, skeleton, null)
+
+func _retarget_rotation_tracks_with_source(animation: Animation, target_skeleton: Skeleton3D, source_skeleton: Skeleton3D) -> void:
 	for track_index in range(animation.get_track_count()):
 		if animation.track_get_type(track_index) != Animation.TYPE_ROTATION_3D:
 			continue
@@ -3120,14 +3241,25 @@ func _retarget_rotation_tracks(animation: Animation) -> void:
 		var bone_name := _extract_mixamo_bone_name(path_text)
 		if bone_name.is_empty():
 			continue
-		var resolved_name := _resolve_mixamo_bone_name(skeleton, bone_name)
+		var resolved_name := _resolve_mixamo_bone_name(target_skeleton, bone_name)
 		if resolved_name.is_empty():
 			continue
-		var target_idx := skeleton.find_bone(resolved_name)
+		var target_idx := target_skeleton.find_bone(resolved_name)
 		if target_idx == -1:
 			continue
-		var target_rest_rot := skeleton.get_bone_rest(target_idx).basis.get_rotation_quaternion()
-		var source_rest_rot := _get_source_skeleton_rest_rot(bone_name)
+		var target_rest_rot := target_skeleton.get_bone_rest(target_idx).basis.get_rotation_quaternion()
+		# Get source rest rotation: from source_skeleton if provided, else from cache
+		var source_rest_rot := Quaternion.IDENTITY
+		if source_skeleton != null:
+			# Find the bone in the source skeleton (try original and resolved names)
+			var src_idx := source_skeleton.find_bone(bone_name)
+			if src_idx == -1:
+				# Try mixamorig5_ variant
+				src_idx = source_skeleton.find_bone("mixamorig5_" + resolved_name.substr("mixamorig_".length()))
+			if src_idx != -1:
+				source_rest_rot = source_skeleton.get_bone_rest(src_idx).basis.get_rotation_quaternion()
+		else:
+			source_rest_rot = _get_source_skeleton_rest_rot(bone_name)
 		if source_rest_rot == Quaternion.IDENTITY and target_rest_rot == Quaternion.IDENTITY:
 			continue
 		# Compute offset: target_rest * source_rest.inverse()
@@ -3166,6 +3298,15 @@ func _extract_mixamo_bone_name(path_text: String) -> String:
 	var underscore_index := path_text.find("mixamorig_", max(0, slash_index))
 	if underscore_index >= 0:
 		return path_text.substr(underscore_index)
+	# Match mixamorig5_, mixamorig6_, etc.
+	var digit_index := path_text.find("mixamorig", max(0, slash_index))
+	if digit_index >= 0:
+		var after := path_text.substr(digit_index + "mixamorig".length())
+		var d_end := 0
+		while d_end < after.length() and after[d_end] >= '0' and after[d_end] <= '9':
+			d_end += 1
+		if d_end > 0 and d_end < after.length() and after[d_end] == '_':
+			return path_text.substr(digit_index)
 	return ""
 
 func _resolve_mixamo_bone_name(skeleton: Skeleton3D, imported_bone_name: String) -> String:
@@ -3174,6 +3315,17 @@ func _resolve_mixamo_bone_name(skeleton: Skeleton3D, imported_bone_name: String)
 		candidates.append("mixamorig_" + imported_bone_name.substr("mixamorig:".length()))
 	elif imported_bone_name.begins_with("mixamorig_"):
 		candidates.append("mixamorig:" + imported_bone_name.substr("mixamorig_".length()))
+	# Handle mixamorig5_, mixamorig6_, etc. (different Mixamo FBX export versions)
+	var digit_match := imported_bone_name.find("mixamorig")
+	if digit_match >= 0:
+		var after_prefix := imported_bone_name.substr(digit_match + "mixamorig".length())
+		var digit_end := 0
+		while digit_end < after_prefix.length() and after_prefix[digit_end] >= '0' and after_prefix[digit_end] <= '9':
+			digit_end += 1
+		if digit_end > 0 and digit_end < after_prefix.length() and after_prefix[digit_end] == '_':
+			var bare_name := after_prefix.substr(digit_end + 1)
+			candidates.append("mixamorig_" + bare_name)
+			candidates.append("mixamorig:" + bare_name)
 	for candidate in candidates:
 		if skeleton.find_bone(candidate) == -1:
 			continue
@@ -4186,6 +4338,10 @@ func drop_inventory_item(index: int) -> void:
 		_recalculate_carry_capacity()
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
+	if item_type == "tool_torch":
+		set_meta("last_torch_durability", float(item.durability))
+		if torch_light != null:
+			torch_light.visible = false
 	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
@@ -4212,6 +4368,11 @@ func _sync_held_item() -> void:
 
 func _sync_third_person_equipment(held_item) -> void:
 	_rifle_in_hands = held_item != null and str(held_item.item_type) == "weapon_rifle"
+	# Hide torch character when not holding a torch
+	_torch_in_hands = held_item != null and str(held_item.item_type) == "tool_torch"
+	var _is_holding_torch := _torch_in_hands
+	if not _is_holding_torch:
+		_clear_torch_attachment()
 	if third_person_hand_item_root == null or third_person_back_item_root == null:
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			return
@@ -4304,6 +4465,9 @@ func _sync_third_person_equipment(held_item) -> void:
 				_build_third_person_plastic_bottle()
 			else:
 				_build_third_person_pack()
+			_clear_rifle_attachment()
+		"tool_torch":
+			_build_third_person_torch()
 			_clear_rifle_attachment()
 		"tool_axe":
 			_build_third_person_axe()
@@ -6025,6 +6189,43 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state: _rifle_in_hands is set by _sync_third_person_equipment
 		_has_rifle = _rifle_in_hands
+		# Torch locomotion: use torch-specific animations when holding torch
+		if _torch_in_hands and not _has_rifle and not is_sitting and not is_prone:
+			if moving:
+				if is_sprinting and not _torch_run_animation.is_empty():
+					target_animation = _torch_run_animation
+				elif is_crouching:
+					if not _torch_walk_animation.is_empty():
+						target_animation = _torch_walk_animation
+					else:
+						target_animation = third_person_walk_animation
+				elif not _torch_walk_animation.is_empty():
+					target_animation = _torch_walk_animation
+				else:
+					target_animation = third_person_walk_animation
+			elif _turn_input < -2.0:
+				if is_crouching and not _torch_crouch_turn_left_animation.is_empty():
+					target_animation = _torch_crouch_turn_left_animation
+				elif not _torch_turn_left_animation.is_empty():
+					target_animation = _torch_turn_left_animation
+			elif _turn_input > 2.0:
+				if is_crouching and not _torch_crouch_turn_right_animation.is_empty():
+					target_animation = _torch_crouch_turn_right_animation
+				elif not _torch_turn_right_animation.is_empty():
+					target_animation = _torch_turn_right_animation
+			elif is_crouching:
+				if not _torch_idle_animation.is_empty():
+					target_animation = _torch_idle_animation
+			elif not _torch_idle_animation.is_empty():
+				target_animation = _torch_idle_animation
+			if not target_animation.is_empty():
+				if third_person_animation_player.current_animation != target_animation:
+					third_person_animation_player.play(target_animation, 0.15)
+				elif not third_person_animation_player.is_playing():
+					third_person_animation_player.play(target_animation, 0.15)
+				third_person_animation_player.speed_scale = 1.0 if is_sprinting else (0.55 if is_crouching else 1.0)
+				_turn_input = lerp(_turn_input, 0.0, delta * 7.0)
+				return
 		if _has_rifle and not _is_aiming and not is_sprinting:
 			# Rifle locomotion: use rifle-specific animations
 			if moving:
@@ -6272,6 +6473,23 @@ func _find_nearby_world_action():
 	return best
 
 func _toggle_flashlight() -> void:
+	var held = get_held_item()
+	if held != null and str(held.item_type) == "tool_torch":
+		if held.is_broken():
+			notice.emit("La antorcha está gastada.")
+			return
+		if torch_light.visible:
+			torch_light.visible = false
+			notice.emit("Antorcha apagada.")
+			return
+		if not inventory.has_item_name("Cerillas"):
+			notice.emit("Necesitas cerillas para encender la antorcha.")
+			return
+		inventory.consume_item_name("Cerillas", 1)
+		inventory.changed.emit()
+		torch_light.visible = true
+		notice.emit("Antorcha encendida con cerillas.")
+		return
 	if not inventory.has_item_type("tool"):
 		notice.emit("No tienes linterna.")
 		return
@@ -6301,6 +6519,174 @@ func _update_flashlight(delta: float) -> void:
 			flashlight.visible = false
 			_sync_held_item()
 			notice.emit("La linterna se queda sin pilas.")
+
+var _torch_arm_active := false
+var _torch_arm_bone_idx := -1
+var _torch_forearm_bone_idx := -1
+var _torch_hand_bone_idx := -1
+var _torch_pose_connected := false
+
+func _load_torch_animations() -> void:
+	if _torch_animations_loaded:
+		return
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	var torch_lib: AnimationLibrary = AnimationLibrary.new()
+	var torch_anims := {
+		THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION: TORCH_IDLE_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_WALK_ANIMATION: TORCH_WALK_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_RUN_ANIMATION: TORCH_RUN_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION: TORCH_TURN_LEFT_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION: TORCH_TURN_RIGHT_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION: TORCH_CROUCH_TURN_LEFT_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION: TORCH_CROUCH_TURN_RIGHT_FBX,
+	}
+	for anim_name in torch_anims:
+		var fbx_path: String = torch_anims[anim_name]
+		if not ResourceLoader.exists(fbx_path):
+			print("[TORCH-ANIM] FBX not found: ", fbx_path)
+			continue
+		var loaded = load(fbx_path)
+		if loaded is PackedScene:
+			var instance = (loaded as PackedScene).instantiate()
+			if instance is Node3D:
+				var src_skeleton := _find_skeleton(instance)
+				var src_anim_player := _find_animation_player(instance)
+				if src_anim_player != null:
+					var src_lib_names := src_anim_player.get_animation_list()
+					# Find the longest animation (skip "Take 001" which is a 0.001s rest pose)
+					var best_anim: Animation = null
+					var best_length := 0.0
+					for src_anim_name in src_lib_names:
+						var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+						if candidate == null:
+							continue
+						if candidate.length > best_length:
+							best_length = candidate.length
+							best_anim = candidate
+					if best_anim != null:
+						var copied := best_anim.duplicate(true)
+						copied.loop_mode = Animation.LOOP_LINEAR
+						copied.step = 0.0166667
+						var track_count_before: int = copied.get_track_count()
+						_retarget_animation_to_character_skeleton(copied)
+						var resolved_count := 0
+						var unresolved_count := 0
+						for ti in range(copied.get_track_count()):
+							var tp := str(copied.track_get_path(ti))
+							var bn := _extract_mixamo_bone_name(tp)
+							if not bn.is_empty():
+								if skel.find_bone(bn) >= 0:
+									resolved_count += 1
+								else:
+									unresolved_count += 1
+						print("[TORCH-ANIM] ", anim_name, " tracks_before=", track_count_before, " resolved=", resolved_count, " unresolved=", unresolved_count, " length=", best_length)
+						# Torch GLBs have a different skeleton (mixamorig5_) with different rest pose
+						# and scale, so always retarget rotations using the source skeleton and remove position tracks
+						_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+						_remove_non_hips_position_tracks(copied, false, 0.0)
+						_smooth_loop_boundary(copied)
+						torch_lib.add_animation(anim_name, copied)
+				else:
+					print("[TORCH-ANIM] No AnimationPlayer found in ", fbx_path)
+				instance.queue_free()
+	if torch_lib.get_animation_list().size() > 0:
+		third_person_animation_player.add_animation_library("torch", torch_lib)
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION):
+			_torch_idle_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_WALK_ANIMATION):
+			_torch_walk_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_WALK_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_RUN_ANIMATION):
+			_torch_run_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_RUN_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION):
+			_torch_turn_left_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION):
+			_torch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION):
+			_torch_crouch_turn_left_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION):
+			_torch_crouch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION
+	_torch_animations_loaded = true
+
+func _build_third_person_torch() -> void:
+	# Place torch_stick.glb in the torch hand root (follows left hand bone via _update_torch_hand_socket)
+	if _torch_hand_root == null or not is_instance_valid(_torch_hand_root):
+		return
+
+	# Clear previous children
+	for child in _torch_hand_root.get_children():
+		child.queue_free()
+
+	# Load torch_stick.glb into the left hand socket
+	var torch_node := _load_external_node3d(REAL_TORCH_MODEL)
+	if torch_node != null:
+		torch_node.name = "HeldTorch"
+		torch_node.scale = Vector3.ONE * 0.5
+		torch_node.position = Vector3(-0.16, 0.0, 0.05)
+		torch_node.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+		_torch_hand_root.add_child(torch_node)
+
+	# Torch animations from Mixamo handle the arm pose; no manual bone override needed.
+	if torch_light != null:
+		var held = get_held_item()
+		if held != null and str(held.item_type) == "tool_torch" and not held.is_broken():
+			torch_light.visible = true
+		else:
+			torch_light.visible = false
+
+func _override_torch_arm_pose() -> void:
+	pass
+
+func _clear_torch_attachment() -> void:
+	_torch_arm_active = false
+	if _torch_pose_connected:
+		var skel := _find_skeleton(third_person_model)
+		if skel != null and is_instance_valid(skel):
+			if skel.pose_updated.is_connected(_override_torch_arm_pose):
+				skel.pose_updated.disconnect(_override_torch_arm_pose)
+			# Clear bone overrides
+			skel.clear_bones_global_pose_override()
+		_torch_pose_connected = false
+	_torch_arm_bone_idx = -1
+	_torch_forearm_bone_idx = -1
+	# Clear torch from torch hand root (left hand)
+	if _torch_hand_root != null and is_instance_valid(_torch_hand_root):
+		for child in _torch_hand_root.get_children():
+			child.queue_free()
+
+func _update_torch(delta: float) -> void:
+	if torch_light == null:
+		return
+	var held = get_held_item()
+	if held == null or str(held.item_type) != "tool_torch":
+		if torch_light.visible:
+			torch_light.visible = false
+		return
+	if held.is_broken():
+		if torch_light.visible:
+			torch_light.visible = false
+			notice.emit("La antorcha se ha apagado.")
+		return
+	if torch_light.visible:
+		held.reduce_durability(delta * 2.0)
+		var pct: float = held.durability_pct()
+		torch_light.light_energy = 0.5 + 2.0 * pct
+		torch_light.light_color = Color(1.0, 0.6 + 0.3 * pct, 0.2 + 0.2 * pct)
+		stats.body_temperature = min(37.5, stats.body_temperature + delta * 1.5 * pct)
+		if wetness > 0.0:
+			wetness = max(0.0, wetness - delta * 0.03 * pct)
+			stats.wetness = wetness
+		_stats_emit_timer += delta
+		if _stats_emit_timer >= 0.25:
+			_stats_emit_timer = 0.0
+			stats.changed.emit()
+		if held.is_broken():
+			torch_light.visible = false
+			notice.emit("La antorcha se ha apagado.")
+			_sync_held_item()
 
 #endregion
 

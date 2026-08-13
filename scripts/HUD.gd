@@ -50,6 +50,7 @@ var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
 var _context_menu_has_eat := false
+var _context_menu_has_light := false
 var _context_menu_has_drink := false
 
 func setup(new_player, new_day_cycle) -> void:
@@ -980,6 +981,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	_context_menu_slot_index = slot_index
 	_context_menu_has_drink = false
 	_context_menu_has_eat = false
+	_context_menu_has_light = false
 	_context_menu = PanelContainer.new()
 	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
@@ -1015,6 +1017,14 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 		eat_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(eat_btn)
 		_context_menu_has_eat = true
+	# Add Encender button for torch when matches are available
+	if str(item.item_type) == "tool_torch" and player.inventory.has_item_name("Cerillas"):
+		var light_btn := Button.new()
+		light_btn.text = "Encender"
+		light_btn.add_theme_font_size_override("font_size", 14)
+		light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(light_btn)
+		_context_menu_has_light = true
 	var drop_btn := Button.new()
 	drop_btn.text = "Soltar"
 	drop_btn.add_theme_font_size_override("font_size", 14)
@@ -1027,7 +1037,8 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	vbox.add_child(store_btn)
 	# Add combine button if there are recipes available for this item
 	var item_name := str(item.item_name)
-	var recipes := CraftingSystemScript.get_recipes_for_item(item_name)
+	var item_type := str(item.item_type)
+	var recipes := CraftingSystemScript.get_recipes_for_item(item_name, item_type)
 	_context_menu_recipes = []
 	for recipe in recipes:
 		if CraftingSystemScript._can_craft(recipe, player.inventory.items):
@@ -1061,11 +1072,15 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		var idx := 2
 		var drink_index := -1
 		var eat_index := -1
+		var light_index := -1
 		if _context_menu_has_drink:
 			drink_index = idx
 			idx += 1
 		if _context_menu_has_eat:
 			eat_index = idx
+			idx += 1
+		if _context_menu_has_light:
+			light_index = idx
 			idx += 1
 		var drop_index := idx
 		idx += 1
@@ -1086,6 +1101,11 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 				var eat_btn = vbox.get_child(eat_index)
 				if eat_btn is Button and eat_btn.get_global_rect().has_point(mouse_pos):
 					_on_eat_pressed()
+					return true
+			if light_index >= 0:
+				var light_btn = vbox.get_child(light_index)
+				if light_btn is Button and light_btn.get_global_rect().has_point(mouse_pos):
+					_on_light_torch_pressed()
 					return true
 			var drop_btn = vbox.get_child(drop_index)
 			if drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
@@ -1133,6 +1153,17 @@ func _on_eat_pressed() -> void:
 	player._use_inventory_index(selected_slot_index)
 	if player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
 		player._eat_held_item()
+	selected_slot_index = -1
+
+func _on_light_torch_pressed() -> void:
+	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+		return
+	player.held_index = selected_slot_index
+	player._sync_held_item()
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+	player._toggle_flashlight()
 	selected_slot_index = -1
 
 func _on_use_pressed() -> void:

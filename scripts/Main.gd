@@ -16,6 +16,10 @@ const FishControllerScript = preload("res://scripts/FishController.gd")
 const WildlifeControllerScript = preload("res://scripts/WildlifeController.gd")
 const SimpleObjLoaderScript = preload("res://scripts/SimpleObjLoader.gd")
 const CelestialSystemScript = preload("res://scripts/CelestialSystem.gd")
+const NavPathfindingScript = preload("res://scripts/NavPathfinding.gd")
+const MaterialFactory = preload("res://scripts/MaterialFactory.gd")
+const NodeUtils = preload("res://scripts/NodeUtils.gd")
+const WildlifeRoutes = preload("res://scripts/WildlifeRoutes.gd")
 
 const MAP_EXTENT := 250.0
 
@@ -31,7 +35,7 @@ var containers_by_id := {}
 var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
-var _camo_texture_cache: Dictionary = {}
+var nav = null
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
 var _net_sync_timer := 0.0
@@ -73,9 +77,6 @@ var _boulder_deactivation_radius := 15.0
 var _boulder_check_timer := 0.0
 var _boulder_grid: Dictionary = {} # cell_key -> Array[entry refs]
 var _boulder_grid_cell_size := 20.0
-var material_cache := {}
-var billboard_texture_cache := {}
-var texture_path_cache := {}
 var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
 var _cached_leafy_material: StandardMaterial3D = null
@@ -94,12 +95,8 @@ var river_segments_data: Array = []
 var wildlife_blockers: Array = []
 var _wildlife_respawn_timer := 0.0
 var campfire_positions: Array = []
+var torch_fire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
-var _nav_grid: Dictionary = {}
-var _nav_grid_size := 182
-var _nav_cell_size := 2.0
-var _door_open_cache: Dictionary = {}
-var _nav_grid_built := false
 var game_over := false
 var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
@@ -166,7 +163,6 @@ const POLY_GRASS_DIFF := "res://assets/external/polyhaven/grass_bermuda_01/textu
 const POLY_GRASS_BERMUDA_ALPHA := "res://assets/external/polyhaven/grass_bermuda_01/textures/grass_bermuda_01_alpha_4k.png"
 const POLY_GRASS_BERMUDA_BLEND := "res://assets/external/polyhaven/grass_bermuda_01/grass_bermuda_01_4k.blend"
 const POLY_GRASS_MEDIUM_DIFF := "res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_diff_4k.jpg"
-const POLY_GRASS_DRY_DIFF := "res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_dry_diff_4k.png"
 const POLY_GRASS_CUTOUT := "res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_cutout_1024.png"
 const POLY_GRASS_MEDIUM_02_DIFF := "res://assets/external/polyhaven/grass_medium_02/textures/grass_medium_02_diff_4k.jpg"
 const POLY_GRASS_MEDIUM_02_ALPHA := "res://assets/external/polyhaven/grass_medium_02/textures/grass_medium_02_alpha_4k.png"
@@ -182,10 +178,8 @@ const POLY_FIR_BARK_DIFF := "res://assets/external/polyhaven/fir_tree_01/texture
 const POLY_FIR_TWIG_DIFF := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_diff_4k.png"
 const POLY_FIR_TWIG_ALPHA := "res://assets/external/polyhaven/fir_tree_01/textures/fir_tree_01_twig_alpha_4k.png"
 const LEAFY_FLOOR_MODEL := "res://assets/models/environment/leafy_floor.glb"
-const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
 const POLY_ROCKY_TERRAIN_DISP := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"
 const POLY_ROCKY_TERRAIN_SPEC := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_spec_4k.png"
-const POLY_RIVER_PEBBLES_DIFF := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg"
 const POLY_RIVER_PEBBLES_DISP := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_disp_4k.png"
 const POLY_BOULDER_DIFF := "res://assets/external/polyhaven/namaqualand_boulder_02/textures/namaqualand_boulder_02_diff_4k.jpg"
 const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
@@ -255,9 +249,6 @@ const POLY_FURNITURE_MODELS := [
 	POLY_FURNITURE_DIR + "wood_cabinet_worn_long.glb",
 	POLY_FURNITURE_DIR + "vintage_cabinet_01.glb",
 	POLY_FURNITURE_DIR + "side_table_01.glb"
-]
-const SKY_HDRI_CANDIDATES := [
-	"res://assets/hdri/kloofendal_48d_partly_cloudy_4k.exr",
 ]
 const UPRIGHT_GRASS_ASSET_MODELS := [
 	Q_NATURE + "Grass_Wispy_Tall.gltf",
@@ -390,6 +381,7 @@ var _loading_countdown: float = 0.0
 func _ready() -> void:
 	seed(WORLD_SEED)
 	_world_rng.seed = WORLD_SEED
+	nav = NavPathfindingScript.new()
 	
 	world_streaming_mgr = WorldStreamingManager.new()
 	add_child(world_streaming_mgr)
@@ -436,6 +428,24 @@ func _ready() -> void:
 	_create_day_night()
 	await _create_map()
 	_create_player()
+	# === DEBUG: equip knife, spawn default clothing near player ===
+	if player != null and player.inventory != null:
+		var knife = ItemScript.create("Cuchillo", "weapon", 0.35, 1, 0.0)
+		player.inventory.add_item(knife)
+		var matches = ItemScript.create("Cerillas", "tool_matches", 0.1, 10, 0.0)
+		player.inventory.add_item(matches)
+		player.held_index = player.inventory.items.size() - 2
+		player._sync_held_item()
+		var ppos: Vector3 = player.global_position
+		var debug_clothing := [
+			{"id": "dbg_camiseta", "name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.06, "paths": ["res://assets/characters/adapted/pickup_default_tops.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "color": Color(0.4, 0.4, 0.4), "pos": ppos + Vector3(2.0, 0.0, 0.0)},
+			{"id": "dbg_pantalones", "name": "Pantalones", "type": "clothing", "weight": 0.4, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_default_bottoms.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "color": Color(0.3, 0.3, 0.35), "pos": ppos + Vector3(-2.0, 0.0, 1.0)},
+			{"id": "dbg_zapatillas", "name": "Zapatillas", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/adapted/pickup_default_shoes.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "color": Color(0.2, 0.2, 0.2), "pos": ppos + Vector3(0.0, 0.0, 2.5)},
+		]
+		for dc in debug_clothing:
+			_create_pickup_item(dc)
+		print("[DEBUG] Player equipped with knife. Default clothing spawned nearby at ", ppos)
+	# === END DEBUG ===
 	if net != null and net.is_host and not net.is_dedicated_server:
 		_send_character_appearance()
 	if net == null or not net.is_dedicated_server:
@@ -658,10 +668,11 @@ func _process(delta: float) -> void:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping)
 	_apply_campfire_effect(player, delta)
+	_apply_torch_fire_effect(player, delta)
 	_door_cache_timer += delta
 	if _door_cache_timer >= 1.0:
 		_door_cache_timer = 0.0
-		_update_door_open_cache()
+		nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 	if not _pending_open_doors.is_empty():
 		_apply_pending_doors()
 	_water_night_timer += delta
@@ -711,43 +722,58 @@ func _tick_campfire_fires() -> void:
 		var smoke_node := get_node_or_null(fire_name + "Smoke")
 		if smoke_node != null:
 			smoke_node.queue_free()
-		# Find and remove the WorldAction and visual structure for this campfire
+		# Find the WorldAction for this fire
 		var expired_action_id := ""
+		var is_torch := false
 		for action_id in world_actions_by_id.keys():
 			var action = world_actions_by_id[action_id]
 			if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
 				expired_action_id = action_id
-				var visual_name := str(action.get_meta("visual_name", ""))
-				if not visual_name.is_empty():
-					var vis_node := get_node_or_null(visual_name)
-					if vis_node != null:
-						vis_node.queue_free()
-				# Remove fallback stones/ash
-				var cf_id := str(action_id)
-				var ash_node := get_node_or_null("PlayerCampfireAsh_" + cf_id)
-				if ash_node != null:
-					ash_node.queue_free()
-				for i in range(8):
-					var stone := get_node_or_null("PlayerCampfireStone_%s_%d" % [cf_id, i])
-					if stone != null:
-						stone.queue_free()
-				action.queue_free()
-				world_actions_by_id.erase(action_id)
+				is_torch = action.get_meta("item_type", "") == "tool_torch"
+				if is_torch:
+					action.set_meta("torch_lit", false)
+					action.set_meta("torch_durability", 0.0)
+					action.remove_meta("fire_name")
+					if player != null:
+						player.notice.emit("La antorcha se ha apagado.")
+				else:
+					var visual_name := str(action.get_meta("visual_name", ""))
+					if not visual_name.is_empty():
+						var vis_node := get_node_or_null(visual_name)
+						if vis_node != null:
+							vis_node.queue_free()
+					# Remove fallback stones/ash
+					var cf_id := str(action_id)
+					var ash_node := get_node_or_null("PlayerCampfireAsh_" + cf_id)
+					if ash_node != null:
+						ash_node.queue_free()
+					for i in range(8):
+						var stone := get_node_or_null("PlayerCampfireStone_%s_%d" % [cf_id, i])
+						if stone != null:
+							stone.queue_free()
+					action.queue_free()
+					world_actions_by_id.erase(action_id)
 				break
-		# Remove from campfire_positions
-		for i in range(campfire_positions.size() - 1, -1, -1):
-			if campfire_positions[i] is Vector3:
-				campfire_positions.remove_at(i)
-				break
+		# Remove from positions array
+		if is_torch:
+			for i in range(torch_fire_positions.size() - 1, -1, -1):
+				if torch_fire_positions[i] is Vector3:
+					torch_fire_positions.remove_at(i)
+					break
+		else:
+			for i in range(campfire_positions.size() - 1, -1, -1):
+				if campfire_positions[i] is Vector3:
+					campfire_positions.remove_at(i)
+					break
 		# Remove from _lit_campfires and _built_campfires
 		for i in range(_lit_campfires.size() - 1, -1, -1):
 			if _lit_campfires[i] is Dictionary and _lit_campfires[i].get("fire_name", "") == fire_name:
 				_lit_campfires.remove_at(i)
-		if not expired_action_id.is_empty():
+		if not is_torch and not expired_action_id.is_empty():
 			for i in range(_built_campfires.size() - 1, -1, -1):
 				if _built_campfires[i] is Dictionary and _built_campfires[i].get("id", "") == expired_action_id:
 					_built_campfires.remove_at(i)
-		if player != null:
+		if not is_torch and player != null:
 			player.notice.emit("La fogata se ha apagado.")
 		_save_world_change_silent()
 
@@ -780,6 +806,27 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
 			player_node.stats.body_temperature = min(38.0, player_node.stats.body_temperature + warmth_factor * 3.0 * delta)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
+			emit_stats = true
+	if emit_stats:
+		_campfire_emit_timer += delta
+		if _campfire_emit_timer >= 0.25:
+			_campfire_emit_timer = 0.0
+			player_node.stats.changed.emit()
+
+func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
+	if torch_fire_positions.is_empty():
+		return
+	var ppos := player_node.global_position
+	var emit_stats := false
+	for fire_pos in torch_fire_positions:
+		var dx: float = fire_pos.x - ppos.x
+		var dz: float = fire_pos.z - ppos.z
+		var dist_sq: float = dx * dx + dz * dz
+		if dist_sq < 4.0:
+			var dist: float = sqrt(dist_sq)
+			var warmth_factor: float = 1.0 - dist / 2.0
+			player_node.stats.body_temperature = min(37.5, player_node.stats.body_temperature + warmth_factor * 1.5 * delta)
+			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.02 * delta)
 			emit_stats = true
 	if emit_stats:
 		_campfire_emit_timer += delta
@@ -917,8 +964,8 @@ func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("ground_energy", 1.0)
 	sky_material.set_shader_parameter("cloud_uv_scale", 1.0)
 	sky_material.set_shader_parameter("cloud_uv_scale2", 1.3)
-	sky_material.set_shader_parameter("small_cloud_cover", 0.65)
-	sky_material.set_shader_parameter("large_cloud_cover", 0.55)
+	sky_material.set_shader_parameter("small_cloud_cover", 0.25)
+	sky_material.set_shader_parameter("large_cloud_cover", 0.15)
 	sky_material.set_shader_parameter("cloud_inner_colour", Color(1.0, 1.0, 1.0, 1))
 	sky_material.set_shader_parameter("cloud_outer_colour", Color(0.75, 0.75, 0.78, 1))
 	sky_material.set_shader_parameter("wind_direction", 0.0)
@@ -934,7 +981,13 @@ func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("rain_sky_tint", Vector3(0.25, 0.3, 0.4))
 	sky_material.set_shader_parameter("rain_cloud_tint", Vector3(0.4, 0.42, 0.46))
 	sky_material.set_shader_parameter("fog_depth_falloff", 0.4)
-	sky_material.set_shader_parameter("sunrise_haze", 0.3)
+	sky_material.set_shader_parameter("sun_disk_size", 0.3)
+	sky_material.set_shader_parameter("sun_glow_size", 9.0)
+	sky_material.set_shader_parameter("sun_glow_intensity", 0.0)
+	sky_material.set_shader_parameter("rayleigh_scatter", 0.3)
+	sky_material.set_shader_parameter("mie_scatter", 0.05)
+	sky_material.set_shader_parameter("mie_g", 0.5)
+	sky_material.set_shader_parameter("sunrise_haze", 0.05)
 	sky_material.set_shader_parameter("night_sky_brightness", 0.15)
 	var noise1 := FastNoiseLite.new()
 	noise1.frequency = 0.015
@@ -2366,6 +2419,13 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		if net != null and net.is_connected and not net.is_host:
 			net.shelter_built.rpc_id(1, sh_id, pos)
 		return
+	if item_name == "Antorcha" and item_type == "tool_torch":
+		var torch_id := "player_torch_%d" % randi()
+		var torch_durability := 120.0
+		if player != null and player.has_meta("last_torch_durability"):
+			torch_durability = float(player.get_meta("last_torch_durability", 120.0))
+		_spawn_placed_torch(torch_id, pos, torch_durability)
+		return
 	# Dropping a whole animal corpse spawns the model lying on the ground
 	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
 		var animal_kind := "wolf"
@@ -2499,6 +2559,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return [K_SURVIVAL + "tree-log.glb", K_SURVIVAL + "tree-log-small.glb", "res://assets/models/props/wood_stick_01.glb"]
 			if item_name == "Palo":
 				return ["res://assets/models/props/wood_stick.glb"]
+			if item_name == "Trapos":
+				return []
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
 			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
@@ -2821,7 +2883,7 @@ func _create_map() -> void:
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
-		_build_nav_grid()
+		nav.build(wildlife_blockers, river_segments_data)
 		await get_tree().process_frame
 		if _loading_label != null:
 			_loading_label.text = "Generando fauna..."
@@ -3016,7 +3078,7 @@ func _print_mesh_hierarchy(node: Node, indent: String) -> void:
 
 func _get_world_y_extent(model_root: Node) -> float:
 	var meshes: Array = []
-	_collect_mesh_instances(model_root, meshes)
+	NodeUtils.collect_mesh_instances(model_root, meshes)
 	var minimum_y := INF
 	var maximum_y := -INF
 	for mn in meshes:
@@ -3057,7 +3119,7 @@ func _register_server_house_blockers() -> void:
 
 func _create_barn(origin: Vector3) -> void:
 	var barn_path := BARN_MODEL
-	if not _resource_path_exists(barn_path):
+	if not MaterialFactory.resource_path_exists(barn_path):
 		print("[BARN] Model not found: ", barn_path)
 		return
 	var ground_y := _get_exact_ground_y(origin.x, origin.z)
@@ -3097,7 +3159,7 @@ func _create_barn(origin: Vector3) -> void:
 	node.force_update_transform()
 	# Measure AABB at scale 1
 	var meshes := []
-	_collect_mesh_instances(node, meshes)
+	NodeUtils.collect_mesh_instances(node, meshes)
 	var combined := AABB()
 	var first := true
 	for mesh_node in meshes:
@@ -3147,7 +3209,7 @@ func _create_barn(origin: Vector3) -> void:
 	print("[BARN] Scale: ", uniform_scale, " pos: ", node.global_position)
 	# Verify final AABB
 	var meshes2 := []
-	_collect_mesh_instances(node, meshes2)
+	NodeUtils.collect_mesh_instances(node, meshes2)
 	var combined2 := AABB()
 	var first2 := true
 	for mesh_node in meshes2:
@@ -3176,7 +3238,7 @@ func _create_barn(origin: Vector3) -> void:
 	var front_z := origin.z - half_d
 	var back_z := origin.z + half_d
 	var meshes3: Array = []
-	_collect_mesh_instances(node, meshes3)
+	NodeUtils.collect_mesh_instances(node, meshes3)
 	# Create temporary trimesh collision on ALL meshes so we can raycast
 	# Trimesh respects actual geometry (including door holes), unlike convex hull
 	for mesh_node in meshes3:
@@ -3499,7 +3561,7 @@ func _create_house_foundation(origin: Vector3, label: String, half_w: float, hal
 		mesh_instance.mesh = _get_shared_box_mesh()
 		mesh_instance.scale = beam_size
 		var uv_scale := Vector3(max(beam_size.x, beam_size.z) / 2.0, beam_size.y / 2.0, 1.0)
-		mesh_instance.material_override = _make_textured_material("ConcreteBase" + TEX_CONCRETE_DIFF, TEX_CONCRETE_DIFF, Color(0.55, 0.54, 0.52), uv_scale)
+		mesh_instance.material_override = MaterialFactory.make_textured_material("ConcreteBase" + TEX_CONCRETE_DIFF, TEX_CONCRETE_DIFF, Color(0.55, 0.54, 0.52), uv_scale)
 		add_child(mesh_instance)
 
 func _create_house_floor(origin: Vector3, label: String, width: float, depth: float) -> void:
@@ -3507,7 +3569,7 @@ func _create_house_floor(origin: Vector3, label: String, width: float, depth: fl
 	floor_mat.albedo_color = Color(0.28, 0.20, 0.10)
 	floor_mat.roughness = 0.9
 	floor_mat.uv1_scale = Vector3(4.0, 3.3, 1.0)
-	var floor_tex = _load_texture_from_path(TEX_WOOD_FLOOR_DIFF)
+	var floor_tex = MaterialFactory.load_texture(TEX_WOOD_FLOOR_DIFF)
 	if floor_tex != null:
 		floor_mat.albedo_texture = floor_tex
 		floor_mat.albedo_color = Color(0.78, 0.70, 0.58)
@@ -3584,7 +3646,7 @@ func _create_new_world_props() -> void:
 	var car_s := Vector3.ONE * 2.0
 	var car_pos := Vector3(9.0, 0.0, -30.0)
 	var car_rot := Vector3(0, 70, 0)
-	var car_ground_y := _raycast_ground_y(space_state, car_pos)
+	var car_ground_y := NodeUtils.raycast_ground_y(space_state, car_pos)
 	if _try_instance_external_scene([ABANDONED_JUNK_CAR_MODEL], "JunkCar0", car_pos, car_s, car_rot, true, car_ground_y):
 		var junk_node := get_node_or_null("JunkCar0")
 		var junk_height := 2.0
@@ -3601,7 +3663,7 @@ func _create_new_world_props() -> void:
 	var scrap_s := Vector3.ONE * 0.5
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
 	var scrap_rot := Vector3(0, -40, 0)
-	var scrap_ground_y := _raycast_ground_y(space_state, scrap_pos)
+	var scrap_ground_y := NodeUtils.raycast_ground_y(space_state, scrap_pos)
 	if _dbg_file:
 		_dbg_file.store_line("scrap_ground_y=" + str(scrap_ground_y) + " pos=" + str(scrap_pos) + " scale=" + str(scrap_s))
 		_dbg_file.close()
@@ -3629,7 +3691,7 @@ func _create_new_world_props() -> void:
 		if _dbg_file:
 			_dbg_file.store_line("=== MESH HIERARCHY DUMP ===")
 			var _meshes := []
-			_collect_mesh_instances(scrap_node, _meshes)
+			NodeUtils.collect_mesh_instances(scrap_node, _meshes)
 			for _mi in _meshes:
 				var _mi3d := _mi as MeshInstance3D
 				if _mi3d and _mi3d.mesh:
@@ -3660,7 +3722,7 @@ func _create_new_world_props() -> void:
 				cn.rotation_degrees = Vector3.ZERO
 				cn.force_update_transform()
 				var meshes := []
-				_collect_mesh_instances(cn, meshes)
+				NodeUtils.collect_mesh_instances(cn, meshes)
 				var min_v := Vector3(999999, 999999, 999999)
 				var max_v := Vector3(-999999, -999999, -999999)
 				for mesh_node in meshes:
@@ -3734,7 +3796,7 @@ func _create_world_details() -> void:
 	if tent_node != null:
 		_remove_collision_from_node(tent_node)
 		var _meshes: Array = []
-		_collect_mesh_instances(tent_node, _meshes)
+		NodeUtils.collect_mesh_instances(tent_node, _meshes)
 		for m in _meshes:
 			var mi := m as MeshInstance3D
 			if mi != null:
@@ -3867,12 +3929,12 @@ func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
 	# Deer: large outer ring routes around the expanded map
 	var deer_routes := [
-		_build_circular_route(55.0, 0.0, 10, 6.0),
-		_build_circular_route(85.0, PI * 0.5, 10, 6.0),
-		_build_circular_route(115.0, PI, 10, 7.0),
-		_build_circular_route(140.0, PI * 1.5, 10, 8.0),
-		_build_circular_route(158.0, PI * 0.25, 12, 9.0),
-		_build_circular_route(170.0, PI * 0.75, 12, 8.0),
+		WildlifeRoutes.build_circular_route(_world_rng, 55.0, 0.0, 10, 6.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 85.0, PI * 0.5, 10, 6.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 115.0, PI, 10, 7.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 140.0, PI * 1.5, 10, 8.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 158.0, PI * 0.25, 12, 9.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 170.0, PI * 0.75, 12, 8.0, is_wildlife_allowed_at),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
@@ -3893,7 +3955,7 @@ func _create_wildlife() -> void:
 	for fz in fox_zones:
 		# Ruta larga que recorre el mapa partiendo de la zona de origen
 		var fox_start: Vector3 = (fz[0] as Vector3).lerp(fz[1] as Vector3, 0.5)
-		var fox_route := _build_roaming_route(fox_start, 14, 35.0, 70.0)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 14, 35.0, 70.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 	
 	# Wolves: spread across 12 expanded quadrants of the open world
@@ -3910,7 +3972,7 @@ func _create_wildlife() -> void:
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
-		var route := _build_roaming_route(center, 16, 40.0, 80.0)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 16, 40.0, 80.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -3936,112 +3998,15 @@ func _check_wildlife_respawn() -> void:
 			if not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
-		var route := _build_roaming_route(center, 16, 40.0, 80.0)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 16, 40.0, 80.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 	elif alive_deer < 12 and alive_deer <= alive_fox:
-		var deer_route := _build_circular_route(randf_range(50.0, 175.0), randf() * TAU, 10, 7.0)
+		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(50.0, 175.0), randf() * TAU, 10, 7.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
 	elif alive_fox < 10:
 		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
-		var fox_route := _build_roaming_route(fox_zone, 14, 35.0, 70.0)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 14, 35.0, 70.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
-
-# Build a circular patrol route around the map center.
-# radius: distance from center, angle_offset: starting angle in radians,
-# num_points: waypoints around the circle, jitter: random offset per point.
-func _build_circular_route(radius: float, angle_offset: float, num_points: int, jitter: float) -> Array:
-	var route: Array = []
-	for i in range(num_points):
-		var angle := angle_offset + TAU * float(i) / float(num_points)
-		var r := radius + _world_rng.randf_range(-jitter, jitter)
-		var pos := Vector3(cos(angle) * r, 0.0, sin(angle) * r)
-		pos.x = clamp(pos.x, -180.0, 180.0)
-		pos.z = clamp(pos.z, -180.0, 180.0)
-		# Sanitize: push point away from blocked areas
-		if not is_wildlife_allowed_at(pos):
-			pos = _find_allowed_near(pos, 3.0)
-		route.append(pos)
-	return route
-
-# Build a long roaming route that wanders across the whole map instead of
-# staying inside a small territory. Each waypoint is a large step in a slowly
-# drifting direction, so animals cover a lot of ground while still following a
-# coherent path.
-func _build_roaming_route(start: Vector3, num_points: int, step_min: float, step_max: float) -> Array:
-	var route: Array = []
-	var cursor := start
-	var heading := _world_rng.randf_range(0.0, TAU)
-	# El movimiento de la fauna está limitado a +/-180, así que los waypoints
-	# deben quedar dentro de ese rango o serían inalcanzables.
-	var limit := 175.0
-	for _i in range(num_points):
-		heading += _world_rng.randf_range(-0.9, 0.9)
-		var step := _world_rng.randf_range(step_min, step_max)
-		var candidate := cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
-		# Si el paso sale del mapa, girar hacia el centro
-		if abs(candidate.x) > limit or abs(candidate.z) > limit:
-			heading = atan2(-cursor.z, -cursor.x) + _world_rng.randf_range(-0.6, 0.6)
-			candidate = cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
-		candidate.x = clamp(candidate.x, -limit, limit)
-		candidate.z = clamp(candidate.z, -limit, limit)
-		if not is_wildlife_allowed_at(candidate):
-			candidate = _find_allowed_near(candidate, 4.0)
-		route.append(candidate)
-		cursor = candidate
-	return route
-
-func _build_zigzag_route(corner_a: Vector3, corner_b: Vector3, num_points: int, jitter: float) -> Array:
-	var route: Array = []
-	for i in range(num_points):
-		var t := float(i) / float(num_points - 1) if num_points > 1 else 0.0
-		var base := corner_a.lerp(corner_b, t)
-		var perp := (corner_b - corner_a).cross(Vector3.UP).normalized() if (corner_b - corner_a).length() > 0.01 else Vector3.RIGHT
-		var offset := perp * _world_rng.randf_range(-jitter, jitter)
-		var pos := base + offset
-		pos.x = clamp(pos.x, -180.0, 180.0)
-		pos.z = clamp(pos.z, -180.0, 180.0)
-		if not is_wildlife_allowed_at(pos):
-			pos = _find_allowed_near(pos, 3.0)
-		route.append(pos)
-	return route
-
-func _find_allowed_near(origin: Vector3, max_radius: float) -> Vector3:
-	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0]:
-		if radius > max_radius and max_radius > 0.0:
-			break
-		for i in range(16):
-			var angle := TAU * float(i) / 16.0
-			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -65.0, 65.0)
-			candidate.z = clamp(candidate.z, -65.0, 65.0)
-			if is_wildlife_allowed_at(candidate):
-				return candidate
-	return origin
-
-func _random_pos_far_from(origin: Vector3, min_dist: float, world_range: float) -> Vector3:
-	var pos := Vector3.ZERO
-	for _attempt in range(50):
-		pos = Vector3(randf_range(-world_range, world_range), 0.0, randf_range(-world_range, world_range))
-		if Vector2(pos.x, pos.z).distance_to(Vector2(origin.x, origin.z)) >= min_dist:
-			break
-	return pos
-
-func _random_pos_far_from_all(origin: Vector3, others: Array, min_dist: float, min_from_others: float, world_range: float) -> Vector3:
-	var pos := Vector3.ZERO
-	for _attempt in range(80):
-		pos = Vector3(randf_range(-world_range, world_range), 0.0, randf_range(-world_range, world_range))
-		if Vector2(pos.x, pos.z).distance_to(Vector2(origin.x, origin.z)) < min_dist:
-			continue
-		var ok := true
-		for other in others:
-			if Vector2(pos.x, pos.z).distance_to(Vector2(other.x, other.z)) < min_from_others:
-				ok = false
-				break
-		if ok and not is_wildlife_allowed_at(pos):
-			ok = false
-		if ok:
-			break
-	return pos
 
 func _create_deer_pair(route: Array) -> void:
 	var offsets := [Vector3(-2.4, 0.0, -1.6), Vector3(2.4, 0.0, 1.6)]
@@ -4325,7 +4290,7 @@ func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
 
 func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = _make_camo_texture(base_color)
+	mat.albedo_texture = MaterialFactory.make_camo_texture(base_color)
 	mat.albedo_color = Color.WHITE
 	mat.roughness = 0.85
 	mat.metallic = 0.0
@@ -4338,30 +4303,6 @@ func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 		for c in n.get_children():
 			stack.append(c)
 
-func _make_camo_texture(base_color: Color = Color(0.2, 0.25, 0.15)) -> ImageTexture:
-	var cache_key := str(base_color)
-	if _camo_texture_cache.has(cache_key):
-		return _camo_texture_cache[cache_key]
-	var size := 128
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
-	img.fill(camo_colors[0])
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for blob in range(40):
-		var cx := rng.randi_range(0, size - 1)
-		var cy := rng.randi_range(0, size - 1)
-		var radius := rng.randi_range(8, 25)
-		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
-		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
-			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
-				var dx := x - cx
-				var dy := y - cy
-				if dx * dx + dy * dy <= radius * radius:
-					img.set_pixel(x, y, color)
-	var tex := ImageTexture.create_from_image(img)
-	_camo_texture_cache[cache_key] = tex
-	return tex
 
 func _create_pickup_item(data: Dictionary) -> void:
 	var id := str(data["id"])
@@ -4382,7 +4323,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 	# Rayo desde justo encima de la posición pedida: si se lanza desde muy alto,
 	# dentro de una casa golpea la colisión del tejado y el objeto acaba en el
 	# tejado en lugar de en el suelo interior.
-	var real_ground_y := _raycast_ground_y(space_state, pos, pos.y + 2.0)
+	var real_ground_y := NodeUtils.raycast_ground_y(space_state, pos, pos.y + 2.0)
 	var spawned := false
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
@@ -4441,7 +4382,7 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	var visual_name := "ChoppableTree_" + id
 	var collision_name := visual_name + "_Collision"
 	var scale_value := Vector3.ONE * _world_rng.randf_range(1.05, 1.75)
-	if not _try_instance_external_scene(_shuffled_paths(POLY_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
+	if not _try_instance_external_scene(NodeUtils.shuffled_paths(POLY_TREE_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
 		push_warning("No se crea arbol talable %s porque falta/carga mal el asset .glb" % id)
 		return
 	_override_tree_foliage_green(visual_name)
@@ -4454,7 +4395,7 @@ func _create_choppable_tree(id: String, pos: Vector3) -> void:
 func _create_choppable_bush(id: String, pos: Vector3) -> void:
 	var visual_name := "ChoppableBush_" + id
 	var scale_value := Vector3.ONE * _world_rng.randf_range(0.8, 1.3)
-	if not _try_instance_external_scene(_shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
+	if not _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
 		var base_color := Color(0.05, 0.12, 0.045).lerp(Color(0.10, 0.17, 0.075), _world_rng.randf())
 		_create_visual_sphere(visual_name, pos + Vector3(0, 0.35, 0), Vector3(0.8, 0.5, 0.8), base_color)
 	var visual_node := get_node_or_null(visual_name)
@@ -4514,7 +4455,10 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.06)
 	if not spawned:
-		_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
+		if item_name == "Trapos":
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.02, 0), 0.15, 0.04, Color(0.85, 0.85, 0.85), Vector3(0, randf_range(0, 360), 0))
+		else:
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
 	_mark_world_action_visual(visual_name)
 	var ground_node := get_node_or_null(visual_name)
 	if ground_node != null:
@@ -4658,6 +4602,26 @@ func handle_world_action(action, actor) -> void:
 				float(action.get_meta("item_use_value"))
 			)
 			_finish_pickup_action(action, actor, meat_item, "Recoges %s." % meat_item.item_name)
+		"pickup_torch":
+			var torch_dur := float(action.get_meta("torch_durability", 0.0))
+			var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
+			torch_item.durability = torch_dur
+			torch_item.max_durability = 120.0
+			var torch_id := str(action.get_meta("torch_id", ""))
+			if action.get_meta("torch_lit", false) and not torch_id.is_empty():
+				var light_node := get_node_or_null(torch_id + "Light")
+				if light_node != null:
+					light_node.queue_free()
+				var particles_node := get_node_or_null(torch_id + "Particles")
+				if particles_node != null:
+					particles_node.queue_free()
+				campfire_fire_timers.erase(torch_id)
+			var torch_pos: Vector3 = action.position
+			for i in range(torch_fire_positions.size() - 1, -1, -1):
+				if torch_fire_positions[i] is Vector3 and (torch_fire_positions[i] as Vector3).distance_to(torch_pos) < 1.5:
+					torch_fire_positions.remove_at(i)
+					break
+			_finish_pickup_action(action, actor, torch_item, "Recoges la antorcha.")
 		"pickup_item":
 			var item = ItemScript.create(
 				str(action.get_meta("item_name")),
@@ -4666,8 +4630,34 @@ func handle_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
+			# If clothing on ground and holding knife: cut into rags (not shoes)
+			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
+				var held_p = actor.get_held_item() if actor.has_method("get_held_item") else null
+				if held_p != null and held_p.item_name == "Cuchillo":
+					_play_actor_action(actor, "forage", 3.0)
+					if audio_system != null and audio_system.has_method("play_chop_loop_at"):
+						audio_system.play_chop_loop_at(action.position, 3.0)
+					actor.notice.emit("Cortando ropa para trapos... (3s)")
+					if hud != null:
+						hud.show_countdown("Cortando ropa", 3.0)
+					await get_tree().create_timer(3.0).timeout
+					_hide_action_visual(action)
+					var rag_pos: Vector3 = action.position
+					var rag1_id := "pickup_Trapos_%d" % (Time.get_ticks_msec() + randi() % 1000)
+					var rag2_id := "pickup_Trapos_%d" % (Time.get_ticks_msec() + randi() % 1000)
+					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(0.2, 0.06, 0.0), 0.05, 1, 0.0, rag1_id)
+					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(-0.2, 0.06, 0.1), 0.05, 1, 0.0, rag2_id)
+					actor.notice.emit("Cortas la ropa en trapos. Recogelos del suelo.")
+					action.mark_depleted()
+					_save_world_change_silent()
+					var rag_spawns: Array = [
+						{"id": rag1_id, "name": "Trapos", "type": "resource", "pos": rag_pos + Vector3(0.2, 0.06, 0.0), "weight": 0.05, "qty": 1, "use": 0.0},
+						{"id": rag2_id, "name": "Trapos", "type": "resource", "pos": rag_pos + Vector3(-0.2, 0.06, 0.1), "weight": 0.05, "qty": 1, "use": 0.0},
+					]
+					if net != null and net.is_connected and not net.is_host:
+						net.world_action_completed.rpc_id(1, action.action_id, rag_spawns, "", Vector3.ZERO)
+					return
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				# Equip directly from ground — adds to inventory, equips (drops old to ground)
 				_play_actor_action(actor, "pickup", 0.8)
 				if not actor.inventory.add_item(item):
 					return
@@ -5338,7 +5328,7 @@ func _fit_shelter_net(sh_id: String) -> void:
 		if stick == null:
 			continue
 		var meshes: Array = []
-		_collect_mesh_instances(stick, meshes)
+		NodeUtils.collect_mesh_instances(stick, meshes)
 		for mi in meshes:
 			var aabb: AABB = (mi as MeshInstance3D).get_aabb()
 			var gt: Transform3D = (mi as MeshInstance3D).global_transform
@@ -5391,7 +5381,7 @@ func _apply_shelter_camouflage(sh_id: String) -> void:
 		if node == null:
 			continue
 		var meshes: Array = []
-		_collect_mesh_instances(node, meshes)
+		NodeUtils.collect_mesh_instances(node, meshes)
 		for mi in meshes:
 			(mi as MeshInstance3D).material_override = camo_mat
 
@@ -5468,7 +5458,7 @@ func _create_terrain_variation() -> void:
 		if not _can_place_ground_vegetation(rock_pos, 1.6):
 			continue
 		var rock_scale := _world_rng.randf_range(0.7, 1.35)
-		if _try_instance_external_scene(_shuffled_paths(REAL_ROCK_MODELS), "RealRock", rock_pos, Vector3.ONE * rock_scale, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
+		if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_ROCK_MODELS), "RealRock", rock_pos, Vector3.ONE * rock_scale, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
 			pass
 		else:
 			_create_polyhaven_boulder(rock_pos, Vector3(_world_rng.randf_range(0.32, 0.74), _world_rng.randf_range(0.16, 0.34), _world_rng.randf_range(0.28, 0.62)))
@@ -5872,7 +5862,7 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	mesh_instance.position = center
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
 	mesh_instance.mesh = _make_irregular_river_mesh(size)
-	mesh_instance.material_override = _make_river_water_material()
+	mesh_instance.material_override = MaterialFactory.make_river_water_material()
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
 	await _create_river_edge_blend(center, size, yaw)
@@ -6017,7 +6007,7 @@ func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3,
 		var pebble_pos: Vector3 = pos + along * _world_rng.randf_range(-0.65, 0.65) + across * side * _world_rng.randf_range(-0.22, 0.56)
 		pebble_pos.y = 0.055
 		var pebble_scale: Vector3 = Vector3(_world_rng.randf_range(0.12, 0.34), _world_rng.randf_range(0.035, 0.09), _world_rng.randf_range(0.10, 0.30))
-		var texture_path: String = POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else POLY_ROCK_07_DIFF
+		var texture_path: String = MaterialFactory.POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else POLY_ROCK_07_DIFF
 		_create_textured_visual_sphere("RiverPebbleClusterStone", pebble_pos, pebble_scale, texture_path, Color(0.30, 0.29, 0.25))
 
 #endregion
@@ -6163,7 +6153,7 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			_mountain_shared_material.albedo_color = Color(0.35, 0.55, 0.20)
 		mesh_instance.material_override = _mountain_shared_material
 	else:
-		mesh_instance.material_override = _make_material(color, true)
+		mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	# Crear colisión para poder caminar sobre la montaña
 	if not node_name.contains("SnowCap"):
 		var static_body := StaticBody3D.new()
@@ -6468,8 +6458,8 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 			if fridge_ref != null:
 				fridge_ref.force_update_transform()
 				cabinet_node.force_update_transform()
-				var fridge_aabb: AABB = _compute_node_world_aabb(fridge_ref)
-				var cabinet_aabb: AABB = _compute_node_world_aabb(cabinet_node)
+				var fridge_aabb: AABB = NodeUtils.compute_node_world_aabb(fridge_ref)
+				var cabinet_aabb: AABB = NodeUtils.compute_node_world_aabb(cabinet_node)
 				var gap := 0.05
 				# Both are against the +X wall: align back faces (max X) to same wall plane
 				var fridge_back_x := fridge_aabb.position.x + fridge_aabb.size.x
@@ -6488,11 +6478,11 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 				cabinet_node.position.y += delta_y
 				cabinet_node.force_update_transform()
 				# Verify final placement
-				var final_fridge_aabb := _compute_node_world_aabb(fridge_ref)
-				var final_cabinet_aabb := _compute_node_world_aabb(cabinet_node)
+				var final_fridge_aabb := NodeUtils.compute_node_world_aabb(fridge_ref)
+				var final_cabinet_aabb := NodeUtils.compute_node_world_aabb(cabinet_node)
 				# Log each mesh child to find origin offsets
 				var cabinet_meshes := []
-				_collect_mesh_instances(cabinet_node, cabinet_meshes)
+				NodeUtils.collect_mesh_instances(cabinet_node, cabinet_meshes)
 				var actual_gap := final_fridge_aabb.position.z - (final_cabinet_aabb.position.z + final_cabinet_aabb.size.z)
 				if actual_gap < -0.001:
 					push_warning("[SINK_CABINET] %s OVERLAP detected! Gap=%.4f" % [label, actual_gap])
@@ -6502,8 +6492,8 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 				var stove_ref := get_node_or_null(label + " Stove")
 				if stove_ref != null:
 					stove_ref.force_update_transform()
-					var stove_aabb: AABB = _compute_node_world_aabb(stove_ref)
-					var cab_aabb2: AABB = _compute_node_world_aabb(cabinet_node)
+					var stove_aabb: AABB = NodeUtils.compute_node_world_aabb(stove_ref)
+					var cab_aabb2: AABB = NodeUtils.compute_node_world_aabb(cabinet_node)
 					var stove_gap := 0.05
 					# Align back faces (max X) to same wall plane as cabinet
 					var cab_back_x := cab_aabb2.position.x + cab_aabb2.size.x
@@ -6514,8 +6504,8 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 					var stove_max_z := stove_aabb.position.z + stove_aabb.size.z
 					stove_ref.position.z += (cab_left_z - stove_gap) - stove_max_z
 					stove_ref.force_update_transform()
-					var final_stove_aabb := _compute_node_world_aabb(stove_ref)
-					var final_cab_aabb := _compute_node_world_aabb(cabinet_node)
+					var final_stove_aabb := NodeUtils.compute_node_world_aabb(stove_ref)
+					var final_cab_aabb := NodeUtils.compute_node_world_aabb(cabinet_node)
 					var stove_actual_gap := final_cab_aabb.position.z - (final_stove_aabb.position.z + final_stove_aabb.size.z)
 					if stove_actual_gap < -0.001:
 						push_warning("[STOVE] %s OVERLAP with cabinet! Gap=%.4f" % [label, stove_actual_gap])
@@ -6551,7 +6541,7 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	particles.scale_amount_min = 0.15
 	particles.scale_amount_max = 0.4
 	particles.color = Color(1.0, 0.6, 0.15, 1.0)
-	particles.color_ramp = _make_fire_gradient()
+	particles.color_ramp = MaterialFactory.make_fire_gradient()
 	# Billboard plane with radial gradient flame texture
 	var quad := PlaneMesh.new()
 	quad.size = Vector2(0.3, 0.3)
@@ -6600,23 +6590,89 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	smoke.draw_pass_1 = smoke_quad
 	add_child(smoke)
 
-func _make_fire_ramp() -> GradientTexture1D:
-	var grad := Gradient.new()
-	grad.add_point(0.0, Color(1.0, 0.9, 0.3, 1.0))
-	grad.add_point(0.3, Color(1.0, 0.5, 0.1, 0.9))
-	grad.add_point(0.7, Color(0.8, 0.15, 0.02, 0.5))
-	grad.add_point(1.0, Color(0.2, 0.05, 0.0, 0.0))
-	var tex := GradientTexture1D.new()
-	tex.gradient = grad
-	return tex
+func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float) -> void:
+	var visual_name := "PlacedTorch_" + torch_id
+	var spawned := _try_instance_external_scene(["res://torch_stick.glb"], visual_name, pos + Vector3(0, 0.0, 0), Vector3.ONE * 0.5, Vector3(0, randf_range(0, 360), 0), false, 0.0)
+	if not spawned:
+		var stick := BoxMesh.new()
+		stick.size = Vector3(0.05, 0.05, 0.6)
+		var stick_mi := MeshInstance3D.new()
+		stick_mi.name = visual_name
+		stick_mi.mesh = stick
+		stick_mi.position = pos + Vector3(0, 0.3, 0)
+		stick_mi.rotation_degrees = Vector3(90, 0, 0)
+		var stick_mat := StandardMaterial3D.new()
+		stick_mat.albedo_color = Color(0.25, 0.16, 0.08)
+		stick_mi.material_override = stick_mat
+		add_child(stick_mi)
+		stick_mi.add_to_group("world_action_visual")
+	_mark_world_action_visual(visual_name)
+	var lit := durability > 0.0
+	if lit:
+		_create_torch_fire(torch_id, pos + Vector3(0, 0.7, 0), durability)
+	var action = _create_world_action(torch_id, "pickup_torch", "Antorcha", pos, Vector3(0.3, 0.8, 0.3), Color(0.2, 0.14, 0.06), false, false)
+	if action != null:
+		action.set_meta("visual_name", visual_name)
+		action.set_meta("item_name", "Antorcha")
+		action.set_meta("item_type", "tool_torch")
+		action.set_meta("item_weight", 0.3)
+		action.set_meta("item_quantity", 1)
+		action.set_meta("item_use_value", 0.0)
+		action.set_meta("torch_durability", durability)
+		action.set_meta("torch_lit", lit)
+		action.set_meta("torch_id", torch_id)
+		if lit:
+			action.set_meta("fire_name", torch_id)
 
-func _make_fire_gradient() -> Gradient:
-	var grad := Gradient.new()
-	grad.add_point(0.0, Color(1.0, 0.9, 0.3, 1.0))
-	grad.add_point(0.3, Color(1.0, 0.5, 0.1, 0.9))
-	grad.add_point(0.7, Color(0.8, 0.15, 0.02, 0.5))
-	grad.add_point(1.0, Color(0.2, 0.05, 0.0, 0.0))
-	return grad
+func _create_torch_fire(node_name: String, pos: Vector3, durability: float) -> void:
+	torch_fire_positions.append(pos)
+	var burn_time_sec := durability / 2.0
+	var expiry_time := Time.get_ticks_msec() + int(burn_time_sec * 1000)
+	campfire_fire_timers[node_name] = expiry_time
+	var light := OmniLight3D.new()
+	light.name = node_name + "Light"
+	light.position = pos
+	light.light_color = Color(1.0, 0.7, 0.3)
+	light.light_energy = 2.0
+	light.omni_range = 6.0
+	light.omni_attenuation = 1.5
+	light.shadow_enabled = false
+	light.add_to_group("omni_lights")
+	add_child(light)
+	var particles := CPUParticles3D.new()
+	particles.name = node_name + "Particles"
+	particles.position = pos
+	particles.amount = 15
+	particles.lifetime = 0.4
+	particles.explosiveness = 0.4
+	particles.randomness = 0.6
+	particles.direction = Vector3(0, 1, 0)
+	particles.spread = 6.0
+	particles.initial_velocity_min = 0.5
+	particles.initial_velocity_max = 1.2
+	particles.gravity = Vector3(0, 1.0, 0)
+	particles.scale_amount_min = 0.08
+	particles.scale_amount_max = 0.2
+	particles.color = Color(1.0, 0.6, 0.15, 1.0)
+	particles.color_ramp = MaterialFactory.make_fire_gradient()
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(0.15, 0.15)
+	quad.orientation = PlaneMesh.FACE_Y
+	var fire_mat := StandardMaterial3D.new()
+	fire_mat.albedo_color = Color(1.0, 0.5, 0.1, 1.0)
+	fire_mat.emission_enabled = true
+	fire_mat.emission = Color(1.0, 0.55, 0.12)
+	fire_mat.emission_energy_multiplier = 4.0
+	fire_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	fire_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fire_mat.no_depth_test = true
+	fire_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	fire_mat.billboard_keep_scale = true
+	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	quad.material = fire_mat
+	particles.draw_pass_1 = quad
+	add_child(particles)
+
 
 # Interior de casas: pendiente de implementar (placeholder para futura expansión)
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
@@ -6673,11 +6729,11 @@ func _create_wrecked_car(pos: Vector3, yaw: float, color: Color) -> void:
 	if not _is_vehicle_spawn_clear(pos):
 		return
 	_register_wildlife_blocker(pos, 3.8)
-	if _try_instance_external_scene(_shuffled_paths(REAL_CAR_MODELS), "RealAbandonedCar", pos + Vector3(0, 0.05, 0), Vector3(1.45, 1.45, 1.45), Vector3(0, yaw, 0), true, 0.0):
+	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_CAR_MODELS), "RealAbandonedCar", pos + Vector3(0, 0.05, 0), Vector3(1.45, 1.45, 1.45), Vector3(0, yaw, 0), true, 0.0):
 		var car_node := get_node_or_null("RealAbandonedCar")
 		var car_height := 2.3
 		if car_node != null and car_node is Node3D:
-			car_height = _get_node_world_aabb_height(car_node as Node3D)
+			car_height = NodeUtils.get_node_world_aabb_height(car_node as Node3D)
 			car_height += 0.15
 			if car_height < 0.5:
 				car_height = 2.3
@@ -6702,7 +6758,7 @@ func _create_visible_vehicle_asset(pos: Vector3, yaw: float, model_index: int) -
 		var vis_node := get_node_or_null("ExternalVehicleVisible")
 		var vis_height := 2.8
 		if vis_node != null and vis_node is Node3D:
-			vis_height = _get_node_world_aabb_height(vis_node as Node3D)
+			vis_height = NodeUtils.get_node_world_aabb_height(vis_node as Node3D)
 			vis_height += 0.15
 			if vis_height < 0.5:
 				vis_height = 2.8
@@ -6773,7 +6829,7 @@ func _create_wrecked_van(pos: Vector3, yaw: float) -> void:
 		var van_node := get_node_or_null("RealAbandonedVan")
 		var van_height := 2.8
 		if van_node != null and van_node is Node3D:
-			van_height = _get_node_world_aabb_height(van_node as Node3D)
+			van_height = NodeUtils.get_node_world_aabb_height(van_node as Node3D)
 			van_height += 0.15
 			if van_height < 0.5:
 				van_height = 2.8
@@ -6869,7 +6925,7 @@ func _apply_camp_camouflage(_camp_pos: Vector3) -> void:
 		if node == null:
 			continue
 		var meshes: Array = []
-		_collect_mesh_instances(node, meshes)
+		NodeUtils.collect_mesh_instances(node, meshes)
 		for mi in meshes:
 			(mi as MeshInstance3D).material_override = camo_mat
 
@@ -7115,53 +7171,6 @@ func _is_in_barn_doorway_passage(pos: Vector3, blocker: Dictionary) -> bool:
 		return true
 	return false
 
-func _update_door_open_cache() -> void:
-	_door_open_cache.clear()
-	for blocker in wildlife_blockers:
-		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
-		var is_barn_always_open: bool = blocker.get("barn_door_always_open", false) == true
-		var door = blocker.get("door", null)
-		if not is_barn_always_open:
-			if door == null or not is_instance_valid(door):
-				continue
-			if door.get("is_open") != true:
-				continue
-		# For house_bounds blockers, unblock doorway passage cells
-		if blocker.has("house_bounds"):
-			var bounds: Rect2 = blocker["house_bounds"]
-			var expanded := bounds.grow(3.5)
-			var min_cell := _world_to_grid(Vector3(expanded.position.x, 0.0, expanded.position.y))
-			var max_cell := _world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
-			for gx in range(min_cell.x, max_cell.x + 1):
-				for gy in range(min_cell.y, max_cell.y + 1):
-					if gx < 0 or gx >= _nav_grid_size or gy < 0 or gy >= _nav_grid_size:
-						continue
-					var cell := Vector2i(gx, gy)
-					if not _nav_grid.has(cell):
-						continue
-					var world_pos := _grid_to_world(cell)
-					if is_barn_always_open:
-						if _is_in_barn_doorway_passage(world_pos, blocker):
-							_door_open_cache[cell] = true
-					elif _is_in_doorway_passage(world_pos, blocker_pos):
-						_door_open_cache[cell] = true
-			continue
-		var radius: float = float(blocker.get("radius", 1.8))
-		var center_cell := _world_to_grid(blocker_pos)
-		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
-		for dx in range(-cell_radius, cell_radius + 1):
-			for dy in range(-cell_radius, cell_radius + 1):
-				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
-				if cell.x < 0 or cell.x >= _nav_grid_size or cell.y < 0 or cell.y >= _nav_grid_size:
-					continue
-				if not _nav_grid.has(cell):
-					continue
-				var world_pos := _grid_to_world(cell)
-				var local_x := world_pos.x - blocker_pos.x
-				var local_z := world_pos.z - blocker_pos.z
-				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
-					_door_open_cache[cell] = true
-
 func _add_collision_to_prop_group(root: Node) -> void:
 	if root is CollisionObject3D:
 		root.add_to_group("prop_collision")
@@ -7325,17 +7334,17 @@ func _create_billboard_underbrush_fields() -> void:
 		_create_billboard_underbrush(pos, _world_rng.randf_range(0.55, 1.05))
 
 func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
-	var texture_paths := _get_billboard_textures("underbrush")
+	var texture_paths := UNDERBRUSH_BILLBOARD_TEXTURES
 	if texture_paths.is_empty():
 		return false
 	var texture_path := ""
-	for candidate in _shuffled_paths(texture_paths):
-		if _resource_path_exists(candidate):
+	for candidate in NodeUtils.shuffled_paths(texture_paths):
+		if MaterialFactory.resource_path_exists(candidate):
 			texture_path = candidate
 			break
 	if texture_path.is_empty():
 		return false
-	var material := _make_tree_billboard_material(texture_path)
+	var material := MaterialFactory.make_tree_billboard_material(texture_path)
 	if material.albedo_texture == null:
 		return false
 	var width := height * _world_rng.randf_range(0.95, 1.55)
@@ -7521,7 +7530,7 @@ func _load_forest_tree_pack() -> void:
 	root.rotation_degrees.x = -90.0
 	root.force_update_transform()
 	var meshes: Array = []
-	_collect_mesh_instances(root, meshes)
+	NodeUtils.collect_mesh_instances(root, meshes)
 	for mi in meshes:
 		var mesh_inst := mi as MeshInstance3D
 		if mesh_inst.mesh == null:
@@ -7586,12 +7595,12 @@ func _spawn_wood_chips(origin: Vector3) -> void:
 func _create_billboard_tree(pos: Vector3, texture_paths: Array, height: float, node_name: String) -> bool:
 	var texture_path := ""
 	for candidate in texture_paths:
-		if _resource_path_exists(candidate):
+		if MaterialFactory.resource_path_exists(candidate):
 			texture_path = candidate
 			break
 	if texture_path.is_empty():
 		return false
-	var material := _make_tree_billboard_material(texture_path)
+	var material := MaterialFactory.make_tree_billboard_material(texture_path)
 	if material.albedo_texture == null:
 		return false
 	var width := height * _world_rng.randf_range(0.42, 0.56)
@@ -7638,7 +7647,7 @@ func _create_living_tree_fallback(pos: Vector3, visual_name: String) -> bool:
 	return true
 
 func _create_dead_tree_fallback(pos: Vector3) -> void:
-	if _try_instance_external_scene(_shuffled_paths(REAL_DEAD_TREE_MODELS), "ExternalDeadTree", pos, Vector3.ONE * _world_rng.randf_range(1.05, 1.75), Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
+	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_DEAD_TREE_MODELS), "ExternalDeadTree", pos, Vector3.ONE * _world_rng.randf_range(1.05, 1.75), Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
 		_create_tree_collision("ExternalDeadTreeCollision", pos)
 		return
 	var height := _world_rng.randf_range(4.2, 7.2)
@@ -7828,7 +7837,7 @@ func _ensure_tall_grass_batches() -> void:
 		if node == null:
 			continue
 		var meshes: Array = []
-		_collect_mesh_instances(node, meshes)
+		NodeUtils.collect_mesh_instances(node, meshes)
 		for m in meshes:
 			var mi := m as MeshInstance3D
 			if mi.mesh != null:
@@ -7932,7 +7941,7 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 	var visual_name := "Bush_%d" % _bush_id_counter
 	var made_visual := false
 	var meta_names := ""
-	if _try_instance_external_scene(_shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, Vector3.ONE * _world_rng.randf_range(radius * 0.22, radius * 0.42), Vector3(0, _world_rng.randf_range(0, 360), 0), true, pos.y):
+	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, Vector3.ONE * _world_rng.randf_range(radius * 0.22, radius * 0.42), Vector3(0, _world_rng.randf_range(0, 360), 0), true, pos.y):
 		var vn := get_node_or_null(visual_name)
 		if vn != null:
 			vn.add_to_group("world_action_visual")
@@ -7958,7 +7967,7 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 		action.set_meta("visual_name", meta_names)
 
 func _create_cutout_plant(node_name: String, pos: Vector3, height: float, texture_path: String, alpha_path: String, width_factor: float) -> bool:
-	if not _resource_path_exists(texture_path):
+	if not MaterialFactory.resource_path_exists(texture_path):
 		return false
 	var root := Node3D.new()
 	root.name = node_name
@@ -7974,7 +7983,7 @@ func _create_cutout_plant(node_name: String, pos: Vector3, height: float, textur
 		var mesh := PlaneMesh.new()
 		mesh.size = Vector2(height * width_factor, height)
 		mesh_instance.mesh = mesh
-		mesh_instance.material_override = _make_cutout_material(node_name + texture_path + alpha_path, texture_path, alpha_path)
+		mesh_instance.material_override = MaterialFactory.make_cutout_material(node_name + texture_path + alpha_path, texture_path, alpha_path)
 		root.add_child(mesh_instance)
 	return true
 
@@ -7986,7 +7995,7 @@ func _create_static_box(node_name: String, pos: Vector3, size: Vector3, color: C
 	mesh_instance.mesh = _get_shared_box_mesh()
 	mesh_instance.scale = size
 	mesh_instance.position.y = size.y * 0.5
-	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -8064,7 +8073,7 @@ func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: 
 	mesh_instance.scale = size
 	mesh_instance.position.y = size.y * 0.5
 	var uv_scale := Vector3(max(size.x, size.z) / 1.4, size.y / 1.4, 1.0)
-	mesh_instance.material_override = _make_textured_material(node_name + TEX_BRICK_DIFF, TEX_BRICK_DIFF, Color(0.62, 0.46, 0.38), uv_scale)
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + TEX_BRICK_DIFF, TEX_BRICK_DIFF, Color(0.62, 0.46, 0.38), uv_scale)
 	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -8137,7 +8146,7 @@ func _create_static_cylinder(node_name: String, pos: Vector3, radius: float, hei
 	mesh_instance.mesh = _get_shared_cylinder_mesh()
 	mesh_instance.scale = Vector3(radius, height, radius)
 	mesh_instance.position.y = height * 0.5
-	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := CylinderShape3D.new()
@@ -8156,7 +8165,7 @@ func _create_visual_cylinder(node_name: String, pos: Vector3, radius: float, hei
 	mesh_instance.rotation_degrees = rot
 	mesh_instance.mesh = _get_shared_cylinder_mesh()
 	mesh_instance.scale = Vector3(radius, height, radius)
-	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	add_child(mesh_instance)
 
 func _create_textured_cylinder(node_name: String, pos: Vector3, radius: float, height: float, texture_path: String, fallback_color: Color, uv_scale: Vector3) -> void:
@@ -8165,12 +8174,12 @@ func _create_textured_cylinder(node_name: String, pos: Vector3, radius: float, h
 	mesh_instance.position = pos + Vector3(0, height * 0.5, 0)
 	mesh_instance.mesh = _get_shared_trunk_cylinder_mesh()
 	mesh_instance.scale = Vector3(radius, height, radius)
-	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, uv_scale)
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, uv_scale)
 	add_child(mesh_instance)
 
 func _create_tree_twig_plane(pos: Vector3, size: Vector2, yaw: float, texture_path: String, alpha_path: String) -> void:
 	return
-	if not _resource_path_exists(texture_path):
+	if not MaterialFactory.resource_path_exists(texture_path):
 		return
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "PolyTreeTwig"
@@ -8179,7 +8188,7 @@ func _create_tree_twig_plane(pos: Vector3, size: Vector2, yaw: float, texture_pa
 	var mesh := PlaneMesh.new()
 	mesh.size = size
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_cutout_material("tree_twig_" + texture_path + alpha_path, texture_path, alpha_path)
+	mesh_instance.material_override = MaterialFactory.make_cutout_material("tree_twig_" + texture_path + alpha_path, texture_path, alpha_path)
 	add_child(mesh_instance)
 
 func _create_visual_box(node_name: String, pos: Vector3, size: Vector3, color: Color, rot: Vector3) -> void:
@@ -8189,7 +8198,7 @@ func _create_visual_box(node_name: String, pos: Vector3, size: Vector3, color: C
 	mesh_instance.rotation_degrees = rot
 	mesh_instance.mesh = _get_shared_box_mesh()
 	mesh_instance.scale = size
-	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	add_child(mesh_instance)
 
 func _create_area_light(node_name: String, pos: Vector3, light_size: Vector2, color: Color, energy: float, rot_deg: Vector3) -> void:
@@ -8211,7 +8220,7 @@ func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3,
 	mesh_instance.rotation_degrees = rot
 	mesh_instance.mesh = _get_shared_box_mesh()
 	mesh_instance.scale = size
-	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.8, 1.8, 1.0))
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.8, 1.8, 1.0))
 	add_child(mesh_instance)
 
 func _create_leafy_floor_ground() -> void:
@@ -8274,7 +8283,7 @@ func _extract_texture_from_glb(path: String) -> Texture2D:
 	var root := generated_scene as Node3D
 	add_child(root)
 	var meshes: Array = []
-	_collect_mesh_instances(root, meshes)
+	NodeUtils.collect_mesh_instances(root, meshes)
 	var result: Texture2D = null
 	for mi in meshes:
 		var mesh_inst := mi as MeshInstance3D
@@ -8308,9 +8317,9 @@ func _create_visual_plane(node_name: String, pos: Vector3, size: Vector2, color:
 	mesh.subdivide_depth = 12
 	mesh_instance.mesh = mesh
 	if node_name == "TerrainSurface":
-		mesh_instance.material_override = _make_main_ground_material(color)
+		mesh_instance.material_override = MaterialFactory.make_main_ground_material(color)
 	else:
-		mesh_instance.material_override = _make_material(color, true)
+		mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	add_child(mesh_instance)
 
 func _create_textured_ground_patch(node_name: String, pos: Vector3, size: Vector2, texture_path: String, yaw: float, fallback_color: Color) -> void:
@@ -8325,7 +8334,7 @@ func _create_textured_ground_patch(node_name: String, pos: Vector3, size: Vector
 	mesh.subdivide_width = 2
 	mesh.subdivide_depth = 2
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(2.8, 2.8, 1.0))
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(2.8, 2.8, 1.0))
 	add_child(mesh_instance)
 
 func _create_irregular_textured_ground_patch(node_name: String, pos: Vector3, size: Vector2, texture_path: String, yaw: float, fallback_color: Color) -> void:
@@ -8362,7 +8371,7 @@ func _create_irregular_textured_ground_patch(node_name: String, pos: Vector3, si
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(2.25, 2.25, 1.0))
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(2.25, 2.25, 1.0))
 	add_child(mesh_instance)
 
 func _create_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3, color: Color) -> void:
@@ -8371,7 +8380,7 @@ func _create_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3
 	mesh_instance.position = pos
 	mesh_instance.scale = scale_value
 	mesh_instance.mesh = _get_shared_visual_sphere_mesh()
-	mesh_instance.material_override = _make_material(color, true)
+	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	mesh_instance.visibility_range_end = 80.0
 	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
@@ -8383,7 +8392,7 @@ func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value
 	mesh_instance.rotation_degrees = Vector3(_world_rng.randf_range(-4.0, 4.0), _world_rng.randf_range(0.0, 360.0), _world_rng.randf_range(-4.0, 4.0))
 	mesh_instance.scale = scale_value
 	mesh_instance.mesh = _get_shared_sphere_mesh()
-	mesh_instance.material_override = _make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.6, 1.6, 1.0))
+	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.6, 1.6, 1.0))
 	mesh_instance.visibility_range_end = 80.0
 	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
@@ -8493,266 +8502,12 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 		roof_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 		mesh.surface_set_material(0, roof_mat)
 	else:
-		mesh_instance.material_override = _make_material(color, true)
+		mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	add_child(mesh_instance)
 
 #endregion
 
 
-#region FÁBRICA DE MATERIALES Y TEXTURAS
-func _make_material(color: Color, noisy: bool) -> StandardMaterial3D:
-	var key := "%0.2f_%0.2f_%0.2f_%s" % [color.r, color.g, color.b, str(noisy)]
-	if material_cache.has(key):
-		return material_cache[key]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.96
-	material.metallic = 0.0
-	if noisy:
-		var noise := FastNoiseLite.new()
-		noise.seed = randi()
-		noise.frequency = 0.085
-		noise.fractal_octaves = 3
-		var texture := NoiseTexture2D.new()
-		texture.width = 96
-		texture.height = 96
-		texture.noise = noise
-		material.albedo_texture = texture
-	material_cache[key] = material
-	return material
-
-func _make_textured_material(key: String, texture_path: String, fallback_color: Color, uv_scale: Vector3, cutout := false) -> StandardMaterial3D:
-	var cache_key := "textured_%s_%s_%s" % [key, texture_path, str(cutout)]
-	if material_cache.has(cache_key):
-		return material_cache[cache_key]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = fallback_color
-	material.roughness = 0.92
-	material.metallic = 0.0
-	material.uv1_scale = uv_scale
-	var tex = _load_texture_from_path(texture_path)
-	if tex != null:
-		material.albedo_texture = tex
-		material.albedo_color = Color(1, 1, 1)
-	if texture_path == POLY_RIVER_PEBBLES_DIFF:
-		material.roughness = 1.0
-	if cutout:
-		material.cull_mode = BaseMaterial3D.CULL_DISABLED
-		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-		material.alpha_scissor_threshold = 0.18
-	material_cache[cache_key] = material
-	return material
-
-func _make_rocky_ground_material(fallback_color: Color) -> StandardMaterial3D:
-	if material_cache.has("rocky_ground"):
-		return material_cache["rocky_ground"]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.31, 0.30, 0.25).lerp(fallback_color, 0.18)
-	material.roughness = 1.0
-	material.metallic = 0.0
-	material.uv1_scale = Vector3(30.0, 30.0, 1.0)
-	var rocky_texture = _load_texture_from_path(POLY_ROCKY_TERRAIN_DIFF)
-	if rocky_texture != null:
-		material.albedo_texture = rocky_texture
-	else:
-		var noise := FastNoiseLite.new()
-		noise.seed = randi()
-		noise.frequency = 0.18
-		noise.fractal_octaves = 5
-		var texture := NoiseTexture2D.new()
-		texture.width = 256
-		texture.height = 256
-		texture.noise = noise
-		material.albedo_texture = texture
-	material_cache["rocky_ground"] = material
-	return material
-
-func _make_main_ground_material(fallback_color: Color) -> StandardMaterial3D:
-	if material_cache.has("main_ground"):
-		return material_cache["main_ground"]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.46, 0.62, 0.32)
-	material.roughness = 1.0
-	material.metallic = 0.0
-	material.uv1_scale = Vector3(44.0, 44.0, 1.0)
-	var ground_texture = _load_texture_from_path(POLY_ROCKY_TERRAIN_DIFF)
-	if ground_texture != null:
-		material.albedo_texture = ground_texture
-	else:
-		var fallback_texture = _load_texture_from_path(POLY_GRASS_DRY_DIFF)
-		if fallback_texture != null:
-			material.albedo_texture = fallback_texture
-	material_cache["main_ground"] = material
-	return material
-
-func _make_grass_blade_material() -> StandardMaterial3D:
-	if material_cache.has("grass_blade"):
-		return material_cache["grass_blade"]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.19, 0.42, 0.12)
-	material.roughness = 1.0
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material_cache["grass_blade"] = material
-	return material
-
-func _make_river_water_material() -> Material:
-	if material_cache.has("river_water"):
-		return material_cache["river_water"]
-	var shader := Shader.new()
-	shader.code = """
-shader_type spatial;
-render_mode blend_mix, depth_draw_always, cull_disabled, unshaded;
-
-uniform vec4 shallow_color : source_color = vec4(0.03, 0.48, 0.92, 0.93);
-uniform vec4 deep_color : source_color = vec4(0.00, 0.24, 0.74, 0.96);
-uniform vec4 night_shallow_color : source_color = vec4(0.035, 0.085, 0.12, 0.90);
-uniform vec4 night_deep_color : source_color = vec4(0.012, 0.035, 0.060, 0.94);
-uniform float night_amount = 0.0;
-uniform float wave_height = 0.045;
-uniform float flow_speed = 0.42;
-
-void vertex() {
-	float long_wave = sin(UV.x * 24.0 + TIME * 1.55);
-	float cross_wave = sin(UV.y * 18.0 + UV.x * 10.0 - TIME * 2.10);
-	float small_wave = sin((UV.x + UV.y) * 46.0 + TIME * 3.20);
-	VERTEX.y += (long_wave * 0.55 + cross_wave * 0.32 + small_wave * 0.13) * wave_height;
-}
-
-void fragment() {
-	float current = sin((UV.x + TIME * flow_speed) * 44.0 + UV.y * 8.0) * 0.5 + 0.5;
-	float ripple = sin((UV.x * 90.0 - TIME * 3.0) + sin(UV.y * 20.0)) * 0.5 + 0.5;
-	vec3 day_color = mix(shallow_color.rgb, deep_color.rgb, smoothstep(0.05, 0.95, UV.y));
-	vec3 night_color = mix(night_shallow_color.rgb, night_deep_color.rgb, smoothstep(0.05, 0.95, UV.y));
-	vec3 water_color = mix(day_color, night_color, clamp(night_amount, 0.0, 1.0));
-	water_color += vec3(0.010, 0.030, 0.085) * current * (1.0 - night_amount * 0.82);
-	water_color += vec3(0.006, 0.018, 0.060) * ripple * (1.0 - night_amount * 0.78);
-	ALBEDO = water_color;
-	ALPHA = mix(mix(shallow_color.a, deep_color.a, smoothstep(0.0, 1.0, UV.y)), mix(night_shallow_color.a, night_deep_color.a, smoothstep(0.0, 1.0, UV.y)), night_amount);
-	ROUGHNESS = 0.18;
-	METALLIC = 0.0;
-	SPECULAR = 0.55;
-	EMISSION = water_color * mix(0.18, 0.015, night_amount);
-}
-"""
-	var material := ShaderMaterial.new()
-	material.shader = shader
-	material_cache["river_water"] = material
-	return material
-
-const REALISTIC_SKY_SHADER := "res://shaders/realistic_sky.gdshader"
-
-func _make_shader_sky_material() -> ShaderMaterial:
-	if not ResourceLoader.exists(REALISTIC_SKY_SHADER):
-		return null
-	var shader = load(REALISTIC_SKY_SHADER)
-	if shader == null or not (shader is Shader):
-		return null
-	var material := ShaderMaterial.new()
-	material.shader = shader
-	return material
-
-func _make_hdri_sky_material() -> PanoramaSkyMaterial:
-	for texture_path in SKY_HDRI_CANDIDATES:
-		if not _resource_path_exists(texture_path):
-			continue
-		var panorama = _load_texture_from_path(texture_path)
-		if panorama == null:
-			continue
-		var material := PanoramaSkyMaterial.new()
-		material.panorama = panorama
-		material.energy_multiplier = 0.82
-		return material
-	return null
-
-func _get_billboard_textures(kind: String) -> Array:
-	if billboard_texture_cache.has(kind):
-		return billboard_texture_cache[kind].duplicate()
-	var textures := []
-	var dir := DirAccess.open("res://assets/external/tree_billboards/png")
-	if dir != null:
-		dir.list_dir_begin()
-		var file_name := dir.get_next()
-		while file_name != "":
-			if not dir.current_is_dir() and file_name.get_extension().to_lower() == "png":
-				var lower := file_name.to_lower()
-				var include_file := kind == "tree" and (lower.begins_with("pine_") or lower.begins_with("lake_pine_"))
-				if kind == "dead":
-					include_file = lower.begins_with("flare_pine")
-				elif kind == "underbrush":
-					include_file = lower.find("broadleaf") >= 0
-				if include_file:
-					textures.append("res://assets/external/tree_billboards/png/" + file_name)
-			file_name = dir.get_next()
-		dir.list_dir_end()
-	if textures.is_empty():
-		if kind == "dead":
-			textures = DEAD_TREE_BILLBOARD_TEXTURES.duplicate()
-		elif kind == "underbrush":
-			textures = UNDERBRUSH_BILLBOARD_TEXTURES.duplicate()
-		else:
-			textures = TREE_BILLBOARD_TEXTURES.duplicate()
-	textures.sort()
-	billboard_texture_cache[kind] = textures
-	return textures.duplicate()
-
-func _resource_path_exists(path: String) -> bool:
-	if ResourceLoader.exists(path):
-		return true
-	if FileAccess.file_exists(path):
-		return true
-	if path.begins_with("res://"):
-		return FileAccess.file_exists(ProjectSettings.globalize_path(path))
-	return false
-
-func _load_texture_from_path(texture_path: String):
-	if texture_path_cache.has(texture_path):
-		return texture_path_cache[texture_path]
-	var result = null
-	if ResourceLoader.exists(texture_path):
-		var loaded_texture = load(texture_path)
-		if loaded_texture is Texture2D:
-			result = loaded_texture
-	if result == null:
-		var disk_path := ProjectSettings.globalize_path(texture_path) if texture_path.begins_with("res://") else texture_path
-		var image := Image.load_from_file(disk_path)
-		if image != null and not image.is_empty():
-			image.generate_mipmaps()
-			result = ImageTexture.create_from_image(image)
-	texture_path_cache[texture_path] = result
-	return result
-
-func _make_tree_billboard_material(texture_path: String) -> StandardMaterial3D:
-	var key := "tree_billboard_" + texture_path
-	if material_cache.has(key):
-		return material_cache[key]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1, 1, 1, 1)
-	material.roughness = 0.92
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	material.alpha_scissor_threshold = 0.06
-	material.albedo_texture = _load_texture_from_path(texture_path)
-	material_cache[key] = material
-	return material
-
-func _make_cutout_material(key: String, texture_path: String, alpha_path: String) -> StandardMaterial3D:
-	var cache_key := "cutout_" + key
-	if material_cache.has(cache_key):
-		return material_cache[cache_key]
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1, 1, 1, 1)
-	material.roughness = 0.92
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	material.alpha_scissor_threshold = 0.12
-	material.albedo_texture = _load_texture_from_path(texture_path)
-	material_cache[cache_key] = material
-	return material
-
-#endregion
 
 
 #region RECURSOS EXTERNOS Y ESCENAS
@@ -8776,7 +8531,7 @@ func _create_loot_container(id: String, label: String, pos: Vector3, size: Vecto
 
 func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3, scale_value: Vector3, rot: Vector3, snap_to_ground := false, ground_y := 0.0) -> bool:
 	for path in paths:
-		if not _resource_path_exists(path):
+		if not MaterialFactory.resource_path_exists(path):
 			continue
 		var path_str := str(path)
 		var scene_resource = _get_external_scene_resource(path_str)
@@ -8914,7 +8669,7 @@ func _create_concrete_barrier(_node_name: String, _pos: Vector3, _rot: Vector3) 
 
 func _add_convex_collision_to_meshes(root: Node) -> void:
 	var meshes: Array = []
-	_collect_mesh_instances(root, meshes)
+	NodeUtils.collect_mesh_instances(root, meshes)
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
 		if mesh_instance.mesh != null:
@@ -8922,7 +8677,7 @@ func _add_convex_collision_to_meshes(root: Node) -> void:
 
 func _add_convex_collision_to_small_meshes(root: Node, max_dim: float = 3.5, door_zones: Array = []) -> void:
 	var meshes: Array = []
-	_collect_mesh_instances(root, meshes)
+	NodeUtils.collect_mesh_instances(root, meshes)
 	print("[BARN-COL] Found ", meshes.size(), " meshes, max_dim=", max_dim)
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
@@ -8972,7 +8727,7 @@ func _override_tree_foliage_green(_node_name: String) -> void:
 
 func _apply_foliage_green_to_node(node: Node3D) -> void:
 	var meshes: Array = []
-	_collect_mesh_instances(node, meshes)
+	NodeUtils.collect_mesh_instances(node, meshes)
 	if _shared_foliage_green_mat == null:
 		_shared_foliage_green_mat = StandardMaterial3D.new()
 		_shared_foliage_green_mat.albedo_color = Color(0.15, 0.42, 0.10)
@@ -8987,7 +8742,7 @@ func _apply_foliage_green_to_node(node: Node3D) -> void:
 func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 	node.force_update_transform()
 	var meshes := []
-	_collect_mesh_instances(node, meshes)
+	NodeUtils.collect_mesh_instances(node, meshes)
 	var min_y := 1000000.0
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
@@ -9014,7 +8769,7 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 		return
 	node.force_update_transform()
 	var meshes := []
-	_collect_mesh_instances(node, meshes)
+	NodeUtils.collect_mesh_instances(node, meshes)
 	if _snap_dbg:
 		_snap_dbg.store_line("[SNAP] mesh_count=" + str(meshes.size()))
 	var min_local_y := 1000000.0
@@ -9041,83 +8796,6 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 			_snap_dbg.store_line("[SNAP] WARNING: no valid meshes found for " + path)
 			_snap_dbg.close()
 
-func _collect_mesh_instances(root: Node, result: Array) -> void:
-	if root is MeshInstance3D:
-		result.append(root)
-	for child in root.get_children():
-		_collect_mesh_instances(child, result)
-
-# from_y permite empezar el rayo por debajo de techos y otras estructuras
-# elevadas. Con el valor por defecto (100) un rayo lanzado dentro de una casa
-# impactaría en la colisión del tejado en lugar del suelo.
-func _raycast_ground_y(space_state: PhysicsDirectSpaceState3D, pos: Vector3, from_y: float = 100.0) -> float:
-	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, from_y, pos.z), Vector3(pos.x, -200.0, pos.z))
-	query.collide_with_bodies = true
-	query.collide_with_areas = false
-	var hit := space_state.intersect_ray(query)
-	if not hit.is_empty():
-		return float(hit["position"].y)
-	return 0.0
-
-func _get_node_world_aabb_height(node: Node3D) -> float:
-	node.force_update_transform()
-	var meshes := []
-	_collect_mesh_instances(node, meshes)
-	var min_y := 1000000.0
-	var max_y := -1000000.0
-	for mesh_node in meshes:
-		var mi := mesh_node as MeshInstance3D
-		if mi.mesh == null:
-			continue
-		mi.force_update_transform()
-		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
-		min_y = min(min_y, world_aabb.position.y)
-		max_y = max(max_y, world_aabb.position.y + world_aabb.size.y)
-	if max_y > min_y:
-		return max_y - min_y
-	return 0.0
-
-func _get_node_world_aabb_min_y(node: Node3D) -> float:
-	node.force_update_transform()
-	var meshes := []
-	_collect_mesh_instances(node, meshes)
-	var min_y := 1000000.0
-	for mesh_node in meshes:
-		var mi := mesh_node as MeshInstance3D
-		if mi.mesh == null:
-			continue
-		mi.force_update_transform()
-		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
-		min_y = min(min_y, world_aabb.position.y)
-	if min_y < 1000000.0:
-		return min_y
-	return 0.0
-
-func _compute_node_world_aabb(node: Node3D) -> AABB:
-	node.force_update_transform()
-	var meshes := []
-	_collect_mesh_instances(node, meshes)
-	var combined := AABB()
-	var first := true
-	for mesh_node in meshes:
-		var mi := mesh_node as MeshInstance3D
-		if mi.mesh == null:
-			continue
-		mi.force_update_transform()
-		var world_aabb: AABB = mi.global_transform * mi.get_aabb()
-		if first:
-			combined = world_aabb
-			first = false
-		else:
-			combined = combined.merge(world_aabb)
-	if first:
-		return AABB(node.global_position, Vector3.ZERO)
-	return combined
-
-func _shuffled_paths(paths: Array) -> Array:
-	var shuffled := paths.duplicate()
-	shuffled.shuffle()
-	return shuffled
 
 func _spawn_external(path: String, node_name: String, pos: Vector3, scale_value: Vector3, rot: Vector3, collision_size: Vector3 = Vector3.ZERO) -> bool:
 	if not _try_instance_external_scene([path], node_name, pos, scale_value, rot, true, 0.0):
@@ -9125,7 +8803,7 @@ func _spawn_external(path: String, node_name: String, pos: Vector3, scale_value:
 	if collision_size != Vector3.ZERO:
 		var node := get_node_or_null(node_name)
 		if node != null and node is Node3D:
-			var dyn_h := _get_node_world_aabb_height(node as Node3D) + 0.3
+			var dyn_h := NodeUtils.get_node_world_aabb_height(node as Node3D) + 0.3
 			if dyn_h > 0.5:
 				collision_size.y = dyn_h
 		_create_invisible_collision_box_rotated(node_name + "Collision", pos, collision_size, rot.y)
@@ -9211,176 +8889,14 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 		migrated_inventory.append(raw_item)
 	player_data["inventory"] = migrated_inventory
 
-func _world_to_grid(pos: Vector3) -> Vector2i:
-	return Vector2i(int(round(pos.x / _nav_cell_size)) + _nav_grid_size / 2, int(round(pos.z / _nav_cell_size)) + _nav_grid_size / 2)
-
-func _grid_to_world(cell: Vector2i) -> Vector3:
-	return Vector3(float(cell.x - _nav_grid_size / 2) * _nav_cell_size, 0.0, float(cell.y - _nav_grid_size / 2) * _nav_cell_size)
-
-func _build_nav_grid() -> void:
-	_nav_grid.clear()
-	for blocker in wildlife_blockers:
-		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
-		var radius: float = float(blocker.get("radius", 1.8))
-		# Block rectangular house bounds (walls)
-		if blocker.has("house_bounds"):
-			var bounds: Rect2 = blocker["house_bounds"]
-			var expanded := bounds.grow(3.5)
-			var min_cell := _world_to_grid(Vector3(expanded.position.x, 0.0, expanded.position.y))
-			var max_cell := _world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
-			for gx in range(min_cell.x, max_cell.x + 1):
-				for gy in range(min_cell.y, max_cell.y + 1):
-					if gx >= 0 and gx < _nav_grid_size and gy >= 0 and gy < _nav_grid_size:
-						_nav_grid[Vector2i(gx, gy)] = true
-			continue
-		var center_cell := _world_to_grid(blocker_pos)
-		var cell_radius := int(ceil(radius / _nav_cell_size)) + 1
-		for dx in range(-cell_radius, cell_radius + 1):
-			for dy in range(-cell_radius, cell_radius + 1):
-				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
-				if cell.x < 0 or cell.x >= _nav_grid_size or cell.y < 0 or cell.y >= _nav_grid_size:
-					continue
-				var world_pos := _grid_to_world(cell)
-				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
-					_nav_grid[cell] = true
-	_block_river_cells_in_nav_grid()
-	_nav_grid_built = true
-
-func _block_river_cells_in_nav_grid() -> void:
-	for segment in river_segments_data:
-		var center: Vector3 = segment["center"]
-		var size: Vector2 = segment["size"]
-		var yaw: float = deg_to_rad(float(segment["yaw"]))
-		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
-		var across := Vector3(sin(yaw), 0.0, cos(yaw))
-		var half_length := size.x * 0.5
-		var half_width := size.y * 0.5
-		var steps_l := int(ceil(size.x / _nav_cell_size)) + 1
-		var steps_w := int(ceil(size.y / _nav_cell_size)) + 1
-		for i in range(steps_l + 1):
-			var local_along: float = lerp(-half_length, half_length, float(i) / float(steps_l))
-			for j in range(steps_w + 1):
-				var local_across: float = lerp(-half_width, half_width, float(j) / float(steps_w))
-				var world_pos: Vector3 = center + along * local_along + across * local_across
-				var cell := _world_to_grid(world_pos)
-				if cell.x >= 0 and cell.x < _nav_grid_size and cell.y >= 0 and cell.y < _nav_grid_size:
-					_nav_grid[cell] = true
+func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
+	if nav == null:
+		return [goal]
+	return nav.find_path(start, goal)
 
 func is_nav_cell_blocked(cell: Vector2i) -> bool:
-	if cell.x < 1 or cell.x >= _nav_grid_size - 1 or cell.y < 1 or cell.y >= _nav_grid_size - 1:
-		return true
-	if not _nav_grid.has(cell):
+	if nav == null:
 		return false
-	if _door_open_cache.has(cell):
-		return false
-	return true
-
-func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
-	if not _nav_grid_built:
-		return [goal]
-	var start_cell := _world_to_grid(start)
-	var goal_cell := _world_to_grid(goal)
-	if start_cell == goal_cell:
-		return [goal]
-	if is_nav_cell_blocked(goal_cell):
-		goal_cell = _nearest_free_cell(goal_cell)
-		if goal_cell == start_cell:
-			return [goal]
-	if is_nav_cell_blocked(start_cell):
-		start_cell = _nearest_free_cell(start_cell)
-		if start_cell == goal_cell:
-			return [goal]
-	return _astar(start_cell, goal_cell, start)
-
-func _nearest_free_cell(cell: Vector2i) -> Vector2i:
-	for radius in range(1, 10):
-		for dx in range(-radius, radius + 1):
-			for dy in range(-radius, radius + 1):
-				if abs(dx) != radius and abs(dy) != radius:
-					continue
-				var candidate := Vector2i(cell.x + dx, cell.y + dy)
-				if not is_nav_cell_blocked(candidate):
-					return candidate
-	return cell
-
-func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> Array:
-	var came_from: Dictionary = {}
-	var visited: Dictionary = {}
-	var queue: Array = [start_cell]
-	visited[start_cell] = true
-	var head := 0
-	var max_iterations := 8000
-	var iterations := 0
-	while head < queue.size() and iterations < max_iterations:
-		iterations += 1
-		var current: Vector2i = queue[head]
-		head += 1
-		if current == goal_cell:
-			return _reconstruct_path(came_from, current, start_world)
-		for neighbor in _get_neighbors(current):
-			if visited.has(neighbor):
-				continue
-			if is_nav_cell_blocked(neighbor):
-				continue
-			visited[neighbor] = true
-			came_from[neighbor] = current
-			queue.append(neighbor)
-	return []
-
-func _get_neighbors(cell: Vector2i) -> Array:
-	return [
-		Vector2i(cell.x + 1, cell.y),
-		Vector2i(cell.x - 1, cell.y),
-		Vector2i(cell.x, cell.y + 1),
-		Vector2i(cell.x, cell.y - 1),
-		Vector2i(cell.x + 1, cell.y + 1),
-		Vector2i(cell.x + 1, cell.y - 1),
-		Vector2i(cell.x - 1, cell.y + 1),
-		Vector2i(cell.x - 1, cell.y - 1)
-	]
-
-func _reconstruct_path(came_from: Dictionary, current: Vector2i, start_world: Vector3) -> Array:
-	var cells: Array = [current]
-	while came_from.has(current):
-		current = came_from[current]
-		cells.push_front(current)
-	var path: Array = []
-	for i in range(cells.size()):
-		if i == 0:
-			continue
-		path.append(_grid_to_world(cells[i]))
-	if path.is_empty():
-		path.append(_grid_to_world(cells[0]))
-	return _smooth_path(path)
-
-func _smooth_path(path: Array) -> Array:
-	if path.size() <= 2:
-		return path
-	var smoothed: Array = [path[0]]
-	var current_idx := 0
-	while current_idx < path.size() - 1:
-		var farthest := current_idx + 1
-		for j in range(path.size() - 1, current_idx + 1, -1):
-			if _is_path_clear_nav(path[current_idx], path[j]):
-				farthest = j
-				break
-		smoothed.append(path[farthest])
-		current_idx = farthest
-	return smoothed
-
-func _is_path_clear_nav(a: Vector3, b: Vector3) -> bool:
-	var diff := b - a
-	diff.y = 0.0
-	var dist := diff.length()
-	if dist < 0.01:
-		return true
-	var dir := diff.normalized()
-	var steps := int(ceil(dist / _nav_cell_size))
-	for i in range(1, steps):
-		var pos := a + dir * (float(i) * _nav_cell_size)
-		var cell := _world_to_grid(pos)
-		if is_nav_cell_blocked(cell):
-			return false
-	return true
+	return nav.is_cell_blocked(cell)
 
 #endregion
