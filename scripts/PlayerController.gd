@@ -226,6 +226,8 @@ const THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION := "TorchTurnLeftExternal"
 const THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION := "TorchTurnRightExternal"
 const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION := "TorchCrouchTurnLeftExternal"
 const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION := "TorchCrouchTurnRightExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_IDLE_ANIMATION := "TorchCrouchIdleExternal"
+const THIRD_PERSON_EXTERNAL_TORCH_CROUCH_WALK_ANIMATION := "TorchCrouchWalkExternal"
 const TORCH_IDLE_FBX := "res://assets/animations/Standing Torch Idle 01.glb"
 const TORCH_WALK_FBX := "res://assets/animations/Standing Torch Walk Forward.glb"
 const TORCH_RUN_FBX := "res://assets/animations/Standing Torch Run Forward.glb"
@@ -233,6 +235,8 @@ const TORCH_TURN_LEFT_FBX := "res://assets/animations/Standing Torch Turn Left 9
 const TORCH_TURN_RIGHT_FBX := "res://assets/animations/Standing Torch Turn Right 90.glb"
 const TORCH_CROUCH_TURN_LEFT_FBX := "res://assets/animations/Crouch Torch Turn Left 90.glb"
 const TORCH_CROUCH_TURN_RIGHT_FBX := "res://assets/animations/Crouch Torch Turn Right 90.glb"
+const TORCH_CROUCH_IDLE_FBX := "res://assets/animations/Crouch Torch Idle 01.glb"
+const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forward.glb"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -364,6 +368,8 @@ var _torch_turn_left_animation := ""
 var _torch_turn_right_animation := ""
 var _torch_crouch_turn_left_animation := ""
 var _torch_crouch_turn_right_animation := ""
+var _torch_crouch_idle_animation := ""
+var _torch_crouch_walk_animation := ""
 var _torch_animations_loaded := false
 var _torch_in_hands := false
 var _has_rifle := false
@@ -6195,7 +6201,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				if is_sprinting and not _torch_run_animation.is_empty():
 					target_animation = _torch_run_animation
 				elif is_crouching:
-					if not _torch_walk_animation.is_empty():
+					if not _torch_crouch_walk_animation.is_empty():
+						target_animation = _torch_crouch_walk_animation
+					elif not _torch_walk_animation.is_empty():
 						target_animation = _torch_walk_animation
 					else:
 						target_animation = third_person_walk_animation
@@ -6214,7 +6222,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				elif not _torch_turn_right_animation.is_empty():
 					target_animation = _torch_turn_right_animation
 			elif is_crouching:
-				if not _torch_idle_animation.is_empty():
+				if not _torch_crouch_idle_animation.is_empty():
+					target_animation = _torch_crouch_idle_animation
+				elif not _torch_idle_animation.is_empty():
 					target_animation = _torch_idle_animation
 			elif not _torch_idle_animation.is_empty():
 				target_animation = _torch_idle_animation
@@ -6543,6 +6553,8 @@ func _load_torch_animations() -> void:
 		THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION: TORCH_TURN_RIGHT_FBX,
 		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION: TORCH_CROUCH_TURN_LEFT_FBX,
 		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION: TORCH_CROUCH_TURN_RIGHT_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_IDLE_ANIMATION: TORCH_CROUCH_IDLE_FBX,
+		THIRD_PERSON_EXTERNAL_TORCH_CROUCH_WALK_ANIMATION: TORCH_CROUCH_WALK_FBX,
 	}
 	for anim_name in torch_anims:
 		var fbx_path: String = torch_anims[anim_name]
@@ -6605,6 +6617,10 @@ func _load_torch_animations() -> void:
 			_torch_turn_left_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_LEFT_ANIMATION
 		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION):
 			_torch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_TURN_RIGHT_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_IDLE_ANIMATION):
+			_torch_crouch_idle_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_IDLE_ANIMATION
+		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_WALK_ANIMATION):
+			_torch_crouch_walk_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_WALK_ANIMATION
 		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION):
 			_torch_crouch_turn_left_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_LEFT_ANIMATION
 		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION):
@@ -6624,7 +6640,7 @@ func _build_third_person_torch() -> void:
 	var torch_node := _load_external_node3d(REAL_TORCH_MODEL)
 	if torch_node != null:
 		torch_node.name = "HeldTorch"
-		torch_node.scale = Vector3.ONE * 0.5
+		torch_node.scale = Vector3.ONE * 0.6
 		torch_node.position = Vector3(-0.16, 0.0, 0.05)
 		torch_node.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 		_torch_hand_root.add_child(torch_node)

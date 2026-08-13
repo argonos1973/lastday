@@ -25,10 +25,8 @@ func _process(delta: float) -> void:
 			time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
 			_real_time_initialized = true
 	elif not fixed_time:
-		var hours_per_second := 24.0 / day_length_seconds
-		time_of_day += delta * hours_per_second
-		if time_of_day >= 24.0:
-			time_of_day -= 24.0
+		var dt := Time.get_time_dict_from_system()
+		time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
 	var night := is_night()
 	if night and not last_was_night:
 		night_started.emit()
