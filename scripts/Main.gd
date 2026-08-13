@@ -1120,9 +1120,11 @@ var _spawn_zones: Array = [
 ]
 
 func _get_random_spawn_pos() -> Vector3:
-	var zone: Vector3 = _spawn_zones[_world_rng.randi() % _spawn_zones.size()]
-	var offset_x: float = _world_rng.randf_range(-3.0, 3.0)
-	var offset_z: float = _world_rng.randf_range(-3.0, 3.0)
+	var spawn_rng := RandomNumberGenerator.new()
+	spawn_rng.randomize()
+	var zone: Vector3 = _spawn_zones[spawn_rng.randi() % _spawn_zones.size()]
+	var offset_x: float = spawn_rng.randf_range(-3.0, 3.0)
+	var offset_z: float = spawn_rng.randf_range(-3.0, 3.0)
 	var base_pos := Vector3(zone.x + offset_x, 0.0, zone.z + offset_z)
 	var h := _get_ground_height(base_pos)
 	return Vector3(base_pos.x, h + 0.4, base_pos.z)
@@ -5819,11 +5821,24 @@ func get_nearest_river_audio_point(world_pos: Vector3) -> Dictionary:
 	}
 
 func get_forest_audio_point(world_pos: Vector3) -> Dictionary:
-	var forest_center := Vector3(-43.0, 0.0, 31.0)
-	var distance := Vector2(world_pos.x - forest_center.x, world_pos.z - forest_center.z).length()
+	var pc := _tree_grid_key(world_pos)
+	var best_dist := 999.0
+	var best_pos := world_pos
+	for gx in range(pc.x - 3, pc.x + 4):
+		for gy in range(pc.y - 3, pc.y + 4):
+			var key := Vector2i(gx, gy)
+			if not _tree_grid.has(key):
+				continue
+			for entry in _tree_grid[key]:
+				var dx: float = world_pos.x - entry.pos.x
+				var dz: float = world_pos.z - entry.pos.z
+				var dist_sq: float = dx * dx + dz * dz
+				if dist_sq < best_dist * best_dist:
+					best_dist = sqrt(dist_sq)
+					best_pos = entry.pos
 	return {
-		"position": forest_center,
-		"distance": distance
+		"position": best_pos,
+		"distance": best_dist
 	}
 
 const HOUSE_DATA := [

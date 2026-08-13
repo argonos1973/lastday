@@ -19,8 +19,8 @@ uniform float rayleigh_scatter = 1.0;
 uniform float mie_scatter = 0.6;
 uniform float mie_g = 0.8;
 uniform vec3 sunset_color = vec3(1.0,0.4,0.2);
-uniform float sun_disk_size = 1.8;
-uniform float sun_glow_size = 28.0;
+uniform float sun_disk_size = 0.8;
+uniform float sun_glow_size = 8.0;
 
 uniform bool stars_enabled = true;
 uniform vec4 star_color = vec4(1,0.95,0.85,1);

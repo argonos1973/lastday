@@ -69,9 +69,9 @@ func _update_lighting() -> void:
 	sun.light_energy = lerp(0.01, 1.5, day_amount)
 	sun.shadow_enabled = day_amount > 0.05
 	if star_field != null:
-		star_field.visible = night_amount > 0.42
+		star_field.visible = night_amount > 0.7
 	if moon_field != null:
-		moon_field.visible = night_amount > 0.36
+		moon_field.visible = night_amount > 0.6
 	if world_environment != null and world_environment.environment != null:
 		world_environment.environment.background_color = Color(0.008, 0.009, 0.014).lerp(Color(0.56, 0.76, 0.96), day_amount)
 		world_environment.environment.ambient_light_color = Color(0.12, 0.14, 0.20).lerp(Color(0.86, 0.90, 0.92), day_amount)
