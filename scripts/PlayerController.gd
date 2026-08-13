@@ -6649,7 +6649,7 @@ func _build_third_person_torch() -> void:
 	if torch_node != null:
 		torch_node.name = "HeldTorch"
 		torch_node.scale = Vector3.ONE * (0.7 if not is_broken_torch else 0.4)
-		torch_node.position = Vector3(-0.04, 0.0, 0.02)
+		torch_node.position = Vector3(-0.02, 0.0, 0.01)
 		torch_node.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 		_torch_hand_root.add_child(torch_node)
 

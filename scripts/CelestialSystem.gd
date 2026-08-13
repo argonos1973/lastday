@@ -106,9 +106,9 @@ func create_star_field() -> void:
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.no_depth_test = false
-		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-		mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-		mat.render_priority = 127
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+		mat.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
+		mat.render_priority = -128
 		star.material_override = mat
 		var size_factor: float = clamp(1.8 - mag * 0.38, 0.3, 2.0)
 		star.scale = Vector3.ONE * size_factor
@@ -116,6 +116,7 @@ func create_star_field() -> void:
 		var dir := _radec_to_world_dir(ra_rad, dec_rad, lst_rad, lat_rad)
 		var radius: float = STAR_DOME_RADIUS + mag * 12.0
 		star.position = dir * radius
+		star.look_at(Vector3.ZERO, Vector3.UP)
 		star.visible = dir.y > 0.02
 		star_field.add_child(star)
 		_real_star_nodes.append(star)
@@ -137,6 +138,7 @@ func update_real_star_positions() -> void:
 		var mag: float = float(BRIGHT_STAR_CATALOG[i][2])
 		var radius: float = STAR_DOME_RADIUS + mag * 12.0
 		node.position = dir * radius
+		node.look_at(Vector3.ZERO, Vector3.UP)
 		node.visible = dir.y > 0.02
 
 func update_moon_position() -> void:
