@@ -5,8 +5,8 @@ signal time_changed
 signal night_started
 
 @export var day_length_seconds := 86400.0
-@export var fixed_time := true
-var time_of_day := 12.0
+@export var fixed_time := false
+var time_of_day := 8.0
 var last_was_night := false
 var sun: DirectionalLight3D
 var world_environment: WorldEnvironment

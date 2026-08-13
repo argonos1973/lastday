@@ -401,6 +401,10 @@ var _rifle_target_ik_weight := 1.0
 var _last_rifle_animation_debug := ""
 var _cached_exclude_rids: Array[RID] = []
 var _cached_rids_dirty := true
+var _cam_ray_exclude: Array[RID] = []
+var _cam_ray_exclude_dirty := true
+var _cam_collision_timer: float = 0.0
+var _cached_cam_z: float = 0.0
 var _interaction_prompt_timer := 0.0
 var _stats_emit_timer := 0.0
 var _ik_bone_cache: Dictionary = {}
@@ -2482,6 +2486,8 @@ func _update_water_state(delta: float) -> void:
 			notice.emit("Te mojas. La ropa fria te roba calor.")
 			_water_notice_cooldown = 8.0
 	else:
+		if wetness <= 0.0:
+			return
 		var ambient: float = 12.0
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("get_day_cycle"):
@@ -5835,21 +5841,29 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
 	var desired_z := THIRD_PERSON_CAMERA_POS.z
 	
-	# Camera collision: raycast from player to desired camera position
-	var space_state := get_world_3d().direct_space_state
-	if space_state != null:
-		var camera_origin := global_position + Vector3(0, third_height, 0)
-		var camera_target := camera_origin + global_transform.basis.z * desired_z
-		var query := PhysicsRayQueryParameters3D.create(camera_origin, camera_target)
-		query.collide_with_bodies = true
-		query.collide_with_areas = false
-		query.exclude = [self]
-		var hit := space_state.intersect_ray(query)
-		if not hit.is_empty():
-			# Obstacle detected, bring camera closer
-			var hit_point: Vector3 = hit["position"]
-			var hit_distance := camera_origin.distance_to(hit_point)
-			desired_z = max(hit_distance - 0.3, 1.0)  # Keep 0.3m margin, minimum 1m distance
+	# Camera collision: throttled to 10/s, caches exclude array
+	_cam_collision_timer += delta
+	if _cam_collision_timer >= 0.1:
+		_cam_collision_timer = 0.0
+		var space_state := get_world_3d().direct_space_state
+		if space_state != null:
+			if _cam_ray_exclude_dirty:
+				_cam_ray_exclude = [self.get_rid()]
+				_cam_ray_exclude_dirty = false
+			var camera_origin := global_position + Vector3(0, third_height, 0)
+			var camera_target := camera_origin + global_transform.basis.z * desired_z
+			var query := PhysicsRayQueryParameters3D.create(camera_origin, camera_target)
+			query.collide_with_bodies = true
+			query.collide_with_areas = false
+			query.exclude = _cam_ray_exclude
+			var hit := space_state.intersect_ray(query)
+			if not hit.is_empty():
+				var hit_point: Vector3 = hit["position"]
+				var hit_distance := camera_origin.distance_to(hit_point)
+				_cached_cam_z = max(hit_distance - 0.3, 1.0)
+			else:
+				_cached_cam_z = desired_z
+	desired_z = _cached_cam_z if _cached_cam_z > 0.0 else desired_z
 	
 	target_position = Vector3(side_bob * 0.45, third_height, desired_z)
 	target_position.y += _water_sink

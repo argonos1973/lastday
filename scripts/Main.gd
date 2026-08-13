@@ -43,6 +43,8 @@ var _cached_in_house := false
 var _cached_near_shelter := false
 var _door_cache_timer := 0.0
 var _shadow_update_timer := 0.0
+var _streaming_update_timer := 0.0
+var _world_action_tick_timer := 0.0
 var _campfire_emit_timer := 0.0
 var _animal_debug_timer := 0
 var _client_animal_debug_timer := 0
@@ -119,6 +121,8 @@ var _tall_grass_meshes: Array = []
 var _tall_grass_transforms: Array = []
 var _tall_grass_colors: Array = []
 var _tall_grass_material: StandardMaterial3D = null
+var _grass_batch_nodes: Array[MultiMeshInstance3D] = []
+var _grass_batch_centers: Array[Vector3] = []
 
 const SAVE_BALANCE_VERSION := 6
 const Q_NATURE := "res://assets/external/quaternius_stylized_nature_megakit/glTF/"
@@ -551,14 +555,22 @@ func _input(_event: InputEvent) -> void:
 	return
 
 func _process(delta: float) -> void:
-	_update_wind_shader_time(delta)
+	if _grass_any_visible:
+		_wind_time += delta
+		if grass_batch_material is ShaderMaterial:
+			(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", _wind_time)
+	_grass_vis_timer += delta
+	if _grass_vis_timer >= 0.5:
+		_grass_vis_timer = 0.0
+		_update_grass_visibility()
 	_tree_check_timer += delta
 	if _tree_check_timer > 1.0:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
-		_update_shadow_proximity()
-	if world_streaming_mgr != null:
+	_streaming_update_timer += delta
+	if _streaming_update_timer >= 0.5 and world_streaming_mgr != null:
+		_streaming_update_timer = 0.0
 		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
 			_streaming_positions.append(player.global_position)
@@ -629,8 +641,10 @@ func _process(delta: float) -> void:
 	var near_built_shelter := _cached_near_shelter
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5 or near_built_shelter
 	var in_house := _cached_in_house
-	player.set_meta("in_house", in_house)
-	player.set_meta("in_built_shelter", near_built_shelter)
+	if player.get_meta("in_house", false) != in_house:
+		player.set_meta("in_house", in_house)
+	if player.get_meta("in_built_shelter", false) != near_built_shelter:
+		player.set_meta("in_built_shelter", near_built_shelter)
 	var is_sheltered: bool = player.in_shelter or in_house
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Use real weather temperature when available
@@ -645,21 +659,26 @@ func _process(delta: float) -> void:
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping)
 	_apply_campfire_effect(player, delta)
 	_door_cache_timer += delta
-	if _door_cache_timer >= 0.5:
+	if _door_cache_timer >= 1.0:
 		_door_cache_timer = 0.0
 		_update_door_open_cache()
-	_apply_pending_doors()
+	if not _pending_open_doors.is_empty():
+		_apply_pending_doors()
 	_water_night_timer += delta
-	if _water_night_timer >= 2.0:
+	if _water_night_timer >= 5.0:
 		_water_night_timer = 0.0
 		_update_water_night_amount()
 	_shadow_update_timer += delta
-	if _shadow_update_timer >= 0.5:
+	if _shadow_update_timer >= 1.0:
 		_shadow_update_timer = 0.0
 		_update_shadow_proximity()
-	_tick_world_actions(delta)
+	_world_action_tick_timer += delta
+	if _world_action_tick_timer >= 0.5:
+		_world_action_tick_timer = 0.0
+		_tick_world_actions(delta)
 	_tick_drink_hold(delta)
-	_tick_campfire_fires()
+	if not campfire_fire_timers.is_empty():
+		_tick_campfire_fires()
 	# Network sync
 	if net != null and net.is_connected:
 		_net_sync_timer += delta
@@ -748,13 +767,16 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 	var ppos := player_node.global_position
 	var emit_stats := false
 	for fire_pos in campfire_positions:
-		var dist := ppos.distance_to(Vector3(fire_pos.x, ppos.y, fire_pos.z))
-		if dist < 1.2:
+		var dx: float = fire_pos.x - ppos.x
+		var dz: float = fire_pos.z - ppos.z
+		var dist_sq: float = dx * dx + dz * dz
+		if dist_sq < 1.44:
 			player_node.stats.health -= 5.0 * delta
 			emit_stats = true
 			if randf() < delta * 2.0:
 				player_node.notice.emit("Te quemas al estar demasiado cerca del fuego.")
-		elif dist < 4.0:
+		elif dist_sq < 16.0:
+			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
 			player_node.stats.body_temperature = min(38.0, player_node.stats.body_temperature + warmth_factor * 3.0 * delta)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
@@ -789,27 +811,41 @@ func _tick_world_actions(delta: float) -> void:
 func _update_celestial_follow() -> void:
 	return
 
+var _cached_river_water: Array = []
+var _river_water_cache_dirty := true
+
 func _update_water_night_amount() -> void:
 	if day_cycle == null:
 		return
 	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
 	var night_amount := 1.0 - day_amount
-	for node in get_tree().get_nodes_in_group("river_water"):
-		if node is RiverWater and node.has_method("set_night_amount"):
+	if _river_water_cache_dirty:
+		_cached_river_water = get_tree().get_nodes_in_group("river_water")
+		_river_water_cache_dirty = false
+	for node in _cached_river_water:
+		if node is RiverWater and is_instance_valid(node) and node.has_method("set_night_amount"):
 			node.set_night_amount(night_amount)
+
+var _cached_omni_lights: Array = []
+var _cached_area_lights: Array = []
+var _light_cache_dirty := true
 
 func _update_shadow_proximity() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
 	const SHADOW_RADIUS := 10.0
-	for light in get_tree().get_nodes_in_group("omni_lights"):
-		if light is OmniLight3D:
+	if _light_cache_dirty:
+		_cached_omni_lights = get_tree().get_nodes_in_group("omni_lights")
+		_cached_area_lights = get_tree().get_nodes_in_group("area_lights")
+		_light_cache_dirty = false
+	for light in _cached_omni_lights:
+		if light is OmniLight3D and is_instance_valid(light):
 			var ol: OmniLight3D = light
 			var dist: float = ppos.distance_to(ol.global_position)
 			ol.shadow_enabled = dist < SHADOW_RADIUS
-	for light in get_tree().get_nodes_in_group("area_lights"):
-		if light is AreaLight3D:
+	for light in _cached_area_lights:
+		if light is AreaLight3D and is_instance_valid(light):
 			var al: AreaLight3D = light
 			var dist: float = ppos.distance_to(al.global_position)
 			al.shadow_enabled = dist < SHADOW_RADIUS
@@ -1084,9 +1120,10 @@ var _spawn_zones: Array = [
 ]
 
 func _get_random_spawn_pos() -> Vector3:
-	var angle := _world_rng.randf() * TAU
-	var dist := _world_rng.randf_range(40.0, 120.0)
-	var base_pos := Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	var zone: Vector3 = _spawn_zones[_world_rng.randi() % _spawn_zones.size()]
+	var offset_x: float = _world_rng.randf_range(-3.0, 3.0)
+	var offset_z: float = _world_rng.randf_range(-3.0, 3.0)
+	var base_pos := Vector3(zone.x + offset_x, 0.0, zone.z + offset_z)
 	var h := _get_ground_height(base_pos)
 	return Vector3(base_pos.x, h + 0.4, base_pos.z)
 
@@ -4088,9 +4125,6 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		{"id": "soldier_torso", "name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
-		{"id": "soldier_legs", "name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
-		{"id": "soldier_hands", "name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08)},
 		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_2", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.15, 0.18, 0.20)},
@@ -4115,8 +4149,6 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
-		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10)},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
@@ -4154,7 +4186,6 @@ func _create_house_loot() -> void:
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
-		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 	]
 	var barn_origin := Vector3(45, 0, 120)
@@ -7734,10 +7765,34 @@ void fragment() {
 }
 """
 
-func _update_wind_shader_time(delta: float) -> void:
-	_wind_time += delta
-	if grass_batch_material is ShaderMaterial:
-		(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", _wind_time)
+const GRASS_VISIBLE_RADIUS := 500.0
+const GRASS_HIDE_RADIUS := 520.0
+var _grass_vis_timer: float = 0.0
+var _grass_any_visible: bool = false
+
+func _update_grass_visibility() -> void:
+	if _grass_batch_nodes.is_empty():
+		return
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	var any_visible := false
+	for i in range(_grass_batch_nodes.size()):
+		var node: MultiMeshInstance3D = _grass_batch_nodes[i]
+		if not is_instance_valid(node):
+			continue
+		var center: Vector3 = _grass_batch_centers[i]
+		var dist: float = ppos.distance_to(Vector3(center.x, ppos.y, center.z))
+		var should_show: bool = false
+		if node.visible:
+			should_show = dist < GRASS_HIDE_RADIUS
+		else:
+			should_show = dist < GRASS_VISIBLE_RADIUS
+		if node.visible != should_show:
+			node.visible = should_show
+		if should_show:
+			any_visible = true
+	_grass_any_visible = any_visible
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 	_ensure_grass_batches()
@@ -7804,12 +7859,19 @@ func _flush_grass_batches() -> void:
 		for i in range(transforms.size()):
 			multimesh.set_instance_transform(i, transforms[i])
 			multimesh.set_instance_color(i, colors[i])
+		var center := Vector3.ZERO
+		for t in transforms:
+			center += t.origin
+		if not transforms.is_empty():
+			center /= transforms.size()
 		var mm_instance := MultiMeshInstance3D.new()
 		mm_instance.name = "GrassBatch_%d" % variant
 		mm_instance.multimesh = multimesh
 		mm_instance.material_override = grass_batch_material
 		mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mm_instance)
+		_grass_batch_nodes.append(mm_instance)
+		_grass_batch_centers.append(center)
 		transforms.clear()
 		colors.clear()
 		await get_tree().process_frame
@@ -7827,12 +7889,19 @@ func _flush_grass_batches() -> void:
 			for i in range(t_transforms.size()):
 				multimesh.set_instance_transform(i, t_transforms[i])
 				multimesh.set_instance_color(i, t_colors[i])
+			var center := Vector3.ZERO
+			for t in t_transforms:
+				center += t.origin
+			if not t_transforms.is_empty():
+				center /= t_transforms.size()
 			var mm_instance := MultiMeshInstance3D.new()
 			mm_instance.name = "TallGrassBatch_%d" % variant
 			mm_instance.multimesh = multimesh
 			mm_instance.material_override = _tall_grass_material
 			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(mm_instance)
+			_grass_batch_nodes.append(mm_instance)
+			_grass_batch_centers.append(center)
 			t_transforms.clear()
 			t_colors.clear()
 
