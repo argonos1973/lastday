@@ -6558,7 +6558,6 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	fire_mat.billboard_keep_scale = true
 	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	quad.material = fire_mat
-	particles.draw_pass_1 = quad
 	add_child(particles)
 	# Smoke particles
 	var smoke := CPUParticles3D.new()
@@ -6587,7 +6586,6 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	smoke_tex_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	smoke_tex_mat.billboard_keep_scale = true
 	smoke_quad.material = smoke_tex_mat
-	smoke.draw_pass_1 = smoke_quad
 	add_child(smoke)
 
 func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float) -> void:
@@ -6670,7 +6668,6 @@ func _create_torch_fire(node_name: String, pos: Vector3, durability: float) -> v
 	fire_mat.billboard_keep_scale = true
 	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	quad.material = fire_mat
-	particles.draw_pass_1 = quad
 	add_child(particles)
 
 
@@ -7588,7 +7585,6 @@ func _spawn_wood_chips(origin: Vector3) -> void:
 	particles.color = Color(0.42, 0.26, 0.12)
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.12, 0.06, 0.12)
-	particles.draw_pass_1 = mesh
 	add_child(particles)
 	get_tree().create_timer(2.5).timeout.connect(particles.queue_free)
 

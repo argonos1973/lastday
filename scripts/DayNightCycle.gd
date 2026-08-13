@@ -21,11 +21,11 @@ func _process(delta: float) -> void:
 			time_of_day = 12.0
 			_real_time_initialized = true
 		else:
-			var dt := Time.get_time_dict_from_system()
+			var dt := Time.get_time_dict_from_system(false)
 			time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
 			_real_time_initialized = true
 	elif not fixed_time:
-		var dt := Time.get_time_dict_from_system()
+		var dt := Time.get_time_dict_from_system(false)
 		time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
 	var night := is_night()
 	if night and not last_was_night:
@@ -35,7 +35,7 @@ func _process(delta: float) -> void:
 	time_changed.emit()
 
 func is_night() -> bool:
-	return time_of_day < 6.0 or time_of_day >= 21.5
+	return time_of_day < 6.0 or time_of_day >= 21.0
 
 func get_cold_factor() -> float:
 	return get_ambient_temperature()
@@ -61,21 +61,28 @@ func skip_to_morning() -> void:
 func _update_lighting() -> void:
 	if sun == null:
 		return
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 18.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
 	var night_amount: float = 1.0 - day_amount
-	sun.rotation_degrees.x = lerp(-15.0, -72.0, day_amount)
-	sun.light_energy = lerp(0.01, 1.5, day_amount)
+	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
+	sun.light_energy = lerp(0.0, 1.5, day_amount)
 	sun.shadow_enabled = day_amount > 0.05
 	if star_field != null:
 		star_field.visible = night_amount > 0.7
 	if moon_field != null:
 		moon_field.visible = night_amount > 0.6
+	# Moon illumination factor: if moon is up, provide a little light
+	var moon_illum := 0.0
+	if moon_field != null and moon_field.visible:
+		moon_illum = 0.15
 	if world_environment != null and world_environment.environment != null:
-		world_environment.environment.background_color = Color(0.008, 0.009, 0.014).lerp(Color(0.56, 0.76, 0.96), day_amount)
-		world_environment.environment.ambient_light_color = Color(0.12, 0.14, 0.20).lerp(Color(0.86, 0.90, 0.92), day_amount)
-		world_environment.environment.ambient_light_energy = lerp(0.05, 0.95, day_amount)
-		world_environment.environment.fog_light_color = Color(0.02, 0.022, 0.03).lerp(Color(0.62, 0.70, 0.74), day_amount)
-		world_environment.environment.fog_density = lerp(0.002, 0.0008, day_amount)
+		var night_bg := Color(0.002, 0.003, 0.005)
+		world_environment.environment.background_color = night_bg.lerp(Color(0.56, 0.76, 0.96), day_amount)
+		var night_ambient := Color(0.03, 0.035, 0.05)
+		world_environment.environment.ambient_light_color = night_ambient.lerp(Color(0.86, 0.90, 0.92), day_amount)
+		world_environment.environment.ambient_light_energy = lerp(0.01 + moon_illum, 0.95, day_amount)
+		var night_fog := Color(0.005, 0.006, 0.008)
+		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74), day_amount)
+		world_environment.environment.fog_density = lerp(0.003, 0.0008, day_amount)
 		var sky := world_environment.environment.sky
 		if sky != null and sky.sky_material is ShaderMaterial:
 			var sm := sky.sky_material as ShaderMaterial
@@ -84,10 +91,10 @@ func _update_lighting() -> void:
 			var sun_dir := sun.global_transform.basis.z.normalized()
 			sm.set_shader_parameter("sun_direction", sun_dir)
 			sm.set_shader_parameter("sun_intensity", day_amount)
-			sm.set_shader_parameter("sky_top_color", Color(0.002, 0.003, 0.008, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
-			sm.set_shader_parameter("sky_horizon_color", Color(0.015, 0.018, 0.025, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
-			sm.set_shader_parameter("ground_bottom_color", Color(0.005, 0.005, 0.008, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
-			sm.set_shader_parameter("ground_horizon_color", Color(0.015, 0.016, 0.02, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
+			sm.set_shader_parameter("sky_top_color", Color(0.001, 0.001, 0.003, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
+			sm.set_shader_parameter("sky_horizon_color", Color(0.008, 0.009, 0.012, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
+			sm.set_shader_parameter("ground_bottom_color", Color(0.002, 0.002, 0.004, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
+			sm.set_shader_parameter("ground_horizon_color", Color(0.008, 0.008, 0.01, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
 
 func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}

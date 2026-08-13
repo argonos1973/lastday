@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://dqreppiv58ubc"
-path="res://.godot/imported/pickup_default_tops.glb-9f1c58b6d5f715694044f86e80d7ba87.scn"
+uid="uid://c4clkrycx7mgf"
+path="res://.godot/imported/Crouch Torch Walk Forward.glb-d8c220f66a7ec8106d62d768b2f8ae72.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_default_tops.glb"
-dest_files=["res://.godot/imported/pickup_default_tops.glb-9f1c58b6d5f715694044f86e80d7ba87.scn"]
+source_file="res://assets/animations/Crouch Torch Walk Forward.glb"
+dest_files=["res://.godot/imported/Crouch Torch Walk Forward.glb-d8c220f66a7ec8106d62d768b2f8ae72.scn"]
 
 [params]
 

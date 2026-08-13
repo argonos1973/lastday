@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://den36hssi03jg"
-path="res://.godot/imported/player_with_clothes.glb-5db752b2e61b32f0018d1b077d54643e.scn"
+path="res://.godot/imported/player_with_clothes.glb-c3ae01ee10dd5475df9fc9b691c53762.scn"
 
 [deps]
 
-source_file="res://assets/adapted/player_with_clothes.glb"
-dest_files=["res://.godot/imported/player_with_clothes.glb-5db752b2e61b32f0018d1b077d54643e.scn"]
+source_file="res://assets/characters/adapted/player_with_clothes.glb"
+dest_files=["res://.godot/imported/player_with_clothes.glb-c3ae01ee10dd5475df9fc9b691c53762.scn"]
 
 [params]
 

@@ -41,9 +41,21 @@ const BRIGHT_STAR_CATALOG := [
 
 var _real_star_nodes: Array = []
 var _real_star_radec: Array = []
+var _real_star_mats: Array = []
+var _real_star_phases: Array = []
 var _star_update_accum := 0.0
+var _twinkle_time := 0.0
 var star_field: Node3D = null
 var moon_field: Node3D = null
+
+func _process(delta: float) -> void:
+	_twinkle_time += delta
+	for i in range(_real_star_mats.size()):
+		var mat = _real_star_mats[i]
+		if mat is StandardMaterial3D:
+			var phase: float = _real_star_phases[i]
+			var twinkle := 0.7 + 0.3 * sin(_twinkle_time * 3.0 + phase)
+			mat.emission_energy_multiplier = 6.0 * twinkle
 
 func _julian_date_now() -> float:
 	return Time.get_unix_time_from_system() / 86400.0 + 2440587.5
@@ -73,19 +85,10 @@ func create_star_field() -> void:
 	add_child(star_field)
 	_real_star_nodes.clear()
 	_real_star_radec.clear()
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.97, 0.98, 1.0, 1.0)
-	material.emission_enabled = true
-	material.emission = Color(0.90, 0.93, 1.0)
-	material.emission_energy_multiplier = 6.0
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.no_depth_test = true
-	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	material.render_priority = 127
+	_real_star_mats.clear()
+	_real_star_phases.clear()
 	var star_mesh := QuadMesh.new()
-	star_mesh.size = Vector2(3.0, 3.0)
+	star_mesh.size = Vector2(1.2, 1.2)
 	var lat_rad := deg_to_rad(BCN_LAT_DEG)
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
 	for entry in BRIGHT_STAR_CATALOG:
@@ -95,16 +98,30 @@ func create_star_field() -> void:
 		var star := MeshInstance3D.new()
 		star.name = "RealStar"
 		star.mesh = star_mesh
-		star.material_override = material
-		var size_factor: float = clamp(2.6 - mag * 0.55, 0.5, 3.4)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.97, 0.98, 1.0, 1.0)
+		mat.emission_enabled = true
+		mat.emission = Color(0.90, 0.93, 1.0)
+		mat.emission_energy_multiplier = 6.0
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.no_depth_test = false
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		mat.render_priority = 127
+		star.material_override = mat
+		var size_factor: float = clamp(1.8 - mag * 0.38, 0.3, 2.0)
 		star.scale = Vector3.ONE * size_factor
 		star.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var dir := _radec_to_world_dir(ra_rad, dec_rad, lst_rad, lat_rad)
-		star.position = dir * STAR_DOME_RADIUS
-		star.visible = dir.y > 0.15
+		var radius: float = STAR_DOME_RADIUS + mag * 12.0
+		star.position = dir * radius
+		star.visible = dir.y > 0.02
 		star_field.add_child(star)
 		_real_star_nodes.append(star)
 		_real_star_radec.append(Vector2(ra_rad, dec_rad))
+		_real_star_mats.append(mat)
+		_real_star_phases.append(randf() * TAU)
 
 func update_real_star_positions() -> void:
 	if _real_star_nodes.is_empty():
@@ -117,8 +134,10 @@ func update_real_star_positions() -> void:
 			continue
 		var rd: Vector2 = _real_star_radec[i]
 		var dir := _radec_to_world_dir(rd.x, rd.y, lst_rad, lat_rad)
-		node.position = dir * STAR_DOME_RADIUS
-		node.visible = dir.y > 0.15
+		var mag: float = float(BRIGHT_STAR_CATALOG[i][2])
+		var radius: float = STAR_DOME_RADIUS + mag * 12.0
+		node.position = dir * radius
+		node.visible = dir.y > 0.02
 
 func update_moon_position() -> void:
 	if moon_field == null or not is_instance_valid(moon_field):

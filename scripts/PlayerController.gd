@@ -1063,7 +1063,6 @@ func _debug_auto_torch() -> void:
 	# Light the torch
 	var held = get_held_item()
 	if held != null and str(held.item_type) == "tool_torch":
-		held.use()
 		if torch_light != null:
 			torch_light.visible = true
 		notice.emit("Antorcha encendida (debug)")
@@ -3136,7 +3135,7 @@ func _trim_animation(animation: Animation, start_time: float, end_time: float) -
 	trimmed.length = duration
 	return trimmed
 
-func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool = false, sit_fraction: float = 0.0) -> void:
+func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool = false, sit_fraction: float = 0.0, preserve_hips_anim_y: bool = false) -> void:
 	# For custom characters, retarget position tracks to the target skeleton's
 	# rest pose. Animations from a different Mixamo skeleton have bone offsets
 	# that don't match Remy's proportions, causing deformation.
@@ -3156,7 +3155,7 @@ func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool =
 		var is_hips := path_text.find("mixamorig_Hips") >= 0 or path_text.find("mixamorig:Hips") >= 0
 		if is_hips:
 			# Lock Hips to rest pose position (no root motion)
-			# But preserve Y offset for sit/sleep animations
+			# But preserve Y offset for sit/sleep/crouch animations
 			var bone_name := "mixamorig_Hips"
 			var bone_idx := skeleton.find_bone(bone_name)
 			if bone_idx == -1:
@@ -3164,7 +3163,12 @@ func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool =
 			if bone_idx != -1:
 				var rest_pos := skeleton.get_bone_rest(bone_idx).origin
 				var key_count := animation.track_get_key_count(track_index)
-				if allow_hips_y and sit_fraction > 0.0:
+				if preserve_hips_anim_y:
+					# Keep original animation Hips Y (for crouch), lock X/Z to rest
+					for key_index in range(key_count):
+						var orig_val: Vector3 = animation.track_get_key_value(track_index, key_index)
+						animation.track_set_key_value(track_index, key_index, Vector3(rest_pos.x, orig_val.y, rest_pos.z))
+				elif allow_hips_y and sit_fraction > 0.0:
 					# For sit/sleep, set Hips Y to a fraction of standing height
 					# This avoids coordinate system mismatches between source/target skeletons
 					var target_y := rest_pos.y * sit_fraction
@@ -6599,7 +6603,8 @@ func _load_torch_animations() -> void:
 						# Torch GLBs have a different skeleton (mixamorig5_) with different rest pose
 						# and scale, so always retarget rotations using the source skeleton and remove position tracks
 						_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
-						_remove_non_hips_position_tracks(copied, false, 0.0)
+						var is_crouch_anim: bool = anim_name.find("Crouch") >= 0
+						_remove_non_hips_position_tracks(copied, false, 0.0, is_crouch_anim)
 						_smooth_loop_boundary(copied)
 						torch_lib.add_animation(anim_name, copied)
 				else:
@@ -6636,18 +6641,20 @@ func _build_third_person_torch() -> void:
 	for child in _torch_hand_root.get_children():
 		child.queue_free()
 
-	# Load torch_stick.glb into the left hand socket
-	var torch_node := _load_external_node3d(REAL_TORCH_MODEL)
+	# Check if torch is broken - show stick instead
+	var held = get_held_item()
+	var is_broken_torch: bool = held != null and str(held.item_type) == "tool_torch" and held.is_broken()
+	var model_path: String = REAL_TORCH_MODEL if not is_broken_torch else REAL_WOOD_STICK_MODEL
+	var torch_node := _load_external_node3d(model_path)
 	if torch_node != null:
 		torch_node.name = "HeldTorch"
-		torch_node.scale = Vector3.ONE * 0.6
-		torch_node.position = Vector3(-0.16, 0.0, 0.05)
+		torch_node.scale = Vector3.ONE * (0.7 if not is_broken_torch else 0.4)
+		torch_node.position = Vector3(-0.04, 0.0, 0.02)
 		torch_node.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 		_torch_hand_root.add_child(torch_node)
 
 	# Torch animations from Mixamo handle the arm pose; no manual bone override needed.
 	if torch_light != null:
-		var held = get_held_item()
 		if held != null and str(held.item_type) == "tool_torch" and not held.is_broken():
 			torch_light.visible = true
 		else:
@@ -6685,6 +6692,10 @@ func _update_torch(delta: float) -> void:
 		if torch_light.visible:
 			torch_light.visible = false
 			notice.emit("La antorcha se ha apagado.")
+		# Transform broken torch into a stick
+		held.item_name = "Palo"
+		held.item_type = "resource"
+		_sync_held_item()
 		return
 	if torch_light.visible:
 		held.reduce_durability(delta * 2.0)
@@ -6702,6 +6713,8 @@ func _update_torch(delta: float) -> void:
 		if held.is_broken():
 			torch_light.visible = false
 			notice.emit("La antorcha se ha apagado.")
+			held.item_name = "Palo"
+			held.item_type = "resource"
 			_sync_held_item()
 
 #endregion

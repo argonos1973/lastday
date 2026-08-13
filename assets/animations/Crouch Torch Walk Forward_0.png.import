@@ -2,23 +2,24 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://1dg0xfyfimny"
-path="res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-a6be9d193ef5e13bdbe50d29d5b6bfab.ctex"
+uid="uid://b1p8wabyta3wc"
+path.s3tc="res://.godot/imported/Crouch Torch Walk Forward_0.png-342f1168bffb70a521888c9414fac5f7.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
-"md5": "309deb11032868e9404063bdcbc8c519"
+"md5": "95d2e34c8eb8b4b6e1aabcaaeafe001d"
 }
 
 [deps]
 
-source_file="res://assets/adapted/player_with_clothes_Soldier_Body_specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-a6be9d193ef5e13bdbe50d29d5b6bfab.ctex"]
+source_file="res://assets/animations/Crouch Torch Walk Forward_0.png"
+dest_files=["res://.godot/imported/Crouch Torch Walk Forward_0.png-342f1168bffb70a521888c9414fac5f7.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
