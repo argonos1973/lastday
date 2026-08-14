@@ -22,9 +22,13 @@ func duplicate_stack():
 	var dup = load("res://scripts/Item.gd").create(item_name, item_type, weight, quantity, use_value)
 	dup.durability = durability
 	dup.max_durability = max_durability
+	for key in get_meta_list():
+		dup.set_meta(key, get_meta(key))
 	return dup
 
 func can_stack_with(other) -> bool:
+	if other != null and item_type == "tool_torch" and other.item_type == "tool_torch":
+		return false
 	return other != null and item_name == other.item_name and item_type == other.item_type and use_value == other.use_value
 
 func to_dict() -> Dictionary:

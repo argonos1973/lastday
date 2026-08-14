@@ -2422,9 +2422,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	if item_name == "Antorcha" and item_type == "tool_torch":
 		var torch_id := "player_torch_%d" % randi()
 		var torch_durability := 120.0
+		var torch_lit := false
 		if player != null and player.has_meta("last_torch_durability"):
 			torch_durability = float(player.get_meta("last_torch_durability", 120.0))
-		_spawn_placed_torch(torch_id, pos, torch_durability)
+		if player != null and player.has_meta("last_torch_lit"):
+			torch_lit = bool(player.get_meta("last_torch_lit", false))
+		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit)
 		return
 	# Dropping a whole animal corpse spawns the model lying on the ground
 	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
@@ -4607,8 +4610,11 @@ func handle_world_action(action, actor) -> void:
 			var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
 			torch_item.durability = torch_dur
 			torch_item.max_durability = 120.0
+			var torch_lit := bool(action.get_meta("torch_lit", false))
+			torch_item.set_meta("torch_lit", torch_lit)
+			print("[PICKUP_TORCH] torch_lit=", torch_lit, " torch_dur=", torch_dur, " action_meta_keys=", action.get_meta_list())
 			var torch_id := str(action.get_meta("torch_id", ""))
-			if action.get_meta("torch_lit", false) and not torch_id.is_empty():
+			if torch_lit and not torch_id.is_empty():
 				var light_node := get_node_or_null(torch_id + "Light")
 				if light_node != null:
 					light_node.queue_free()
@@ -6588,9 +6594,9 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	smoke_quad.material = smoke_tex_mat
 	add_child(smoke)
 
-func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float) -> void:
+func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit: bool = false) -> void:
 	var visual_name := "PlacedTorch_" + torch_id
-	var spawned := _try_instance_external_scene(["res://torch_stick.glb"], visual_name, pos + Vector3(0, 0.0, 0), Vector3.ONE * 0.5, Vector3(0, randf_range(0, 360), 0), false, 0.0)
+	var spawned := _try_instance_external_scene(["res://assets/animations/torch_stick.glb"], visual_name, pos + Vector3(0, 0.3, 0), Vector3.ONE * 0.5, Vector3(0, randf_range(0, 360), 90), false, 0.0)
 	if not spawned:
 		var stick := BoxMesh.new()
 		stick.size = Vector3(0.05, 0.05, 0.6)
@@ -6605,8 +6611,7 @@ func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float) -> v
 		add_child(stick_mi)
 		stick_mi.add_to_group("world_action_visual")
 	_mark_world_action_visual(visual_name)
-	var lit := durability > 0.0
-	if lit:
+	if lit and durability > 0.0:
 		_create_torch_fire(torch_id, pos + Vector3(0, 0.7, 0), durability)
 	var action = _create_world_action(torch_id, "pickup_torch", "Antorcha", pos, Vector3(0.3, 0.8, 0.3), Color(0.2, 0.14, 0.06), false, false)
 	if action != null:

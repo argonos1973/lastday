@@ -1024,6 +1024,7 @@ func _ready() -> void:
 
 	# DEBUG: auto-craft, equip and light torch after 2 seconds
 	if not is_puppet:
+		print("[DEBUG] Creating auto-torch timer, is_puppet=", is_puppet)
 		var debug_timer := Timer.new()
 		debug_timer.name = "DebugTorchTimer"
 		debug_timer.wait_time = 2.0
@@ -1051,6 +1052,10 @@ func _debug_auto_torch() -> void:
 		torch_item.durability = 120.0
 		torch_item.max_durability = 120.0
 		inventory.add_item(torch_item)
+	# Set torch_lit meta on all torches before equipping
+	for it in inventory.items:
+		if str(it.item_type) == "tool_torch":
+			it.set_meta("torch_lit", true)
 	# Equip the torch
 	var _found_torch := false
 	for i in range(inventory.items.size()):
@@ -2525,16 +2530,20 @@ func _update_hand_socket() -> void:
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
+		print("[TORCH] EARLY RETURN: skel=", _hand_skeleton, " bone_idx=", _left_hand_bone_idx)
 		return
 	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(_torch_hand_root):
+		print("[TORCH] EARLY RETURN: invalid instance")
 		return
 	var bone_pose := _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
 	var skel_global := _hand_skeleton.global_transform
 	var bone_world := skel_global * bone_pose
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var bone_local := local_to_model * bone_world
-	_torch_hand_root.position = bone_local.origin
-	_torch_hand_root.rotation_degrees = Vector3.ZERO
+	# Offset in model space: +Z moves forward (away from body), small -X stays on arm line
+	_torch_hand_root.position = bone_local.origin + Vector3(-0.15, 0.0, 0.20)
+	var euler := bone_local.basis.get_euler()
+	_torch_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
 # Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
 # animations (walking, looking up/down, sitting, etc.) instead of staying
@@ -2664,13 +2673,13 @@ func _create_body() -> void:
 	torch_light = OmniLight3D.new()
 	torch_light.name = "TorchLight"
 	torch_light.visible = false
-	torch_light.light_energy = 2.5
-	torch_light.omni_range = 12.0
-	torch_light.omni_attenuation = 1.2
+	torch_light.light_energy = 5.0
+	torch_light.omni_range = 22.0
+	torch_light.omni_attenuation = 0.8
 	torch_light.light_color = Color(1.0, 0.7, 0.3)
-	torch_light.position = Vector3(0.0, -0.3, -0.5)
-	camera.add_child(torch_light)
+	torch_light.shadow_enabled = false
 	_create_third_person_model()
+	# torch_light will be re-parented to _torch_hand_root after model creation
 
 func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
@@ -2769,6 +2778,9 @@ func _create_third_person_model() -> void:
 				_torch_hand_root = Node3D.new()
 				_torch_hand_root.name = "TorchHandSocket"
 				third_person_model.add_child(_torch_hand_root)
+				if torch_light != null:
+					third_person_model.add_child(torch_light)
+					torch_light.position = Vector3(0.0, 1.8, -1.2)
 				third_person_back_item_root = Node3D.new()
 				third_person_back_item_root.name = "BackpackSocket"
 				third_person_back_item_root.position = Vector3(0.0, -0.05, -0.18)
@@ -2831,6 +2843,9 @@ func _create_third_person_item_slots() -> void:
 	_torch_hand_root = Node3D.new()
 	_torch_hand_root.name = "TorchHandSocket"
 	third_person_model.add_child(_torch_hand_root)
+	if torch_light != null:
+		third_person_model.add_child(torch_light)
+		torch_light.position = Vector3(0.0, 1.8, -1.2)
 
 	third_person_back_item_root = Node3D.new()
 	third_person_back_item_root.name = "BackpackSocket"
@@ -4032,7 +4047,7 @@ func _select_default_held_item() -> void:
 func equip_item_by_name(item_name: String) -> void:
 	if inventory == null:
 		return
-	for i in range(inventory.items.size()):
+	for i in range(inventory.items.size() - 1, -1, -1):
 		if inventory.items[i].item_name == item_name:
 			held_index = i
 			_sync_held_item()
@@ -4350,6 +4365,7 @@ func drop_inventory_item(index: int) -> void:
 		unequip_clothing(item_name)
 	if item_type == "tool_torch":
 		set_meta("last_torch_durability", float(item.durability))
+		set_meta("last_torch_lit", torch_light != null and torch_light.visible)
 		if torch_light != null:
 			torch_light.visible = false
 	var drop_qty := 1
@@ -6494,6 +6510,7 @@ func _toggle_flashlight() -> void:
 			return
 		if torch_light.visible:
 			torch_light.visible = false
+			held.set_meta("torch_lit", false)
 			notice.emit("Antorcha apagada.")
 			return
 		if not inventory.has_item_name("Cerillas"):
@@ -6502,6 +6519,7 @@ func _toggle_flashlight() -> void:
 		inventory.consume_item_name("Cerillas", 1)
 		inventory.changed.emit()
 		torch_light.visible = true
+		held.set_meta("torch_lit", true)
 		notice.emit("Antorcha encendida con cerillas.")
 		return
 	if not inventory.has_item_type("tool"):
@@ -6539,6 +6557,7 @@ var _torch_arm_bone_idx := -1
 var _torch_forearm_bone_idx := -1
 var _torch_hand_bone_idx := -1
 var _torch_pose_connected := false
+var _torch_debug_timer := 0.0
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
@@ -6639,6 +6658,8 @@ func _build_third_person_torch() -> void:
 
 	# Clear previous children
 	for child in _torch_hand_root.get_children():
+		if child == torch_light:
+			continue
 		child.queue_free()
 
 	# Check if torch is broken - show stick instead
@@ -6649,13 +6670,17 @@ func _build_third_person_torch() -> void:
 	if torch_node != null:
 		torch_node.name = "HeldTorch"
 		torch_node.scale = Vector3.ONE * (0.7 if not is_broken_torch else 0.4)
-		torch_node.position = Vector3(-0.02, 0.0, 0.01)
-		torch_node.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+		torch_node.position = Vector3.ZERO
+		torch_node.rotation_degrees = Vector3(0.0, 0.0, 90.0)
 		_torch_hand_root.add_child(torch_node)
 
 	# Torch animations from Mixamo handle the arm pose; no manual bone override needed.
 	if torch_light != null:
-		if held != null and str(held.item_type) == "tool_torch" and not held.is_broken():
+		var has_lit_meta = held != null and held.has_meta("torch_lit")
+		var lit_value = false
+		if has_lit_meta:
+			lit_value = bool(held.get_meta("torch_lit", false))
+		if held != null and str(held.item_type) == "tool_torch" and not held.is_broken() and lit_value:
 			torch_light.visible = true
 		else:
 			torch_light.visible = false
@@ -6678,29 +6703,52 @@ func _clear_torch_attachment() -> void:
 	# Clear torch from torch hand root (left hand)
 	if _torch_hand_root != null and is_instance_valid(_torch_hand_root):
 		for child in _torch_hand_root.get_children():
+			if child == torch_light:
+				continue
 			child.queue_free()
 
 func _update_torch(delta: float) -> void:
 	if torch_light == null:
+		push_warning("[UPDATE_TORCH] torch_light is NULL!")
 		return
+	_torch_debug_timer += delta
+	if _torch_debug_timer >= 0.5:
+		_torch_debug_timer = 0.0
+		var held = get_held_item()
+		var held_type = "null" if held == null else str(held.item_type)
+		var held_lit = "no_meta"
+		if held != null and held.has_meta("torch_lit"):
+			held_lit = str(held.get_meta("torch_lit"))
+		var held_broken = held != null and held.is_broken()
+		print("[UPDATE_TORCH] visible=", torch_light.visible, " held_type=", held_type, " held_lit=", held_lit, " broken=", held_broken, " energy=", torch_light.light_energy, " range=", torch_light.omni_range, " pos=", torch_light.global_position, " parent=", torch_light.get_parent())
 	var held = get_held_item()
 	if held == null or str(held.item_type) != "tool_torch":
 		if torch_light.visible:
+			print("[UPDATE_TORCH] turning off: not tool_torch, held=", held)
 			torch_light.visible = false
 		return
 	if held.is_broken():
 		if torch_light.visible:
+			print("[UPDATE_TORCH] turning off: broken")
 			torch_light.visible = false
 			notice.emit("La antorcha se ha apagado.")
+		held.set_meta("torch_lit", false)
 		# Transform broken torch into a stick
 		held.item_name = "Palo"
 		held.item_type = "resource"
 		_sync_held_item()
 		return
+	var should_be_lit: bool = held.has_meta("torch_lit") and bool(held.get_meta("torch_lit", false))
+	if should_be_lit and not torch_light.visible:
+		torch_light.visible = true
+		print("[UPDATE_TORCH] turning ON: torch_lit meta=true")
+	if not should_be_lit and torch_light.visible:
+		torch_light.visible = false
+		print("[UPDATE_TORCH] turning off: torch_lit meta=false")
 	if torch_light.visible:
 		held.reduce_durability(delta * 2.0)
 		var pct: float = held.durability_pct()
-		torch_light.light_energy = 0.5 + 2.0 * pct
+		torch_light.light_energy = 1.0 + 4.0 * pct
 		torch_light.light_color = Color(1.0, 0.6 + 0.3 * pct, 0.2 + 0.2 * pct)
 		stats.body_temperature = min(37.5, stats.body_temperature + delta * 1.5 * pct)
 		if wetness > 0.0:
