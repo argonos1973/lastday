@@ -1022,57 +1022,6 @@ func _ready() -> void:
 	_apply_view_mode()
 	call_deferred("_capture_mouse")
 
-	# DEBUG: auto-craft, equip and light torch after 2 seconds
-	if not is_puppet:
-		print("[DEBUG] Creating auto-torch timer, is_puppet=", is_puppet)
-		var debug_timer := Timer.new()
-		debug_timer.name = "DebugTorchTimer"
-		debug_timer.wait_time = 2.0
-		debug_timer.one_shot = true
-		debug_timer.timeout.connect(_debug_auto_torch)
-		add_child(debug_timer)
-		debug_timer.start()
-
-func _debug_auto_torch() -> void:
-	# Craft torch: 1 palo + 1 trapos
-	var recipe := {
-		"inputs": { "Palo": 1, "Trapos": 1 },
-		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 120.0, "max_durability": 120.0 },
-		"label": "Crear antorcha con palo y trapos"
-	}
-	craft_recipe(recipe)
-	# If craft didn't work, add torch directly
-	var _has_torch := false
-	for it in inventory.items:
-		if str(it.item_type) == "tool_torch":
-			_has_torch = true
-			break
-	if not _has_torch:
-		var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
-		torch_item.durability = 120.0
-		torch_item.max_durability = 120.0
-		inventory.add_item(torch_item)
-	# Set torch_lit meta on all torches before equipping
-	for it in inventory.items:
-		if str(it.item_type) == "tool_torch":
-			it.set_meta("torch_lit", true)
-	# Equip the torch
-	var _found_torch := false
-	for i in range(inventory.items.size()):
-		var item = inventory.items[i]
-		if str(item.item_type) == "tool_torch":
-			held_index = i
-			_found_torch = true
-			_sync_held_item()
-			break
-	# Light the torch
-	var held = get_held_item()
-	if held != null and str(held.item_type) == "tool_torch":
-		if torch_light != null:
-			torch_light.visible = true
-		notice.emit("Antorcha encendida (debug)")
-	print("[DEBUG] Auto-torch equipped and lit")
-
 func _input(event: InputEvent) -> void:
 	if is_puppet or is_dead:
 		return
@@ -6557,7 +6506,6 @@ var _torch_arm_bone_idx := -1
 var _torch_forearm_bone_idx := -1
 var _torch_hand_bone_idx := -1
 var _torch_pose_connected := false
-var _torch_debug_timer := 0.0
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
@@ -6709,27 +6657,14 @@ func _clear_torch_attachment() -> void:
 
 func _update_torch(delta: float) -> void:
 	if torch_light == null:
-		push_warning("[UPDATE_TORCH] torch_light is NULL!")
 		return
-	_torch_debug_timer += delta
-	if _torch_debug_timer >= 0.5:
-		_torch_debug_timer = 0.0
-		var held = get_held_item()
-		var held_type = "null" if held == null else str(held.item_type)
-		var held_lit = "no_meta"
-		if held != null and held.has_meta("torch_lit"):
-			held_lit = str(held.get_meta("torch_lit"))
-		var held_broken = held != null and held.is_broken()
-		print("[UPDATE_TORCH] visible=", torch_light.visible, " held_type=", held_type, " held_lit=", held_lit, " broken=", held_broken, " energy=", torch_light.light_energy, " range=", torch_light.omni_range, " pos=", torch_light.global_position, " parent=", torch_light.get_parent())
 	var held = get_held_item()
 	if held == null or str(held.item_type) != "tool_torch":
 		if torch_light.visible:
-			print("[UPDATE_TORCH] turning off: not tool_torch, held=", held)
 			torch_light.visible = false
 		return
 	if held.is_broken():
 		if torch_light.visible:
-			print("[UPDATE_TORCH] turning off: broken")
 			torch_light.visible = false
 			notice.emit("La antorcha se ha apagado.")
 		held.set_meta("torch_lit", false)
@@ -6741,10 +6676,8 @@ func _update_torch(delta: float) -> void:
 	var should_be_lit: bool = held.has_meta("torch_lit") and bool(held.get_meta("torch_lit", false))
 	if should_be_lit and not torch_light.visible:
 		torch_light.visible = true
-		print("[UPDATE_TORCH] turning ON: torch_lit meta=true")
 	if not should_be_lit and torch_light.visible:
 		torch_light.visible = false
-		print("[UPDATE_TORCH] turning off: torch_lit meta=false")
 	if torch_light.visible:
 		held.reduce_durability(delta * 2.0)
 		var pct: float = held.durability_pct()

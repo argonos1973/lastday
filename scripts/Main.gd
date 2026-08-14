@@ -428,24 +428,6 @@ func _ready() -> void:
 	_create_day_night()
 	await _create_map()
 	_create_player()
-	# === DEBUG: equip knife, spawn default clothing near player ===
-	if player != null and player.inventory != null:
-		var knife = ItemScript.create("Cuchillo", "weapon", 0.35, 1, 0.0)
-		player.inventory.add_item(knife)
-		var matches = ItemScript.create("Cerillas", "tool_matches", 0.1, 10, 0.0)
-		player.inventory.add_item(matches)
-		player.held_index = player.inventory.items.size() - 2
-		player._sync_held_item()
-		var ppos: Vector3 = player.global_position
-		var debug_clothing := [
-			{"id": "dbg_camiseta", "name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.06, "paths": ["res://assets/characters/adapted/pickup_default_tops.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "color": Color(0.4, 0.4, 0.4), "pos": ppos + Vector3(2.0, 0.0, 0.0)},
-			{"id": "dbg_pantalones", "name": "Pantalones", "type": "clothing", "weight": 0.4, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_default_bottoms.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "color": Color(0.3, 0.3, 0.35), "pos": ppos + Vector3(-2.0, 0.0, 1.0)},
-			{"id": "dbg_zapatillas", "name": "Zapatillas", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/adapted/pickup_default_shoes.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "color": Color(0.2, 0.2, 0.2), "pos": ppos + Vector3(0.0, 0.0, 2.5)},
-		]
-		for dc in debug_clothing:
-			_create_pickup_item(dc)
-		print("[DEBUG] Player equipped with knife. Default clothing spawned nearby at ", ppos)
-	# === END DEBUG ===
 	if net != null and net.is_host and not net.is_dedicated_server:
 		_send_character_appearance()
 	if net == null or not net.is_dedicated_server:
@@ -4612,7 +4594,6 @@ func handle_world_action(action, actor) -> void:
 			torch_item.max_durability = 120.0
 			var torch_lit := bool(action.get_meta("torch_lit", false))
 			torch_item.set_meta("torch_lit", torch_lit)
-			print("[PICKUP_TORCH] torch_lit=", torch_lit, " torch_dur=", torch_dur, " action_meta_keys=", action.get_meta_list())
 			var torch_id := str(action.get_meta("torch_id", ""))
 			if torch_lit and not torch_id.is_empty():
 				var light_node := get_node_or_null(torch_id + "Light")

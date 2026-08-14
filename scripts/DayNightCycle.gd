@@ -5,8 +5,8 @@ signal time_changed
 signal night_started
 
 @export var day_length_seconds := 86400.0
-@export var fixed_time := true
-var time_of_day := 23.0
+@export var fixed_time := false
+var time_of_day := 12.0
 var last_was_night := false
 var sun: DirectionalLight3D
 var world_environment: WorldEnvironment
@@ -18,7 +18,7 @@ var _real_time_initialized := false
 func _process(delta: float) -> void:
 	if not _real_time_initialized:
 		if fixed_time:
-			time_of_day = 23.0
+			time_of_day = 12.0
 			_real_time_initialized = true
 		else:
 			var dt := Time.get_time_dict_from_system(false)
