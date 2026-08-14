@@ -2634,7 +2634,6 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
-	inventory.add_item(ItemScript.create("Cuchillo", "weapon", 0.3, 1, 0.0))
 	inventory.add_item(ItemScript.create("Cerillas", "misc", 0.05, 1, 0.0))
 	inventory.add_item(ItemScript.create("Palo", "resource", 0.1, 1, 0.0))
 	inventory.add_item(ItemScript.create("Trapos", "resource", 0.05, 1, 0.0))
