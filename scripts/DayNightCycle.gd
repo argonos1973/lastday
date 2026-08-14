@@ -86,11 +86,12 @@ func _update_lighting() -> void:
 		var sky := world_environment.environment.sky
 		if sky != null and sky.sky_material is ShaderMaterial:
 			var sm := sky.sky_material as ShaderMaterial
-			var day_norm := time_of_day / 24.0
+			var day_norm := day_amount
 			sm.set_shader_parameter("day_cycle", day_norm)
 			var sun_dir := sun.global_transform.basis.z.normalized()
 			sm.set_shader_parameter("sun_direction", sun_dir)
 			sm.set_shader_parameter("sun_intensity", day_amount)
+			sm.set_shader_parameter("night_sky_brightness", 0.03)
 			sm.set_shader_parameter("sky_top_color", Color(0.0005, 0.0005, 0.001, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
 			sm.set_shader_parameter("sky_horizon_color", Color(0.004, 0.005, 0.007, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
 			sm.set_shader_parameter("ground_bottom_color", Color(0.001, 0.001, 0.002, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))

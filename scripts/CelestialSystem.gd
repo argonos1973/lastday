@@ -89,6 +89,7 @@ func create_star_field() -> void:
 	_real_star_phases.clear()
 	var star_mesh := QuadMesh.new()
 	star_mesh.size = Vector2(1.2, 1.2)
+	star_mesh.orientation = PlaneMesh.FACE_Z
 	var lat_rad := deg_to_rad(BCN_LAT_DEG)
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
 	for entry in BRIGHT_STAR_CATALOG:
@@ -116,9 +117,9 @@ func create_star_field() -> void:
 		var dir := _radec_to_world_dir(ra_rad, dec_rad, lst_rad, lat_rad)
 		var radius: float = STAR_DOME_RADIUS + mag * 12.0
 		star.position = dir * radius
-		star.look_at(Vector3.ZERO, Vector3.UP)
-		star.visible = dir.y > 0.02
 		star_field.add_child(star)
+		star.look_at_from_position(star.position, star.position * 2.0, Vector3.UP)
+		star.visible = dir.y > 0.02
 		_real_star_nodes.append(star)
 		_real_star_radec.append(Vector2(ra_rad, dec_rad))
 		_real_star_mats.append(mat)
@@ -138,7 +139,7 @@ func update_real_star_positions() -> void:
 		var mag: float = float(BRIGHT_STAR_CATALOG[i][2])
 		var radius: float = STAR_DOME_RADIUS + mag * 12.0
 		node.position = dir * radius
-		node.look_at(Vector3.ZERO, Vector3.UP)
+		node.look_at_from_position(node.position, node.position * 2.0, Vector3.UP)
 		node.visible = dir.y > 0.02
 
 func update_moon_position() -> void:
