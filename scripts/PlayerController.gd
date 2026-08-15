@@ -55,7 +55,7 @@ const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
-	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
+	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
 	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"]},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
@@ -806,6 +806,18 @@ func puppet_set_state_flags(sleeping: bool, sitting: bool, prone: bool, crouchin
 	is_prone = prone
 	is_crouching = crouching
 
+func puppet_set_torch(lit: bool) -> void:
+	if not is_puppet:
+		return
+	if torch_light != null:
+		torch_light.visible = lit
+
+func puppet_set_flashlight(on: bool) -> void:
+	if not is_puppet:
+		return
+	if flashlight != null:
+		flashlight.visible = on
+
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
 		return
@@ -1222,7 +1234,8 @@ func _use_inventory_index(index: int) -> void:
 	if used:
 		stats.changed.emit()
 	if used and item_type == "clothing":
-		equip_clothing(item_name)
+		var _inv_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
+		equip_clothing(item_name, _inv_color)
 	elif not used:
 		_sync_held_item()
 
@@ -1234,7 +1247,7 @@ func _on_inventory_changed() -> void:
 
 
 #region ROPA Y APARIENCIA (PlayerAppearance)
-func equip_clothing(item_name: String) -> void:
+func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)) -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
 		slot = CLOTHING_SLOTS[item_name]
@@ -1350,10 +1363,17 @@ func equip_clothing(item_name: String) -> void:
 				var body_mi: MeshInstance3D = _find_mesh_in_third_person(body_name)
 				if body_mi != null:
 					body_mi.visible = false
+		# Apply loot color to the clothing mesh if provided
+		if clothing_color.a > 0.0 and bn != null:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = clothing_color
+			mat.roughness = 0.8
+			mat.metallic = 0.0
+			bn.material_override = mat
 	elif SURVIVAL_CLOTHING.has(item_name):
-		_wear_survival_clothing(item_name, true)
+		_wear_survival_clothing(item_name, true, clothing_color)
 	else:
-		_wear_clothing_visual(item_name)
+		_wear_clothing_visual(item_name, clothing_color)
 	if not slot.is_empty():
 		_equipped_slots[slot] = item_name
 	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
@@ -1362,6 +1382,12 @@ func equip_clothing(item_name: String) -> void:
 		var cloth_mi := _find_custom_slot_mesh(slot)
 		if cloth_mi != null:
 			cloth_mi.visible = true
+			if clothing_color.a > 0.0:
+				var mat := StandardMaterial3D.new()
+				mat.albedo_color = clothing_color
+				mat.roughness = 0.8
+				mat.metallic = 0.0
+				cloth_mi.material_override = mat
 		# Hide Desnudo_* parts covered by this clothing item
 		if DEFAULT_SKIN_HIDES.has(item_name):
 			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
@@ -1906,7 +1932,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 			cmi.visible = false
 	src_scene.free()
 
-func _wear_survival_clothing(item_name: String, worn: bool) -> void:
+func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = Color(0, 0, 0, 0)) -> void:
 	if not SURVIVAL_CLOTHING.has(item_name):
 		return
 	var cfg: Dictionary = SURVIVAL_CLOTHING[item_name]
@@ -1923,6 +1949,12 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 				mat.albedo_color = Color.WHITE
 			else:
 				mat.albedo_color = cfg["tint"]
+			mi.material_override = mat
+		elif worn and loot_color.a > 0.0:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = loot_color
+			mat.roughness = 0.85
+			mat.metallic = 0.0
 			mi.material_override = mat
 		elif worn:
 			mi.material_override = null
@@ -1960,7 +1992,7 @@ func _wear_survival_clothing(item_name: String, worn: bool) -> void:
 # Attaches and fits a clothing model onto the body relative to its measured
 # bounding box, so the player is visibly wearing it (e.g. the life vest on the
 # chest) regardless of the character model's scale/proportions.
-func _wear_clothing_visual(item_name: String) -> void:
+func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0, 0)) -> void:
 	if third_person_model == null or not CLOTHING_VISUALS.has(item_name):
 		return
 	var cfg: Dictionary = CLOTHING_VISUALS[item_name]
@@ -2008,6 +2040,15 @@ func _wear_clothing_visual(item_name: String) -> void:
 		for mi in meshes:
 			var mat := StandardMaterial3D.new()
 			mat.albedo_color = tint
+			mat.roughness = 0.9
+			mat.metallic = 0.0
+			mi.material_override = mat
+	elif loot_color.a > 0.0:
+		var meshes2: Array = []
+		_collect_mesh_instances(node, meshes2)
+		for mi in meshes2:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = loot_color
 			mat.roughness = 0.9
 			mat.metallic = 0.0
 			mi.material_override = mat
@@ -2634,9 +2675,6 @@ func _add_starting_items() -> void:
 	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
 	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
 	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
-	inventory.add_item(ItemScript.create("Cerillas", "misc", 0.05, 1, 0.0))
-	inventory.add_item(ItemScript.create("Palo", "resource", 0.1, 1, 0.0))
-	inventory.add_item(ItemScript.create("Trapos", "resource", 0.05, 1, 0.0))
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -2701,7 +2739,8 @@ func _create_third_person_model() -> void:
 					# Equip default clothing items
 					for item in inventory.items:
 						if DEFAULT_CLOTHING.has(str(item.item_name)):
-							equip_clothing(str(item.item_name))
+							var _def_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
+							equip_clothing(str(item.item_name), _def_color)
 		else:
 			if is_clothing_model:
 				# Puppet: equip default clothing directly without inventory

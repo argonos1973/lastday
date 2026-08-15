@@ -1,6 +1,7 @@
 extends Node3D
 
 const PlayerControllerScript = preload("res://scripts/PlayerController.gd")
+const SaveGameHooks = preload("res://scripts/SaveGameHooks.gd")
 const HUDScript = preload("res://scripts/HUD.gd")
 const DayNightCycleScript = preload("res://scripts/DayNightCycle.gd")
 const RadioSystemScript = preload("res://scripts/RadioSystem.gd")
@@ -435,6 +436,7 @@ func _ready() -> void:
 		_create_hud()
 	_apply_pending_doors()
 	_apply_pending_restore()
+	SaveGameHooks.maybe_load_saved_game(self, player)
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()
@@ -881,7 +883,7 @@ func _update_shadow_proximity() -> void:
 
 # Guardado de partida: pendiente de implementar (actualmente no persiste)
 func save_current_game() -> void:
-	return
+	_save_world_change_silent()
 
 func _build_save_data() -> Dictionary:
 	var data := {
@@ -897,7 +899,11 @@ func _build_save_data() -> Dictionary:
 	return data
 
 func _save_world_change_silent() -> void:
-	SaveSystemScript.save_game(_build_save_data())
+	var sgm = get_node_or_null("/root/SaveGameManager")
+	if sgm != null and player != null and is_instance_valid(player):
+		var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
+		if SaveGameHooksScript != null:
+			sgm.save_game(SaveGameHooksScript.collect_player_data(player), SaveGameHooksScript.collect_world_data(self))
 
 func sleep_at_shelter() -> void:
 	player.stats.rest(6.0)
@@ -1808,7 +1814,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		if net.peer.get_peer(pid) == null:
 			continue
-		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack)
+		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack, false, false, false, false, false, false, false, false)
 
 func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float) -> void:
 	# Reliable death notification from server — apply immediately to puppet
@@ -1938,7 +1944,7 @@ func _update_server_proxies(delta: float) -> void:
 			# Check if peer is actually still connected before sending RPC
 			if net.peer != null and net.peer.get_peer(connected_pid) == null:
 				continue
-			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false))
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false)
 	# Tick survival stats for disconnected proxies (hunger, thirst, health decay)
 	for cid in proxy_by_client_id.keys():
 		var dp: Node3D = proxy_by_client_id[cid]
@@ -2043,7 +2049,13 @@ func _sync_local_player_state() -> void:
 	var sitting_flag := bool(player.is_sitting)
 	var prone_flag := bool(player.is_prone)
 	var crouching_flag := bool(player.is_crouching)
-	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag)
+	var torch_lit_flag := false
+	if player.torch_light != null:
+		torch_lit_flag = player.torch_light.visible
+	var flashlight_on_flag := false
+	if player.flashlight != null:
+		flashlight_on_flag = player.flashlight.visible
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag, torch_lit_flag, flashlight_on_flag)
 
 func _sync_local_player_inventory() -> void:
 	if net == null or player == null or not net.is_connected:
@@ -2121,6 +2133,8 @@ func _update_remote_players() -> void:
 		var remote_sitting: bool = data.get("sitting", false)
 		var remote_prone: bool = data.get("prone", false)
 		var remote_crouching: bool = data.get("crouching", false)
+		var remote_torch_lit: bool = data.get("torch_lit", false)
+		var remote_flashlight_on: bool = data.get("flashlight_on", false)
 		# Apply character appearance if available and not yet applied
 		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and not rp.get("_applied_appearance"):
 			rp.puppet_apply_appearance(data.get("char_name", ""), data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
@@ -2130,6 +2144,10 @@ func _update_remote_players() -> void:
 			rp.puppet_set_rifle(remote_has_rifle)
 		if rp.has_method("puppet_set_state_flags"):
 			rp.puppet_set_state_flags(remote_sleeping, remote_sitting, remote_prone, remote_crouching)
+		if rp.has_method("puppet_set_torch"):
+			rp.puppet_set_torch(remote_torch_lit)
+		if rp.has_method("puppet_set_flashlight"):
+			rp.puppet_set_flashlight(remote_flashlight_on)
 		if is_offline:
 			# Snap to exact position for offline characters
 			if anim == "dead":
@@ -2479,11 +2497,22 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			if laid is Node3D:
 				_snap_node_bottom_to_y(laid as Node3D, 0.06)
 		_mark_world_action_visual(visual_name)
-	# Apply black material to dropped Botas survival
+	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
 	if item_name == "Botas survival":
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
-			_apply_black_material_recursive(boot_node as Node3D)
+			var remy_meshes: Array = []
+			_collect_meshes_recursive(boot_node as Node3D, remy_meshes)
+			for mi in remy_meshes:
+				if mi is MeshInstance3D:
+					var m := mi as MeshInstance3D
+					if m.name.to_lower() == "shoes":
+						var mat := StandardMaterial3D.new()
+						mat.albedo_color = Color(0.05, 0.05, 0.05)
+						mat.roughness = 0.9
+						m.material_override = mat
+					else:
+						m.visible = false
 	# Apply character clothing color to dropped default clothing
 	if item_name in ["Camiseta", "Pantalones", "Zapatillas"]:
 		var cloth_node := get_node_or_null(NodePath(visual_name))
@@ -2570,6 +2599,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"tool_pickaxe":
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"clothing":
+			if item_name == "Botas survival":
+				return ["res://assets/characters/Remy.glb"]
 			match item_name:
 				"Camiseta":
 					return ["res://assets/characters/adapted/pickup_default_tops.glb"]
@@ -2584,7 +2615,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				"Guantes survival":
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Botas survival":
-					return ["res://assets/characters/adapted/pickup_cloth_feet.glb"]
+					return ["res://assets/characters/Remy.glb"]
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II":
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
@@ -2639,7 +2670,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Guantes survival":
 					return 1.2
 				"Botas survival":
-					return 0.9
+					return 0.8
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II":
 					return 0.8
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
@@ -4040,8 +4071,12 @@ func _create_mushrooms() -> void:
 	var mushroom_count := 120
 	var mushroom_idx := 0
 	for _i in range(mushroom_count):
-		var pos := _find_safe_loot_pos()
-		if pos.distance_to(Vector3.ZERO) < 80.0:
+		var pos := Vector3(_world_rng.randf_range(-120, 120), 0.06, _world_rng.randf_range(-120, 120))
+		if pos.distance_to(Vector3.ZERO) < 40.0:
+			continue
+		if _is_near_river(pos, 5.0):
+			continue
+		if _is_near_car_or_container(pos, 4.0):
 			continue
 		var py := _get_exact_ground_y(pos.x, pos.z)
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
@@ -4076,7 +4111,7 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
-		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
 		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_2", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.15, 0.18, 0.20)},
@@ -4100,7 +4135,25 @@ func _create_house_loot() -> void:
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
-		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/adapted/pickup_cloth_feet.glb"], "scale": 0.9, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
+		# --- Remy clothing ---
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.3, 0.4, 0.6), "remy_mesh": "tops"},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -60, 0), "flat": true, "color": Color(0.15, 0.12, 0.1), "remy_mesh": "bottoms"},
+		# --- Luis clothing ---
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 70, 0), "flat": true, "color": Color(0.6, 0.2, 0.3), "remy_mesh": "tops"},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 120, 0), "flat": true, "color": Color(0.1, 0.15, 0.25), "remy_mesh": "bottoms"},
+		# --- Marc clothing ---
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": true, "color": Color(0.2, 0.5, 0.3), "remy_mesh": "tops"},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -30, 0), "flat": true, "color": Color(0.35, 0.3, 0.15), "remy_mesh": "bottoms"},
+		# --- Edu clothing ---
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": true, "color": Color(0.5, 0.45, 0.2), "remy_mesh": "tops"},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 90, 0), "flat": true, "color": Color(0.2, 0.2, 0.5), "remy_mesh": "bottoms"},
+		# --- Dris clothing ---
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -120, 0), "flat": true, "color": Color(0.8, 0.7, 0.6), "remy_mesh": "tops"},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -150, 0), "flat": true, "color": Color(0.3, 0.3, 0.35), "remy_mesh": "bottoms"},
+		# --- Soldier clothing (camo green) ---
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12), "tint": Color(0.15, 0.18, 0.12)},
+		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
@@ -4273,6 +4326,15 @@ func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
 		for c in n.get_children():
 			stack.append(c)
 
+func _collect_meshes_recursive(node: Node3D, result: Array) -> void:
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			result.append(n)
+		for c in n.get_children():
+			stack.append(c)
+
 func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = MaterialFactory.make_camo_texture(base_color)
@@ -4322,11 +4384,39 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var pickup_node := get_node_or_null(visual_name)
 	if pickup_node != null:
 		_remove_collision_from_node(pickup_node)
-	# Apply black material to Botas survival pickup so they look black on the ground
+	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
 	if item_name == "Botas survival":
 		var boot_node := get_node_or_null(NodePath(visual_name))
 		if boot_node is Node3D:
-			_apply_black_material_recursive(boot_node as Node3D)
+			var remy_meshes: Array = []
+			_collect_meshes_recursive(boot_node as Node3D, remy_meshes)
+			for mi in remy_meshes:
+				if mi is MeshInstance3D:
+					var m := mi as MeshInstance3D
+					if m.name.to_lower() == "shoes":
+						var mat := StandardMaterial3D.new()
+						mat.albedo_color = Color(0.05, 0.05, 0.05)
+						mat.roughness = 0.9
+						m.material_override = mat
+					else:
+						m.visible = false
+	# Remy clothing: hide all meshes except the relevant one, paint with color
+	if data.has("remy_mesh"):
+		var remy_mesh_name := str(data["remy_mesh"])
+		var remy_node := get_node_or_null(NodePath(visual_name))
+		if remy_node is Node3D:
+			var remy_meshes: Array = []
+			_collect_meshes_recursive(remy_node as Node3D, remy_meshes)
+			for mi in remy_meshes:
+				if mi is MeshInstance3D:
+					var m := mi as MeshInstance3D
+					if m.name.to_lower() == remy_mesh_name:
+						var mat := StandardMaterial3D.new()
+						mat.albedo_color = color
+						mat.roughness = 0.85
+						m.material_override = mat
+					else:
+						m.visible = false
 	# Apply tint or camo material to military clothing pickups
 	if data.has("tint"):
 		var tint_node := get_node_or_null(NodePath(visual_name))
@@ -4344,6 +4434,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 	action.set_meta("item_weight", float(data.get("weight", 0.1)))
 	action.set_meta("item_quantity", int(data.get("qty", 1)))
 	action.set_meta("item_use_value", float(data.get("use", 0.0)))
+	action.set_meta("item_color", color)
 
 func _mark_world_action_visual(node_name: String) -> void:
 	var node := get_node_or_null(NodePath(node_name))
@@ -4448,6 +4539,20 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var ground_node := get_node_or_null(visual_name)
 	if ground_node != null:
 		_remove_collision_from_node(ground_node)
+	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
+	if item_name == "Botas survival" and ground_node is Node3D:
+		var remy_meshes: Array = []
+		_collect_meshes_recursive(ground_node as Node3D, remy_meshes)
+		for mi in remy_meshes:
+			if mi is MeshInstance3D:
+				var m := mi as MeshInstance3D
+				if m.name.to_lower() == "shoes":
+					var mat := StandardMaterial3D.new()
+					mat.albedo_color = Color(0.05, 0.05, 0.05)
+					mat.roughness = 0.9
+					m.material_override = mat
+				else:
+					m.visible = false
 	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -4617,6 +4722,8 @@ func handle_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
+			if action.has_meta("item_color"):
+				item.set_meta("clothing_color", action.get_meta("item_color"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
 			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
 				var held_p = actor.get_held_item() if actor.has_method("get_held_item") else null
@@ -4646,15 +4753,45 @@ func handle_world_action(action, actor) -> void:
 					return
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
 				_play_actor_action(actor, "pickup", 0.8)
-				if not actor.inventory.add_item(item):
+				# If the same clothing item is already equipped, swap: drop the old
+				# one on the ground instead of adding a duplicate to the inventory.
+				var slot_key := ""
+				if actor.get("_equipped_slots") != null:
+					for sk in actor._equipped_slots.keys():
+						if str(actor._equipped_slots[sk]) == item.item_name:
+							slot_key = sk
+							break
+				if not slot_key.is_empty():
+					# Already wearing the same item: drop the old one and equip the new
+					actor.unequip_clothing(item.item_name)
+					if actor.inventory != null:
+						for i in range(actor.inventory.items.size()):
+							if str(actor.inventory.items[i].item_name) == item.item_name:
+								actor.inventory.remove_index(i)
+								break
+					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
+					swap_drop_pos.y = actor.global_position.y
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos)
+					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					actor.inventory.add_item(item)
+					actor.equip_clothing(item.item_name, _eq_color)
+					actor.notice.emit("Equipas %s." % item.item_name)
+					_hide_action_visual(action)
+					action.mark_depleted()
+					_save_world_change_silent()
+					if net != null and net.is_connected and not net.is_host:
+						net.item_picked_up.rpc_id(1, action.action_id)
+				elif not actor.inventory.add_item(item):
 					return
-				actor.equip_clothing(item.item_name)
-				actor.notice.emit("Equipas %s." % item.item_name)
-				_hide_action_visual(action)
-				action.mark_depleted()
-				_save_world_change_silent()
-				if net != null and net.is_connected and not net.is_host:
-					net.item_picked_up.rpc_id(1, action.action_id)
+				else:
+					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					actor.equip_clothing(item.item_name, _eq_color2)
+					actor.notice.emit("Equipas %s." % item.item_name)
+					_hide_action_visual(action)
+					action.mark_depleted()
+					_save_world_change_silent()
+					if net != null and net.is_connected and not net.is_host:
+						net.item_picked_up.rpc_id(1, action.action_id)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				_play_actor_action(actor, "pickup", 0.3)
 				# Equip first so carry capacity expands before the weight check in
@@ -5151,6 +5288,8 @@ func handle_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
+			if action.has_meta("item_color"):
+				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool":
 			if not action.has_meta("item_name"):
@@ -5163,12 +5302,40 @@ func handle_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
+			if action.has_meta("item_color"):
+				item.set_meta("clothing_color", action.get_meta("item_color"))
 			_play_actor_action(actor, "pickup", 0.8)
-			if not actor.inventory.add_item(item):
-				return
+			# If the same clothing item is already equipped, swap: drop the old
+			# one on the ground instead of adding a duplicate to the inventory.
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				actor.equip_clothing(item.item_name)
-				actor.notice.emit("Equipas %s." % item.item_name)
+				var slot_key := ""
+				if actor.get("_equipped_slots") != null:
+					for sk in actor._equipped_slots.keys():
+						if str(actor._equipped_slots[sk]) == item.item_name:
+							slot_key = sk
+							break
+				if not slot_key.is_empty():
+					actor.unequip_clothing(item.item_name)
+					if actor.inventory != null:
+						for i in range(actor.inventory.items.size()):
+							if str(actor.inventory.items[i].item_name) == item.item_name:
+								actor.inventory.remove_index(i)
+								break
+					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
+					swap_drop_pos.y = actor.global_position.y
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos)
+					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					actor.inventory.add_item(item)
+					actor.equip_clothing(item.item_name, _eq_color)
+					actor.notice.emit("Equipas %s." % item.item_name)
+				elif not actor.inventory.add_item(item):
+					return
+				else:
+					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					actor.equip_clothing(item.item_name, _eq_color2)
+					actor.notice.emit("Equipas %s." % item.item_name)
+			elif not actor.inventory.add_item(item):
+				return
 			else:
 				actor.notice.emit("Coges %s." % item.item_name)
 			if actor.has_method("refresh_carry_capacity"):

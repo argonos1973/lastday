@@ -61,7 +61,7 @@ func skip_to_morning() -> void:
 func _update_lighting() -> void:
 	if sun == null:
 		return
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 14.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 18.0 * PI), 0.0, 1.0)
 	var night_amount: float = 1.0 - day_amount
 	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
 	sun.light_energy = lerp(0.0, 1.5, day_amount)

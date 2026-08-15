@@ -32,7 +32,7 @@ func can_stack_with(other) -> bool:
 	return other != null and item_name == other.item_name and item_type == other.item_type and use_value == other.use_value
 
 func to_dict() -> Dictionary:
-	return {
+	var d := {
 		"name": item_name,
 		"type": item_type,
 		"weight": weight,
@@ -41,6 +41,10 @@ func to_dict() -> Dictionary:
 		"durability": durability,
 		"max_durability": max_durability
 	}
+	if has_meta("clothing_color"):
+		var c: Color = get_meta("clothing_color")
+		d["clothing_color"] = [c.r, c.g, c.b, c.a]
+	return d
 
 static func from_dict(data: Dictionary):
 	var item = load("res://scripts/Item.gd").create(
@@ -52,6 +56,10 @@ static func from_dict(data: Dictionary):
 	)
 	item.durability = float(data.get("durability", 100.0))
 	item.max_durability = float(data.get("max_durability", 100.0))
+	if data.has("clothing_color"):
+		var c_arr = data["clothing_color"]
+		if c_arr is Array and c_arr.size() >= 3:
+			item.set_meta("clothing_color", Color(float(c_arr[0]), float(c_arr[1]), float(c_arr[2]), float(c_arr[3]) if c_arr.size() > 3 else 1.0))
 	return item
 
 func is_broken() -> bool:

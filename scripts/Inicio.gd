@@ -1,6 +1,7 @@
 extends Control
 
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
+const SaveIntegration = preload("res://scripts/InicioSaveIntegration.gd")
 const DISCOVERY_PORT := 5006
 
 var _started: bool = false
@@ -23,7 +24,8 @@ var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
 
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
-const CHAR_CONFIGS := [
+const SAVED_PREVIEW_SCENE := "res://assets/animations/inicio.glb"
+var CHAR_CONFIGS := [
 	{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
 	{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
 	{"id": "marc", "name": "Marc", "top": Color(0.2, 0.5, 0.3), "bottom": Color(0.35, 0.3, 0.15), "shoes": Color(0.5, 0.25, 0.15), "hair": Color(0.75, 0.6, 0.3), "skin": Color(0.7, 0.58, 0.45)},
@@ -38,6 +40,7 @@ func _ready() -> void:
 	if net_check != null and net_check.is_dedicated_server:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
+	SaveIntegration.maybe_insert_saved_character(self)
 	var args := OS.get_cmdline_user_args()
 	if args.has("--auto-single"):
 		# Auto-start single player after a short delay so UI is ready
@@ -524,6 +527,7 @@ func _apply_char_selection() -> void:
 		gsess.selected_hair_color = cfg["hair"]
 		gsess.selected_skin_color = cfg["skin"]
 		gsess.set_meta("char_name", cfg["name"])
+		SaveIntegration.apply_saved_camo(gsess, cfg)
 
 func _on_char_next() -> void:
 	_char_index = (_char_index + 1) % CHAR_CONFIGS.size()
@@ -538,11 +542,15 @@ func _update_char_view() -> void:
 	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
 	if _char_name_label != null:
 		_char_name_label.text = String(cfg.get("name", "?"))
+	SaveIntegration.update_saved_info(self, cfg)
 	if _char_preview_anchor == null:
 		return
 	for child in _char_preview_anchor.get_children():
 		child.queue_free()
-	var packed := load(REMY_PREVIEW_SCENE)
+	var model_path := REMY_PREVIEW_SCENE
+	if cfg.get("is_saved", false):
+		model_path = SAVED_PREVIEW_SCENE
+	var packed := load(model_path)
 	if packed is PackedScene:
 		var instance := (packed as PackedScene).instantiate()
 		if instance is Node3D:
@@ -551,20 +559,29 @@ func _update_char_view() -> void:
 			model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
 			model.scale = Vector3.ONE
 			_char_preview_anchor.add_child(model)
-			_apply_preview_colors(model, cfg)
-			_fit_char_preview(model)
-			_play_preview_animation(model)
+			if cfg.get("is_saved", false):
+				_apply_preview_colors(model, cfg)
+				SaveIntegration.apply_saved_equipment_preview(model, cfg)
+				_fit_char_preview(model, true)
+				_play_preview_animation(model)
+			else:
+				_apply_preview_colors(model, cfg)
+				_fit_char_preview(model, false)
+				_play_preview_animation(model)
 
 func _play_preview_animation(model: Node3D) -> void:
 	var anim_player := _find_animation_player(model)
 	if anim_player != null:
 		var anims := anim_player.get_animation_list()
+		var chosen := ""
 		for anim_name in anims:
 			if anim_name.find("idle") >= 0 or anim_name.find("Idle") >= 0 or anim_name.find("IDLE") >= 0:
-				anim_player.play(anim_name)
-				return
-		if anims.size() > 0:
-			anim_player.play(anims[0])
+				chosen = anim_name
+				break
+		if chosen.is_empty() and anims.size() > 0:
+			chosen = anims[0]
+		if not chosen.is_empty():
+			anim_player.play(chosen)
 
 func _find_animation_player(root: Node) -> AnimationPlayer:
 	if root is AnimationPlayer:
@@ -575,9 +592,46 @@ func _find_animation_player(root: Node) -> AnimationPlayer:
 			return result
 	return null
 
-func _fit_char_preview(model: Node3D) -> void:
+func _fit_char_preview(model: Node3D, is_saved: bool = false) -> void:
 	await get_tree().process_frame
 	if not is_instance_valid(model):
+		return
+	if is_saved:
+		_hide_export_helpers(model)
+		var smeshes: Array = []
+		_collect_meshes(model, smeshes)
+		var smin_y := 999999.0
+		var smax_y := -999999.0
+		for mi2 in smeshes:
+			if not is_instance_valid(mi2):
+				continue
+			var mesh2: MeshInstance3D = mi2 as MeshInstance3D
+			if not mesh2.visible:
+				continue
+			# Skip meshes from gloves source
+			if mesh2.get_parent() != null and mesh2.get_parent().get_parent() != null:
+				var gp = mesh2.get_parent().get_parent()
+				if gp is Node3D and gp.name == "PreviewGlovesSrc":
+					continue
+			# Skip cloth_hands (gloves mesh reparented to main skeleton)
+			if mesh2.name.to_lower() == "cloth_hands":
+				continue
+			# Skip phantom meshes (animation targets with zero scale)
+			if mesh2.name.find("default") >= 0:
+				continue
+			var raw_aabb: AABB = mesh2.get_aabb()
+			smin_y = min(smin_y, raw_aabb.position.y)
+			smax_y = max(smax_y, raw_aabb.end.y)
+		if smin_y < 999999.0 and smax_y > -999999.0:
+			var raw_height := smax_y - smin_y
+			if raw_height > 0.01:
+				var s := 1.9 / raw_height
+				model.scale = Vector3.ONE * s
+				var mid_y := (smin_y + smax_y) * 0.5
+				model.position.y = -mid_y * s
+		if _char_preview_cam != null:
+			_char_preview_cam.position = Vector3(0.0, 0.0, 3.0)
+			_char_preview_cam.look_at_from_position(_char_preview_cam.position, Vector3.ZERO)
 		return
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
@@ -587,6 +641,8 @@ func _fit_char_preview(model: Node3D) -> void:
 		if not is_instance_valid(mi):
 			continue
 		var mesh: MeshInstance3D = mi as MeshInstance3D
+		if not mesh.visible:
+			continue
 		var aabb: AABB = mesh.get_aabb()
 		var world_aabb: AABB = mesh.global_transform * aabb
 		min_y = min(min_y, world_aabb.position.y)
@@ -605,6 +661,8 @@ func _fit_char_preview(model: Node3D) -> void:
 				if not is_instance_valid(mi2):
 					continue
 				var mesh2: MeshInstance3D = mi2 as MeshInstance3D
+				if not mesh2.visible:
+					continue
 				var aabb2: AABB = mesh2.get_aabb()
 				var world_aabb2: AABB = mesh2.global_transform * aabb2
 				min_y = min(min_y, world_aabb2.position.y)
@@ -621,6 +679,14 @@ func _collect_meshes(root: Node, result: Array) -> void:
 		result.append(root)
 	for c in root.get_children():
 		_collect_meshes(c, result)
+
+func _hide_export_helpers(root: Node) -> void:
+	var nl := root.name.to_lower()
+	if nl == "cube" or nl.find("placeholder") >= 0 or nl.find("floor") >= 0:
+		if root is Node3D:
+			(root as Node3D).visible = false
+	for c in root.get_children():
+		_hide_export_helpers(c)
 
 func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
 	var top_val: Variant = cfg.get("top", Color(0.5, 0.5, 0.5))
@@ -650,8 +716,18 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
 				mat.albedo_texture = camo_tex
 			else:
 				mat.albedo_color = top_val as Color
-		elif name_lower.find("body") >= 0 or name_lower.find("skin") >= 0 or name_lower.find("head") >= 0:
+		elif name_lower.find("cloth_") >= 0:
+			mat.albedo_color = Color(0.05, 0.05, 0.05)
+			mat.roughness = 0.9
+		elif name_lower.find("soldier_") >= 0:
+			mat.albedo_color = Color(0.2, 0.25, 0.12)
+			mat.roughness = 0.85
+		elif name_lower.find("desnudo") >= 0 or name_lower.find("body") >= 0 or name_lower.find("skin") >= 0 or name_lower.find("head") >= 0:
 			mat.albedo_color = skin_color
+		elif name_lower.find("eyes") >= 0:
+			mat.albedo_color = Color(0.2, 0.15, 0.1)
+		elif name_lower.find("eyelashes") >= 0:
+			mat.albedo_color = Color(0.1, 0.05, 0.03)
 		else:
 			mat.albedo_color = skin_color
 		mesh_inst.material_override = mat
