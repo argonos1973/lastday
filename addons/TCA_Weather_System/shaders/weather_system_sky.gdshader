@@ -139,7 +139,7 @@ void sky(){
     // === TCA 1.3 昼夜色温 ===
     float day = clamp((day_cycle - 0.25) / 0.25, 0.0, 1.0);
     float night = 1.0 - day;
-    sky = mix(sky, sky * 0.4 + vec3(0.0,0.05,0.15), night * night_sky_brightness);
+    sky = mix(sky, sky * 0.15 + vec3(0.0,0.01,0.03), night);
     
     vec3 sun_dir=vec3(0.0);
     float sun_angle_deg=0.0;
@@ -188,6 +188,7 @@ void sky(){
     
     float sun_facing=max(0.0,dot(EYEDIR,sun_dir));
     float cloud_brightness=0.5+0.6*sun_facing*cloud_lighting;
+    cloud_brightness *= mix(0.15, 1.0, day);
     
     // === TCA 1.3 云层阴影遮挡太阳 ===
     float cloud_shadow = 1.0 - clouds * cloud_shadow_strength * (1.0 - night);
@@ -251,7 +252,7 @@ void sky(){
     
     float atmosphere_factor=clamp(1.0-EYEDIR.y,0.0,1.0);
     float atmosphere_adj = mix(atmosphere_depth, atmosphere_depth * atmosphere_lod_factor, lod_factor);
-    vec3 atmosphere=vec3(0.55,0.65,0.78)*atmosphere_factor*atmosphere_adj;
+    vec3 atmosphere=vec3(0.55,0.65,0.78)*atmosphere_factor*atmosphere_adj*mix(0.05, 1.0, day);
     COLOR.rgb=mix(COLOR.rgb,atmosphere,atmosphere_factor*0.35);
     
     if(output_reflection)COLOR.rgb=sky;

@@ -36,6 +36,32 @@ static func maybe_load_saved_game(main: Node, player: Node) -> void:
 	apply_saved_player_data(player, save_data.get("player", {}))
 	apply_saved_world_data(main, save_data.get("world", {}))
 
+static func preload_saved_world_state(main: Node) -> void:
+	if main == null or not is_instance_valid(main):
+		return
+	if main.net != null and main.net.is_connected:
+		return
+	var gsess: Node = main.get_node_or_null("/root/GameSession")
+	if gsess == null or gsess.selected_character_id != "saved":
+		return
+	var sgm = main.get_node_or_null("/root/SaveGameManager")
+	if sgm == null or not sgm.has_save():
+		return
+	var save_data: Dictionary = sgm.load_game()
+	if save_data.is_empty():
+		return
+	var world_data: Dictionary = save_data.get("world", {})
+	# Pre-load depleted action IDs so world generation can skip cut trees
+	var depleted = world_data.get("depleted_action_ids", [])
+	for action_id in depleted:
+		if not main._depleted_action_ids.has(action_id):
+			main._depleted_action_ids.append(action_id)
+	# Pre-load picked-up loot IDs so world generation can skip already-collected loot
+	var picked_up: Array = world_data.get("picked_up_loot_ids", [])
+	for loot_id in picked_up:
+		if not main._depleted_action_ids.has(loot_id):
+			main._depleted_action_ids.append(loot_id)
+
 static func collect_player_data(player: Node) -> Dictionary:
 	if player == null or not is_instance_valid(player):
 		return {}

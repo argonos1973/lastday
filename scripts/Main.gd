@@ -427,6 +427,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_create_environment()
 	_create_day_night()
+	SaveGameHooks.preload_saved_world_state(self)
 	await _create_map()
 	_create_player()
 	if net != null and net.is_host and not net.is_dedicated_server:
@@ -848,7 +849,7 @@ var _river_water_cache_dirty := true
 func _update_water_night_amount() -> void:
 	if day_cycle == null:
 		return
-	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 15.5 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
 	var night_amount := 1.0 - day_amount
 	if _river_water_cache_dirty:
 		_cached_river_water = get_tree().get_nodes_in_group("river_water")
@@ -4056,6 +4057,8 @@ func _create_world_action(id: String, action_type: String, label: String, pos: V
 	return action
 
 func _create_tool_pickup(id: String, action_type: String, label: String, model_path: String, pos: Vector3, scale_value: float, rot: Vector3) -> void:
+	if _depleted_action_ids.has(id):
+		return
 	var visual_name := "Pickup_" + id
 	var spawned := _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.05)
 	if not spawned:
@@ -4083,6 +4086,8 @@ func _create_mushrooms() -> void:
 		mushroom_idx += 1
 
 func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
+	if _depleted_action_ids.has(id):
+		return
 	var visual_name := "Pickup_" + id
 	var scale_value := 0.05
 	var spawned := _try_instance_external_scene(["res://amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
@@ -4353,6 +4358,8 @@ func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 
 func _create_pickup_item(data: Dictionary) -> void:
 	var id := str(data["id"])
+	if _depleted_action_ids.has(id):
+		return
 	var item_name := str(data["name"])
 	var item_type := str(data["type"])
 	var pos: Vector3 = data["pos"]
@@ -4442,6 +4449,8 @@ func _mark_world_action_visual(node_name: String) -> void:
 		node.add_to_group("world_action_visual")
 
 func _create_backpack_pickup(id: String, pos: Vector3) -> void:
+	if _depleted_action_ids.has(id):
+		return
 	var visual_name := "Pickup_" + id
 	if not _try_instance_external_scene([ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]], visual_name, pos, Vector3.ONE * 1.2, Vector3(0.0, -18.0, 0.0), true, 0.05):
 		push_warning("No se crea mochila porque falta/carga mal el asset real.")
@@ -4779,8 +4788,7 @@ func handle_world_action(action, actor) -> void:
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
-					if net != null and net.is_connected and not net.is_host:
-						net.item_picked_up.rpc_id(1, action.action_id)
+					_net_notify_pickup(action)
 				elif not actor.inventory.add_item(item):
 					return
 				else:
@@ -4790,8 +4798,7 @@ func handle_world_action(action, actor) -> void:
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
-					if net != null and net.is_connected and not net.is_host:
-						net.item_picked_up.rpc_id(1, action.action_id)
+					_net_notify_pickup(action)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				_play_actor_action(actor, "pickup", 0.3)
 				# Equip first so carry capacity expands before the weight check in
@@ -4806,8 +4813,7 @@ func handle_world_action(action, actor) -> void:
 				_hide_action_visual(action)
 				action.mark_depleted()
 				_save_world_change_silent()
-				if net != null and net.is_connected and not net.is_host:
-					net.item_picked_up.rpc_id(1, action.action_id)
+				_net_notify_pickup(action)
 			else:
 				_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
@@ -5234,15 +5240,17 @@ func _finish_pickup_action(action, actor, item, message: String, action_name := 
 		_hide_action_visual(action)
 	action.mark_depleted()
 	_save_world_change_silent()
-	# Notify other clients to remove this item from world
-	if net != null and net.is_connected and not net.is_host:
-		var picked_id: String = action.action_id
-		net.item_picked_up.rpc_id(1, picked_id)
+	_net_notify_pickup(action)
 
 func _net_notify_pickup(action) -> void:
 	if net != null and net.is_connected and not net.is_host:
 		var picked_id: String = action.action_id
 		net.item_picked_up.rpc_id(1, picked_id)
+	# In single player or host, track depleted locally so it persists in save
+	if net == null or not net.is_connected or net.is_host:
+		var picked_id_local: String = action.action_id
+		if not _depleted_action_ids.has(picked_id_local):
+			_depleted_action_ids.append(picked_id_local)
 
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
@@ -7575,8 +7583,13 @@ func _update_tree_interactions() -> void:
 					_deactivate_tree(entry)
 
 func _activate_tree(entry: Dictionary) -> void:
-	var visual_name: String = entry.visual_name
 	var tree_id: int = entry.id
+	var action_id := "fell_tree_%d" % tree_id
+	# Skip trees that were already cut (from save)
+	if _depleted_action_ids.has(action_id):
+		entry.active = true
+		return
+	var visual_name: String = entry.visual_name
 	var collision_name := visual_name + "_Collision"
 	var pos: Vector3 = entry.pos
 	_register_wildlife_blocker(pos, 2.0)
@@ -7644,7 +7657,15 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	else:
 		made_visual = _create_living_tree_fallback(pos, visual_name)
 	if made_visual:
-		if is_interactive:
+		var action_id := "fell_tree_%d" % tree_id
+		var was_depleted := _depleted_action_ids.has(action_id)
+		if was_depleted:
+			# Tree was cut in a previous session — replace visual with stump
+			var tree_node := get_node_or_null(visual_name)
+			if tree_node != null:
+				tree_node.queue_free()
+			_create_cut_tree_remains(pos)
+		elif is_interactive:
 			_register_wildlife_blocker(pos, 2.0)
 			var collision := _create_tree_collision(collision_name, pos)
 			collision.add_to_group("world_action_visual")

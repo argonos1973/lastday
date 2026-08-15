@@ -41,7 +41,7 @@ func get_cold_factor() -> float:
 	return get_ambient_temperature()
 
 func get_ambient_temperature() -> float:
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 18.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
 	return lerp(2.0, 35.0, day_amount)
 
 func get_hour_text() -> String:
@@ -61,7 +61,8 @@ func skip_to_morning() -> void:
 func _update_lighting() -> void:
 	if sun == null:
 		return
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 18.0 * PI), 0.0, 1.0)
+	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
+	print("[DAYNIGHT] time_of_day=%.2f day_amount=%.3f night_amount=%.3f" % [time_of_day, day_amount, 1.0 - day_amount])
 	var night_amount: float = 1.0 - day_amount
 	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
 	sun.light_energy = lerp(0.0, 1.5, day_amount)
@@ -93,9 +94,12 @@ func _update_lighting() -> void:
 			sm.set_shader_parameter("sun_intensity", day_amount)
 			sm.set_shader_parameter("night_sky_brightness", 0.03)
 			sm.set_shader_parameter("sky_top_color", Color(0.0005, 0.0005, 0.001, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
+			sm.set_shader_parameter("sky_mid_color", Color(0.001, 0.002, 0.004, 1).lerp(Color(0.55, 0.75, 0.98, 1), day_amount))
 			sm.set_shader_parameter("sky_horizon_color", Color(0.004, 0.005, 0.007, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
+			sm.set_shader_parameter("sky_energy", lerp(0.02, 1.0, day_amount))
 			sm.set_shader_parameter("ground_bottom_color", Color(0.001, 0.001, 0.002, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
 			sm.set_shader_parameter("ground_horizon_color", Color(0.004, 0.004, 0.006, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
+			sm.set_shader_parameter("ground_energy", lerp(0.02, 1.0, day_amount))
 
 func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}
