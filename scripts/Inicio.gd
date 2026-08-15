@@ -24,7 +24,7 @@ var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
 
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
-const SAVED_PREVIEW_SCENE := "res://assets/animations/inicio.glb"
+const SAVED_PREVIEW_SCENE := "res://assets/characters/adapted/player_with_clothes.glb"
 var CHAR_CONFIGS := [
 	{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
 	{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},

@@ -216,6 +216,29 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 					inv.items.append(item)
 	# Held index
 	player.held_index = int(data.get("held_index", 0))
+	# Restore character appearance colors into GameSession so
+	# _apply_character_colors picks them up correctly.
+	# This must happen BEFORE equipping clothing so that clothing_color
+	# from inventory items overrides the default top_color.
+	var gsess: Node = Engine.get_main_loop().get_root().get_node_or_null("/root/GameSession")
+	if gsess != null:
+		if data.has("top_color"):
+			gsess.selected_top_color = _str_to_color(str(data["top_color"]))
+		if data.has("bottom_color"):
+			gsess.selected_bottom_color = _str_to_color(str(data["bottom_color"]))
+		if data.has("shoes_color"):
+			gsess.selected_shoes_color = _str_to_color(str(data["shoes_color"]))
+		if data.has("hair_color"):
+			gsess.selected_hair_color = _str_to_color(str(data["hair_color"]))
+		if data.has("skin_color"):
+			gsess.selected_skin_color = _str_to_color(str(data["skin_color"]))
+		if data.has("top_camo"):
+			gsess.set_meta("top_camo", bool(data["top_camo"]))
+		if data.has("bottom_camo"):
+			gsess.set_meta("bottom_camo", bool(data["bottom_camo"]))
+	# Re-apply character colors on the player model BEFORE equipping saved clothing
+	if player.has_method("_apply_character_colors"):
+		player._apply_character_colors()
 	# Restore equipped clothing
 	var equipped_clothing := str(data.get("equipped_clothing", ""))
 	if not equipped_clothing.is_empty():
@@ -245,27 +268,6 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	# Sync held item
 	if player.has_method("_sync_held_item"):
 		player._sync_held_item()
-	# Restore character appearance colors into GameSession so
-	# _apply_character_colors picks them up correctly.
-	var gsess: Node = Engine.get_main_loop().get_root().get_node_or_null("/root/GameSession")
-	if gsess != null:
-		if data.has("top_color"):
-			gsess.selected_top_color = _str_to_color(str(data["top_color"]))
-		if data.has("bottom_color"):
-			gsess.selected_bottom_color = _str_to_color(str(data["bottom_color"]))
-		if data.has("shoes_color"):
-			gsess.selected_shoes_color = _str_to_color(str(data["shoes_color"]))
-		if data.has("hair_color"):
-			gsess.selected_hair_color = _str_to_color(str(data["hair_color"]))
-		if data.has("skin_color"):
-			gsess.selected_skin_color = _str_to_color(str(data["skin_color"]))
-		if data.has("top_camo"):
-			gsess.set_meta("top_camo", bool(data["top_camo"]))
-		if data.has("bottom_camo"):
-			gsess.set_meta("bottom_camo", bool(data["bottom_camo"]))
-	# Re-apply character colors on the player model
-	if player.has_method("_apply_character_colors"):
-		player._apply_character_colors()
 	# State flags
 	player.is_sleeping = bool(data.get("sleeping", false))
 	player.is_sitting = bool(data.get("sitting", false))
