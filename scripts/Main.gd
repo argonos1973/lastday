@@ -4788,13 +4788,11 @@ func handle_world_action(action, actor) -> void:
 							break
 				if not slot_key.is_empty():
 					# Already wearing the same item: drop the old one and equip the new
+					var _old_color := actor.get_current_clothing_color(item.item_name)
 					actor.unequip_clothing(item.item_name)
-					var _old_color := Color(0, 0, 0, 0)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
-								if actor.inventory.items[i].has_meta("clothing_color"):
-									_old_color = actor.inventory.items[i].get_meta("clothing_color")
 								actor.inventory.remove_index(i)
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
@@ -5348,13 +5346,11 @@ func handle_world_action_collect(action, actor) -> void:
 							slot_key = sk
 							break
 				if not slot_key.is_empty():
+					var _old_color := actor.get_current_clothing_color(item.item_name)
 					actor.unequip_clothing(item.item_name)
-					var _old_color := Color(0, 0, 0, 0)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
-								if actor.inventory.items[i].has_meta("clothing_color"):
-									_old_color = actor.inventory.items[i].get_meta("clothing_color")
 								actor.inventory.remove_index(i)
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)

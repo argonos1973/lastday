@@ -1247,6 +1247,26 @@ func _on_inventory_changed() -> void:
 
 
 #region ROPA Y APARIENCIA (PlayerAppearance)
+func get_current_clothing_color(item_name: String) -> Color:
+	if inventory != null:
+		for i in range(inventory.items.size()):
+			if str(inventory.items[i].item_name) == item_name and inventory.items[i].has_meta("clothing_color"):
+				var c: Color = inventory.items[i].get_meta("clothing_color")
+				if c.a > 0.0:
+					return c
+	# Fall back to the character customization color for default clothing that
+	# was never explicitly dyed/looted (color lives only in GameSession).
+	if item_name in ["Camiseta", "Pantalones", "Zapatillas"]:
+		var gsess := get_node_or_null("/root/GameSession")
+		if gsess != null:
+			if item_name == "Camiseta":
+				return gsess.selected_top_color
+			elif item_name == "Pantalones":
+				return gsess.selected_bottom_color
+			elif item_name == "Zapatillas":
+				return gsess.selected_shoes_color
+	return Color(0, 0, 0, 0)
+
 func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)) -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
@@ -1255,14 +1275,14 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 	if not slot.is_empty() and _equipped_slots.get(slot, "") != item_name:
 		var prev_name := str(_equipped_slots.get(slot, ""))
 		if not prev_name.is_empty() and prev_name != item_name:
+			var prev_color := get_current_clothing_color(prev_name)
 			unequip_clothing(prev_name)
 			# Remove old clothing from inventory and drop it on the ground
-			var prev_color := Color(0, 0, 0, 0)
 			if inventory != null:
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
-						if inventory.items[i].has_meta("clothing_color"):
-							prev_color = inventory.items[i].get_meta("clothing_color")
+						if false:
+							pass
 						inventory.remove_index(i)
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
@@ -4361,9 +4381,7 @@ func drop_inventory_item(index: int) -> void:
 	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
-	var drop_color := Color(0, 0, 0, 0)
-	if item.has_meta("clothing_color"):
-		drop_color = item.get_meta("clothing_color")
+	var drop_color := get_current_clothing_color(item_name)
 	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color)
 	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
