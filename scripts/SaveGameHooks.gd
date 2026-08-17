@@ -332,7 +332,11 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 				main._spawn_raw_meat_visual(drop_id, str(drop.get("name", "")), dpos)
 		else:
 			if main.has_method("_spawn_dropped_item_visual"):
-				main._spawn_dropped_item_visual(drop_id, str(drop.get("name", "")), str(drop.get("type", "")), float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos)
+				var drop_color := Color(0, 0, 0, 0)
+				var color_arr = drop.get("color")
+				if color_arr is Array and color_arr.size() >= 4:
+					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
+				main._spawn_dropped_item_visual(drop_id, str(drop.get("name", "")), str(drop.get("type", "")), float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos, drop_color)
 		main._dropped_items.append(drop)
 	# Built campfires
 	var campfires = data.get("built_campfires", [])

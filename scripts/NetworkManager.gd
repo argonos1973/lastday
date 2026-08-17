@@ -472,16 +472,16 @@ func item_picked_up(action_id: String) -> void:
 
 # Client tells server it dropped an item in the world (server relays to all other clients)
 @rpc("any_peer", "reliable")
-func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
 	# Server relays to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != multiplayer.get_unique_id():
-				item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+				item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 	# All clients (except the original dropper, who already spawned it locally): spawn the visual
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_item_dropped"):
-		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 # Client tells server its player died (server drops inventory as loot)
 @rpc("any_peer", "reliable")

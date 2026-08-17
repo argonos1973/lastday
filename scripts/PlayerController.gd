@@ -258,7 +258,7 @@ const SMALL_BACKPACK_WEIGHT := 10.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
-signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3)
+signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color)
 
 @export var walk_speed := 4.0
 @export var sprint_speed := 7.0
@@ -1257,14 +1257,17 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 		if not prev_name.is_empty() and prev_name != item_name:
 			unequip_clothing(prev_name)
 			# Remove old clothing from inventory and drop it on the ground
+			var prev_color := Color(0, 0, 0, 0)
 			if inventory != null:
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
+						if inventory.items[i].has_meta("clothing_color"):
+							prev_color = inventory.items[i].get_meta("clothing_color")
 						inventory.remove_index(i)
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 			drop_pos.y = global_position.y
-			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos)
+			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color)
 	equipped_clothing = item_name
 	# Determine if all clothing slots will be equipped after this item
 	var equipped_check := _equipped_slots.duplicate()
@@ -4119,7 +4122,7 @@ func _craft_campfire() -> void:
 	await get_tree().create_timer(2.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
 	pos.y = 0.15
-	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos)
+	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0))
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
 func _craft_shelter() -> void:
@@ -4139,7 +4142,7 @@ func _craft_shelter() -> void:
 	await get_tree().create_timer(3.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 2.0)
 	pos.y = 0.0
-	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos)
+	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0))
 	notice.emit("Has construido un refugio.")
 
 func craft_recipe(recipe: Dictionary) -> void:
@@ -4358,7 +4361,10 @@ func drop_inventory_item(index: int) -> void:
 	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
-	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos)
+	var drop_color := Color(0, 0, 0, 0)
+	if item.has_meta("clothing_color"):
+		drop_color = item.get_meta("clothing_color")
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color)
 	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)

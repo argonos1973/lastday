@@ -1470,7 +1470,11 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 					dpos = Vector3(float(dpos_raw[0]), float(dpos_raw[1]), float(dpos_raw[2]))
 				else:
 					dpos = dpos_raw
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos)
+				var drop_color := Color(0, 0, 0, 0)
+				var color_arr = drop.get("color")
+				if color_arr is Array and color_arr.size() >= 4:
+					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color)
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -2407,7 +2411,7 @@ func _net_add_looted_item(item_data: Dictionary) -> void:
 			if inv != null and inv.has_method("add_item"):
 				inv.add_item(item)
 
-func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -2459,9 +2463,13 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
+	if color.a > 0.0:
+		drop_entry["color"] = [color.r, color.g, color.b, color.a]
+	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
-		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
 	var visual_name := "Pickup_" + drop_id
@@ -2477,7 +2485,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -2514,18 +2522,21 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 						m.material_override = mat
 					else:
 						m.visible = false
-	# Apply character clothing color to dropped default clothing
+	# Apply the dropped clothing's actual color (preserved from equip/inventory).
+	# Fall back to the character customization color only if none was provided.
 	if item_name in ["Camiseta", "Pantalones", "Zapatillas"]:
 		var cloth_node := get_node_or_null(NodePath(visual_name))
 		if cloth_node is Node3D:
-			var gsess := get_node_or_null("/root/GameSession")
-			if gsess != null:
-				var drop_color: Color = gsess.selected_top_color
-				if item_name == "Pantalones":
-					drop_color = gsess.selected_bottom_color
-				elif item_name == "Zapatillas":
-					drop_color = gsess.selected_shoes_color
-				_apply_color_material_recursive(cloth_node, drop_color)
+			var drop_color := color
+			if drop_color.a <= 0.0:
+				var gsess := get_node_or_null("/root/GameSession")
+				if gsess != null:
+					drop_color = gsess.selected_top_color
+					if item_name == "Pantalones":
+						drop_color = gsess.selected_bottom_color
+					elif item_name == "Zapatillas":
+						drop_color = gsess.selected_shoes_color
+			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
 	var military_black_names := ["Chaqueta militar azul", "Pantalones militares azules", "Chaqueta militar negra II", "Pantalones militares negros II", "Guantes militares"]
 	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert"]
@@ -2553,13 +2564,18 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
+	if color.a > 0.0:
+		action.set_meta("item_color", color)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3) -> void:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
 	if net != null and net.is_dedicated_server:
-		_dropped_items.append({"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos})
+		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
+		if color.a > 0.0:
+			drop_entry["color"] = [color.r, color.g, color.b, color.a]
+		_dropped_items.append(drop_entry)
 	if world_actions_by_id.has(drop_id):
 		return
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	match item_type:
@@ -4773,14 +4789,17 @@ func handle_world_action(action, actor) -> void:
 				if not slot_key.is_empty():
 					# Already wearing the same item: drop the old one and equip the new
 					actor.unequip_clothing(item.item_name)
+					var _old_color := Color(0, 0, 0, 0)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
+								if actor.inventory.items[i].has_meta("clothing_color"):
+									_old_color = actor.inventory.items[i].get_meta("clothing_color")
 								actor.inventory.remove_index(i)
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
 					swap_drop_pos.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos)
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.inventory.add_item(item)
 					actor.equip_clothing(item.item_name, _eq_color)
@@ -5251,6 +5270,12 @@ func _net_notify_pickup(action) -> void:
 		var picked_id_local: String = action.action_id
 		if not _depleted_action_ids.has(picked_id_local):
 			_depleted_action_ids.append(picked_id_local)
+	# Remove from _dropped_items so it doesn't respawn / re-save as a ghost duplicate
+	var picked_action_id: String = action.action_id
+	for i in range(_dropped_items.size() - 1, -1, -1):
+		if str(_dropped_items[i].get("id", "")) == picked_action_id:
+			_dropped_items.remove_at(i)
+			break
 
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
@@ -5324,14 +5349,17 @@ func handle_world_action_collect(action, actor) -> void:
 							break
 				if not slot_key.is_empty():
 					actor.unequip_clothing(item.item_name)
+					var _old_color := Color(0, 0, 0, 0)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
+								if actor.inventory.items[i].has_meta("clothing_color"):
+									_old_color = actor.inventory.items[i].get_meta("clothing_color")
 								actor.inventory.remove_index(i)
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
 					swap_drop_pos.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos)
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.inventory.add_item(item)
 					actor.equip_clothing(item.item_name, _eq_color)
