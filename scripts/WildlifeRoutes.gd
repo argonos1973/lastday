@@ -10,7 +10,7 @@ static func build_circular_route(rng: RandomNumberGenerator, radius: float, angl
 		pos.x = clamp(pos.x, -180.0, 180.0)
 		pos.z = clamp(pos.z, -180.0, 180.0)
 		if not is_allowed.call(pos):
-			pos = find_allowed_near(pos, 3.0, is_allowed)
+			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
 	return route
 
@@ -29,7 +29,7 @@ static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_
 		candidate.x = clamp(candidate.x, -limit, limit)
 		candidate.z = clamp(candidate.z, -limit, limit)
 		if not is_allowed.call(candidate):
-			candidate = find_allowed_near(candidate, 4.0, is_allowed)
+			candidate = find_allowed_near(candidate, 26.0, is_allowed)
 		route.append(candidate)
 		cursor = candidate
 	return route
@@ -45,19 +45,21 @@ static func build_zigzag_route(rng: RandomNumberGenerator, corner_a: Vector3, co
 		pos.x = clamp(pos.x, -180.0, 180.0)
 		pos.z = clamp(pos.z, -180.0, 180.0)
 		if not is_allowed.call(pos):
-			pos = find_allowed_near(pos, 3.0, is_allowed)
+			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
 	return route
 
+const WORLD_LIMIT := 180.0
+
 static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Callable) -> Vector3:
-	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0]:
+	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0, 26.0]:
 		if radius > max_radius and max_radius > 0.0:
 			break
 		for i in range(16):
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -65.0, 65.0)
-			candidate.z = clamp(candidate.z, -65.0, 65.0)
+			candidate.x = clamp(candidate.x, -WORLD_LIMIT, WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -WORLD_LIMIT, WORLD_LIMIT)
 			if is_allowed.call(candidate):
 				return candidate
 	return origin

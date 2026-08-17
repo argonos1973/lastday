@@ -35,13 +35,30 @@ func _process(delta: float) -> void:
 	time_changed.emit()
 
 func is_night() -> bool:
-	return time_of_day < 6.0 or time_of_day >= 21.0
+	return time_of_day < 6.0 or time_of_day >= 22.0
+
+func get_day_amount() -> float:
+	return get_day_amount_at(time_of_day)
+
+static func get_day_amount_at(t: float) -> float:
+	var sunrise_start := 5.5
+	var sunrise_end := 7.0
+	var sunset_start := 20.0
+	var sunset_end := 22.0
+	if t < sunrise_start or t >= sunset_end:
+		return 0.0
+	elif t < sunrise_end:
+		return smoothstep(sunrise_start, sunrise_end, t)
+	elif t < sunset_start:
+		return 1.0
+	else:
+		return 1.0 - smoothstep(sunset_start, sunset_end, t)
 
 func get_cold_factor() -> float:
 	return get_ambient_temperature()
 
 func get_ambient_temperature() -> float:
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
+	var day_amount: float = get_day_amount()
 	return lerp(2.0, 35.0, day_amount)
 
 func get_hour_text() -> String:
@@ -61,16 +78,15 @@ func skip_to_morning() -> void:
 func _update_lighting() -> void:
 	if sun == null:
 		return
-	var day_amount: float = clamp(sin((time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
-	print("[DAYNIGHT] time_of_day=%.2f day_amount=%.3f night_amount=%.3f" % [time_of_day, day_amount, 1.0 - day_amount])
+	var day_amount: float = get_day_amount()
 	var night_amount: float = 1.0 - day_amount
 	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
 	sun.light_energy = lerp(0.0, 1.5, day_amount)
 	sun.shadow_enabled = day_amount > 0.05
 	if star_field != null:
-		star_field.visible = night_amount > 0.7
+		star_field.visible = night_amount > 0.85
 	if moon_field != null:
-		moon_field.visible = night_amount > 0.6
+		moon_field.visible = night_amount > 0.75
 	# Moon illumination factor: if moon is up, provide a little light
 	var moon_illum := 0.0
 	if moon_field != null and moon_field.visible:

@@ -137,7 +137,7 @@ void sky(){
     sky*=sky_energy;
 
     // === TCA 1.3 昼夜色温 ===
-    float day = clamp((day_cycle - 0.25) / 0.25, 0.0, 1.0);
+    float day = day_cycle;
     float night = 1.0 - day;
     sky = mix(sky, sky * 0.15 + vec3(0.0,0.01,0.03), night);
     

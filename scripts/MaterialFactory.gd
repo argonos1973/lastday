@@ -136,12 +136,49 @@ static func make_grass_blade_material() -> StandardMaterial3D:
 static func make_river_water_material() -> Material:
 	if _mat_cache.has("river_water"):
 		return _mat_cache["river_water"]
-	var s := Shader.new()
-	s.code = "shader_type spatial;\nrender_mode blend_mix, depth_draw_always, cull_disabled, unshaded;\nuniform vec4 shallow_color : source_color = vec4(0.03, 0.48, 0.92, 0.93);\nuniform vec4 deep_color : source_color = vec4(0.00, 0.24, 0.74, 0.96);\nuniform vec4 night_shallow_color : source_color = vec4(0.035, 0.085, 0.12, 0.90);\nuniform vec4 night_deep_color : source_color = vec4(0.012, 0.035, 0.060, 0.94);\nuniform float night_amount = 0.0;\nuniform float wave_height = 0.045;\nuniform float flow_speed = 0.42;\nvoid vertex() {\n\tfloat lw = sin(UV.x * 24.0 + TIME * 1.55);\n\tfloat cw = sin(UV.y * 18.0 + UV.x * 10.0 - TIME * 2.10);\n\tfloat sw = sin((UV.x + UV.y) * 46.0 + TIME * 3.20);\n\tVERTEX.y += (lw * 0.55 + cw * 0.32 + sw * 0.13) * wave_height;\n}\nvoid fragment() {\n\tfloat cur = sin((UV.x + TIME * flow_speed) * 44.0 + UV.y * 8.0) * 0.5 + 0.5;\n\tfloat rip = sin((UV.x * 90.0 - TIME * 3.0) + sin(UV.y * 20.0)) * 0.5 + 0.5;\n\tvec3 dc = mix(shallow_color.rgb, deep_color.rgb, smoothstep(0.05, 0.95, UV.y));\n\tvec3 nc = mix(night_shallow_color.rgb, night_deep_color.rgb, smoothstep(0.05, 0.95, UV.y));\n\tvec3 wc = mix(dc, nc, clamp(night_amount, 0.0, 1.0));\n\twc += vec3(0.010, 0.030, 0.085) * cur * (1.0 - night_amount * 0.82);\n\twc += vec3(0.006, 0.018, 0.060) * rip * (1.0 - night_amount * 0.78);\n\tALBEDO = wc;\n\tALPHA = mix(mix(shallow_color.a, deep_color.a, smoothstep(0.0, 1.0, UV.y)), mix(night_shallow_color.a, night_deep_color.a, smoothstep(0.0, 1.0, UV.y)), night_amount);\n\tROUGHNESS = 0.18; METALLIC = 0.0; SPECULAR = 0.55;\n\tEMISSION = wc * mix(0.18, 0.015, night_amount);\n}"
-	var m := ShaderMaterial.new()
-	m.shader = s
-	_mat_cache["river_water"] = m
-	return m
+	var mat: ShaderMaterial = null
+	var tres = load("res://river_water.tres")
+	if tres is ShaderMaterial:
+		mat = (tres as ShaderMaterial).duplicate()
+		mat.set_shader_parameter("wave_height", 0.06)
+		mat.set_shader_parameter("wave_speed", 0.15)
+		mat.set_shader_parameter("wave_scale", 6.0)
+		mat.set_shader_parameter("flow_speed", 0.35)
+		mat.set_shader_parameter("foam_scale", 3.0)
+		mat.set_shader_parameter("foam_falloff_distance", 0.35)
+		mat.set_shader_parameter("night_amount", 0.0)
+		mat.set_shader_parameter("night_water_color", Color(0.012, 0.035, 0.060))
+	if mat == null:
+		var shader = load("res://water.gdshader")
+		if shader is Shader:
+			mat = ShaderMaterial.new()
+			mat.shader = shader
+			mat.set_shader_parameter("water_color", Color(0.08, 0.304, 0.5, 1.0))
+			mat.set_shader_parameter("use_vertex_waves", true)
+			mat.set_shader_parameter("wave_height", 1.0)
+			mat.set_shader_parameter("wave_speed", 0.01)
+			mat.set_shader_parameter("use_river_flow", true)
+			mat.set_shader_parameter("flow_speed", 0.1)
+			mat.set_shader_parameter("flow_direction_multiplier", -1.0)
+			mat.set_shader_parameter("uv1_scale", Vector2(20, 1))
+			mat.set_shader_parameter("use_foam", true)
+			mat.set_shader_parameter("foam_uv_scale", 0.5)
+			mat.set_shader_parameter("foam_scale", 6.0)
+			mat.set_shader_parameter("foam_speed", 0.2)
+			mat.set_shader_parameter("foam_falloff_distance", 0.1)
+			mat.set_shader_parameter("foam_edge_distance", 0.1)
+			mat.set_shader_parameter("foam_edge_bias", 1.0)
+			mat.set_shader_parameter("night_amount", 0.0)
+			mat.set_shader_parameter("night_water_color", Color(0.012, 0.035, 0.060))
+			mat.set_shader_parameter("double_sided", true)
+			mat.set_shader_parameter("surface_bottom", Color(0.045, 0.125, 0.170, 0.65))
+			mat.set_shader_parameter("depth_distance", 0.6)
+			mat.set_shader_parameter("water_color_ratio", 0.1)
+			mat.set_shader_parameter("beers_law", 1.0)
+			mat.set_shader_parameter("normal_scale", 1.0)
+			mat.set_shader_parameter("roughness_scale", 0.0)
+	_mat_cache["river_water"] = mat
+	return mat
 
 static func make_shader_sky_material() -> ShaderMaterial:
 	if not ResourceLoader.exists(REALISTIC_SKY_SHADER):

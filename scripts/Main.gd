@@ -849,7 +849,7 @@ var _river_water_cache_dirty := true
 func _update_water_night_amount() -> void:
 	if day_cycle == null:
 		return
-	var day_amount: float = clamp(sin((day_cycle.time_of_day - 6.0) / 15.0 * PI), 0.0, 1.0)
+	var day_amount: float = day_cycle.get_day_amount()
 	var night_amount := 1.0 - day_amount
 	if _river_water_cache_dirty:
 		_cached_river_water = get_tree().get_nodes_in_group("river_water")

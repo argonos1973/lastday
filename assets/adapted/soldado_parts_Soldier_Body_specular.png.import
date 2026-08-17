@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cl5qyujrnhrv4"
-path="res://.godot/imported/soldado_parts_Soldier_Body_specular.png-17f190f4ff539e66673879a0acda098b.ctex"
+path="res://.godot/imported/soldado_parts_Soldier_Body_specular.png-575ecc64073c11e1a757fd7519006cf9.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/adapted/soldado_parts_Soldier_Body_specular.png"
-dest_files=["res://.godot/imported/soldado_parts_Soldier_Body_specular.png-17f190f4ff539e66673879a0acda098b.ctex"]
+source_file="res://assets/characters/adapted/soldado_parts_Soldier_Body_specular.png"
+dest_files=["res://.godot/imported/soldado_parts_Soldier_Body_specular.png-575ecc64073c11e1a757fd7519006cf9.ctex"]
 
 [params]
 
