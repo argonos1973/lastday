@@ -201,6 +201,22 @@ static func collect_world_data(main: Node) -> Dictionary:
 	for fire_name in fire_timers.keys():
 		cf_timers[fire_name] = fire_timers[fire_name]
 	data["campfire_fire_timers"] = cf_timers
+	# Dead wildlife — persist corpses so they don't respawn alive
+	var dead_wildlife := []
+	for node in main.get_tree().get_nodes_in_group("wildlife"):
+		if node == null or not is_instance_valid(node):
+			continue
+		if node.get("_is_dead") == true:
+			dead_wildlife.append({
+				"name": node.name,
+				"type": node.get("animal_type"),
+				"pos": [node.global_position.x, node.global_position.y, node.global_position.z],
+				"rot": node.rotation.y,
+				"gutted": bool(node.get("_gutted")),
+				"health": float(node.get("health")),
+				"rot_timer": float(node.get("_rot_timer"))
+			})
+	data["dead_wildlife"] = dead_wildlife
 	return data
 
 static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
@@ -394,6 +410,40 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 	main._pending_open_doors = open_doors.duplicate()
 	if main.has_method("_apply_pending_doors"):
 		main._apply_pending_doors()
+	# Dead wildlife — mark existing animals as dead or skip respawn
+	var dead_wl = data.get("dead_wildlife", [])
+	for dw in dead_wl:
+		var dw_name := str(dw.get("name", ""))
+		var dw_type := str(dw.get("type", "wolf"))
+		var dw_gutted := bool(dw.get("gutted", false))
+		var dw_pos_raw = dw.get("pos", [0.0, 0.0, 0.0])
+		var dw_pos: Vector3
+		if dw_pos_raw is Array:
+			dw_pos = Vector3(float(dw_pos_raw[0]), float(dw_pos_raw[1]), float(dw_pos_raw[2]))
+		else:
+			dw_pos = dw_pos_raw
+		var dw_rot := float(dw.get("rot", 0.0))
+		# Find the animal by name in the current scene
+		var found := false
+		for node in main.get_tree().get_nodes_in_group("wildlife"):
+			if node == null or not is_instance_valid(node):
+				continue
+			if node.name == dw_name:
+				node.set("_is_dead", true)
+				node.set("_gutted", dw_gutted)
+				node.set("health", 0.0)
+				node.set("_rot_timer", float(dw.get("rot_timer", 300.0)))
+				node.global_position = dw_pos
+				node.rotation.y = dw_rot
+				if node.has_method("_lie_corpse_flat"):
+					node._lie_corpse_flat()
+				found = true
+				break
+		if not found:
+			# Store for post-wildlife-creation application
+			if "_pending_dead_wildlife" not in main:
+				main._pending_dead_wildlife = []
+			main._pending_dead_wildlife.append(dw)
 
 static func _color_to_str(c: Color) -> String:
 	return "%.4f,%.4f,%.4f" % [c.r, c.g, c.b]

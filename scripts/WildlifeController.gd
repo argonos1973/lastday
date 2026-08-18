@@ -122,6 +122,7 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		if health <= 0.0:
 			_is_dead = true
 			_hit_flash_timer = 2.0
+			_rot_timer = 300.0
 			if _animation_player != null:
 				_animation_player.stop()
 			_lie_corpse_flat()
@@ -242,16 +243,15 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		if animal_type == "wolf" and not _is_dead:
 			_update_wolf_sounds(delta)
-		if _is_dead and _gutted:
+		if _is_dead:
 			_rot_timer = max(0.0, _rot_timer - delta)
 			if _rot_timer <= 0.0:
 				_remove_corpse()
 		return
 	if _is_dead:
-		if _gutted:
-			_rot_timer = max(0.0, _rot_timer - delta)
-			if _rot_timer <= 0.0:
-				_remove_corpse()
+		_rot_timer = max(0.0, _rot_timer - delta)
+		if _rot_timer <= 0.0:
+			_remove_corpse()
 		return
 	if patrol_points.size() < 2:
 		return

@@ -63,6 +63,8 @@ var _lit_campfires: Array = []
 var _server_door_states: Dictionary = {}
 var _pending_open_doors: Array = []
 var _pending_restore_data: Array = []
+var _pending_dead_wildlife: Array = []
+var _dead_wildlife_names: Dictionary = {} # name -> true, for respawn check
 var _tree_id_counter := 0
 var _tree_registry: Array = [] # {pos, visual_name, id, active}
 var _tree_activation_radius := 10.0
@@ -438,6 +440,7 @@ func _ready() -> void:
 	_apply_pending_doors()
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
+	_apply_pending_dead_wildlife()
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()
@@ -1061,7 +1064,6 @@ func _create_player() -> void:
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
-		print("[SPAWN] Player pending spawn position: ", _pending_spawn_pos)
 		_has_pending_spawn_pos = false
 
 #endregion
@@ -1297,7 +1299,6 @@ var _has_pending_spawn_pos := false
 
 func _apply_net_spawn_pos(pos: Vector3) -> void:
 	_has_received_spawn_pos = true
-	print("[SPAWN] Net spawn pos received: ", pos)
 	if player != null:
 		player.global_position = pos
 	else:
@@ -2920,7 +2921,7 @@ func _create_map() -> void:
 		await get_tree().process_frame
 		if _loading_label != null:
 			_loading_label.text = "Generando fauna..."
-		_create_wildlife()
+		await _create_wildlife()
 		await get_tree().process_frame
 	if not is_server:
 		_flush_grass_batches()
@@ -3153,14 +3154,11 @@ func _register_server_house_blockers() -> void:
 func _create_barn(origin: Vector3) -> void:
 	var barn_path := BARN_MODEL
 	if not MaterialFactory.resource_path_exists(barn_path):
-		print("[BARN] Model not found: ", barn_path)
 		return
 	var ground_y := _get_exact_ground_y(origin.x, origin.z)
-	print("[BARN] Ground Y: ", ground_y, " origin: ", origin)
 	# Load the scene resource
 	var scene_resource = _get_external_scene_resource(barn_path)
 	if scene_resource == null:
-		print("[BARN] Failed to load scene resource")
 		return
 	var instance: Node = null
 	if scene_resource is PackedScene:
@@ -3168,7 +3166,6 @@ func _create_barn(origin: Vector3) -> void:
 	elif scene_resource is Node3D:
 		instance = (scene_resource as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION)
 	if not (instance is Node3D):
-		print("[BARN] Instance is not Node3D")
 		return
 	var node := instance as Node3D
 	# Strip display props (turntable, lights, etc.)
@@ -3181,7 +3178,6 @@ func _create_barn(origin: Vector3) -> void:
 	_collect_collision_nodes(node, _col_check)
 	pre_collision_count = _col_check.size()
 	if pre_collision_count > 0:
-		print("[BARN] Removing ", pre_collision_count, " baked collision nodes")
 		_remove_collision_from_node(node)
 	node.name = "OldWoodenBarn"
 	node.add_to_group("world_action_visual")
@@ -3207,9 +3203,7 @@ func _create_barn(origin: Vector3) -> void:
 		else:
 			combined = combined.merge(world_aabb)
 	if first:
-		print("[BARN] No meshes found")
 		return
-	print("[BARN] AABB at scale 1: pos=", combined.position, " size=", combined.size)
 	# Collect individual mesh bottom Y values to find the "visible bottom"
 	# (exclude underground/foundation meshes that pull the AABB down)
 	var mesh_bottoms: Array = []
@@ -3222,7 +3216,6 @@ func _create_barn(origin: Vector3) -> void:
 	mesh_bottoms.sort()
 	# Use the 25th percentile bottom Y as the "visible bottom" to avoid outliers
 	var visible_bottom_y: float = mesh_bottoms[mesh_bottoms.size() / 4]
-	print("[BARN] Visible bottom Y (25th pct): ", visible_bottom_y, " min: ", mesh_bottoms[0])
 	# Scale to ~8m wide (uniform) - smaller barn
 	var target_w := 8.0
 	var uniform_scale := target_w / combined.size.x
@@ -3239,7 +3232,6 @@ func _create_barn(origin: Vector3) -> void:
 		origin.z - scaled_center_xz.y
 	)
 	node.force_update_transform()
-	print("[BARN] Scale: ", uniform_scale, " pos: ", node.global_position)
 	# Verify final AABB
 	var meshes2 := []
 	NodeUtils.collect_mesh_instances(node, meshes2)
@@ -3257,7 +3249,6 @@ func _create_barn(origin: Vector3) -> void:
 		else:
 			combined2 = combined2.merge(wa)
 	if not first2:
-		print("[BARN] Final AABB: pos=", combined2.position, " size=", combined2.size)
 	# Create wall collision boxes with door opening (no convex collision on interior)
 	var barn_w := combined2.size.x
 	var barn_d := combined2.size.z
@@ -3350,14 +3341,12 @@ func _raycast_find_door(origin: Vector3, wall_z: float, ground_y: float, half_w:
 		if r_w > best_w:
 			best_w = r_w
 			best_cx = r_cx
-	print("[BARN-RAY] wall_z=", wall_z, " runs=", runs.size(), " best_cx=", best_cx, " best_w=", best_w)
 	return Vector2(best_cx, best_w)
 
 func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w: float, barn_d: float, barn_h: float, half_w: float, half_d: float, front_z: float, back_z: float, wall_thickness: float, wall_height: float, door_width: float, door_height: float) -> void:
 	# Raycast from inside to find actual door openings
 	var front_door := _raycast_find_door(origin, front_z, ground_y, half_w, door_height)
 	var back_door := _raycast_find_door(origin, back_z, ground_y, half_w, door_height)
-	print("[BARN-RAY] front=", front_door, " back=", back_door)
 	var front_door_x: float = origin.x
 	var front_door_w: float = door_width
 	var back_door_x: float = origin.x
@@ -3368,7 +3357,6 @@ func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w
 	if back_door.y > 0.8:
 		back_door_x = back_door.x
 		back_door_w = back_door.y
-	print("[BARN] Final door positions: front=", front_door_x, " w=", front_door_w, " back=", back_door_x, " w=", back_door_w)
 	# Remove temporary convex collision from all meshes
 	_remove_collision_from_node(node)
 	# Add convex collision to small interior meshes, skipping door zones
@@ -3496,7 +3484,6 @@ func _find_largest_gap(x_points: Array, min_x: float, max_x: float) -> Vector2:
 	if x_points.size() < 2:
 		return Vector2((min_x + max_x) * 0.5, 3.0)
 	x_points.sort()
-	# Debug: print unique X points
 	var pstr := ""
 	var last_x := -9999.0
 	for i in range(x_points.size()):
@@ -3504,7 +3491,6 @@ func _find_largest_gap(x_points: Array, min_x: float, max_x: float) -> Vector2:
 		if xv - last_x > 0.05:
 			pstr += str(snapped(xv, 0.1)) + " "
 			last_x = xv
-	print("[BARN] X points(", x_points.size(), "): ", pstr)
 	var max_gap := 0.0
 	var gap_center := (min_x + max_x) * 0.5
 	for i in range(x_points.size() - 1):
@@ -3514,7 +3500,6 @@ func _find_largest_gap(x_points: Array, min_x: float, max_x: float) -> Vector2:
 		if gap > max_gap:
 			max_gap = gap
 			gap_center = (a + b) * 0.5
-	print("[BARN] Largest gap=", max_gap, " center=", gap_center)
 	if max_gap > 0.5:
 		return Vector2(gap_center, max_gap)
 	return Vector2((min_x + max_x) * 0.5, 3.0)
@@ -3812,7 +3797,6 @@ func _find_flat_area_for_tent() -> Vector3:
 		# Fallback: no flat area found, use least bad
 		best_pos = Vector3(200.0, 0, 200.0)
 	_military_tent_pos = best_pos
-	print("[TENT] Placed at flat area: ", best_pos, " max_diff=", best_score)
 	return best_pos
 
 func _create_world_details() -> void:
@@ -4015,17 +3999,32 @@ func _check_wildlife_respawn() -> void:
 	var alive_deer := 0
 	var alive_fox := 0
 	var alive_wolf := 0
+	var dead_deer := 0
+	var dead_fox := 0
+	var dead_wolf := 0
 	for node in get_tree().get_nodes_in_group("wildlife"):
-		if node is WildlifeController and not node._is_dead:
-			match node.animal_type:
-				"deer":
-					alive_deer += 1
-				"fox":
-					alive_fox += 1
-				"wolf":
-					alive_wolf += 1
-	# Respawn one animal at a time, prioritizing the most depleted species
-	if alive_wolf < 12 and alive_wolf <= alive_fox and alive_wolf <= alive_deer:
+		if node is WildlifeController:
+			if node._is_dead:
+				match node.animal_type:
+					"deer":
+						dead_deer += 1
+					"fox":
+						dead_fox += 1
+					"wolf":
+						dead_wolf += 1
+			else:
+				match node.animal_type:
+					"deer":
+						alive_deer += 1
+					"fox":
+						alive_fox += 1
+					"wolf":
+						alive_wolf += 1
+	# Respawn only if total (alive + dead) is below max — dead animals persist as corpses
+	var total_wolf := alive_wolf + dead_wolf
+	var total_deer := alive_deer + dead_deer
+	var total_fox := alive_fox + dead_fox
+	if total_wolf < 12 and total_wolf <= total_fox and total_wolf <= total_deer:
 		var center := Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		for _retry in range(30):
 			if not _is_near_wildlife_blocker(center, 5.0):
@@ -4033,10 +4032,10 @@ func _check_wildlife_respawn() -> void:
 			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
 		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 16, 40.0, 80.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
-	elif alive_deer < 12 and alive_deer <= alive_fox:
+	elif total_deer < 12 and total_deer <= total_fox:
 		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(50.0, 175.0), randf() * TAU, 10, 7.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
-	elif alive_fox < 10:
+	elif total_fox < 10:
 		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 14, 35.0, 70.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
@@ -4057,6 +4056,35 @@ func _create_wildlife_animal(kind: String, points: Array) -> void:
 	_animal_id_counter += 1
 	add_child(animal)
 	animal.setup(kind, points)
+
+func _apply_pending_dead_wildlife() -> void:
+	if _pending_dead_wildlife.is_empty():
+		return
+	for dw in _pending_dead_wildlife:
+		var dw_name := str(dw.get("name", ""))
+		var dw_gutted := bool(dw.get("gutted", false))
+		var dw_pos_raw = dw.get("pos", [0.0, 0.0, 0.0])
+		var dw_pos: Vector3
+		if dw_pos_raw is Array:
+			dw_pos = Vector3(float(dw_pos_raw[0]), float(dw_pos_raw[1]), float(dw_pos_raw[2]))
+		else:
+			dw_pos = dw_pos_raw
+		var dw_rot := float(dw.get("rot", 0.0))
+		for node in get_tree().get_nodes_in_group("wildlife"):
+			if node == null or not is_instance_valid(node):
+				continue
+			if node.name == dw_name:
+				node.set("_is_dead", true)
+				node.set("_gutted", dw_gutted)
+				node.set("health", 0.0)
+				node.set("_rot_timer", float(dw.get("rot_timer", 300.0)))
+				node.global_position = dw_pos
+				node.rotation.y = dw_rot
+				if node.has_method("_lie_corpse_flat"):
+					node._lie_corpse_flat()
+				_dead_wildlife_names[dw_name] = true
+				break
+	_pending_dead_wildlife.clear()
 
 #endregion
 
@@ -4199,9 +4227,8 @@ func _create_house_loot() -> void:
 			if template.get("rare", false) and _world_rng.randf() > 0.50:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
-			loot_data["id"] = "house_loot_%d" % loot_idx
-			loot_idx += 1
 			loot_data["pos"] = _find_pos_inside_house(origin, half_w, half_d)
+			loot_data["id"] = "house_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
 			_create_pickup_item(loot_data)
 	# Barn loot — more items, barn-specific pool
 	var barn_loot_pool := [
@@ -4223,9 +4250,8 @@ func _create_house_loot() -> void:
 		if template.get("rare", false) and _world_rng.randf() > 0.40:
 			template = barn_loot_pool[_world_rng.randi() % barn_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
-		loot_data["id"] = "barn_loot_%d" % loot_idx
-		loot_idx += 1
 		loot_data["pos"] = _find_pos_inside_house(barn_origin, barn_half_w, barn_half_d)
+		loot_data["id"] = "barn_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
 		_create_pickup_item(loot_data)
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
@@ -4254,10 +4280,9 @@ func _create_house_loot() -> void:
 	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
 	# Guarantee rifle spawn in tent
 	var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
-	rifle_data["id"] = "tent_loot_%d" % loot_idx
-	loot_idx += 1
 	rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	rifle_data["pos"].y = tent_ground_y + 0.06
+	rifle_data["id"] = "tent_loot_%d_%d" % [int(round(rifle_data["pos"].x)), int(round(rifle_data["pos"].z))]
 	_create_pickup_item(rifle_data)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
@@ -4268,20 +4293,18 @@ func _create_house_loot() -> void:
 		clothing_indices.remove_at(gi)
 	for gidx in guaranteed_clothing:
 		var g_data: Dictionary = tent_loot_pool[gidx].duplicate()
-		g_data["id"] = "tent_loot_%d" % loot_idx
-		loot_idx += 1
 		g_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		g_data["pos"].y = tent_ground_y + 0.06
+		g_data["id"] = "tent_loot_%d_%d" % [int(round(g_data["pos"].x)), int(round(g_data["pos"].z))]
 		_create_pickup_item(g_data)
 	# Additional random items
 	var tent_num_items := 2 + _world_rng.randi() % 3
 	for _j in range(tent_num_items):
 		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
-		loot_data["id"] = "tent_loot_%d" % loot_idx
-		loot_idx += 1
 		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		loot_data["pos"].y = tent_ground_y + 0.06
+		loot_data["id"] = "tent_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
 		_create_pickup_item(loot_data)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
@@ -4586,8 +4609,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_weight", weight)
 	action.set_meta("item_quantity", qty)
 	action.set_meta("item_use_value", use_value)
-	# On server: persist the pickup so it survives client disconnects and syncs to new clients
-	if net != null and net.is_dedicated_server:
+	# Persist the pickup so it survives save/load and syncs to new clients
+	if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
 		_dropped_items.append({
 			"id": id,
 			"name": item_name,
@@ -4703,6 +4726,8 @@ func handle_world_action(action, actor) -> void:
 			t.timeout.connect(func():
 				_hide_action_visual(action_ref)
 				action_ref.mark_depleted()
+				if not _depleted_action_ids.has(gut_action_id):
+					_depleted_action_ids.append(gut_action_id)
 				_save_world_change_silent()
 				if net != null and net.is_connected and not net.is_host:
 					net.world_action_completed.rpc_id(1, gut_action_id, gut_spawns, "", Vector3.ZERO)
@@ -4829,6 +4854,8 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 				_hide_action_visual(action)
 				action.mark_depleted()
+				if not _depleted_action_ids.has(action.action_id):
+					_depleted_action_ids.append(action.action_id)
 				_save_world_change_silent()
 				_net_notify_pickup(action)
 			else:
@@ -5076,6 +5103,8 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(2.0, 0.06, 0.1), 1.2, 1, 0.0, log4_id)
 			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
 			action.mark_depleted()
+			if not _depleted_action_ids.has(action.action_id):
+				_depleted_action_ids.append(action.action_id)
 			_save_world_change_silent()
 			var tree_spawns: Array = [
 				{"id": log1_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.0, 0.06, 0.3), "weight": 1.2, "qty": 1, "use": 0.0},
@@ -5110,6 +5139,8 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0, stick3_id)
 			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
 			action.mark_depleted()
+			if not _depleted_action_ids.has(action.action_id):
+				_depleted_action_ids.append(action.action_id)
 			_save_world_change_silent()
 			var bush_spawns: Array = [
 				{"id": stick1_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(0.3, 0.06, 0.0), "weight": 0.3, "qty": 1, "use": 0.0},
@@ -5141,6 +5172,8 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0, clog3_id)
 			actor.notice.emit("Cortas el tronco en troncos mas pequenos. Recogelos del suelo.")
 			action.mark_depleted()
+			if not _depleted_action_ids.has(action.action_id):
+				_depleted_action_ids.append(action.action_id)
 			var cutlog_spawns: Array = [
 				{"id": clog1_id, "name": "Tronco", "type": "resource", "pos": log_pos + Vector3(0.3, 0.06, 0.0), "weight": 1.2, "qty": 1, "use": 0.0},
 				{"id": clog2_id, "name": "Tronco", "type": "resource", "pos": log_pos + Vector3(-0.3, 0.06, 0.2), "weight": 1.2, "qty": 1, "use": 0.0},
@@ -5182,6 +5215,8 @@ func handle_world_action(action, actor) -> void:
 			_build_player_cabin(action.position)
 			actor.notice.emit("Levantas una cabana basica. Ya tienes un refugio propio.")
 			action.mark_depleted()
+			if not _depleted_action_ids.has(action.action_id):
+				_depleted_action_ids.append(action.action_id)
 			_save_world_change_silent()
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
@@ -5217,6 +5252,8 @@ func handle_world_action(action, actor) -> void:
 			# Remove the world action
 			_hide_action_visual(action)
 			action.mark_depleted()
+			if not _depleted_action_ids.has(sh_id):
+				_depleted_action_ids.append(sh_id)
 			world_actions_by_id.erase(sh_id)
 			_save_world_change_silent()
 			actor.notice.emit("Desmontas el refugio. Recuperas 11 palos.")
@@ -5793,8 +5830,9 @@ func _create_rocky_foothills() -> void:
 func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave: bool) -> void:
 	var base_color := Color(0.28, 0.26, 0.22)
 	var rock_texture := POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
-	_boulder_id_counter += 1
-	var boulder_id := _boulder_id_counter
+	var boulder_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+	if boulder_id < 0:
+		boulder_id = -boulder_id
 	var main_name := "GiantBoulder_%d" % boulder_id
 	# Lóbulo principal
 	_create_textured_visual_sphere(main_name, pos + Vector3(0, scale_value.y * 0.45, 0), scale_value, rock_texture, base_color)
@@ -7612,6 +7650,12 @@ func _activate_tree(entry: Dictionary) -> void:
 	# Skip trees that were already cut (from save)
 	if _depleted_action_ids.has(action_id):
 		entry.active = true
+		# Hide the tree visual and replace with stump
+		var visual_name: String = entry.visual_name
+		var tree_node := get_node_or_null(visual_name)
+		if tree_node != null:
+			tree_node.visible = false
+		_create_cut_tree_remains(entry.pos)
 		return
 	var visual_name: String = entry.visual_name
 	var collision_name := visual_name + "_Collision"
@@ -7649,8 +7693,9 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
-	_tree_id_counter += 1
-	var tree_id := _tree_id_counter
+	var tree_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+	if tree_id < 0:
+		tree_id = -tree_id
 	var visual_name := "Tree_%d" % tree_id
 	var collision_name := visual_name + "_Collision"
 	var made_visual := false
@@ -8131,8 +8176,10 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos):
 		return
-	_bush_id_counter += 1
-	var visual_name := "Bush_%d" % _bush_id_counter
+	var bush_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+	if bush_id < 0:
+		bush_id = -bush_id
+	var visual_name := "Bush_%d" % bush_id
 	var made_visual := false
 	var meta_names := ""
 	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_BUSH_MODELS), visual_name, pos, Vector3.ONE * _world_rng.randf_range(radius * 0.22, radius * 0.42), Vector3(0, _world_rng.randf_range(0, 360), 0), true, pos.y):
@@ -8157,7 +8204,7 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 		meta_names = visual_name + "_Core|" + visual_name + "_LobeA|" + visual_name + "_LobeB"
 		made_visual = true
 	if made_visual:
-		var action = _create_world_action("fell_bush_%d" % _bush_id_counter, "fell_bush", "Arbusto", pos, Vector3(1.4, 1.2, 1.4), Color(0.08, 0.14, 0.05), false, false)
+		var action = _create_world_action("fell_bush_%d" % bush_id, "fell_bush", "Arbusto", pos, Vector3(1.4, 1.2, 1.4), Color(0.08, 0.14, 0.05), false, false)
 		action.set_meta("visual_name", meta_names)
 
 func _create_cutout_plant(node_name: String, pos: Vector3, height: float, texture_path: String, alpha_path: String, width_factor: float) -> bool:
@@ -8872,7 +8919,6 @@ func _add_convex_collision_to_meshes(root: Node) -> void:
 func _add_convex_collision_to_small_meshes(root: Node, max_dim: float = 3.5, door_zones: Array = []) -> void:
 	var meshes: Array = []
 	NodeUtils.collect_mesh_instances(root, meshes)
-	print("[BARN-COL] Found ", meshes.size(), " meshes, max_dim=", max_dim)
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
 		if mesh_instance.mesh == null:
@@ -8880,7 +8926,6 @@ func _add_convex_collision_to_small_meshes(root: Node, max_dim: float = 3.5, doo
 		var aabb := mesh_instance.get_aabb()
 		mesh_instance.force_update_transform()
 		var world_aabb: AABB = mesh_instance.global_transform * aabb
-		print("[BARN-COL] Mesh: ", mesh_instance.name, " world_size=", world_aabb.size, " world_pos=", world_aabb.position)
 		# Use WORLD AABB size for filtering - rotated meshes can have small local AABB but large world AABB
 		if world_aabb.size.x < max_dim and world_aabb.size.z < max_dim:
 			# Skip meshes whose CENTER is within a door zone (keeps door entrance clear)
@@ -8901,10 +8946,8 @@ func _add_convex_collision_to_small_meshes(root: Node, max_dim: float = 3.5, doo
 					in_door_zone = true
 					break
 			if in_door_zone:
-				print("[BARN-COL]   -> SKIPPED (in door zone)")
 				continue
 			mesh_instance.create_convex_collision()
-			print("[BARN-COL]   -> ADDED collision")
 			# Add to prop_collision group so ground raycast ignores it
 			if mesh_instance.get_child_count() > 0:
 				var col: Node = mesh_instance.get_child(0)

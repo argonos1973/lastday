@@ -9,6 +9,7 @@ class_name WorldAction
 @export var action_state := ""
 @export var growth := 0.0
 @export var grow_time := 45.0
+var _rot_timer := 0.0
 
 var _mesh_instance: MeshInstance3D
 var _collision: CollisionShape3D
@@ -65,12 +66,20 @@ func set_crop_state(state: String, new_growth := 0.0) -> void:
 	_update_crop_visual()
 
 func tick_growth(delta: float) -> void:
-	if action_type != "farm_plot" or action_state != "planted":
-		return
-	growth += delta
-	if growth >= grow_time:
-		action_state = "ready"
-		_update_crop_visual()
+	if action_type == "farm_plot" and action_state == "planted":
+		growth += delta
+		if growth >= grow_time:
+			action_state = "ready"
+			_update_crop_visual()
+	if action_type == "wolf_meat_raw" or action_type == "deer_meat_raw" or action_type == "fox_meat_raw":
+		if _rot_timer <= 0.0:
+			_rot_timer = 600.0
+		_rot_timer = max(0.0, _rot_timer - delta)
+		if _rot_timer <= 0.0:
+			var main := get_tree().current_scene
+			if main != null and "world_actions_by_id" in main:
+				main.world_actions_by_id.erase(action_id)
+			queue_free()
 
 func get_interaction_text(_player = null) -> String:
 	if action_type == "farm_plot":

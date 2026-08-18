@@ -2223,7 +2223,6 @@ func _collect_lights(node: Node, result: Array) -> void:
 		_collect_lights(child, result)
 
 func equip_backpack(item_name: String) -> void:
-	print("[BP] equip_backpack: ", item_name, " prev: ", equipped_backpack)
 	equipped_backpack = item_name
 	_recalculate_carry_capacity()
 	_sync_held_item()
@@ -2543,10 +2542,8 @@ func _update_hand_socket() -> void:
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
-		print("[TORCH] EARLY RETURN: skel=", _hand_skeleton, " bone_idx=", _left_hand_bone_idx)
 		return
 	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(_torch_hand_root):
-		print("[TORCH] EARLY RETURN: invalid instance")
 		return
 	var bone_pose := _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
 	var skel_global := _hand_skeleton.global_transform
@@ -4433,7 +4430,6 @@ func _sync_third_person_equipment(held_item) -> void:
 			third_person_back_item_root.remove_child(child)
 			child.free()
 	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
-	print("[BP] sync: equip_has_bp=", equip_has_bp, " eq_bp_set=", eq_bp_set, " inv_null=", inventory == null, " children=", third_person_back_item_root.get_child_count())
 	if inventory != null and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
 	# Rifle on back: check if rifle is in inventory but not held in hands
@@ -4526,10 +4522,8 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 
 func _build_third_person_backpack() -> void:
-	print("[BP] _build_third_person_backpack called")
 	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
 	if bp_node == null:
-		print("[BP] bp_node is NULL")
 		return
 	var raw_aabb := _hierarchy_local_aabb(bp_node)
 	if raw_aabb.size.y <= 0.0001 or raw_aabb.size.x <= 0.0001 or raw_aabb.size.z <= 0.0001:
@@ -6592,7 +6586,6 @@ func _load_torch_animations() -> void:
 	for anim_name in torch_anims:
 		var fbx_path: String = torch_anims[anim_name]
 		if not ResourceLoader.exists(fbx_path):
-			print("[TORCH-ANIM] FBX not found: ", fbx_path)
 			continue
 		var loaded = load(fbx_path)
 		if loaded is PackedScene:
@@ -6628,7 +6621,6 @@ func _load_torch_animations() -> void:
 									resolved_count += 1
 								else:
 									unresolved_count += 1
-						print("[TORCH-ANIM] ", anim_name, " tracks_before=", track_count_before, " resolved=", resolved_count, " unresolved=", unresolved_count, " length=", best_length)
 						# Torch GLBs have a different skeleton (mixamorig5_) with different rest pose
 						# and scale, so always retarget rotations using the source skeleton and remove position tracks
 						_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
@@ -6637,7 +6629,6 @@ func _load_torch_animations() -> void:
 						_smooth_loop_boundary(copied)
 						torch_lib.add_animation(anim_name, copied)
 				else:
-					print("[TORCH-ANIM] No AnimationPlayer found in ", fbx_path)
 				instance.queue_free()
 	if torch_lib.get_animation_list().size() > 0:
 		third_person_animation_player.add_animation_library("torch", torch_lib)
@@ -7226,8 +7217,66 @@ func _shoot_rifle() -> void:
 			var my_id: int = net_node.get_my_id()
 			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
 	if result.is_empty():
+		# Fallback: check for wildlife along the ray path (Area3D hitboxes may not be detected)
+		var wl := _find_wildlife_along_ray(ray_origin, ray_dir, RIFLE_RANGE)
+		if not wl.is_empty():
+			_apply_rifle_damage(wl["node"], ray_origin + ray_dir * wl["dist"], wl["dist"])
 		return
-	_apply_rifle_damage(result["collider"], hit_pos, hit_dist)
+	# Check if the raycast hit a wildlife entity by walking up the tree
+	var hit_collider = result["collider"]
+	var hit_is_wildlife := false
+	if hit_collider is Node3D:
+		var walked: Node = hit_collider
+		while walked != null:
+			if walked == self:
+				break
+			if walked.has_method("take_damage") and walked.is_in_group("wildlife"):
+				hit_is_wildlife = true
+				break
+			walked = walked.get_parent()
+	if not hit_is_wildlife:
+		# Fallback: check for wildlife along the full ray path (not just to hit point)
+		# The raycast may hit ground/terrain before reaching a distant animal because
+		# the weapon origin is lower than the camera, but the player is aiming at the animal.
+		var wl := _find_wildlife_along_ray(ray_origin, ray_dir, RIFLE_RANGE)
+		if not wl.is_empty():
+			_apply_rifle_damage(wl["node"], ray_origin + ray_dir * wl["dist"], wl["dist"])
+			return
+	_apply_rifle_damage(hit_collider, hit_pos, hit_dist)
+
+func _find_wildlife_along_ray(ray_origin: Vector3, ray_dir: Vector3, max_dist: float) -> Dictionary:
+	var closest_wildlife: Node = null
+	var closest_along: float = 0.0
+	var closest_perp: float = INF
+	# Use XZ-plane for perpendicular distance check since animals are at ground level (y=0)
+	# but the ray originates from camera height (~1.7m)
+	var ray_origin_xz := Vector2(ray_origin.x, ray_origin.z)
+	var ray_dir_xz := Vector2(ray_dir.x, ray_dir.z).normalized()
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == null or not is_instance_valid(w):
+			continue
+		if w == self:
+			continue
+		if not w.has_method("take_damage"):
+			continue
+		if w.get("_is_dead") == true:
+			continue
+		var w_pos: Vector3 = w.global_position
+		# Project onto XZ plane for along-ray and perpendicular distance
+		var to_w_xz := Vector2(w_pos.x, w_pos.z) - ray_origin_xz
+		var along_xz: float = to_w_xz.dot(ray_dir_xz)
+		if along_xz < 0.0 or along_xz > max_dist:
+			continue
+		var closest_pt_xz := ray_origin_xz + ray_dir_xz * along_xz
+		var perp_xz: float = Vector2(w_pos.x, w_pos.z).distance_to(closest_pt_xz)
+		# 2.0m threshold on XZ plane to account for animal body width
+		if perp_xz < 2.0 and perp_xz < closest_perp:
+			closest_wildlife = w
+			closest_along = along_xz
+			closest_perp = perp_xz
+	if closest_wildlife != null:
+		return {"node": closest_wildlife, "dist": closest_along, "perp": closest_perp}
+	return {}
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
 	# Damage: lethal at close range, falloff at long range
