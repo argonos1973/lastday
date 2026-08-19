@@ -319,8 +319,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	# Sync held item
 	if player.has_method("_sync_held_item"):
 		player._sync_held_item()
-	# State flags
-	player.is_sleeping = bool(data.get("sleeping", false))
+	# State flags — don't restore sleeping to prevent being stuck on load
+	player.is_sleeping = false
 	player.is_sitting = bool(data.get("sitting", false))
 	player.is_prone = bool(data.get("prone", false))
 	player.is_crouching = bool(data.get("crouching", false))
