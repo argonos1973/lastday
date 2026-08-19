@@ -1963,7 +1963,13 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 	var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
 	if mi != null:
 		mi.visible = worn
-		if worn and (cfg.has("tint") or cfg.has("camo")):
+		if worn and loot_color.a > 0.0:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = loot_color
+			mat.roughness = 0.85
+			mat.metallic = 0.0
+			mi.material_override = mat
+		elif worn and (cfg.has("tint") or cfg.has("camo")):
 			var mat := StandardMaterial3D.new()
 			mat.roughness = 0.85
 			mat.metallic = 0.0
@@ -1972,12 +1978,6 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 				mat.albedo_color = Color.WHITE
 			else:
 				mat.albedo_color = cfg["tint"]
-			mi.material_override = mat
-		elif worn and loot_color.a > 0.0:
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = loot_color
-			mat.roughness = 0.85
-			mat.metallic = 0.0
 			mi.material_override = mat
 		elif worn:
 			mi.material_override = null
@@ -2056,22 +2056,22 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 		item_center.y = item.position.y
 	node.position += anchor - item_center
 	node.position += cfg.get("offset", Vector3.ZERO)
-	if cfg.has("tint"):
+	if loot_color.a > 0.0:
+		var meshes2: Array = []
+		_collect_mesh_instances(node, meshes2)
+		for mi in meshes2:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = loot_color
+			mat.roughness = 0.9
+			mat.metallic = 0.0
+			mi.material_override = mat
+	elif cfg.has("tint"):
 		var tint: Color = cfg["tint"]
 		var meshes: Array = []
 		_collect_mesh_instances(node, meshes)
 		for mi in meshes:
 			var mat := StandardMaterial3D.new()
 			mat.albedo_color = tint
-			mat.roughness = 0.9
-			mat.metallic = 0.0
-			mi.material_override = mat
-	elif loot_color.a > 0.0:
-		var meshes2: Array = []
-		_collect_mesh_instances(node, meshes2)
-		for mi in meshes2:
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = loot_color
 			mat.roughness = 0.9
 			mat.metallic = 0.0
 			mi.material_override = mat
@@ -4173,6 +4173,13 @@ func craft_recipe(recipe: Dictionary) -> void:
 	if out["type"] == "shelter":
 		_craft_shelter()
 		return
+	# Unequip any clothing items that will be consumed by this recipe
+	for input_name in recipe["inputs"]:
+		if CLOTHING_SLOTS.has(input_name):
+			for sk in _equipped_slots.keys():
+				if str(_equipped_slots[sk]) == input_name:
+					unequip_clothing(input_name)
+					break
 	if not CraftingSystemScript.craft(recipe, inventory):
 		notice.emit("No tienes los materiales necesarios.")
 		return
@@ -6519,7 +6526,20 @@ func _toggle_flashlight() -> void:
 			notice.emit("Antorcha apagada.")
 			return
 		if not inventory.has_item_name("Cerillas"):
-			notice.emit("Necesitas cerillas para encender la antorcha.")
+			if not inventory.has_item_name("Palo", 2):
+				notice.emit("Necesitas cerillas o 2 palos para encender la antorcha.")
+				return
+			inventory.consume_item_name("Palo", 2)
+			inventory.changed.emit()
+			play_action_animation("forage", 8.0)
+			notice.emit("Frotando palos para encender antorcha... (8s)")
+			var _hud := get_parent().get_node_or_null("HUD")
+			if _hud != null and _hud.has_method("show_countdown"):
+				_hud.show_countdown("Encendiendo antorcha con palos", 8.0)
+			await get_tree().create_timer(8.0).timeout
+			torch_light.visible = true
+			held.set_meta("torch_lit", true)
+			notice.emit("Antorcha encendida frotando palos.")
 			return
 		inventory.consume_item_name("Cerillas", 1)
 		inventory.changed.emit()
@@ -6629,7 +6649,8 @@ func _load_torch_animations() -> void:
 						_smooth_loop_boundary(copied)
 						torch_lib.add_animation(anim_name, copied)
 				else:
-				instance.queue_free()
+					pass
+			instance.queue_free()
 	if torch_lib.get_animation_list().size() > 0:
 		third_person_animation_player.add_animation_library("torch", torch_lib)
 		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION):

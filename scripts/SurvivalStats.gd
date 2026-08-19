@@ -20,6 +20,7 @@ var sick_timer := 0.0
 var dead := false
 var hot_food_charges := 0
 var hot_food_temp_bonus := 0.0
+var survival_seconds := 0.0
 
 var hunger_decay := 0.12
 var thirst_decay := 0.22
@@ -47,6 +48,7 @@ func consume_water(value: float) -> void:
 func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false) -> void:
 	if dead:
 		return
+	survival_seconds += delta
 	var sleep_factor := 0.3 if sleeping else 1.0
 	var sprint_multiplier := 3.0 if sprinting else 1.0
 	var move_multiplier := 2.0 if moving else 1.0
@@ -141,6 +143,18 @@ func do_sleep(hours: float) -> void:
 		health = min(max_stat, health + 8.0 * hours)
 	changed.emit()
 
+func get_survival_days() -> int:
+	return int(survival_seconds / 86400.0)
+
+func get_survival_time_text() -> String:
+	var total_hours := int(survival_seconds / 3600.0)
+	var days := total_hours / 24
+	var hours := total_hours % 24
+	var minutes := int(fmod(survival_seconds, 3600.0) / 60.0)
+	if days > 0:
+		return "Dia %d - %02d:%02d" % [days + 1, hours, minutes]
+	return "Dia 1 - %02d:%02d" % [hours, minutes]
+
 func get_sick(duration: float) -> void:
 	sick = true
 	sick_timer = max(sick_timer, duration)
@@ -169,6 +183,7 @@ func to_dict() -> Dictionary:
 		"sick_timer": sick_timer,
 		"hot_food_charges": hot_food_charges,
 		"hot_food_temp_bonus": hot_food_temp_bonus,
+		"survival_seconds": survival_seconds,
 		"dead": dead
 	}
 
@@ -186,5 +201,6 @@ func from_dict(data: Dictionary) -> void:
 	sick_timer = float(data.get("sick_timer", 0.0))
 	hot_food_charges = int(data.get("hot_food_charges", 0))
 	hot_food_temp_bonus = float(data.get("hot_food_temp_bonus", 0.0))
+	survival_seconds = float(data.get("survival_seconds", 0.0))
 	dead = bool(data.get("dead", health <= 0.0))
 	changed.emit()

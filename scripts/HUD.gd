@@ -2,9 +2,12 @@ extends CanvasLayer
 class_name HUD
 
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
+const HudIconScript = preload("res://scripts/HudIcon.gd")
+const ItemThumbnail3DScript = preload("res://scripts/ItemThumbnail3D.gd")
 
 var player
 var day_cycle
+var main_node = null
 var _damage_overlay: ColorRect = null
 var _damage_flash: float = 0.0
 var _prev_health: float = 100.0
@@ -14,14 +17,15 @@ var status_panel: PanelContainer
 var inventory_panel: PanelContainer
 var inventory_grid: GridContainer
 var inventory_weight_label: Label
-var time_label: Label
 var real_clock_label: Label
-var weather_label: Label
+var survival_label: Label
+var temp_label: Label
 var _weather_timer := 0.0
 var _weather_http: HTTPRequest
 var _real_temp := "--"
 var _real_temp_parsed := -999.0
 var _weather_loading := false
+var _weather_retry_timer := 0.0
 var prompt_label: Label
 var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
@@ -38,24 +42,23 @@ var countdown_label: Label = null
 var countdown_timer := 0.0
 var countdown_total := 0.0
 var countdown_text := ""
-var status_bars := {}
-var stamina_bar: ProgressBar = null
-var stamina_label: Label = null
+var status_icons := {}
 var selected_slot_index := -1
 var slot_action_label: Label = null
 var _inv_refresh_timer := 0.0
 var _debug_temp_timer := 0.0
-var _weather_retry_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
 var _context_menu_has_eat := false
 var _context_menu_has_light := false
 var _context_menu_has_drink := false
+var _context_menu_has_cut := false
 
-func setup(new_player, new_day_cycle) -> void:
+func setup(new_player, new_day_cycle, new_main_node = null) -> void:
 	player = new_player
 	day_cycle = new_day_cycle
+	main_node = new_main_node
 	add_to_group("hud")
 	_build_ui()
 	_apply_aim_layout()
@@ -75,7 +78,6 @@ func _process(delta: float) -> void:
 	if _weather_timer >= 600.0:
 		_weather_timer = 0.0
 		_fetch_weather()
-	# Retry weather fetch if it failed
 	if _weather_retry_timer > 0.0:
 		_weather_retry_timer -= delta
 		if _weather_retry_timer <= 0.0 and _real_temp_parsed == -999.0:
@@ -159,8 +161,8 @@ func _build_real_clock_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.offset_left = 18
 	panel.offset_top = 18
-	panel.offset_right = 218
-	panel.offset_bottom = 88
+	panel.offset_right = 250
+	panel.offset_bottom = 108
 	panel.anchor_left = 0.0
 	panel.anchor_top = 0.0
 	panel.anchor_right = 0.0
@@ -170,21 +172,27 @@ func _build_real_clock_panel() -> void:
 	root.add_child(panel)
 
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
+	box.add_theme_constant_override("separation", 2)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(box)
 
 	real_clock_label = Label.new()
-	real_clock_label.add_theme_font_size_override("font_size", 22)
+	real_clock_label.add_theme_font_size_override("font_size", 20)
 	real_clock_label.add_theme_color_override("font_color", Color(0.90, 0.92, 0.85))
 	real_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(real_clock_label)
 
-	weather_label = Label.new()
-	weather_label.add_theme_font_size_override("font_size", 14)
-	weather_label.add_theme_color_override("font_color", Color(0.70, 0.74, 0.68))
-	weather_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(weather_label)
+	survival_label = Label.new()
+	survival_label.add_theme_font_size_override("font_size", 13)
+	survival_label.add_theme_color_override("font_color", Color(0.72, 0.68, 0.42))
+	survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(survival_label)
+
+	temp_label = Label.new()
+	temp_label.add_theme_font_size_override("font_size", 14)
+	temp_label.add_theme_color_override("font_color", Color(0.70, 0.74, 0.68))
+	temp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(temp_label)
 
 	_weather_http = HTTPRequest.new()
 	_weather_http.timeout = 10.0
@@ -203,13 +211,11 @@ func _fetch_weather() -> void:
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
-		pass # print("[HUD] Weather request init failed, err=%d" % err)
 
 func _on_weather_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_weather_loading = false
 	if result == HTTPRequest.RESULT_SUCCESS:
 		var text := body.get_string_from_utf8().strip_edges()
-		pass # print("[HUD] Weather received: '%s'" % text.left(120))
 		var json = JSON.new()
 		if json.parse(text) == OK:
 			var data: Dictionary = json.data
@@ -219,23 +225,27 @@ func _on_weather_received(result: int, _response_code: int, _headers: PackedStri
 					var temp: float = float(current["temperature_2m"])
 					_real_temp = "%.0f°C" % temp
 					_real_temp_parsed = temp
-					pass # print("[HUD] Parsed temperature: %.1f" % temp)
 					return
-		pass # print("[HUD] Failed to parse weather JSON")
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
 	else:
-		pass # print("[HUD] Weather request failed, result=%d" % result)
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
 
 func _update_real_clock() -> void:
-	if real_clock_label == null:
+	if real_clock_label == null or player == null or player.stats == null or day_cycle == null:
 		return
-	var now := Time.get_time_dict_from_system()
-	real_clock_label.text = "%02d:%02d:%02d" % [now.hour, now.minute, now.second]
-	if weather_label != null:
-		weather_label.text = "Temp: %s" % _real_temp
+	var day_num: int = player.stats.get_survival_days() + 1 if player.stats.has_method("get_survival_days") else 1
+	real_clock_label.text = "DIA %d - %s" % [day_num, day_cycle.get_hour_text()]
+	if survival_label != null:
+		var survival_seconds: float = player.stats.survival_seconds if "survival_seconds" in player.stats else 0.0
+		var total_seconds: int = int(survival_seconds)
+		var hrs: int = total_seconds / 3600
+		var mins: int = (total_seconds / 60) % 60
+		var secs: int = total_seconds % 60
+		survival_label.text = "Supervivencia: %02d:%02d:%02d" % [hrs, mins, secs]
+	if temp_label != null:
+		temp_label.text = "Temp: %s" % _real_temp
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -247,87 +257,69 @@ func _build_status_panel() -> void:
 	status_panel.anchor_top = 1.0
 	status_panel.anchor_right = 0.0
 	status_panel.anchor_bottom = 1.0
-	status_panel.offset_top = -300
+	status_panel.offset_top = -70
 	status_panel.offset_bottom = 0
 	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
 	root.add_child(status_panel)
 
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 5)
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.add_child(box)
-
-	time_label = Label.new()
-	time_label.add_theme_font_size_override("font_size", 15)
-	time_label.add_theme_color_override("font_color", Color(0.82, 0.84, 0.78))
-	time_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(time_label)
-
-	_create_status_bar(box, "health", "SALUD", Color(0.62, 0.10, 0.08))
-	_create_status_bar(box, "hunger", "COMIDA", Color(0.62, 0.48, 0.15))
-	_create_status_bar(box, "thirst", "AGUA", Color(0.18, 0.42, 0.66))
-	_create_status_bar(box, "sleep", "SUEÑO", Color(0.35, 0.20, 0.55))
-	_create_status_bar(box, "cold", "FRIO", Color(0.30, 0.58, 0.78))
-	_build_stamina_bar()
-
-func _create_status_bar(parent: VBoxContainer, key: String, title: String, color: Color) -> void:
 	var row := HBoxContainer.new()
-	row.custom_minimum_size = Vector2(220, 21)
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 6)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
+	status_panel.add_child(row)
 
-	var icon_panel := PanelContainer.new()
-	icon_panel.custom_minimum_size = Vector2(32, 21)
-	icon_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon_panel.add_theme_stylebox_override("panel", _panel_style(color.darkened(0.50), color, 1))
-	row.add_child(icon_panel)
+	_add_vital_icon(row, "health", "heart", true)
+	_add_vital_icon(row, "hunger", "apple", true)
+	_add_vital_icon(row, "thirst", "drop", true)
+	_add_vital_icon(row, "temp", "thermometer", true)
+	_add_vital_icon(row, "energy", "bolt", true)
+	_add_vital_icon(row, "sleep", "bed", true)
+	_add_vital_icon(row, "sick", "warning", false)
 
-	var icon_label := Label.new()
-	icon_label.text = _status_icon_text(key)
-	icon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	icon_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	icon_label.add_theme_font_size_override("font_size", 13)
-	icon_label.add_theme_color_override("font_color", Color(0.92, 0.95, 0.88))
-	icon_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon_panel.add_child(icon_label)
+func _add_vital_icon(parent: HBoxContainer, key: String, shape: String, always_visible: bool) -> void:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(34, 34)
+	panel.visible = always_visible
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var neutral := Color(0.32, 0.35, 0.31)
+	panel.add_theme_stylebox_override("panel", _panel_style(neutral.darkened(0.55), neutral, 1))
+	parent.add_child(panel)
+	var icon := HudIconScript.new()
+	icon.custom_minimum_size = Vector2(30, 30)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_shape(shape)
+	icon.set_icon_color(Color(0.92, 0.94, 0.88))
+	panel.add_child(icon)
+	status_icons[key] = {"panel": panel, "icon": icon, "always": always_visible}
 
-	var label := Label.new()
-	label.text = title
-	label.custom_minimum_size = Vector2(78, 20)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", Color(0.70, 0.73, 0.66))
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(label)
+func _tier_color(ratio: float) -> Color:
+	if ratio > 0.6:
+		return Color(0.32, 0.35, 0.31)
+	elif ratio > 0.3:
+		return Color(0.78, 0.55, 0.10)
+	else:
+		return Color(0.80, 0.12, 0.10)
 
-	var value_label := Label.new()
-	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	value_label.custom_minimum_size = Vector2(70, 20)
-	value_label.add_theme_font_size_override("font_size", 13)
-	value_label.add_theme_color_override("font_color", Color(0.88, 0.90, 0.84))
-	value_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(value_label)
+func _set_vital_icon_color(key: String, color: Color) -> void:
+	if not status_icons.has(key):
+		return
+	var panel := status_icons[key]["panel"] as PanelContainer
+	panel.add_theme_stylebox_override("panel", _panel_style(color.darkened(0.65), color, 2))
 
-	status_bars[key] = {
-		"icon_panel": icon_panel,
-		"icon": icon_label,
-		"value": value_label,
-		"base_color": color
-	}
-
-func _status_icon_text(key: String) -> String:
-	match key:
-		"health":
-			return "+"
-		"hunger":
-			return "FO"
-		"thirst":
-			return "WA"
-		"cold":
-			return "T"
-		_:
-			return "?"
+func _update_status_icons() -> void:
+	if player == null or player.stats == null:
+		return
+	var stats = player.stats
+	_set_vital_icon_color("health", _tier_color(stats.health / stats.max_health))
+	_set_vital_icon_color("hunger", _tier_color(stats.hunger / stats.max_stat))
+	_set_vital_icon_color("thirst", _tier_color(stats.thirst / stats.max_stat))
+	var temp_deviation: float = abs(stats.body_temperature - 36.6)
+	_set_vital_icon_color("temp", _tier_color(clamp(1.0 - temp_deviation / 3.0, 0.0, 1.0)))
+	_set_vital_icon_color("energy", _tier_color(stats.energy / stats.max_stat))
+	_set_vital_icon_color("sleep", _tier_color(stats.sleep / stats.max_stat))
+	if status_icons.has("sick"):
+		status_icons["sick"]["panel"].visible = bool(stats.sick)
+		_set_vital_icon_color("sick", Color(0.80, 0.12, 0.10))
 
 func _build_inventory_panel() -> void:
 	inventory_panel = PanelContainer.new()
@@ -586,18 +578,7 @@ func _update_stats() -> void:
 		return
 	if player.inventory == null:
 		return
-	time_label.text = "%s  |  %.1f / %.1f kg" % [
-		day_cycle.get_hour_text(),
-		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
-		player.inventory.max_weight
-	]
-	_set_bar("health", player.stats.health / player.stats.max_health, "%.0f" % player.stats.health)
-	_set_bar("hunger", player.stats.hunger / player.stats.max_stat, "%.0f" % player.stats.hunger)
-	_set_bar("thirst", player.stats.thirst / player.stats.max_stat, "%.0f" % player.stats.thirst)
-	_set_bar("sleep", player.stats.sleep / player.stats.max_stat, "%.0f" % player.stats.sleep)
-	var cold_percent: float = clamp((36.6 - player.stats.body_temperature) / 3.0, 0.0, 1.0)
-	_set_bar("cold", cold_percent, "%.1f C" % player.stats.body_temperature)
-	_update_stamina_bar()
+	_update_status_icons()
 	if _prev_health > player.stats.health + 0.1:
 		_damage_flash = 1.0
 	_prev_health = player.stats.health
@@ -613,81 +594,6 @@ func _update_damage_overlay(delta: float) -> void:
 	var flash_alpha := _damage_flash * 0.5
 	var total_alpha: float = clamp(persistent_alpha + flash_alpha, 0.0, 0.85)
 	_damage_overlay.color = Color(0.4, 0.0, 0.0, total_alpha)
-
-func _build_stamina_bar() -> void:
-	var row := HBoxContainer.new()
-	row.custom_minimum_size = Vector2(220, 24)
-	row.add_theme_constant_override("separation", 8)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.get_child(0).add_child(row)
-
-	var label := Label.new()
-	label.text = "STAMINA"
-	label.custom_minimum_size = Vector2(78, 20)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", Color(0.70, 0.73, 0.66))
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(label)
-
-	stamina_bar = ProgressBar.new()
-	stamina_bar.custom_minimum_size = Vector2(110, 18)
-	stamina_bar.min_value = 0.0
-	stamina_bar.max_value = 100.0
-	stamina_bar.value = 100.0
-	stamina_bar.show_percentage = false
-	stamina_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = Color(0.18, 0.66, 0.40)
-	fill_style.set_corner_radius_all(2)
-	stamina_bar.add_theme_stylebox_override("fill", fill_style)
-	var bg_style := StyleBoxFlat.new()
-	bg_style.bg_color = Color(0.05, 0.06, 0.05, 0.8)
-	bg_style.border_color = Color(0.20, 0.22, 0.19, 0.7)
-	bg_style.set_border_width_all(1)
-	bg_style.set_corner_radius_all(2)
-	stamina_bar.add_theme_stylebox_override("background", bg_style)
-	row.add_child(stamina_bar)
-
-	stamina_label = Label.new()
-	stamina_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	stamina_label.custom_minimum_size = Vector2(32, 20)
-	stamina_label.add_theme_font_size_override("font_size", 12)
-	stamina_label.add_theme_color_override("font_color", Color(0.88, 0.90, 0.84))
-	stamina_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(stamina_label)
-
-func _update_stamina_bar() -> void:
-	if stamina_bar == null or player == null:
-		return
-	var ratio: float = player.stats.energy / player.stats.max_stat
-	stamina_bar.value = ratio * 100.0
-	if stamina_label != null:
-		stamina_label.text = "%.0f" % player.stats.energy
-	var fill := stamina_bar.get_theme_stylebox("fill") as StyleBoxFlat
-	if fill != null:
-		if ratio > 0.5:
-			fill.bg_color = Color(0.18, 0.66, 0.40)
-		elif ratio > 0.2:
-			fill.bg_color = Color(0.72, 0.62, 0.16)
-		else:
-			fill.bg_color = Color(0.72, 0.16, 0.10)
-
-func _set_bar(key: String, ratio: float, value_text: String) -> void:
-	if not status_bars.has(key):
-		return
-	var data: Dictionary = status_bars[key]
-	var icon_panel := data["icon_panel"] as PanelContainer
-	var icon_label := data["icon"] as Label
-	var value_label := data["value"] as Label
-	var base_color: Color = data["base_color"]
-	var amount: float = clamp(ratio, 0.0, 1.0)
-	if key == "cold":
-		amount = 1.0 - amount
-	var warning_color := Color(0.75, 0.12, 0.08)
-	var shown_color: Color = warning_color.lerp(base_color, amount)
-	icon_panel.add_theme_stylebox_override("panel", _panel_style(shown_color.darkened(0.50), shown_color, 1))
-	icon_label.add_theme_color_override("font_color", Color(0.93, 0.95, 0.88).lerp(Color(0.96, 0.55, 0.42), 1.0 - amount))
-	value_label.text = value_text
 
 func _update_inventory() -> void:
 	if player == null or inventory_grid == null:
@@ -735,7 +641,7 @@ func _update_equipment_labels() -> void:
 
 func _create_inventory_slot(index: int, item) -> void:
 	var slot := PanelContainer.new()
-	slot.custom_minimum_size = Vector2(86, 76)
+	slot.custom_minimum_size = Vector2(96, 86)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var is_selected := index == selected_slot_index
 	var border_color := Color(0.72, 0.74, 0.40, 0.95) if is_selected else Color(0.25, 0.27, 0.23, 0.82)
@@ -761,7 +667,7 @@ func _create_inventory_slot(index: int, item) -> void:
 	top_row.add_child(slot_number)
 
 	var thumbnail := PanelContainer.new()
-	thumbnail.custom_minimum_size = Vector2(36, 28)
+	thumbnail.custom_minimum_size = Vector2(56, 48)
 	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var thumb_fill := Color(0.075, 0.080, 0.072, 0.86)
 	var thumb_border := Color(0.22, 0.24, 0.20, 0.72)
@@ -771,14 +677,25 @@ func _create_inventory_slot(index: int, item) -> void:
 	thumbnail.add_theme_stylebox_override("panel", _panel_style(thumb_fill, thumb_border, 1))
 	top_row.add_child(thumbnail)
 
-	var thumb_label := Label.new()
-	thumb_label.text = "-" if item == null else _item_thumbnail_text(item)
-	thumb_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	thumb_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	thumb_label.add_theme_font_size_override("font_size", 10)
-	thumb_label.add_theme_color_override("font_color", Color(0.92, 0.94, 0.86))
-	thumb_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	thumbnail.add_child(thumb_label)
+	if item != null:
+		var model_paths: Array = []
+		var model_scale: float = 1.0
+		if main_node != null and main_node.has_method("_get_drop_model_paths"):
+			model_paths = main_node._get_drop_model_paths(item.item_name, item.item_type)
+			model_scale = main_node._get_drop_scale(item.item_name, item.item_type)
+		if not model_paths.is_empty():
+			var thumb3d := ItemThumbnail3DScript.new()
+			thumb3d.custom_minimum_size = Vector2(48, 42)
+			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			thumbnail.add_child(thumb3d)
+			thumb3d.set_model(model_paths, model_scale)
+		else:
+			var thumb_icon := HudIconScript.new()
+			thumb_icon.custom_minimum_size = Vector2(36, 30)
+			thumb_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			thumb_icon.set_shape(_item_icon_shape(item))
+			thumb_icon.set_icon_color(Color(0.92, 0.94, 0.88))
+			thumbnail.add_child(thumb_icon)
 
 	var label := Label.new()
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -808,6 +725,10 @@ func _create_inventory_slot(index: int, item) -> void:
 	box.add_child(label)
 
 func _item_thumbnail_color(item) -> Color:
+	if str(item.item_type) == "clothing" and item.has_meta("clothing_color"):
+		var c: Color = item.get_meta("clothing_color")
+		if c.a > 0.0:
+			return c
 	match str(item.item_type):
 		"food":
 			return Color(0.50, 0.20, 0.08)
@@ -815,7 +736,7 @@ func _item_thumbnail_color(item) -> Color:
 			return Color(0.10, 0.32, 0.52)
 		"medical":
 			return Color(0.62, 0.16, 0.12)
-		"weapon":
+		"weapon", "weapon_rifle":
 			return Color(0.32, 0.32, 0.30)
 		"tool", "tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
 			return Color(0.36, 0.27, 0.12)
@@ -823,7 +744,7 @@ func _item_thumbnail_color(item) -> Color:
 			return Color(0.16, 0.22, 0.12)
 		"backpack":
 			return Color(0.08, 0.13, 0.07)
-		"resource":
+		"resource", "material":
 			return Color(0.24, 0.15, 0.07)
 		"seed":
 			return Color(0.22, 0.36, 0.10)
@@ -833,35 +754,59 @@ func _item_thumbnail_color(item) -> Color:
 			return Color(0.38, 0.26, 0.10)
 		"tool_fishing":
 			return Color(0.30, 0.22, 0.08)
+		"tool_matches":
+			return Color(0.30, 0.16, 0.06)
+		"tool_torch":
+			return Color(0.34, 0.20, 0.08)
 		"campfire":
 			return Color(0.20, 0.12, 0.04)
+		"shelter":
+			return Color(0.14, 0.16, 0.10)
 		_:
 			return Color(0.18, 0.18, 0.16)
 
-func _item_thumbnail_text(item) -> String:
+func _item_icon_shape(item) -> String:
 	match str(item.item_type):
 		"food":
-			return "FO"
+			return "apple"
 		"water":
-			return "WA"
+			return "drop"
 		"medical":
-			return "ME"
-		"weapon":
-			return "WE"
-		"tool", "tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "tool_fishing":
-			return "TO"
+			return "cross"
+		"weapon", "weapon_rifle":
+			return "gun"
+		"tool_axe":
+			return "axe"
+		"tool_hammer":
+			return "hammer"
+		"tool_pickaxe":
+			return "pickaxe"
+		"tool_shovel", "tool_hoe":
+			return "shovel"
+		"tool_spear":
+			return "spear"
+		"tool_fishing":
+			return "fishing"
+		"tool_matches":
+			return "match"
+		"tool_torch":
+			return "torch"
 		"clothing":
-			return "CL"
+			return "shirt"
 		"backpack":
-			return "BP"
-		"resource":
-			return "RS"
+			return "backpack"
+		"resource", "material":
+			return "log"
 		"seed":
-			return "SE"
+			return "seed"
 		"battery":
-			return "BA"
+			return "battery"
+		"campfire":
+			return "flame"
+		"shelter":
+			return "tent"
 		_:
-			return "IT"
+			return "box"
 
 func _set_prompt(text: String) -> void:
 	prompt_label.text = text
@@ -982,6 +927,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	_context_menu_has_drink = false
 	_context_menu_has_eat = false
 	_context_menu_has_light = false
+	_context_menu_has_cut = false
 	_context_menu = PanelContainer.new()
 	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
@@ -1017,14 +963,34 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 		eat_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(eat_btn)
 		_context_menu_has_eat = true
-	# Add Encender button for torch when matches are available
-	if str(item.item_type) == "tool_torch" and player.inventory.has_item_name("Cerillas"):
-		var light_btn := Button.new()
-		light_btn.text = "Encender"
-		light_btn.add_theme_font_size_override("font_size", 14)
-		light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(light_btn)
-		_context_menu_has_light = true
+	# Add Encender button for torch when matches or 2 palos are available
+	if str(item.item_type) == "tool_torch":
+		var has_matches: bool = player.inventory.has_item_name("Cerillas")
+		var has_sticks: bool = player.inventory.has_item_name("Palo", 2)
+		if has_matches or has_sticks:
+			var light_btn := Button.new()
+			if has_matches:
+				light_btn.text = "Encender con cerillas"
+			else:
+				light_btn.text = "Encender con 2 palos (8s)"
+			light_btn.add_theme_font_size_override("font_size", 14)
+			light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(light_btn)
+			_context_menu_has_light = true
+	# Add Cortar en trapos button for clothing when holding knife/axe
+	if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
+		var has_knife := false
+		for _inv_i in player.inventory.items:
+			if _inv_i.item_name == "Cuchillo" or _inv_i.item_name == "Hacha":
+				has_knife = true
+				break
+		if has_knife:
+			var cut_btn := Button.new()
+			cut_btn.text = "Cortar en trapos"
+			cut_btn.add_theme_font_size_override("font_size", 14)
+			cut_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(cut_btn)
+			_context_menu_has_cut = true
 	var drop_btn := Button.new()
 	drop_btn.text = "Soltar"
 	drop_btn.add_theme_font_size_override("font_size", 14)
@@ -1082,6 +1048,10 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		if _context_menu_has_light:
 			light_index = idx
 			idx += 1
+		var cut_index := -1
+		if _context_menu_has_cut:
+			cut_index = idx
+			idx += 1
 		var drop_index := idx
 		idx += 1
 		var store_index := idx
@@ -1106,6 +1076,11 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 				var light_btn = vbox.get_child(light_index)
 				if light_btn is Button and light_btn.get_global_rect().has_point(mouse_pos):
 					_on_light_torch_pressed()
+					return true
+			if cut_index >= 0:
+				var cut_btn = vbox.get_child(cut_index)
+				if cut_btn is Button and cut_btn.get_global_rect().has_point(mouse_pos):
+					_on_cut_clothing_pressed()
 					return true
 			var drop_btn = vbox.get_child(drop_index)
 			if drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
@@ -1137,6 +1112,25 @@ func _on_combine_pressed(recipe: Dictionary) -> void:
 		toggle_inventory()
 	if player.has_method("craft_recipe"):
 		player.craft_recipe(recipe)
+
+func _on_cut_clothing_pressed() -> void:
+	if player == null or player.inventory == null:
+		return
+	if _context_menu_slot_index < 0 or _context_menu_slot_index >= player.inventory.items.size():
+		return
+	var item = player.inventory.items[_context_menu_slot_index]
+	var item_name := str(item.item_name)
+	# Find the cut recipe for this clothing item
+	var recipes := CraftingSystemScript.get_recipes_for_item(item_name, str(item.item_type))
+	for recipe in recipes:
+		if recipe["inputs"].has(item_name) and recipe["output"]["name"] == "Trapos":
+			selected_slot_index = -1
+			_close_context_menu()
+			if inventory_visible:
+				toggle_inventory()
+			if player.has_method("craft_recipe"):
+				player.craft_recipe(recipe)
+			return
 
 func _on_eat_pressed() -> void:
 	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():

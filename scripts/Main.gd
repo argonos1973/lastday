@@ -441,6 +441,8 @@ func _ready() -> void:
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
 	_apply_pending_dead_wildlife()
+	# Post-load cleanup: remove tent rifle if player already has a rifle or it was already picked up
+	_cleanup_tent_rifle()
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()
@@ -451,6 +453,31 @@ func _ready() -> void:
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
+
+func _cleanup_tent_rifle() -> void:
+	if player == null or not is_instance_valid(player) or player.inventory == null:
+		return
+	var has_rifle := false
+	for item in player.inventory.items:
+		if item != null and str(item.item_type) == "weapon_rifle":
+			has_rifle = true
+			break
+	if not has_rifle and not _depleted_action_ids.has("tent_loot_rifle"):
+		return
+	# Remove the tent rifle WorldAction and its visual model
+	if world_actions_by_id.has("tent_loot_rifle"):
+		var action = world_actions_by_id["tent_loot_rifle"]
+		var vis_name: String = action.get_meta("visual_name", "")
+		if not vis_name.is_empty():
+			var vis_node := get_node_or_null(NodePath(vis_name))
+			if vis_node != null:
+				vis_node.queue_free()
+		_hide_action_visual(action)
+		action.mark_depleted()
+		if not _depleted_action_ids.has("tent_loot_rifle"):
+			_depleted_action_ids.append("tent_loot_rifle")
+		world_actions_by_id.erase("tent_loot_rifle")
+		print("DEBUG: tent rifle removed post-load (player has rifle or already picked up)")
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -2418,12 +2445,16 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_spawn_player_campfire_with_id(cf_id, pos)
 		if net != null and net.is_connected and not net.is_host:
 			net.campfire_built.rpc_id(1, cf_id, pos)
+		else:
+			_built_campfires.append({"id": cf_id, "pos": pos})
 		return
 	if item_name == "shelter":
 		var sh_id := "player_shelter_%d" % randi()
 		_spawn_player_shelter_with_id(sh_id, pos)
 		if net != null and net.is_connected and not net.is_host:
 			net.shelter_built.rpc_id(1, sh_id, pos)
+		else:
+			_built_shelters.append({"id": sh_id, "pos": pos})
 		return
 	if item_name == "Antorcha" and item_type == "tool_torch":
 		var torch_id := "player_torch_%d" % randi()
@@ -2434,6 +2465,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		if player != null and player.has_meta("last_torch_lit"):
 			torch_lit = bool(player.get_meta("last_torch_lit", false))
 		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit)
+		_dropped_items.append({"id": torch_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": [pos.x, pos.y, pos.z], "durability": torch_durability, "lit": torch_lit})
+		_save_world_change_silent()
 		return
 	# Dropping a whole animal corpse spawns the model lying on the ground
 	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
@@ -2506,6 +2539,13 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
 				_snap_node_bottom_to_y(laid as Node3D, 0.06)
+		_mark_world_action_visual(visual_name)
+	else:
+		# Fallback: no model available, create a simple cylinder
+		if item_name == "Trapos":
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
+		else:
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		_mark_world_action_visual(visual_name)
 	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
 	if item_name == "Botas survival":
@@ -2616,6 +2656,26 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [SURVIVAL_TOOL_MODELS["hammer"]]
 		"tool_pickaxe":
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
+		"tool_spear":
+			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+		"tool_fishing":
+			return [K_SURVIVAL + "fish.glb"]
+		"tool_torch":
+			return ["res://assets/animations/torch_stick.glb", "res://assets/models/props/wood_stick.glb"]
+		"medical":
+			return [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box.glb"]
+		"battery":
+			return [K_SURVIVAL + "box.glb"]
+		"material":
+			if item_name == "Palo":
+				return ["res://assets/models/props/wood_stick.glb"]
+			if item_name == "Trapos":
+				return [K_SURVIVAL + "bedroll.glb", K_SURVIVAL + "box.glb"]
+			return [K_SURVIVAL + "box.glb"]
+		"campfire":
+			return [K_SURVIVAL + "campfire-pit.glb"]
+		"shelter":
+			return [K_SURVIVAL + "tent.glb"]
 		"clothing":
 			if item_name == "Botas survival":
 				return ["res://assets/characters/Remy.glb"]
@@ -2675,6 +2735,24 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 1.2
 		"tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
 			return 1.0
+		"tool_spear":
+			return 1.0
+		"tool_fishing":
+			return 1.0
+		"tool_torch":
+			return 0.5
+		"medical":
+			return 1.0
+		"battery":
+			return 1.0
+		"material":
+			if item_name == "Palo":
+				return 0.2
+			return 1.0
+		"campfire":
+			return 1.0
+		"shelter":
+			return 1.0
 		"tool_matches":
 			return 0.0005
 		"clothing":
@@ -2715,7 +2793,7 @@ func _create_audio() -> void:
 func _create_hud() -> void:
 	hud = HUDScript.new()
 	add_child(hud)
-	hud.setup(player, day_cycle)
+	hud.setup(player, day_cycle, self)
 
 func _create_debug_overlay() -> void:
 	_debug_overlay = CanvasLayer.new()
@@ -3248,7 +3326,6 @@ func _create_barn(origin: Vector3) -> void:
 			first2 = false
 		else:
 			combined2 = combined2.merge(wa)
-	if not first2:
 	# Create wall collision boxes with door opening (no convex collision on interior)
 	var barn_w := combined2.size.x
 	var barn_d := combined2.size.z
@@ -4115,15 +4192,19 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	action.set_meta("visual_name", visual_name)
 
 func _create_mushrooms() -> void:
-	var mushroom_count := 120
+	var mushroom_count := 400
 	var mushroom_idx := 0
 	for _i in range(mushroom_count):
 		var pos := Vector3(_world_rng.randf_range(-120, 120), 0.06, _world_rng.randf_range(-120, 120))
-		if pos.distance_to(Vector3.ZERO) < 40.0:
+		if pos.distance_to(Vector3.ZERO) < 20.0:
 			continue
 		if _is_near_river(pos, 5.0):
 			continue
 		if _is_near_car_or_container(pos, 4.0):
+			continue
+		if _is_near_house(pos, 2.0):
+			continue
+		if _is_on_road(pos):
 			continue
 		var py := _get_exact_ground_y(pos.x, pos.z)
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
@@ -4228,7 +4309,8 @@ func _create_house_loot() -> void:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
 			loot_data["pos"] = _find_pos_inside_house(origin, half_w, half_d)
-			loot_data["id"] = "house_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
+			loot_data["id"] = "house_loot_%d" % loot_idx
+			loot_idx += 1
 			_create_pickup_item(loot_data)
 	# Barn loot — more items, barn-specific pool
 	var barn_loot_pool := [
@@ -4251,7 +4333,7 @@ func _create_house_loot() -> void:
 			template = barn_loot_pool[_world_rng.randi() % barn_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
 		loot_data["pos"] = _find_pos_inside_house(barn_origin, barn_half_w, barn_half_d)
-		loot_data["id"] = "barn_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
+		loot_data["id"] = "barn_loot_%d" % _j
 		_create_pickup_item(loot_data)
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
@@ -4278,33 +4360,47 @@ func _create_house_loot() -> void:
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
 	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
-	# Guarantee rifle spawn in tent
-	var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
-	rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-	rifle_data["pos"].y = tent_ground_y + 0.06
-	rifle_data["id"] = "tent_loot_%d_%d" % [int(round(rifle_data["pos"].x)), int(round(rifle_data["pos"].z))]
-	_create_pickup_item(rifle_data)
+	# Guarantee rifle spawn in tent — use fixed ID so it doesn't respawn
+	# Check if player already has a rifle (player may not be created yet, check later)
+	var _player_has_rifle := false
+	if player != null and is_instance_valid(player) and player.inventory != null:
+		for _inv_item in player.inventory.items:
+			if str(_inv_item.item_type) == "weapon_rifle":
+				_player_has_rifle = true
+				break
+	# Also check if rifle was already picked up (depleted)
+	if _depleted_action_ids.has("tent_loot_rifle"):
+		_player_has_rifle = true
+	if not _player_has_rifle:
+		var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
+		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		rifle_data["pos"].y = tent_ground_y + 0.06
+		rifle_data["id"] = "tent_loot_rifle"
+		_create_pickup_item(rifle_data)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
+	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
 	var guaranteed_clothing: Array = []
-	for _g in range(3):
+	for _g in range(2):
 		var gi := _world_rng.randi() % clothing_indices.size()
 		guaranteed_clothing.append(clothing_indices[gi])
 		clothing_indices.remove_at(gi)
+	var _tent_clothing_idx := 0
 	for gidx in guaranteed_clothing:
 		var g_data: Dictionary = tent_loot_pool[gidx].duplicate()
 		g_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		g_data["pos"].y = tent_ground_y + 0.06
-		g_data["id"] = "tent_loot_%d_%d" % [int(round(g_data["pos"].x)), int(round(g_data["pos"].z))]
+		g_data["id"] = "tent_loot_clothing_%d" % _tent_clothing_idx
+		_tent_clothing_idx += 1
 		_create_pickup_item(g_data)
-	# Additional random items
-	var tent_num_items := 2 + _world_rng.randi() % 3
+	# Additional random items (limited)
+	var tent_num_items := 1 + _world_rng.randi() % 2
 	for _j in range(tent_num_items):
 		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
 		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		loot_data["pos"].y = tent_ground_y + 0.06
-		loot_data["id"] = "tent_loot_%d_%d" % [int(round(loot_data["pos"].x)), int(round(loot_data["pos"].z))]
+		loot_data["id"] = "tent_loot_extra_%d" % _j
 		_create_pickup_item(loot_data)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
@@ -4580,7 +4676,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.06)
 	if not spawned:
 		if item_name == "Trapos":
-			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.02, 0), 0.15, 0.04, Color(0.85, 0.85, 0.85), Vector3(0, randf_range(0, 360), 0))
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), Vector3(0, randf_range(0, 360), 0))
 		else:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
 	_mark_world_action_visual(visual_name)
@@ -4776,8 +4872,13 @@ func handle_world_action(action, actor) -> void:
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
 			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
-				var held_p = actor.get_held_item() if actor.has_method("get_held_item") else null
-				if held_p != null and held_p.item_name == "Cuchillo":
+				var _has_cut_tool := false
+				if actor.inventory != null:
+					for _ci in actor.inventory.items:
+						if str(_ci.item_name) == "Cuchillo" or str(_ci.item_name) == "Hacha":
+							_has_cut_tool = true
+							break
+				if _has_cut_tool:
 					_play_actor_action(actor, "forage", 3.0)
 					if audio_system != null and audio_system.has_method("play_chop_loop_at"):
 						audio_system.play_chop_loop_at(action.position, 3.0)
@@ -4785,14 +4886,22 @@ func handle_world_action(action, actor) -> void:
 					if hud != null:
 						hud.show_countdown("Cortando ropa", 3.0)
 					await get_tree().create_timer(3.0).timeout
+					# Remove the clothing visual completely
 					_hide_action_visual(action)
+					var _clothing_vis: String = action.get_meta("visual_name", "") if action.has_meta("visual_name") else ""
+					if not _clothing_vis.is_empty():
+						var _cv := get_node_or_null(NodePath(_clothing_vis))
+						if _cv != null:
+							_cv.queue_free()
+					action.mark_depleted()
+					if not _depleted_action_ids.has(action.action_id):
+						_depleted_action_ids.append(action.action_id)
 					var rag_pos: Vector3 = action.position
 					var rag1_id := "pickup_Trapos_%d" % (Time.get_ticks_msec() + randi() % 1000)
 					var rag2_id := "pickup_Trapos_%d" % (Time.get_ticks_msec() + randi() % 1000)
 					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(0.2, 0.06, 0.0), 0.05, 1, 0.0, rag1_id)
 					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(-0.2, 0.06, 0.1), 0.05, 1, 0.0, rag2_id)
 					actor.notice.emit("Cortas la ropa en trapos. Recogelos del suelo.")
-					action.mark_depleted()
 					_save_world_change_silent()
 					var rag_spawns: Array = [
 						{"id": rag1_id, "name": "Trapos", "type": "resource", "pos": rag_pos + Vector3(0.2, 0.06, 0.0), "weight": 0.05, "qty": 1, "use": 0.0},
@@ -4974,14 +5083,23 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("La fogata ya esta encendida.")
 				return
 			var held_m = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_m == null or held_m.item_name != "Cerillas":
-				actor.notice.emit("Necesitas tener las cerillas en la mano para encender la fogata.")
+			if held_m != null and held_m.item_name == "Cerillas":
+				_play_actor_action(actor, "plant", 1.5)
+				actor.notice.emit("Encendiendo fogata con cerillas...")
+				if hud != null:
+					hud.show_countdown("Encendiendo fogata", 1.5)
+				await get_tree().create_timer(1.5).timeout
+			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
+				actor.inventory.consume_item_name("Palo", 2)
+				actor.inventory.changed.emit()
+				_play_actor_action(actor, "forage", 8.0)
+				actor.notice.emit("Frotando palos para encender fogata... (8s)")
+				if hud != null:
+					hud.show_countdown("Encendiendo fogata con palos", 8.0)
+				await get_tree().create_timer(8.0).timeout
+			else:
+				actor.notice.emit("Necesitas cerillas o 2 palos para encender la fogata.")
 				return
-			_play_actor_action(actor, "plant", 1.5)
-			actor.notice.emit("Encendiendo fogata...")
-			if hud != null:
-				hud.show_countdown("Encendiendo fogata", 1.5)
-			await get_tree().create_timer(1.5).timeout
 			var fire_name := "CampfireFire_%d" % randi()
 			_create_campfire_fire(action.position + Vector3(0, 0.15, 0), fire_name)
 			action.set_meta("lit", true)
@@ -6007,7 +6125,7 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 		if absf(local_forward) <= half_length and absf(local_side) <= half_width:
 			var side_depth: float = 1.0 - absf(local_side) / max(0.01, half_width)
 			var length_depth: float = 1.0 - absf(local_forward) / max(0.01, half_length)
-			return clamp(min(side_depth, length_depth) * 1.65, 0.18, 1.0)
+			return clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5)
 	return 0.0
 
 func get_nearest_river_audio_point(world_pos: Vector3) -> Dictionary:
@@ -6075,7 +6193,14 @@ func _is_player_in_house(pos: Vector3) -> bool:
 
 func _is_near_built_shelter(pos: Vector3) -> bool:
 	for sh in _built_shelters:
-		var sh_pos: Vector3 = sh["pos"]
+		var sh_pos_raw = sh.get("pos", sh)
+		var sh_pos: Vector3
+		if sh_pos_raw is Vector3:
+			sh_pos = sh_pos_raw
+		elif sh_pos_raw is Array:
+			sh_pos = Vector3(float(sh_pos_raw[0]), float(sh_pos_raw[1]), float(sh_pos_raw[2]))
+		else:
+			continue
 		if pos.distance_to(sh_pos) < 3.5:
 			return true
 	return false

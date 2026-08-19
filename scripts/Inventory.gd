@@ -28,6 +28,19 @@ func add_item(item) -> bool:
 	changed.emit()
 	return true
 
+func merge_stacks() -> void:
+	var i := 0
+	while i < items.size():
+		var j := i + 1
+		while j < items.size():
+			if items[i].can_stack_with(items[j]):
+				items[i].quantity += items[j].quantity
+				items.remove_at(j)
+			else:
+				j += 1
+		i += 1
+	changed.emit()
+
 func remove_index(index: int, amount := 1):
 	if index < 0 or index >= items.size():
 		return null

@@ -59,6 +59,11 @@ func mark_depleted() -> void:
 	if _collision != null:
 		_collision.disabled = true
 	_clear_visual_children()
+	# Auto-register in Main's depleted list so it persists across save/load
+	var main := get_tree().current_scene
+	if main != null and main.get("_depleted_action_ids") != null:
+		if not main._depleted_action_ids.has(action_id):
+			main._depleted_action_ids.append(action_id)
 
 func set_crop_state(state: String, new_growth := 0.0) -> void:
 	action_state = state
@@ -138,7 +143,7 @@ func get_interaction_text(_player = null) -> String:
 					return "Llenar botella - [E]"
 			return "Beber agua - [E]"
 		"light_campfire":
-			return "Encender fogata - [N] (cerillas)"
+			return "Encender fogata - [E] (cerillas o 2 palos)"
 		"cook":
 			return "Cocinar carne ensartada - [E]"
 		"shelter":
@@ -269,12 +274,18 @@ func _player_has_blade(player) -> bool:
 	return false
 
 func _player_has_knife(player) -> bool:
-	if player == null or not player.has_method("get_held_item"):
+	if player == null:
 		return false
-	var held = player.get_held_item()
-	if held == null:
-		return false
-	return held.item_name == "Cuchillo"
+	if player.has_method("get_held_item"):
+		var held = player.get_held_item()
+		if held != null and held.item_name == "Cuchillo":
+			return true
+	# Also search entire inventory
+	if player.get("inventory") != null and player.inventory.items.size() > 0:
+		for item in player.inventory.items:
+			if item.item_name == "Cuchillo" or item.item_name == "Hacha":
+				return true
+	return false
 
 func _is_footwear() -> bool:
 	if not has_meta("item_name"):

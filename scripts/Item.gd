@@ -27,8 +27,6 @@ func duplicate_stack():
 	return dup
 
 func can_stack_with(other) -> bool:
-	if other != null and item_type == "tool_torch" and other.item_type == "tool_torch":
-		return false
 	return other != null and item_name == other.item_name and item_type == other.item_type and use_value == other.use_value
 
 func to_dict() -> Dictionary:

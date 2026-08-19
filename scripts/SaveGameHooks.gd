@@ -35,6 +35,9 @@ static func maybe_load_saved_game(main: Node, player: Node) -> void:
 		return
 	apply_saved_player_data(player, save_data.get("player", {}))
 	apply_saved_world_data(main, save_data.get("world", {}))
+	# Merge duplicate stacks (e.g. torches that were in separate slots)
+	if player != null and is_instance_valid(player) and player.inventory != null:
+		player.inventory.merge_stacks()
 
 static func preload_saved_world_state(main: Node) -> void:
 	if main == null or not is_instance_valid(main):
@@ -72,17 +75,18 @@ static func collect_player_data(player: Node) -> Dictionary:
 	if player.has_method("_get_current_anim"):
 		anim = player._get_current_anim()
 	data["anim"] = anim
-	# Stats
-	var hp := 100.0
-	var hunger := 100.0
-	var thirst := 100.0
-	if player.get("stats") != null:
-		hp = player.stats.health
-		hunger = player.stats.hunger
-		thirst = player.stats.thirst
-	data["health"] = hp
-	data["hunger"] = hunger
-	data["thirst"] = thirst
+	# Stats (full dict: health, hunger, thirst, energy, sleep, body_temperature, sick, wetness, survival_seconds, etc.)
+	if player.get("stats") != null and player.stats.has_method("to_dict"):
+		data["stats"] = player.stats.to_dict()
+		# Legacy flat fields kept for backward-compat with older saves/tools
+		data["health"] = player.stats.health
+		data["hunger"] = player.stats.hunger
+		data["thirst"] = player.stats.thirst
+		data["survival_seconds"] = player.stats.survival_seconds
+	else:
+		data["health"] = 100.0
+		data["hunger"] = 100.0
+		data["thirst"] = 100.0
 	# State flags
 	data["sleeping"] = player.get("is_sleeping") != null and bool(player.get("is_sleeping"))
 	data["sitting"] = player.get("is_sitting") != null and bool(player.get("is_sitting"))
@@ -242,10 +246,15 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 		player._jump_velocity = 0.0
 	# Stats
 	if player.get("stats") != null:
-		player.stats.health = float(data.get("health", 100.0))
-		player.stats.hunger = float(data.get("hunger", 100.0))
-		player.stats.thirst = float(data.get("thirst", 100.0))
-		player.stats.changed.emit()
+		if data.has("stats") and player.stats.has_method("from_dict"):
+			player.stats.from_dict(data["stats"])
+		else:
+			# Legacy fallback for older saves without full stats dict
+			player.stats.health = float(data.get("health", 100.0))
+			player.stats.hunger = float(data.get("hunger", 100.0))
+			player.stats.thirst = float(data.get("thirst", 100.0))
+			player.stats.survival_seconds = float(data.get("survival_seconds", 0.0))
+			player.stats.changed.emit()
 	# Inventory
 	var items_data = data.get("inventory", [])
 	if player.has_node("Inventory"):
@@ -336,6 +345,9 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		var drop_id := str(drop.get("id", ""))
 		if drop_id.is_empty() or main.world_actions_by_id.has(drop_id):
 			continue
+		# Skip if this item was already picked up (depleted)
+		if main._depleted_action_ids.has(drop_id):
+			continue
 		var dpos_raw = drop.get("pos", [0.0, 0.06, 0.0])
 		var dpos: Vector3
 		if dpos_raw is Array:
@@ -343,16 +355,23 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		else:
 			dpos = dpos_raw
 		var drop_at := str(drop.get("action_type", ""))
+		var drop_name := str(drop.get("name", ""))
+		var drop_type := str(drop.get("type", ""))
 		if drop_at == "wolf_meat_raw":
 			if main.has_method("_spawn_raw_meat_visual"):
-				main._spawn_raw_meat_visual(drop_id, str(drop.get("name", "")), dpos)
+				main._spawn_raw_meat_visual(drop_id, drop_name, dpos)
+		elif drop_name == "Antorcha" and drop_type == "tool_torch":
+			if main.has_method("_spawn_placed_torch"):
+				var torch_dur := float(drop.get("durability", 120.0))
+				var torch_lit := bool(drop.get("lit", false))
+				main._spawn_placed_torch(drop_id, dpos, torch_dur, torch_lit)
 		else:
 			if main.has_method("_spawn_dropped_item_visual"):
 				var drop_color := Color(0, 0, 0, 0)
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				main._spawn_dropped_item_visual(drop_id, str(drop.get("name", "")), str(drop.get("type", "")), float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos, drop_color)
+				main._spawn_dropped_item_visual(drop_id, drop_name, drop_type, float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos, drop_color)
 		main._dropped_items.append(drop)
 	# Built campfires
 	var campfires = data.get("built_campfires", [])
