@@ -6037,7 +6037,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var vertical_bob: float = abs(sin(_walk_bob)) * 0.055 * _walk_intensity
 	var side_bob: float = sin(_walk_bob * 0.5) * 0.028 * _walk_intensity
 	var roll: float = sin(_walk_bob) * deg_to_rad(0.75) * _walk_intensity
-	var target_sink := -0.24 * _water_depth if is_in_water else 0.0
+	var target_sink := -0.6 * _water_depth if is_in_water else 0.0
 	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
@@ -6131,7 +6131,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
 	var crouch_lift := 0.0
 	var sit_drop := 0.0
-	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink * 0.55
+	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink
 	if third_person_model != null:
 		# Cache del skeleton para evitar búsqueda recursiva cada frame
 		if _anim_skel_dirty or _anim_skel_cache == null or not is_instance_valid(_anim_skel_cache):
@@ -6173,8 +6173,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 						if bone_model.y < min_foot_model_y:
 							min_foot_model_y = bone_model.y
 				if min_foot_model_y < 999999.0:
-					# Target: feet at ground level (capsule bottom = 0.025)
-					target_y = 0.025 - min_foot_model_y
+					# Target: feet at ground level (capsule bottom = 0.025), sink in water
+					target_y = 0.025 - min_foot_model_y + _water_sink
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
