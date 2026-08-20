@@ -58,6 +58,8 @@ var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
 var _legit_cut_trees: Array = []
 var _dropped_items: Array = []
+var _pending_fruit_cooldowns: Dictionary = {}
+var _pending_fruit_types: Dictionary = {}
 var _built_campfires: Array = []
 var _built_shelters: Array = []
 var _lit_campfires: Array = []
@@ -128,6 +130,10 @@ var _grass_batch_centers: Array[Vector3] = []
 const SAVE_BALANCE_VERSION := 6
 const Q_NATURE := "res://assets/external/quaternius_stylized_nature_megakit/glTF/"
 const K_SURVIVAL := "res://assets/external/kenney_survival_kit/Models/GLB format/"
+const FRUIT_TREE_MODELS := [
+	"res://realistic_hd_sour_orange_1630.glb",
+	"res://realistic_hd_common_fig_tree_1830.glb",
+]
 const REAL_DEAD_TREE_MODELS := [
 	Q_NATURE + "DeadTree_1.gltf",
 	Q_NATURE + "DeadTree_2.gltf",
@@ -2544,16 +2550,20 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	elif lay_flat:
 		rot.x += 90.0
 	if not paths.is_empty():
-		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.06)
+		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.06)
+		if not _spawned_ok:
+			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		if lay_flat or pre_flat:
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
 				_snap_node_bottom_to_y(laid as Node3D, 0.06)
 		_mark_world_action_visual(visual_name)
 	else:
-		# Fallback: no model available, create a simple cylinder
+		# Fallback: no model available, create a simple shape
 		if item_name == "Trapos":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
+		elif item_name == "Naranja":
+			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
 		else:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		_mark_world_action_visual(visual_name)
@@ -2653,6 +2663,10 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"food":
 			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
+			if item_name == "Naranja":
+				return []
+			if item_name == "Higo":
+				return ["res://fig.glb"]
 			return [CANNED_FOOD_LOW_MODEL, FOOD_CAN_415G_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
@@ -2740,6 +2754,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"food":
 			if item_name == "Carne cruda de lobo":
 				return 1.0
+			if item_name == "Naranja":
+				return 0.05
+			if item_name == "Higo":
+				return 3.0
 			return 1.0
 		"backpack":
 			return 1.2
@@ -3943,6 +3961,119 @@ func _create_world_details() -> void:
 		body.add_child(front_right)
 		_add_collision_to_prop_group(body)
 		_create_invisible_collision_box_rotated("MilitaryTentRoofCollision", tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), 35.0, 2)
+	# Fruit trees — near tent, near barn, and scattered in forest
+	_create_fruit_trees()
+
+func _create_fruit_trees() -> void:
+	# Clear stale pending types from previous saves — fruit type is now deterministic
+	_pending_fruit_types.clear()
+	var barn_pos := Vector3(45, 0, 120)
+	var tent_pos := _military_tent_pos
+	var tree_counter := 0
+	# Near tent: 4 fruit trees in a loose ring around the tent (alternate orange/fig)
+	for i in range(4):
+		var angle := i * (PI * 0.5) + _world_rng.randf_range(-0.3, 0.3)
+		var dist := _world_rng.randf_range(12.0, 18.0)
+		var fpos := tent_pos + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
+		_create_fruit_tree(fpos, tree_counter % 2)
+		tree_counter += 1
+	# Near barn: 4 fruit trees (alternate orange/fig)
+	for i in range(4):
+		var angle := i * (PI * 0.5) + PI * 0.25 + _world_rng.randf_range(-0.3, 0.3)
+		var dist := _world_rng.randf_range(10.0, 16.0)
+		var fpos := barn_pos + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
+		_create_fruit_tree(fpos, tree_counter % 2)
+		tree_counter += 1
+	# Scattered in forest: ~18 fruit trees (alternate orange/fig)
+	var scattered := 18
+	var attempts := 0
+	var placed := 0
+	while placed < scattered and attempts < 120:
+		attempts += 1
+		var x := _world_rng.randf_range(-MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
+		var z := _world_rng.randf_range(-MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
+		var pos := Vector3(x, 0, z)
+		# Keep clear of village center
+		if Vector2(pos.x, pos.z).length() < 65.0:
+			continue
+		# Keep away from tent and barn
+		if pos.distance_to(tent_pos) < 25.0:
+			continue
+		if pos.distance_to(barn_pos) < 25.0:
+			continue
+		# Keep away from houses
+		if _is_near_house(pos, 8.0):
+			continue
+		if not _can_place_ground_vegetation(pos, 3.0):
+			continue
+		_create_fruit_tree(pos, tree_counter % 2)
+		tree_counter += 1
+		placed += 1
+
+func _create_fruit_tree(pos: Vector3, fruit_type_index: int = 0) -> void:
+	pos.y = _get_exact_ground_y(pos.x, pos.z)
+	if not _can_place_ground_vegetation(pos, 3.0):
+		return
+	var tree_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+	if tree_id < 0:
+		tree_id = -tree_id
+	var visual_name := "FruitTree_%d" % tree_id
+	var model_idx := fruit_type_index % FRUIT_TREE_MODELS.size()
+	var model_path: String = FRUIT_TREE_MODELS[model_idx]
+	var fruit_type_name := "Naranja" if model_idx == 0 else "Higo"
+	var tree_scale := _world_rng.randf_range(3.0, 4.0)
+	var spawned := _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * tree_scale, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0)
+	if not spawned:
+		return
+	var tree_node := get_node_or_null(visual_name)
+	if tree_node != null:
+		tree_node.add_to_group("world_action_visual")
+		tree_node.set_meta("fruit_type_name", fruit_type_name)
+		_remove_collision_from_node(tree_node)
+		# Darken materials so they don't look too bright
+		_darken_materials_recursive(tree_node, 0.6)
+		# Apply same optimizations as regular forest trees
+		if pos.length() > 15.0:
+			_set_shadow_casting_off_recursive(tree_node)
+		_set_visibility_range_recursive(tree_node, 180.0)
+	# Register as repeatable pick_fruit action — fruit can be harvested periodically
+	var action_id := "pick_fruit_%d" % tree_id
+	var display := "Naranjo" if fruit_type_name == "Naranja" else "Higuera"
+	var action = _create_world_action(action_id, "pick_fruit", display, pos, Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	action.set_meta("visual_name", visual_name)
+	action.set_meta("fruit_type_name", fruit_type_name)
+	# Restore cooldown from save if available
+	if _pending_fruit_cooldowns.has(action_id):
+		action.set_meta("fruit_ready_time", _pending_fruit_cooldowns[action_id])
+	else:
+		action.set_meta("fruit_ready_time", 0.0)
+
+func _set_shadow_casting_off_recursive(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in node.get_children():
+		_set_shadow_casting_off_recursive(c)
+
+func _darken_materials_recursive(node: Node, factor: float) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		for i in range(mi.get_surface_override_material_count()):
+			var mat = mi.get_surface_override_material(i)
+			if mat is StandardMaterial3D:
+				var smat := mat as StandardMaterial3D
+				smat.albedo_color = smat.albedo_color * factor
+				smat.roughness = max(smat.roughness, 0.8)
+				smat.metallic = 0.0
+	for c in node.get_children():
+		_darken_materials_recursive(c, factor)
+
+func _set_visibility_range_recursive(node: Node, range_end: float) -> void:
+	if node is GeometryInstance3D:
+		var gi := node as GeometryInstance3D
+		gi.visibility_range_end = range_end
+		gi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	for c in node.get_children():
+		_set_visibility_range_recursive(c, range_end)
 
 func _create_dayz_interaction_examples() -> void:
 	_spawn_interaction_item(BACKPACK_ITEM_SCENE, Vector3(8.35, 0.05, 2.5), Vector3(0, -18, 0))
@@ -5203,6 +5334,29 @@ func handle_world_action(action, actor) -> void:
 			_net_notify_pickup(action)
 		"farm_plot":
 			_handle_farm_plot(action, actor)
+		"pick_fruit":
+			var now := Time.get_unix_time_from_system()
+			var ready_time: float = float(action.get_meta("fruit_ready_time", 0.0))
+			if now < ready_time:
+				var remaining := int(ceil(ready_time - now))
+				actor.notice.emit("El arbol aun no tiene fruta madura. (%ds)" % remaining)
+				return
+			_play_actor_action(actor, "forage", 3.0)
+			actor.notice.emit("Recolectando fruta...")
+			if hud != null:
+				hud.show_countdown("Recolectando fruta", 3.0)
+			await get_tree().create_timer(3.0).timeout
+			var fruit_name := str(action.get_meta("fruit_type_name", "Higo"))
+			var fruit_type := "food"
+			var fruit_use := 15.0
+			if actor.inventory.add_item(ItemScript.create(fruit_name, fruit_type, 0.15, 2, fruit_use)):
+				_equip_actor_item(actor, fruit_name)
+				actor.notice.emit("Recoges 2 %ss." % fruit_name.to_lower())
+			else:
+				actor.notice.emit("No tienes espacio para llevar mas.")
+			# Set cooldown: 300 seconds (5 minutes real time)
+			action.set_meta("fruit_ready_time", now + 300.0)
+			_save_world_change_silent()
 		"fell_tree":
 			var held = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held == null or held.item_name != "Hacha":
@@ -9230,6 +9384,15 @@ func _load_if_available() -> void:
 				var id := str(raw_action.get("id", ""))
 				if world_actions_by_id.has(id):
 					world_actions_by_id[id].from_dict(raw_action)
+					# Re-derive fruit_type_name from the tree visual node since save data may be stale
+					if world_actions_by_id[id].action_type == "pick_fruit":
+						var vis_name := str(world_actions_by_id[id].get_meta("visual_name", ""))
+						if not vis_name.is_empty():
+							var tree_node := get_node_or_null(vis_name)
+							if tree_node != null and tree_node.has_meta("fruit_type_name"):
+								var correct_fruit := str(tree_node.get_meta("fruit_type_name"))
+								world_actions_by_id[id].set_meta("fruit_type_name", correct_fruit)
+								world_actions_by_id[id].display_name = "Naranjo" if correct_fruit == "Naranja" else "Higuera"
 					if world_actions_by_id[id].depleted:
 						_hide_action_visual(world_actions_by_id[id])
 						if world_actions_by_id[id].action_type == "fell_tree":

@@ -72,6 +72,14 @@ static func preload_saved_world_state(main: Node) -> void:
 	for loot_id in picked_up:
 		if not main._depleted_action_ids.has(loot_id):
 			main._depleted_action_ids.append(loot_id)
+	# Pre-load fruit tree cooldowns so they persist across sessions
+	var fruit_cooldowns: Dictionary = world_data.get("fruit_tree_cooldowns", {})
+	for action_id in fruit_cooldowns.keys():
+		main._pending_fruit_cooldowns[action_id] = float(fruit_cooldowns[action_id])
+	# Pre-load fruit tree types so the correct fruit is assigned after world gen
+	var fruit_types: Dictionary = world_data.get("fruit_tree_types", {})
+	for action_id in fruit_types.keys():
+		main._pending_fruit_types[action_id] = str(fruit_types[action_id])
 
 static func collect_player_data(player: Node) -> Dictionary:
 	if player == null or not is_instance_valid(player):
@@ -215,6 +223,24 @@ static func collect_world_data(main: Node) -> Dictionary:
 	for fire_name in fire_timers.keys():
 		cf_timers[fire_name] = fire_timers[fire_name]
 	data["campfire_fire_timers"] = cf_timers
+	# Fruit tree cooldowns — persist pick_fruit ready times
+	var fruit_cd := {}
+	var wabi = main.get("world_actions_by_id")
+	if wabi != null:
+		for action_id in wabi.keys():
+			var action = wabi[action_id]
+			if action != null and is_instance_valid(action) and action.action_type == "pick_fruit":
+				var rt = action.get_meta("fruit_ready_time", 0.0)
+				fruit_cd[action_id] = rt
+	data["fruit_tree_cooldowns"] = fruit_cd
+	# Fruit tree types — persist which fruit each tree produces
+	var fruit_types := {}
+	if wabi != null:
+		for action_id in wabi.keys():
+			var action = wabi[action_id]
+			if action != null and is_instance_valid(action) and action.action_type == "pick_fruit":
+				fruit_types[action_id] = str(action.get_meta("fruit_type_name", "Higo"))
+	data["fruit_tree_types"] = fruit_types
 	# Dead wildlife — persist corpses so they don't respawn alive
 	var dead_wildlife := []
 	for node in main.get_tree().get_nodes_in_group("wildlife"):

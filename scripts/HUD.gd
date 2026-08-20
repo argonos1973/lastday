@@ -694,7 +694,7 @@ func _create_inventory_slot(index: int, item) -> void:
 			thumb_icon.custom_minimum_size = Vector2(36, 30)
 			thumb_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumb_icon.set_shape(_item_icon_shape(item))
-			thumb_icon.set_icon_color(Color(0.92, 0.94, 0.88))
+			thumb_icon.set_icon_color(_item_thumbnail_color(item))
 			thumbnail.add_child(thumb_icon)
 
 	var label := Label.new()
@@ -729,6 +729,10 @@ func _item_thumbnail_color(item) -> Color:
 		var c: Color = item.get_meta("clothing_color")
 		if c.a > 0.0:
 			return c
+	if item.item_name == "Naranja":
+		return Color(1.0, 0.5, 0.05)
+	if item.item_name == "Higo":
+		return Color(0.35, 0.2, 0.08)
 	match str(item.item_type):
 		"food":
 			return Color(0.50, 0.20, 0.08)
@@ -766,6 +770,10 @@ func _item_thumbnail_color(item) -> Color:
 			return Color(0.18, 0.18, 0.16)
 
 func _item_icon_shape(item) -> String:
+	if item.item_name == "Naranja":
+		return "circle"
+	if item.item_name == "Higo":
+		return "pear"
 	match str(item.item_type):
 		"food":
 			return "apple"

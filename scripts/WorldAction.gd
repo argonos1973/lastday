@@ -32,6 +32,9 @@ func disable_collision() -> void:
 		collision_mask = 0
 		if _collision != null:
 			_collision.disabled = true
+	elif action_type == "pick_fruit":
+		collision_layer = 1
+		collision_mask = 0
 	else:
 		collision_layer = 2
 		collision_mask = 0
@@ -134,6 +137,12 @@ func get_interaction_text(_player = null) -> String:
 			return "%s - [E] Pescar" % display_name
 		"hunt":
 			return "%s - [E] Rastrear" % display_name
+		"pick_fruit":
+			var now := Time.get_unix_time_from_system()
+			var ready: float = float(get_meta("fruit_ready_time", 0.0))
+			if now < ready:
+				return "%s - Fruta madurando (%ds)" % [display_name, int(ceil(ready - now))]
+			return "%s - [E] Recoger fruta" % display_name
 		"drink_water":
 			if _player != null and _player.has_method("get_held_item"):
 				var held = _player.get_held_item()

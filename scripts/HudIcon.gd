@@ -66,6 +66,21 @@ func _draw() -> void:
 			_draw_tent(c, s)
 		"flame":
 			_draw_flame(c, s, 1.0)
+		"circle":
+			_draw_circle_icon(c, s)
+		"pear":
+			_draw_pear(c, s)
+
+func _draw_circle_icon(c: Vector2, s: Vector2) -> void:
+	var r: float = min(s.x, s.y) * 0.28
+	draw_circle(c, r, icon_color)
+
+func _draw_pear(c: Vector2, s: Vector2) -> void:
+	var r: float = min(s.x, s.y) * 0.24
+	var body := Vector2(c.x, c.y + r * 0.2)
+	draw_circle(body, r * 0.7, icon_color)
+	draw_circle(body + Vector2(0, -r * 0.5), r * 0.5, icon_color)
+	draw_rect(Rect2(c.x - r * 0.05, c.y - r * 0.9, r * 0.1, r * 0.3), icon_color, true)
 
 func _draw_heart(c: Vector2, s: Vector2) -> void:
 	var scale_f: float = min(s.x, s.y) * 0.032
