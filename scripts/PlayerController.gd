@@ -2334,7 +2334,9 @@ func _physics_process(delta: float) -> void:
 		_clothing_wear_timer += delta * wear_rate
 		if _clothing_wear_timer >= 60.0:
 			_clothing_wear_timer = 0.0
-			for item in inventory.items:
+			var _broken_indices: Array = []
+			for i in range(inventory.items.size()):
+				var item = inventory.items[i]
 				if item != null and item.item_type == "clothing" and item.has_method("reduce_durability"):
 					var is_equipped := false
 					for slot_val in _equipped_slots.values():
@@ -2345,6 +2347,21 @@ func _physics_process(delta: float) -> void:
 						item.reduce_durability(1.0)
 						if item.is_broken():
 							notice.emit("%s se ha deteriorado y ya no sirve." % item.item_name)
+							_broken_indices.append(i)
+			# Drop and remove broken clothing from highest index to lowest
+			for idx in range(_broken_indices.size() - 1, -1, -1):
+				var i_broken: int = _broken_indices[idx]
+				var broken_item = inventory.items[i_broken]
+				var broken_name := str(broken_item.item_name)
+				unequip_clothing(broken_name)
+				var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+				drop_pos.y = global_position.y
+				var drop_color := get_current_clothing_color(broken_name)
+				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color)
+				inventory.remove_index(i_broken, 1)
+			if held_index >= inventory.items.size():
+				held_index = max(0, inventory.items.size() - 1)
+			_sync_held_item()
 			inventory.changed.emit()
 	if is_dead:
 		is_sprinting = false

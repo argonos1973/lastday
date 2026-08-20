@@ -56,6 +56,7 @@ var _client_animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
 var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
+var _legit_cut_trees: Array = []
 var _dropped_items: Array = []
 var _built_campfires: Array = []
 var _built_shelters: Array = []
@@ -477,7 +478,16 @@ func _cleanup_tent_rifle() -> void:
 		if not _depleted_action_ids.has("tent_loot_rifle"):
 			_depleted_action_ids.append("tent_loot_rifle")
 		world_actions_by_id.erase("tent_loot_rifle")
-		print("DEBUG: tent rifle removed post-load (player has rifle or already picked up)")
+	# Also search for any leftover visual node by name
+	var rifle_visual := get_node_or_null("Pickup_tent_loot_rifle")
+	if rifle_visual != null:
+		rifle_visual.queue_free()
+	# Search for any node in world_action_visual group containing rifle in name
+	for node in get_tree().get_nodes_in_group("world_action_visual"):
+		if node is Node3D and (String(node.name).findn("rifle") >= 0 or String(node.name).findn("tent_loot_rifle") >= 0):
+			node.queue_free()
+	if has_rifle and not _depleted_action_ids.has("tent_loot_rifle"):
+		_depleted_action_ids.append("tent_loot_rifle")
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -4393,10 +4403,10 @@ func _create_house_loot() -> void:
 		g_data["id"] = "tent_loot_clothing_%d" % _tent_clothing_idx
 		_tent_clothing_idx += 1
 		_create_pickup_item(g_data)
-	# Additional random items (limited)
+	# Additional random items (limited) — exclude rifle (index 0) from random pool
 	var tent_num_items := 1 + _world_rng.randi() % 2
 	for _j in range(tent_num_items):
-		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
+		var template: Dictionary = tent_loot_pool[1 + _world_rng.randi() % (tent_loot_pool.size() - 1)]
 		var loot_data: Dictionary = template.duplicate()
 		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		loot_data["pos"].y = tent_ground_y + 0.06
@@ -5223,6 +5233,8 @@ func handle_world_action(action, actor) -> void:
 			action.mark_depleted()
 			if not _depleted_action_ids.has(action.action_id):
 				_depleted_action_ids.append(action.action_id)
+			if not _legit_cut_trees.has(action.action_id):
+				_legit_cut_trees.append(action.action_id)
 			_save_world_change_silent()
 			var tree_spawns: Array = [
 				{"id": log1_id, "name": "Tronco", "type": "resource", "pos": tree_pos + Vector3(1.0, 0.06, 0.3), "weight": 1.2, "qty": 1, "use": 0.0},
@@ -7809,7 +7821,7 @@ func _deactivate_tree(entry: Dictionary) -> void:
 			var col_node := get_node_or_null(collision_name)
 			if col_node != null:
 				col_node.queue_free()
-		action.mark_depleted()
+		# Don't mark as depleted — the tree is not cut, just out of range
 		action.queue_free()
 		world_actions_by_id.erase(action_id)
 	entry.active = false

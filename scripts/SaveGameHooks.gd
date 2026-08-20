@@ -56,7 +56,15 @@ static func preload_saved_world_state(main: Node) -> void:
 	var world_data: Dictionary = save_data.get("world", {})
 	# Pre-load depleted action IDs so world generation can skip cut trees
 	var depleted = world_data.get("depleted_action_ids", [])
+	# Load legitimately cut tree IDs to filter out fake fell_tree_* from _deactivate_tree bug
+	var legit_cut: Array = world_data.get("legit_cut_trees", [])
+	for tree_id in legit_cut:
+		if not main._legit_cut_trees.has(tree_id):
+			main._legit_cut_trees.append(tree_id)
 	for action_id in depleted:
+		# Only keep fell_tree_* IDs that were legitimately cut
+		if str(action_id).begins_with("fell_tree_") and not legit_cut.has(action_id):
+			continue
 		if not main._depleted_action_ids.has(action_id):
 			main._depleted_action_ids.append(action_id)
 	# Pre-load picked-up loot IDs so world generation can skip already-collected loot
@@ -151,6 +159,8 @@ static func collect_world_data(main: Node) -> Dictionary:
 			dcopy["pos"] = [dcopy["pos"].x, dcopy["pos"].y, dcopy["pos"].z]
 		dropped.append(dcopy)
 	data["dropped_items"] = dropped
+	# Legitimately cut trees (to filter out fake fell_tree_* from _deactivate_tree bug)
+	data["legit_cut_trees"] = main.get("_legit_cut_trees").duplicate()
 	# Built campfires
 	var campfires := []
 	for cf in main.get("_built_campfires"):
@@ -330,7 +340,15 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		return
 	# Depleted action IDs — remove from world
 	var depleted = data.get("depleted_action_ids", [])
+	var legit_cut: Array = data.get("legit_cut_trees", [])
+	# Restore legit cut trees list
+	for tree_id in legit_cut:
+		if not main._legit_cut_trees.has(tree_id):
+			main._legit_cut_trees.append(tree_id)
 	for action_id in depleted:
+		# Skip fake fell_tree_* IDs (from _deactivate_tree bug)
+		if str(action_id).begins_with("fell_tree_") and not legit_cut.has(action_id):
+			continue
 		if main.world_actions_by_id.has(action_id):
 			var action = main.world_actions_by_id[action_id]
 			if main.has_method("_hide_action_visual"):
