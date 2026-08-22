@@ -506,6 +506,18 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
 		if dist_to_player < 45.0:
+			# If player is elevated (on car/container) and wolf can't reach, give up and leave
+			if height_diff >= 2.5 and not _can_reach_player():
+				_state = "patrol"
+				_chase_target = null
+				_chase_cooldown = 8.0
+				_play_wolf_sound("growl")
+				var away := (global_position - _player.global_position).normalized()
+				away.y = 0.0
+				target = _clamp_flee_goal(global_position, away, 30.0)
+				speed = move_speed * 2.0
+				_play_animation_by_name("trot")
+				return {"target": target, "speed": speed}
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
@@ -513,7 +525,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 1.5
 			else:
 				speed = move_speed * 4.0
-			if height_diff >= 15.0 and not _can_reach_player():
+			if height_diff >= 2.5 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 1.5:
 					_state = "patrol"
@@ -529,7 +541,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist <= 4.0 and height_diff < 15.0:
+			elif flat_dist <= 4.0 and height_diff < 2.5:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
@@ -1219,7 +1231,7 @@ func _play_wolf_pain_sound() -> void:
 	var path := "res://assets/audio/loboherido.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
-		stream = load(path)
+		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	if stream == null:
 		var disk_path := ProjectSettings.globalize_path(path)
 		if FileAccess.file_exists(disk_path):
@@ -1315,11 +1327,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 			return
 		var path := "res://assets/external/audio/downloaded/aullidos.mp3"
 		var stream: AudioStream = null
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamMP3.load_from_file(disk_path)
-		if stream == null and ResourceLoader.has_cached(path):
-			stream = load(path)
+		if ResourceLoader.exists(path):
+			stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		if stream == null:
+			var disk_path := ProjectSettings.globalize_path(path)
+			if FileAccess.file_exists(disk_path):
+				stream = AudioStreamMP3.load_from_file(disk_path)
 		if stream == null:
 			return
 		if stream is AudioStreamMP3:
@@ -1350,11 +1363,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_:
 			return
 	var stream: AudioStream = null
-	var disk_path := ProjectSettings.globalize_path(path)
-	if FileAccess.file_exists(disk_path):
-		stream = AudioStreamWAV.load_from_file(disk_path)
-	if stream == null and ResourceLoader.has_cached(path):
-		stream = load(path)
+	if ResourceLoader.exists(path):
+		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
@@ -1712,7 +1726,7 @@ func _can_reach_player() -> bool:
 	if _player == null or not is_instance_valid(_player):
 		return false
 	var height_diff := absf(_player.global_position.y - global_position.y)
-	if height_diff >= 15.0:
+	if height_diff >= 2.5:
 		return false
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):

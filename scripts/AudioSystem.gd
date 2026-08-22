@@ -225,9 +225,9 @@ func _load_first_stream(paths: Array) -> AudioStream:
 
 func _load_stream_from_path(path: String) -> AudioStream:
 	if ResourceLoader.exists(path):
-		var stream := load(path)
-		if stream is AudioStream:
-			return stream
+		var loaded = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		if loaded is AudioStream:
+			return loaded
 	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
 	if path.get_extension().to_lower() == "wav" and FileAccess.file_exists(disk_path):
 		var wav_stream := AudioStreamWAV.load_from_file(disk_path)

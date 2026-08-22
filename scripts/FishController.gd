@@ -115,6 +115,10 @@ func _load_external_node3d(path: String) -> Node3D:
 	return null
 
 func _load_gltf_node3d(path: String) -> Node3D:
+	if ResourceLoader.exists(path):
+		var loaded = load(path)
+		if loaded is PackedScene:
+			return (loaded as PackedScene).instantiate() as Node3D
 	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
 	if not FileAccess.file_exists(disk_path):
 		return null

@@ -85,15 +85,21 @@ func _ready() -> void:
 
 	# Load inicio.png
 	var tex_rect := TextureRect.new()
-	var abs_path := ProjectSettings.globalize_path("res://assets/textures/inicio.png")
 	var loaded := false
-	var img := Image.load_from_file(abs_path)
-	if img != null:
-		tex_rect.texture = ImageTexture.create_from_image(img)
-		loaded = true
+	if ResourceLoader.exists("res://assets/textures/inicio.png"):
+		var tex = load("res://assets/textures/inicio.png")
+		if tex is Texture2D:
+			tex_rect.texture = tex as Texture2D
+			loaded = true
+	if not loaded:
+		var abs_path := ProjectSettings.globalize_path("res://assets/textures/inicio.png")
+		var img := Image.load_from_file(abs_path)
+		if img != null:
+			tex_rect.texture = ImageTexture.create_from_image(img)
+			loaded = true
 	if not loaded:
 		var img2 := Image.new()
-		var err := img2.load_png_from_buffer(FileAccess.get_file_as_bytes(abs_path))
+		var err := img2.load_png_from_buffer(FileAccess.get_file_as_bytes("res://assets/textures/inicio.png"))
 		if err == OK:
 			tex_rect.texture = ImageTexture.create_from_image(img2)
 			loaded = true

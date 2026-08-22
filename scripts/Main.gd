@@ -2785,6 +2785,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				return 3.0
 			if item_name.begins_with("Seta"):
 				return 0.3
+			if item_name.begins_with("Lata de guiso"):
+				return 0.0005
+			if item_name.begins_with("Lata de atun"):
+				return 1.35
 			return 1.0
 		"backpack":
 			return 1.2
@@ -8868,20 +8872,26 @@ func _create_leafy_floor_ground() -> void:
 	add_child(dirt_mi)
 
 func _extract_texture_from_glb(path: String) -> Texture2D:
-	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
-	if not FileAccess.file_exists(disk_path):
-		return null
-	var document := GLTFDocument.new()
-	var state := GLTFState.new()
-	var error := document.append_from_file(disk_path, state)
-	if error != OK:
-		return null
-	var generated_scene := document.generate_scene(state)
-	if not (generated_scene is Node3D):
-		if generated_scene != null:
-			generated_scene.queue_free()
-		return null
-	var root := generated_scene as Node3D
+	var root: Node3D = null
+	if ResourceLoader.exists(path):
+		var loaded = load(path)
+		if loaded is PackedScene:
+			root = (loaded as PackedScene).instantiate() as Node3D
+	if root == null:
+		var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
+		if not FileAccess.file_exists(disk_path):
+			return null
+		var document := GLTFDocument.new()
+		var state := GLTFState.new()
+		var error := document.append_from_file(disk_path, state)
+		if error != OK:
+			return null
+		var generated_scene := document.generate_scene(state)
+		if not (generated_scene is Node3D):
+			if generated_scene != null:
+				generated_scene.queue_free()
+			return null
+		root = generated_scene as Node3D
 	add_child(root)
 	var meshes: Array = []
 	NodeUtils.collect_mesh_instances(root, meshes)
@@ -9249,6 +9259,10 @@ func _external_obj_color(path: String) -> Color:
 	return Color(0.68, 0.64, 0.52)
 
 func _load_gltf_scene_from_file(path: String):
+	if ResourceLoader.exists(path):
+		var loaded = load(path)
+		if loaded is PackedScene:
+			return (loaded as PackedScene).instantiate() as Node3D
 	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
 	if not FileAccess.file_exists(disk_path):
 		return null

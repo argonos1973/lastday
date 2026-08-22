@@ -2,10 +2,22 @@ extends RefCounted
 class_name SimpleObjLoader
 
 func load_node3d(path: String, color := Color(0.8, 0.78, 0.68)) -> Node3D:
-	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
-	if not FileAccess.file_exists(disk_path):
-		return null
-	var file := FileAccess.open(disk_path, FileAccess.READ)
+	# Try ResourceLoader first (works in exported builds where .obj is imported as Mesh)
+	if ResourceLoader.exists(path):
+		var loaded = load(path)
+		if loaded is Mesh:
+			var mi := MeshInstance3D.new()
+			mi.mesh = loaded as Mesh
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = color
+			mat.roughness = 0.8
+			mi.material_override = mat
+			return mi
+	# Fallback: read raw .obj file (works in editor or if file exists on disk)
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
+		file = FileAccess.open(disk_path, FileAccess.READ)
 	if file == null:
 		return null
 	var positions: Array[Vector3] = []

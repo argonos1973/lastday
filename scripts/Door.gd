@@ -16,8 +16,14 @@ func setup(label: String, size: Vector3, color: Color, open_angle: float, model_
 	open_yaw = open_angle
 	add_to_group("doors")
 	add_to_group("interactable")
-	var disk_path := ProjectSettings.globalize_path(model_path) if model_path.begins_with("res://") else model_path
-	if model_path != "" and FileAccess.file_exists(disk_path):
+	var door_loaded := false
+	if model_path != "" and ResourceLoader.exists(model_path):
+		door_loaded = true
+	if not door_loaded and model_path != "":
+		var disk_path := ProjectSettings.globalize_path(model_path) if model_path.begins_with("res://") else model_path
+		if FileAccess.file_exists(disk_path):
+			door_loaded = true
+	if door_loaded:
 		await _make_door_from_glb(size, model_path)
 	else:
 		_make_door(size, color)
@@ -191,13 +197,18 @@ func _make_door(size: Vector3, _color: Color) -> void:
 
 func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 	var model: Node3D = null
-	var disk_path := ProjectSettings.globalize_path(model_path) if model_path.begins_with("res://") else model_path
-	if FileAccess.file_exists(disk_path):
-		var doc := GLTFDocument.new()
-		var state := GLTFState.new()
-		var err := doc.append_from_file(disk_path, state)
-		if err == OK:
-			model = doc.generate_scene(state)
+	if ResourceLoader.exists(model_path):
+		var loaded = load(model_path)
+		if loaded is PackedScene:
+			model = (loaded as PackedScene).instantiate() as Node3D
+	if model == null:
+		var disk_path := ProjectSettings.globalize_path(model_path) if model_path.begins_with("res://") else model_path
+		if FileAccess.file_exists(disk_path):
+			var doc := GLTFDocument.new()
+			var state := GLTFState.new()
+			var err := doc.append_from_file(disk_path, state)
+			if err == OK:
+				model = doc.generate_scene(state)
 	if model == null:
 		push_warning("Door GLB failed to load: %s, falling back to procedural" % model_path)
 		_make_door(size, Color(0.13, 0.075, 0.04))
