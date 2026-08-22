@@ -322,14 +322,19 @@ func _tier_color(ratio: float) -> Color:
 	else:
 		return Color(0.80, 0.12, 0.10)
 
+func _tier_bar_color(ratio: float) -> Color:
+	if ratio > 0.6:
+		return Color.WHITE
+	elif ratio > 0.3:
+		return Color(0.78, 0.55, 0.10)
+	else:
+		return Color(0.80, 0.12, 0.10)
+
 func _set_vital_icon_color(key: String, color: Color) -> void:
 	if not status_icons.has(key):
 		return
 	var panel := status_icons[key]["panel"] as PanelContainer
 	panel.add_theme_stylebox_override("panel", _panel_style(color.darkened(0.65), color, 2))
-	if status_icons[key].has("bar_fill"):
-		var bar_fill: ColorRect = status_icons[key]["bar_fill"]
-		bar_fill.color = color
 
 func _set_vital_bar(key: String, ratio: float) -> void:
 	if not status_icons.has(key):
@@ -338,6 +343,7 @@ func _set_vital_bar(key: String, ratio: float) -> void:
 		return
 	var bar_fill: ColorRect = status_icons[key]["bar_fill"]
 	var bar_bg: Control = status_icons[key]["bar_bg"]
+	bar_fill.color = _tier_bar_color(ratio)
 	var max_w: float = bar_bg.size.x
 	if max_w <= 0.0:
 		max_w = 30.0
