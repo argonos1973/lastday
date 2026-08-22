@@ -1,0 +1,59 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://0k1g80jb8yqw"]
+
+[ext_resource type="Shader" uid="uid://xylr8s63qjs1" path="res://shaders/water.gdshader" id="1"]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_jtd41"]
+noise_type = 3
+frequency = 0.02
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_ij8ot"]
+width = 256
+height = 256
+noise = SubResource("FastNoiseLite_jtd41")
+seamless = true
+normalize = false
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_fq3vl"]
+noise_type = 3
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_jtd41"]
+noise = SubResource("FastNoiseLite_fq3vl")
+seamless = true
+as_normal_map = true
+seamless_blend_skirt = 1.0
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/water_color = Color(0.08000001, 0.304, 0.5, 1)
+shader_parameter/water_noise_1 = SubResource("NoiseTexture2D_jtd41")
+shader_parameter/water_noise_2 = SubResource("NoiseTexture2D_jtd41")
+shader_parameter/use_vertex_waves = true
+shader_parameter/wave_height = 1.0000000149012
+shader_parameter/wave_speed = 0.00999999977648
+shader_parameter/wave_scale = 10.0
+shader_parameter/double_sided = true
+shader_parameter/surface_bottom = Color(0.045301944, 0.12487381, 0.1697582, 0.6509804)
+shader_parameter/depth_distance = 0.60000000894072
+shader_parameter/water_color_ratio = 0.10000000149012
+shader_parameter/beers_law = 1.0000000149012
+shader_parameter/normal_scale = 1.0
+shader_parameter/roughness_scale = 0.0
+shader_parameter/use_river_flow = true
+shader_parameter/flow_speed = 0.10000000149012
+shader_parameter/flow_direction_multiplier = -1.0
+shader_parameter/uv1_scale = Vector2(20, 1)
+shader_parameter/uv1_offset = Vector2(0, 0)
+shader_parameter/debug_tangent = false
+shader_parameter/use_foam = true
+shader_parameter/debug_foam = false
+shader_parameter/foam_texture = SubResource("NoiseTexture2D_ij8ot")
+shader_parameter/foam_uv_scale = 0.50000002375
+shader_parameter/foam_scale = 6.0
+shader_parameter/foam_speed = 0.20000000298024
+shader_parameter/foam_falloff_distance = 0.10000000149012
+shader_parameter/foam_edge_distance = 0.10000000149012
+shader_parameter/foam_edge_bias = 1.0
+shader_parameter/foam_color = Color(0.8, 0.8, 0.8, 1)
+shader_parameter/camera_near = 0.05
+shader_parameter/camera_far = 200.0

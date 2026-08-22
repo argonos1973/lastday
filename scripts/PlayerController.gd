@@ -49,7 +49,7 @@ const CLOTHING_VISUALS := {
 # Loaded first so the deformable survival garments are available to wear.
 const ADAPTED_PLAYER_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
 
-const SOLDADO_MODEL := "res://assets/adapted/soldado_parts.glb"
+const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
 
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
@@ -241,8 +241,8 @@ const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
 const MIXAMO_GROUND_CORRECTION := 0.38
-const BASE_CARRY_SLOTS := 4
-const BASE_CARRY_WEIGHT := 6.0
+const BASE_CARRY_SLOTS := 0
+const BASE_CARRY_WEIGHT := 0.0
 const TORSO_CARRY_SLOTS := 2
 const TORSO_CARRY_WEIGHT := 2.0
 const LEGS_CARRY_SLOTS := 2
@@ -517,6 +517,7 @@ var _survival_cloth_nodes := {}
 var _survival_body_nodes := {}
 var _worn_survival := {}        # item_name -> true while the garment is shown
 var _equipped_slots := {}         # slot -> item_name currently equipped
+var _initializing := true         # true during _ready, prevents drop_excess
 
 var _pitch := 0.0
 var _gravity := ProjectSettings.get_setting("physics/3d/default_gravity") as float
@@ -1017,6 +1018,8 @@ func _ready() -> void:
 	add_child(inventory)
 	inventory.item_used.connect(func(message: String) -> void: notice.emit(message))
 	inventory.changed.connect(_on_inventory_changed)
+	inventory.max_slots = 10
+	inventory.max_weight = 18.0
 
 	equipment = PlayerEquipmentScript.new()
 	equipment.name = "PlayerEquipment"
@@ -1028,11 +1031,12 @@ func _ready() -> void:
 
 	_add_starting_items()
 	_create_body()
-	_recalculate_carry_capacity()
 	_select_default_held_item()
 	_sync_held_item()
 	_apply_view_mode()
 	call_deferred("_capture_mouse")
+	_initializing = false
+	_recalculate_carry_capacity()
 
 func _input(event: InputEvent) -> void:
 	if is_puppet or is_dead:
@@ -1769,7 +1773,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	if body_mi != null:
 		_full_body_mesh = body_mi
 		_full_body_mesh.visible = true
-	var src_path := "res://assets/adapted/player_with_clothes.glb"
+	var src_path := "res://assets/characters/adapted/player_with_clothes.glb"
 	var src_scene: Node = load(src_path).instantiate()
 	if src_scene == null:
 		return
@@ -2236,32 +2240,60 @@ func refresh_carry_capacity() -> void:
 func _recalculate_carry_capacity() -> void:
 	if inventory == null:
 		return
+	if _initializing:
+		return
 	var slots := BASE_CARRY_SLOTS
 	var weight := BASE_CARRY_WEIGHT
-	# Bonus per equipped clothing slot
+	# Bonus per equipped clothing item — uses item's storage_capacity
 	for slot in _equipped_slots:
-		match slot:
-			"torso":
-				slots += TORSO_CARRY_SLOTS
-				weight += TORSO_CARRY_WEIGHT
-			"legs":
-				slots += LEGS_CARRY_SLOTS
-				weight += LEGS_CARRY_WEIGHT
-			"feet":
-				slots += FEET_CARRY_SLOTS
-				weight += FEET_CARRY_WEIGHT
-			"hands":
-				slots += HANDS_CARRY_SLOTS
-				weight += HANDS_CARRY_WEIGHT
-			"head":
-				slots += HEAD_CARRY_SLOTS
-				weight += HEAD_CARRY_WEIGHT
+		var equipped_item_name: String = str(_equipped_slots[slot])
+		var cap := 0
+		# Find the item in inventory to get its storage_capacity
+		for inv_item in inventory.items:
+			if str(inv_item.item_name) == equipped_item_name:
+				cap = int(inv_item.storage_capacity)
+				break
+		if cap > 0:
+			slots += cap
+			weight += float(cap) * 1.0
 	# Backpack bonus only if actually equipped (not just in inventory)
 	if not equipped_backpack.is_empty():
 		slots += SMALL_BACKPACK_SLOTS
 		weight += SMALL_BACKPACK_WEIGHT
+	# If new max_slots is lower than current item count, drop excess
+	var old_max: int = inventory.max_slots
 	inventory.max_slots = slots
 	inventory.max_weight = weight
+	if not _initializing and slots < old_max and inventory.items.size() > slots:
+		_drop_excess_items(inventory.items.size() - slots)
+
+func _drop_excess_items(count: int) -> void:
+	if inventory == null or count <= 0:
+		return
+	var dropped := 0
+	# Drop from the end of inventory (least recently picked up)
+	for i in range(inventory.items.size() - 1, -1, -1):
+		if dropped >= count:
+			break
+		var item = inventory.items[i]
+		if item == null:
+			continue
+		# Don't drop equipped clothing
+		var is_equipped := false
+		for slot_val in _equipped_slots.values():
+			if str(slot_val) == str(item.item_name):
+				is_equipped = true
+				break
+		if is_equipped:
+			continue
+		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+		drop_pos.y = global_position.y
+		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0))
+		inventory.remove_index(i)
+		dropped += 1
+	if dropped > 0:
+		notice.emit("Se ha caido %d objeto(s) al perder capacidad." % dropped)
+		inventory.changed.emit()
 
 func _recalculate_warmth() -> void:
 	if stats == null:
@@ -2756,6 +2788,8 @@ func _create_third_person_model() -> void:
 		if is_clothing_model:
 			_init_survival_clothing(character)
 			_apply_character_colors()
+		print("[DEBUG] is_clothing_model=", is_clothing_model, " is_custom_character=", is_custom_character, " is_puppet=", is_puppet)
+		print("[DEBUG] _survival_body_nodes keys=", _survival_body_nodes.keys())
 		if not is_puppet:
 			if is_clothing_model or is_custom_character:
 				# Ensure default clothing is in inventory and equipped
@@ -2773,22 +2807,22 @@ func _create_third_person_model() -> void:
 						inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.4, 1, 0.0))
 					if not has_zapatillas:
 						inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.3, 1, 0.0))
-					# Equip default clothing items
-					for item in inventory.items:
-						if DEFAULT_CLOTHING.has(str(item.item_name)):
-							var _def_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
-							equip_clothing(str(item.item_name), _def_color)
-		else:
-			if is_clothing_model:
-				# Puppet: equip default clothing directly without inventory
-				equip_clothing("Camiseta")
-				equip_clothing("Pantalones")
-				equip_clothing("Zapatillas")
-			elif is_custom_character:
-				# Custom character puppet: equip default clothing
-				equip_clothing("Camiseta")
-				equip_clothing("Pantalones")
-				equip_clothing("Zapatillas")
+				# Equip default clothing items
+				for item in inventory.items:
+					if DEFAULT_CLOTHING.has(str(item.item_name)):
+						var _def_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
+						equip_clothing(str(item.item_name), _def_color)
+			else:
+				if is_clothing_model:
+					# Puppet: equip default clothing directly without inventory
+					equip_clothing("Camiseta")
+					equip_clothing("Pantalones")
+					equip_clothing("Zapatillas")
+				elif is_custom_character:
+					# Custom character puppet: equip default clothing
+					equip_clothing("Camiseta")
+					equip_clothing("Pantalones")
+					equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
 		else:
@@ -6806,7 +6840,6 @@ func take_damage(amount: float, from_knife: bool = false) -> void:
 	apply_damage(amount)
 
 func apply_damage(amount: float) -> void:
-	return # INVULNERABLE: no attack damage
 	if is_dead:
 		return
 	if is_sleeping:
@@ -6826,7 +6859,7 @@ func apply_damage(amount: float) -> void:
 					if item.is_broken():
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
 		inventory.changed.emit()
-	stats.health = max(1.0, stats.health - amount)
+	stats.health = max(0.0, stats.health - amount)
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
 	_play_pain_sound()

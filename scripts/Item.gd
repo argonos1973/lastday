@@ -8,6 +8,26 @@ class_name Item
 @export var use_value := 0.0
 @export var durability := 100.0
 @export var max_durability := 100.0
+@export var storage_capacity := 0
+
+const CLOTHING_STORAGE := {
+	"Camiseta": 2,
+	"Pantalones": 3,
+	"Zapatillas": 0,
+	"Guantes survival": 1,
+	"Botas survival": 0,
+	"Chaqueta militar": 5,
+	"Pantalones militares": 4,
+	"Guantes militares": 1,
+	"Chaqueta militar azul": 5,
+	"Pantalones militares azules": 4,
+	"Chaqueta militar negra II": 5,
+	"Pantalones militares negros II": 4,
+	"Pantalones camuflaje": 4,
+	"Pantalones camuflaje desert": 4,
+	"Guantes de trabajo": 1,
+	"Sombrero de pescador": 1,
+}
 
 static func create(new_name: String, new_type: String, new_weight: float, new_quantity := 1, new_use_value := 0.0):
 	var item = load("res://scripts/Item.gd").new()
@@ -16,12 +36,15 @@ static func create(new_name: String, new_type: String, new_weight: float, new_qu
 	item.weight = new_weight
 	item.quantity = new_quantity
 	item.use_value = new_use_value
+	if new_type == "clothing" and CLOTHING_STORAGE.has(new_name):
+		item.storage_capacity = CLOTHING_STORAGE[new_name]
 	return item
 
 func duplicate_stack():
 	var dup = load("res://scripts/Item.gd").create(item_name, item_type, weight, quantity, use_value)
 	dup.durability = durability
 	dup.max_durability = max_durability
+	dup.storage_capacity = storage_capacity
 	for key in get_meta_list():
 		dup.set_meta(key, get_meta(key))
 	return dup
@@ -37,7 +60,8 @@ func to_dict() -> Dictionary:
 		"quantity": quantity,
 		"use_value": use_value,
 		"durability": durability,
-		"max_durability": max_durability
+		"max_durability": max_durability,
+		"storage_capacity": storage_capacity
 	}
 	if has_meta("clothing_color"):
 		var c: Color = get_meta("clothing_color")
@@ -54,6 +78,9 @@ static func from_dict(data: Dictionary):
 	)
 	item.durability = float(data.get("durability", 100.0))
 	item.max_durability = float(data.get("max_durability", 100.0))
+	item.storage_capacity = int(data.get("storage_capacity", 0))
+	if item.item_type == "clothing" and item.storage_capacity == 0 and CLOTHING_STORAGE.has(item.item_name):
+		item.storage_capacity = CLOTHING_STORAGE[item.item_name]
 	if data.has("clothing_color"):
 		var c_arr = data["clothing_color"]
 		if c_arr is Array and c_arr.size() >= 3:

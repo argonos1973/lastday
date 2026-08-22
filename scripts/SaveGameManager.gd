@@ -26,10 +26,13 @@ func _process(_delta: float) -> void:
 
 func enable_auto_save() -> void:
 	_auto_save_enabled = true
+	_saved_on_quit = false
 
 func _do_save(main: Node) -> void:
 	_saved_on_quit = true
 	if "net" in main and main.net != null and main.net.is_connected:
+		return
+	if "game_over" in main and main.game_over:
 		return
 	if not main.has_method("get") or main.get("player") == null:
 		return

@@ -12,8 +12,10 @@ var items: Array = []
 
 func add_item(item) -> bool:
 	if item == null or item.quantity <= 0:
+		print("[DEBUG] add_item rejected: null or zero quantity")
 		return false
 	if get_total_weight() + item.weight * item.quantity > max_weight:
+		print("[DEBUG] add_item rejected: too heavy, weight=", get_total_weight() + item.weight * item.quantity, " max=", max_weight)
 		item_used.emit("Demasiado peso.")
 		return false
 	for existing in items:
@@ -78,6 +80,22 @@ func use_index(index: int, stats) -> bool:
 				item_used.emit("Comes carne asada separada del palo. Calienta tu cuerpo.")
 				remove_index(index)
 				add_item(ItemScript.create("Palo", "material", 0.3, 1, 0.0))
+				return true
+			if item.item_name == "Naranja":
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.5)
+				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.2))
+				stats.changed.emit()
+				item_used.emit("Comes una naranja. Calma el hambre y la sed.")
+				remove_index(index)
+				return true
+			if item.item_name == "Higo":
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.5))
+				stats.changed.emit()
+				item_used.emit("Comes un higo. Nutritivo y reconfortante.")
+				remove_index(index)
 				return true
 			stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
 			stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))

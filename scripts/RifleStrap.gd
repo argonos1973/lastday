@@ -654,15 +654,7 @@ func _update_rifle_strap(_delta: float) -> void:
 		)
 
 		if segment_length > RIFLE_STRAP_MAX_SEGMENT:
-
-			push_warning(
-				"RIFLE STRAP: segmento sospechoso P%d -> P%d = %.3f m"
-				% [
-					i,
-					i + 1,
-					segment_length
-				]
-			)
+			pass
 
 	# ============================================================
 	# DEBUG: ESFERAS EN CADA PUNTO DE CONTROL

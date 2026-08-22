@@ -7,8 +7,8 @@ static func build_circular_route(rng: RandomNumberGenerator, radius: float, angl
 		var angle := angle_offset + TAU * float(i) / float(num_points)
 		var r := radius + rng.randf_range(-jitter, jitter)
 		var pos := Vector3(cos(angle) * r, 0.0, sin(angle) * r)
-		pos.x = clamp(pos.x, -180.0, 180.0)
-		pos.z = clamp(pos.z, -180.0, 180.0)
+		pos.x = clamp(pos.x, -WORLD_LIMIT, WORLD_LIMIT)
+		pos.z = clamp(pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 		if not is_allowed.call(pos):
 			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
@@ -18,7 +18,7 @@ static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_
 	var route: Array = []
 	var cursor := start
 	var heading := rng.randf_range(0.0, TAU)
-	var limit := 175.0
+	var limit := 250.0
 	for _i in range(num_points):
 		heading += rng.randf_range(-0.9, 0.9)
 		var step := rng.randf_range(step_min, step_max)
@@ -42,14 +42,14 @@ static func build_zigzag_route(rng: RandomNumberGenerator, corner_a: Vector3, co
 		var perp := (corner_b - corner_a).cross(Vector3.UP).normalized() if (corner_b - corner_a).length() > 0.01 else Vector3.RIGHT
 		var offset := perp * rng.randf_range(-jitter, jitter)
 		var pos := base + offset
-		pos.x = clamp(pos.x, -180.0, 180.0)
-		pos.z = clamp(pos.z, -180.0, 180.0)
+		pos.x = clamp(pos.x, -WORLD_LIMIT, WORLD_LIMIT)
+		pos.z = clamp(pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 		if not is_allowed.call(pos):
 			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
 	return route
 
-const WORLD_LIMIT := 180.0
+const WORLD_LIMIT := 250.0
 
 static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Callable) -> Vector3:
 	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0, 26.0]:

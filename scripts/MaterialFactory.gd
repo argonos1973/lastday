@@ -137,7 +137,7 @@ static func make_river_water_material() -> Material:
 	if _mat_cache.has("river_water"):
 		return _mat_cache["river_water"]
 	var mat: ShaderMaterial = null
-	var tres = load("res://river_water.tres")
+	var tres = load("res://shaders/river_water.tres")
 	if tres is ShaderMaterial:
 		mat = (tres as ShaderMaterial).duplicate()
 		mat.set_shader_parameter("wave_height", 0.06)
@@ -149,7 +149,7 @@ static func make_river_water_material() -> Material:
 		mat.set_shader_parameter("night_amount", 0.0)
 		mat.set_shader_parameter("night_water_color", Color(0.012, 0.035, 0.060))
 	if mat == null:
-		var shader = load("res://water.gdshader")
+		var shader = load("res://shaders/water.gdshader")
 		if shader is Shader:
 			mat = ShaderMaterial.new()
 			mat.shader = shader

@@ -5,7 +5,7 @@ class_name PickableItem
 @export var action_label := "Recoger"
 @export var remove_on_pickup := true
 
-func get_interaction_text(_player := null) -> String:
+func get_interaction_text(_player: Node = null) -> String:
 	if item == null:
 		return ""
 	return "[E] %s %s" % [action_label, item.item_name]

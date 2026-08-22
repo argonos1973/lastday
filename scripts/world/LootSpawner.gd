@@ -31,7 +31,7 @@ func _pick_weighted(entries: Array) -> ItemResource:
 	var total := 0.0
 	for entry in entries:
 		total += float(entry.get("weight", 1.0))
-	var roll := randf() * max(total, 0.01)
+	var roll: float = randf() * max(total, 0.01)
 	for entry in entries:
 		roll -= float(entry.get("weight", 1.0))
 		if roll <= 0.0:

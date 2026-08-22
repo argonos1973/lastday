@@ -97,23 +97,23 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	body_temperature = lerp(body_temperature, target_temperature, delta * 0.08)
 
 	if hunger <= 0.0:
-		pass # INVULNERABLE: no starvation damage
+		health = max(0.0, health - 2.0 * delta)
 	if thirst <= 0.0:
-		pass # INVULNERABLE: no dehydration damage
+		health = max(0.0, health - 2.5 * delta)
 	if sleep <= 0.0:
-		pass # INVULNERABLE: no sleep deprivation damage
+		health = max(0.0, health - 3.0 * delta)
 	if body_temperature < 35.0:
-		pass # INVULNERABLE: no cold damage
+		health = max(0.0, health - 1.5 * delta)
 	if body_temperature > 38.0:
-		pass # INVULNERABLE: no heat damage
+		health = max(0.0, health - 1.5 * delta)
 	if body_temperature >= 40.0:
-		pass # INVULNERABLE: no extreme heat damage
+		health = max(0.0, health - 4.0 * delta)
 
 	if sick:
 		sick_timer -= delta
 		if sick_timer <= 0.0:
 			sick = false
-		health = clamp(health, 0.0, max_health) # INVULNERABLE: no sickness damage
+		health = max(0.0, health - 1.0 * delta)
 	# Passive slow health regen when not suffering any critical condition
 	if not sick and hunger > 0.0 and thirst > 0.0 and body_temperature >= 35.0 and body_temperature < 39.0 and health < max_health:
 		var regen_rate: float = 0.5
@@ -122,7 +122,8 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		health = min(max_health, health + regen_rate * delta)
 	changed.emit()
 	if health <= 0.0 and not dead:
-		pass # INVULNERABLE: never die
+		dead = true
+		died.emit()
 
 func rest(hours: float) -> void:
 	if dead:

@@ -287,13 +287,8 @@ func _player_has_knife(player) -> bool:
 		return false
 	if player.has_method("get_held_item"):
 		var held = player.get_held_item()
-		if held != null and held.item_name == "Cuchillo":
+		if held != null and (held.item_name == "Cuchillo" or held.item_name == "Hacha"):
 			return true
-	# Also search entire inventory
-	if player.get("inventory") != null and player.inventory.items.size() > 0:
-		for item in player.inventory.items:
-			if item.item_name == "Cuchillo" or item.item_name == "Hacha":
-				return true
 	return false
 
 func _is_footwear() -> bool:

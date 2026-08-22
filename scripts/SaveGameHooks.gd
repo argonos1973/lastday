@@ -262,6 +262,9 @@ static func collect_world_data(main: Node) -> Dictionary:
 static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	if player == null or not is_instance_valid(player) or data.is_empty():
 		return
+	# Prevent _recalculate_carry_capacity from dropping items during restore
+	var prev_init = player.get("_initializing")
+	player.set("_initializing", true)
 	# Position
 	var pos_arr = data.get("pos", [8.0, 0.4, 2.5])
 	if pos_arr is Array and pos_arr.size() >= 3:
@@ -360,6 +363,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	player.is_sitting = bool(data.get("sitting", false))
 	player.is_prone = bool(data.get("prone", false))
 	player.is_crouching = bool(data.get("crouching", false))
+	# Restore _initializing flag
+	player.set("_initializing", prev_init)
 
 static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 	if data.is_empty():

@@ -277,20 +277,42 @@ func _build_status_panel() -> void:
 	_add_vital_icon(row, "sick", "warning", false)
 
 func _add_vital_icon(parent: HBoxContainer, key: String, shape: String, always_visible: bool) -> void:
+	var wrapper := VBoxContainer.new()
+	wrapper.custom_minimum_size = Vector2(34, 48)
+	wrapper.visible = always_visible
+	wrapper.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrapper.add_theme_constant_override("separation", 2)
+	parent.add_child(wrapper)
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(34, 34)
-	panel.visible = always_visible
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var neutral := Color(0.32, 0.35, 0.31)
 	panel.add_theme_stylebox_override("panel", _panel_style(neutral.darkened(0.55), neutral, 1))
-	parent.add_child(panel)
+	wrapper.add_child(panel)
 	var icon := HudIconScript.new()
 	icon.custom_minimum_size = Vector2(30, 30)
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_shape(shape)
 	icon.set_icon_color(Color(0.92, 0.94, 0.88))
 	panel.add_child(icon)
-	status_icons[key] = {"panel": panel, "icon": icon, "always": always_visible}
+	# Level bar below the icon
+	var bar_bg := Control.new()
+	bar_bg.custom_minimum_size = Vector2(30, 6)
+	bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_bg.clip_contents = true
+	var bar_bg_style := PanelContainer.new()
+	bar_bg_style.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_bg_style.add_theme_stylebox_override("panel", _panel_style(Color(0.05, 0.05, 0.05, 0.9), Color(0.2, 0.2, 0.2, 0.6), 1))
+	bar_bg_style.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bar_bg.add_child(bar_bg_style)
+	wrapper.add_child(bar_bg)
+	var bar_fill := ColorRect.new()
+	bar_fill.custom_minimum_size = Vector2(0, 6)
+	bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_fill.color = Color(0.32, 0.35, 0.31)
+	bar_fill.size = Vector2(30, 6)
+	bar_bg.add_child(bar_fill)
+	status_icons[key] = {"panel": panel, "icon": icon, "always": always_visible, "wrapper": wrapper, "bar_fill": bar_fill, "bar_bg": bar_bg}
 
 func _tier_color(ratio: float) -> Color:
 	if ratio > 0.6:
@@ -305,21 +327,51 @@ func _set_vital_icon_color(key: String, color: Color) -> void:
 		return
 	var panel := status_icons[key]["panel"] as PanelContainer
 	panel.add_theme_stylebox_override("panel", _panel_style(color.darkened(0.65), color, 2))
+	if status_icons[key].has("bar_fill"):
+		var bar_fill: ColorRect = status_icons[key]["bar_fill"]
+		bar_fill.color = color
+
+func _set_vital_bar(key: String, ratio: float) -> void:
+	if not status_icons.has(key):
+		return
+	if not status_icons[key].has("bar_fill"):
+		return
+	var bar_fill: ColorRect = status_icons[key]["bar_fill"]
+	var bar_bg: Control = status_icons[key]["bar_bg"]
+	var max_w: float = bar_bg.size.x
+	if max_w <= 0.0:
+		max_w = 30.0
+	bar_fill.size.x = max_w * clamp(ratio, 0.0, 1.0)
 
 func _update_status_icons() -> void:
 	if player == null or player.stats == null:
 		return
 	var stats = player.stats
-	_set_vital_icon_color("health", _tier_color(stats.health / stats.max_health))
-	_set_vital_icon_color("hunger", _tier_color(stats.hunger / stats.max_stat))
-	_set_vital_icon_color("thirst", _tier_color(stats.thirst / stats.max_stat))
+	var health_ratio: float = float(stats.health) / float(stats.max_health)
+	var hunger_ratio: float = float(stats.hunger) / float(stats.max_stat)
+	var thirst_ratio: float = float(stats.thirst) / float(stats.max_stat)
 	var temp_deviation: float = abs(stats.body_temperature - 36.6)
-	_set_vital_icon_color("temp", _tier_color(clamp(1.0 - temp_deviation / 3.0, 0.0, 1.0)))
-	_set_vital_icon_color("energy", _tier_color(stats.energy / stats.max_stat))
-	_set_vital_icon_color("sleep", _tier_color(stats.sleep / stats.max_stat))
+	var temp_ratio: float = clamp(1.0 - temp_deviation / 3.0, 0.0, 1.0)
+	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
+	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
+	_set_vital_icon_color("health", _tier_color(health_ratio))
+	_set_vital_icon_color("hunger", _tier_color(hunger_ratio))
+	_set_vital_icon_color("thirst", _tier_color(thirst_ratio))
+	_set_vital_icon_color("temp", _tier_color(temp_ratio))
+	_set_vital_icon_color("energy", _tier_color(energy_ratio))
+	_set_vital_icon_color("sleep", _tier_color(sleep_ratio))
 	if status_icons.has("sick"):
-		status_icons["sick"]["panel"].visible = bool(stats.sick)
+		status_icons["sick"]["wrapper"].visible = bool(stats.sick)
 		_set_vital_icon_color("sick", Color(0.80, 0.12, 0.10))
+	# Update level bars
+	_set_vital_bar("health", health_ratio)
+	_set_vital_bar("hunger", hunger_ratio)
+	_set_vital_bar("thirst", thirst_ratio)
+	_set_vital_bar("temp", temp_ratio)
+	_set_vital_bar("energy", energy_ratio)
+	_set_vital_bar("sleep", sleep_ratio)
+	if status_icons.has("sick") and bool(stats.sick):
+		_set_vital_bar("sick", 1.0)
 
 func _build_inventory_panel() -> void:
 	inventory_panel = PanelContainer.new()

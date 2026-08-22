@@ -58,6 +58,7 @@ var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
 var _legit_cut_trees: Array = []
 var _dropped_items: Array = []
+var _loot_wear_timer := 0.0
 var _pending_fruit_cooldowns: Dictionary = {}
 var _pending_fruit_types: Dictionary = {}
 var _built_campfires: Array = []
@@ -131,8 +132,8 @@ const SAVE_BALANCE_VERSION := 6
 const Q_NATURE := "res://assets/external/quaternius_stylized_nature_megakit/glTF/"
 const K_SURVIVAL := "res://assets/external/kenney_survival_kit/Models/GLB format/"
 const FRUIT_TREE_MODELS := [
-	"res://realistic_hd_sour_orange_1630.glb",
-	"res://realistic_hd_common_fig_tree_1830.glb",
+	"res://assets/models/environment/fruit_trees/realistic_hd_sour_orange_1630.glb",
+	"res://assets/models/environment/fruit_trees/realistic_hd_common_fig_tree_1830.glb",
 ]
 const REAL_DEAD_TREE_MODELS := [
 	Q_NATURE + "DeadTree_1.gltf",
@@ -448,6 +449,15 @@ func _ready() -> void:
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
 	_apply_pending_dead_wildlife()
+	# If no save existed, create one now with the initial player state
+	if net == null or not net.is_connected:
+		var sgm_init = get_node_or_null("/root/SaveGameManager")
+		if sgm_init != null and not sgm_init.has_save():
+			_save_world_change_silent()
+			# Mark character as saved so future loads recognize the save
+			var gsess_init = get_node_or_null("/root/GameSession")
+			if gsess_init != null:
+				gsess_init.selected_character_id = "saved"
 	# Post-load cleanup: remove tent rifle if player already has a rifle or it was already picked up
 	_cleanup_tent_rifle()
 	# Remove loading overlay immediately — everything is loaded
@@ -634,8 +644,10 @@ func _process(delta: float) -> void:
 			_quit_active = false
 			get_tree().quit()
 			return
-		if hud != null:
-			hud.show_notice("Saliendo en %d..." % int(ceil(_quit_countdown)))
+	_loot_wear_timer += delta
+	if _loot_wear_timer >= 5.0:
+		_loot_wear_timer = 0.0
+		_update_loot_wear()
 	if net != null and net.is_dedicated_server:
 		# Update proxy positions from client sync data
 		_update_server_proxies(delta)
@@ -946,6 +958,8 @@ func _build_save_data() -> Dictionary:
 	return data
 
 func _save_world_change_silent() -> void:
+	if game_over:
+		return
 	var sgm = get_node_or_null("/root/SaveGameManager")
 	if sgm != null and player != null and is_instance_valid(player):
 		var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
@@ -2348,11 +2362,20 @@ func _on_player_died() -> void:
 				held = player.inventory.items[held_idx].item_name
 		var rot_y: float = player.rotation.y if player != null else 0.0
 		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
-	SaveSystemScript.delete_save()
+	# Disable auto-save immediately to prevent saving dead player state
+	var sgm = get_node_or_null("/root/SaveGameManager")
+	if sgm != null:
+		sgm.set("_auto_save_enabled", false)
+		sgm.set("_saved_on_quit", true)
 	if hud != null:
-		hud.show_notice("Has muerto. El juego se cerrara...")
+		hud.show_notice("Has muerto. Volviendo a la pantalla de inicio...")
 		await get_tree().create_timer(3.0).timeout
-		get_tree().quit()
+	# Delete saves AFTER the wait so no auto-save can re-create them
+	SaveSystemScript.delete_save()
+	if sgm != null and sgm.has_method("delete_save"):
+		sgm.delete_save()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
 
 var _loot_dead_peer_id := -1
 var _loot_items: Array = []
@@ -2564,7 +2587,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
 		elif item_name == "Naranja":
 			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
-		else:
+		elif item_name != "Higo":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		_mark_world_action_visual(visual_name)
 	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
@@ -2664,9 +2687,11 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
 			if item_name == "Naranja":
-				return []
+				return ["res://assets/models/props/fruit/apple.glb"]
 			if item_name == "Higo":
-				return ["res://fig.glb"]
+				return ["res://assets/models/props/fruit/fig.glb"]
+			if item_name.begins_with("Seta"):
+				return ["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"]
 			return [CANNED_FOOD_LOW_MODEL, FOOD_CAN_415G_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
@@ -2755,9 +2780,11 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			if item_name == "Carne cruda de lobo":
 				return 1.0
 			if item_name == "Naranja":
-				return 0.05
+				return 0.005
 			if item_name == "Higo":
 				return 3.0
+			if item_name.begins_with("Seta"):
+				return 0.3
 			return 1.0
 		"backpack":
 			return 1.2
@@ -3911,7 +3938,7 @@ func _create_world_details() -> void:
 	# Military tent — find flat area far from village
 	var tent_pos := _find_flat_area_for_tent()
 	var tent_ground_y := _get_exact_ground_y(tent_pos.x, tent_pos.z)
-	_try_instance_external_scene(["res://tent_military.glb"], "MilitaryTent", Vector3(tent_pos.x, tent_ground_y, tent_pos.z), Vector3.ONE * 1.5, Vector3(0, 35, 0), true, 0.0)
+	_try_instance_external_scene(["res://assets/models/props/tent/tent_military.glb"], "MilitaryTent", Vector3(tent_pos.x, tent_ground_y, tent_pos.z), Vector3.ONE * 1.5, Vector3(0, 35, 0), true, 0.0)
 	HOUSE_FOOTPRINTS.append({"origin": tent_pos, "w": 9.0, "d": 12.0})
 	# Add box collision for tent walls, leaving a door gap on the front (-Z side)
 	var tent_node := get_node_or_null("MilitaryTent")
@@ -4138,7 +4165,8 @@ func _create_survival_objectives() -> void:
 	_create_world_action("fish_north", "fish", "Zona de pesca", Vector3(-35, 0.05, -57), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
-	_create_backpack_pickup("small_backpack_pickup", _find_safe_loot_pos())
+	_create_backpack_pickup("small_backpack_pickup_0", _find_safe_loot_pos())
+	_create_backpack_pickup("small_backpack_pickup_1", _find_safe_loot_pos())
 	_create_tool_pickup("loose_axe_0", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", _find_safe_loot_pos(), 1.2, Vector3(0, 45, 0))
 	_create_tool_pickup("loose_matches_0", "matches_tool", "Cerillas", "res://assets/models/props/box_of_matches_north_korea_1955.glb", _find_safe_loot_pos(), 0.0005, Vector3(0, 30, 0))
 	_create_loose_survival_pickups()
@@ -4164,12 +4192,12 @@ func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
 	# Deer: large outer ring routes around the expanded map
 	var deer_routes := [
-		WildlifeRoutes.build_circular_route(_world_rng, 55.0, 0.0, 10, 6.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 85.0, PI * 0.5, 10, 6.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 115.0, PI, 10, 7.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 140.0, PI * 1.5, 10, 8.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 158.0, PI * 0.25, 12, 9.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 170.0, PI * 0.75, 12, 8.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 80.0, 0.0, 14, 8.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 120.0, PI * 0.5, 14, 8.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 160.0, PI, 14, 10.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 200.0, PI * 1.5, 16, 12.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 230.0, PI * 0.25, 18, 14.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 245.0, PI * 0.75, 18, 12.0, is_wildlife_allowed_at),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
@@ -4190,7 +4218,7 @@ func _create_wildlife() -> void:
 	for fz in fox_zones:
 		# Ruta larga que recorre el mapa partiendo de la zona de origen
 		var fox_start: Vector3 = (fz[0] as Vector3).lerp(fz[1] as Vector3, 0.5)
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 14, 35.0, 70.0, is_wildlife_allowed_at)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 20, 50.0, 100.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 	
 	# Wolves: spread across 12 expanded quadrants of the open world
@@ -4207,7 +4235,7 @@ func _create_wildlife() -> void:
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 16, 40.0, 80.0, is_wildlife_allowed_at)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 24, 60.0, 120.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -4243,19 +4271,19 @@ func _check_wildlife_respawn() -> void:
 	var total_deer := alive_deer + dead_deer
 	var total_fox := alive_fox + dead_fox
 	if total_wolf < 12 and total_wolf <= total_fox and total_wolf <= total_deer:
-		var center := Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
+		var center := Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
 		for _retry in range(30):
 			if not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = Vector3(randf_range(-150, 150), 0.0, randf_range(-150, 150))
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 16, 40.0, 80.0, is_wildlife_allowed_at)
+			center = Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 24, 60.0, 120.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 	elif total_deer < 12 and total_deer <= total_fox:
-		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(50.0, 175.0), randf() * TAU, 10, 7.0, is_wildlife_allowed_at)
+		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(80.0, 245.0), randf() * TAU, 16, 12.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
 	elif total_fox < 10:
-		var fox_zone := Vector3(randf_range(-140, 140), 0.0, randf_range(-140, 140))
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 14, 35.0, 70.0, is_wildlife_allowed_at)
+		var fox_zone := Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 20, 50.0, 100.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 
 func _create_deer_pair(route: Array) -> void:
@@ -4356,7 +4384,7 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 		return
 	var visual_name := "Pickup_" + id
 	var scale_value := 0.05
-	var spawned := _try_instance_external_scene(["res://amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
+	var spawned := _try_instance_external_scene(["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
 	if not spawned:
 		push_warning("No se crea seta %s porque falta/carga mal el asset .glb" % id)
 		return
@@ -4367,7 +4395,7 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	var pickup_node := get_node_or_null(visual_name)
 	if pickup_node != null:
 		_remove_collision_from_node(pickup_node)
-	var action = _create_world_action(id, "eat_food", "Seta amanita", pos, Vector3(0.8, 0.5, 0.8), Color(0.8, 0.15, 0.1), false, false)
+	var action = _create_world_action(id, "eat_food", "Seta amanita", pos, Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", "Seta amanita")
 	action.set_meta("item_type", "food")
@@ -4718,6 +4746,13 @@ func _create_pickup_item(data: Dictionary) -> void:
 	action.set_meta("item_quantity", int(data.get("qty", 1)))
 	action.set_meta("item_use_value", float(data.get("use", 0.0)))
 	action.set_meta("item_color", color)
+	# Register in _dropped_items so loot wear system can track it
+	_dropped_items.append({
+		"id": id, "name": item_name, "type": item_type,
+		"weight": float(data.get("weight", 0.1)), "qty": int(data.get("qty", 1)),
+		"use": float(data.get("use", 0.0)), "pos": [pos.x, pos.y, pos.z],
+		"wear": 0.0
+	})
 
 func _mark_world_action_visual(node_name: String) -> void:
 	var node := get_node_or_null(NodePath(node_name))
@@ -5014,11 +5049,9 @@ func handle_world_action(action, actor) -> void:
 			# If clothing on ground and holding knife: cut into rags (not shoes)
 			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
 				var _has_cut_tool := false
-				if actor.inventory != null:
-					for _ci in actor.inventory.items:
-						if str(_ci.item_name) == "Cuchillo" or str(_ci.item_name) == "Hacha":
-							_has_cut_tool = true
-							break
+				var _held = actor.get_held_item() if actor.has_method("get_held_item") else null
+				if _held != null and (str(_held.item_name) == "Cuchillo" or str(_held.item_name) == "Hacha"):
+					_has_cut_tool = true
 				if _has_cut_tool:
 					_play_actor_action(actor, "forage", 3.0)
 					if audio_system != null and audio_system.has_method("play_chop_loop_at"):
@@ -5345,15 +5378,26 @@ func handle_world_action(action, actor) -> void:
 			actor.notice.emit("Recolectando fruta...")
 			if hud != null:
 				hud.show_countdown("Recolectando fruta", 3.0)
-			await get_tree().create_timer(3.0).timeout
 			var fruit_name := str(action.get_meta("fruit_type_name", "Higo"))
 			var fruit_type := "food"
+			var fruit_weight := 0.15
+			var fruit_qty := 2
 			var fruit_use := 15.0
-			if actor.inventory.add_item(ItemScript.create(fruit_name, fruit_type, 0.15, 2, fruit_use)):
+			match fruit_name:
+				"Naranja":
+					fruit_use = 20.0
+					fruit_weight = 0.20
+				"Higo":
+					fruit_use = 12.0
+					fruit_weight = 0.10
+			var new_item = ItemScript.create(fruit_name, fruit_type, fruit_weight, fruit_qty, fruit_use)
+			var added_ok: bool = actor.inventory.add_item(new_item)
+			if added_ok:
 				_equip_actor_item(actor, fruit_name)
-				actor.notice.emit("Recoges 2 %ss." % fruit_name.to_lower())
+				actor.notice.emit("Recoges %d %ss." % [fruit_qty, fruit_name.to_lower()])
 			else:
-				actor.notice.emit("No tienes espacio para llevar mas.")
+				var w: float = actor.inventory.get_total_weight()
+				actor.notice.emit("No se añadio %s. Peso: %.1f/%.1f Slots: %d/%d" % [fruit_name, w, actor.inventory.max_weight, actor.inventory.items.size(), actor.inventory.max_slots])
 			# Set cooldown: 300 seconds (5 minutes real time)
 			action.set_meta("fruit_ready_time", now + 300.0)
 			_save_world_change_silent()
@@ -5657,36 +5701,11 @@ func handle_world_action_collect(action, actor) -> void:
 			if action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			_play_actor_action(actor, "pickup", 0.8)
-			# If the same clothing item is already equipped, swap: drop the old
-			# one on the ground instead of adding a duplicate to the inventory.
-			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				var slot_key := ""
-				if actor.get("_equipped_slots") != null:
-					for sk in actor._equipped_slots.keys():
-						if str(actor._equipped_slots[sk]) == item.item_name:
-							slot_key = sk
-							break
-				if not slot_key.is_empty():
-					var _old_color: Color = actor.get_current_clothing_color(item.item_name)
-					actor.unequip_clothing(item.item_name)
-					if actor.inventory != null:
-						for i in range(actor.inventory.items.size()):
-							if str(actor.inventory.items[i].item_name) == item.item_name:
-								actor.inventory.remove_index(i)
-								break
-					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
-					swap_drop_pos.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color)
-					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					actor.inventory.add_item(item)
-					actor.equip_clothing(item.item_name, _eq_color)
-					actor.notice.emit("Equipas %s." % item.item_name)
-				elif not actor.inventory.add_item(item):
+			if str(item.item_type) == "clothing":
+				if not actor.inventory.add_item(item):
+					actor.notice.emit("No tienes espacio en el inventario.")
 					return
-				else:
-					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					actor.equip_clothing(item.item_name, _eq_color2)
-					actor.notice.emit("Equipas %s." % item.item_name)
+				actor.notice.emit("Coges %s." % item.item_name)
 			elif not actor.inventory.add_item(item):
 				return
 			else:
@@ -6357,6 +6376,56 @@ func _is_player_in_house(pos: Vector3) -> bool:
 			return true
 	return false
 
+func _is_loot_sheltered(pos: Vector3) -> bool:
+	if _is_player_in_house(pos):
+		return true
+	if _is_near_built_shelter(pos):
+		return true
+	# Check barn area
+	var barn_origin := Vector3(45, 0, 120)
+	if abs(pos.x - barn_origin.x) < 4.0 and abs(pos.z - barn_origin.z) < 9.0:
+		return true
+	# Check tent area
+	var tent_origin := Vector3(48, 0, -48)
+	if abs(pos.x - tent_origin.x) < 4.0 and abs(pos.z - tent_origin.z) < 4.0:
+		return true
+	return false
+
+func _update_loot_wear() -> void:
+	# Wear rate: 0.5 per tick (every 5s) when sheltered, 2.0 when exposed
+	# 100 wear = ~1000s (16min) sheltered, ~250s (4min) exposed
+	var removed_ids: Array = []
+	for i in range(_dropped_items.size() - 1, -1, -1):
+		var entry: Dictionary = _dropped_items[i]
+		var pos_data = entry.get("pos", [0, 0, 0])
+		var pos: Vector3
+		if pos_data is Array and pos_data.size() >= 3:
+			pos = Vector3(float(pos_data[0]), float(pos_data[1]), float(pos_data[2]))
+		elif pos_data is Vector3:
+			pos = pos_data
+		else:
+			continue
+		var wear: float = float(entry.get("wear", 0.0))
+		var rate := 2.0
+		if _is_loot_sheltered(pos):
+			rate = 0.5
+		wear += rate
+		entry["wear"] = wear
+		if wear >= 100.0:
+			var drop_id: String = str(entry.get("id", ""))
+			removed_ids.append(drop_id)
+			_dropped_items.remove_at(i)
+			# Remove visual node
+			var visual_name := "Pickup_" + drop_id
+			var vnode := get_node_or_null(NodePath(visual_name))
+			if vnode != null:
+				vnode.queue_free()
+			# Mark as depleted so it doesn't respawn
+			if not _depleted_action_ids.has(drop_id):
+				_depleted_action_ids.append(drop_id)
+	if not removed_ids.is_empty():
+		_save_world_change_silent()
+
 func _is_near_built_shelter(pos: Vector3) -> bool:
 	for sh in _built_shelters:
 		var sh_pos_raw = sh.get("pos", sh)
@@ -6830,7 +6899,7 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 	bed_area.name = label + " BedInteractable"
 	var bed_col := CollisionShape3D.new()
 	var bed_shape := BoxShape3D.new()
-	bed_shape.size = Vector3(3.0, 2.0, 4.0)
+	bed_shape.size = Vector3(1.5, 1.5, 2.5)
 	bed_col.shape = bed_shape
 	bed_area.add_child(bed_col)
 	bed_area.set_script(load("res://scripts/BedInteractable.gd"))
