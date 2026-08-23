@@ -579,8 +579,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_quit_active = true
 			_quit_countdown = 5.0
 			_quit_final_sent = false
-			if hud != null:
-				hud.show_notice("Saliendo en 5...")
+			if hud != null and hud.has_method("show_countdown"):
+				hud.show_countdown("Saliendo del juego (ESC para cancelar)", 5.0)
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE and _quit_active:
 		_quit_active = false
@@ -588,6 +588,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_quit_final_sent = false
 		if hud != null:
 			hud.show_notice("Salida cancelada.")
+			if "countdown_timer" in hud:
+				hud.countdown_timer = 0.0
+			if hud.countdown_label != null:
+				hud.countdown_label.visible = false
 		return
 	if game_over:
 		return
@@ -5634,9 +5638,19 @@ func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 		if node.has_method("attract_to_noise"):
 			node.attract_to_noise(pos, radius)
 
+const _TOOL_WEAPON_TYPES := ["weapon", "tool_axe", "tool_fishing", "tool_hammer", "tool_hoe", "tool_matches", "tool_pickaxe", "tool_shovel", "tool_spear", "tool_torch", "axe_tool", "matches_tool"]
+
 func _equip_actor_item(actor, item_name: String) -> void:
-	if actor != null and actor.has_method("equip_item_by_name"):
-		actor.equip_item_by_name(item_name)
+	if actor == null or not actor.has_method("equip_item_by_name"):
+		return
+	# Don't rip a tool/weapon out of the player's hand just because they
+	# picked up a resource (berries, wood, stone, etc.) — only auto-equip
+	# the new pickup if the actor isn't actively holding something important.
+	if actor.has_method("get_held_item"):
+		var current_held = actor.get_held_item()
+		if current_held != null and str(current_held.item_name) != item_name and _TOOL_WEAPON_TYPES.has(str(current_held.item_type)):
+			return
+	actor.equip_item_by_name(item_name)
 
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
