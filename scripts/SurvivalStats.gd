@@ -21,6 +21,8 @@ var dead := false
 var hot_food_charges := 0
 var hot_food_temp_bonus := 0.0
 var survival_seconds := 0.0
+var overeat_count := 0
+var overdrink_count := 0
 
 var hunger_decay := 0.12
 var thirst_decay := 0.22
@@ -55,8 +57,18 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if sleeping:
 		sprint_multiplier = 1.0
 		move_multiplier = 1.0
-	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sleep_factor)
-	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
+	# Sheltered (under roof): reduced exertion, less calorie/water loss
+	var shelter_factor := 0.7 if sheltered else 1.0
+	# High body temperature increases thirst drain (sweating)
+	var temp_thirst_mult := 1.0
+	if body_temperature > 37.0:
+		temp_thirst_mult = 1.0 + (body_temperature - 37.0) * 0.5
+	# Extreme cold increases hunger drain (body burns calories to stay warm)
+	var temp_hunger_mult := 1.0
+	if body_temperature < 36.0:
+		temp_hunger_mult = 1.0 + (36.0 - body_temperature) * 0.3
+	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sprint_multiplier * 0.5 * sleep_factor * shelter_factor * temp_hunger_mult)
+	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * shelter_factor * temp_thirst_mult)
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
 	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
 	var sleep_mult := sprint_multiplier
@@ -159,6 +171,9 @@ func get_survival_time_text() -> String:
 func get_sick(duration: float) -> void:
 	sick = true
 	sick_timer = max(sick_timer, duration)
+	hunger *= 0.5
+	thirst *= 0.5
+	health *= 0.5
 	changed.emit()
 
 func equip_warmth(value: float) -> void:
@@ -185,6 +200,8 @@ func to_dict() -> Dictionary:
 		"hot_food_charges": hot_food_charges,
 		"hot_food_temp_bonus": hot_food_temp_bonus,
 		"survival_seconds": survival_seconds,
+		"overeat_count": overeat_count,
+		"overdrink_count": overdrink_count,
 		"dead": dead
 	}
 
@@ -203,5 +220,7 @@ func from_dict(data: Dictionary) -> void:
 	hot_food_charges = int(data.get("hot_food_charges", 0))
 	hot_food_temp_bonus = float(data.get("hot_food_temp_bonus", 0.0))
 	survival_seconds = float(data.get("survival_seconds", 0.0))
+	overeat_count = int(data.get("overeat_count", 0))
+	overdrink_count = int(data.get("overdrink_count", 0))
 	dead = bool(data.get("dead", health <= 0.0))
 	changed.emit()

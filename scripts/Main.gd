@@ -2692,6 +2692,10 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return ["res://assets/models/props/fruit/fig.glb"]
 			if item_name.begins_with("Seta"):
 				return ["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"]
+			if item_name.begins_with("Lata de guiso"):
+				return [CANNED_FOOD_LOW_MODEL]
+			if item_name.begins_with("Lata de atun"):
+				return [FOOD_CAN_415G_MODEL]
 			return [CANNED_FOOD_LOW_MODEL, FOOD_CAN_415G_MODEL]
 		"backpack":
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
@@ -4367,6 +4371,7 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 func _create_mushrooms() -> void:
 	var mushroom_count := 400
 	var mushroom_idx := 0
+	var placed_positions: Array[Vector3] = []
 	for _i in range(mushroom_count):
 		var pos := Vector3(_world_rng.randf_range(-120, 120), 0.06, _world_rng.randf_range(-120, 120))
 		if pos.distance_to(Vector3.ZERO) < 20.0:
@@ -4379,9 +4384,17 @@ func _create_mushrooms() -> void:
 			continue
 		if _is_on_road(pos):
 			continue
+		var too_close := false
+		for prev_pos in placed_positions:
+			if pos.distance_to(prev_pos) < 2.0:
+				too_close = true
+				break
+		if too_close:
+			continue
 		var py := _get_exact_ground_y(pos.x, pos.z)
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
 		mushroom_idx += 1
+		placed_positions.append(pos)
 
 func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	if _depleted_action_ids.has(id):
@@ -4454,9 +4467,6 @@ func _create_house_loot() -> void:
 		# --- Dris clothing ---
 		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -120, 0), "flat": true, "color": Color(0.8, 0.7, 0.6), "remy_mesh": "tops"},
 		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -150, 0), "flat": true, "color": Color(0.3, 0.3, 0.35), "remy_mesh": "bottoms"},
-		# --- Soldier clothing (camo green) ---
-		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12), "tint": Color(0.15, 0.18, 0.12)},
-		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
@@ -4475,7 +4485,7 @@ func _create_house_loot() -> void:
 		var origin: Vector3 = hd["origin"]
 		var half_w: float = hd["w"] * 0.5
 		var half_d: float = hd["d"] * 0.5
-		var num_items := 2 + _world_rng.randi() % 3
+		var num_items := 3 + _world_rng.randi() % 4
 		for _j in range(num_items):
 			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			if template.get("rare", false) and _world_rng.randf() > 0.50:
@@ -4499,7 +4509,7 @@ func _create_house_loot() -> void:
 	var barn_origin := Vector3(45, 0, 120)
 	var barn_half_w := 4.0
 	var barn_half_d := 9.0
-	var barn_num_items := 5 + _world_rng.randi() % 4
+	var barn_num_items := 6 + _world_rng.randi() % 5
 	for _j in range(barn_num_items):
 		var template: Dictionary = barn_loot_pool[_world_rng.randi() % barn_loot_pool.size()]
 		if template.get("rare", false) and _world_rng.randf() > 0.40:
@@ -4512,13 +4522,10 @@ func _create_house_loot() -> void:
 	var tent_loot_pool := [
 		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
 		# --- Standard green military ---
-		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.5, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 45, 0), "flat": false, "color": Color(0.15, 0.18, 0.12), "tint": Color(0.15, 0.18, 0.12)},
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 		# --- Blue military variant A ---
-		{"name": "Chaqueta militar azul", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 120, 0), "flat": false, "color": Color(0.03, 0.05, 0.10), "tint": Color(0.03, 0.05, 0.10)},
 		{"name": "Pantalones militares azules", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 80, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
 		# --- Black military variant B ---
-		{"name": "Chaqueta militar negra II", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.20, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -60, 0), "flat": false, "color": Color(0.03, 0.03, 0.04), "tint": Color(0.03, 0.03, 0.04)},
 		{"name": "Pantalones militares negros II", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
 		# --- Camo military ---
 		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 100, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},

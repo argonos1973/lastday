@@ -241,8 +241,8 @@ const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
 const MIXAMO_GROUND_CORRECTION := 0.38
-const BASE_CARRY_SLOTS := 0
-const BASE_CARRY_WEIGHT := 0.0
+const BASE_CARRY_SLOTS := 3
+const BASE_CARRY_WEIGHT := 5.0
 const TORSO_CARRY_SLOTS := 2
 const TORSO_CARRY_WEIGHT := 2.0
 const LEGS_CARRY_SLOTS := 2
@@ -1984,7 +1984,14 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 				mat.albedo_color = cfg["tint"]
 			mi.material_override = mat
 		elif worn:
-			mi.material_override = null
+			if mesh_name.begins_with("soldier_"):
+				var sol_mat := StandardMaterial3D.new()
+				sol_mat.albedo_color = Color(0.15, 0.18, 0.12)
+				sol_mat.roughness = 0.85
+				sol_mat.metallic = 0.0
+				mi.material_override = sol_mat
+			else:
+				mi.material_override = null
 	# Build reverse map: body mesh name -> default clothing item name
 	var _body_to_default := {}
 	for dname in DEFAULT_CLOTHING:
@@ -2244,18 +2251,37 @@ func _recalculate_carry_capacity() -> void:
 		return
 	var slots := BASE_CARRY_SLOTS
 	var weight := BASE_CARRY_WEIGHT
-	# Bonus per equipped clothing item — uses item's storage_capacity
+	# Bonus per equipped clothing slot
 	for slot in _equipped_slots:
 		var equipped_item_name: String = str(_equipped_slots[slot])
-		var cap := 0
-		# Find the item in inventory to get its storage_capacity
-		for inv_item in inventory.items:
-			if str(inv_item.item_name) == equipped_item_name:
-				cap = int(inv_item.storage_capacity)
-				break
-		if cap > 0:
-			slots += cap
-			weight += float(cap) * 1.0
+		if equipped_item_name.is_empty():
+			continue
+		var is_military := equipped_item_name.find("militar") >= 0 or equipped_item_name.find("camuflaje") >= 0
+		match slot:
+			"torso":
+				slots += TORSO_CARRY_SLOTS
+				weight += TORSO_CARRY_WEIGHT
+				if is_military:
+					slots += 3
+					weight += 3.0
+			"legs":
+				slots += LEGS_CARRY_SLOTS
+				weight += LEGS_CARRY_WEIGHT
+				if is_military:
+					slots += 2
+					weight += 2.0
+			"feet":
+				slots += FEET_CARRY_SLOTS
+				weight += FEET_CARRY_WEIGHT
+			"hands":
+				slots += HANDS_CARRY_SLOTS
+				weight += HANDS_CARRY_WEIGHT
+				if is_military:
+					slots += 1
+					weight += 0.5
+			"head":
+				slots += HEAD_CARRY_SLOTS
+				weight += HEAD_CARRY_WEIGHT
 	# Backpack bonus only if actually equipped (not just in inventory)
 	if not equipped_backpack.is_empty():
 		slots += SMALL_BACKPACK_SLOTS

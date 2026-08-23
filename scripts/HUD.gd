@@ -330,6 +330,12 @@ func _tier_bar_color(ratio: float) -> Color:
 	else:
 		return Color(0.80, 0.12, 0.10)
 
+func _overfull_bar_color(count: int) -> Color:
+	if count >= 2:
+		return Color(0.6, 0.1, 0.6)
+	else:
+		return Color(0.6, 0.4, 0.8)
+
 func _set_vital_icon_color(key: String, color: Color) -> void:
 	if not status_icons.has(key):
 		return
@@ -349,6 +355,19 @@ func _set_vital_bar(key: String, ratio: float) -> void:
 		max_w = 30.0
 	bar_fill.size.x = max_w * clamp(ratio, 0.0, 1.0)
 
+func _set_vital_bar_color(key: String, color: Color) -> void:
+	if not status_icons.has(key):
+		return
+	if not status_icons[key].has("bar_fill"):
+		return
+	var bar_fill: ColorRect = status_icons[key]["bar_fill"]
+	var bar_bg: Control = status_icons[key]["bar_bg"]
+	bar_fill.color = color
+	var max_w: float = bar_bg.size.x
+	if max_w <= 0.0:
+		max_w = 30.0
+	bar_fill.size.x = max_w
+
 func _update_status_icons() -> void:
 	if player == null or player.stats == null:
 		return
@@ -361,8 +380,16 @@ func _update_status_icons() -> void:
 	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
-	_set_vital_icon_color("hunger", _tier_color(hunger_ratio))
-	_set_vital_icon_color("thirst", _tier_color(thirst_ratio))
+	var hunger_overfull := hunger_ratio >= 1.0 and stats.overeat_count > 0
+	var thirst_overfull := thirst_ratio >= 1.0 and stats.overdrink_count > 0
+	if hunger_overfull:
+		_set_vital_icon_color("hunger", _overfull_bar_color(stats.overeat_count))
+	else:
+		_set_vital_icon_color("hunger", _tier_color(hunger_ratio))
+	if thirst_overfull:
+		_set_vital_icon_color("thirst", _overfull_bar_color(stats.overdrink_count))
+	else:
+		_set_vital_icon_color("thirst", _tier_color(thirst_ratio))
 	_set_vital_icon_color("temp", _tier_color(temp_ratio))
 	_set_vital_icon_color("energy", _tier_color(energy_ratio))
 	_set_vital_icon_color("sleep", _tier_color(sleep_ratio))
@@ -371,8 +398,14 @@ func _update_status_icons() -> void:
 		_set_vital_icon_color("sick", Color(0.80, 0.12, 0.10))
 	# Update level bars
 	_set_vital_bar("health", health_ratio)
-	_set_vital_bar("hunger", hunger_ratio)
-	_set_vital_bar("thirst", thirst_ratio)
+	if hunger_overfull:
+		_set_vital_bar_color("hunger", _overfull_bar_color(stats.overeat_count))
+	else:
+		_set_vital_bar("hunger", hunger_ratio)
+	if thirst_overfull:
+		_set_vital_bar_color("thirst", _overfull_bar_color(stats.overdrink_count))
+	else:
+		_set_vital_bar("thirst", thirst_ratio)
 	_set_vital_bar("temp", temp_ratio)
 	_set_vital_bar("energy", energy_ratio)
 	_set_vital_bar("sleep", sleep_ratio)

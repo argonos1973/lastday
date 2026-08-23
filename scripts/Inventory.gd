@@ -63,8 +63,22 @@ func use_index(index: int, stats) -> bool:
 			if item.item_name.begins_with("Lata de ") and item.durability > 0.0:
 				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha antes de comer.")
 				return false
+			# Overeat check: eating when already full
+			if stats.hunger >= stats.max_stat:
+				stats.overeat_count += 1
+				if stats.overeat_count >= 3 and stats.has_method("get_sick"):
+					stats.get_sick(45.0)
+					stats.overeat_count = 0
+					item_used.emit("Has comido demasiado. Te sientes mal del estomago.")
+				else:
+					item_used.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
+				stats.changed.emit()
+				remove_index(index)
+				return true
 			if item.item_name == "Carne cruda de lobo":
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
 				if stats.has_method("get_sick"):
 					stats.get_sick(60.0)
 				stats.changed.emit()
@@ -73,6 +87,8 @@ func use_index(index: int, stats) -> bool:
 				return true
 			if item.item_name == "Carne asada en palo":
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
 				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.4))
 				if stats.has_method("add_hot_food"):
 					stats.add_hot_food(1)
@@ -84,7 +100,7 @@ func use_index(index: int, stats) -> bool:
 			if item.item_name == "Naranja":
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
 				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.5)
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.80)
 				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.2))
 				stats.changed.emit()
 				item_used.emit("Comes una naranja. Calma el hambre y la sed.")
@@ -92,17 +108,53 @@ func use_index(index: int, stats) -> bool:
 				return true
 			if item.item_name == "Higo":
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.70)
 				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.5))
 				stats.changed.emit()
 				item_used.emit("Comes un higo. Nutritivo y reconfortante.")
 				remove_index(index)
 				return true
+			if item.item_name.begins_with("Lata de "):
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.15)
+				stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
+				stats.changed.emit()
+				item_used.emit("Comes %s. Te hidrata un poco." % item.item_name)
+				remove_index(index)
+				return true
+			if item.item_name.begins_with("Seta"):
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+				if stats.has("thirst"):
+					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.30)
+				stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
+				stats.changed.emit()
+				item_used.emit("Comes una seta. Humeda y nutritiva.")
+				remove_index(index)
+				return true
 			stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
+			if stats.has("thirst"):
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.20)
 			stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
 			item_used.emit("Comida consumida. Te recuperas un poco.")
 			remove_index(index)
 			return true
 		"water":
+			# Overdrink check: drinking when already hydrated
+			if stats.thirst >= stats.max_stat:
+				stats.overdrink_count += 1
+				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
+					stats.get_sick(40.0)
+					stats.overdrink_count = 0
+					item_used.emit("Has bebido demasiado agua. Te sientes mal.")
+				else:
+					item_used.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
+				stats.changed.emit()
+				if item.item_name == "Botella de agua":
+					return true
+				remove_index(index)
+				return true
 			if item.item_name == "Botella de agua":
 				var drink_pct := 0.25
 				var remaining_pct: float = float(item.durability_pct())

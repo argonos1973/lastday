@@ -3,10 +3,9 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://miti24w12soc"
-path.s3tc="res://.godot/imported/walking_Remy_Hair_Gloss.png-ba8a030251f1775b94e5fc9047794caa.s3tc.ctex"
+path="res://.godot/imported/walking_Remy_Hair_Gloss.png-ba8a030251f1775b94e5fc9047794caa.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
+"vram_texture": false
 }
 generator_parameters={
 "md5": "0a54dbd50b5f87eac18d5fbf337de80d"
@@ -15,11 +14,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/walking_Remy_Hair_Gloss.png"
-dest_files=["res://.godot/imported/walking_Remy_Hair_Gloss.png-ba8a030251f1775b94e5fc9047794caa.s3tc.ctex"]
+dest_files=["res://.godot/imported/walking_Remy_Hair_Gloss.png-ba8a030251f1775b94e5fc9047794caa.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -41,4 +40,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=0
+detect_3d/compress_to=1

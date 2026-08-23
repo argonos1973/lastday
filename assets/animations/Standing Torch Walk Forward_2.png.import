@@ -3,10 +3,9 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://biofv4fo8jrw4"
-path.s3tc="res://.godot/imported/Standing Torch Walk Forward_2.png-e178c19bdf36ad6f5156b3ec88387a0f.s3tc.ctex"
+path="res://.godot/imported/Standing Torch Walk Forward_2.png-e178c19bdf36ad6f5156b3ec88387a0f.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
+"vram_texture": false
 }
 generator_parameters={
 "md5": "b6a4b4d7190e3227ce5fc32acad845fc"
@@ -15,11 +14,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Standing Torch Walk Forward_2.png"
-dest_files=["res://.godot/imported/Standing Torch Walk Forward_2.png-e178c19bdf36ad6f5156b3ec88387a0f.s3tc.ctex"]
+dest_files=["res://.godot/imported/Standing Torch Walk Forward_2.png-e178c19bdf36ad6f5156b3ec88387a0f.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -41,4 +40,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=0
+detect_3d/compress_to=1
