@@ -144,18 +144,36 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl == "cloth_hands":
 			m.visible = false
 		elif nl == "body_hands":
-			m.visible = hands_item.is_empty()
-		elif nl == "body_feet":
-			m.visible = not (has_feet and (is_survival_feet or feet_item == "Zapatillas"))
-		elif nl == "body_torso":
-			m.visible = not is_military_torso
-		elif nl == "body_arms":
-			m.visible = not is_military_torso
-		elif nl == "body_legs":
-			m.visible = not is_military_legs
-		elif nl == "desnudo_torso":
 			m.visible = false
+		elif nl == "body_feet":
+			m.visible = has_feet and (is_survival_feet or feet_item == "Zapatillas")
+		elif nl == "body_torso":
+			m.visible = has_torso and not is_military_torso
+		elif nl == "body_arms":
+			m.visible = has_torso and not is_military_torso
+		elif nl == "body_legs":
+			m.visible = has_legs and not is_military_legs
+		elif nl == "desnudo_torso":
+			m.visible = not (has_torso or is_military_torso)
+			if m.visible:
+				_mat(m, skin_color)
 			_extract_and_add_head_mesh(m, model, skin_color)
+		elif nl == "desnudo_arms":
+			m.visible = not (has_torso or is_military_torso)
+			if m.visible:
+				_mat(m, skin_color)
+		elif nl == "desnudo_legs":
+			m.visible = not (has_legs or is_military_legs)
+			if m.visible:
+				_mat(m, skin_color)
+		elif nl == "desnudo_feet":
+			m.visible = not (has_feet and (is_survival_feet or feet_item == "Zapatillas"))
+			if m.visible:
+				_mat(m, skin_color)
+		elif nl == "desnudo_hands":
+			m.visible = hands_item.is_empty()
+			if m.visible:
+				_mat(m, skin_color)
 		elif nl.begins_with("desnudo_"):
 			m.visible = false
 		elif nl.begins_with("soldier_"):
