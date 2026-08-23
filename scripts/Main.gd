@@ -887,9 +887,19 @@ func _tick_drink_hold(delta: float) -> void:
 	_drink_hold_timer += delta
 	if _drink_hold_timer >= 1.0:
 		_drink_hold_timer -= 1.0
-		_drink_hold_actor.stats.thirst = min(_drink_hold_actor.stats.max_stat, _drink_hold_actor.stats.thirst + 5.0)
-		_drink_hold_actor.stats.changed.emit()
-		_drink_hold_actor.notice.emit("Bebes agua del rio.")
+		var _stats = _drink_hold_actor.stats
+		if _stats.thirst >= _stats.max_stat:
+			_stats.overdrink_count += 1
+			if _stats.overdrink_count >= 3 and _stats.has_method("get_sick"):
+				_stats.get_sick(40.0)
+				_stats.overdrink_count = 0
+				_drink_hold_actor.notice.emit("Has bebido demasiada agua. Te sientes mal.")
+			else:
+				_drink_hold_actor.notice.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
+		else:
+			_stats.thirst = min(_stats.max_stat, _stats.thirst + 5.0)
+			_drink_hold_actor.notice.emit("Bebes agua del rio.")
+		_stats.changed.emit()
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
 
 func _tick_world_actions(delta: float) -> void:
