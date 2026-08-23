@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c2df54ur6kg62"
-path="res://.godot/imported/player_with_clothes_Ch36_1001_Specular.png-df926434632be96fc8f7a95aacb2c722.ctex"
+path="res://.godot/imported/player_with_clothes_Ch36_1001_Specular.png-a96c2f7bd7a413ca6efdbc0ac2dc1a64.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Ch36_1001_Specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Specular.png-df926434632be96fc8f7a95aacb2c722.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Ch36_1001_Specular.png"
+dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Specular.png-a96c2f7bd7a413ca6efdbc0ac2dc1a64.ctex"]
 
 [params]
 

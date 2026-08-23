@@ -140,6 +140,15 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 					continue
 			if not _has_line_of_sight(player, node):
 				continue
+			var dir_to_node2 := (node_pos - player_pos)
+			dir_to_node2.y = 0.0
+			if dir_to_node2.length() > 0.2:
+				dir_to_node2 = dir_to_node2.normalized()
+				var player_forward2 := -player.global_transform.basis.z
+				player_forward2.y = 0.0
+				player_forward2 = player_forward2.normalized()
+				if player_forward2.dot(dir_to_node2) < 0.5:
+					continue
 			best_dist = total_dist
 			best = node
 	return best

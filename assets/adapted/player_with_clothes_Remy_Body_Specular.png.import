@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://823f734ilbiq"
-path="res://.godot/imported/player_with_clothes_Remy_Body_Specular.png-e65d89dff0c78f7480f9a51fce005250.ctex"
+path="res://.godot/imported/player_with_clothes_Remy_Body_Specular.png-be0fabd46d70a41a55c55fc0ad1b1346.ctex"
 metadata={
 "vram_texture": false
 }
@@ -13,8 +13,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Remy_Body_Specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Specular.png-e65d89dff0c78f7480f9a51fce005250.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Remy_Body_Specular.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Specular.png-be0fabd46d70a41a55c55fc0ad1b1346.ctex"]
 
 [params]
 
