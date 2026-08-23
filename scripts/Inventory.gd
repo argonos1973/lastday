@@ -64,7 +64,7 @@ func use_index(index: int, stats) -> bool:
 				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha antes de comer.")
 				return false
 			# Overeat check: eating when already full
-			if stats.hunger >= stats.max_stat:
+			if stats.hunger >= stats.max_stat - 2.0:
 				stats.overeat_count += 1
 				if stats.overeat_count >= 3 and stats.has_method("get_sick"):
 					stats.get_sick(45.0)
@@ -142,7 +142,7 @@ func use_index(index: int, stats) -> bool:
 			return true
 		"water":
 			# Overdrink check: drinking when already hydrated
-			if stats.thirst >= stats.max_stat:
+			if stats.thirst >= stats.max_stat - 2.0:
 				stats.overdrink_count += 1
 				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
 					stats.get_sick(40.0)

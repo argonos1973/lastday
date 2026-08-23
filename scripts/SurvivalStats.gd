@@ -68,7 +68,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if body_temperature < 36.0:
 		temp_hunger_mult = 1.0 + (36.0 - body_temperature) * 0.3
 	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sprint_multiplier * 0.5 * sleep_factor * shelter_factor * temp_hunger_mult)
+	if hunger < max_stat - 10.0:
+		overeat_count = 0
 	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * shelter_factor * temp_thirst_mult)
+	if thirst < max_stat - 10.0:
+		overdrink_count = 0
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
 	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
 	var sleep_mult := sprint_multiplier

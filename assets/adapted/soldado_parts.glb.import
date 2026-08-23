@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://dcbjoer2se1pb"
-path="res://.godot/imported/soldado_parts.glb-5d2f048edb401a47c9645c8e85204ed4.scn"
+path="res://.godot/imported/soldado_parts.glb-1208780df8dbf53992652ce5e5f417d9.scn"
 
 [deps]
 
-source_file="res://assets/adapted/soldado_parts.glb"
-dest_files=["res://.godot/imported/soldado_parts.glb-5d2f048edb401a47c9645c8e85204ed4.scn"]
+source_file="res://assets/characters/adapted/soldado_parts.glb"
+dest_files=["res://.godot/imported/soldado_parts.glb-1208780df8dbf53992652ce5e5f417d9.scn"]
 
 [params]
 

@@ -4383,7 +4383,7 @@ func _drink_held_item() -> void:
 	drink_timer.one_shot = true
 	drink_timer.timeout.connect(func():
 		if stats != null:
-			if stats.thirst >= stats.max_stat:
+			if stats.thirst >= stats.max_stat - 2.0:
 				stats.overdrink_count += 1
 				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
 					stats.get_sick(40.0)

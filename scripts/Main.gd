@@ -888,7 +888,7 @@ func _tick_drink_hold(delta: float) -> void:
 	if _drink_hold_timer >= 1.0:
 		_drink_hold_timer -= 1.0
 		var _stats = _drink_hold_actor.stats
-		if _stats.thirst >= _stats.max_stat:
+		if _stats.thirst >= _stats.max_stat - 2.0:
 			_stats.overdrink_count += 1
 			if _stats.overdrink_count >= 3 and _stats.has_method("get_sick"):
 				_stats.get_sick(40.0)

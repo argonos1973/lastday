@@ -380,8 +380,8 @@ func _update_status_icons() -> void:
 	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
-	var hunger_overfull: bool = hunger_ratio >= 1.0 and int(stats.overeat_count) > 0
-	var thirst_overfull: bool = thirst_ratio >= 1.0 and int(stats.overdrink_count) > 0
+	var hunger_overfull: bool = int(stats.overeat_count) > 0
+	var thirst_overfull: bool = int(stats.overdrink_count) > 0
 	if hunger_overfull:
 		_set_vital_icon_color("hunger", _overfull_bar_color(int(stats.overeat_count)))
 	else:
