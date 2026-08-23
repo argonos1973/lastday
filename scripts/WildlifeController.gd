@@ -507,7 +507,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_wolf_ai_debug_timer = 5.0
 		if dist_to_player < 45.0:
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
-			if height_diff >= 2.5 and not _can_reach_player():
+			if height_diff >= 1.8 and not _can_reach_player():
 				_state = "patrol"
 				_chase_target = null
 				_chase_cooldown = 8.0
@@ -525,7 +525,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 1.5
 			else:
 				speed = move_speed * 4.0
-			if height_diff >= 2.5 and not _can_reach_player():
+			if height_diff >= 1.8 and not _can_reach_player():
 				_chase_stuck_time += delta * 2.0
 				if _chase_stuck_time > 1.5:
 					_state = "patrol"
@@ -541,7 +541,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					target = _player.global_position
 					_play_animation_by_name("run")
-			elif flat_dist <= 4.0 and height_diff < 2.5:
+			elif flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
@@ -1726,7 +1726,7 @@ func _can_reach_player() -> bool:
 	if _player == null or not is_instance_valid(_player):
 		return false
 	var height_diff := absf(_player.global_position.y - global_position.y)
-	if height_diff >= 2.5:
+	if height_diff >= 1.8:
 		return false
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):
