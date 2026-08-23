@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bwcksxlpvhvul"
-path.s3tc="res://.godot/imported/player_with_clothes_Remy_Shoes_Diffuse.png-3dfccde604b8ee2ae5e03dca1e7a6971.s3tc.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Shoes_Diffuse.png-ddbd4745292ac741e51bd12279001199.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Remy_Shoes_Diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Shoes_Diffuse.png-3dfccde604b8ee2ae5e03dca1e7a6971.s3tc.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Remy_Shoes_Diffuse.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Shoes_Diffuse.png-ddbd4745292ac741e51bd12279001199.s3tc.ctex"]
 
 [params]
 

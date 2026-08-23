@@ -5170,10 +5170,19 @@ func handle_world_action(action, actor) -> void:
 				hud.show_countdown("Comiendo", 1.2)
 			await get_tree().create_timer(1.2).timeout
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
-			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-			actor.stats.changed.emit()
 			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
-			actor.notice.emit("Comes %s." % eaten_name)
+			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
+				actor.stats.overeat_count += 1
+				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
+					actor.stats.get_sick(45.0)
+					actor.stats.overeat_count = 0
+					actor.notice.emit("Has comido demasiado. Te sientes mal del estomago.")
+				else:
+					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
+			else:
+				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
+				actor.notice.emit("Comes %s." % eaten_name)
+			actor.stats.changed.emit()
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
@@ -5748,10 +5757,19 @@ func handle_world_action_eat(action, actor) -> void:
 				hud.show_countdown("Comiendo", 1.2)
 			await get_tree().create_timer(1.2).timeout
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
-			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-			actor.stats.changed.emit()
 			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
-			actor.notice.emit("Comes %s." % eaten_name)
+			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
+				actor.stats.overeat_count += 1
+				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
+					actor.stats.get_sick(45.0)
+					actor.stats.overeat_count = 0
+					actor.notice.emit("Has comido demasiado. Te sientes mal del estomago.")
+				else:
+					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
+			else:
+				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
+				actor.notice.emit("Comes %s." % eaten_name)
+			actor.stats.changed.emit()
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
