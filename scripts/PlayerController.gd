@@ -4383,9 +4383,18 @@ func _drink_held_item() -> void:
 	drink_timer.one_shot = true
 	drink_timer.timeout.connect(func():
 		if stats != null:
-			stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
-			if stats.thirst > 35.0:
-				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
+			if stats.thirst >= stats.max_stat:
+				stats.overdrink_count += 1
+				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
+					stats.get_sick(40.0)
+					stats.overdrink_count = 0
+					notice.emit("Has bebido demasiada agua. Te sientes mal.")
+				else:
+					notice.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
+			else:
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
+				if stats.thirst > 35.0:
+					stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
 			stats.changed.emit()
 		if item_name == "Botella de agua" and item.has_method("is_broken") and item.is_broken():
 			inventory.remove_index(held_index)

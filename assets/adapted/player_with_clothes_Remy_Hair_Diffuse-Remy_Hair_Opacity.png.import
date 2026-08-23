@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cngmjntoyg2jd"
-path.s3tc="res://.godot/imported/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png-6e903d1a00cd12072eb6b1185736f832.s3tc.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png-cee077d684d4ae29c0af73c1c7af19ff.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png-6e903d1a00cd12072eb6b1185736f832.s3tc.ctex"]
+source_file="res://assets/adapted/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Hair_Diffuse-Remy_Hair_Opacity.png-cee077d684d4ae29c0af73c1c7af19ff.s3tc.ctex"]
 
 [params]
 
