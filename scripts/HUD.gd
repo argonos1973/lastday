@@ -380,14 +380,14 @@ func _update_status_icons() -> void:
 	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
-	var hunger_overfull := hunger_ratio >= 1.0 and stats.overeat_count > 0
-	var thirst_overfull := thirst_ratio >= 1.0 and stats.overdrink_count > 0
+	var hunger_overfull: bool = hunger_ratio >= 1.0 and int(stats.overeat_count) > 0
+	var thirst_overfull: bool = thirst_ratio >= 1.0 and int(stats.overdrink_count) > 0
 	if hunger_overfull:
-		_set_vital_icon_color("hunger", _overfull_bar_color(stats.overeat_count))
+		_set_vital_icon_color("hunger", _overfull_bar_color(int(stats.overeat_count)))
 	else:
 		_set_vital_icon_color("hunger", _tier_color(hunger_ratio))
 	if thirst_overfull:
-		_set_vital_icon_color("thirst", _overfull_bar_color(stats.overdrink_count))
+		_set_vital_icon_color("thirst", _overfull_bar_color(int(stats.overdrink_count)))
 	else:
 		_set_vital_icon_color("thirst", _tier_color(thirst_ratio))
 	_set_vital_icon_color("temp", _tier_color(temp_ratio))
@@ -399,11 +399,11 @@ func _update_status_icons() -> void:
 	# Update level bars
 	_set_vital_bar("health", health_ratio)
 	if hunger_overfull:
-		_set_vital_bar_color("hunger", _overfull_bar_color(stats.overeat_count))
+		_set_vital_bar_color("hunger", _overfull_bar_color(int(stats.overeat_count)))
 	else:
 		_set_vital_bar("hunger", hunger_ratio)
 	if thirst_overfull:
-		_set_vital_bar_color("thirst", _overfull_bar_color(stats.overdrink_count))
+		_set_vital_bar_color("thirst", _overfull_bar_color(int(stats.overdrink_count)))
 	else:
 		_set_vital_bar("thirst", thirst_ratio)
 	_set_vital_bar("temp", temp_ratio)
