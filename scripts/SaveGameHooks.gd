@@ -345,11 +345,24 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 		for slot_name in slots:
 			if not slot_name.is_empty():
 				var _load_color := Color(0, 0, 0, 0)
+				var _found_in_inv := false
 				if player.get("inventory") != null:
 					for inv_item in player.inventory.items:
-						if str(inv_item.item_name) == slot_name and inv_item.has_meta("clothing_color"):
-							_load_color = inv_item.get_meta("clothing_color")
+						if str(inv_item.item_name) == slot_name:
+							_found_in_inv = true
+							if inv_item.has_meta("clothing_color"):
+								_load_color = inv_item.get_meta("clothing_color")
 							break
+				if not _found_in_inv and player.get("inventory") != null:
+					var _weight := 0.3
+					var _use := 0.05
+					if slot_name == "Pantalones":
+						_weight = 0.5
+						_use = 0.10
+					elif slot_name == "Zapatillas":
+						_weight = 0.4
+						_use = 0.08
+					player.inventory.add_item(ItemScript.create(slot_name, "clothing", _weight, 1, _use))
 				player.equip_clothing(slot_name, _load_color)
 	# Restore equipped backpack
 	var equipped_backpack := str(data.get("equipped_backpack", ""))

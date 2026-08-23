@@ -1481,6 +1481,23 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		var slots := equipped_clothing.split(",")
 		for slot_name in slots:
 			if not slot_name.is_empty():
+				var _found_in_inv := false
+				if player.get("inventory") != null:
+					for inv_item in player.inventory.items:
+						if str(inv_item.item_name) == slot_name:
+							_found_in_inv = true
+							break
+				if not _found_in_inv and player.get("inventory") != null:
+					var ItemScript2 = load("res://scripts/Item.gd")
+					var _w := 0.3
+					var _u := 0.05
+					if slot_name == "Pantalones":
+						_w = 0.5
+						_u = 0.10
+					elif slot_name == "Zapatillas":
+						_w = 0.4
+						_u = 0.08
+					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
 				player.equip_clothing(slot_name)
 	player.held_index = clampi(held_idx, 0, max(0, player.inventory.items.size() - 1))
 	player._sync_held_item()
