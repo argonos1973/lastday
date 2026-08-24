@@ -237,6 +237,7 @@ const TORCH_CROUCH_TURN_LEFT_FBX := "res://assets/animations/Crouch Torch Turn L
 const TORCH_CROUCH_TURN_RIGHT_FBX := "res://assets/animations/Crouch Torch Turn Right 90.glb"
 const TORCH_CROUCH_IDLE_FBX := "res://assets/animations/Crouch Torch Idle 01.glb"
 const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forward.glb"
+const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -371,6 +372,8 @@ var _torch_crouch_turn_right_animation := ""
 var _torch_crouch_idle_animation := ""
 var _torch_crouch_walk_animation := ""
 var _torch_animations_loaded := false
+var _drink_animation_loaded := false
+var _drink_animation_length := 2.0
 var _torch_in_hands := false
 var _has_rifle := false
 var _rifle_in_hands := false
@@ -3165,6 +3168,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		var drink_anim := third_person_animation_player.get_animation(third_person_drink_animation)
 		if drink_anim != null:
 			drink_anim.loop_mode = Animation.LOOP_LINEAR
+	# Custom drink animation converted from Drinking.fbx, overrides the pre-built one if it loads successfully
+	_load_drink_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -4404,11 +4409,12 @@ func _drink_held_item() -> void:
 		return
 	# Show drink bottle model in hand during animation
 	_build_third_person_plastic_bottle()
-	play_action_animation("drink", 2.0)
+	var drink_duration := _drink_animation_length
+	play_action_animation("drink", drink_duration)
 	notice.emit("Bebiendo %s..." % item.item_name)
 	var item_name := str(item.item_name)
 	var drink_timer := Timer.new()
-	drink_timer.wait_time = 2.0
+	drink_timer.wait_time = drink_duration
 	drink_timer.one_shot = true
 	drink_timer.timeout.connect(func():
 		var _ot: float = 0.0
@@ -6704,6 +6710,57 @@ var _torch_arm_bone_idx := -1
 var _torch_forearm_bone_idx := -1
 var _torch_hand_bone_idx := -1
 var _torch_pose_connected := false
+
+func _load_drink_animation() -> void:
+	if _drink_animation_loaded:
+		return
+	_drink_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(DRINK_ANIMATION_GLB):
+		return
+	var loaded = load(DRINK_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_LINEAR
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	_smooth_loop_boundary(copied)
+	instance.queue_free()
+	var drink_lib: AnimationLibrary = AnimationLibrary.new()
+	drink_lib.add_animation(THIRD_PERSON_EXTERNAL_DRINK_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("drink", drink_lib)
+	if third_person_animation_player.has_animation("drink/" + THIRD_PERSON_EXTERNAL_DRINK_ANIMATION):
+		third_person_drink_animation = "drink/" + THIRD_PERSON_EXTERNAL_DRINK_ANIMATION
+		_drink_animation_length = copied.length
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
