@@ -4377,7 +4377,7 @@ func _eat_held_item() -> void:
 			if item_name == "Carne cruda de lobo" and stats.has_method("get_sick"):
 				stats.get_sick(60.0)
 			stats.changed.emit()
-			var _r := inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+			var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
 			inventory.remove_index(held_index)
 			inventory.changed.emit()
 			_sync_held_item()
@@ -4444,7 +4444,7 @@ func _drink_held_item() -> void:
 			third_person_hand_item_root.remove_child(child)
 			child.free()
 		_sync_held_item()
-		var _dr := ""
+		var _dr: String = ""
 		if stats != null:
 			_dr = inventory._fmt_restore(0.0, 0.0, _ot, float(stats.thirst), _ohp, float(stats.health))
 		notice.emit("Bebes %s.%s" % [item_name, _dr])
