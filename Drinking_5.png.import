@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://1dg0xfyfimny"
-path="res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"
+uid="uid://64hkj7hp2vn3"
+path="res://.godot/imported/Drinking_5.png-90282f17c01e1ad0c011a0bfae6a1cfd.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "309deb11032868e9404063bdcbc8c519"
+"md5": "58a579cf20ffc18cc344080ef430fcc5"
 }
 
 [deps]
 
-source_file="res://assets/characters/adapted/player_with_clothes_Soldier_Body_specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Soldier_Body_specular.png-2b5ae4c384e211eaa8b6ad6866847cb3.ctex"]
+source_file="res://Drinking_5.png"
+dest_files=["res://.godot/imported/Drinking_5.png-90282f17c01e1ad0c011a0bfae6a1cfd.ctex"]
 
 [params]
 

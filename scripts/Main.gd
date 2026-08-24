@@ -4505,29 +4505,31 @@ func _create_house_loot() -> void:
 		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -150, 0), "flat": true, "color": Color(0.3, 0.3, 0.35), "remy_mesh": "bottoms"},
 	]
 	var house_loot_data := [
-		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
-		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
-		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
-		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
-		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
-		{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
-		{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
-		{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
-		{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
-		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
+		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
+		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0, "label": "Casa abandonada 2"},
+		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5, "label": "Casa abandonada 3"},
+		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0, "label": "Casa abandonada 4"},
+		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0, "label": "Casa abandonada 5"},
+		{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5, "label": "Casa abandonada 6"},
+		{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0, "label": "Casa abandonada 7"},
+		{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0, "label": "Casa abandonada 8"},
+		{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0, "label": "Casa abandonada 9"},
+		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5, "label": "Casa abandonada 10"},
 	]
 	var loot_idx := 0
 	for hd in house_loot_data:
 		var origin: Vector3 = hd["origin"]
 		var half_w: float = hd["w"] * 0.5
 		var half_d: float = hd["d"] * 0.5
+		var house_label: String = str(hd.get("label", ""))
+		var furniture_aabbs: Array = _collect_house_furniture_aabbs(house_label)
 		var num_items := 3 + _world_rng.randi() % 4
 		for _j in range(num_items):
 			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			if template.get("rare", false) and _world_rng.randf() > 0.50:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
-			loot_data["pos"] = _find_pos_inside_house(origin, half_w, half_d)
+			loot_data["pos"] = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs)
 			loot_data["id"] = "house_loot_%d" % loot_idx
 			loot_idx += 1
 			_create_pickup_item(loot_data)
@@ -4629,12 +4631,40 @@ func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Ve
 	)
 	return pos
 
+func _collect_house_furniture_aabbs(house_label: String) -> Array:
+	var aabbs: Array = []
+	if house_label.is_empty():
+		return aabbs
+	var furniture_names := [" Bed", " Furniture", " Fridge", " Toilet", " Sink", " Stove", " SinkCabinet"]
+	for suffix in furniture_names:
+		var node := get_node_or_null(house_label + suffix)
+		if node is Node3D:
+			(node as Node3D).force_update_transform()
+			aabbs.append(NodeUtils.compute_node_world_aabb(node as Node3D))
+	return aabbs
+
+func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: float, furniture_aabbs: Array) -> Vector3:
+	var pad := 0.6
+	for _attempt in range(20):
+		var pos := _find_pos_inside_house(origin, half_w, half_d)
+		var blocked := false
+		for aabb in furniture_aabbs:
+			var box: AABB = aabb
+			var expanded := AABB(box.position - Vector3(pad, 0.0, pad), box.size + Vector3(pad * 2.0, box.size.y + 1.0, pad * 2.0))
+			if expanded.has_point(Vector3(pos.x, box.position.y, pos.z)):
+				blocked = true
+				break
+		if not blocked:
+			return pos
+	return _find_pos_inside_house(origin, half_w, half_d)
+
 func _find_safe_loot_pos() -> Vector3:
 	for _attempt in range(60):
 		var pos := Vector3(_world_rng.randf_range(-65, 65), 0.06, _world_rng.randf_range(-65, 65))
 		if _is_pos_safe_for_loot(pos):
 			return pos
 	return Vector3(_world_rng.randf_range(-65, 65), 0.06, _world_rng.randf_range(-65, 65))
+
 
 func _is_pos_safe_for_loot(pos: Vector3) -> bool:
 	if _is_near_river(pos, 5.0):

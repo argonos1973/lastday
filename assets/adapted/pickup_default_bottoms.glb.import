@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://dfhnhvybebqp5"
-path="res://.godot/imported/pickup_default_bottoms.glb-3014317ea41c552536bcfa61ec6ce273.scn"
+path="res://.godot/imported/pickup_default_bottoms.glb-f5d7106d022be72de14c3ed1c9e10af1.scn"
 
 [deps]
 
-source_file="res://assets/adapted/pickup_default_bottoms.glb"
-dest_files=["res://.godot/imported/pickup_default_bottoms.glb-3014317ea41c552536bcfa61ec6ce273.scn"]
+source_file="res://assets/characters/adapted/pickup_default_bottoms.glb"
+dest_files=["res://.godot/imported/pickup_default_bottoms.glb-f5d7106d022be72de14c3ed1c9e10af1.scn"]
 
 [params]
 
