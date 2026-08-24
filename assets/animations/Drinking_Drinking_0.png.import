@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c25jt7g2bpgr4"
-path="res://.godot/imported/Drinking_Ch10_1002_Specular.png-03ef8c91cda31b502a3fd2d58e8990a6.ctex"
+uid="uid://c72fcsy3asfn7"
+path="res://.godot/imported/Drinking_Drinking_0.png-73566a84e19c053ff312a4af981f0922.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "ebede5940d9c5b94d7119a7994d25a8e"
+"md5": "b0162432fc7ed34cb583653b1e0dbacd"
 }
 
 [deps]
 
-source_file="res://assets/animations/Drinking_Ch10_1002_Specular.png"
-dest_files=["res://.godot/imported/Drinking_Ch10_1002_Specular.png-03ef8c91cda31b502a3fd2d58e8990a6.ctex"]
+source_file="res://assets/animations/Drinking_Drinking_0.png"
+dest_files=["res://.godot/imported/Drinking_Drinking_0.png-73566a84e19c053ff312a4af981f0922.ctex"]
 
 [params]
 

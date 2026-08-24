@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c5l8afuqyvfg3"
-path="res://.godot/imported/Drinking_Ch10_1001_Diffuse.png-ffd9a781ed0c596a0daaf0271c89f914.ctex"
+uid="uid://0jvu4t513alf"
+path="res://.godot/imported/Drinking_Drinking_7.png-c0cb677c02bd2837b4c05d5372d9bd3a.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "b0162432fc7ed34cb583653b1e0dbacd"
+"md5": "3c2eebef5d4616928894284fa12b7f34"
 }
 
 [deps]
 
-source_file="res://assets/animations/Drinking_Ch10_1001_Diffuse.png"
-dest_files=["res://.godot/imported/Drinking_Ch10_1001_Diffuse.png-ffd9a781ed0c596a0daaf0271c89f914.ctex"]
+source_file="res://assets/animations/Drinking_Drinking_7.png"
+dest_files=["res://.godot/imported/Drinking_Drinking_7.png-c0cb677c02bd2837b4c05d5372d9bd3a.ctex"]
 
 [params]
 
