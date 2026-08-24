@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dp2gcgx4yoomb"
-path.s3tc="res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-6776570535a6aec5d6a1ea681a8bb247.s3tc.ctex"
+uid="uid://b4t7dynni53i0"
+path.s3tc="res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-19fbff6c15fa52fce95ed550da020f6e.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "a4b7f91c88a346aca2d12f9f230c8628"
+"md5": "1ba152c474efb3141ce49dd0c36227df"
 }
 
 [deps]
 
-source_file="res://assets/adapted/player_with_clothes_Remy_Bottom_Diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Bottom_Diffuse.png-6776570535a6aec5d6a1ea681a8bb247.s3tc.ctex"]
+source_file="res://assets/characters/adapted/soldado_parts_Soldier_Body_diffuse.png"
+dest_files=["res://.godot/imported/soldado_parts_Soldier_Body_diffuse.png-19fbff6c15fa52fce95ed550da020f6e.s3tc.ctex"]
 
 [params]
 

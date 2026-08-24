@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://blovag2ytd3ge"
-path.s3tc="res://.godot/imported/player_with_clothes_Remy_Body_Normal.png-eaa070dc35dc6eca6eec8f1db23acc4b.s3tc.ctex"
+uid="uid://c3qbg028w73fc"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Body_Gloss.png-1e32e5caf34e8401c73229b2b856b30d.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "fc6ed9c4c7aea2bb1f93df4f3c4f2981"
+"md5": "8c8aac2234d3bd2b4260a67d7bd17938"
 }
 
 [deps]
 
-source_file="res://assets/adapted/player_with_clothes_Remy_Body_Normal.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Normal.png-eaa070dc35dc6eca6eec8f1db23acc4b.s3tc.ctex"]
+source_file="res://assets/characters/adapted/player_with_clothes_Remy_Body_Gloss.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Gloss.png-1e32e5caf34e8401c73229b2b856b30d.s3tc.ctex"]
 
 [params]
 
@@ -25,12 +25,12 @@ compress/lossy_quality=0.7
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
-compress/normal_map=1
+compress/normal_map=0
 compress/channel_pack=0
 mipmaps/generate=true
 mipmaps/limit=-1
-roughness/mode=1
-roughness/src_normal="res://assets/adapted/player_with_clothes_Remy_Body_Normal.png"
+roughness/mode=0
+roughness/src_normal=""
 process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2

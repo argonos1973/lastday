@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dtwoa7764fxyc"
-path.s3tc="res://.godot/imported/pickup_soldier_torso_Soldier_Body_normal.png-e583c2f2257a0e2851fb27aae3ba84e3.s3tc.ctex"
+uid="uid://blovag2ytd3ge"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Body_Normal.png-f03d454636005b9cb1ff8816db541ce3.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "60006af43518f5deeb032aa359cfa316"
+"md5": "fc6ed9c4c7aea2bb1f93df4f3c4f2981"
 }
 
 [deps]
 
-source_file="res://assets/characters/adapted/pickup_soldier_torso_Soldier_Body_normal.png"
-dest_files=["res://.godot/imported/pickup_soldier_torso_Soldier_Body_normal.png-e583c2f2257a0e2851fb27aae3ba84e3.s3tc.ctex"]
+source_file="res://assets/characters/adapted/player_with_clothes_Remy_Body_Normal.png"
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Body_Normal.png-f03d454636005b9cb1ff8816db541ce3.s3tc.ctex"]
 
 [params]
 
@@ -30,7 +30,7 @@ compress/channel_pack=0
 mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=1
-roughness/src_normal="res://assets/adapted/pickup_soldier_torso_Soldier_Body_normal.png"
+roughness/src_normal="res://assets/adapted/player_with_clothes_Remy_Body_Normal.png"
 process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2
