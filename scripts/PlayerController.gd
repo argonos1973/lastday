@@ -6025,7 +6025,7 @@ func _build_third_person_drink_bottle_left_hand() -> void:
 	for child in _drink_hand_root.get_children():
 		if child.name == "ThirdPersonDrinkBottleLeft":
 			child.queue_free()
-	_try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0, -0.05, 0.02), Vector3(90, 0, 0), Vector3.ONE * 0.015)
+	_try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0.02, -0.08, 0.05), Vector3(70, 0, 10), Vector3.ONE * 0.015)
 
 func _clear_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
