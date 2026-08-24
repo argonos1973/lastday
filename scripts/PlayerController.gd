@@ -4407,8 +4407,8 @@ func _drink_held_item() -> void:
 	if item.item_type != "water":
 		notice.emit("No tienes agua en la mano.")
 		return
-	# Show drink bottle model in hand during animation
-	_build_third_person_plastic_bottle()
+	# Show drink bottle model in the LEFT hand during animation (matches drink anim pose)
+	_build_third_person_drink_bottle_left_hand()
 	var drink_duration := _drink_animation_length
 	play_action_animation("drink", drink_duration)
 	notice.emit("Bebiendo %s..." % item.item_name)
@@ -4446,9 +4446,7 @@ func _drink_held_item() -> void:
 		else:
 			inventory.remove_index(held_index)
 		inventory.changed.emit()
-		for child in third_person_hand_item_root.get_children():
-			third_person_hand_item_root.remove_child(child)
-			child.free()
+		_clear_third_person_drink_bottle_left_hand()
 		_sync_held_item()
 		var _dr: String = ""
 		if stats != null:
@@ -6007,6 +6005,24 @@ func _build_third_person_bottle() -> void:
 
 func _build_third_person_plastic_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
+
+# Drink bottle held in the LEFT hand, following the same socket used for the
+# torch (_torch_hand_root, updated every frame via _update_torch_hand_socket)
+# so it matches the drink animation's left-hand pose correctly.
+func _build_third_person_drink_bottle_left_hand() -> void:
+	if _torch_hand_root == null or not is_instance_valid(_torch_hand_root):
+		return
+	for child in _torch_hand_root.get_children():
+		if child.name == "ThirdPersonDrinkBottleLeft":
+			child.queue_free()
+	_try_add_model_to_parent(_torch_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
+
+func _clear_third_person_drink_bottle_left_hand() -> void:
+	if _torch_hand_root == null or not is_instance_valid(_torch_hand_root):
+		return
+	for child in _torch_hand_root.get_children():
+		if child.name == "ThirdPersonDrinkBottleLeft":
+			child.queue_free()
 
 func _build_third_person_drink_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
