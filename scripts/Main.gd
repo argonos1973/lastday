@@ -4556,7 +4556,7 @@ func _create_house_loot() -> void:
 		_create_pickup_item(loot_data)
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.15, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
 		# --- Standard green military ---
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 		# --- Blue military variant A ---
@@ -4590,7 +4590,7 @@ func _create_house_loot() -> void:
 	if not _player_has_rifle:
 		var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
 		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-		rifle_data["pos"].y = tent_ground_y + 0.3
+		rifle_data["pos"].y = tent_ground_y + 0.06
 		rifle_data["id"] = "tent_loot_rifle"
 		_create_pickup_item(rifle_data)
 	else:
