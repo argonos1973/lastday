@@ -901,8 +901,13 @@ func _tick_drink_hold(delta: float) -> void:
 			else:
 				_drink_hold_actor.notice.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
 		else:
+			var _ot_river := _stats.thirst
+			var _ohp_river := _stats.health
 			_stats.thirst = min(_stats.max_stat, _stats.thirst + 5.0)
-			_drink_hold_actor.notice.emit("Bebes agua del rio.")
+			if _stats.thirst > 35.0:
+				_stats.health = min(_stats.max_health, _stats.health + max(1.0, 5.0 * 0.15))
+			var _r_river := _drink_hold_actor.inventory._fmt_restore(0.0, 0.0, _ot_river, _stats.thirst, _ohp_river, _stats.health)
+			_drink_hold_actor.notice.emit("Bebes agua del rio.%s" % _r_river)
 		_stats.changed.emit()
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
 
@@ -5201,8 +5206,15 @@ func handle_world_action(action, actor) -> void:
 				else:
 					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
 			else:
+				var _oh_eat := actor.stats.hunger
+				var _ot_eat := actor.stats.thirst if actor.stats.has("thirst") else 0.0
+				var _ohp_eat := actor.stats.health
 				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				actor.notice.emit("Comes %s." % eaten_name)
+				if actor.stats.has("thirst"):
+					actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
+				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
+				var _r_eat := actor.inventory._fmt_restore(_oh_eat, actor.stats.hunger, _ot_eat, actor.stats.thirst if actor.stats.has("thirst") else _ot_eat, _ohp_eat, actor.stats.health)
+				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat])
 			actor.stats.changed.emit()
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -5798,8 +5810,15 @@ func handle_world_action_eat(action, actor) -> void:
 				else:
 					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
 			else:
+				var _oh_eat2 := actor.stats.hunger
+				var _ot_eat2 := actor.stats.thirst if actor.stats.has("thirst") else 0.0
+				var _ohp_eat2 := actor.stats.health
 				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				actor.notice.emit("Comes %s." % eaten_name)
+				if actor.stats.has("thirst"):
+					actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
+				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
+				var _r_eat2 := actor.inventory._fmt_restore(_oh_eat2, actor.stats.hunger, _ot_eat2, actor.stats.thirst if actor.stats.has("thirst") else _ot_eat2, _ohp_eat2, actor.stats.health)
+				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat2])
 			actor.stats.changed.emit()
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -5817,11 +5836,17 @@ func handle_world_action_eat(action, actor) -> void:
 				hud.show_countdown("Comiendo carne cruda", 3.0)
 			await get_tree().create_timer(3.0).timeout
 			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
+			var _oh_raw := actor.stats.hunger
+			var _ot_raw := actor.stats.thirst if actor.stats.has("thirst") else 0.0
+			var _ohp_raw := actor.stats.health
 			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + raw_food_value)
+			if actor.stats.has("thirst"):
+				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + raw_food_value * 0.10)
 			if actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(60.0)
 			actor.stats.changed.emit()
-			actor.notice.emit("Comes %s. Te sientes mal del estomago." % str(action.get_meta("item_name", "carne cruda")))
+			var _r_raw := actor.inventory._fmt_restore(_oh_raw, actor.stats.hunger, _ot_raw, actor.stats.thirst if actor.stats.has("thirst") else _ot_raw, _ohp_raw, actor.stats.health)
+			actor.notice.emit("Comes %s. Te sientes mal del estomago.%s" % [str(action.get_meta("item_name", "carne cruda")), _r_raw])
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()
