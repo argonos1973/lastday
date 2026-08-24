@@ -291,7 +291,7 @@ var _body_no_head_mesh: MeshInstance3D = null
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _torch_hand_root: Node3D
-var _drink_hand_root: Node3D
+var _drink_hand_root: BoneAttachment3D
 var _left_hand_bone_idx: int = -1
 var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
@@ -910,7 +910,6 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
 		_update_torch_hand_socket()
-		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
@@ -2459,7 +2458,6 @@ func _physics_process(delta: float) -> void:
 		_update_backpack_socket()
 		_update_hand_socket()
 		_update_torch_hand_socket()
-		_update_drink_hand_socket()
 		_update_head_worn_items()
 		_update_interaction_prompt()
 		# Align sleeping model vertically so it stays on top of bed
@@ -2577,7 +2575,6 @@ func _physics_process(delta: float) -> void:
 	_update_backpack_socket()
 	_update_hand_socket()
 	_update_torch_hand_socket()
-	_update_drink_hand_socket()
 	_update_head_worn_items()
 
 #endregion
@@ -2636,21 +2633,6 @@ func _update_torch_hand_socket() -> void:
 	_torch_hand_root.position = bone_local.origin + Vector3(-0.15, 0.0, 0.20)
 	var euler := bone_local.basis.get_euler()
 	_torch_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
-
-func _update_drink_hand_socket() -> void:
-	if _hand_skeleton == null or _left_hand_bone_idx < 0:
-		return
-	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(_drink_hand_root):
-		return
-	var bone_pose := _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
-	var skel_global := _hand_skeleton.global_transform
-	var bone_world := skel_global * bone_pose
-	var local_to_model := third_person_model.global_transform.affine_inverse()
-	var bone_local := local_to_model * bone_world
-	# Small offset so the bottle sits in the palm, not at the wrist joint
-	_drink_hand_root.position = bone_local.origin + Vector3(-0.05, 0.02, -0.08)
-	var euler := bone_local.basis.get_euler()
-	_drink_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
 # Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
 # animations (walking, looking up/down, sitting, etc.) instead of staying
@@ -2884,9 +2866,6 @@ func _create_third_person_model() -> void:
 				_torch_hand_root = Node3D.new()
 				_torch_hand_root.name = "TorchHandSocket"
 				third_person_model.add_child(_torch_hand_root)
-				_drink_hand_root = Node3D.new()
-				_drink_hand_root.name = "DrinkHandSocket"
-				third_person_model.add_child(_drink_hand_root)
 				if torch_light != null:
 					third_person_model.add_child(torch_light)
 					torch_light.position = Vector3(0.0, 1.8, -1.2)
@@ -2952,9 +2931,6 @@ func _create_third_person_item_slots() -> void:
 	_torch_hand_root = Node3D.new()
 	_torch_hand_root.name = "TorchHandSocket"
 	third_person_model.add_child(_torch_hand_root)
-	_drink_hand_root = Node3D.new()
-	_drink_hand_root.name = "DrinkHandSocket"
-	third_person_model.add_child(_drink_hand_root)
 	if torch_light != null:
 		third_person_model.add_child(torch_light)
 		torch_light.position = Vector3(0.0, 1.8, -1.2)
@@ -2983,6 +2959,11 @@ func _create_third_person_item_slots() -> void:
 			_left_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 			if _left_hand_bone_idx != -1:
 				break
+	if _left_hand_bone_idx >= 0 and _drink_hand_root == null:
+		_drink_hand_root = BoneAttachment3D.new()
+		_drink_hand_root.name = "DrinkHandSocket"
+		_drink_hand_root.bone_idx = _left_hand_bone_idx
+		_hand_skeleton.add_child(_drink_hand_root)
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
 	if _head_skeleton != null:
@@ -6036,16 +6017,15 @@ func _build_third_person_bottle() -> void:
 func _build_third_person_plastic_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
 
-# Drink bottle held in the LEFT hand, following a dedicated socket
-# (_drink_hand_root, updated every frame via _update_drink_hand_socket)
-# so it matches the drink animation's left-hand pose correctly.
+# Drink bottle held in the LEFT hand, attached via BoneAttachment3D to the
+# left hand bone so it automatically follows the drink animation's pose.
 func _build_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
 		return
 	for child in _drink_hand_root.get_children():
 		if child.name == "ThirdPersonDrinkBottleLeft":
 			child.queue_free()
-	_try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
+	_try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0, -0.05, 0.02), Vector3(90, 0, 0), Vector3.ONE * 0.015)
 
 func _clear_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
