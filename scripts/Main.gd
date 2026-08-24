@@ -4556,7 +4556,7 @@ func _create_house_loot() -> void:
 		_create_pickup_item(loot_data)
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.15, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
 		# --- Standard green military ---
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 		# --- Blue military variant A ---
@@ -4590,9 +4590,11 @@ func _create_house_loot() -> void:
 	if not _player_has_rifle:
 		var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
 		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-		rifle_data["pos"].y = tent_ground_y + 0.06
+		rifle_data["pos"].y = tent_ground_y + 0.3
 		rifle_data["id"] = "tent_loot_rifle"
 		_create_pickup_item(rifle_data)
+	else:
+		pass
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
@@ -5207,13 +5209,12 @@ func handle_world_action(action, actor) -> void:
 					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
 			else:
 				var _oh_eat: float = float(actor.stats.hunger)
-				var _ot_eat: float = float(actor.stats.thirst) if actor.stats.has("thirst") else 0.0
+				var _ot_eat: float = float(actor.stats.thirst)
 				var _ohp_eat: float = float(actor.stats.health)
 				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				if actor.stats.has("thirst"):
-					actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
+				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
 				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
-				var _r_eat: String = actor.inventory._fmt_restore(_oh_eat, float(actor.stats.hunger), _ot_eat, float(actor.stats.thirst) if actor.stats.has("thirst") else _ot_eat, _ohp_eat, float(actor.stats.health))
+				var _r_eat: String = actor.inventory._fmt_restore(_oh_eat, float(actor.stats.hunger), _ot_eat, float(actor.stats.thirst), _ohp_eat, float(actor.stats.health))
 				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat])
 			actor.stats.changed.emit()
 			_hide_action_visual(action)
@@ -5811,13 +5812,12 @@ func handle_world_action_eat(action, actor) -> void:
 					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
 			else:
 				var _oh_eat2: float = float(actor.stats.hunger)
-				var _ot_eat2: float = float(actor.stats.thirst) if actor.stats.has("thirst") else 0.0
+				var _ot_eat2: float = float(actor.stats.thirst)
 				var _ohp_eat2: float = float(actor.stats.health)
 				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				if actor.stats.has("thirst"):
-					actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
+				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
 				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
-				var _r_eat2: String = actor.inventory._fmt_restore(_oh_eat2, float(actor.stats.hunger), _ot_eat2, float(actor.stats.thirst) if actor.stats.has("thirst") else _ot_eat2, _ohp_eat2, float(actor.stats.health))
+				var _r_eat2: String = actor.inventory._fmt_restore(_oh_eat2, float(actor.stats.hunger), _ot_eat2, float(actor.stats.thirst), _ohp_eat2, float(actor.stats.health))
 				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat2])
 			actor.stats.changed.emit()
 			_hide_action_visual(action)
@@ -5837,15 +5837,14 @@ func handle_world_action_eat(action, actor) -> void:
 			await get_tree().create_timer(3.0).timeout
 			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
 			var _oh_raw: float = float(actor.stats.hunger)
-			var _ot_raw: float = float(actor.stats.thirst) if actor.stats.has("thirst") else 0.0
+			var _ot_raw: float = float(actor.stats.thirst)
 			var _ohp_raw: float = float(actor.stats.health)
 			actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + raw_food_value)
-			if actor.stats.has("thirst"):
-				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + raw_food_value * 0.10)
+			actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + raw_food_value * 0.10)
 			if actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(60.0)
 			actor.stats.changed.emit()
-			var _r_raw: String = actor.inventory._fmt_restore(_oh_raw, float(actor.stats.hunger), _ot_raw, float(actor.stats.thirst) if actor.stats.has("thirst") else _ot_raw, _ohp_raw, float(actor.stats.health))
+			var _r_raw: String = actor.inventory._fmt_restore(_oh_raw, float(actor.stats.hunger), _ot_raw, float(actor.stats.thirst), _ohp_raw, float(actor.stats.health))
 			actor.notice.emit("Comes %s. Te sientes mal del estomago.%s" % [str(action.get_meta("item_name", "carne cruda")), _r_raw])
 			_hide_action_visual(action)
 			action.mark_depleted()

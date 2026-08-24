@@ -1285,9 +1285,9 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 			if inventory != null:
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
-						if false:
-							pass
 						inventory.remove_index(i)
+						if i < held_index:
+							held_index -= 1
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 			drop_pos.y = global_position.y

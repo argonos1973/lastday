@@ -92,88 +92,81 @@ func use_index(index: int, stats) -> bool:
 				return true
 			if item.item_name == "Carne cruda de lobo":
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
 				if stats.has_method("get_sick"):
 					stats.get_sick(60.0)
 				stats.changed.emit()
-				item_used.emit("Comes carne cruda de lobo. Te sientes mal del estomago." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes carne cruda de lobo. Te sientes mal del estomago." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			if item.item_name == "Carne asada en palo":
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.10)
 				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.4))
 				if stats.has_method("add_hot_food"):
 					stats.add_hot_food(1)
 				stats.changed.emit()
-				item_used.emit("Comes carne asada separada del palo. Calienta tu cuerpo." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes carne asada separada del palo. Calienta tu cuerpo." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				add_item(ItemScript.create("Palo", "material", 0.3, 1, 0.0))
 				return true
 			if item.item_name == "Naranja":
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.80)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.80)
 				stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.2))
 				stats.changed.emit()
-				item_used.emit("Comes una naranja. Calma el hambre y la sed." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes una naranja. Calma el hambre y la sed." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			if item.item_name == "Higo":
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.70)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.70)
 				stats.health = min(stats.max_health, stats.health + max(5.0, item.use_value * 0.5))
 				stats.changed.emit()
-				item_used.emit("Comes un higo. Nutritivo y reconfortante." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes un higo. Nutritivo y reconfortante." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			if item.item_name.begins_with("Lata de "):
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.15)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.15)
 				stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
 				stats.changed.emit()
-				item_used.emit("Comes %s. Te hidrata un poco." % item.item_name + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes %s. Te hidrata un poco." % item.item_name + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			if item.item_name.begins_with("Seta"):
 				var _oh: float = float(stats.hunger)
-				var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
 				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-				if stats.has("thirst"):
-					stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.30)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.30)
 				stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
 				stats.changed.emit()
-				item_used.emit("Comes una seta. Humeda y nutritiva." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+				item_used.emit("Comes una seta. Humeda y nutritiva." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			var _oh: float = float(stats.hunger)
-			var _ot: float = float(stats.thirst) if stats.has("thirst") else 0.0
+			var _ot: float = float(stats.thirst)
 			var _ohp: float = float(stats.health)
 			stats.hunger = min(stats.max_stat, stats.hunger + item.use_value)
-			if stats.has("thirst"):
-				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.20)
+			stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.20)
 			stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35))
-			item_used.emit("Comida consumida. Te recuperas un poco." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst) if stats.has("thirst") else _ot, _ohp, float(stats.health)))
+			item_used.emit("Comida consumida. Te recuperas un poco." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 			remove_index(index)
 			return true
 		"water":
