@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://deltxm8ieuef"
-path.s3tc="res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-abff19786f9b0e2c882d379b8ee839ed.s3tc.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-ad016789f1826370b83160885188babc.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/adapted/player_with_clothes_Ch36_1001_Glossiness.png"
-dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-abff19786f9b0e2c882d379b8ee839ed.s3tc.ctex"]
+source_file="res://assets/characters/adapted/player_with_clothes_Ch36_1001_Glossiness.png"
+dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Glossiness.png-ad016789f1826370b83160885188babc.s3tc.ctex"]
 
 [params]
 

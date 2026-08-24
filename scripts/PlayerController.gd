@@ -4347,20 +4347,49 @@ func _eat_held_item() -> void:
 	eat_timer.one_shot = true
 	eat_timer.timeout.connect(func():
 		if stats != null:
-			stats.consume_food(food_value)
+			var _oh: float = float(stats.hunger)
+			var _ot: float = float(stats.thirst)
+			var _ohp: float = float(stats.health)
+			var _thirst_pct := 0.20
+			var _health_pct := 0.35
+			if item_name == "Naranja":
+				_thirst_pct = 0.80
+				_health_pct = 0.20
+			elif item_name == "Higo":
+				_thirst_pct = 0.70
+				_health_pct = 0.50
+			elif item_name.begins_with("Seta"):
+				_thirst_pct = 0.30
+				_health_pct = 0.35
+			elif item_name.begins_with("Lata de"):
+				_thirst_pct = 0.15
+				_health_pct = 0.35
+			elif item_name == "Carne asada en palo":
+				_thirst_pct = 0.10
+				_health_pct = 0.40
+			elif item_name == "Carne cruda de lobo":
+				_thirst_pct = 0.10
+				_health_pct = 0.0
+			stats.hunger = min(stats.max_stat, stats.hunger + food_value)
+			stats.thirst = min(stats.max_stat, stats.thirst + food_value * _thirst_pct)
+			if _health_pct > 0.0:
+				stats.health = min(stats.max_health, stats.health + max(3.0, food_value * _health_pct))
+			if item_name == "Carne cruda de lobo" and stats.has_method("get_sick"):
+				stats.get_sick(60.0)
 			stats.changed.emit()
-		inventory.remove_index(held_index)
-		inventory.changed.emit()
-		_sync_held_item()
-		notice.emit("Comes %s. +%d hambre." % [item_name, int(food_value)])
-		if item_name == "Carne humana":
-			notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
-			if stats != null:
-				stats.health = 0.0
-				stats.changed.emit()
-			if has_method("die"):
-				die()
-	)
+			var _r := inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+			inventory.remove_index(held_index)
+			inventory.changed.emit()
+			_sync_held_item()
+			notice.emit("Comes %s.%s" % [item_name, _r])
+			if item_name == "Carne humana":
+				notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
+				if stats != null:
+					stats.health = 0.0
+					stats.changed.emit()
+				if has_method("die"):
+					die()
+		)
 	add_child(eat_timer)
 	eat_timer.start()
 
@@ -4382,7 +4411,11 @@ func _drink_held_item() -> void:
 	drink_timer.wait_time = 2.0
 	drink_timer.one_shot = true
 	drink_timer.timeout.connect(func():
+		var _ot: float = 0.0
+		var _ohp: float = 0.0
 		if stats != null:
+			_ot = float(stats.thirst)
+			_ohp = float(stats.health)
 			if stats.thirst >= stats.max_stat - 2.0:
 				stats.overdrink_count += 1
 				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
@@ -4411,7 +4444,10 @@ func _drink_held_item() -> void:
 			third_person_hand_item_root.remove_child(child)
 			child.free()
 		_sync_held_item()
-		notice.emit("Bebes %s." % item_name)
+		var _dr := ""
+		if stats != null:
+			_dr = inventory._fmt_restore(0.0, 0.0, _ot, float(stats.thirst), _ohp, float(stats.health))
+		notice.emit("Bebes %s.%s" % [item_name, _dr])
 	)
 	add_child(drink_timer)
 	drink_timer.start()
