@@ -4407,7 +4407,12 @@ func _drink_held_item() -> void:
 	if item.item_type != "water":
 		notice.emit("No tienes agua en la mano.")
 		return
-	# Show drink bottle model in the LEFT hand during animation (matches drink anim pose)
+	# Remove the right-hand bottle (shown while just holding it) and show it
+	# in the LEFT hand during the drink animation (matches drink anim pose)
+	if third_person_hand_item_root != null:
+		for child in third_person_hand_item_root.get_children():
+			third_person_hand_item_root.remove_child(child)
+			child.free()
 	_build_third_person_drink_bottle_left_hand()
 	var drink_duration := _drink_animation_length
 	play_action_animation("drink", drink_duration)
