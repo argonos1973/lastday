@@ -291,8 +291,9 @@ var _body_no_head_mesh: MeshInstance3D = null
 var third_person_hand_item_root: Node3D
 var third_person_back_item_root: Node3D
 var _torch_hand_root: Node3D
-var _drink_hand_root: BoneAttachment3D
+var _drink_hand_root: Node3D
 var _left_hand_bone_idx: int = -1
+var _drink_bone_idx: int = -1
 var _spine_skeleton: Skeleton3D = null
 var _spine_bone_idx: int = -1
 var _hand_skeleton: Skeleton3D = null
@@ -910,6 +911,7 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		_update_hand_socket()
 		_update_torch_hand_socket()
+		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
@@ -2458,6 +2460,7 @@ func _physics_process(delta: float) -> void:
 		_update_backpack_socket()
 		_update_hand_socket()
 		_update_torch_hand_socket()
+		_update_drink_hand_socket()
 		_update_head_worn_items()
 		_update_interaction_prompt()
 		# Align sleeping model vertically so it stays on top of bed
@@ -2575,6 +2578,7 @@ func _physics_process(delta: float) -> void:
 	_update_backpack_socket()
 	_update_hand_socket()
 	_update_torch_hand_socket()
+	_update_drink_hand_socket()
 	_update_head_worn_items()
 
 #endregion
@@ -2633,6 +2637,23 @@ func _update_torch_hand_socket() -> void:
 	_torch_hand_root.position = bone_local.origin + Vector3(-0.15, 0.0, 0.20)
 	var euler := bone_local.basis.get_euler()
 	_torch_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+func _update_drink_hand_socket() -> void:
+	if _hand_skeleton == null or _drink_bone_idx < 0:
+		return
+	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(_drink_hand_root):
+		return
+	var bone_pose := _hand_skeleton.get_bone_global_pose(_drink_bone_idx)
+	var skel_global := _hand_skeleton.global_transform
+	var bone_world := skel_global * bone_pose
+	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var bone_local := local_to_model * bone_world
+	# Offset in the palm bone's local space; bone is at base of middle finger
+	_drink_hand_root.position = bone_local.origin + bone_local.basis * Vector3(0.0, -0.02, 0.0)
+	var euler := bone_local.basis.get_euler()
+	_drink_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+	if Engine.get_process_frames() % 60 == 0:
+		print("DEBUG drink socket: pos=", _drink_hand_root.position, " global=", _drink_hand_root.global_position, " children=", _drink_hand_root.get_child_count(), " model_scale=", third_person_model.scale)
 
 # Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
 # animations (walking, looking up/down, sitting, etc.) instead of staying
@@ -2959,11 +2980,20 @@ func _create_third_person_item_slots() -> void:
 			_left_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 			if _left_hand_bone_idx != -1:
 				break
+		for bone_name in ["mixamorig:LeftHandMiddle1", "mixamorig_LeftHandMiddle1", "LeftHandMiddle1"]:
+			_drink_bone_idx = _hand_skeleton.find_bone(bone_name)
+			if _drink_bone_idx != -1:
+				break
 	if _left_hand_bone_idx >= 0 and _drink_hand_root == null:
-		_drink_hand_root = BoneAttachment3D.new()
+		_drink_hand_root = Node3D.new()
 		_drink_hand_root.name = "DrinkHandSocket"
-		_drink_hand_root.bone_idx = _left_hand_bone_idx
-		_hand_skeleton.add_child(_drink_hand_root)
+		third_person_model.add_child(_drink_hand_root)
+		print("DEBUG drink: Node3D socket created, bone_idx=", _left_hand_bone_idx)
+		# Print all bone names to find finger bones
+		for i in range(_hand_skeleton.get_bone_count()):
+			var bn = _hand_skeleton.get_bone_name(i)
+			if bn.find("Left") >= 0 or bn.find("left") >= 0:
+				print("DEBUG drink: bone[", i, "]=", bn, " parent=", _hand_skeleton.get_bone_parent(i))
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
 	if _head_skeleton != null:
@@ -6021,11 +6051,24 @@ func _build_third_person_plastic_bottle() -> void:
 # left hand bone so it automatically follows the drink animation's pose.
 func _build_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
+		print("DEBUG drink: _drink_hand_root NULL")
 		return
 	for child in _drink_hand_root.get_children():
 		if child.name == "ThirdPersonDrinkBottleLeft":
 			child.queue_free()
-	_try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0.02, -0.08, 0.05), Vector3(70, 0, 10), Vector3.ONE * 0.015)
+	var ok = _try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0.0, -0.03, 0.02), Vector3(0, 0, 0), Vector3.ONE * 0.012)
+	print("DEBUG drink: bottle added ok=", ok, " children=", _drink_hand_root.get_child_count())
+
+func _print_tree_debug(node: Node, depth: int) -> void:
+	var prefix = ""
+	for i in range(depth):
+		prefix += "  "
+	var info = prefix + node.name + " [" + node.get_class() + "]"
+	if node is Node3D:
+		info += " visible=" + str(node.visible) + " pos=" + str(node.position) + " scale=" + str(node.scale)
+	print("DEBUG drink: ", info)
+	for child in node.get_children():
+		_print_tree_debug(child, depth + 1)
 
 func _clear_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
