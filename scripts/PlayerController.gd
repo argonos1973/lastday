@@ -6058,11 +6058,30 @@ func _build_third_person_drink_bottle_left_hand() -> void:
 			child.queue_free()
 	var bottle_mesh_center_local := Vector3(-15.22919, 15.60067, -2.003666)
 	var bottle_scale := Vector3.ONE * 0.015
-	var bottle_rot_deg := Vector3(-90, 0, 90)
+	var bottle_rot_deg := Vector3(-120, 0, 90)
 	var bottle_basis := Basis.from_euler(Vector3(deg_to_rad(bottle_rot_deg.x), deg_to_rad(bottle_rot_deg.y), deg_to_rad(bottle_rot_deg.z)))
 	var bottle_pos := -(bottle_basis * (bottle_scale * bottle_mesh_center_local)) + Vector3(0, 0.06, 0)
 	var ok = _try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", bottle_pos, bottle_rot_deg, bottle_scale)
+	if ok:
+		var bottle_node := _drink_hand_root.get_node_or_null("ThirdPersonDrinkBottleLeft")
+		if bottle_node != null:
+			_fix_bottle_materials(bottle_node)
 	print("DEBUG drink: bottle added ok=", ok, " children=", _drink_hand_root.get_child_count(), " pos=", bottle_pos)
+
+func _fix_bottle_materials(root: Node) -> void:
+	for child in root.get_children():
+		if child is MeshInstance3D:
+			for i in range(child.get_surface_override_material_count()):
+				var mat: Material = child.get_surface_override_material(i)
+				if mat == null and child.mesh != null:
+					mat = child.mesh.surface_get_material(i)
+				if mat is StandardMaterial3D:
+					var smat := mat as StandardMaterial3D
+					smat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+					smat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
+					smat.no_depth_test = false
+					child.set_surface_override_material(i, smat)
+		_fix_bottle_materials(child)
 
 func _print_tree_debug(node: Node, depth: int) -> void:
 	var prefix = ""
