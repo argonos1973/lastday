@@ -6056,8 +6056,13 @@ func _build_third_person_drink_bottle_left_hand() -> void:
 	for child in _drink_hand_root.get_children():
 		if child.name == "ThirdPersonDrinkBottleLeft":
 			child.queue_free()
-	var ok = _try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", Vector3(0.0, -0.03, 0.02), Vector3(0, 0, 0), Vector3.ONE * 0.012)
-	print("DEBUG drink: bottle added ok=", ok, " children=", _drink_hand_root.get_child_count())
+	var bottle_mesh_center_local := Vector3(-15.22919, 15.60067, -2.003666)
+	var bottle_scale := Vector3.ONE * 0.015
+	var bottle_rot_deg := Vector3(-90, 0, 90)
+	var bottle_basis := Basis.from_euler(Vector3(deg_to_rad(bottle_rot_deg.x), deg_to_rad(bottle_rot_deg.y), deg_to_rad(bottle_rot_deg.z)))
+	var bottle_pos := -(bottle_basis * (bottle_scale * bottle_mesh_center_local)) + Vector3(0, 0.06, 0)
+	var ok = _try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", bottle_pos, bottle_rot_deg, bottle_scale)
+	print("DEBUG drink: bottle added ok=", ok, " children=", _drink_hand_root.get_child_count(), " pos=", bottle_pos)
 
 func _print_tree_debug(node: Node, depth: int) -> void:
 	var prefix = ""
@@ -6189,6 +6194,21 @@ func _add_held_sphere(parent: Node, node_name: String, scale_value: Vector3, pos
 	parent.add_child(mesh_instance)
 	return mesh_instance
 
+func _debug_collect_aabb(node: Node, base_xform: Transform3D, out_aabb: Array) -> void:
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		var mesh_aabb: AABB = (node as MeshInstance3D).mesh.get_aabb()
+		var xform: Transform3D = base_xform * (node as Node3D).transform
+		var world_aabb: AABB = xform * mesh_aabb
+		if out_aabb.is_empty():
+			out_aabb.append(world_aabb)
+		else:
+			out_aabb[0] = (out_aabb[0] as AABB).merge(world_aabb)
+	for child in node.get_children():
+		var next_xform := base_xform
+		if node is Node3D:
+			next_xform = base_xform * (node as Node3D).transform
+		_debug_collect_aabb(child, next_xform, out_aabb)
+
 func _try_add_model_to_parent(parent: Node, path: String, node_name: String, pos: Vector3, rot: Vector3, scale_value: Vector3) -> bool:
 	if parent == null:
 		return false
@@ -6196,6 +6216,12 @@ func _try_add_model_to_parent(parent: Node, path: String, node_name: String, pos
 	if node == null:
 		return false
 	node.name = node_name
+	if node_name == "ThirdPersonDrinkBottleLeft":
+		var aabb_result: Array = []
+		_debug_collect_aabb(node, Transform3D.IDENTITY, aabb_result)
+		if not aabb_result.is_empty():
+			var a: AABB = aabb_result[0]
+			print("DEBUG bottle RAW AABB (before offset applied): position=", a.position, " size=", a.size, " center=", a.get_center())
 	node.position = pos
 	node.rotation_degrees = rot
 	node.scale = scale_value
