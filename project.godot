@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Un dia mas"
-run/main_scene="res://scenes/Main.tscn"
+run/main_scene="res://scenes/Inicio.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [autoload]
@@ -20,7 +20,6 @@ NetworkManager="*res://scripts/NetworkManager.gd"
 GameState="*res://scripts/GameState.gd"
 GameSession="*res://scripts/GameSession.gd"
 SaveGameManager="*res://scripts/SaveGameManager.gd"
-DrinkTest="*res://tools/test_drink_screenshot.gd"
 
 [display]
 

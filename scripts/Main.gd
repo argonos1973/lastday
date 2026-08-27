@@ -22,7 +22,7 @@ const MaterialFactory = preload("res://scripts/MaterialFactory.gd")
 const NodeUtils = preload("res://scripts/NodeUtils.gd")
 const WildlifeRoutes = preload("res://scripts/WildlifeRoutes.gd")
 
-const MAP_EXTENT := 250.0
+const MAP_EXTENT := 500.0
 
 var player
 var hud
@@ -71,8 +71,8 @@ var _pending_dead_wildlife: Array = []
 var _dead_wildlife_names: Dictionary = {} # name -> true, for respawn check
 var _tree_id_counter := 0
 var _tree_registry: Array = [] # {pos, visual_name, id, active}
-var _tree_activation_radius := 10.0
-var _tree_deactivation_radius := 15.0
+var _tree_activation_radius := 8.0
+var _tree_deactivation_radius := 12.0
 var _tree_check_timer := 0.0
 var _tree_grid: Dictionary = {} # cell_key -> Array[entry refs]
 var _tree_grid_cell_size := 20.0
@@ -3050,6 +3050,10 @@ func _create_map() -> void:
 		await get_tree().process_frame
 		_tm = Time.get_ticks_msec()
 	if not is_server:
+		_create_barn(Vector3(-380, 0, 320), "_Remote")
+		await get_tree().process_frame
+		_tm = Time.get_ticks_msec()
+	if not is_server:
 		_create_world_details()
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
@@ -3107,8 +3111,8 @@ func _create_map() -> void:
 
 const ROAD_HALF_WIDTH := 5.0
 const ROAD_CENTER_X := 9.0
-const ROAD_START_Z := -250.0
-const ROAD_END_Z := 250.0
+const ROAD_START_Z := -500.0
+const ROAD_END_Z := 500.0
 
 func _is_on_road(pos: Vector3) -> bool:
 	return abs(pos.x - ROAD_CENTER_X) <= ROAD_HALF_WIDTH + 1.0 and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
@@ -3123,14 +3127,14 @@ func _create_road() -> void:
 	var road_z_start := ROAD_START_Z
 	var road_z_end := ROAD_END_Z
 	var _zi := 0
-	while _zi < 250:
+	while _zi < 500:
 		var z_test := -float(_zi) * seg_length
 		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
 			road_z_start = z_test + seg_length
 			break
 		_zi += 1
 	_zi = 0
-	while _zi < 250:
+	while _zi < 500:
 		var z_test := float(_zi) * seg_length
 		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
 			road_z_end = z_test - seg_length
@@ -3328,7 +3332,7 @@ func _register_server_house_blockers() -> void:
 		var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, hd["w"] + 0.6, hd["d"] + 1.0)
 
-func _create_barn(origin: Vector3) -> void:
+func _create_barn(origin: Vector3, name_suffix := "") -> void:
 	var barn_path := BARN_MODEL
 	if not MaterialFactory.resource_path_exists(barn_path):
 		return
@@ -3356,7 +3360,7 @@ func _create_barn(origin: Vector3) -> void:
 	pre_collision_count = _col_check.size()
 	if pre_collision_count > 0:
 		_remove_collision_from_node(node)
-	node.name = "OldWoodenBarn"
+	node.name = "OldWoodenBarn" + name_suffix
 	node.add_to_group("world_action_visual")
 	node.position = Vector3(0, 0, 0)
 	node.rotation_degrees = Vector3(0, 0, 0)
@@ -3448,7 +3452,7 @@ func _create_barn(origin: Vector3) -> void:
 	# Wait for physics frames so temporary collision shapes are registered
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	_finalize_barn_walls(node, origin, ground_y, barn_w, barn_d, barn_h, half_w, half_d, front_z, back_z, wall_thickness, wall_height, door_width, door_height)
+	_finalize_barn_walls(node, origin, ground_y, barn_w, barn_d, barn_h, half_w, half_d, front_z, back_z, wall_thickness, wall_height, door_width, door_height, name_suffix)
 
 func _raycast_find_door(origin: Vector3, wall_z: float, ground_y: float, half_w: float, door_height: float) -> Vector2:
 	# Cast rays from BOTH inside-out and outside-in at each X position.
@@ -3519,7 +3523,7 @@ func _raycast_find_door(origin: Vector3, wall_z: float, ground_y: float, half_w:
 			best_cx = r_cx
 	return Vector2(best_cx, best_w)
 
-func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w: float, barn_d: float, barn_h: float, half_w: float, half_d: float, front_z: float, back_z: float, wall_thickness: float, wall_height: float, door_width: float, door_height: float) -> void:
+func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w: float, barn_d: float, barn_h: float, half_w: float, half_d: float, front_z: float, back_z: float, wall_thickness: float, wall_height: float, door_width: float, door_height: float, name_suffix := "") -> void:
 	# Raycast from inside to find actual door openings
 	var front_door := _raycast_find_door(origin, front_z, ground_y, half_w, door_height)
 	var back_door := _raycast_find_door(origin, back_z, ground_y, half_w, door_height)
@@ -3540,19 +3544,19 @@ func _finalize_barn_walls(node: Node3D, origin: Vector3, ground_y: float, barn_w
 	_add_convex_collision_to_small_meshes(node, 7.0, door_zones)
 	# Front wall (south, -Z side) with door gap
 	var front_seg_w := (barn_w - front_door_w) * 0.5
-	_create_invisible_collision_box("BarnWallFrontL", Vector3(front_door_x - front_door_w * 0.5 - front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
-	_create_invisible_collision_box("BarnWallFrontR", Vector3(front_door_x + front_door_w * 0.5 + front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
-	_create_invisible_collision_box("BarnWallDoorTop", Vector3(front_door_x, ground_y + door_height, front_z), Vector3(front_door_w, wall_height - door_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallFrontL" + name_suffix, Vector3(front_door_x - front_door_w * 0.5 - front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallFrontR" + name_suffix, Vector3(front_door_x + front_door_w * 0.5 + front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallDoorTop" + name_suffix, Vector3(front_door_x, ground_y + door_height, front_z), Vector3(front_door_w, wall_height - door_height, wall_thickness))
 	# Back wall (north, +Z side) with door gap
 	var back_seg_w := (barn_w - back_door_w) * 0.5
-	_create_invisible_collision_box("BarnWallBackL", Vector3(back_door_x - back_door_w * 0.5 - back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
-	_create_invisible_collision_box("BarnWallBackR", Vector3(back_door_x + back_door_w * 0.5 + back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
-	_create_invisible_collision_box("BarnWallBackDoorTop", Vector3(back_door_x, ground_y + door_height, back_z), Vector3(back_door_w, wall_height - door_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackL" + name_suffix, Vector3(back_door_x - back_door_w * 0.5 - back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackR" + name_suffix, Vector3(back_door_x + back_door_w * 0.5 + back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackDoorTop" + name_suffix, Vector3(back_door_x, ground_y + door_height, back_z), Vector3(back_door_w, wall_height - door_height, wall_thickness))
 	# Left and right walls
-	_create_invisible_collision_box("BarnWallLeft", Vector3(origin.x - half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
-	_create_invisible_collision_box("BarnWallRight", Vector3(origin.x + half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
+	_create_invisible_collision_box("BarnWallLeft" + name_suffix, Vector3(origin.x - half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
+	_create_invisible_collision_box("BarnWallRight" + name_suffix, Vector3(origin.x + half_w, ground_y, origin.z), Vector3(wall_thickness, wall_height, barn_d))
 	# Add all wall collision bodies to prop_collision group
-	for wall_name in ["BarnWallFrontL", "BarnWallFrontR", "BarnWallDoorTop", "BarnWallBackL", "BarnWallBackR", "BarnWallBackDoorTop", "BarnWallLeft", "BarnWallRight"]:
+	for wall_name in ["BarnWallFrontL" + name_suffix, "BarnWallFrontR" + name_suffix, "BarnWallDoorTop" + name_suffix, "BarnWallBackL" + name_suffix, "BarnWallBackR" + name_suffix, "BarnWallBackDoorTop" + name_suffix, "BarnWallLeft" + name_suffix, "BarnWallRight" + name_suffix]:
 		var wall_node := get_node_or_null(wall_name)
 		if wall_node != null:
 			wall_node.add_to_group("prop_collision")
@@ -3952,7 +3956,7 @@ func _find_flat_area_for_tent() -> Vector3:
 	# Scan positions in a ring 160-280 units from origin
 	for angle_deg in range(0, 360, 10):
 		var angle: float = deg_to_rad(float(angle_deg))
-		for dist in [160.0, 190.0, 220.0, 250.0, 280.0]:
+		for dist in [160.0, 220.0, 280.0, 340.0, 400.0, 460.0]:
 			var cx: float = dist * cos(angle)
 			var cz: float = dist * sin(angle)
 			var cy: float = _get_ground_height(Vector3(cx, 0, cz))
@@ -4556,6 +4560,28 @@ func _create_house_loot() -> void:
 		loot_data["pos"] = _find_pos_inside_house(barn_origin, barn_half_w, barn_half_d)
 		loot_data["id"] = "barn_loot_%d" % _j
 		_create_pickup_item(loot_data)
+	# Remote barn loot — food + backpack focus
+	var remote_barn_origin := Vector3(-380, 0, 320)
+	var remote_barn_half_w := 4.0
+	var remote_barn_half_d := 9.0
+	var remote_barn_loot_pool := [
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+	]
+	var remote_barn_num_items := 8 + _world_rng.randi() % 5
+	for _j in range(remote_barn_num_items):
+		var template: Dictionary = remote_barn_loot_pool[_world_rng.randi() % remote_barn_loot_pool.size()]
+		var loot_data: Dictionary = template.duplicate()
+		loot_data["pos"] = _find_pos_inside_house(remote_barn_origin, remote_barn_half_w, remote_barn_half_d)
+		loot_data["id"] = "remote_barn_loot_%d" % _j
+		_create_pickup_item(loot_data)
+	# Guaranteed backpack pickup in remote barn
+	var remote_barn_ground_y := _get_exact_ground_y(remote_barn_origin.x, remote_barn_origin.z)
+	_create_backpack_pickup("remote_barn_backpack_0", _find_pos_inside_house(remote_barn_origin, remote_barn_half_w - 1.0, remote_barn_half_d - 1.0) + Vector3(0, remote_barn_ground_y + 0.06, 0))
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
 		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
@@ -6372,6 +6398,13 @@ func _create_mountain_river() -> void:
 		_create_river_seam_cover(center, size, yaw)
 		if _world_rng.randf() < 0.72:
 			_create_fish_school(center, size, yaw)
+	# Extra tall grass around lake segments (large sizes indicate lake)
+	for segment in segments:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw: float = float(segment["yaw"])
+		if size.x >= 60.0:
+			await _create_lake_bank_tall_grass(center, size, yaw)
 
 func _default_river_segments() -> Array:
 	return [
@@ -6391,7 +6424,45 @@ func _default_river_segments() -> Array:
 		{"center": Vector3(-66, 0.085, 42), "size": Vector2(27, 6), "yaw": 92.0},
 		{"center": Vector3(-63, 0.085, 15), "size": Vector2(26, 6), "yaw": 85.0},
 		{"center": Vector3(-66, 0.085, -14), "size": Vector2(30, 6.5), "yaw": 93.0},
-		{"center": Vector3(-64, 0.085, -40), "size": Vector2(25, 6), "yaw": 88.0}
+		{"center": Vector3(-64, 0.085, -40), "size": Vector2(25, 6), "yaw": 88.0},
+		# Outer river — north side (west to east)
+		{"center": Vector3(-180, 0.085, -120), "size": Vector2(45, 7), "yaw": 5.0},
+		{"center": Vector3(-40, 0.085, -135), "size": Vector2(45, 7), "yaw": 6.0},
+		{"center": Vector3(40, 0.085, -140), "size": Vector2(50, 7.5), "yaw": -4.0},
+		{"center": Vector3(120, 0.085, -135), "size": Vector2(48, 7), "yaw": 3.0},
+		{"center": Vector3(200, 0.085, -130), "size": Vector2(50, 7.5), "yaw": -5.0},
+		{"center": Vector3(280, 0.085, -125), "size": Vector2(50, 7), "yaw": 4.0},
+		{"center": Vector3(350, 0.085, -120), "size": Vector2(50, 7), "yaw": -3.0},
+		# Outer river — east side (north to south)
+		{"center": Vector3(380, 0.085, -60), "size": Vector2(45, 7), "yaw": 88.0},
+		{"center": Vector3(390, 0.085, 10), "size": Vector2(48, 7.5), "yaw": 92.0},
+		{"center": Vector3(385, 0.085, 80), "size": Vector2(45, 7), "yaw": 87.0},
+		{"center": Vector3(390, 0.085, 150), "size": Vector2(50, 7.5), "yaw": 93.0},
+		{"center": Vector3(380, 0.085, 220), "size": Vector2(48, 7), "yaw": 88.0},
+		{"center": Vector3(385, 0.085, 290), "size": Vector2(50, 7), "yaw": 92.0},
+		{"center": Vector3(380, 0.085, 360), "size": Vector2(48, 7), "yaw": 87.0},
+		# Outer river — south side (east to west)
+		{"center": Vector3(320, 0.085, 390), "size": Vector2(50, 7), "yaw": 176.0},
+		{"center": Vector3(240, 0.085, 395), "size": Vector2(50, 7.5), "yaw": 184.0},
+		{"center": Vector3(160, 0.085, 390), "size": Vector2(48, 7), "yaw": 178.0},
+		{"center": Vector3(80, 0.085, 395), "size": Vector2(50, 7), "yaw": 182.0},
+		{"center": Vector3(0, 0.085, 390), "size": Vector2(50, 7.5), "yaw": 176.0},
+		{"center": Vector3(-80, 0.085, 395), "size": Vector2(48, 7), "yaw": 184.0},
+		{"center": Vector3(-160, 0.085, 390), "size": Vector2(50, 7), "yaw": 178.0},
+		{"center": Vector3(-240, 0.085, 395), "size": Vector2(50, 7.5), "yaw": 182.0},
+		{"center": Vector3(-320, 0.085, 390), "size": Vector2(48, 7), "yaw": 176.0},
+		# Outer river — west side (south to north)
+		{"center": Vector3(-380, 0.085, 340), "size": Vector2(48, 7), "yaw": 88.0},
+		{"center": Vector3(-385, 0.085, 270), "size": Vector2(50, 7), "yaw": 92.0},
+		{"center": Vector3(-380, 0.085, 200), "size": Vector2(48, 7.5), "yaw": 87.0},
+		{"center": Vector3(-390, 0.085, 130), "size": Vector2(50, 7), "yaw": 93.0},
+		{"center": Vector3(-385, 0.085, 60), "size": Vector2(48, 7), "yaw": 88.0},
+		{"center": Vector3(-390, 0.085, -10), "size": Vector2(50, 7.5), "yaw": 92.0},
+		{"center": Vector3(-380, 0.085, -80), "size": Vector2(48, 7), "yaw": 87.0},
+		# Lake in the northeast valley
+		{"center": Vector3(250, 0.085, -300), "size": Vector2(80, 55), "yaw": 10.0},
+		{"center": Vector3(180, 0.085, -310), "size": Vector2(70, 50), "yaw": -5.0},
+		{"center": Vector3(320, 0.085, -310), "size": Vector2(70, 50), "yaw": 5.0}
 	]
 
 func get_river_segments_for_minimap() -> Array:
@@ -6508,6 +6579,10 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 	# Check barn area
 	var barn_origin := Vector3(45, 0, 120)
 	if abs(pos.x - barn_origin.x) < 4.0 and abs(pos.z - barn_origin.z) < 9.0:
+		return true
+	# Check remote barn area
+	var remote_barn_origin := Vector3(-380, 0, 320)
+	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
 	# Check tent area
 	var tent_origin := Vector3(48, 0, -48)
@@ -6785,6 +6860,48 @@ func _create_dense_river_bank_vegetation(center: Vector3, size: Vector2, yaw: fl
 			if _world_rng.randf() < 0.15:
 				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.25, 0.9), _world_rng.randf_range(0.44, 0.74))
 			if i % 60 == 59:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
+
+func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) -> void:
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	var half_l := size.x * 0.5
+	var half_w := size.y * 0.5
+	# Dense tall grass ring around the lake perimeter
+	for side_value in [-1.0, 1.0]:
+		var side: float = side_value
+		for i in range(300):
+			var t := _world_rng.randf_range(-1.0, 1.0)
+			var bank_pos := center + along * t * half_l * 1.05 + across * side * _world_rng.randf_range(half_w * 0.55, half_w * 1.80)
+			bank_pos.y = 0.052
+			if not _can_place_ground_vegetation(bank_pos, -1.0):
+				continue
+			_create_grass_clump(bank_pos, _world_rng.randf_range(1.0, 1.8), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+			if _world_rng.randf() < 0.60:
+				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-1.0, 1.0), _world_rng.randf_range(1.2, 2.2), side)
+			if _world_rng.randf() < 0.35:
+				_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 1.5), _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
+			if _world_rng.randf() < 0.12:
+				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.3, 1.2), _world_rng.randf_range(0.45, 0.78))
+			if i % 80 == 79:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
+	# Tall grass at the lake ends (caps)
+	for end_value in [-1.0, 1.0]:
+		var end: float = end_value
+		for i in range(150):
+			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.10) + across * _world_rng.randf_range(-half_w * 0.95, half_w * 0.95)
+			bank_pos.y = 0.052
+			if not _can_place_ground_vegetation(bank_pos, -1.0):
+				continue
+			_create_grass_clump(bank_pos, _world_rng.randf_range(0.9, 1.6), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
+			if _world_rng.randf() < 0.50:
+				_create_river_reed_cluster(bank_pos, _world_rng.randf_range(1.0, 1.8), end)
+			if i % 80 == 79:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
 				_world_rng.state = _saved_rng_state
@@ -7656,7 +7773,7 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
-	if abs(pos.x) > 285.0 or abs(pos.z) > 285.0:
+	if abs(pos.x) > MAP_EXTENT * 1.07 or abs(pos.z) > MAP_EXTENT * 1.07:
 		return false
 	if _is_near_house(pos, 1.0):
 		return false
@@ -7716,6 +7833,7 @@ var HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
 	{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
 	{"origin": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
+	{"origin": Vector3(-380, 0, 320), "w": 8.0, "d": 18.0},  # Remote barn
 ]
 
 func _is_near_house(pos: Vector3, margin: float) -> bool:
@@ -7881,7 +7999,7 @@ func _add_collision_to_prop_group(root: Node) -> void:
 	for child in root.get_children():
 		_add_collision_to_prop_group(child)
 
-func _get_exact_ground_y(x: float, z: float, from_y: float = 250.0) -> float:
+func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 	var space_state := get_world_3d().direct_space_state
 	if space_state != null:
 		var query := PhysicsRayQueryParameters3D.create(Vector3(x, from_y, z), Vector3(x, -50.0, z))
@@ -7920,7 +8038,7 @@ func _get_ground_height(pos: Vector3) -> float:
 	return max_h
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(120 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(60 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var rx := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -7935,7 +8053,7 @@ func _create_ground_clutter() -> void:
 			_world_rng.state = _saved_rng_state
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(1 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(20, 55), _world_rng.randf_range(20, 55))
@@ -7954,7 +8072,7 @@ func _create_tall_grass_fields() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(1 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(0.5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(15, 30), _world_rng.randf_range(15, 30))
@@ -8002,7 +8120,7 @@ func _create_grass_ground_cover() -> void:
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
 	var coverage := MAP_EXTENT * 1.05
-	var spacing := 3.0
+	var spacing := 4.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
@@ -8069,7 +8187,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.09)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.045)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
@@ -8202,7 +8320,7 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
 		if pos.length() > 15.0:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mi.visibility_range_end = 180.0
+		mi.visibility_range_end = 120.0
 		mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mi)
 		mi.add_to_group("world_action_visual")
