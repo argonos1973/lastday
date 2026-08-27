@@ -2649,7 +2649,7 @@ func _update_drink_hand_socket() -> void:
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var bone_local := local_to_model * bone_world
 	# Offset in the palm bone's local space; bone is at base of middle finger
-	_drink_hand_root.position = bone_local.origin + bone_local.basis * Vector3(0.0, -0.02, 0.0)
+	_drink_hand_root.position = bone_local.origin + Vector3(0.0, 0.0, -0.10)
 	var euler := bone_local.basis.get_euler()
 	_drink_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 	if Engine.get_process_frames() % 60 == 0:
@@ -6057,10 +6057,10 @@ func _build_third_person_drink_bottle_left_hand() -> void:
 		if child.name == "ThirdPersonDrinkBottleLeft":
 			child.queue_free()
 	var bottle_mesh_center_local := Vector3(-15.22919, 15.60067, -2.003666)
-	var bottle_scale := Vector3.ONE * 0.015
-	var bottle_rot_deg := Vector3(-120, 0, 90)
+	var bottle_scale := Vector3.ONE * 0.016
+	var bottle_rot_deg := Vector3(-115, 0, 90)
 	var bottle_basis := Basis.from_euler(Vector3(deg_to_rad(bottle_rot_deg.x), deg_to_rad(bottle_rot_deg.y), deg_to_rad(bottle_rot_deg.z)))
-	var bottle_pos := -(bottle_basis * (bottle_scale * bottle_mesh_center_local)) + Vector3(0, 0.06, 0)
+	var bottle_pos := -(bottle_basis * (bottle_scale * bottle_mesh_center_local)) + Vector3(0, 0.0, 0.0)
 	var ok = _try_add_model_to_parent(_drink_hand_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottleLeft", bottle_pos, bottle_rot_deg, bottle_scale)
 	if ok:
 		var bottle_node := _drink_hand_root.get_node_or_null("ThirdPersonDrinkBottleLeft")
