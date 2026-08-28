@@ -86,6 +86,10 @@ var _boulder_grid: Dictionary = {} # cell_key -> Array[entry refs]
 var _boulder_grid_cell_size := 20.0
 var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
+var _forest_multimesh_nodes: Array[MultiMeshInstance3D] = []
+var _forest_multimesh_centers: Array[Vector3] = []
+const FOREST_MM_VISIBLE_RADIUS := 100.0
+const FOREST_MM_HIDE_RADIUS := 120.0
 var _cached_leafy_material: StandardMaterial3D = null
 var _mountain_shared_material: StandardMaterial3D = null
 var _generated_hills: Array = []
@@ -623,6 +627,7 @@ func _process(delta: float) -> void:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
+		_update_forest_visibility()
 	_streaming_update_timer += delta
 	if _streaming_update_timer >= 0.5 and world_streaming_mgr != null:
 		_streaming_update_timer = 0.0
@@ -8188,9 +8193,21 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.045)
+	print("[FOREST] Starting forest generation: total_trees=%d" % total_trees)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
+	# Pre-load forest tree pack so we know how many variants exist
+	if _forest_tree_meshes.is_empty():
+		_load_forest_tree_pack()
+	# Collect transforms per mesh variant for MultiMesh batching
+	var batch_transforms: Array = [] # Array[Array[Transform3D]]
+	var batch_aabbs: Array = [] # Array[AABB]
+	for _i in range(_forest_tree_meshes.size()):
+		batch_transforms.append([])
+		batch_aabbs.append((_forest_tree_meshes[_i] as Dictionary).get("aabb", AABB()))
+	var batched_count := 0
+	var interactive_count := 0
 	for i in range(total_trees):
 		var x := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
 		var z := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
@@ -8204,8 +8221,25 @@ func _create_forest() -> void:
 			continue
 		if _is_near_house(pos, 8.0):
 			continue
-			
-		_create_tree(pos, false)
+		
+		# Batch non-interactive trees into MultiMesh
+		if not _forest_tree_meshes.is_empty():
+			var variant_idx := _world_rng.randi() % _forest_tree_meshes.size()
+			var entry: Dictionary = _forest_tree_meshes[variant_idx]
+			var tree_scale := _world_rng.randf_range(0.8, 1.4)
+			var aabb: AABB = entry.aabb
+			var tree_height := aabb.size.z * tree_scale
+			if tree_height < 1.0:
+				tree_scale = 1.0 / max(0.01, aabb.size.z)
+			# Match original: rotation_degrees = Vector3(-90, 0, yaw), scale = uniform
+			var yaw_deg := _world_rng.randf_range(0, 360)
+			var basis := Basis.from_euler(Vector3(deg_to_rad(-90), 0, deg_to_rad(yaw_deg))).scaled(Vector3(tree_scale, tree_scale, tree_scale))
+			var world_xform := Transform3D(basis, pos)
+			(batch_transforms[variant_idx] as Array).append(world_xform)
+			batched_count += 1
+		else:
+			_create_tree(pos, false)
+			interactive_count += 1
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
 		for _g in range(1):
@@ -8218,6 +8252,70 @@ func _create_forest() -> void:
 			var _saved_rng_state := _world_rng.state
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
+	
+	# Flush batched trees into MultiMesh instances (one per variant)
+	_flush_forest_multimeshes(batch_transforms)
+	print("[FOREST] Batched=%d MultiMesh variants=%d Interactive=%d" % [batched_count, _forest_tree_meshes.size(), interactive_count])
+
+func _flush_forest_multimeshes(batch_transforms: Array) -> void:
+	if _forest_tree_meshes.is_empty():
+		return
+	# Split each variant into spatial batches of ~500 to allow per-batch visibility culling
+	const BATCH_SIZE := 500
+	for variant_idx in range(_forest_tree_meshes.size()):
+		var transforms: Array = batch_transforms[variant_idx]
+		if transforms.is_empty():
+			continue
+		var entry: Dictionary = _forest_tree_meshes[variant_idx]
+		var src_mesh: ArrayMesh = entry.mesh
+		# Create sub-batches for visibility culling
+		var num_batches := int(ceil(float(transforms.size()) / float(BATCH_SIZE)))
+		for b in range(num_batches):
+			var start := b * BATCH_SIZE
+			var end_idx: int = min(start + BATCH_SIZE, transforms.size())
+			var count: int = end_idx - start
+			if count <= 0:
+				continue
+			var multimesh := MultiMesh.new()
+			multimesh.transform_format = MultiMesh.TRANSFORM_3D
+			multimesh.mesh = src_mesh
+			multimesh.instance_count = count
+			var center := Vector3.ZERO
+			for j in range(count):
+				var t: Transform3D = transforms[start + j]
+				multimesh.set_instance_transform(j, t)
+				center += t.origin
+			center /= float(count)
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "ForestMM_%d_%d" % [variant_idx, b]
+			mmi.multimesh = multimesh
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = FOREST_MM_VISIBLE_RADIUS
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			add_child(mmi)
+			_forest_multimesh_nodes.append(mmi)
+			_forest_multimesh_centers.append(center)
+	print("[FOREST] MultiMesh nodes created: %d" % _forest_multimesh_nodes.size())
+
+func _update_forest_visibility() -> void:
+	if _forest_multimesh_nodes.is_empty():
+		return
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	for i in range(_forest_multimesh_nodes.size()):
+		var node: MultiMeshInstance3D = _forest_multimesh_nodes[i]
+		if not is_instance_valid(node):
+			continue
+		var center: Vector3 = _forest_multimesh_centers[i]
+		var dist := ppos.distance_to(Vector3(center.x, ppos.y, center.z))
+		var should_show := false
+		if node.visible:
+			should_show = dist < FOREST_MM_HIDE_RADIUS
+		else:
+			should_show = dist < FOREST_MM_VISIBLE_RADIUS
+		if node.visible != should_show:
+			node.visible = should_show
 
 func _tree_grid_key(pos: Vector3) -> Vector2i:
 	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
