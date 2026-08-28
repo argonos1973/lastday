@@ -3,11 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c6wfi2kybohpw"
-path.s3tc="res://.godot/imported/apple_0.png-79e46d8b7a1030fdb92faa70ea6f6a02.s3tc.ctex"
-metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
-}
+valid=false
 generator_parameters={
 "md5": "22b43504950bea9a79a257770514046b"
 }
@@ -15,7 +11,6 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/fruit/apple_0.png"
-dest_files=["res://.godot/imported/apple_0.png-79e46d8b7a1030fdb92faa70ea6f6a02.s3tc.ctex"]
 
 [params]
 

@@ -91,6 +91,11 @@ var _forest_multimesh_centers: Array[Vector3] = []
 var _forest_multimesh_radii: Array[float] = []
 const FOREST_MM_VISIBLE_RADIUS := 100.0
 const FOREST_MM_HIDE_RADIUS := 120.0
+var _forest_collision_grid: Dictionary = {} # cell_key -> Array[Vector3]
+var _forest_collision_grid_size := 20.0
+var _forest_collision_active_cells: Dictionary = {} # cell_key -> StaticBody3D
+var _forest_collision_radius := 40.0
+var _forest_collision_check_timer := 0.0
 var _cached_leafy_material: StandardMaterial3D = null
 var _mountain_shared_material: StandardMaterial3D = null
 var _generated_hills: Array = []
@@ -629,6 +634,7 @@ func _process(delta: float) -> void:
 		_update_tree_interactions()
 		_update_boulder_interactions()
 		_update_forest_visibility()
+		_update_forest_collision()
 	_streaming_update_timer += delta
 	if _streaming_update_timer >= 0.5 and world_streaming_mgr != null:
 		_streaming_update_timer = 0.0
@@ -1225,6 +1231,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 			server_proxies[peer_id].set_meta("reconnecting", false)
 
 var _military_tent_pos := Vector3.ZERO
+var _remote_tent_pos := Vector3.ZERO
 var _spawn_zones: Array = [
 	Vector3(38.0, 0.4, 110.0),  # TEMP: Near barn for testing
 	Vector3(15.0, 0.4, -35.0),
@@ -3985,6 +3992,45 @@ func _find_flat_area_for_tent() -> Vector3:
 	_military_tent_pos = best_pos
 	return best_pos
 
+func _find_flat_area_for_remote_tent() -> Vector3:
+	var best_pos := Vector3.ZERO
+	var best_score := 99999.0
+	# Scan positions in a ring 380-480 units from origin (far edge of map)
+	for angle_deg in range(0, 360, 5):
+		var angle: float = deg_to_rad(float(angle_deg))
+		for dist in [380.0, 420.0, 460.0, 480.0]:
+			var cx: float = dist * cos(angle)
+			var cz: float = dist * sin(angle)
+			# Avoid river/lake areas
+			if _is_near_river(Vector3(cx, 0, cz), 15.0):
+				continue
+			# Avoid existing tent area
+			if _military_tent_pos != Vector3.ZERO and Vector3(cx, 0, cz).distance_to(_military_tent_pos) < 100.0:
+				continue
+			# Avoid remote barn
+			if Vector3(cx, 0, cz).distance_to(Vector3(-380, 0, 320)) < 60.0:
+				continue
+			# Avoid lake center
+			if Vector3(cx, 0, cz).distance_to(Vector3(250, 0, -310)) < 100.0:
+				continue
+			var cy: float = _get_ground_height(Vector3(cx, 0, cz))
+			# Sample 12 points around candidate at 6m radius for flatness
+			var max_diff := 0.0
+			for s in range(12):
+				var sa: float = deg_to_rad(float(s) * 30.0)
+				var sx: float = cx + 6.0 * cos(sa)
+				var sz: float = cz + 6.0 * sin(sa)
+				var sy: float = _get_ground_height(Vector3(sx, 0, sz))
+				max_diff = max(max_diff, abs(sy - cy))
+			# Score: prefer flat and far from village
+			var score: float = max_diff + (480.0 - dist) * 0.02
+			if max_diff < 1.2 and score < best_score:
+				best_score = score
+				best_pos = Vector3(cx, 0, cz)
+	if best_pos == Vector3.ZERO:
+		best_pos = Vector3(-420.0, 0, -380.0)
+	return best_pos
+
 func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
@@ -4044,6 +4090,59 @@ func _create_world_details() -> void:
 		_create_invisible_collision_box_rotated("MilitaryTentRoofCollision", tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), 35.0, 2)
 	# Fruit trees — near tent, near barn, and scattered in forest
 	_create_fruit_trees()
+	# Second military tent — far from village, flat area, loot zone
+	var remote_tent_pos := _find_flat_area_for_remote_tent()
+	var remote_tent_ground_y := _get_exact_ground_y(remote_tent_pos.x, remote_tent_pos.z)
+	_try_instance_external_scene(["res://assets/models/props/tent/tent_military.glb"], "MilitaryTentRemote", Vector3(remote_tent_pos.x, remote_tent_ground_y, remote_tent_pos.z), Vector3.ONE * 1.5, Vector3(0, 120, 0), true, 0.0)
+	HOUSE_FOOTPRINTS.append({"origin": remote_tent_pos, "w": 9.0, "d": 12.0})
+	var remote_tent_node := get_node_or_null("MilitaryTentRemote")
+	if remote_tent_node != null:
+		_remove_collision_from_node(remote_tent_node)
+		var _rt_meshes: Array = []
+		NodeUtils.collect_mesh_instances(remote_tent_node, _rt_meshes)
+		for m in _rt_meshes:
+			var mi := m as MeshInstance3D
+			if mi != null:
+				for c in mi.get_children():
+					if c is CollisionShape3D or c is StaticBody3D:
+						c.queue_free()
+		var rtw := 4.5
+		var rtd := 6.0
+		var rth := 1.5
+		var rdoor_w := 2.0
+		var rbody := StaticBody3D.new()
+		rbody.name = "MilitaryTentRemoteCollision"
+		add_child(rbody)
+		rbody.global_position = remote_tent_node.global_position
+		rbody.global_rotation = remote_tent_node.global_rotation
+		var rback := CollisionShape3D.new()
+		rback.shape = BoxShape3D.new()
+		rback.shape.size = Vector3(rtw * 2.0, rth * 2.0, 0.3)
+		rback.position = Vector3(0.0, rth, -rtd)
+		rbody.add_child(rback)
+		var rleft := CollisionShape3D.new()
+		rleft.shape = BoxShape3D.new()
+		rleft.shape.size = Vector3(0.3, rth * 2.0, rtd * 2.0)
+		rleft.position = Vector3(-rtw, rth, 0.0)
+		rbody.add_child(rleft)
+		var rright := CollisionShape3D.new()
+		rright.shape = BoxShape3D.new()
+		rright.shape.size = Vector3(0.3, rth * 2.0, rtd * 2.0)
+		rright.position = Vector3(rtw, rth, 0.0)
+		rbody.add_child(rright)
+		var rfront_left := CollisionShape3D.new()
+		rfront_left.shape = BoxShape3D.new()
+		rfront_left.shape.size = Vector3(rtw - rdoor_w, rth * 2.0, 0.3)
+		rfront_left.position = Vector3(-(rtw + rdoor_w) * 0.5, rth, rtd)
+		rbody.add_child(rfront_left)
+		var rfront_right := CollisionShape3D.new()
+		rfront_right.shape = BoxShape3D.new()
+		rfront_right.shape.size = Vector3(rtw - rdoor_w, rth * 2.0, 0.3)
+		rfront_right.position = Vector3((rtw + rdoor_w) * 0.5, rth, rtd)
+		rbody.add_child(rfront_right)
+		_add_collision_to_prop_group(rbody)
+		_create_invisible_collision_box_rotated("MilitaryTentRemoteRoofCollision", remote_tent_node.global_position + Vector3(0, rth * 2.0, 0), Vector3(rtw * 2.0, 0.7, rtd * 2.0), 120.0, 2)
+	_remote_tent_pos = remote_tent_pos
 
 func _create_fruit_trees() -> void:
 	# Clear stale pending types from previous saves — fruit type is now deterministic
@@ -4065,11 +4164,27 @@ func _create_fruit_trees() -> void:
 		var fpos := barn_pos + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
 		_create_fruit_tree(fpos, tree_counter % 2)
 		tree_counter += 1
-	# Scattered in forest: ~18 fruit trees (alternate orange/fig)
-	var scattered := 18
+	# Near remote barn: 4 fruit trees (alternate orange/fig)
+	var remote_barn_pos := Vector3(-380, 0, 320)
+	for i in range(4):
+		var angle := i * (PI * 0.5) + PI * 0.15 + _world_rng.randf_range(-0.3, 0.3)
+		var dist := _world_rng.randf_range(10.0, 16.0)
+		var fpos := remote_barn_pos + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
+		_create_fruit_tree(fpos, tree_counter % 2)
+		tree_counter += 1
+	# Near lake: 6 fruit trees around the lake perimeter
+	var lake_center := Vector3(250, 0, -310)
+	for i in range(6):
+		var angle := i * (PI / 3.0) + _world_rng.randf_range(-0.3, 0.3)
+		var dist := _world_rng.randf_range(55.0, 75.0)
+		var fpos := lake_center + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
+		_create_fruit_tree(fpos, tree_counter % 2)
+		tree_counter += 1
+	# Scattered in forest: ~50 fruit trees (alternate orange/fig)
+	var scattered := 50
 	var attempts := 0
 	var placed := 0
-	while placed < scattered and attempts < 120:
+	while placed < scattered and attempts < 300:
 		attempts += 1
 		var x := _world_rng.randf_range(-MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
 		var z := _world_rng.randf_range(-MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
@@ -4415,7 +4530,7 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	action.set_meta("visual_name", visual_name)
 
 func _create_mushrooms() -> void:
-	var mushroom_count := 400
+	var mushroom_count := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0) / 7.9)
 	var mushroom_idx := 0
 	var placed_positions: Array[Vector3] = []
 	var forest_min_radius := 70.0
@@ -4656,6 +4771,45 @@ func _create_house_loot() -> void:
 		loot_data["pos"].y = tent_ground_y + 0.06
 		loot_data["id"] = "tent_loot_extra_%d" % _j
 		_create_pickup_item(loot_data)
+	# Remote military tent loot — military-grade pool (no rifle, but backpack)
+	var remote_tent_origin := _remote_tent_pos
+	var remote_tent_half_w := 4.0
+	var remote_tent_half_d := 5.5
+	var remote_tent_ground_y := _get_exact_ground_y(remote_tent_origin.x, remote_tent_origin.z)
+	var remote_tent_loot := [
+		tent_loot_pool[1], # green pants
+		tent_loot_pool[2], # blue pants
+		tent_loot_pool[3], # black pants
+		tent_loot_pool[4], # camo pants
+		tent_loot_pool[5], # gloves
+		tent_loot_pool[6], # canned stew
+		tent_loot_pool[7], # canned tuna
+		tent_loot_pool[8], # plastic bottle
+	]
+	# Guarantee 3 clothing items
+	var rt_clothing_indices := [0, 1, 2, 3, 4]
+	var rt_guaranteed: Array = []
+	for _g in range(3):
+		var gi := _world_rng.randi() % rt_clothing_indices.size()
+		rt_guaranteed.append(rt_clothing_indices[gi])
+		rt_clothing_indices.remove_at(gi)
+	var _rt_loot_idx := 0
+	for gidx in rt_guaranteed:
+		var g_data: Dictionary = remote_tent_loot[gidx].duplicate()
+		g_data["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		g_data["pos"].y = remote_tent_ground_y + 0.06
+		g_data["id"] = "remote_tent_loot_clothing_%d" % _rt_loot_idx
+		_rt_loot_idx += 1
+		_create_pickup_item(g_data)
+	# Guaranteed food items
+	for _fi in range(2):
+		var food_data: Dictionary = remote_tent_loot[5 + _world_rng.randi() % 3].duplicate()
+		food_data["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		food_data["pos"].y = remote_tent_ground_y + 0.06
+		food_data["id"] = "remote_tent_loot_food_%d" % _fi
+		_create_pickup_item(food_data)
+	# Guaranteed backpack in remote tent
+	_create_backpack_pickup("remote_tent_backpack_0", _find_pos_inside_house(remote_tent_origin, remote_tent_half_w - 1.0, remote_tent_half_d - 1.0) + Vector3(0, remote_tent_ground_y + 0.06, 0))
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
@@ -6413,6 +6567,7 @@ func _create_mountain_river() -> void:
 		var yaw: float = float(segment["yaw"])
 		if size.x >= 60.0:
 			await _create_lake_bank_tall_grass(center, size, yaw)
+			await _create_lake_shore_rocks(center, size, yaw)
 
 func _default_river_segments() -> Array:
 	return [
@@ -6595,6 +6750,9 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 	# Check tent area
 	var tent_origin := Vector3(48, 0, -48)
 	if abs(pos.x - tent_origin.x) < 4.0 and abs(pos.z - tent_origin.z) < 4.0:
+		return true
+	# Check remote tent area
+	if _remote_tent_pos != Vector3.ZERO and abs(pos.x - _remote_tent_pos.x) < 4.0 and abs(pos.z - _remote_tent_pos.z) < 5.5:
 		return true
 	return false
 
@@ -6910,6 +7068,50 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 			if _world_rng.randf() < 0.50:
 				_create_river_reed_cluster(bank_pos, _world_rng.randf_range(1.0, 1.8), end)
 			if i % 80 == 79:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
+
+func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> void:
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	var half_l := size.x * 0.5
+	var half_w := size.y * 0.5
+	# Boulders and rocks around the lake shore
+	for side_value in [-1.0, 1.0]:
+		var side: float = side_value
+		for i in range(80):
+			var t := _world_rng.randf_range(-1.0, 1.0)
+			var bank_pos := center + along * t * half_l * 1.08 + across * side * _world_rng.randf_range(half_w * 0.52, half_w * 1.60)
+			bank_pos.y = 0.045
+			if not _can_place_ground_vegetation(bank_pos, -1.0):
+				continue
+			if i % 4 == 0:
+				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.4), _world_rng.randf_range(0.25, 0.7), _world_rng.randf_range(0.5, 1.3)))
+			elif i % 4 == 1:
+				_create_river_pebble_cluster(bank_pos, along, across, side)
+			elif i % 4 == 2:
+				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.25, 0.65), _world_rng.randf_range(0.12, 0.32), _world_rng.randf_range(0.25, 0.65)))
+			else:
+				_create_grass_clump(bank_pos, _world_rng.randf_range(0.6, 1.2), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
+			if i % 60 == 59:
+				var _saved_rng_state := _world_rng.state
+				await get_tree().process_frame
+				_world_rng.state = _saved_rng_state
+	# Rocks at the lake ends (caps)
+	for end_value in [-1.0, 1.0]:
+		var end: float = end_value
+		for i in range(40):
+			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.12) + across * _world_rng.randf_range(-half_w * 0.95, half_w * 0.95)
+			bank_pos.y = 0.045
+			if not _can_place_ground_vegetation(bank_pos, -1.0):
+				continue
+			if i % 3 == 0:
+				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.30, 0.78), _world_rng.randf_range(0.12, 0.36), _world_rng.randf_range(0.30, 0.78)))
+			else:
+				_create_river_pebble_cluster(bank_pos, along, across, end)
+			if i % 40 == 39:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
 				_world_rng.state = _saved_rng_state
@@ -8332,21 +8534,53 @@ func _update_forest_visibility() -> void:
 			node.visible = should_show
 
 func _create_forest_collision(positions: Array) -> void:
-	if positions.is_empty():
-		return
-	var body := StaticBody3D.new()
-	body.name = "ForestCollision"
-	body.collision_layer = 1
-	body.collision_mask = 1
-	add_child(body)
-	var trunk_shape := CylinderShape3D.new()
-	trunk_shape.radius = 0.25
-	trunk_shape.height = 6.0
+	# Register tree positions in a spatial grid for on-demand collision creation
 	for pos in positions:
-		var col := CollisionShape3D.new()
-		col.shape = trunk_shape
-		col.position = Vector3(pos.x, pos.y + trunk_shape.height * 0.5, pos.z)
-		body.add_child(col)
+		var key := Vector2i(int(pos.x / _forest_collision_grid_size), int(pos.z / _forest_collision_grid_size))
+		if not _forest_collision_grid.has(key):
+			_forest_collision_grid[key] = []
+		(_forest_collision_grid[key] as Array).append(pos)
+
+func _update_forest_collision() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var ppos: Vector3 = player.global_position
+	var pc := Vector2i(int(ppos.x / _forest_collision_grid_size), int(ppos.z / _forest_collision_grid_size))
+	var r := int(_forest_collision_radius / _forest_collision_grid_size) + 1
+	var needed_cells: Dictionary = {}
+	for gx in range(pc.x - r, pc.x + r + 1):
+		for gy in range(pc.y - r, pc.y + r + 1):
+			var key := Vector2i(gx, gy)
+			if _forest_collision_grid.has(key):
+				needed_cells[key] = true
+	# Create missing collision bodies
+	for key in needed_cells:
+		if not _forest_collision_active_cells.has(key):
+			var positions: Array = _forest_collision_grid[key]
+			var body := StaticBody3D.new()
+			body.name = "ForestCol_%d_%d" % [key.x, key.y]
+			body.collision_layer = 1
+			body.collision_mask = 1
+			var trunk_shape := CylinderShape3D.new()
+			trunk_shape.radius = 0.25
+			trunk_shape.height = 6.0
+			for pos in positions:
+				var col := CollisionShape3D.new()
+				col.shape = trunk_shape
+				col.position = Vector3(pos.x, pos.y + trunk_shape.height * 0.5, pos.z)
+				body.add_child(col)
+			add_child(body)
+			_forest_collision_active_cells[key] = body
+	# Remove far collision bodies
+	var to_remove: Array = []
+	for key in _forest_collision_active_cells:
+		if not needed_cells.has(key):
+			to_remove.append(key)
+	for key in to_remove:
+		var body: StaticBody3D = _forest_collision_active_cells[key]
+		if is_instance_valid(body):
+			body.queue_free()
+		_forest_collision_active_cells.erase(key)
 
 func _tree_grid_key(pos: Vector3) -> Vector2i:
 	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
@@ -8759,8 +8993,8 @@ void fragment() {
 }
 """
 
-const GRASS_VISIBLE_RADIUS := 500.0
-const GRASS_HIDE_RADIUS := 520.0
+const GRASS_VISIBLE_RADIUS := 100.0
+const GRASS_HIDE_RADIUS := 130.0
 var _grass_vis_timer: float = 0.0
 var _grass_any_visible: bool = false
 
@@ -8840,32 +9074,49 @@ func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) ->
 func _flush_grass_batches() -> void:
 	if grass_batch_meshes.is_empty():
 		return
+	const GRASS_BATCH_SIZE := 500
+	const GRID_CELL := 50.0
 	for variant in range(grass_batch_meshes.size()):
 		var transforms: Array = grass_batch_transforms[variant]
 		var colors: Array = grass_batch_colors[variant]
 		if transforms.is_empty():
 			continue
-		var multimesh := MultiMesh.new()
-		multimesh.transform_format = MultiMesh.TRANSFORM_3D
-		multimesh.use_colors = true
-		multimesh.mesh = grass_batch_meshes[variant]
-		multimesh.instance_count = transforms.size()
-		for i in range(transforms.size()):
-			multimesh.set_instance_transform(i, transforms[i])
-			multimesh.set_instance_color(i, colors[i])
-		var center := Vector3.ZERO
-		for t in transforms:
-			center += t.origin
-		if not transforms.is_empty():
-			center /= transforms.size()
-		var mm_instance := MultiMeshInstance3D.new()
-		mm_instance.name = "GrassBatch_%d" % variant
-		mm_instance.multimesh = multimesh
-		mm_instance.material_override = grass_batch_material
-		mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(mm_instance)
-		_grass_batch_nodes.append(mm_instance)
-		_grass_batch_centers.append(center)
+		# Sort by spatial grid cell so batches contain nearby instances
+		var indices := range(transforms.size())
+		indices.sort_custom(func(a: int, b: int) -> bool:
+			var pa: Vector3 = (transforms[a] as Transform3D).origin
+			var pb: Vector3 = (transforms[b] as Transform3D).origin
+			var ka := int(pa.x / GRID_CELL) * 10000 + int(pa.z / GRID_CELL)
+			var kb := int(pb.x / GRID_CELL) * 10000 + int(pb.z / GRID_CELL)
+			return ka < kb
+		)
+		var num_batches := int(ceil(float(transforms.size()) / float(GRASS_BATCH_SIZE)))
+		for b in range(num_batches):
+			var start := b * GRASS_BATCH_SIZE
+			var end_idx: int = min(start + GRASS_BATCH_SIZE, indices.size())
+			var count: int = end_idx - start
+			if count <= 0:
+				continue
+			var multimesh := MultiMesh.new()
+			multimesh.transform_format = MultiMesh.TRANSFORM_3D
+			multimesh.use_colors = true
+			multimesh.mesh = grass_batch_meshes[variant]
+			multimesh.instance_count = count
+			var center := Vector3.ZERO
+			for i in range(count):
+				var src_idx: int = indices[start + i]
+				multimesh.set_instance_transform(i, transforms[src_idx])
+				multimesh.set_instance_color(i, colors[src_idx])
+				center += (transforms[src_idx] as Transform3D).origin
+			center /= float(count)
+			var mm_instance := MultiMeshInstance3D.new()
+			mm_instance.name = "GrassBatch_%d_%d" % [variant, b]
+			mm_instance.multimesh = multimesh
+			mm_instance.material_override = grass_batch_material
+			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(mm_instance)
+			_grass_batch_nodes.append(mm_instance)
+			_grass_batch_centers.append(center)
 		transforms.clear()
 		colors.clear()
 		await get_tree().process_frame
@@ -8875,32 +9126,44 @@ func _flush_grass_batches() -> void:
 			var t_colors: Array = _tall_grass_colors[variant]
 			if t_transforms.is_empty():
 				continue
-			var multimesh := MultiMesh.new()
-			multimesh.transform_format = MultiMesh.TRANSFORM_3D
-			multimesh.use_colors = true
-			multimesh.mesh = _tall_grass_meshes[variant]
-			multimesh.instance_count = t_transforms.size()
-			for i in range(t_transforms.size()):
-				multimesh.set_instance_transform(i, t_transforms[i])
-				multimesh.set_instance_color(i, t_colors[i])
-			var center := Vector3.ZERO
-			for t in t_transforms:
-				center += t.origin
-			if not t_transforms.is_empty():
-				center /= t_transforms.size()
-			var mm_instance := MultiMeshInstance3D.new()
-			mm_instance.name = "TallGrassBatch_%d" % variant
-			mm_instance.multimesh = multimesh
-			mm_instance.material_override = _tall_grass_material
-			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			add_child(mm_instance)
-			_grass_batch_nodes.append(mm_instance)
-			_grass_batch_centers.append(center)
+			var indices := range(t_transforms.size())
+			indices.sort_custom(func(a: int, b: int) -> bool:
+				var pa: Vector3 = (t_transforms[a] as Transform3D).origin
+				var pb: Vector3 = (t_transforms[b] as Transform3D).origin
+				var ka := int(pa.x / GRID_CELL) * 10000 + int(pa.z / GRID_CELL)
+				var kb := int(pb.x / GRID_CELL) * 10000 + int(pb.z / GRID_CELL)
+				return ka < kb
+			)
+			var num_batches := int(ceil(float(t_transforms.size()) / float(GRASS_BATCH_SIZE)))
+			for b in range(num_batches):
+				var start := b * GRASS_BATCH_SIZE
+				var end_idx: int = min(start + GRASS_BATCH_SIZE, indices.size())
+				var count: int = end_idx - start
+				if count <= 0:
+					continue
+				var multimesh := MultiMesh.new()
+				multimesh.transform_format = MultiMesh.TRANSFORM_3D
+				multimesh.use_colors = true
+				multimesh.mesh = _tall_grass_meshes[variant]
+				multimesh.instance_count = count
+				var center := Vector3.ZERO
+				for i in range(count):
+					var src_idx: int = indices[start + i]
+					multimesh.set_instance_transform(i, t_transforms[src_idx])
+					multimesh.set_instance_color(i, t_colors[src_idx])
+					center += (t_transforms[src_idx] as Transform3D).origin
+				center /= float(count)
+				var mm_instance := MultiMeshInstance3D.new()
+				mm_instance.name = "TallGrassBatch_%d_%d" % [variant, b]
+				mm_instance.multimesh = multimesh
+				mm_instance.material_override = _tall_grass_material
+				mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(mm_instance)
+				_grass_batch_nodes.append(mm_instance)
+				_grass_batch_centers.append(center)
 			t_transforms.clear()
 			t_colors.clear()
-
-#endregion
-
+			await get_tree().process_frame
 
 #region PRIMITIVAS Y GEOMETRÍA (PrimitiveBuilder)
 func _create_bush(pos: Vector3, radius: float) -> void:
@@ -9553,9 +9816,6 @@ func _remove_collision_from_node(root: Node) -> void:
 	_collect_collision_nodes(root, to_remove)
 	for node in to_remove:
 		if is_instance_valid(node):
-			var parent := (node as Node).get_parent()
-			if parent != null:
-				parent.remove_child(node)
 			(node as Node).queue_free()
 
 func _collect_collision_nodes(node: Node, result: Array) -> void:
