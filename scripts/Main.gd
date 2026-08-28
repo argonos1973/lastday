@@ -88,6 +88,7 @@ var external_scene_cache := {}
 var _forest_tree_meshes: Array = []
 var _forest_multimesh_nodes: Array[MultiMeshInstance3D] = []
 var _forest_multimesh_centers: Array[Vector3] = []
+var _forest_multimesh_radii: Array[float] = []
 const FOREST_MM_VISIBLE_RADIUS := 100.0
 const FOREST_MM_HIDE_RADIUS := 120.0
 var _cached_leafy_material: StandardMaterial3D = null
@@ -4417,15 +4418,17 @@ func _create_mushrooms() -> void:
 	var mushroom_count := 400
 	var mushroom_idx := 0
 	var placed_positions: Array[Vector3] = []
+	var forest_min_radius := 70.0
+	var forest_max_radius := MAP_EXTENT * 0.95
 	for _i in range(mushroom_count):
-		var pos := Vector3(_world_rng.randf_range(-120, 120), 0.06, _world_rng.randf_range(-120, 120))
-		if pos.distance_to(Vector3.ZERO) < 20.0:
-			continue
+		var angle := _world_rng.randf_range(0, TAU)
+		var radius := _world_rng.randf_range(forest_min_radius, forest_max_radius)
+		var pos := Vector3(cos(angle) * radius, 0.06, sin(angle) * radius)
 		if _is_near_river(pos, 5.0):
 			continue
 		if _is_near_car_or_container(pos, 4.0):
 			continue
-		if _is_near_house(pos, 2.0):
+		if _is_near_house(pos, 8.0):
 			continue
 		if _is_on_road(pos):
 			continue
@@ -8208,6 +8211,7 @@ func _create_forest() -> void:
 		batch_aabbs.append((_forest_tree_meshes[_i] as Dictionary).get("aabb", AABB()))
 	var batched_count := 0
 	var interactive_count := 0
+	var all_tree_positions: Array = [] # Array[Vector3] for collision
 	for i in range(total_trees):
 		var x := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
 		var z := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
@@ -8236,6 +8240,7 @@ func _create_forest() -> void:
 			var basis := Basis.from_euler(Vector3(deg_to_rad(-90), 0, deg_to_rad(yaw_deg))).scaled(Vector3(tree_scale, tree_scale, tree_scale))
 			var world_xform := Transform3D(basis, pos)
 			(batch_transforms[variant_idx] as Array).append(world_xform)
+			all_tree_positions.append(pos)
 			batched_count += 1
 		else:
 			_create_tree(pos, false)
@@ -8255,6 +8260,8 @@ func _create_forest() -> void:
 	
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
+	# Create collision bodies for all batched trees (simple trunk cylinders)
+	_create_forest_collision(all_tree_positions)
 	print("[FOREST] Batched=%d MultiMesh variants=%d Interactive=%d" % [batched_count, _forest_tree_meshes.size(), interactive_count])
 
 func _flush_forest_multimeshes(batch_transforms: Array) -> void:
@@ -8286,16 +8293,21 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				multimesh.set_instance_transform(j, t)
 				center += t.origin
 			center /= float(count)
+			# Calculate batch radius (max distance from center to any tree)
+			var batch_radius := 0.0
+			for j in range(count):
+				var t: Transform3D = transforms[start + j]
+				var d := center.distance_to(t.origin)
+				if d > batch_radius:
+					batch_radius = d
 			var mmi := MultiMeshInstance3D.new()
 			mmi.name = "ForestMM_%d_%d" % [variant_idx, b]
 			mmi.multimesh = multimesh
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.visibility_range_end = FOREST_MM_VISIBLE_RADIUS
-			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mmi)
 			_forest_multimesh_nodes.append(mmi)
 			_forest_multimesh_centers.append(center)
-	print("[FOREST] MultiMesh nodes created: %d" % _forest_multimesh_nodes.size())
+			_forest_multimesh_radii.append(batch_radius)
 
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():
@@ -8308,14 +8320,33 @@ func _update_forest_visibility() -> void:
 		if not is_instance_valid(node):
 			continue
 		var center: Vector3 = _forest_multimesh_centers[i]
+		var batch_radius: float = _forest_multimesh_radii[i] if i < _forest_multimesh_radii.size() else 0.0
 		var dist := ppos.distance_to(Vector3(center.x, ppos.y, center.z))
+		# Show batch if any tree could be within visible radius
 		var should_show := false
 		if node.visible:
-			should_show = dist < FOREST_MM_HIDE_RADIUS
+			should_show = dist < (FOREST_MM_HIDE_RADIUS + batch_radius)
 		else:
-			should_show = dist < FOREST_MM_VISIBLE_RADIUS
+			should_show = dist < (FOREST_MM_VISIBLE_RADIUS + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
+
+func _create_forest_collision(positions: Array) -> void:
+	if positions.is_empty():
+		return
+	var body := StaticBody3D.new()
+	body.name = "ForestCollision"
+	body.collision_layer = 1
+	body.collision_mask = 1
+	add_child(body)
+	var trunk_shape := CylinderShape3D.new()
+	trunk_shape.radius = 0.25
+	trunk_shape.height = 6.0
+	for pos in positions:
+		var col := CollisionShape3D.new()
+		col.shape = trunk_shape
+		col.position = Vector3(pos.x, pos.y + trunk_shape.height * 0.5, pos.z)
+		body.add_child(col)
 
 func _tree_grid_key(pos: Vector3) -> Vector2i:
 	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
