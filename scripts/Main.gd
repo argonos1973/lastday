@@ -137,6 +137,7 @@ var _tall_grass_colors: Array = []
 var _tall_grass_material: StandardMaterial3D = null
 var _grass_batch_nodes: Array[MultiMeshInstance3D] = []
 var _grass_batch_centers: Array[Vector3] = []
+var _grass_batch_radii: Array[float] = []
 
 const SAVE_BALANCE_VERSION := 6
 const Q_NATURE := "res://assets/external/quaternius_stylized_nature_megakit/glTF/"
@@ -3063,7 +3064,7 @@ func _create_map() -> void:
 		await get_tree().process_frame
 		_tm = Time.get_ticks_msec()
 	if not is_server:
-		_create_barn(Vector3(-380, 0, 320), "_Remote")
+		_create_barn(Vector3(-340, 0, 280), "_Remote")
 		await get_tree().process_frame
 		_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -4008,7 +4009,7 @@ func _find_flat_area_for_remote_tent() -> Vector3:
 			if _military_tent_pos != Vector3.ZERO and Vector3(cx, 0, cz).distance_to(_military_tent_pos) < 100.0:
 				continue
 			# Avoid remote barn
-			if Vector3(cx, 0, cz).distance_to(Vector3(-380, 0, 320)) < 60.0:
+			if Vector3(cx, 0, cz).distance_to(Vector3(-340, 0, 280)) < 60.0:
 				continue
 			# Avoid lake center
 			if Vector3(cx, 0, cz).distance_to(Vector3(250, 0, -310)) < 100.0:
@@ -4165,7 +4166,7 @@ func _create_fruit_trees() -> void:
 		_create_fruit_tree(fpos, tree_counter % 2)
 		tree_counter += 1
 	# Near remote barn: 4 fruit trees (alternate orange/fig)
-	var remote_barn_pos := Vector3(-380, 0, 320)
+	var remote_barn_pos := Vector3(-340, 0, 280)
 	for i in range(4):
 		var angle := i * (PI * 0.5) + PI * 0.15 + _world_rng.randf_range(-0.3, 0.3)
 		var dist := _world_rng.randf_range(10.0, 16.0)
@@ -4563,7 +4564,7 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	if _depleted_action_ids.has(id):
 		return
 	var visual_name := "Pickup_" + id
-	var scale_value := 0.05
+	var scale_value := 0.04
 	var spawned := _try_instance_external_scene(["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
 	if not spawned:
 		push_warning("No se crea seta %s porque falta/carga mal el asset .glb" % id)
@@ -4684,7 +4685,7 @@ func _create_house_loot() -> void:
 		loot_data["id"] = "barn_loot_%d" % _j
 		_create_pickup_item(loot_data)
 	# Remote barn loot — food + backpack focus
-	var remote_barn_origin := Vector3(-380, 0, 320)
+	var remote_barn_origin := Vector3(-340, 0, 280)
 	var remote_barn_half_w := 4.0
 	var remote_barn_half_d := 9.0
 	var remote_barn_loot_pool := [
@@ -6352,6 +6353,10 @@ func _create_rocky_foothills() -> void:
 		if near_spawn:
 			continue
 		
+		# Avoid rivers — no hills on water
+		if _is_near_river(pos, 8.0):
+			continue
+		
 		# ~25% de las colinas se convierten en montañas grandes con vegetación
 		var is_large_mountain := large_hill_count < 12 and _world_rng.randf() < 0.25
 		var radius_x: float
@@ -6744,7 +6749,7 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 	if abs(pos.x - barn_origin.x) < 4.0 and abs(pos.z - barn_origin.z) < 9.0:
 		return true
 	# Check remote barn area
-	var remote_barn_origin := Vector3(-380, 0, 320)
+	var remote_barn_origin := Vector3(-340, 0, 280)
 	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
 	# Check tent area
@@ -8043,7 +8048,7 @@ var HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
 	{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
 	{"origin": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
-	{"origin": Vector3(-380, 0, 320), "w": 8.0, "d": 18.0},  # Remote barn
+	{"origin": Vector3(-340, 0, 280), "w": 8.0, "d": 18.0},  # Remote barn
 ]
 
 func _is_near_house(pos: Vector3, margin: float) -> bool:
@@ -8415,8 +8420,8 @@ func _create_forest() -> void:
 	var interactive_count := 0
 	var all_tree_positions: Array = [] # Array[Vector3] for collision
 	for i in range(total_trees):
-		var x := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
-		var z := _world_rng.randf_range(-MAP_EXTENT * 1.10, MAP_EXTENT * 1.10)
+		var x := _world_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
+		var z := _world_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
 		
 		# Mantener las zonas de construcción principales despejadas
 		if Vector2(x, z).length() < inner_clear_radius:
@@ -8993,8 +8998,8 @@ void fragment() {
 }
 """
 
-const GRASS_VISIBLE_RADIUS := 100.0
-const GRASS_HIDE_RADIUS := 130.0
+const GRASS_VISIBLE_RADIUS := 120.0
+const GRASS_HIDE_RADIUS := 170.0
 var _grass_vis_timer: float = 0.0
 var _grass_any_visible: bool = false
 
@@ -9010,12 +9015,13 @@ func _update_grass_visibility() -> void:
 		if not is_instance_valid(node):
 			continue
 		var center: Vector3 = _grass_batch_centers[i]
+		var batch_radius: float = _grass_batch_radii[i] if i < _grass_batch_radii.size() else 0.0
 		var dist: float = ppos.distance_to(Vector3(center.x, ppos.y, center.z))
 		var should_show: bool = false
 		if node.visible:
-			should_show = dist < GRASS_HIDE_RADIUS
+			should_show = dist < (GRASS_HIDE_RADIUS + batch_radius)
 		else:
-			should_show = dist < GRASS_VISIBLE_RADIUS
+			should_show = dist < (GRASS_VISIBLE_RADIUS + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
 		if should_show:
@@ -9074,8 +9080,8 @@ func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) ->
 func _flush_grass_batches() -> void:
 	if grass_batch_meshes.is_empty():
 		return
-	const GRASS_BATCH_SIZE := 500
-	const GRID_CELL := 50.0
+	const GRASS_BATCH_SIZE := 200
+	const GRID_CELL := 25.0
 	for variant in range(grass_batch_meshes.size()):
 		var transforms: Array = grass_batch_transforms[variant]
 		var colors: Array = grass_batch_colors[variant]
@@ -9109,6 +9115,12 @@ func _flush_grass_batches() -> void:
 				multimesh.set_instance_color(i, colors[src_idx])
 				center += (transforms[src_idx] as Transform3D).origin
 			center /= float(count)
+			var batch_radius := 0.0
+			for i in range(count):
+				var src_idx: int = indices[start + i]
+				var d := center.distance_to((transforms[src_idx] as Transform3D).origin)
+				if d > batch_radius:
+					batch_radius = d
 			var mm_instance := MultiMeshInstance3D.new()
 			mm_instance.name = "GrassBatch_%d_%d" % [variant, b]
 			mm_instance.multimesh = multimesh
@@ -9117,6 +9129,7 @@ func _flush_grass_batches() -> void:
 			add_child(mm_instance)
 			_grass_batch_nodes.append(mm_instance)
 			_grass_batch_centers.append(center)
+			_grass_batch_radii.append(batch_radius)
 		transforms.clear()
 		colors.clear()
 		await get_tree().process_frame
@@ -9153,6 +9166,12 @@ func _flush_grass_batches() -> void:
 					multimesh.set_instance_color(i, t_colors[src_idx])
 					center += (t_transforms[src_idx] as Transform3D).origin
 				center /= float(count)
+				var batch_radius := 0.0
+				for i in range(count):
+					var src_idx: int = indices[start + i]
+					var d := center.distance_to((t_transforms[src_idx] as Transform3D).origin)
+					if d > batch_radius:
+						batch_radius = d
 				var mm_instance := MultiMeshInstance3D.new()
 				mm_instance.name = "TallGrassBatch_%d_%d" % [variant, b]
 				mm_instance.multimesh = multimesh
@@ -9161,6 +9180,7 @@ func _flush_grass_batches() -> void:
 				add_child(mm_instance)
 				_grass_batch_nodes.append(mm_instance)
 				_grass_batch_centers.append(center)
+				_grass_batch_radii.append(batch_radius)
 			t_transforms.clear()
 			t_colors.clear()
 			await get_tree().process_frame
