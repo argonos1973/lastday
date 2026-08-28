@@ -4550,7 +4550,7 @@ func _create_mushrooms() -> void:
 			continue
 		var too_close := false
 		for prev_pos in placed_positions:
-			if pos.distance_to(prev_pos) < 2.0:
+			if pos.distance_to(prev_pos) < 5.0:
 				too_close = true
 				break
 		if too_close:
