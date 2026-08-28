@@ -8248,7 +8248,7 @@ func _get_ground_height(pos: Vector3) -> float:
 	return max_h
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(60 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(90 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var rx := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -8263,11 +8263,11 @@ func _create_ground_clutter() -> void:
 			_world_rng.state = _saved_rng_state
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(1 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(1.5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(20, 55), _world_rng.randf_range(20, 55))
-		var count := int(radius.x * radius.y * 0.12)
+		var count := int(radius.x * radius.y * 0.18)
 		for j in range(count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var dist := sqrt(_world_rng.randf()) 
@@ -8282,11 +8282,11 @@ func _create_tall_grass_fields() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(0.5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(0.8 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(15, 30), _world_rng.randf_range(15, 30))
-		var count := int(radius.x * radius.y * 0.18)
+		var count := int(radius.x * radius.y * 0.25)
 		for j in range(count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var dist := sqrt(_world_rng.randf())
@@ -8309,11 +8309,11 @@ func _create_dense_vegetation_zones() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_grass_ground_cover() -> void:
-	var total_patches := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_patches := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_patches):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(30, 65), _world_rng.randf_range(30, 65))
-		var count := int(radius.x * radius.y * 0.15)
+		var count := int(radius.x * radius.y * 0.22)
 		for j in range(count):
 			var angle := _world_rng.randf_range(0.0, TAU)
 			var dist := sqrt(_world_rng.randf())
@@ -8330,7 +8330,7 @@ func _create_grass_ground_cover() -> void:
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
 	var coverage := MAP_EXTENT * 1.05
-	var spacing := 4.0
+	var spacing := 3.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
@@ -8397,7 +8397,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.045)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.055)
 	print("[FOREST] Starting forest generation: total_trees=%d" % total_trees)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
