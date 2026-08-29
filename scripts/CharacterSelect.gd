@@ -18,9 +18,7 @@ func _load_definitions() -> void:
 	var remy_scene := ResourceLoader.load("res://assets/characters/Remy.glb", "PackedScene") as PackedScene
 	if remy_scene == null:
 		push_warning("No se pudo cargar Remy.glb para preview")
-		print("[CHAR-SELECT] ERROR: Failed to load Remy.glb")
 		return
-	print("[CHAR-SELECT] Remy.glb loaded OK, creating definitions")
 	var configs := [
 		{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
 		{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
@@ -136,7 +134,6 @@ func _build_ui() -> void:
 func _update_view() -> void:
 	if _definitions.is_empty():
 		_name_label.text = "No hay personajes"
-		print("[CHAR-SELECT] No definitions loaded!")
 		if _confirm_button != null:
 			_confirm_button.disabled = true
 		return
@@ -144,12 +141,10 @@ func _update_view() -> void:
 	_current_index = clampi(_current_index, 0, _definitions.size() - 1)
 	var def := _definitions[_current_index]
 	_name_label.text = def.character_name
-	print("[CHAR-SELECT] Showing character: ", def.character_name, " scene=", def.character_scene)
 	if _confirm_button != null:
 		_confirm_button.disabled = false
 
 	if _preview_anchor == null or def.character_scene == null:
-		print("[CHAR-SELECT] preview_anchor=", _preview_anchor, " scene=", def.character_scene)
 		return
 
 	for child in _preview_anchor.get_children():

@@ -2507,6 +2507,10 @@ func _physics_process(delta: float) -> void:
 	_update_crouch_collision()
 	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
+	var effective_max_energy: float = stats.max_stat * (1.0 - carry * 0.5)
+	# Cannot sprint when heavily loaded
+	if carry > 0.85:
+		is_sprinting = false
 	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
 	# Reduce speed when aiming with rifle for careful movement
 	if _is_aiming and _has_rifle_equipped():
@@ -2518,13 +2522,13 @@ func _physics_process(delta: float) -> void:
 		speed = 0.0
 		is_sprinting = false
 	if is_sprinting:
-		stats.energy = max(0.0, stats.energy - (3.0 + carry * 7.0) * delta)
+		stats.energy = max(0.0, stats.energy - (3.0 + carry * 9.0) * delta)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
 			stats.changed.emit()
 	elif not is_jumping and is_on_floor():
-		stats.energy = min(stats.max_stat, stats.energy + (8.0 - carry * 4.0) * delta)
+		stats.energy = min(effective_max_energy, stats.energy + (8.0 - carry * 5.0) * delta)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
@@ -2652,8 +2656,6 @@ func _update_drink_hand_socket() -> void:
 	_drink_hand_root.position = bone_local.origin + Vector3(0.0, 0.0, -0.10)
 	var euler := bone_local.basis.get_euler()
 	_drink_hand_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
-	if Engine.get_process_frames() % 60 == 0:
-		print("DEBUG drink socket: pos=", _drink_hand_root.position, " global=", _drink_hand_root.global_position, " children=", _drink_hand_root.get_child_count(), " model_scale=", third_person_model.scale)
 
 # Keeps head-slot clothing (e.g. the hat) glued to the head bone so it follows
 # animations (walking, looking up/down, sitting, etc.) instead of staying
@@ -2839,8 +2841,6 @@ func _create_third_person_model() -> void:
 		if is_clothing_model:
 			_init_survival_clothing(character)
 			_apply_character_colors()
-		print("[DEBUG] is_clothing_model=", is_clothing_model, " is_custom_character=", is_custom_character, " is_puppet=", is_puppet)
-		print("[DEBUG] _survival_body_nodes keys=", _survival_body_nodes.keys())
 		if not is_puppet:
 			if is_clothing_model or is_custom_character:
 				# Ensure default clothing is in inventory and equipped
@@ -2988,12 +2988,6 @@ func _create_third_person_item_slots() -> void:
 		_drink_hand_root = Node3D.new()
 		_drink_hand_root.name = "DrinkHandSocket"
 		third_person_model.add_child(_drink_hand_root)
-		print("DEBUG drink: Node3D socket created, bone_idx=", _left_hand_bone_idx)
-		# Print all bone names to find finger bones
-		for i in range(_hand_skeleton.get_bone_count()):
-			var bn = _hand_skeleton.get_bone_name(i)
-			if bn.find("Left") >= 0 or bn.find("left") >= 0:
-				print("DEBUG drink: bone[", i, "]=", bn, " parent=", _hand_skeleton.get_bone_parent(i))
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
 	if _head_skeleton != null:
@@ -6051,7 +6045,6 @@ func _build_third_person_plastic_bottle() -> void:
 # left hand bone so it automatically follows the drink animation's pose.
 func _build_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
-		print("DEBUG drink: _drink_hand_root NULL")
 		return
 	for child in _drink_hand_root.get_children():
 		if child.name == "ThirdPersonDrinkBottleLeft":
@@ -6066,7 +6059,6 @@ func _build_third_person_drink_bottle_left_hand() -> void:
 		var bottle_node := _drink_hand_root.get_node_or_null("ThirdPersonDrinkBottleLeft")
 		if bottle_node != null:
 			_fix_bottle_materials(bottle_node)
-	print("DEBUG drink: bottle added ok=", ok, " children=", _drink_hand_root.get_child_count(), " pos=", bottle_pos)
 
 func _fix_bottle_materials(root: Node) -> void:
 	for child in root.get_children():
@@ -6239,8 +6231,7 @@ func _try_add_model_to_parent(parent: Node, path: String, node_name: String, pos
 		var aabb_result: Array = []
 		_debug_collect_aabb(node, Transform3D.IDENTITY, aabb_result)
 		if not aabb_result.is_empty():
-			var a: AABB = aabb_result[0]
-			print("DEBUG bottle RAW AABB (before offset applied): position=", a.position, " size=", a.size, " center=", a.get_center())
+			pass
 	node.position = pos
 	node.rotation_degrees = rot
 	node.scale = scale_value
@@ -6279,7 +6270,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var vertical_bob: float = abs(sin(_walk_bob)) * 0.055 * _walk_intensity
 	var side_bob: float = sin(_walk_bob * 0.5) * 0.028 * _walk_intensity
 	var roll: float = sin(_walk_bob) * deg_to_rad(0.75) * _walk_intensity
-	var target_sink := -0.6 * _water_depth if is_in_water else 0.0
+	var target_sink := -0.8 * _water_depth if is_in_water else 0.0
 	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45

@@ -4002,11 +4002,14 @@ func _find_flat_area_for_remote_tent() -> Vector3:
 		for dist in [380.0, 420.0, 460.0, 480.0]:
 			var cx: float = dist * cos(angle)
 			var cz: float = dist * sin(angle)
+			# Avoid world edge — keep within playable area
+			if abs(cx) > MAP_EXTENT * 0.95 or abs(cz) > MAP_EXTENT * 0.95:
+				continue
 			# Avoid river/lake areas
 			if _is_near_river(Vector3(cx, 0, cz), 15.0):
 				continue
-			# Avoid existing tent area
-			if _military_tent_pos != Vector3.ZERO and Vector3(cx, 0, cz).distance_to(_military_tent_pos) < 100.0:
+			# Avoid existing tent area — must be on opposite side of map
+			if _military_tent_pos != Vector3.ZERO and Vector3(cx, 0, cz).distance_to(_military_tent_pos) < 500.0:
 				continue
 			# Avoid remote barn
 			if Vector3(cx, 0, cz).distance_to(Vector3(-340, 0, 280)) < 60.0:
@@ -4029,7 +4032,14 @@ func _find_flat_area_for_remote_tent() -> Vector3:
 				best_score = score
 				best_pos = Vector3(cx, 0, cz)
 	if best_pos == Vector3.ZERO:
-		best_pos = Vector3(-420.0, 0, -380.0)
+		# Fallback: place opposite to first tent
+		if _military_tent_pos != Vector3.ZERO:
+			best_pos = Vector3(-_military_tent_pos.x, 0, -_military_tent_pos.z)
+			# Clamp within bounds
+			best_pos.x = clampf(best_pos.x, -MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
+			best_pos.z = clampf(best_pos.z, -MAP_EXTENT * 0.9, MAP_EXTENT * 0.9)
+		else:
+			best_pos = Vector3(-420.0, 0, -380.0)
 	return best_pos
 
 func _create_world_details() -> void:
@@ -4540,6 +4550,8 @@ func _create_mushrooms() -> void:
 		var angle := _world_rng.randf_range(0, TAU)
 		var radius := _world_rng.randf_range(forest_min_radius, forest_max_radius)
 		var pos := Vector3(cos(angle) * radius, 0.06, sin(angle) * radius)
+		if abs(pos.x) > MAP_EXTENT * 0.98 or abs(pos.z) > MAP_EXTENT * 0.98:
+			continue
 		if _is_near_river(pos, 5.0):
 			continue
 		if _is_near_car_or_container(pos, 4.0):
@@ -4550,7 +4562,7 @@ func _create_mushrooms() -> void:
 			continue
 		var too_close := false
 		for prev_pos in placed_positions:
-			if pos.distance_to(prev_pos) < 5.0:
+			if pos.distance_to(prev_pos) < 8.0:
 				too_close = true
 				break
 		if too_close:
@@ -6353,10 +6365,7 @@ func _create_rocky_foothills() -> void:
 		if near_spawn:
 			continue
 		
-		# Avoid rivers — no hills on water
-		if _is_near_river(pos, 8.0):
-			continue
-		
+		# Avoid rivers — no hills on water (check after radius is known)
 		# ~25% de las colinas se convierten en montañas grandes con vegetación
 		var is_large_mountain := large_hill_count < 12 and _world_rng.randf() < 0.25
 		var radius_x: float
@@ -6371,6 +6380,10 @@ func _create_rocky_foothills() -> void:
 			radius_x = _world_rng.randf_range(6.0, 14.0)
 			radius_z = _world_rng.randf_range(6.0, 14.0)
 			height = _world_rng.randf_range(0.8, 2.8) # Muy suaves y caminables
+		
+		# Now check river with actual hill radius as margin
+		if _is_near_river(pos, max(radius_x, radius_z) + 5.0):
+			continue
 		
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _world_rng.randf())
@@ -6673,7 +6686,12 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 		if absf(local_forward) <= half_length and absf(local_side) <= half_width:
 			var side_depth: float = 1.0 - absf(local_side) / max(0.01, half_width)
 			var length_depth: float = 1.0 - absf(local_forward) / max(0.01, half_length)
-			return clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5)
+			var depth_factor := 3.0
+			var max_depth := 2.5
+			if size.x >= 60.0:
+				depth_factor = 5.5
+				max_depth = 4.0
+			return clamp(min(side_depth, length_depth) * depth_factor, 0.18, max_depth)
 	return 0.0
 
 func get_nearest_river_audio_point(world_pos: Vector3) -> Dictionary:
@@ -6811,6 +6829,17 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 	return false
 
 func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
+	# Water-textured bottom plane to hide terrain showing through transparent water
+	var bottom_mesh := MeshInstance3D.new()
+	bottom_mesh.name = "RiverBottom"
+	bottom_mesh.position = center
+	bottom_mesh.position.y = 0.04
+	bottom_mesh.rotation_degrees = Vector3(0, yaw, 0)
+	var bottom_plane := PlaneMesh.new()
+	bottom_plane.size = Vector2(size.x * 1.02, size.y * 1.02)
+	bottom_mesh.mesh = bottom_plane
+	bottom_mesh.material_override = MaterialFactory.make_river_water_material()
+	add_child(bottom_mesh)
 	var mesh_instance = RiverWaterScript.new()
 	mesh_instance.name = "MountainRiverWater"
 	mesh_instance.position = center
@@ -7044,19 +7073,19 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 	# Dense tall grass ring around the lake perimeter
 	for side_value in [-1.0, 1.0]:
 		var side: float = side_value
-		for i in range(300):
+		for i in range(1200):
 			var t := _world_rng.randf_range(-1.0, 1.0)
-			var bank_pos := center + along * t * half_l * 1.05 + across * side * _world_rng.randf_range(half_w * 0.55, half_w * 1.80)
-			bank_pos.y = 0.052
-			if not _can_place_ground_vegetation(bank_pos, -1.0):
+			var bank_pos := center + along * t * half_l * 1.05 + across * side * _world_rng.randf_range(half_w * 0.70, half_w * 2.50)
+			if get_river_depth_at(bank_pos) > 0.02:
 				continue
+			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.02
 			_create_grass_clump(bank_pos, _world_rng.randf_range(1.0, 1.8), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
-			if _world_rng.randf() < 0.60:
+			if _world_rng.randf() < 0.65:
 				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-1.0, 1.0), _world_rng.randf_range(1.2, 2.2), side)
-			if _world_rng.randf() < 0.35:
-				_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 1.5), _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
-			if _world_rng.randf() < 0.12:
-				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.3, 1.2), _world_rng.randf_range(0.45, 0.78))
+			if _world_rng.randf() < 0.55:
+				_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 1.8), _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
+			if _world_rng.randf() < 0.25:
+				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.3, 1.5), _world_rng.randf_range(0.45, 0.78))
 			if i % 80 == 79:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
@@ -7064,14 +7093,16 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 	# Tall grass at the lake ends (caps)
 	for end_value in [-1.0, 1.0]:
 		var end: float = end_value
-		for i in range(150):
-			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.10) + across * _world_rng.randf_range(-half_w * 0.95, half_w * 0.95)
-			bank_pos.y = 0.052
-			if not _can_place_ground_vegetation(bank_pos, -1.0):
+		for i in range(600):
+			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.15) + across * _world_rng.randf_range(-half_w * 0.85, half_w * 0.85)
+			if get_river_depth_at(bank_pos) > 0.02:
 				continue
+			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.02
 			_create_grass_clump(bank_pos, _world_rng.randf_range(0.9, 1.6), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
-			if _world_rng.randf() < 0.50:
+			if _world_rng.randf() < 0.55:
 				_create_river_reed_cluster(bank_pos, _world_rng.randf_range(1.0, 1.8), end)
+			if _world_rng.randf() < 0.25:
+				_create_grass_clump(bank_pos + across * _world_rng.randf_range(-0.5, 0.5), _world_rng.randf_range(0.8, 1.4), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
 			if i % 80 == 79:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
@@ -7088,18 +7119,18 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 		var side: float = side_value
 		for i in range(80):
 			var t := _world_rng.randf_range(-1.0, 1.0)
-			var bank_pos := center + along * t * half_l * 1.08 + across * side * _world_rng.randf_range(half_w * 0.52, half_w * 1.60)
-			bank_pos.y = 0.045
-			if not _can_place_ground_vegetation(bank_pos, -1.0):
+			var bank_pos := center + along * t * half_l * 1.08 + across * side * _world_rng.randf_range(half_w * 0.85, half_w * 1.60)
+			if get_river_depth_at(bank_pos) > 0.02:
 				continue
-			if i % 4 == 0:
-				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.4), _world_rng.randf_range(0.25, 0.7), _world_rng.randf_range(0.5, 1.3)))
-			elif i % 4 == 1:
+			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.01
+			if i % 5 == 0:
+				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
+			elif i % 5 == 1:
 				_create_river_pebble_cluster(bank_pos, along, across, side)
-			elif i % 4 == 2:
-				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.25, 0.65), _world_rng.randf_range(0.12, 0.32), _world_rng.randf_range(0.25, 0.65)))
-			else:
+			elif i % 5 == 2:
 				_create_grass_clump(bank_pos, _world_rng.randf_range(0.6, 1.2), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
+			else:
+				continue
 			if i % 60 == 59:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
@@ -7108,14 +7139,16 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 	for end_value in [-1.0, 1.0]:
 		var end: float = end_value
 		for i in range(40):
-			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.12) + across * _world_rng.randf_range(-half_w * 0.95, half_w * 0.95)
-			bank_pos.y = 0.045
-			if not _can_place_ground_vegetation(bank_pos, -1.0):
+			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.70, half_l * 1.12) + across * _world_rng.randf_range(-half_w * 0.80, half_w * 0.80)
+			if get_river_depth_at(bank_pos) > 0.02:
 				continue
-			if i % 3 == 0:
-				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.30, 0.78), _world_rng.randf_range(0.12, 0.36), _world_rng.randf_range(0.30, 0.78)))
-			else:
+			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.01
+			if i % 5 == 0:
+				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.30, 0.68), _world_rng.randf_range(0.12, 0.32), _world_rng.randf_range(0.30, 0.68)))
+			elif i % 5 == 1:
 				_create_river_pebble_cluster(bank_pos, along, across, end)
+			else:
+				continue
 			if i % 40 == 39:
 				var _saved_rng_state := _world_rng.state
 				await get_tree().process_frame
@@ -7988,7 +8021,7 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
-	if abs(pos.x) > MAP_EXTENT * 1.07 or abs(pos.z) > MAP_EXTENT * 1.07:
+	if abs(pos.x) > MAP_EXTENT * 0.98 or abs(pos.z) > MAP_EXTENT * 0.98:
 		return false
 	if _is_near_house(pos, 1.0):
 		return false
@@ -8334,7 +8367,7 @@ func _create_grass_ground_cover() -> void:
 
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
-	var coverage := MAP_EXTENT * 1.05
+	var coverage := MAP_EXTENT * 0.98
 	var spacing := 3.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
@@ -8403,7 +8436,6 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.055)
-	print("[FOREST] Starting forest generation: total_trees=%d" % total_trees)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
@@ -8469,7 +8501,6 @@ func _create_forest() -> void:
 	_flush_forest_multimeshes(batch_transforms)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
-	print("[FOREST] Batched=%d MultiMesh variants=%d Interactive=%d" % [batched_count, _forest_tree_meshes.size(), interactive_count])
 
 func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 	if _forest_tree_meshes.is_empty():

@@ -12,10 +12,8 @@ var items: Array = []
 
 func add_item(item) -> bool:
 	if item == null or item.quantity <= 0:
-		print("[DEBUG] add_item rejected: null or zero quantity")
 		return false
 	if get_total_weight() + item.weight * item.quantity > max_weight:
-		print("[DEBUG] add_item rejected: too heavy, weight=", get_total_weight() + item.weight * item.quantity, " max=", max_weight)
 		item_used.emit("Demasiado peso.")
 		return false
 	for existing in items:

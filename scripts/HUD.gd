@@ -377,7 +377,9 @@ func _update_status_icons() -> void:
 	var thirst_ratio: float = float(stats.thirst) / float(stats.max_stat)
 	var temp_deviation: float = abs(stats.body_temperature - 36.6)
 	var temp_ratio: float = clamp(1.0 - temp_deviation / 3.0, 0.0, 1.0)
-	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
+	var carry_ratio: float = player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0
+	var effective_max_energy: float = float(stats.max_stat) * (1.0 - carry_ratio * 0.5)
+	var energy_ratio: float = float(stats.energy) / effective_max_energy
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
 	var hunger_overfull: bool = int(stats.overeat_count) > 0
