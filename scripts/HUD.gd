@@ -322,6 +322,19 @@ func _tier_color(ratio: float) -> Color:
 	else:
 		return Color(0.80, 0.12, 0.10)
 
+func _temp_color(ratio: float, is_hot: bool) -> Color:
+	# ratio: 0.0 = freezing (33°C), 0.514 = normal (36.6°C), 1.0 = overheating (40°C)
+	if ratio > 0.45 and ratio < 0.58:
+		return Color(0.32, 0.35, 0.31)
+	if is_hot:
+		if ratio < 0.75:
+			return Color(0.90, 0.45, 0.08)
+		return Color(0.95, 0.15, 0.05)
+	else:
+		if ratio > 0.25:
+			return Color(0.15, 0.45, 0.85)
+		return Color(0.05, 0.20, 0.70)
+
 func _tier_bar_color(ratio: float) -> Color:
 	if ratio > 0.6:
 		return Color.WHITE
@@ -375,11 +388,9 @@ func _update_status_icons() -> void:
 	var health_ratio: float = float(stats.health) / float(stats.max_health)
 	var hunger_ratio: float = float(stats.hunger) / float(stats.max_stat)
 	var thirst_ratio: float = float(stats.thirst) / float(stats.max_stat)
-	var temp_deviation: float = abs(stats.body_temperature - 36.6)
-	var temp_ratio: float = clamp(1.0 - temp_deviation / 3.0, 0.0, 1.0)
-	var carry_ratio: float = player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0
-	var effective_max_energy: float = float(stats.max_stat) * (1.0 - carry_ratio * 0.5)
-	var energy_ratio: float = float(stats.energy) / effective_max_energy
+	var temp_ratio: float = clamp((stats.body_temperature - 33.0) / 7.0, 0.0, 1.0)
+	var temp_is_hot: bool = stats.body_temperature > 36.6
+	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
 	var hunger_overfull: bool = int(stats.overeat_count) > 0
@@ -392,7 +403,7 @@ func _update_status_icons() -> void:
 		_set_vital_icon_color("thirst", _overfull_bar_color(int(stats.overdrink_count)))
 	else:
 		_set_vital_icon_color("thirst", _tier_color(thirst_ratio))
-	_set_vital_icon_color("temp", _tier_color(temp_ratio))
+	_set_vital_icon_color("temp", _temp_color(temp_ratio, temp_is_hot))
 	_set_vital_icon_color("energy", _tier_color(energy_ratio))
 	_set_vital_icon_color("sleep", _tier_color(sleep_ratio))
 	if status_icons.has("sick"):
@@ -408,6 +419,7 @@ func _update_status_icons() -> void:
 		_set_vital_bar_color("thirst", _overfull_bar_color(int(stats.overdrink_count)))
 	else:
 		_set_vital_bar("thirst", thirst_ratio)
+	_set_vital_bar_color("temp", _temp_color(temp_ratio, temp_is_hot))
 	_set_vital_bar("temp", temp_ratio)
 	_set_vital_bar("energy", energy_ratio)
 	_set_vital_bar("sleep", sleep_ratio)

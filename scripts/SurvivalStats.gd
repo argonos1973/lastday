@@ -14,6 +14,7 @@ var sleep := 100.0
 var body_temperature := 36.6
 var warmth_bonus := 0.0
 var heat_protection_bonus := 0.0
+var heat_retention_bonus := 0.0
 var wetness := 0.0
 var sick := false
 var sick_timer := 0.0
@@ -27,7 +28,7 @@ var overdrink_count := 0
 var hunger_decay := 0.12
 var thirst_decay := 0.22
 var energy_decay := 0.06
-var sleep_decay := 0.04
+var sleep_decay := 0.15
 var cold_decay := 0.012
 
 func add_hot_food(charges: int) -> void:
@@ -47,7 +48,7 @@ func consume_water(value: float) -> void:
 	thirst = min(max_stat, thirst + value)
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false) -> void:
 	if dead:
 		return
 	survival_seconds += delta
@@ -73,7 +74,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * shelter_factor * temp_thirst_mult)
 	if thirst < max_stat - 10.0:
 		overdrink_count = 0
-	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor)
+	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * (1.0 + carry_ratio * 8.0))
 	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
 	var sleep_mult := sprint_multiplier
 	if energy < 30.0:
@@ -95,35 +96,51 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
 	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
-		var heat_retention: float = 1.0 + protection * 0.8
+		var heat_retention: float = 1.0 + heat_retention_bonus
 		var heat_reduction: float = 1.0 - clamp(heat_protection_bonus, 0.0, 0.8)
 		target_temperature += (ambient_temperature - 28.0) * 0.08 * heat_retention * heat_reduction
 	# Wet clothes significantly lower body temperature until dry
 	if wetness > 0.05:
 		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
+	# Physical activity raises body temperature
+	if not sleeping:
+		if moving:
+			target_temperature += 0.4
+		if sprinting:
+			target_temperature += 0.8
+		if jumping:
+			target_temperature += 0.5
+	# Sun exposure during daytime raises body temperature when not sheltered
+	if not night and not sheltered:
+		target_temperature += 0.6
 
 	if sheltered:
-		target_temperature = clamp(target_temperature, 34.0, 37.0)
+		target_temperature = clamp(target_temperature, 35.5, 37.0)
 	# Hot food bonus: increases body temp, decays over time
 	if hot_food_charges > 0:
 		target_temperature += hot_food_temp_bonus
 		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
-	body_temperature = lerp(body_temperature, target_temperature, delta * 0.08)
+	body_temperature = lerp(body_temperature, target_temperature, delta * 0.03)
 
 	if hunger <= 0.0:
 		health = max(0.0, health - 2.0 * delta)
 	if thirst <= 0.0:
 		health = max(0.0, health - 2.5 * delta)
 	if sleep <= 0.0:
+		health = max(0.0, health - 8.0 * delta)
+	elif sleep < 50.0:
+		health = max(0.0, health - (50.0 - sleep) * 0.2 * delta)
+	# Health damage starts when temp color changes from white (deviation >= 1.2°C)
+	if body_temperature < 35.4:
+		health = max(0.0, health - 1.0 * delta)
+	if body_temperature < 34.5:
+		health = max(0.0, health - 2.5 * delta)
+	if body_temperature > 37.8:
+		health = max(0.0, health - 1.0 * delta)
+	if body_temperature > 39.0:
 		health = max(0.0, health - 3.0 * delta)
-	if body_temperature < 35.0:
-		health = max(0.0, health - 1.5 * delta)
-	if body_temperature > 38.0:
-		health = max(0.0, health - 1.5 * delta)
-	if body_temperature >= 40.0:
-		health = max(0.0, health - 4.0 * delta)
 
 	if sick:
 		sick_timer -= delta
@@ -131,7 +148,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			sick = false
 		health = max(0.0, health - 1.0 * delta)
 	# Passive slow health regen when not suffering any critical condition
-	if not sick and hunger > 0.0 and thirst > 0.0 and body_temperature >= 35.0 and body_temperature < 39.0 and health < max_health:
+	if not sick and hunger > 0.0 and thirst > 0.0 and sleep > 50.0 and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2

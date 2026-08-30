@@ -18,7 +18,7 @@ static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_
 	var route: Array = []
 	var cursor := start
 	var heading := rng.randf_range(0.0, TAU)
-	var limit := 250.0
+	var limit := 480.0
 	for _i in range(num_points):
 		heading += rng.randf_range(-0.9, 0.9)
 		var step := rng.randf_range(step_min, step_max)
@@ -49,7 +49,7 @@ static func build_zigzag_route(rng: RandomNumberGenerator, corner_a: Vector3, co
 		route.append(pos)
 	return route
 
-const WORLD_LIMIT := 250.0
+const WORLD_LIMIT := 480.0
 
 static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Callable) -> Vector3:
 	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0, 26.0]:

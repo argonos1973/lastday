@@ -30,7 +30,7 @@ func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_le
 	_heading = randf_range(-0.18, 0.18)
 	_wander_seed = randf_range(0.0, TAU)
 	_side_target = _local_side
-	position = center + along * _local_forward + across * _local_side + Vector3(0.0, 0.012, 0.0)
+	position = center + along * _local_forward + across * _local_side + Vector3(0.0, 0.0, 0.0)
 	_last_position = position
 	_build_fish()
 
@@ -46,7 +46,7 @@ func _process(delta: float) -> void:
 	else:
 		_side_target = sin(phase * 0.72 + _wander_seed) * width * 0.25 + sin(phase * 1.21 + _wander_seed * 0.7) * width * 0.08
 	_local_side = lerp(_local_side, clamp(_side_target, -width * 0.35, width * 0.35), delta * 0.85)
-	position = center + along * _local_forward + across * _local_side + Vector3(0.0, 0.012, 0.0)
+	position = center + along * _local_forward + across * _local_side
 	var side_velocity: float = (_local_side - previous_side) / max(0.001, delta)
 	var move_dir: Vector3 = along * speed + across * side_velocity
 	if wrapped:

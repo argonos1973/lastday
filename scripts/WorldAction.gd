@@ -40,6 +40,9 @@ func disable_collision() -> void:
 		collision_mask = 0
 
 func interact(player) -> void:
+	if has_meta("no_pickup") and bool(get_meta("no_pickup")):
+		player.notice.emit("%s esta rota y no se puede coger." % display_name)
+		return
 	if depleted and not repeatable:
 		player.notice.emit("%s ya no tiene nada util." % display_name)
 		return
@@ -48,6 +51,9 @@ func interact(player) -> void:
 		main.handle_world_action(self, player)
 
 func collect(player) -> void:
+	if has_meta("no_pickup") and bool(get_meta("no_pickup")):
+		player.notice.emit("%s esta rota y no se puede coger." % display_name)
+		return
 	if depleted and not repeatable:
 		player.notice.emit("%s ya no tiene nada util." % display_name)
 		return
@@ -90,6 +96,8 @@ func tick_growth(delta: float) -> void:
 			queue_free()
 
 func get_interaction_text(_player = null) -> String:
+	if has_meta("no_pickup") and bool(get_meta("no_pickup")):
+		return "%s - Ropa rota, no se puede coger" % display_name
 	if action_type == "farm_plot":
 		match action_state:
 			"planted":

@@ -175,6 +175,28 @@ const CLOTHING_HEAT_PROTECTION := {
 	"Sombrero de pescador": 0.35,
 }
 
+# Heat retention: how much body heat is retained in hot environments.
+# Heavy clothing retains heat (bad in hot weather); light/short items ventilate (good in hot weather).
+# 0.0 = neutral, positive = retains heat, negative = ventilates (cools down).
+const CLOTHING_HEAT_RETENTION := {
+	"Camiseta": 0.0,
+	"Pantalones": 0.05,
+	"Zapatillas": 0.0,
+	"Guantes survival": 0.05,
+	"Botas survival": 0.10,
+	"Chaqueta militar": 0.30,
+	"Pantalones militares": 0.25,
+	"Chaqueta militar azul": 0.30,
+	"Pantalones militares azules": 0.25,
+	"Chaqueta militar negra II": 0.30,
+	"Pantalones militares negros II": 0.25,
+	"Pantalones camuflaje": 0.25,
+	"Pantalones camuflaje desert": 0.15,
+	"Guantes militares": 0.08,
+	"Guantes de trabajo": 0.05,
+	"Sombrero de pescador": 0.0,
+}
+
 const THIRD_PERSON_MODEL_CANDIDATES := [
 	"res://assets/characters/adapted/player_with_clothes.glb",
 	"res://assets/animations/inicio.glb",
@@ -259,7 +281,7 @@ const SMALL_BACKPACK_WEIGHT := 10.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
-signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color)
+signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color, broken: bool)
 
 @export var walk_speed := 4.0
 @export var sprint_speed := 7.0
@@ -532,6 +554,7 @@ var _turn_input := 0.0
 var _water_depth := 0.0
 var _water_sink := 0.0
 var _water_notice_cooldown := 0.0
+var _water_query_timer := 0.0
 var _aim_screen_offset := Vector2.ZERO
 var is_puppet := false
 var _puppet_anim := "idle"
@@ -1297,7 +1320,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 			drop_pos.y = global_position.y
-			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color)
+			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color, false)
 	equipped_clothing = item_name
 	# Determine if all clothing slots will be equipped after this item
 	var equipped_check := _equipped_slots.duplicate()
@@ -2320,7 +2343,7 @@ func _drop_excess_items(count: int) -> void:
 			continue
 		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 		drop_pos.y = global_position.y
-		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0))
+		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0), false)
 		inventory.remove_index(i)
 		dropped += 1
 	if dropped > 0:
@@ -2342,11 +2365,15 @@ func _recalculate_heat_protection() -> void:
 	if stats == null:
 		return
 	var total := 0.0
+	var retention := 0.0
 	for slot in _equipped_slots:
 		var item_name: String = str(_equipped_slots[slot])
 		if CLOTHING_HEAT_PROTECTION.has(item_name):
 			total += CLOTHING_HEAT_PROTECTION[item_name]
+		if CLOTHING_HEAT_RETENTION.has(item_name):
+			retention += CLOTHING_HEAT_RETENTION[item_name]
 	stats.heat_protection_bonus = total
+	stats.heat_retention_bonus = retention
 	stats.changed.emit()
 
 func _get_carry_weight_ratio() -> float:
@@ -2421,8 +2448,26 @@ func _physics_process(delta: float) -> void:
 				var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 				drop_pos.y = global_position.y
 				var drop_color := get_current_clothing_color(broken_name)
-				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color)
+				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true)
 				inventory.remove_index(i_broken, 1)
+			# After losing clothing, capacity is reduced — drop items that no longer fit
+			_recalculate_carry_capacity()
+			while inventory.items.size() > inventory.max_slots:
+				var overflow_item = inventory.items[inventory.items.size() - 1]
+				var overflow_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
+				overflow_pos.y = global_position.y
+				if overflow_item != null:
+					notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
+					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false)
+				inventory.remove_index(inventory.items.size() - 1)
+			while inventory.get_total_weight() > inventory.max_weight and inventory.items.size() > 0:
+				var overflow_item2 = inventory.items[inventory.items.size() - 1]
+				var overflow_pos2 := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
+				overflow_pos2.y = global_position.y
+				if overflow_item2 != null:
+					notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
+					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false)
+				inventory.items.remove_at(inventory.items.size() - 1)
 			if held_index >= inventory.items.size():
 				held_index = max(0, inventory.items.size() - 1)
 			_sync_held_item()
@@ -2439,11 +2484,6 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		_update_death_pose(delta)
 		return
-	# Auto-sleep when sleep reaches minimum
-	if not is_sleeping and stats.sleep <= 0.0 and not _auto_sleep_triggered and not is_in_water:
-		_auto_sleep_triggered = true
-		start_sleep()
-		notice.emit("Te quedas dormido del cansancio. Pulsa D para despertar.")
 	if is_sleeping:
 		velocity.x = 0.0
 		velocity.z = 0.0
@@ -2687,14 +2727,17 @@ func _update_head_worn_items() -> void:
 #region ENTORNO (agua, temperatura)
 func _update_water_state(delta: float) -> void:
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
-	var river_depth := _query_river_depth()
-	_water_depth = river_depth
-	is_in_water = river_depth > 0.02
+	_water_query_timer += delta
+	if _water_query_timer >= 0.25:
+		_water_query_timer = 0.0
+		var river_depth := _query_river_depth()
+		_water_depth = river_depth
+		is_in_water = river_depth > 0.02
 	if is_in_water:
-		wetness = min(1.0, wetness + delta * (0.38 + river_depth * 0.55))
+		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = wetness
-		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + river_depth))
-		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + river_depth))
+		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
+		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + _water_depth))
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
@@ -4251,7 +4294,7 @@ func _craft_campfire() -> void:
 	await get_tree().create_timer(2.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
 	pos.y = 0.15
-	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0))
+	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
 func _craft_shelter() -> void:
@@ -4271,7 +4314,7 @@ func _craft_shelter() -> void:
 	await get_tree().create_timer(3.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 2.0)
 	pos.y = 0.0
-	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0))
+	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false)
 	notice.emit("Has construido un refugio.")
 
 func craft_recipe(recipe: Dictionary) -> void:
@@ -4547,7 +4590,7 @@ func drop_inventory_item(index: int) -> void:
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	var drop_color := get_current_clothing_color(item_name)
-	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color)
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, false)
 	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)

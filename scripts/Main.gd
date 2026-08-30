@@ -237,6 +237,7 @@ const KITCHEN_STOVE_MODEL := "res://assets/models/props/old_rusty_kitchen_stove_
 const SINK_CABINET_MODEL := "res://assets/models/props/clogged_old_sink_cabinet.glb"
 const ROOT_AXE_CS2_MODEL := ROOT_GLB_DIR + "tool__axe_weapon_model_cs2.glb"
 const ROOT_SOFA_MODEL := ROOT_GLB_DIR + "trashy_backyard_sofa.glb"
+const HIKING_HUT_MODEL := ROOT_GLB_DIR + "hiking_hut_-_scan.glb"
 const ROOT_FRIDGE_MODEL := ROOT_GLB_DIR + "old_rusty_fridge.glb"
 const ROOT_GASSTOVE_MODEL := ROOT_GLB_DIR + "old_russian_gasstove.glb"
 const ROOT_POWER_POLE_MODEL := "res://assets/external/power_pole.glb"
@@ -630,7 +631,7 @@ func _process(delta: float) -> void:
 		_grass_vis_timer = 0.0
 		_update_grass_visibility()
 	_tree_check_timer += delta
-	if _tree_check_timer > 1.0:
+	if _tree_check_timer > 2.0:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
@@ -726,7 +727,7 @@ func _process(delta: float) -> void:
 	# Built shelters protect from extreme temperatures
 	if near_built_shelter:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping)
 	_apply_campfire_effect(player, delta)
 	_apply_torch_fire_effect(player, delta)
 	_door_cache_timer += delta
@@ -1146,7 +1147,7 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = _get_random_spawn_pos()
+	player.position = Vector3(8.0, 0.4, 2.5)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -1234,7 +1235,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 var _military_tent_pos := Vector3.ZERO
 var _remote_tent_pos := Vector3.ZERO
 var _spawn_zones: Array = [
-	Vector3(38.0, 0.4, 110.0),  # TEMP: Near barn for testing
+	Vector3(8.0, 0.4, 2.5),
 	Vector3(15.0, 0.4, -35.0),
 	Vector3(-55.0, 0.4, -40.0),
 	Vector3(55.0, 0.4, 45.0),
@@ -2528,7 +2529,7 @@ func _net_add_looted_item(item_data: Dictionary) -> void:
 			if inv != null and inv.has_method("add_item"):
 				inv.add_item(item)
 
-func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
+func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false) -> void:
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -2586,7 +2587,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken)
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 	if color.a > 0.0:
 		drop_entry["color"] = [color.r, color.g, color.b, color.a]
@@ -2608,7 +2609,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false) -> void:
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -2691,13 +2692,18 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			else:
 				_apply_camo_material_recursive(camo_node as Node3D, Color(0.20, 0.25, 0.15))
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
-	var action = _create_world_action(drop_id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	var action_label := item_name
+	if broken:
+		action_label = item_name + " (rota)"
+	var action = _create_world_action(drop_id, action_kind, action_label, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
 	action.set_meta("item_type", item_type)
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
+	if broken:
+		action.set_meta("no_pickup", true)
 	if color.a > 0.0:
 		action.set_meta("item_color", color)
 
@@ -3867,6 +3873,7 @@ func _create_new_world_props() -> void:
 			var jn := junk_node as Node3D
 			jn.force_update_transform()
 			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
+			_disable_emission_recursive(jn)
 		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(2.0, junk_height, 4.0), float(car_rot.y))
 		var _jc := get_node_or_null("JunkCarCollision0")
 		if _jc != null:
@@ -3891,6 +3898,7 @@ func _create_new_world_props() -> void:
 			var sn := scrap_node as Node3D
 			sn.force_update_transform()
 			sn.position.y += SCRAP_CAR_Y_CORRECTION
+			_disable_emission_recursive(sn)
 			if _dbg_file:
 				_dbg_file.store_line("final_pos=" + str(sn.global_position) + " ground_y=" + str(scrap_ground_y))
 			scrap_height = 1.0
@@ -3963,6 +3971,30 @@ func _create_new_world_props() -> void:
 	var sofa_s := Vector3.ONE * 0.009
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaA", Vector3(-24.0, 0.0, -5.0), sofa_s, Vector3(0, 45, 0), true, 0.0)
 	_try_instance_external_scene([ROOT_SOFA_MODEL], "BackyardSofaB", Vector3(30.0, 0.0, -35.0), sofa_s, Vector3(0, -20, 0), true, 0.0)
+	# Hiking hut near the lake shore (lake center 250,-307, size 150x90; south shore ~z=-262)
+	var hut_pos := Vector3(250.0, -0.3, -258.0)
+	var hut_ground_y := _get_exact_ground_y(hut_pos.x, hut_pos.z)
+	var hut_scale := 1.5
+	if _try_instance_external_scene([HIKING_HUT_MODEL], "HikingHut", hut_pos, Vector3.ONE * hut_scale, Vector3(0, 270, 0), true, hut_ground_y):
+		var hut_node := get_node_or_null("HikingHut")
+		if hut_node != null and hut_node is Node3D:
+			_disable_emission_recursive(hut_node as Node3D)
+		# Wall collisions: north, east, west — south open toward lake
+		_create_invisible_collision_box("HikingHutWallNorth", hut_pos + Vector3(0, 0, 1.8), Vector3(4.0, 3.0, 0.4))
+		_create_invisible_collision_box("HikingHutWallEast", hut_pos + Vector3(1.8, 0, 0), Vector3(0.4, 3.0, 4.0))
+		_create_invisible_collision_box("HikingHutWallWest", hut_pos + Vector3(-1.8, 0, 0), Vector3(0.4, 3.0, 4.0))
+		var _wbl := get_node_or_null("HikingHutWallNorth")
+		var _wlf := get_node_or_null("HikingHutWallEast")
+		var _wrt := get_node_or_null("HikingHutWallWest")
+		for _w in [_wbl, _wlf, _wrt]:
+			if _w != null:
+				_w.add_to_group("prop_collision")
+		_register_wildlife_blocker(hut_pos, 6.0)
+		# Loot outside the hut, near the entrance (south side)
+		_create_tool_pickup("hut_axe", "tool_axe", "Hacha", "res://assets/models/props/simple_axe.glb", hut_pos + Vector3(-1.5, 0.05, -2.5), 1.2, Vector3(0, 45, 0))
+		_create_pickup_item({"id": "hut_bottle", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.0, 0.05, -2.8), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)})
+		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [], "scale": 0.3, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
+		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": [], "scale": 0.15, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
 
 func _find_flat_area_for_tent() -> Vector3:
 	var best_pos := Vector3.ZERO
@@ -4360,53 +4392,78 @@ func _create_river_drink_zones() -> void:
 		var center: Vector3 = seg["center"]
 		var size: Vector2 = seg["size"]
 		var yaw: float = float(seg["yaw"])
-		var zone_size := Vector3(size.x + 2.0, 0.5, size.y + 2.0)
-		var action = _create_world_action(
-			"drink_%d" % i, "drink_water", "Orilla del rio",
-			center, zone_size, Color(0.08, 0.22, 0.48, 0.0), true, false
-		)
-		if action != null:
-			action.rotation_degrees.y = yaw
+		var is_lake := size.x >= 60.0
+		if is_lake:
+			var angle := deg_to_rad(yaw)
+			var along := Vector3(cos(angle), 0, -sin(angle))
+			var across := Vector3(sin(angle), 0, cos(angle))
+			var half_l := size.x * 0.5
+			var half_w := size.y * 0.5
+			var ellipse_scale := 0.88
+			var num_zones := 64
+			for j in range(num_zones):
+				var theta := float(j) / float(num_zones) * TAU
+				var ex: float = cos(theta) * half_l * ellipse_scale
+				var ez: float = sin(theta) * half_w * ellipse_scale
+				var zone_pos := center + along * ex + across * ez
+				zone_pos.y = 0.05
+				var action = _create_world_action(
+					"drink_%d_%d" % [i, j], "drink_water", "Orilla del lago",
+					zone_pos, Vector3(3.0, 0.5, 3.0), Color(0.08, 0.22, 0.48, 0.0), true, false
+				)
+				if action != null:
+					action.rotation_degrees.y = yaw
+		else:
+			var zone_size := Vector3(size.x + 2.0, 0.5, size.y + 2.0)
+			var action = _create_world_action(
+				"drink_%d" % i, "drink_water", "Orilla del rio",
+				center, zone_size, Color(0.08, 0.22, 0.48, 0.0), true, false
+			)
+			if action != null:
+				action.rotation_degrees.y = yaw
 
 func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
 	# Deer: large outer ring routes around the expanded map
 	var deer_routes := [
-		WildlifeRoutes.build_circular_route(_world_rng, 80.0, 0.0, 14, 8.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 120.0, PI * 0.5, 14, 8.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 160.0, PI, 14, 10.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 200.0, PI * 1.5, 16, 12.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 230.0, PI * 0.25, 18, 14.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 245.0, PI * 0.75, 18, 12.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 100.0, 0.0, 16, 12.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 160.0, PI * 0.5, 16, 12.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 220.0, PI, 18, 15.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 280.0, PI * 1.5, 20, 18.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 340.0, PI * 0.25, 22, 20.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 400.0, PI * 0.75, 24, 22.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 450.0, PI * 1.25, 26, 24.0, is_wildlife_allowed_at),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
 	
 	# Foxes: 10 animals starting in distinct zones, each roaming the whole map
 	var fox_zones := [
-		[Vector3(-85, 0, -60), Vector3(-45, 0, -20)],
-		[Vector3(50, 0, 80), Vector3(90, 0, 40)],
-		[Vector3(-110, 0, 70), Vector3(-70, 0, 110)],
-		[Vector3(60, 0, -100), Vector3(100, 0, -60)],
-		[Vector3(-40, 0, 120), Vector3(10, 0, 150)],
-		[Vector3(120, 0, 10), Vector3(160, 0, 50)],
-		[Vector3(-150, 0, -80), Vector3(-110, 0, -120)],
-		[Vector3(130, 0, -110), Vector3(170, 0, -70)],
-		[Vector3(-130, 0, 130), Vector3(-90, 0, 160)],
-		[Vector3(90, 0, 130), Vector3(130, 0, 160)],
+		[Vector3(-150, 0, -100), Vector3(-80, 0, -40)],
+		[Vector3(80, 0, 140), Vector3(150, 0, 70)],
+		[Vector3(-200, 0, 120), Vector3(-120, 0, 200)],
+		[Vector3(100, 0, -180), Vector3(180, 0, -100)],
+		[Vector3(-70, 0, 220), Vector3(20, 0, 280)],
+		[Vector3(200, 0, 20), Vector3(280, 0, 90)],
+		[Vector3(-280, 0, -140), Vector3(-180, 0, -220)],
+		[Vector3(220, 0, -200), Vector3(300, 0, -120)],
+		[Vector3(-240, 0, 240), Vector3(-150, 0, 300)],
+		[Vector3(160, 0, 240), Vector3(240, 0, 300)],
 	]
 	for fz in fox_zones:
 		# Ruta larga que recorre el mapa partiendo de la zona de origen
 		var fox_start: Vector3 = (fz[0] as Vector3).lerp(fz[1] as Vector3, 0.5)
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 20, 50.0, 100.0, is_wildlife_allowed_at)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 	
 	# Wolves: spread across 12 expanded quadrants of the open world
 	var wolf_quadrants := [
-		Vector3(-120, 0, -120), Vector3(0, 0, -135), Vector3(120, 0, -120),
-		Vector3(-140, 0, 0), Vector3(140, 0, 0), Vector3(-120, 0, 120),
-		Vector3(0, 0, 135), Vector3(120, 0, 120), Vector3(-60, 0, -60),
-		Vector3(60, 0, -60), Vector3(-60, 0, 60), Vector3(60, 0, 60)
+		Vector3(-200, 0, -200), Vector3(0, 0, -240), Vector3(200, 0, -200),
+		Vector3(-240, 0, 0), Vector3(240, 0, 0), Vector3(-200, 0, 200),
+		Vector3(0, 0, 240), Vector3(200, 0, 200), Vector3(-100, 0, -100),
+		Vector3(100, 0, -100), Vector3(-100, 0, 100), Vector3(100, 0, 100),
+		Vector3(-300, 0, -100), Vector3(300, 0, 100), Vector3(-100, 0, 300),
+		Vector3(100, 0, -300), Vector3(-300, 0, 200), Vector3(300, 0, -200),
 	]
 	for i in range(wolf_quadrants.size()):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
@@ -4415,7 +4472,7 @@ func _create_wildlife() -> void:
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 24, 60.0, 120.0, is_wildlife_allowed_at)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -4450,20 +4507,20 @@ func _check_wildlife_respawn() -> void:
 	var total_wolf := alive_wolf + dead_wolf
 	var total_deer := alive_deer + dead_deer
 	var total_fox := alive_fox + dead_fox
-	if total_wolf < 12 and total_wolf <= total_fox and total_wolf <= total_deer:
-		var center := Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
+	if total_wolf < 18 and total_wolf <= total_fox and total_wolf <= total_deer:
+		var center := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		for _retry in range(30):
 			if not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 24, 60.0, 120.0, is_wildlife_allowed_at)
+			center = Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
-	elif total_deer < 12 and total_deer <= total_fox:
-		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(80.0, 245.0), randf() * TAU, 16, 12.0, is_wildlife_allowed_at)
+	elif total_deer < 14 and total_deer <= total_fox:
+		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
 	elif total_fox < 10:
-		var fox_zone := Vector3(randf_range(-200, 200), 0.0, randf_range(-200, 200))
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 20, 50.0, 100.0, is_wildlife_allowed_at)
+		var fox_zone := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 
 func _create_deer_pair(route: Array) -> void:
@@ -4584,7 +4641,8 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	var sn := get_node_or_null(NodePath(visual_name))
 	if sn is Node3D:
 		_snap_node_bottom_to_y(sn as Node3D, pos.y)
-	_mark_world_action_visual(visual_name)
+		_disable_emission_recursive(sn as Node3D)
+		_mark_world_action_visual(visual_name)
 	var pickup_node := get_node_or_null(visual_name)
 	if pickup_node != null:
 		_remove_collision_from_node(pickup_node)
@@ -4621,6 +4679,8 @@ func _create_house_loot() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var house_loot_pool := [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.2, "qty": 1, "use": 0.0, "paths": ["res://assets/models/props/simple_axe.glb"], "scale": 1.2, "rot": Vector3(0, 45, 0), "color": Color(0.10, 0.095, 0.07), "rare": true},
+		{"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
@@ -4758,7 +4818,9 @@ func _create_house_loot() -> void:
 		rifle_data["id"] = "tent_loot_rifle"
 		_create_pickup_item(rifle_data)
 	else:
-		pass
+		# Consume the same RNG that _find_pos_inside_house would have consumed
+		# to keep the RNG state in sync for subsequent loot generation
+		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
@@ -4915,6 +4977,33 @@ func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
 		for c in n.get_children():
 			stack.append(c)
 
+func _disable_emission_recursive(node: Node3D) -> void:
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			var mi := n as MeshInstance3D
+			for slot in range(mi.get_surface_override_material_count()):
+				var mat := mi.get_surface_override_material(slot)
+				if mat is StandardMaterial3D:
+					(mat as StandardMaterial3D).emission_enabled = false
+					(mat as StandardMaterial3D).emission_energy_multiplier = 0.0
+				elif mat is BaseMaterial3D:
+					(mat as BaseMaterial3D).emission_enabled = false
+					(mat as BaseMaterial3D).emission_energy_multiplier = 0.0
+			var mesh := mi.mesh
+			if mesh != null:
+				for slot in range(mesh.get_surface_count()):
+					var smat := mesh.surface_get_material(slot)
+					if smat is StandardMaterial3D:
+						(smat as StandardMaterial3D).emission_enabled = false
+						(smat as StandardMaterial3D).emission_energy_multiplier = 0.0
+					elif smat is BaseMaterial3D:
+						(smat as BaseMaterial3D).emission_enabled = false
+						(smat as BaseMaterial3D).emission_energy_multiplier = 0.0
+		for c in n.get_children():
+			stack.append(c)
+
 func _collect_meshes_recursive(node: Node3D, result: Array) -> void:
 	var stack: Array = [node]
 	while not stack.is_empty():
@@ -4951,7 +5040,11 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var paths: Array = data.get("paths", [])
 	var color: Color = data.get("color", Color(0.42, 0.38, 0.28))
 	var scale_value: float = float(data.get("scale", 0.42))
-	var rotation_degrees: Vector3 = data.get("rot", Vector3(0, _world_rng.randf_range(0, 360), 0))
+	var rotation_degrees: Vector3
+	if data.has("rot"):
+		rotation_degrees = data["rot"]
+	else:
+		rotation_degrees = Vector3(0, _world_rng.randf_range(0, 360), 0)
 	# Garments baked from the standing T-pose are tipped onto their back so they
 	# read as clothing dropped on the ground (rot.x=90, then spun by yaw).
 	var lay_flat: bool = bool(data.get("flat", false))
@@ -6356,6 +6449,11 @@ func _create_rocky_foothills() -> void:
 		if Vector2(pos.x, pos.z).length() < 55.0:
 			continue
 		
+		# Evitar colinas en la carretera (con margen según el radio)
+		var dist_to_road_x := abs(pos.x - ROAD_CENTER_X)
+		if dist_to_road_x < ROAD_HALF_WIDTH + 15.0 and pos.z >= ROAD_START_Z - 10.0 and pos.z <= ROAD_END_Z + 10.0:
+			continue
+		
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
 		var near_spawn := false
 		for sz in _spawn_zones:
@@ -6640,10 +6738,8 @@ func _default_river_segments() -> Array:
 		{"center": Vector3(-385, 0.085, 60), "size": Vector2(48, 7), "yaw": 88.0},
 		{"center": Vector3(-390, 0.085, -10), "size": Vector2(50, 7.5), "yaw": 92.0},
 		{"center": Vector3(-380, 0.085, -80), "size": Vector2(48, 7), "yaw": 87.0},
-		# Lake in the northeast valley
-		{"center": Vector3(250, 0.085, -300), "size": Vector2(80, 55), "yaw": 10.0},
-		{"center": Vector3(180, 0.085, -310), "size": Vector2(70, 50), "yaw": -5.0},
-		{"center": Vector3(320, 0.085, -310), "size": Vector2(70, 50), "yaw": 5.0}
+		# Lake in the northeast valley — single unified elliptical lake
+		{"center": Vector3(250, 0.085, -307), "size": Vector2(150, 90), "yaw": 0.0}
 	]
 
 func get_river_segments_for_minimap() -> Array:
@@ -6683,15 +6779,21 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 		var local_side := offset.dot(across)
 		var half_length := size.x * 0.5
 		var half_width := size.y * 0.5
-		if absf(local_forward) <= half_length and absf(local_side) <= half_width:
-			var side_depth: float = 1.0 - absf(local_side) / max(0.01, half_width)
-			var length_depth: float = 1.0 - absf(local_forward) / max(0.01, half_length)
-			var depth_factor := 3.0
-			var max_depth := 2.5
-			if size.x >= 60.0:
-				depth_factor = 5.5
-				max_depth = 4.0
-			return clamp(min(side_depth, length_depth) * depth_factor, 0.18, max_depth)
+		if size.x >= 60.0:
+			# Lake: elliptical boundary slightly inside visual mesh (0.85 < 0.87 min wobble)
+			var ellipse_rx: float = half_length * 0.85
+			var ellipse_rz: float = half_width * 0.85
+			var norm_f: float = local_forward / max(0.01, ellipse_rx)
+			var norm_s: float = local_side / max(0.01, ellipse_rz)
+			var ellipse_dist: float = sqrt(norm_f * norm_f + norm_s * norm_s)
+			if ellipse_dist <= 1.0:
+				var depth_val: float = 1.0 - ellipse_dist
+				return clamp(depth_val * 5.5, 0.18, 4.0)
+		else:
+			if absf(local_forward) <= half_length and absf(local_side) <= half_width:
+				var side_depth: float = 1.0 - absf(local_side) / max(0.01, half_width)
+				var length_depth: float = 1.0 - absf(local_forward) / max(0.01, half_length)
+				return clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5)
 	return 0.0
 
 func get_nearest_river_audio_point(world_pos: Vector3) -> Dictionary:
@@ -6829,27 +6931,105 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 	return false
 
 func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
+	var is_lake := size.x >= 60.0
 	# Water-textured bottom plane to hide terrain showing through transparent water
 	var bottom_mesh := MeshInstance3D.new()
 	bottom_mesh.name = "RiverBottom"
 	bottom_mesh.position = center
-	bottom_mesh.position.y = 0.04
 	bottom_mesh.rotation_degrees = Vector3(0, yaw, 0)
 	var bottom_plane := PlaneMesh.new()
-	bottom_plane.size = Vector2(size.x * 1.02, size.y * 1.02)
-	bottom_mesh.mesh = bottom_plane
-	bottom_mesh.material_override = MaterialFactory.make_river_water_material()
+	if is_lake:
+		bottom_plane.size = Vector2(size.x * 0.92, size.y * 0.92)
+		bottom_mesh.position.y = -0.15
+		var lake_bottom_mat := StandardMaterial3D.new()
+		lake_bottom_mat.albedo_color = Color(0.04, 0.07, 0.10)
+		lake_bottom_mat.roughness = 1.0
+		lake_bottom_mat.metallic = 0.0
+		lake_bottom_mat.no_depth_test = false
+		bottom_mesh.mesh = bottom_plane
+		bottom_mesh.material_override = lake_bottom_mat
+	else:
+		bottom_plane.size = Vector2(size.x * 1.02, size.y * 1.02)
+		bottom_mesh.position.y = 0.04
+		bottom_mesh.mesh = bottom_plane
+		bottom_mesh.material_override = MaterialFactory.make_river_water_material()
 	add_child(bottom_mesh)
 	var mesh_instance = RiverWaterScript.new()
 	mesh_instance.name = "MountainRiverWater"
 	mesh_instance.position = center
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
-	mesh_instance.mesh = _make_irregular_river_mesh(size)
+	if is_lake:
+		mesh_instance.mesh = _make_lake_mesh(size)
+	else:
+		mesh_instance.mesh = _make_irregular_river_mesh(size)
 	mesh_instance.material_override = MaterialFactory.make_river_water_material()
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
 	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
+
+func _make_lake_mesh(size: Vector2) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var radial_steps := 64
+	var ring_steps := 12
+	var half_length: float = size.x * 0.5
+	var half_width: float = size.y * 0.5
+	# Center vertex
+	vertices.append(Vector3(0.0, 0.0, 0.0))
+	normals.append(Vector3.UP)
+	uvs.append(Vector2(0.5, 0.5))
+	# Generate smooth irregular elliptical boundary
+	var edge_scale: Array[float] = []
+	for i in range(radial_steps + 1):
+		var angle: float = float(i) / float(radial_steps) * TAU
+		var wobble: float = sin(angle * 3.0) * 0.04 + sin(angle * 7.0) * 0.025 + sin(angle * 13.0) * 0.015
+		edge_scale.append(0.90 + wobble)
+	# Smooth edge scale
+	for pass_idx in range(2):
+		var smoothed: Array[float] = []
+		for i in range(radial_steps + 1):
+			var prev_idx: int = (i - 1 + radial_steps) % radial_steps
+			var next_idx: int = (i + 1) % radial_steps
+			smoothed.append(lerp(edge_scale[i], (edge_scale[prev_idx] + edge_scale[next_idx]) * 0.5, 0.4))
+		edge_scale = smoothed
+	# Generate rings from center to edge
+	for ring in range(1, ring_steps + 1):
+		var ring_t: float = float(ring) / float(ring_steps)
+		for i in range(radial_steps + 1):
+			var angle: float = float(i) / float(radial_steps) * TAU
+			var r: float = edge_scale[i] * ring_t
+			var x: float = cos(angle) * r * half_length
+			var z: float = sin(angle) * r * half_width
+			vertices.append(Vector3(x, 0.0, z))
+			normals.append(Vector3.UP)
+			uvs.append(Vector2(0.5 + cos(angle) * ring_t * 0.5, 0.5 + sin(angle) * ring_t * 0.5))
+	# Build triangles: fan from center, then rings
+	for i in range(radial_steps):
+		indices.append(0)
+		indices.append(1 + i)
+		indices.append(1 + i + 1)
+	for ring in range(1, ring_steps):
+		var ring_offset: int = 1 + (ring - 1) * (radial_steps + 1)
+		var next_ring_offset: int = 1 + ring * (radial_steps + 1)
+		for i in range(radial_steps):
+			indices.append(ring_offset + i)
+			indices.append(next_ring_offset + i)
+			indices.append(ring_offset + i + 1)
+			indices.append(ring_offset + i + 1)
+			indices.append(next_ring_offset + i)
+			indices.append(next_ring_offset + i + 1)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 func _make_irregular_river_mesh(size: Vector2) -> ArrayMesh:
 	var vertices := PackedVector3Array()
@@ -7002,11 +7182,15 @@ func _create_fish_school(center: Vector3, size: Vector2, yaw: float) -> void:
 	var along := Vector3(cos(angle), 0, -sin(angle))
 	var across := Vector3(sin(angle), 0, cos(angle))
 	var count := 2 + _world_rng.randi() % 3
+	var is_lake := size.x >= 60.0
 	for i in range(count):
 		var fish = FishControllerScript.new()
 		fish.name = "RiverFish"
 		var fish_center := center + along * _world_rng.randf_range(-size.x * 0.36, size.x * 0.36) + across * _world_rng.randf_range(-size.y * 0.22, size.y * 0.22)
-		fish_center.y = center.y + 0.035
+		if is_lake:
+			fish_center.y = center.y - _world_rng.randf_range(1.5, 3.0)
+		else:
+			fish_center.y = center.y + 0.035
 		fish.setup(fish_center, along, across, _world_rng.randf_range(size.x * 0.22, size.x * 0.55), _world_rng.randf_range(size.y * 0.18, size.y * 0.45))
 		add_child(fish)
 
@@ -7070,43 +7254,87 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 	var across := Vector3(sin(angle), 0, cos(angle))
 	var half_l := size.x * 0.5
 	var half_w := size.y * 0.5
-	# Dense tall grass ring around the lake perimeter
-	for side_value in [-1.0, 1.0]:
-		var side: float = side_value
-		for i in range(1200):
-			var t := _world_rng.randf_range(-1.0, 1.0)
-			var bank_pos := center + along * t * half_l * 1.05 + across * side * _world_rng.randf_range(half_w * 0.70, half_w * 2.50)
-			if get_river_depth_at(bank_pos) > 0.02:
-				continue
-			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.02
-			_create_grass_clump(bank_pos, _world_rng.randf_range(1.0, 1.8), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
-			if _world_rng.randf() < 0.65:
-				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-1.0, 1.0), _world_rng.randf_range(1.2, 2.2), side)
-			if _world_rng.randf() < 0.55:
-				_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 1.8), _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
-			if _world_rng.randf() < 0.25:
-				_create_bush(bank_pos + across * side * _world_rng.randf_range(0.3, 1.5), _world_rng.randf_range(0.45, 0.78))
-			if i % 80 == 79:
-				var _saved_rng_state := _world_rng.state
-				await get_tree().process_frame
-				_world_rng.state = _saved_rng_state
-	# Tall grass at the lake ends (caps)
-	for end_value in [-1.0, 1.0]:
-		var end: float = end_value
-		for i in range(600):
-			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.55, half_l * 1.15) + across * _world_rng.randf_range(-half_w * 0.85, half_w * 0.85)
-			if get_river_depth_at(bank_pos) > 0.02:
-				continue
-			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.02
-			_create_grass_clump(bank_pos, _world_rng.randf_range(0.9, 1.6), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
-			if _world_rng.randf() < 0.55:
-				_create_river_reed_cluster(bank_pos, _world_rng.randf_range(1.0, 1.8), end)
-			if _world_rng.randf() < 0.25:
-				_create_grass_clump(bank_pos + across * _world_rng.randf_range(-0.5, 0.5), _world_rng.randf_range(0.8, 1.4), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
-			if i % 80 == 79:
-				var _saved_rng_state := _world_rng.state
-				await get_tree().process_frame
-				_world_rng.state = _saved_rng_state
+	# Place grass from 0.5m inside water edge to 3m inland (in absolute meters)
+	var total_iters := 5000
+	for i in range(total_iters):
+		var theta := float(i) / float(total_iters) * TAU + _world_rng.randf_range(-0.04, 0.04)
+		# Absolute offset in meters from the 0.85 ellipse boundary
+		var offset_m := _world_rng.randf_range(-0.5, 3.0)
+		var base_rx: float = half_l * 0.85
+		var base_rz: float = half_w * 0.85
+		# True ellipse normal: (cos/rx, sin/rz) normalized
+		var ex: float = cos(theta) * base_rx
+		var ez: float = sin(theta) * base_rz
+		var nx: float = cos(theta) / base_rx
+		var nz: float = sin(theta) / base_rz
+		var n_len: float = sqrt(nx * nx + nz * nz)
+		nx /= max(0.01, n_len)
+		nz /= max(0.01, n_len)
+		ex += nx * offset_m
+		ez += nz * offset_m
+		var bank_pos := center + along * ex + across * ez
+		if get_river_depth_at(bank_pos) > 0.02:
+			continue
+		bank_pos.y = _get_ground_height(bank_pos) + 0.02
+		# Tall grass clump
+		_create_grass_clump(bank_pos, _world_rng.randf_range(1.0, 1.8), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+		if _world_rng.randf() < 0.55:
+			var side: float = 1.0 if sin(theta) >= 0.0 else -1.0
+			_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-1.0, 1.0), _world_rng.randf_range(1.2, 2.2), side)
+		# Extra tall grass cluster nearby
+		if _world_rng.randf() < 0.45:
+			var t2 := _world_rng.randf_range(0.0, TAU)
+			var extra_pos := bank_pos + along * cos(t2) * _world_rng.randf_range(0.05, 0.4) + across * sin(t2) * _world_rng.randf_range(0.05, 0.4)
+			if get_river_depth_at(extra_pos) <= 0.02:
+				_create_grass_clump(extra_pos, _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
+		# Short grass clumps around the tall grass
+		if _world_rng.randf() < 0.80:
+			var t3 := _world_rng.randf_range(0.0, TAU)
+			var short_pos := bank_pos + along * cos(t3) * _world_rng.randf_range(0.1, 0.6) + across * sin(t3) * _world_rng.randf_range(0.1, 0.6)
+			if get_river_depth_at(short_pos) <= 0.02:
+				_create_grass_clump(short_pos, _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
+		# Second short grass clump
+		if _world_rng.randf() < 0.70:
+			var t4 := _world_rng.randf_range(0.0, TAU)
+			var short_pos2 := bank_pos + along * cos(t4) * _world_rng.randf_range(0.15, 0.7) + across * sin(t4) * _world_rng.randf_range(0.15, 0.7)
+			if get_river_depth_at(short_pos2) <= 0.02:
+				_create_grass_clump(short_pos2, _world_rng.randf_range(0.35, 0.7), Color(0.16, 0.34, 0.11).lerp(Color(0.32, 0.43, 0.16), _world_rng.randf()))
+		if _world_rng.randf() < 0.18:
+			_create_bush(bank_pos + along * _world_rng.randf_range(-0.3, 0.3) + across * _world_rng.randf_range(-0.3, 0.3), _world_rng.randf_range(0.45, 0.78))
+		if i % 50 == 49:
+			var _saved_rng_state := _world_rng.state
+			await get_tree().process_frame
+			_world_rng.state = _saved_rng_state
+	# Short grass ring extending further inland (3-12m from water edge)
+	var short_iters := 6000
+	for j in range(short_iters):
+		var theta2 := float(j) / float(short_iters) * TAU + _world_rng.randf_range(-0.04, 0.04)
+		var offset_m2 := _world_rng.randf_range(3.0, 12.0)
+		var base_rx2: float = half_l * 0.85
+		var base_rz2: float = half_w * 0.85
+		var ex2: float = cos(theta2) * base_rx2
+		var ez2: float = sin(theta2) * base_rz2
+		var nx2: float = cos(theta2) / base_rx2
+		var nz2: float = sin(theta2) / base_rz2
+		var n_len2: float = sqrt(nx2 * nx2 + nz2 * nz2)
+		nx2 /= max(0.01, n_len2)
+		nz2 /= max(0.01, n_len2)
+		ex2 += nx2 * offset_m2
+		ez2 += nz2 * offset_m2
+		var short_bank_pos := center + along * ex2 + across * ez2
+		if get_river_depth_at(short_bank_pos) > 0.02:
+			continue
+		short_bank_pos.y = _get_ground_height(short_bank_pos) + 0.02
+		_create_grass_clump(short_bank_pos, _world_rng.randf_range(0.25, 0.55), Color(0.16, 0.34, 0.11).lerp(Color(0.32, 0.43, 0.16), _world_rng.randf()))
+		if _world_rng.randf() < 0.50:
+			var t5 := _world_rng.randf_range(0.0, TAU)
+			var fill_pos := short_bank_pos + along * cos(t5) * _world_rng.randf_range(0.2, 0.8) + across * sin(t5) * _world_rng.randf_range(0.2, 0.8)
+			if get_river_depth_at(fill_pos) <= 0.02:
+				_create_grass_clump(fill_pos, _world_rng.randf_range(0.2, 0.45), Color(0.18, 0.36, 0.12).lerp(Color(0.34, 0.45, 0.18), _world_rng.randf()))
+		if j % 50 == 49:
+			var _saved_rng_state2 := _world_rng.state
+			await get_tree().process_frame
+			_world_rng.state = _saved_rng_state2
 
 func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> void:
 	var angle := deg_to_rad(yaw)
@@ -7114,45 +7342,46 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 	var across := Vector3(sin(angle), 0, cos(angle))
 	var half_l := size.x * 0.5
 	var half_w := size.y * 0.5
-	# Boulders and rocks around the lake shore
-	for side_value in [-1.0, 1.0]:
-		var side: float = side_value
-		for i in range(80):
-			var t := _world_rng.randf_range(-1.0, 1.0)
-			var bank_pos := center + along * t * half_l * 1.08 + across * side * _world_rng.randf_range(half_w * 0.85, half_w * 1.60)
-			if get_river_depth_at(bank_pos) > 0.02:
-				continue
-			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.01
-			if i % 5 == 0:
-				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
-			elif i % 5 == 1:
-				_create_river_pebble_cluster(bank_pos, along, across, side)
-			elif i % 5 == 2:
-				_create_grass_clump(bank_pos, _world_rng.randf_range(0.6, 1.2), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
-			else:
-				continue
-			if i % 60 == 59:
-				var _saved_rng_state := _world_rng.state
-				await get_tree().process_frame
-				_world_rng.state = _saved_rng_state
-	# Rocks at the lake ends (caps)
-	for end_value in [-1.0, 1.0]:
-		var end: float = end_value
-		for i in range(40):
-			var bank_pos := center + along * end * _world_rng.randf_range(half_l * 0.70, half_l * 1.12) + across * _world_rng.randf_range(-half_w * 0.80, half_w * 0.80)
-			if get_river_depth_at(bank_pos) > 0.02:
-				continue
-			bank_pos.y = _get_exact_ground_y(bank_pos.x, bank_pos.z) + 0.01
-			if i % 5 == 0:
-				_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.30, 0.68), _world_rng.randf_range(0.12, 0.32), _world_rng.randf_range(0.30, 0.68)))
-			elif i % 5 == 1:
-				_create_river_pebble_cluster(bank_pos, along, across, end)
-			else:
-				continue
-			if i % 40 == 39:
-				var _saved_rng_state := _world_rng.state
-				await get_tree().process_frame
-				_world_rng.state = _saved_rng_state
+	# Boulders and rocks around the elliptical lake shore, same band as grass
+	var total_iters := 800
+	for i in range(total_iters):
+		var theta := float(i) / float(total_iters) * TAU + _world_rng.randf_range(-0.05, 0.05)
+		# Absolute offset in meters from the 0.85 ellipse boundary
+		var offset_m := _world_rng.randf_range(-0.5, 3.0)
+		var base_rx: float = half_l * 0.85
+		var base_rz: float = half_w * 0.85
+		var ex: float = cos(theta) * base_rx
+		var ez: float = sin(theta) * base_rz
+		var nx: float = cos(theta) / base_rx
+		var nz: float = sin(theta) / base_rz
+		var n_len: float = sqrt(nx * nx + nz * nz)
+		nx /= max(0.01, n_len)
+		nz /= max(0.01, n_len)
+		ex += nx * offset_m
+		ez += nz * offset_m
+		var bank_pos := center + along * ex + across * ez
+		if get_river_depth_at(bank_pos) > 0.02:
+			continue
+		bank_pos.y = _get_ground_height(bank_pos) + 0.01
+		var side: float = 1.0 if sin(theta) >= 0.0 else -1.0
+		if i % 5 == 0:
+			_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
+			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.5, 0.5), _world_rng.randf_range(1.0, 1.6), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+			_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 0.6), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
+		elif i % 5 == 1:
+			_create_river_pebble_cluster(bank_pos, along, across, side)
+			_create_grass_clump(bank_pos, _world_rng.randf_range(0.8, 1.4), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
+			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.4, 0.4) + across * _world_rng.randf_range(-0.4, 0.4), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
+		elif i % 5 == 2:
+			_create_grass_clump(bank_pos, _world_rng.randf_range(0.6, 1.2), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
+			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.3, 0.3), _world_rng.randf_range(0.5, 1.0), Color(0.13, 0.30, 0.09).lerp(Color(0.32, 0.43, 0.14), _world_rng.randf()))
+		else:
+			_create_grass_clump(bank_pos, _world_rng.randf_range(0.8, 1.5), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
+			_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.1, 0.5), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
+		if i % 40 == 39:
+			var _saved_rng_state := _world_rng.state
+			await get_tree().process_frame
+			_world_rng.state = _saved_rng_state
 
 func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, radius_z: float, height: float, yaw: float, color: Color) -> void:
 	if not node_name.contains("SnowCap"):
@@ -7806,6 +8035,7 @@ func _create_wrecked_car(pos: Vector3, yaw: float, color: Color) -> void:
 			car_height += 0.15
 			if car_height < 0.5:
 				car_height = 2.3
+			_disable_emission_recursive(car_node as Node3D)
 		_create_invisible_collision_box("RealCarCollision", pos, Vector3(2.7, car_height, 4.5))
 		var _rcc := get_node_or_null("RealCarCollision")
 		if _rcc != null:
@@ -7831,6 +8061,7 @@ func _create_visible_vehicle_asset(pos: Vector3, yaw: float, model_index: int) -
 			vis_height += 0.15
 			if vis_height < 0.5:
 				vis_height = 2.8
+			_disable_emission_recursive(vis_node as Node3D)
 		_create_invisible_collision_box("ExternalVehicleVisibleCollision", pos, Vector3(3.0, vis_height, 5.0))
 		var _evc := get_node_or_null("ExternalVehicleVisibleCollision")
 		if _evc != null:
@@ -8052,8 +8283,16 @@ func _is_inside_river_band(pos: Vector3, margin: float) -> bool:
 		var offset := pos - center
 		var local_forward := offset.dot(along)
 		var local_side := offset.dot(across)
-		if absf(local_forward) <= size.x * 0.5 + margin * 0.55 and absf(local_side) <= size.y * 0.5 + margin:
-			return true
+		if size.x >= 60.0:
+			var ellipse_rx: float = size.x * 0.5 * 0.85 + margin
+			var ellipse_rz: float = size.y * 0.5 * 0.85 + margin
+			var norm_f: float = local_forward / max(0.01, ellipse_rx)
+			var norm_s: float = local_side / max(0.01, ellipse_rz)
+			if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
+				return true
+		else:
+			if absf(local_forward) <= size.x * 0.5 + margin * 0.55 and absf(local_side) <= size.y * 0.5 + margin:
+				return true
 	return false
 
 func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
@@ -8080,6 +8319,7 @@ var HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
 	{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
 	{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
+	{"origin": Vector3(250, 0, -258), "w": 8.0, "d": 8.0},  # Hiking hut near lake
 	{"origin": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
 	{"origin": Vector3(-340, 0, 280), "w": 8.0, "d": 18.0},  # Remote barn
 ]
@@ -8106,8 +8346,16 @@ func _is_near_river(pos: Vector3, margin: float) -> bool:
 		var offset := p - Vector2(center.x, center.z)
 		var local_along := offset.dot(along)
 		var local_across := offset.dot(across)
-		if abs(local_along) <= half_length and abs(local_across) <= half_width:
-			return true
+		if size.x >= 60.0:
+			var ellipse_rx: float = size.x * 0.5 * 0.85 + margin
+			var ellipse_rz: float = size.y * 0.5 * 0.85 + margin
+			var norm_f: float = local_along / max(0.01, ellipse_rx)
+			var norm_s: float = local_across / max(0.01, ellipse_rz)
+			if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
+				return true
+		else:
+			if abs(local_along) <= half_length and abs(local_across) <= half_width:
+				return true
 	return false
 
 func _is_in_river(pos: Vector3) -> bool:
@@ -8123,8 +8371,14 @@ func _is_in_river(pos: Vector3) -> bool:
 		var offset := p - Vector2(center.x, center.z)
 		var local_along := offset.dot(along)
 		var local_across := offset.dot(across)
-		if abs(local_along) <= half_length and abs(local_across) <= half_width:
-			return true
+		if size.x >= 60.0:
+			var norm_f: float = local_along / max(0.01, half_length * 0.85)
+			var norm_s: float = local_across / max(0.01, half_width * 0.85)
+			if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
+				return true
+		else:
+			if abs(local_along) <= half_length and abs(local_across) <= half_width:
+				return true
 	return false
 
 func _is_inside_closed_house(pos: Vector3) -> bool:
@@ -8460,6 +8714,8 @@ func _create_forest() -> void:
 			continue
 		
 		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
+		if get_river_depth_at(pos) > 0.0:
+			continue
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
 		if _is_near_house(pos, 8.0):
@@ -8589,8 +8845,11 @@ func _update_forest_collision() -> void:
 			var key := Vector2i(gx, gy)
 			if _forest_collision_grid.has(key):
 				needed_cells[key] = true
-	# Create missing collision bodies
+	# Create missing collision bodies — limit per tick to avoid stutter
+	var created := 0
 	for key in needed_cells:
+		if created >= 2:
+			break
 		if not _forest_collision_active_cells.has(key):
 			var positions: Array = _forest_collision_grid[key]
 			var body := StaticBody3D.new()
@@ -8607,16 +8866,21 @@ func _update_forest_collision() -> void:
 				body.add_child(col)
 			add_child(body)
 			_forest_collision_active_cells[key] = body
-	# Remove far collision bodies
+			created += 1
+	# Remove far collision bodies — limit per tick to avoid stutter
 	var to_remove: Array = []
 	for key in _forest_collision_active_cells:
 		if not needed_cells.has(key):
 			to_remove.append(key)
+	var removed := 0
 	for key in to_remove:
+		if removed >= 2:
+			break
 		var body: StaticBody3D = _forest_collision_active_cells[key]
 		if is_instance_valid(body):
 			body.queue_free()
 		_forest_collision_active_cells.erase(key)
+		removed += 1
 
 func _tree_grid_key(pos: Vector3) -> Vector2i:
 	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
