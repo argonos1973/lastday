@@ -8,11 +8,19 @@ static func collect_mesh_instances(root: Node, result: Array) -> void:
 		collect_mesh_instances(child, result)
 
 static func raycast_ground_y(space_state: PhysicsDirectSpaceState3D, pos: Vector3, from_y: float = 100.0) -> float:
-	var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, from_y, pos.z), Vector3(pos.x, -200.0, pos.z))
-	query.collide_with_bodies = true
-	query.collide_with_areas = false
-	var hit := space_state.intersect_ray(query)
-	if not hit.is_empty():
+	var exclude_rids: Array = []
+	for _attempt in range(8):
+		var query := PhysicsRayQueryParameters3D.create(Vector3(pos.x, from_y, pos.z), Vector3(pos.x, -200.0, pos.z))
+		query.collide_with_bodies = true
+		query.collide_with_areas = false
+		query.exclude = exclude_rids
+		var hit := space_state.intersect_ray(query)
+		if hit.is_empty():
+			return 0.0
+		var collider = hit["collider"]
+		if collider is Node and (collider as Node).is_in_group("prop_collision"):
+			exclude_rids.append(hit["rid"])
+			continue
 		return float(hit["position"].y)
 	return 0.0
 

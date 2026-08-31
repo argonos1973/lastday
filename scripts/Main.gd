@@ -3979,6 +3979,8 @@ func _create_new_world_props() -> void:
 		var hut_node := get_node_or_null("HikingHut")
 		if hut_node != null and hut_node is Node3D:
 			_disable_emission_recursive(hut_node as Node3D)
+			_remove_collision_from_node(hut_node)
+			_generate_lods_for_node(hut_node as Node3D)
 		# Wall collisions: north, east, west — south open toward lake
 		_create_invisible_collision_box("HikingHutWallNorth", hut_pos + Vector3(0, 0, 1.8), Vector3(4.0, 3.0, 0.4))
 		_create_invisible_collision_box("HikingHutWallEast", hut_pos + Vector3(1.8, 0, 0), Vector3(0.4, 3.0, 4.0))
@@ -3993,8 +3995,8 @@ func _create_new_world_props() -> void:
 		# Loot outside the hut, near the entrance (south side)
 		_create_tool_pickup("hut_axe", "tool_axe", "Hacha", "res://assets/models/props/simple_axe.glb", hut_pos + Vector3(-1.5, 0.05, -2.5), 1.2, Vector3(0, 45, 0))
 		_create_pickup_item({"id": "hut_bottle", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.0, 0.05, -2.8), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)})
-		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [], "scale": 0.3, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
-		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": [], "scale": 0.15, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
+		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
+		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.05, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
 
 func _find_flat_area_for_tent() -> Vector3:
 	var best_pos := Vector3.ZERO
@@ -10132,6 +10134,15 @@ func _remove_collision_from_node(root: Node) -> void:
 	for node in to_remove:
 		if is_instance_valid(node):
 			(node as Node).queue_free()
+
+func _generate_lods_for_node(root: Node3D) -> void:
+	var meshes: Array = []
+	NodeUtils.collect_mesh_instances(root, meshes)
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		mi.generate_lods()
 
 func _collect_collision_nodes(node: Node, result: Array) -> void:
 	if node is CollisionShape3D or node is StaticBody3D or node is RigidBody3D or node is AnimatableBody3D:
