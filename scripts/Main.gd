@@ -8810,7 +8810,10 @@ func _create_forest() -> void:
 			var world_xform := Transform3D(basis, pos)
 			(batch_transforms[variant_idx] as Array).append(world_xform)
 			all_tree_positions.append(pos)
-			_register_tree_in_grid({"pos": pos, "active": false})
+			var batch_tree_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+			if batch_tree_id < 0:
+				batch_tree_id = -batch_tree_id
+			_register_tree_in_grid({"pos": pos, "id": batch_tree_id, "visual_name": "Tree_%d" % batch_tree_id, "active": false})
 			batched_count += 1
 		else:
 			_create_tree(pos, false)
@@ -9004,22 +9007,58 @@ func _update_tree_interactions() -> void:
 				elif dist > _tree_deactivation_radius and entry.active:
 					_deactivate_tree(entry)
 
+func _create_individual_tree_visual(visual_name: String, pos: Vector3) -> void:
+	if _forest_tree_meshes.is_empty():
+		_load_forest_tree_pack()
+	if _forest_tree_meshes.is_empty():
+		return
+	var entry = _forest_tree_meshes[_world_rng.randi() % _forest_tree_meshes.size()]
+	var src_mesh: ArrayMesh = entry.mesh
+	var branch_mesh: ArrayMesh = entry.get("branch_mesh", null)
+	var tree_scale := _world_rng.randf_range(0.8, 1.4)
+	var up_fix_deg: float = entry.get("up_fix_deg", -90.0)
+	var mi := Node3D.new()
+	mi.name = visual_name
+	mi.position = pos
+	mi.rotation_degrees = Vector3(up_fix_deg, 0, _world_rng.randf_range(0, 360))
+	mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
+	var trunk_mi := MeshInstance3D.new()
+	trunk_mi.name = "Trunk"
+	trunk_mi.mesh = src_mesh
+	trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	trunk_mi.visibility_range_end = 120.0
+	trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	mi.add_child(trunk_mi)
+	if branch_mesh != null:
+		var branch_mi := MeshInstance3D.new()
+		branch_mi.name = "Branches"
+		branch_mi.mesh = branch_mesh
+		branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		branch_mi.visibility_range_end = 120.0
+		branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		mi.add_child(branch_mi)
+	add_child(mi)
+	mi.add_to_group("world_action_visual")
+
 func _activate_tree(entry: Dictionary) -> void:
 	var tree_id: int = entry.id
 	var action_id := "fell_tree_%d" % tree_id
+	var visual_name: String = entry.visual_name
 	# Skip trees that were already cut (from save)
 	if _depleted_action_ids.has(action_id):
 		entry.active = true
 		# Hide the tree visual and replace with stump
-		var visual_name: String = entry.visual_name
 		var tree_node := get_node_or_null(visual_name)
 		if tree_node != null:
 			tree_node.visible = false
 		_create_cut_tree_remains(entry.pos)
 		return
-	var visual_name: String = entry.visual_name
 	var collision_name := visual_name + "_Collision"
 	var pos: Vector3 = entry.pos
+	# If no individual visual node exists (MultiMesh batched tree), create one
+	# so it can be animated when chopped.
+	if get_node_or_null(visual_name) == null:
+		_create_individual_tree_visual(visual_name, pos)
 	_register_wildlife_blocker(pos, 2.0)
 	var collision := _create_tree_collision(collision_name, pos)
 	collision.add_to_group("world_action_visual")
@@ -9047,6 +9086,13 @@ func _deactivate_tree(entry: Dictionary) -> void:
 		# Don't mark as depleted — the tree is not cut, just out of range
 		action.queue_free()
 		world_actions_by_id.erase(action_id)
+	# Free the individual visual if the tree is not cut (was only needed for interaction)
+	if not _depleted_action_ids.has(action_id):
+		var visual_name: String = entry.visual_name
+		if not visual_name.is_empty():
+			var vis_node := get_node_or_null(visual_name)
+			if vis_node != null:
+				vis_node.queue_free()
 	entry.active = false
 
 func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:

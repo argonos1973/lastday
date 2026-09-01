@@ -186,19 +186,25 @@ static func _matches_input(input_name: String, item) -> bool:
 static func craft(recipe: Dictionary, inventory) -> bool:
 	if not _can_craft(recipe, inventory.items):
 		return false
+	# Save consumed item info for potential refund
+	var saved_inputs: Array = []
 	# Consume inputs (tools are not consumed, only resources)
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
 		# Don't consume tools (knife, etc.) but reduce their durability
 		if _is_tool(input_name):
 			for item in inventory.items:
-				if item != null and str(item.item_name) == input_name and item.has_method("reduce_durability"):
+				if item != null and _matches_input(input_name, item) and item.has_method("reduce_durability"):
 					item.reduce_durability(3.0)
 					break
 			continue
 		if input_name == "ANY_CLOTHING":
 			_consume_clothing(inventory, needed)
 		else:
+			for item in inventory.items:
+				if item != null and str(item.item_name) == input_name and item.quantity > 0:
+					saved_inputs.append({"name": item.item_name, "type": item.item_type, "weight": item.weight, "use_value": item.use_value, "qty": min(needed, item.quantity), "durability": item.durability, "max_durability": item.max_durability})
+					break
 			inventory.consume_item_name(input_name, needed)
 	# Create output
 	var out = recipe["output"]
@@ -207,7 +213,13 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 	if out.has("durability"):
 		new_item.durability = float(out["durability"])
 		new_item.max_durability = float(out.get("max_durability", out["durability"]))
-	inventory.add_item(new_item)
+	if not inventory.add_item(new_item):
+		for si in saved_inputs:
+			var refund = ItemScript.create(si["name"], si["type"], si["weight"], si["qty"], si["use_value"])
+			refund.durability = si["durability"]
+			refund.max_durability = si["max_durability"]
+			inventory.add_item(refund)
+		return false
 	return true
 
 static func _consume_clothing(inventory, amount: int) -> void:
