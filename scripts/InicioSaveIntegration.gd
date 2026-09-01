@@ -131,11 +131,17 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		if nl == "tops":
 			m.visible = show_tops
 			if m.visible:
-				_mat(m, top_color)
+				if bool(cfg.get("top_camo", false)):
+					_mat_camo(m)
+				else:
+					_mat(m, top_color)
 		elif nl == "bottoms":
 			m.visible = show_bottoms
 			if m.visible:
-				_mat(m, bottom_color)
+				if bool(cfg.get("bottom_camo", false)):
+					_mat_camo(m)
+				else:
+					_mat(m, bottom_color)
 		elif nl == "shoes":
 			m.visible = show_shoes
 			if m.visible:
@@ -240,6 +246,40 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 static func _mat(m: MeshInstance3D, c: Color) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = c
+	mat.roughness = 0.8
+	m.material_override = mat
+
+static var _camo_texture_cache: Dictionary = {}
+
+static func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> ImageTexture:
+	var cache_key := str(base_color)
+	if _camo_texture_cache.has(cache_key):
+		return _camo_texture_cache[cache_key]
+	var size := 128
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
+	img.fill(camo_colors[0])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for blob in range(40):
+		var cx := rng.randi_range(0, size - 1)
+		var cy := rng.randi_range(0, size - 1)
+		var radius := rng.randi_range(8, 25)
+		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
+		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
+			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
+				var dx := x - cx
+				var dy := y - cy
+				if dx * dx + dy * dy <= radius * radius:
+					img.set_pixel(x, y, color)
+	var tex := ImageTexture.create_from_image(img)
+	_camo_texture_cache[cache_key] = tex
+	return tex
+
+static func _mat_camo(m: MeshInstance3D) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _make_camo_texture()
+	mat.albedo_color = Color.WHITE
 	mat.roughness = 0.8
 	m.material_override = mat
 
