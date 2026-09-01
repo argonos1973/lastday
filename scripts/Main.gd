@@ -5092,7 +5092,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 				_apply_camo_material_recursive(tint_node as Node3D, data["tint"])
 			else:
 				_apply_color_material_recursive(tint_node as Node3D, data["tint"])
-	# Fallback: if all meshes are hidden or missing, create a simple box so the item is visible
+	# Si todas las mallas estan ocultas o no existen, eliminar el nodo y no crear la indicacion
 	var _fb_node := get_node_or_null(NodePath(visual_name))
 	if _fb_node is Node3D:
 		var _fb_mesh_list: Array = []
@@ -5103,15 +5103,9 @@ func _create_pickup_item(data: Dictionary) -> void:
 				_any_visible = true
 				break
 		if not _any_visible:
-			var _box := MeshInstance3D.new()
-			_box.mesh = BoxMesh.new()
-			_box.mesh.size = Vector3(0.3, 0.15, 0.3)
-			var _box_mat := StandardMaterial3D.new()
-			_box_mat.albedo_color = color
-			_box_mat.roughness = 0.8
-			_box.material_override = _box_mat
-			_box.name = "FallbackBox"
-			(_fb_node as Node3D).add_child(_box)
+			(_fb_node as Node3D).queue_free()
+			push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
+			return
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
