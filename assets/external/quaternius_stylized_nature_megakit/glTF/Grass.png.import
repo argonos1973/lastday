@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://boqttj0fk6cd2"
 path.s3tc="res://.godot/imported/Grass.png-ae77bdfdb079a7468d8552ede79ffcf5.s3tc.ctex"
+path.etc2="res://.godot/imported/Grass.png-ae77bdfdb079a7468d8552ede79ffcf5.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/quaternius_stylized_nature_megakit/glTF/Grass.png"
-dest_files=["res://.godot/imported/Grass.png-ae77bdfdb079a7468d8552ede79ffcf5.s3tc.ctex"]
+dest_files=["res://.godot/imported/Grass.png-ae77bdfdb079a7468d8552ede79ffcf5.s3tc.ctex", "res://.godot/imported/Grass.png-ae77bdfdb079a7468d8552ede79ffcf5.etc2.ctex"]
 
 [params]
 

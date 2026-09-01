@@ -110,6 +110,21 @@ const RECIPES := [
 		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 2 },
 		"label": "Cortar pantalones con cuchillo para hacer trapos"
 	},
+	{
+		"inputs": { "Lata de guiso": 1, "Cuchillo": 1 },
+		"output": { "name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "use_value": 35.0, "quantity": 1, "durability": 0.0 },
+		"label": "Abrir lata de guiso con cuchillo"
+	},
+	{
+		"inputs": { "Lata de atun": 1, "Cuchillo": 1 },
+		"output": { "name": "Lata de atun abierta", "type": "food", "weight": 0.3, "use_value": 18.0, "quantity": 1, "durability": 0.0 },
+		"label": "Abrir lata de atun con cuchillo"
+	},
+	{
+		"inputs": { "Lata de comida": 1, "Cuchillo": 1 },
+		"output": { "name": "Lata de comida abierta", "type": "food", "weight": 0.35, "use_value": 32.0, "quantity": 1, "durability": 0.0 },
+		"label": "Abrir lata de comida con cuchillo"
+	},
 ]
 
 # Returns all recipes that can be crafted with the given inventory items
@@ -174,8 +189,12 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 	# Consume inputs (tools are not consumed, only resources)
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
-		# Don't consume tools (knife, etc.)
+		# Don't consume tools (knife, etc.) but reduce their durability
 		if _is_tool(input_name):
+			for item in inventory.items:
+				if item != null and str(item.item_name) == input_name and item.has_method("reduce_durability"):
+					item.reduce_durability(3.0)
+					break
 			continue
 		if input_name == "ANY_CLOTHING":
 			_consume_clothing(inventory, needed)

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dsv0v63kasmcy"
 path.s3tc="res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.s3tc.ctex"
+path.etc2="res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/wolf/WolfAnimated_T_Wolf.png"
-dest_files=["res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.s3tc.ctex"]
+dest_files=["res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.s3tc.ctex", "res://.godot/imported/WolfAnimated_T_Wolf.png-88aba1d3060ed5172eeb8587f3df708d.etc2.ctex"]
 
 [params]
 

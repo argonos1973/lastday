@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c4yfg7y7hwkyd"
 path.s3tc="res://.godot/imported/player_with_clothes_Ch36_1001_Diffuse.png-4e097385665311a88f4c888347b871fd.s3tc.ctex"
+path.etc2="res://.godot/imported/player_with_clothes_Ch36_1001_Diffuse.png-4e097385665311a88f4c888347b871fd.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/player_with_clothes_Ch36_1001_Diffuse.png"
-dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Diffuse.png-4e097385665311a88f4c888347b871fd.s3tc.ctex"]
+dest_files=["res://.godot/imported/player_with_clothes_Ch36_1001_Diffuse.png-4e097385665311a88f4c888347b871fd.s3tc.ctex", "res://.godot/imported/player_with_clothes_Ch36_1001_Diffuse.png-4e097385665311a88f4c888347b871fd.etc2.ctex"]
 
 [params]
 

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://5gefnekrqjlk"
 path.s3tc="res://.godot/imported/walking_Remy_Shoes_Normal.png-ef7b906bd1b2fc0021f699f116747242.s3tc.ctex"
+path.etc2="res://.godot/imported/walking_Remy_Shoes_Normal.png-ef7b906bd1b2fc0021f699f116747242.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/walking_Remy_Shoes_Normal.png"
-dest_files=["res://.godot/imported/walking_Remy_Shoes_Normal.png-ef7b906bd1b2fc0021f699f116747242.s3tc.ctex"]
+dest_files=["res://.godot/imported/walking_Remy_Shoes_Normal.png-ef7b906bd1b2fc0021f699f116747242.s3tc.ctex", "res://.godot/imported/walking_Remy_Shoes_Normal.png-ef7b906bd1b2fc0021f699f116747242.etc2.ctex"]
 
 [params]
 

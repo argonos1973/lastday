@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbs26pe827x8y"
 path.s3tc="res://.godot/imported/cc0_-_raw_meat_4_1.png-9f1e711ea35fae7b3f699acc37967bce.s3tc.ctex"
+path.etc2="res://.godot/imported/cc0_-_raw_meat_4_1.png-9f1e711ea35fae7b3f699acc37967bce.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/cc0_-_raw_meat_4_1.png"
-dest_files=["res://.godot/imported/cc0_-_raw_meat_4_1.png-9f1e711ea35fae7b3f699acc37967bce.s3tc.ctex"]
+dest_files=["res://.godot/imported/cc0_-_raw_meat_4_1.png-9f1e711ea35fae7b3f699acc37967bce.s3tc.ctex", "res://.godot/imported/cc0_-_raw_meat_4_1.png-9f1e711ea35fae7b3f699acc37967bce.etc2.ctex"]
 
 [params]
 

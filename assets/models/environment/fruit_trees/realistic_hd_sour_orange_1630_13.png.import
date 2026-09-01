@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://6iyaa0shoy5b"
 path.s3tc="res://.godot/imported/realistic_hd_sour_orange_1630_13.png-d91aad5ee1325df26bd5e6de5f904d2c.s3tc.ctex"
+path.etc2="res://.godot/imported/realistic_hd_sour_orange_1630_13.png-d91aad5ee1325df26bd5e6de5f904d2c.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/fruit_trees/realistic_hd_sour_orange_1630_13.png"
-dest_files=["res://.godot/imported/realistic_hd_sour_orange_1630_13.png-d91aad5ee1325df26bd5e6de5f904d2c.s3tc.ctex"]
+dest_files=["res://.godot/imported/realistic_hd_sour_orange_1630_13.png-d91aad5ee1325df26bd5e6de5f904d2c.s3tc.ctex", "res://.godot/imported/realistic_hd_sour_orange_1630_13.png-d91aad5ee1325df26bd5e6de5f904d2c.etc2.ctex"]
 
 [params]
 

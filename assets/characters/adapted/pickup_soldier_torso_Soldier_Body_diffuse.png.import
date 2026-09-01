@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://t1hkq6d68h36"
 path.s3tc="res://.godot/imported/pickup_soldier_torso_Soldier_Body_diffuse.png-44d33d3ed4400294558974290c79d542.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_soldier_torso_Soldier_Body_diffuse.png-44d33d3ed4400294558974290c79d542.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/pickup_soldier_torso_Soldier_Body_diffuse.png"
-dest_files=["res://.godot/imported/pickup_soldier_torso_Soldier_Body_diffuse.png-44d33d3ed4400294558974290c79d542.s3tc.ctex"]
+dest_files=["res://.godot/imported/pickup_soldier_torso_Soldier_Body_diffuse.png-44d33d3ed4400294558974290c79d542.s3tc.ctex", "res://.godot/imported/pickup_soldier_torso_Soldier_Body_diffuse.png-44d33d3ed4400294558974290c79d542.etc2.ctex"]
 
 [params]
 

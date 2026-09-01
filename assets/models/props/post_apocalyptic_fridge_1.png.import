@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://u43m56bp36rg"
 path.s3tc="res://.godot/imported/post_apocalyptic_fridge_1.png-90b11e7bc42dfc99dd55711b8e3f4fbb.s3tc.ctex"
+path.etc2="res://.godot/imported/post_apocalyptic_fridge_1.png-90b11e7bc42dfc99dd55711b8e3f4fbb.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/post_apocalyptic_fridge_1.png"
-dest_files=["res://.godot/imported/post_apocalyptic_fridge_1.png-90b11e7bc42dfc99dd55711b8e3f4fbb.s3tc.ctex"]
+dest_files=["res://.godot/imported/post_apocalyptic_fridge_1.png-90b11e7bc42dfc99dd55711b8e3f4fbb.s3tc.ctex", "res://.godot/imported/post_apocalyptic_fridge_1.png-90b11e7bc42dfc99dd55711b8e3f4fbb.etc2.ctex"]
 
 [params]
 

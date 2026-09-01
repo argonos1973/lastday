@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dktv0dmkgy0uq"
 path.s3tc="res://.godot/imported/clogged_old_sink_cabinet_3.jpg-8a94a9c58b2384c90fd3a5bff584f6c0.s3tc.ctex"
+path.etc2="res://.godot/imported/clogged_old_sink_cabinet_3.jpg-8a94a9c58b2384c90fd3a5bff584f6c0.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/clogged_old_sink_cabinet_3.jpg"
-dest_files=["res://.godot/imported/clogged_old_sink_cabinet_3.jpg-8a94a9c58b2384c90fd3a5bff584f6c0.s3tc.ctex"]
+dest_files=["res://.godot/imported/clogged_old_sink_cabinet_3.jpg-8a94a9c58b2384c90fd3a5bff584f6c0.s3tc.ctex", "res://.godot/imported/clogged_old_sink_cabinet_3.jpg-8a94a9c58b2384c90fd3a5bff584f6c0.etc2.ctex"]
 
 [params]
 

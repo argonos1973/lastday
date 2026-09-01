@@ -16,6 +16,15 @@ func setup(label: String, size: Vector3, color: Color, open_angle: float, model_
 	open_yaw = open_angle
 	add_to_group("doors")
 	add_to_group("interactable")
+	# Add collision immediately so the door is raycastable before GLB finishes loading
+	var early_col := CollisionShape3D.new()
+	early_col.name = "EarlyCollision"
+	var early_shape := BoxShape3D.new()
+	early_shape.size = Vector3(size.x, size.y, 0.15)
+	early_col.shape = early_shape
+	early_col.position = Vector3(size.x * 0.5, size.y * 0.5, 0.0)
+	add_child(early_col)
+	_collision = early_col
 	var door_loaded := false
 	if model_path != "" and ResourceLoader.exists(model_path):
 		door_loaded = true
@@ -59,6 +68,9 @@ func _make_door(size: Vector3, _color: Color) -> void:
 	mesh_instance.material_override = wood_mat
 	add_child(mesh_instance)
 
+	# Replace early collision with final one
+	if _collision != null and is_instance_valid(_collision):
+		_collision.queue_free()
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
@@ -257,7 +269,9 @@ func _make_door_from_glb(size: Vector3, model_path: String) -> void:
 	var rotated_min := Vector3(scaled_local_min.x, scaled_local_min.z, -scaled_local_min.y)
 	model.position = Vector3(-rotated_min.x, -rotated_min.y, 0.0)
 
-	# Collision box matching the door size
+	# Collision box matching the door size (replaces early collision)
+	if _collision != null and is_instance_valid(_collision):
+		_collision.queue_free()
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(size.x, size.y, 0.15)

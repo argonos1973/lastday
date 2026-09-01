@@ -94,7 +94,7 @@ const FOREST_MM_HIDE_RADIUS := 120.0
 var _forest_collision_grid: Dictionary = {} # cell_key -> Array[Vector3]
 var _forest_collision_grid_size := 20.0
 var _forest_collision_active_cells: Dictionary = {} # cell_key -> StaticBody3D
-var _forest_collision_radius := 40.0
+var _forest_collision_radius := 80.0
 var _forest_collision_check_timer := 0.0
 var _cached_leafy_material: StandardMaterial3D = null
 var _mountain_shared_material: StandardMaterial3D = null
@@ -146,13 +146,6 @@ const FRUIT_TREE_MODELS := [
 	"res://assets/models/environment/fruit_trees/realistic_hd_sour_orange_1630.glb",
 	"res://assets/models/environment/fruit_trees/realistic_hd_common_fig_tree_1830.glb",
 ]
-const REAL_DEAD_TREE_MODELS := [
-	Q_NATURE + "DeadTree_1.gltf",
-	Q_NATURE + "DeadTree_2.gltf",
-	Q_NATURE + "DeadTree_3.gltf",
-	Q_NATURE + "DeadTree_4.gltf",
-	Q_NATURE + "DeadTree_5.gltf"
-]
 const TREE_BILLBOARD_TEXTURES := [
 	"res://assets/external/tree_billboards/png/lake_pine_01.png",
 	"res://assets/external/tree_billboards/png/lake_pine_02.png",
@@ -167,11 +160,6 @@ const TREE_BILLBOARD_TEXTURES := [
 	"res://assets/external/tree_billboards/png/flare_broadleaf_04.png",
 	"res://assets/external/tree_billboards/png/flare_broadleaf_05.png",
 	"res://assets/external/tree_billboards/png/flare_broadleaf_06.png"
-]
-const DEAD_TREE_BILLBOARD_TEXTURES := [
-	"res://assets/external/tree_billboards/png/flare_pine_01.png",
-	"res://assets/external/tree_billboards/png/flare_pine_02.png",
-	"res://assets/external/tree_billboards/png/flare_pine_03.png"
 ]
 const UNDERBRUSH_BILLBOARD_TEXTURES := [
 	"res://assets/external/tree_billboards/png/flare_broadleaf_04.png",
@@ -631,7 +619,7 @@ func _process(delta: float) -> void:
 		_grass_vis_timer = 0.0
 		_update_grass_visibility()
 	_tree_check_timer += delta
-	if _tree_check_timer > 2.0:
+	if _tree_check_timer > 1.0:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
@@ -727,7 +715,7 @@ func _process(delta: float) -> void:
 	# Built shelters protect from extreme temperatures
 	if near_built_shelter:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed)
 	_apply_campfire_effect(player, delta)
 	_apply_torch_fire_effect(player, delta)
 	_door_cache_timer += delta
@@ -4690,21 +4678,15 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
-		# --- Remy clothing ---
+		# --- Remy clothing (only one character set to avoid clothing overload) ---
 		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.3, 0.4, 0.6), "remy_mesh": "tops"},
 		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -60, 0), "flat": true, "color": Color(0.15, 0.12, 0.1), "remy_mesh": "bottoms"},
-		# --- Luis clothing ---
-		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 70, 0), "flat": true, "color": Color(0.6, 0.2, 0.3), "remy_mesh": "tops"},
-		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 120, 0), "flat": true, "color": Color(0.1, 0.15, 0.25), "remy_mesh": "bottoms"},
-		# --- Marc clothing ---
-		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": true, "color": Color(0.2, 0.5, 0.3), "remy_mesh": "tops"},
-		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -30, 0), "flat": true, "color": Color(0.35, 0.3, 0.15), "remy_mesh": "bottoms"},
-		# --- Edu clothing ---
-		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": true, "color": Color(0.5, 0.45, 0.2), "remy_mesh": "tops"},
-		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 90, 0), "flat": true, "color": Color(0.2, 0.2, 0.5), "remy_mesh": "bottoms"},
-		# --- Dris clothing ---
-		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -120, 0), "flat": true, "color": Color(0.8, 0.7, 0.6), "remy_mesh": "tops"},
-		{"name": "Pantalones", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -150, 0), "flat": true, "color": Color(0.3, 0.3, 0.35), "remy_mesh": "bottoms"},
+		# --- Soldier clothing (camo character) ---
+		{"name": "Camiseta militar", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 30, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
+		{"name": "Pantalones militares", "type": "clothing", "weight": 0.5, "qty": 1, "use": 0.10, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -60, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
+		# --- Extra food to dilute clothing probability ---
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 160, 0), "color": Color(0.30, 0.22, 0.10)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 200, 0), "color": Color(0.36, 0.25, 0.10)},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
@@ -4825,12 +4807,12 @@ func _create_house_loot() -> void:
 		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
-	var clothing_indices := [1, 2, 3, 4, 5, 6, 7, 8]
+	# Limit to 1 pants max: pick 1 from pants pool (indices 1-4) and 1 from non-pants (5-8)
+	var pants_indices := [1, 2, 3, 4]
+	var other_indices := [5, 6, 7, 8]
 	var guaranteed_clothing: Array = []
-	for _g in range(2):
-		var gi := _world_rng.randi() % clothing_indices.size()
-		guaranteed_clothing.append(clothing_indices[gi])
-		clothing_indices.remove_at(gi)
+	guaranteed_clothing.append(pants_indices[_world_rng.randi() % pants_indices.size()])
+	guaranteed_clothing.append(other_indices[_world_rng.randi() % other_indices.size()])
 	var _tent_clothing_idx := 0
 	for gidx in guaranteed_clothing:
 		var g_data: Dictionary = tent_loot_pool[gidx].duplicate()
@@ -4863,13 +4845,12 @@ func _create_house_loot() -> void:
 		tent_loot_pool[7], # canned tuna
 		tent_loot_pool[8], # plastic bottle
 	]
-	# Guarantee 3 clothing items
-	var rt_clothing_indices := [0, 1, 2, 3, 4]
+	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves)
+	var rt_pants_indices := [0, 1, 2, 3]
+	var rt_other_indices := [4]
 	var rt_guaranteed: Array = []
-	for _g in range(3):
-		var gi := _world_rng.randi() % rt_clothing_indices.size()
-		rt_guaranteed.append(rt_clothing_indices[gi])
-		rt_clothing_indices.remove_at(gi)
+	rt_guaranteed.append(rt_pants_indices[_world_rng.randi() % rt_pants_indices.size()])
+	rt_guaranteed.append(rt_other_indices[_world_rng.randi() % rt_other_indices.size()])
 	var _rt_loot_idx := 0
 	for gidx in rt_guaranteed:
 		var g_data: Dictionary = remote_tent_loot[gidx].duplicate()
@@ -5066,7 +5047,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var sn := get_node_or_null(NodePath(visual_name))
 	if sn is Node3D:
 		_snap_node_bottom_to_y(sn as Node3D, real_ground_y)
-	_mark_world_action_visual(visual_name)
+		_mark_world_action_visual(visual_name)
 	var pickup_node := get_node_or_null(visual_name)
 	if pickup_node != null:
 		_remove_collision_from_node(pickup_node)
@@ -5111,6 +5092,26 @@ func _create_pickup_item(data: Dictionary) -> void:
 				_apply_camo_material_recursive(tint_node as Node3D, data["tint"])
 			else:
 				_apply_color_material_recursive(tint_node as Node3D, data["tint"])
+	# Fallback: if all meshes are hidden or missing, create a simple box so the item is visible
+	var _fb_node := get_node_or_null(NodePath(visual_name))
+	if _fb_node is Node3D:
+		var _fb_mesh_list: Array = []
+		_collect_meshes_recursive(_fb_node as Node3D, _fb_mesh_list)
+		var _any_visible := false
+		for mi in _fb_mesh_list:
+			if mi is MeshInstance3D and (mi as MeshInstance3D).visible and (mi as MeshInstance3D).mesh != null:
+				_any_visible = true
+				break
+		if not _any_visible:
+			var _box := MeshInstance3D.new()
+			_box.mesh = BoxMesh.new()
+			_box.mesh.size = Vector3(0.3, 0.15, 0.3)
+			var _box_mat := StandardMaterial3D.new()
+			_box_mat.albedo_color = color
+			_box_mat.roughness = 0.8
+			_box.material_override = _box_mat
+			_box.name = "FallbackBox"
+			(_fb_node as Node3D).add_child(_box)
 	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
@@ -5321,6 +5322,9 @@ func handle_world_action(action, actor) -> void:
 			if held_g == null or (held_g.item_type != "weapon" and held_g.item_name != "Hacha"):
 				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para destripar.")
 				return
+			if held_g.has_method("is_broken") and held_g.is_broken():
+				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(held_g.item_name))
+				return
 			var animal_kind: String = action.get_meta("animal_type", "wolf")
 			var an_lower := "lobo"
 			var meat_name := "Carne cruda de lobo"
@@ -5365,6 +5369,10 @@ func handle_world_action(action, actor) -> void:
 				maction.set_meta("item_use_value", 15.0)
 				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
 			actor.notice.emit("Destripar al %s: +%d carne cruda." % [an_lower, meat_qty])
+			if held_g != null and held_g.has_method("reduce_durability"):
+				held_g.reduce_durability(6.0)
+				if held_g.is_broken():
+					actor.notice.emit("Tu %s se ha roto!" % str(held_g.item_name))
 			_save_world_change_silent()
 			# Hide the wolf corpse after the 5-second animation finishes
 			var action_ref: Node = action
@@ -5450,6 +5458,10 @@ func handle_world_action(action, actor) -> void:
 					var rag2_id := "pickup_Trapos_%d" % (Time.get_ticks_msec() + randi() % 1000)
 					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(0.2, 0.06, 0.0), 0.05, 1, 0.0, rag1_id)
 					_spawn_ground_pickup("Trapos", "resource", rag_pos + Vector3(-0.2, 0.06, 0.1), 0.05, 1, 0.0, rag2_id)
+					if _held != null and _held.has_method("reduce_durability"):
+						_held.reduce_durability(4.0)
+						if _held.is_broken():
+							actor.notice.emit("Tu %s se ha roto!" % str(_held.item_name))
 					actor.notice.emit("Cortas la ropa en trapos. Recogelos del suelo.")
 					_save_world_change_silent()
 					var rag_spawns: Array = [
@@ -5589,6 +5601,9 @@ func handle_world_action(action, actor) -> void:
 			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_name != "Hacha" and held_f.item_type != "tool_fishing"):
 				actor.notice.emit("Necesitas un cuchillo, hacha o caña de pescar para pescar.")
 				return
+			if held_f.has_method("is_broken") and held_f.is_broken():
+				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(held_f.item_name))
+				return
 			var fish_chance := 0.72 if held_f.item_type == "tool_fishing" else 0.48
 			_play_actor_action(actor, "fish", 1.6)
 			if hud != null:
@@ -5600,6 +5615,10 @@ func handle_world_action(action, actor) -> void:
 					actor.notice.emit("Pescas un pez pequeno.")
 			else:
 				actor.notice.emit("No pica nada.")
+			if held_f != null and held_f.has_method("reduce_durability"):
+				held_f.reduce_durability(3.0)
+				if held_f.is_broken():
+					actor.notice.emit("Tu %s se ha roto!" % str(held_f.item_name))
 		"drink_water":
 			# If holding an empty plastic bottle, fill it instead of drinking
 			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
@@ -5653,6 +5672,8 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Encendiendo fogata", 1.5)
 				await get_tree().create_timer(1.5).timeout
+				actor.inventory.consume_item_name("Cerillas", 1)
+				actor.inventory.changed.emit()
 			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
 				actor.inventory.consume_item_name("Palo", 2)
 				actor.inventory.changed.emit()
@@ -5796,6 +5817,9 @@ func handle_world_action(action, actor) -> void:
 			if held == null or held.item_name != "Hacha":
 				actor.notice.emit("Necesitas tener el hacha en la mano para talar.")
 				return
+			if held.has_method("is_broken") and held.is_broken():
+				actor.notice.emit("Tu hacha esta rota y no se puede usar.")
+				return
 			_play_actor_action(actor, "chop", 10.0)
 			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
 				audio_system.play_chop_loop_at(action.position, 10.0)
@@ -5818,6 +5842,10 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(0.5, 0.06, 0.8), 1.2, 1, 0.0, log3_id)
 			_spawn_ground_pickup("Tronco", "resource", tree_pos + Vector3(2.0, 0.06, 0.1), 1.2, 1, 0.0, log4_id)
 			actor.notice.emit("Talas el arbol. Recoge los troncos del suelo.")
+			if held != null and held.has_method("reduce_durability"):
+				held.reduce_durability(10.0)
+				if held.is_broken():
+					actor.notice.emit("Tu hacha se ha roto!")
 			action.mark_depleted()
 			if not _depleted_action_ids.has(action.action_id):
 				_depleted_action_ids.append(action.action_id)
@@ -5836,6 +5864,9 @@ func handle_world_action(action, actor) -> void:
 			var held_b = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_b == null or (held_b.item_name != "Cuchillo" and held_b.item_name != "Hacha"):
 				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para cortar.")
+				return
+			if held_b.has_method("is_broken") and held_b.is_broken():
+				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(held_b.item_name))
 				return
 			_play_actor_action(actor, "forage", 5.0)
 			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
@@ -5856,6 +5887,10 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(-0.3, 0.06, 0.2), 0.3, 1, 0.0, stick2_id)
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0, stick3_id)
 			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
+			if held_b != null and held_b.has_method("reduce_durability"):
+				held_b.reduce_durability(5.0)
+				if held_b.is_broken():
+					actor.notice.emit("Tu %s se ha roto!" % str(held_b.item_name))
 			action.mark_depleted()
 			if not _depleted_action_ids.has(action.action_id):
 				_depleted_action_ids.append(action.action_id)
@@ -5871,6 +5906,9 @@ func handle_world_action(action, actor) -> void:
 			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_l == null or held_l.item_name != "Hacha":
 				actor.notice.emit("Necesitas tener el hacha en la mano para cortar el tronco.")
+				return
+			if held_l.has_method("is_broken") and held_l.is_broken():
+				actor.notice.emit("Tu hacha esta rota y no se puede usar.")
 				return
 			_play_actor_action(actor, "chop", 3.0)
 			if audio_system != null and audio_system.has_method("play_chop_loop_at"):
@@ -5889,6 +5927,10 @@ func handle_world_action(action, actor) -> void:
 			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(-0.3, 0.06, 0.2), 1.2, 1, 0.0, clog2_id)
 			_spawn_ground_pickup("Tronco", "resource", log_pos + Vector3(0.0, 0.06, -0.3), 1.2, 1, 0.0, clog3_id)
 			actor.notice.emit("Cortas el tronco en troncos mas pequenos. Recogelos del suelo.")
+			if held_l != null and held_l.has_method("reduce_durability"):
+				held_l.reduce_durability(8.0)
+				if held_l.is_broken():
+					actor.notice.emit("Tu hacha se ha roto!")
 			action.mark_depleted()
 			if not _depleted_action_ids.has(action.action_id):
 				_depleted_action_ids.append(action.action_id)
@@ -5930,6 +5972,13 @@ func handle_world_action(action, actor) -> void:
 			await get_tree().create_timer(3.0).timeout
 			actor.inventory.consume_item_name("Tronco", 6)
 			actor.inventory.consume_item_name("Piedra", 4)
+			if actor.inventory.has_item_name("Martillo"):
+				for _it in actor.inventory.items:
+					if _it != null and str(_it.item_name) == "Martillo" and _it.has_method("reduce_durability"):
+						_it.reduce_durability(10.0)
+						if _it.is_broken():
+							actor.notice.emit("Tu Martillo se ha roto!")
+						break
 			_build_player_cabin(action.position)
 			actor.notice.emit("Levantas una cabana basica. Ya tienes un refugio propio.")
 			action.mark_depleted()
@@ -6198,6 +6247,10 @@ func _handle_farm_plot(action, actor) -> void:
 			if not actor.inventory.has_item_name("Azada") and not actor.inventory.has_item_name("Pala"):
 				actor.notice.emit("Necesitas una azada o una pala para preparar la tierra.")
 				return
+			var _farm_held = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if _farm_held != null and _farm_held.has_method("is_broken") and _farm_held.is_broken():
+				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(_farm_held.item_name))
+				return
 			if not actor.inventory.consume_item_name("Semillas", 1):
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
 				return
@@ -6205,6 +6258,10 @@ func _handle_farm_plot(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 1.35)
 			await get_tree().create_timer(1.35).timeout
+			if _farm_held != null and _farm_held.has_method("reduce_durability"):
+				_farm_held.reduce_durability(5.0)
+				if _farm_held.is_broken():
+					actor.notice.emit("Tu %s se ha roto!" % str(_farm_held.item_name))
 			action.set_crop_state("planted", 0.0)
 			actor.notice.emit("Plantas semillas. Vuelve cuando hayan crecido.")
 			_save_world_change_silent()
@@ -6452,7 +6509,7 @@ func _create_rocky_foothills() -> void:
 			continue
 		
 		# Evitar colinas en la carretera (con margen según el radio)
-		var dist_to_road_x := abs(pos.x - ROAD_CENTER_X)
+		var dist_to_road_x: float = abs(pos.x - ROAD_CENTER_X)
 		if dist_to_road_x < ROAD_HALF_WIDTH + 15.0 and pos.z >= ROAD_START_Z - 10.0 and pos.z <= ROAD_END_Z + 10.0:
 			continue
 		
@@ -8689,6 +8746,26 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 		add_child(plane)
 	return true
 
+func _pick_forest_tree_variant() -> int:
+	var count := _forest_tree_meshes.size()
+	if count <= 1:
+		return 0
+	# Variant index 1 is the white-birch (bare, no-leaf) tree, which looked
+	# overly dominant when picked with equal (50/50) probability. Bias it
+	# down further and spread the rest evenly across remaining variants.
+	var birch_weight := 0.08
+	var r := _world_rng.randf()
+	if count == 2:
+		return 1 if r < birch_weight else 0
+	var other_weight: float = (1.0 - birch_weight) / float(count - 1)
+	var cumulative := 0.0
+	for i in range(count):
+		var w: float = birch_weight if i == 1 else other_weight
+		cumulative += w
+		if r < cumulative:
+			return i
+	return count - 1
+
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.055)
@@ -8725,19 +8802,21 @@ func _create_forest() -> void:
 		
 		# Batch non-interactive trees into MultiMesh
 		if not _forest_tree_meshes.is_empty():
-			var variant_idx := _world_rng.randi() % _forest_tree_meshes.size()
+			var variant_idx := _pick_forest_tree_variant()
 			var entry: Dictionary = _forest_tree_meshes[variant_idx]
 			var tree_scale := _world_rng.randf_range(0.8, 1.4)
-			var aabb: AABB = entry.aabb
-			var tree_height := aabb.size.z * tree_scale
+			var base_height: float = entry.get("height", 5.0)
+			var tree_height := base_height * tree_scale
 			if tree_height < 1.0:
-				tree_scale = 1.0 / max(0.01, aabb.size.z)
-			# Match original: rotation_degrees = Vector3(-90, 0, yaw), scale = uniform
+				tree_scale = 1.0 / max(0.01, base_height)
+			# Match original: rotation_degrees = Vector3(up_fix, 0, yaw), scale = uniform
 			var yaw_deg := _world_rng.randf_range(0, 360)
-			var basis := Basis.from_euler(Vector3(deg_to_rad(-90), 0, deg_to_rad(yaw_deg))).scaled(Vector3(tree_scale, tree_scale, tree_scale))
+			var up_fix_deg: float = entry.get("up_fix_deg", -90.0)
+			var basis := Basis.from_euler(Vector3(deg_to_rad(up_fix_deg), 0, deg_to_rad(yaw_deg))).scaled(Vector3(tree_scale, tree_scale, tree_scale))
 			var world_xform := Transform3D(basis, pos)
 			(batch_transforms[variant_idx] as Array).append(world_xform)
 			all_tree_positions.append(pos)
+			_register_tree_in_grid({"pos": pos, "active": false})
 			batched_count += 1
 		else:
 			_create_tree(pos, false)
@@ -8804,6 +8883,25 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 			_forest_multimesh_nodes.append(mmi)
 			_forest_multimesh_centers.append(center)
 			_forest_multimesh_radii.append(batch_radius)
+			# If this variant has a separate branches (leaves) mesh, create a
+			# matching MultiMeshInstance3D sharing the exact same per-instance
+			# transforms so trunk and leaves always render together.
+			var branch_mesh: ArrayMesh = entry.get("branch_mesh", null)
+			if branch_mesh != null:
+				var branch_multimesh := MultiMesh.new()
+				branch_multimesh.transform_format = MultiMesh.TRANSFORM_3D
+				branch_multimesh.mesh = branch_mesh
+				branch_multimesh.instance_count = count
+				for j in range(count):
+					branch_multimesh.set_instance_transform(j, transforms[start + j])
+				var branch_mmi := MultiMeshInstance3D.new()
+				branch_mmi.name = "ForestMM_%d_%d_leaves" % [variant_idx, b]
+				branch_mmi.multimesh = branch_multimesh
+				branch_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(branch_mmi)
+				_forest_multimesh_nodes.append(branch_mmi)
+				_forest_multimesh_centers.append(center)
+				_forest_multimesh_radii.append(batch_radius)
 
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():
@@ -8849,8 +8947,9 @@ func _update_forest_collision() -> void:
 				needed_cells[key] = true
 	# Create missing collision bodies — limit per tick to avoid stutter
 	var created := 0
+	var create_limit := 8 if _forest_collision_active_cells.is_empty() else 3
 	for key in needed_cells:
-		if created >= 2:
+		if created >= create_limit:
 			break
 		if not _forest_collision_active_cells.has(key):
 			var positions: Array = _forest_collision_grid[key]
@@ -8876,7 +8975,7 @@ func _update_forest_collision() -> void:
 			to_remove.append(key)
 	var removed := 0
 	for key in to_remove:
-		if removed >= 2:
+		if removed >= 5:
 			break
 		var body: StaticBody3D = _forest_collision_active_cells[key]
 		if is_instance_valid(body):
@@ -8971,22 +9070,35 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	if not made_visual and not _forest_tree_meshes.is_empty():
 		var entry = _forest_tree_meshes[_world_rng.randi() % _forest_tree_meshes.size()]
 		var src_mesh: ArrayMesh = entry.mesh
-		var xform: Transform3D = entry.transform
-		var aabb: AABB = entry.aabb
-		var mi := MeshInstance3D.new()
-		mi.name = visual_name
-		mi.mesh = src_mesh
+		var branch_mesh: ArrayMesh = entry.get("branch_mesh", null)
+		var base_height: float = entry.get("height", entry.aabb.size.z)
 		var tree_scale := _world_rng.randf_range(0.8, 1.4)
-		var tree_height := aabb.size.z * tree_scale
+		var tree_height := base_height * tree_scale
 		if tree_height < 1.0:
-			tree_scale = 1.0 / max(0.01, aabb.size.z)
+			tree_scale = 1.0 / max(0.01, base_height)
+		var up_fix_deg: float = entry.get("up_fix_deg", -90.0)
+		var mi := Node3D.new()
+		mi.name = visual_name
 		mi.position = pos
-		mi.rotation_degrees = Vector3(-90, 0, _world_rng.randf_range(0, 360))
+		mi.rotation_degrees = Vector3(up_fix_deg, 0, _world_rng.randf_range(0, 360))
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
+		var trunk_mi := MeshInstance3D.new()
+		trunk_mi.name = "Trunk"
+		trunk_mi.mesh = src_mesh
 		if pos.length() > 15.0:
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mi.visibility_range_end = 120.0
-		mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		trunk_mi.visibility_range_end = 120.0
+		trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		mi.add_child(trunk_mi)
+		if branch_mesh != null:
+			var branch_mi := MeshInstance3D.new()
+			branch_mi.name = "Branches"
+			branch_mi.mesh = branch_mesh
+			if pos.length() > 15.0:
+				branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			branch_mi.visibility_range_end = 120.0
+			branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			mi.add_child(branch_mi)
 		add_child(mi)
 		mi.add_to_group("world_action_visual")
 		made_visual = true
@@ -9038,23 +9150,90 @@ func _load_forest_tree_pack() -> void:
 	root.force_update_transform()
 	var meshes: Array = []
 	NodeUtils.collect_mesh_instances(root, meshes)
+	# The GLB pack stores trunk and branches as separate top-level mesh
+	# instances (no parent/child grouping), all centered at the origin.
+	# Godot appends "_001"/"_002" suffixes to duplicate copies of the same
+	# source node name. Group by base variant (e.g. "Tree_Trunk_01") and
+	# pair each trunk with its matching branches ("...01" with "...01")
+	# so a full tree (trunk + leaves) is placed together, instead of a
+	# random single piece.
+	var trunk_re := RegEx.new()
+	trunk_re.compile("(?i)^tree_trunk_(\\d+)")
+	var branch_re := RegEx.new()
+	branch_re.compile("(?i)^tree_branches_(\\d+)")
+	var trunks_by_variant: Dictionary = {}
+	var branches_by_variant: Dictionary = {}
 	for mi in meshes:
 		var mesh_inst := mi as MeshInstance3D
 		if mesh_inst.mesh == null:
 			continue
 		var name_lower := mesh_inst.name.to_lower()
-		if not (name_lower.contains("tree") or name_lower.contains("branch") or name_lower.contains("trunk")):
+		if name_lower.contains("atlas") or name_lower.contains("background") or name_lower.contains("rock"):
 			continue
-		if name_lower.contains("rock"):
+		var tm := trunk_re.search(mesh_inst.name)
+		if tm != null:
+			var variant := tm.get_string(1)
+			if not trunks_by_variant.has(variant):
+				trunks_by_variant[variant] = mesh_inst
 			continue
-		var aabb := mesh_inst.get_aabb()
-		if aabb.size.z < 1.5:
+		var bm := branch_re.search(mesh_inst.name)
+		if bm != null:
+			var bvariant := bm.get_string(1)
+			if not branches_by_variant.has(bvariant):
+				branches_by_variant[bvariant] = mesh_inst
 			continue
-		var world_xform: Transform3D = mesh_inst.global_transform
+	# Fix leaves rendering: convert alpha-blend to alpha-scissor (cutout)
+	# which survives VRAM texture compression in exported builds.
+	var _fix_material := func(mat: Material) -> Material:
+		if mat is StandardMaterial3D:
+			var sm := (mat as StandardMaterial3D).duplicate()
+			if sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+				sm.alpha_scissor_threshold = 0.4
+				# Godot bakes mipmaps for the leaf alpha texture assuming
+				# alpha-blend, so most mip levels end up with an average
+				# alpha below the scissor threshold. At any distance this
+				# makes the leaves vanish while the trunk stays, making
+				# trees look bald/dead far more often than intended.
+				# Disabling mipmaps for this material keeps full leaf
+				# coverage at all distances (small tradeoff: some texture
+				# aliasing/shimmer far away, but no more disappearing leaves).
+				sm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+			return sm
+		return mat
+	# Trunk variant "02" (white-bark birch) is a bare/leafless tree in the
+	# original source model; Tree_Branches_02 is a separate leaf-cluster
+	# mesh that does not belong to it, so never pair leaves onto it.
+	var bare_trunk_variants := ["02"]
+	for variant in trunks_by_variant.keys():
+		var is_bare := bare_trunk_variants.has(variant)
+		if not is_bare and not branches_by_variant.has(variant):
+			continue
+		var trunk_inst: MeshInstance3D = trunks_by_variant[variant]
+		var trunk_mesh: ArrayMesh = trunk_inst.mesh.duplicate()
+		for surf_idx in range(trunk_mesh.get_surface_count()):
+			trunk_mesh.surface_set_material(surf_idx, _fix_material.call(trunk_mesh.surface_get_material(surf_idx)))
+		var branch_mesh: ArrayMesh = null
+		var combined_aabb: AABB = trunk_inst.get_aabb()
+		if not is_bare:
+			var branch_inst: MeshInstance3D = branches_by_variant[variant]
+			branch_mesh = branch_inst.mesh.duplicate()
+			for surf_idx in range(branch_mesh.get_surface_count()):
+				branch_mesh.surface_set_material(surf_idx, _fix_material.call(branch_mesh.surface_get_material(surf_idx)))
+			combined_aabb = combined_aabb.merge(branch_inst.get_aabb())
+		if combined_aabb.size.z < 1.5:
+			continue
+		# Store trunk and branches as two separate meshes sharing the same
+		# transform, since MultiMeshInstance3D only supports a single mesh
+		# and merging surfaces via add_surface_from_arrays fails for meshes
+		# using compressed vertex formats.
 		_forest_tree_meshes.append({
-			"mesh": mesh_inst.mesh,
-			"transform": world_xform,
-			"aabb": aabb
+			"mesh": trunk_mesh,
+			"branch_mesh": branch_mesh,
+			"transform": trunk_inst.global_transform,
+			"aabb": combined_aabb,
+			"height": combined_aabb.size.z,
+			"up_fix_deg": -90.0
 		})
 	remove_child(root)
 	root.queue_free()
@@ -9151,23 +9330,6 @@ func _create_living_tree_fallback(pos: Vector3, visual_name: String) -> bool:
 		var branch_height := _world_rng.randf_range(0.62, 1.15) * ring_scale
 		_create_tree_twig_plane(branch_pos, Vector2(branch_width, branch_height), rad_to_deg(angle), twig_texture, twig_alpha)
 	return true
-
-func _create_dead_tree_fallback(pos: Vector3) -> void:
-	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_DEAD_TREE_MODELS), "ExternalDeadTree", pos, Vector3.ONE * _world_rng.randf_range(1.05, 1.75), Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
-		_create_tree_collision("ExternalDeadTreeCollision", pos)
-		return
-	var height := _world_rng.randf_range(4.2, 7.2)
-	var trunk_color := Color(0.14, 0.10, 0.07).lerp(Color(0.24, 0.20, 0.15), _world_rng.randf())
-	_create_static_cylinder("DeadFallbackTrunk", pos, _world_rng.randf_range(0.16, 0.28), height * 0.82, trunk_color)
-	for i in range(5 + _world_rng.randi() % 4):
-		var side := -1.0 if i % 2 == 0 else 1.0
-		var y := height * _world_rng.randf_range(0.34, 0.78)
-		var branch_length := _world_rng.randf_range(0.85, 1.75)
-		var branch_pos := pos + Vector3(side * _world_rng.randf_range(0.18, 0.46), y, _world_rng.randf_range(-0.22, 0.22))
-		var branch_rot := Vector3(_world_rng.randf_range(54.0, 76.0), _world_rng.randf_range(-70.0, 70.0), side * _world_rng.randf_range(18.0, 42.0))
-		_create_visual_cylinder("DeadFallbackBranch", branch_pos, _world_rng.randf_range(0.025, 0.055), branch_length, trunk_color.darkened(_world_rng.randf_range(0.04, 0.18)), branch_rot)
-	if _world_rng.randf() < 0.35:
-		_create_visual_sphere("DeadFallbackSparseLeaves", pos + Vector3(_world_rng.randf_range(-0.25, 0.25), height * 0.74, _world_rng.randf_range(-0.25, 0.25)), Vector3(_world_rng.randf_range(0.55, 0.9), _world_rng.randf_range(0.24, 0.42), _world_rng.randf_range(0.45, 0.78)), Color(0.055, 0.095, 0.042))
 
 func _create_grass_clump(pos: Vector3, height: float, color: Color) -> void:
 	if not _can_place_ground_vegetation(pos):
@@ -10142,7 +10304,8 @@ func _generate_lods_for_node(root: Node3D) -> void:
 		var mi := mesh_node as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue
-		mi.generate_lods()
+		if mi.has_method("generate_lods"):
+			mi.generate_lods()
 
 func _collect_collision_nodes(node: Node, result: Array) -> void:
 	if node is CollisionShape3D or node is StaticBody3D or node is RigidBody3D or node is AnimatableBody3D:

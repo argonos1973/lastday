@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://2tckbowlw0qt"
 path.s3tc="res://.godot/imported/souce_toilet_dirty_2_1.png-999d5145d88a076485c2d1eee65cf181.s3tc.ctex"
+path.etc2="res://.godot/imported/souce_toilet_dirty_2_1.png-999d5145d88a076485c2d1eee65cf181.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/souce_toilet_dirty_2_1.png"
-dest_files=["res://.godot/imported/souce_toilet_dirty_2_1.png-999d5145d88a076485c2d1eee65cf181.s3tc.ctex"]
+dest_files=["res://.godot/imported/souce_toilet_dirty_2_1.png-999d5145d88a076485c2d1eee65cf181.s3tc.ctex", "res://.godot/imported/souce_toilet_dirty_2_1.png-999d5145d88a076485c2d1eee65cf181.etc2.ctex"]
 
 [params]
 

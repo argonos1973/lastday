@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://shv43wswa7oh"
 path.s3tc="res://.godot/imported/telephone_pole_scene_2.jpg-b2812ef37c6720bfbfc4627f4c397e54.s3tc.ctex"
+path.etc2="res://.godot/imported/telephone_pole_scene_2.jpg-b2812ef37c6720bfbfc4627f4c397e54.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/telephone_pole_scene_2.jpg"
-dest_files=["res://.godot/imported/telephone_pole_scene_2.jpg-b2812ef37c6720bfbfc4627f4c397e54.s3tc.ctex"]
+dest_files=["res://.godot/imported/telephone_pole_scene_2.jpg-b2812ef37c6720bfbfc4627f4c397e54.s3tc.ctex", "res://.godot/imported/telephone_pole_scene_2.jpg-b2812ef37c6720bfbfc4627f4c397e54.etc2.ctex"]
 
 [params]
 

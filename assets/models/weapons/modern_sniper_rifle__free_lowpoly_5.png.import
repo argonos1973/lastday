@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dpaa3j2oe7wgu"
 path.s3tc="res://.godot/imported/modern_sniper_rifle__free_lowpoly_5.png-7e716fdea6b96b41d854154188eedbc5.s3tc.ctex"
+path.etc2="res://.godot/imported/modern_sniper_rifle__free_lowpoly_5.png-7e716fdea6b96b41d854154188eedbc5.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/models/weapons/modern_sniper_rifle__free_lowpoly_5.png"
-dest_files=["res://.godot/imported/modern_sniper_rifle__free_lowpoly_5.png-7e716fdea6b96b41d854154188eedbc5.s3tc.ctex"]
+dest_files=["res://.godot/imported/modern_sniper_rifle__free_lowpoly_5.png-7e716fdea6b96b41d854154188eedbc5.s3tc.ctex", "res://.godot/imported/modern_sniper_rifle__free_lowpoly_5.png-7e716fdea6b96b41d854154188eedbc5.etc2.ctex"]
 
 [params]
 

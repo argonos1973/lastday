@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b6a2i7a1n3xo7"
 path.s3tc="res://.godot/imported/shipping_container_anos_2.png-a710af0e3d82fe7fbd121c78186a3e09.s3tc.ctex"
+path.etc2="res://.godot/imported/shipping_container_anos_2.png-a710af0e3d82fe7fbd121c78186a3e09.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/shipping_container_anos_2.png"
-dest_files=["res://.godot/imported/shipping_container_anos_2.png-a710af0e3d82fe7fbd121c78186a3e09.s3tc.ctex"]
+dest_files=["res://.godot/imported/shipping_container_anos_2.png-a710af0e3d82fe7fbd121c78186a3e09.s3tc.ctex", "res://.godot/imported/shipping_container_anos_2.png-a710af0e3d82fe7fbd121c78186a3e09.etc2.ctex"]
 
 [params]
 

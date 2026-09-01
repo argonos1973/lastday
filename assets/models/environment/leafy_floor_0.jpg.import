@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c0smxmi1cgcjl"
 path.s3tc="res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.s3tc.ctex"
+path.etc2="res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/leafy_floor_0.jpg"
-dest_files=["res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.s3tc.ctex"]
+dest_files=["res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.s3tc.ctex", "res://.godot/imported/leafy_floor_0.jpg-d7be13adb027ea4995663109eeebdcee.etc2.ctex"]
 
 [params]
 

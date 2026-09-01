@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://hfc773um4n02"
 path.s3tc="res://.godot/imported/Remy_Remy_7.png-055d7d2a305cf866a0cbe33c349bd38e.s3tc.ctex"
+path.etc2="res://.godot/imported/Remy_Remy_7.png-055d7d2a305cf866a0cbe33c349bd38e.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/Remy_Remy_7.png"
-dest_files=["res://.godot/imported/Remy_Remy_7.png-055d7d2a305cf866a0cbe33c349bd38e.s3tc.ctex"]
+dest_files=["res://.godot/imported/Remy_Remy_7.png-055d7d2a305cf866a0cbe33c349bd38e.s3tc.ctex", "res://.godot/imported/Remy_Remy_7.png-055d7d2a305cf866a0cbe33c349bd38e.etc2.ctex"]
 
 [params]
 

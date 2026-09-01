@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dj5a6oxw53epa"
 path.s3tc="res://.godot/imported/box_of_matches_north_korea_1955_0.png-8a31faa1f89710ddbb230e322957030e.s3tc.ctex"
+path.etc2="res://.godot/imported/box_of_matches_north_korea_1955_0.png-8a31faa1f89710ddbb230e322957030e.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/box_of_matches_north_korea_1955_0.png"
-dest_files=["res://.godot/imported/box_of_matches_north_korea_1955_0.png-8a31faa1f89710ddbb230e322957030e.s3tc.ctex"]
+dest_files=["res://.godot/imported/box_of_matches_north_korea_1955_0.png-8a31faa1f89710ddbb230e322957030e.s3tc.ctex", "res://.godot/imported/box_of_matches_north_korea_1955_0.png-8a31faa1f89710ddbb230e322957030e.etc2.ctex"]
 
 [params]
 

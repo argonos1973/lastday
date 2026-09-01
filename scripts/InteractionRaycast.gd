@@ -147,7 +147,7 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 				var player_forward2 := -player.global_transform.basis.z
 				player_forward2.y = 0.0
 				player_forward2 = player_forward2.normalized()
-				if player_forward2.dot(dir_to_node2) < 0.5:
+				if player_forward2.dot(dir_to_node2) < 0.3:
 					continue
 			best_dist = total_dist
 			best = node
@@ -158,7 +158,15 @@ func _has_line_of_sight(player: Node3D, target: Node3D) -> bool:
 	if space_state == null:
 		return true
 	var from: Vector3 = player.global_position + Vector3(0, 1.0, 0)
-	var to: Vector3 = target.global_position
+	var to: Vector3 = target.global_position + Vector3(0, 1.0, 0)
+	# Adjust target point to center of collision box if available
+	if target is CollisionObject3D:
+		for child in (target as Node).get_children():
+			if child is CollisionShape3D and (child as CollisionShape3D).shape is BoxShape3D:
+				var col := child as CollisionShape3D
+				var box := col.shape as BoxShape3D
+				to = target.global_position + col.position + Vector3(0, box.size.y * 0.5, 0)
+				break
 	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(from, to)
 	query.collide_with_areas = false
 	query.collide_with_bodies = true
@@ -166,7 +174,7 @@ func _has_line_of_sight(player: Node3D, target: Node3D) -> bool:
 	_collect_child_collision_rids(player, exclude_rids)
 	if target is CollisionObject3D:
 		exclude_rids.append((target as CollisionObject3D).get_rid())
-	_collect_child_collision_rids(target, exclude_rids)
+		_collect_child_collision_rids(target, exclude_rids)
 	query.exclude = exclude_rids
 	var result: Dictionary = space_state.intersect_ray(query)
 	return result.is_empty()

@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cwt1vsudat76k"
 path.s3tc="res://.godot/imported/Leaves.png-d540a2f2b7adeaff1a270a02a8b354f5.s3tc.ctex"
+path.etc2="res://.godot/imported/Leaves.png-d540a2f2b7adeaff1a270a02a8b354f5.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/quaternius_stylized_nature_megakit/glTF/Leaves.png"
-dest_files=["res://.godot/imported/Leaves.png-d540a2f2b7adeaff1a270a02a8b354f5.s3tc.ctex"]
+dest_files=["res://.godot/imported/Leaves.png-d540a2f2b7adeaff1a270a02a8b354f5.s3tc.ctex", "res://.godot/imported/Leaves.png-d540a2f2b7adeaff1a270a02a8b354f5.etc2.ctex"]
 
 [params]
 

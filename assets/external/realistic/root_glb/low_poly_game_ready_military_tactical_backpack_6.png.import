@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b0hrpt7at4g0y"
 path.s3tc="res://.godot/imported/low_poly_game_ready_military_tactical_backpack_6.png-25730e6733ae726ecd2589086cb719c7.s3tc.ctex"
+path.etc2="res://.godot/imported/low_poly_game_ready_military_tactical_backpack_6.png-25730e6733ae726ecd2589086cb719c7.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack_6.png"
-dest_files=["res://.godot/imported/low_poly_game_ready_military_tactical_backpack_6.png-25730e6733ae726ecd2589086cb719c7.s3tc.ctex"]
+dest_files=["res://.godot/imported/low_poly_game_ready_military_tactical_backpack_6.png-25730e6733ae726ecd2589086cb719c7.s3tc.ctex", "res://.godot/imported/low_poly_game_ready_military_tactical_backpack_6.png-25730e6733ae726ecd2589086cb719c7.etc2.ctex"]
 
 [params]
 

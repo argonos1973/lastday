@@ -4339,9 +4339,33 @@ func craft_recipe(recipe: Dictionary) -> void:
 		notice.emit("No tienes los materiales necesarios.")
 		return
 	inventory.changed.emit()
+	# Determine animation and duration based on recipe type
+	var craft_anim := "forage"
+	var craft_duration := 2.0
+	var out_name := str(out["name"])
+	if out_name.find("abierta") >= 0:
+		craft_anim = "pickup"
+		craft_duration = 1.5
+		notice.emit("Abriendo lata con cuchillo...")
+	else:
+		notice.emit("Has crafteado: %s." % out_name)
 	# Play crafting animation
-	play_action_animation("forage", 2.0)
-	notice.emit("Has crafteado: %s." % out["name"])
+	play_action_animation(craft_anim, craft_duration)
+	# Show countdown via parent HUD
+	var parent_node := get_parent()
+	if parent_node != null and parent_node.has_node("HUD"):
+		var hud_node := parent_node.get_node("HUD")
+		if hud_node != null and hud_node.has_method("show_countdown"):
+			hud_node.show_countdown("Abriendo lata" if craft_anim == "pickup" else "Crafteando", craft_duration)
+	if craft_anim == "pickup":
+		await get_tree().create_timer(craft_duration).timeout
+		notice.emit("Has abierto la lata. Ya puedes comerla.")
+		for _it in inventory.items:
+			if _it != null and str(_it.item_name) == "Cuchillo" and _it.has_method("reduce_durability"):
+				_it.reduce_durability(2.0)
+				if _it.is_broken():
+					notice.emit("Tu Cuchillo se ha roto!")
+				break
 
 func _toggle_sit() -> void:
 	var has_rifle := _has_rifle_equipped()

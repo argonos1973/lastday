@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://chdkb0rjlauib"
 path.s3tc="res://.godot/imported/TrafficLight_1_Zombie_Atlas.png-0a0c731a2c7cde6fc3a47d1d3928e1dc.s3tc.ctex"
+path.etc2="res://.godot/imported/TrafficLight_1_Zombie_Atlas.png-0a0c731a2c7cde6fc3a47d1d3928e1dc.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/quaternius_zombie_apocalypse/Environment/glTF/TrafficLight_1_Zombie_Atlas.png"
-dest_files=["res://.godot/imported/TrafficLight_1_Zombie_Atlas.png-0a0c731a2c7cde6fc3a47d1d3928e1dc.s3tc.ctex"]
+dest_files=["res://.godot/imported/TrafficLight_1_Zombie_Atlas.png-0a0c731a2c7cde6fc3a47d1d3928e1dc.s3tc.ctex", "res://.godot/imported/TrafficLight_1_Zombie_Atlas.png-0a0c731a2c7cde6fc3a47d1d3928e1dc.etc2.ctex"]
 
 [params]
 

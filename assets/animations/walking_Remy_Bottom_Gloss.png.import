@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://qkysffyn2btt"
 path.s3tc="res://.godot/imported/walking_Remy_Bottom_Gloss.png-802ccb68eb7c0e53d4d5e1ca42fd660f.s3tc.ctex"
+path.etc2="res://.godot/imported/walking_Remy_Bottom_Gloss.png-802ccb68eb7c0e53d4d5e1ca42fd660f.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/walking_Remy_Bottom_Gloss.png"
-dest_files=["res://.godot/imported/walking_Remy_Bottom_Gloss.png-802ccb68eb7c0e53d4d5e1ca42fd660f.s3tc.ctex"]
+dest_files=["res://.godot/imported/walking_Remy_Bottom_Gloss.png-802ccb68eb7c0e53d4d5e1ca42fd660f.s3tc.ctex", "res://.godot/imported/walking_Remy_Bottom_Gloss.png-802ccb68eb7c0e53d4d5e1ca42fd660f.etc2.ctex"]
 
 [params]
 

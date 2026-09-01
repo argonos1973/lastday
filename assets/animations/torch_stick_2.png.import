@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://d3uexr3dvrlxq"
 path.s3tc="res://.godot/imported/torch_stick_2.png-99af8e247b1130b447d31f991357c507.s3tc.ctex"
+path.etc2="res://.godot/imported/torch_stick_2.png-99af8e247b1130b447d31f991357c507.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/torch_stick_2.png"
-dest_files=["res://.godot/imported/torch_stick_2.png-99af8e247b1130b447d31f991357c507.s3tc.ctex"]
+dest_files=["res://.godot/imported/torch_stick_2.png-99af8e247b1130b447d31f991357c507.s3tc.ctex", "res://.godot/imported/torch_stick_2.png-99af8e247b1130b447d31f991357c507.etc2.ctex"]
 
 [params]
 

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://d1pocd80xle1e"
 path.s3tc="res://.godot/imported/canned_food_low_0.png-86a593ac6fd8d1125057b577c79a4e52.s3tc.ctex"
+path.etc2="res://.godot/imported/canned_food_low_0.png-86a593ac6fd8d1125057b577c79a4e52.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/canned_food_low_0.png"
-dest_files=["res://.godot/imported/canned_food_low_0.png-86a593ac6fd8d1125057b577c79a4e52.s3tc.ctex"]
+dest_files=["res://.godot/imported/canned_food_low_0.png-86a593ac6fd8d1125057b577c79a4e52.s3tc.ctex", "res://.godot/imported/canned_food_low_0.png-86a593ac6fd8d1125057b577c79a4e52.etc2.ctex"]
 
 [params]
 

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cnsvffhuaea7"
 path.s3tc="res://.godot/imported/Characters_Matt_SingleWeapon_Zombie_Atlas.png-927f166fff99fda76c65f5146e41a9bd.s3tc.ctex"
+path.etc2="res://.godot/imported/Characters_Matt_SingleWeapon_Zombie_Atlas.png-927f166fff99fda76c65f5146e41a9bd.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon_Zombie_Atlas.png"
-dest_files=["res://.godot/imported/Characters_Matt_SingleWeapon_Zombie_Atlas.png-927f166fff99fda76c65f5146e41a9bd.s3tc.ctex"]
+dest_files=["res://.godot/imported/Characters_Matt_SingleWeapon_Zombie_Atlas.png-927f166fff99fda76c65f5146e41a9bd.s3tc.ctex", "res://.godot/imported/Characters_Matt_SingleWeapon_Zombie_Atlas.png-927f166fff99fda76c65f5146e41a9bd.etc2.ctex"]
 
 [params]
 

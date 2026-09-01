@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cv8sody0l2fmf"
 path.s3tc="res://.godot/imported/fishermans_hat_arm_1k.jpg-38a1f71ed60ab5b862ceaf8f4f7a4e9e.s3tc.ctex"
+path.etc2="res://.godot/imported/fishermans_hat_arm_1k.jpg-38a1f71ed60ab5b862ceaf8f4f7a4e9e.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/polyhaven/fishermans_hat/textures/fishermans_hat_arm_1k.jpg"
-dest_files=["res://.godot/imported/fishermans_hat_arm_1k.jpg-38a1f71ed60ab5b862ceaf8f4f7a4e9e.s3tc.ctex"]
+dest_files=["res://.godot/imported/fishermans_hat_arm_1k.jpg-38a1f71ed60ab5b862ceaf8f4f7a4e9e.s3tc.ctex", "res://.godot/imported/fishermans_hat_arm_1k.jpg-38a1f71ed60ab5b862ceaf8f4f7a4e9e.etc2.ctex"]
 
 [params]
 

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dg50nem1lauhr"
 path.s3tc="res://.godot/imported/old_rusty_kitchen_stove__dirty_damaged_3.png-6de64f8e5dfac3fb76995ebe33761c80.s3tc.ctex"
+path.etc2="res://.godot/imported/old_rusty_kitchen_stove__dirty_damaged_3.png-6de64f8e5dfac3fb76995ebe33761c80.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/old_rusty_kitchen_stove__dirty_damaged_3.png"
-dest_files=["res://.godot/imported/old_rusty_kitchen_stove__dirty_damaged_3.png-6de64f8e5dfac3fb76995ebe33761c80.s3tc.ctex"]
+dest_files=["res://.godot/imported/old_rusty_kitchen_stove__dirty_damaged_3.png-6de64f8e5dfac3fb76995ebe33761c80.s3tc.ctex", "res://.godot/imported/old_rusty_kitchen_stove__dirty_damaged_3.png-6de64f8e5dfac3fb76995ebe33761c80.etc2.ctex"]
 
 [params]
 

@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dgmylwaye4xqx"
 path.s3tc="res://.godot/imported/Standing Torch Run Forward_2.png-8b26e788afd104f9e60a6e2cd844a695.s3tc.ctex"
+path.etc2="res://.godot/imported/Standing Torch Run Forward_2.png-8b26e788afd104f9e60a6e2cd844a695.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Standing Torch Run Forward_2.png"
-dest_files=["res://.godot/imported/Standing Torch Run Forward_2.png-8b26e788afd104f9e60a6e2cd844a695.s3tc.ctex"]
+dest_files=["res://.godot/imported/Standing Torch Run Forward_2.png-8b26e788afd104f9e60a6e2cd844a695.s3tc.ctex", "res://.godot/imported/Standing Torch Run Forward_2.png-8b26e788afd104f9e60a6e2cd844a695.etc2.ctex"]
 
 [params]
 

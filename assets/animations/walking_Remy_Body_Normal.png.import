@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dpy8g7yyd8hkw"
 path.s3tc="res://.godot/imported/walking_Remy_Body_Normal.png-3e32fb2bc6256d686eec3614884c067b.s3tc.ctex"
+path.etc2="res://.godot/imported/walking_Remy_Body_Normal.png-3e32fb2bc6256d686eec3614884c067b.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/walking_Remy_Body_Normal.png"
-dest_files=["res://.godot/imported/walking_Remy_Body_Normal.png-3e32fb2bc6256d686eec3614884c067b.s3tc.ctex"]
+dest_files=["res://.godot/imported/walking_Remy_Body_Normal.png-3e32fb2bc6256d686eec3614884c067b.s3tc.ctex", "res://.godot/imported/walking_Remy_Body_Normal.png-3e32fb2bc6256d686eec3614884c067b.etc2.ctex"]
 
 [params]
 

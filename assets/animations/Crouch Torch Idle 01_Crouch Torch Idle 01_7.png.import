@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://g6dva64fp04h"
 path.s3tc="res://.godot/imported/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png-3318083d96fc2504a82b23afa29d0d7c.s3tc.ctex"
+path.etc2="res://.godot/imported/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png-3318083d96fc2504a82b23afa29d0d7c.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png"
-dest_files=["res://.godot/imported/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png-3318083d96fc2504a82b23afa29d0d7c.s3tc.ctex"]
+dest_files=["res://.godot/imported/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png-3318083d96fc2504a82b23afa29d0d7c.s3tc.ctex", "res://.godot/imported/Crouch Torch Idle 01_Crouch Torch Idle 01_7.png-3318083d96fc2504a82b23afa29d0d7c.etc2.ctex"]
 
 [params]
 

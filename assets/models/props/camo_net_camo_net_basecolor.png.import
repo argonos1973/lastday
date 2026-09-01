@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://ppttu5uankpn"
 path.s3tc="res://.godot/imported/camo_net_camo_net_basecolor.png-af7b28c1ff9450206145c94154708970.s3tc.ctex"
+path.etc2="res://.godot/imported/camo_net_camo_net_basecolor.png-af7b28c1ff9450206145c94154708970.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/camo_net_camo_net_basecolor.png"
-dest_files=["res://.godot/imported/camo_net_camo_net_basecolor.png-af7b28c1ff9450206145c94154708970.s3tc.ctex"]
+dest_files=["res://.godot/imported/camo_net_camo_net_basecolor.png-af7b28c1ff9450206145c94154708970.s3tc.ctex", "res://.godot/imported/camo_net_camo_net_basecolor.png-af7b28c1ff9450206145c94154708970.etc2.ctex"]
 
 [params]
 

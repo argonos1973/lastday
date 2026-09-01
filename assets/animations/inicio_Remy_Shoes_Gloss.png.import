@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dp20kka26wsc3"
 path.s3tc="res://.godot/imported/inicio_Remy_Shoes_Gloss.png-252537a978c49e435bf17ed777889963.s3tc.ctex"
+path.etc2="res://.godot/imported/inicio_Remy_Shoes_Gloss.png-252537a978c49e435bf17ed777889963.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/inicio_Remy_Shoes_Gloss.png"
-dest_files=["res://.godot/imported/inicio_Remy_Shoes_Gloss.png-252537a978c49e435bf17ed777889963.s3tc.ctex"]
+dest_files=["res://.godot/imported/inicio_Remy_Shoes_Gloss.png-252537a978c49e435bf17ed777889963.s3tc.ctex", "res://.godot/imported/inicio_Remy_Shoes_Gloss.png-252537a978c49e435bf17ed777889963.etc2.ctex"]
 
 [params]
 

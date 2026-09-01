@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bvmxu0tefneqv"
 path.s3tc="res://.godot/imported/tinylivingpack_3.png-b6f18ea1866a5ab6a6a1edf8c2dc11f4.s3tc.ctex"
+path.etc2="res://.godot/imported/tinylivingpack_3.png-b6f18ea1866a5ab6a6a1edf8c2dc11f4.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/tinylivingpack_3.png"
-dest_files=["res://.godot/imported/tinylivingpack_3.png-b6f18ea1866a5ab6a6a1edf8c2dc11f4.s3tc.ctex"]
+dest_files=["res://.godot/imported/tinylivingpack_3.png-b6f18ea1866a5ab6a6a1edf8c2dc11f4.s3tc.ctex", "res://.godot/imported/tinylivingpack_3.png-b6f18ea1866a5ab6a6a1edf8c2dc11f4.etc2.ctex"]
 
 [params]
 

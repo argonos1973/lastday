@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://br1i4x67roa02"
 path.s3tc="res://.godot/imported/tent_military_0.png-022a2710fabe34011a4dc50c1446e1af.s3tc.ctex"
+path.etc2="res://.godot/imported/tent_military_0.png-022a2710fabe34011a4dc50c1446e1af.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/tent/tent_military_0.png"
-dest_files=["res://.godot/imported/tent_military_0.png-022a2710fabe34011a4dc50c1446e1af.s3tc.ctex"]
+dest_files=["res://.godot/imported/tent_military_0.png-022a2710fabe34011a4dc50c1446e1af.s3tc.ctex", "res://.godot/imported/tent_military_0.png-022a2710fabe34011a4dc50c1446e1af.etc2.ctex"]
 
 [params]
 

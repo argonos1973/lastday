@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cmn4ysb2536fv"
 path.s3tc="res://.godot/imported/Vehicle_Sports_Armored_Zombie_Atlas.png-b6ae6f66e63acdabc727d4391fd5e9ec.s3tc.ctex"
+path.etc2="res://.godot/imported/Vehicle_Sports_Armored_Zombie_Atlas.png-b6ae6f66e63acdabc727d4391fd5e9ec.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/quaternius_zombie_apocalypse/Vehicles/glTF/Vehicle_Sports_Armored_Zombie_Atlas.png"
-dest_files=["res://.godot/imported/Vehicle_Sports_Armored_Zombie_Atlas.png-b6ae6f66e63acdabc727d4391fd5e9ec.s3tc.ctex"]
+dest_files=["res://.godot/imported/Vehicle_Sports_Armored_Zombie_Atlas.png-b6ae6f66e63acdabc727d4391fd5e9ec.s3tc.ctex", "res://.godot/imported/Vehicle_Sports_Armored_Zombie_Atlas.png-b6ae6f66e63acdabc727d4391fd5e9ec.etc2.ctex"]
 
 [params]
 

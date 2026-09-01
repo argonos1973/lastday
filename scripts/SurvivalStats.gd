@@ -48,7 +48,7 @@ func consume_water(value: float) -> void:
 	thirst = min(max_stat, thirst + value)
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false, on_bed := false) -> void:
 	if dead:
 		return
 	survival_seconds += delta
@@ -152,6 +152,8 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2
+		if sleeping and on_bed:
+			regen_rate *= 2.0
 		health = min(max_health, health + regen_rate * delta)
 	changed.emit()
 	if health <= 0.0 and not dead:

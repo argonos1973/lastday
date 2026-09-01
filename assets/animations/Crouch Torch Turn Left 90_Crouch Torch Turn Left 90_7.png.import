@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bk7pwd7wi4hhd"
 path.s3tc="res://.godot/imported/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png-3a088a9cb649b54db8ebb98cd5fa7114.s3tc.ctex"
+path.etc2="res://.godot/imported/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png-3a088a9cb649b54db8ebb98cd5fa7114.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png"
-dest_files=["res://.godot/imported/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png-3a088a9cb649b54db8ebb98cd5fa7114.s3tc.ctex"]
+dest_files=["res://.godot/imported/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png-3a088a9cb649b54db8ebb98cd5fa7114.s3tc.ctex", "res://.godot/imported/Crouch Torch Turn Left 90_Crouch Torch Turn Left 90_7.png-3a088a9cb649b54db8ebb98cd5fa7114.etc2.ctex"]
 
 [params]
 

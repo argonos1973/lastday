@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://gwo5yivf7fj7"
 path.s3tc="res://.godot/imported/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png-a96b0e125579b50289526a5abe322348.s3tc.ctex"
+path.etc2="res://.godot/imported/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png-a96b0e125579b50289526a5abe322348.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png"
-dest_files=["res://.godot/imported/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png-a96b0e125579b50289526a5abe322348.s3tc.ctex"]
+dest_files=["res://.godot/imported/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png-a96b0e125579b50289526a5abe322348.s3tc.ctex", "res://.godot/imported/Standing Torch Turn Right 90_Standing Torch Turn Right 90_7.png-a96b0e125579b50289526a5abe322348.etc2.ctex"]
 
 [params]
 

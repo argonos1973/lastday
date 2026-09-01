@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dfcb0ori7dnja"
 path.s3tc="res://.godot/imported/inicio_Remy_Bottom_Normal.png-33ba28f70df9ebad6a3218e40033e1bb.s3tc.ctex"
+path.etc2="res://.godot/imported/inicio_Remy_Bottom_Normal.png-33ba28f70df9ebad6a3218e40033e1bb.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/inicio_Remy_Bottom_Normal.png"
-dest_files=["res://.godot/imported/inicio_Remy_Bottom_Normal.png-33ba28f70df9ebad6a3218e40033e1bb.s3tc.ctex"]
+dest_files=["res://.godot/imported/inicio_Remy_Bottom_Normal.png-33ba28f70df9ebad6a3218e40033e1bb.s3tc.ctex", "res://.godot/imported/inicio_Remy_Bottom_Normal.png-33ba28f70df9ebad6a3218e40033e1bb.etc2.ctex"]
 
 [params]
 

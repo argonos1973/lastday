@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://lpgak8voqjba"
 path.s3tc="res://.godot/imported/old_wooden_barn_house_4_3.png-272a79ad5395cf266c9d9f0252f14a45.s3tc.ctex"
+path.etc2="res://.godot/imported/old_wooden_barn_house_4_3.png-272a79ad5395cf266c9d9f0252f14a45.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/buildings/old_wooden_barn_house_4_3.png"
-dest_files=["res://.godot/imported/old_wooden_barn_house_4_3.png-272a79ad5395cf266c9d9f0252f14a45.s3tc.ctex"]
+dest_files=["res://.godot/imported/old_wooden_barn_house_4_3.png-272a79ad5395cf266c9d9f0252f14a45.s3tc.ctex", "res://.godot/imported/old_wooden_barn_house_4_3.png-272a79ad5395cf266c9d9f0252f14a45.etc2.ctex"]
 
 [params]
 

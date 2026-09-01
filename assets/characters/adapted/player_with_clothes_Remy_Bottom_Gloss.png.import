@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cv1ns833s1c5a"
 path.s3tc="res://.godot/imported/player_with_clothes_Remy_Bottom_Gloss.png-dfb0cc69c8c15ce0daa376f0bbd776ee.s3tc.ctex"
+path.etc2="res://.godot/imported/player_with_clothes_Remy_Bottom_Gloss.png-dfb0cc69c8c15ce0daa376f0bbd776ee.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/player_with_clothes_Remy_Bottom_Gloss.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Bottom_Gloss.png-dfb0cc69c8c15ce0daa376f0bbd776ee.s3tc.ctex"]
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Bottom_Gloss.png-dfb0cc69c8c15ce0daa376f0bbd776ee.s3tc.ctex", "res://.godot/imported/player_with_clothes_Remy_Bottom_Gloss.png-dfb0cc69c8c15ce0daa376f0bbd776ee.etc2.ctex"]
 
 [params]
 

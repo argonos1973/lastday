@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c7vqi3tj64xqw"
 path.s3tc="res://.godot/imported/camo_net_stick_shelter_deformable_camo_net_normal.png-75454f9f1a063af968b014fcf4dd1d6b.s3tc.ctex"
+path.etc2="res://.godot/imported/camo_net_stick_shelter_deformable_camo_net_normal.png-75454f9f1a063af968b014fcf4dd1d6b.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://tools/blender/camo_net_export/camo_net_stick_shelter_deformable_camo_net_normal.png"
-dest_files=["res://.godot/imported/camo_net_stick_shelter_deformable_camo_net_normal.png-75454f9f1a063af968b014fcf4dd1d6b.s3tc.ctex"]
+dest_files=["res://.godot/imported/camo_net_stick_shelter_deformable_camo_net_normal.png-75454f9f1a063af968b014fcf4dd1d6b.s3tc.ctex", "res://.godot/imported/camo_net_stick_shelter_deformable_camo_net_normal.png-75454f9f1a063af968b014fcf4dd1d6b.etc2.ctex"]
 
 [params]
 

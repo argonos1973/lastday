@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://rl80mpr5na52"
 path.s3tc="res://.godot/imported/Pipes_Zombie_Atlas.png-564a16329bfb1e0f5cb34b2c8d1a7cdf.s3tc.ctex"
+path.etc2="res://.godot/imported/Pipes_Zombie_Atlas.png-564a16329bfb1e0f5cb34b2c8d1a7cdf.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/quaternius_zombie_apocalypse/Environment/glTF/Pipes_Zombie_Atlas.png"
-dest_files=["res://.godot/imported/Pipes_Zombie_Atlas.png-564a16329bfb1e0f5cb34b2c8d1a7cdf.s3tc.ctex"]
+dest_files=["res://.godot/imported/Pipes_Zombie_Atlas.png-564a16329bfb1e0f5cb34b2c8d1a7cdf.s3tc.ctex", "res://.godot/imported/Pipes_Zombie_Atlas.png-564a16329bfb1e0f5cb34b2c8d1a7cdf.etc2.ctex"]
 
 [params]
 
