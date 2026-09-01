@@ -84,6 +84,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var legs_item := ""
 	var feet_item := ""
 	var hands_item := ""
+	var head_item := ""
 	for it in equipped_items:
 		var n := str(it).strip_edges()
 		if n == "Camiseta" or n.find("Chaqueta") >= 0:
@@ -94,6 +95,8 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			feet_item = n
 		elif n.find("Guantes") >= 0:
 			hands_item = n
+		elif n.find("Sombrero") >= 0:
+			head_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
 	var has_feet := not feet_item.is_empty()
@@ -179,12 +182,12 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl.begins_with("soldier_"):
 			if nl == "soldier_torso":
 				m.visible = show_soldier_torso
-				if m.visible:
-					_mat(m, Color(0.2, 0.25, 0.12))
+				if m.visible and torso_item.find("militar ") >= 0:
+					_mat(m, _MILITARY_TINTS.get(torso_item, Color(0.2, 0.25, 0.12)))
 			elif nl == "soldier_legs":
 				m.visible = show_soldier_legs
-				if m.visible:
-					_mat(m, Color(0.2, 0.25, 0.12))
+				if m.visible and legs_item.find("militares ") >= 0:
+					_mat(m, _MILITARY_TINTS.get(legs_item, Color(0.2, 0.25, 0.12)))
 			else:
 				m.visible = false
 		elif nl == "cube":
@@ -198,6 +201,13 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Add gloves
 	if not hands_item.is_empty():
 		_add_preview_gloves(model, hands_item)
+	# Add hat
+	if not head_item.is_empty():
+		_add_preview_hat(model, head_item)
+	# Add held item (weapon/tool in hand)
+	var held_item_name := str(pd.get("held_item", ""))
+	if held_item_name == "Cuchillo":
+		_add_preview_knife(model)
 
 const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"]}
 const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Chaqueta militar":["Body_torso","Body_arms"],"Pantalones militares":["Body_legs"]}
@@ -271,6 +281,88 @@ static func _add_preview_backpack(model: Node3D) -> void:
 		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
 	)
 	bp.position = center_offset + Vector3(0.0, 2.6, -0.15)
+
+const _MILITARY_TINTS := {
+	"Chaqueta militar azul": Color(0.03, 0.05, 0.10),
+	"Pantalones militares azules": Color(0.02, 0.04, 0.08),
+	"Chaqueta militar negra II": Color(0.03, 0.03, 0.04),
+	"Pantalones militares negros II": Color(0.02, 0.02, 0.03),
+}
+
+const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
+const _KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
+
+static func _add_preview_hat(model: Node3D, item_name: String) -> void:
+	if item_name != "Sombrero de pescador":
+		return
+	var packed := load(_HAT_MODEL)
+	if packed == null or not packed is PackedScene:
+		return
+	var hat := (packed as PackedScene).instantiate() as Node3D
+	if hat == null:
+		return
+	hat.name = "PreviewHat"
+	var body_meshes: Array = []
+	_collect_meshes(model, body_meshes)
+	var bmin := Vector3(999999.0, 999999.0, 999999.0)
+	var bmax := Vector3(-999999.0, -999999.0, -999999.0)
+	var has_body := false
+	for mi in body_meshes:
+		var m := mi as MeshInstance3D
+		if not m.visible or m.mesh == null:
+			continue
+		var aabb: AABB = m.get_aabb()
+		bmin.x = min(bmin.x, aabb.position.x)
+		bmin.y = min(bmin.y, aabb.position.y)
+		bmin.z = min(bmin.z, aabb.position.z)
+		bmax.x = max(bmax.x, aabb.position.x + aabb.size.x)
+		bmax.y = max(bmax.y, aabb.position.y + aabb.size.y)
+		bmax.z = max(bmax.z, aabb.position.z + aabb.size.z)
+		has_body = true
+	if not has_body:
+		hat.queue_free()
+		return
+	var body_size := bmax - bmin
+	model.add_child(hat)
+	var item_aabb := _hierarchy_local_aabb(hat)
+	if item_aabb.size.y > 0.001:
+		var target: float = 0.06 * body_size.y
+		hat.scale = Vector3.ONE * (target / item_aabb.size.y)
+	item_aabb = _hierarchy_local_aabb(hat)
+	var anchor := Vector3(
+		bmin.x + body_size.x * 0.5,
+		bmin.y + 0.94 * body_size.y,
+		bmin.z + body_size.z * 0.5 + 0.04 * body_size.z
+	)
+	var item_center := item_aabb.position + item_aabb.size * 0.5
+	item_center.y = item_aabb.position.y
+	hat.position = anchor - item_center
+
+static func _add_preview_knife(model: Node3D) -> void:
+	var packed := load(_KNIFE_MODEL)
+	if packed == null or not packed is PackedScene:
+		return
+	var knife := (packed as PackedScene).instantiate() as Node3D
+	if knife == null:
+		return
+	knife.name = "PreviewKnife"
+	var skel := _find_skeleton(model)
+	if skel == null:
+		knife.queue_free()
+		return
+	var hand_bone_idx := -1
+	for bone_name in ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"]:
+		hand_bone_idx = skel.find_bone(bone_name)
+		if hand_bone_idx != -1:
+			break
+	if hand_bone_idx == -1:
+		knife.queue_free()
+		return
+	skel.add_child(knife)
+	var bone_pose := skel.get_bone_global_pose(hand_bone_idx)
+	knife.transform = bone_pose
+	knife.scale = Vector3.ONE * 0.55
+	knife.position += Vector3(0.10, 0.0, -0.10)
 
 const _PWC_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
 
