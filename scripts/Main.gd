@@ -394,13 +394,14 @@ var _loading_bg: TextureRect = null
 var _loading_tip_label: Label = null
 var _loading_countdown: float = 0.0
 var _loading_phase := 0
+var _tip_pool: Array = []
+var _tip_index := 0
 
-const _LOADING_IMAGES := [
-	"res://assets/loading/01_carretera_camiseta_roja.png",
-	"res://assets/loading/02_campamento_camiseta_azul.png",
-	"res://assets/loading/03_lobos_camiseta_verde.png",
-	"res://assets/loading/04_lago_camiseta_amarilla.png"
-]
+const _LOADING_TEX_0 := preload("res://assets/loading/01_carretera_camiseta_roja.png")
+const _LOADING_TEX_1 := preload("res://assets/loading/02_campamento_camiseta_azul.png")
+const _LOADING_TEX_2 := preload("res://assets/loading/03_lobos_camiseta_verde.png")
+const _LOADING_TEX_3 := preload("res://assets/loading/04_lago_camiseta_amarilla.png")
+const _LOADING_TEXTURES: Array[Texture2D] = [_LOADING_TEX_0, _LOADING_TEX_1, _LOADING_TEX_2, _LOADING_TEX_3]
 
 const _LOADING_TIPS := [
 	"Combina el cuchillo con una lata para abrirla y obtener comida.",
@@ -412,89 +413,151 @@ const _LOADING_TIPS := [
 	"Usa trapos para curar heridas y fabricar vendajes.",
 	"El hacha se gasta con el uso, cuidala para que no se rompa.",
 	"Los lobos atacan en manada, mantente alerta cerca del bosque.",
-	"Puedes pescar en las zonas de pesca señaladas.",
 	"Combina palos con cuerdas para construir herramientas.",
 	"La noche es peligrosa, prepara una hoguera antes de que oscurezca.",
 	"Viste ropa para protegerte del frio y la lluvia.",
 	"Busca piedras y troncos para construir tu campamento.",
-	"El hambre y la sed bajan tu salud, mantente alimentado."
+	"El hambre y la sed bajan tu salud, mantente alimentado.",
+	"Las hogueras tambien ahuyentan a los animales salvajes.",
+	"Combina palos con piedras para fabricar una lanza.",
+	"Guarda comida enlatada para emergencias, no perece.",
+	"El fuego se apaga con la lluvia, busca refugio para cocinar.",
+	"Cuerda y palos pueden usarse para construir una trampa.",
+	"Mantente alejado de los lobos heridos, son mas peligrosos.",
+	"Combina vendajes con alcohol para curar mas rapido.",
+	"Las piedras afiladas sirven como herramientas de corte.",
+	"No corras en la oscuridad, puedes caer en una pendiente.",
+	"Revisa los cadaveres de animales para obtener carne y pieles.",
+	"Las pieles de animales pueden combinarse para hacer ropa de abrigo.",
+	"Un tronco cortado da mas madera que uno arrancado.",
+	"Combina carne cocinada con palos para transportarla mejor.",
+	"La lluvia moja la ropa y aumenta el riesgo de hipotermia.",
+	"Construye cerca del agua pero no demasiado cerca del bosque.",
+	"Los arbustos esconden bayas comestibles, aprende a distinguirlas.",
+	"Una hoguera grande dura mas pero gasta mas leña.",
+	"Combina tela con palos para fabricar una antorcha.",
+	"El cuchillo es mas rapido que el hacha para cortar tela.",
+	"No desperdicies agua, en el bosque no siempre es segura.",
+	"Las cuerdas se rompen con el uso, lleva repuestos.",
+	"Sube a zonas altas para orientarte y divisar el terreno.",
+	"El frio extremo baja tu salud sin que te des cuenta.",
+	"Combina latas vacias con piedras para hacer ruido y ahuyentar lobos.",
+	"Corta arbustos para despejar el camino alrededor de tu refugio.",
+	"Una tienda de campaña protege de la lluvia mejor que un refugio abierto.",
+	"Guarda palos y piedras, siempre los necesitaras para construir.",
+	"El amanecer es el momento mas seguro para explorar.",
+	"No te adentres en el bosque sin un arma o una hoguera cerca.",
+	"Combina carne cruda con sal para conservarla mas tiempo.",
+	"Los troncos apilados se conservan mejor que los esparcidos.",
+	"Si ves lobos acechando, enciende una hoguera para ahuyentarlos.",
+	"La niebla reduce la visibilidad, lleva una antorcha para guiarte.",
+	"Combina tela con cuerda para hacer una mochila improvisada.",
+	"Corta la ropa en buen estado para obtener tela y trapos.",
+	"Un buen campamento necesita paredes, suelo y techo."
 ]
 
 
-#region INICIALIZACIÓN Y CICLO DE VIDA
-func _ready() -> void:
-	seed(WORLD_SEED)
-	_world_rng.seed = WORLD_SEED
-	nav = NavPathfindingScript.new()
-	
-	world_streaming_mgr = WorldStreamingManager.new()
-	add_child(world_streaming_mgr)
-	world_streaming_mgr.setup(self)
-
-	sector_persistence_mgr = SectorPersistenceManager.new()
-	add_child(sector_persistence_mgr)
-
-	_create_debug_overlay()
-	# Get NetworkManager (autoload)
-	net = get_node("/root/NetworkManager")
-	if net != null:
-		net.player_connected.connect(_on_remote_player_connected)
-		net.player_disconnected.connect(_on_remote_player_disconnected)
-		if not net.is_dedicated_server:
-			# Spawn any already-connected players
-			for pid in net.players.keys():
-				if pid != net.get_my_id():
-					_spawn_remote_player(pid)
-	if net != null and net.is_dedicated_server:
-		# Server only needs collision + nav grid + wildlife AI — skip all visuals
-		_create_map()
-		return
-	# Loading overlay with countdown: show it BEFORE heavy world generation
+func _create_loading_overlay() -> void:
 	_loading_overlay = CanvasLayer.new()
 	_loading_overlay.name = "LoadingOverlay"
 	_loading_overlay.layer = 100
 	_loading_phase = -1
+	# Use the actual window size, not the viewport visible rect
+	# which may differ on retina/hidpi displays
+	var win := get_window()
+	var vp_size := Vector2(1280, 720)
+	if win != null:
+		vp_size = win.get_size()
+	var scale_factor: float = vp_size.x / 1280.0
+	if scale_factor < 0.5:
+		scale_factor = 0.5
+	elif scale_factor > 3.0:
+		scale_factor = 3.0
+	# Root Control with explicit size so children layout correctly
+	var root := Control.new()
+	root.name = "LoadingRoot"
+	root.position = Vector2.ZERO
+	root.size = vp_size
+	_loading_overlay.add_child(root)
 	# Background image
 	_loading_bg = TextureRect.new()
 	_loading_bg.name = "LoadingBg"
-	_loading_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_loading_bg.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-	_loading_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_loading_bg.texture = load(_LOADING_IMAGES[0])
-	_loading_overlay.add_child(_loading_bg)
+	_loading_bg.texture = _LOADING_TEX_0
+	_loading_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_loading_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_loading_bg.position = Vector2.ZERO
+	_loading_bg.size = vp_size
+	root.add_child(_loading_bg)
 	# Semi-transparent dark overlay so text is readable
 	var _loading_rect := ColorRect.new()
 	_loading_rect.color = Color(0.0, 0.0, 0.0, 0.45)
-	_loading_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_loading_overlay.add_child(_loading_rect)
+	_loading_rect.position = Vector2.ZERO
+	_loading_rect.size = vp_size
+	root.add_child(_loading_rect)
 	# Loading text (centered)
 	_loading_label = Label.new()
-	_set_loading_phase("Generando mundo...")
-	_loading_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading_label.text = "Generando mundo..."
+	_loading_label.position = Vector2.ZERO
+	_loading_label.size = vp_size
 	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_loading_label.add_theme_font_size_override("font_size", 72)
+	_loading_label.add_theme_font_size_override("font_size", int(36 * scale_factor))
 	_loading_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
 	_loading_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.8))
-	_loading_label.add_theme_constant_override("font_shadow_offset", Vector2(2, 2))
-	_loading_overlay.add_child(_loading_label)
+	_loading_label.add_theme_constant_override("font_shadow_offset", int(2 * scale_factor))
+	root.add_child(_loading_label)
 	# Tips label at the bottom
 	_loading_tip_label = Label.new()
 	_loading_tip_label.name = "LoadingTip"
-	_loading_tip_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_loading_tip_label.position = Vector2(0, -80)
-	_loading_tip_label.size = Vector2(0, 60)
+	var tip_h := int(50 * scale_factor)
+	_loading_tip_label.position = Vector2(0, vp_size.y - tip_h)
+	_loading_tip_label.size = Vector2(vp_size.x, tip_h)
 	_loading_tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_tip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_loading_tip_label.add_theme_font_size_override("font_size", 22)
+	_loading_tip_label.add_theme_font_size_override("font_size", int(16 * scale_factor))
 	_loading_tip_label.add_theme_color_override("font_color", Color(0.9, 0.85, 0.6))
 	_loading_tip_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
-	_loading_tip_label.add_theme_constant_override("font_shadow_offset", Vector2(1, 1))
-	_loading_tip_label.text = "Consejo: " + _LOADING_TIPS[randi() % _LOADING_TIPS.size()]
-	_loading_overlay.add_child(_loading_tip_label)
+	_loading_tip_label.add_theme_constant_override("font_shadow_offset", int(1 * scale_factor))
+	_loading_tip_label.text = "Consejo: " + _get_next_tip()
+	root.add_child(_loading_tip_label)
 	add_child(_loading_overlay)
-	# Force a render of the overlay before heavy world generation
-	await get_tree().process_frame
+
+#region INICIALIZACIÓN Y CICLO DE VIDA
+func _ready() -> void:
+	# Get NetworkManager first to decide if we need visuals
+	net = get_node("/root/NetworkManager")
+	if net != null and net.is_dedicated_server:
+		seed(WORLD_SEED)
+		_world_rng.seed = WORLD_SEED
+		nav = NavPathfindingScript.new()
+		world_streaming_mgr = WorldStreamingManager.new()
+		add_child(world_streaming_mgr)
+		world_streaming_mgr.setup(self)
+		sector_persistence_mgr = SectorPersistenceManager.new()
+		add_child(sector_persistence_mgr)
+		_create_map()
+		return
+	# Create loading overlay FIRST, before any heavy initialization
+	_create_loading_overlay()
+	# Give the renderer time to display the overlay before heavy work
+	await get_tree().create_timer(0.1).timeout
+	seed(WORLD_SEED)
+	_world_rng.seed = WORLD_SEED
+	nav = NavPathfindingScript.new()
+	world_streaming_mgr = WorldStreamingManager.new()
+	add_child(world_streaming_mgr)
+	world_streaming_mgr.setup(self)
+	sector_persistence_mgr = SectorPersistenceManager.new()
+	add_child(sector_persistence_mgr)
+	_create_debug_overlay()
+	if net != null:
+		net.player_connected.connect(_on_remote_player_connected)
+		net.player_disconnected.connect(_on_remote_player_disconnected)
+		if not net.is_dedicated_server:
+			for pid in net.players.keys():
+				if pid != net.get_my_id():
+					_spawn_remote_player(pid)
+	_set_loading_phase("Generando mundo...")
 	_create_environment()
 	_create_day_night()
 	SaveGameHooks.preload_saved_world_state(self)
@@ -537,11 +600,22 @@ func _set_loading_phase(text: String) -> void:
 	if _loading_label != null:
 		_loading_label.text = text
 	_loading_phase += 1
-	var img_idx := _loading_phase % _LOADING_IMAGES.size()
-	if _loading_bg != null:
-		_loading_bg.texture = load(_LOADING_IMAGES[img_idx])
+	var img_idx := _loading_phase % _LOADING_TEXTURES.size()
+	if _loading_bg != null and img_idx < _LOADING_TEXTURES.size() and _LOADING_TEXTURES[img_idx] != null:
+		_loading_bg.texture = _LOADING_TEXTURES[img_idx]
 	if _loading_tip_label != null:
-		_loading_tip_label.text = "Consejo: " + _LOADING_TIPS[randi() % _LOADING_TIPS.size()]
+		_loading_tip_label.text = "Consejo: " + _get_next_tip()
+
+func _get_next_tip() -> String:
+	if _tip_pool.is_empty():
+		_tip_pool = _LOADING_TIPS.duplicate()
+		_tip_pool.shuffle()
+		_tip_index = 0
+	var tip: String = _tip_pool[_tip_index]
+	_tip_index += 1
+	if _tip_index >= _tip_pool.size():
+		_tip_pool.clear()
+	return tip
 
 func _cleanup_tent_rifle() -> void:
 	if player == null or not is_instance_valid(player) or player.inventory == null:
