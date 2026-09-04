@@ -13,7 +13,7 @@ const RIVER_WATER_PATHS := [
 	"res://assets/external/audio/river_water_loop.wav"
 ]
 const AXE_CHOP_PATHS := [
-	"res://assets/external/audio/axe_chop.wav"
+	"res://cortarArbol.mp3"
 ]
 const FOREST_BIRD_PATHS := [
 	"res://assets/external/audio/downloaded/pajaros.mp3"
@@ -144,9 +144,9 @@ func _create_players() -> void:
 
 	action_player = AudioStreamPlayer3D.new()
 	action_player.name = "ActionSounds"
-	action_player.unit_size = 1.0
-	action_player.max_distance = 24.0
-	action_player.volume_db = -1.0
+	action_player.unit_size = 2.0
+	action_player.max_distance = 30.0
+	action_player.volume_db = 4.0
 	add_child(action_player)
 
 	animal_call_player = AudioStreamPlayer3D.new()
@@ -343,20 +343,41 @@ func _update_animal_calls(delta: float) -> void:
 	animal_call_timer = randf_range(26.0, 52.0)
 
 func play_chop_at(pos: Vector3) -> void:
-	_play_one_shot_at(action_player, chop_sounds, pos, -1.0, randf_range(0.90, 1.06))
+	_play_one_shot_at(action_player, chop_sounds, pos, 4.0, randf_range(0.90, 1.06))
+
+var _chop_token := 0
+
+func stop_chop() -> void:
+	_chop_token += 1
+	if action_player != null:
+		action_player.stop()
 
 func play_chop_loop_at(pos: Vector3, duration: float) -> void:
+	var my_token := _chop_token + 1
+	_chop_token = my_token
+	if action_player == null or chop_sounds.is_empty():
+		return
+	# Play the chop sound once (the clip is ~10s, enough for the action duration)
+	_play_one_shot_at(action_player, chop_sounds, pos, 4.0, randf_range(0.90, 1.06))
+	# Poll for cancellation or duration expiry
 	var elapsed := 0.0
-	while elapsed < duration:
-		_play_one_shot_at(action_player, chop_sounds, pos, -1.0, randf_range(0.90, 1.06))
-		await get_tree().create_timer(1.2).timeout
-		elapsed += 1.2
+	while elapsed < duration and _chop_token == my_token:
+		await get_tree().create_timer(0.2).timeout
+		elapsed += 0.2
+	# Stop the sound when done or cancelled
+	if _chop_token == my_token and action_player != null:
+		action_player.stop()
 
 func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float) -> void:
-	if player_node == null or streams.is_empty():
+	if player_node == null:
+		print("[AUDIO] _play_one_shot_at: player_node is null")
+		return
+	if streams.is_empty():
+		print("[AUDIO] _play_one_shot_at: streams is EMPTY for player ", player_node.name)
 		return
 	var stream = streams[randi() % streams.size()]
 	if not stream is AudioStream:
+		print("[AUDIO] _play_one_shot_at: stream is not AudioStream")
 		return
 	player_node.stop()
 	player_node.global_position = pos

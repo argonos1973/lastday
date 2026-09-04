@@ -56,21 +56,6 @@ const RECIPES := [
 		"label": "Crear antorcha con palo y trapos"
 	},
 	{
-		"inputs": { "Chaqueta militar": 1, "Cuchillo": 1 },
-		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
-		"label": "Cortar chaqueta militar con cuchillo para hacer trapos"
-	},
-	{
-		"inputs": { "Chaqueta militar azul": 1, "Cuchillo": 1 },
-		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
-		"label": "Cortar chaqueta militar azul con cuchillo para hacer trapos"
-	},
-	{
-		"inputs": { "Chaqueta militar negra II": 1, "Cuchillo": 1 },
-		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
-		"label": "Cortar chaqueta militar negra con cuchillo para hacer trapos"
-	},
-	{
 		"inputs": { "Pantalones militares": 1, "Cuchillo": 1 },
 		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 2 },
 		"label": "Cortar pantalones militares con cuchillo para hacer trapos"
@@ -170,6 +155,8 @@ static func _can_craft(recipe: Dictionary, inventory_items: Array) -> bool:
 		var needed: int = recipe["inputs"][input_name]
 		var have := 0
 		for item in inventory_items:
+			if item == null:
+				continue
 			if _matches_input(input_name, item):
 				have += item.quantity
 		if have < needed:
@@ -177,14 +164,29 @@ static func _can_craft(recipe: Dictionary, inventory_items: Array) -> bool:
 	return true
 
 static func _matches_input(input_name: String, item) -> bool:
+	if item == null:
+		return false
 	if input_name == "ANY_CLOTHING":
 		return str(item.item_type) == "clothing"
 	if str(item.item_name) == input_name or _is_substitute(input_name, str(item.item_name)):
 		return true
 	return false
 
+static var craft_error := ""
+
 static func craft(recipe: Dictionary, inventory) -> bool:
+	craft_error = ""
 	if not _can_craft(recipe, inventory.items):
+		var missing := []
+		for input_name in recipe["inputs"]:
+			var needed: int = recipe["inputs"][input_name]
+			var have := 0
+			for item in inventory.items:
+				if item != null and _matches_input(input_name, item):
+					have += item.quantity
+			if have < needed:
+				missing.append("%dx %s (tienes %d)" % [needed, input_name, have])
+		craft_error = "Faltan materiales: %s" % ", ".join(missing)
 		return false
 	# Save consumed item info for potential refund
 	var saved_inputs: Array = []
@@ -214,6 +216,7 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 		new_item.durability = float(out["durability"])
 		new_item.max_durability = float(out.get("max_durability", out["durability"]))
 	if not inventory.add_item(new_item):
+		craft_error = "No hay espacio/peso para %s (peso %.2f, total %.2f/%.2f, slots %d/%d)" % [out["name"], out["weight"] * qty, inventory.get_total_weight(), inventory.max_weight, inventory.items.size(), inventory.max_slots]
 		for si in saved_inputs:
 			var refund = ItemScript.create(si["name"], si["type"], si["weight"], si["qty"], si["use_value"])
 			refund.durability = si["durability"]

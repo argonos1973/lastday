@@ -56,12 +56,9 @@ const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
 const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"]},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
-	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"], "tint": Color(0.03, 0.05, 0.10)},
 	"Pantalones militares azules": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.04, 0.08)},
-	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_torso", "Body_arms"], "tint": Color(0.03, 0.03, 0.04)},
 	"Pantalones militares negros II": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.02, 0.03)},
 	"Pantalones camuflaje": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.18, 0.22, 0.13)},
 	"Pantalones camuflaje desert": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.32, 0.28, 0.16)},
@@ -88,11 +85,8 @@ const DEFAULT_SKIN_HIDES := {
 	"Camiseta": ["Desnudo_torso"],
 	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
-	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
 	"Pantalones militares": ["Desnudo_legs"],
-	"Chaqueta militar azul": ["Desnudo_torso", "Desnudo_arms"],
 	"Pantalones militares azules": ["Desnudo_legs"],
-	"Chaqueta militar negra II": ["Desnudo_torso", "Desnudo_arms"],
 	"Pantalones militares negros II": ["Desnudo_legs"],
 	"Pantalones camuflaje": ["Desnudo_legs"],
 	"Pantalones camuflaje desert": ["Desnudo_legs"],
@@ -113,11 +107,8 @@ const CLOTHING_COVERED_ZONES := {
 	"Camiseta": ["torso"],
 	"Pantalones": ["cadera", "piernas"],
 	"Zapatillas": ["pies"],
-	"Chaqueta militar": ["torso", "brazos_superiores"],
 	"Pantalones militares": ["cadera", "piernas"],
-	"Chaqueta militar azul": ["torso", "brazos_superiores"],
 	"Pantalones militares azules": ["cadera", "piernas"],
-	"Chaqueta militar negra II": ["torso", "brazos_superiores"],
 	"Pantalones militares negros II": ["cadera", "piernas"],
 	"Pantalones camuflaje": ["cadera", "piernas"],
 	"Pantalones camuflaje desert": ["cadera", "piernas"],
@@ -135,12 +126,9 @@ const CLOTHING_SLOTS := {
 	"Zapatillas": "feet",
 	"Guantes survival": "hands",
 	"Botas survival": "feet",
-	"Chaqueta militar": "torso",
 	"Pantalones militares": "legs",
 	"Guantes militares": "hands",
-	"Chaqueta militar azul": "torso",
 	"Pantalones militares azules": "legs",
-	"Chaqueta militar negra II": "torso",
 	"Pantalones militares negros II": "legs",
 	"Pantalones camuflaje": "legs",
 	"Pantalones camuflaje desert": "legs",
@@ -156,11 +144,8 @@ const CLOTHING_WARMTH := {
 	"Zapatillas": 0.05,
 	"Guantes survival": 0.08,
 	"Botas survival": 0.18,
-	"Chaqueta militar": 0.28,
 	"Pantalones militares": 0.20,
-	"Chaqueta militar azul": 0.28,
 	"Pantalones militares azules": 0.20,
-	"Chaqueta militar negra II": 0.28,
 	"Pantalones militares negros II": 0.20,
 	"Pantalones camuflaje": 0.20,
 	"Pantalones camuflaje desert": 0.20,
@@ -184,11 +169,8 @@ const CLOTHING_HEAT_RETENTION := {
 	"Zapatillas": 0.0,
 	"Guantes survival": 0.05,
 	"Botas survival": 0.10,
-	"Chaqueta militar": 0.30,
 	"Pantalones militares": 0.25,
-	"Chaqueta militar azul": 0.30,
 	"Pantalones militares azules": 0.25,
-	"Chaqueta militar negra II": 0.30,
 	"Pantalones militares negros II": 0.25,
 	"Pantalones camuflaje": 0.25,
 	"Pantalones camuflaje desert": 0.15,
@@ -516,6 +498,13 @@ var _side_camera := false
 var _left_camera := false
 var _rear_camera := false
 var _top_camera := false
+var _aerial_camera := false
+var _aerial_pos := Vector3(0.0, 0.0, 0.0)
+var _aerial_height := 600.0
+const _AERIAL_MIN_HEIGHT := 100.0
+const _AERIAL_MAX_HEIGHT := 1500.0
+const _AERIAL_PAN_SPEED := 400.0
+const _AERIAL_ZOOM_STEP := 100.0
 
 var _crosshair_check_timer := 0.0
 var is_jumping := false
@@ -1006,7 +995,7 @@ func _process(delta: float) -> void:
 	# Update rifle strap mesh in real-time to follow animations
 	_update_rifle_strap(delta)
 	# Camera overrides for debug views only
-	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
+	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera or _aerial_camera):
 		var char_forward := -global_basis.z.normalized()
 		var char_right := global_basis.x.normalized()
 		var char_up := global_basis.y.normalized()
@@ -1030,6 +1019,31 @@ func _process(delta: float) -> void:
 			camera.global_position = global_position + char_up * 5.0
 			camera.look_at(global_position, char_forward)
 			camera.fov = 55.0
+		elif _aerial_camera:
+			# Pan with WASD / arrows
+			var pan_x := 0.0
+			var pan_z := 0.0
+			if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+				pan_x += 1.0
+			if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+				pan_x -= 1.0
+			if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+				pan_z += 1.0
+			if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+				pan_z -= 1.0
+			var pan_vec := Vector3(pan_x, 0.0, pan_z)
+			if pan_vec.length() > 0.0:
+				pan_vec = pan_vec.normalized()
+				_aerial_pos += pan_vec * _AERIAL_PAN_SPEED * delta * (_aerial_height / 600.0)
+			camera.global_position = Vector3(_aerial_pos.x, _aerial_height, _aerial_pos.z)
+			camera.look_at(Vector3(_aerial_pos.x, 0.0, _aerial_pos.z), Vector3(0.0, 0.0, -1.0))
+			camera.fov = 90.0
+			camera.far = 2000.0
+	else:
+		if camera != null and camera.fov != _camera_fov:
+			camera.fov = _camera_fov
+		if camera != null and camera.far != 500.0:
+			camera.far = 500.0
 
 #endregion
 
@@ -1073,6 +1087,13 @@ func _input(event: InputEvent) -> void:
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 	if event is InputEventMouseButton and event.pressed:
+		if _aerial_camera:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_aerial_height = clamp(_aerial_height - _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
+				return
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_aerial_height = clamp(_aerial_height + _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
+				return
 		_capture_mouse()
 		var has_rifle := _has_rifle_equipped()
 		if event.button_index == MOUSE_BUTTON_LEFT:
@@ -1096,7 +1117,7 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and not event.pressed:
 		if event.button_index == MOUSE_BUTTON_RIGHT and _is_aiming:
 			_toggle_aim()
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not _aerial_camera:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_turn_input = clamp(event.relative.x, -80.0, 80.0)
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-78.0), deg_to_rad(78.0))
@@ -1142,6 +1163,7 @@ func _input(event: InputEvent) -> void:
 			_left_camera = false
 			_rear_camera = false
 			_top_camera = false
+			_aerial_camera = false
 			return
 		if event.keycode == KEY_2:
 			_side_camera = not _side_camera
@@ -1149,6 +1171,7 @@ func _input(event: InputEvent) -> void:
 			_left_camera = false
 			_rear_camera = false
 			_top_camera = false
+			_aerial_camera = false
 			return
 		if event.keycode == KEY_3:
 			_left_camera = not _left_camera
@@ -1156,6 +1179,7 @@ func _input(event: InputEvent) -> void:
 			_side_camera = false
 			_rear_camera = false
 			_top_camera = false
+			_aerial_camera = false
 			return
 		if event.keycode == KEY_4:
 			_rear_camera = not _rear_camera
@@ -1163,6 +1187,7 @@ func _input(event: InputEvent) -> void:
 			_side_camera = false
 			_left_camera = false
 			_top_camera = false
+			_aerial_camera = false
 			return
 		if event.keycode == KEY_5:
 			_top_camera = not _top_camera
@@ -1170,6 +1195,7 @@ func _input(event: InputEvent) -> void:
 			_side_camera = false
 			_left_camera = false
 			_rear_camera = false
+			_aerial_camera = false
 			return
 		if event.keycode == KEY_6:
 			_frontal_camera = false
@@ -1177,6 +1203,18 @@ func _input(event: InputEvent) -> void:
 			_left_camera = false
 			_rear_camera = false
 			_top_camera = false
+			_aerial_camera = false
+			return
+		if event.keycode == KEY_9:
+			_aerial_camera = not _aerial_camera
+			_frontal_camera = false
+			_side_camera = false
+			_left_camera = false
+			_rear_camera = false
+			_top_camera = false
+			if _aerial_camera:
+				_aerial_pos = Vector3(global_position.x, 0.0, global_position.z)
+				_aerial_height = 600.0
 			return
 		var inventory_index := _inventory_index_for_key(event.keycode)
 		if inventory_index >= 0:
@@ -1576,12 +1614,15 @@ func _init_survival_clothing(root: Node) -> void:
 			body_names[String(h)] = true
 	for dname in DEFAULT_CLOTHING:
 		body_names[String(DEFAULT_CLOTHING[dname])] = true
+	var _unused_soldier_meshes := ["soldier_torso"]
 	var stack: Array = [root]
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		if node is MeshInstance3D:
 			var mi := node as MeshInstance3D
-			if wanted.has(mi.name):
+			if mi.name in _unused_soldier_meshes:
+				mi.visible = false
+			elif wanted.has(mi.name):
 				_survival_cloth_nodes[mi.name] = mi
 				mi.visible = false
 				if mi.name == "cloth_hands" or mi.name == "cloth_feet":
@@ -2525,6 +2566,16 @@ func _physics_process(delta: float) -> void:
 			camera.position = camera.position.lerp(sleep_cam_pos, delta * 5.0)
 			_pitch = lerp(_pitch, deg_to_rad(-12.0), delta * 5.0)
 			camera.rotation.x = _pitch
+		return
+	# Aerial camera: freeze player movement
+	if _aerial_camera:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if not is_on_floor():
+			velocity.y -= _gravity * delta
+		else:
+			velocity.y = 0.0
+		move_and_slide()
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
@@ -4336,7 +4387,7 @@ func craft_recipe(recipe: Dictionary) -> void:
 					unequip_clothing(input_name)
 					break
 	if not CraftingSystemScript.craft(recipe, inventory):
-		notice.emit("No tienes los materiales necesarios.")
+		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
 		return
 	inventory.changed.emit()
 	# Determine animation and duration based on recipe type
@@ -7854,8 +7905,22 @@ func from_dict(data: Dictionary) -> void:
 	inventory.max_slots = int(data.get("inventory_max_slots", inventory.max_slots))
 	inventory.max_weight = float(data.get("inventory_max_weight", inventory.max_weight))
 	if data.get("inventory", null) is Array:
-		inventory.from_array(data["inventory"])
+		var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
+		var _filtered_inv: Array = []
+		for d in data["inventory"]:
+			var _in := str(d.get("item_name", ""))
+			if _in not in _removed_items:
+				_filtered_inv.append(d)
+		inventory.from_array(_filtered_inv)
 	equipped_clothing = str(data.get("equipped_clothing", equipped_clothing))
+	if not equipped_clothing.is_empty():
+		var _removed_items2 := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
+		var _filtered_eq: Array = []
+		for _s in equipped_clothing.split(","):
+			var _sn := str(_s).strip_edges()
+			if not _sn.is_empty() and _sn not in _removed_items2:
+				_filtered_eq.append(_sn)
+		equipped_clothing = ",".join(_filtered_eq)
 	equipped_backpack = str(data.get("equipped_backpack", equipped_backpack))
 	flashlight_charge = float(data.get("flashlight_charge", flashlight_charge))
 	wetness = float(data.get("wetness", wetness))
@@ -7899,15 +7964,20 @@ func _eat_action() -> void:
 		held_index = clampi(held_index, 0, inventory.items.size() - 1)
 		var item = inventory.items[held_index]
 		if item != null and item.item_type == "food":
+			print("[DEBUG _eat_action] Eating from INVENTORY: %s" % item.item_name)
 			_eat_held_item()
 			return
 	var target = _get_interaction_target()
+	print("[DEBUG _eat_action] target=%s is WorldAction=%s" % [target, target is WorldAction if target != null else false])
 	if target != null and target is WorldAction:
+		print("[DEBUG _eat_action] action_type=%s action_id=%s" % [target.action_type, target.action_id])
 		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw":
 			var main := get_tree().current_scene
 			if main != null and main.has_method("handle_world_action_eat"):
+				print("[DEBUG _eat_action] Calling handle_world_action_eat")
 				main.handle_world_action_eat(target, self)
 			else:
+				print("[DEBUG _eat_action] No handle_world_action_eat, calling interact")
 				target.interact(self)
 
 func _light_action() -> void:

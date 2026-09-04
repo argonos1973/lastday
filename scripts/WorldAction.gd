@@ -67,6 +67,9 @@ func mark_depleted() -> void:
 		_mesh_instance.visible = false
 	if _collision != null:
 		_collision.disabled = true
+	collision_layer = 0
+	collision_mask = 0
+	remove_from_group("interactable")
 	_clear_visual_children()
 	# Auto-register in Main's depleted list so it persists across save/load
 	var main := get_tree().current_scene

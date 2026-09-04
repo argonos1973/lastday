@@ -241,6 +241,21 @@ static func collect_world_data(main: Node) -> Dictionary:
 			if action != null and is_instance_valid(action) and action.action_type == "pick_fruit":
 				fruit_types[action_id] = str(action.get_meta("fruit_type_name", "Higo"))
 	data["fruit_tree_types"] = fruit_types
+	# Cut tree positions — fallback for hiding trees when IDs don't match after load
+	var cut_tree_positions := []
+	for action_id in main.get("_depleted_action_ids"):
+		if str(action_id).begins_with("fell_tree_") and main.get("world_actions_by_id").has(action_id):
+			var action = main.world_actions_by_id[action_id]
+			if action != null and is_instance_valid(action):
+				cut_tree_positions.append([action.global_position.x, action.global_position.y, action.global_position.z])
+	# Also include positions from _legit_cut_trees that have been deactivated (no WorldAction)
+	for entry in main.get("_tree_grid").values():
+		if entry is Array:
+			for tree_entry in entry:
+				var aid := "fell_tree_%d" % tree_entry.id
+				if main.get("_depleted_action_ids").has(aid):
+					cut_tree_positions.append([tree_entry.pos.x, tree_entry.pos.y, tree_entry.pos.z])
+	data["cut_tree_positions"] = cut_tree_positions
 	# Dead wildlife — persist corpses so they don't respawn alive
 	var dead_wildlife := []
 	for node in main.get_tree().get_nodes_in_group("wildlife"):
@@ -294,7 +309,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 			player.stats.thirst = float(data.get("thirst", 100.0))
 			player.stats.survival_seconds = float(data.get("survival_seconds", 0.0))
 			player.stats.changed.emit()
-	# Inventory
+	# Inventory — filter out removed clothing items (migrated out of the game)
+	var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
 	var items_data = data.get("inventory", [])
 	if player.has_node("Inventory"):
 		var inv = player.get_node("Inventory")
@@ -303,6 +319,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 			for d in items_data:
 				var item = ItemScript.from_dict(d)
 				if item != null:
+					if str(item.item_name) in _removed_items:
+						continue
 					inv.items.append(item)
 	# Held index
 	player.held_index = int(data.get("held_index", 0))
@@ -329,8 +347,15 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	# Re-apply character colors on the player model BEFORE equipping saved clothing
 	if player.has_method("_apply_character_colors"):
 		player._apply_character_colors()
-	# Restore equipped clothing
+	# Restore equipped clothing — filter out removed items from save migration
 	var equipped_clothing := str(data.get("equipped_clothing", ""))
+	if not equipped_clothing.is_empty():
+		var _filtered_slots: Array = []
+		for _s in equipped_clothing.split(","):
+			var _sn := str(_s).strip_edges()
+			if not _sn.is_empty() and _sn not in _removed_items:
+				_filtered_slots.append(_sn)
+		equipped_clothing = ",".join(_filtered_slots)
 	if not equipped_clothing.is_empty():
 		if "_equipped_slots" in player:
 			var old_slots: Dictionary = player._equipped_slots.duplicate()
@@ -401,6 +426,15 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			main.world_actions_by_id.erase(action_id)
 		if not main._depleted_action_ids.has(action_id):
 			main._depleted_action_ids.append(action_id)
+	# Fallback: use saved cut tree positions to hide any trees that weren't caught by ID matching
+	var cut_positions = data.get("cut_tree_positions", [])
+	for pos_arr in cut_positions:
+		if pos_arr is Array and pos_arr.size() >= 3:
+			var cpos := Vector3(float(pos_arr[0]), float(pos_arr[1]), float(pos_arr[2]))
+			if main.has_method("_hide_multimesh_tree_at"):
+				main._hide_multimesh_tree_at(cpos)
+			if main.has_method("_create_cut_tree_remains"):
+				main._create_cut_tree_remains(cpos)
 	# Dropped items — spawn visuals
 	var dropped = data.get("dropped_items", [])
 	for drop in dropped:
