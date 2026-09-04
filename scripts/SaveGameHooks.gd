@@ -498,9 +498,11 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 				lc_pos = Vector3(float(lc_pos_raw[0]), float(lc_pos_raw[1]), float(lc_pos_raw[2]))
 			else:
 				lc_pos = lc_pos_raw
+			var lc_fire_name := str(lc.get("fire_name", ""))
 			if main.has_method("_create_campfire_fire"):
-				main._create_campfire_fire(lc_pos + Vector3(0, 0.15, 0), str(lc.get("fire_name", "")))
+				main._create_campfire_fire(lc_pos + Vector3(0, 0.15, 0), lc_fire_name)
 			action.set_meta("lit", true)
+			action.set_meta("fire_name", lc_fire_name)
 			action.action_type = "cook"
 			action.display_name = "Fogata encendida"
 			action.repeatable = true

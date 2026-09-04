@@ -328,6 +328,14 @@ const _MILITARY_TINTS := {
 const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const _KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 
+static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
+	var p := mi.get_parent()
+	while p != null:
+		if p is Node3D and (p.name.begins_with("PreviewHat") or p.name.begins_with("PreviewBackpack") or p.name.begins_with("PreviewKnife")):
+			return true
+		p = p.get_parent()
+	return false
+
 static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	if item_name != "Sombrero de pescador":
 		return
@@ -346,6 +354,8 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	for mi in body_meshes:
 		var m := mi as MeshInstance3D
 		if not m.visible or m.mesh == null:
+			continue
+		if _is_accessory_mesh(m):
 			continue
 		var aabb: AABB = m.get_aabb()
 		bmin.x = min(bmin.x, aabb.position.x)

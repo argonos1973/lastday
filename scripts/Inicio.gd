@@ -622,6 +622,10 @@ func _fit_char_preview(model: Node3D, is_saved: bool = false) -> void:
 			# Skip cloth_hands (gloves mesh reparented to main skeleton)
 			if mesh2.name.to_lower() == "cloth_hands":
 				continue
+			# Skip preview accessories (hat, backpack, knife) — their AABBs
+			# are in a different local space and would corrupt the height calc
+			if SaveIntegration._is_accessory_mesh(mesh2):
+				continue
 			# Skip phantom meshes (animation targets with zero scale)
 			if mesh2.name.find("default") >= 0:
 				continue

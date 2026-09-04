@@ -165,7 +165,11 @@ func get_interaction_text(_player = null) -> String:
 		"light_campfire":
 			return "Encender fogata - [E] (cerillas o 2 palos)"
 		"cook":
-			return "Cocinar carne ensartada - [E]"
+			if _player != null and _player.has_method("get_held_item"):
+				var held = _player.get_held_item()
+				if held != null and held.item_name == "Carne ensartada":
+					return "Cocinar carne ensartada - [E]"
+			return ""
 		"shelter":
 			return "Desmontar refugio - [E] (recuperar 11 palos)"
 	return "%s - [E]" % display_name

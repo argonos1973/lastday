@@ -404,55 +404,50 @@ const _LOADING_TEX_3 := preload("res://assets/loading/04_lago_camiseta_amarilla.
 const _LOADING_TEXTURES: Array[Texture2D] = [_LOADING_TEX_0, _LOADING_TEX_1, _LOADING_TEX_2, _LOADING_TEX_3]
 
 const _LOADING_TIPS := [
-	"Combina el cuchillo con una lata para abrirla y obtener comida.",
 	"Tala arboles con el hacha para obtener troncos.",
-	"Combina troncos con el hacha para hacer palos.",
-	"Bebe agua del rio para mantener tu sed a raya.",
-	"Construye un refugio para protegerte del frio por la noche.",
-	"Cocina la carne cruda en una hoguera antes de comerla.",
-	"Usa trapos para curar heridas y fabricar vendajes.",
+	"Talla un tronco con el cuchillo o el hacha para obtener 2 palos.",
+	"Afila un palo con el cuchillo para hacer un palo afilado.",
+	"Combina un palo afilado con una piedra para fabricar una lanza.",
+	"Combina un palo afilado con carne cruda para ensartarla y poder cocinarla.",
+	"Combina un palo con una cuerda para hacer una caña simple.",
+	"Combina un palo afilado con carne cruda para crear una caña de pescar con cebo.",
+	"Combina un palo con trapos para fabricar una antorcha.",
+	"Combina 2 troncos y 1 palo para construir una fogata.",
+	"Necesitas 11 palos para construir un refugio.",
+	"Usa las cerillas para encender la fogata.",
+	"Cocina la carne ensartada en una hoguera para obtener carne cocinada.",
+	"Combina el cuchillo con una lata para abrirla y poder comer su contenido.",
+	"Corta ropa vieja con el cuchillo para obtener trapos.",
+	"Bebe agua del rio o del lago para mantener tu sed a raya.",
+	"Llena una botella de plastico en el rio para obtener una botella de agua.",
+	"Puedes pescar en las zonas de pesca del rio con una caña.",
+	"Recoge naranjas e higos de los arboles frutales.",
+	"Corta arbustos para obtener bayas silvestres y semillas.",
+	"Planta semillas en un huerto y vuelve mas tarde para cosechar verduras.",
+	"Destaza los animales muertos para obtener carne cruda.",
+	"Ensarta la carne cruda de lobo en un palo afilado antes de cocinarla.",
 	"El hacha se gasta con el uso, cuidala para que no se rompa.",
 	"Los lobos atacan en manada, mantente alerta cerca del bosque.",
-	"Combina palos con cuerdas para construir herramientas.",
 	"La noche es peligrosa, prepara una hoguera antes de que oscurezca.",
 	"Viste ropa para protegerte del frio y la lluvia.",
 	"Busca piedras y troncos para construir tu campamento.",
 	"El hambre y la sed bajan tu salud, mantente alimentado.",
 	"Las hogueras tambien ahuyentan a los animales salvajes.",
-	"Combina palos con piedras para fabricar una lanza.",
 	"Guarda comida enlatada para emergencias, no perece.",
 	"El fuego se apaga con la lluvia, busca refugio para cocinar.",
-	"Cuerda y palos pueden usarse para construir una trampa.",
 	"Mantente alejado de los lobos heridos, son mas peligrosos.",
-	"Combina vendajes con alcohol para curar mas rapido.",
-	"Las piedras afiladas sirven como herramientas de corte.",
 	"No corras en la oscuridad, puedes caer en una pendiente.",
-	"Revisa los cadaveres de animales para obtener carne y pieles.",
-	"Las pieles de animales pueden combinarse para hacer ropa de abrigo.",
-	"Un tronco cortado da mas madera que uno arrancado.",
-	"Combina carne cocinada con palos para transportarla mejor.",
 	"La lluvia moja la ropa y aumenta el riesgo de hipotermia.",
 	"Construye cerca del agua pero no demasiado cerca del bosque.",
-	"Los arbustos esconden bayas comestibles, aprende a distinguirlas.",
-	"Una hoguera grande dura mas pero gasta mas leña.",
-	"Combina tela con palos para fabricar una antorcha.",
-	"El cuchillo es mas rapido que el hacha para cortar tela.",
-	"No desperdicies agua, en el bosque no siempre es segura.",
-	"Las cuerdas se rompen con el uso, lleva repuestos.",
 	"Sube a zonas altas para orientarte y divisar el terreno.",
 	"El frio extremo baja tu salud sin que te des cuenta.",
-	"Combina latas vacias con piedras para hacer ruido y ahuyentar lobos.",
 	"Corta arbustos para despejar el camino alrededor de tu refugio.",
-	"Una tienda de campaña protege de la lluvia mejor que un refugio abierto.",
 	"Guarda palos y piedras, siempre los necesitaras para construir.",
 	"El amanecer es el momento mas seguro para explorar.",
 	"No te adentres en el bosque sin un arma o una hoguera cerca.",
-	"Combina carne cruda con sal para conservarla mas tiempo.",
-	"Los troncos apilados se conservan mejor que los esparcidos.",
 	"Si ves lobos acechando, enciende una hoguera para ahuyentarlos.",
 	"La niebla reduce la visibilidad, lleva una antorcha para guiarte.",
-	"Combina tela con cuerda para hacer una mochila improvisada.",
-	"Corta la ropa en buen estado para obtener tela y trapos.",
+	"Sigue los rastros de animales para encontrar presas.",
 	"Un buen campamento necesita paredes, suelo y techo."
 ]
 
@@ -518,7 +513,7 @@ func _create_loading_overlay() -> void:
 	_loading_tip_label.add_theme_color_override("font_color", Color(0.9, 0.85, 0.6))
 	_loading_tip_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
 	_loading_tip_label.add_theme_constant_override("font_shadow_offset", int(1 * scale_factor))
-	_loading_tip_label.text = "Consejo: " + _get_next_tip()
+	_loading_tip_label.text = _get_next_tip()
 	root.add_child(_loading_tip_label)
 	add_child(_loading_overlay)
 
@@ -604,7 +599,7 @@ func _set_loading_phase(text: String) -> void:
 	if _loading_bg != null and img_idx < _LOADING_TEXTURES.size() and _LOADING_TEXTURES[img_idx] != null:
 		_loading_bg.texture = _LOADING_TEXTURES[img_idx]
 	if _loading_tip_label != null:
-		_loading_tip_label.text = "Consejo: " + _get_next_tip()
+		_loading_tip_label.text = _get_next_tip()
 
 func _get_next_tip() -> String:
 	if _tip_pool.is_empty():
@@ -1803,6 +1798,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 			if not action.get_meta("lit", false):
 				_create_campfire_fire(action.position + Vector3(0, 0.15, 0), str(lc["fire_name"]))
 				action.set_meta("lit", true)
+				action.set_meta("fire_name", str(lc["fire_name"]))
 				action.action_type = "cook"
 				action.display_name = "Fogata encendida"
 				action.repeatable = true
@@ -5952,6 +5948,7 @@ func handle_world_action(action, actor) -> void:
 			action.action_type = "cook"
 			action.display_name = "Fogata encendida"
 			action.repeatable = true
+			_lit_campfires.append({"id": action.action_id, "fire_name": fire_name, "pos": action.position})
 			_save_world_change_silent()
 			actor.notice.emit("Has encendido la fogata. Durara 5 minutos.")
 			if net != null and net.is_connected and not net.is_host:
@@ -7021,62 +7018,116 @@ func _create_mountain_river() -> void:
 			await _create_lake_bank_tall_grass(center, size, yaw)
 			await _create_lake_shore_rocks(center, size, yaw)
 
+func _catmull_rom(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
+	var t2 := t * t
+	var t3 := t2 * t
+	return 0.5 * (
+		(2.0 * p1) +
+		(-p0 + p2) * t +
+		(2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+		(-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+	)
+
+func _generate_spline_segments(points: Array, spacing: float, width: float, is_closed: bool) -> Array:
+	var segments: Array = []
+	var n := points.size()
+	if n < 3:
+		return segments
+	var sample_pos: Array[Vector3] = []
+	var sample_yaw: Array[float] = []
+	var subdiv := 14
+	var loop_count := n if is_closed else n - 1
+	for i in range(loop_count):
+		var p0: Vector3 = points[(i - 1 + n) % n] if is_closed else points[max(0, i - 1)]
+		var p1: Vector3 = points[i]
+		var p2: Vector3 = points[(i + 1) % n] if is_closed else points[min(n - 1, i + 1)]
+		var p3: Vector3 = points[(i + 2) % n] if is_closed else points[min(n - 1, i + 2)]
+		for j in range(subdiv):
+			var t := float(j) / float(subdiv)
+			var pos := _catmull_rom(p0, p1, p2, p3, t)
+			var t2 := min(1.0, t + 0.01)
+			var pos_next := _catmull_rom(p0, p1, p2, p3, t2)
+			var tangent := (pos_next - pos).normalized()
+			var yaw := rad_to_deg(atan2(-tangent.z, tangent.x))
+			sample_pos.append(pos)
+			sample_yaw.append(yaw)
+	var accum := 0.0
+	var last_idx := 0
+	for i in range(1, sample_pos.size()):
+		accum += sample_pos[i].distance_to(sample_pos[i - 1])
+		if accum >= spacing:
+			var mid := (last_idx + i) / 2
+			segments.append({
+				"center": Vector3(sample_pos[mid].x, 0.085, sample_pos[mid].z),
+				"size": Vector2(spacing + 1.5, width),
+				"yaw": sample_yaw[mid]
+			})
+			accum = 0.0
+			last_idx = i
+	return segments
+
 func _default_river_segments() -> Array:
-	return [
-		{"center": Vector3(-60, 0.085, -58), "size": Vector2(25, 6), "yaw": -8.0},
-		{"center": Vector3(-36, 0.085, -61), "size": Vector2(25, 6), "yaw": 5.0},
-		{"center": Vector3(-12, 0.085, -58), "size": Vector2(25, 5.5), "yaw": -6.0},
-		{"center": Vector3(16, 0.085, -61), "size": Vector2(30, 6.5), "yaw": 4.0},
-		{"center": Vector3(47, 0.085, -59), "size": Vector2(27, 6.5), "yaw": -7.0},
-		{"center": Vector3(63, 0.085, -36), "size": Vector2(25, 6), "yaw": 86.0},
-		{"center": Vector3(66, 0.085, -10), "size": Vector2(25, 6.5), "yaw": 93.0},
-		{"center": Vector3(63, 0.085, 18), "size": Vector2(29, 6), "yaw": 88.0},
-		{"center": Vector3(65, 0.085, 47), "size": Vector2(27, 6.5), "yaw": 94.0},
-		{"center": Vector3(40, 0.085, 64), "size": Vector2(29, 6), "yaw": 176.0},
-		{"center": Vector3(10, 0.085, 66), "size": Vector2(30, 6.5), "yaw": 184.0},
-		{"center": Vector3(-21, 0.085, 63), "size": Vector2(30, 6), "yaw": 178.0},
-		{"center": Vector3(-52, 0.085, 65), "size": Vector2(27, 6.5), "yaw": 186.0},
-		{"center": Vector3(-66, 0.085, 42), "size": Vector2(27, 6), "yaw": 92.0},
-		{"center": Vector3(-63, 0.085, 15), "size": Vector2(26, 6), "yaw": 85.0},
-		{"center": Vector3(-66, 0.085, -14), "size": Vector2(30, 6.5), "yaw": 93.0},
-		{"center": Vector3(-64, 0.085, -40), "size": Vector2(25, 6), "yaw": 88.0},
-		# Outer river — north side (west to east)
-		{"center": Vector3(-180, 0.085, -120), "size": Vector2(45, 7), "yaw": 5.0},
-		{"center": Vector3(-40, 0.085, -135), "size": Vector2(45, 7), "yaw": 6.0},
-		{"center": Vector3(40, 0.085, -140), "size": Vector2(50, 7.5), "yaw": -4.0},
-		{"center": Vector3(120, 0.085, -135), "size": Vector2(48, 7), "yaw": 3.0},
-		{"center": Vector3(200, 0.085, -130), "size": Vector2(50, 7.5), "yaw": -5.0},
-		{"center": Vector3(280, 0.085, -125), "size": Vector2(50, 7), "yaw": 4.0},
-		{"center": Vector3(350, 0.085, -120), "size": Vector2(50, 7), "yaw": -3.0},
-		# Outer river — east side (north to south)
-		{"center": Vector3(380, 0.085, -60), "size": Vector2(45, 7), "yaw": 88.0},
-		{"center": Vector3(390, 0.085, 10), "size": Vector2(48, 7.5), "yaw": 92.0},
-		{"center": Vector3(385, 0.085, 80), "size": Vector2(45, 7), "yaw": 87.0},
-		{"center": Vector3(390, 0.085, 150), "size": Vector2(50, 7.5), "yaw": 93.0},
-		{"center": Vector3(380, 0.085, 220), "size": Vector2(48, 7), "yaw": 88.0},
-		{"center": Vector3(385, 0.085, 290), "size": Vector2(50, 7), "yaw": 92.0},
-		{"center": Vector3(380, 0.085, 360), "size": Vector2(48, 7), "yaw": 87.0},
-		# Outer river — south side (east to west)
-		{"center": Vector3(320, 0.085, 390), "size": Vector2(50, 7), "yaw": 176.0},
-		{"center": Vector3(240, 0.085, 395), "size": Vector2(50, 7.5), "yaw": 184.0},
-		{"center": Vector3(160, 0.085, 390), "size": Vector2(48, 7), "yaw": 178.0},
-		{"center": Vector3(80, 0.085, 395), "size": Vector2(50, 7), "yaw": 182.0},
-		{"center": Vector3(0, 0.085, 390), "size": Vector2(50, 7.5), "yaw": 176.0},
-		{"center": Vector3(-80, 0.085, 395), "size": Vector2(48, 7), "yaw": 184.0},
-		{"center": Vector3(-160, 0.085, 390), "size": Vector2(50, 7), "yaw": 178.0},
-		{"center": Vector3(-240, 0.085, 395), "size": Vector2(50, 7.5), "yaw": 182.0},
-		{"center": Vector3(-320, 0.085, 390), "size": Vector2(48, 7), "yaw": 176.0},
-		# Outer river — west side (south to north)
-		{"center": Vector3(-380, 0.085, 340), "size": Vector2(48, 7), "yaw": 88.0},
-		{"center": Vector3(-385, 0.085, 270), "size": Vector2(50, 7), "yaw": 92.0},
-		{"center": Vector3(-380, 0.085, 200), "size": Vector2(48, 7.5), "yaw": 87.0},
-		{"center": Vector3(-390, 0.085, 130), "size": Vector2(50, 7), "yaw": 93.0},
-		{"center": Vector3(-385, 0.085, 60), "size": Vector2(48, 7), "yaw": 88.0},
-		{"center": Vector3(-390, 0.085, -10), "size": Vector2(50, 7.5), "yaw": 92.0},
-		{"center": Vector3(-380, 0.085, -80), "size": Vector2(48, 7), "yaw": 87.0},
-		# Lake in the northeast valley — single unified elliptical lake
-		{"center": Vector3(250, 0.085, -307), "size": Vector2(150, 90), "yaw": 0.0}
+	# Inner river — meandering closed loop around the play area
+	var inner_points := [
+		Vector3(-72, 0, -50), Vector3(-50, 0, -68), Vector3(-28, 0, -52), Vector3(-8, 0, -66),
+		Vector3(12, 0, -52), Vector3(32, 0, -68), Vector3(52, 0, -54), Vector3(68, 0, -42),
+		Vector3(72, 0, -22), Vector3(60, 0, -5), Vector3(72, 0, 12), Vector3(58, 0, 32),
+		Vector3(70, 0, 50), Vector3(50, 0, 68), Vector3(28, 0, 56), Vector3(8, 0, 70),
+		Vector3(-12, 0, 56), Vector3(-32, 0, 70), Vector3(-52, 0, 58), Vector3(-70, 0, 48),
+		Vector3(-62, 0, 28), Vector3(-72, 0, 8), Vector3(-58, 0, -12), Vector3(-70, 0, -32)
 	]
+	var segments := _generate_spline_segments(inner_points, 14.0, 6.0, true)
+	# Connecting river — meandering path from inner river (east side) to the lake
+	var connector_points := [
+		Vector3(72, 0, -42), Vector3(95, 0, -65), Vector3(105, 0, -95), Vector3(130, 0, -110),
+		Vector3(145, 0, -140), Vector3(170, 0, -155), Vector3(180, 0, -185), Vector3(205, 0, -205),
+		Vector3(210, 0, -235), Vector3(230, 0, -265)
+	]
+	segments.append_array(_generate_spline_segments(connector_points, 14.0, 5.5, false))
+	# Outer river — large curved perimeter loop with meanders
+	var outer_points := [
+		# North side (west to east)
+		Vector3(-350, 0, -120), Vector3(-280, 0, -135), Vector3(-200, 0, -125), Vector3(-120, 0, -140),
+		Vector3(-40, 0, -130), Vector3(40, 0, -145), Vector3(120, 0, -130), Vector3(200, 0, -140),
+		Vector3(280, 0, -125), Vector3(350, 0, -135),
+		# East side (north to south)
+		Vector3(385, 0, -80), Vector3(375, 0, -10), Vector3(390, 0, 60), Vector3(380, 0, 130),
+		Vector3(395, 0, 200), Vector3(380, 0, 270), Vector3(390, 0, 340),
+		# South side (east to west)
+		Vector3(340, 0, 385), Vector3(260, 0, 395), Vector3(180, 0, 385), Vector3(100, 0, 395),
+		Vector3(20, 0, 385), Vector3(-60, 0, 395), Vector3(-140, 0, 385), Vector3(-220, 0, 395),
+		Vector3(-300, 0, 385),
+		# West side (south to north)
+		Vector3(-385, 0, 340), Vector3(-375, 0, 270), Vector3(-390, 0, 200), Vector3(-380, 0, 130),
+		Vector3(-395, 0, 60), Vector3(-375, 0, -10), Vector3(-390, 0, -80),
+	]
+	segments.append_array(_generate_spline_segments(outer_points, 45.0, 7.0, true))
+	# Tributary 1: north — from inner river to outer river
+	var trib_north := [
+		Vector3(-8, 0, -66), Vector3(-15, 0, -90), Vector3(-30, 0, -110), Vector3(-40, 0, -130)
+	]
+	segments.append_array(_generate_spline_segments(trib_north, 14.0, 5.5, false))
+	# Tributary 2: east — from inner river to outer river
+	var trib_east := [
+		Vector3(72, 0, 12), Vector3(120, 0, 15), Vector3(180, 0, 10), Vector3(240, 0, 12),
+		Vector3(300, 0, 8), Vector3(375, 0, -10)
+	]
+	segments.append_array(_generate_spline_segments(trib_east, 14.0, 5.5, false))
+	# Tributary 3: south — from inner river to outer river
+	var trib_south := [
+		Vector3(8, 0, 70), Vector3(15, 0, 120), Vector3(10, 0, 180), Vector3(20, 0, 240),
+		Vector3(15, 0, 300), Vector3(20, 0, 385)
+	]
+	segments.append_array(_generate_spline_segments(trib_south, 14.0, 5.5, false))
+	# Tributary 4: west — from inner river to outer river
+	var trib_west := [
+		Vector3(-72, 0, 8), Vector3(-120, 0, 5), Vector3(-180, 0, 12), Vector3(-240, 0, 8),
+		Vector3(-300, 0, 15), Vector3(-375, 0, -10)
+	]
+	segments.append_array(_generate_spline_segments(trib_west, 14.0, 5.5, false))
+	# Lake in the northeast valley
+	segments.append({"center": Vector3(250, 0.085, -307), "size": Vector2(150, 90), "yaw": 0.0})
+	return segments
 
 func get_river_segments_for_minimap() -> Array:
 	return _default_river_segments()
@@ -7215,11 +7266,15 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 	# Check remote tent area
 	if _remote_tent_pos != Vector3.ZERO and abs(pos.x - _remote_tent_pos.x) < 4.0 and abs(pos.z - _remote_tent_pos.z) < 5.5:
 		return true
+	# Check hiking hut near lake
+	var hut_origin := Vector3(250, 0, -258)
+	if abs(pos.x - hut_origin.x) < 6.0 and abs(pos.z - hut_origin.z) < 6.0:
+		return true
 	return false
 
 func _update_loot_wear() -> void:
-	# Wear rate: 0.5 per tick (every 5s) when sheltered, 2.0 when exposed
-	# 100 wear = ~1000s (16min) sheltered, ~250s (4min) exposed
+	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
+	# 100 wear = ~1000s (16min) sheltered, ~1500s (25min) exposed
 	var removed_ids: Array = []
 	for i in range(_dropped_items.size() - 1, -1, -1):
 		var entry: Dictionary = _dropped_items[i]
@@ -7232,7 +7287,7 @@ func _update_loot_wear() -> void:
 		else:
 			continue
 		var wear: float = float(entry.get("wear", 0.0))
-		var rate := 2.0
+		var rate := 0.33
 		if _is_loot_sheltered(pos):
 			rate = 0.5
 		wear += rate
