@@ -4507,7 +4507,12 @@ func _eat_held_item() -> void:
 		return
 	# Play eating animation (same as campfire crafting)
 	play_action_animation("plant", 2.0)
-	notice.emit("Comiendo %s..." % item.item_name)
+	if item.is_perishable() and item.spoil_state() == 2:
+		notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
+	elif item.is_perishable() and item.spoil_state() == 1:
+		notice.emit("Comes comida en mal estado. Te sientes mal.")
+	else:
+		notice.emit("Comiendo %s..." % item.item_name)
 	# Consume the food after animation
 	var item_name := str(item.item_name)
 	var food_value := float(item.use_value)
@@ -7212,8 +7217,8 @@ func _update_torch(delta: float) -> void:
 	if torch_light.visible:
 		held.reduce_durability(delta * 2.0)
 		var pct: float = held.durability_pct()
-		torch_light.light_energy = 1.0 + 4.0 * pct
-		torch_light.light_color = Color(1.0, 0.6 + 0.3 * pct, 0.2 + 0.2 * pct)
+		torch_light.light_energy = 1.0 + 4.0 * clamp(pct, 0.0, 1.0)
+		torch_light.light_color = Color(1.0, 0.6 + 0.3 * clamp(pct, 0.0, 1.0), 0.2 + 0.2 * clamp(pct, 0.0, 1.0))
 		stats.body_temperature = min(37.5, stats.body_temperature + delta * 1.5 * pct)
 		if wetness > 0.0:
 			wetness = max(0.0, wetness - delta * 0.03 * pct)

@@ -42,6 +42,8 @@ var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is 
 var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
+var _cached_wildlife: Array = []
+var _wildlife_cache_timer := 0.0
 var _water_night_timer := 0.0
 var _shelter_check_timer := 0.0
 var _cached_in_house := false
@@ -817,7 +819,7 @@ func _process(delta: float) -> void:
 		_update_server_proxies(delta)
 		# Server broadcasts animal state to clients
 		_animal_sync_timer += delta
-		if _animal_sync_timer >= 0.1:
+		if _animal_sync_timer >= 0.15:
 			_animal_sync_timer = 0.0
 			_broadcast_animals()
 		# Tick campfire fires on server
@@ -2610,8 +2612,12 @@ func _update_remote_players() -> void:
 func _broadcast_animals() -> void:
 	if net == null or not net.is_connected:
 		return
+	_wildlife_cache_timer += 0.15
+	if _wildlife_cache_timer >= 1.0:
+		_wildlife_cache_timer = 0.0
+		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	var data := {}
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	for node in _cached_wildlife:
 		if not (node is Node3D):
 			continue
 		var animal := node as Node3D
@@ -5924,7 +5930,7 @@ func handle_world_action(action, actor) -> void:
 			var torch_dur := float(action.get_meta("torch_durability", 0.0))
 			var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
 			torch_item.durability = torch_dur
-			torch_item.max_durability = 120.0
+			torch_item.max_durability = 600.0
 			var torch_lit := bool(action.get_meta("torch_lit", false))
 			torch_item.set_meta("torch_lit", torch_lit)
 			var torch_id := str(action.get_meta("torch_id", ""))

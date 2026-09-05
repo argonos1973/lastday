@@ -11,6 +11,9 @@ class_name InteractionRaycast
 # player and limited by interaction_distance.
 @export var camera_trace_distance := 7.0
 
+var _cached_interactables: Array = []
+var _interactable_cache_timer := 0.0
+
 func _ready() -> void:
 	target_position = Vector3(0.0, 0.0, -interaction_distance)
 	collide_with_areas = true
@@ -90,10 +93,14 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 func _find_nearest_interactable(player: Node3D) -> Object:
 	if player == null or player.get_tree() == null:
 		return null
+	_interactable_cache_timer += 1.0 / 60.0
+	if _interactable_cache_timer >= 0.5 or _cached_interactables.is_empty():
+		_interactable_cache_timer = 0.0
+		_cached_interactables = player.get_tree().get_nodes_in_group("interactable")
 	var player_pos := player.global_position
 	var best: Object = null
 	var best_dist := 999.0
-	for node in player.get_tree().get_nodes_in_group("interactable"):
+	for node in _cached_interactables:
 		if not (node is Node3D):
 			continue
 		if node is WorldAction:
@@ -104,7 +111,9 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log" and wa.action_type != "pickup_item" and wa.action_type != "eat_food" and wa.action_type != "light_campfire" and wa.action_type != "cook":
 				continue
 		var node_pos := (node as Node3D).global_position
-		var flat_dist := Vector2(player_pos.x, player_pos.z).distance_to(Vector2(node_pos.x, node_pos.z))
+		var dx := player_pos.x - node_pos.x
+		var dz := player_pos.z - node_pos.z
+		var flat_dist := sqrt(dx * dx + dz * dz)
 		var reach := 0.0
 		var max_dist := interaction_distance
 		if node is CollisionObject3D:

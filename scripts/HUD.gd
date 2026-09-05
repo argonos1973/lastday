@@ -1116,20 +1116,22 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 		eat_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(eat_btn)
 		_context_menu_has_eat = true
-	# Add Encender button for torch when matches or 2 palos are available
+	# Add Encender button for torch when matches or 2 palos are available (only if not already lit)
 	if str(item.item_type) == "tool_torch":
-		var has_matches: bool = player.inventory.has_item_name("Cerillas")
-		var has_sticks: bool = player.inventory.has_item_name("Palo", 2)
-		if has_matches or has_sticks:
-			var light_btn := Button.new()
-			if has_matches:
-				light_btn.text = "Encender con cerillas"
-			else:
-				light_btn.text = "Encender con 2 palos (8s)"
-			light_btn.add_theme_font_size_override("font_size", 14)
-			light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(light_btn)
-			_context_menu_has_light = true
+		var torch_already_lit: bool = item.has_meta("torch_lit") and bool(item.get_meta("torch_lit", false))
+		if not torch_already_lit:
+			var has_matches: bool = player.inventory.has_item_name("Cerillas")
+			var has_sticks: bool = player.inventory.has_item_name("Palo", 2)
+			if has_matches or has_sticks:
+				var light_btn := Button.new()
+				if has_matches:
+					light_btn.text = "Encender con cerillas"
+				else:
+					light_btn.text = "Encender con 2 palos (8s)"
+				light_btn.add_theme_font_size_override("font_size", 14)
+				light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				vbox.add_child(light_btn)
+				_context_menu_has_light = true
 	# Add Cortar en trapos button for clothing when holding knife/axe
 	if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
 		var has_knife := false
@@ -1297,8 +1299,9 @@ func _on_eat_pressed() -> void:
 	if inventory_visible:
 		toggle_inventory()
 	# Put food in hand and eat immediately
+	var was_in_hand := player.held_index == selected_slot_index and player.hands != null and player.hands.has_item_in_hands()
 	player._use_inventory_index(selected_slot_index)
-	if player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
+	if not was_in_hand and player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
 		player._eat_held_item()
 	selected_slot_index = -1
 

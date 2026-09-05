@@ -73,6 +73,10 @@ const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
 const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
 const AI_LOD_CULL := 150.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
 
+# Cache de grupo wildlife para evitar get_nodes_in_group cada frame
+var _cached_wildlife: Array = []
+var _wildlife_cache_timer := 0.0
+
 # Puppet mode: visual-only animal controlled by network sync (no AI)
 func setup_puppet(kind: String) -> void:
 	animal_type = kind
@@ -240,6 +244,10 @@ func _exit_tree() -> void:
 	_shared_cylinder = null
 
 func _process(delta: float) -> void:
+	_wildlife_cache_timer += delta
+	if _wildlife_cache_timer >= 1.0:
+		_wildlife_cache_timer = 0.0
+		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	if is_puppet:
 		if animal_type == "wolf" and not _is_dead:
 			_update_wolf_sounds(delta)
@@ -694,44 +702,44 @@ func _wolf_ai(delta: float) -> Dictionary:
 
 func _find_nearest_corpse() -> Node3D:
 	var nearest: Node3D = null
-	var nearest_dist := 9999.0
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	var nearest_dist_sq := 9999.0 * 9999.0
+	for node in _cached_wildlife:
 		if node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
 		if not other.get("_is_dead") or other.get("_gutted"):
 			continue
-		var d := global_position.distance_to(other.global_position)
-		if d < nearest_dist:
-			nearest_dist = d
+		var d_sq := global_position.distance_squared_to(other.global_position)
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
 			nearest = other
 	if nearest == null:
 		for p in get_tree().get_nodes_in_group("net_player_proxy"):
 			if p is Node3D and p.get_meta("proxy_dead", false) and not p.get_meta("gutted", false):
-				var d := global_position.distance_to((p as Node3D).global_position)
-				if d < nearest_dist:
-					nearest_dist = d
+				var d_sq := global_position.distance_squared_to((p as Node3D).global_position)
+				if d_sq < nearest_dist_sq:
+					nearest_dist_sq = d_sq
 					nearest = p as Node3D
 	# Also search for gutted meat pickups on the ground
 	var meat := _find_nearest_meat_pickup()
 	if meat != null:
-		var d := global_position.distance_to(meat.global_position)
-		if d < nearest_dist:
-			nearest_dist = d
+		var d_sq := global_position.distance_squared_to(meat.global_position)
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
 			nearest = meat
 	return nearest
 
 func _find_nearest_proxy() -> Node3D:
 	var nearest: Node3D = null
-	var nearest_dist := 99999.0
+	var nearest_dist_sq := 99999.0 * 99999.0
 	for p in get_tree().get_nodes_in_group("net_player_proxy"):
 		if not (p is Node3D) or not is_instance_valid(p):
 			continue
 		if p.get_meta("proxy_dead", false):
 			continue
-		var d: float = global_position.distance_to((p as Node3D).global_position)
-		if d < nearest_dist:
-			nearest_dist = d
+		var d_sq: float = global_position.distance_squared_to((p as Node3D).global_position)
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
 			nearest = p as Node3D
 	# Also check "Player" node on non-server scenes
 	if nearest == null:
@@ -744,8 +752,8 @@ func _find_nearest_proxy() -> Node3D:
 
 func _find_nearest_prey() -> Node3D:
 	var nearest: Node3D = null
-	var nearest_dist := 9999.0
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	var nearest_dist_sq := 9999.0 * 9999.0
+	for node in _cached_wildlife:
 		if node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
@@ -754,9 +762,9 @@ func _find_nearest_prey() -> Node3D:
 		var at = other.get("animal_type")
 		if at == null or str(at) == "wolf":
 			continue
-		var d := global_position.distance_to(other.global_position)
-		if d < nearest_dist:
-			nearest_dist = d
+		var d_sq := global_position.distance_squared_to(other.global_position)
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
 			nearest = other
 	return nearest
 
@@ -1605,7 +1613,7 @@ func _is_position_allowed(pos: Vector3) -> bool:
 
 func _get_separation_vector() -> Vector3:
 	var push := Vector3.ZERO
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	for node in _cached_wildlife:
 		if node == self:
 			continue
 		if not (node is Node3D):
@@ -1617,8 +1625,9 @@ func _get_separation_vector() -> Vector3:
 			continue
 		var diff := global_position - other.global_position
 		diff.y = 0.0
-		var d := diff.length()
-		if d > 0.001 and d < 3.0:
+		var d_sq := diff.length_squared()
+		if d_sq > 0.000001 and d_sq < 9.0:
+			var d := sqrt(d_sq)
 			push += diff.normalized() * (3.0 - d) / 3.0
 	if push.length() > 0.01:
 		return push.normalized()
