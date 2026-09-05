@@ -18,9 +18,8 @@ func _ready() -> void:
 	# Create heat mist fog volume above the water surface
 	_heat_mist = FogVolume.new()
 	_heat_mist.name = "HeatMist"
-	_heat_mist.shape = BoxShape3D.new()
-	var box_shape := _heat_mist.shape as BoxShape3D
-	box_shape.size = Vector3(60.0, 2.5, 60.0)
+	_heat_mist.shape = RenderingServer.FOG_VOLUME_SHAPE_BOX
+	_heat_mist.size = Vector3(60.0, 2.5, 60.0)
 	_heat_mist.position = Vector3(0.0, 1.2, 0.0)
 	_heat_mist_mat = FogMaterial.new()
 	_heat_mist_mat.density = 0.0
@@ -80,6 +79,4 @@ func set_night_amount(value: float) -> void:
 func set_mist_size(width: float, depth: float) -> void:
 	if _heat_mist == null:
 		return
-	var box_shape := _heat_mist.shape as BoxShape3D
-	if box_shape != null:
-		box_shape.size = Vector3(width, 2.5, depth)
+	_heat_mist.size = Vector3(width, 2.5, depth)

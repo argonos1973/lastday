@@ -4515,12 +4515,15 @@ func _eat_held_item() -> void:
 	eat_timer.wait_time = 2.0
 	eat_timer.one_shot = true
 	eat_timer.timeout.connect(func():
+		var _oh: float = 0.0
+		var _ot: float = 0.0
+		var _ohp: float = 0.0
+		var _thirst_pct := 0.20
+		var _health_pct := 0.35
 		if stats != null:
-			var _oh: float = float(stats.hunger)
-			var _ot: float = float(stats.thirst)
-			var _ohp: float = float(stats.health)
-			var _thirst_pct := 0.20
-			var _health_pct := 0.35
+			_oh = float(stats.hunger)
+			_ot = float(stats.thirst)
+			_ohp = float(stats.health)
 			if item_name == "Naranja":
 				_thirst_pct = 0.80
 				_health_pct = 0.20

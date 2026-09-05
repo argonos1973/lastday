@@ -7084,10 +7084,10 @@ func _create_mountain_backdrop() -> void:
 		for i in range(count):
 			var offset := step * (float(i) - float(count - 1) * 0.5)
 			var pos := center + offset + Vector3(_world_rng.randf_range(-12.0, 12.0), 0.0, _world_rng.randf_range(-10.0, 10.0))
-			var peak_height := _world_rng.randf_range(14.0, 26.0)
-			var radius_x := _world_rng.randf_range(40.0, 75.0)
-			var radius_z := _world_rng.randf_range(30.0, 60.0)
-			var base_color := shadow_color.lerp(mountain_color, _world_rng.randf_range(0.35, 0.95))
+			var peak_height: float = _world_rng.randf_range(14.0, 26.0)
+			var radius_x: float = _world_rng.randf_range(40.0, 75.0)
+			var radius_z: float = _world_rng.randf_range(30.0, 60.0)
+			var base_color: Color = shadow_color.lerp(mountain_color, _world_rng.randf_range(0.35, 0.95))
 			_create_mountain_peak("MountainPeak", pos, radius_x, radius_z, peak_height, yaw + _world_rng.randf_range(-14.0, 14.0), base_color)
 
 func _create_rocky_foothills() -> void:
