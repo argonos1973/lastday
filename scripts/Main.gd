@@ -3689,7 +3689,7 @@ func _create_road() -> void:
 			var node := (pole_scene as Node3D).duplicate() as Node3D
 			node.name = "RoadTelephonePole_%d" % poles_placed
 			node.add_to_group("world_action_visual")
-			node.position = Vector3(powerpole_pos.x, pole_y, powerpole_pos.z)
+			node.position = Vector3(powerpole_pos.x, 0.0, powerpole_pos.z)
 			node.scale = Vector3.ONE * pole_scale
 			node.rotation_degrees = Vector3(0, light_yaw + 180.0, 0)
 			add_child(node)
@@ -8881,7 +8881,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			var node := (pole_scene as Node3D).duplicate() as Node3D
 			node.name = "TelephonePoleGLB_%d" % i
 			node.add_to_group("world_action_visual")
-			node.position = pos
+			node.position = Vector3(pos.x, 0.0, pos.z)
 			node.scale = Vector3.ONE * pole_scale
 			node.rotation_degrees = Vector3(0, 90, 0)
 			add_child(node)
