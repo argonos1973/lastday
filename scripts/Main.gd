@@ -47,6 +47,11 @@ var _shelter_check_timer := 0.0
 var _cached_in_house := false
 var _cached_near_shelter := false
 var _door_cache_timer := 0.0
+var _rain_particles: GPUParticles3D = null
+var _snow_particles: GPUParticles3D = null
+var _rain_process_mat: ParticleProcessMaterial = null
+var _snow_process_mat: ParticleProcessMaterial = null
+var _weather_effect_timer := 0.0
 var _shadow_update_timer := 0.0
 var _streaming_update_timer := 0.0
 var _world_action_tick_timer := 0.0
@@ -75,6 +80,7 @@ var _tree_id_counter := 0
 var _tree_registry: Array = [] # {pos, visual_name, id, active}
 var _tree_activation_radius := 8.0
 var _tree_deactivation_radius := 12.0
+var _tree_check_interval := 2.0
 var _tree_check_timer := 0.0
 var _tree_grid: Dictionary = {} # cell_key -> Array[entry refs]
 var _tree_grid_cell_size := 20.0
@@ -94,12 +100,12 @@ var _forest_multimesh_centers: Array[Vector3] = []
 var _forest_multimesh_radii: Array[float] = []
 var _hidden_tree_transforms: Dictionary = {} # Vector3 pos key -> original Transform3D
 var _cut_remains_positions: Dictionary = {} # Vector3 rounded pos -> bool (prevent duplicate stumps)
-const FOREST_MM_VISIBLE_RADIUS := 100.0
-const FOREST_MM_HIDE_RADIUS := 120.0
+const FOREST_MM_VISIBLE_RADIUS := 55.0
+const FOREST_MM_HIDE_RADIUS := 75.0
 var _forest_collision_grid: Dictionary = {} # cell_key -> Array[Vector3]
-var _forest_collision_grid_size := 20.0
+var _forest_collision_grid_size := 25.0
 var _forest_collision_active_cells: Dictionary = {} # cell_key -> StaticBody3D
-var _forest_collision_radius := 80.0
+var _forest_collision_radius := 35.0
 var _forest_collision_check_timer := 0.0
 var _cached_leafy_material: StandardMaterial3D = null
 var _mountain_shared_material: StandardMaterial3D = null
@@ -564,6 +570,7 @@ func _ready() -> void:
 	if net == null or not net.is_dedicated_server:
 		_create_audio()
 		_create_hud()
+		_create_weather_particles()
 	_apply_pending_doors()
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
@@ -762,18 +769,18 @@ func _process(delta: float) -> void:
 		if grass_batch_material is ShaderMaterial:
 			(grass_batch_material as ShaderMaterial).set_shader_parameter("time_var", _wind_time)
 	_grass_vis_timer += delta
-	if _grass_vis_timer >= 0.5:
+	if _grass_vis_timer >= 1.0:
 		_grass_vis_timer = 0.0
 		_update_grass_visibility()
 	_tree_check_timer += delta
-	if _tree_check_timer > 1.0:
+	if _tree_check_timer > _tree_check_interval:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
 		_update_forest_visibility()
 		_update_forest_collision()
 	_streaming_update_timer += delta
-	if _streaming_update_timer >= 0.5 and world_streaming_mgr != null:
+	if _streaming_update_timer >= 1.0 and world_streaming_mgr != null:
 		_streaming_update_timer = 0.0
 		_streaming_positions.clear()
 		if player != null and is_instance_valid(player):
@@ -867,6 +874,7 @@ func _process(delta: float) -> void:
 	if near_built_shelter:
 		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed)
+	_update_weather_effects(delta)
 	_tick_stat_warnings(delta, player)
 	_apply_campfire_effect(player, delta)
 	_apply_torch_fire_effect(player, delta)
@@ -881,7 +889,7 @@ func _process(delta: float) -> void:
 		_water_night_timer = 0.0
 		_update_water_night_amount()
 	_shadow_update_timer += delta
-	if _shadow_update_timer >= 1.0:
+	if _shadow_update_timer >= 2.0:
 		_shadow_update_timer = 0.0
 		_update_shadow_proximity()
 	_world_action_tick_timer += delta
@@ -1089,6 +1097,91 @@ func _update_water_night_amount() -> void:
 		if node is RiverWater and is_instance_valid(node) and node.has_method("set_night_amount"):
 			node.set_night_amount(night_amount)
 
+func _create_weather_particles() -> void:
+	# Rain particles
+	_rain_particles = GPUParticles3D.new()
+	_rain_particles.name = "RainParticles"
+	_rain_particles.amount = 2000
+	_rain_particles.lifetime = 1.5
+	_rain_particles.explosiveness = 0.0
+	_rain_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
+	var rain_mat = ParticleProcessMaterial.new()
+	rain_mat.direction = Vector3(0.05, -1.0, 0.05)
+	rain_mat.spread = 5.0
+	rain_mat.initial_velocity_min = 35.0
+	rain_mat.initial_velocity_max = 45.0
+	rain_mat.gravity = Vector3(0, -5, 0)
+	rain_mat.color = Color(0.6, 0.7, 0.85, 0.4)
+	rain_mat.scale_min = 0.01
+	rain_mat.scale_max = 0.03
+	_rain_process_mat = rain_mat
+	_rain_particles.process_material = rain_mat
+	var rain_mesh = BoxMesh.new()
+	rain_mesh.size = Vector3(0.02, 0.6, 0.02)
+	_rain_particles.draw_pass_1 = rain_mesh
+	_rain_particles.emitting = false
+	_rain_particles.visible = false
+	add_child(_rain_particles)
+	# Snow particles
+	_snow_particles = GPUParticles3D.new()
+	_snow_particles.name = "SnowParticles"
+	_snow_particles.amount = 1500
+	_snow_particles.lifetime = 4.0
+	_snow_particles.explosiveness = 0.0
+	_snow_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
+	var snow_mat = ParticleProcessMaterial.new()
+	snow_mat.direction = Vector3(0.05, -1.0, 0.05)
+	snow_mat.spread = 20.0
+	snow_mat.initial_velocity_min = 2.0
+	snow_mat.initial_velocity_max = 5.0
+	snow_mat.gravity = Vector3(0, -1.0, 0)
+	snow_mat.color = Color(0.9, 0.92, 0.98, 0.7)
+	snow_mat.scale_min = 0.03
+	snow_mat.scale_max = 0.06
+	_snow_process_mat = snow_mat
+	_snow_particles.process_material = snow_mat
+	var snow_mesh = SphereMesh.new()
+	snow_mesh.radius = 0.05
+	snow_mesh.height = 0.1
+	_snow_particles.draw_pass_1 = snow_mesh
+	_snow_particles.emitting = false
+	_snow_particles.visible = false
+	add_child(_snow_particles)
+
+func _update_weather_effects(delta: float) -> void:
+	if hud == null or player == null:
+		return
+	if _rain_particles == null and _snow_particles == null:
+		return
+	_weather_effect_timer += delta
+	if _weather_effect_timer < 2.0:
+		return
+	_weather_effect_timer = 0.0
+	var rain_amount: float = hud._real_rain
+	var snow_amount: float = hud._real_snow
+	var is_sheltered: bool = player.in_shelter or _cached_in_house
+	# Rain
+	if _rain_particles != null:
+		var rain_active := rain_amount > 0.1 and not is_sheltered
+		_rain_particles.emitting = rain_active
+		_rain_particles.visible = rain_active
+		if rain_active:
+			_rain_particles.global_position = player.global_position + Vector3(0, 30, 0)
+			_rain_particles.amount = int(clamp(rain_amount * 300, 200, 3000))
+	# Snow
+	if _snow_particles != null:
+		var snow_active := snow_amount > 0.05 and not is_sheltered
+		_snow_particles.emitting = snow_active
+		_snow_particles.visible = snow_active
+		if snow_active:
+			_snow_particles.global_position = player.global_position + Vector3(0, 30, 0)
+			_snow_particles.amount = int(clamp(snow_amount * 400, 200, 2500))
+	# Wetness from rain
+	if rain_amount > 0.1 and not is_sheltered:
+		var wet_gain: float = delta * 0.04 * clamp(rain_amount * 0.5, 0.1, 1.0)
+		player.wetness = min(1.0, player.wetness + wet_gain)
+		player.stats.wetness = player.wetness
+
 var _cached_omni_lights: Array = []
 var _cached_area_lights: Array = []
 var _light_cache_dirty := true
@@ -1160,7 +1253,7 @@ func _update_shadow_proximity() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	const SHADOW_RADIUS := 10.0
+	const SHADOW_RADIUS := 6.0
 	if _light_cache_dirty:
 		_cached_omni_lights = get_tree().get_nodes_in_group("omni_lights")
 		_cached_area_lights = get_tree().get_nodes_in_group("area_lights")
@@ -2909,7 +3002,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 				_apply_camo_material_recursive(camo_node as Node3D, Color(0.35, 0.30, 0.18))
 			else:
 				_apply_camo_material_recursive(camo_node as Node3D, Color(0.20, 0.25, 0.15))
-	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta"))) else "pickup_item"
 	var action_label := item_name
 	if broken:
 		action_label = item_name + " (rota)"
@@ -2940,7 +3033,7 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	match item_type:
 		"water":
-			if item_name == "Botella de agua":
+			if item_name == "Botella de agua" or item_name == "Botella de agua llena":
 				return [PLASTIC_BOTTLE_MODEL]
 			return [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"]
 		"resource":
@@ -3041,7 +3134,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 func _get_drop_scale(item_name: String, item_type: String) -> float:
 	match item_type:
 		"water":
-			if item_name == "Botella de agua":
+			if item_name == "Botella de agua" or item_name == "Botella de agua llena":
 				return 0.02
 			return 1.0
 		"resource":
@@ -3349,30 +3442,132 @@ const ROAD_HALF_WIDTH := 5.0
 const ROAD_CENTER_X := 9.0
 const ROAD_START_Z := -500.0
 const ROAD_END_Z := 500.0
+var _road_segments: Array = [] # Cached road segments for _is_on_road
+
+func _road_waypoints() -> Array:
+	# Curved road from south to north, avoiding river crossings.
+	# River inner loop crosses x~9 near z=-52 and z=70.
+	# Tributary south runs near x=8-20 from z=70 to z=385.
+	# Road curves west to avoid those areas.
+	return [
+		Vector3(9, 0, -500),
+		Vector3(9, 0, -400),
+		Vector3(9, 0, -300),
+		Vector3(9, 0, -200),
+		Vector3(9, 0, -120),
+		Vector3(9, 0, -80),
+		Vector3(-18, 0, -52),
+		Vector3(-12, 0, -30),
+		Vector3(9, 0, -10),
+		Vector3(9, 0, 10),
+		Vector3(9, 0, 35),
+		Vector3(-18, 0, 70),
+		Vector3(-25, 0, 120),
+		Vector3(-22, 0, 180),
+		Vector3(-18, 0, 240),
+		Vector3(-12, 0, 300),
+		Vector3(9, 0, 360),
+		Vector3(9, 0, 420),
+		Vector3(9, 0, 500),
+	]
+
+func _generate_road_segments() -> Array:
+	var waypoints := _road_waypoints()
+	var segments: Array = []
+	var n := waypoints.size()
+	if n < 3:
+		return segments
+	var sample_pos: Array[Vector3] = []
+	var sample_yaw: Array[float] = []
+	var subdiv := 14
+	for i in range(n - 1):
+		var p0: Vector3 = waypoints[max(0, i - 1)]
+		var p1: Vector3 = waypoints[i]
+		var p2: Vector3 = waypoints[min(n - 1, i + 1)]
+		var p3: Vector3 = waypoints[min(n - 1, i + 2)]
+		for j in range(subdiv):
+			var t := float(j) / float(subdiv)
+			var pos := _catmull_rom(p0, p1, p2, p3, t)
+			var t2: float = min(1.0, t + 0.01)
+			var pos_next := _catmull_rom(p0, p1, p2, p3, t2)
+			var tangent := (pos_next - pos).normalized()
+			var yaw := rad_to_deg(atan2(-tangent.z, tangent.x))
+			sample_pos.append(pos)
+			sample_yaw.append(yaw)
+	var spacing := 6.0
+	var seg_along := 14.0
+	var seg_across := 7.0
+	var accum := 0.0
+	var last_idx := 0
+	for i in range(1, sample_pos.size()):
+		accum += sample_pos[i].distance_to(sample_pos[i - 1])
+		if accum >= spacing:
+			var mid := (last_idx + i) / 2
+			segments.append({
+				"center": Vector3(sample_pos[mid].x, 0.0, sample_pos[mid].z),
+				"size": Vector2(seg_along, seg_across),
+				"yaw": sample_yaw[mid]
+			})
+			accum = 0.0
+			last_idx = i
+	return segments
 
 func _is_on_road(pos: Vector3) -> bool:
-	return abs(pos.x - ROAD_CENTER_X) <= ROAD_HALF_WIDTH + 1.0 and pos.z >= ROAD_START_Z - 3.0 and pos.z <= ROAD_END_Z + 3.0
+	if _road_segments.is_empty():
+		return false
+	for seg in _road_segments:
+		var center: Vector3 = seg["center"]
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var offset := pos - center
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		var half_length: float = float(seg["size"].x) * 0.5 + 1.0
+		var half_width: float = float(seg["size"].y) * 0.5 + 1.0
+		if abs(local_along) <= half_length and abs(local_across) <= half_width:
+			return true
+	return false
+
+func _is_near_road(pos: Vector3, margin: float) -> bool:
+	if _road_segments.is_empty():
+		return false
+	for seg in _road_segments:
+		var center: Vector3 = seg["center"]
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var offset := pos - center
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		var half_length: float = float(seg["size"].x) * 0.5 + margin
+		var half_width: float = float(seg["size"].y) * 0.5 + margin
+		if abs(local_along) <= half_length and abs(local_across) <= half_width:
+			return true
+	return false
 
 func _create_road() -> void:
-	var road_x := ROAD_CENTER_X
 	var road_width := 10.0
 	var seg_length := 10.0
-	# Scan terrain to find where hills/mountains start
-	var base_y := _get_exact_ground_y(road_x, 0.0)
+	_road_segments = _generate_road_segments()
+	if _road_segments.is_empty():
+		return
+	# Scan terrain to find where hills/mountains start — filter segments by slope
+	var base_y := _get_exact_ground_y(ROAD_CENTER_X, 0.0)
 	var max_slope := 3.0
 	var road_z_start := ROAD_START_Z
 	var road_z_end := ROAD_END_Z
 	var _zi := 0
 	while _zi < 500:
 		var z_test := -float(_zi) * seg_length
-		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
+		if abs(_get_exact_ground_y(ROAD_CENTER_X, z_test) - base_y) > max_slope:
 			road_z_start = z_test + seg_length
 			break
 		_zi += 1
 	_zi = 0
 	while _zi < 500:
 		var z_test := float(_zi) * seg_length
-		if abs(_get_exact_ground_y(road_x, z_test) - base_y) > max_slope:
+		if abs(_get_exact_ground_y(ROAD_CENTER_X, z_test) - base_y) > max_slope:
 			road_z_end = z_test - seg_length
 			break
 		_zi += 1
@@ -3381,102 +3576,155 @@ func _create_road() -> void:
 	road_mat.metallic = 0.0
 	road_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	road_mat.texture_repeat = true
-	var tex_dir := "res://assets/textures/ground032/"
-	var color_tex := load(tex_dir + "Ground032_4K-JPG_Color.jpg")
+	var tex_dir := "res://assets/textures/dirt_road/"
+	var color_tex := load(tex_dir + "Ground038_1K-JPG_Color.jpg")
 	if color_tex != null:
 		road_mat.albedo_texture = color_tex
-		road_mat.albedo_color = Color(0.45, 0.38, 0.30)
+		road_mat.albedo_color = Color(0.55, 0.48, 0.38)
 	else:
 		road_mat.albedo_color = Color(0.45, 0.32, 0.2)
-	var normal_tex := load(tex_dir + "Ground032_4K-JPG_NormalGL.jpg")
+	var normal_tex := load(tex_dir + "Ground038_1K-JPG_NormalGL.jpg")
 	if normal_tex != null:
 		road_mat.normal_texture = normal_tex
 		road_mat.normal_enabled = true
-	var rough_tex := load(tex_dir + "Ground032_4K-JPG_Roughness.jpg")
+	var rough_tex := load(tex_dir + "Ground038_1K-JPG_Roughness.jpg")
 	if rough_tex != null:
 		road_mat.roughness_texture = rough_tex
 		road_mat.roughness_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_GREEN
-	var ao_tex := load(tex_dir + "Ground032_4K-JPG_AmbientOcclusion.jpg")
+	var ao_tex := load(tex_dir + "Ground038_1K-JPG_AmbientOcclusion.jpg")
 	if ao_tex != null:
 		road_mat.ao_texture = ao_tex
 		road_mat.ao_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_RED
-	var tiles_x := int(road_width / 2.0)
-	var tiles_z := int(seg_length / 2.0)
-	road_mat.uv1_scale = Vector3(float(tiles_x), float(tiles_z), 1.0)
+	road_mat.uv1_scale = Vector3(2.0, 4.0, 1.0)
 	var road_body := StaticBody3D.new()
 	road_body.name = "RoadCollision"
 	add_child(road_body)
-	var num_segs := int((road_z_end - road_z_start) / seg_length)
-	for si in range(num_segs):
-		var z_center := road_z_start + (float(si) + 0.5) * seg_length
-		var seg_ground_y := _get_exact_ground_y(road_x, z_center)
-		var road_plane := PlaneMesh.new()
-		road_plane.size = Vector2(road_width, seg_length)
-		road_plane.orientation = PlaneMesh.FACE_Y
-		road_plane.subdivide_width = max(1, tiles_x - 1)
-		road_plane.subdivide_depth = max(1, tiles_z - 1)
+	# Filter segments by slope: skip those outside the flat road range
+	var filtered_segments: Array = []
+	for seg in _road_segments:
+		var center: Vector3 = seg["center"]
+		if center.z < road_z_start - 5.0 or center.z > road_z_end + 5.0:
+			continue
+		filtered_segments.append(seg)
+	_road_segments = filtered_segments
+	for si in range(_road_segments.size()):
+		var seg: Dictionary = _road_segments[si]
+		var center: Vector3 = seg["center"]
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var seg_ground_y := _get_exact_ground_y(center.x, center.z)
+		var seg_width: float = float(seg["size"].y)
+		var seg_len: float = float(seg["size"].x)
+		var half_w := seg_width * 0.5
+		var half_l := seg_len * 0.5
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var grid_w := max(3, int(seg_width / 1.5))
+		var grid_l := max(4, int(seg_len / 1.5))
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var uv_x_scale := seg_width / 2.0
+		var uv_y_scale := seg_len / 2.0
+		for iz in range(grid_l + 1):
+			var t_l: float = float(iz) / float(grid_l)
+			var local_l: float = -half_l + t_l * seg_len
+			for ix in range(grid_w + 1):
+				var t_w: float = float(ix) / float(grid_w)
+				var local_w: float = -half_w + t_w * seg_width
+				var world_pos: Vector3 = center + along * local_l + across * local_w
+				var gy: float = _get_exact_ground_y(world_pos.x, world_pos.z) + 0.04
+				st.set_uv(Vector2(t_w * uv_x_scale, t_l * uv_y_scale))
+				st.add_vertex(Vector3(world_pos.x, gy, world_pos.z))
+		for iz in range(grid_l):
+			for ix in range(grid_w):
+				var i00: int = iz * (grid_w + 1) + ix
+				var i10: int = iz * (grid_w + 1) + ix + 1
+				var i01: int = (iz + 1) * (grid_w + 1) + ix
+				var i11: int = (iz + 1) * (grid_w + 1) + ix + 1
+				st.add_index(i00)
+				st.add_index(i01)
+				st.add_index(i10)
+				st.add_index(i10)
+				st.add_index(i01)
+				st.add_index(i11)
+		st.generate_normals()
 		var road_mi := MeshInstance3D.new()
-		road_mi.mesh = road_plane
+		road_mi.mesh = st.commit()
 		road_mi.name = "DirtRoad_%d" % si
 		road_mi.material_override = road_mat
 		add_child(road_mi)
-		road_mi.global_position = Vector3(road_x, seg_ground_y + 0.02, z_center)
 		var col_shape := BoxShape3D.new()
-		col_shape.size = Vector3(road_width, 0.1, seg_length)
+		col_shape.size = Vector3(seg_width, 0.1, seg_len)
 		var col := CollisionShape3D.new()
 		col.shape = col_shape
-		col.position = Vector3(road_x - road_body.global_position.x, seg_ground_y + 0.02 - road_body.global_position.y, z_center - road_body.global_position.z)
+		col.position = Vector3(center.x - road_body.global_position.x, seg_ground_y + 0.04 - road_body.global_position.y, center.z - road_body.global_position.z)
+		col.rotation_degrees.y = float(seg["yaw"])
 		road_body.add_child(col)
-	# Utility poles along the road (same style as village)
+	# Utility poles along the road (placed every N segments)
 	var pole_spacing := 40.0
-	var streetlight_x := road_x - 6.0
-	var powerpole_x := road_x + 6.0
-	var num_poles := int((road_z_end - road_z_start) / pole_spacing)
-	for pi2 in range(num_poles):
-		var z_pole := road_z_start + (float(pi2) + 0.5) * pole_spacing
-		var light_y := _get_exact_ground_y(streetlight_x, z_pole)
-		_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % pi2, Vector3(streetlight_x, light_y, z_pole), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-		var _lnode := get_node_or_null("RoadLight_%d" % pi2)
-		if _lnode != null:
-			_add_collision_to_prop_group(_lnode)
-	# Power/telephone poles on the right side, paired with street lights
 	var pole_scale := 9.0 / 49.45
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
-	if pole_scene is Node3D:
-		for pi3 in range(num_poles):
-			var z_pole := road_z_start + (float(pi3) + 0.5) * pole_spacing
-			var pole_y := _get_exact_ground_y(powerpole_x, z_pole)
+	var poles_placed := 0
+	var accum_dist := 0.0
+	for si in range(_road_segments.size()):
+		var seg: Dictionary = _road_segments[si]
+		var center: Vector3 = seg["center"]
+		accum_dist += 6.0
+		if accum_dist < pole_spacing:
+			continue
+		accum_dist = 0.0
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var streetlight_pos := center + across * (-4.0)
+		var light_y := _get_exact_ground_y(streetlight_pos.x, streetlight_pos.z)
+		var light_yaw: float = rad_to_deg(atan2(across.x, across.z))
+		_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % poles_placed, Vector3(streetlight_pos.x, light_y, streetlight_pos.z), Vector3.ONE, Vector3(0, light_yaw, 0), Vector3(0.5, 4.0, 0.5))
+		var _lnode := get_node_or_null("RoadLight_%d" % poles_placed)
+		if _lnode != null:
+			_add_collision_to_prop_group(_lnode)
+		if pole_scene is Node3D:
+			var powerpole_pos := center + across * 4.0
+			var pole_y := _get_exact_ground_y(powerpole_pos.x, powerpole_pos.z)
 			var node := (pole_scene as Node3D).duplicate() as Node3D
-			node.name = "RoadTelephonePole_%d" % pi3
+			node.name = "RoadTelephonePole_%d" % poles_placed
 			node.add_to_group("world_action_visual")
-			node.position = Vector3(powerpole_x, pole_y, z_pole)
+			node.position = Vector3(powerpole_pos.x, pole_y, powerpole_pos.z)
 			node.scale = Vector3.ONE * pole_scale
-			node.rotation_degrees = Vector3(0, 90, 0)
+			node.rotation_degrees = Vector3(0, light_yaw + 180.0, 0)
 			add_child(node)
 			_snap_node_bottom_to_y_cached(node, pole_y, pole_path, Vector3.ONE * pole_scale)
 			_add_collision_to_prop_group(node)
-	# Procedural grass along both road edges
-	var road_length := road_z_end - road_z_start
-	var grass_depth := 20.0
-	var tuft_spacing := 0.18
-	var num_tufts := int(road_length / tuft_spacing)
+		poles_placed += 1
+	# Procedural grass along both road edges — extends outward with decreasing density
+	var grass_depth := 8.0
+	var tuft_spacing := 0.25
 	var grass_base := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
-	for side in [-1, 1]:
-		for i in range(num_tufts):
-			var z_pos: float = road_z_start + (i + 0.5) * tuft_spacing + _world_rng.randf_range(-0.08, 0.08)
-			var blade_count := 8
-			for j in range(blade_count):
-				var t: float = pow(_world_rng.randf(), 2.5)
-				var offset_x: float = t * grass_depth + _world_rng.randf_range(-0.25, 0.25)
-				var edge_x: float = road_x + side * (road_width * 0.5 + 0.05 + offset_x)
-				var z_jitter := z_pos + _world_rng.randf_range(-0.15, 0.15)
-				var pos := Vector3(edge_x, _get_exact_ground_y(edge_x, z_jitter) + 0.02, z_jitter)
-				var h := _world_rng.randf_range(0.15, 0.35) * (1.0 - t * 0.3)
-				var r := _world_rng.randf_range(0.18, 0.38)
-				var c := grass_base.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
-				_queue_grass_instance(pos, h, r, c)
+	for si in range(_road_segments.size()):
+		var seg: Dictionary = _road_segments[si]
+		var center: Vector3 = seg["center"]
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var seg_along_len: float = float(seg["size"].x)
+		var num_tufts := int(seg_along_len / tuft_spacing)
+		for side in [-1, 1]:
+			for i in range(num_tufts):
+				var t_along: float = (i + 0.5) * tuft_spacing - seg_along_len * 0.5 + _world_rng.randf_range(-0.12, 0.12)
+				var blade_count := 5
+				for j in range(blade_count):
+					var t: float = pow(_world_rng.randf(), 1.5)
+					var offset_across: float = t * grass_depth
+					var edge_pos: Vector3 = center + across * side * (float(seg["size"].y) * 0.5 - 0.1 + offset_across) + along * t_along
+					if _is_near_river(edge_pos, 2.0):
+						continue
+					var pos := Vector3(edge_pos.x, _get_exact_ground_y(edge_pos.x, edge_pos.z) + 0.02, edge_pos.z)
+					var density_fade := 1.0 - t
+					var h := _world_rng.randf_range(0.15, 0.35) * density_fade
+					var r := _world_rng.randf_range(0.18, 0.38)
+					var c := grass_base.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
+					_queue_grass_instance(pos, h, r, c)
 
 func _get_mesh_global_min_y(mi: MeshInstance3D) -> float:
 	var aabb := mi.get_aabb()
@@ -4821,7 +5069,7 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	action.set_meta("visual_name", visual_name)
 
 func _create_mushrooms() -> void:
-	var mushroom_count := int(400 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0) / 7.9)
+	var mushroom_count := int(200 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0) / 7.9)
 	var mushroom_idx := 0
 	var placed_positions: Array[Vector3] = []
 	var forest_min_radius := 70.0
@@ -5347,7 +5595,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 			(_fb_node as Node3D).queue_free()
 			push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
 			return
-	var action_kind := "eat_food" if (item_type == "food" and not item_name.begins_with("Lata de ")) else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta"))) else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
 	action.set_meta("visual_name", stored_visual_name)
@@ -5928,7 +6176,7 @@ func handle_world_action(action, actor) -> void:
 					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
 						actor.inventory.remove_index(i)
 						break
-				var filled_bottle = ItemScript.create("Botella de agua", "water", 0.4, 1, 25.0)
+				var filled_bottle = ItemScript.create("Botella de agua llena", "water", 0.4, 1, 25.0)
 				filled_bottle.max_durability = 100.0
 				filled_bottle.durability = 100.0
 				if actor.inventory.add_item(filled_bottle):
@@ -5938,7 +6186,7 @@ func handle_world_action(action, actor) -> void:
 					actor.notice.emit("Has llenado la botella de agua. Puedes beber de ella.")
 				return
 			# If holding a partially empty water bottle, refill it
-			if held_dw != null and held_dw.item_name == "Botella de agua" and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
+			if held_dw != null and (held_dw.item_name == "Botella de agua" or held_dw.item_name == "Botella de agua llena") and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
 				_play_actor_action(actor, "plant", 5.0)
 				actor.notice.emit("Llenando botella en el rio...")
 				if hud != null:
@@ -5946,6 +6194,7 @@ func handle_world_action(action, actor) -> void:
 				await get_tree().create_timer(5.0).timeout
 				if _scene_quitting: return
 				held_dw.durability = float(held_dw.max_durability)
+				held_dw.item_name = "Botella de agua llena"
 				actor.inventory.changed.emit()
 				if actor.has_method("_sync_held_item"):
 					actor._sync_held_item()
@@ -6853,8 +7102,7 @@ func _create_rocky_foothills() -> void:
 			continue
 		
 		# Evitar colinas en la carretera (con margen según el radio)
-		var dist_to_road_x: float = abs(pos.x - ROAD_CENTER_X)
-		if dist_to_road_x < ROAD_HALF_WIDTH + 15.0 and pos.z >= ROAD_START_Z - 10.0 and pos.z <= ROAD_END_Z + 10.0:
+		if _is_on_road(pos) or _is_near_road(pos, 15.0):
 			continue
 		
 		# Evitar generar colinas encima de los puntos de aparición del jugador (spawn zones)
@@ -7073,9 +7321,6 @@ func _create_mountain_river() -> void:
 		await _create_river_segment(center, size, yaw)
 		_decorate_river_area(center, size, yaw)
 		await _create_dense_river_bank_vegetation(center, size, yaw)
-		# Extra vegetation where river crosses the road (road at x=9)
-		if abs(center.x - ROAD_CENTER_X) < size.x * 0.5 + 5.0:
-			await _create_dense_river_bank_vegetation(center, size, yaw)
 		_create_river_seam_cover(center, size, yaw)
 		if _world_rng.randf() < 0.72:
 			_create_fish_school(center, size, yaw)
@@ -7438,6 +7683,7 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	mesh_instance.material_override = MaterialFactory.make_river_water_material()
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
+	mesh_instance.set_mist_size(size.x, size.y)
 	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
 
@@ -7703,15 +7949,15 @@ func _create_dense_river_bank_vegetation(center: Vector3, size: Vector2, yaw: fl
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for side_value in [-1.0, 1.0]:
 		var side: float = side_value
-		for i in range(110):
+		for i in range(55):
 			var bank_pos := center + along * _world_rng.randf_range(-size.x * 0.56, size.x * 0.56) + across * side * _world_rng.randf_range(size.y * 0.52, size.y * 1.50)
 			bank_pos.y = 0.052
 			if not _can_place_ground_vegetation(bank_pos, -1.0):
 				continue
 			_create_grass_clump(bank_pos, _world_rng.randf_range(0.7, 1.3), Color(0.14, 0.31, 0.09))
-			if _world_rng.randf() < 0.72:
+			if _world_rng.randf() < 0.45:
 				_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-0.75, 0.75), _world_rng.randf_range(0.9, 1.6), side)
-			if _world_rng.randf() < 0.50:
+			if _world_rng.randf() < 0.30:
 				var tall_pos := bank_pos + across * side * _world_rng.randf_range(0.15, 0.85) + along * _world_rng.randf_range(-0.50, 0.50)
 				_create_grass_clump(tall_pos, _world_rng.randf_range(0.85, 1.35), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
 			if _world_rng.randf() < 0.15:
@@ -7728,7 +7974,7 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 	var half_l := size.x * 0.5
 	var half_w := size.y * 0.5
 	# Place grass from 0.5m inside water edge to 3m inland (in absolute meters)
-	var total_iters := 5000
+	var total_iters := 2500
 	for i in range(total_iters):
 		var theta := float(i) / float(total_iters) * TAU + _world_rng.randf_range(-0.04, 0.04)
 		# Absolute offset in meters from the 0.85 ellipse boundary
@@ -7751,23 +7997,23 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 		bank_pos.y = _get_ground_height(bank_pos) + 0.02
 		# Tall grass clump
 		_create_grass_clump(bank_pos, _world_rng.randf_range(1.0, 1.8), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
-		if _world_rng.randf() < 0.55:
+		if _world_rng.randf() < 0.35:
 			var side: float = 1.0 if sin(theta) >= 0.0 else -1.0
 			_create_river_reed_cluster(bank_pos + along * _world_rng.randf_range(-1.0, 1.0), _world_rng.randf_range(1.2, 2.2), side)
 		# Extra tall grass cluster nearby
-		if _world_rng.randf() < 0.45:
+		if _world_rng.randf() < 0.25:
 			var t2 := _world_rng.randf_range(0.0, TAU)
 			var extra_pos := bank_pos + along * cos(t2) * _world_rng.randf_range(0.05, 0.4) + across * sin(t2) * _world_rng.randf_range(0.05, 0.4)
 			if get_river_depth_at(extra_pos) <= 0.02:
 				_create_grass_clump(extra_pos, _world_rng.randf_range(0.9, 1.6), Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.44, 0.14), _world_rng.randf()))
 		# Short grass clumps around the tall grass
-		if _world_rng.randf() < 0.80:
+		if _world_rng.randf() < 0.50:
 			var t3 := _world_rng.randf_range(0.0, TAU)
 			var short_pos := bank_pos + along * cos(t3) * _world_rng.randf_range(0.1, 0.6) + across * sin(t3) * _world_rng.randf_range(0.1, 0.6)
 			if get_river_depth_at(short_pos) <= 0.02:
 				_create_grass_clump(short_pos, _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
 		# Second short grass clump
-		if _world_rng.randf() < 0.70:
+		if _world_rng.randf() < 0.35:
 			var t4 := _world_rng.randf_range(0.0, TAU)
 			var short_pos2 := bank_pos + along * cos(t4) * _world_rng.randf_range(0.15, 0.7) + across * sin(t4) * _world_rng.randf_range(0.15, 0.7)
 			if get_river_depth_at(short_pos2) <= 0.02:
@@ -7779,7 +8025,7 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
 	# Short grass ring extending further inland (3-12m from water edge)
-	var short_iters := 6000
+	var short_iters := 3000
 	for j in range(short_iters):
 		var theta2 := float(j) / float(short_iters) * TAU + _world_rng.randf_range(-0.04, 0.04)
 		var offset_m2 := _world_rng.randf_range(3.0, 12.0)
@@ -7799,7 +8045,7 @@ func _create_lake_bank_tall_grass(center: Vector3, size: Vector2, yaw: float) ->
 			continue
 		short_bank_pos.y = _get_ground_height(short_bank_pos) + 0.02
 		_create_grass_clump(short_bank_pos, _world_rng.randf_range(0.25, 0.55), Color(0.16, 0.34, 0.11).lerp(Color(0.32, 0.43, 0.16), _world_rng.randf()))
-		if _world_rng.randf() < 0.50:
+		if _world_rng.randf() < 0.30:
 			var t5 := _world_rng.randf_range(0.0, TAU)
 			var fill_pos := short_bank_pos + along * cos(t5) * _world_rng.randf_range(0.2, 0.8) + across * sin(t5) * _world_rng.randf_range(0.2, 0.8)
 			if get_river_depth_at(fill_pos) <= 0.02:
@@ -9014,7 +9260,7 @@ func _get_ground_height(pos: Vector3) -> float:
 	return max_h
 
 func _create_ground_clutter() -> void:
-	var total_clutter := int(90 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_clutter := int(45 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_clutter):
 		var rx := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var rz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -9029,7 +9275,7 @@ func _create_ground_clutter() -> void:
 			_world_rng.state = _saved_rng_state
 
 func _create_tall_grass_fields() -> void:
-	var total_fields := int(1.5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_fields := int(0.8 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_fields):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(20, 55), _world_rng.randf_range(20, 55))
@@ -9048,7 +9294,7 @@ func _create_tall_grass_fields() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_dense_vegetation_zones() -> void:
-	var total_zones := int(0.8 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_zones := int(0.4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_zones):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(15, 30), _world_rng.randf_range(15, 30))
@@ -9075,7 +9321,7 @@ func _create_dense_vegetation_zones() -> void:
 				_world_rng.state = _saved_rng_state
 
 func _create_grass_ground_cover() -> void:
-	var total_patches := int(3 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_patches := int(1.5 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_patches):
 		var center := Vector3(_world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT), 0, _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT))
 		var radius := Vector2(_world_rng.randf_range(30, 65), _world_rng.randf_range(30, 65))
@@ -9096,14 +9342,14 @@ func _create_grass_ground_cover() -> void:
 func _create_grass_carpet() -> void:
 	_ensure_grass_batches()
 	var coverage := MAP_EXTENT * 0.98
-	var spacing := 3.0
+	var spacing := 6.0
 	var cells_x := int(coverage * 2.0 / spacing)
 	var cells_z := int(coverage * 2.0 / spacing)
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
 	for cx in range(cells_x):
 		for cz in range(cells_z):
-			if _world_rng.randf() < 0.25:
+			if _world_rng.randf() < 0.45:
 				continue
 			var px := -coverage + float(cx) * spacing + _world_rng.randf_range(-0.5, 0.5)
 			var pz := -coverage + float(cz) * spacing + _world_rng.randf_range(-0.5, 0.5)
@@ -9120,7 +9366,7 @@ func _create_grass_carpet() -> void:
 			_world_rng.state = _saved_rng_state
 
 func _create_billboard_underbrush_fields() -> void:
-	var total_brushes := int(4 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
+	var total_brushes := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
 	for i in range(total_brushes):
 		var ux := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
 		var uz := _world_rng.randf_range(-MAP_EXTENT, MAP_EXTENT)
@@ -9183,7 +9429,7 @@ func _pick_forest_tree_variant() -> int:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
-	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.055)
+	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.035)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
 	var color_var := Color(0.34, 0.46, 0.16)
@@ -10006,8 +10252,8 @@ void fragment() {
 }
 """
 
-const GRASS_VISIBLE_RADIUS := 120.0
-const GRASS_HIDE_RADIUS := 170.0
+const GRASS_VISIBLE_RADIUS := 50.0
+const GRASS_HIDE_RADIUS := 70.0
 var _grass_vis_timer: float = 0.0
 var _grass_any_visible: bool = false
 

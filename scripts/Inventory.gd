@@ -143,6 +143,29 @@ func use_index(index: int, stats) -> bool:
 				item_used.emit("Comes un higo. Nutritivo y reconfortante." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
+			if item.item_name.begins_with("Lata de ") and item.item_name.ends_with(" abierta"):
+				var _oh: float = float(stats.hunger)
+				var _ot: float = float(stats.thirst)
+				var _ohp: float = float(stats.health)
+				var eat_pct := 0.25
+				var remaining_pct: float = float(item.durability_pct())
+				if remaining_pct <= 0.0:
+					item_used.emit("La lata esta vacia.")
+					return false
+				var actual_eat: float = min(eat_pct, remaining_pct)
+				stats.hunger = min(stats.max_stat, stats.hunger + item.use_value * actual_eat)
+				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value * 0.15 * actual_eat)
+				stats.health = min(stats.max_health, stats.health + max(3.0, item.use_value * 0.35 * actual_eat))
+				item.reduce_durability(float(item.max_durability) * eat_pct)
+				stats.changed.emit()
+				var _r: String = _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+				if item.is_broken():
+					item_used.emit("Comes el ultimo trozo de %s." % item.item_name + _r)
+					remove_index(index)
+				else:
+					var new_pct := int(float(item.durability_pct()) * 100.0)
+					item_used.emit("Comes un poco de %s. Queda %d%%." % [item.item_name, new_pct] + _r)
+				return true
 			if item.item_name.begins_with("Lata de "):
 				var _oh: float = float(stats.hunger)
 				var _ot: float = float(stats.thirst)
@@ -185,11 +208,11 @@ func use_index(index: int, stats) -> bool:
 				else:
 					item_used.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
 				stats.changed.emit()
-				if item.item_name == "Botella de agua":
+				if item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena":
 					return true
 				remove_index(index)
 				return true
-			if item.item_name == "Botella de agua":
+			if item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena":
 				var drink_pct := 0.25
 				var remaining_pct: float = float(item.durability_pct())
 				if remaining_pct <= 0.0:

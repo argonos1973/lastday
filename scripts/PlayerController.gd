@@ -898,6 +898,8 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4))
 		"Botella de agua":
 			_build_third_person_plastic_bottle()
+		"Botella de agua llena":
+			_build_third_person_plastic_bottle()
 		"Botella":
 			_build_third_person_bottle()
 		"Vendaje":
@@ -4473,7 +4475,7 @@ func _eat_held_item() -> void:
 		notice.emit("No tienes comida en la mano.")
 		return
 	# Canned food must be opened with knife/axe before eating
-	if item.item_name.begins_with("Lata de ") and item.durability > 0.0:
+	if item.item_name.begins_with("Lata de ") and not item.item_name.ends_with(" abierta") and item.durability > 0.0:
 		if not _inventory_has_blade():
 			notice.emit("Necesitas un cuchillo o hacha para abrir la lata.")
 			return
@@ -4481,7 +4483,8 @@ func _eat_held_item() -> void:
 			# Split one can from the stack, open only that one
 			item.quantity -= 1
 			var opened = ItemScript.create(item.item_name + " abierta", item.item_type, item.weight, 1, item.use_value)
-			opened.durability = 0.0
+			opened.durability = 100.0
+			opened.max_durability = 100.0
 			inventory.changed.emit()
 			if not inventory.add_item(opened):
 				# No space — revert and put it back
@@ -4496,7 +4499,8 @@ func _eat_held_item() -> void:
 					break
 			_sync_held_item()
 		else:
-			item.durability = 0.0
+			item.durability = 100.0
+			item.max_durability = 100.0
 			item.item_name = item.item_name + " abierta"
 			inventory.changed.emit()
 		notice.emit("Abres la lata con el cuchillo. Ahora puedes comer.")
@@ -4548,7 +4552,28 @@ func _eat_held_item() -> void:
 				stats.get_sick(30.0)
 				notice.emit("Comes comida en mal estado. Te sientes mal.")
 			stats.changed.emit()
-			var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+		var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+		# Opened cans: eat 25% per use, only remove when empty
+		if item_name.begins_with("Lata de") and item_name.ends_with(" abierta"):
+			var eat_pct := 0.25
+			var actual_eat: float = min(eat_pct, float(item.durability_pct()))
+			# Recalculate hunger/thirst with partial amount
+			stats.hunger = min(stats.max_stat, _oh + food_value * actual_eat)
+			stats.thirst = min(stats.max_stat, _ot + food_value * _thirst_pct * actual_eat)
+			if _health_pct > 0.0:
+				stats.health = min(stats.max_health, _ohp + max(3.0, food_value * _health_pct * actual_eat))
+			stats.changed.emit()
+			_r = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
+			item.reduce_durability(float(item.max_durability) * eat_pct)
+			if item.is_broken():
+				inventory.remove_index(held_index)
+				notice.emit("Comes el ultimo trozo de %s.%s" % [item_name, _r])
+			else:
+				var remaining_pct := int(float(item.durability_pct()) * 100.0)
+				notice.emit("Comes un poco de %s. Queda %d%%.%s" % [item_name, remaining_pct, _r])
+			inventory.changed.emit()
+			_sync_held_item()
+		else:
 			inventory.remove_index(held_index)
 			inventory.changed.emit()
 			_sync_held_item()
@@ -4606,14 +4631,16 @@ func _drink_held_item() -> void:
 				if stats.thirst > 35.0:
 					stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
 			stats.changed.emit()
-		if item_name == "Botella de agua" and item.has_method("is_broken") and item.is_broken():
+		if (item_name == "Botella de agua" or item_name == "Botella de agua llena") and item.has_method("is_broken") and item.is_broken():
 			inventory.remove_index(held_index)
 			inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
-		elif item_name == "Botella de agua":
+		elif item_name == "Botella de agua" or item_name == "Botella de agua llena":
 			item.reduce_durability(float(item.max_durability) * 0.25)
 			if item.is_broken():
 				inventory.remove_index(held_index)
 				inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
+			elif item_name == "Botella de agua llena":
+				item.item_name = "Botella de agua"
 		else:
 			inventory.remove_index(held_index)
 		inventory.changed.emit()
@@ -4679,6 +4706,13 @@ func drop_inventory_item(index: int) -> void:
 		set_meta("last_torch_lit", torch_light != null and torch_light.visible)
 		if torch_light != null:
 			torch_light.visible = false
+	# Water bottles: append fill state to display name
+	if item_type == "water" and item_name == "Botella de agua":
+		if float(item.durability) >= float(item.max_durability):
+			item_name = "Botella de agua llena"
+		elif item.is_broken():
+			item_name = "Botella de plastico"
+			item_type = "misc"
 	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
@@ -4777,7 +4811,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 		"water":
 			var wname := str(held_item.item_name)
-			if wname == "Botella de agua":
+			if wname == "Botella de agua" or wname == "Botella de agua llena":
 				_build_third_person_plastic_bottle()
 			else:
 				_build_third_person_bottle()

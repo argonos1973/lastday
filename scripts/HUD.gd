@@ -26,6 +26,10 @@ var _real_temp := "--"
 var _real_temp_parsed := -999.0
 var _weather_loading := false
 var _weather_retry_timer := 0.0
+var _real_weather_code := -1
+var _real_rain := 0.0
+var _real_snow := 0.0
+var _real_weather_desc := ""
 var prompt_label: Label
 var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
@@ -75,7 +79,7 @@ func _process(delta: float) -> void:
 	_update_stats()
 	_update_real_clock()
 	_weather_timer += delta
-	if _weather_timer >= 600.0:
+	if _weather_timer >= 300.0:
 		_weather_timer = 0.0
 		_fetch_weather()
 	if _weather_retry_timer > 0.0:
@@ -207,7 +211,7 @@ func _fetch_weather() -> void:
 	if not is_instance_valid(_weather_http):
 		return
 	_weather_loading = true
-	var url := "https://api.open-meteo.com/v1/forecast?latitude=41.38&longitude=2.17&current=temperature_2m&timezone=auto"
+	var url := "https://api.open-meteo.com/v1/forecast?latitude=41.38&longitude=2.17&current=temperature_2m,weather_code,rain,snowfall&timezone=auto"
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
@@ -225,12 +229,35 @@ func _on_weather_received(result: int, _response_code: int, _headers: PackedStri
 					var temp: float = float(current["temperature_2m"])
 					_real_temp = "%.0f°C" % temp
 					_real_temp_parsed = temp
-					return
+				if current.has("weather_code"):
+					_real_weather_code = int(current["weather_code"])
+					_real_weather_desc = _weather_code_to_desc(_real_weather_code)
+				if current.has("rain"):
+					_real_rain = float(current["rain"])
+				if current.has("snowfall"):
+					_real_snow = float(current["snowfall"])
+				return
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
 	else:
 		_real_temp = "N/A"
 		_weather_retry_timer = 15.0
+
+func _weather_code_to_desc(code: int) -> String:
+	if code == 0: return "Despejado"
+	if code <= 3: return "Parcialmente nublado"
+	if code in [45, 48]: return "Niebla"
+	if code in [51, 53, 55]: return "Llovizna"
+	if code in [56, 57]: return "Llovizna helada"
+	if code in [61, 63, 65]: return "Lluvia"
+	if code in [66, 67]: return "Lluvia helada"
+	if code in [71, 73, 75]: return "Nieve"
+	if code == 77: return "Granizo"
+	if code in [80, 81, 82]: return "Aguaceros"
+	if code in [85, 86]: return "Aguaceros de nieve"
+	if code == 95: return "Tormenta"
+	if code in [96, 99]: return "Tormenta con granizo"
+	return "Nublado"
 
 func _update_real_clock() -> void:
 	if real_clock_label == null or player == null or player.stats == null or day_cycle == null:
@@ -245,7 +272,10 @@ func _update_real_clock() -> void:
 		var secs: int = total_seconds % 60
 		survival_label.text = "Supervivencia: %02d:%02d:%02d" % [hrs, mins, secs]
 	if temp_label != null:
-		temp_label.text = "Temp: %s" % _real_temp
+		if _real_weather_desc != "":
+			temp_label.text = "Temp: %s | %s" % [_real_temp, _real_weather_desc]
+		else:
+			temp_label.text = "Temp: %s" % _real_temp
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -812,12 +842,19 @@ func _create_inventory_slot(index: int, item) -> void:
 		label.add_theme_color_override("font_color", Color(0.36, 0.38, 0.34))
 	else:
 		label.text = "%s\nx%d" % [item.item_name, item.quantity]
-		if item.item_name == "Botella de agua" and item.has_method("durability_pct"):
+		if (item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena") and item.has_method("durability_pct"):
 			var wpct := int(item.durability_pct() * 100.0)
 			label.text += "\nAgua: %d%%" % wpct
 			if wpct < 25:
 				label.add_theme_color_override("font_color", Color(0.96, 0.40, 0.30))
 			elif wpct < 50:
+				label.add_theme_color_override("font_color", Color(0.92, 0.78, 0.30))
+		elif item.item_name.begins_with("Lata de ") and item.item_name.ends_with(" abierta") and item.has_method("durability_pct"):
+			var cpct := int(item.durability_pct() * 100.0)
+			label.text += "\nComida: %d%%" % cpct
+			if cpct < 25:
+				label.add_theme_color_override("font_color", Color(0.96, 0.40, 0.30))
+			elif cpct < 50:
 				label.add_theme_color_override("font_color", Color(0.92, 0.78, 0.30))
 		elif item.has_method("durability_pct") and item.item_type != "food" and item.item_type != "water":
 			var pct := int(item.durability_pct() * 100.0)

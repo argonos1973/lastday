@@ -23,12 +23,12 @@ SaveGameManager="*res://scripts/SaveGameManager.gd"
 
 [debug]
 
-gdscript/warnings/inference_on_variant=1
 gdscript/warnings/untyped_declaration=1
-gdscript/warnings/unsafe_call_argument=1
-gdscript/warnings/unsafe_method_return=1
 gdscript/warnings/unsafe_property_access=1
 gdscript/warnings/unsafe_cast=1
+gdscript/warnings/unsafe_call_argument=1
+gdscript/warnings/inference_on_variant=1
+gdscript/warnings/unsafe_method_return=1
 
 [display]
 
@@ -131,13 +131,13 @@ use_slot={
 textures/canvas_textures/default_texture_filter=0
 renderer/rendering_method="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
-lights_and_shadows/directional_shadow/size=1024
+lights_and_shadows/directional_shadow/size=512
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=0
 lights_and_shadows/positional_shadow/soft_shadow_filter_quality=0
 textures/decals/filter=0
 environment/defaults/default_clear_color=Color(0.045, 0.05, 0.055, 1)
 hdr/output_mode=2
-mesh_lod/threshold_pixels=8.0
-mesh_lod/lod_change_threshold_pixels=8.0
-lights_and_shadows/positional_shadow/size=512
+mesh_lod/threshold_pixels=32.0
+mesh_lod/lod_change_threshold_pixels=32.0
+lights_and_shadows/positional_shadow/size=256
 environment/defaults/default_fog=false

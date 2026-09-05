@@ -3,7 +3,7 @@ class_name PerformanceController
 
 enum Quality { LOW, MEDIUM, HIGH, ULTRA }
 
-@export var current_quality: Quality = Quality.HIGH
+@export var current_quality: Quality = Quality.LOW
 @export var auto_adjust: bool = true
 @export var target_fps: int = 60
 @export var adjust_interval: float = 5.0
@@ -17,8 +17,8 @@ var _water_material: ShaderMaterial
 var _rain_particles: GPUParticles3D
 var _snow_particles: GPUParticles3D
 var _timer: Timer
-var _base_rain_amount: int = 1000
-var _base_snow_amount: int = 600
+var _base_rain_amount: int = 500
+var _base_snow_amount: int = 300
 
 signal quality_changed(quality: Quality)
 
