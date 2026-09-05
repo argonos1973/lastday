@@ -934,6 +934,17 @@ func _process(delta: float) -> void:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
 		return
+	# Tick spoilage for perishable food in inventory
+	if inventory != null and not is_dead:
+		var _any_spoiled := false
+		for item in inventory.items:
+			if item.is_perishable():
+				var _prev_state: int = item.spoil_state()
+				item.tick_spoilage(delta)
+				if item.spoil_state() != _prev_state:
+					_any_spoiled = true
+		if _any_spoiled:
+			inventory.changed.emit()
 	# Recoil recovery: exponential decay back to neutral
 	if _recoil_pitch != 0.0 or _recoil_yaw != 0.0:
 		var decay := 1.0 - exp(-_recoil_recover_speed * delta)
@@ -4530,6 +4541,12 @@ func _eat_held_item() -> void:
 				stats.health = min(stats.max_health, stats.health + max(3.0, food_value * _health_pct))
 			if item_name == "Carne cruda de lobo" and stats.has_method("get_sick"):
 				stats.get_sick(60.0)
+			if item.is_perishable() and item.spoil_state() == 2 and stats.has_method("get_sick"):
+				stats.get_sick(80.0)
+				notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
+			elif item.is_perishable() and item.spoil_state() == 1 and stats.has_method("get_sick"):
+				stats.get_sick(30.0)
+				notice.emit("Comes comida en mal estado. Te sientes mal.")
 			stats.changed.emit()
 			var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
 			inventory.remove_index(held_index)

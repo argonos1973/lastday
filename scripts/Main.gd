@@ -536,6 +536,7 @@ func _ready() -> void:
 	_create_loading_overlay()
 	# Give the renderer time to display the overlay before heavy work
 	await get_tree().create_timer(0.1).timeout
+	if _scene_quitting: return
 	seed(WORLD_SEED)
 	_world_rng.seed = WORLD_SEED
 	nav = NavPathfindingScript.new()
@@ -712,6 +713,7 @@ func _send_final_state() -> void:
 var _quit_countdown := 0.0
 var _quit_active := false
 var _quit_final_sent := false
+var _scene_quitting := false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_0:
@@ -753,6 +755,8 @@ func _input(_event: InputEvent) -> void:
 	return
 
 func _process(delta: float) -> void:
+	if _scene_quitting:
+		return
 	if _grass_any_visible:
 		_wind_time += delta
 		if grass_batch_material is ShaderMaterial:
@@ -791,7 +795,11 @@ func _process(delta: float) -> void:
 			_send_final_state()
 		if _quit_countdown <= 0.0:
 			_quit_active = false
-			get_tree().quit()
+			_scene_quitting = true
+			if net != null and net.is_connected:
+				net.close_connection()
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
 			return
 	_loot_wear_timer += delta
 	if _loot_wear_timer >= 5.0:
@@ -1414,10 +1422,12 @@ func _on_remote_player_disconnected(id: int) -> void:
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state
 	await get_tree().create_timer(2.0).timeout
+	if _scene_quitting: return
 	_send_world_state_to_client(peer_id)
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
 	await get_tree().create_timer(2.0).timeout
+	if _scene_quitting: return
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
@@ -1461,6 +1471,7 @@ func _get_random_spawn_pos() -> Vector3:
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
+	if _scene_quitting: return
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, _get_random_spawn_pos())
 		# Clear reconnecting flag so server accepts position updates from this client
@@ -2627,6 +2638,7 @@ func _on_player_died() -> void:
 	if hud != null:
 		hud.show_notice("Has muerto. Volviendo a la pantalla de inicio...")
 		await get_tree().create_timer(3.0).timeout
+		if _scene_quitting: return
 	# Delete saves AFTER the wait so no auto-save can re-create them
 	SaveSystemScript.delete_save()
 	if sgm != null and sgm.has_method("delete_save"):
@@ -2754,10 +2766,10 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		return
 	if item_name == "Antorcha" and item_type == "tool_torch":
 		var torch_id := "player_torch_%d" % randi()
-		var torch_durability := 120.0
+		var torch_durability := 600.0
 		var torch_lit := false
 		if player != null and player.has_meta("last_torch_durability"):
-			torch_durability = float(player.get_meta("last_torch_durability", 120.0))
+			torch_durability = float(player.get_meta("last_torch_durability", 600.0))
 		if player != null and player.has_meta("last_torch_lit"):
 			torch_lit = bool(player.get_meta("last_torch_lit", false))
 		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit)
@@ -2908,6 +2920,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
+	if action_kind == "eat_food":
+		action.set_meta("item_spoilage", 0.0)
 	if broken:
 		action.set_meta("no_pickup", true)
 	if color.a > 0.0:
@@ -5190,9 +5204,13 @@ func _disable_emission_recursive(node: Node3D) -> void:
 				if mat is StandardMaterial3D:
 					(mat as StandardMaterial3D).emission_enabled = false
 					(mat as StandardMaterial3D).emission_energy_multiplier = 0.0
+					(mat as StandardMaterial3D).metallic = 0.0
+					(mat as StandardMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 				elif mat is BaseMaterial3D:
 					(mat as BaseMaterial3D).emission_enabled = false
 					(mat as BaseMaterial3D).emission_energy_multiplier = 0.0
+					(mat as BaseMaterial3D).metallic = 0.0
+					(mat as BaseMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 			var mesh := mi.mesh
 			if mesh != null:
 				for slot in range(mesh.get_surface_count()):
@@ -5200,9 +5218,13 @@ func _disable_emission_recursive(node: Node3D) -> void:
 					if smat is StandardMaterial3D:
 						(smat as StandardMaterial3D).emission_enabled = false
 						(smat as StandardMaterial3D).emission_energy_multiplier = 0.0
+						(smat as StandardMaterial3D).metallic = 0.0
+						(smat as StandardMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 					elif smat is BaseMaterial3D:
 						(smat as BaseMaterial3D).emission_enabled = false
 						(smat as BaseMaterial3D).emission_energy_multiplier = 0.0
+						(smat as BaseMaterial3D).metallic = 0.0
+						(smat as BaseMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 		for c in n.get_children():
 			stack.append(c)
 
@@ -5335,12 +5357,14 @@ func _create_pickup_item(data: Dictionary) -> void:
 	action.set_meta("item_quantity", int(data.get("qty", 1)))
 	action.set_meta("item_use_value", float(data.get("use", 0.0)))
 	action.set_meta("item_color", color)
+	if action_kind == "eat_food":
+		action.set_meta("item_spoilage", 0.0)
 	# Register in _dropped_items so loot wear system can track it
 	_dropped_items.append({
 		"id": id, "name": item_name, "type": item_type,
 		"weight": float(data.get("weight", 0.1)), "qty": int(data.get("qty", 1)),
 		"use": float(data.get("use", 0.0)), "pos": [pos.x, pos.y, pos.z],
-		"wear": 0.0
+		"wear": 0.0, "spoilage": 0.0
 	})
 
 func _mark_world_action_visual(node_name: String) -> void:
@@ -5596,6 +5620,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
 			await get_tree().create_timer(5.0).timeout
+			if _scene_quitting: return
 			action.set_meta("gutted", true)
 			# Spawn 5 meat pieces and 1 skin around the animal
 			var animal_pos: Vector3 = action.global_position
@@ -5679,6 +5704,8 @@ func handle_world_action(action, actor) -> void:
 			)
 			if action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
+			if action.has_meta("item_spoilage"):
+				item.spoilage = float(action.get_meta("item_spoilage"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
 			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
 				var _has_cut_tool := false
@@ -5693,6 +5720,7 @@ func handle_world_action(action, actor) -> void:
 					if hud != null:
 						hud.show_countdown("Cortando ropa", 3.0)
 					await get_tree().create_timer(3.0).timeout
+					if _scene_quitting: return
 					if audio_system != null and audio_system.has_method("stop_chop"):
 						audio_system.stop_chop()
 					# Remove the clothing visual completely
@@ -5790,9 +5818,19 @@ func handle_world_action(action, actor) -> void:
 				hud.show_countdown("Comiendo", 1.2)
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
 			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
+			var food_spoilage := 0.0
+			if action.has_meta("item_spoilage"):
+				food_spoilage = float(action.get_meta("item_spoilage"))
 			await get_tree().create_timer(1.2).timeout
+			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
+			if food_spoilage >= 100.0 and actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(80.0)
+				actor.notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
+			elif food_spoilage >= 50.0 and actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(30.0)
+				actor.notice.emit("Comes comida en mal estado. Te sientes mal.")
 			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
 				actor.stats.overeat_count += 1
 				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
@@ -5864,6 +5902,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Pescando", 1.6)
 			await get_tree().create_timer(1.6).timeout
+			if _scene_quitting: return
 			if randf() < fish_chance:
 				if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
 					_equip_actor_item(actor, "Pez crudo")
@@ -5883,6 +5922,7 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				await get_tree().create_timer(5.0).timeout
+				if _scene_quitting: return
 				# Remove empty bottle and add filled one
 				for i in range(actor.inventory.items.size()):
 					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
@@ -5904,6 +5944,7 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				await get_tree().create_timer(5.0).timeout
+				if _scene_quitting: return
 				held_dw.durability = float(held_dw.max_durability)
 				actor.inventory.changed.emit()
 				if actor.has_method("_sync_held_item"):
@@ -5927,6 +5968,7 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Encendiendo fogata", 1.5)
 				await get_tree().create_timer(1.5).timeout
+				if _scene_quitting: return
 				actor.inventory.consume_item_name("Cerillas", 1)
 				actor.inventory.changed.emit()
 			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
@@ -5937,6 +5979,7 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Encendiendo fogata con palos", 8.0)
 				await get_tree().create_timer(8.0).timeout
+				if _scene_quitting: return
 			else:
 				actor.notice.emit("Necesitas cerillas o 2 palos para encender la fogata.")
 				return
@@ -5969,6 +6012,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Cocinando", 10.0)
 			await get_tree().create_timer(10.0).timeout
+			if _scene_quitting: return
 			# Replace raw meat on stick with cooked meat on stick
 			var cooked := false
 			for i in range(actor.inventory.items.size()):
@@ -5999,6 +6043,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Cazando", 1.0)
 			await get_tree().create_timer(1.0).timeout
+			if _scene_quitting: return
 			if randf() < 0.48:
 				if actor.inventory.add_item(ItemScript.create("Carne cruda", "food", 0.75, 1, 30.0)):
 					_equip_actor_item(actor, "Carne cruda")
@@ -6084,10 +6129,12 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Talando arbol", 10.0)
 			await get_tree().create_timer(10.0).timeout
+			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
 			_fall_tree_animation(action)
 			await get_tree().create_timer(1.5).timeout
+			if _scene_quitting: return
 			_hide_action_visual(action)
 			_create_cut_tree_remains(action.position)
 			var tree_pos: Vector3 = action.position
@@ -6134,10 +6181,12 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Cortando arbusto", 5.0)
 			await get_tree().create_timer(5.0).timeout
+			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
 			_shrink_bush_animation(action)
 			await get_tree().create_timer(0.8).timeout
+			if _scene_quitting: return
 			_hide_action_visual(action)
 			var bush_pos: Vector3 = action.position
 			var stick1_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
@@ -6178,6 +6227,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Cortando tronco", 3.0)
 			await get_tree().create_timer(3.0).timeout
+			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
 			_hide_action_visual(action)
@@ -6221,6 +6271,7 @@ func handle_world_action(action, actor) -> void:
 				if hud != null:
 					hud.show_countdown("Durmiendo", float(sleep_seconds + 1))
 				await get_tree().create_timer(1.0).timeout
+				if _scene_quitting: return
 			if actor.has_method("stop_sleep"):
 				actor.stop_sleep()
 			actor.notice.emit("Has dormido. Te sientes descansado.")
@@ -6232,6 +6283,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Construyendo cabana", 3.0)
 			await get_tree().create_timer(3.0).timeout
+			if _scene_quitting: return
 			actor.inventory.consume_item_name("Tronco", 6)
 			actor.inventory.consume_item_name("Piedra", 4)
 			if actor.inventory.has_item_name("Martillo"):
@@ -6254,6 +6306,7 @@ func handle_world_action(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Desmontando refugio", 3.0)
 			await get_tree().create_timer(3.0).timeout
+			if _scene_quitting: return
 			var sh_id: String = action.action_id
 			# Remove shelter stick visuals
 			var stick_names := [
@@ -6403,6 +6456,8 @@ func handle_world_action_collect(action, actor) -> void:
 			)
 			if action.has_meta("item_color"):
 				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
+			if action.has_meta("item_spoilage"):
+				eat_item.spoilage = float(action.get_meta("item_spoilage"))
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool":
 			if not action.has_meta("item_name"):
@@ -6417,6 +6472,8 @@ func handle_world_action_collect(action, actor) -> void:
 			)
 			if action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
+			if action.has_meta("item_spoilage"):
+				item.spoilage = float(action.get_meta("item_spoilage"))
 			_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "clothing":
 				if not actor.inventory.add_item(item):
@@ -6447,9 +6504,19 @@ func handle_world_action_eat(action, actor) -> void:
 				hud.show_countdown("Comiendo", 1.2)
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
 			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
+			var food_spoilage2 := 0.0
+			if action.has_meta("item_spoilage"):
+				food_spoilage2 = float(action.get_meta("item_spoilage"))
 			await get_tree().create_timer(1.2).timeout
+			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
+			if food_spoilage2 >= 100.0 and actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(80.0)
+				actor.notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
+			elif food_spoilage2 >= 50.0 and actor.stats.has_method("get_sick"):
+				actor.stats.get_sick(30.0)
+				actor.notice.emit("Comes comida en mal estado. Te sientes mal.")
 			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
 				actor.stats.overeat_count += 1
 				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
@@ -6485,6 +6552,7 @@ func handle_world_action_eat(action, actor) -> void:
 			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
 			var raw_eaten_name := str(action.get_meta("item_name", "carne cruda"))
 			await get_tree().create_timer(3.0).timeout
+			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
 			var _oh_raw: float = float(actor.stats.hunger)
@@ -6509,6 +6577,7 @@ func _handle_farm_plot(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Cosechando", 1.25)
 			await get_tree().create_timer(1.25).timeout
+			if _scene_quitting: return
 			if not actor.inventory.add_item(ItemScript.create("Verduras", "food", 0.22, 3, 16.0)):
 				return
 			_equip_actor_item(actor, "Verduras")
@@ -6532,6 +6601,7 @@ func _handle_farm_plot(action, actor) -> void:
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 1.35)
 			await get_tree().create_timer(1.35).timeout
+			if _scene_quitting: return
 			if _farm_held != null and _farm_held.has_method("reduce_durability"):
 				_farm_held.reduce_durability(5.0)
 				if _farm_held.is_broken():
@@ -7045,7 +7115,7 @@ func _generate_spline_segments(points: Array, spacing: float, width: float, is_c
 		for j in range(subdiv):
 			var t := float(j) / float(subdiv)
 			var pos := _catmull_rom(p0, p1, p2, p3, t)
-			var t2 := min(1.0, t + 0.01)
+			var t2: float = min(1.0, t + 0.01)
 			var pos_next := _catmull_rom(p0, p1, p2, p3, t2)
 			var tangent := (pos_next - pos).normalized()
 			var yaw := rad_to_deg(atan2(-tangent.z, tangent.x))
@@ -7286,10 +7356,22 @@ func _update_loot_wear() -> void:
 			pos = pos_data
 		else:
 			continue
+		# Tick spoilage for food items (spoils everywhere, not just exposed)
+		var entry_type := str(entry.get("type", ""))
+		var entry_name := str(entry.get("name", ""))
+		if entry_type == "food" and not entry_name.begins_with("Lata de "):
+			var food_item: Item = ItemScript.create(entry_name, entry_type, 0.0, 1, 0.0)
+			if food_item.is_perishable():
+				var spoil: float = float(entry.get("spoilage", 0.0))
+				spoil = min(100.0, spoil + food_item.get_spoilage_rate() * 5.0)
+				entry["spoilage"] = spoil
+				var action_node := get_node_or_null(NodePath("Pickup_" + str(entry.get("id", ""))))
+				if action_node != null:
+					action_node.set_meta("item_spoilage", spoil)
+		if _is_loot_sheltered(pos):
+			continue
 		var wear: float = float(entry.get("wear", 0.0))
 		var rate := 0.33
-		if _is_loot_sheltered(pos):
-			rate = 0.5
 		wear += rate
 		entry["wear"] = wear
 		if wear >= 100.0:
@@ -8524,6 +8606,7 @@ func _create_wrecked_van(pos: Vector3, yaw: float) -> void:
 			van_height += 0.15
 			if van_height < 0.5:
 				van_height = 2.8
+			_disable_emission_recursive(van_node as Node3D)
 		_create_invisible_collision_box("RealVanCollision", pos, Vector3(3.0, van_height, 5.2))
 		var _rvc := get_node_or_null("RealVanCollision")
 		if _rvc != null:

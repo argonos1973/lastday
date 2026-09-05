@@ -52,7 +52,7 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "Palo": 1, "Trapos": 1 },
-		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 120.0, "max_durability": 120.0 },
+		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0 },
 		"label": "Crear antorcha con palo y trapos"
 	},
 	{

@@ -827,6 +827,9 @@ func _create_inventory_slot(index: int, item) -> void:
 					label.add_theme_color_override("font_color", Color(0.96, 0.40, 0.30))
 				elif pct < 50:
 					label.add_theme_color_override("font_color", Color(0.92, 0.78, 0.30))
+		if item.has_method("is_perishable") and item.is_perishable():
+			label.text += "\n[%s]" % item.spoil_state_label()
+			label.add_theme_color_override("font_color", item.spoil_state_color())
 	box.add_child(label)
 
 func _item_thumbnail_color(item) -> Color:

@@ -21,6 +21,15 @@ GameState="*res://scripts/GameState.gd"
 GameSession="*res://scripts/GameSession.gd"
 SaveGameManager="*res://scripts/SaveGameManager.gd"
 
+[debug]
+
+gdscript/warnings/inference_on_variant=1
+gdscript/warnings/untyped_declaration=1
+gdscript/warnings/unsafe_call_argument=1
+gdscript/warnings/unsafe_method_return=1
+gdscript/warnings/unsafe_property_access=1
+gdscript/warnings/unsafe_cast=1
+
 [display]
 
 window/size/viewport_width=1280

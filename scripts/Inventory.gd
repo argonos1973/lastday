@@ -76,6 +76,13 @@ func use_index(index: int, stats) -> bool:
 			if item.item_name.begins_with("Lata de ") and item.durability > 0.0:
 				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha antes de comer.")
 				return false
+			# Spoiled food sickness check
+			if item.is_perishable() and item.spoil_state() == 2 and stats.has_method("get_sick"):
+				stats.get_sick(80.0)
+				item_used.emit("Comes comida podrida. Te sientes muy mal del estomago.")
+			elif item.is_perishable() and item.spoil_state() == 1 and stats.has_method("get_sick"):
+				stats.get_sick(30.0)
+				item_used.emit("Comes comida en mal estado. Te sientes mal.")
 			# Overeat check: eating when already full
 			if stats.hunger >= stats.max_stat - 2.0:
 				stats.overeat_count += 1
