@@ -749,19 +749,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if game_over:
 		return
+
+func _input(event: InputEvent) -> void:
+	if game_over:
+		return
 	if hud != null and hud.inventory_visible and event is InputEventMouseButton and event.pressed:
 		if hud.handle_context_menu_click(event.position, event.button_index):
+			get_viewport().set_input_as_handled()
 			return
 		if hud.is_click_on_slot(event.position):
 			hud.handle_slot_click(event.position, event.button_index)
+			get_viewport().set_input_as_handled()
 			return
 	var tab_pressed: bool = event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB
 	if hud != null and (event.is_action_pressed("toggle_inventory") or tab_pressed):
 		hud.toggle_inventory()
-
-# _input manejado por el HUD y el PlayerController; Main no procesa input directo
-func _input(_event: InputEvent) -> void:
-	return
+		get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
 	if _scene_quitting:
@@ -1243,6 +1246,27 @@ func _tick_stat_warnings(delta: float, p) -> void:
 	elif s.sick:
 		msg = "Te sientes enfermo. Cuidate."
 		key = "sick"
+	# Independent sleep warning: not blocked by the elif chain above
+	if key.begins_with("sleep") == false:
+		var sleep_msg := ""
+		var sleep_key := ""
+		if s.sleep < 10.0:
+			sleep_msg = "Estas exhausto. Necesitas dormir."
+			sleep_key = "sleep_critical"
+		elif s.sleep < 30.0:
+			sleep_msg = "Te entra sueno. Descansa o duerme."
+			sleep_key = "sleep_low"
+		elif s.sleep < 60.0:
+			sleep_msg = "Empiezas a tener sueno. Descansa pronto."
+			sleep_key = "sleep_moderate"
+		if sleep_msg != "":
+			var sleep_cooldown: float = 20.0 if _stat_warning_cooldowns.has(sleep_key) else 12.0
+			var sleep_elapsed: float = float(_stat_warning_cooldowns.get(sleep_key, 999.0))
+			if sleep_elapsed >= sleep_cooldown:
+				_stat_warning_cooldowns[sleep_key] = 0.0
+				p.notice.emit(sleep_msg)
+			else:
+				_stat_warning_cooldowns[sleep_key] = sleep_elapsed + 1.0
 	if msg == "":
 		return
 	# Cooldown: different messages every 12s, same message every 20s
