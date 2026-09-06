@@ -20,6 +20,7 @@ NetworkManager="*res://scripts/NetworkManager.gd"
 GameState="*res://scripts/GameState.gd"
 GameSession="*res://scripts/GameSession.gd"
 SaveGameManager="*res://scripts/SaveGameManager.gd"
+TrailerDirector="*res://addons/trailer_capture/TrailerDirector.gd"
 
 [debug]
 
@@ -38,7 +39,7 @@ window/stretch/mode="canvas_items"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/TCA_Weather_System/plugin.cfg")
+enabled=PackedStringArray("res://addons/TCA_Weather_System/plugin.cfg", "res://addons/trailer_capture/plugin.cfg")
 
 [filesystem]
 

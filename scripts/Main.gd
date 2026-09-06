@@ -3164,7 +3164,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			if item_name == "Higo":
 				return 3.0
 			if item_name.begins_with("Seta"):
-				return 0.3
+				return 0.04
 			if item_name.begins_with("Lata de guiso"):
 				return 0.0005
 			if item_name.begins_with("Lata de atun"):

@@ -15,19 +15,24 @@ func _ready() -> void:
 	if material_override != null:
 		_material = material_override.duplicate()
 		material_override = _material
-	# Create heat mist fog volume above the water surface
-	_heat_mist = FogVolume.new()
-	_heat_mist.name = "HeatMist"
-	_heat_mist.shape = RenderingServer.FOG_VOLUME_SHAPE_BOX
-	_heat_mist.size = Vector3(60.0, 2.5, 60.0)
-	_heat_mist.position = Vector3(0.0, 1.2, 0.0)
-	_heat_mist_mat = FogMaterial.new()
-	_heat_mist_mat.density = 0.0
-	_heat_mist_mat.albedo = Color(0.85, 0.88, 0.92, 0.6)
-	_heat_mist_mat.emission = Color(0.0, 0.0, 0.0)
-	_heat_mist.material = _heat_mist_mat
-	_heat_mist.visible = false
-	add_child(_heat_mist)
+	# FogVolume requires Forward+/Mobile renderer; skip on OpenGL
+	var is_gl := false
+	if ProjectSettings.has_setting("rendering/renderer/rendering_method"):
+		var method: String = ProjectSettings.get_setting("rendering/renderer/rendering_method")
+		is_gl = method == "gl_compatibility"
+	if not is_gl:
+		_heat_mist = FogVolume.new()
+		_heat_mist.name = "HeatMist"
+		_heat_mist.shape = RenderingServer.FOG_VOLUME_SHAPE_BOX
+		_heat_mist.size = Vector3(60.0, 2.5, 60.0)
+		_heat_mist.position = Vector3(0.0, 1.2, 0.0)
+		_heat_mist_mat = FogMaterial.new()
+		_heat_mist_mat.density = 0.0
+		_heat_mist_mat.albedo = Color(0.85, 0.88, 0.92, 0.6)
+		_heat_mist_mat.emission = Color(0.0, 0.0, 0.0)
+		_heat_mist.material = _heat_mist_mat
+		_heat_mist.visible = false
+		add_child(_heat_mist)
 
 func _process(delta: float) -> void:
 	_time += delta

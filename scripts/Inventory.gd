@@ -306,6 +306,29 @@ func get_total_weight() -> float:
 		total += item.weight * item.quantity
 	return total
 
+func swap_items(index_a: int, index_b: int) -> void:
+	if index_a < 0 or index_a >= items.size():
+		return
+	if index_b < 0 or index_b >= items.size():
+		return
+	if index_a == index_b:
+		return
+	var tmp = items[index_a]
+	items[index_a] = items[index_b]
+	items[index_b] = tmp
+	changed.emit()
+
+func move_item(from_index: int, to_index: int) -> void:
+	if from_index < 0 or from_index >= items.size():
+		return
+	if to_index < 0 or to_index >= items.size():
+		return
+	if from_index == to_index:
+		return
+	var item = items.pop_at(from_index)
+	items.insert(to_index, item)
+	changed.emit()
+
 func to_array() -> Array:
 	var data := []
 	for item in items:

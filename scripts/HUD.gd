@@ -50,6 +50,14 @@ var status_icons := {}
 var selected_slot_index := -1
 var slot_action_label: Label = null
 var _inv_refresh_timer := 0.0
+var _inv_category_filter := "all"
+var _inv_category_buttons: Dictionary = {}
+var _inv_sort_mode := 0 # 0=none, 1=type, 2=name, 3=weight
+var _inv_sort_button: Button = null
+var _inv_tooltip: PanelContainer = null
+var _inv_tooltip_label: Label = null
+var _drag_source_index := -1
+var _drag_visual: Control = null
 var _debug_temp_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
@@ -93,6 +101,7 @@ func _process(delta: float) -> void:
 		if _inv_refresh_timer >= 0.5 and selected_slot_index < 0:
 			_inv_refresh_timer = 0.0
 			_update_inventory()
+		_update_inv_tooltip_hover()
 	if notice_timer > 0.0:
 		notice_timer -= delta
 		if notice_timer <= 0.0:
@@ -517,6 +526,35 @@ func _build_inventory_panel() -> void:
 	right.custom_minimum_size = Vector2(480, 420)
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	columns.add_child(right)
+
+	# Category filter tabs
+	var cat_row := HBoxContainer.new()
+	cat_row.add_theme_constant_override("separation", 4)
+	cat_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	right.add_child(cat_row)
+	var categories := ["all", "food", "water", "tool", "weapon", "clothing", "resource", "medical"]
+	var cat_labels := {"all": "Todo", "food": "Comida", "water": "Agua", "tool": "Herram.", "weapon": "Armas", "clothing": "Ropa", "resource": "Mat.", "medical": "Medic."}
+	for cat in categories:
+		var btn := Button.new()
+		btn.text = cat_labels[cat]
+		btn.add_theme_font_size_override("font_size", 12)
+		btn.custom_minimum_size = Vector2(52, 24)
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn.toggle_mode = true
+		btn.set_pressed_no_signals(cat == _inv_category_filter)
+		btn.pressed.connect(_set_category_filter.bind(cat))
+		cat_row.add_child(btn)
+		_inv_category_buttons[cat] = btn
+
+	# Sort button
+	_inv_sort_button = Button.new()
+	_inv_sort_button.text = "Ordenar: Tipo"
+	_inv_sort_button.add_theme_font_size_override("font_size", 12)
+	_inv_sort_button.custom_minimum_size = Vector2(120, 24)
+	_inv_sort_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inv_sort_button.pressed.connect(_cycle_sort_mode)
+	cat_row.add_child(_inv_sort_button)
+
 	_add_inventory_section_title(right, "INVENTARIO")
 
 	inventory_grid = GridContainer.new()
@@ -526,6 +564,20 @@ func _build_inventory_panel() -> void:
 	inventory_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right.add_child(inventory_grid)
 
+	# Build tooltip
+	_inv_tooltip = PanelContainer.new()
+	_inv_tooltip.visible = false
+	_inv_tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_inv_tooltip.z_index = 200
+	_inv_tooltip.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.97), Color(0.60, 0.62, 0.45, 0.90), 1))
+	root.add_child(_inv_tooltip)
+	_inv_tooltip_label = Label.new()
+	_inv_tooltip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_inv_tooltip_label.add_theme_font_size_override("font_size", 12)
+	_inv_tooltip_label.custom_minimum_size = Vector2(180, 0)
+	_inv_tooltip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_inv_tooltip.add_child(_inv_tooltip_label)
+
 func _add_inventory_section_title(parent: VBoxContainer, text: String) -> void:
 	var label := Label.new()
 	label.text = text
@@ -533,6 +585,113 @@ func _add_inventory_section_title(parent: VBoxContainer, text: String) -> void:
 	label.add_theme_color_override("font_color", Color(0.56, 0.62, 0.52))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(label)
+
+func _set_category_filter(cat: String) -> void:
+	_inv_category_filter = cat
+	for key in _inv_category_buttons:
+		_inv_category_buttons[key].set_pressed_no_signals(key == cat)
+	_update_inventory()
+
+func _cycle_sort_mode() -> void:
+	_inv_sort_mode = (_inv_sort_mode + 1) % 4
+	var labels := ["Ninguno", "Tipo", "Nombre", "Peso"]
+	_inv_sort_button.text = "Ordenar: %s" % labels[_inv_sort_mode]
+	_update_inventory()
+
+func _get_filtered_sorted_items() -> Array:
+	var filtered: Array = []
+	for item in player.inventory.items:
+		if item == null:
+			continue
+		if _inv_category_filter != "all":
+			var itype := str(item.item_type)
+			var matched := false
+			match _inv_category_filter:
+				"food":
+					matched = itype == "food"
+				"water":
+					matched = itype == "water"
+				"tool":
+					matched = itype.begins_with("tool") or itype == "campfire" or itype == "shelter"
+				"weapon":
+					matched = itype.begins_with("weapon")
+				"clothing":
+					matched = itype == "clothing" or itype == "backpack"
+				"resource":
+					matched = itype == "resource" or itype == "material" or itype == "seed" or itype == "misc" or itype == "battery"
+				"medical":
+					matched = itype == "medical"
+				_:
+					matched = true
+			if not matched:
+				continue
+		filtered.append(item)
+	if _inv_sort_mode == 0:
+		return filtered
+	var sorted := filtered.duplicate()
+	match _inv_sort_mode:
+		1:
+			sorted.sort_custom(func(a, b): return str(a.item_type) < str(b.item_type))
+		2:
+			sorted.sort_custom(func(a, b): return str(a.item_name) < str(b.item_name))
+		3:
+			sorted.sort_custom(func(a, b): return float(a.weight) * int(a.quantity) > float(b.weight) * int(b.quantity))
+	return sorted
+
+func _show_inv_tooltip(item, slot_rect: Rect2) -> void:
+	if item == null:
+		return
+	var lines: Array = []
+	lines.append(item.item_name)
+	lines.append("Tipo: %s" % str(item.item_type))
+	lines.append("Peso: %.2f kg (x%d = %.2f)" % [float(item.weight), int(item.quantity), float(item.weight) * int(item.quantity)])
+	if item.has_method("durability_pct") and item.item_type != "food" and item.item_type != "water":
+		var pct := int(item.durability_pct() * 100.0)
+		if pct < 100:
+			lines.append("Durabilidad: %d%%" % pct)
+	if (item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena") and item.has_method("durability_pct"):
+		lines.append("Agua: %d%%" % int(item.durability_pct() * 100.0))
+	if item.item_name.begins_with("Lata de ") and item.item_name.ends_with(" abierta") and item.has_method("durability_pct"):
+		lines.append("Comida: %d%%" % int(item.durability_pct() * 100.0))
+	if item.has_method("is_perishable") and item.is_perishable():
+		lines.append("Estado: %s" % item.spoil_state_label())
+	if item.has_method("get_spoilage_rate") and item.get_spoilage_rate() > 0.0:
+		lines.append("Caduca en ~%.0f min" % ((100.0 - float(item.spoilage)) / float(item.get_spoilage_rate()) / 60.0))
+	if item.storage_capacity > 0:
+		lines.append("Almacenamiento: +%d slots" % item.storage_capacity)
+	_inv_tooltip_label.text = "\n".join(lines)
+	_inv_tooltip.visible = true
+	_inv_tooltip.position = Vector2(slot_rect.position.x + slot_rect.size.x + 6, slot_rect.position.y)
+	# Keep tooltip on screen
+	var screen_size := get_viewport().get_visible_rect().size
+	if _inv_tooltip.position.x + _inv_tooltip.size.x > screen_size.x:
+		_inv_tooltip.position.x = slot_rect.position.x - _inv_tooltip.size.x - 6
+	if _inv_tooltip.position.y + _inv_tooltip.size.y > screen_size.y:
+		_inv_tooltip.position.y = screen_size.y - _inv_tooltip.size.y - 4
+
+func _hide_inv_tooltip() -> void:
+	if _inv_tooltip != null:
+		_inv_tooltip.visible = false
+
+func _update_inv_tooltip_hover() -> void:
+	if inventory_grid == null or _inv_tooltip == null:
+		return
+	if _context_menu != null:
+		_hide_inv_tooltip()
+		return
+	var mouse_pos := get_viewport().get_mouse_position()
+	var display_items: Array = _get_filtered_sorted_items()
+	for i in range(inventory_grid.get_child_count()):
+		var slot = inventory_grid.get_child(i)
+		if slot is PanelContainer:
+			var rect = slot.get_global_rect()
+			if rect.has_point(mouse_pos):
+				if i < display_items.size() and display_items[i] != null:
+					_show_inv_tooltip(display_items[i], rect)
+				else:
+					_hide_inv_tooltip()
+				return
+	_hide_inv_tooltip()
 
 func _add_equipment_line(parent: VBoxContainer, left_text: String, right_text: String) -> Label:
 	var panel := PanelContainer.new()
@@ -550,7 +709,7 @@ func _add_equipment_line(parent: VBoxContainer, left_text: String, right_text: S
 
 func _add_inventory_hint(parent: VBoxContainer) -> void:
 	var label := Label.new()
-	label.text = "Clic izq en objeto para ver opciones.\nClic der para soltar directamente.\nI o Tab abre/cierra la mochila."
+	label.text = "Clic izq en objeto para ver opciones.\nClic der para soltar directamente.\nClic medio para mover objetos.\nI o Tab abre/cierra la mochila."
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", Color(0.64, 0.66, 0.59))
@@ -729,9 +888,10 @@ func _update_inventory() -> void:
 		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
 		player.inventory.max_weight
 	]
-	var slot_count: int = max(player.inventory.max_slots, player.inventory.items.size())
+	var display_items: Array = _get_filtered_sorted_items()
+	var slot_count: int = max(player.inventory.max_slots, display_items.size())
 	for i in range(slot_count):
-		var item = player.inventory.items[i] if i < player.inventory.items.size() else null
+		var item = display_items[i] if i < display_items.size() else null
 		_create_inventory_slot(i, item)
 
 func _update_equipment_labels() -> void:
@@ -1062,12 +1222,32 @@ func handle_slot_click(mouse_pos: Vector2, button_index: int) -> void:
 	if _context_menu != null:
 		_close_context_menu()
 		return
+	var display_items: Array = _get_filtered_sorted_items()
 	for i in range(inventory_grid.get_child_count()):
 		var slot = inventory_grid.get_child(i)
 		if slot is PanelContainer:
 			var rect = slot.get_global_rect()
 			if rect.has_point(mouse_pos):
-				if i < player.inventory.items.size() and player.inventory.items[i] != null:
+				if button_index == MOUSE_BUTTON_MIDDLE:
+					# Drag & drop: pick up or swap
+					if _drag_source_index < 0:
+						if i < display_items.size() and display_items[i] != null:
+							_drag_source_index = i
+							selected_slot_index = i
+							_update_inventory()
+					else:
+						var src_real := _get_real_inv_index(_drag_source_index)
+						var dst_real := _get_real_inv_index(i)
+						if src_real >= 0 and dst_real >= 0:
+							player.inventory.swap_items(src_real, dst_real)
+						elif src_real >= 0 and i >= display_items.size():
+							# Move to empty slot (no-op since filtered view doesn't have empty slots)
+							pass
+						_drag_source_index = -1
+						selected_slot_index = -1
+						_update_inventory()
+					return
+				if i < display_items.size() and display_items[i] != null:
 					if button_index == MOUSE_BUTTON_LEFT:
 						_show_context_menu(i, rect)
 					elif button_index == MOUSE_BUTTON_RIGHT:
@@ -1100,7 +1280,10 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	vbox.add_theme_constant_override("separation", 4)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_child(vbox)
-	var item = player.inventory.items[slot_index]
+	var display_items: Array = _get_filtered_sorted_items()
+	var item = display_items[slot_index] if slot_index < display_items.size() else null
+	if item == null:
+		return
 	var name_label := Label.new()
 	name_label.text = item.item_name
 	name_label.add_theme_font_size_override("font_size", 14)
@@ -1280,12 +1463,25 @@ func _on_combine_pressed(recipe: Dictionary) -> void:
 	if player.has_method("craft_recipe"):
 		player.craft_recipe(recipe)
 
+func _get_real_inv_index(display_index: int) -> int:
+	if display_index < 0:
+		return -1
+	var display_items: Array = _get_filtered_sorted_items()
+	if display_index >= display_items.size():
+		return -1
+	var target_item = display_items[display_index]
+	for i in range(player.inventory.items.size()):
+		if player.inventory.items[i] == target_item:
+			return i
+	return -1
+
 func _on_cut_clothing_pressed() -> void:
 	if player == null or player.inventory == null:
 		return
-	if _context_menu_slot_index < 0 or _context_menu_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(_context_menu_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	var item = player.inventory.items[_context_menu_slot_index]
+	var item = player.inventory.items[real_idx]
 	var item_name := str(item.item_name)
 	# Find the cut recipe for this clothing item
 	var recipes := CraftingSystemScript.get_recipes_for_item(item_name, str(item.item_type))
@@ -1300,10 +1496,11 @@ func _on_cut_clothing_pressed() -> void:
 			return
 
 func _on_eat_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = selected_slot_index
-	var item = player.inventory.items[selected_slot_index]
+	player.held_index = real_idx
+	var item = player.inventory.items[real_idx]
 	if str(item.item_type) != "food":
 		return
 	# Close inventory so animation is visible
@@ -1311,16 +1508,17 @@ func _on_eat_pressed() -> void:
 	if inventory_visible:
 		toggle_inventory()
 	# Put food in hand and eat immediately
-	var was_in_hand: bool = player.held_index == selected_slot_index and player.hands != null and player.hands.has_item_in_hands()
-	player._use_inventory_index(selected_slot_index)
-	if not was_in_hand and player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
+	var was_in_hand: bool = player.held_index == real_idx and player.hands != null and player.hands.has_item_in_hands()
+	player._use_inventory_index(real_idx)
+	if not was_in_hand and player.held_index == real_idx and player.has_method("_eat_held_item"):
 		player._eat_held_item()
 	selected_slot_index = -1
 
 func _on_light_torch_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = selected_slot_index
+	player.held_index = real_idx
 	player._sync_held_item()
 	_close_context_menu()
 	if inventory_visible:
@@ -1329,10 +1527,11 @@ func _on_light_torch_pressed() -> void:
 	selected_slot_index = -1
 
 func _on_use_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = selected_slot_index
-	var item = player.inventory.items[selected_slot_index]
+	player.held_index = real_idx
+	var item = player.inventory.items[real_idx]
 	var item_type := str(item.item_type)
 	var item_name := str(item.item_name)
 	# Items that should go to hand instead of being consumed
@@ -1340,11 +1539,11 @@ func _on_use_pressed() -> void:
 	match item_type:
 		"food", "water", "medical", "clothing":
 			if to_hand and item_type == "food":
-				player._use_inventory_index(selected_slot_index)
+				player._use_inventory_index(real_idx)
 			elif to_hand:
 				player._sync_held_item()
 			else:
-				player._use_inventory_index(selected_slot_index)
+				player._use_inventory_index(real_idx)
 		_:
 			player._sync_held_item()
 	selected_slot_index = -1
@@ -1353,21 +1552,23 @@ func _on_use_pressed() -> void:
 		toggle_inventory()
 
 func _on_drop_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.drop_inventory_item(selected_slot_index)
+	player.drop_inventory_item(real_idx)
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:
 		toggle_inventory()
 
 func _on_drink_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	var item = player.inventory.items[selected_slot_index]
+	var item = player.inventory.items[real_idx]
 	if str(item.item_type) != "water":
 		return
-	player.held_index = selected_slot_index
+	player.held_index = real_idx
 	player._sync_held_item()
 	player._drink_held_item()
 	selected_slot_index = -1
@@ -1376,9 +1577,10 @@ func _on_drink_pressed() -> void:
 		toggle_inventory()
 
 func _on_store_pressed() -> void:
-	if selected_slot_index < 0 or selected_slot_index >= player.inventory.items.size():
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = selected_slot_index
+	player.held_index = real_idx
 	if player.has_method("_store_held_item"):
 		player._store_held_item()
 	selected_slot_index = -1
