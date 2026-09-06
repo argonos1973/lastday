@@ -156,10 +156,12 @@ func _build_ui() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
 
+	_build_damage_overlay()
 	_build_status_panel()
 	_build_inventory_panel()
 	_build_center_messages()
 	_build_real_clock_panel()
+	_add_shadows_recursive(root)
 
 func _build_real_clock_panel() -> void:
 	var panel := PanelContainer.new()
@@ -172,7 +174,7 @@ func _build_real_clock_panel() -> void:
 	panel.anchor_right = 0.0
 	panel.anchor_bottom = 0.0
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
+	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
 	root.add_child(panel)
 
 	var box := VBoxContainer.new()
@@ -182,7 +184,7 @@ func _build_real_clock_panel() -> void:
 
 	real_clock_label = Label.new()
 	real_clock_label.add_theme_font_size_override("font_size", 20)
-	real_clock_label.add_theme_color_override("font_color", Color(0.90, 0.92, 0.85))
+	real_clock_label.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
 	real_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(real_clock_label)
 
@@ -290,7 +292,7 @@ func _build_status_panel() -> void:
 	status_panel.offset_top = -70
 	status_panel.offset_bottom = 0
 	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.017, 0.016, 0.66), Color(0.34, 0.37, 0.32, 0.45), 1))
+	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
 	root.add_child(status_panel)
 
 	var row := HBoxContainer.new()
@@ -468,7 +470,7 @@ func _build_inventory_panel() -> void:
 	inventory_panel.offset_bottom = -86
 	inventory_panel.visible = inventory_visible
 	inventory_panel.mouse_filter = Control.MOUSE_FILTER_PASS
-	inventory_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.020, 0.018, 0.91), Color(0.47, 0.49, 0.42, 0.52), 1))
+	inventory_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.07, 0.08, 0.07, 0.95), Color(0.50, 0.52, 0.45, 0.75), 1))
 	root.add_child(inventory_panel)
 
 	var box := VBoxContainer.new()
@@ -626,19 +628,6 @@ func _build_center_messages() -> void:
 	crosshair_dot.color = Color(0.96, 0.94, 0.84, 0.92)
 	crosshair_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(crosshair_dot)
-
-	_damage_overlay = ColorRect.new()
-	_damage_overlay.anchor_left = 0.0
-	_damage_overlay.anchor_top = 0.0
-	_damage_overlay.anchor_right = 1.0
-	_damage_overlay.anchor_bottom = 1.0
-	_damage_overlay.offset_left = 0
-	_damage_overlay.offset_top = 0
-	_damage_overlay.offset_right = 0
-	_damage_overlay.offset_bottom = 0
-	_damage_overlay.color = Color(0.4, 0.0, 0.0, 0.0)
-	_damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(_damage_overlay)
 
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1023,6 +1012,29 @@ func _get_crosshair_action_color(text: String, active: bool) -> Color:
 		return Color(1.0, 0.60, 0.26, 0.96)
 	return Color(0.96, 0.94, 0.84, 0.96)
 
+func _build_damage_overlay() -> void:
+	_damage_overlay = ColorRect.new()
+	_damage_overlay.anchor_left = 0.0
+	_damage_overlay.anchor_top = 0.0
+	_damage_overlay.anchor_right = 1.0
+	_damage_overlay.anchor_bottom = 1.0
+	_damage_overlay.offset_left = 0
+	_damage_overlay.offset_top = 0
+	_damage_overlay.offset_right = 0
+	_damage_overlay.offset_bottom = 0
+	_damage_overlay.color = Color(0.4, 0.0, 0.0, 0.0)
+	_damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_damage_overlay)
+
+func _add_shadows_recursive(node: Node) -> void:
+	if node is Label:
+		var label := node as Label
+		label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.9))
+		label.add_theme_constant_override("shadow_offset_x", 1)
+		label.add_theme_constant_override("shadow_offset_y", 1)
+	for child in node.get_children():
+		_add_shadows_recursive(child)
+
 func _panel_style(fill: Color, border: Color, border_width: int) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
@@ -1299,7 +1311,7 @@ func _on_eat_pressed() -> void:
 	if inventory_visible:
 		toggle_inventory()
 	# Put food in hand and eat immediately
-	var was_in_hand := player.held_index == selected_slot_index and player.hands != null and player.hands.has_item_in_hands()
+	var was_in_hand: bool = player.held_index == selected_slot_index and player.hands != null and player.hands.has_item_in_hands()
 	player._use_inventory_index(selected_slot_index)
 	if not was_in_hand and player.held_index == selected_slot_index and player.has_method("_eat_held_item"):
 		player._eat_held_item()

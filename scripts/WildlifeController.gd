@@ -1,6 +1,8 @@
 extends Node3D
 class_name WildlifeController
 
+const WORLD_LIMIT := 480.0
+
 var patrol_points: Array = []
 var target_index := 0
 var move_speed := 1.2
@@ -71,7 +73,7 @@ var _ai_lod_timer := 0.0
 const AI_LOD_NEAR := 40.0   # Distancia: IA completa cada frame
 const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
 const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
-const AI_LOD_CULL := 150.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
+const AI_LOD_CULL := 200.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
 
 # Cache de grupo wildlife para evitar get_nodes_in_group cada frame
 var _cached_wildlife: Array = []
@@ -203,8 +205,8 @@ func _nearest_allowed_point(origin: Vector3):
 		for i in range(16):
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -180.0, 180.0)
-			candidate.z = clamp(candidate.z, -180.0, 180.0)
+			candidate.x = clamp(candidate.x, -WORLD_LIMIT, WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -WORLD_LIMIT, WORLD_LIMIT)
 			if _is_position_allowed(candidate):
 				return candidate
 	return null
@@ -230,8 +232,8 @@ func _escape_if_trapped(delta: float) -> bool:
 	dir = dir.normalized()
 	var step := move_speed * 2.2 * delta
 	var next_pos := global_position + dir * step
-	next_pos.x = clamp(next_pos.x, -180.0, 180.0)
-	next_pos.z = clamp(next_pos.z, -180.0, 180.0)
+	next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)
+	next_pos.z = clamp(next_pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 	global_position = next_pos
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * 6.0)
 	_walk_time += delta * move_speed * 5.0
@@ -325,7 +327,7 @@ func _process(delta: float) -> void:
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
 					if _wolf_eating_target is WildlifeController:
 						_wolf_eating_target._gutted = true
-						_wolf_eating_target._spawn_gut_pickups()
+						_wolf_eating_target._spawn_partial_pickups()
 						_broadcast_wolf_meat_drops(_wolf_eating_target)
 						_wolf_eating_target._remove_corpse()
 					elif _wolf_eating_target.has_meta("proxy_dead") and _wolf_eating_target.get_meta("proxy_dead", false):
@@ -370,8 +372,8 @@ func _process(delta: float) -> void:
 			var wander_radius := randf_range(2.0, 6.0)
 			_wander_offset = Vector3(cos(wander_angle) * wander_radius, 0.0, sin(wander_angle) * wander_radius)
 		target += _wander_offset
-	target.x = clamp(target.x, -180.0, 180.0)
-	target.z = clamp(target.z, -180.0, 180.0)
+	target.x = clamp(target.x, -WORLD_LIMIT, WORLD_LIMIT)
+	target.z = clamp(target.z, -WORLD_LIMIT, WORLD_LIMIT)
 	var to_target := target - global_position
 	to_target.y = 0.0
 	if to_target.length() < 1.6:
@@ -513,7 +515,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-		if dist_to_player < 45.0:
+		if dist_to_player < 60.0:
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
 			if height_diff >= 1.8 and not _can_reach_player():
 				_state = "patrol"
@@ -678,7 +680,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var nearest_prey := _find_nearest_prey()
 		if nearest_prey != null and is_instance_valid(nearest_prey):
 			var dist_to_prey := global_position.distance_to(nearest_prey.global_position)
-			if dist_to_prey < 25.0:
+			if dist_to_prey < 40.0:
 				_state = "chase_prey"
 				_chase_target = nearest_prey
 				target = nearest_prey.global_position
@@ -768,11 +770,11 @@ func _find_nearest_prey() -> Node3D:
 			nearest = other
 	return nearest
 
-# Un objetivo de huida fuera del mapa se recorta a +/-180 y el animal se queda
+# Un objetivo de huida fuera del mapa se recorta a +/-WORLD_LIMIT y el animal se queda
 # clavado contra el límite. Si el destino sale del área jugable, se gira la
 # dirección de huida hacia el interior manteniendo la distancia.
 func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
-	var limit := 176.0
+	var limit := WORLD_LIMIT - 4.0
 	var goal := from + away.normalized() * dist
 	if abs(goal.x) <= limit and abs(goal.z) <= limit:
 		return goal
@@ -900,6 +902,13 @@ func _meat_count() -> int:
 		"deer": return 8
 		"fox": return 3
 		_: return 4
+
+func _leftover_meat_count() -> int:
+	match animal_type:
+		"wolf": return 1
+		"deer": return 3
+		"fox": return 1
+		_: return 1
 
 func _corpse_item_name() -> String:
 	match animal_type:
@@ -1053,6 +1062,25 @@ func _spawn_gut_pickups() -> void:
 	# Spawn meat pieces scattered around the corpse
 	for i in range(meat_qty):
 		var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
+		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
+		var pos := base_pos + offset
+		pos.y = 0.06
+		var drop_id := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+		if scene.has_method("_spawn_ground_pickup"):
+			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id, "wolf_meat_raw")
+
+# When a wolf eats a corpse, spawn only leftover meat (wolf consumed most of it)
+func _spawn_partial_pickups() -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var base_pos := global_position
+	var meat := _meat_name()
+	var meat_qty := _leftover_meat_count()
+	var meat_weight := 0.3
+	var meat_use_value := 15.0
+	for i in range(meat_qty):
+		var angle := TAU * float(i) / float(max(meat_qty, 1)) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 		var pos := base_pos + offset
 		pos.y = 0.06
@@ -1454,8 +1482,8 @@ func _begin_unstuck_burst() -> void:
 		var clearance := 0.0
 		for step in range(1, 7):
 			var probe := global_position + dir * float(step) * 1.2
-			probe.x = clamp(probe.x, -180.0, 180.0)
-			probe.z = clamp(probe.z, -180.0, 180.0)
+			probe.x = clamp(probe.x, -WORLD_LIMIT, WORLD_LIMIT)
+			probe.z = clamp(probe.z, -WORLD_LIMIT, WORLD_LIMIT)
 			if not _is_position_allowed(probe):
 				break
 			clearance = float(step) * 1.2
@@ -1525,8 +1553,8 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 		dir = (dir + sep * 0.45).normalized()
 	var step := speed * delta
 	var next_pos: Vector3 = global_position + dir * step
-	next_pos.x = clamp(next_pos.x, -180.0, 180.0)
-	next_pos.z = clamp(next_pos.z, -180.0, 180.0)
+	next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)
+	next_pos.z = clamp(next_pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 	if not _is_position_allowed(next_pos):
 		if not _move_with_avoidance(dir, speed, delta, turn_speed):
 			return
@@ -1573,14 +1601,14 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 		candidate = candidate.normalized()
 		var step_dist := speed * delta
 		var next_pos: Vector3 = global_position + candidate * step_dist
-		next_pos.x = clamp(next_pos.x, -180.0, 180.0)
-		next_pos.z = clamp(next_pos.z, -180.0, 180.0)
+		next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)
+		next_pos.z = clamp(next_pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 		if not _is_position_allowed(next_pos):
 			continue
 		# Anticipación a distancia fija: permite esquivar antes de chocar
 		var lookahead: Vector3 = global_position + candidate * 1.2
-		lookahead.x = clamp(lookahead.x, -180.0, 180.0)
-		lookahead.z = clamp(lookahead.z, -180.0, 180.0)
+		lookahead.x = clamp(lookahead.x, -WORLD_LIMIT, WORLD_LIMIT)
+		lookahead.z = clamp(lookahead.z, -WORLD_LIMIT, WORLD_LIMIT)
 		if not _is_position_allowed(lookahead):
 			if fallback_dir.length() < 0.01:
 				fallback_dir = candidate
@@ -1652,8 +1680,8 @@ func _find_safe_patrol_points(source_points: Array) -> Array:
 			var angle := TAU * float(i) / 24.0
 			var radius := 6.0 + float(i % 4) * 4.0
 			var candidate := center_pos + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			candidate.x = clamp(candidate.x, -180.0, 180.0)
-			candidate.z = clamp(candidate.z, -180.0, 180.0)
+			candidate.x = clamp(candidate.x, -WORLD_LIMIT, WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -WORLD_LIMIT, WORLD_LIMIT)
 			if _is_position_allowed(candidate):
 				safe_points.append(candidate)
 				break
