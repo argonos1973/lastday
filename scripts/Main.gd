@@ -1234,6 +1234,9 @@ func _tick_stat_warnings(delta: float, p) -> void:
 	elif s.sleep < 25.0:
 		msg = "Te entra sueno. Descansa o duerme."
 		key = "sleep_low"
+	elif s.sleep < 60.0:
+		msg = "Empiezas a tener sueno. Descansa pronto."
+		key = "sleep_moderate"
 	elif s.energy < 15.0:
 		msg = "Estas muy cansado. Deja de correr y descansa."
 		key = "energy_low"

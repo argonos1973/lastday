@@ -518,6 +518,9 @@ var _puppet_death_remove_timer := 0.0
 var _puppet_naked_pending := false
 var _puppet_naked_timer := 0.0
 var is_sprinting := false
+var _sprint_double_tap := false
+var _last_forward_press_time := 0.0
+const DOUBLE_TAP_WINDOW := 0.3
 var is_crouching := false
 var _force_crouch := false
 var is_moving := false
@@ -2609,7 +2612,16 @@ func _physics_process(delta: float) -> void:
 	if _force_crouch and input_dir.length() < 0.1:
 		is_crouching = true
 	_update_crouch_collision()
-	is_sprinting = Input.is_key_pressed(KEY_R) and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
+	# Sprint: double-tap forward to toggle, hold forward to keep sprinting
+	var forward_held := Input.is_action_pressed("move_forward") and input_dir.y < -0.1
+	if Input.is_action_just_pressed("move_forward"):
+		var now := Time.get_ticks_msec() / 1000.0
+		if now - _last_forward_press_time < DOUBLE_TAP_WINDOW:
+			_sprint_double_tap = true
+		_last_forward_press_time = now
+	if not forward_held:
+		_sprint_double_tap = false
+	is_sprinting = _sprint_double_tap and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
 	var carry := _get_carry_weight_ratio()
 	var effective_max_energy: float = stats.max_stat * (1.0 - carry * 0.5)
 	# Cannot sprint when heavily loaded
