@@ -64,6 +64,11 @@ var _idle_cooldown := 0.0
 var _progress_ref_pos := Vector3.ZERO
 var _progress_timer := 0.0
 
+# Profundidad de agua (rios/lagos): afecta velocidad y hundimiento visual, igual que el jugador
+var _water_depth := 0.0
+var _water_sink := 0.0
+var _water_query_timer := 0.0
+
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
 static var _shared_cylinder: CylinderMesh = null
@@ -295,6 +300,7 @@ func _process(delta: float) -> void:
 			_ai_lod_timer = 0.0
 	# -------------------------------------------
 	_update_stuck_timer(delta)
+	_update_water_depth(delta)
 	# Salida forzada de un atasco: tiene prioridad sobre la IA normal
 	if _unstuck_timer > 0.0:
 		_unstuck_timer -= delta
@@ -1541,6 +1547,20 @@ func _try_flee_from_player(delta: float) -> bool:
 		_animate_legs(delta)
 	return true
 
+func _update_water_depth(delta: float) -> void:
+	_water_query_timer += delta
+	if _water_query_timer >= 0.25:
+		_water_query_timer = 0.0
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("get_river_depth_at"):
+			_water_depth = float(scene.call("get_river_depth_at", global_position))
+		else:
+			_water_depth = 0.0
+	var target_sink: float = -clamp(_water_depth, 0.0, 1.4) * 0.35
+	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
+	if _visual_root != null and is_instance_valid(_visual_root):
+		_visual_root.position.y = _water_sink
+
 func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: float) -> void:
 	var dir: Vector3 = target_pos - global_position
 	dir.y = 0.0
@@ -1551,6 +1571,9 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	var sep := _get_separation_vector()
 	if sep.length() > 0.01:
 		dir = (dir + sep * 0.45).normalized()
+	# Profundidad de agua: al igual que el jugador, vadear rios/lagos frena al animal
+	if _water_depth > 0.02:
+		speed *= lerp(0.72, 0.32, clamp(_water_depth, 0.0, 1.0))
 	var step := speed * delta
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)

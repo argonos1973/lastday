@@ -1,0 +1,413 @@
+extends Node3D
+class_name BirdController
+
+const WORLD_LIMIT := 480.0
+const FLIGHT_HEIGHT_MIN := 3.0
+const FLIGHT_HEIGHT_MAX := 8.0
+const AI_LOD_CULL := 500.0
+
+var animal_type := "bird"
+var patrol_points: Array = []
+var target_index := 0
+var move_speed := 4.0
+var _wing_phase := 0.0
+var _wing_speed := 12.0
+var _left_wing: MeshInstance3D = null
+var _right_wing: MeshInstance3D = null
+var _body_mesh: MeshInstance3D = null
+var _bird_root: Node3D = null
+var _player: Node3D = null
+var _resolve_player_timer := 0.0
+var _ai_lod_timer := 0.0
+var _target_height := 25.0
+var _idle_timer := 0.0
+var _idle_cooldown := 8.0
+var _is_perched := false
+var _perch_timer := 0.0
+var _perch_object: Node3D = null
+var _is_dead := false
+var _use_external_model := false
+var _animation_player: AnimationPlayer = null
+var _scene_cache: Dictionary = {}
+
+const BIRD_MODEL_PATH := "res://assets/external/bird/simple_bird.glb"
+const BIRD_TARGET_HEIGHT := 4.0
+
+func _ready() -> void:
+	add_to_group("birds")
+	add_to_group("wildlife")
+	_build_bird()
+
+func _build_bird() -> void:
+	print("[BIRD] _build_bird called for ", name)
+	# GLB loading disabled - using large bright primitive for visibility
+	var _use_glb = false
+	if _use_glb and _try_load_external_model():
+		_use_external_model = true
+		_set_visibility_range(_bird_root, 600.0)
+		_apply_visible_material_override(_bird_root)
+		print("[BIRD] Using external GLB model, scale=", _bird_root.scale, " visible=", _bird_root.visible, " children=", _bird_root.get_child_count())
+		return
+	# Fallback: build primitive bird mesh
+	_build_primitive_bird()
+	_set_visibility_range(_bird_root, 600.0)
+	print("[BIRD] Using primitive bird model, root_visible=", _bird_root.visible, " children=", _bird_root.get_child_count(), " pos=", global_position)
+
+func _try_load_external_model() -> bool:
+	var node := _load_external_node3d(BIRD_MODEL_PATH)
+	if node == null:
+		return false
+	node.name = "ExternalBirdModel"
+	node.rotation_degrees = Vector3.ZERO
+	add_child(node)
+	_normalize_model_height(node, BIRD_TARGET_HEIGHT)
+	node.visible = true
+	_bird_root = node
+	_animation_player = _find_animation_player(node)
+	if _animation_player != null:
+		_play_fly_animation()
+	return true
+
+func _build_primitive_bird() -> void:
+	_bird_root = Node3D.new()
+	_bird_root.name = "BirdModel"
+	add_child(_bird_root)
+
+	var body_color := Color(1.0, 1.0, 0.0)
+	var wing_color := Color(1.0, 0.0, 0.0)
+
+	# Body: elongated sphere
+	var body_mesh := SphereMesh.new()
+	body_mesh.radius = 1.5
+	body_mesh.height = 6.4
+	_body_mesh = MeshInstance3D.new()
+	_body_mesh.name = "BirdBody"
+	_body_mesh.mesh = body_mesh
+	_body_mesh.material_override = _make_material(body_color)
+	_body_mesh.scale = Vector3(1.5, 1.5, 3.2)
+	_bird_root.add_child(_body_mesh)
+
+	# Head: smaller sphere at front
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 1.2
+	head_mesh.height = 2.4
+	var head := MeshInstance3D.new()
+	head.name = "BirdHead"
+	head.mesh = head_mesh
+	head.material_override = _make_material(body_color)
+	head.position = Vector3(0, 0.7, 3.4)
+	_bird_root.add_child(head)
+
+	# Beak: cone
+	var beak_mesh := CylinderMesh.new()
+	beak_mesh.top_radius = 0.0
+	beak_mesh.bottom_radius = 0.44
+	beak_mesh.height = 1.2
+	var beak := MeshInstance3D.new()
+	beak.name = "BirdBeak"
+	beak.mesh = beak_mesh
+	beak.material_override = _make_material(Color(0.9, 0.7, 0.2))
+	beak.position = Vector3(0, 0.6, 4.8)
+	beak.rotation_degrees.x = 90.0
+	_bird_root.add_child(beak)
+
+	# Tail: flat cone
+	var tail_mesh := CylinderMesh.new()
+	tail_mesh.top_radius = 0.0
+	tail_mesh.bottom_radius = 1.0
+	tail_mesh.height = 2.8
+	var tail := MeshInstance3D.new()
+	tail.name = "BirdTail"
+	tail.mesh = tail_mesh
+	tail.material_override = _make_material(wing_color)
+	tail.position = Vector3(0, 0.3, -3.4)
+	tail.rotation_degrees.x = -90.0
+	_bird_root.add_child(tail)
+
+	# Wings: flat boxes that rotate to flap
+	var wing_mesh := BoxMesh.new()
+	wing_mesh.size = Vector3(8.0, 0.3, 3.0)
+
+	_left_wing = MeshInstance3D.new()
+	_left_wing.name = "BirdWingLeft"
+	_left_wing.mesh = wing_mesh
+	_left_wing.material_override = _make_material(wing_color)
+	# Pivot at body side so wing rotates from the base
+	var left_pivot := Node3D.new()
+	left_pivot.name = "LeftWingPivot"
+	left_pivot.position = Vector3(-1.2, 0.6, 0.0)
+	_bird_root.add_child(left_pivot)
+	_left_wing.position = Vector3(-3.6, 0.0, 0.0)
+	left_pivot.add_child(_left_wing)
+
+	_right_wing = MeshInstance3D.new()
+	_right_wing.name = "BirdWingRight"
+	_right_wing.mesh = wing_mesh
+	_right_wing.material_override = _make_material(wing_color)
+	var right_pivot := Node3D.new()
+	right_pivot.name = "RightWingPivot"
+	right_pivot.position = Vector3(1.2, 0.6, 0.0)
+	_bird_root.add_child(right_pivot)
+	_right_wing.position = Vector3(3.6, 0.0, 0.0)
+	right_pivot.add_child(_right_wing)
+
+func _make_material(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.9
+	mat.metallic = 0.0
+	mat.emission_enabled = true
+	mat.emission = color * 1.0
+	mat.emission_energy_multiplier = 1.0
+	return mat
+
+func _apply_visible_material_override(root: Node) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.9, 0.9, 0.95)
+	mat.roughness = 0.7
+	mat.metallic = 0.0
+	mat.emission_enabled = true
+	mat.emission = Color(0.8, 0.8, 1.0) * 0.5
+	mat.emission_energy_multiplier = 0.5
+	var meshes: Array = []
+	_collect_mesh_instances(root, meshes)
+	for mi in meshes:
+		(mi as MeshInstance3D).material_override = mat
+
+func _set_visibility_range(node: Node, distance: float) -> void:
+	# Disabled visibility range - birds should always be visible
+	return
+
+func setup(points: Array) -> void:
+	patrol_points = points.duplicate()
+	if patrol_points.is_empty():
+		patrol_points = [Vector3.ZERO, Vector3(20, 25, 20)]
+	_target_height = randf_range(FLIGHT_HEIGHT_MIN, FLIGHT_HEIGHT_MAX)
+	global_position = patrol_points[0]
+	global_position.y = _get_ground_y(global_position.x, global_position.z) + _target_height
+	target_index = 1 if patrol_points.size() > 1 else 0
+	move_speed = randf_range(3.5, 6.0)
+	_wing_speed = randf_range(10.0, 16.0)
+	_idle_cooldown = randf_range(6.0, 16.0)
+	print("[BIRD] setup done: ", name, " pos=", global_position, " height=", _target_height, " patrol_points=", patrol_points.size())
+
+func _process(delta: float) -> void:
+	if patrol_points.size() < 2:
+		return
+	# Resolve player reference for LOD
+	if _player == null or not is_instance_valid(_player):
+		_resolve_player_timer += delta
+		if _resolve_player_timer >= 1.0:
+			_resolve_player_timer = 0.0
+			_resolve_player()
+	# LOD: skip AI when far away
+	if _player != null and is_instance_valid(_player):
+		var dist := global_position.distance_to(_player.global_position)
+		if dist > AI_LOD_CULL:
+			# Still animate wings but less frequently
+			_wing_phase += delta * _wing_speed
+			_animate_wings()
+			return
+	# Perched state: bird sits on a tree/structure briefly
+	if _is_perched:
+		_perch_timer -= delta
+		# Gentle wing movement while perched
+		_wing_phase += delta * 3.0
+		_animate_wings()
+		if _perch_timer <= 0.0:
+			_is_perched = false
+			_target_height = randf_range(FLIGHT_HEIGHT_MIN, FLIGHT_HEIGHT_MAX)
+		return
+	# Move toward current patrol point
+	var target: Vector3 = patrol_points[target_index]
+	var ground_y := _get_ground_y(target.x, target.z)
+	var target_pos := Vector3(target.x, ground_y + _target_height, target.z)
+	var dir: Vector3 = target_pos - global_position
+	var dist_to_target := dir.length()
+	if dist_to_target < 3.0:
+		# Reached waypoint: advance or occasionally perch
+		_idle_timer += delta
+		if _idle_timer >= _idle_cooldown and _try_perch():
+			_idle_timer = 0.0
+			_idle_cooldown = randf_range(8.0, 20.0)
+			return
+		target_index = (target_index + 1) % patrol_points.size()
+		_idle_timer = 0.0
+		# Vary altitude slightly between waypoints
+		_target_height = randf_range(FLIGHT_HEIGHT_MIN, FLIGHT_HEIGHT_MAX)
+		return
+	dir = dir.normalized()
+	# Smooth turn toward direction
+	var target_yaw := atan2(dir.x, dir.z)
+	rotation.y = lerp_angle(rotation.y, target_yaw, delta * 3.0)
+	# Move forward
+	var step := move_speed * delta
+	global_position += dir * step
+	# Gentle bobbing
+	var bob := sin(_wing_phase * 0.5) * 0.15
+	global_position.y += bob * delta
+	# Re-adjust altitude toward target height
+	var current_ground_y := _get_ground_y(global_position.x, global_position.z)
+	var desired_y := current_ground_y + _target_height
+	global_position.y = lerp(global_position.y, desired_y, delta * 0.5)
+	# Animate wings
+	_wing_phase += delta * _wing_speed
+	_animate_wings()
+
+func _animate_wings() -> void:
+	# Skip procedural wing animation when using external model with its own animations
+	if _use_external_model and _animation_player != null:
+		return
+	var flap := sin(_wing_phase)
+	if _left_wing != null and _left_wing.get_parent() != null:
+		_left_wing.get_parent().rotation_degrees.x = flap * 35.0
+	if _right_wing != null and _right_wing.get_parent() != null:
+		_right_wing.get_parent().rotation_degrees.x = flap * 35.0
+
+func _try_perch() -> bool:
+	# 15% chance to perch when reaching a waypoint
+	if randf() > 0.15:
+		return false
+	# Find a nearby tree or structure to perch on
+	var scene := get_tree().current_scene
+	if scene == null:
+		return false
+	var best_pos := Vector3.ZERO
+	var best_found := false
+	# Check for world_action_visual nodes (trees, structures) near current position
+	var search_radius := 15.0
+	for node in get_tree().get_nodes_in_group("world_action_visual"):
+		if not (node is Node3D):
+			continue
+		var n3d := node as Node3D
+		var flat_dist := sqrt(pow(n3d.global_position.x - global_position.x, 2) + pow(n3d.global_position.z - global_position.z, 2))
+		if flat_dist < search_radius:
+			var perch_y := n3d.global_position.y + 3.0
+			best_pos = Vector3(n3d.global_position.x, perch_y, n3d.global_position.z)
+			best_found = true
+			break
+	if not best_found:
+		return false
+	global_position = best_pos
+	_is_perched = true
+	_perch_timer = randf_range(5.0, 15.0)
+	rotation.y = randf_range(0, TAU)
+	return true
+
+func _resolve_player() -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	# Try to find the player node
+	if scene.has_node("PlayerController"):
+		_player = scene.get_node("PlayerController")
+	elif scene.get("player") != null and is_instance_valid(scene.get("player")):
+		_player = scene.get("player")
+
+func _get_ground_y(x: float, z: float) -> float:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_get_exact_ground_y"):
+		return float(scene.call("_get_exact_ground_y", x, z))
+	elif scene != null and scene.has_method("_get_ground_height"):
+		return float(scene.call("_get_ground_height", Vector3(x, 0, z)))
+	return 0.0
+
+func _load_external_node3d(path: String) -> Node3D:
+	if _scene_cache.has(path):
+		var cached = _scene_cache[path]
+		if cached is PackedScene:
+			return (cached as PackedScene).instantiate() as Node3D
+		elif cached is Node3D:
+			return (cached as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION) as Node3D
+	var instance: Node = null
+	if ResourceLoader.exists(path):
+		var loaded = load(path)
+		if loaded is PackedScene:
+			instance = (loaded as PackedScene).instantiate()
+			_scene_cache[path] = loaded
+	if instance == null and (path.get_extension().to_lower() == "gltf" or path.get_extension().to_lower() == "glb"):
+		instance = _load_gltf_node3d(path)
+		if instance != null:
+			_scene_cache[path] = instance
+	if instance is Node3D:
+		return instance as Node3D
+	if instance != null:
+		instance.queue_free()
+	return null
+
+func _load_gltf_node3d(path: String) -> Node3D:
+	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
+	if not FileAccess.file_exists(disk_path):
+		return null
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	var error := document.append_from_file(disk_path, state)
+	if error != OK:
+		return null
+	var generated_scene := document.generate_scene(state)
+	if generated_scene is Node3D:
+		return generated_scene as Node3D
+	if generated_scene != null:
+		generated_scene.queue_free()
+	return null
+
+func _normalize_model_height(node: Node3D, target_height: float) -> void:
+	var aabb := _baked_aabb_local(node)
+	if aabb.size.y <= 0.001:
+		return
+	var factor: float = target_height / aabb.size.y
+	var bottom_rel: float = aabb.position.y
+	node.scale = Vector3.ONE * factor
+	node.position.y -= bottom_rel * factor
+
+func _baked_aabb_local(root: Node) -> AABB:
+	var meshes: Array = []
+	_collect_mesh_instances(root, meshes)
+	var combined := AABB()
+	var has_any := false
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var raw := mi.get_aabb()
+		if not has_any:
+			combined = raw
+			has_any = true
+		else:
+			combined = combined.merge(raw)
+	return combined
+
+func _collect_mesh_instances(root: Node, result: Array) -> void:
+	if root is MeshInstance3D:
+		result.append(root)
+	for child in root.get_children():
+		_collect_mesh_instances(child, result)
+
+func _find_animation_player(root: Node) -> AnimationPlayer:
+	if root is AnimationPlayer:
+		return root as AnimationPlayer
+	for child in root.get_children():
+		var found := _find_animation_player(child)
+		if found != null:
+			return found
+	return null
+
+func _play_fly_animation() -> void:
+	if _animation_player == null:
+		return
+	var chosen := ""
+	var any_fallback := ""
+	for animation_name in _animation_player.get_animation_list():
+		var animation := _animation_player.get_animation(animation_name)
+		if animation != null:
+			animation.loop_mode = Animation.LOOP_LINEAR
+		var lower := animation_name.to_lower()
+		if lower.find("fly") >= 0 or lower.find("flap") >= 0 or lower.find("soar") >= 0 or lower.find("glide") >= 0:
+			chosen = animation_name
+			break
+		if any_fallback.is_empty():
+			any_fallback = animation_name
+	if chosen.is_empty():
+		chosen = any_fallback
+	if not chosen.is_empty():
+		_animation_player.play(chosen)

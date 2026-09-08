@@ -4309,6 +4309,9 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 		return
 	is_sleeping = true
 	_cancel_aim()
+	# Guardar lo que lleva en la mano al inventario antes de dormir
+	if hands != null and hands.has_item_in_hands():
+		_store_held_item()
 	if on_bed:
 		is_sleeping_on_bed = true
 		_bed_sleep_position = bed_pos
@@ -4573,9 +4576,9 @@ func _eat_held_item() -> void:
 				notice.emit("Comes comida en mal estado. Te sientes mal.")
 			stats.changed.emit()
 		var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
-		# Opened cans: eat 25% per use, only remove when empty
+		# Opened cans: eat 50% per use, only remove when empty
 		if item_name.begins_with("Lata de") and item_name.ends_with(" abierta"):
-			var eat_pct := 0.25
+			var eat_pct := 0.50
 			var actual_eat: float = min(eat_pct, float(item.durability_pct()))
 			# Recalculate hunger/thirst with partial amount
 			stats.hunger = min(stats.max_stat, _oh + food_value * actual_eat)
@@ -4584,7 +4587,7 @@ func _eat_held_item() -> void:
 				stats.health = min(stats.max_health, _ohp + max(3.0, food_value * _health_pct * actual_eat))
 			stats.changed.emit()
 			_r = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
-			item.reduce_durability(float(item.max_durability) * eat_pct)
+			item.reduce_durability(float(item.max_durability) * actual_eat)
 			if item.is_broken():
 				inventory.remove_index(held_index)
 				notice.emit("Comes el ultimo trozo de %s.%s" % [item_name, _r])
@@ -4665,7 +4668,11 @@ func _drink_held_item() -> void:
 			inventory.remove_index(held_index)
 		inventory.changed.emit()
 		_clear_third_person_drink_bottle_left_hand()
-		_sync_held_item()
+		# Limpiar la mano tras beber (guardar item en inventario)
+		if hands != null and hands.has_item_in_hands():
+			_store_held_item()
+		else:
+			_sync_held_item()
 		var _dr: String = ""
 		if stats != null:
 			_dr = inventory._fmt_restore(0.0, 0.0, _ot, float(stats.thirst), _ohp, float(stats.health))
@@ -4750,12 +4757,18 @@ func drop_inventory_item(index: int) -> void:
 #region ITEMS EN MANO Y EQUIPAMIENTO (PlayerHeldItems)
 func _sync_held_item() -> void:
 	if inventory == null or inventory.items.is_empty():
+		if hands != null:
+			hands.clear_hands()
 		_sync_third_person_equipment(null)
 		_update_crosshair(false)
 		return
 	held_index = clampi(held_index, 0, inventory.items.size() - 1)
 	var held_item = inventory.items[held_index]
+	if hands != null:
+		hands.clear_hands()
 	_sync_third_person_equipment(held_item)
+	if hands != null:
+		hands.current_item = held_item
 	_update_crosshair(_has_rifle_equipped())
 
 func _sync_third_person_equipment(held_item) -> void:
@@ -7352,6 +7365,8 @@ func _melee_attack() -> void:
 	var closest_dist := attack_range
 	var closest_dist_sq := attack_range * attack_range  # Opt: comparar con sq para evitar sqrt
 	var fwd := -global_transform.basis.z.normalized()
+	fwd.y = 0.0
+	fwd = fwd.normalized()
 	# Check wildlife
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if not (node is Node3D) or not is_instance_valid(node):
@@ -7362,8 +7377,11 @@ func _melee_attack() -> void:
 		var d_sq := global_position.distance_squared_to(animal.global_position)
 		if d_sq > closest_dist_sq:
 			continue
-		var dir := (animal.global_position - global_position).normalized()
-		if fwd.dot(dir) < 0.3:
+		var dir := animal.global_position - global_position
+		dir.y = 0.0
+		if dir.length() > 0.001:
+			dir = dir.normalized()
+		if fwd.dot(dir) < 0.15:
 			continue
 		closest_target = animal
 		closest_dist_sq = d_sq

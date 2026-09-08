@@ -21,6 +21,7 @@ const NavPathfindingScript = preload("res://scripts/NavPathfinding.gd")
 const MaterialFactory = preload("res://scripts/MaterialFactory.gd")
 const NodeUtils = preload("res://scripts/NodeUtils.gd")
 const WildlifeRoutes = preload("res://scripts/WildlifeRoutes.gd")
+const BirdControllerScript = preload("res://scripts/BirdController.gd")
 
 const MAP_EXTENT := 500.0
 
@@ -1564,32 +1565,41 @@ var _remote_tent_pos := Vector3.ZERO
 var _spawn_zones: Array = [
 	Vector3(8.0, 0.4, 2.5),
 	Vector3(15.0, 0.4, -35.0),
-	Vector3(-55.0, 0.4, -40.0),
-	Vector3(55.0, 0.4, 45.0),
-	Vector3(-50.0, 0.4, 50.0),
-	Vector3(110.0, 0.4, -120.0),
+	Vector3(-40.0, 0.4, -30.0),
+	Vector3(40.0, 0.4, 35.0),
+	Vector3(-35.0, 0.4, 40.0),
+	Vector3(110.0, 0.4, -180.0),
 	Vector3(-120.0, 0.4, -110.0),
 	Vector3(130.0, 0.4, 110.0),
 	Vector3(-110.0, 0.4, 120.0),
-	Vector3(0.0, 0.4, -160.0),
-	Vector3(0.0, 0.4, 160.0),
-	Vector3(-160.0, 0.4, 0.0),
-	Vector3(160.0, 0.4, 0.0),
-	Vector3(85.0, 0.4, -60.0),
-	Vector3(-85.0, 0.4, 60.0),
-	Vector3(60.0, 0.4, 130.0),
-	Vector3(-60.0, 0.4, -130.0)
+	Vector3(0.0, 0.4, -200.0),
+	Vector3(0.0, 0.4, 200.0),
+	Vector3(-200.0, 0.4, 0.0),
+	Vector3(200.0, 0.4, 0.0),
+	Vector3(85.0, 0.4, -180.0),
+	Vector3(-85.0, 0.4, 180.0),
+	Vector3(60.0, 0.4, 200.0),
+	Vector3(-60.0, 0.4, -200.0)
 ]
 
 func _get_random_spawn_pos() -> Vector3:
 	var spawn_rng := RandomNumberGenerator.new()
 	spawn_rng.randomize()
-	var zone: Vector3 = _spawn_zones[spawn_rng.randi() % _spawn_zones.size()]
-	var offset_x: float = spawn_rng.randf_range(-3.0, 3.0)
-	var offset_z: float = spawn_rng.randf_range(-3.0, 3.0)
-	var base_pos := Vector3(zone.x + offset_x, 0.0, zone.z + offset_z)
-	var h := _get_ground_height(base_pos)
-	return Vector3(base_pos.x, h + 0.4, base_pos.z)
+	for _attempt in range(20):
+		var zone: Vector3 = _spawn_zones[spawn_rng.randi() % _spawn_zones.size()]
+		var offset_x: float = spawn_rng.randf_range(-3.0, 3.0)
+		var offset_z: float = spawn_rng.randf_range(-3.0, 3.0)
+		var base_pos := Vector3(zone.x + offset_x, 0.0, zone.z + offset_z)
+		if _is_near_river(base_pos, 30.0):
+			continue
+		var h := _get_ground_height(base_pos)
+		return Vector3(base_pos.x, h + 0.4, base_pos.z)
+	# Fallback: use center zone (safely inland) with ground height
+	var fb := Vector3(8.0, 0.0, 2.5)
+	if _is_near_river(fb, 30.0):
+		fb = Vector3(-35.0, 0.0, 40.0)
+	var h := _get_ground_height(fb)
+	return Vector3(fb.x, h + 0.4, fb.z)
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
@@ -2691,19 +2701,31 @@ func _update_puppet_animals() -> void:
 		return
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
+		var kind := str(d.get("t", "deer"))
 		if not puppet_animals.has(aid):
-			var puppet = WildlifeControllerScript.new()
-			puppet.name = "Puppet_" + str(aid)
-			add_child(puppet)
-			puppet.setup_puppet(str(d.get("t", "deer")))
-			puppet.global_position = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0))
-			puppet_animals[aid] = puppet
+			if kind == "bird":
+				var bird_puppet = BirdControllerScript.new()
+				bird_puppet.name = "Puppet_" + str(aid)
+				add_child(bird_puppet)
+				bird_puppet.setup([Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), Vector3(d.get("x", 0.0) + 20.0, d.get("y", 0.0), d.get("z", 0.0) + 20.0)])
+				puppet_animals[aid] = bird_puppet
+			else:
+				var puppet = WildlifeControllerScript.new()
+				puppet.name = "Puppet_" + str(aid)
+				add_child(puppet)
+				puppet.setup_puppet(kind)
+				puppet.global_position = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0))
+				puppet_animals[aid] = puppet
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
-			p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
-			if p.animal_type == "wolf":
-				p._wolf_hunger = float(d.get("h", p._wolf_hunger))
-				p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
+			if kind == "bird":
+				p.global_position = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0))
+				p.rotation.y = float(d.get("r", 0.0))
+			else:
+				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
+				if p.animal_type == "wolf":
+					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
+					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
 	# Remove puppets that no longer exist on the server (unless dead/gutted - those are removed by _net_animal_gutted after animation)
 	var stale := []
 	for aid in puppet_animals.keys():
@@ -4927,6 +4949,7 @@ func _create_river_drink_zones() -> void:
 				action.rotation_degrees.y = yaw
 
 func _create_wildlife() -> void:
+	print("[WILDLIFE] _create_wildlife started")
 	var player_start := Vector3(8, 0.0, 2.5)
 	# Deer: large outer ring routes around the expanded map
 	var deer_routes := [
@@ -4972,7 +4995,7 @@ func _create_wildlife() -> void:
 	for i in range(wolf_quadrants.size()):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		for _retry in range(30):
-			if not _is_near_wildlife_blocker(center, 5.0):
+			if not _is_near_wildlife_blocker(center, 5.0) and not _is_near_lake(center, 15.0):
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
@@ -4981,11 +5004,40 @@ func _create_wildlife() -> void:
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
 		_world_rng.state = _saved_rng_state
+	# Birds: flocks roaming the entire map from spread-out starting zones
+	var bird_always_allowed := func(_pos: Vector3) -> bool: return true
+	var bird_start_zones := [
+		Vector3(-400, 0, -400), Vector3(400, 0, 400),
+		Vector3(-400, 0, 400), Vector3(400, 0, -400),
+		Vector3(0, 0, -420), Vector3(0, 0, 420),
+		Vector3(-420, 0, 0), Vector3(420, 0, 0),
+	]
+	for bs in bird_start_zones:
+		_bird_flock_counter += 1
+		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bs, 40, 150.0, 300.0, bird_always_allowed)
+		var flock_size := 2
+		for i in range(flock_size):
+			var offset := Vector3(_world_rng.randf_range(-8, 8), 0.0, _world_rng.randf_range(-8, 8))
+			var shifted: Array = []
+			for point in bird_route:
+				shifted.append((point as Vector3) + offset)
+			_create_bird(shifted, _bird_flock_counter)
+
+var _bird_flock_counter := 0
+
+func _create_bird(points: Array, flock_id: int = 0) -> void:
+	var bird = BirdControllerScript.new()
+	bird.name = "Bird_%d" % _animal_id_counter
+	_animal_id_counter += 1
+	add_child(bird)
+	bird.set_flock_id(flock_id)
+	bird.setup(points)
 
 func _check_wildlife_respawn() -> void:
 	var alive_deer := 0
 	var alive_fox := 0
 	var alive_wolf := 0
+	var alive_bird := 0
 	var dead_deer := 0
 	var dead_fox := 0
 	var dead_wolf := 0
@@ -5007,6 +5059,9 @@ func _check_wildlife_respawn() -> void:
 						alive_fox += 1
 					"wolf":
 						alive_wolf += 1
+		elif node is BirdController:
+			if not node._is_dead:
+				alive_bird += 1
 	# Respawn only if total (alive + dead) is below max — dead animals persist as corpses
 	var total_wolf := alive_wolf + dead_wolf
 	var total_deer := alive_deer + dead_deer
@@ -5026,6 +5081,19 @@ func _check_wildlife_respawn() -> void:
 		var fox_zone := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
+	# Respawn birds if population drops below threshold
+	if alive_bird < 3:
+		var bird_always_allowed := func(_pos: Vector3) -> bool: return true
+		var bird_start := Vector3(randf_range(-350, 350), 0.0, randf_range(-350, 350))
+		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bird_start, 30, 100.0, 200.0, bird_always_allowed)
+		var flock_size := 1
+		_bird_flock_counter += 1
+		for i in range(flock_size):
+			var offset := Vector3(_world_rng.randf_range(-5, 5), 0.0, _world_rng.randf_range(-5, 5))
+			var shifted: Array = []
+			for point in bird_route:
+				shifted.append((point as Vector3) + offset)
+			_create_bird(shifted, _bird_flock_counter)
 
 func _create_deer_pair(route: Array) -> void:
 	var offsets := [Vector3(-2.4, 0.0, -1.6), Vector3(2.4, 0.0, 1.6)]
@@ -6196,7 +6264,12 @@ func handle_world_action(action, actor) -> void:
 					actor.notice.emit("Tu %s se ha roto!" % str(held_f.item_name))
 		"drink_water":
 			# If holding an empty plastic bottle, fill it instead of drinking
+			# Only allow filling if the bottle is actually held in the player's hands
 			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_dw != null:
+				var _hands_dw = actor.get("hands") if actor.has_method("get") else null
+				if _hands_dw == null or not _hands_dw.has_method("has_item_in_hands") or not _hands_dw.has_item_in_hands():
+					held_dw = null
 			if held_dw != null and held_dw.item_name == "Botella de plastico":
 				_play_actor_action(actor, "plant", 5.0)
 				actor.notice.emit("Llenando botella en el rio...")
@@ -7714,9 +7787,9 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	else:
 		mesh_instance.mesh = _make_irregular_river_mesh(size)
 	mesh_instance.material_override = MaterialFactory.make_river_water_material()
+	mesh_instance.set_is_lake(is_lake)
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
-	mesh_instance.set_mist_size(size.x, size.y)
 	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
 
@@ -9059,6 +9132,8 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
+	if _is_in_lake(pos):
+		return false
 	return true
 
 var HOUSE_FOOTPRINTS := [
@@ -9109,6 +9184,48 @@ func _is_near_river(pos: Vector3, margin: float) -> bool:
 		else:
 			if abs(local_along) <= half_length and abs(local_across) <= half_width:
 				return true
+	return false
+
+func _is_near_lake(pos: Vector3, margin: float) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	for segment in river_segments_data:
+		var size: Vector2 = segment["size"]
+		if size.x < 60.0:
+			continue
+		var center: Vector3 = segment["center"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along := Vector2(cos(yaw), -sin(yaw))
+		var across := Vector2(sin(yaw), cos(yaw))
+		var half_length := size.x * 0.5
+		var half_width := size.y * 0.5
+		var offset := p - Vector2(center.x, center.z)
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		var norm_f: float = local_along / max(0.01, half_length * 0.85 + margin)
+		var norm_s: float = local_across / max(0.01, half_width * 0.85 + margin)
+		if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
+			return true
+	return false
+
+func _is_in_lake(pos: Vector3) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	for segment in river_segments_data:
+		var size: Vector2 = segment["size"]
+		if size.x < 60.0:
+			continue
+		var center: Vector3 = segment["center"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along := Vector2(cos(yaw), -sin(yaw))
+		var across := Vector2(sin(yaw), cos(yaw))
+		var half_length := size.x * 0.5
+		var half_width := size.y * 0.5
+		var offset := p - Vector2(center.x, center.z)
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		var norm_f: float = local_along / max(0.01, half_length * 0.85)
+		var norm_s: float = local_across / max(0.01, half_width * 0.85)
+		if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
+			return true
 	return false
 
 func _is_in_river(pos: Vector3) -> bool:
@@ -9173,6 +9290,27 @@ func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 					continue
 			var strength := (radius - distance) / radius
 			push += Vector3(offset.x, 0.0, offset.y).normalized() * strength
+	# Repulsion del lago: empujar a los animales lejos de la orilla del lago
+	for segment in river_segments_data:
+		var size: Vector2 = segment["size"]
+		if size.x < 60.0:
+			continue
+		var center: Vector3 = segment["center"]
+		var yaw: float = deg_to_rad(float(segment["yaw"]))
+		var along2 := Vector2(cos(yaw), -sin(yaw))
+		var across2 := Vector2(sin(yaw), cos(yaw))
+		var offset_w := p - Vector2(center.x, center.z)
+		var local_along := offset_w.dot(along2)
+		var local_across := offset_w.dot(across2)
+		var margin_w := 4.0
+		var rx: float = size.x * 0.5 * 0.85 + margin_w
+		var rz: float = size.y * 0.5 * 0.85 + margin_w
+		var nf: float = local_along / max(0.01, rx)
+		var ns: float = local_across / max(0.01, rz)
+		var dist_edge := sqrt(nf * nf + ns * ns)
+		if dist_edge < 1.0:
+			var strength := (1.0 - dist_edge) * 2.0
+			push += Vector3(offset_w.x, 0.0, offset_w.y).normalized() * strength
 	if push.length() > 0.01:
 		return push.normalized()
 	return Vector3.ZERO

@@ -541,7 +541,7 @@ func _build_inventory_panel() -> void:
 		btn.custom_minimum_size = Vector2(52, 24)
 		btn.mouse_filter = Control.MOUSE_FILTER_STOP
 		btn.toggle_mode = true
-		btn.set_pressed_no_signals(cat == _inv_category_filter)
+		btn.button_pressed = (cat == _inv_category_filter)
 		btn.pressed.connect(_set_category_filter.bind(cat))
 		cat_row.add_child(btn)
 		_inv_category_buttons[cat] = btn
@@ -589,7 +589,7 @@ func _add_inventory_section_title(parent: VBoxContainer, text: String) -> void:
 func _set_category_filter(cat: String) -> void:
 	_inv_category_filter = cat
 	for key in _inv_category_buttons:
-		_inv_category_buttons[key].set_pressed_no_signals(key == cat)
+		_inv_category_buttons[key].button_pressed = (key == cat)
 	_update_inventory()
 
 func _cycle_sort_mode() -> void:

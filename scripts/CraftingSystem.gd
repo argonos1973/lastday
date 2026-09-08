@@ -97,17 +97,17 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "Lata de guiso": 1, "Cuchillo": 1 },
-		"output": { "name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "use_value": 35.0, "quantity": 1, "durability": 0.0 },
+		"output": { "name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "use_value": 35.0, "quantity": 1, "durability": 100.0, "max_durability": 100.0 },
 		"label": "Abrir lata de guiso con cuchillo"
 	},
 	{
 		"inputs": { "Lata de atun": 1, "Cuchillo": 1 },
-		"output": { "name": "Lata de atun abierta", "type": "food", "weight": 0.3, "use_value": 18.0, "quantity": 1, "durability": 0.0 },
+		"output": { "name": "Lata de atun abierta", "type": "food", "weight": 0.3, "use_value": 18.0, "quantity": 1, "durability": 100.0, "max_durability": 100.0 },
 		"label": "Abrir lata de atun con cuchillo"
 	},
 	{
 		"inputs": { "Lata de comida": 1, "Cuchillo": 1 },
-		"output": { "name": "Lata de comida abierta", "type": "food", "weight": 0.35, "use_value": 32.0, "quantity": 1, "durability": 0.0 },
+		"output": { "name": "Lata de comida abierta", "type": "food", "weight": 0.35, "use_value": 32.0, "quantity": 1, "durability": 100.0, "max_durability": 100.0 },
 		"label": "Abrir lata de comida con cuchillo"
 	},
 ]

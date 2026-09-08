@@ -157,9 +157,11 @@ func get_interaction_text(_player = null) -> String:
 		"drink_water":
 			if _player != null and _player.has_method("get_held_item"):
 				var held = _player.get_held_item()
-				if held != null and held.item_name == "Botella de plastico":
+				var _hands = _player.get("hands") if _player.has_method("get") else null
+				var _in_hands = _hands != null and _hands.has_method("has_item_in_hands") and _hands.has_item_in_hands()
+				if _in_hands and held != null and held.item_name == "Botella de plastico":
 					return "Llenar botella - [E]"
-				if held != null and (held.item_name == "Botella de agua" or held.item_name == "Botella de agua llena") and held.has_method("is_broken") and not held.is_broken() and float(held.durability) < float(held.max_durability):
+				if _in_hands and held != null and (held.item_name == "Botella de agua" or held.item_name == "Botella de agua llena") and held.has_method("is_broken") and not held.is_broken() and float(held.durability) < float(held.max_durability):
 					return "Llenar botella - [E]"
 			return "Beber agua - [E]"
 		"light_campfire":

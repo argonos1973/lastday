@@ -148,6 +148,9 @@ static func make_river_water_material() -> Material:
 		mat.set_shader_parameter("foam_falloff_distance", 0.35)
 		mat.set_shader_parameter("night_amount", 0.0)
 		mat.set_shader_parameter("night_water_color", Color(0.012, 0.035, 0.060))
+		mat.set_shader_parameter("mirror_color", Color(0.62, 0.78, 0.97))
+		mat.set_shader_parameter("mirror_strength", 0.35)
+		mat.set_shader_parameter("mirror_fresnel_power", 3.0)
 	if mat == null:
 		var shader = load("res://shaders/water.gdshader")
 		if shader is Shader:
@@ -177,6 +180,9 @@ static func make_river_water_material() -> Material:
 			mat.set_shader_parameter("beers_law", 1.0)
 			mat.set_shader_parameter("normal_scale", 1.0)
 			mat.set_shader_parameter("roughness_scale", 0.0)
+			mat.set_shader_parameter("mirror_color", Color(0.62, 0.78, 0.97))
+			mat.set_shader_parameter("mirror_strength", 0.35)
+			mat.set_shader_parameter("mirror_fresnel_power", 3.0)
 	_mat_cache["river_water"] = mat
 	return mat
 

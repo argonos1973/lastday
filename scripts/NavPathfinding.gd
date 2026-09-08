@@ -43,8 +43,10 @@ func build(blockers: Array, river_segments: Array) -> void:
 
 func _block_river_cells(river_segments: Array) -> void:
 	for segment in river_segments:
-		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
+		if size.x < 60.0:
+			continue
+		var center: Vector3 = segment["center"]
 		var yaw: float = deg_to_rad(float(segment["yaw"]))
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))

@@ -53,6 +53,11 @@ group_uniforms night;
 uniform float night_amount : hint_range(0.0, 1.0) = 0.0;
 uniform vec3 night_water_color : source_color = vec3(0.012, 0.035, 0.060);
 
+group_uniforms mirror;
+uniform vec3 mirror_color : source_color = vec3(0.62, 0.78, 0.97);
+uniform float mirror_strength : hint_range(0.0, 1.0) = 0.35;
+uniform float mirror_fresnel_power : hint_range(0.5, 8.0) = 3.0;
+
 varying vec4 world_uv;
 varying vec2 flow_direction;
 varying flat vec2 TANGENT_DEBUG;
@@ -141,6 +146,10 @@ void fragment() {
 	// Night darkening
 	ALBEDO = mix(ALBEDO, night_water_color, night_amount);
 	ALPHA = mix(ALPHA, 0.94, night_amount * 0.5);
+
+	// Reflejo tipo espejo: mas visible en angulos rasantes (Fresnel), color acorde a la hora del dia
+	float mirror_fresnel = pow(clamp(1.0 - dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), mirror_fresnel_power);
+	ALBEDO = mix(ALBEDO, mirror_color, mirror_fresnel * mirror_strength);
 
 	if (use_foam) {
 		float edgePatternScroll = TIME * foam_speed;
