@@ -6723,8 +6723,6 @@ func _do_fishing_action(actor, held_item, duration := 2.0) -> void:
 		if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
 			_equip_actor_item(actor, "Pez crudo")
 			actor.notice.emit("Pescas un pez pequeno.")
-		if held_item.item_type == "tool_fishing":
-			_play_actor_action(actor, "fish_end", 1.6)
 	else:
 		actor.notice.emit("No pica nada.")
 	if held_item != null and held_item.has_method("reduce_durability"):
