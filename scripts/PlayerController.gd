@@ -4906,12 +4906,13 @@ func _sync_third_person_equipment(held_item) -> void:
 		_clear_rifle_attachment()
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			return
-	if hands == null or not hands.has_item_in_hands():
-		for child in third_person_hand_item_root.get_children():
-			third_person_hand_item_root.remove_child(child)
-			child.free()
-		# Clean up IK when clearing held items
-		_clear_rifle_attachment()
+	# Rebuild the hand slot from a clean state. Inventory change notifications
+	# can synchronize the same equipped item repeatedly; retaining the previous
+	# visual here accumulated duplicate rods and left one visible while fishing.
+	for child in third_person_hand_item_root.get_children():
+		third_person_hand_item_root.remove_child(child)
+		child.free()
+	_clear_rifle_attachment()
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
 	if not equip_has_bp:
 		for child in third_person_back_item_root.get_children():
@@ -7031,7 +7032,7 @@ func _get_current_anim() -> String:
 	return "idle"
 
 func _interact() -> void:
-	if _has_fishing_rod and not _is_fishing:
+	if _has_fishing_rod_in_hand() and not _is_fishing:
 		var fishing_state := _get_fishing_water_state()
 		if bool(fishing_state.get("near", false)):
 			if bool(fishing_state.get("facing", false)):
@@ -7050,7 +7051,7 @@ func _interact() -> void:
 	target.interact(self)
 
 func _start_fishing_near_water() -> void:
-	if not _has_fishing_rod:
+	if not _has_fishing_rod_in_hand():
 		notice.emit("Necesitas una caña de pescar en la mano.")
 		return
 	if _is_fishing:
@@ -7124,7 +7125,7 @@ func _update_interaction_prompt() -> void:
 		prompt_changed.emit("")
 		return
 	# Check if player can fish near water with rod in hand
-	if _has_fishing_rod:
+	if _has_fishing_rod_in_hand():
 		var fishing_state := _get_fishing_water_state()
 		_is_near_fishing_shore = bool(fishing_state.get("near", false))
 		_can_fish_near_water = _is_near_fishing_shore and bool(fishing_state.get("facing", false))
@@ -7146,6 +7147,12 @@ func _update_interaction_prompt() -> void:
 			prompt_changed.emit("Pulsa E para interactuar")
 		return
 	prompt_changed.emit("")
+
+func _has_fishing_rod_in_hand() -> bool:
+	if not _has_fishing_rod or hands == null or not hands.has_item_in_hands():
+		return false
+	var hand_item = hands.get_current_hand_item()
+	return hand_item != null and str(hand_item.item_type) == "tool_fishing"
 
 func _get_fishing_water_state() -> Dictionary:
 	var result := {"near": false, "facing": false, "point": Vector3.ZERO}
