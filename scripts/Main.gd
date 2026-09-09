@@ -3136,7 +3136,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"tool_spear":
 			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
 		"tool_fishing":
-			return [K_SURVIVAL + "fish.glb"]
+			return ["res://assets/models/props/cana_de_pescar.glb"]
 		"tool_torch":
 			return ["res://assets/animations/torch_stick.glb", "res://assets/models/props/wood_stick.glb"]
 		"medical":
