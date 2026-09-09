@@ -405,6 +405,12 @@ var _can_fish_near_water := false
 var _rod_socket_keyframes: Array = []
 var _rod_base_position := Vector3.ZERO
 var _rod_socket_active := false
+var _rod_visual_overlays: Dictionary = {}
+var _active_rod_visual_key := ""
+var _active_rod_visual_root: Node3D = null
+var _active_rod_visual_player: AnimationPlayer = null
+var _active_rod_visual_animation := ""
+var _rod_action_speed_scale := 1.0
 var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
@@ -2721,6 +2727,7 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	_update_walk_motion(delta, input_dir.length())
+	_update_rod_visual_overlay()
 	_interaction_prompt_timer += delta
 	if _interaction_prompt_timer >= 0.1:
 		_interaction_prompt_timer = 0.0
@@ -4090,7 +4097,7 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			if _has_fishing_rod and not _rod_fish_start_animation.is_empty():
 				target_animation = _rod_fish_start_animation
 				_is_fishing_idle = false
-				_rod_socket_active = true
+				_rod_socket_active = not _rod_visual_overlays.has(THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION)
 				var fish_anim := third_person_animation_player.get_animation(target_animation)
 				if fish_anim != null:
 					fish_anim.loop_mode = Animation.LOOP_NONE
@@ -4136,7 +4143,21 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 		return
 	third_person_action_animation = target_animation
 	third_person_action_timer = duration
+	_rod_action_speed_scale = 1.0
+	if duration > 0.0 and (target_animation == _rod_fish_start_animation or target_animation == _rod_fish_end_animation or target_animation == _rod_cast_animation):
+		var rod_action := third_person_animation_player.get_animation(target_animation)
+		if rod_action != null and rod_action.length > 0.0:
+			_rod_action_speed_scale = rod_action.length / duration
 	third_person_animation_player.play(target_animation, 0.08)
+	third_person_animation_player.speed_scale = _rod_action_speed_scale
+	if target_animation == _rod_fish_start_animation:
+		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION)
+	elif target_animation == _rod_fish_end_animation:
+		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION)
+	elif target_animation == _rod_cast_animation:
+		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION)
+	else:
+		_deactivate_rod_visual_overlay()
 
 func die() -> void:
 	if is_dead:
@@ -4864,6 +4885,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_load_rod_animations()
 	else:
 		_is_fishing_idle = false
+		_deactivate_rod_visual_overlay()
 	var _is_holding_torch := _torch_in_hands
 	if not _is_holding_torch:
 		_clear_torch_attachment()
@@ -6698,6 +6720,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		var cur := third_person_animation_player.current_animation
 		if cur == _rod_fish_start_animation or cur == _rod_fish_end_animation or cur == _rod_cast_animation:
 			third_person_animation_player.stop()
+			third_person_animation_player.speed_scale = 1.0
+			_rod_action_speed_scale = 1.0
 			third_person_action_animation = ""
 			_rod_socket_active = false
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
@@ -6769,12 +6793,16 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			third_person_action_timer = max(0.0, third_person_action_timer - delta)
 			if third_person_animation_player.current_animation != third_person_action_animation:
 				third_person_animation_player.play(third_person_action_animation, 0.08)
-			third_person_animation_player.speed_scale = 1.0
+			if third_person_action_animation == _rod_fish_start_animation or third_person_action_animation == _rod_fish_end_animation or third_person_action_animation == _rod_cast_animation:
+				third_person_animation_player.speed_scale = _rod_action_speed_scale
+			else:
+				third_person_animation_player.speed_scale = 1.0
 			return
 		elif third_person_action_timer <= 0.0:
 			if _has_fishing_rod and not _rod_idle_animation.is_empty():
 				_is_fishing_idle = true
 			_rod_socket_active = false
+			_rod_action_speed_scale = 1.0
 			third_person_action_animation = ""
 			_is_firing = false
 		if is_prone and third_person_action_timer <= 0.0:
@@ -7382,6 +7410,105 @@ func _load_torch_animations() -> void:
 			_torch_crouch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION
 	_torch_animations_loaded = true
 
+func _set_rod_overlay_mesh_visibility(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		var is_character_mesh := mesh_instance.skin != null or not mesh_instance.skeleton.is_empty()
+		mesh_instance.visible = not is_character_mesh
+	for child in node.get_children():
+		_set_rod_overlay_mesh_visibility(child)
+
+func _register_rod_visual_overlay(key: String, instance: Node3D, anim_player: AnimationPlayer, source_animation: String) -> bool:
+	if third_person_model == null or instance == null or anim_player == null or source_animation.is_empty():
+		return false
+	var has_socket := instance.find_child("FishingRodSocket", true, false) != null
+	var has_line := instance.find_child("Hilo de pesca", true, false) != null
+	if not has_socket and not has_line:
+		return false
+	_set_rod_overlay_mesh_visibility(instance)
+	instance.name = "RodVisual_" + key
+	instance.position = Vector3.ZERO
+	instance.rotation = Vector3.ZERO
+	instance.scale = Vector3.ONE
+	instance.visible = false
+	third_person_model.add_child(instance)
+	anim_player.play(source_animation)
+	anim_player.seek(0.0, true)
+	anim_player.pause()
+	_rod_visual_overlays[key] = {
+		"root": instance,
+		"player": anim_player,
+		"animation": source_animation,
+	}
+	return true
+
+func _set_normal_fishing_rod_visible(value: bool) -> void:
+	if third_person_hand_item_root == null:
+		return
+	var normal_rod := third_person_hand_item_root.get_node_or_null("ThirdPersonFishingRod") as Node3D
+	if normal_rod != null:
+		normal_rod.visible = value
+
+func _activate_rod_visual_overlay(key: String) -> void:
+	_deactivate_rod_visual_overlay()
+	if not _rod_visual_overlays.has(key):
+		return
+	var info: Dictionary = _rod_visual_overlays[key]
+	var visual_root := info.get("root") as Node3D
+	var visual_player := info.get("player") as AnimationPlayer
+	var visual_animation := str(info.get("animation", ""))
+	if visual_root == null or visual_player == null or visual_animation.is_empty():
+		return
+	_active_rod_visual_key = key
+	_active_rod_visual_root = visual_root
+	_active_rod_visual_player = visual_player
+	_active_rod_visual_animation = visual_animation
+	visual_root.visible = true
+	visual_player.play(visual_animation)
+	visual_player.seek(0.0, true)
+	visual_player.pause()
+	_set_normal_fishing_rod_visible(false)
+
+func _deactivate_rod_visual_overlay() -> void:
+	if _active_rod_visual_player != null and is_instance_valid(_active_rod_visual_player):
+		_active_rod_visual_player.stop()
+	if _active_rod_visual_root != null and is_instance_valid(_active_rod_visual_root):
+		_active_rod_visual_root.visible = false
+	_active_rod_visual_key = ""
+	_active_rod_visual_root = null
+	_active_rod_visual_player = null
+	_active_rod_visual_animation = ""
+	_set_normal_fishing_rod_visible(_has_fishing_rod)
+
+func _update_rod_visual_overlay() -> void:
+	if _active_rod_visual_root == null or _active_rod_visual_player == null:
+		return
+	if not is_instance_valid(_active_rod_visual_root) or not is_instance_valid(_active_rod_visual_player):
+		_deactivate_rod_visual_overlay()
+		return
+	var is_matching_action := false
+	if _active_rod_visual_key == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION:
+		is_matching_action = third_person_action_animation == _rod_fish_start_animation
+	elif _active_rod_visual_key == THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION:
+		is_matching_action = third_person_action_animation == _rod_fish_end_animation
+	elif _active_rod_visual_key == THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION:
+		is_matching_action = third_person_action_animation == _rod_cast_animation
+	if not _has_fishing_rod or not is_matching_action or third_person_action_timer <= 0.0:
+		_deactivate_rod_visual_overlay()
+		return
+	var visual_animation := _active_rod_visual_player.get_animation(_active_rod_visual_animation)
+	if visual_animation == null or third_person_animation_player == null:
+		_deactivate_rod_visual_overlay()
+		return
+	var synchronized_time := clampf(third_person_animation_player.current_animation_position, 0.0, visual_animation.length)
+	_active_rod_visual_player.seek(synchronized_time, true)
+
+func _remove_rod_visual_tracks_from_character_animation(animation: Animation) -> void:
+	for track_index in range(animation.get_track_count() - 1, -1, -1):
+		var path_text := str(animation.track_get_path(track_index))
+		if _extract_mixamo_bone_name(path_text).is_empty():
+			animation.remove_track(track_index)
+
 func _load_rod_animations() -> void:
 	if _rod_animations_loaded:
 		return
@@ -7408,9 +7535,11 @@ func _load_rod_animations() -> void:
 			if instance is Node3D:
 				var src_skeleton := _find_skeleton(instance)
 				var src_anim_player := _find_animation_player(instance)
+				var keep_visual_instance := false
 				if src_anim_player != null:
 					var src_lib_names := src_anim_player.get_animation_list()
 					var best_anim: Animation = null
+					var best_source_animation := ""
 					var best_length := 0.0
 					for src_anim_name in src_lib_names:
 						var candidate: Animation = src_anim_player.get_animation(src_anim_name)
@@ -7419,10 +7548,14 @@ func _load_rod_animations() -> void:
 						if candidate.length > best_length:
 							best_length = candidate.length
 							best_anim = candidate
+							best_source_animation = str(src_anim_name)
 					if best_anim != null:
-						if anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION:
+						keep_visual_instance = _register_rod_visual_overlay(anim_name, instance as Node3D, src_anim_player, best_source_animation)
+						if anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION and not keep_visual_instance:
 							_rod_socket_keyframes = _extract_rod_socket_keyframes(src_anim_player, src_lib_names)
 						var copied := best_anim.duplicate(true)
+						if keep_visual_instance:
+							_remove_rod_visual_tracks_from_character_animation(copied)
 						copied.loop_mode = Animation.LOOP_NONE if (anim_name == THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION or anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION or anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION) else Animation.LOOP_LINEAR
 						copied.step = 0.0166667
 						_retarget_animation_to_character_skeleton(copied)
@@ -7434,7 +7567,8 @@ func _load_rod_animations() -> void:
 						if anim_name != THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION and anim_name != THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION and anim_name != THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION:
 							_smooth_loop_boundary(copied)
 						rod_lib.add_animation(anim_name, copied)
-				instance.queue_free()
+				if not keep_visual_instance:
+					instance.queue_free()
 	if rod_lib.get_animation_list().size() > 0:
 		third_person_animation_player.add_animation_library("rod", rod_lib)
 		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION):
