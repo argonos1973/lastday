@@ -7453,6 +7453,11 @@ func _cache_normal_fishing_rod_pose(instance: Node3D, anim_player: AnimationPlay
 	var hand_transform := root_inverse * (source_skeleton.global_transform * source_skeleton.get_bone_global_pose(hand_bone))
 	var source_socket_transform := hand_transform
 	source_socket_transform.origin += _hand_socket_offset
+	# The imported Mixamo skeleton carries a 0.01 basis scale. HandsSocket is
+	# updated with the hand rotation and position only, so remove that import
+	# scale before calculating the rod's local transform. This keeps the rod's
+	# own 0.01 scale instead of expanding its geometry 100 times in-game.
+	source_socket_transform.basis = source_socket_transform.basis.orthonormalized()
 	var rod_transform := root_inverse * source_rod.global_transform
 	_normal_fishing_rod_source = source_rod
 	_normal_fishing_rod_hand_transform = source_socket_transform.affine_inverse() * rod_transform
