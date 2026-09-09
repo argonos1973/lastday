@@ -248,6 +248,7 @@ const ROD_CAST_GLB := ""
 const ROD_IDLE_GLB := ""
 const ROD_FISH_END_GLB := ""
 const ROD_MODEL_PATH := "res://assets/models/props/cana_de_pescar.glb"
+const NORMAL_FISHING_ROD_GRIP_CORRECTION := Vector3(-0.058, 0.051, -0.100)
 const THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION := "RodWalkExternal"
 const THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION := "RodCastExternal"
 const THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION := "RodIdleExternal"
@@ -7501,6 +7502,10 @@ func _cache_normal_fishing_rod_pose(instance: Node3D, anim_player: AnimationPlay
 	var rod_transform := root_inverse * source_rod.global_transform
 	_normal_fishing_rod_source = source_rod
 	_normal_fishing_rod_hand_transform = source_socket_transform.affine_inverse() * rod_transform
+	# Place the handle through the centre of the adapted character's palm. The
+	# authored fishing pose leaves the rod offset from the wrist when reused by
+	# the normal idle/walk animations.
+	_normal_fishing_rod_hand_transform.origin += NORMAL_FISHING_ROD_GRIP_CORRECTION
 	_normal_fishing_rod_pose_ready = true
 	anim_player.seek(0.0, true)
 	anim_player.pause()
