@@ -34,8 +34,8 @@ build_linux() {
 build_macos() {
     info "Exportando macOS..."
     mkdir -p "$BUILD_DIR/macos"
-    if "$GODOT" --headless --path "$PROJECT_DIR" --export-release "macOS" "$BUILD_DIR/macos/LastDay.zip" 2>&1; then
-        ok "macOS: $BUILD_DIR/macos/LastDay.zip"
+    if "$GODOT" --headless --path "$PROJECT_DIR" --export-release "macOS" "$BUILD_DIR/macos/LastDay.app" 2>&1; then
+        ok "macOS: $BUILD_DIR/macos/LastDay.app"
     else
         fail "macOS: exportacion fallida"
         return 1

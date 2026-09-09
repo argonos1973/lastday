@@ -1473,7 +1473,7 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = _get_random_spawn_pos()
+	player.position = Vector3(252.0, 0.4, -254.0)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -4516,6 +4516,7 @@ func _create_new_world_props() -> void:
 		_create_pickup_item({"id": "hut_bottle", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.0, 0.05, -2.8), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)})
 		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
 		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.0005, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
+		_create_pickup_item({"id": "hut_fishing_rod", "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.6, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.2, 0.05, -2.5), "paths": ["res://assets/models/props/cana_de_pescar.glb"], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.25, 0.18, 0.10)})
 
 func _find_flat_area_for_tent() -> Vector3:
 	var best_pos := Vector3.ZERO
@@ -6711,6 +6712,25 @@ func handle_world_action(action, actor) -> void:
 func _play_actor_action(actor, action_name: String, duration: float) -> void:
 	if actor != null and actor.has_method("play_action_animation"):
 		actor.play_action_animation(action_name, duration)
+
+func _do_fishing_action(actor, held_item, duration := 2.0) -> void:
+	var fish_chance := 0.72 if held_item.item_type == "tool_fishing" else 0.48
+	if hud != null:
+		hud.show_countdown("Pescando", duration)
+	await get_tree().create_timer(duration).timeout
+	if _scene_quitting: return
+	if randf() < fish_chance:
+		if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
+			_equip_actor_item(actor, "Pez crudo")
+			actor.notice.emit("Pescas un pez pequeno.")
+		if held_item.item_type == "tool_fishing":
+			_play_actor_action(actor, "fish_end", 1.6)
+	else:
+		actor.notice.emit("No pica nada.")
+	if held_item != null and held_item.has_method("reduce_durability"):
+		held_item.reduce_durability(3.0)
+		if held_item.is_broken():
+			actor.notice.emit("Tu %s se ha roto!" % str(held_item.item_name))
 
 func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 	for node in get_tree().get_nodes_in_group("wildlife"):

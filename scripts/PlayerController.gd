@@ -242,6 +242,17 @@ const TORCH_CROUCH_TURN_RIGHT_FBX := "res://assets/animations/Crouch Torch Turn 
 const TORCH_CROUCH_IDLE_FBX := "res://assets/animations/Crouch Torch Idle 01.glb"
 const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forward.glb"
 const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
+const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
+const ROD_WALK_GLB := ""
+const ROD_CAST_GLB := ""
+const ROD_IDLE_GLB := ""
+const ROD_FISH_END_GLB := ""
+const ROD_MODEL_PATH := "res://assets/models/props/cana_de_pescar.glb"
+const THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION := "RodWalkExternal"
+const THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION := "RodCastExternal"
+const THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION := "RodIdleExternal"
+const THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION := "RodFishStartExternal"
+const THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION := "RodFishEndExternal"
 const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
@@ -381,6 +392,19 @@ var _torch_animations_loaded := false
 var _drink_animation_loaded := false
 var _drink_animation_length := 2.0
 var _torch_in_hands := false
+var _has_fishing_rod := false
+var _rod_walk_animation := ""
+var _rod_cast_animation := ""
+var _rod_idle_animation := ""
+var _rod_fish_start_animation := ""
+var _rod_fish_end_animation := ""
+var _rod_animations_loaded := false
+var _is_fishing_idle := false
+var _is_fishing := false
+var _can_fish_near_water := false
+var _rod_socket_keyframes: Array = []
+var _rod_base_position := Vector3.ZERO
+var _rod_socket_active := false
 var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
@@ -1102,6 +1126,14 @@ func _input(event: InputEvent) -> void:
 		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
+	# Abandon the fishing cast/idle-with-line state as soon as any key or mouse
+	# button is pressed, returning the player to the normal controllable pose.
+	var _pressed_key_or_button: bool = (event is InputEventKey and event.pressed and not event.echo) \
+		or (event is InputEventMouseButton and event.pressed)
+	if _pressed_key_or_button and (_is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)):
+		_is_fishing_idle = false
+		third_person_action_animation = ""
+		third_person_action_timer = 0.0
 	if event is InputEventMouseButton and event.pressed:
 		if _aerial_camera:
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -2739,7 +2771,11 @@ func _update_hand_socket() -> void:
 	var bone_world := skel_global * bone_pose
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var bone_local := local_to_model * bone_world
-	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset
+	var rod_offset := Vector3.ZERO
+	if _rod_socket_active and third_person_animation_player != null:
+		var anim_time := third_person_animation_player.current_animation_position
+		rod_offset = _get_rod_socket_offset(anim_time)
+	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset + rod_offset
 	var euler := bone_local.basis.get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
@@ -3450,6 +3486,34 @@ func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool =
 		if animation.track_get_type(track_index) == Animation.TYPE_SCALE_3D:
 			animation.remove_track(track_index)
 
+# Rebase a preserved Hips Y curve (from _remove_non_hips_position_tracks with
+# preserve_hips_anim_y=true) onto the target skeleton's rest height, keeping
+# the original relative vertical motion (e.g. a crouch/lean) but anchored to
+# the character's actual standing height instead of the source rig's own
+# coordinate baseline, which otherwise causes a visible offset/deformation.
+func _normalize_hips_anim_y_offset(animation: Animation, skeleton: Skeleton3D) -> void:
+	if skeleton == null:
+		return
+	var bone_idx := skeleton.find_bone("mixamorig_Hips")
+	if bone_idx == -1:
+		bone_idx = skeleton.find_bone("mixamorig:Hips")
+	if bone_idx == -1:
+		return
+	var rest_y := skeleton.get_bone_rest(bone_idx).origin.y
+	for track_index in range(animation.get_track_count()):
+		if animation.track_get_type(track_index) != Animation.TYPE_POSITION_3D:
+			continue
+		var path_text := str(animation.track_get_path(track_index))
+		if path_text.find("mixamorig_Hips") < 0 and path_text.find("mixamorig:Hips") < 0:
+			continue
+		var key_count := animation.track_get_key_count(track_index)
+		if key_count == 0:
+			continue
+		var base_y: float = (animation.track_get_key_value(track_index, 0) as Vector3).y
+		for key_index in range(key_count):
+			var val: Vector3 = animation.track_get_key_value(track_index, key_index)
+			animation.track_set_key_value(track_index, key_index, Vector3(val.x, rest_y + (val.y - base_y), val.z))
+
 # Cache for source skeleton rest rotations (from player_with_clothes.glb)
 var _source_skeleton_rest_cache: Dictionary = {}
 var _source_skeleton_rest_pos_cache: Dictionary = {}
@@ -4023,7 +4087,27 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 		"plant":
 			target_animation = third_person_plant_animation
 		"fish":
-			target_animation = third_person_fish_animation
+			if _has_fishing_rod and not _rod_fish_start_animation.is_empty():
+				target_animation = _rod_fish_start_animation
+				_is_fishing_idle = false
+				_rod_socket_active = true
+				var fish_anim := third_person_animation_player.get_animation(target_animation)
+				if fish_anim != null:
+					fish_anim.loop_mode = Animation.LOOP_NONE
+			elif _has_fishing_rod and not _rod_cast_animation.is_empty():
+				target_animation = _rod_cast_animation
+				_is_fishing_idle = false
+				var cast_anim := third_person_animation_player.get_animation(target_animation)
+				if cast_anim != null:
+					cast_anim.loop_mode = Animation.LOOP_NONE
+			else:
+				target_animation = third_person_fish_animation
+		"fish_end":
+			if _has_fishing_rod and not _rod_fish_end_animation.is_empty():
+				target_animation = _rod_fish_end_animation
+				_is_fishing_idle = false
+			else:
+				target_animation = third_person_fish_animation
 		"forage":
 			target_animation = third_person_gather_animation
 			if target_animation.is_empty():
@@ -4775,6 +4859,11 @@ func _sync_third_person_equipment(held_item) -> void:
 	_rifle_in_hands = held_item != null and str(held_item.item_type) == "weapon_rifle"
 	# Hide torch character when not holding a torch
 	_torch_in_hands = held_item != null and str(held_item.item_type) == "tool_torch"
+	_has_fishing_rod = held_item != null and str(held_item.item_type) == "tool_fishing"
+	if _has_fishing_rod:
+		_load_rod_animations()
+	else:
+		_is_fishing_idle = false
 	var _is_holding_torch := _torch_in_hands
 	if not _is_holding_torch:
 		_clear_torch_attachment()
@@ -4872,6 +4961,9 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 		"tool_torch":
 			_build_third_person_torch()
+			_clear_rifle_attachment()
+		"tool_fishing":
+			_build_third_person_fishing_rod()
 			_clear_rifle_attachment()
 		"tool_axe":
 			_build_third_person_axe()
@@ -6344,6 +6436,42 @@ func _build_third_person_axe() -> void:
 			mesh_inst.position += Vector3(0.0, 0.0, -aabb.position.z)
 	third_person_hand_item_root.add_child(node)
 
+func _build_third_person_fishing_rod() -> void:
+	var node := _load_external_node3d(ROD_MODEL_PATH)
+	if node == null:
+		return
+	node.name = "ThirdPersonFishingRod"
+	node.rotation_degrees = Vector3(0, 90, 0)
+	node.scale = Vector3.ONE * 1.0
+	node.position = Vector3.ZERO
+	# The rod is a multi-part model (reel, cork grip, blank, guides, line...).
+	# Shifting each mesh individually by its own local AABB (like the axe/knife
+	# helpers do for single-piece models) tears the parts apart. Instead compute
+	# ONE combined AABB for the whole assembly (in the node's own local space)
+	# and rigidly offset the root so the grip end (minimum local X — the cork
+	# handle/reel end) sits at the hand socket origin.
+	var acc := {"aabb": AABB(), "has": false}
+	_collect_rod_local_aabb(node, Transform3D.IDENTITY, acc)
+	if acc["has"]:
+		var combined: AABB = acc["aabb"]
+		var grip_local := Vector3(combined.position.x, combined.position.y + combined.size.y * 0.5, combined.position.z + combined.size.z * 0.5)
+		node.position = -(node.transform.basis * grip_local)
+	third_person_hand_item_root.add_child(node)
+
+func _collect_rod_local_aabb(node: Node, xform: Transform3D, acc: Dictionary) -> void:
+	if node is Node3D:
+		xform = xform * (node as Node3D).transform
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		var mesh_aabb: AABB = (node as MeshInstance3D).mesh.get_aabb()
+		var local_aabb: AABB = xform * mesh_aabb
+		if not acc["has"]:
+			acc["aabb"] = local_aabb
+			acc["has"] = true
+		else:
+			acc["aabb"] = (acc["aabb"] as AABB).merge(local_aabb)
+	for c in node.get_children():
+		_collect_rod_local_aabb(c, xform, acc)
+
 func _collect_meshes_recursive(root: Node, result: Array) -> void:
 	if root is MeshInstance3D:
 		result.append(root)
@@ -6562,6 +6690,16 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
 		return
+	# Defensive guard: if a one-shot fishing animation is playing without an
+	# active action timer, stop it immediately and clear the action state.
+	# This prevents the fish start/end/cast animation from ever looping or
+	# playing automatically at game start.
+	if third_person_animation_player != null and third_person_action_timer <= 0.0:
+		var cur := third_person_animation_player.current_animation
+		if cur == _rod_fish_start_animation or cur == _rod_fish_end_animation or cur == _rod_cast_animation:
+			third_person_animation_player.stop()
+			third_person_action_animation = ""
+			_rod_socket_active = false
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
@@ -6634,6 +6772,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			third_person_animation_player.speed_scale = 1.0
 			return
 		elif third_person_action_timer <= 0.0:
+			if _has_fishing_rod and not _rod_idle_animation.is_empty():
+				_is_fishing_idle = true
+			_rod_socket_active = false
 			third_person_action_animation = ""
 			_is_firing = false
 		if is_prone and third_person_action_timer <= 0.0:
@@ -6702,6 +6843,24 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				elif not third_person_animation_player.is_playing():
 					third_person_animation_player.play(target_animation, 0.15)
 				third_person_animation_player.speed_scale = 1.0 if is_sprinting else (0.55 if is_crouching else 1.0)
+				_turn_input = lerp(_turn_input, 0.0, delta * 7.0)
+				return
+		# Fishing rod locomotion: use rod-specific animations when holding fishing rod
+		if _has_fishing_rod and not _has_rifle and not is_sitting and not is_prone:
+			if moving:
+				_is_fishing_idle = false
+			if _is_fishing_idle and not _rod_idle_animation.is_empty():
+				target_animation = _rod_idle_animation
+			elif moving and not _rod_walk_animation.is_empty():
+				target_animation = _rod_walk_animation
+			elif not _rod_idle_animation.is_empty():
+				target_animation = _rod_idle_animation
+			if not target_animation.is_empty():
+				if third_person_animation_player.current_animation != target_animation:
+					third_person_animation_player.play(target_animation, 0.15)
+				elif not third_person_animation_player.is_playing():
+					third_person_animation_player.play(target_animation, 0.15)
+				third_person_animation_player.speed_scale = 1.0
 				_turn_input = lerp(_turn_input, 0.0, delta * 7.0)
 				return
 		if _has_rifle and not _is_aiming and not is_sprinting:
@@ -6810,6 +6969,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 func _loop_third_person_animation(animation_name: String) -> void:
 	if third_person_animation_player == null or animation_name.is_empty():
 		return
+	# Never auto-restart one-shot action animations (fish start/end, cast)
+	if animation_name == _rod_fish_start_animation or animation_name == _rod_fish_end_animation or animation_name == _rod_cast_animation:
+		return
 	var animation := third_person_animation_player.get_animation(animation_name)
 	if animation == null:
 		return
@@ -6827,6 +6989,9 @@ func _get_current_anim() -> String:
 	return "idle"
 
 func _interact() -> void:
+	if _can_fish_near_water and _has_fishing_rod and not _is_fishing:
+		_start_fishing_near_water()
+		return
 	var target = _get_interaction_target()
 	if target == null:
 		notice.emit("No hay nada al alcance.")
@@ -6836,6 +7001,53 @@ func _interact() -> void:
 		tw.tween_property(camera, "fov", 72.0, 0.12).set_ease(Tween.EASE_OUT)
 		tw.chain().tween_property(camera, "fov", 75.0, 0.18).set_ease(Tween.EASE_IN_OUT)
 	target.interact(self)
+
+func _start_fishing_near_water() -> void:
+	if not _has_fishing_rod:
+		return
+	if _is_fishing:
+		return
+	var main := get_tree().current_scene
+	if main == null or not main.has_method("_is_near_river") or not main.has_method("_is_near_lake"):
+		return
+	var pos := global_position
+	if not main._is_near_river(pos, 5.0) and not main._is_near_lake(pos, 5.0):
+		_can_fish_near_water = false
+		return
+	var held = get_held_item()
+	if held == null or str(held.item_type) != "tool_fishing":
+		notice.emit("Necesitas una caña de pescar en la mano.")
+		return
+	if held.has_method("is_broken") and held.is_broken():
+		notice.emit("Tu caña de pescar esta rota y no se puede usar.")
+		return
+	_is_fishing = true
+	var fish_start_anim := _rod_fish_start_animation
+	var fish_start_duration := 2.0
+	if not fish_start_anim.is_empty():
+		play_action_animation("fish", fish_start_duration)
+	elif not _rod_cast_animation.is_empty():
+		fish_start_duration = 1.6
+		play_action_animation("fish", fish_start_duration)
+	if main.has_method("_do_fishing_action"):
+		main._do_fishing_action(self, held, fish_start_duration)
+	else:
+		notice.emit("Comienzas a pescar...")
+		if main.hud != null and main.hud.has_method("show_countdown"):
+			main.hud.show_countdown("Pescando", fish_start_duration)
+		await get_tree().create_timer(fish_start_duration).timeout
+		var fish_chance := 0.72
+		if randf() < fish_chance:
+			if inventory != null and inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
+				notice.emit("Pescas un pez pequeno.")
+		else:
+			notice.emit("No pica nada.")
+		if held.has_method("reduce_durability"):
+			held.reduce_durability(3.0)
+			if held.is_broken():
+				notice.emit("Tu caña de pescar se ha roto!")
+	await get_tree().create_timer(fish_start_duration + 1.6).timeout
+	_is_fishing = false
 
 func get_interaction_text(_player = null) -> String:
 	return ""
@@ -6858,6 +7070,16 @@ func _update_interaction_prompt() -> void:
 	if is_sleeping:
 		prompt_changed.emit("")
 		return
+	# Check if player can fish near water with rod in hand
+	if _has_fishing_rod:
+		var main := get_tree().current_scene
+		if main != null and main.has_method("_is_near_river") and main.has_method("_is_near_lake"):
+			var pos := global_position
+			if main._is_near_river(pos, 5.0) or main._is_near_lake(pos, 5.0):
+				_can_fish_near_water = true
+				prompt_changed.emit("Pescar - [E]")
+				return
+	_can_fish_near_water = false
 	var target = _get_interaction_target()
 	if target != null:
 		if raycast != null and raycast.has_method("get_default_text"):
@@ -7159,6 +7381,119 @@ func _load_torch_animations() -> void:
 		if third_person_animation_player.has_animation("torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION):
 			_torch_crouch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION
 	_torch_animations_loaded = true
+
+func _load_rod_animations() -> void:
+	if _rod_animations_loaded:
+		return
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	var rod_lib: AnimationLibrary = AnimationLibrary.new()
+	var rod_anims := {
+		THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION: ROD_WALK_GLB,
+		THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION: ROD_CAST_GLB,
+		THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION: ROD_IDLE_GLB,
+		THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION: ROD_FISH_START_GLB,
+		THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION: ROD_FISH_END_GLB,
+	}
+	for anim_name in rod_anims:
+		var glb_path: String = rod_anims[anim_name]
+		if not ResourceLoader.exists(glb_path):
+			continue
+		var loaded = load(glb_path)
+		if loaded is PackedScene:
+			var instance = (loaded as PackedScene).instantiate()
+			if instance is Node3D:
+				var src_skeleton := _find_skeleton(instance)
+				var src_anim_player := _find_animation_player(instance)
+				if src_anim_player != null:
+					var src_lib_names := src_anim_player.get_animation_list()
+					var best_anim: Animation = null
+					var best_length := 0.0
+					for src_anim_name in src_lib_names:
+						var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+						if candidate == null:
+							continue
+						if candidate.length > best_length:
+							best_length = candidate.length
+							best_anim = candidate
+					if best_anim != null:
+						if anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION:
+							_rod_socket_keyframes = _extract_rod_socket_keyframes(src_anim_player, src_lib_names)
+						var copied := best_anim.duplicate(true)
+						copied.loop_mode = Animation.LOOP_NONE if (anim_name == THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION or anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION or anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION) else Animation.LOOP_LINEAR
+						copied.step = 0.0166667
+						_retarget_animation_to_character_skeleton(copied)
+						_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+						var is_fish_pose: bool = anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION or anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION
+						_remove_non_hips_position_tracks(copied, false, 0.0, is_fish_pose)
+						if is_fish_pose:
+							_normalize_hips_anim_y_offset(copied, skel)
+						if anim_name != THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION and anim_name != THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION and anim_name != THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION:
+							_smooth_loop_boundary(copied)
+						rod_lib.add_animation(anim_name, copied)
+				instance.queue_free()
+	if rod_lib.get_animation_list().size() > 0:
+		third_person_animation_player.add_animation_library("rod", rod_lib)
+		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION):
+			_rod_walk_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION
+		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION):
+			_rod_cast_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION
+		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION):
+			_rod_idle_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION
+		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION):
+			_rod_fish_start_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION
+		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION):
+			_rod_fish_end_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION
+	_rod_animations_loaded = true
+
+func _extract_rod_socket_keyframes(anim_player: AnimationPlayer, anim_names: Array) -> Array:
+	var keyframes: Array = []
+	for anim_name in anim_names:
+		var anim: Animation = anim_player.get_animation(anim_name)
+		if anim == null:
+			continue
+		for track_idx in range(anim.get_track_count()):
+			var path_text := str(anim.track_get_path(track_idx))
+			if path_text.find("FishingRodSocket") < 0:
+				continue
+			if anim.track_get_type(track_idx) != Animation.TYPE_POSITION_3D:
+				continue
+			var key_count := anim.track_get_key_count(track_idx)
+			for key_idx in range(key_count):
+				var time := anim.track_get_key_time(track_idx, key_idx)
+				var pos: Vector3 = anim.track_get_key_value(track_idx, key_idx)
+				keyframes.append({"time": time, "pos": pos})
+			break
+		if not keyframes.is_empty():
+			break
+	return keyframes
+
+func _get_rod_socket_offset(anim_time: float) -> Vector3:
+	if _rod_socket_keyframes.is_empty():
+		return Vector3.ZERO
+	if _rod_socket_keyframes.size() == 1:
+		return Vector3.ZERO
+	var base_pos: Vector3 = _rod_socket_keyframes[0]["pos"]
+	var first_time: float = _rod_socket_keyframes[0]["time"]
+	var last_idx := _rod_socket_keyframes.size() - 1
+	var last_time: float = _rod_socket_keyframes[last_idx]["time"]
+	if anim_time <= first_time:
+		return Vector3.ZERO
+	if anim_time >= last_time:
+		var last_pos: Vector3 = _rod_socket_keyframes[last_idx]["pos"]
+		return last_pos - base_pos
+	for i in range(last_idx):
+		var t1: float = _rod_socket_keyframes[i]["time"]
+		var t2: float = _rod_socket_keyframes[i + 1]["time"]
+		if anim_time >= t1 and anim_time <= t2:
+			var p1: Vector3 = _rod_socket_keyframes[i]["pos"]
+			var p2: Vector3 = _rod_socket_keyframes[i + 1]["pos"]
+			var alpha: float = (anim_time - t1) / (t2 - t1) if t2 > t1 else 0.0
+			return p1.lerp(p2, alpha) - base_pos
+	return Vector3.ZERO
 
 func _build_third_person_torch() -> void:
 	# Place torch_stick.glb in the torch hand root (follows left hand bone via _update_torch_hand_socket)
