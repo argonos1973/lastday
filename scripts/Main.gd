@@ -6241,28 +6241,14 @@ func handle_world_action(action, actor) -> void:
 			_net_notify_pickup(action)
 		"fish":
 			var held_f = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_f == null or (held_f.item_name != "Cuchillo" and held_f.item_name != "Hacha" and held_f.item_type != "tool_fishing"):
-				actor.notice.emit("Necesitas un cuchillo, hacha o caña de pescar para pescar.")
+			if held_f == null or str(held_f.item_type) != "tool_fishing":
+				actor.notice.emit("Necesitas una caña de pescar en la mano.")
 				return
 			if held_f.has_method("is_broken") and held_f.is_broken():
-				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(held_f.item_name))
+				actor.notice.emit("Tu caña de pescar esta rota y no se puede usar.")
 				return
-			var fish_chance := 0.72 if held_f.item_type == "tool_fishing" else 0.48
-			_play_actor_action(actor, "fish", 1.6)
-			if hud != null:
-				hud.show_countdown("Pescando", 1.6)
-			await get_tree().create_timer(1.6).timeout
-			if _scene_quitting: return
-			if randf() < fish_chance:
-				if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
-					_equip_actor_item(actor, "Pez crudo")
-					actor.notice.emit("Pescas un pez pequeno.")
-			else:
-				actor.notice.emit("No pica nada.")
-			if held_f != null and held_f.has_method("reduce_durability"):
-				held_f.reduce_durability(3.0)
-				if held_f.is_broken():
-					actor.notice.emit("Tu %s se ha roto!" % str(held_f.item_name))
+			if actor.has_method("_start_fishing_near_water"):
+				actor._start_fishing_near_water()
 		"drink_water":
 			# If holding an empty plastic bottle, fill it instead of drinking
 			# Only allow filling if the bottle is actually held in the player's hands
@@ -9224,6 +9210,52 @@ func _is_near_lake(pos: Vector3, margin: float) -> bool:
 		if sqrt(norm_f * norm_f + norm_s * norm_s) <= 1.0:
 			return true
 	return false
+
+func get_nearest_fishing_water_point(pos: Vector3, max_distance: float = 5.0) -> Dictionary:
+	var nearest_point := Vector3.ZERO
+	var nearest_distance := INF
+	var p := Vector2(pos.x, pos.z)
+	for segment in river_segments_data:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw := deg_to_rad(float(segment["yaw"]))
+		var along := Vector2(cos(yaw), -sin(yaw))
+		var across := Vector2(sin(yaw), cos(yaw))
+		var offset := p - Vector2(center.x, center.z)
+		var local_along := offset.dot(along)
+		var local_across := offset.dot(across)
+		var candidate_local := Vector2.ZERO
+		if size.x >= 60.0:
+			# Lakes use the same ellipse dimensions as their rendered water mesh.
+			var radius_along := size.x * 0.5 * 0.85
+			var radius_across := size.y * 0.5 * 0.85
+			var ellipse_distance := sqrt(
+				pow(local_along / maxf(radius_along, 0.01), 2.0)
+				+ pow(local_across / maxf(radius_across, 0.01), 2.0)
+			)
+			# Fishing is a shore action; do not select water below the player.
+			if ellipse_distance <= 1.0:
+				continue
+			candidate_local = Vector2(local_along, local_across) / ellipse_distance
+		else:
+			var half_length := size.x * 0.5
+			var half_width := size.y * 0.5
+			if absf(local_along) <= half_length and absf(local_across) <= half_width:
+				continue
+			candidate_local = Vector2(
+				clampf(local_along, -half_length, half_length),
+				clampf(local_across, -half_width, half_width)
+			)
+		var candidate_2d := Vector2(center.x, center.z) + along * candidate_local.x + across * candidate_local.y
+		var distance := p.distance_to(candidate_2d)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_point = Vector3(candidate_2d.x, center.y, candidate_2d.y)
+	return {
+		"valid": nearest_distance <= max_distance,
+		"point": nearest_point,
+		"distance": nearest_distance,
+	}
 
 func _is_in_lake(pos: Vector3) -> bool:
 	var p := Vector2(pos.x, pos.z)

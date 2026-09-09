@@ -402,6 +402,7 @@ var _rod_animations_loaded := false
 var _is_fishing_idle := false
 var _is_fishing := false
 var _can_fish_near_water := false
+var _is_near_fishing_shore := false
 var _rod_socket_keyframes: Array = []
 var _rod_base_position := Vector3.ZERO
 var _rod_socket_active := false
@@ -4874,9 +4875,10 @@ func _sync_held_item() -> void:
 	var held_item = inventory.items[held_index]
 	if hands != null:
 		hands.clear_hands()
-	_sync_third_person_equipment(held_item)
-	if hands != null:
 		hands.current_item = held_item
+	# Build the third-person prop after the item is marked as held. Several
+	# equipment paths consult hands.has_item_in_hands() while synchronizing.
+	_sync_third_person_equipment(held_item)
 	_update_crosshair(_has_rifle_equipped())
 
 func _sync_third_person_equipment(held_item) -> void:
@@ -7028,9 +7030,14 @@ func _get_current_anim() -> String:
 	return "idle"
 
 func _interact() -> void:
-	if _can_fish_near_water and _has_fishing_rod and not _is_fishing:
-		_start_fishing_near_water()
-		return
+	if _has_fishing_rod and not _is_fishing:
+		var fishing_state := _get_fishing_water_state()
+		if bool(fishing_state.get("near", false)):
+			if bool(fishing_state.get("facing", false)):
+				_start_fishing_near_water()
+			else:
+				notice.emit("Mira hacia el agua para poder pescar.")
+			return
 	var target = _get_interaction_target()
 	if target == null:
 		notice.emit("No hay nada al alcance.")
@@ -7043,15 +7050,18 @@ func _interact() -> void:
 
 func _start_fishing_near_water() -> void:
 	if not _has_fishing_rod:
+		notice.emit("Necesitas una caña de pescar en la mano.")
 		return
 	if _is_fishing:
 		return
-	var main := get_tree().current_scene
-	if main == null or not main.has_method("_is_near_river") or not main.has_method("_is_near_lake"):
-		return
-	var pos := global_position
-	if not main._is_near_river(pos, 5.0) and not main._is_near_lake(pos, 5.0):
+	var fishing_state := _get_fishing_water_state()
+	if not bool(fishing_state.get("near", false)):
 		_can_fish_near_water = false
+		notice.emit("Acércate a la orilla de un lago o río para pescar.")
+		return
+	if not bool(fishing_state.get("facing", false)):
+		_can_fish_near_water = false
+		notice.emit("Mira hacia el agua para poder pescar.")
 		return
 	var held = get_held_item()
 	if held == null or str(held.item_type) != "tool_fishing":
@@ -7059,6 +7069,9 @@ func _start_fishing_near_water() -> void:
 		return
 	if held.has_method("is_broken") and held.is_broken():
 		notice.emit("Tu caña de pescar esta rota y no se puede usar.")
+		return
+	var main := get_tree().current_scene
+	if main == null:
 		return
 	_is_fishing = true
 	var fish_start_anim := _rod_fish_start_animation
@@ -7111,14 +7124,17 @@ func _update_interaction_prompt() -> void:
 		return
 	# Check if player can fish near water with rod in hand
 	if _has_fishing_rod:
-		var main := get_tree().current_scene
-		if main != null and main.has_method("_is_near_river") and main.has_method("_is_near_lake"):
-			var pos := global_position
-			if main._is_near_river(pos, 5.0) or main._is_near_lake(pos, 5.0):
-				_can_fish_near_water = true
-				prompt_changed.emit("Pescar - [E]")
-				return
+		var fishing_state := _get_fishing_water_state()
+		_is_near_fishing_shore = bool(fishing_state.get("near", false))
+		_can_fish_near_water = _is_near_fishing_shore and bool(fishing_state.get("facing", false))
+		if _can_fish_near_water:
+			prompt_changed.emit("Pescar - [E]")
+			return
+		if _is_near_fishing_shore:
+			prompt_changed.emit("Mira hacia el agua para pescar")
+			return
 	_can_fish_near_water = false
+	_is_near_fishing_shore = false
 	var target = _get_interaction_target()
 	if target != null:
 		if raycast != null and raycast.has_method("get_default_text"):
@@ -7129,6 +7145,30 @@ func _update_interaction_prompt() -> void:
 			prompt_changed.emit("Pulsa E para interactuar")
 		return
 	prompt_changed.emit("")
+
+func _get_fishing_water_state() -> Dictionary:
+	var result := {"near": false, "facing": false, "point": Vector3.ZERO}
+	if is_in_water:
+		return result
+	var main := get_tree().current_scene
+	if main == null or not main.has_method("get_nearest_fishing_water_point"):
+		return result
+	var water_info: Dictionary = main.get_nearest_fishing_water_point(global_position, 5.0)
+	if not bool(water_info.get("valid", false)):
+		return result
+	var water_point: Vector3 = water_info.get("point", Vector3.ZERO)
+	var to_water := water_point - global_position
+	to_water.y = 0.0
+	if to_water.length_squared() < 0.0001:
+		return result
+	var forward := global_transform.basis * Vector3.FORWARD
+	forward.y = 0.0
+	if forward.length_squared() < 0.0001:
+		return result
+	result["near"] = true
+	result["facing"] = forward.normalized().dot(to_water.normalized()) >= 0.25
+	result["point"] = water_point
+	return result
 
 func _get_interaction_target():
 	if raycast != null and raycast.has_method("get_interactable"):
