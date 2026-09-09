@@ -411,6 +411,9 @@ var _active_rod_visual_root: Node3D = null
 var _active_rod_visual_player: AnimationPlayer = null
 var _active_rod_visual_animation := ""
 var _rod_action_speed_scale := 1.0
+var _normal_fishing_rod_source: Node3D = null
+var _normal_fishing_rod_hand_transform := Transform3D.IDENTITY
+var _normal_fishing_rod_pose_ready := false
 var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
@@ -6459,6 +6462,14 @@ func _build_third_person_axe() -> void:
 	third_person_hand_item_root.add_child(node)
 
 func _build_third_person_fishing_rod() -> void:
+	if _normal_fishing_rod_pose_ready and _normal_fishing_rod_source != null and is_instance_valid(_normal_fishing_rod_source):
+		var animated_rod_copy := _normal_fishing_rod_source.duplicate() as Node3D
+		if animated_rod_copy != null:
+			animated_rod_copy.name = "ThirdPersonFishingRod"
+			animated_rod_copy.transform = _normal_fishing_rod_hand_transform
+			animated_rod_copy.visible = true
+			third_person_hand_item_root.add_child(animated_rod_copy)
+			return
 	var node := _load_external_node3d(ROD_MODEL_PATH)
 	if node == null:
 		return
@@ -7418,6 +7429,37 @@ func _set_rod_overlay_mesh_visibility(node: Node) -> void:
 	for child in node.get_children():
 		_set_rod_overlay_mesh_visibility(child)
 
+func _cache_normal_fishing_rod_pose(instance: Node3D, anim_player: AnimationPlayer, source_animation: String) -> void:
+	var source_rod := instance.find_child("FishingRod", true, false) as Node3D
+	var source_skeleton := _find_skeleton(instance)
+	var source_clip := anim_player.get_animation(source_animation)
+	if source_rod == null or source_skeleton == null or source_clip == null:
+		return
+	var hand_bone := -1
+	for bone_name in ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"]:
+		hand_bone = source_skeleton.find_bone(bone_name)
+		if hand_bone != -1:
+			break
+	if hand_bone == -1:
+		return
+
+	# Use the final authored pose of the start-fishing clip. Both transforms
+	# are converted to the imported scene root, so the result can be applied
+	# directly below HandsSocket on the in-game character.
+	anim_player.play(source_animation)
+	anim_player.seek(source_clip.length, true)
+	source_skeleton.force_update_all_bone_transforms()
+	var root_inverse := instance.global_transform.affine_inverse()
+	var hand_transform := root_inverse * (source_skeleton.global_transform * source_skeleton.get_bone_global_pose(hand_bone))
+	var source_socket_transform := hand_transform
+	source_socket_transform.origin += _hand_socket_offset
+	var rod_transform := root_inverse * source_rod.global_transform
+	_normal_fishing_rod_source = source_rod
+	_normal_fishing_rod_hand_transform = source_socket_transform.affine_inverse() * rod_transform
+	_normal_fishing_rod_pose_ready = true
+	anim_player.seek(0.0, true)
+	anim_player.pause()
+
 func _register_rod_visual_overlay(key: String, instance: Node3D, anim_player: AnimationPlayer, source_animation: String) -> bool:
 	if third_person_model == null or instance == null or anim_player == null or source_animation.is_empty():
 		return false
@@ -7435,6 +7477,8 @@ func _register_rod_visual_overlay(key: String, instance: Node3D, anim_player: An
 	anim_player.play(source_animation)
 	anim_player.seek(0.0, true)
 	anim_player.pause()
+	if key == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION:
+		_cache_normal_fishing_rod_pose(instance, anim_player, source_animation)
 	_rod_visual_overlays[key] = {
 		"root": instance,
 		"player": anim_player,
