@@ -325,7 +325,7 @@ func _update_real_clock() -> void:
 	if temp_label != null:
 		var ambient: float = _real_temp_parsed if _real_temp_parsed != -999.0 else day_cycle.get_ambient_temperature()
 		var weather_text := " | " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
-		var loc_text := " (%s)" % _geo_location_name if _geo_resolved else ""
+		var loc_text := " (%s)" % _geo_location_name
 		temp_label.text = "Ambiente: %.0f°C%s%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, loc_text, player.stats.body_temperature, player.stats.get_thermal_state()]
 
 func _build_status_panel() -> void:
