@@ -52,7 +52,7 @@ var _use_external_model := false
 # Drinking states
 enum DrinkState { FLYING, DESCENDING, DRINKING, ASCENDING, FISHING }
 var _drink_state := DrinkState.FLYING
-var _drink_cooldown := 20.0
+var _drink_cooldown := 60.0
 var _drink_target := Vector3.ZERO
 var _drink_timer := 0.0
 var _saved_height := 50.0
@@ -272,8 +272,10 @@ func _process(delta: float) -> void:
 	_update_fish_eat(delta)
 
 	_drink_cooldown -= delta
-	if _drink_cooldown <= 0.0 and _try_start_drinking():
+	# Only attempt to descend to lake occasionally; most of the time birds fly freely
+	if _drink_cooldown <= 0.0 and randf() < 0.3 and _try_start_drinking():
 		return
+	_drink_cooldown = maxf(_drink_cooldown, 0.0)
 
 	# Update flock neighbors periodically
 	_neighbor_update_timer += delta
@@ -367,7 +369,7 @@ func _try_start_drinking() -> bool:
 			best_pos = center + center_jitter
 			best_pos.y = 0.5
 	if best_dist >= 600.0:
-		_drink_cooldown = randf_range(15.0, 30.0)
+		_drink_cooldown = randf_range(60.0, 120.0)
 		return false
 	_drink_target = best_pos
 	_is_fishing = randf() < 0.4
@@ -464,7 +466,7 @@ func _process_drink_state(delta: float) -> void:
 			if global_position.y >= target_y_a - 2.0:
 				_drink_state = DrinkState.FLYING
 				_target_height = _saved_height
-				_drink_cooldown = randf_range(30.0, 70.0)
+				_drink_cooldown = randf_range(90.0, 180.0)
 				_wing_speed = randf_range(10.0, 16.0)
 				# Re-inicializar velocidad en direccion de vuelo
 				var fwd := Vector3.FORWARD.rotated(Vector3.UP, rotation.y)
@@ -789,7 +791,7 @@ func flee_from_gunshot(origin: Vector3, radius: float) -> void:
 	_flee_timer = 6.0
 	_is_perched = false
 	_drink_state = DrinkState.FLYING
-	_drink_cooldown = 30.0
+	_drink_cooldown = 60.0
 
 func take_damage(amount: float, from_knife: bool = false) -> void:
 	if _is_dead or amount <= 0.0:
