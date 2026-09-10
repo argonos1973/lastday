@@ -22,6 +22,7 @@ var survival_label: Label
 var temp_label: Label
 var _weather_timer := 0.0
 var _weather_http: HTTPRequest
+var _geo_http: HTTPRequest
 var _real_temp := "--"
 var _real_temp_parsed := -999.0
 var _weather_loading := false
@@ -30,6 +31,10 @@ var _real_weather_code := -1
 var _real_rain := 0.0
 var _real_snow := 0.0
 var _real_weather_desc := ""
+var _geo_lat := 41.38
+var _geo_lon := 2.17
+var _geo_location_name := "Barcelona"
+var _geo_resolved := false
 var prompt_label: Label
 var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
@@ -217,8 +222,36 @@ func _build_real_clock_panel() -> void:
 	_weather_http.timeout = 10.0
 	add_child(_weather_http)
 	_weather_http.request_completed.connect(_on_weather_received)
-	_fetch_weather()
+	_geo_http = HTTPRequest.new()
+	_geo_http.timeout = 8.0
+	add_child(_geo_http)
+	_geo_http.request_completed.connect(_on_geo_received)
+	_resolve_location()
 	_weather_retry_timer = 15.0
+
+func _resolve_location() -> void:
+	if not is_instance_valid(_geo_http):
+		return
+	var url := "https://ipapi.co/json/"
+	var err := _geo_http.request(url, [], HTTPClient.METHOD_GET, "")
+	if err != OK:
+		_fetch_weather()
+
+func _on_geo_received(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+		var data = JSON.parse_string(body.get_string_from_utf8())
+		if data is Dictionary:
+			var lat = data.get("latitude")
+			var lon = data.get("longitude")
+			var city = data.get("city")
+			if (lat is float or lat is int) and (lon is float or lon is int):
+				_geo_lat = float(lat)
+				_geo_lon = float(lon)
+				if city is String and not city.is_empty():
+					_geo_location_name = city
+				_geo_resolved = true
+				print("[GEO] Location resolved: %s (%.2f, %.2f)" % [_geo_location_name, _geo_lat, _geo_lon])
+	_fetch_weather()
 
 func _fetch_weather() -> void:
 	if _weather_loading:
@@ -226,7 +259,7 @@ func _fetch_weather() -> void:
 	if not is_instance_valid(_weather_http):
 		return
 	_weather_loading = true
-	var url := "https://api.open-meteo.com/v1/forecast?latitude=41.38&longitude=2.17&current=temperature_2m,weather_code,rain,snowfall&timezone=auto"
+	var url := "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&current=temperature_2m,weather_code,rain,snowfall&timezone=auto" % [_geo_lat, _geo_lon]
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
@@ -292,7 +325,8 @@ func _update_real_clock() -> void:
 	if temp_label != null:
 		var ambient: float = _real_temp_parsed if _real_temp_parsed != -999.0 else day_cycle.get_ambient_temperature()
 		var weather_text := " | " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
-		temp_label.text = "Ambiente: %.0f°C%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
+		var loc_text := " (%s)" % _geo_location_name if _geo_resolved else ""
+		temp_label.text = "Ambiente: %.0f°C%s%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, loc_text, player.stats.body_temperature, player.stats.get_thermal_state()]
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
