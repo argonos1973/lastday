@@ -43,7 +43,7 @@ uniform float small_cloud_cover = 0.45;
 uniform float large_cloud_cover = 0.35;
 uniform vec3 cloud_inner_colour = vec3(1,1,1);
 uniform vec3 cloud_outer_colour = vec3(0.7,0.72,0.75);
-uniform float cloud_speed = 0.0006;
+uniform float cloud_speed = 0.008;
 uniform float cloud_lighting = 0.7;
 
 uniform bool volumetric_clouds = false;
@@ -215,9 +215,13 @@ void sky(){
     
     // Sample directions on a distant dome. No plane near the camera, no
     // division by elevation and no repeated texture strips at the horizon.
-    vec3 cloud_offset = vec3(cos(wind_direction), 0.0, sin(wind_direction)) * cloud_speed * TIME * wind_strength;
+    vec3 wind_dir = vec3(cos(wind_direction), 0.0, sin(wind_direction));
+    vec3 cloud_offset = wind_dir * cloud_speed * TIME * wind_strength;
+    vec3 cloud_offset2 = wind_dir * cloud_speed * 0.4 * TIME * wind_strength + vec3(31.7, 0.0, 17.3);
     float coverage = clamp((small_cloud_cover + large_cloud_cover) * 0.5, 0.0, 1.0);
     float cloud_noise = cloud_fbm(EYEDIR * cloud_uv_scale * 3.0 + cloud_offset);
+    float cloud_noise2 = cloud_fbm(EYEDIR * cloud_uv_scale * 1.6 + cloud_offset2);
+    cloud_noise = mix(cloud_noise, cloud_noise * 0.6 + cloud_noise2 * 0.4, 0.5);
     float threshold = mix(0.75, 0.24, coverage);
     float clouds = smoothstep(threshold - 0.08, threshold + 0.12, cloud_noise);
     clouds *= smoothstep(0.0, 0.15, coverage);
