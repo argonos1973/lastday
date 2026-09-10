@@ -39,6 +39,14 @@ var _is_perched := false
 var _perch_timer := 0.0
 var _perch_object: Node3D = null
 var _is_dead := false
+var _gutted := false
+var _landed := false
+var is_puppet := false
+var health := 25.0
+var current_anim_keyword := "fly"
+var _flee_timer := 0.0
+var _flee_origin := Vector3.ZERO
+var _corpse_age := 0.0
 var _use_external_model := false
 
 # Drinking states
@@ -70,6 +78,7 @@ func _ready() -> void:
 	add_to_group("birds")
 	add_to_group("wildlife")
 	_build_bird()
+	_build_hitbox()
 
 func _build_bird() -> void:
 	if _try_load_external_model():
@@ -210,6 +219,25 @@ func set_flock_id(id: int) -> void:
 	flock_id = id
 
 func _process(delta: float) -> void:
+	if is_puppet:
+		if not _is_dead:
+			_wing_phase += delta * _wing_speed
+			_animate_wings()
+		return
+	if _is_dead:
+		_update_falling(delta)
+		return
+	if _flee_timer > 0.0:
+		_flee_timer -= delta
+		var away := (global_position - _flee_origin).normalized()
+		away.y = 0.4
+		_velocity = _velocity.move_toward(away.normalized() * 12.0, delta * 8.0)
+		global_position += _velocity * delta
+		global_position.y = maxf(global_position.y, _get_ground_y(global_position.x, global_position.z) + 1.0)
+		rotation.y = lerp_angle(rotation.y, atan2(_velocity.x, _velocity.z), minf(delta * 4.0, 1.0))
+		_wing_phase += delta * _wing_speed * 1.3
+		_animate_wings()
+		return
 	if patrol_points.size() < 2:
 		return
 	if _player == null or not is_instance_valid(_player):
@@ -219,6 +247,8 @@ func _process(delta: float) -> void:
 			_resolve_player()
 	if _player != null and is_instance_valid(_player):
 		var dist := global_position.distance_to(_player.global_position)
+		if dist < 12.0:
+			flee_from_gunshot(_player.global_position, 12.0)
 		if dist > AI_LOD_CULL:
 			_wing_phase += delta * _wing_speed
 			_animate_wings()
@@ -286,7 +316,9 @@ func _process(delta: float) -> void:
 
 	# Smooth turn toward velocity direction
 	var target_yaw := atan2(_velocity.x, _velocity.z)
-	rotation.y = lerp_angle(rotation.y, target_yaw, delta * 4.0)
+	var turn := wrapf(target_yaw - rotation.y, -PI, PI)
+	rotation.z = lerp_angle(rotation.z, clampf(-turn * 0.5, -0.5, 0.5), minf(delta * 3.0, 1.0))
+	rotation.y = lerp_angle(rotation.y, target_yaw, minf(delta * 4.0, 1.0))
 
 	# Maintain altitude
 	var current_ground_y := _get_ground_y(global_position.x, global_position.z)
@@ -367,7 +399,9 @@ func _process_drink_state(delta: float) -> void:
 				target_y = water_y + 0.02
 			if flat_dist < 3.0:
 				target_y = water_y + 0.01
-			global_position.y = lerp(global_position.y, target_y, delta * 1.0)
+			if flat_dist > 8.0:
+				target_y = maxf(target_y + minf(flat_dist * 0.25, 30.0), _get_ground_y(global_position.x, global_position.z) + 2.0)
+			global_position.y = move_toward(global_position.y, target_y, delta * 3.0)
 			# Alas mas lentas al aproximarse
 			_wing_speed = lerp(_wing_speed, 5.0, delta * 2.0)
 			if flat_dist < 2.0 and abs(global_position.y - target_y) < 0.2:
@@ -399,7 +433,9 @@ func _process_drink_state(delta: float) -> void:
 				target_y_f = water_y_f + 0.015
 			if flat_dist_f < 2.0:
 				target_y_f = water_y_f + 0.005
-			global_position.y = lerp(global_position.y, target_y_f, delta * 1.5)
+			if flat_dist_f > 5.0:
+				target_y_f = maxf(target_y_f + minf(flat_dist_f * 0.3, 30.0), _get_ground_y(global_position.x, global_position.z) + 2.0)
+			global_position.y = move_toward(global_position.y, target_y_f, delta * 5.0)
 			_wing_speed = lerp(_wing_speed, 3.0, delta * 3.0)
 			# Al tocar el agua, atrapar el pez
 			if flat_dist_f < 2.0 and abs(global_position.y - target_y_f) < 0.15:
@@ -439,6 +475,8 @@ func _process_drink_state(delta: float) -> void:
 
 func _create_fish_in_talons() -> void:
 	_remove_fish_from_talons()
+	_has_fish = true
+	_fish_eat_timer = 30.0
 	var fish_mesh := SphereMesh.new()
 	fish_mesh.radius = 0.06
 	fish_mesh.height = 0.22
@@ -473,10 +511,12 @@ func _update_flock_neighbors() -> void:
 	for node in get_tree().get_nodes_in_group("birds"):
 		if node == self:
 			continue
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		if not (node is BirdController):
 			continue
 		var other := node as BirdController
-		if other.flock_id != flock_id:
+		if other._is_dead or other.flock_id != flock_id:
 			continue
 		if not is_instance_valid(other):
 			continue
@@ -486,8 +526,10 @@ func _compute_separation() -> Vector3:
 	var steer := Vector3.ZERO
 	var count := 0
 	for other in _flock_neighbors:
+		if not is_instance_valid(other) or other.is_queued_for_deletion():
+			continue
 		var o := other as BirdController
-		if not is_instance_valid(o):
+		if o == null or o._is_dead:
 			continue
 		var diff := global_position - o.global_position
 		var d := diff.length()
@@ -506,8 +548,10 @@ func _compute_alignment() -> Vector3:
 	var sum := Vector3.ZERO
 	var count := 0
 	for other in _flock_neighbors:
+		if not is_instance_valid(other) or other.is_queued_for_deletion():
+			continue
 		var o := other as BirdController
-		if not is_instance_valid(o):
+		if o == null or o._is_dead:
 			continue
 		var d := global_position.distance_to(o.global_position)
 		if d < BOIDS_ALIGNMENT_RADIUS:
@@ -525,8 +569,10 @@ func _compute_cohesion() -> Vector3:
 	var center := Vector3.ZERO
 	var count := 0
 	for other in _flock_neighbors:
+		if not is_instance_valid(other) or other.is_queued_for_deletion():
+			continue
 		var o := other as BirdController
-		if not is_instance_valid(o):
+		if o == null or o._is_dead:
 			continue
 		var d := global_position.distance_to(o.global_position)
 		if d < BOIDS_COHESION_RADIUS:
@@ -720,3 +766,119 @@ func _play_fly_animation() -> void:
 		chosen = any_fallback
 	if not chosen.is_empty():
 		_animation_player.play(chosen)
+
+func _build_hitbox() -> void:
+	var body := Area3D.new()
+	body.name = "BodyHitbox"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.18
+	capsule.height = 0.6
+	shape.shape = capsule
+	shape.rotation.x = PI / 2.0
+	shape.position.y = 0.2
+	body.add_child(shape)
+	add_child(body)
+
+func flee_from_gunshot(origin: Vector3, radius: float) -> void:
+	if _is_dead or is_puppet or global_position.distance_to(origin) > radius:
+		return
+	_flee_origin = origin
+	_flee_timer = 6.0
+	_is_perched = false
+	_drink_state = DrinkState.FLYING
+	_drink_cooldown = 30.0
+
+func take_damage(amount: float, from_knife: bool = false) -> void:
+	if _is_dead or amount <= 0.0:
+		return
+	if is_puppet:
+		var net_node := get_node_or_null("/root/NetworkManager")
+		if net_node != null:
+			net_node.damage_animal.rpc_id(1, name, amount, from_knife)
+		return
+	health = maxf(0.0, health - amount)
+	if health > 0.0:
+		return
+	_is_dead = true
+	current_anim_keyword = "fall"
+	_is_perched = false
+	_remove_fish_from_talons()
+	if _animation_player != null:
+		_animation_player.stop()
+
+func _update_falling(delta: float) -> void:
+	_corpse_age += delta
+	if _corpse_age > 300.0:
+		queue_free()
+		return
+	if _landed:
+		return
+	var ground := _get_ground_y(global_position.x, global_position.z) + 0.12
+	var displacement := _velocity * delta + Vector3.DOWN * 4.905 * delta * delta
+	_velocity += Vector3.DOWN * 9.81 * delta
+	_velocity *= exp(-0.15 * delta)
+	var query := PhysicsRayQueryParameters3D.create(global_position, global_position + displacement)
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	global_position += displacement
+	rotation.z += delta * 2.0
+	if not hit.is_empty() or global_position.y <= ground:
+		if not hit.is_empty():
+			global_position = hit.position + hit.normal * 0.12
+		else:
+			global_position.y = ground
+		_land_corpse()
+
+func _land_corpse() -> void:
+	_landed = true
+	_velocity = Vector3.ZERO
+	rotation.z = PI / 2.0
+	current_anim_keyword = "dead"
+	add_to_group("interactable")
+
+func _has_butchering_tool(player: Node) -> bool:
+	if not is_instance_valid(player):
+		return false
+	var inv = player.get("inventory")
+	if inv == null:
+		return false
+	for item in inv.items:
+		if item != null and (item.item_name == "Cuchillo" or item.item_name == "Hacha") and not item.is_broken():
+			return true
+	return false
+
+func get_interaction_text(player = null) -> String:
+	if not _landed or _gutted:
+		return ""
+	return "[E] Desplumar y obtener carne del pajaro" if _has_butchering_tool(player) else "Necesitas cuchillo o hacha para aprovechar el pajaro"
+
+func interact(player: Node) -> void:
+	if not _is_dead or not _landed or _gutted or not _has_butchering_tool(player):
+		return
+	if player.global_position.distance_to(global_position) > 5.0:
+		return
+	var net_node := get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.is_connected:
+		if is_puppet:
+			net_node.gut_animal.rpc_id(1, name, false)
+		else:
+			get_tree().current_scene._net_gut_animal(str(name), net_node.get_my_id(), false)
+		return
+	_gutted = true
+	var scene := get_tree().current_scene
+	if scene.has_method("_spawn_ground_pickup"):
+		# Generic raw meat already supports skewering, cooking and spoilage.
+		scene._spawn_ground_pickup("Carne cruda", "food", global_position, 0.3, 1, 15.0, "bird_meat_%d" % get_instance_id(), "wolf_meat_raw")
+	queue_free()
+
+func puppet_apply(pos: Vector3, yaw: float, dead: bool, gutted: bool, landed: bool) -> void:
+	global_position = pos
+	rotation.y = yaw
+	_is_dead = dead
+	_gutted = gutted
+	if dead and _animation_player != null:
+		_animation_player.stop()
+	if landed and not _landed:
+		_land_corpse()

@@ -87,6 +87,7 @@ static func collect_player_data(player: Node) -> Dictionary:
 	var data := {}
 	data["pos"] = [player.global_position.x, player.global_position.y, player.global_position.z]
 	data["rot"] = player.rotation.y
+	data["rifle_ammo"] = {"initialized": player._rifle_ammo_initialized, "magazine": player._rifle_magazine, "reserve": player._rifle_reserve_ammo}
 	var anim := "idle"
 	if player.has_method("_get_current_anim"):
 		anim = player._get_current_anim()
@@ -131,16 +132,10 @@ static func collect_player_data(player: Node) -> Dictionary:
 	# Backpack
 	var eb = player.get("equipped_backpack")
 	data["equipped_backpack"] = str(eb) if eb != null else ""
-	# Held item
-	var held := ""
-	var hi_raw = player.get("held_index")
-	var held_idx := int(hi_raw) if hi_raw != null else 0
-	if player.get("inventory") != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(held_idx, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
-	data["held_item"] = held
-	data["held_index"] = held_idx
+	# Empty hands are a state, not the item at the inventory cursor.
+	var actual_held = player.get_held_item()
+	data["held_item"] = str(actual_held.item_name) if actual_held != null else ""
+	data["held_index"] = player.inventory.items.find(actual_held) if actual_held != null else -1
 	# Character appearance
 	var gsess: Node = Engine.get_main_loop().get_root().get_node_or_null("/root/GameSession")
 	if gsess != null:
@@ -393,9 +388,12 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	var equipped_backpack := str(data.get("equipped_backpack", ""))
 	if not equipped_backpack.is_empty() and player.has_method("equip_backpack"):
 		player.equip_backpack(equipped_backpack)
-	# Sync held item
-	if player.has_method("_sync_held_item"):
-		player._sync_held_item()
+	# Restore only an explicitly saved held item, including empty hands.
+	var ammo: Dictionary = data.get("rifle_ammo", {})
+	player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
+	player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
+	player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
+	player.restore_held_item(str(data.get("held_item", "")), int(data.get("held_index", -1)))
 	# State flags — don't restore sleeping to prevent being stuck on load
 	player.is_sleeping = false
 	player.is_sitting = bool(data.get("sitting", false))

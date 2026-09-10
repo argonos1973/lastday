@@ -156,8 +156,8 @@ func _setup_environment():
 		env.sdfgi_enabled = true
 		env.sdfgi_cascades = 4
 
-		env.volumetric_fog_enabled = true
-		env.volumetric_fog_density = fog_intensity * 0.3
+		env.volumetric_fog_enabled = false
+		env.volumetric_fog_density = 0.0
 		env.volumetric_fog_albedo = Color(0.9, 0.85, 0.8)
 
 func _create_reflection_probe() -> ReflectionProbe:
@@ -225,8 +225,8 @@ func _update_weather():
 			water_material.set_shader_parameter("water_smoothness", 0.95)
 
 	if world_environment and world_environment.environment:
-		world_environment.environment.volumetric_fog_density = fog_intensity * 0.3
-		world_environment.environment.fog_density = fog_intensity * 0.1
+		world_environment.environment.volumetric_fog_density = 0.0
+		world_environment.environment.fog_density = 0.0
 
 func _update_weather_by_type():
 	match weather_type.to_lower():

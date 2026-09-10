@@ -41,6 +41,11 @@ const RECIPES := [
 		"label": "Ensartar carne en palo"
 	},
 	{
+		"inputs": { "Palo afilado": 1, "Pez crudo": 1 },
+		"output": { "name": "Pez ensartado", "type": "food", "weight": 0.45, "use_value": 18.0 },
+		"label": "Ensartar pez en palo"
+	},
+	{
 		"inputs": { "Tronco": 2, "Palo": 1 },
 		"output": { "name": "Fogata", "type": "campfire", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir fogata con troncos"
@@ -166,6 +171,8 @@ static func _can_craft(recipe: Dictionary, inventory_items: Array) -> bool:
 static func _matches_input(input_name: String, item) -> bool:
 	if item == null:
 		return false
+	if _is_tool(input_name) and item.is_broken():
+		return false
 	if input_name == "ANY_CLOTHING":
 		return str(item.item_type) == "clothing"
 	if str(item.item_name) == input_name or _is_substitute(input_name, str(item.item_name)):
@@ -188,46 +195,64 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 				missing.append("%dx %s (tienes %d)" % [needed, input_name, have])
 		craft_error = "Faltan materiales: %s" % ", ".join(missing)
 		return false
-	# Save consumed item info for potential refund
-	var saved_inputs: Array = []
-	# Consume inputs (tools are not consumed, only resources)
+	# Simulate the complete transaction before touching live resources or emitting signals.
+	var staged = load("res://scripts/Inventory.gd").new()
+	staged.max_slots = inventory.max_slots
+	staged.max_weight = inventory.max_weight
+	var original_items: Array = inventory.items.duplicate()
+	var staged_originals: Array = []
+	for item in original_items:
+		var copy = item.duplicate_stack()
+		staged.items.append(copy)
+		staged_originals.append(copy)
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
-		# Don't consume tools (knife, etc.) but reduce their durability
-		if _is_tool(input_name):
-			for item in inventory.items:
-				if item != null and _matches_input(input_name, item) and item.has_method("reduce_durability"):
-					item.reduce_durability(3.0)
-					break
-			continue
-		if input_name == "ANY_CLOTHING":
-			_consume_clothing(inventory, needed)
-		else:
-			for item in inventory.items:
-				if item != null and str(item.item_name) == input_name and item.quantity > 0:
-					saved_inputs.append({"name": item.item_name, "type": item.item_type, "weight": item.weight, "use_value": item.use_value, "qty": min(needed, item.quantity), "durability": item.durability, "max_durability": item.max_durability})
-					break
-			inventory.consume_item_name(input_name, needed)
-	# Create output
-	var out = recipe["output"]
-	var qty: int = int(out.get("quantity", 1))
-	var new_item = ItemScript.create(out["name"], out["type"], out["weight"], qty, out["use_value"])
+		for item in staged.items.duplicate():
+			if needed <= 0:
+				break
+			if not _matches_input(input_name, item):
+				continue
+			if _is_tool(input_name):
+				item.reduce_durability(3.0)
+				needed -= item.quantity
+			else:
+				var taken := mini(needed, int(item.quantity))
+				item.quantity -= taken
+				needed -= taken
+				if item.quantity <= 0:
+					staged.items.erase(item)
+		if needed > 0:
+			craft_error = "Faltan materiales: " + str(input_name)
+			staged.free()
+			return false
+	var out: Dictionary = recipe["output"]
+	var new_item = ItemScript.create(out["name"], out["type"], out["weight"], int(out.get("quantity", 1)), out["use_value"])
 	if out.has("durability"):
 		new_item.durability = float(out["durability"])
 		new_item.max_durability = float(out.get("max_durability", out["durability"]))
-	if not inventory.add_item(new_item):
-		craft_error = "No hay espacio/peso para %s (peso %.2f, total %.2f/%.2f, slots %d/%d)" % [out["name"], out["weight"] * qty, inventory.get_total_weight(), inventory.max_weight, inventory.items.size(), inventory.max_slots]
-		for si in saved_inputs:
-			var refund = ItemScript.create(si["name"], si["type"], si["weight"], si["qty"], si["use_value"])
-			refund.durability = si["durability"]
-			refund.max_durability = si["max_durability"]
-			inventory.add_item(refund)
+	if not staged.add_item(new_item):
+		craft_error = "No hay espacio o peso disponible para %s." % out["name"]
+		staged.free()
 		return false
+	var committed: Array = []
+	for item in staged.items:
+		var original_index := staged_originals.find(item)
+		if original_index >= 0:
+			var original = original_items[original_index]
+			original.quantity = item.quantity
+			original.durability = item.durability
+			original.spoilage = item.spoilage
+			committed.append(original)
+		else:
+			committed.append(item)
+	inventory.items = committed
+	staged.free()
+	inventory.changed.emit()
 	return true
 
 static func _consume_clothing(inventory, amount: int) -> void:
 	var consumed := 0
-	for item in inventory.items:
+	for item in inventory.items.duplicate():
 		if consumed >= amount:
 			break
 		if str(item.item_type) == "clothing":

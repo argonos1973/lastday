@@ -19,7 +19,5 @@ func interact(player: Node) -> void:
 	if inventory.add_item(item):
 		if player.has_signal("notice"):
 			player.notice.emit("Recoges %s." % item.item_name)
-		if player.has_method("equip_item_by_name"):
-			player.equip_item_by_name(item.item_name)
 		if remove_on_pickup:
 			queue_free()

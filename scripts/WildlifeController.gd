@@ -712,6 +712,8 @@ func _find_nearest_corpse() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 9999.0 * 9999.0
 	for node in _cached_wildlife:
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		if node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
@@ -741,7 +743,7 @@ func _find_nearest_proxy() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 99999.0 * 99999.0
 	for p in get_tree().get_nodes_in_group("net_player_proxy"):
-		if not (p is Node3D) or not is_instance_valid(p):
+		if not is_instance_valid(p) or not (p is Node3D):
 			continue
 		if p.get_meta("proxy_dead", false):
 			continue
@@ -762,6 +764,8 @@ func _find_nearest_prey() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 9999.0 * 9999.0
 	for node in _cached_wildlife:
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		if node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
@@ -1110,7 +1114,7 @@ func _broadcast_wolf_meat_drops(corpse: Node3D) -> void:
 	var actions_dict: Dictionary = scene.get("world_actions_by_id") if scene.get("world_actions_by_id") != null else {}
 	for action_id in actions_dict.keys():
 		var action = actions_dict[action_id]
-		if not action is Node3D:
+		if not is_instance_valid(action) or not action is Node3D:
 			continue
 		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
 			continue
@@ -1195,7 +1199,7 @@ func _find_nearest_meat_pickup() -> Node3D:
 	var actions_dict: Dictionary = scene.get("world_actions_by_id") if scene.get("world_actions_by_id") != null else {}
 	for action_id in actions_dict.keys():
 		var action = actions_dict[action_id]
-		if not action is Node3D:
+		if not is_instance_valid(action) or not action is Node3D:
 			continue
 		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
 			continue
@@ -1665,6 +1669,8 @@ func _is_position_allowed(pos: Vector3) -> bool:
 func _get_separation_vector() -> Vector3:
 	var push := Vector3.ZERO
 	for node in _cached_wildlife:
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		if node == self:
 			continue
 		if not (node is Node3D):
@@ -1803,7 +1809,7 @@ func _can_reach_player() -> bool:
 func _compute_wolf_separation(radius: float) -> Vector3:
 	var push := Vector3.ZERO
 	for node in get_tree().get_nodes_in_group("wildlife"):
-		if node == self or not (node is Node3D) or not is_instance_valid(node):
+		if not is_instance_valid(node) or node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
 		var d := global_position.distance_to(other.global_position)

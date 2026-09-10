@@ -34,7 +34,7 @@ func _ready() -> void:
 	_model_root = Node3D.new()
 	_viewport.add_child(_model_root)
 
-func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO) -> void:
+func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0) -> void:
 	for child in _model_root.get_children():
 		child.queue_free()
 	if _model_root == null:
@@ -59,9 +59,9 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	_model_root.add_child(inst)
 	inst.scale = Vector3.ONE * scale_value
 	inst.rotation_degrees = extra_rotation_deg
-	_frame_camera(inst)
+	_frame_camera(inst, frame_zoom)
 
-func _frame_camera(inst: Node3D) -> void:
+func _frame_camera(inst: Node3D, frame_zoom: float = 1.0) -> void:
 	var meshes: Array = []
 	_collect_meshes(inst, meshes)
 	if meshes.is_empty():
@@ -85,7 +85,8 @@ func _frame_camera(inst: Node3D) -> void:
 	var radius: float = box.size.length() * 0.5
 	if radius < 0.001:
 		radius = 0.5
-	_cam.size = radius * 2.05
+	# frame_zoom < 1.0 zooms in (smaller cam.size = more zoom)
+	_cam.size = radius * 2.05 * frame_zoom
 	var dir := Vector3(1.0, 0.85, 1.0).normalized()
 	_cam.global_position = center + dir * (radius * 4.0 + 2.0)
 	_cam.look_at(center, Vector3.UP)

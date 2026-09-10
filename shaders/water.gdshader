@@ -131,12 +131,12 @@ void fragment() {
 
 	if (FRONT_FACING) {
 		ALBEDO = water_color;
-		NORMAL *= normal_scale;
+		NORMAL_MAP_DEPTH = normal_scale;
 	} else {
 		NORMAL = -NORMAL;
-		NORMAL_MAP = mix(vec3(1.0), vec3(0.0), NORMAL_MAP);
+		NORMAL_MAP = vec3(NORMAL_MAP.xy, 1.0);
 		ALBEDO = surface_bottom.rgb;
-		NORMAL *= normal_scale;
+		NORMAL_MAP_DEPTH = normal_scale;
 	}
 
 	ALPHA = clamp(0.55 + water_color_ratio * 0.35, 0.55, 0.95);
@@ -149,7 +149,10 @@ void fragment() {
 
 	// Reflejo tipo espejo: mas visible en angulos rasantes (Fresnel), color acorde a la hora del dia
 	float mirror_fresnel = pow(clamp(1.0 - dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), mirror_fresnel_power);
-	ALBEDO = mix(ALBEDO, mirror_color, mirror_fresnel * mirror_strength);
+	// Real sky and scene reflections come from the reflection probe.
+	SPECULAR = 1.0;
+	METALLIC = mirror_strength * 0.55;
+	ALPHA = mix(ALPHA, 1.0, mirror_fresnel);
 
 	if (use_foam) {
 		float edgePatternScroll = TIME * foam_speed;

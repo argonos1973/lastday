@@ -69,11 +69,11 @@ sky_material = SubResource("ShaderMaterial_gjwbc")
 [sub_resource type="Environment" id="Environment_33mdr"]
 background_mode = 2
 sky = SubResource("Sky_lb1th")
-volumetric_fog_density = 0.01
-fog_enabled = true
+volumetric_fog_density = 0.0
+fog_enabled = false
 fog_height = 10.0
 fog_start = 100.0
-fog_density = 0.1
+fog_density = 0.0
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_wetness"]
 shader = ExtResource("8_wet")
@@ -101,7 +101,7 @@ sunrise_haze = 0.3
 night_sky_brightness = 0.15
 fog_height = 10.0
 fog_start = 100.0
-fog_density = 0.1
+fog_density = 0.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_33mdr")

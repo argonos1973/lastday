@@ -13,9 +13,15 @@ var spoilage := 0.0
 var spoilage_rate := 0.0
 
 const PERISHABLE_FOODS := {
+	"Carne cruda": 0.5,
+	"Carne cruda de ciervo": 0.5,
+	"Carne cruda de zorro": 0.5,
 	"Carne cruda de lobo": 0.5,
 	"Carne asada en palo": 0.3,
 	"Carne ensartada": 0.4,
+	"Pez crudo": 0.9,
+	"Pez ensartado": 0.7,
+	"Pez cocinado": 0.4,
 	"Naranja": 0.25,
 	"Higo": 0.25,
 	"Bayas silvestres": 0.35,
@@ -66,7 +72,14 @@ func duplicate_stack():
 func can_stack_with(other) -> bool:
 	if other == null or item_name != other.item_name or item_type != other.item_type or use_value != other.use_value:
 		return false
-	if is_perishable() and absf(spoilage - other.spoilage) > 5.0:
+	if weight != other.weight or durability != other.durability or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
+		return false
+	if get_meta_list().size() != other.get_meta_list().size():
+		return false
+	for key in get_meta_list():
+		if not other.has_meta(key) or get_meta(key) != other.get_meta(key):
+			return false
+	if is_perishable() and absf(spoilage - other.spoilage) > 25.0:
 		return false
 	return true
 

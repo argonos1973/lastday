@@ -191,7 +191,7 @@ const RIFLE_RANGE := 150.0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
-const RIFLE_DAMAGE := 100.0
+const RIFLE_DAMAGE := 200.0
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -245,8 +245,9 @@ const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
-const ROD_IDLE_GLB := ""
-const ROD_FISH_END_GLB := ""
+const ROD_IDLE_GLB := "res://assets/animations/fishing_idle_rod_line.glb"
+const ROD_FISH_END_GLB := "res://assets/animations/fishing_end_catch.glb"
+const FISHING_IDLE_DURATION := 10.0
 const ROD_MODEL_PATH := "res://assets/models/props/cana_de_pescar.glb"
 const NORMAL_FISHING_ROD_GRIP_CORRECTION := Vector3(-0.058, 0.051, -0.100)
 const THIRD_PERSON_EXTERNAL_ROD_WALK_ANIMATION := "RodWalkExternal"
@@ -275,7 +276,7 @@ const SMALL_BACKPACK_WEIGHT := 10.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
-signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color, broken: bool)
+signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color, broken: bool, spoilage: float)
 
 @export var walk_speed := 4.0
 @export var sprint_speed := 7.0
@@ -400,10 +401,15 @@ var _rod_idle_animation := ""
 var _rod_fish_start_animation := ""
 var _rod_fish_end_animation := ""
 var _rod_animations_loaded := false
+var _rod_animations_loading := false
+var _rod_animations_pending: Array = []
+var _rod_animations_deferred := false
 var _is_fishing_idle := false
 var _is_fishing := false
 var _can_fish_near_water := false
 var _is_near_fishing_shore := false
+var _fishing_water_cache_pos := Vector3.INF
+var _fishing_water_cache := {"near": false, "facing": false, "point": Vector3.ZERO}
 var _rod_socket_keyframes: Array = []
 var _rod_base_position := Vector3.ZERO
 var _rod_socket_active := false
@@ -420,6 +426,9 @@ var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
 var _is_firing := false
+var _held_selection_revision := 0
+var _rifle_ammo_initialized := false
+var _fishing_session := 0
 var _rifle_magazine := 0
 var _rifle_reserve_ammo := 0
 var _recoil_pitch := 0.0
@@ -564,6 +573,8 @@ var is_in_water := false
 var wetness := 0.0
 var flashlight_charge := 0.0
 var held_index := 0
+var _consumption_pending := false
+var _held_item_reference = null
 var equipped_clothing := ""
 var equipped_backpack := ""
 # Survival deformable clothing nodes inside the adapted model (mesh name -> node).
@@ -954,6 +965,12 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_can()
 		"Carne cocinada":
 			_build_third_person_can()
+		"Pez ensartado":
+			_build_third_person_can()
+		"Pez cocinado":
+			_build_third_person_can()
+		"Pez crudo":
+			_build_third_person_can()
 		_:
 			_build_third_person_pack()
 
@@ -1125,7 +1142,6 @@ func _ready() -> void:
 
 	_add_starting_items()
 	_create_body()
-	_select_default_held_item()
 	_sync_held_item()
 	_apply_view_mode()
 	call_deferred("_capture_mouse")
@@ -1141,10 +1157,27 @@ func _input(event: InputEvent) -> void:
 	# button is pressed, returning the player to the normal controllable pose.
 	var _pressed_key_or_button: bool = (event is InputEventKey and event.pressed and not event.echo) \
 		or (event is InputEventMouseButton and event.pressed)
-	if _pressed_key_or_button and (_is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)):
+	if _pressed_key_or_button and (_is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation) or _is_fishing):
+		_is_fishing = false
 		_is_fishing_idle = false
 		third_person_action_animation = ""
 		third_person_action_timer = 0.0
+		_deactivate_rod_visual_overlay()
+		# Hide countdown and clear notice
+		var main := get_tree().current_scene
+		if main != null:
+			if main.get("hud") != null and main.hud.has_method("hide_countdown"):
+				main.hud.hide_countdown()
+		notice.emit("")
+		# Return to normal animation
+		if third_person_animation_player != null and not third_person_idle_animation.is_empty():
+			third_person_animation_player.play(third_person_idle_animation, 0.3)
+			third_person_animation_player.speed_scale = 1.0
+		# Store the fishing rod back into inventory
+		_store_held_item()
+		# Consume this input so it only cancels fishing and does not trigger
+		# other actions (store item, switch slot, etc.) with the same press.
+		return
 	if event is InputEventMouseButton and event.pressed:
 		if _aerial_camera:
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -1277,7 +1310,6 @@ func _input(event: InputEvent) -> void:
 			return
 		var inventory_index := _inventory_index_for_key(event.keycode)
 		if inventory_index >= 0:
-			held_index = inventory_index
 			_use_inventory_index(inventory_index)
 			return
 		if event.keycode == KEY_B:
@@ -1341,8 +1373,7 @@ func _use_inventory_index(index: int) -> void:
 		if held_index == index and hands != null and hands.has_item_in_hands():
 			_eat_held_item()
 		else:
-			held_index = index
-			_sync_held_item()
+			_select_held_item(index)
 			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para comer." % item_name)
 		return
 	# Water items: first put in hand, then drink with animation when used again
@@ -1350,14 +1381,12 @@ func _use_inventory_index(index: int) -> void:
 		if held_index == index and hands != null and hands.has_item_in_hands():
 			_drink_held_item()
 		else:
-			held_index = index
-			_sync_held_item()
+			_select_held_item(index)
 			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para beber." % item_name)
 		return
 	# Plastic bottle: put in hand, then fill at river
 	if item_name == "Botella de plastico":
-		held_index = index
-		_sync_held_item()
+		_select_held_item(index)
 		notice.emit("Tienes la botella en la mano. Ve al rio y pulsa E para llenarla.")
 		return
 	var used: bool = inventory.use_index(index, stats)
@@ -1367,9 +1396,13 @@ func _use_inventory_index(index: int) -> void:
 		var _inv_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
 		equip_clothing(item_name, _inv_color)
 	elif not used:
-		_sync_held_item()
+		_select_held_item(index)
 
 func _on_inventory_changed() -> void:
+	if inventory != null and _held_item_reference != null:
+		var current_index: int = inventory.items.find(_held_item_reference)
+		if current_index >= 0:
+			held_index = current_index
 	_recalculate_carry_capacity()
 	_sync_held_item()
 
@@ -1412,12 +1445,10 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
 						inventory.remove_index(i)
-						if i < held_index:
-							held_index -= 1
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 			drop_pos.y = global_position.y
-			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color, false)
+			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color, false, 0.0)
 	equipped_clothing = item_name
 	# Determine if all clothing slots will be equipped after this item
 	var equipped_check := _equipped_slots.duplicate()
@@ -2443,7 +2474,7 @@ func _drop_excess_items(count: int) -> void:
 			continue
 		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 		drop_pos.y = global_position.y
-		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0), false)
+		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0), false, float(item.spoilage))
 		inventory.remove_index(i)
 		dropped += 1
 	if dropped > 0:
@@ -2548,7 +2579,7 @@ func _physics_process(delta: float) -> void:
 				var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 				drop_pos.y = global_position.y
 				var drop_color := get_current_clothing_color(broken_name)
-				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true)
+				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true, 0.0)
 				inventory.remove_index(i_broken, 1)
 			# After losing clothing, capacity is reduced — drop items that no longer fit
 			_recalculate_carry_capacity()
@@ -2558,7 +2589,7 @@ func _physics_process(delta: float) -> void:
 				overflow_pos.y = global_position.y
 				if overflow_item != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
-					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false)
+					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
 				inventory.remove_index(inventory.items.size() - 1)
 			while inventory.get_total_weight() > inventory.max_weight and inventory.items.size() > 0:
 				var overflow_item2 = inventory.items[inventory.items.size() - 1]
@@ -2566,7 +2597,7 @@ func _physics_process(delta: float) -> void:
 				overflow_pos2.y = global_position.y
 				if overflow_item2 != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
-					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false)
+					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
 				inventory.items.remove_at(inventory.items.size() - 1)
 			if held_index >= inventory.items.size():
 				held_index = max(0, inventory.items.size() - 1)
@@ -2668,7 +2699,7 @@ func _physics_process(delta: float) -> void:
 	var carry := _get_carry_weight_ratio()
 	var effective_max_energy: float = stats.max_stat * (1.0 - carry * 0.5)
 	# Cannot sprint when heavily loaded
-	if carry > 0.85:
+	if carry > 0.85 or stats.get_thermal_stress() >= 0.85:
 		is_sprinting = false
 	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
 	# Reduce speed when aiming with rifle for careful movement
@@ -2681,13 +2712,13 @@ func _physics_process(delta: float) -> void:
 		speed = 0.0
 		is_sprinting = false
 	if is_sprinting:
-		stats.energy = max(0.0, stats.energy - (3.0 + carry * 9.0) * delta)
+		stats.energy = max(0.0, stats.energy - (3.0 + carry * 9.0) * (1.0 + stats.get_thermal_stress()) * delta)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
 			stats.changed.emit()
 	elif not is_jumping and is_on_floor():
-		stats.energy = min(effective_max_energy, stats.energy + (8.0 - carry * 5.0) * delta)
+		stats.energy = min(effective_max_energy, stats.energy + (8.0 - carry * 5.0) * stats.get_thermal_recovery_multiplier() * delta)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
@@ -2698,6 +2729,7 @@ func _physics_process(delta: float) -> void:
 		speed *= lerp(0.72, 0.48, _water_depth)
 		is_sprinting = false
 
+	speed *= stats.get_thermal_speed_multiplier()
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	if is_jumping:
@@ -3245,6 +3277,10 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	third_person_animation_player.add_animation_library("external", lib)
 	# Load torch-specific animations from FBX files
 	_load_torch_animations()
+	# Pre-cache the fishing rod pose and animations at startup so fishing starts instantly.
+	if not is_puppet:
+		_preload_rod_pose()
+		_load_rod_animations()
 	# Warm the rifle model cache at startup so selecting it later is instant.
 	if not is_puppet:
 		var warm_rifle := _load_external_node3d(REAL_RIFLE_MODEL)
@@ -4377,35 +4413,39 @@ func _load_gltf_node3d(path: String) -> Node3D:
 		generated_scene.queue_free()
 	return null
 
-func _select_default_held_item() -> void:
-	for i in range(inventory.items.size()):
-		if inventory.items[i].item_type == "weapon_rifle":
-			held_index = i
-			return
-	for i in range(inventory.items.size()):
-		if inventory.items[i].item_type == "weapon":
-			held_index = i
-			return
-	for i in range(inventory.items.size()):
-		if inventory.items[i].item_type == "tool_axe":
-			held_index = i
-			return
-	held_index = 0
+func _select_held_item(index: int) -> void:
+	if inventory == null or index < 0 or index >= inventory.items.size():
+		return
+	if _is_fishing and get_held_item() != inventory.items[index]:
+		_is_fishing = false
+		_is_fishing_idle = false
+		_deactivate_rod_visual_overlay()
+	_held_selection_revision += 1
+	held_index = index
+	_held_item_reference = inventory.items[index]
+	_sync_held_item()
+
+func restore_held_item(item_name: String, index: int) -> void:
+	clear_hands()
+	if inventory == null or item_name.is_empty() or index < 0 or index >= inventory.items.size():
+		return
+	if str(inventory.items[index].item_name) == item_name:
+		_select_held_item(index)
 
 func equip_item_by_name(item_name: String) -> void:
 	if inventory == null:
 		return
 	for i in range(inventory.items.size() - 1, -1, -1):
 		if inventory.items[i].item_name == item_name:
-			held_index = i
-			_sync_held_item()
+			_select_held_item(i)
 			return
 
 func get_held_item():
-	if inventory == null or inventory.items.is_empty():
+	if inventory == null or _held_item_reference == null:
 		return null
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	return inventory.items[held_index]
+	if not inventory.items.has(_held_item_reference):
+		return null
+	return _held_item_reference
 
 #endregion
 
@@ -4419,9 +4459,21 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 		return
 	is_sleeping = true
 	_cancel_aim()
-	# Guardar lo que lleva en la mano al inventario antes de dormir
+	# Cancel fishing if in progress
+	if _is_fishing or _is_fishing_idle:
+		_is_fishing = false
+		_is_fishing_idle = false
+		third_person_action_animation = ""
+		third_person_action_timer = 0.0
+		_deactivate_rod_visual_overlay()
+	# Store everything held in hands back to inventory
 	if hands != null and hands.has_item_in_hands():
 		_store_held_item()
+	# Clear torch light if lit
+	if torch_light != null and torch_light.visible:
+		torch_light.visible = false
+	# Clear rifle state
+	_rifle_in_hands = false
 	if on_bed:
 		is_sleeping_on_bed = true
 		_bed_sleep_position = bed_pos
@@ -4447,16 +4499,17 @@ func stop_sleep() -> void:
 	_sync_held_item()
 
 func clear_hands() -> void:
-	if hands != null:
-		hands.clear_hands()
+	_held_selection_revision += 1
+	_held_item_reference = null
+	_sync_held_item()
 
 func _cycle_held_item() -> void:
 	if inventory.items.is_empty():
 		return
 	if _is_aiming:
 		_cancel_aim()
-	held_index = (held_index + 1) % inventory.items.size()
-	_sync_held_item()
+	var next_index: int = (held_index + 1) % inventory.items.size() if get_held_item() != null else 0
+	_select_held_item(next_index)
 	var item = inventory.items[held_index]
 	notice.emit("En mano: %s." % item.item_name)
 
@@ -4483,7 +4536,7 @@ func _craft_campfire() -> void:
 	await get_tree().create_timer(2.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
 	pos.y = 0.15
-	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false)
+	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
 func _craft_shelter() -> void:
@@ -4503,7 +4556,7 @@ func _craft_shelter() -> void:
 	await get_tree().create_timer(3.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 2.0)
 	pos.y = 0.0
-	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false)
+	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
 	notice.emit("Has construido un refugio.")
 
 func craft_recipe(recipe: Dictionary) -> void:
@@ -4517,16 +4570,14 @@ func craft_recipe(recipe: Dictionary) -> void:
 	if out["type"] == "shelter":
 		_craft_shelter()
 		return
-	# Unequip any clothing items that will be consumed by this recipe
-	for input_name in recipe["inputs"]:
-		if CLOTHING_SLOTS.has(input_name):
-			for sk in _equipped_slots.keys():
-				if str(_equipped_slots[sk]) == input_name:
-					unequip_clothing(input_name)
-					break
 	if not CraftingSystemScript.craft(recipe, inventory):
 		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
 		return
+	# Change equipment only after the transaction succeeded.
+	for slot in _equipped_slots.keys():
+		var clothing_name := str(_equipped_slots[slot])
+		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
+			unequip_clothing(clothing_name)
 	inventory.changed.emit()
 	# Determine animation and duration based on recipe type
 	var craft_anim := "forage"
@@ -4591,12 +4642,10 @@ func _toggle_sit() -> void:
 		notice.emit("Te sientas. Pulsa S para tumbarte.")
 
 func _eat_held_item() -> void:
-	if inventory == null or inventory.items.is_empty():
-		notice.emit("No tienes nada en la mano.")
+	if _consumption_pending or is_dead:
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var item = inventory.items[held_index]
-	if item.item_type != "food":
+	var item = get_held_item()
+	if item == null or item.item_type != "food":
 		notice.emit("No tienes comida en la mano.")
 		return
 	# Canned food must be opened with knife/axe before eating
@@ -4622,7 +4671,7 @@ func _eat_held_item() -> void:
 				if inventory.items[i].item_name == item.item_name + " abierta" and inventory.items[i].quantity == 1:
 					held_index = i
 					break
-			_sync_held_item()
+			_select_held_item(held_index)
 		else:
 			item.durability = 100.0
 			item.max_durability = 100.0
@@ -4630,180 +4679,68 @@ func _eat_held_item() -> void:
 			inventory.changed.emit()
 		notice.emit("Abres la lata con el cuchillo. Ahora puedes comer.")
 		return
-	# Play eating animation (same as campfire crafting)
-	play_action_animation("plant", 2.0)
-	if item.is_perishable() and item.spoil_state() == 2:
-		notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
-	elif item.is_perishable() and item.spoil_state() == 1:
-		notice.emit("Comes comida en mal estado. Te sientes mal.")
-	else:
-		notice.emit("Comiendo %s..." % item.item_name)
-	# Consume the food after animation
-	var item_name := str(item.item_name)
-	var food_value := float(item.use_value)
-	var eat_timer := Timer.new()
-	eat_timer.wait_time = 2.0
-	eat_timer.one_shot = true
-	eat_timer.timeout.connect(func():
-		var _oh: float = 0.0
-		var _ot: float = 0.0
-		var _ohp: float = 0.0
-		var _thirst_pct := 0.20
-		var _health_pct := 0.35
-		if stats != null:
-			_oh = float(stats.hunger)
-			_ot = float(stats.thirst)
-			_ohp = float(stats.health)
-			if item_name == "Naranja":
-				_thirst_pct = 0.80
-				_health_pct = 0.20
-			elif item_name == "Higo":
-				_thirst_pct = 0.70
-				_health_pct = 0.50
-			elif item_name.begins_with("Seta"):
-				_thirst_pct = 0.30
-				_health_pct = 0.35
-			elif item_name.begins_with("Lata de"):
-				_thirst_pct = 0.15
-				_health_pct = 0.35
-			elif item_name == "Carne asada en palo":
-				_thirst_pct = 0.10
-				_health_pct = 0.40
-			elif item_name == "Carne cruda de lobo":
-				_thirst_pct = 0.10
-				_health_pct = 0.0
-			stats.hunger = min(stats.max_stat, stats.hunger + food_value)
-			stats.thirst = min(stats.max_stat, stats.thirst + food_value * _thirst_pct)
-			if _health_pct > 0.0:
-				stats.health = min(stats.max_health, stats.health + max(3.0, food_value * _health_pct))
-			if item_name == "Carne cruda de lobo" and stats.has_method("get_sick"):
-				stats.get_sick(60.0)
-			if item.is_perishable() and item.spoil_state() == 2 and stats.has_method("get_sick"):
-				stats.get_sick(80.0)
-				notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
-			elif item.is_perishable() and item.spoil_state() == 1 and stats.has_method("get_sick"):
-				stats.get_sick(30.0)
-				notice.emit("Comes comida en mal estado. Te sientes mal.")
-			stats.changed.emit()
-		var _r: String = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
-		# Opened cans: eat 50% per use, only remove when empty
-		if item_name.begins_with("Lata de") and item_name.ends_with(" abierta"):
-			var eat_pct := 0.50
-			var actual_eat: float = min(eat_pct, float(item.durability_pct()))
-			# Recalculate hunger/thirst with partial amount
-			stats.hunger = min(stats.max_stat, _oh + food_value * actual_eat)
-			stats.thirst = min(stats.max_stat, _ot + food_value * _thirst_pct * actual_eat)
-			if _health_pct > 0.0:
-				stats.health = min(stats.max_health, _ohp + max(3.0, food_value * _health_pct * actual_eat))
-			stats.changed.emit()
-			_r = inventory._fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health))
-			item.reduce_durability(float(item.max_durability) * actual_eat)
-			if item.is_broken():
-				inventory.remove_index(held_index)
-				notice.emit("Comes el ultimo trozo de %s.%s" % [item_name, _r])
-			else:
-				var remaining_pct := int(float(item.durability_pct()) * 100.0)
-				notice.emit("Comes un poco de %s. Queda %d%%.%s" % [item_name, remaining_pct, _r])
-			inventory.changed.emit()
-			_sync_held_item()
-		else:
-			inventory.remove_index(held_index)
-			inventory.changed.emit()
-			_sync_held_item()
-			notice.emit("Comes %s.%s" % [item_name, _r])
-			if item_name == "Carne humana":
-				notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
-				if stats != null:
-					stats.health = 0.0
+	_start_consumption(item, "plant", 2.0)
+
+func _start_consumption(item, animation: String, duration: float) -> void:
+	if _consumption_pending or is_dead or stats == null:
+		return
+	_consumption_pending = true
+	play_action_animation(animation, duration)
+	notice.emit("Bebiendo..." if animation == "drink" else "Comiendo...")
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = maxf(duration, 0.01)
+	timer.timeout.connect(func():
+		timer.queue_free()
+		_consumption_pending = false
+		# Resolve by identity: sorting, moving or dropping cannot consume another item.
+		if not is_dead and inventory != null and stats != null:
+			var index: int = inventory.items.find(item)
+			if index >= 0:
+				var consumed: bool = inventory.use_index(index, stats)
+				if consumed:
 					stats.changed.emit()
-				if has_method("die"):
-					die()
-		)
-	add_child(eat_timer)
-	eat_timer.start()
+					if item.item_name == "Carne humana":
+						stats.health = 0.0
+						stats.changed.emit()
+						die()
+		_clear_third_person_drink_bottle_left_hand()
+		_sync_held_item()
+	)
+	add_child(timer)
+	timer.start()
 
 func _drink_held_item() -> void:
-	if inventory == null or inventory.items.is_empty():
-		notice.emit("No tienes nada en la mano.")
+	if _consumption_pending or is_dead:
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var item = inventory.items[held_index]
-	if item.item_type != "water":
+	var item = get_held_item()
+	if item == null or item.item_type != "water":
 		notice.emit("No tienes agua en la mano.")
 		return
-	# Remove the right-hand bottle (shown while just holding it) and show it
-	# in the LEFT hand during the drink animation (matches drink anim pose)
+	if item.is_broken():
+		notice.emit("La botella esta vacia.")
+		return
 	if third_person_hand_item_root != null:
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
 	_build_third_person_drink_bottle_left_hand()
-	var drink_duration := _drink_animation_length
-	play_action_animation("drink", drink_duration)
-	notice.emit("Bebiendo %s..." % item.item_name)
-	var item_name := str(item.item_name)
-	var drink_timer := Timer.new()
-	drink_timer.wait_time = drink_duration
-	drink_timer.one_shot = true
-	drink_timer.timeout.connect(func():
-		var _ot: float = 0.0
-		var _ohp: float = 0.0
-		if stats != null:
-			_ot = float(stats.thirst)
-			_ohp = float(stats.health)
-			if stats.thirst >= stats.max_stat - 2.0:
-				stats.overdrink_count += 1
-				if stats.overdrink_count >= 3 and stats.has_method("get_sick"):
-					stats.get_sick(40.0)
-					stats.overdrink_count = 0
-					notice.emit("Has bebido demasiada agua. Te sientes mal.")
-				else:
-					notice.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
-			else:
-				stats.thirst = min(stats.max_stat, stats.thirst + item.use_value)
-				if stats.thirst > 35.0:
-					stats.health = min(stats.max_health, stats.health + max(2.0, item.use_value * 0.15))
-			stats.changed.emit()
-		if (item_name == "Botella de agua" or item_name == "Botella de agua llena") and item.has_method("is_broken") and item.is_broken():
-			inventory.remove_index(held_index)
-			inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
-		elif item_name == "Botella de agua" or item_name == "Botella de agua llena":
-			item.reduce_durability(float(item.max_durability) * 0.25)
-			if item.is_broken():
-				inventory.remove_index(held_index)
-				inventory.add_item(ItemScript.create("Botella de plastico", "misc", 0.1, 1, 0.0))
-			elif item_name == "Botella de agua llena":
-				item.item_name = "Botella de agua"
-		else:
-			inventory.remove_index(held_index)
-		inventory.changed.emit()
-		_clear_third_person_drink_bottle_left_hand()
-		# Limpiar la mano tras beber (guardar item en inventario)
-		if hands != null and hands.has_item_in_hands():
-			_store_held_item()
-		else:
-			_sync_held_item()
-		var _dr: String = ""
-		if stats != null:
-			_dr = inventory._fmt_restore(0.0, 0.0, _ot, float(stats.thirst), _ohp, float(stats.health))
-		notice.emit("Bebes %s.%s" % [item_name, _dr])
-	)
-	add_child(drink_timer)
-	drink_timer.start()
+	_start_consumption(item, "drink", _drink_animation_length)
 
 func _drop_held_item() -> void:
-	if inventory == null or inventory.items.is_empty():
+	var item = get_held_item()
+	if item == null:
 		notice.emit("No tienes nada que soltar.")
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	drop_inventory_item(held_index)
+	drop_inventory_item(inventory.items.find(item))
 
 func _store_held_item() -> void:
-	if inventory == null or inventory.items.is_empty():
+	_held_selection_revision += 1
+	var item = get_held_item()
+	if item == null:
 		notice.emit("No tienes nada en la mano.")
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var item = inventory.items[held_index]
+	_held_item_reference = null
 	# Clear hands visual - item stays in inventory but is not shown in hand
 	if hands != null:
 		hands.clear_hands()
@@ -4854,7 +4791,7 @@ func drop_inventory_item(index: int) -> void:
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	var drop_color := get_current_clothing_color(item_name)
-	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, false)
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, false, float(item.spoilage))
 	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)
@@ -4866,14 +4803,15 @@ func drop_inventory_item(index: int) -> void:
 
 #region ITEMS EN MANO Y EQUIPAMIENTO (PlayerHeldItems)
 func _sync_held_item() -> void:
-	if inventory == null or inventory.items.is_empty():
+	var held_item = get_held_item()
+	if held_item == null:
+		_held_item_reference = null
 		if hands != null:
 			hands.clear_hands()
 		_sync_third_person_equipment(null)
 		_update_crosshair(false)
 		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var held_item = inventory.items[held_index]
+	held_index = inventory.items.find(held_item)
 	if hands != null:
 		hands.clear_hands()
 		hands.current_item = held_item
@@ -4887,9 +4825,9 @@ func _sync_third_person_equipment(held_item) -> void:
 	# Hide torch character when not holding a torch
 	_torch_in_hands = held_item != null and str(held_item.item_type) == "tool_torch"
 	_has_fishing_rod = held_item != null and str(held_item.item_type) == "tool_fishing"
-	if _has_fishing_rod:
-		_load_rod_animations()
-	else:
+	# Don't load rod animations here — only when fishing starts.
+	# The rod visual uses the fallback model (ROD_MODEL_PATH) immediately.
+	if not _has_fishing_rod:
 		_is_fishing_idle = false
 		_deactivate_rod_visual_overlay()
 	var _is_holding_torch := _torch_in_hands
@@ -4947,9 +4885,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 		"weapon_rifle":
 			_build_third_person_rifle()
-			if _rifle_magazine == 0 and _rifle_reserve_ammo == 0:
-				_rifle_magazine = RIFLE_MAG_SIZE
-				_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
+			_initialize_rifle_ammo()
 		"tool":
 			_build_third_person_flashlight()
 			_clear_rifle_attachment()
@@ -6814,7 +6750,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 			return
 		elif third_person_action_timer <= 0.0:
-			if _has_fishing_rod and not _rod_idle_animation.is_empty():
+			if _is_fishing and _has_fishing_rod and not _rod_idle_animation.is_empty():
 				_is_fishing_idle = true
 			_rod_socket_active = false
 			_rod_action_speed_scale = 1.0
@@ -6896,8 +6832,6 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rod_idle_animation
 			elif moving and not _rod_walk_animation.is_empty():
 				target_animation = _rod_walk_animation
-			elif not _rod_idle_animation.is_empty():
-				target_animation = _rod_idle_animation
 			if not target_animation.is_empty():
 				if third_person_animation_player.current_animation != target_animation:
 					third_person_animation_player.play(target_animation, 0.15)
@@ -6906,6 +6840,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 				_turn_input = lerp(_turn_input, 0.0, delta * 7.0)
 				return
+			# No rod-specific animation available — fall through to normal locomotion
 		if _has_rifle and not _is_aiming and not is_sprinting:
 			# Rifle locomotion: use rifle-specific animations
 			if moving:
@@ -7056,6 +6991,8 @@ func _start_fishing_near_water() -> void:
 		return
 	if _is_fishing:
 		return
+	# Load rod animations on demand (only when actually fishing)
+	_load_rod_animations()
 	var fishing_state := _get_fishing_water_state()
 	if not bool(fishing_state.get("near", false)):
 		_can_fish_near_water = false
@@ -7076,6 +7013,9 @@ func _start_fishing_near_water() -> void:
 	if main == null:
 		return
 	_is_fishing = true
+	_fishing_session += 1
+	var session := _fishing_session
+	var fishing_origin := global_position
 	var fish_start_anim := _rod_fish_start_animation
 	var fish_start_duration := 2.0
 	if not fish_start_anim.is_empty():
@@ -7083,25 +7023,75 @@ func _start_fishing_near_water() -> void:
 	elif not _rod_cast_animation.is_empty():
 		fish_start_duration = 1.6
 		play_action_animation("fish", fish_start_duration)
-	if main.has_method("_do_fishing_action"):
-		main._do_fishing_action(self, held, fish_start_duration)
+	notice.emit("Lanzas el hilo...")
+	if main.get("hud") != null and main.hud.has_method("show_countdown"):
+		main.hud.show_countdown("Lanzando", fish_start_duration)
+	await get_tree().create_timer(fish_start_duration).timeout
+	if session != _fishing_session:
+		return
+	if not _fishing_attempt_valid(session, held, fishing_origin):
+		_is_fishing = false
+		return
+
+	# Continue with the authored fishing idle, including its rod and line, for
+	# the full waiting period before deciding whether a fish bites.
+	_is_fishing_idle = true
+	third_person_action_timer = 0.0
+	third_person_action_animation = ""
+	if not _rod_idle_animation.is_empty():
+		third_person_animation_player.play(_rod_idle_animation, 0.08)
+		third_person_animation_player.speed_scale = 1.0
+		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION)
+	if main.get("hud") != null and main.hud.has_method("show_countdown"):
+		main.hud.show_countdown("Pescando", FISHING_IDLE_DURATION)
+	await get_tree().create_timer(FISHING_IDLE_DURATION).timeout
+	if session != _fishing_session:
+		return
+	if not _fishing_attempt_valid(session, held, fishing_origin):
+		_is_fishing = false
+		_is_fishing_idle = false
+		_deactivate_rod_visual_overlay()
+		return
+
+	var caught_fish := randf() < 0.72
+	_is_fishing_idle = false
+	if caught_fish and not _rod_fish_end_animation.is_empty():
+		var end_animation := third_person_animation_player.get_animation(_rod_fish_end_animation)
+		var end_duration := end_animation.length if end_animation != null else 4.04
+		play_action_animation("fish_end", end_duration)
+		if main.get("hud") != null and main.hud.has_method("show_countdown"):
+			main.hud.show_countdown("Recogiendo", end_duration)
+		await get_tree().create_timer(end_duration).timeout
+	if session != _fishing_session:
+		return
+	if not _fishing_attempt_valid(session, held, fishing_origin):
+		_is_fishing = false
+		_is_fishing_idle = false
+		_deactivate_rod_visual_overlay()
+		return
+	if caught_fish:
+		# Drop the fish on the ground instead of adding to inventory
+		var drop_pos := global_position + (-global_basis.z * 0.8)
+		drop_pos.y = 0.1
+		item_dropped.emit("Pez crudo", "food", 0.55, 1, 24.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+		notice.emit("Pescas un pez. Lo has dejado en el suelo.")
 	else:
-		notice.emit("Comienzas a pescar...")
-		if main.hud != null and main.hud.has_method("show_countdown"):
-			main.hud.show_countdown("Pescando", fish_start_duration)
-		await get_tree().create_timer(fish_start_duration).timeout
-		var fish_chance := 0.72
-		if randf() < fish_chance:
-			if inventory != null and inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
-				notice.emit("Pescas un pez pequeno.")
-		else:
-			notice.emit("No pica nada.")
-		if held.has_method("reduce_durability"):
-			held.reduce_durability(3.0)
-			if held.is_broken():
-				notice.emit("Tu caña de pescar se ha roto!")
-	await get_tree().create_timer(fish_start_duration + 1.6).timeout
+		notice.emit("No pica nada.")
+	if held != null and held.has_method("reduce_durability"):
+		held.reduce_durability(3.0)
+		if held.is_broken():
+			notice.emit("Tu caña de pescar se ha roto!")
 	_is_fishing = false
+	_is_fishing_idle = false
+	_deactivate_rod_visual_overlay()
+	# Return to normal animation (same as when canceling fishing)
+	third_person_action_animation = ""
+	third_person_action_timer = 0.0
+	if third_person_animation_player != null and not third_person_idle_animation.is_empty():
+		third_person_animation_player.play(third_person_idle_animation, 0.3)
+		third_person_animation_player.speed_scale = 1.0
+	# Store the fishing rod back into inventory after fishing ends
+	_store_held_item()
 
 func get_interaction_text(_player = null) -> String:
 	return ""
@@ -7148,24 +7138,46 @@ func _update_interaction_prompt() -> void:
 		return
 	prompt_changed.emit("")
 
-func _has_fishing_rod_in_hand() -> bool:
-	if not _has_fishing_rod or hands == null or not hands.has_item_in_hands():
+func _fishing_attempt_valid(session: int, rod, origin: Vector3) -> bool:
+	if session != _fishing_session or not _is_fishing or is_dead:
 		return false
-	var hand_item = hands.get_current_hand_item()
-	return hand_item != null and str(hand_item.item_type) == "tool_fishing"
+	if rod == null or get_held_item() != rod or rod.is_broken():
+		return false
+	if global_position.distance_to(origin) > 1.0:
+		return false
+	var water := _get_fishing_water_state()
+	return bool(water.get("near", false)) and bool(water.get("facing", false))
+
+func _has_fishing_rod_in_hand() -> bool:
+	var held = get_held_item()
+	return held != null and held.item_type == "tool_fishing" and not held.is_broken()
 
 func _get_fishing_water_state() -> Dictionary:
 	var result := {"near": false, "facing": false, "point": Vector3.ZERO}
 	if is_in_water:
+		_fishing_water_cache_pos = Vector3.INF
 		return result
-	var main := get_tree().current_scene
-	if main == null or not main.has_method("get_nearest_fishing_water_point"):
+	# Cache: only recompute the expensive nearest-water scan when the player has
+	# moved more than 0.5m or rotated since the last call. Facing is recomputed
+	# from the cached point cheaply every call so the prompt stays responsive.
+	var pos := global_position
+	if _fishing_water_cache_pos.distance_squared_to(pos) > 0.25:
+		_fishing_water_cache_pos = pos
+		var main := get_tree().current_scene
+		if main == null or not main.has_method("get_nearest_fishing_water_point"):
+			_fishing_water_cache = result
+			return result
+		var water_info: Dictionary = main.get_nearest_fishing_water_point(pos, 5.0)
+		if not bool(water_info.get("valid", false)):
+			_fishing_water_cache = result
+			return result
+		var water_point: Vector3 = water_info.get("point", Vector3.ZERO)
+		_fishing_water_cache = {"near": true, "facing": false, "point": water_point}
+	var cached: Dictionary = _fishing_water_cache
+	if not bool(cached.get("near", false)):
 		return result
-	var water_info: Dictionary = main.get_nearest_fishing_water_point(global_position, 5.0)
-	if not bool(water_info.get("valid", false)):
-		return result
-	var water_point: Vector3 = water_info.get("point", Vector3.ZERO)
-	var to_water := water_point - global_position
+	var water_point: Vector3 = cached.get("point", Vector3.ZERO)
+	var to_water := water_point - pos
 	to_water.y = 0.0
 	if to_water.length_squared() < 0.0001:
 		return result
@@ -7594,7 +7606,10 @@ func _update_rod_visual_overlay() -> void:
 		is_matching_action = third_person_action_animation == _rod_fish_end_animation
 	elif _active_rod_visual_key == THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION:
 		is_matching_action = third_person_action_animation == _rod_cast_animation
-	if not _has_fishing_rod or not is_matching_action or third_person_action_timer <= 0.0:
+	elif _active_rod_visual_key == THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION:
+		is_matching_action = _is_fishing_idle and third_person_animation_player.current_animation == _rod_idle_animation
+	var needs_action_timer := _active_rod_visual_key != THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION
+	if not _has_fishing_rod_in_hand() or not is_matching_action or (needs_action_timer and third_person_action_timer <= 0.0):
 		_deactivate_rod_visual_overlay()
 		return
 	var visual_animation := _active_rod_visual_player.get_animation(_active_rod_visual_animation)
@@ -7611,12 +7626,66 @@ func _remove_rod_visual_tracks_from_character_animation(animation: Animation) ->
 			animation.remove_track(track_index)
 
 func _load_rod_animations() -> void:
-	if _rod_animations_loaded:
+	if _rod_animations_loaded or _rod_animations_loading:
 		return
 	if third_person_animation_player == null:
 		return
 	var skel := _find_skeleton(third_person_model)
 	if skel == null:
+		return
+	_rod_animations_loading = true
+	# Load synchronously — called only when fishing starts, not when equipping.
+	_load_rod_animations_deferred()
+
+func _preload_rod_pose() -> void:
+	# Pre-cache the fishing rod pose from the fish_start GLB so the rod is
+	# held correctly when equipped, without loading all animation GLBs.
+	if _normal_fishing_rod_pose_ready:
+		return
+	if not ResourceLoader.exists(ROD_FISH_START_GLB):
+		return
+	var loaded = load(ROD_FISH_START_GLB)
+	if not (loaded is PackedScene):
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not (instance is Node3D):
+		return
+	add_child(instance)
+	instance.visible = false
+	var src_anim_player := _find_animation_player(instance)
+	var src_skeleton := _find_skeleton(instance)
+	if src_anim_player != null and src_skeleton != null:
+		var src_lib_names := src_anim_player.get_animation_list()
+		var best_anim: Animation = null
+		var best_source_animation := ""
+		var best_length := 0.0
+		for src_anim_name in src_lib_names:
+			var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+			if candidate == null:
+				continue
+			if candidate.length > best_length:
+				best_length = candidate.length
+				best_anim = candidate
+				best_source_animation = str(src_anim_name)
+		if best_anim != null:
+			_cache_normal_fishing_rod_pose(instance as Node3D, src_anim_player, best_source_animation)
+	# Keep the source rod alive — _normal_fishing_rod_source points to it.
+	# Reparent it to a hidden holder so it survives but isn't rendered.
+	if _normal_fishing_rod_source != null and is_instance_valid(_normal_fishing_rod_source):
+		_normal_fishing_rod_source.visible = false
+	else:
+		instance.queue_free()
+
+func _load_rod_animations_deferred() -> void:
+	if _rod_animations_loaded:
+		_rod_animations_loading = false
+		return
+	if third_person_animation_player == null:
+		_rod_animations_loading = false
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		_rod_animations_loading = false
 		return
 	var rod_lib: AnimationLibrary = AnimationLibrary.new()
 	var rod_anims := {
@@ -7642,14 +7711,28 @@ func _load_rod_animations() -> void:
 					var best_anim: Animation = null
 					var best_source_animation := ""
 					var best_length := 0.0
+					# First pass: prefer animation whose name matches the expected anim_name
+					var anim_name_lower: String = anim_name.to_lower()
 					for src_anim_name in src_lib_names:
 						var candidate: Animation = src_anim_player.get_animation(src_anim_name)
 						if candidate == null:
 							continue
-						if candidate.length > best_length:
-							best_length = candidate.length
+						var src_lower := str(src_anim_name).to_lower()
+						if src_lower.find(anim_name_lower) >= 0 or (src_lower.find("walk") >= 0 and anim_name_lower.find("walk") >= 0):
 							best_anim = candidate
 							best_source_animation = str(src_anim_name)
+							best_length = candidate.length
+							break
+					# Fallback: pick the longest animation
+					if best_anim == null:
+						for src_anim_name in src_lib_names:
+							var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+							if candidate == null:
+								continue
+							if candidate.length > best_length:
+								best_length = candidate.length
+								best_anim = candidate
+								best_source_animation = str(src_anim_name)
 					if best_anim != null:
 						keep_visual_instance = _register_rod_visual_overlay(anim_name, instance as Node3D, src_anim_player, best_source_animation)
 						if anim_name == THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION and not keep_visual_instance:
@@ -7683,6 +7766,7 @@ func _load_rod_animations() -> void:
 		if third_person_animation_player.has_animation("rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION):
 			_rod_fish_end_animation = "rod/" + THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION
 	_rod_animations_loaded = true
+	_rod_animations_loading = false
 
 func _extract_rod_socket_keyframes(anim_player: AnimationPlayer, anim_names: Array) -> Array:
 	var keyframes: Array = []
@@ -7753,6 +7837,13 @@ func _build_third_person_torch() -> void:
 		torch_node.rotation_degrees = Vector3(0.0, 0.0, 90.0)
 		_torch_hand_root.add_child(torch_node)
 
+	if torch_light != null and torch_light.get_node_or_null("FireVisuals") == null:
+		var effects := preload("res://scripts/FireVisuals.gd").new()
+		effects.name = "FireVisuals"
+		effects.small = true
+		effects.flicker = false
+		torch_light.add_child(effects)
+
 	# Torch animations from Mixamo handle the arm pose; no manual bone override needed.
 	if torch_light != null:
 		var has_lit_meta = held != null and held.has_meta("torch_lit")
@@ -7814,7 +7905,7 @@ func _update_torch(delta: float) -> void:
 		var pct: float = held.durability_pct()
 		torch_light.light_energy = 1.0 + 4.0 * clamp(pct, 0.0, 1.0)
 		torch_light.light_color = Color(1.0, 0.6 + 0.3 * clamp(pct, 0.0, 1.0), 0.2 + 0.2 * clamp(pct, 0.0, 1.0))
-		stats.body_temperature = min(37.5, stats.body_temperature + delta * 1.5 * pct)
+		stats.apply_external_heat(delta * 1.5 * pct, 37.5)
 		if wetness > 0.0:
 			wetness = max(0.0, wetness - delta * 0.03 * pct)
 			stats.wetness = wetness
@@ -8098,7 +8189,17 @@ func _remove_scope_overlay() -> void:
 		_scope_overlay.queue_free()
 	_scope_overlay = null
 
+func _initialize_rifle_ammo() -> void:
+	if _rifle_ammo_initialized:
+		return
+	_rifle_ammo_initialized = true
+	_rifle_magazine = RIFLE_MAG_SIZE
+	_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
+
 func _reload_rifle() -> void:
+	var rifle = get_held_item()
+	if is_dead or rifle == null or rifle.item_type != "weapon_rifle":
+		return
 	if _is_reloading:
 		return
 	var needed := RIFLE_MAG_SIZE - _rifle_magazine
@@ -8109,6 +8210,12 @@ func _reload_rifle() -> void:
 		notice.emit("Sin municion de reserva.")
 		return
 	_is_reloading = true
+	var selection_revision := _held_selection_revision
+	notice.emit("Recargando...")
+	await get_tree().create_timer(3.0).timeout
+	_is_reloading = false
+	if is_dead or get_held_item() != rifle or selection_revision != _held_selection_revision:
+		return
 	var to_load: int = min(needed, _rifle_reserve_ammo)
 	_rifle_reserve_ammo -= to_load
 	_rifle_magazine += to_load
@@ -8134,6 +8241,13 @@ func get_wind_info() -> Dictionary:
 	}
 
 func _shoot_rifle() -> void:
+	var held = get_held_item()
+	if is_dead or _is_reloading or camera == null or held == null or held.item_type != "weapon_rifle":
+		return
+	# Capture the sight line before recoil moves the camera.
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + _aim_screen_offset
+	var cam_ray_origin := camera.project_ray_origin(aim_point)
+	var cam_ray_dir := camera.project_ray_normal(aim_point)
 	if _shoot_cooldown > 0.0:
 		return
 	if _rifle_magazine <= 0:
@@ -8186,10 +8300,6 @@ func _shoot_rifle() -> void:
 			third_person_animation_player.play(fire_anim_name, 0.05)
 	notice.emit("Bang!")
 	_play_shoot_sound()
-	var vp := camera.get_viewport()
-	var aim_point := vp.get_visible_rect().size * 0.5 + _aim_screen_offset
-	var cam_ray_origin := camera.project_ray_origin(aim_point)
-	var cam_ray_dir := camera.project_ray_normal(aim_point)
 	var space_state := get_world_3d().direct_space_state
 	# Usar RIDs cacheados para evitar recorrer el árbol en cada disparo
 	if _cached_rids_dirty:
@@ -8207,38 +8317,32 @@ func _shoot_rifle() -> void:
 	cam_query.collide_with_bodies = true
 	var cam_result := space_state.intersect_ray(cam_query)
 	var target_point: Vector3 = cam_ray_origin + cam_ray_dir * RIFLE_RANGE
-	var cam_hit_collider = null
 	if not cam_result.is_empty():
 		target_point = cam_result["position"]
-		cam_hit_collider = cam_result["collider"]
-	# Sync rifle shot with other clients
-	if not is_puppet:
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-		if net_node != null and net_node.is_connected:
-			var my_id: int = net_node.get_my_id()
-			net_node.player_shot_rifle.rpc_id(1, my_id, cam_ray_origin, cam_ray_dir)
-	# If camera ray hit a hitbox directly, use that result for damage (avoids parallax miss)
-	if cam_hit_collider != null and cam_hit_collider is Node3D:
-		var cam_node: Node3D = cam_hit_collider as Node3D
-		if cam_node.name == "BodyHitbox" or cam_node.name == "HeadHitbox":
-			var direct_hit_pos: Vector3 = cam_result["position"]
-			var direct_hit_dist: float = cam_ray_origin.distance_to(direct_hit_pos)
-			_apply_rifle_damage(cam_hit_collider, direct_hit_pos, direct_hit_dist)
-			return
 	# Weapon origin: player position at chest/shoulder height
 	var weapon_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
 	if is_crouching:
 		weapon_origin = global_position + Vector3(0.0, 1.0, 0.0)
 	elif is_prone:
 		weapon_origin = global_position + Vector3(0.0, 0.3, 0.0)
+	if is_instance_valid(_rifle_muzzle):
+		var muzzle_pos := _rifle_muzzle.global_position
+		var barrel_query := PhysicsRayQueryParameters3D.create(weapon_origin, muzzle_pos)
+		barrel_query.exclude = exclude_arr
+		barrel_query.collide_with_areas = true
+		var barrel_hit := space_state.intersect_ray(barrel_query)
+		if not barrel_hit.is_empty():
+			target_point = barrel_hit.position
+		else:
+			weapon_origin = muzzle_pos
 	var ray_dir: Vector3 = (target_point - weapon_origin).normalized()
 	var ray_origin: Vector3 = weapon_origin
 	# Realistic spread: wider when moving, narrower when crouching/aiming
-	var spread_deg := 2.0
+	var spread_deg := 0.6
 	if is_crouching:
-		spread_deg = 0.5
+		spread_deg = 0.25
 	if is_prone:
-		spread_deg = 0.3
+		spread_deg = 0.12
 	if _is_aiming:
 		spread_deg *= 0.3
 	if is_moving:
@@ -8252,127 +8356,22 @@ func _shoot_rifle() -> void:
 		var right := ray_dir.cross(Vector3.UP).normalized()
 		ray_dir = ray_dir.rotated(right, randf_range(-spread_rad, spread_rad))
 		ray_dir = ray_dir.normalized()
-	# Breath sway: small vertical oscillation when aiming and still
-	if _is_aiming and not is_moving:
-		var breath_deg := 0.15 * sin(_breath_timer * 1.2)
-		if is_prone:
-			breath_deg *= 0.3
-		elif is_crouching:
-			breath_deg *= 0.5
-		var right2 := ray_dir.cross(Vector3.UP).normalized()
-		ray_dir = ray_dir.rotated(right2, deg_to_rad(breath_deg))
-		ray_dir = ray_dir.normalized()
-	# Bullet drop: apply gravity over the trajectory
-	var hit_dist := RIFLE_RANGE
-	# First ray to find hit distance
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_dir * RIFLE_RANGE)
-	query.exclude = exclude_arr
-	query.collide_with_areas = true
-	query.collide_with_bodies = true
-	var result := space_state.intersect_ray(query)
-	var hit_pos: Vector3 = ray_origin + ray_dir * RIFLE_RANGE
-	if not result.is_empty():
-		hit_dist = ray_origin.distance_to(result["position"])
-		hit_pos = result["position"]
-	# Apply bullet drop: gravity-based drop over trajectory (realistic for 7.62mm)
-	var bullet_drop := 0.5 * 9.8 * (hit_dist / 180.0) * (hit_dist / 180.0)
-	# Wind deflection: lateral push proportional to distance and wind strength
-	# Stronger effect: 3.5 m/s wind can deflect ~1m at 100m
-	var wind_deflect := _wind_strength * (hit_dist / 100.0) * 1.2
-	var wind_offset := _wind_dir * wind_deflect
-	# Re-cast with adjusted target if distance is significant
-	if hit_dist > 5.0 and (bullet_drop > 0.02 or wind_deflect > 0.02):
-		var adjusted_target := ray_origin + ray_dir * hit_dist + Vector3(0, -bullet_drop, 0) + wind_offset
-		var drop_query := PhysicsRayQueryParameters3D.create(ray_origin, adjusted_target)
-		drop_query.exclude = exclude_arr
-		drop_query.collide_with_areas = true
-		drop_query.collide_with_bodies = true
-		var drop_result := space_state.intersect_ray(drop_query)
-		if not drop_result.is_empty():
-			result = drop_result
-			hit_pos = drop_result["position"]
-			hit_dist = ray_origin.distance_to(hit_pos)
-	# Sync rifle shot with other clients
+	var projectile := preload("res://scripts/RifleProjectile.gd").new()
+	projectile.velocity = ray_dir * 800.0
+	projectile.wind_velocity = _wind_dir * _wind_strength
+	projectile.max_distance = RIFLE_RANGE
+	projectile.excluded = exclude_arr
+	projectile.impact.connect(_apply_rifle_damage)
+	get_tree().current_scene.add_child(projectile)
+	projectile.global_position = ray_origin
 	if not is_puppet:
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		var net_node := get_node_or_null("/root/NetworkManager")
 		if net_node != null and net_node.is_connected:
-			var my_id: int = net_node.get_my_id()
-			net_node.player_shot_rifle.rpc_id(1, my_id, ray_origin, ray_dir)
-	if result.is_empty():
-		# Fallback: check for wildlife along the ray path (Area3D hitboxes may not be detected)
-		var wl := _find_wildlife_along_ray(ray_origin, ray_dir, RIFLE_RANGE)
-		if not wl.is_empty():
-			_apply_rifle_damage(wl["node"], ray_origin + ray_dir * wl["dist"], wl["dist"])
-		return
-	# Check if the raycast hit a wildlife entity by walking up the tree
-	var hit_collider = result["collider"]
-	var hit_is_wildlife := false
-	if hit_collider is Node3D:
-		var walked: Node = hit_collider
-		while walked != null:
-			if walked == self:
-				break
-			if walked.has_method("take_damage") and walked.is_in_group("wildlife"):
-				hit_is_wildlife = true
-				break
-			walked = walked.get_parent()
-	if not hit_is_wildlife:
-		# Fallback: check for wildlife along the full ray path (not just to hit point)
-		# The raycast may hit ground/terrain before reaching a distant animal because
-		# the weapon origin is lower than the camera, but the player is aiming at the animal.
-		var wl := _find_wildlife_along_ray(ray_origin, ray_dir, RIFLE_RANGE)
-		if not wl.is_empty():
-			_apply_rifle_damage(wl["node"], ray_origin + ray_dir * wl["dist"], wl["dist"])
-			return
-	_apply_rifle_damage(hit_collider, hit_pos, hit_dist)
-
-func _find_wildlife_along_ray(ray_origin: Vector3, ray_dir: Vector3, max_dist: float) -> Dictionary:
-	var closest_wildlife: Node = null
-	var closest_along: float = 0.0
-	var closest_perp: float = INF
-	# Use XZ-plane for perpendicular distance check since animals are at ground level (y=0)
-	# but the ray originates from camera height (~1.7m)
-	var ray_origin_xz := Vector2(ray_origin.x, ray_origin.z)
-	var ray_dir_xz := Vector2(ray_dir.x, ray_dir.z).normalized()
-	for w in get_tree().get_nodes_in_group("wildlife"):
-		if w == null or not is_instance_valid(w):
-			continue
-		if w == self:
-			continue
-		if not w.has_method("take_damage"):
-			continue
-		if w.get("_is_dead") == true:
-			continue
-		var w_pos: Vector3 = w.global_position
-		# Project onto XZ plane for along-ray and perpendicular distance
-		var to_w_xz := Vector2(w_pos.x, w_pos.z) - ray_origin_xz
-		var along_xz: float = to_w_xz.dot(ray_dir_xz)
-		if along_xz < 0.0 or along_xz > max_dist:
-			continue
-		var closest_pt_xz := ray_origin_xz + ray_dir_xz * along_xz
-		var perp_xz: float = Vector2(w_pos.x, w_pos.z).distance_to(closest_pt_xz)
-		# 2.0m threshold on XZ plane to account for animal body width
-		if perp_xz < 2.0 and perp_xz < closest_perp:
-			closest_wildlife = w
-			closest_along = along_xz
-			closest_perp = perp_xz
-	if closest_wildlife != null:
-		return {"node": closest_wildlife, "dist": closest_along, "perp": closest_perp}
-	return {}
+			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), ray_origin, ray_dir)
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
-	# Damage: lethal at close range, falloff at long range
-	# Base 200: close-range body shot (200*1.5=300) kills NPC (240hp)
-	var damage := 200.0
-	# Close range bonus: 1.5x within 15m, scaling down to 1.0 at 50m
-	if hit_dist < 15.0:
-		damage *= 1.5
-	elif hit_dist < 50.0:
-		damage *= lerp(1.5, 1.0, (hit_dist - 15.0) / 35.0)
-	# Long range falloff: linear from 50m to 20% at max range
-	if hit_dist > 50.0:
-		var falloff: float = clamp(1.0 - (hit_dist - 50.0) / (RIFLE_RANGE - 50.0), 0.2, 1.0)
-		damage *= falloff
+	# Smooth energy loss; damage remains a game abstraction rather than a medical model.
+	var damage := RIFLE_DAMAGE * exp(-0.0003 * hit_dist)
 	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D
@@ -8408,7 +8407,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
 				walked = walked.get_parent()
 		if target_node != null:
 			if is_headshot:
-				target_node.take_damage(9999.0, false)
+				target_node.take_damage(damage * 3.0, false)
 			else:
 				target_node.take_damage(damage, false)
 			_spawn_blood_splatter(hit_pos)
@@ -8596,7 +8595,7 @@ func _inventory_has_blade() -> bool:
 	if inventory == null:
 		return false
 	for item in inventory.items:
-		if item != null and (item.item_type == "weapon" or item.item_name == "Hacha"):
+		if item != null and item.item_name in ["Cuchillo", "Hacha"] and not item.is_broken():
 			return true
 	return false
 

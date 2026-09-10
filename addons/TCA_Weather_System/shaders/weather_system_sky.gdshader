@@ -46,7 +46,7 @@ uniform vec3 cloud_outer_colour = vec3(0.7,0.72,0.75);
 uniform float cloud_speed = 0.0006;
 uniform float cloud_lighting = 0.7;
 
-uniform bool volumetric_clouds = true;
+uniform bool volumetric_clouds = false;
 uniform float volumetric_clouds_density = 0.3;
 uniform float volcloud_min_steps = 8.0;
 uniform float volcloud_max_steps = 28.0;
@@ -54,6 +54,7 @@ uniform float volcloud_max_steps = 28.0;
 uniform float wind_direction = 0.0;
 uniform float wind_strength = 0.4;
 uniform float rain_intensity = 0.0;
+uniform float lightning_intensity = 0.0;
 uniform float fog_intensity = 0.0;
 uniform vec3 season_tint = vec3(1,1,1);
 uniform float atmosphere_depth = 1.0;
@@ -75,6 +76,34 @@ uniform float sunrise_haze = 0.3;
 uniform float night_sky_brightness = 0.15;
 
 float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+
+float cloud_hash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float cloud_noise_3d(vec3 p) {
+    vec3 cell = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(cloud_hash(cell), cloud_hash(cell + vec3(1,0,0)), f.x),
+            mix(cloud_hash(cell + vec3(0,1,0)), cloud_hash(cell + vec3(1,1,0)), f.x), f.y),
+        mix(mix(cloud_hash(cell + vec3(0,0,1)), cloud_hash(cell + vec3(1,0,1)), f.x),
+            mix(cloud_hash(cell + vec3(0,1,1)), cloud_hash(cell + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+float cloud_fbm(vec3 p) {
+    float value = 0.0;
+    float weight = 0.5;
+    for (int i = 0; i < 5; i++) {
+        value += weight * cloud_noise_3d(p);
+        p = p * 2.03 + vec3(11.3, 7.1, 3.7);
+        weight *= 0.5;
+    }
+    return value;
+}
 
 float star_field(vec2 uv,float time){
     float stars=0.0;
@@ -109,12 +138,14 @@ vec3 atmospheric_scattering(vec3 ray_dir,vec3 sun_dir,float sun_angle_deg){
 
 vec3 volumetric_cloud(vec3 ray_dir,vec3 sun_dir,float time){
     if(!volumetric_clouds)return vec3(0.0);
+    // Only render volumetric clouds high in the sky
+    if(ray_dir.y <= 0.0) return vec3(0.0);
     float density=0.0;
     int steps = int(mix(volcloud_min_steps, volcloud_max_steps, 1.0 - lod_factor));
     for(int i=0;i<int(volcloud_max_steps);i++){
         if(i>=steps)break;
         float t=float(i)/float(steps);
-        vec3 pos=ray_dir*t*40.0;
+        vec3 pos=ray_dir*t*80.0;
         vec3 cloud_pos=pos*0.15+vec3(time*0.04,0.0,time*0.02);
         float noise=sin(cloud_pos.x*0.7)*cos(cloud_pos.z*0.5);
         noise+=sin(cloud_pos.x*2.0)*cos(cloud_pos.z*1.8)*0.5;
@@ -124,7 +155,7 @@ vec3 volumetric_cloud(vec3 ray_dir,vec3 sun_dir,float time){
     density*=volumetric_clouds_density;
     float sun_facing=max(0.0,dot(ray_dir,sun_dir));
     vec3 cloud_color=vec3(0.95,0.92,0.88)*(0.6+0.5*sun_facing);
-    return cloud_color*density;
+    return cloud_color*density*smoothstep(0.02, 0.25, ray_dir.y);
 }
 
 void sky(){
@@ -148,7 +179,7 @@ void sky(){
     
     if(LIGHT0_ENABLED){
         sun_dir=LIGHT0_DIRECTION;
-        sun_angle_deg=degrees(acos(dot(sun_dir,EYEDIR)));
+        sun_angle_deg=degrees(acos(clamp(dot(sun_dir,EYEDIR), -1.0, 1.0)));
         sun_alt = clamp(sun_dir.y * 2.0 + 0.5, 0.0, 1.0);
         has_sun=true;
         
@@ -159,6 +190,11 @@ void sky(){
         if(sun_angle_deg<sun_glow_size){
             float sun_falloff=pow(1.0-sun_angle_deg/sun_glow_size,3.0);
             sky+=LIGHT0_COLOR*LIGHT0_ENERGY*sun_falloff;
+        }
+        // Visible sun disk (dimmed by clouds later via cloud_shadow)
+        if(sun_angle_deg < sun_disk_size){
+            float disk = 1.0 - smoothstep(sun_disk_size * 0.6, sun_disk_size, sun_angle_deg);
+            sky += LIGHT0_COLOR * LIGHT0_ENERGY * disk;
         }
     }
     if(has_sun){
@@ -177,17 +213,18 @@ void sky(){
     ground=mix(ground,ground_bottom_color.rgb,gt1);
     ground*=ground_energy;
     
-    vec2 sky_uv=EYEDIR.xz/max(abs(EYEDIR.y),0.02);
-    float cloud_uv_scale_adj = mix(cloud_uv_scale, cloud_uv_scale * cloud_lod_factor, lod_factor);
-    float cloud_uv_scale2_adj = mix(cloud_uv_scale2, cloud_uv_scale2 * cloud_lod_factor, lod_factor);
-    vec2 cloud_offset = vec2(cos(wind_direction), sin(wind_direction)) * cloud_speed * TIME * wind_strength;
-    float clouds1=texture(cloud_texture,sky_uv*cloud_uv_scale_adj+cloud_offset).r;
-    float clouds2=texture(cloud_texture2,sky_uv*cloud_uv_scale2_adj+cloud_offset*0.7).r;
-    float clouds=clouds1*small_cloud_cover+clouds2*large_cloud_cover;
-    clouds=clamp(clouds,0.0,0.9);
-    
+    // Sample directions on a distant dome. No plane near the camera, no
+    // division by elevation and no repeated texture strips at the horizon.
+    vec3 cloud_offset = vec3(cos(wind_direction), 0.0, sin(wind_direction)) * cloud_speed * TIME * wind_strength;
+    float coverage = clamp((small_cloud_cover + large_cloud_cover) * 0.5, 0.0, 1.0);
+    float cloud_noise = cloud_fbm(EYEDIR * cloud_uv_scale * 3.0 + cloud_offset);
+    float threshold = mix(0.75, 0.24, coverage);
+    float clouds = smoothstep(threshold - 0.08, threshold + 0.12, cloud_noise);
+    clouds *= smoothstep(0.0, 0.15, coverage);
+    clouds *= smoothstep(0.03, 0.32, EYEDIR.y);
+
     float sun_facing=max(0.0,dot(EYEDIR,sun_dir));
-    float cloud_brightness=0.5+0.6*sun_facing*cloud_lighting;
+    float cloud_brightness=0.8+0.3*sun_facing*cloud_lighting;
     cloud_brightness *= mix(0.15, 1.0, day);
     
     // === TCA 1.3 云层阴影遮挡太阳 ===
@@ -197,20 +234,21 @@ void sky(){
     // === TCA 1.3 月亮照亮云层 ===
     cloud_brightness += night * moon_cloud_illumination;
     
-    vec3 cloud_color=mix(cloud_outer_colour,cloud_inner_colour,clouds)*cloud_brightness;
+    vec3 cloud_color=mix(cloud_inner_colour,cloud_outer_colour,smoothstep(0.3, 0.75, cloud_noise))*cloud_brightness;
     
     // === TCA 1.3 雨天云层变灰 ===
-    cloud_color = mix(cloud_color, rain_cloud_tint, rain_intensity * 0.8);
+    cloud_color = mix(cloud_color, rain_cloud_tint * mix(0.04, 1.0, day) * mix(1.15, 0.65, cloud_noise), rain_intensity * 0.8);
     
     sky=mix(sky,cloud_color,clouds);
     sky+=volumetric_cloud(EYEDIR,sun_dir,TIME);
     
     // === TCA 1.3 雨天天空染色 ===
-    sky = mix(sky, rain_sky_tint, rain_intensity * 0.5);
+    sky = mix(sky, rain_sky_tint * mix(0.025, 1.0, day), rain_intensity * 0.3);
     
     // === TCA 1.3 雾深度融合 ===
-    float fog_fall = pow(1.0 - EYEDIR.y, fog_depth_falloff);
-    sky=mix(sky,vec3(0.6,0.65,0.7),fog_intensity * fog_fall);
+    // Disabled: this was causing a gray layer near the horizon
+    // float fog_fall = pow(1.0 - EYEDIR.y, fog_depth_falloff);
+    // sky=mix(sky,vec3(0.6,0.65,0.7),fog_intensity * fog_fall);
     
     sky*=season_tint;
     ground*=season_tint;
@@ -247,13 +285,16 @@ void sky(){
         }
     }
     
-    float horizon_blend=clamp(EYEDIR.y*8.0+0.2,0.0,1.0);
+    // Sky dominates most of the view, ground only when looking down
+    float horizon_blend=clamp(EYEDIR.y*4.0+0.5,0.0,1.0);
     COLOR=mix(ground,sky,horizon_blend);
+    COLOR += vec3(0.75, 0.82, 1.0) * lightning_intensity * 0.4;
     
-    float atmosphere_factor=clamp(1.0-EYEDIR.y,0.0,1.0);
-    float atmosphere_adj = mix(atmosphere_depth, atmosphere_depth * atmosphere_lod_factor, lod_factor);
-    vec3 atmosphere=vec3(0.55,0.65,0.78)*atmosphere_factor*atmosphere_adj*mix(0.05, 1.0, day);
-    COLOR.rgb=mix(COLOR.rgb,atmosphere,atmosphere_factor*0.35);
+    // Disabled atmosphere haze - was causing gray layer
+    // float atmosphere_factor=clamp(1.0-EYEDIR.y,0.0,1.0);
+    // float atmosphere_adj = mix(atmosphere_depth, atmosphere_depth * atmosphere_lod_factor, lod_factor);
+    // vec3 atmosphere=vec3(0.55,0.65,0.78)*atmosphere_factor*atmosphere_adj*mix(0.05, 1.0, day);
+    // COLOR.rgb=mix(COLOR.rgb,atmosphere,atmosphere_factor*0.12);
     
     if(output_reflection)COLOR.rgb=sky;
 }

@@ -54,6 +54,8 @@ var _rain_particles: GPUParticles3D = null
 var _snow_particles: GPUParticles3D = null
 var _rain_process_mat: ParticleProcessMaterial = null
 var _snow_process_mat: ParticleProcessMaterial = null
+var _rain_splash_particles: GPUParticles3D = null
+var _rain_splash_process_mat: ParticleProcessMaterial = null
 var _weather_effect_timer := 0.0
 var _shadow_update_timer := 0.0
 var _streaming_update_timer := 0.0
@@ -77,6 +79,16 @@ var _lit_campfires: Array = []
 var _server_door_states: Dictionary = {}
 var _pending_open_doors: Array = []
 var _pending_restore_data: Array = []
+# Storm lightning state
+const WeatherConditionsScript = preload("res://scripts/WeatherConditions.gd")
+var _weather_visual := {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+var _weather_target := {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+var _lightning_bolt: Node3D = null
+var _lightning_flash := 0.0
+var _lightning_cooldown := 0.0
+var _storm_active := false
+var _storm_notice_sent := false
+var _thunder_timer: Timer = null
 var _pending_dead_wildlife: Array = []
 var _dead_wildlife_names: Dictionary = {} # name -> true, for respawn check
 var _tree_id_counter := 0
@@ -705,10 +717,9 @@ func _send_final_state() -> void:
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
 	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var actual_held = player.get_held_item()
+	if actual_held != null:
+		held = actual_held.item_name
 	var backpack: String = player.equipped_backpack
 	var sleeping: bool = player.is_sleeping
 	var sitting: bool = player.is_sitting
@@ -873,13 +884,7 @@ func _process(delta: float) -> void:
 	# Use real weather temperature when available
 	if hud != null and hud._real_temp_parsed != -999.0:
 		ambient_temp = hud._real_temp_parsed
-	# Houses protect from extreme temperatures
-	if in_house:
-		ambient_temp = clamp(ambient_temp, 12.0, 28.0)
-	# Built shelters protect from extreme temperatures
-	if near_built_shelter:
-		ambient_temp = clamp(ambient_temp, 10.0, 30.0)
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
 	_update_weather_effects(delta)
 	_tick_stat_warnings(delta, player)
 	_apply_campfire_effect(player, delta)
@@ -1019,7 +1024,7 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 		elif dist_sq < 16.0:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
-			player_node.stats.body_temperature = min(38.0, player_node.stats.body_temperature + warmth_factor * 3.0 * delta)
+			player_node.stats.apply_external_heat(warmth_factor * 3.0 * delta, 38.0)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
 			emit_stats = true
 	if emit_stats:
@@ -1040,7 +1045,7 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 		if dist_sq < 4.0:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - dist / 2.0
-			player_node.stats.body_temperature = min(37.5, player_node.stats.body_temperature + warmth_factor * 1.5 * delta)
+			player_node.stats.apply_external_heat(warmth_factor * 1.5 * delta, 37.5)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.02 * delta)
 			emit_stats = true
 	if emit_stats:
@@ -1100,30 +1105,39 @@ func _update_water_night_amount() -> void:
 		_cached_river_water = get_tree().get_nodes_in_group("river_water")
 		_river_water_cache_dirty = false
 	for node in _cached_river_water:
-		if node is RiverWater and is_instance_valid(node) and node.has_method("set_night_amount"):
-			node.set_night_amount(night_amount)
+		if is_instance_valid(node) and node is RiverWater and node.has_method("set_night_amount"):
+			node.set_night_amount(night_amount, day_cycle.weather_darkness)
 
 func _create_weather_particles() -> void:
 	# Rain particles
 	_rain_particles = GPUParticles3D.new()
 	_rain_particles.name = "RainParticles"
-	_rain_particles.amount = 2000
+	_rain_particles.amount = 1500
+	_rain_particles.local_coords = false
+	_rain_particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_rain_particles.lifetime = 1.5
 	_rain_particles.explosiveness = 0.0
 	_rain_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
 	var rain_mat = ParticleProcessMaterial.new()
+	rain_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	rain_mat.emission_box_extents = Vector3(22, 0.5, 22)
 	rain_mat.direction = Vector3(0.05, -1.0, 0.05)
 	rain_mat.spread = 5.0
 	rain_mat.initial_velocity_min = 35.0
 	rain_mat.initial_velocity_max = 45.0
 	rain_mat.gravity = Vector3(0, -5, 0)
 	rain_mat.color = Color(0.6, 0.7, 0.85, 0.4)
-	rain_mat.scale_min = 0.01
-	rain_mat.scale_max = 0.03
+	rain_mat.scale_min = 0.7
+	rain_mat.scale_max = 1.2
 	_rain_process_mat = rain_mat
 	_rain_particles.process_material = rain_mat
 	var rain_mesh = BoxMesh.new()
 	rain_mesh.size = Vector3(0.02, 0.6, 0.02)
+	var rain_surface := StandardMaterial3D.new()
+	rain_surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rain_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rain_surface.vertex_color_use_as_albedo = true
+	rain_mesh.material = rain_surface
 	_rain_particles.draw_pass_1 = rain_mesh
 	_rain_particles.emitting = false
 	_rain_particles.visible = false
@@ -1131,62 +1145,285 @@ func _create_weather_particles() -> void:
 	# Snow particles
 	_snow_particles = GPUParticles3D.new()
 	_snow_particles.name = "SnowParticles"
-	_snow_particles.amount = 1500
+	_snow_particles.amount = 1200
+	_snow_particles.local_coords = false
+	_snow_particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_snow_particles.lifetime = 4.0
 	_snow_particles.explosiveness = 0.0
 	_snow_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
 	var snow_mat = ParticleProcessMaterial.new()
+	snow_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	snow_mat.emission_box_extents = Vector3(22, 0.5, 22)
 	snow_mat.direction = Vector3(0.05, -1.0, 0.05)
 	snow_mat.spread = 20.0
 	snow_mat.initial_velocity_min = 2.0
 	snow_mat.initial_velocity_max = 5.0
 	snow_mat.gravity = Vector3(0, -1.0, 0)
 	snow_mat.color = Color(0.9, 0.92, 0.98, 0.7)
-	snow_mat.scale_min = 0.03
-	snow_mat.scale_max = 0.06
+	snow_mat.scale_min = 0.5
+	snow_mat.scale_max = 1.0
 	_snow_process_mat = snow_mat
 	_snow_particles.process_material = snow_mat
 	var snow_mesh = SphereMesh.new()
 	snow_mesh.radius = 0.05
 	snow_mesh.height = 0.1
+	var snow_surface := StandardMaterial3D.new()
+	snow_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	snow_surface.vertex_color_use_as_albedo = true
+	snow_mesh.material = snow_surface
 	_snow_particles.draw_pass_1 = snow_mesh
 	_snow_particles.emitting = false
 	_snow_particles.visible = false
 	add_child(_snow_particles)
+	# Rain splash particles (bouncing drops on ground/water)
+	_rain_splash_particles = GPUParticles3D.new()
+	_rain_splash_particles.name = "RainSplashParticles"
+	_rain_splash_particles.amount = 1500
+	_rain_splash_particles.local_coords = false
+	_rain_splash_particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_rain_splash_particles.lifetime = 0.5
+	_rain_splash_particles.explosiveness = 0.0
+	_rain_splash_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
+	var splash_mat = ParticleProcessMaterial.new()
+	splash_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	splash_mat.emission_box_extents = Vector3(30, 0.02, 30)
+	splash_mat.direction = Vector3(0, 1.0, 0)
+	splash_mat.spread = 40.0
+	splash_mat.initial_velocity_min = 2.0
+	splash_mat.initial_velocity_max = 4.5
+	splash_mat.gravity = Vector3(0, -12.0, 0)
+	splash_mat.color = Color(0.75, 0.85, 1.0, 0.85)
+	splash_mat.scale_min = 0.15
+	splash_mat.scale_max = 0.35
+	_rain_splash_process_mat = splash_mat
+	_rain_splash_particles.process_material = splash_mat
+	var splash_mesh = SphereMesh.new()
+	splash_mesh.radius = 0.08
+	splash_mesh.height = 0.16
+	var splash_surface := StandardMaterial3D.new()
+	splash_surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	splash_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	splash_surface.vertex_color_use_as_albedo = true
+	splash_surface.no_depth_test = false
+	splash_mesh.material = splash_surface
+	_rain_splash_particles.draw_pass_1 = splash_mesh
+	_rain_splash_particles.emitting = false
+	_rain_splash_particles.visible = false
+	add_child(_rain_splash_particles)
 
 func _update_weather_effects(delta: float) -> void:
 	if hud == null or player == null:
 		return
-	if _rain_particles == null and _snow_particles == null:
+	if _rain_particles == null and _snow_particles == null and _rain_splash_particles == null:
 		return
+	_update_weather_visuals(delta)
+	# Follow every frame; emitted particles stay in world space.
+	if _rain_particles != null:
+		_rain_particles.global_position = player.global_position + Vector3(0, 20, 0)
+	if _snow_particles != null:
+		_snow_particles.global_position = player.global_position + Vector3(0, 8, 0)
+	if _rain_splash_particles != null:
+		_rain_splash_particles.global_position = player.global_position + Vector3(0, 0.05, 0)
+	_lightning_flash = maxf(0.0, _lightning_flash - delta * 4.0)
+	_apply_lightning_flash(_lightning_flash)
+	if _lightning_bolt != null:
+		_lightning_bolt.visible = _lightning_flash > 0.35
+	# Heavy weather logic only every 2s
 	_weather_effect_timer += delta
 	if _weather_effect_timer < 2.0:
 		return
+	var weather_elapsed := _weather_effect_timer
 	_weather_effect_timer = 0.0
-	var rain_amount: float = hud._real_rain
-	var snow_amount: float = hud._real_snow
-	var is_sheltered: bool = player.in_shelter or _cached_in_house
-	# Rain
+	var weather := WeatherConditionsScript.from_observation(hud._real_weather_code, hud._real_rain, hud._real_snow)
+	var rain_amount: float = weather.rain
+	var snow_amount: float = weather.snow
+	var storm: bool = weather.storm
+	_weather_target = weather
+	if _rain_process_mat != null:
+		_rain_process_mat.direction = Vector3(0.35, -1.0, 0.2) if storm else Vector3(0.05, -1.0, 0.05)
+	# Rain audio
+	if audio_system != null and audio_system.has_method("set_rain_volume"):
+		var rain_intensity_norm := clampf(rain_amount / 6.0, 0.0, 1.0)
+		audio_system.set_rain_volume(rain_intensity_norm, storm)
+	var is_sheltered: bool = player.in_shelter or _cached_in_house or _is_near_built_shelter(player.global_position)
+	# Rain (disable completely when no rain for performance)
 	if _rain_particles != null:
 		var rain_active := rain_amount > 0.1 and not is_sheltered
 		_rain_particles.emitting = rain_active
 		_rain_particles.visible = rain_active
 		if rain_active:
-			_rain_particles.global_position = player.global_position + Vector3(0, 30, 0)
-			_rain_particles.amount = int(clamp(rain_amount * 300, 200, 3000))
-	# Snow
+			_rain_particles.amount_ratio = float(int(clamp(rain_amount * 200, 150, 1500))) / 1500.0
+	# Rain splashes (disable completely when no rain)
+	if _rain_splash_particles != null:
+		var splash_active := rain_amount > 0.1 and not is_sheltered
+		_rain_splash_particles.emitting = splash_active
+		_rain_splash_particles.visible = splash_active
+		if splash_active:
+			_rain_splash_particles.amount_ratio = float(int(clamp(rain_amount * 200, 200, 1500))) / 1500.0
+			if _rain_splash_process_mat != null:
+				_rain_splash_process_mat.initial_velocity_min = 3.0 if storm else 2.0
+				_rain_splash_process_mat.initial_velocity_max = 6.0 if storm else 4.5
+				_rain_splash_process_mat.spread = 55.0 if storm else 40.0
+	# Snow (disable completely when no snow)
 	if _snow_particles != null:
 		var snow_active := snow_amount > 0.05 and not is_sheltered
 		_snow_particles.emitting = snow_active
 		_snow_particles.visible = snow_active
 		if snow_active:
-			_snow_particles.global_position = player.global_position + Vector3(0, 30, 0)
-			_snow_particles.amount = int(clamp(snow_amount * 400, 200, 2500))
+			_snow_particles.amount_ratio = float(int(clamp(snow_amount * 200, 150, 1200))) / 1200.0
 	# Wetness from rain
 	if rain_amount > 0.1 and not is_sheltered:
-		var wet_gain: float = delta * 0.04 * clamp(rain_amount * 0.5, 0.1, 1.0)
+		var wet_gain: float = weather_elapsed * 0.20 * clamp(rain_amount * 0.5, 0.1, 1.0)
 		player.wetness = min(1.0, player.wetness + wet_gain)
 		player.stats.wetness = player.wetness
+	# Storm lightning and thunder
+	_storm_active = storm
+	if storm:
+		if not _storm_notice_sent:
+			_storm_notice_sent = true
+			player.notice.emit("Tormenta electrica! Busca refugio.")
+		_lightning_cooldown -= weather_elapsed
+		if _lightning_cooldown <= 0.0:
+			_lightning_flash = 1.0
+			_lightning_cooldown = randf_range(8.0, 20.0)
+			_apply_lightning_flash(1.0)
+			_create_lightning_bolt()
+	else:
+		_storm_notice_sent = false
+	# Extinguish campfires and torches in heavy rain
+	if rain_amount > 1.0:
+		_extinguish_fires_in_rain(weather_elapsed)
+
+func _update_weather_visuals(delta: float) -> void:
+	var blend := 1.0 - exp(-delta / 4.0)
+	for key in _weather_visual:
+		_weather_visual[key] = lerpf(_weather_visual[key], _weather_target[key], blend)
+	if day_cycle == null:
+		return
+	day_cycle.weather_darkness = _weather_visual.darkness
+	day_cycle.weather_cloud_cover = _weather_visual.cloud
+	day_cycle.weather_fog_density = _weather_visual.fog
+	var world: WorldEnvironment = day_cycle.world_environment
+	if world == null or world.environment == null or world.environment.sky == null:
+		return
+	var material := world.environment.sky.sky_material as ShaderMaterial
+	if material == null:
+		return
+	material.set_shader_parameter("rain_intensity", clampf(_weather_visual.rain / 6.0, 0.0, 1.0))
+	material.set_shader_parameter("small_cloud_cover", _weather_visual.cloud)
+	material.set_shader_parameter("large_cloud_cover", _weather_visual.cloud)
+	material.set_shader_parameter("wind_strength", lerpf(0.4, 1.5, _weather_visual.darkness / 0.6))
+
+func _apply_lightning_flash(intensity: float) -> void:
+	if day_cycle != null:
+		day_cycle.lightning_intensity = intensity
+
+func _create_lightning_bolt() -> void:
+	if _lightning_bolt != null:
+		_lightning_bolt.queue_free()
+	_lightning_bolt = Node3D.new()
+	_lightning_bolt.name = "LightningBolt"
+	add_child(_lightning_bolt)
+	var angle := randf() * TAU
+	var distance := randf_range(180.0, 550.0)
+	var base: Vector3 = player.global_position + Vector3(cos(angle), 0, sin(angle)) * distance
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color(2.5, 2.7, 3.0)
+	var previous := base + Vector3(0, 100, 0)
+	for i in range(1, 11):
+		var point := base + Vector3(randf_range(-7, 7), 100 - i * 10, randf_range(-7, 7))
+		var segment := MeshInstance3D.new()
+		var mesh := CylinderMesh.new()
+		mesh.top_radius = 0.18
+		mesh.bottom_radius = 0.28
+		mesh.height = previous.distance_to(point)
+		mesh.radial_segments = 5
+		segment.mesh = mesh
+		segment.material_override = material
+		segment.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_lightning_bolt.add_child(segment)
+		segment.global_position = (previous + point) * 0.5
+		segment.quaternion = Quaternion(Vector3.UP, (previous - point).normalized())
+		previous = point
+	_play_thunder_delayed(distance / 343.0)
+
+func _play_thunder_delayed(delay: float) -> void:
+	if audio_system == null:
+		return
+	# Reuse a single timer instead of creating one each time
+	if _thunder_timer == null:
+		_thunder_timer = Timer.new()
+		_thunder_timer.one_shot = true
+		add_child(_thunder_timer)
+		_thunder_timer.timeout.connect(func():
+			if audio_system != null and audio_system.has_method("play_thunder"):
+				audio_system.play_thunder()
+	)
+	_thunder_timer.stop()
+	_thunder_timer.wait_time = delay
+	_thunder_timer.start()
+
+func _extinguish_fires_in_rain(elapsed: float) -> void:
+	# Randomly extinguish lit campfires and torches when exposed to heavy rain
+	if randf() > elapsed * 0.15:
+		return
+	# Extinguish campfires
+	for i in range(_lit_campfires.size() - 1, -1, -1):
+		var cf = _lit_campfires[i]
+		if not cf is Dictionary:
+			continue
+		var fire_name: String = cf.get("fire_name", "")
+		var cf_pos: Vector3 = cf.get("pos", Vector3.ZERO)
+		# Check if campfire is sheltered (inside a built shelter)
+		var sheltered := false
+		for sh in _built_shelters:
+			if sh is Dictionary:
+				var sh_pos: Vector3 = sh.get("pos", Vector3.ZERO)
+				if sh_pos.distance_to(cf_pos) < 4.0:
+					sheltered = true
+					break
+		if not sheltered and not fire_name.is_empty():
+			_extinguish_fire_by_name(fire_name)
+			if player != null:
+				player.notice.emit("La lluvia ha apagado tu fogata.")
+	# Extinguish player torch
+	if player != null and player.has_method("get_held_item"):
+		var held = player.get_held_item()
+		if held != null and str(held.item_type) == "tool_torch" and held.has_meta("torch_lit") and bool(held.get_meta("torch_lit", false)):
+			if not player.in_shelter and not _cached_in_house:
+				held.set_meta("torch_lit", false)
+				held.set_meta("torch_durability", 0.0)
+				if player.has_method("_clear_torch_attachment"):
+					player._clear_torch_attachment()
+				player.notice.emit("La lluvia ha apagado tu antorcha.")
+
+func _extinguish_fire_by_name(fire_name: String) -> void:
+	# Find and remove the fire visual + its WorldAction
+	for action_id in world_actions_by_id.keys():
+		var action = world_actions_by_id[action_id]
+		if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
+			var visual_name := str(action.get_meta("visual_name", ""))
+			if not visual_name.is_empty():
+				var vis_node := get_node_or_null(visual_name)
+				if vis_node != null:
+					vis_node.queue_free()
+			action.set_meta("lit", false)
+			action.action_type = "light_campfire"
+			action.display_name = "Fogata apagada"
+			action.repeatable = false
+			action.remove_meta("fire_name")
+			break
+	# Remove from campfire positions
+	for i in range(campfire_positions.size() - 1, -1, -1):
+		if campfire_positions[i] is Vector3:
+			campfire_positions.remove_at(i)
+			break
+	# Remove from _lit_campfires
+	for i in range(_lit_campfires.size() - 1, -1, -1):
+		if _lit_campfires[i] is Dictionary and _lit_campfires[i].get("fire_name", "") == fire_name:
+			_lit_campfires.remove_at(i)
+			break
 
 var _cached_omni_lights: Array = []
 var _cached_area_lights: Array = []
@@ -1289,12 +1526,12 @@ func _update_shadow_proximity() -> void:
 		_cached_area_lights = get_tree().get_nodes_in_group("area_lights")
 		_light_cache_dirty = false
 	for light in _cached_omni_lights:
-		if light is OmniLight3D and is_instance_valid(light):
+		if is_instance_valid(light) and light is OmniLight3D:
 			var ol: OmniLight3D = light
 			var dist: float = ppos.distance_to(ol.global_position)
 			ol.shadow_enabled = dist < SHADOW_RADIUS
 	for light in _cached_area_lights:
-		if light is AreaLight3D and is_instance_valid(light):
+		if is_instance_valid(light) and light is AreaLight3D:
 			var al: AreaLight3D = light
 			var dist: float = ppos.distance_to(al.global_position)
 			al.shadow_enabled = dist < SHADOW_RADIUS
@@ -1335,31 +1572,6 @@ func listen_radio() -> void:
 	var message: String = radio.listen()
 	hud.show_notice("Radio: \"%s\"" % message)
 
-func _make_cloud_noise_texture(noise: FastNoiseLite, size: int) -> ImageTexture:
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var data := PackedByteArray()
-	data.resize(size * size * 4)
-	var idx := 0
-	var R := float(size) * 0.5
-	var r := float(size) * 0.2
-	for y in range(size):
-		for x in range(size):
-			var u := float(x) / float(size) * TAU
-			var v := float(y) / float(size) * TAU
-			var px := (R + r * cos(v)) * cos(u)
-			var py := (R + r * cos(v)) * sin(u)
-			var pz := r * sin(v)
-			var n := noise.get_noise_3d(px, py, pz) * 0.5 + 0.5
-			n = clamp(n, 0.0, 1.0)
-			var val := int(n * 255.0)
-			data[idx] = val
-			data[idx + 1] = val
-			data[idx + 2] = val
-			data[idx + 3] = 255
-			idx += 4
-	img.set_data(size, size, false, Image.FORMAT_RGBA8, data)
-	return ImageTexture.create_from_image(img)
-
 func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("sky_top_color", Color(0.34, 0.62, 0.95, 1))
 	sky_material.set_shader_parameter("sky_mid_color", Color(0.55, 0.75, 0.98, 1))
@@ -1370,10 +1582,10 @@ func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("ground_horizon_color", Color(0.38, 0.52, 0.28, 1))
 	sky_material.set_shader_parameter("ground_curve", 0.0627672)
 	sky_material.set_shader_parameter("ground_energy", 1.0)
-	sky_material.set_shader_parameter("cloud_uv_scale", 1.0)
-	sky_material.set_shader_parameter("cloud_uv_scale2", 1.3)
-	sky_material.set_shader_parameter("small_cloud_cover", 0.25)
-	sky_material.set_shader_parameter("large_cloud_cover", 0.15)
+	sky_material.set_shader_parameter("cloud_uv_scale", 1.5)
+	sky_material.set_shader_parameter("cloud_uv_scale2", 2.0)
+	sky_material.set_shader_parameter("small_cloud_cover", 0.1)
+	sky_material.set_shader_parameter("large_cloud_cover", 0.05)
 	sky_material.set_shader_parameter("cloud_inner_colour", Color(1.0, 1.0, 1.0, 1))
 	sky_material.set_shader_parameter("cloud_outer_colour", Color(0.75, 0.75, 0.78, 1))
 	sky_material.set_shader_parameter("wind_direction", 0.0)
@@ -1384,12 +1596,12 @@ func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("moon_enabled", false)
 	sky_material.set_shader_parameter("volumetric_clouds", false)
 	sky_material.set_shader_parameter("day_cycle", 0.5)
-	sky_material.set_shader_parameter("cloud_shadow_strength", 0.4)
+	sky_material.set_shader_parameter("cloud_shadow_strength", 0.7)
 	sky_material.set_shader_parameter("moon_cloud_illumination", 0.25)
 	sky_material.set_shader_parameter("rain_sky_tint", Vector3(0.25, 0.3, 0.4))
 	sky_material.set_shader_parameter("rain_cloud_tint", Vector3(0.4, 0.42, 0.46))
 	sky_material.set_shader_parameter("fog_depth_falloff", 0.4)
-	sky_material.set_shader_parameter("sun_disk_size", 0.3)
+	sky_material.set_shader_parameter("sun_disk_size", 0.15)
 	sky_material.set_shader_parameter("sun_glow_size", 9.0)
 	sky_material.set_shader_parameter("sun_glow_intensity", 0.0)
 	sky_material.set_shader_parameter("rayleigh_scatter", 0.3)
@@ -1397,17 +1609,6 @@ func _setup_tca_sky_params(sky_material: ShaderMaterial) -> void:
 	sky_material.set_shader_parameter("mie_g", 0.5)
 	sky_material.set_shader_parameter("sunrise_haze", 0.05)
 	sky_material.set_shader_parameter("night_sky_brightness", 0.15)
-	var noise1 := FastNoiseLite.new()
-	noise1.frequency = 0.015
-	noise1.fractal_octaves = 4
-	noise1.fractal_weighted_strength = 0.46
-	var tex1 := _make_cloud_noise_texture(noise1, 128)
-	sky_material.set_shader_parameter("cloud_texture", tex1)
-	var noise2 := FastNoiseLite.new()
-	noise2.frequency = 0.006
-	noise2.fractal_octaves = 3
-	var tex2 := _make_cloud_noise_texture(noise2, 128)
-	sky_material.set_shader_parameter("cloud_texture2", tex2)
 
 func _create_environment() -> void:
 	var world := WorldEnvironment.new()
@@ -1420,13 +1621,14 @@ func _create_environment() -> void:
 	sky.sky_material = sky_material
 	environment.sky = sky
 	environment.background_mode = Environment.BG_SKY
-	environment.background_color = Color(0.56, 0.76, 0.96)
+	environment.background_color = Color(0.2, 0.5, 0.9)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.86, 0.90, 0.92)
-	environment.ambient_light_energy = 0.95
+	environment.ambient_light_energy = 0.55
 	environment.fog_enabled = false
 	environment.fog_light_color = Color(0.78, 0.86, 0.90)
-	environment.fog_density = 0.0025
+	environment.fog_density = 0.0
+	environment.fog_sky_affect = 0.0
 	environment.glow_enabled = false
 	world.environment = environment
 	add_child(world)
@@ -1435,10 +1637,10 @@ func _create_environment() -> void:
 	sun.name = "Sun"
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.rotation_degrees = Vector3(-45, -25, 0)
-	sun.shadow_enabled = false
-	sun.directional_shadow_max_distance = 45.0
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 85.0
 	sun.directional_shadow_blend_splits = true
-	sun.shadow_normal_bias = 1.5
+	sun.shadow_normal_bias = 0.8
 	add_child(sun)
 
 	celestial = CelestialSystemScript.new()
@@ -1867,8 +2069,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 						_u = 0.08
 					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
 				player.equip_clothing(slot_name)
-	player.held_index = clampi(held_idx, 0, max(0, player.inventory.items.size() - 1))
-	player._sync_held_item()
+	player.restore_held_item(held_item, held_idx)
 	# Restore sitting/prone/crouching state AFTER equipment so animations are correct
 	if prone and not player.is_prone:
 		player.is_prone = true
@@ -2050,6 +2251,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 		var dist := sender_proxy.global_position.distance_to(animal.global_position)
 		if dist > 5.0:
 			return
+	if animal is BirdController and not animal._landed:
+		return
 	# Mark as gutted
 	animal.set("_gutted", true)
 	var meat_drops: Array = []
@@ -2061,6 +2264,9 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			"deer":
 				meat_name = "Carne cruda de ciervo"
 				meat_qty = 8
+			"bird":
+				meat_name = "Carne cruda"
+				meat_qty = 1
 			"fox":
 				meat_name = "Carne cruda de zorro"
 				meat_qty = 3
@@ -2078,7 +2284,6 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, "wolf_meat_raw")
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
-			_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "weight": 0.3, "qty": 1, "use": 15.0, "pos": [mpos.x, mpos.y, mpos.z], "action_type": "wolf_meat_raw"})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
 		animal._remove_corpse()
@@ -2501,10 +2706,9 @@ func _sync_local_player_state() -> void:
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
 	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var actual_held = player.get_held_item()
+	if actual_held != null:
+		held = actual_held.item_name
 	var backpack: String = player.equipped_backpack
 	var aim_flag := bool(player._is_aiming)
 	var rifle_flag := bool(player._has_rifle_equipped())
@@ -2547,10 +2751,9 @@ func _sync_local_player_inventory() -> void:
 		clothing = ",".join(clothing_items)
 	var backpack: String = player.equipped_backpack
 	var held: String = ""
-	if player.inventory != null and player.inventory.items.size() > 0:
-		var hi: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-		if player.inventory.items[hi] != null:
-			held = player.inventory.items[hi].item_name
+	var actual_held = player.get_held_item()
+	if actual_held != null:
+		held = actual_held.item_name
 	var sleeping: bool = player.is_sleeping
 	var sitting: bool = player.is_sitting
 	var prone: bool = player.is_prone
@@ -2655,6 +2858,8 @@ func _broadcast_animals() -> void:
 		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	var data := {}
 	for node in _cached_wildlife:
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		if not (node is Node3D):
 			continue
 		var animal := node as Node3D
@@ -2672,6 +2877,7 @@ func _broadcast_animals() -> void:
 			"d": bool(animal.get("_is_dead")),
 			"g": bool(animal.get("_gutted")),
 			"h": round(float(hunger_val) * 10.0) / 10.0 if hunger_val != null else 0.0,
+			"landed": animal._landed if animal is BirdController else false,
 			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0
 		}
 	net.animals = data
@@ -2705,6 +2911,7 @@ func _update_puppet_animals() -> void:
 		if not puppet_animals.has(aid):
 			if kind == "bird":
 				var bird_puppet = BirdControllerScript.new()
+				bird_puppet.is_puppet = true
 				bird_puppet.name = "Puppet_" + str(aid)
 				add_child(bird_puppet)
 				bird_puppet.setup([Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), Vector3(d.get("x", 0.0) + 20.0, d.get("y", 0.0), d.get("z", 0.0) + 20.0)])
@@ -2719,8 +2926,7 @@ func _update_puppet_animals() -> void:
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
 			if kind == "bird":
-				p.global_position = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0))
-				p.rotation.y = float(d.get("r", 0.0))
+				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), float(d.get("r", 0.0)), bool(d.get("d", false)), bool(d.get("g", false)), bool(d.get("landed", false)))
 			else:
 				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
 				if p.animal_type == "wolf":
@@ -2895,7 +3101,7 @@ func _net_add_looted_item(item_data: Dictionary) -> void:
 			if inv != null and inv.has_method("add_item"):
 				inv.add_item(item)
 
-func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false) -> void:
+func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -2953,8 +3159,10 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage)
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
+	if spoilage > 0.0:
+		drop_entry["spoilage"] = spoilage
 	if color.a > 0.0:
 		drop_entry["color"] = [color.r, color.g, color.b, color.a]
 	_dropped_items.append(drop_entry)
@@ -2975,7 +3183,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -3004,6 +3212,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
 		elif item_name == "Naranja":
 			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
+		elif item_name == "Pez crudo":
+			_create_visual_fish(visual_name, pos + Vector3(0, 0.06, 0), rot)
 		elif item_name != "Higo":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		_mark_world_action_visual(visual_name)
@@ -3057,7 +3267,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 				_apply_camo_material_recursive(camo_node as Node3D, Color(0.35, 0.30, 0.18))
 			else:
 				_apply_camo_material_recursive(camo_node as Node3D, Color(0.20, 0.25, 0.15))
-	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta"))) else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
 	var action_label := item_name
 	if broken:
 		action_label = item_name + " (rota)"
@@ -3068,8 +3278,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
-	if action_kind == "eat_food":
-		action.set_meta("item_spoilage", 0.0)
+	# Set spoilage for all perishable food items (not just eat_food)
+	if item_type == "food":
+		action.set_meta("item_spoilage", spoilage)
 	if broken:
 		action.set_meta("no_pickup", true)
 	if color.a > 0.0:
@@ -3110,6 +3321,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"food":
 			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
+			if item_name == "Pez crudo" or item_name == "Pez ensartado" or item_name == "Pez cocinado":
+				return ["res://assets/models/props/fish.glb"]
 			if item_name == "Naranja":
 				return ["res://assets/models/props/fruit/apple.glb"]
 			if item_name == "Higo":
@@ -3205,6 +3418,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"food":
 			if item_name == "Carne cruda de lobo":
 				return 1.0
+			if item_name == "Pez crudo":
+				return 0.3
 			if item_name == "Naranja":
 				return 0.005
 			if item_name == "Higo":
@@ -3491,6 +3706,9 @@ func _create_map() -> void:
 	if not is_server:
 		_flush_grass_batches()
 		await get_tree().process_frame
+		for water in get_tree().get_nodes_in_group("river_water"):
+			if water.has_method("request_reflection_refresh"):
+				water.request_reflection_refresh()
 
 
 const ROAD_HALF_WIDTH := 5.0
@@ -5697,7 +5915,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 			(_fb_node as Node3D).queue_free()
 			push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
 			return
-	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta"))) else "pickup_item"
+	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
 	action.set_meta("visual_name", stored_visual_name)
@@ -6122,7 +6340,7 @@ func handle_world_action(action, actor) -> void:
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
 					swap_drop_pos.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color)
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color, false, 0.0)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.inventory.add_item(item)
 					actor.equip_clothing(item.item_name, _eq_color)
@@ -6211,7 +6429,6 @@ func handle_world_action(action, actor) -> void:
 			_play_actor_action(actor, "forage", 0.9)
 			if not actor.inventory.add_item(ItemScript.create("Bayas silvestres", "food", 0.08, 2, 12.0)):
 				return
-			_equip_actor_item(actor, "Bayas silvestres")
 			if randf() < 0.65:
 				actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 2, 0.0))
 			actor.notice.emit("Recolectas bayas silvestres.")
@@ -6223,7 +6440,6 @@ func handle_world_action(action, actor) -> void:
 			_play_actor_action(actor, "collect", 0.8)
 			if not actor.inventory.add_item(ItemScript.create("Tronco", "resource", 1.2, 2, 0.0)):
 				return
-			_equip_actor_item(actor, "Tronco")
 			actor.notice.emit("Recoges troncos para construir.")
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -6233,7 +6449,6 @@ func handle_world_action(action, actor) -> void:
 			_play_actor_action(actor, "collect", 0.8)
 			if not actor.inventory.add_item(ItemScript.create("Piedra", "resource", 0.45, 2, 0.0)):
 				return
-			_equip_actor_item(actor, "Piedra")
 			actor.notice.emit("Recoges piedras utiles.")
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -6343,22 +6558,24 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("La fogata no esta encendida.")
 				return
 			var held_c = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_c == null or held_c.item_name != "Carne ensartada":
-				actor.notice.emit("Necesitas tener carne ensartada en la mano para cocinar.")
+			if held_c == null or (held_c.item_name != "Carne ensartada" and held_c.item_name != "Pez ensartado"):
+				actor.notice.emit("Necesitas tener carne o pez ensartado en la mano para cocinar.")
 				return
-			# Make sure the meat on stick is visible in hand during cooking
+			var is_fish: bool = held_c.item_name == "Pez ensartado"
+			# Make sure the meat/fish on stick is visible in hand during cooking
 			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
 			_play_actor_action(actor, "cook", 10.0)
-			actor.notice.emit("Cocinando carne en la fogata...")
+			actor.notice.emit("Cocinando en la fogata...")
 			if hud != null:
 				hud.show_countdown("Cocinando", 10.0)
 			await get_tree().create_timer(10.0).timeout
 			if _scene_quitting: return
-			# Replace raw meat on stick with cooked meat on stick
+			# Replace raw item on stick with cooked item
 			var cooked := false
+			var raw_name := "Carne ensartada" if not is_fish else "Pez ensartado"
 			for i in range(actor.inventory.items.size()):
-				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Carne ensartada":
+				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == raw_name:
 					actor.inventory.remove_index(i)
 					cooked = true
 					break
@@ -6368,18 +6585,20 @@ func handle_world_action(action, actor) -> void:
 					actor.inventory.remove_index(i)
 					break
 			if cooked:
-				var cooked_item = ItemScript.create("Carne cocinada", "food", 0.4, 1, 35.0)
+				var cooked_name := "Carne cocinada" if not is_fish else "Pez cocinado"
+				var cooked_use := 35.0 if not is_fish else 30.0
+				var cooked_weight := 0.4 if not is_fish else 0.35
+				var cooked_item = ItemScript.create(cooked_name, "food", cooked_weight, 1, cooked_use)
 				if actor.inventory.add_item(cooked_item):
 					if actor.stats.has_method("add_hot_food"):
 						actor.stats.add_hot_food(2)
 					actor.inventory.changed.emit()
-					_equip_actor_item(actor, "Carne cocinada")
 					if actor.has_method("_sync_held_item"):
 						actor._sync_held_item()
-					actor.notice.emit("Has cocinado carne. Segura para comer. Caliente!")
+					actor.notice.emit("Has cocinado %s. Seguro para comer. Caliente!" % ("el pez" if is_fish else "la carne"))
 				else:
 					actor.inventory.changed.emit()
-					actor.notice.emit("No tienes espacio para la carne cocinada.")
+					actor.notice.emit("No tienes espacio para %s cocinado." % ("el pez" if is_fish else "la carne"))
 		"hunt":
 			_play_actor_action(actor, "interact", 1.0)
 			if hud != null:
@@ -6388,7 +6607,6 @@ func handle_world_action(action, actor) -> void:
 			if _scene_quitting: return
 			if randf() < 0.48:
 				if actor.inventory.add_item(ItemScript.create("Carne cruda", "food", 0.75, 1, 30.0)):
-					_equip_actor_item(actor, "Carne cruda")
 					actor.notice.emit("Sigues el rastro y consigues carne.")
 			else:
 				actor.notice.emit("El animal escapa entre la maleza.")
@@ -6447,7 +6665,6 @@ func handle_world_action(action, actor) -> void:
 			var new_item = ItemScript.create(fruit_name, fruit_type, fruit_weight, fruit_qty, fruit_use)
 			var added_ok: bool = actor.inventory.add_item(new_item)
 			if added_ok:
-				_equip_actor_item(actor, fruit_name)
 				actor.notice.emit("Recoges %d %ss." % [fruit_qty, fruit_name.to_lower()])
 			else:
 				var w: float = actor.inventory.get_total_weight()
@@ -6707,7 +6924,6 @@ func _do_fishing_action(actor, held_item, duration := 2.0) -> void:
 	if _scene_quitting: return
 	if randf() < fish_chance:
 		if actor.inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0)):
-			_equip_actor_item(actor, "Pez crudo")
 			actor.notice.emit("Pescas un pez pequeno.")
 	else:
 		actor.notice.emit("No pica nada.")
@@ -6723,27 +6939,10 @@ func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 		if node.has_method("attract_to_noise"):
 			node.attract_to_noise(pos, radius)
 
-const _TOOL_WEAPON_TYPES := ["weapon", "tool_axe", "tool_fishing", "tool_hammer", "tool_hoe", "tool_matches", "tool_pickaxe", "tool_shovel", "tool_spear", "tool_torch", "axe_tool", "matches_tool"]
-
-func _equip_actor_item(actor, item_name: String) -> void:
-	if actor == null or not actor.has_method("equip_item_by_name"):
-		return
-	# Don't rip a tool/weapon out of the player's hand just because they
-	# picked up a resource (berries, wood, stone, etc.) — only auto-equip
-	# the new pickup if the actor isn't actively holding something important.
-	if actor.has_method("get_held_item"):
-		var current_held = actor.get_held_item()
-		if current_held != null and str(current_held.item_name) != item_name and _TOOL_WEAPON_TYPES.has(str(current_held.item_type)):
-			return
-	actor.equip_item_by_name(item_name)
-
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
 	if not actor.inventory.add_item(item):
 		return
-	# Don't auto-equip clothing from ground pickups — just add to inventory
-	if str(item.item_type) != "clothing":
-		_equip_actor_item(actor, item.item_name)
 	if actor.has_method("refresh_carry_capacity"):
 		actor.refresh_carry_capacity()
 	actor.notice.emit(message)
@@ -6939,7 +7138,6 @@ func _handle_farm_plot(action, actor) -> void:
 			if _scene_quitting: return
 			if not actor.inventory.add_item(ItemScript.create("Verduras", "food", 0.22, 3, 16.0)):
 				return
-			_equip_actor_item(actor, "Verduras")
 			if randf() < 0.55:
 				actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 1, 0.0))
 			action.set_crop_state("empty", 0.0)
@@ -8657,67 +8855,11 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	light.shadow_enabled = false
 	light.add_to_group("omni_lights")
 	add_child(light)
-	var particles := CPUParticles3D.new()
-	particles.name = node_name + "Particles"
-	particles.position = pos
-	particles.amount = 60
-	particles.lifetime = 0.6
-	particles.explosiveness = 0.4
-	particles.randomness = 0.6
-	particles.direction = Vector3(0, 1, 0)
-	particles.spread = 8.0
-	particles.initial_velocity_min = 1.0
-	particles.initial_velocity_max = 2.5
-	particles.gravity = Vector3(0, 1.0, 0)
-	particles.scale_amount_min = 0.15
-	particles.scale_amount_max = 0.4
-	particles.color = Color(1.0, 0.6, 0.15, 1.0)
-	particles.color_ramp = MaterialFactory.make_fire_gradient()
-	# Billboard plane with radial gradient flame texture
-	var quad := PlaneMesh.new()
-	quad.size = Vector2(0.3, 0.3)
-	quad.orientation = PlaneMesh.FACE_Y
-	var fire_mat := StandardMaterial3D.new()
-	fire_mat.albedo_color = Color(1.0, 0.5, 0.1, 1.0)
-	fire_mat.emission_enabled = true
-	fire_mat.emission = Color(1.0, 0.55, 0.12)
-	fire_mat.emission_energy_multiplier = 4.0
-	fire_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	fire_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fire_mat.no_depth_test = true
-	fire_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	fire_mat.billboard_keep_scale = true
-	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	quad.material = fire_mat
-	add_child(particles)
-	# Smoke particles
-	var smoke := CPUParticles3D.new()
-	smoke.name = node_name + "Smoke"
-	smoke.position = pos + Vector3(0, 0.5, 0)
-	smoke.amount = 20
-	smoke.lifetime = 3.0
-	smoke.explosiveness = 0.2
-	smoke.randomness = 0.5
-	smoke.direction = Vector3(0, 1, 0)
-	smoke.spread = 15.0
-	smoke.initial_velocity_min = 0.5
-	smoke.initial_velocity_max = 1.5
-	smoke.gravity = Vector3(0, 0.3, 0)
-	smoke.scale_amount_min = 0.3
-	smoke.scale_amount_max = 1.0
-	smoke.color = Color(0.3, 0.3, 0.3, 0.4)
-	var smoke_quad := PlaneMesh.new()
-	smoke_quad.size = Vector2(0.5, 0.5)
-	smoke_quad.orientation = PlaneMesh.FACE_Y
-	var smoke_tex_mat := StandardMaterial3D.new()
-	smoke_tex_mat.albedo_color = Color(0.3, 0.3, 0.3, 0.4)
-	smoke_tex_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	smoke_tex_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	smoke_tex_mat.no_depth_test = true
-	smoke_tex_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	smoke_tex_mat.billboard_keep_scale = true
-	smoke_quad.material = smoke_tex_mat
-	add_child(smoke)
+	_light_cache_dirty = true
+	var effects := preload("res://scripts/FireVisuals.gd").new()
+	effects.name = "FireVisuals"
+	effects.small = false
+	light.add_child(effects)
 
 func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit: bool = false) -> void:
 	var visual_name := "PlacedTorch_" + torch_id
@@ -8767,41 +8909,12 @@ func _create_torch_fire(node_name: String, pos: Vector3, durability: float) -> v
 	light.shadow_enabled = false
 	light.add_to_group("omni_lights")
 	add_child(light)
-	var particles := CPUParticles3D.new()
-	particles.name = node_name + "Particles"
-	particles.position = pos
-	particles.amount = 15
-	particles.lifetime = 0.4
-	particles.explosiveness = 0.4
-	particles.randomness = 0.6
-	particles.direction = Vector3(0, 1, 0)
-	particles.spread = 6.0
-	particles.initial_velocity_min = 0.5
-	particles.initial_velocity_max = 1.2
-	particles.gravity = Vector3(0, 1.0, 0)
-	particles.scale_amount_min = 0.08
-	particles.scale_amount_max = 0.2
-	particles.color = Color(1.0, 0.6, 0.15, 1.0)
-	particles.color_ramp = MaterialFactory.make_fire_gradient()
-	var quad := PlaneMesh.new()
-	quad.size = Vector2(0.15, 0.15)
-	quad.orientation = PlaneMesh.FACE_Y
-	var fire_mat := StandardMaterial3D.new()
-	fire_mat.albedo_color = Color(1.0, 0.5, 0.1, 1.0)
-	fire_mat.emission_enabled = true
-	fire_mat.emission = Color(1.0, 0.55, 0.12)
-	fire_mat.emission_energy_multiplier = 4.0
-	fire_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	fire_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fire_mat.no_depth_test = true
-	fire_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	fire_mat.billboard_keep_scale = true
-	fire_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	quad.material = fire_mat
-	add_child(particles)
+	_light_cache_dirty = true
+	var effects := preload("res://scripts/FireVisuals.gd").new()
+	effects.name = "FireVisuals"
+	effects.small = true
+	light.add_child(effects)
 
-
-# Interior de casas: pendiente de implementar (placeholder para futura expansión)
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
 	return
 
@@ -10598,6 +10711,7 @@ func _flush_grass_batches() -> void:
 					batch_radius = d
 			var mm_instance := MultiMeshInstance3D.new()
 			mm_instance.name = "GrassBatch_%d_%d" % [variant, b]
+			mm_instance.layers = 1 << 18
 			mm_instance.multimesh = multimesh
 			mm_instance.material_override = grass_batch_material
 			mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -10649,6 +10763,7 @@ func _flush_grass_batches() -> void:
 						batch_radius = d
 				var mm_instance := MultiMeshInstance3D.new()
 				mm_instance.name = "TallGrassBatch_%d_%d" % [variant, b]
+				mm_instance.layers = 1 << 18
 				mm_instance.multimesh = multimesh
 				mm_instance.material_override = _tall_grass_material
 				mm_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -11120,6 +11235,51 @@ func _create_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3
 	mesh_instance.visibility_range_end = 80.0
 	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
+
+func _create_visual_fish(node_name: String, pos: Vector3, rot: Vector3) -> void:
+	var root := Node3D.new()
+	root.name = node_name
+	root.position = pos
+	root.rotation_degrees = rot
+	root.scale = Vector3.ONE * 1.5
+	# Body: elongated sphere
+	var body := MeshInstance3D.new()
+	body.name = "FishBody"
+	var body_mesh := SphereMesh.new()
+	body_mesh.radius = 0.12
+	body_mesh.height = 0.40
+	body_mesh.radial_segments = 10
+	body_mesh.rings = 6
+	body.mesh = body_mesh
+	body.material_override = MaterialFactory.make_material(Color(0.45, 0.55, 0.35), true)
+	body.visibility_range_end = 120.0
+	body.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	root.add_child(body)
+	# Tail: flat prism
+	var tail := MeshInstance3D.new()
+	tail.name = "FishTail"
+	var tail_mesh := PrismMesh.new()
+	tail_mesh.size = Vector3(0.14, 0.12, 0.04)
+	tail.mesh = tail_mesh
+	tail.position = Vector3(0, 0, -0.22)
+	tail.rotation_degrees = Vector3(0, 0, 90)
+	tail.material_override = MaterialFactory.make_material(Color(0.35, 0.45, 0.28), true)
+	tail.visibility_range_end = 120.0
+	tail.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	root.add_child(tail)
+	# Eye: small sphere
+	var eye := MeshInstance3D.new()
+	eye.name = "FishEye"
+	var eye_mesh := SphereMesh.new()
+	eye_mesh.radius = 0.02
+	eye_mesh.height = 0.04
+	eye.mesh = eye_mesh
+	eye.position = Vector3(0.05, 0.04, 0.16)
+	eye.material_override = MaterialFactory.make_material(Color(0.0, 0.0, 0.0), true)
+	eye.visibility_range_end = 120.0
+	eye.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	root.add_child(eye)
+	add_child(root)
 
 func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value: Vector3, texture_path: String, fallback_color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()

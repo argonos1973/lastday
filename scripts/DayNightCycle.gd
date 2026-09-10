@@ -9,6 +9,10 @@ signal night_started
 var time_of_day := 12.0
 var last_was_night := false
 var sun: DirectionalLight3D
+var weather_darkness := 0.0
+var weather_cloud_cover := 0.0
+var weather_fog_density := 0.0
+var lightning_intensity := 0.0
 var world_environment: WorldEnvironment
 var star_field: Node3D
 var moon_field: Node3D
@@ -81,30 +85,34 @@ func _update_lighting() -> void:
 	var day_amount: float = get_day_amount()
 	var night_amount: float = 1.0 - day_amount
 	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
-	sun.light_energy = lerp(0.0, 1.5, day_amount)
+	sun.light_color = Color(1.0, 0.68, 0.42).lerp(Color(1.0, 0.96, 0.90), smoothstep(0.1, 0.85, day_amount))
+	sun.light_energy = lerp(0.0, 1.5, day_amount) * (1.0 - weather_darkness)
 	sun.shadow_enabled = day_amount > 0.05
 	if star_field != null:
-		star_field.visible = night_amount > 0.85
+		star_field.visible = night_amount > 0.85 and weather_cloud_cover < 0.65
 	if moon_field != null:
-		moon_field.visible = night_amount > 0.75
+		moon_field.visible = night_amount > 0.75 and weather_cloud_cover < 0.85
 	# Moon illumination factor: if moon is up, provide a little light
 	var moon_illum := 0.0
 	if moon_field != null and moon_field.visible:
-		moon_illum = 0.12
+		moon_illum = 0.08
 	if world_environment != null and world_environment.environment != null:
 		var night_bg := Color(0.001, 0.001, 0.002)
 		world_environment.environment.background_color = night_bg.lerp(Color(0.56, 0.76, 0.96), day_amount)
-		var night_ambient := Color(0.01, 0.012, 0.018)
+		var night_ambient := Color(0.18, 0.23, 0.32)
 		world_environment.environment.ambient_light_color = night_ambient.lerp(Color(0.86, 0.90, 0.92), day_amount)
-		world_environment.environment.ambient_light_energy = lerp(0.005 + moon_illum, 0.95, day_amount)
+		world_environment.environment.ambient_light_energy = lerp(0.16 + moon_illum, 0.55, day_amount) * (1.0 - weather_darkness * 0.6) + lightning_intensity * 1.0
 		var night_fog := Color(0.002, 0.003, 0.004)
 		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74), day_amount)
-		world_environment.environment.fog_density = lerp(0.004, 0.0008, day_amount)
+		world_environment.environment.fog_density = weather_fog_density
+		world_environment.environment.fog_enabled = weather_fog_density > 0.00005
+		world_environment.environment.volumetric_fog_enabled = false
 		var sky := world_environment.environment.sky
 		if sky != null and sky.sky_material is ShaderMaterial:
 			var sm := sky.sky_material as ShaderMaterial
 			var day_norm := day_amount
 			sm.set_shader_parameter("day_cycle", day_norm)
+			sm.set_shader_parameter("lightning_intensity", lightning_intensity)
 			var sun_dir := sun.global_transform.basis.z.normalized()
 			sm.set_shader_parameter("sun_direction", sun_dir)
 			sm.set_shader_parameter("sun_intensity", day_amount)

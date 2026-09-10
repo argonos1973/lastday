@@ -171,6 +171,8 @@ func get_interaction_text(_player = null) -> String:
 				var held = _player.get_held_item()
 				if held != null and held.item_name == "Carne ensartada":
 					return "Cocinar carne ensartada - [E]"
+				if held != null and held.item_name == "Pez ensartado":
+					return "Cocinar pez ensartado - [E]"
 			return ""
 		"shelter":
 			return "Desmontar refugio - [E] (recuperar 11 palos)"

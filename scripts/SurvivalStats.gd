@@ -48,9 +48,11 @@ func consume_water(value: float) -> void:
 	thirst = min(max_stat, thirst + value)
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false, on_bed := false) -> void:
-	if dead:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false, on_bed := false, sun_exposure := 1.0, wind_speed := 0.0) -> void:
+	if dead or delta <= 0.0:
 		return
+	if not is_finite(ambient_temperature):
+		ambient_temperature = 20.0
 	survival_seconds += delta
 	var sleep_factor := 0.3 if sleeping else 1.0
 	var sprint_multiplier := 3.0 if sprinting else 1.0
@@ -96,12 +98,16 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
 	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
-		var heat_retention: float = 1.0 + heat_retention_bonus
+		var heat_retention: float = clampf(1.0 + heat_retention_bonus, 0.3, 2.5)
 		var heat_reduction: float = 1.0 - clamp(heat_protection_bonus, 0.0, 0.8)
-		target_temperature += (ambient_temperature - 28.0) * 0.08 * heat_retention * heat_reduction
-	# Wet clothes significantly lower body temperature until dry
+		target_temperature += (ambient_temperature - 28.0) * 0.18 * heat_retention * heat_reduction
+	# Gameplay cooling curve: wet clothing loses more heat in cooler air.
 	if wetness > 0.05:
-		target_temperature -= wetness * 2.5 * (1.0 - protection * 0.3)
+		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.17, 0.0, 5.0)
+		target_temperature -= wetness * wet_cooling * (1.0 - protection * 0.3)
+	# Wind increases heat loss in cool air, especially with wet clothing.
+	if not sheltered and ambient_temperature < 18.0:
+		target_temperature -= minf(maxf(wind_speed, 0.0), 20.0) * 0.05 * (1.0 + wetness) / (1.0 + protection)
 	# Physical activity raises body temperature
 	if not sleeping:
 		if moving:
@@ -112,17 +118,24 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			target_temperature += 0.5
 	# Sun exposure during daytime raises body temperature when not sheltered
 	if not night and not sheltered:
-		target_temperature += 0.6
+		target_temperature += 0.6 * clampf(sun_exposure, 0.0, 1.0)
 
 	if sheltered:
-		target_temperature = clamp(target_temperature, 35.5, 37.0)
+		# Under a roof: warm up gradually towards comfortable temperature
+		# Shelter moderates exchange without making outdoor extremes harmless.
+		if target_temperature < 36.6:
+			target_temperature = lerp(target_temperature, 36.6, 0.5)
+		else:
+			target_temperature = lerp(target_temperature, 36.6, 0.2)
+		# Dry off faster when sheltered (no rain)
+		wetness = maxf(0.0, wetness - delta * 0.05)
 	# Hot food bonus: increases body temp, decays over time
 	if hot_food_charges > 0:
 		target_temperature += hot_food_temp_bonus
 		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
-	body_temperature = lerp(body_temperature, target_temperature, delta * 0.03)
+	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.03))
 
 	if hunger <= 0.0:
 		health = max(0.0, health - 2.0 * delta)
@@ -160,11 +173,37 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		dead = true
 		died.emit()
 
+func apply_external_heat(amount: float, target_limit: float) -> void:
+	if dead or amount <= 0.0 or body_temperature >= target_limit:
+		return
+	body_temperature = minf(target_limit, body_temperature + amount)
+
+# Gameplay severity, shared by locomotion and the HUD.
+func get_thermal_stress() -> float:
+	return clampf(maxf((36.0 - body_temperature) / 2.0, (body_temperature - 37.3) / 2.0), 0.0, 1.0)
+
+func get_thermal_speed_multiplier() -> float:
+	return lerpf(1.0, 0.6, get_thermal_stress())
+
+func get_thermal_recovery_multiplier() -> float:
+	return lerpf(1.0, 0.2, get_thermal_stress())
+
+func get_thermal_state() -> String:
+	if body_temperature < 34.5:
+		return "Frío extremo"
+	if body_temperature < 36.0:
+		return "Frío"
+	if body_temperature > 39.0:
+		return "Calor extremo"
+	if body_temperature > 37.3:
+		return "Calor"
+	return "Confortable"
+
 func rest(hours: float) -> void:
 	if dead:
 		return
 	energy = min(max_stat, energy + 16.0 * hours)
-	body_temperature = min(36.6, body_temperature + 0.4 * hours)
+	body_temperature = move_toward(body_temperature, 36.6, maxf(hours, 0.0) * 0.4)
 	hunger = max(0.0, hunger - 3.0 * hours)
 	thirst = max(0.0, thirst - 5.0 * hours)
 	changed.emit()

@@ -87,12 +87,12 @@ func _process(delta: float) -> void:
 	_update_stats()
 	_update_real_clock()
 	_weather_timer += delta
-	if _weather_timer >= 300.0:
+	if _weather_timer >= 60.0:
 		_weather_timer = 0.0
 		_fetch_weather()
 	if _weather_retry_timer > 0.0:
 		_weather_retry_timer -= delta
-		if _weather_retry_timer <= 0.0 and _real_temp_parsed == -999.0:
+		if _weather_retry_timer <= 0.0:
 			_fetch_weather()
 			_weather_retry_timer = 15.0
 	_update_damage_overlay(delta)
@@ -121,6 +121,10 @@ func show_countdown(text: String, duration: float) -> void:
 	countdown_timer = duration
 	countdown_label.visible = true
 	countdown_label.text = "%s... %ds" % [text, ceili(duration)]
+
+func hide_countdown() -> void:
+	countdown_timer = 0.0
+	countdown_label.visible = false
 
 func toggle_inventory() -> void:
 	_close_context_menu()
@@ -177,7 +181,7 @@ func _build_real_clock_panel() -> void:
 	panel.offset_left = 18
 	panel.offset_top = 18
 	panel.offset_right = 250
-	panel.offset_bottom = 108
+	panel.offset_bottom = 132
 	panel.anchor_left = 0.0
 	panel.anchor_top = 0.0
 	panel.anchor_right = 0.0
@@ -226,44 +230,47 @@ func _fetch_weather() -> void:
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
+		_weather_retry_timer = 15.0
 
-func _on_weather_received(result: int, _response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+func _on_weather_received(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_weather_loading = false
-	if result == HTTPRequest.RESULT_SUCCESS:
-		var text := body.get_string_from_utf8().strip_edges()
-		var json = JSON.new()
-		if json.parse(text) == OK:
-			var data: Dictionary = json.data
-			if data.has("current"):
-				var current: Dictionary = data["current"]
-				if current.has("temperature_2m"):
-					var temp: float = float(current["temperature_2m"])
-					_real_temp = "%.0f°C" % temp
-					_real_temp_parsed = temp
-				if current.has("weather_code"):
-					_real_weather_code = int(current["weather_code"])
-					_real_weather_desc = _weather_code_to_desc(_real_weather_code)
-				if current.has("rain"):
-					_real_rain = float(current["rain"])
-				if current.has("snowfall"):
-					_real_snow = float(current["snowfall"])
+	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+		var data = JSON.parse_string(body.get_string_from_utf8())
+		if data is Dictionary and data.get("current") is Dictionary:
+			var current: Dictionary = data.current
+			var valid := true
+			for key in ["temperature_2m", "weather_code", "rain", "snowfall"]:
+				var value = current.get(key)
+				if not (value is float or value is int):
+					valid = false
+				elif not is_finite(float(value)):
+					valid = false
+			if valid:
+				_real_temp_parsed = float(current.temperature_2m)
+				_real_temp = "%.0f°C" % _real_temp_parsed
+				_real_weather_code = int(current.weather_code)
+				_real_weather_desc = _weather_code_to_desc(_real_weather_code)
+				_real_rain = maxf(float(current.rain), 0.0)
+				_real_snow = maxf(float(current.snowfall), 0.0)
+				_weather_retry_timer = 0.0
 				return
-		_real_temp = "N/A"
-		_weather_retry_timer = 15.0
-	else:
-		_real_temp = "N/A"
-		_weather_retry_timer = 15.0
+	# Keep the last complete observation when the service temporarily fails.
+	if _real_temp_parsed == -999.0:
+		_real_temp = "Sin datos"
+	_weather_retry_timer = 15.0
 
 func _weather_code_to_desc(code: int) -> String:
 	if code == 0: return "Despejado"
-	if code <= 3: return "Parcialmente nublado"
+	if code == 1: return "Mayormente despejado"
+	if code == 2: return "Parcialmente nublado"
+	if code == 3: return "Cubierto"
 	if code in [45, 48]: return "Niebla"
 	if code in [51, 53, 55]: return "Llovizna"
 	if code in [56, 57]: return "Llovizna helada"
 	if code in [61, 63, 65]: return "Lluvia"
 	if code in [66, 67]: return "Lluvia helada"
 	if code in [71, 73, 75]: return "Nieve"
-	if code == 77: return "Granizo"
+	if code == 77: return "Nieve granulada"
 	if code in [80, 81, 82]: return "Aguaceros"
 	if code in [85, 86]: return "Aguaceros de nieve"
 	if code == 95: return "Tormenta"
@@ -283,10 +290,9 @@ func _update_real_clock() -> void:
 		var secs: int = total_seconds % 60
 		survival_label.text = "Supervivencia: %02d:%02d:%02d" % [hrs, mins, secs]
 	if temp_label != null:
-		if _real_weather_desc != "":
-			temp_label.text = "Temp: %s | %s" % [_real_temp, _real_weather_desc]
-		else:
-			temp_label.text = "Temp: %s" % _real_temp
+		var ambient: float = _real_temp_parsed if _real_temp_parsed != -999.0 else day_cycle.get_ambient_temperature()
+		var weather_text := " | " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
+		temp_label.text = "Ambiente: %.0f°C%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -964,15 +970,19 @@ func _create_inventory_slot(index: int, item) -> void:
 	if item != null:
 		var model_paths: Array = []
 		var model_scale: float = 1.0
+		var frame_zoom: float = 1.0
 		if main_node != null and main_node.has_method("_get_drop_model_paths"):
 			model_paths = main_node._get_drop_model_paths(item.item_name, item.item_type)
 			model_scale = main_node._get_drop_scale(item.item_name, item.item_type)
+		# Fishing rod is long and thin — zoom in so it fills the thumbnail
+		if str(item.item_type) == "tool_fishing":
+			frame_zoom = 0.35
 		if not model_paths.is_empty():
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumbnail.add_child(thumb3d)
-			thumb3d.set_model(model_paths, model_scale)
+			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom)
 		else:
 			var thumb_icon := HudIconScript.new()
 			thumb_icon.custom_minimum_size = Vector2(36, 30)
@@ -1499,7 +1509,6 @@ func _on_eat_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = real_idx
 	var item = player.inventory.items[real_idx]
 	if str(item.item_type) != "food":
 		return
@@ -1518,8 +1527,7 @@ func _on_light_torch_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = real_idx
-	player._sync_held_item()
+	player._select_held_item(real_idx)
 	_close_context_menu()
 	if inventory_visible:
 		toggle_inventory()
@@ -1530,7 +1538,6 @@ func _on_use_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = real_idx
 	var item = player.inventory.items[real_idx]
 	var item_type := str(item.item_type)
 	var item_name := str(item.item_name)
@@ -1541,11 +1548,11 @@ func _on_use_pressed() -> void:
 			if to_hand and item_type == "food":
 				player._use_inventory_index(real_idx)
 			elif to_hand:
-				player._sync_held_item()
+				player._select_held_item(real_idx)
 			else:
 				player._use_inventory_index(real_idx)
 		_:
-			player._sync_held_item()
+			player._select_held_item(real_idx)
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:
@@ -1568,8 +1575,7 @@ func _on_drink_pressed() -> void:
 	var item = player.inventory.items[real_idx]
 	if str(item.item_type) != "water":
 		return
-	player.held_index = real_idx
-	player._sync_held_item()
+	player._select_held_item(real_idx)
 	player._drink_held_item()
 	selected_slot_index = -1
 	_close_context_menu()
@@ -1580,7 +1586,6 @@ func _on_store_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	player.held_index = real_idx
 	if player.has_method("_store_held_item"):
 		player._store_held_item()
 	selected_slot_index = -1

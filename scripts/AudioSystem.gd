@@ -60,6 +60,8 @@ var _run_active := false
 var ambient_day_player: AudioStreamPlayer
 var ambient_night_player: AudioStreamPlayer
 var wind_player: AudioStreamPlayer
+var rain_player: AudioStreamPlayer
+var thunder_player: AudioStreamPlayer
 var river_player: AudioStreamPlayer3D
 var footstep_player: AudioStreamPlayer3D
 var action_player: AudioStreamPlayer3D
@@ -113,6 +115,16 @@ func _create_players() -> void:
 	wind_player.name = "WindLoop"
 	wind_player.volume_db = -8.0
 	add_child(wind_player)
+
+	rain_player = AudioStreamPlayer.new()
+	rain_player.name = "RainLoop"
+	rain_player.volume_db = -80.0
+	add_child(rain_player)
+
+	thunder_player = AudioStreamPlayer.new()
+	thunder_player.name = "Thunder"
+	thunder_player.volume_db = -6.0
+	add_child(thunder_player)
 
 	river_player = AudioStreamPlayer3D.new()
 	river_player.name = "RiverWater"
@@ -246,6 +258,97 @@ func _load_streams(paths: Array) -> Array:
 		if stream != null:
 			streams.append(stream)
 	return streams
+
+var _rain_stream_cache: AudioStream = null
+var _thunder_stream_cache: AudioStream = null
+
+func set_rain_volume(rain_intensity: float, storm: bool) -> void:
+	# rain_intensity: 0.0 to 1.0
+	if rain_player == null:
+		return
+	if rain_intensity <= 0.01:
+		rain_player.volume_db = -80.0
+		rain_player.stop()
+		return
+	# Generate rain stream once and cache it
+	if _rain_stream_cache == null:
+		_rain_stream_cache = _generate_rain_stream()
+	if rain_player.stream == null:
+		rain_player.stream = _rain_stream_cache
+	# Volume: louder during storms
+	var vol: float = lerp(-30.0, -10.0, rain_intensity)
+	if storm:
+		vol += 4.0
+	rain_player.volume_db = vol
+	if not rain_player.playing:
+		rain_player.play()
+
+func play_thunder() -> void:
+	if thunder_player == null:
+		return
+	# Generate thunder stream once and cache it
+	if _thunder_stream_cache == null:
+		_thunder_stream_cache = _generate_thunder_stream()
+	if thunder_player.stream == null:
+		thunder_player.stream = _thunder_stream_cache
+	thunder_player.volume_db = randf_range(-8.0, -2.0)
+	thunder_player.play()
+
+func _generate_rain_stream() -> AudioStream:
+	# Generate a looping rain sound using white noise
+	var sample_rate := 22050
+	var duration := 2.0
+	var num_samples := int(sample_rate * duration)
+	var data := PackedByteArray()
+	data.resize(num_samples * 2)
+	for i in range(num_samples):
+		# Filtered white noise for rain sound
+		var noise_val := randf_range(-0.15, 0.15)
+		# Add some low-frequency variation
+		noise_val += sin(i * 0.001) * 0.05
+		var sample := int(clamp(noise_val, -1.0, 1.0) * 32767)
+		# Encode as 16-bit little-endian
+		data[i * 2] = sample & 0xFF
+		data[i * 2 + 1] = (sample >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = sample_rate
+	stream.stereo = false
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = num_samples
+	stream.data = data
+	return stream
+
+func _generate_thunder_stream() -> AudioStream:
+	# Generate a thunder rumble sound (low-frequency noise burst)
+	var sample_rate := 22050
+	var duration := 3.0
+	var num_samples := int(sample_rate * duration)
+	var data := PackedByteArray()
+	data.resize(num_samples * 2)
+	var low_pass := 0.0
+	for i in range(num_samples):
+		var t := float(i) / float(num_samples)
+		# Envelope: quick attack, long decay
+		var env: float
+		if t < 0.05:
+			env = t / 0.05
+		else:
+			env = exp(-(t - 0.05) * 3.0)
+		# Low-frequency rumble
+		low_pass = lerp(low_pass, randf_range(-1.0, 1.0), 0.05)
+		var sample_val := low_pass * env * 0.6
+		var sample := int(clamp(sample_val, -1.0, 1.0) * 32767)
+		data[i * 2] = sample & 0xFF
+		data[i * 2 + 1] = (sample >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = sample_rate
+	stream.stereo = false
+	stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	stream.data = data
+	return stream
 
 func _update_ambience() -> void:
 	var night_amount: float = 1.0 if day_cycle.is_night() else 0.0

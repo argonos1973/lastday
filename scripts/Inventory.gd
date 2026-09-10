@@ -19,6 +19,9 @@ func add_item(item) -> bool:
 	for existing in items:
 		if existing.can_stack_with(item):
 			existing.quantity += item.quantity
+			# Use the higher spoilage when stacking perishable items
+			if existing.is_perishable() and item.spoilage > existing.spoilage:
+				existing.spoilage = item.spoilage
 			changed.emit()
 			return true
 	if items.size() >= max_slots:
@@ -35,6 +38,9 @@ func merge_stacks() -> void:
 		while j < items.size():
 			if items[i].can_stack_with(items[j]):
 				items[i].quantity += items[j].quantity
+				# Use the higher spoilage when merging perishable stacks
+				if items[i].is_perishable() and items[j].spoilage > items[i].spoilage:
+					items[i].spoilage = items[j].spoilage
 				items.remove_at(j)
 			else:
 				j += 1
@@ -42,10 +48,11 @@ func merge_stacks() -> void:
 	changed.emit()
 
 func remove_index(index: int, amount := 1):
-	if index < 0 or index >= items.size():
+	if index < 0 or index >= items.size() or amount <= 0:
 		return null
 	var item = items[index]
-	var removed = ItemScript.create(item.item_name, item.item_type, item.weight, min(amount, item.quantity), item.use_value)
+	var removed = item.duplicate_stack()
+	removed.quantity = mini(amount, item.quantity)
 	item.quantity -= removed.quantity
 	if item.quantity <= 0:
 		items.remove_at(index)
@@ -71,9 +78,24 @@ func use_index(index: int, stats) -> bool:
 	if index < 0 or index >= items.size():
 		return false
 	var item = items[index]
+	var portioned: bool = item.item_name in ["Botella de agua", "Botella de agua llena"] or item.item_name.ends_with(" abierta")
+	if portioned and item.is_broken():
+		item_used.emit("El recipiente esta vacio.")
+		return false
+	# Only the unit being used loses contents; the rest of the stack stays full.
+	if portioned and item.quantity > 1:
+		if items.size() >= max_slots:
+			item_used.emit("Necesitas un espacio libre para separar una unidad.")
+			return false
+		var unit = item.duplicate_stack()
+		unit.quantity = 1
+		item.quantity -= 1
+		items.append(unit)
+		index = items.size() - 1
+		item = unit
 	match item.item_type:
 		"food":
-			if item.item_name.begins_with("Lata de ") and item.durability > 0.0:
+			if item.item_name.begins_with("Lata de ") and not item.item_name.ends_with(" abierta"):
 				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha antes de comer.")
 				return false
 			# Spoiled food sickness check
@@ -93,9 +115,10 @@ func use_index(index: int, stats) -> bool:
 				else:
 					item_used.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
 				stats.changed.emit()
-				remove_index(index)
-				return true
-			if item.item_name == "Carne cruda de lobo":
+				if not portioned:
+					remove_index(index)
+					return true
+			if item.item_name.begins_with("Carne cruda"):
 				var _oh: float = float(stats.hunger)
 				var _ot: float = float(stats.thirst)
 				var _ohp: float = float(stats.health)
@@ -104,7 +127,7 @@ func use_index(index: int, stats) -> bool:
 				if stats.has_method("get_sick"):
 					stats.get_sick(60.0)
 				stats.changed.emit()
-				item_used.emit("Comes carne cruda de lobo. Te sientes mal del estomago." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
+				item_used.emit("Comes carne cruda. Te sientes mal del estomago." + _fmt_restore(_oh, float(stats.hunger), _ot, float(stats.thirst), _ohp, float(stats.health)))
 				remove_index(index)
 				return true
 			if item.item_name == "Carne asada en palo":
@@ -165,6 +188,7 @@ func use_index(index: int, stats) -> bool:
 				else:
 					var new_pct := int(float(item.durability_pct()) * 100.0)
 					item_used.emit("Comes un poco de %s. Queda %d%%." % [item.item_name, new_pct] + _r)
+					changed.emit()
 				return true
 			if item.item_name.begins_with("Lata de "):
 				item_used.emit("Necesitas abrir la lata con un cuchillo o hacha primero.")
@@ -200,10 +224,9 @@ func use_index(index: int, stats) -> bool:
 				else:
 					item_used.emit("No tienes sed pero bebes de todas formas. Te sientes hinchado.")
 				stats.changed.emit()
-				if item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena":
+				if not portioned:
+					remove_index(index)
 					return true
-				remove_index(index)
-				return true
 			if item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena":
 				var drink_pct := 0.25
 				var remaining_pct: float = float(item.durability_pct())
@@ -227,6 +250,7 @@ func use_index(index: int, stats) -> bool:
 				else:
 					item_used.emit("Bebes agua de la botella. Queda %d%%." % new_pct + _r)
 				stats.changed.emit()
+				changed.emit()
 				return true
 			var _ot: float = float(stats.thirst)
 			var _ohp: float = float(stats.health)
@@ -269,6 +293,8 @@ func get_item_count(item_name: String) -> int:
 	return total
 
 func consume_item_name(item_name: String, amount: int) -> bool:
+	if amount <= 0:
+		return false
 	if get_item_count(item_name) < amount:
 		return false
 	var remaining := amount

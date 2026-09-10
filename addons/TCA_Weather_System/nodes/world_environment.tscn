@@ -52,7 +52,8 @@ sky_material = SubResource("ShaderMaterial_gjwbc")
 [sub_resource type="Environment" id="Environment_33mdr"]
 background_mode = 2
 sky = SubResource("Sky_lb1th")
-volumetric_fog_density = 0.01
+volumetric_fog_density = 0.0
+fog_density = 0.0
 
 [node name="WorldEnvironment" type="WorldEnvironment"]
 environment = SubResource("Environment_33mdr")
