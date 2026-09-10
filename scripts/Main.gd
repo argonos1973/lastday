@@ -1214,9 +1214,9 @@ func _create_weather_particles() -> void:
 func _update_weather_effects(delta: float) -> void:
 	if hud == null or player == null:
 		return
+	_update_weather_visuals(delta)
 	if _rain_particles == null and _snow_particles == null and _rain_splash_particles == null:
 		return
-	_update_weather_visuals(delta)
 	# Follow every frame; emitted particles stay in world space.
 	if _rain_particles != null:
 		_rain_particles.global_position = player.global_position + Vector3(0, 20, 0)
@@ -1294,7 +1294,10 @@ func _update_weather_effects(delta: float) -> void:
 	if rain_amount > 1.0:
 		_extinguish_fires_in_rain(weather_elapsed)
 
+var _cloud_time := 0.0
+
 func _update_weather_visuals(delta: float) -> void:
+	_cloud_time += delta
 	var blend := 1.0 - exp(-delta / 4.0)
 	for key in _weather_visual:
 		_weather_visual[key] = lerpf(_weather_visual[key], _weather_target[key], blend)
@@ -1309,6 +1312,7 @@ func _update_weather_visuals(delta: float) -> void:
 	var material := world.environment.sky.sky_material as ShaderMaterial
 	if material == null:
 		return
+	material.set_shader_parameter("cloud_time", _cloud_time)
 	material.set_shader_parameter("rain_intensity", clampf(_weather_visual.rain / 6.0, 0.0, 1.0))
 	material.set_shader_parameter("small_cloud_cover", _weather_visual.cloud)
 	material.set_shader_parameter("large_cloud_cover", _weather_visual.cloud)
