@@ -290,12 +290,8 @@ func _make_wood_floor_material() -> StandardMaterial3D:
 	mat.albedo_color = Color(0.65, 0.48, 0.35)
 	mat.roughness = 0.85
 	mat.uv1_scale = Vector3(1.2, 2.0, 1.0)
-	var disk_path := ProjectSettings.globalize_path(TEX_WOOD_FLOOR_DIFF)
-	if FileAccess.file_exists(disk_path):
-		var image := Image.load_from_file(disk_path)
-		if image != null and not image.is_empty():
-			image.generate_mipmaps()
-			mat.albedo_texture = ImageTexture.create_from_image(image)
+	# Reuse the imported GPU texture across doors, including exported packs.
+	mat.albedo_texture = load(TEX_WOOD_FLOOR_DIFF)
 	return mat
 
 func _apply_material_to_meshes(node: Node, mat: Material) -> void:

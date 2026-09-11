@@ -406,6 +406,9 @@ const NO_GRASS_AREAS := [
 ]
 
 const WORLD_SEED := 1337
+# Punto temporal de entrada para revisar el poblado. Está junto a la primera
+# casa, sobre terreno libre y orientado hacia el núcleo de edificios.
+const TOWN_TEST_SPAWN := Vector3(-17.0, 0.4, -10.0)
 
 var _world_rng := RandomNumberGenerator.new()
 
@@ -1695,7 +1698,7 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = Vector3(252.0, 0.4, -254.0)
+	player.position = TOWN_TEST_SPAWN
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -3867,31 +3870,8 @@ func _create_road() -> void:
 			road_z_end = z_test - seg_length
 			break
 		_zi += 1
-	var road_mat := StandardMaterial3D.new()
-	road_mat.roughness = 1.0
-	road_mat.metallic = 0.0
-	road_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	road_mat.texture_repeat = true
 	var tex_dir := "res://assets/textures/dirt_road/"
 	var color_tex := load(tex_dir + "Ground038_1K-JPG_Color.jpg")
-	if color_tex != null:
-		road_mat.albedo_texture = color_tex
-		road_mat.albedo_color = Color(0.55, 0.48, 0.38)
-	else:
-		road_mat.albedo_color = Color(0.45, 0.32, 0.2)
-	var normal_tex := load(tex_dir + "Ground038_1K-JPG_NormalGL.jpg")
-	if normal_tex != null:
-		road_mat.normal_texture = normal_tex
-		road_mat.normal_enabled = true
-	var rough_tex := load(tex_dir + "Ground038_1K-JPG_Roughness.jpg")
-	if rough_tex != null:
-		road_mat.roughness_texture = rough_tex
-		road_mat.roughness_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_GREEN
-	var ao_tex := load(tex_dir + "Ground038_1K-JPG_AmbientOcclusion.jpg")
-	if ao_tex != null:
-		road_mat.ao_texture = ao_tex
-		road_mat.ao_texture_channel = StandardMaterial3D.TEXTURE_CHANNEL_RED
-	road_mat.uv1_scale = Vector3(2.0, 4.0, 1.0)
 	var road_body := StaticBody3D.new()
 	road_body.name = "RoadCollision"
 	add_child(road_body)
@@ -3903,6 +3883,9 @@ func _create_road() -> void:
 			continue
 		filtered_segments.append(seg)
 	_road_segments = filtered_segments
+	var asphalt_mat := ShaderMaterial.new()
+	asphalt_mat.shader = preload("res://scripts/road_surface.gdshader")
+	asphalt_mat.set_shader_parameter("aggregate", color_tex)
 	for si in range(_road_segments.size()):
 		var seg: Dictionary = _road_segments[si]
 		var center: Vector3 = seg["center"]
@@ -3916,6 +3899,20 @@ func _create_road() -> void:
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))
 		var grid_w := max(3, int(seg_width / 1.5))
 		var grid_l := max(4, int(seg_len / 1.5))
+		var start_center := center - along * half_l
+		var end_center := center + along * half_l
+		var start_across := across
+		var end_across := across
+		if si > 0:
+			var previous: Dictionary = _road_segments[si-1]
+			var previous_yaw := deg_to_rad(float(previous["yaw"]))
+			start_center = (center + Vector3(previous["center"])) * 0.5
+			start_across = (across + Vector3(sin(previous_yaw),0,cos(previous_yaw))).normalized()
+		if si + 1 < _road_segments.size():
+			var next: Dictionary = _road_segments[si+1]
+			var next_yaw := deg_to_rad(float(next["yaw"]))
+			end_center = (center + Vector3(next["center"])) * 0.5
+			end_across = (across + Vector3(sin(next_yaw),0,cos(next_yaw))).normalized()
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		var uv_x_scale := seg_width / 2.0
@@ -3926,9 +3923,10 @@ func _create_road() -> void:
 			for ix in range(grid_w + 1):
 				var t_w: float = float(ix) / float(grid_w)
 				var local_w: float = -half_w + t_w * seg_width
-				var world_pos: Vector3 = center + along * local_l + across * local_w
+				var world_pos: Vector3 = start_center.lerp(end_center,t_l) + start_across.lerp(end_across,t_l) * local_w
 				var gy: float = _get_exact_ground_y(world_pos.x, world_pos.z) + 0.04
-				st.set_uv(Vector2(t_w * uv_x_scale, t_l * uv_y_scale))
+				st.set_uv(Vector2(world_pos.x,world_pos.z) * 0.5)
+				st.set_uv2(Vector2(t_w * 2.0 - 1.0, world_pos.z))
 				st.add_vertex(Vector3(world_pos.x, gy, world_pos.z))
 		for iz in range(grid_l):
 			for ix in range(grid_w):
@@ -3946,7 +3944,7 @@ func _create_road() -> void:
 		var road_mi := MeshInstance3D.new()
 		road_mi.mesh = st.commit()
 		road_mi.name = "DirtRoad_%d" % si
-		road_mi.material_override = road_mat
+		road_mi.material_override = asphalt_mat
 		add_child(road_mi)
 		var col_shape := BoxShape3D.new()
 		col_shape.size = Vector3(seg_width, 0.1, seg_len)
@@ -4511,6 +4509,7 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
 	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
+	preload("res://scripts/VillageArchitecture.gd").interior(self, origin, label, width, depth, height)
 	# Roof collision
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth), 2)
 	# Link door to wildlife blocker so wolves can enter when door is open
@@ -8526,6 +8525,7 @@ func _create_house_details(origin: Vector3, label: String, width: float, depth: 
 	_create_static_box(label + " Chimney", origin + Vector3(half_w * 0.6, height + 0.35, -(half_d * 0.38)), Vector3(0.62, 1.25, 0.62), Color(0.11, 0.08, 0.065))
 	_create_house_doorway(origin, label, half_d, height)
 	_create_house_windows(origin, label, half_w, half_d, front_seg_c, height, win_w, win_h)
+	preload("res://scripts/VillageArchitecture.gd").decorate(self, origin, label, width, depth, height, front_seg_c, win_w)
 	_create_visual_box(label + " BrokenGlassA", origin + Vector3(-front_seg_c, height * 0.44, half_d + 0.3), Vector3(0.12, 0.32, 0.035), Color(0.50, 0.62, 0.66, 0.72), Vector3(0, 0, -18))
 	_create_visual_box(label + " RoofHole", origin + Vector3(-(half_w * 0.41), height + 0.4, half_d * 0.38), Vector3(1.2, 0.08, 0.75), Color(0.035, 0.025, 0.02), Vector3(0, 22, -12))
 	_create_visual_box(label + " BigRustRoofPatch", origin + Vector3(half_w * 0.37, height + 0.63, half_d * 0.29), Vector3(2.25, 0.09, 1.15), Color(0.34, 0.13, 0.055), Vector3(0, -13, 10))
@@ -8550,6 +8550,9 @@ func _create_interactive_door(node_name: String, hinge_pos: Vector3, size: Vecto
 	door.position = hinge_pos
 	add_child(door)
 	var door_model: String = DOOR_MODELS[_world_rng.randi() % DOOR_MODELS.size()]
+	# House doors use the detailed two-sided panel construction, sized to the opening.
+	if node_name.begins_with("Casa abandonada") or node_name.begins_with("VillageHouse"):
+		door_model = ""
 	door.setup("Puerta", size, color, open_angle, door_model)
 
 func _create_house_windows(origin: Vector3, label: String, half_w: float, half_d: float, front_seg_c: float, height: float, win_w: float, win_h: float) -> void:
@@ -11408,6 +11411,14 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 	mesh_instance.name = node_name
 	mesh_instance.position = pos
 	mesh_instance.mesh = mesh
+	# Separate face vertices so each roof slope receives its real lighting.
+	var roof_surface := SurfaceTool.new()
+	roof_surface.create_from(mesh, 0)
+	roof_surface.deindex()
+	roof_surface.set_smooth_group(-1)
+	roof_surface.generate_normals()
+	mesh = roof_surface.commit()
+	mesh_instance.mesh = mesh
 	if _roof_texture == null:
 		_roof_texture = _extract_texture_from_glb(MODULAR_ROOF_MODEL)
 	if _roof_texture != null:
@@ -11801,7 +11812,7 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 	if not (data.get("player", null) is Dictionary):
 		return
 	var player_data := data["player"] as Dictionary
-	player_data["position"] = [8.0, 0.4, 2.5]
+	player_data["position"] = [0.0, 0.4, 0.0]
 	if not (player_data.get("inventory", null) is Array):
 		data["balance_version"] = SAVE_BALANCE_VERSION
 		return
