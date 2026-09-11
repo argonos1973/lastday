@@ -46,6 +46,9 @@ func _ready() -> void:
 		# Auto-start single player after a short delay so UI is ready
 		get_tree().create_timer(1.0).timeout.connect(_on_single_player)
 		return
+	if args.has("--cinematic"):
+		get_tree().create_timer(1.0).timeout.connect(_on_single_player)
+		return
 	if args.size() >= 2 and args[0] == "--client":
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")

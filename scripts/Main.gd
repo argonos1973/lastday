@@ -613,6 +613,10 @@ func _ready() -> void:
 		_loading_tip_label = null
 	if hud != null:
 		hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
+	# Cinematic mode
+	var user_args := OS.get_cmdline_user_args()
+	if user_args.has("--cinematic"):
+		call_deferred("_setup_cinematic")
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
@@ -783,6 +787,9 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if _scene_quitting:
+		return
+	if _cinematic_active:
+		_process_cinematic(delta)
 		return
 	if _grass_any_visible:
 		_wind_time += delta
@@ -11844,5 +11851,262 @@ func is_nav_cell_blocked(cell: Vector2i) -> bool:
 	if nav == null:
 		return false
 	return nav.is_cell_blocked(cell)
+
+#endregion
+
+#region Cinematic Mode
+
+var _cinematic_cam: Camera3D = null
+var _cinematic_active := false
+var _cinematic_time := 0.0
+var _cinematic_label: Label = null
+var _cinematic_shots: Array = []
+var _cinematic_shot_idx := 0
+var _cinematic_shot_elapsed := 0.0
+var _cinematic_phase := "day"
+var _cinematic_lightning_timer := 0.0
+var _cinematic_campfires: Array = []
+var _cinematic_player_seated := false
+
+func _setup_cinematic() -> void:
+	_cinematic_active = true
+	_cinematic_cam = Camera3D.new()
+	_cinematic_cam.name = "CinematicCamera"
+	_cinematic_cam.fov = 65.0
+	_cinematic_cam.near = 0.5
+	_cinematic_cam.far = 2000.0
+	add_child(_cinematic_cam)
+	_cinematic_cam.make_current()
+	if hud != null:
+		hud.visible = false
+	if day_cycle != null:
+		day_cycle.fixed_time = true
+	# Make rain particles bigger and more visible for cinematic
+	if _rain_particles != null:
+		var rain_mesh = BoxMesh.new()
+		rain_mesh.size = Vector3(0.04, 1.2, 0.04)
+		var rain_surface := StandardMaterial3D.new()
+		rain_surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		rain_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		rain_surface.vertex_color_use_as_albedo = true
+		rain_mesh.material = rain_surface
+		_rain_particles.draw_pass_1 = rain_mesh
+		_rain_particles.amount = 2000
+	# Position player by the lake near a campfire, facing the fire
+	if player != null and is_instance_valid(player):
+		var lake_fire_pos := Vector3(248, 0, -256)
+		var gy := _get_exact_ground_y(lake_fire_pos.x, lake_fire_pos.z)
+		player.global_position = Vector3(lake_fire_pos.x + 1.5, gy, lake_fire_pos.z + 1.5)
+		player.rotation.y = deg_to_rad(180.0)
+	# Each shot: [name, pos, look_at, duration, phase]
+	# phase: "day", "night", "night_fire", "storm", "sunset"
+	_cinematic_shots = [
+		["Pueblo abandonado", Vector3(0, 25, 35), Vector3(0, 2, 0), 10.0, "day"],
+		["Casas en ruinas", Vector3(-30, 18, -25), Vector3(-25, 3, -18), 8.0, "day"],
+		["Interior de casa 1", Vector3(-25, 2.0, -18), Vector3(-25, 1.5, -14), 6.0, "day"],
+		["Interior de casa 2", Vector3(-38, 2.0, 18), Vector3(-38, 1.5, 22), 6.0, "day"],
+		["Interior de casa 3", Vector3(23, 2.0, 18), Vector3(23, 1.5, 22), 6.0, "day"],
+		["Interior de casa 4", Vector3(42, 2.0, 26), Vector3(42, 1.5, 30), 6.0, "day"],
+		["Calle del pueblo", Vector3(20, 12, 15), Vector3(35, 2, -8), 8.0, "day"],
+		["Bosque", Vector3(-120, 30, -80), Vector3(-180, 5, -120), 10.0, "day"],
+		["Lago panoramic", Vector3(250, 50, -280), Vector3(250, 2, -310), 12.0, "day"],
+		["Lago desde el sur", Vector3(250, 25, -240), Vector3(250, 1, -310), 10.0, "day"],
+		["Orilla del lago", Vector3(220, 8, -260), Vector3(250, 1, -310), 8.0, "day"],
+		["Refugio junto al lago", Vector3(250, 6, -252), Vector3(250, 1, -258), 8.0, "day"],
+		["Interior del refugio", Vector3(250, 1.5, -258), Vector3(252, 1.5, -255), 6.0, "day"],
+		["Rio", Vector3(100, 20, -150), Vector3(80, 2, -180), 8.0, "day"],
+		["Tienda militar", Vector3(0, 25, 0), Vector3(0, 2, 0), 8.0, "day"],
+		["Tienda militar remota", Vector3(0, 25, 0), Vector3(0, 2, 0), 8.0, "day"],
+		["Granero", Vector3(45, 15, 120), Vector3(45, 2, 120), 10.0, "day"],
+		["Interior del granero", Vector3(45, 3.0, 120), Vector3(45, 2.5, 125), 6.0, "day"],
+		["Granero remoto", Vector3(-340, 15, 280), Vector3(-340, 2, 280), 10.0, "day"],
+		["Vuelo alto", Vector3(-200, 80, 200), Vector3(0, 0, 0), 12.0, "day"],
+		["Pajaros en vuelo", Vector3(0, 55, 0), Vector3(50, 45, 50), 8.0, "day"],
+		["Bandada sobre el bosque", Vector3(-150, 50, -100), Vector3(-120, 42, -80), 8.0, "day"],
+		["Pajaros sobre el lago", Vector3(250, 48, -300), Vector3(250, 40, -310), 8.0, "day"],
+		# Sunset
+		["Atardecer sobre el mapa", Vector3(300, 60, -100), Vector3(0, 5, 0), 10.0, "sunset"],
+		["Vista del pueblo al atardecer", Vector3(50, 30, 50), Vector3(0, 3, 0), 10.0, "sunset"],
+		["Lago al atardecer", Vector3(280, 35, -290), Vector3(250, 2, -310), 10.0, "sunset"],
+		["Pajaros al atardecer", Vector3(-100, 52, 100), Vector3(-50, 44, 50), 8.0, "sunset"],
+		# Storm - first round
+		["Tormenta electrica", Vector3(0, 30, 30), Vector3(0, 2, 0), 14.0, "storm"],
+		["Lluvia sobre el lago", Vector3(250, 35, -270), Vector3(250, 2, -310), 12.0, "storm"],
+		["Rayos sobre el pueblo", Vector3(30, 20, 30), Vector3(0, 3, 0), 14.0, "storm"],
+		# Night
+		["Noche sobre el pueblo", Vector3(0, 30, 30), Vector3(0, 2, 0), 10.0, "night"],
+		["Noche en el bosque", Vector3(-100, 25, -60), Vector3(-150, 5, -100), 10.0, "night"],
+		["Estrellas sobre el lago", Vector3(250, 40, -280), Vector3(250, 2, -310), 12.0, "night"],
+		["Luna sobre el mapa", Vector3(-200, 70, 200), Vector3(0, 0, 0), 10.0, "night"],
+		# Night with campfire - player sitting by the fire at lake
+		["Fogata nocturna en el pueblo", Vector3(5, 5, 5), Vector3(0, 1, 0), 12.0, "night_fire"],
+		["Fogata junto al refugio", Vector3(248, 4, -255), Vector3(250, 1, -258), 12.0, "night_fire"],
+		["Personaje junto a la fogata", Vector3(252, 3.0, -252), Vector3(249.5, 1.2, -254.5), 14.0, "night_fire_sit"],
+		["Fogata en el lago", Vector3(245, 3.0, -250), Vector3(248, 1.2, -256), 12.0, "night_fire_sit"],
+		["Sentado mirando el fuego", Vector3(250, 2.0, -253), Vector3(248, 1.2, -256), 12.0, "night_fire_sit"],
+		["Reflejo del fuego en el lago", Vector3(255, 1.5, -258), Vector3(248, 1.0, -256), 10.0, "night_fire_sit"],
+		# Storm - second round
+		["Tormenta en el bosque", Vector3(-120, 25, -80), Vector3(-180, 5, -120), 12.0, "storm"],
+		["Lluvia en el rio", Vector3(100, 18, -150), Vector3(80, 2, -180), 10.0, "storm"],
+		["Tormenta sobre el lago", Vector3(260, 40, -270), Vector3(250, 2, -310), 14.0, "storm"],
+	]
+	if _military_tent_pos != Vector3.ZERO:
+		var tp := _military_tent_pos
+		var gy := _get_exact_ground_y(tp.x, tp.z)
+		_cinematic_shots[14] = ["Tienda militar", Vector3(tp.x + 15, gy + 12, tp.z + 15), Vector3(tp.x, gy + 2, tp.z), 10.0, "day"]
+	if _remote_tent_pos != Vector3.ZERO:
+		var rp := _remote_tent_pos
+		var rgy := _get_exact_ground_y(rp.x, rp.z)
+		_cinematic_shots[15] = ["Tienda militar remota", Vector3(rp.x + 15, rgy + 12, rp.z + 15), Vector3(rp.x, rgy + 2, rp.z), 10.0, "day"]
+	_cinematic_label = Label.new()
+	_cinematic_label.name = "CinematicLabel"
+	_cinematic_label.visible = false
+	_cinematic_label.add_theme_font_size_override("font_size", 28)
+	_cinematic_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.0))
+	_cinematic_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.0))
+	_cinematic_label.add_theme_constant_override("font_shadow_offset_x", 0)
+	_cinematic_label.add_theme_constant_override("font_shadow_offset_y", 0)
+	_cinematic_label.position = Vector2(40, 40)
+	_cinematic_label.size = Vector2(600, 50)
+	_cinematic_label.z_index = 100
+	if hud != null and hud.get_parent() != null:
+		hud.get_parent().add_child(_cinematic_label)
+	else:
+		add_child(_cinematic_label)
+	_cinematic_shot_idx = 0
+	_cinematic_shot_elapsed = 0.0
+	_cinematic_time = 0.0
+	_cinematic_phase = "day"
+
+func _cinematic_apply_phase(phase: String) -> void:
+	if phase == _cinematic_phase:
+		return
+	_cinematic_phase = phase
+	if day_cycle == null:
+		return
+	match phase:
+		"day":
+			day_cycle.time_of_day = 12.0
+			_weather_target = {"cloud": 0.15, "rain": 0.0, "darkness": 0.05, "fog": 0.0}
+			_weather_visual = {"cloud": 0.15, "rain": 0.0, "darkness": 0.05, "fog": 0.0}
+			_storm_active = false
+		"sunset":
+			day_cycle.time_of_day = 18.5
+			_weather_target = {"cloud": 0.3, "rain": 0.0, "darkness": 0.1, "fog": 0.0}
+			_weather_visual = {"cloud": 0.3, "rain": 0.0, "darkness": 0.1, "fog": 0.0}
+			_storm_active = false
+		"night":
+			day_cycle.time_of_day = 0.5
+			_weather_target = {"cloud": 0.2, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_weather_visual = {"cloud": 0.2, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_storm_active = false
+		"night_fire":
+			day_cycle.time_of_day = 1.0
+			_weather_target = {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_weather_visual = {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_storm_active = false
+			_cinematic_spawn_campfires()
+		"night_fire_sit":
+			day_cycle.time_of_day = 1.5
+			_weather_target = {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_weather_visual = {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
+			_storm_active = false
+			_cinematic_spawn_campfires()
+			if not _cinematic_player_seated and player != null and is_instance_valid(player):
+				player.is_sitting = true
+				_cinematic_player_seated = true
+		"storm":
+			day_cycle.time_of_day = 14.0
+			_weather_target = {"cloud": 1.0, "rain": 8.0, "darkness": 0.6, "fog": 0.002}
+			_weather_visual = {"cloud": 1.0, "rain": 8.0, "darkness": 0.6, "fog": 0.002}
+			_storm_active = true
+			_cinematic_lightning_timer = 2.0
+
+func _cinematic_spawn_campfires() -> void:
+	for cf in _cinematic_campfires:
+		if is_instance_valid(cf):
+			cf.queue_free()
+	_cinematic_campfires.clear()
+	var fire_positions := [
+		Vector3(0, 0, 0),
+		Vector3(248, 0, -256),
+		Vector3(-25, 0, -15),
+		Vector3(35, 0, -5),
+	]
+	for fp in fire_positions:
+		var gy := _get_exact_ground_y(fp.x, fp.z)
+		var fire_pos := Vector3(fp.x, gy, fp.z)
+		var cf_name := "CinematicFire_%d" % randi()
+		_create_campfire_fire(fire_pos, cf_name)
+		_cinematic_campfires.append(get_node_or_null(cf_name + "Light"))
+
+func _process_cinematic(delta: float) -> void:
+	if not _cinematic_active or _cinematic_cam == null:
+		return
+	_cinematic_time += delta
+	_cinematic_shot_elapsed += delta
+	if _cinematic_shot_idx >= _cinematic_shots.size():
+		_cinematic_shot_idx = 0
+		_cinematic_shot_elapsed = 0.0
+	var shot: Array = _cinematic_shots[_cinematic_shot_idx]
+	var shot_name: String = shot[0]
+	var shot_pos: Vector3 = shot[1]
+	var shot_look: Vector3 = shot[2]
+	var shot_dur: float = shot[3]
+	var shot_phase: String = shot[4] if shot.size() > 4 else "day"
+	_cinematic_apply_phase(shot_phase)
+	if _cinematic_label != null:
+		var progress := clampf(_cinematic_shot_elapsed / shot_dur, 0.0, 1.0)
+		_cinematic_label.text = "%s  [%.0f%%]" % [shot_name, progress * 100.0]
+	# Storm lightning
+	if shot_phase == "storm":
+		_cinematic_lightning_timer -= delta
+		if _cinematic_lightning_timer <= 0.0:
+			_lightning_flash = 1.0
+			_cinematic_lightning_timer = randf_range(3.0, 8.0)
+			_apply_lightning_flash(1.0)
+			_create_lightning_bolt()
+	# Force weather visuals to target immediately for storm
+	if shot_phase == "storm":
+		_weather_visual = _weather_target.duplicate()
+	# Update weather visuals for smooth transitions
+	_update_weather_visuals(delta)
+	# Rain particles follow camera
+	if _rain_particles != null:
+		_rain_particles.global_position = _cinematic_cam.global_position + Vector3(0, 20, 0)
+		var rain_on: bool = _weather_visual.rain > 0.1
+		_rain_particles.emitting = rain_on
+		_rain_particles.visible = rain_on
+		if rain_on:
+			_rain_particles.amount_ratio = 1.0
+			if _rain_process_mat != null:
+				_rain_process_mat.direction = Vector3(0.35, -1.0, 0.2) if _storm_active else Vector3(0.05, -1.0, 0.05)
+				_rain_process_mat.initial_velocity_min = 35.0
+				_rain_process_mat.initial_velocity_max = 45.0
+				_rain_process_mat.color = Color(0.6, 0.7, 0.85, 0.7)
+	if _rain_splash_particles != null:
+		_rain_splash_particles.global_position = _cinematic_cam.global_position + Vector3(0, 0.05, 0)
+		var splash_on: bool = _weather_visual.rain > 0.1
+		_rain_splash_particles.emitting = splash_on
+		_rain_splash_particles.visible = splash_on
+		if splash_on:
+			_rain_splash_particles.amount_ratio = 1.0
+	# Rain audio
+	if audio_system != null and audio_system.has_method("set_rain_volume"):
+		audio_system.set_rain_volume(clampf(_weather_visual.rain / 6.0, 0.0, 1.0), _storm_active)
+	# Lightning fade
+	_lightning_flash = maxf(0.0, _lightning_flash - delta * 4.0)
+	_apply_lightning_flash(_lightning_flash)
+	if _lightning_bolt != null:
+		_lightning_bolt.visible = _lightning_flash > 0.35
+	# Camera orbit
+	var orbit_angle := _cinematic_time * 0.15
+	var orbit_radius := 8.0
+	var offset := Vector3(cos(orbit_angle) * orbit_radius, sin(_cinematic_time * 0.3) * 3.0, sin(orbit_angle) * orbit_radius)
+	_cinematic_cam.global_position = shot_pos + offset
+	_cinematic_cam.look_at(shot_look, Vector3.UP)
+	if _cinematic_shot_elapsed >= shot_dur:
+		_cinematic_shot_idx += 1
+		_cinematic_shot_elapsed = 0.0
 
 #endregion
