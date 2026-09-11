@@ -1295,6 +1295,8 @@ func _update_weather_effects(delta: float) -> void:
 		_extinguish_fires_in_rain(weather_elapsed)
 
 var _cloud_time := 0.0
+var _cloud_wind_direction := deg_to_rad(35.0)
+var _cloud_displacement := Vector3.ZERO
 
 func _update_weather_visuals(delta: float) -> void:
 	_cloud_time += delta
@@ -1312,11 +1314,25 @@ func _update_weather_visuals(delta: float) -> void:
 	var material := world.environment.sky.sky_material as ShaderMaterial
 	if material == null:
 		return
-	material.set_shader_parameter("cloud_time", _cloud_time)
 	material.set_shader_parameter("rain_intensity", clampf(_weather_visual.rain / 6.0, 0.0, 1.0))
 	material.set_shader_parameter("small_cloud_cover", _weather_visual.cloud)
 	material.set_shader_parameter("large_cloud_cover", _weather_visual.cloud)
-	material.set_shader_parameter("wind_strength", lerpf(0.4, 1.5, _weather_visual.darkness / 0.6))
+	# Open-Meteo provides meteorological degrees clockwise from north. Preserve
+	# the direction between updates and ease into a new reading so cloud layers
+	# drift continuously rather than snapping when weather refreshes.
+	var wind_speed := maxf(hud._real_wind_speed, 0.0)
+	var target_wind_direction := deg_to_rad(hud._real_wind_direction)
+	_cloud_wind_direction = lerp_angle(_cloud_wind_direction, target_wind_direction, 1.0 - exp(-delta / 8.0))
+	var weather_gust: float = float(_weather_visual.darkness) / 0.6
+	var cloud_wind_strength := clampf(wind_speed / 12.0 + weather_gust * 0.45, 0.22, 1.8)
+	# Integrate velocity: changing the wind must never reposition all clouds
+	# by multiplying the new velocity by the entire elapsed session time.
+	var travel_direction := Vector3(-sin(_cloud_wind_direction), 0.0, cos(_cloud_wind_direction))
+	_cloud_displacement += travel_direction * cloud_wind_strength * 0.035 * delta
+	material.set_shader_parameter("cloud_displacement", _cloud_displacement)
+	material.set_shader_parameter("wind_direction", _cloud_wind_direction)
+	material.set_shader_parameter("wind_strength", cloud_wind_strength)
+	material.set_shader_parameter("cloud_speed", 0.012)
 
 func _apply_lightning_flash(intensity: float) -> void:
 	if day_cycle != null:
@@ -3430,7 +3446,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				return 3.0
 			if item_name.begins_with("Seta"):
 				return 0.04
-			if item_name.begins_with("Lata de guiso"):
+			# The low-poly canned-food asset is authored in millimetres. The
+			# generic "Lata de comida" created by older saves uses this same
+			# model, so it must share the small scale as the stew cans.
+			if item_name == "Lata de comida" or item_name.begins_with("Lata de guiso"):
 				return 0.0005
 			if item_name.begins_with("Lata de atun"):
 				return 1.35

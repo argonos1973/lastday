@@ -7819,6 +7819,9 @@ func _build_third_person_torch() -> void:
 	if _torch_hand_root == null or not is_instance_valid(_torch_hand_root):
 		return
 
+	# The light and its particles must be attached to the tip, not to the
+	# character root. Detach it before recreating the visual model.
+	_detach_torch_light_from_tip()
 	# Clear previous children
 	for child in _torch_hand_root.get_children():
 		if child == torch_light:
@@ -7836,6 +7839,7 @@ func _build_third_person_torch() -> void:
 		torch_node.position = Vector3.ZERO
 		torch_node.rotation_degrees = Vector3(0.0, 0.0, 90.0)
 		_torch_hand_root.add_child(torch_node)
+		_attach_torch_light_to_tip(torch_node)
 
 	if torch_light != null and torch_light.get_node_or_null("FireVisuals") == null:
 		var effects := preload("res://scripts/FireVisuals.gd").new()
@@ -7855,6 +7859,32 @@ func _build_third_person_torch() -> void:
 		else:
 			torch_light.visible = false
 
+func _detach_torch_light_from_tip() -> void:
+	if torch_light == null or third_person_model == null:
+		return
+	# Equipment is initialized before the newly created light is added to the tree.
+	if torch_light.get_parent() == null:
+		return
+	if torch_light.get_parent() != third_person_model:
+		torch_light.reparent(third_person_model, false)
+		torch_light.position = Vector3(0.0, 1.8, -1.2)
+
+func _attach_torch_light_to_tip(torch_node: Node3D) -> void:
+	if torch_light == null or not is_instance_valid(torch_node):
+		return
+	var flame_tip := torch_node.get_node_or_null("TorchFlameTip") as Marker3D
+	if flame_tip == null:
+		flame_tip = Marker3D.new()
+		flame_tip.name = "TorchFlameTip"
+		var local_bounds := _hierarchy_local_aabb(torch_node)
+		# The source model is upright: its positive local Y end is the burning tip.
+		flame_tip.position = Vector3(local_bounds.get_center().x, local_bounds.position.y + local_bounds.size.y + 0.05, local_bounds.get_center().z)
+		torch_node.add_child(flame_tip)
+	if torch_light.get_parent() != flame_tip:
+		torch_light.reparent(flame_tip, false)
+	torch_light.position = Vector3.ZERO
+	torch_light.rotation = Vector3.ZERO
+
 func _override_torch_arm_pose() -> void:
 	pass
 
@@ -7870,6 +7900,7 @@ func _clear_torch_attachment() -> void:
 		_torch_pose_connected = false
 	_torch_arm_bone_idx = -1
 	_torch_forearm_bone_idx = -1
+	_detach_torch_light_from_tip()
 	# Clear torch from torch hand root (left hand)
 	if _torch_hand_root != null and is_instance_valid(_torch_hand_root):
 		for child in _torch_hand_root.get_children():

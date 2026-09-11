@@ -54,6 +54,7 @@ uniform float volcloud_max_steps = 28.0;
 uniform float wind_direction = 0.0;
 uniform float wind_strength = 0.4;
 uniform float cloud_time = 0.0;
+uniform vec3 cloud_displacement = vec3(0.0);
 uniform float rain_intensity = 0.0;
 uniform float lightning_intensity = 0.0;
 uniform float fog_intensity = 0.0;
@@ -216,9 +217,8 @@ void sky(){
     
     // Sample directions on a distant dome. No plane near the camera, no
     // division by elevation and no repeated texture strips at the horizon.
-    vec3 wind_dir = vec3(cos(wind_direction), 0.0, sin(wind_direction));
-    vec3 cloud_offset = wind_dir * cloud_speed * cloud_time * wind_strength;
-    vec3 cloud_offset2 = wind_dir * cloud_speed * 0.4 * cloud_time * wind_strength + vec3(31.7, 0.0, 17.3);
+    vec3 cloud_offset = -cloud_displacement;
+    vec3 cloud_offset2 = -cloud_displacement * 0.4 + vec3(31.7, 0.0, 17.3);
     float coverage = clamp((small_cloud_cover + large_cloud_cover) * 0.5, 0.0, 1.0);
     float cloud_noise = cloud_fbm(EYEDIR * cloud_uv_scale * 3.0 + cloud_offset);
     float cloud_noise2 = cloud_fbm(EYEDIR * cloud_uv_scale * 1.6 + cloud_offset2);
@@ -226,7 +226,9 @@ void sky(){
     float threshold = mix(0.75, 0.24, coverage);
     float clouds = smoothstep(threshold - 0.08, threshold + 0.12, cloud_noise);
     clouds *= smoothstep(0.0, 0.15, coverage);
-    clouds *= smoothstep(0.03, 0.32, EYEDIR.y);
+    // Fade at the horizon while keeping clouds visible from the player camera.
+    float cloud_elevation = smoothstep(0.03, 0.32, max(EYEDIR.y, 0.0));
+    clouds *= cloud_elevation;
 
     float sun_facing=max(0.0,dot(EYEDIR,sun_dir));
     float cloud_brightness=0.8+0.3*sun_facing*cloud_lighting;
@@ -290,8 +292,9 @@ void sky(){
         }
     }
     
-    // Sky dominates most of the view, ground only when looking down
-    float horizon_blend=clamp(EYEDIR.y*4.0+0.5,0.0,1.0);
+    // The sky must own the horizon. Ground colour only appears when looking
+    // below it; mixing ground at y=0 produced a dark horizontal lid.
+    float horizon_blend=smoothstep(-0.16, 0.025, EYEDIR.y);
     COLOR=mix(ground,sky,horizon_blend);
     COLOR += vec3(0.75, 0.82, 1.0) * lightning_intensity * 0.4;
     

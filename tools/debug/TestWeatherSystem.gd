@@ -86,9 +86,12 @@ func _ready() -> void:
 	_apply_lightning_flash(0.0)
 	day_cycle._update_lighting()
 	check(flash_energy > day_cycle.world_environment.environment.ambient_light_energy + 0.8, "Lightning survives day/night update and restores")
-	var valid_body := JSON.stringify({"current": {"temperature_2m": 22.0, "weather_code": 3, "rain": 0.0, "snowfall": 0.0}}).to_utf8_buffer()
+	var valid_body := JSON.stringify({"current": {"temperature_2m": 22.0, "weather_code": 3, "rain": 0.0, "snowfall": 0.0, "wind_speed_10m": 18.0, "wind_direction_10m": 90.0}}).to_utf8_buffer()
 	hud._on_weather_received(HTTPRequest.RESULT_SUCCESS, 200, [], valid_body)
-	check(hud._real_temp_parsed == 22.0 and hud._real_weather_desc == "Cubierto", "Complete observation")
+	check(hud._real_temp_parsed == 22.0 and hud._real_weather_desc == "Cubierto" and hud._real_wind_speed == 18.0 and hud._real_wind_direction == 90.0, "Complete observation including wind")
+	_update_weather_visuals(8.0)
+	var sky_material := day_cycle.world_environment.environment.sky.sky_material as ShaderMaterial
+	check(float(sky_material.get_shader_parameter("wind_strength")) >= 1.5 and absf(float(sky_material.get_shader_parameter("wind_direction")) - deg_to_rad(90.0)) < 0.8, "Clouds receive live wind")
 	for bad_body in ["null", "[]", "{}", '{"current":{"temperature_2m":null}}']:
 		hud._on_weather_received(HTTPRequest.RESULT_SUCCESS, 200, [], bad_body.to_utf8_buffer())
 		check(hud._real_temp_parsed == 22.0 and hud._real_weather_code == 3, "Bad data preserves previous observation")
