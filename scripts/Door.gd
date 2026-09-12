@@ -53,7 +53,7 @@ func interact(player) -> void:
 		net.door_state_changed.rpc(name, is_open)
 
 func get_interaction_text(_player = null) -> String:
-	return "[E] Cerrar puerta" if is_open else "[E] Abrir puerta"
+	return "[F] Cerrar puerta" if is_open else "[F] Abrir puerta"
 
 func _make_door(size: Vector3, _color: Color) -> void:
 	var door_center := Vector3(size.x * 0.5, size.y * 0.5, 0.0)

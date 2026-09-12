@@ -937,11 +937,11 @@ func get_interaction_text(player = null) -> String:
 	var an := _animal_name()
 	var an_cap := _animal_name_cap()
 	if _gutted:
-		return "[E] %s vacio" % an_cap
+		return "[F] %s vacio" % an_cap
 	var has_knife := _player_has_knife(player)
 	if has_knife:
-		return "[E] Destripar %s  |  [C] Coger %s entero (necesitas mochila)" % [an, an]
-	return "[E] Necesitas un cuchillo o hacha  |  [C] Coger %s (necesitas mochila)" % an
+		return "[F] Destripar %s  |  [C] Coger %s entero (necesitas mochila)" % [an, an]
+	return "[F] Necesitas un cuchillo o hacha  |  [C] Coger %s (necesitas mochila)" % an
 
 func interact(player: Node) -> void:
 	if not _is_dead:

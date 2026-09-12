@@ -8,7 +8,7 @@ class_name PickableItem
 func get_interaction_text(_player: Node = null) -> String:
 	if item == null:
 		return ""
-	return "[E] %s %s" % [action_label, item.item_name]
+	return "[F] %s %s" % [action_label, item.item_name]
 
 func interact(player: Node) -> void:
 	if item == null:

@@ -856,7 +856,7 @@ func _has_butchering_tool(player: Node) -> bool:
 func get_interaction_text(player = null) -> String:
 	if not _landed or _gutted:
 		return ""
-	return "[E] Desplumar y obtener carne del pajaro" if _has_butchering_tool(player) else "Necesitas cuchillo o hacha para aprovechar el pajaro"
+	return "[F] Desplumar y obtener carne del pajaro" if _has_butchering_tool(player) else "Necesitas cuchillo o hacha para aprovechar el pajaro"
 
 func interact(player: Node) -> void:
 	if not _is_dead or not _landed or _gutted or not _has_butchering_tool(player):

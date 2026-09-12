@@ -7,7 +7,7 @@ func _ready() -> void:
 	add_to_group("interactable")
 
 func get_interaction_text(_player = null) -> String:
-	return "Pulsa E para dormir en la cama"
+	return "Pulsa F para dormir en la cama"
 
 func interact(player: Node) -> void:
 	if player == null or not player is Node3D:

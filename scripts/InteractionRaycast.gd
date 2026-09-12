@@ -32,7 +32,7 @@ func get_default_text(target, player = null) -> String:
 	if target != null and target.has_method("get_interaction_text"):
 		return str(target.call("get_interaction_text", player))
 	if target != null:
-		return "Pulsa E para interactuar"
+		return "Pulsa F para interactuar"
 	return ""
 
 func _get_collider_from_camera(player: Node3D, camera: Camera3D, screen_offset: Vector2) -> Object:

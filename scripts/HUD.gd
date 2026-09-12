@@ -660,8 +660,15 @@ func _cycle_sort_mode() -> void:
 
 func _get_filtered_sorted_items() -> Array:
 	var filtered: Array = []
+	# El item en mano no se muestra en el grid de inventario: ya esta en la mano
+	var held_item = null
+	if player != null and player.has_method("get_held_item"):
+		held_item = player.get_held_item()
 	for item in player.inventory.items:
 		if item == null:
+			continue
+		# Saltar el item que esta actualmente en la mano
+		if held_item != null and item == held_item:
 			continue
 		if _inv_category_filter != "all":
 			var itype := str(item.item_type)
@@ -769,7 +776,7 @@ func _add_equipment_line(parent: VBoxContainer, left_text: String, right_text: S
 
 func _add_inventory_hint(parent: VBoxContainer) -> void:
 	var label := Label.new()
-	label.text = "Clic izq en objeto para ver opciones.\nClic der para soltar directamente.\nClic medio para mover objetos.\nI o Tab abre/cierra la mochila."
+	label.text = "Clic izq en objeto para ver opciones.\nClic der para soltar directamente.\nClic medio para mover objetos.\nTAB abre/cierra la mochila."
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", Color(0.64, 0.66, 0.59))

@@ -407,6 +407,19 @@ var _rod_animations_deferred := false
 var _is_fishing_idle := false
 var _is_fishing := false
 var _interact_busy := false  # bloquea interacciones con await en curso
+var _throw_charging := false
+var _throw_charge_time := 0.0
+const THROW_MAX_CHARGE_TIME := 1.2
+const THROW_MIN_FORCE := 4.0
+const THROW_MAX_FORCE := 22.0
+const THROW_GRAVITY := 14.0
+# F mantenido: guardar al inventario; G mantenido: tirar lejos
+var _f_holding := false
+var _f_hold_time := 0.0
+var _f_hold_triggered := false
+var _g_holding := false
+var _g_hold_time := 0.0
+const HOLD_THRESHOLD := 0.3
 var _can_fish_near_water := false
 var _is_near_fishing_shore := false
 var _fishing_water_cache_pos := Vector3.INF
@@ -993,6 +1006,26 @@ func _process(delta: float) -> void:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
 		return
+	# Carga de lanzamiento (mantener G) y guardar (mantener F)
+	if _f_holding:
+		_f_hold_time += delta
+		if _f_hold_time >= HOLD_THRESHOLD and not _f_hold_triggered:
+			_f_hold_triggered = true
+			if get_held_item() != null:
+				_store_held_item()
+	if _g_holding:
+		_g_hold_time += delta
+		if _g_hold_time >= HOLD_THRESHOLD and not _throw_charging:
+			var held = get_held_item()
+			if held != null and str(held.item_type) != "weapon_rifle" and not _is_fishing and not is_sleeping:
+				_throw_charging = true
+				_throw_charge_time = 0.0
+			else:
+				_g_holding = false
+	if _throw_charging:
+		_throw_charge_time = min(_throw_charge_time + delta, THROW_MAX_CHARGE_TIME)
+		var pct := int((_throw_charge_time / THROW_MAX_CHARGE_TIME) * 100.0)
+		notice.emit("Cargando lanzamiento... %d%%" % pct)
 	# Tick spoilage for perishable food in inventory
 	if inventory != null and not is_dead:
 		var _any_spoiled := false
@@ -1222,16 +1255,29 @@ func _input(event: InputEvent) -> void:
 				camera.rotation.y = _breath_yaw_offset * 0.5
 	if event.is_action_pressed("interact") and not event.echo:
 		_interact()
+		_f_holding = true
+		_f_hold_time = 0.0
+		_f_hold_triggered = false
+	if event.is_action_released("interact"):
+		_f_holding = false
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
 		var target = _get_interaction_target()
 		if target != null and target.has_method("interact") and "is_open" in target and target.is_open:
 			target.interact(self)
 		else:
 			_collect()
-	if event.is_action_pressed("drop_item"):
-		_drop_held_item()
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_G:
-		_store_held_item()
+	# G: soltar (tap) / tirar lejos (mantener)
+	if event.is_action_pressed("drop_item") and not event.echo:
+		_g_holding = true
+		_g_hold_time = 0.0
+		_throw_charging = false
+	if event.is_action_released("drop_item"):
+		if _throw_charging:
+			_throw_charging = false
+			_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
+		elif _g_hold_time < HOLD_THRESHOLD:
+			_drop_held_item()
+		_g_holding = false
 	if event.is_action_pressed("flashlight"):
 		_toggle_flashlight()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_I:
@@ -1333,7 +1379,7 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_N:
 			_light_action()
 			return
-		if event.keycode == KEY_T and _has_rifle_equipped():
+		if event.keycode == KEY_R and _has_rifle_equipped():
 			_reload_rifle()
 			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
@@ -4814,6 +4860,209 @@ func drop_inventory_item(index: int) -> void:
 	_sync_held_item()
 	notice.emit("Sueltas %s." % item_name)
 
+# Tirar el item en mano lejos, con fuerza según carga y distancia según peso.
+# Usa la animación de atacar. Si cae al agua: splash + ondas.
+func _throw_held_item(charge: float) -> void:
+	var item = get_held_item()
+	if item == null:
+		notice.emit("No tienes nada en la mano para tirar.")
+		return
+	if str(item.item_type) == "weapon_rifle":
+		notice.emit("No puedes tirar el rifle.")
+		return
+	var item_name := str(item.item_name)
+	var item_type := str(item.item_type)
+	var item_weight := float(item.weight)
+	# Mismo preprocesamiento que drop_inventory_item para agua/ropa/antorcha
+	if item_type == "backpack":
+		equipped_backpack = ""
+		_recalculate_carry_capacity()
+	if CLOTHING_SLOTS.has(item_name):
+		unequip_clothing(item_name)
+	if item_type == "tool_torch":
+		set_meta("last_torch_durability", float(item.durability))
+		set_meta("last_torch_lit", torch_light != null and torch_light.visible)
+		if torch_light != null:
+			torch_light.visible = false
+	if item_type == "water" and item_name == "Botella de agua":
+		if float(item.durability) >= float(item.max_durability):
+			item_name = "Botella de agua llena"
+		elif item.is_broken():
+			item_name = "Botella de plastico"
+			item_type = "misc"
+	var drop_color := get_current_clothing_color(item_name)
+	set_meta("last_dropped_durability", float(item.durability))
+	set_meta("last_dropped_max_durability", float(item.max_durability))
+	var is_broken := false
+	if item.has_method("is_broken"):
+		is_broken = item.is_broken()
+	# Quitar del inventario
+	var idx := inventory.items.find(item)
+	if idx >= 0:
+		inventory.remove_index(idx, 1)
+	if held_index >= inventory.items.size():
+		held_index = max(0, inventory.items.size() - 1)
+	_sync_held_item()
+	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
+	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
+	var throw_force := lerp(THROW_MIN_FORCE, THROW_MAX_FORCE, charge) * weight_factor
+	# Dirección: hacia donde mira la cámara, con un poco de ángulo hacia arriba
+	var fwd := -global_transform.basis.z.normalized()
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	if fwd.length_squared() < 0.01:
+		fwd = Vector3.FORWARD
+	var launch_dir := (fwd + Vector3(0, 0.35, 0)).normalized()
+	var launch_pos := global_position + Vector3(0, 1.2, 0) + fwd * 0.5
+	var launch_vel := launch_dir * throw_force
+	# Animación de ataque
+	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
+		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
+		if atk_anim != null:
+			atk_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = third_person_attack_animation
+		third_person_action_timer = 0.8
+		third_person_animation_player.play(third_person_attack_animation, 0.08)
+	notice.emit("Tiras %s." % item_name)
+	# Tras 0.3s (cuando la animación "suelta" el objeto), lanzar el visual
+	await get_tree().create_timer(0.3).timeout
+	if _scene_quitting or not is_inside_tree():
+		return
+	_spawn_thrown_item_visual(item_name, item_type, item_weight, float(item.use_value), drop_color, is_broken, float(item.spoilage), launch_pos, launch_vel)
+
+# Crea un nodo visual que vuela con parábola y al aterrizar genera el drop.
+func _spawn_thrown_item_visual(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	# Crear visual temporal: usar un modelo simple o un placeholder
+	var visual := MeshInstance3D.new()
+	visual.name = "ThrownItem_%d" % Time.get_ticks_msec()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.2, 0.2, 0.2)
+	visual.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
+	mat.roughness = 0.8
+	visual.material_override = mat
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	scene.add_child(visual)
+	visual.global_position = start_pos
+	# Simular vuelo parabólico
+	var pos := start_pos
+	var vel := velocity
+	var dt := 0.016
+	var max_time := 5.0
+	var elapsed := 0.0
+	var landed := false
+	var land_pos := pos
+	while elapsed < max_time and is_instance_valid(visual):
+		vel.y -= THROW_GRAVITY * dt
+		pos += vel * dt
+		visual.global_position = pos
+		# Rotación de vuelo
+		visual.rotate(Vector3(1, 0.3, 0.5), dt * 4.0)
+		# Comprobar si toca el suelo o el agua
+		if pos.y <= 0.05:
+			land_pos = Vector3(pos.x, 0.05, pos.z)
+			landed = true
+			break
+		await get_tree().process_frame
+		elapsed += dt
+	if not is_instance_valid(visual):
+		return
+	visual.queue_free()
+	if not landed:
+		land_pos = Vector3(pos.x, 0.05, pos.z)
+	# Comprobar si cae al agua
+	var water_depth := 0.0
+	if scene.has_method("get_river_depth_at"):
+		water_depth = float(scene.call("get_river_depth_at", land_pos))
+	if water_depth > 0.02:
+		# Splash + ondas
+		_spawn_water_splash(land_pos)
+		_spawn_water_ripples(land_pos)
+		notice.emit("Cae al agua con un chapoteo.")
+		# El item se hunde: no crear drop (se pierde) o crear drop en la orilla
+		# Para no perder items injustamente, lo dejamos como drop en la posición
+	else:
+		# Drop normal en la posición de aterrizaje
+		set_meta("last_dropped_durability", 0.0)
+		set_meta("last_dropped_max_durability", 0.0)
+		item_dropped.emit(item_name, item_type, item_weight, 1, item_use_value, land_pos, color, broken, spoilage)
+
+# Splash de agua: partículas blancas/azules hacia arriba
+func _spawn_water_splash(at_pos: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var particles := GPUParticles3D.new()
+	particles.name = "WaterSplash"
+	particles.amount = 30
+	particles.lifetime = 0.8
+	particles.explosiveness = 1.0
+	particles.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 35.0
+	mat.initial_velocity_min = 2.0
+	mat.initial_velocity_max = 6.0
+	mat.gravity = Vector3(0, -9.8, 0)
+	mat.scale_min = 0.3
+	mat.scale_max = 0.8
+	mat.color = Color(0.75, 0.85, 0.95, 0.85)
+	mat.color_ramp = _make_fade_ramp(0.05, 0.5)
+	particles.process_material = mat
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.12, 0.12), Color.WHITE)
+	scene.add_child(particles)
+	particles.global_position = at_pos + Vector3(0, 0.1, 0)
+	particles.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(func(): particles.queue_free())
+
+# Ondas concéntricas en el agua: anillos que se expanden y se desvanecen
+func _spawn_water_ripples(at_pos: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	for i in range(3):
+		var ring := MeshInstance3D.new()
+		ring.name = "WaterRipple_%d" % i
+		var ring_mesh := TorusMesh.new()
+		ring_mesh.inner_radius = 0.05
+		ring_mesh.outer_radius = 0.15
+		ring.mesh = ring_mesh
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.8, 0.9, 1.0, 0.6)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		ring.material_override = mat
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		scene.add_child(ring)
+		ring.global_position = at_pos + Vector3(0, 0.02, 0)
+		ring.rotate_x(deg_to_rad(90))
+		# Animar expansión y fade
+		var delay := i * 0.15
+		var tween := create_tween()
+		tween.tween_interval(delay)
+		tween.tween_property(ring, "scale", Vector3.ONE, 0.0)
+		var start_scale := 1.0
+		var end_scale := 4.0 + i * 1.5
+		tween.tween_method(func(s: float):
+			if not is_instance_valid(ring):
+				return
+			ring.scale = Vector3(s, s, s)
+			var t := (s - start_scale) / (end_scale - start_scale)
+			mat.albedo_color.a = 0.6 * (1.0 - t)
+		, start_scale, end_scale, 1.2)
+		tween.tween_callback(func():
+			if is_instance_valid(ring):
+				ring.queue_free())
+	# Sonido de splash si hay AudioSystem
+	var audio := get_node_or_null("/root/AudioSystem")
+	if audio != null and audio.has_method("play_sfx"):
+		audio.call("play_sfx", "water_splash", at_pos)
+
 #endregion
 
 
@@ -7139,13 +7388,14 @@ func _update_interaction_prompt() -> void:
 		_is_near_fishing_shore = bool(fishing_state.get("near", false))
 		_can_fish_near_water = _is_near_fishing_shore and bool(fishing_state.get("facing", false))
 		if _can_fish_near_water:
-			prompt_changed.emit("Pescar - [E]")
+			prompt_changed.emit("Pescar - [F]")
 			return
 		if _is_near_fishing_shore:
 			prompt_changed.emit("Mira hacia el agua para pescar")
 			return
 	_can_fish_near_water = false
 	_is_near_fishing_shore = false
+	# Primero: acciones del mundo (WorldAction) apuntadas con la mirada
 	var target = _get_interaction_target()
 	if target != null:
 		if raycast != null and raycast.has_method("get_default_text"):
@@ -7153,7 +7403,7 @@ func _update_interaction_prompt() -> void:
 		elif target.has_method("get_interaction_text"):
 			prompt_changed.emit(target.call("get_interaction_text", self))
 		else:
-			prompt_changed.emit("Pulsa E para interactuar")
+			prompt_changed.emit("Pulsa F para interactuar")
 		return
 	prompt_changed.emit("")
 
