@@ -4897,7 +4897,7 @@ func _throw_held_item(charge: float) -> void:
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
 	# Quitar del inventario
-	var idx := inventory.items.find(item)
+	var idx: int = inventory.items.find(item)
 	if idx >= 0:
 		inventory.remove_index(idx, 1)
 	if held_index >= inventory.items.size():
@@ -4905,7 +4905,7 @@ func _throw_held_item(charge: float) -> void:
 	_sync_held_item()
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
-	var throw_force := lerp(THROW_MIN_FORCE, THROW_MAX_FORCE, charge) * weight_factor
+	var throw_force: float = lerp(THROW_MIN_FORCE, THROW_MAX_FORCE, charge) * weight_factor
 	# Dirección: hacia donde mira la cámara, con un poco de ángulo hacia arriba
 	var fwd := -global_transform.basis.z.normalized()
 	fwd.y = 0.0
@@ -4914,7 +4914,7 @@ func _throw_held_item(charge: float) -> void:
 		fwd = Vector3.FORWARD
 	var launch_dir := (fwd + Vector3(0, 0.35, 0)).normalized()
 	var launch_pos := global_position + Vector3(0, 1.2, 0) + fwd * 0.5
-	var launch_vel := launch_dir * throw_force
+	var launch_vel: Vector3 = launch_dir * throw_force
 	# Animación de ataque
 	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
 		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
@@ -4926,7 +4926,7 @@ func _throw_held_item(charge: float) -> void:
 	notice.emit("Tiras %s." % item_name)
 	# Tras 0.3s (cuando la animación "suelta" el objeto), lanzar el visual
 	await get_tree().create_timer(0.3).timeout
-	if _scene_quitting or not is_inside_tree():
+	if not is_inside_tree():
 		return
 	_spawn_thrown_item_visual(item_name, item_type, item_weight, float(item.use_value), drop_color, is_broken, float(item.spoilage), launch_pos, launch_vel)
 
