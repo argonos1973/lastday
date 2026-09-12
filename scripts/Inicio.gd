@@ -23,6 +23,10 @@ var _char_name_label: Label = null
 var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
 
+# Los args de linea de comandos persisten durante todo el proceso. Este flag
+# evita que volver al menu (p.ej. con Shift+Q) rearranque el juego solo.
+static var _auto_launch_consumed := false
+
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
 const SAVED_PREVIEW_SCENE := "res://assets/characters/adapted/player_with_clothes.glb"
 var CHAR_CONFIGS := [
@@ -42,14 +46,17 @@ func _ready() -> void:
 		return
 	SaveIntegration.maybe_insert_saved_character(self)
 	var args := OS.get_cmdline_user_args()
-	if args.has("--auto-single"):
+	if not _auto_launch_consumed and args.has("--auto-single"):
+		_auto_launch_consumed = true
 		# Auto-start single player after a short delay so UI is ready
 		get_tree().create_timer(1.0).timeout.connect(_on_single_player)
 		return
-	if args.has("--cinematic"):
+	if not _auto_launch_consumed and args.has("--cinematic"):
+		_auto_launch_consumed = true
 		get_tree().create_timer(1.0).timeout.connect(_on_single_player)
 		return
-	if args.size() >= 2 and args[0] == "--client":
+	if not _auto_launch_consumed and args.size() >= 2 and args[0] == "--client":
+		_auto_launch_consumed = true
 		var ip := args[1]
 		_net = get_node("/root/NetworkManager")
 		_net.connection_succeeded.connect(_on_net_connected)

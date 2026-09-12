@@ -4873,6 +4873,7 @@ func _sync_third_person_equipment(held_item) -> void:
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			_build_third_person_rifle()
+			_initialize_rifle_ammo()
 			return
 	if held_item == null or held_item.item_type == "backpack":
 		return

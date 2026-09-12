@@ -39,7 +39,7 @@ func _process(delta: float) -> void:
 	time_changed.emit()
 
 func is_night() -> bool:
-	return time_of_day < 6.0 or time_of_day >= 22.0
+	return time_of_day < 6.0 or time_of_day >= 21.5
 
 func get_day_amount() -> float:
 	return get_day_amount_at(time_of_day)
@@ -47,8 +47,8 @@ func get_day_amount() -> float:
 static func get_day_amount_at(t: float) -> float:
 	var sunrise_start := 5.5
 	var sunrise_end := 7.0
-	var sunset_start := 20.0
-	var sunset_end := 22.0
+	var sunset_start := 19.5
+	var sunset_end := 21.5
 	if t < sunrise_start or t >= sunset_end:
 		return 0.0
 	elif t < sunrise_end:

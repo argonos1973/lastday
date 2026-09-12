@@ -409,6 +409,7 @@ const WORLD_SEED := 1337
 # Punto temporal de entrada para revisar el poblado. Está junto a la primera
 # casa, sobre terreno libre y orientado hacia el núcleo de edificios.
 const TOWN_TEST_SPAWN := Vector3(-17.0, 0.4, -10.0)
+const LAKE_TEST_SPAWN := Vector3(245.0, 0.4, -255.0)
 
 var _world_rng := RandomNumberGenerator.new()
 
@@ -1705,10 +1706,15 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = TOWN_TEST_SPAWN
+	player.position = LAKE_TEST_SPAWN
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
+	# Equip rifle for testing
+	if player.inventory != null:
+		var rifle_item = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0)
+		player.inventory.add_item(rifle_item)
+		player.equip_item_by_name("Rifle francotirador")
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
@@ -11898,6 +11904,11 @@ func _setup_cinematic() -> void:
 		var gy := _get_exact_ground_y(lake_fire_pos.x, lake_fire_pos.z)
 		player.global_position = Vector3(lake_fire_pos.x + 1.5, gy, lake_fire_pos.z + 1.5)
 		player.rotation.y = deg_to_rad(180.0)
+		# Equip rifle
+		if player.inventory != null:
+			var rifle_item = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0)
+			player.inventory.add_item(rifle_item)
+			player.equip_item_by_name("Rifle francotirador")
 	# Each shot: [name, pos, look_at, duration, phase]
 	# phase: "day", "night", "night_fire", "storm", "sunset"
 	_cinematic_shots = [

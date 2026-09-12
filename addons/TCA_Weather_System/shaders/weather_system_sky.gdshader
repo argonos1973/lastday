@@ -232,19 +232,20 @@ void sky(){
 
     float sun_facing=max(0.0,dot(EYEDIR,sun_dir));
     float cloud_brightness=0.8+0.3*sun_facing*cloud_lighting;
-    cloud_brightness *= mix(0.15, 1.0, day);
+    cloud_brightness *= mix(0.0, 1.0, day);
     
     // === TCA 1.3 云层阴影遮挡太阳 ===
     float cloud_shadow = 1.0 - clouds * cloud_shadow_strength * (1.0 - night);
     sky *= cloud_shadow;
     
     // === TCA 1.3 月亮照亮云层 ===
-    cloud_brightness += night * moon_cloud_illumination;
+    // Disabled: clouds should not be visible at night
+    // cloud_brightness += night * moon_cloud_illumination;
     
     vec3 cloud_color=mix(cloud_inner_colour,cloud_outer_colour,smoothstep(0.3, 0.75, cloud_noise))*cloud_brightness;
     
     // === TCA 1.3 雨天云层变灰 ===
-    cloud_color = mix(cloud_color, rain_cloud_tint * mix(0.04, 1.0, day) * mix(1.15, 0.65, cloud_noise), rain_intensity * 0.8);
+    cloud_color = mix(cloud_color, rain_cloud_tint * mix(0.0, 1.0, day) * mix(1.15, 0.65, cloud_noise), rain_intensity * 0.8);
     
     sky=mix(sky,cloud_color,clouds);
     sky+=volumetric_cloud(EYEDIR,sun_dir,TIME);
