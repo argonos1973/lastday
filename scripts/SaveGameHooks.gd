@@ -210,13 +210,16 @@ static func collect_world_data(main: Node) -> Dictionary:
 	for pos in tfp:
 		if pos is Vector3:
 			data["torch_fire_positions"].append([pos.x, pos.y, pos.z])
-	# Campfire fire timers (remaining time)
+	# Campfire fire timers (remaining time in ms, not absolute timestamp)
 	var cf_timers := {}
 	var fire_timers = main.get("campfire_fire_timers")
 	if fire_timers == null:
 		fire_timers = {}
+	var now := Time.get_ticks_msec()
 	for fire_name in fire_timers.keys():
-		cf_timers[fire_name] = fire_timers[fire_name]
+		var remaining: int = int(fire_timers[fire_name]) - int(now)
+		if remaining > 0:
+			cf_timers[fire_name] = remaining
 	data["campfire_fire_timers"] = cf_timers
 	# Fruit tree cooldowns — persist pick_fruit ready times
 	var fruit_cd := {}
@@ -505,6 +508,17 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			action.display_name = "Fogata encendida"
 			action.repeatable = true
 		main._lit_campfires.append(lc)
+	# Restore remaining campfire fire durations (saved as relative ms)
+	var saved_cf_timers = data.get("campfire_fire_timers", {})
+	if saved_cf_timers is Dictionary and not saved_cf_timers.is_empty():
+		var now_ms := Time.get_ticks_msec()
+		for fire_name in saved_cf_timers.keys():
+			var remaining_ms: int = int(saved_cf_timers[fire_name])
+			if remaining_ms > 0 and main.campfire_fire_timers.has(fire_name):
+				main.campfire_fire_timers[fire_name] = now_ms + remaining_ms
+			elif remaining_ms <= 0 and main.campfire_fire_timers.has(fire_name):
+				# Already expired while away — let _tick_campfire_fires clean it up
+				main.campfire_fire_timers[fire_name] = now_ms
 	# Built shelters
 	var shelters = data.get("built_shelters", [])
 	for sh in shelters:

@@ -916,8 +916,9 @@ func _process(delta: float) -> void:
 		_update_shadow_proximity()
 	_world_action_tick_timer += delta
 	if _world_action_tick_timer >= 0.5:
+		var elapsed := _world_action_tick_timer
 		_world_action_tick_timer = 0.0
-		_tick_world_actions(delta)
+		_tick_world_actions(elapsed)
 	_tick_drink_hold(delta)
 	if not campfire_fire_timers.is_empty():
 		_tick_campfire_fires()
@@ -6189,6 +6190,18 @@ func _hide_action_visual(action) -> void:
 				freed_any = true
 
 func handle_world_action(action, actor) -> void:
+	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
+	# destripar, construir) no deben solaparse por repeticion de tecla.
+	if actor != null and actor.get("_interact_busy") == true:
+		return
+	if actor != null:
+		actor.set("_interact_busy", true)
+	# Revalidar que el jugador sigue cerca y con la herramienta correcta tras await
+	await _execute_world_action(action, actor)
+	if actor != null:
+		actor.set("_interact_busy", false)
+
+func _execute_world_action(action, actor) -> void:
 	match action.action_type:
 		"gut_wolf":
 			if action.get_meta("gutted", false):
@@ -6597,6 +6610,7 @@ func handle_world_action(action, actor) -> void:
 				actor.notice.emit("Necesitas tener carne o pez ensartado en la mano para cocinar.")
 				return
 			var is_fish: bool = held_c.item_name == "Pez ensartado"
+			var raw_name := "Carne ensartada" if not is_fish else "Pez ensartado"
 			# Make sure the meat/fish on stick is visible in hand during cooking
 			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
@@ -6606,24 +6620,36 @@ func handle_world_action(action, actor) -> void:
 				hud.show_countdown("Cocinando", 10.0)
 			await get_tree().create_timer(10.0).timeout
 			if _scene_quitting: return
-			# Replace raw item on stick with cooked item
+			# Revalidar: el jugador sigue teniendo el item ensartado en la mano?
+			var held_after = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_after == null or held_after.item_name != raw_name:
+				actor.notice.emit("Ya no tienes %s en la mano." % raw_name.to_lower())
+				return
+			# Comprobar espacio ANTES de consumir el crudo para no perderlo
+			var cooked_name := "Carne cocinada" if not is_fish else "Pez cocinado"
+			var cooked_use := 35.0 if not is_fish else 30.0
+			var cooked_weight := 0.4 if not is_fish else 0.35
+			var cooked_item = ItemScript.create(cooked_name, "food", cooked_weight, 1, cooked_use)
+			# Verificar si hay slot libre o si puede apilarse con algo existente
+			var can_hold := false
+			if actor.inventory.items.size() < actor.inventory.max_slots:
+				can_hold = true
+			else:
+				for existing in actor.inventory.items:
+					if existing != null and existing.can_stack_with(cooked_item):
+						can_hold = true
+						break
+			if not can_hold:
+				actor.notice.emit("No tienes espacio para %s cocinado." % ("el pez" if is_fish else "la carne"))
+				return
+			# Consumir el item ensartado (el palo afilado ya esta integrado en el)
 			var cooked := false
-			var raw_name := "Carne ensartada" if not is_fish else "Pez ensartado"
 			for i in range(actor.inventory.items.size()):
 				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == raw_name:
 					actor.inventory.remove_index(i)
 					cooked = true
 					break
-			# Also remove any leftover Palo afilado used for the skewer
-			for i in range(actor.inventory.items.size() - 1, -1, -1):
-				if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Palo afilado":
-					actor.inventory.remove_index(i)
-					break
 			if cooked:
-				var cooked_name := "Carne cocinada" if not is_fish else "Pez cocinado"
-				var cooked_use := 35.0 if not is_fish else 30.0
-				var cooked_weight := 0.4 if not is_fish else 0.35
-				var cooked_item = ItemScript.create(cooked_name, "food", cooked_weight, 1, cooked_use)
 				if actor.inventory.add_item(cooked_item):
 					if actor.stats.has_method("add_hot_food"):
 						actor.stats.add_hot_food(2)
@@ -7953,9 +7979,15 @@ func _update_loot_wear() -> void:
 				var spoil: float = float(entry.get("spoilage", 0.0))
 				spoil = min(100.0, spoil + food_item.get_spoilage_rate() * 5.0)
 				entry["spoilage"] = spoil
-				var action_node := get_node_or_null(NodePath("Pickup_" + str(entry.get("id", ""))))
+				var entry_id := str(entry.get("id", ""))
+				var action_node := get_node_or_null(NodePath("Pickup_" + entry_id))
 				if action_node != null:
 					action_node.set_meta("item_spoilage", spoil)
+				# La interaccion real esta en WorldAction_* — actualizar tambien
+				if world_actions_by_id.has(entry_id):
+					var wa = world_actions_by_id[entry_id]
+					if wa != null and is_instance_valid(wa):
+						wa.set_meta("item_spoilage", spoil)
 		if _is_loot_sheltered(pos):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))

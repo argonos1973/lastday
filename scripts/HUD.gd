@@ -42,6 +42,11 @@ var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
 var crosshair_ring_v: ColorRect
 var _crosshair_rifle_mode := false
+var _xh_segs: Array = []       # 4 segmentos de cruceta dinamica (t,b,l,r)
+var _xh_gap := 6.0             # separacion actual en pixeles
+var _hit_marker_a: ColorRect
+var _hit_marker_b: ColorRect
+var _hit_marker_timer := 0.0
 var notice_label: Label
 var objective_label: Label
 var equipment_hand_label: Label
@@ -121,6 +126,13 @@ func _process(delta: float) -> void:
 		else:
 			var remaining: int = ceili(countdown_timer)
 			countdown_label.text = "%s... %ds" % [countdown_text, remaining]
+	if _hit_marker_timer > 0.0:
+		_hit_marker_timer -= delta
+		if _hit_marker_timer <= 0.0:
+			if _hit_marker_a != null:
+				_hit_marker_a.visible = false
+			if _hit_marker_b != null:
+				_hit_marker_b.visible = false
 
 func show_countdown(text: String, duration: float) -> void:
 	countdown_text = text
@@ -836,6 +848,42 @@ func _build_center_messages() -> void:
 	crosshair_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(crosshair_dot)
 
+	# Cruceta dinamica del rifle: 4 segmentos que se abren con la dispersion
+	for i in range(4):
+		var seg := ColorRect.new()
+		seg.anchor_left = 0.5
+		seg.anchor_top = 0.5
+		seg.anchor_right = 0.5
+		seg.anchor_bottom = 0.5
+		seg.color = Color(0.96, 0.94, 0.84, 0.9)
+		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		seg.visible = false
+		root.add_child(seg)
+		_xh_segs.append(seg)
+	_layout_crosshair_segments()
+
+	# Hit marker: dos barras formando una X en el centro
+	for i in range(2):
+		var bar := ColorRect.new()
+		bar.anchor_left = 0.5
+		bar.anchor_top = 0.5
+		bar.anchor_right = 0.5
+		bar.anchor_bottom = 0.5
+		bar.offset_left = -9
+		bar.offset_top = -1.25
+		bar.offset_right = 9
+		bar.offset_bottom = 1.25
+		bar.pivot_offset = Vector2(9, 1.25)
+		bar.rotation = PI / 4.0 if i == 0 else -PI / 4.0
+		bar.color = Color(0.95, 0.15, 0.1, 0.95)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.visible = false
+		root.add_child(bar)
+		if i == 0:
+			_hit_marker_a = bar
+		else:
+			_hit_marker_b = bar
+
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	prompt_label.anchor_left = 0.5
@@ -948,6 +996,10 @@ func _update_equipment_labels() -> void:
 		if player.inventory.items.size() > 0:
 			var held_index: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
 			hand_text = player.inventory.items[held_index].item_name
+			# Mostrar municion del rifle si esta equipado
+			if player.has_method("get_rifle_info") and player.has_method("_has_rifle_equipped") and player._has_rifle_equipped():
+				var ri: Dictionary = player.get_rifle_info()
+				hand_text += "\nMun: %d/%d  Res: %d" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), int(ri.get("reserve", 0))]
 		equipment_hand_label.text = "Manos\n%s" % hand_text
 	if equipment_clothing_label != null:
 		var parts: Array = []
@@ -1637,22 +1689,57 @@ func _on_store_pressed() -> void:
 
 func set_crosshair_rifle(active: bool) -> void:
 	_crosshair_rifle_mode = active
+	_update_equipment_labels()
 	if crosshair_dot == null or crosshair_ring_h == null or crosshair_ring_v == null:
 		pass # print("DEBUG CROSSHAIR RIFLE: null nodes dot=", crosshair_dot, " h=", crosshair_ring_h, " v=", crosshair_ring_v)
 		return
 	crosshair_dot.visible = not active
-	if active:
-		crosshair_ring_h.offset_left = -8
-		crosshair_ring_h.offset_top = -1
-		crosshair_ring_h.offset_right = 8
-		crosshair_ring_h.offset_bottom = 1
-		crosshair_ring_v.offset_left = -1
-		crosshair_ring_v.offset_top = -8
-		crosshair_ring_v.offset_right = 1
-		crosshair_ring_v.offset_bottom = 8
-		crosshair_ring_h.color = Color(0.96, 0.94, 0.84, 0.92)
-		crosshair_ring_v.color = Color(0.96, 0.94, 0.84, 0.92)
-	crosshair_ring_h.visible = active
-	crosshair_ring_v.visible = active
+	# Modo rifle: 4 segmentos dinamicos en vez de la cruz fija
+	crosshair_ring_h.visible = false
+	crosshair_ring_v.visible = false
+	for seg in _xh_segs:
+		seg.visible = active
+
+func set_crosshair_spread(gap_px: float) -> void:
+	# gap_px es la distancia del centro a cada segmento, en pixeles
+	_xh_gap = maxf(3.0, gap_px)
+	_layout_crosshair_segments()
+
+func _layout_crosshair_segments() -> void:
+	if _xh_segs.size() < 4:
+		return
+	var seg_len := 11.0
+	var thick := 2.0
+	var g := _xh_gap
+	# top
+	_xh_segs[0].offset_left = -thick * 0.5
+	_xh_segs[0].offset_right = thick * 0.5
+	_xh_segs[0].offset_top = -g - seg_len
+	_xh_segs[0].offset_bottom = -g
+	# bottom
+	_xh_segs[1].offset_left = -thick * 0.5
+	_xh_segs[1].offset_right = thick * 0.5
+	_xh_segs[1].offset_top = g
+	_xh_segs[1].offset_bottom = g + seg_len
+	# left
+	_xh_segs[2].offset_left = -g - seg_len
+	_xh_segs[2].offset_right = -g
+	_xh_segs[2].offset_top = -thick * 0.5
+	_xh_segs[2].offset_bottom = thick * 0.5
+	# right
+	_xh_segs[3].offset_left = g
+	_xh_segs[3].offset_right = g + seg_len
+	_xh_segs[3].offset_top = -thick * 0.5
+	_xh_segs[3].offset_bottom = thick * 0.5
+
+func show_hit_marker(lethal: bool) -> void:
+	if _hit_marker_a == null or _hit_marker_b == null:
+		return
+	_hit_marker_timer = 0.22
+	var col := Color(0.95, 0.15, 0.1, 0.95) if lethal else Color(0.92, 0.9, 0.82, 0.75)
+	_hit_marker_a.color = col
+	_hit_marker_b.color = col
+	_hit_marker_a.visible = true
+	_hit_marker_b.visible = true
 	pass # print("DEBUG CROSSHAIR RIFLE: active=", active, " dot.visible=", crosshair_dot.visible, " h.visible=", crosshair_ring_h.visible, " v.visible=", crosshair_ring_v.visible, " h.pos=", crosshair_ring_h.position, " h.size=", crosshair_ring_h.size)
 	_apply_aim_layout()

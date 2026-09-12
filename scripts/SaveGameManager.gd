@@ -3,6 +3,9 @@ extends Node
 const SAVE_DIR := "user://saves/"
 const SAVE_FILE := "savegame.json"
 const SAVE_PATH := SAVE_DIR + SAVE_FILE
+const BACKUP_PATH := SAVE_DIR + "savegame.bak.json"
+const TEMP_PATH := SAVE_DIR + "savegame.tmp.json"
+const SAVE_VERSION := 2
 
 signal save_loaded(data: Dictionary)
 
@@ -62,37 +65,95 @@ func get_save_path() -> String:
 func save_game(player_data: Dictionary, world_data: Dictionary) -> bool:
 	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
 	var data := {
-		"version": 1,
+		"version": SAVE_VERSION,
 		"timestamp": Time.get_unix_time_from_system(),
 		"player": player_data,
 		"world": world_data,
 	}
 	var json_str := JSON.stringify(data, "  ")
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	# Escritura atomica: escribir a temp, renombrar a destino. Si existe un
+	# save previo, copiarlo a backup antes de sobrescribir.
+	var f := FileAccess.open(TEMP_PATH, FileAccess.WRITE)
 	if f == null:
-		push_error("SaveGameManager: No se pudo abrir %s para escribir" % SAVE_PATH)
+		push_error("SaveGameManager: No se pudo abrir %s para escribir" % TEMP_PATH)
 		return false
 	f.store_string(json_str)
 	f.close()
+	f = null
+	# Validar que el temporal se escribio correctamente
+	var verify := FileAccess.open(TEMP_PATH, FileAccess.READ)
+	if verify == null:
+		push_error("SaveGameManager: No se pudo verificar el temporal")
+		return false
+	var verify_text := verify.get_as_text()
+	verify.close()
+	var verify_parsed = JSON.parse_string(verify_text)
+	if not verify_parsed is Dictionary:
+		push_error("SaveGameManager: Temporal corrupto, abortando")
+		DirAccess.remove_absolute(TEMP_PATH)
+		return false
+	# Backup del save anterior si existe
+	if FileAccess.file_exists(SAVE_PATH):
+		DirAccess.copy_absolute(SAVE_PATH, BACKUP_PATH)
+	# Renombrar temporal -> destino (atomico en la mayoria de filesystems)
+	var err := DirAccess.rename_absolute(TEMP_PATH, SAVE_PATH)
+	if err != OK:
+		push_error("SaveGameManager: No se pudo renombrar el temporal: %d" % err)
+		return false
 	_current_save = data
 	return true
 
 func load_game() -> Dictionary:
 	if not has_save():
 		return {}
+	var text := ""
 	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if f == null:
 		push_error("SaveGameManager: No se pudo abrir %s para leer" % SAVE_PATH)
 		return {}
-	var text := f.get_as_text()
+	text = f.get_as_text()
 	f.close()
 	var parsed = JSON.parse_string(text)
 	if not parsed is Dictionary:
-		push_error("SaveGameManager: JSON invalido en %s" % SAVE_PATH)
-		return {}
+		push_error("SaveGameManager: JSON invalido en %s, intentando backup" % SAVE_PATH)
+		if FileAccess.file_exists(BACKUP_PATH):
+			f = FileAccess.open(BACKUP_PATH, FileAccess.READ)
+			if f != null:
+				text = f.get_as_text()
+				f.close()
+				parsed = JSON.parse_string(text)
+				if parsed is Dictionary:
+					# Restaurar backup como save principal
+					DirAccess.copy_absolute(BACKUP_PATH, SAVE_PATH)
+				else:
+					push_error("SaveGameManager: Backup tambien corrupto")
+					return {}
+			else:
+				return {}
+		else:
+			return {}
+	# Migracion de version
+	parsed = _migrate_save(parsed)
 	_current_save = parsed
 	save_loaded.emit(parsed)
 	return parsed
+
+func _migrate_save(data: Dictionary) -> Dictionary:
+	var ver: int = int(data.get("version", 1))
+	# v1 -> v2: campfire_fire_timers pasan de timestamp absoluto a ms relativos
+	if ver < 2:
+		var cft = data.get("world", {}).get("campfire_fire_timers", {})
+		if cft is Dictionary:
+			var now := Time.get_ticks_msec()
+			var migrated := {}
+			for fire_name in cft.keys():
+				var ts: int = int(cft[fire_name])
+				var remaining: int = ts - int(now)
+				if remaining > 0:
+					migrated[fire_name] = remaining
+			(data["world"] as Dictionary)["campfire_fire_timers"] = migrated
+		data["version"] = SAVE_VERSION
+	return data
 
 func delete_save() -> void:
 	if has_save():

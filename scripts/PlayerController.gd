@@ -406,6 +406,7 @@ var _rod_animations_pending: Array = []
 var _rod_animations_deferred := false
 var _is_fishing_idle := false
 var _is_fishing := false
+var _interact_busy := false  # bloquea interacciones con await en curso
 var _can_fish_near_water := false
 var _is_near_fishing_shore := false
 var _fishing_water_cache_pos := Vector3.INF
@@ -434,6 +435,7 @@ var _rifle_reserve_ammo := 0
 var _recoil_pitch := 0.0
 var _recoil_yaw := 0.0
 var _recoil_recover_speed := 3.0
+var _crosshair_bloom := 0.0   # dispersion extra en px tras cada disparo
 var _wind_dir := Vector3(1.0, 0.0, 0.3).normalized()
 var _wind_strength := 0.0
 var _wind_target_strength := 0.0
@@ -1055,6 +1057,7 @@ func _process(delta: float) -> void:
 		var main := get_tree().current_scene
 		if main != null and main.hud != null:
 			_update_crosshair(_has_rifle_equipped())
+	_update_crosshair_spread(delta)
 	# Update rifle: two-point alignment
 	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset) and _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		var skel := _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
@@ -1217,7 +1220,7 @@ func _input(event: InputEvent) -> void:
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 			if _is_aiming:
 				camera.rotation.y = _breath_yaw_offset * 0.5
-	if event.is_action_pressed("interact"):
+	if event.is_action_pressed("interact") and not event.echo:
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
 		var target = _get_interaction_target()
@@ -2474,8 +2477,9 @@ func _drop_excess_items(count: int) -> void:
 			continue
 		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 		drop_pos.y = global_position.y
-		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), drop_pos, Color(0, 0, 0, 0), false, float(item.spoilage))
-		inventory.remove_index(i)
+		var qty: int = int(item.quantity)
+		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), qty, float(item.use_value), drop_pos, Color(0, 0, 0, 0), false, float(item.spoilage))
+		inventory.remove_index(i, qty)
 		dropped += 1
 	if dropped > 0:
 		notice.emit("Se ha caido %d objeto(s) al perder capacidad." % dropped)
@@ -6968,6 +6972,8 @@ func _get_current_anim() -> String:
 	return "idle"
 
 func _interact() -> void:
+	if _interact_busy:
+		return
 	if _has_fishing_rod_in_hand() and not _is_fishing:
 		var fishing_state := _get_fishing_water_state()
 		if bool(fishing_state.get("near", false)):
@@ -8170,6 +8176,36 @@ func _has_rifle_equipped() -> bool:
 		return false
 	return held.item_type == "weapon_rifle"
 
+func _current_spread_deg() -> float:
+	# Misma regla que _shoot_rifle: mas precision quieto/agachado/tumbado/apuntando
+	var spread_deg := 0.6
+	if is_crouching:
+		spread_deg = 0.25
+	if is_prone:
+		spread_deg = 0.12
+	if _is_aiming:
+		spread_deg *= 0.3
+	if is_moving:
+		spread_deg *= 2.5
+	if not is_on_floor():
+		spread_deg *= 4.0
+	return minf(spread_deg, 12.0)
+
+func _update_crosshair_spread(delta: float) -> void:
+	if is_puppet:
+		return
+	_crosshair_bloom = maxf(0.0, _crosshair_bloom - delta * 90.0)
+	if not _rifle_in_hands or _is_aiming:
+		return
+	var main := get_tree().current_scene
+	if main == null or main.get("hud") == null or not main.hud.has_method("set_crosshair_spread"):
+		return
+	var fov_y := deg_to_rad(camera.fov) if camera != null else deg_to_rad(55.0)
+	var vp_h := get_viewport().get_visible_rect().size.y
+	var px_per_rad: float = (vp_h * 0.5) / tan(fov_y * 0.5)
+	var gap := tan(deg_to_rad(_current_spread_deg())) * px_per_rad + _crosshair_bloom
+	main.hud.set_crosshair_spread(gap)
+
 func _update_crosshair(is_rifle: bool) -> void:
 	if is_puppet:
 		return
@@ -8253,6 +8289,9 @@ func _reload_rifle() -> void:
 	_rifle_magazine += to_load
 	_is_reloading = false
 	notice.emit("Recargado: %d/%d en cargador, %d en reserva." % [_rifle_magazine, RIFLE_MAG_SIZE, _rifle_reserve_ammo])
+	var main := get_tree().current_scene
+	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
+		main.hud._update_equipment_labels()
 
 func get_rifle_info() -> Dictionary:
 	return {
@@ -8290,6 +8329,7 @@ func _shoot_rifle() -> void:
 		return
 	_rifle_magazine -= 1
 	_shoot_cooldown = 1.5
+	_crosshair_bloom = minf(_crosshair_bloom + 26.0, 60.0)
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
@@ -8333,75 +8373,68 @@ func _shoot_rifle() -> void:
 	notice.emit("Bang!")
 	_play_shoot_sound()
 	var space_state := get_world_3d().direct_space_state
-	# Usar RIDs cacheados para evitar recorrer el árbol en cada disparo
 	if _cached_rids_dirty:
 		_cached_exclude_rids = [self.get_rid()]
 		_collect_child_collision_rids(self, _cached_exclude_rids)
 		_cached_rids_dirty = false
-	var exclude_arr: Array[RID] = _cached_exclude_rids
-	# In third-person, the camera is behind/above the player. Cast a ray from
-	# the camera through the crosshair to find the intended target point, then
-	# fire the actual damage ray from the player's weapon position toward that
-	# point so nearby ground-level enemies are hit correctly.
-	var cam_query := PhysicsRayQueryParameters3D.create(cam_ray_origin, cam_ray_origin + cam_ray_dir * RIFLE_RANGE)
-	cam_query.exclude = exclude_arr
-	cam_query.collide_with_areas = true
-	cam_query.collide_with_bodies = true
-	var cam_result := space_state.intersect_ray(cam_query)
-	var target_point: Vector3 = cam_ray_origin + cam_ray_dir * RIFLE_RANGE
-	if not cam_result.is_empty():
-		target_point = cam_result["position"]
-	# Weapon origin: player position at chest/shoulder height
-	var weapon_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
-	if is_crouching:
-		weapon_origin = global_position + Vector3(0.0, 1.0, 0.0)
-	elif is_prone:
-		weapon_origin = global_position + Vector3(0.0, 0.3, 0.0)
-	if is_instance_valid(_rifle_muzzle):
-		var muzzle_pos := _rifle_muzzle.global_position
-		var barrel_query := PhysicsRayQueryParameters3D.create(weapon_origin, muzzle_pos)
-		barrel_query.exclude = exclude_arr
-		barrel_query.collide_with_areas = true
-		var barrel_hit := space_state.intersect_ray(barrel_query)
-		if not barrel_hit.is_empty():
-			target_point = barrel_hit.position
-		else:
-			weapon_origin = muzzle_pos
-	var ray_dir: Vector3 = (target_point - weapon_origin).normalized()
-	var ray_origin: Vector3 = weapon_origin
-	# Realistic spread: wider when moving, narrower when crouching/aiming
-	var spread_deg := 0.6
-	if is_crouching:
-		spread_deg = 0.25
-	if is_prone:
-		spread_deg = 0.12
-	if _is_aiming:
-		spread_deg *= 0.3
-	if is_moving:
-		spread_deg *= 2.5
-	if not is_on_floor():
-		spread_deg *= 4.0
-	spread_deg = min(spread_deg, 12.0)
+	var exclude_arr: Array[RID] = _cached_exclude_rids.duplicate()
+	# Hitscan: la camara apunta donde mira el jugador. Aplicar spread al rayo
+	# de la camara y castear directamente — dano, particulas y fogonazo ocurren
+	# en el mismo frame. Sin proyectil que se pierda ni retardo visible.
+	var aim_dir: Vector3 = cam_ray_dir
+	var spread_deg := _current_spread_deg()
 	if spread_deg > 0.01:
 		var spread_rad := deg_to_rad(spread_deg)
-		ray_dir = ray_dir.rotated(Vector3.UP, randf_range(-spread_rad, spread_rad))
-		var right := ray_dir.cross(Vector3.UP).normalized()
-		ray_dir = ray_dir.rotated(right, randf_range(-spread_rad, spread_rad))
-		ray_dir = ray_dir.normalized()
-	var projectile := preload("res://scripts/RifleProjectile.gd").new()
-	projectile.velocity = ray_dir * 800.0
-	projectile.wind_velocity = _wind_dir * _wind_strength
-	projectile.max_distance = RIFLE_RANGE
-	projectile.excluded = exclude_arr
-	projectile.impact.connect(_apply_rifle_damage)
-	get_tree().current_scene.add_child(projectile)
-	projectile.global_position = ray_origin
+		aim_dir = aim_dir.rotated(Vector3.UP, randf_range(-spread_rad, spread_rad))
+		var right := aim_dir.cross(Vector3.UP).normalized()
+		aim_dir = aim_dir.rotated(right, randf_range(-spread_rad, spread_rad))
+		aim_dir = aim_dir.normalized()
+	# Hitscan: la direccion es donde mira la camara (cruceta), pero el rayo
+	# sale del cañon real del rifle — igual que el fogonazo. Si el muzzle no
+	# existe o esta dentro del propio personaje, se usa el hombro.
+	var shot_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
+	if is_crouching:
+		shot_origin = global_position + Vector3(0.0, 1.0, 0.0)
+	elif is_prone:
+		shot_origin = global_position + Vector3(0.0, 0.3, 0.0)
+	if is_instance_valid(_rifle_muzzle):
+		shot_origin = _rifle_muzzle.global_position
+	var hit_query := PhysicsRayQueryParameters3D.create(shot_origin, shot_origin + aim_dir * RIFLE_RANGE)
+	hit_query.exclude = exclude_arr
+	hit_query.collide_with_areas = true
+	hit_query.collide_with_bodies = true
+	var hit_result := space_state.intersect_ray(hit_query)
+	# Atravesar Area3D que no sean hitboxes (zonas de interaccion, triggers)
+	while not hit_result.is_empty() and hit_result["collider"] is Area3D \
+	and not ("hitbox" in str((hit_result["collider"] as Node).name).to_lower()):
+		exclude_arr.append(hit_result["rid"])
+		hit_query.exclude = exclude_arr
+		hit_result = space_state.intersect_ray(hit_query)
+	var hit_pos: Vector3 = shot_origin + aim_dir * RIFLE_RANGE
+	var hit_normal: Vector3 = Vector3.UP
+	var hit_collider = null
+	if not hit_result.is_empty():
+		hit_pos = hit_result["position"]
+		hit_normal = hit_result["normal"]
+		hit_collider = hit_result["collider"]
+	# Aplicar dano/impacto inmediatamente (hitscan) — las particulas salen ya.
+	if hit_collider != null:
+		_apply_rifle_damage(hit_collider, hit_pos, shot_origin.distance_to(hit_pos), hit_normal)
+	# Fogonazo: en la punta REAL del cañon, igual que la bala.
+	var flash_pos: Vector3 = shot_origin
+	_spawn_muzzle_flash(flash_pos, aim_dir)
+	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
+		_scope_overlay.muzzle_flash()
 	if not is_puppet:
 		var net_node := get_node_or_null("/root/NetworkManager")
 		if net_node != null and net_node.is_connected:
-			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), ray_origin, ray_dir)
+			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), shot_origin, aim_dir)
+	# Refrescar contador de municion en el HUD
+	var main := get_tree().current_scene
+	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
+		main.hud._update_equipment_labels()
 
-func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
+func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP) -> void:
 	# Smooth energy loss; damage remains a game abstraction rather than a medical model.
 	var damage := RIFLE_DAMAGE * exp(-0.0003 * hit_dist)
 	var is_headshot := false
@@ -8443,6 +8476,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
 			else:
 				target_node.take_damage(damage, false)
 			_spawn_blood_splatter(hit_pos)
+			_hit_marker(true)
 			return
 		# Handle net_player_proxy directly
 		if node.is_in_group("net_player_proxy"):
@@ -8466,46 +8500,323 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float) -> void:
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 					if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
 						net_node.apply_damage_to_client.rpc_id(peer_id, damage)
-		elif node.has_method("apply_damage"):
+			_spawn_blood_splatter(hit_pos)
+			_hit_marker(true)
+			return
+		if node.has_method("apply_damage"):
 			node.apply_damage(damage)
-		_spawn_blood_splatter(hit_pos)
+	# Non-living surface: dust puff, debris chips and a bullet hole decal
+	_spawn_bullet_impact(hit_pos, hit_normal, collider)
+	_hit_marker(false)
 
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
-	var particles := GPUParticles3D.new()
-	particles.name = "BloodSplatter"
-	particles.amount = 60
-	particles.lifetime = 1.2
-	particles.explosiveness = 1.0
-	particles.randomness = 1.0
-	particles.one_shot = true
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0, 1.2, 0)
+	# Gotas: pequenas, rapidas, con gravedad fuerte
+	var drops := GPUParticles3D.new()
+	drops.name = "BloodDrops"
+	drops.amount = 40
+	drops.lifetime = 0.8
+	drops.explosiveness = 1.0
+	drops.randomness = 0.9
+	drops.one_shot = true
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 60.0
-	mat.initial_velocity_min = 4.0
-	mat.initial_velocity_max = 9.0
-	mat.gravity = Vector3(0, -15.0, 0)
-	mat.scale_min = 0.08
-	mat.scale_max = 0.15
-	mat.color = Color(0.6, 0.02, 0.02, 1.0)
-	mat.hue_variation_min = -0.03
-	mat.hue_variation_max = 0.03
+	mat.spread = 70.0
+	mat.initial_velocity_min = 3.0
+	mat.initial_velocity_max = 8.0
+	mat.gravity = Vector3(0, -18.0, 0)
+	mat.scale_min = 0.4
+	mat.scale_max = 1.1
+	mat.color = Color(0.45, 0.01, 0.01, 1.0)
+	mat.hue_variation_min = -0.02
+	mat.hue_variation_max = 0.02
+	mat.color_ramp = _make_fade_ramp(0.03, 0.75)
+	drops.process_material = mat
+	drops.draw_pass_1 = _make_soft_mesh(Vector2(0.05, 0.05), Color.WHITE)
+	scene.add_child(drops)
+	drops.global_position = pos
+	drops.emitting = true
+	# Niebla: nube roja oscura que se expande y disipa
+	var mist := GPUParticles3D.new()
+	mist.name = "BloodMist"
+	mist.amount = 14
+	mist.lifetime = 0.7
+	mist.explosiveness = 0.8
+	mist.randomness = 1.0
+	mist.one_shot = true
+	var mmat := ParticleProcessMaterial.new()
+	mmat.direction = Vector3(0, 0.4, 0)
+	mmat.spread = 80.0
+	mmat.initial_velocity_min = 0.5
+	mmat.initial_velocity_max = 2.2
+	mmat.gravity = Vector3(0, -0.8, 0)
+	mmat.damping_min = 1.5
+	mmat.damping_max = 3.0
+	mmat.scale_min = 0.4
+	mmat.scale_max = 0.9
+	mmat.color = Color(0.35, 0.0, 0.0, 0.55)
+	mmat.color_ramp = _make_fade_ramp(0.08, 0.5)
+	var mist_scale := CurveTexture.new()
+	var mist_curve := Curve.new()
+	mist_curve.add_point(Vector2(0.0, 0.5))
+	mist_curve.add_point(Vector2(1.0, 1.8))
+	mist_scale.curve = mist_curve
+	mmat.scale_curve = mist_scale
+	mist.process_material = mmat
+	mist.draw_pass_1 = _make_soft_mesh(Vector2(0.22, 0.22), Color.WHITE)
+	scene.add_child(mist)
+	mist.global_position = pos
+	mist.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(func(): drops.queue_free(); mist.queue_free())
+
+# --- Impactos en superficies no vivas ---
+static var _bullet_hole_texture: Texture2D = null
+static var _soft_particle_texture: Texture2D = null
+static var _bullet_holes: Array = []
+const MAX_BULLET_HOLES := 80
+
+func _get_soft_particle_texture() -> Texture2D:
+	if _soft_particle_texture != null:
+		return _soft_particle_texture
+	var size := 64
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var center := Vector2(size, size) * 0.5
+	for y in range(size):
+		for x in range(size):
+			var d: float = (Vector2(x, y) - center).length() / (size * 0.5)
+			var a := clampf(1.0 - d, 0.0, 1.0)
+			a = pow(a, 1.8)
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
+	_soft_particle_texture = ImageTexture.create_from_image(img)
+	return _soft_particle_texture
+
+func _make_fade_ramp(fade_in_end := 0.15, fade_out_start := 0.55) -> GradientTexture1D:
+	var grad := Gradient.new()
+	grad.set_color(0, Color(1, 1, 1, 0.0))
+	grad.add_point(fade_in_end, Color(1, 1, 1, 1.0))
+	grad.add_point(fade_out_start, Color(1, 1, 1, 0.85))
+	grad.set_color(1, Color(1, 1, 1, 0.0))
+	var tex := GradientTexture1D.new()
+	tex.gradient = grad
+	return tex
+
+func _make_soft_mesh(sz: Vector2, color: Color) -> QuadMesh:
+	var quad := QuadMesh.new()
+	quad.size = sz
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = _get_soft_particle_texture()
+	m.albedo_color = color
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	quad.material = m
+	return quad
+
+func _hit_marker(lethal: bool) -> void:
+	var main := get_tree().current_scene
+	if main != null and main.get("hud") != null and main.hud.has_method("show_hit_marker"):
+		main.hud.show_hit_marker(lethal)
+
+func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> void:
+	if hit_normal.length_squared() < 0.01:
+		hit_normal = Vector3.UP
+	hit_normal = hit_normal.normalized()
+	var dust_color := _guess_surface_dust_color(hit_normal, collider)
+	_spawn_impact_dust(hit_pos, hit_normal, dust_color)
+	_spawn_impact_chips(hit_pos, hit_normal, dust_color)
+	_spawn_bullet_hole_decal(hit_pos, hit_normal)
+
+func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
+	# Heuristica por nombre del collider y sus padres
+	var path_names := ""
+	var c: Node = collider as Node
+	var depth := 0
+	while c != null and depth < 6:
+		path_names += str(c.name).to_lower() + "|"
+		c = c.get_parent()
+		depth += 1
+	if "water" in path_names or "agua" in path_names or "lake" in path_names or "lago" in path_names:
+		return Color(0.75, 0.82, 0.9, 0.7)   # salpicadura
+	if "wood" in path_names or "madera" in path_names or "tree" in path_names or "arbol" in path_names or "tronco" in path_names or "barn" in path_names or "granero" in path_names or "fence" in path_names or "door" in path_names or "puerta" in path_names or "hut" in path_names or "refugio" in path_names or "plank" in path_names:
+		return Color(0.5, 0.38, 0.24, 0.85)  # madera
+	if "metal" in path_names or "tent" in path_names or "tienda" in path_names or "barrel" in path_names or "bidon" in path_names:
+		return Color(0.7, 0.68, 0.6, 0.85)   # metal
+	if "wall" in path_names or "pared" in path_names or "house" in path_names or "casa" in path_names or "stone" in path_names or "piedra" in path_names or "rock" in path_names or "roca" in path_names or "concrete" in path_names or "boulder" in path_names or "brick" in path_names or "ladrillo" in path_names:
+		return Color(0.6, 0.58, 0.52, 0.85)  # piedra/hormigon
+	if hit_normal.y > 0.6:
+		return Color(0.48, 0.38, 0.26, 0.8)  # tierra
+	return Color(0.55, 0.52, 0.46, 0.8)    # generico
+
+func _spawn_impact_dust(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var particles := GPUParticles3D.new()
+	particles.name = "BulletDust"
+	particles.amount = 22
+	particles.lifetime = 1.4
+	particles.explosiveness = 0.65
+	particles.randomness = 0.9
+	particles.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = hit_normal
+	mat.spread = 65.0
+	mat.initial_velocity_min = 0.8
+	mat.initial_velocity_max = 3.2
+	mat.gravity = Vector3(0, -0.4, 0)
+	mat.damping_min = 2.5
+	mat.damping_max = 5.0
+	mat.scale_min = 0.25
+	mat.scale_max = 0.7
+	mat.color = color
+	mat.hue_variation_min = -0.02
+	mat.hue_variation_max = 0.02
+	mat.color_ramp = _make_fade_ramp(0.12, 0.5)
+	var scale_tex := CurveTexture.new()
+	var scale_curve := Curve.new()
+	scale_curve.add_point(Vector2(0.0, 0.35))
+	scale_curve.add_point(Vector2(0.35, 0.9))
+	scale_curve.add_point(Vector2(1.0, 1.6))
+	scale_tex.curve = scale_curve
+	mat.scale_curve = scale_tex
 	particles.process_material = mat
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.08
-	sphere.height = 0.16
-	var blood_mat := StandardMaterial3D.new()
-	blood_mat.albedo_color = Color(0.6, 0.02, 0.02)
-	blood_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	blood_mat.no_depth_test = true
-	sphere.material = blood_mat
-	particles.draw_pass_1 = sphere
-	get_tree().current_scene.add_child(particles)
-	if at_pos != Vector3.ZERO:
-		particles.global_position = at_pos
-	else:
-		particles.global_position = global_position + Vector3(0, 1.2, 0)
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.14, 0.14), Color.WHITE)
+	scene.add_child(particles)
+	particles.global_position = hit_pos + hit_normal * 0.04
 	particles.emitting = true
-	get_tree().create_timer(2.5).timeout.connect(func(): particles.queue_free())
+	get_tree().create_timer(3.0).timeout.connect(func(): particles.queue_free())
+
+func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var particles := GPUParticles3D.new()
+	particles.name = "BulletChips"
+	particles.amount = 16
+	particles.lifetime = 0.45
+	particles.explosiveness = 1.0
+	particles.randomness = 0.75
+	particles.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = hit_normal
+	mat.spread = 70.0
+	mat.initial_velocity_min = 3.5
+	mat.initial_velocity_max = 9.0
+	mat.gravity = Vector3(0, -16.0, 0)
+	mat.scale_min = 0.5
+	mat.scale_max = 1.4
+	mat.color = Color(color.r + 0.08, color.g + 0.08, color.b + 0.08, 0.95)
+	mat.color_ramp = _make_fade_ramp(0.05, 0.7)
+	particles.process_material = mat
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.035, 0.035), Color.WHITE)
+	scene.add_child(particles)
+	particles.global_position = hit_pos + hit_normal * 0.02
+	particles.emitting = true
+	get_tree().create_timer(1.2).timeout.connect(func(): particles.queue_free())
+
+func _get_bullet_hole_texture() -> Texture2D:
+	if _bullet_hole_texture != null:
+		return _bullet_hole_texture
+	var size := 64
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var center := Vector2(size, size) * 0.5
+	for y in range(size):
+		for x in range(size):
+			var offset := Vector2(x, y) - center
+			var d: float = offset.length() / (size * 0.5)
+			var angle := atan2(offset.y, offset.x)
+			# Borde irregular para que no parezca un circulo perfecto
+			var edge := 0.42 + 0.12 * sin(angle * 5.0 + 0.7) + 0.07 * sin(angle * 11.0 + 2.1)
+			var a := clampf(1.0 - d / max(edge, 0.01), 0.0, 1.0)
+			a = pow(a, 0.55)
+			# Centro mas oscuro, halo de raspadura alrededor
+			var shade := 0.02 if d < edge * 0.45 else 0.09
+			img.set_pixel(x, y, Color(shade, shade, shade, a * 0.92))
+	_bullet_hole_texture = ImageTexture.create_from_image(img)
+	return _bullet_hole_texture
+
+func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	# Compatibility renderer (GLES3) no soporta Decal: usamos un quad pegado
+	# a la superficie con la textura del impacto.
+	var mi := MeshInstance3D.new()
+	mi.name = "BulletHole"
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.09, 0.09)
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = _get_bullet_hole_texture()
+	m.albedo_color = Color.WHITE
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	quad.material = m
+	mi.mesh = quad
+	scene.add_child(mi)
+	# +Z del quad mira hacia quien dispara (la cara visible)
+	var pos := hit_pos + hit_normal * 0.012
+	var up := Vector3.UP if absf(hit_normal.y) < 0.95 else Vector3.RIGHT
+	var basis_ := Basis.looking_at(-hit_normal, up)
+	mi.global_transform = Transform3D(basis_, pos)
+	mi.rotate_object_local(Vector3.BACK, randf() * TAU)
+	_bullet_holes.append(mi)
+	while _bullet_holes.size() > MAX_BULLET_HOLES:
+		var old = _bullet_holes.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()
+
+func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var flash_root := Node3D.new()
+	flash_root.name = "MuzzleFlash"
+	scene.add_child(flash_root)
+	flash_root.global_position = at_pos
+	var light := OmniLight3D.new()
+	light.light_color = Color(1.0, 0.72, 0.3)
+	light.light_energy = 5.0
+	light.omni_range = 7.0
+	light.omni_attenuation = 1.5
+	flash_root.add_child(light)
+	var particles := GPUParticles3D.new()
+	particles.amount = 10
+	particles.lifetime = 0.09
+	particles.one_shot = true
+	particles.explosiveness = 1.0
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = dir
+	mat.spread = 12.0
+	mat.initial_velocity_min = 6.0
+	mat.initial_velocity_max = 14.0
+	mat.gravity = Vector3.ZERO
+	mat.scale_min = 0.05
+	mat.scale_max = 0.12
+	mat.color = Color(1.0, 0.75, 0.3, 0.9)
+	particles.process_material = mat
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.1, 0.1)
+	var quad_mat := StandardMaterial3D.new()
+	quad_mat.albedo_color = Color(1.0, 0.72, 0.25, 0.9)
+	quad_mat.emission_enabled = true
+	quad_mat.emission = Color(1.0, 0.6, 0.2)
+	quad_mat.emission_energy_multiplier = 3.0
+	quad_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	quad_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	quad_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	quad.material = quad_mat
+	particles.draw_pass_1 = quad
+	flash_root.add_child(particles)
+	particles.emitting = true
+	get_tree().create_timer(0.15).timeout.connect(func():
+		if is_instance_valid(light):
+			light.light_energy = 0.0)
+	get_tree().create_timer(0.4).timeout.connect(func(): flash_root.queue_free())
 
 func _play_shoot_sound() -> void:
 	if _shoot_audio_player == null:

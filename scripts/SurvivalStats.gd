@@ -141,10 +141,15 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		health = max(0.0, health - 2.0 * delta)
 	if thirst <= 0.0:
 		health = max(0.0, health - 2.5 * delta)
+	# Dano por falta de sueño: transicion suave sin discontinuidad en sleep=0
+	# Cerca de 0 el dano se aproxima a 8.0/s; a 50 es ~0. La curva es continua.
 	if sleep <= 0.0:
 		health = max(0.0, health - 8.0 * delta)
 	elif sleep < 50.0:
-		health = max(0.0, health - (50.0 - sleep) * 0.2 * delta)
+		# smoothstep(0, 50, sleep) => 0 en sleep=0, 1 en sleep=50
+		var t := smoothstep(0.0, 50.0, sleep)
+		var sleep_damage: float = lerp(8.0, 0.0, t)
+		health = max(0.0, health - sleep_damage * delta)
 	# Health damage starts when temp color changes from white (deviation >= 1.2°C)
 	if body_temperature < 35.4:
 		health = max(0.0, health - 1.0 * delta)
@@ -231,11 +236,14 @@ func get_survival_time_text() -> String:
 	return "Dia 1 - %02d:%02d" % [hours, minutes]
 
 func get_sick(duration: float) -> void:
+	# No aplicar reduccion de stats si ya esta enfermo (evita doble penalizacion)
+	var was_sick := sick
 	sick = true
 	sick_timer = max(sick_timer, duration)
-	hunger *= 0.5
-	thirst *= 0.5
-	health *= 0.5
+	if not was_sick:
+		hunger *= 0.5
+		thirst *= 0.5
+		health *= 0.5
 	changed.emit()
 
 func equip_warmth(value: float) -> void:

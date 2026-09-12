@@ -285,16 +285,20 @@ func _process(delta: float) -> void:
 		if dist_to_player > AI_LOD_CULL and animal_type != "wolf":
 			# Lobos siempre activos (agresivos). El resto se duerme.
 			return
-		# LOD: actualizar IA a frecuencia reducida si están lejos
+		# LOD: actualizar IA a frecuencia reducida si están lejos.
+		# Acumular el delta mientras esperamos para procesar el tiempo completo
+		# al despertar, no solo el delta del frame actual.
+		var lod_interval := 0.0
 		if dist_to_player > AI_LOD_MID:
-			_ai_lod_timer += delta
-			if _ai_lod_timer < 1.0:
-				return
-			_ai_lod_timer = 0.0
+			lod_interval = 1.0
 		elif dist_to_player > AI_LOD_NEAR:
+			lod_interval = 0.25
+		if lod_interval > 0.0:
 			_ai_lod_timer += delta
-			if _ai_lod_timer < 0.25:
+			if _ai_lod_timer < lod_interval:
 				return
+			# Procesar con el tiempo acumulado, no solo el frame actual
+			delta = _ai_lod_timer
 			_ai_lod_timer = 0.0
 		else:
 			_ai_lod_timer = 0.0
@@ -1234,31 +1238,10 @@ func _spawn_blood_splatter() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		return
-	var particles := GPUParticles3D.new()
-	particles.name = "WolfBloodSplatter"
-	particles.amount = 40
-	particles.lifetime = 0.8
-	particles.explosiveness = 1.0
-	particles.randomness = 1.0
-	particles.one_shot = true
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 35.0
-	mat.initial_velocity_min = 2.0
-	mat.initial_velocity_max = 5.0
-	mat.gravity = Vector3(0, -9.8, 0)
-	mat.color = Color(0.6, 0.05, 0.05, 1.0)
-	mat.scale_min = 0.08
-	mat.scale_max = 0.2
-	particles.process_material = mat
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.06
-	sphere.height = 0.12
-	particles.draw_pass_1 = sphere
-	get_tree().current_scene.add_child(particles)
-	particles.global_position = global_position + Vector3(0, 0.8, 0)
-	particles.emitting = true
-	get_tree().create_timer(2.0).timeout.connect(func(): particles.queue_free())
+	# Reutiliza el efecto mejorado del jugador (gotas + niebla suaves)
+	var player_node := get_tree().current_scene.get_node_or_null("Player")
+	if player_node != null and player_node.has_method("_spawn_blood_splatter"):
+		player_node._spawn_blood_splatter(global_position + Vector3(0, 0.8, 0))
 
 func _play_wolf_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")

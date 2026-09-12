@@ -9,6 +9,11 @@ var reticle_color := Color(0.0, 0.0, 0.0, 0.85)
 var center_dot_color := Color(0.85, 0.0, 0.0, 0.95)
 var _wind_label: Label = null
 var _breath_label: Label = null
+var _flash := 0.0   # destello del fogonazo visible a traves de la mira
+
+func muzzle_flash() -> void:
+	_flash = 1.0
+	queue_redraw()
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -85,6 +90,9 @@ func _process(_delta: float) -> void:
 		_breath_label.add_theme_color_override("font_color", Color(0.85, 0.6, 0.6, 0.9))
 	else:
 		_breath_label.text = "Shift: aguantar"
+	if _flash > 0.0:
+		_flash = maxf(0.0, _flash - _delta * 7.0)
+		queue_redraw()
 
 func _draw() -> void:
 	var vp_size := get_viewport_rect().size
@@ -102,6 +110,14 @@ func _draw() -> void:
 	draw_line(Vector2(center.x - radius, center.y), Vector2(center.x + radius, center.y), reticle_color, 1.5, true)
 	# Center aim dot.
 	draw_circle(center, 3.0, center_dot_color)
+	# Destello del fogonazo: brillo calido en la parte baja del visor
+	if _flash > 0.0:
+		var glow_pos := center + Vector2(0.0, radius * 0.45)
+		for i in range(4):
+			var t := float(i) / 4.0
+			var gr := radius * (0.18 + t * 0.4) * _flash
+			var ga := 0.55 * _flash * (1.0 - t)
+			draw_circle(glow_pos, gr, Color(1.0, 0.8, 0.45, ga))
 	# Mildot marks on vertical crosshair for range estimation
 	for i in range(1, 5):
 		var dot_y: float = center.y + i * radius * 0.15

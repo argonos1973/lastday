@@ -1,6 +1,6 @@
 extends Node3D
 ## Game ballistics: finite flight time, gravity and drag. Swept segments stop at cover.
-signal impact(collider, position: Vector3, distance: float)
+signal impact(collider, position: Vector3, distance: float, normal: Vector3)
 var velocity := Vector3.ZERO
 var wind_velocity := Vector3.ZERO
 var max_distance := 150.0
@@ -21,9 +21,15 @@ func _physics_process(delta: float) -> void:
 		query.collide_with_areas = true
 		query.hit_from_inside = true
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		# Las Area3D que no son hitboxes de daño (zonas de interaccion,
+		# triggers, volumenes) no detienen la bala: se atraviesan.
+		while not hit.is_empty() and _is_passthrough_area(hit.collider):
+			excluded.append(hit.rid)
+			query.exclude = excluded
+			hit = get_world_3d().direct_space_state.intersect_ray(query)
 		if not hit.is_empty():
 			traveled += global_position.distance_to(hit.position)
-			impact.emit(hit.collider, hit.position, traveled)
+			impact.emit(hit.collider, hit.position, traveled, hit.normal)
 			queue_free()
 			return
 		global_position += displacement
@@ -31,3 +37,10 @@ func _physics_process(delta: float) -> void:
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
 			queue_free()
 			return
+
+func _is_passthrough_area(collider) -> bool:
+	# Solo las hitboxes de daño detienen la bala; el resto de areas son
+	# volumenes de interaccion/triggers que no deben interceptarla.
+	if not (collider is Area3D):
+		return false
+	return not ("hitbox" in str((collider as Node).name).to_lower())
