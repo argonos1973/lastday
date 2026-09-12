@@ -774,13 +774,15 @@ func _build_hitbox() -> void:
 	body.name = "BodyHitbox"
 	body.collision_layer = 1
 	body.collision_mask = 0
+	body.monitorable = true
+	body.monitoring = false
 	var shape := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
-	capsule.radius = 0.18
-	capsule.height = 0.6
+	capsule.radius = 0.35
+	capsule.height = 1.0
 	shape.shape = capsule
 	shape.rotation.x = PI / 2.0
-	shape.position.y = 0.2
+	shape.position.y = 0.3
 	body.add_child(shape)
 	add_child(body)
 
