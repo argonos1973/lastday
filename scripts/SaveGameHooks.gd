@@ -468,7 +468,17 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				main._spawn_dropped_item_visual(drop_id, drop_name, drop_type, float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos, drop_color)
+				var drop_broken := bool(drop.get("broken", false))
+				var drop_spoilage := float(drop.get("spoilage", 0.0))
+				main._spawn_dropped_item_visual(drop_id, drop_name, drop_type, float(drop.get("weight", 0.1)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), dpos, drop_color, drop_broken, drop_spoilage)
+				# Restaurar durabilidad preservada en el WorldAction
+				if main.world_actions_by_id.has(drop_id):
+					var wa = main.world_actions_by_id[drop_id]
+					if wa != null and is_instance_valid(wa):
+						if drop.has("max_durability"):
+							wa.set_meta("item_max_durability", float(drop["max_durability"]))
+						if drop.has("durability"):
+							wa.set_meta("item_durability", float(drop["durability"]))
 		main._dropped_items.append(drop)
 	# Built campfires
 	var campfires = data.get("built_campfires", [])

@@ -2478,7 +2478,12 @@ func _drop_excess_items(count: int) -> void:
 		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 		drop_pos.y = global_position.y
 		var qty: int = int(item.quantity)
-		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), qty, float(item.use_value), drop_pos, Color(0, 0, 0, 0), false, float(item.spoilage))
+		set_meta("last_dropped_durability", float(item.durability))
+		set_meta("last_dropped_max_durability", float(item.max_durability))
+		var is_broken := false
+		if item.has_method("is_broken"):
+			is_broken = item.is_broken()
+		item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), qty, float(item.use_value), drop_pos, Color(0, 0, 0, 0), is_broken, float(item.spoilage))
 		inventory.remove_index(i, qty)
 		dropped += 1
 	if dropped > 0:
@@ -4795,7 +4800,14 @@ func drop_inventory_item(index: int) -> void:
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	var drop_color := get_current_clothing_color(item_name)
-	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, false, float(item.spoilage))
+	# Preservar durabilidad al soltar: usar metas del jugador como canal
+	# (mismo patron que last_torch_durability)
+	set_meta("last_dropped_durability", float(item.durability))
+	set_meta("last_dropped_max_durability", float(item.max_durability))
+	var is_broken := false
+	if item.has_method("is_broken"):
+		is_broken = item.is_broken()
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
 	inventory.remove_index(index, drop_qty)
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)

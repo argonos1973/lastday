@@ -850,12 +850,18 @@ func _process(delta: float) -> void:
 			_broadcast_animals()
 		# Tick campfire fires on server
 		_tick_campfire_fires()
-		# Respawn wildlife periodically
+		# Respawn wildlife periodically (server)
 		_wildlife_respawn_timer += delta
 		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
 		return
+	# Single player: respawn wildlife periodically (no net)
+	if net == null or not net.is_connected:
+		_wildlife_respawn_timer += delta
+		if _wildlife_respawn_timer >= 30.0:
+			_wildlife_respawn_timer = 0.0
+			_check_wildlife_respawn()
 	if net != null and net.is_connected and not net.is_host:
 		_update_puppet_animals()
 		if _client_animal_debug_timer < 100:
@@ -3202,6 +3208,22 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		drop_entry["spoilage"] = spoilage
 	if color.a > 0.0:
 		drop_entry["color"] = [color.r, color.g, color.b, color.a]
+	# Preservar durabilidad del item soltado
+	var drop_durability := 0.0
+	var drop_max_durability := 0.0
+	if player != null:
+		drop_durability = float(player.get_meta("last_dropped_durability", 0.0))
+		drop_max_durability = float(player.get_meta("last_dropped_max_durability", 0.0))
+		player.remove_meta("last_dropped_durability")
+		player.remove_meta("last_dropped_max_durability")
+	if drop_max_durability > 0.0:
+		drop_entry["durability"] = drop_durability
+		drop_entry["max_durability"] = drop_max_durability
+		if world_actions_by_id.has(drop_id):
+			var wa = world_actions_by_id[drop_id]
+			if wa != null and is_instance_valid(wa):
+				wa.set_meta("item_durability", drop_durability)
+				wa.set_meta("item_max_durability", drop_max_durability)
 	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
 		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
@@ -5293,20 +5315,9 @@ func _check_wildlife_respawn() -> void:
 	var alive_fox := 0
 	var alive_wolf := 0
 	var alive_bird := 0
-	var dead_deer := 0
-	var dead_fox := 0
-	var dead_wolf := 0
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if node is WildlifeController:
-			if node._is_dead:
-				match node.animal_type:
-					"deer":
-						dead_deer += 1
-					"fox":
-						dead_fox += 1
-					"wolf":
-						dead_wolf += 1
-			else:
+			if not node._is_dead:
 				match node.animal_type:
 					"deer":
 						alive_deer += 1
@@ -5317,10 +5328,12 @@ func _check_wildlife_respawn() -> void:
 		elif node is BirdController:
 			if not node._is_dead:
 				alive_bird += 1
-	# Respawn only if total (alive + dead) is below max — dead animals persist as corpses
-	var total_wolf := alive_wolf + dead_wolf
-	var total_deer := alive_deer + dead_deer
-	var total_fox := alive_fox + dead_fox
+	# Respawn solo cuando la poblacion viva disminuye bajo el maximo.
+	# Los cadaveres persisten pero NO cuentan para la poblacion: cuando un
+	# animal muere, la poblacion viva baja y se repone (tras el timer de 30s).
+	var total_wolf := alive_wolf
+	var total_deer := alive_deer
+	var total_fox := alive_fox
 	if total_wolf < 18 and total_wolf <= total_fox and total_wolf <= total_deer:
 		var center := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		for _retry in range(30):
@@ -7077,6 +7090,10 @@ func handle_world_action_collect(action, actor) -> void:
 				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				eat_item.spoilage = float(action.get_meta("item_spoilage"))
+			if action.has_meta("item_max_durability"):
+				eat_item.max_durability = float(action.get_meta("item_max_durability"))
+				if action.has_meta("item_durability"):
+					eat_item.durability = float(action.get_meta("item_durability"))
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool":
 			if not action.has_meta("item_name"):
@@ -7093,6 +7110,11 @@ func handle_world_action_collect(action, actor) -> void:
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
+			# Restaurar durabilidad preservada al soltar
+			if action.has_meta("item_max_durability"):
+				item.max_durability = float(action.get_meta("item_max_durability"))
+				if action.has_meta("item_durability"):
+					item.durability = float(action.get_meta("item_durability"))
 			_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "clothing":
 				if not actor.inventory.add_item(item):
@@ -7113,6 +7135,16 @@ func handle_world_action_collect(action, actor) -> void:
 			handle_world_action(action, actor)
 
 func handle_world_action_eat(action, actor) -> void:
+	# Mismo guard que handle_world_action: bloquear interacciones concurrentes
+	if actor != null and actor.get("_interact_busy") == true:
+		return
+	if actor != null:
+		actor.set("_interact_busy", true)
+	await _execute_world_action_eat(action, actor)
+	if actor != null:
+		actor.set("_interact_busy", false)
+
+func _execute_world_action_eat(action, actor) -> void:
 	print("[DEBUG handle_world_action_eat] ENTER action_type=%s action_id=%s" % [action.action_type if action != null else "NULL", action.action_id if action != null else "NULL"])
 	match action.action_type:
 		"eat_food":
