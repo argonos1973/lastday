@@ -1021,6 +1021,8 @@ func _process(delta: float) -> void:
 			if held != null and str(held.item_type) != "weapon_rifle" and not _is_fishing and not is_sleeping:
 				_throw_charging = true
 				_throw_charge_time = 0.0
+				# Iniciar animación de ataque al empezar a cargar (wind-up)
+				_start_throw_animation()
 			else:
 				_g_holding = false
 	if _throw_charging:
@@ -4861,8 +4863,19 @@ func drop_inventory_item(index: int) -> void:
 	_sync_held_item()
 	notice.emit("Sueltas %s." % item_name)
 
+# Inicia la animación de ataque como wind-up del lanzamiento
+func _start_throw_animation() -> void:
+	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
+		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
+		if atk_anim != null:
+			atk_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = third_person_attack_animation
+		third_person_action_timer = 0.8
+		third_person_animation_player.play(third_person_attack_animation, 0.08)
+
 # Tirar el item en mano lejos, con fuerza según carga y distancia según peso.
-# Usa la animación de atacar. Si cae al agua: splash + ondas.
+# La animación de ataque ya empezó al cargar. Al soltar G, lanza el objeto
+# con toda la fuerza almacenada, usando física real (RigidBody3D).
 func _throw_held_item(charge: float) -> void:
 	var item = get_held_item()
 	if item == null:
@@ -4897,6 +4910,8 @@ func _throw_held_item(charge: float) -> void:
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
+	var item_use_value := float(item.use_value)
+	var item_spoilage := float(item.spoilage)
 	# Quitar del inventario
 	var idx: int = inventory.items.find(item)
 	if idx >= 0:
@@ -4916,81 +4931,88 @@ func _throw_held_item(charge: float) -> void:
 	var launch_dir := (fwd + Vector3(0, 0.35, 0)).normalized()
 	var launch_pos := global_position + Vector3(0, 1.2, 0) + fwd * 0.5
 	var launch_vel: Vector3 = launch_dir * throw_force
-	# Animación de ataque
-	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
-		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
-		if atk_anim != null:
-			atk_anim.loop_mode = Animation.LOOP_NONE
-		third_person_action_animation = third_person_attack_animation
-		third_person_action_timer = 0.8
-		third_person_animation_player.play(third_person_attack_animation, 0.08)
 	notice.emit("Tiras %s." % item_name)
-	# Tras 0.3s (cuando la animación "suelta" el objeto), lanzar el visual
-	await get_tree().create_timer(0.3).timeout
-	if not is_inside_tree():
-		return
-	_spawn_thrown_item_visual(item_name, item_type, item_weight, float(item.use_value), drop_color, is_broken, float(item.spoilage), launch_pos, launch_vel)
+	# Lanzar el objeto con física real (RigidBody3D)
+	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel)
 
-# Crea un nodo visual que vuela con parábola y al aterrizar genera el drop.
-func _spawn_thrown_item_visual(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3) -> void:
+# Crea un RigidBody3D que vuela con física real (gravedad, colisiones).
+# Al aterrizar genera el drop; si cae al agua: splash + ondas.
+func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	# Crear visual temporal: usar un modelo simple o un placeholder
+	# Crear RigidBody3D con física real
+	var body := RigidBody3D.new()
+	body.name = "ThrownItem_%d" % Time.get_ticks_msec()
+	# Forma de colisión pequeña
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.15, 0.15, 0.15)
+	col.shape = shape
+	body.add_child(col)
+	# Visual del objeto
 	var visual := MeshInstance3D.new()
-	visual.name = "ThrownItem_%d" % Time.get_ticks_msec()
 	var mesh := BoxMesh.new()
-	mesh.size = Vector3(0.2, 0.2, 0.2)
+	mesh.size = Vector3(0.18, 0.18, 0.18)
 	visual.mesh = mesh
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
 	mat.roughness = 0.8
 	visual.material_override = mat
 	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	scene.add_child(visual)
-	visual.global_position = start_pos
-	# Simular vuelo parabólico
-	var pos := start_pos
-	var vel := velocity
-	var dt := 0.016
-	var max_time := 5.0
-	var elapsed := 0.0
+	body.add_child(visual)
+	# Configurar física: gravedad normal, sin dormir
+	body.gravity_scale = 1.0
+	body.can_sleep = false
+	# Capa de colisión: todo excepto el jugador (capa 1)
+	body.collision_layer = 1
+	body.collision_mask = 0xFFFFFFFF & ~1  # todo menos capa 1 (jugador)
+	# Lanzar
+	scene.add_child(body)
+	body.global_position = start_pos
+	body.linear_velocity = velocity
+	body.angular_velocity = Vector3(randf_range(-3, 3), randf_range(-3, 3), randf_range(-3, 3))
+	# Empaquetar datos del drop para cuando aterrice
+	var drop_data := {
+		"item_name": item_name,
+		"item_type": item_type,
+		"item_weight": item_weight,
+		"item_use_value": item_use_value,
+		"color": color,
+		"broken": broken,
+		"spoilage": spoilage
+	}
+	# Monitorear colisiones para detectar aterrizaje
 	var landed := false
-	var land_pos := pos
-	while elapsed < max_time and is_instance_valid(visual):
-		vel.y -= THROW_GRAVITY * dt
-		pos += vel * dt
-		visual.global_position = pos
-		# Rotación de vuelo
-		visual.rotate(Vector3(1, 0.3, 0.5), dt * 4.0)
-		# Comprobar si toca el suelo o el agua
-		if pos.y <= 0.05:
-			land_pos = Vector3(pos.x, 0.05, pos.z)
+	var land_pos := start_pos
+	var timeout := 8.0
+	while not landed and timeout > 0.0 and is_instance_valid(body):
+		await get_tree().physics_frame
+		timeout -= 0.016
+		# Detectar si está cerca del suelo o ha parado
+		var speed := body.linear_velocity.length()
+		if body.global_position.y <= 0.1 or speed < 0.5:
 			landed = true
+			land_pos = body.global_position
 			break
-		await get_tree().process_frame
-		elapsed += dt
-	if not is_instance_valid(visual):
+	if not is_instance_valid(body):
 		return
-	visual.queue_free()
-	if not landed:
-		land_pos = Vector3(pos.x, 0.05, pos.z)
+	land_pos = body.global_position
+	body.queue_free()
 	# Comprobar si cae al agua
 	var water_depth := 0.0
 	if scene.has_method("get_river_depth_at"):
 		water_depth = float(scene.call("get_river_depth_at", land_pos))
 	if water_depth > 0.02:
-		# Splash + ondas
 		_spawn_water_splash(land_pos)
 		_spawn_water_ripples(land_pos)
 		notice.emit("Cae al agua con un chapoteo.")
-		# El item se hunde: no crear drop (se pierde) o crear drop en la orilla
-		# Para no perder items injustamente, lo dejamos como drop en la posición
-	else:
-		# Drop normal en la posición de aterrizaje.
-		# Las metas last_dropped_durability/max_durability ya fueron seteadas
-		# por _throw_held_item antes del await; NO resetearlas aqui.
-		item_dropped.emit(item_name, item_type, item_weight, 1, item_use_value, land_pos, color, broken, spoilage)
+	# Siempre crear el drop (en agua o tierra)
+	item_dropped.emit(
+		drop_data["item_name"], drop_data["item_type"],
+		drop_data["item_weight"], 1, drop_data["item_use_value"],
+		land_pos, drop_data["color"], drop_data["broken"], drop_data["spoilage"]
+	)
 
 # Splash de agua: partículas blancas/azules hacia arriba
 func _spawn_water_splash(at_pos: Vector3) -> void:
