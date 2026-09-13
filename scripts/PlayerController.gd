@@ -1008,6 +1008,32 @@ func _process(delta: float) -> void:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
 		return
+	# Detectar hold de F y G por polling (mas fiable que eventos)
+	var f_held := Input.is_key_pressed(KEY_F)
+	var g_held := Input.is_key_pressed(KEY_G)
+	# F: press ya llama _interact() en _input; aqui solo track hold para guardar
+	if f_held and not _f_holding:
+		_f_holding = true
+		_f_hold_time = 0.0
+		_f_hold_triggered = false
+	elif not f_held and _f_holding:
+		_f_holding = false
+	# G: tap = soltar, hold = tirar
+	if g_held and not _g_holding:
+		_g_holding = true
+		_g_hold_time = 0.0
+		_throw_charging = false
+		_throw_anim_frozen = false
+	elif not g_held and _g_holding:
+		_g_holding = false
+		if _throw_charging:
+			_throw_charging = false
+			_throw_anim_frozen = false
+			if third_person_animation_player != null:
+				third_person_animation_player.speed_scale = 1.0
+			_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
+		elif _g_hold_time < HOLD_THRESHOLD:
+			_drop_held_item()
 	# Carga de lanzamiento (mantener G) y guardar (mantener F)
 	if _f_holding:
 		_f_hold_time += delta
@@ -1268,33 +1294,12 @@ func _input(event: InputEvent) -> void:
 				camera.rotation.y = _breath_yaw_offset * 0.5
 	if event.is_action_pressed("interact") and not event.echo:
 		_interact()
-		_f_holding = true
-		_f_hold_time = 0.0
-		_f_hold_triggered = false
-	if event.is_action_released("interact"):
-		_f_holding = false
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
 		var target = _get_interaction_target()
 		if target != null and target.has_method("interact") and "is_open" in target and target.is_open:
 			target.interact(self)
 		else:
 			_collect()
-	# G: soltar (tap) / tirar lejos (mantener)
-	if event.is_action_pressed("drop_item") and not event.echo:
-		_g_holding = true
-		_g_hold_time = 0.0
-		_throw_charging = false
-	if event.is_action_released("drop_item"):
-		if _throw_charging:
-			_throw_charging = false
-			_throw_anim_frozen = false
-			# Reanudar animación para completar el movimiento de lanzamiento
-			if third_person_animation_player != null:
-				third_person_animation_player.speed_scale = 1.0
-			_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
-		elif _g_hold_time < HOLD_THRESHOLD:
-			_drop_held_item()
-		_g_holding = false
 	if event.is_action_pressed("flashlight"):
 		_toggle_flashlight()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_I:
@@ -4978,9 +4983,11 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	# Configurar física: gravedad normal, sin dormir
 	body.gravity_scale = 1.0
 	body.can_sleep = false
-	# Capa de colisión: todo excepto el jugador (capa 1)
-	body.collision_layer = 1
-	body.collision_mask = 0xFFFFFFFF & ~1  # todo menos capa 1 (jugador)
+	# Capa de colisión: el objeto en capa 2, colisiona con todo excepto el jugador
+	body.collision_layer = 2
+	body.collision_mask = 1  # colisiona con capa 1 (terreno, objetos)
+	# Excluir al jugador de la colisión
+	body.add_collision_exception_with(self)
 	# Lanzar
 	scene.add_child(body)
 	body.global_position = start_pos
