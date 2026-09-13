@@ -4910,6 +4910,14 @@ func _throw_held_item(charge: float) -> void:
 	if str(item.item_type) == "weapon_rifle":
 		notice.emit("No puedes tirar el rifle.")
 		return
+	if _consumption_pending or get_tree().current_scene == null:
+		return
+	# Capture the current prop before inventory.changed rebuilds the hand.
+	var thrown_visual := Node3D.new()
+	if not _try_spawn_item_visual(thrown_visual, item, str(item.item_name)):
+		thrown_visual.free()
+		notice.emit("No se ha podido preparar el modelo del objeto.")
+		return
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
 	var item_weight := float(item.weight)
@@ -4938,12 +4946,18 @@ func _throw_held_item(charge: float) -> void:
 		is_broken = item.is_broken()
 	var item_use_value := float(item.use_value)
 	var item_spoilage := float(item.spoilage)
-	# Quitar del inventario
+	# Remove exactly one unit by identity, and leave the hand empty even for stacks.
 	var idx: int = inventory.items.find(item)
-	if idx >= 0:
-		inventory.remove_index(idx, 1)
-	if held_index >= inventory.items.size():
-		held_index = max(0, inventory.items.size() - 1)
+	if idx < 0:
+		thrown_visual.free()
+		return
+	_held_item_reference = null
+	held_index = -1
+	_held_selection_revision += 1
+	var removed = inventory.remove_index(idx, 1)
+	if removed == null:
+		thrown_visual.free()
+		return
 	_sync_held_item()
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
@@ -4957,11 +4971,11 @@ func _throw_held_item(charge: float) -> void:
 	var launch_dir := (cam_dir + Vector3(0, 0.15, 0)).normalized()
 	var launch_vel: Vector3 = launch_dir * throw_force
 	# Lanzar el objeto con física real (RigidBody3D)
-	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, item)
+	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, thrown_visual)
 
 # Crea un RigidBody3D que vuela con física real (gravedad, colisiones).
 # Al aterrizar genera el drop; si cae al agua: splash + ondas + hundimiento.
-func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, item = null) -> void:
+func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, prepared_visual: Node3D) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -4975,23 +4989,7 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	shape.size = _thrown_item_collision_size(item_name, item_type, item_weight)
 	col.shape = shape
 	body.add_child(col)
-	# Intentar usar el modelo real del item
-	var visual_added := false
-	if item != null:
-		visual_added = _try_spawn_item_visual(body, item, item_name)
-	if not visual_added:
-		# Fallback sencillo, con una silueta redondeada en vez del cubo de depuración.
-		var visual := MeshInstance3D.new()
-		var mesh := SphereMesh.new()
-		mesh.radius = 0.12
-		mesh.height = 0.24
-		visual.mesh = mesh
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
-		mat.roughness = 0.8
-		visual.material_override = mat
-		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		body.add_child(visual)
+	body.add_child(prepared_visual)
 	# Configurar física: gravedad normal, sin dormir
 	body.gravity_scale = 1.0
 	body.can_sleep = false
@@ -5062,23 +5060,16 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 
 # Intenta usar el modelo real del item para el objeto lanzado
 func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
-	# Opción 1: duplicar el modelo que ya está en la mano
-	if third_person_hand_item_root != null:
+	# Copy all parts, including procedural props, while this item is still held.
+	if third_person_hand_item_root != null and get_held_item() == item:
 		for child in third_person_hand_item_root.get_children():
-			# ThirdPersonPack is an intentionally generic box used only when no
-			# hand model exists; never promote that placeholder to a thrown object.
-			if child.name == "ThirdPersonPack":
-				continue
-			if child is Node3D:
+			if child is Node3D and not child.is_queued_for_deletion():
 				var copy := child.duplicate() as Node3D
 				if copy != null:
-					copy.name = "ThrownItemVisual"
-					# Centrar y normalizar la escala heredada de la mano antes de lanzar.
-					copy.position = Vector3.ZERO
-					copy.rotation = Vector3.ZERO
 					parent.add_child(copy)
-					_normalize_thrown_visual(copy, item_name, str(item.item_type))
-					return true
+		if parent.get_child_count() > 0:
+			_normalize_thrown_visual(parent, item_name, str(item.item_type))
+			return true
 	# Opción 2: cargar modelo por nombre (fallback)
 	var model_path := ""
 	match item_name:
@@ -5184,20 +5175,23 @@ func _spawn_water_splash(at_pos: Vector3) -> void:
 		return
 	var particles := GPUParticles3D.new()
 	particles.name = "WaterSplash"
-	particles.amount = 30
-	particles.lifetime = 0.8
+	particles.amount = 64
+	particles.lifetime = 1.0
 	particles.explosiveness = 1.0
 	particles.one_shot = true
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 35.0
+	mat.spread = 65.0
 	mat.initial_velocity_min = 2.0
-	mat.initial_velocity_max = 6.0
+	mat.initial_velocity_max = 4.5
 	mat.gravity = Vector3(0, -9.8, 0)
-	mat.scale_min = 0.3
-	mat.scale_max = 0.8
+	mat.scale_min = 0.12
+	mat.scale_max = 0.45
 	mat.color = Color(0.75, 0.85, 0.95, 0.85)
 	mat.color_ramp = _make_fade_ramp(0.05, 0.5)
+	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	mat.emission_sphere_radius = 0.12
+	particles.visibility_aabb = AABB(Vector3(-4, -2, -4), Vector3(8, 6, 8))
 	particles.process_material = mat
 	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.12, 0.12), Color.WHITE)
 	scene.add_child(particles)
@@ -5210,18 +5204,20 @@ func _spawn_water_ripples(at_pos: Vector3) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	for i in range(3):
+	for i in range(4):
 		var ring := MeshInstance3D.new()
 		ring.name = "WaterRipple_%d" % i
 		var ring_mesh := TorusMesh.new()
-		ring_mesh.inner_radius = 0.05
+		ring_mesh.inner_radius = 0.13
 		ring_mesh.outer_radius = 0.15
+		ring_mesh.rings = 64
+		ring_mesh.ring_segments = 8
 		ring.mesh = ring_mesh
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Color(0.8, 0.9, 1.0, 0.6)
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.no_depth_test = true
+		mat.no_depth_test = false
 		ring.material_override = mat
 		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		scene.add_child(ring)
@@ -5229,19 +5225,20 @@ func _spawn_water_ripples(at_pos: Vector3) -> void:
 		# TorusMesh ya está orientado alrededor del eje Y: queda horizontal sobre
 		# la superficie del agua (rotarlo en X lo dejaba vertical).
 		# Animar expansión y fade
-		var delay := i * 0.15
+		ring.visible = false
+		var delay := i * 0.20
 		var tween := create_tween()
 		tween.tween_interval(delay)
-		tween.tween_property(ring, "scale", Vector3.ONE, 0.0)
+		tween.tween_callback(func(): ring.visible = true)
 		var start_scale := 1.0
-		var end_scale := 4.0 + i * 1.5
+		var end_scale := 9.0 + i * 2.0
 		tween.tween_method(func(s: float):
 			if not is_instance_valid(ring):
 				return
-			ring.scale = Vector3(s, s, s)
+			ring.scale = Vector3(s, 0.12, s)
 			var t := (s - start_scale) / (end_scale - start_scale)
 			mat.albedo_color.a = 0.6 * (1.0 - t)
-		, start_scale, end_scale, 1.2)
+		, start_scale, end_scale, 2.4)
 		tween.tween_callback(func():
 			if is_instance_valid(ring):
 				ring.queue_free())
@@ -5327,12 +5324,14 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_rifle()
 			_initialize_rifle_ammo()
 			return
-	if held_item == null or held_item.item_type == "backpack":
+	if held_item == null:
 		return
-	if flashlight.visible and inventory.has_item_type("tool"):
+	if flashlight.visible and str(held_item.item_type) == "tool":
 		_build_third_person_flashlight()
 		return
 	match held_item.item_type:
+		"backpack":
+			_build_third_person_tool(REAL_BACKPACK_MODEL, "ThirdPersonBackpack", Color(0.2, 0.25, 0.12))
 		"weapon":
 			_build_third_person_knife()
 			_clear_rifle_attachment()

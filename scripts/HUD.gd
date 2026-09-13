@@ -950,6 +950,7 @@ func _apply_aim_layout() -> void:
 	# would overwrite offset_left/offset_top and break the centering, making
 	# the crosshair and interaction prompt invisible/off-screen.
 	# Nothing to do here — the anchors/offsets from _build_ui are correct.
+	pass
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:
@@ -1631,21 +1632,8 @@ func _on_use_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	var item = player.inventory.items[real_idx]
-	var item_type := str(item.item_type)
-	var item_name := str(item.item_name)
-	# Items that should go to hand instead of being consumed
-	var to_hand := item_name.find("ensartada") >= 0 or item_name.find("asada") >= 0 or (item_name == "Palo") or (item_name == "Palo afilado")
-	match item_type:
-		"food", "water", "medical", "clothing":
-			if to_hand and item_type == "food":
-				player._use_inventory_index(real_idx)
-			elif to_hand:
-				player._select_held_item(real_idx)
-			else:
-				player._use_inventory_index(real_idx)
-		_:
-			player._select_held_item(real_idx)
+	# Usar always equips; Comer and Beber are separate actions.
+	player._select_held_item(real_idx)
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:
