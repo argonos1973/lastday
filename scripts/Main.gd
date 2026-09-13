@@ -7899,6 +7899,23 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 				return clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5)
 	return 0.0
 
+func get_river_surface_y_at(world_pos: Vector3) -> float:
+	# El agua se construye en la altura Y del segmento; exponerla evita que los
+	# efectos de lanzamiento queden bajo el plano o flotando sobre lagos/ríos.
+	for segment in river_segments_data:
+		var center: Vector3 = segment["center"]
+		var size: Vector2 = segment["size"]
+		var yaw := deg_to_rad(float(segment["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var offset := world_pos - center
+		var f := offset.dot(along) / maxf(size.x * 0.5, 0.01)
+		var s := offset.dot(across) / maxf(size.y * 0.5, 0.01)
+		var inside := sqrt(f * f + s * s) <= 0.86 if size.x >= 60.0 else absf(f) <= 1.0 and absf(s) <= 1.0
+		if inside:
+			return center.y
+	return 0.085
+
 func get_nearest_river_audio_point(world_pos: Vector3) -> Dictionary:
 	var best_pos := Vector3.ZERO
 	var best_distance := 999999.0

@@ -945,19 +945,15 @@ func _build_center_messages() -> void:
 	root.add_child(countdown_label)
 
 func _apply_aim_layout() -> void:
-	if player == null or not player.has_method("get_aim_screen_offset"):
-		return
-	var aim_offset: Vector2 = player.get_aim_screen_offset()
-	if aim_offset == Vector2.ZERO:
-		return
-	if crosshair_ring_h != null:
-		crosshair_ring_h.position = aim_offset - crosshair_ring_h.size * 0.5
-	if crosshair_ring_v != null:
-		crosshair_ring_v.position = aim_offset - crosshair_ring_v.size * 0.5
-	if crosshair_dot != null:
-		crosshair_dot.position = aim_offset - crosshair_dot.size * 0.5
+	# These controls are anchored to the viewport centre.  Applying a world/screen
+	# offset here made the reticle drift above the character in third person (and
+	# the old early return left stale positions behind).  Rifle aiming and shooting
+	# both use the same centre ray, so keep every reticle mode on that stable anchor.
+	for reticle in [crosshair_ring_h, crosshair_ring_v, crosshair_dot]:
+		if reticle != null:
+			reticle.position = Vector2.ZERO
 	if prompt_label != null:
-		prompt_label.position = aim_offset + Vector2(-250.0, 24.0)
+		prompt_label.position = Vector2.ZERO
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:

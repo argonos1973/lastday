@@ -1460,6 +1460,13 @@ func _use_inventory_index(index: int) -> void:
 		_select_held_item(index)
 		notice.emit("Tienes la botella en la mano. Ve al rio y pulsa E para llenarla.")
 		return
+	# Medicinas y ropa también pasan primero por la mano: evita que el botón
+	# "Usar" aplique el efecto desde el inventario sin feedback visual.
+	if item_type == "medical" or item_type == "clothing":
+		if held_index != index or hands == null or not hands.has_item_in_hands():
+			_select_held_item(index)
+			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para usarlo." % item_name)
+			return
 	var used: bool = inventory.use_index(index, stats)
 	if used:
 		stats.changed.emit()
@@ -4961,10 +4968,11 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	# Crear RigidBody3D con física real
 	var body := RigidBody3D.new()
 	body.name = "ThrownItem_%d" % Time.get_ticks_msec()
-	# Forma de colisión pequeña
+	# La colisión sigue aproximadamente el tamaño real del objeto (un cubo fijo
+	# hacía que piedras pequeñas y mochilas grandes se comportasen igual).
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.15, 0.15, 0.15)
+	shape.size = _thrown_item_collision_size(item_name, item_type, item_weight)
 	col.shape = shape
 	body.add_child(col)
 	# Intentar usar el modelo real del item
@@ -4972,10 +4980,11 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	if item != null:
 		visual_added = _try_spawn_item_visual(body, item, item_name)
 	if not visual_added:
-		# Fallback: cubo genérico
+		# Fallback sencillo, con una silueta redondeada en vez del cubo de depuración.
 		var visual := MeshInstance3D.new()
-		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.18, 0.18, 0.18)
+		var mesh := SphereMesh.new()
+		mesh.radius = 0.12
+		mesh.height = 0.24
 		visual.mesh = mesh
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
@@ -5013,9 +5022,16 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	while not landed and timeout > 0.0 and is_instance_valid(body):
 		await get_tree().physics_frame
 		timeout -= 0.016
-		# Detectar si está cerca del suelo o ha parado
+		# Detectar contacto con suelo/agua; la velocidad baja por sí sola no basta,
+		# porque podía convertir un objeto aún en el aire en un drop prematuro.
 		var speed := body.linear_velocity.length()
-		if body.global_position.y <= 0.1 or speed < 0.5:
+		var water_depth_now := float(scene.call("get_river_depth_at", body.global_position)) if scene.has_method("get_river_depth_at") else 0.0
+		var water_surface_y := float(scene.call("get_river_surface_y_at", body.global_position)) if scene.has_method("get_river_surface_y_at") else 0.085
+		var ground_y := 0.0
+		if scene.has_method("_get_exact_ground_y"):
+			ground_y = float(scene.call("_get_exact_ground_y", body.global_position.x, body.global_position.z, body.global_position.y + 5.0))
+		var contact_y := water_surface_y if water_depth_now > 0.02 else ground_y
+		if (body.global_position.y <= contact_y + 0.10 and body.linear_velocity.y <= 0.5) or (speed < 0.28 and absf(body.linear_velocity.y) < 0.2):
 			landed = true
 			land_pos = body.global_position
 			break
@@ -5027,6 +5043,7 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	if scene.has_method("get_river_depth_at"):
 		water_depth = float(scene.call("get_river_depth_at", land_pos))
 	if water_depth > 0.02:
+		land_pos.y = float(scene.call("get_river_surface_y_at", land_pos)) if scene.has_method("get_river_surface_y_at") else 0.085
 		# Splash + ondas + hundir el objeto
 		_spawn_water_splash(land_pos)
 		_spawn_water_ripples(land_pos)
@@ -5048,15 +5065,20 @@ func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
 	# Opción 1: duplicar el modelo que ya está en la mano
 	if third_person_hand_item_root != null:
 		for child in third_person_hand_item_root.get_children():
+			# ThirdPersonPack is an intentionally generic box used only when no
+			# hand model exists; never promote that placeholder to a thrown object.
+			if child.name == "ThirdPersonPack":
+				continue
 			if child is Node3D:
 				var copy := child.duplicate() as Node3D
-				if copy != null:
-					copy.name = "ThrownItemVisual"
-					# Resetear posición/rotación al origen del parent
-					copy.position = Vector3.ZERO
-					copy.rotation = Vector3.ZERO
-					parent.add_child(copy)
-					return true
+					if copy != null:
+						copy.name = "ThrownItemVisual"
+						# Centrar y normalizar la escala heredada de la mano antes de lanzar.
+						copy.position = Vector3.ZERO
+						copy.rotation = Vector3.ZERO
+						parent.add_child(copy)
+						_normalize_thrown_visual(copy, item_name, str(item.item_type))
+						return true
 	# Opción 2: cargar modelo por nombre (fallback)
 	var model_path := ""
 	match item_name:
@@ -5083,7 +5105,41 @@ func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
 		return false
 	model.name = "ThrownItemVisual"
 	parent.add_child(model)
+	_normalize_thrown_visual(model, item_name, str(item.item_type))
 	return true
+
+func _thrown_item_collision_size(item_name: String, item_type: String, item_weight: float) -> Vector3:
+	var diameter := 0.22
+	if item_type == "tool" or item_type == "tool_axe" or item_type == "weapon":
+		diameter = 0.65
+	elif item_type == "backpack" or item_type == "clothing":
+		diameter = 0.55
+	elif item_name in ["Palo", "Palo afilado"]:
+		diameter = 0.50
+	elif item_name == "Piedra":
+		diameter = 0.24
+	elif item_type == "food" or item_type == "water":
+		diameter = 0.30
+	diameter = clampf(diameter + item_weight * 0.01, 0.16, 0.85)
+	return Vector3.ONE * diameter
+
+func _normalize_thrown_visual(root: Node3D, item_name: String, item_type: String) -> void:
+	var bounds := _hierarchy_local_aabb(root)
+	if bounds.size.length_squared() <= 0.000001:
+		return
+	var target := 0.30
+	if item_type == "tool" or item_type == "tool_axe" or item_type == "weapon":
+		target = 0.70
+	elif item_type == "backpack":
+		target = 0.62
+	elif item_name in ["Palo", "Palo afilado"]:
+		target = 0.55
+	elif item_name == "Piedra":
+		target = 0.22
+	var max_extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
+	if max_extent > 0.0001:
+		root.scale *= clampf(target / max_extent, 0.05, 4.0)
+	root.position = -bounds.get_center() * root.scale
 
 # Hunde el objeto lanzado en el agua visualmente
 func _sink_thrown_item(body: Node3D, at_pos: Vector3) -> void:
@@ -5097,21 +5153,29 @@ func _sink_thrown_item(body: Node3D, at_pos: Vector3) -> void:
 	var tween := create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(body, "global_position", at_pos + Vector3(0, -1.5, 0), 1.5)
-	# Desvanecer el material del modelo si es MeshInstance3D
-	var mesh_node: MeshInstance3D = null
-	if body is MeshInstance3D:
-		mesh_node = body
-	else:
-		for child in body.get_children():
-			if child is MeshInstance3D:
-				mesh_node = child
-				break
-	if mesh_node != null and mesh_node.material_override != null:
-		var mat := mesh_node.material_override as StandardMaterial3D
-		if mat != null:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			tween.tween_property(mat, "albedo_color:a", 0.0, 1.5)
+	# Desvanecer todos los meshes, también los anidados dentro de un GLB. Duplicar
+	# el material evita cambiar accidentalmente el modelo que sigue en la mano.
+	var mesh_nodes: Array[MeshInstance3D] = []
+	_collect_thrown_meshes(body, mesh_nodes)
+	for mesh_node in mesh_nodes:
+		var source_mat := mesh_node.material_override as StandardMaterial3D
+		if source_mat == null and mesh_node.mesh != null and mesh_node.mesh.get_surface_count() > 0:
+			source_mat = mesh_node.mesh.surface_get_material(0) as StandardMaterial3D
+		if source_mat == null:
+			continue
+		var mat := source_mat.duplicate() as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mesh_node.material_override = mat
+		tween.tween_property(mat, "albedo_color:a", 0.0, 1.5)
 	tween.chain().tween_callback(func(): body.queue_free())
+
+func _collect_thrown_meshes(node: Node, out: Array[MeshInstance3D]) -> void:
+	if node is MeshInstance3D:
+		out.append(node as MeshInstance3D)
+	for child in node.get_children():
+		_collect_thrown_meshes(child, out)
 
 # Splash de agua: partículas blancas/azules hacia arriba
 func _spawn_water_splash(at_pos: Vector3) -> void:
@@ -5162,7 +5226,8 @@ func _spawn_water_ripples(at_pos: Vector3) -> void:
 		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		scene.add_child(ring)
 		ring.global_position = at_pos + Vector3(0, 0.02, 0)
-		ring.rotate_x(deg_to_rad(90))
+		# TorusMesh ya está orientado alrededor del eje Y: queda horizontal sobre
+		# la superficie del agua (rotarlo en X lo dejaba vertical).
 		# Animar expansión y fade
 		var delay := i * 0.15
 		var tween := create_tween()
