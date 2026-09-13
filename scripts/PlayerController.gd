@@ -5071,14 +5071,14 @@ func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
 				continue
 			if child is Node3D:
 				var copy := child.duplicate() as Node3D
-					if copy != null:
-						copy.name = "ThrownItemVisual"
-						# Centrar y normalizar la escala heredada de la mano antes de lanzar.
-						copy.position = Vector3.ZERO
-						copy.rotation = Vector3.ZERO
-						parent.add_child(copy)
-						_normalize_thrown_visual(copy, item_name, str(item.item_type))
-						return true
+				if copy != null:
+					copy.name = "ThrownItemVisual"
+					# Centrar y normalizar la escala heredada de la mano antes de lanzar.
+					copy.position = Vector3.ZERO
+					copy.rotation = Vector3.ZERO
+					parent.add_child(copy)
+					_normalize_thrown_visual(copy, item_name, str(item.item_type))
+					return true
 	# Opción 2: cargar modelo por nombre (fallback)
 	var model_path := ""
 	match item_name:
