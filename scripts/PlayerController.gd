@@ -4941,22 +4941,20 @@ func _throw_held_item(charge: float) -> void:
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
 	var throw_force: float = lerp(THROW_MIN_FORCE, THROW_MAX_FORCE, charge) * weight_factor
-	# Dirección: hacia donde mira la cámara, con un poco de ángulo hacia arriba
-	var fwd := -global_transform.basis.z.normalized()
-	fwd.y = 0.0
-	fwd = fwd.normalized()
-	if fwd.length_squared() < 0.01:
-		fwd = Vector3.FORWARD
-	var launch_dir := (fwd + Vector3(0, 0.35, 0)).normalized()
-	var launch_pos := global_position + Vector3(0, 1.2, 0) + fwd * 0.5
-	var launch_vel: Vector3 = launch_dir * throw_force
 	notice.emit("Tiras %s." % item_name)
+	# Lanzar desde la posición de la cámara hacia donde mira
+	var launch_pos := camera.global_position
+	# Dirección real de la cámara (incluye pitch - donde apunta la vista)
+	var cam_dir := -camera.global_transform.basis.z.normalized()
+	# Añadir un pequeño ángulo hacia arriba para que no caiga de golpe
+	var launch_dir := (cam_dir + Vector3(0, 0.15, 0)).normalized()
+	var launch_vel: Vector3 = launch_dir * throw_force
 	# Lanzar el objeto con física real (RigidBody3D)
-	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel)
+	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, item)
 
 # Crea un RigidBody3D que vuela con física real (gravedad, colisiones).
-# Al aterrizar genera el drop; si cae al agua: splash + ondas.
-func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3) -> void:
+# Al aterrizar genera el drop; si cae al agua: splash + ondas + hundimiento.
+func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, item = null) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -4969,17 +4967,22 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	shape.size = Vector3(0.15, 0.15, 0.15)
 	col.shape = shape
 	body.add_child(col)
-	# Visual del objeto
-	var visual := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3(0.18, 0.18, 0.18)
-	visual.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
-	mat.roughness = 0.8
-	visual.material_override = mat
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	body.add_child(visual)
+	# Intentar usar el modelo real del item
+	var visual_added := false
+	if item != null:
+		visual_added = _try_spawn_item_visual(body, item, item_name)
+	if not visual_added:
+		# Fallback: cubo genérico
+		var visual := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.18, 0.18, 0.18)
+		visual.mesh = mesh
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = color if color.a > 0.0 else Color(0.5, 0.4, 0.3)
+		mat.roughness = 0.8
+		visual.material_override = mat
+		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		body.add_child(visual)
 	# Configurar física: gravedad normal, sin dormir
 	body.gravity_scale = 1.0
 	body.can_sleep = false
@@ -5019,21 +5022,81 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	if not is_instance_valid(body):
 		return
 	land_pos = body.global_position
-	body.queue_free()
 	# Comprobar si cae al agua
 	var water_depth := 0.0
 	if scene.has_method("get_river_depth_at"):
 		water_depth = float(scene.call("get_river_depth_at", land_pos))
 	if water_depth > 0.02:
+		# Splash + ondas + hundir el objeto
 		_spawn_water_splash(land_pos)
 		_spawn_water_ripples(land_pos)
 		notice.emit("Cae al agua con un chapoteo.")
-	# Siempre crear el drop (en agua o tierra)
+		# Hundir el objeto visualmente
+		_sink_thrown_item(body, land_pos)
+		# El item se pierde en el agua (no se puede recuperar)
+		return
+	body.queue_free()
+	# Drop normal en la posición de aterrizaje
 	item_dropped.emit(
 		drop_data["item_name"], drop_data["item_type"],
 		drop_data["item_weight"], 1, drop_data["item_use_value"],
 		land_pos, drop_data["color"], drop_data["broken"], drop_data["spoilage"]
 	)
+
+# Intenta usar el modelo real del item para el objeto lanzado
+func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
+	var model_path := ""
+	match item_name:
+		"Botella de agua", "Botella de agua llena":
+			model_path = REAL_BOTTLE_MODEL
+		"Botella de plastico":
+			model_path = REAL_PLASTIC_BOTTLE_MODEL
+		"Carne ensartada", "Pez ensartado":
+			model_path = REAL_MEAT_ON_STICK_MODEL
+		"Cuchillo":
+			model_path = REAL_KNIFE_MODEL
+		"Palo":
+			model_path = REAL_WOOD_MODEL
+		"Palo afilado":
+			model_path = REAL_WOOD_MODEL
+		"Piedra":
+			model_path = REAL_STONE_MODEL
+	if model_path.is_empty():
+		return false
+	var model := _load_external_node3d(model_path)
+	if model == null:
+		return false
+	model.name = "ThrownItemVisual"
+	parent.add_child(model)
+	return true
+
+# Hunde el objeto lanzado en el agua visualmente
+func _sink_thrown_item(body: Node3D, at_pos: Vector3) -> void:
+	if not is_instance_valid(body):
+		return
+	# Desactivar física y hundir
+	var rb := body as RigidBody3D
+	if rb != null:
+		rb.freeze = true
+	# Tween para hundir: bajar Y y desvanecer
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(body, "global_position", at_pos + Vector3(0, -1.5, 0), 1.5)
+	# Desvanecer el material del modelo si es MeshInstance3D
+	var mesh_node: MeshInstance3D = null
+	if body is MeshInstance3D:
+		mesh_node = body
+	else:
+		for child in body.get_children():
+			if child is MeshInstance3D:
+				mesh_node = child
+				break
+	if mesh_node != null and mesh_node.material_override != null:
+		var mat := mesh_node.material_override as StandardMaterial3D
+		if mat != null:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			tween.tween_property(mat, "albedo_color:a", 0.0, 1.5)
+	tween.chain().tween_callback(func(): body.queue_free())
 
 # Splash de agua: partículas blancas/azules hacia arriba
 func _spawn_water_splash(at_pos: Vector3) -> void:
