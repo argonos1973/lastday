@@ -952,8 +952,8 @@ func _apply_aim_layout() -> void:
 	for reticle in [crosshair_ring_h, crosshair_ring_v, crosshair_dot]:
 		if reticle != null:
 			reticle.position = Vector2.ZERO
-	if prompt_label != null:
-		prompt_label.position = Vector2.ZERO
+	# prompt_label keeps its own anchors/offsets from _build_ui; do not override
+	# here or it shifts off-centre and the interaction prompt becomes invisible.
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:
