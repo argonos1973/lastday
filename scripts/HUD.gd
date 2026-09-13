@@ -945,15 +945,11 @@ func _build_center_messages() -> void:
 	root.add_child(countdown_label)
 
 func _apply_aim_layout() -> void:
-	# These controls are anchored to the viewport centre.  Applying a world/screen
-	# offset here made the reticle drift above the character in third person (and
-	# the old early return left stale positions behind).  Rifle aiming and shooting
-	# both use the same centre ray, so keep every reticle mode on that stable anchor.
-	for reticle in [crosshair_ring_h, crosshair_ring_v, crosshair_dot]:
-		if reticle != null:
-			reticle.position = Vector2.ZERO
-	# prompt_label keeps its own anchors/offsets from _build_ui; do not override
-	# here or it shifts off-centre and the interaction prompt becomes invisible.
+	# Reticles and prompt_label are anchored to the viewport centre with
+	# proper offsets set in _build_ui. Setting position = Vector2.ZERO here
+	# would overwrite offset_left/offset_top and break the centering, making
+	# the crosshair and interaction prompt invisible/off-screen.
+	# Nothing to do here — the anchors/offsets from _build_ui are correct.
 
 func _update_stats() -> void:
 	if player == null or day_cycle == null:
