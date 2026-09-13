@@ -1011,7 +1011,8 @@ func _process(delta: float) -> void:
 		_f_hold_time += delta
 		if _f_hold_time >= HOLD_THRESHOLD and not _f_hold_triggered:
 			_f_hold_triggered = true
-			if get_held_item() != null:
+			# Solo guardar si no hay target de interaccion (evita double-act)
+			if get_held_item() != null and _get_interaction_target() == null:
 				_store_held_item()
 	if _g_holding:
 		_g_hold_time += delta
@@ -4986,9 +4987,9 @@ func _spawn_thrown_item_visual(item_name: String, item_type: String, item_weight
 		# El item se hunde: no crear drop (se pierde) o crear drop en la orilla
 		# Para no perder items injustamente, lo dejamos como drop en la posición
 	else:
-		# Drop normal en la posición de aterrizaje
-		set_meta("last_dropped_durability", 0.0)
-		set_meta("last_dropped_max_durability", 0.0)
+		# Drop normal en la posición de aterrizaje.
+		# Las metas last_dropped_durability/max_durability ya fueron seteadas
+		# por _throw_held_item antes del await; NO resetearlas aqui.
 		item_dropped.emit(item_name, item_type, item_weight, 1, item_use_value, land_pos, color, broken, spoilage)
 
 # Splash de agua: partículas blancas/azules hacia arriba
