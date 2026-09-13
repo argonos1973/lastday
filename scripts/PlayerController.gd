@@ -5045,22 +5045,37 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 
 # Intenta usar el modelo real del item para el objeto lanzado
 func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
+	# Opción 1: duplicar el modelo que ya está en la mano
+	if third_person_hand_item_root != null:
+		for child in third_person_hand_item_root.get_children():
+			if child is Node3D:
+				var copy := child.duplicate() as Node3D
+				if copy != null:
+					copy.name = "ThrownItemVisual"
+					# Resetear posición/rotación al origen del parent
+					copy.position = Vector3.ZERO
+					copy.rotation = Vector3.ZERO
+					parent.add_child(copy)
+					return true
+	# Opción 2: cargar modelo por nombre (fallback)
 	var model_path := ""
 	match item_name:
 		"Botella de agua", "Botella de agua llena":
 			model_path = REAL_BOTTLE_MODEL
 		"Botella de plastico":
 			model_path = REAL_PLASTIC_BOTTLE_MODEL
-		"Carne ensartada", "Pez ensartado":
+		"Carne ensartada", "Pez ensartado", "Carne asada en palo":
 			model_path = REAL_MEAT_ON_STICK_MODEL
 		"Cuchillo":
 			model_path = REAL_KNIFE_MODEL
-		"Palo":
-			model_path = REAL_WOOD_MODEL
-		"Palo afilado":
+		"Palo", "Palo afilado":
 			model_path = REAL_WOOD_MODEL
 		"Piedra":
 			model_path = REAL_STONE_MODEL
+		_:
+			# Intentar por tipo de item
+			if item != null and str(item.item_type) == "tool_torch":
+				model_path = REAL_WOOD_MODEL
 	if model_path.is_empty():
 		return false
 	var model := _load_external_node3d(model_path)
