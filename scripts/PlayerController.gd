@@ -409,7 +409,9 @@ var _is_fishing := false
 var _interact_busy := false  # bloquea interacciones con await en curso
 var _throw_charging := false
 var _throw_charge_time := 0.0
+var _throw_anim_frozen := false
 const THROW_MAX_CHARGE_TIME := 1.2
+const THROW_ANIM_FREEZE_TIME := 0.4
 const THROW_MIN_FORCE := 4.0
 const THROW_MAX_FORCE := 22.0
 const THROW_GRAVITY := 14.0
@@ -1021,6 +1023,7 @@ func _process(delta: float) -> void:
 			if held != null and str(held.item_type) != "weapon_rifle" and not _is_fishing and not is_sleeping:
 				_throw_charging = true
 				_throw_charge_time = 0.0
+				_throw_anim_frozen = false
 				# Iniciar animación de ataque al empezar a cargar (wind-up)
 				_start_throw_animation()
 			else:
@@ -1029,6 +1032,13 @@ func _process(delta: float) -> void:
 		_throw_charge_time = min(_throw_charge_time + delta, THROW_MAX_CHARGE_TIME)
 		var pct := int((_throw_charge_time / THROW_MAX_CHARGE_TIME) * 100.0)
 		notice.emit("Cargando lanzamiento... %d%%" % pct)
+		# Mantener el timer de la animación vivo mientras se carga
+		third_person_action_timer = 0.8
+		# Congelar la animación a los 0.4s mientras se sigue cargando
+		if _throw_charge_time >= THROW_ANIM_FREEZE_TIME and not _throw_anim_frozen:
+			_throw_anim_frozen = true
+			if third_person_animation_player != null:
+				third_person_animation_player.speed_scale = 0.0
 	# Tick spoilage for perishable food in inventory
 	if inventory != null and not is_dead:
 		var _any_spoiled := false
@@ -1277,6 +1287,10 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_released("drop_item"):
 		if _throw_charging:
 			_throw_charging = false
+			_throw_anim_frozen = false
+			# Reanudar animación para completar el movimiento de lanzamiento
+			if third_person_animation_player != null:
+				third_person_animation_player.speed_scale = 1.0
 			_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
 		elif _g_hold_time < HOLD_THRESHOLD:
 			_drop_held_item()
@@ -7035,6 +7049,12 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.play(third_person_action_animation, 0.08)
 			if third_person_action_animation == _rod_fish_start_animation or third_person_action_animation == _rod_fish_end_animation or third_person_action_animation == _rod_cast_animation:
 				third_person_animation_player.speed_scale = _rod_action_speed_scale
+			elif _throw_charging:
+				# Lanzamiento cargado: 1.0 los primeros 0.4s, luego congelar
+				if _throw_charge_time < THROW_ANIM_FREEZE_TIME:
+					third_person_animation_player.speed_scale = 1.0
+				else:
+					third_person_animation_player.speed_scale = 0.0
 			else:
 				third_person_animation_player.speed_scale = 1.0
 			return
