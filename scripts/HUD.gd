@@ -1772,8 +1772,14 @@ func _on_use_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
 		return
-	# Usar always equips; Comer and Beber are separate actions.
-	player._select_held_item(real_idx)
+	var item = player.inventory.items[real_idx]
+	var itype := str(item.item_type)
+	# Clothing equips directly in one step; other items go to hand first.
+	if itype == "clothing":
+		var _inv_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
+		player.equip_clothing(str(item.item_name), _inv_color)
+	else:
+		player._select_held_item(real_idx)
 	selected_slot_index = -1
 	_close_context_menu()
 	if inventory_visible:
