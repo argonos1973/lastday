@@ -164,17 +164,17 @@ func _create_players() -> void:
 
 	water_object_splash_player = AudioStreamPlayer3D.new()
 	water_object_splash_player.name = "WaterObjectSplash"
-	water_object_splash_player.unit_size = 4.0
-	water_object_splash_player.max_distance = 48.0
-	water_object_splash_player.volume_db = 5.0
+	water_object_splash_player.unit_size = 8.0
+	water_object_splash_player.max_distance = 80.0
+	water_object_splash_player.volume_db = 12.0
 	water_object_splash_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(water_object_splash_player)
 
 	water_footstep_player = AudioStreamPlayer3D.new()
 	water_footstep_player.name = "WaterFootsteps"
-	water_footstep_player.unit_size = 3.0
-	water_footstep_player.max_distance = 28.0
-	water_footstep_player.volume_db = 1.0
+	water_footstep_player.unit_size = 8.0
+	water_footstep_player.max_distance = 60.0
+	water_footstep_player.volume_db = 10.0
 	water_footstep_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(water_footstep_player)
 
@@ -510,7 +510,7 @@ func play_water_splash(pos: Vector3, _is_object := true) -> void:
 	var token := _water_object_sound_token
 	water_object_splash_player.stop()
 	water_object_splash_player.global_position = pos
-	water_object_splash_player.volume_db = randf_range(3.0, 7.0)
+	water_object_splash_player.volume_db = randf_range(8.0, 14.0)
 	water_object_splash_player.pitch_scale = randf_range(0.90, 1.08)
 	water_object_splash_player.stream = stream
 	water_object_splash_player.play(WATER_OBJECT_START_SECONDS)
@@ -527,7 +527,7 @@ func play_water_step(pos: Vector3, running := false) -> void:
 	if not stream is AudioStream:
 		return
 	water_footstep_player.global_position = pos
-	water_footstep_player.volume_db = 0.0 if not running else 2.0
+	water_footstep_player.volume_db = 6.0 if not running else 10.0
 	if water_footstep_player.stream != stream:
 		water_footstep_player.stream = stream
 	if not water_footstep_player.playing:
