@@ -3134,6 +3134,7 @@ func _update_water_state(delta: float) -> void:
 					splash_pos.y = float(water_scene.get_river_surface_y_at(splash_pos))
 			_spawn_water_splash(splash_pos)
 			_spawn_water_ripples(splash_pos)
+			_play_water_step_sound(splash_pos)
 			_water_step_timer = 0.45 if is_sprinting else 0.7
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = wetness
