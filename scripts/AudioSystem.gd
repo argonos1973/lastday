@@ -157,9 +157,9 @@ func _create_players() -> void:
 
 	footstep_player = AudioStreamPlayer3D.new()
 	footstep_player.name = "Footsteps"
-	footstep_player.unit_size = 1.0
-	footstep_player.max_distance = 16.0
-	footstep_player.volume_db = -2.0
+	footstep_player.unit_size = 6.0
+	footstep_player.max_distance = 40.0
+	footstep_player.volume_db = 8.0
 	add_child(footstep_player)
 
 	water_object_splash_player = AudioStreamPlayer3D.new()
@@ -180,16 +180,16 @@ func _create_players() -> void:
 
 	walk_loop_player = AudioStreamPlayer3D.new()
 	walk_loop_player.name = "WalkLoop"
-	walk_loop_player.unit_size = 1.0
-	walk_loop_player.max_distance = 16.0
-	walk_loop_player.volume_db = -2.0
+	walk_loop_player.unit_size = 6.0
+	walk_loop_player.max_distance = 40.0
+	walk_loop_player.volume_db = 8.0
 	add_child(walk_loop_player)
 
 	run_loop_player = AudioStreamPlayer3D.new()
 	run_loop_player.name = "RunLoop"
-	run_loop_player.unit_size = 1.0
-	run_loop_player.max_distance = 16.0
-	run_loop_player.volume_db = -2.0
+	run_loop_player.unit_size = 6.0
+	run_loop_player.max_distance = 40.0
+	run_loop_player.volume_db = 8.0
 	add_child(run_loop_player)
 
 	action_player = AudioStreamPlayer3D.new()
