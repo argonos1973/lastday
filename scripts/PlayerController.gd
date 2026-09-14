@@ -2946,7 +2946,7 @@ func _fit_held_prop_to_palm(item) -> void:
 	_hand_grip_curl = 1.0
 	_hand_grip_adjustment = Vector3.ZERO
 	var item_type := str(item.item_type)
-	var long_tool := item_type in ["tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "weapon"] or str(item.item_name) in ["Palo", "Palo afilado", "Madera", "Tronco", "Ramas", "Carne ensartada", "Pez ensartado", "Carne asada en palo"]
+	var long_tool := item_type in ["tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "weapon"] or str(item.item_name) in ["Hacha", "Pala", "Pico", "Martillo", "Palo", "Palo afilado", "Madera", "Tronco", "Ramas", "Carne ensartada", "Pez ensartado", "Carne asada en palo"]
 	# Keep multi-part props together under one grip pivot.
 	var pivot := Node3D.new()
 	pivot.name = "PalmGripVisual"
@@ -3129,11 +3129,11 @@ func _update_water_state(delta: float) -> void:
 	if is_in_water:
 		if _water_step_timer <= 0.0 and Vector2(velocity.x, velocity.z).length() > 0.4:
 			var water_scene := get_tree().current_scene
+			var splash_pos := global_position
 			if water_scene != null and water_scene.has_method("get_river_surface_y_at"):
-				var splash_pos := global_position
-				splash_pos.y = float(water_scene.get_river_surface_y_at(splash_pos))
-				_spawn_water_splash(splash_pos)
-				_spawn_water_ripples(splash_pos)
+					splash_pos.y = float(water_scene.get_river_surface_y_at(splash_pos))
+			_spawn_water_splash(splash_pos)
+			_spawn_water_ripples(splash_pos)
 			_water_step_timer = 0.45 if is_sprinting else 0.7
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = wetness
@@ -5285,6 +5285,7 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		# Splash + ondas + hundir el objeto
 		_spawn_water_splash(land_pos)
 		_spawn_water_ripples(land_pos)
+		_play_water_splash_sound(land_pos)
 		notice.emit("Cae al agua con un chapoteo.")
 		# Hundir el objeto visualmente
 		_sink_thrown_item(body, land_pos)
@@ -5415,6 +5416,42 @@ func _collect_thrown_meshes(node: Node, out: Array[MeshInstance3D]) -> void:
 		_collect_thrown_meshes(child, out)
 
 # Splash de agua: partículas blancas/azules hacia arriba
+func _play_water_splash_sound(at_pos: Vector3) -> void:
+	var audio = _get_water_audio()
+	if audio == null:
+		return
+	if audio.has_method("play_water_splash"):
+		audio.call("play_water_splash", at_pos, true)
+	elif audio.has_method("play_sfx"):
+		audio.call("play_sfx", "water_splash", at_pos)
+
+func _play_water_step_sound(at_pos: Vector3) -> void:
+	var audio = _get_water_audio()
+	if audio == null:
+		return
+	if audio.has_method("play_water_step"):
+		audio.call("play_water_step", at_pos, is_sprinting)
+	elif audio.has_method("play_sfx"):
+		audio.call("play_sfx", "water_step", at_pos)
+
+func _get_water_audio():
+	var audio = get_node_or_null("/root/AudioSystem")
+	if audio != null:
+		return audio
+	if has_meta("audio_system"):
+		audio = get_meta("audio_system")
+		if audio != null and is_instance_valid(audio):
+			return audio
+	# In the normal game AudioSystem is a child of Main, while the current
+	# scene is Inicio. Walk the ownership tree so both launch paths resolve it.
+	var owner_node: Node = self
+	while owner_node != null:
+		var scene_audio = owner_node.get("audio_system")
+		if scene_audio != null and is_instance_valid(scene_audio):
+			return scene_audio
+		owner_node = owner_node.get_parent()
+	return null
+
 func _spawn_water_splash(at_pos: Vector3) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
@@ -5488,11 +5525,6 @@ func _spawn_water_ripples(at_pos: Vector3) -> void:
 		tween.tween_callback(func():
 			if is_instance_valid(ring):
 				ring.queue_free())
-	# Sonido de splash si hay AudioSystem
-	var audio := get_node_or_null("/root/AudioSystem")
-	if audio != null and audio.has_method("play_sfx"):
-		audio.call("play_sfx", "water_splash", at_pos)
-
 #endregion
 
 
@@ -5586,7 +5618,14 @@ func _sync_third_person_equipment(held_item) -> void:
 			return
 	if held_item == null:
 		return
-	if flashlight.visible and str(held_item.item_type) == "tool":
+	var held_name := str(held_item.item_name)
+	# Older saves can retain Hacha with the generic "tool" type. Resolve by
+	# name before the generic tool/flashlight fallback so it always gets the axe.
+	if held_name == "Hacha":
+		_build_third_person_axe()
+		_clear_rifle_attachment()
+		return
+	if flashlight.visible and str(held_item.item_type) == "tool" and held_name in ["Linterna", "Flashlight"]:
 		_build_third_person_flashlight()
 		return
 	match held_item.item_type:
@@ -5602,7 +5641,14 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_rifle()
 			_initialize_rifle_ammo()
 		"tool":
-			_build_third_person_flashlight()
+			if held_name == "Pala":
+				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12))
+			elif held_name == "Martillo":
+				_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
+			elif held_name == "Pico":
+				_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10))
+			else:
+				_build_third_person_flashlight()
 			_clear_rifle_attachment()
 		"food":
 			_build_held_food(str(held_item.item_name))
@@ -7458,6 +7504,14 @@ func _build_third_person_tool(path: String, node_name: String, _fallback_color: 
 
 func _build_third_person_axe() -> void:
 	var node := _load_external_node3d(REAL_AXE_MODEL)
+	if node == null:
+		for fallback_path in [
+			"res://assets/external/kenney_survival_kit/Models/GLB format/tool-axe.glb",
+			"res://assets/external/realistic/root_glb/axe_survival.glb"
+		]:
+			node = _load_external_node3d(fallback_path)
+			if node != null:
+				break
 	if node == null:
 		return
 	node.name = "ThirdPersonAxe"

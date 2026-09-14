@@ -3163,6 +3163,8 @@ func _play_water_drop_effect(pos: Vector3) -> void:
 	var splash_pos := pos
 	if has_method("get_river_surface_y_at"):
 		splash_pos.y = float(get_river_surface_y_at(pos))
+	if audio_system != null and audio_system.has_method("play_water_splash"):
+		audio_system.call("play_water_splash", splash_pos, true)
 	if player != null and is_instance_valid(player):
 		if player.has_method("_spawn_water_splash"):
 			player.call("_spawn_water_splash", splash_pos)
@@ -3604,6 +3606,10 @@ func _create_audio() -> void:
 	audio_system.name = "AudioSystem"
 	add_child(audio_system)
 	audio_system.setup(player, day_cycle)
+	# Keep a direct reference for water impacts emitted by PlayerController even
+	# when the scene is launched through the menu wrapper.
+	if player != null and is_instance_valid(player):
+		player.set_meta("audio_system", audio_system)
 
 func _create_hud() -> void:
 	hud = HUDScript.new()
@@ -9436,7 +9442,9 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	if _is_in_lake(pos):
+	# Deer, foxes and wolves are land animals. Block every water segment here,
+	# including rivers and the lake; birds use their own unrestricted routes.
+	if _is_inside_river_band(pos, 1.2):
 		return false
 	return true
 

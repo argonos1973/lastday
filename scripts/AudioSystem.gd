@@ -45,6 +45,15 @@ const FOOTSTEP_WOOD_PATHS := [
 	"res://assets/external/audio/footstep_wood_02.wav",
 	"res://assets/external/audio/footstep_wood_03.wav"
 ]
+const WATER_OBJECT_SPLASH_PATHS := [
+	"res://objetocaeagua.mp3"
+]
+const WATER_FOOTSTEP_SPLASH_PATHS := [
+	"res://andarporagua.mp3"
+]
+const WATER_FOOTSTEP_START_SECONDS := 4.0
+const WATER_OBJECT_START_SECONDS := 2.0
+const WATER_OBJECT_END_SECONDS := 5.0
 
 const WALK_SOUND_PATH := "res://assets/audio/andar.mp3"
 const RUN_SOUND_PATH := "res://assets/audio/correr.mp3"
@@ -64,6 +73,8 @@ var rain_player: AudioStreamPlayer
 var thunder_player: AudioStreamPlayer
 var river_player: AudioStreamPlayer3D
 var footstep_player: AudioStreamPlayer3D
+var water_object_splash_player: AudioStreamPlayer3D
+var water_footstep_player: AudioStreamPlayer3D
 var action_player: AudioStreamPlayer3D
 var animal_call_player: AudioStreamPlayer3D
 var forest_player: AudioStreamPlayer
@@ -73,6 +84,9 @@ var _forest_loop_stream: AudioStream = null
 var grass_steps: Array = []
 var road_steps: Array = []
 var wood_steps: Array = []
+var water_object_splashes: Array = []
+var water_footstep_splashes: Array = []
+var _water_object_sound_token := 0
 var chop_sounds: Array = []
 var deer_calls: Array = []
 var fox_calls: Array = []
@@ -148,6 +162,22 @@ func _create_players() -> void:
 	footstep_player.volume_db = -2.0
 	add_child(footstep_player)
 
+	water_object_splash_player = AudioStreamPlayer3D.new()
+	water_object_splash_player.name = "WaterObjectSplash"
+	water_object_splash_player.unit_size = 4.0
+	water_object_splash_player.max_distance = 48.0
+	water_object_splash_player.volume_db = 5.0
+	water_object_splash_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+	add_child(water_object_splash_player)
+
+	water_footstep_player = AudioStreamPlayer3D.new()
+	water_footstep_player.name = "WaterFootsteps"
+	water_footstep_player.unit_size = 3.0
+	water_footstep_player.max_distance = 28.0
+	water_footstep_player.volume_db = 1.0
+	water_footstep_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+	add_child(water_footstep_player)
+
 	walk_loop_player = AudioStreamPlayer3D.new()
 	walk_loop_player.name = "WalkLoop"
 	walk_loop_player.unit_size = 1.0
@@ -200,6 +230,13 @@ func _load_audio() -> void:
 	grass_steps = _load_streams(FOOTSTEP_GRASS_PATHS)
 	road_steps = _load_streams(FOOTSTEP_ROAD_PATHS)
 	wood_steps = _load_streams(FOOTSTEP_WOOD_PATHS)
+	water_object_splashes = _load_streams(WATER_OBJECT_SPLASH_PATHS)
+	water_footstep_splashes = _load_streams(WATER_FOOTSTEP_SPLASH_PATHS)
+	for stream in water_footstep_splashes:
+		if stream is AudioStreamMP3:
+			# The water-walking recording has an intro before the useful loop.
+			(stream as AudioStreamMP3).loop = true
+			(stream as AudioStreamMP3).loop_offset = WATER_FOOTSTEP_START_SECONDS
 	chop_sounds = _load_streams(AXE_CHOP_PATHS)
 	if chop_sounds.is_empty():
 		chop_sounds = wood_steps
@@ -461,6 +498,54 @@ func _update_animal_calls(delta: float) -> void:
 func play_chop_at(pos: Vector3) -> void:
 	_play_one_shot_at(action_player, chop_sounds, pos, 4.0, randf_range(0.90, 1.06))
 
+## Splash when an object hits the water. Kept separate from footsteps so a
+## dropped item does not cut off the character's movement sound.
+func play_water_splash(pos: Vector3, _is_object := true) -> void:
+	if water_object_splashes.is_empty() or water_object_splash_player == null:
+		return
+	var stream = water_object_splashes[0]
+	if not stream is AudioStream:
+		return
+	_water_object_sound_token += 1
+	var token := _water_object_sound_token
+	water_object_splash_player.stop()
+	water_object_splash_player.global_position = pos
+	water_object_splash_player.volume_db = randf_range(3.0, 7.0)
+	water_object_splash_player.pitch_scale = randf_range(0.90, 1.08)
+	water_object_splash_player.stream = stream
+	water_object_splash_player.play(WATER_OBJECT_START_SECONDS)
+	# Stop at five seconds, even if the source recording is longer.
+	get_tree().create_timer(WATER_OBJECT_END_SECONDS - WATER_OBJECT_START_SECONDS).timeout.connect(func():
+		if token == _water_object_sound_token and water_object_splash_player != null:
+			water_object_splash_player.stop())
+
+## Short, low-volume splash for a foot entering shallow water.
+func play_water_step(pos: Vector3, running := false) -> void:
+	if water_footstep_splashes.is_empty() or water_footstep_player == null:
+		return
+	var stream = water_footstep_splashes[0]
+	if not stream is AudioStream:
+		return
+	water_footstep_player.global_position = pos
+	water_footstep_player.volume_db = 0.0 if not running else 2.0
+	if water_footstep_player.stream != stream:
+		water_footstep_player.stream = stream
+	if not water_footstep_player.playing:
+		# Start after the four-second intro; loop_offset keeps the loop there.
+		water_footstep_player.pitch_scale = randf_range(0.97, 1.03)
+		water_footstep_player.play(WATER_FOOTSTEP_START_SECONDS)
+
+func stop_water_step() -> void:
+	if water_footstep_player != null:
+		water_footstep_player.stop()
+
+## Compatibility entry point used by older water ripple code.
+func play_sfx(effect: String, pos: Vector3 = Vector3.ZERO) -> void:
+	if effect == "water_splash":
+		play_water_splash(pos)
+	elif effect == "water_step":
+		play_water_step(pos)
+
 var _chop_token := 0
 
 func stop_chop() -> void:
@@ -503,6 +588,23 @@ func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Ve
 	player_node.play()
 
 func _update_footsteps(delta: float) -> void:
+	# Water footsteps use input timing instead of the previous frame's velocity.
+	# This also works while wading deeply, where CharacterBody3D may not report
+	# itself as being on the floor.
+	if player.is_in_water:
+		_stop_walk_run()
+		var water_input: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+		if water_input.length() < 0.1:
+			stop_water_step()
+			step_timer = 0.0
+			return
+		var water_pos: Vector3 = player.global_position
+		var water_scene := get_tree().current_scene
+		if water_scene != null and water_scene.has_method("get_river_surface_y_at"):
+			water_pos.y = float(water_scene.call("get_river_surface_y_at", water_pos))
+		play_water_step(water_pos, player.is_sprinting)
+		return
+	stop_water_step()
 	if not player.is_on_floor():
 		_stop_walk_run()
 		step_timer = 0.0
