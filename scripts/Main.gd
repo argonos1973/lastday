@@ -406,12 +406,14 @@ const NO_GRASS_AREAS := [
 ]
 
 const WORLD_SEED := 1337
+const TERRAIN_SEED := 97531
 # Punto temporal de entrada para revisar el poblado. Está junto a la primera
 # casa, sobre terreno libre y orientado hacia el núcleo de edificios.
 const TOWN_TEST_SPAWN := Vector3(-17.0, 0.4, -10.0)
 const LAKE_TEST_SPAWN := Vector3(245.0, 0.4, -255.0)
 
 var _world_rng := RandomNumberGenerator.new()
+var _terrain_rng := RandomNumberGenerator.new()
 
 var _loading_overlay: CanvasLayer = null
 var _loading_label: Label = null
@@ -550,6 +552,7 @@ func _ready() -> void:
 	if net != null and net.is_dedicated_server:
 		seed(WORLD_SEED)
 		_world_rng.seed = WORLD_SEED
+		_terrain_rng.seed = TERRAIN_SEED
 		nav = NavPathfindingScript.new()
 		world_streaming_mgr = WorldStreamingManager.new()
 		add_child(world_streaming_mgr)
@@ -565,6 +568,7 @@ func _ready() -> void:
 	if _scene_quitting: return
 	seed(WORLD_SEED)
 	_world_rng.seed = WORLD_SEED
+	_terrain_rng.seed = TERRAIN_SEED
 	nav = NavPathfindingScript.new()
 	world_streaming_mgr = WorldStreamingManager.new()
 	add_child(world_streaming_mgr)
@@ -3723,15 +3727,11 @@ func _create_map() -> void:
 	if not is_server:
 		_create_mountain_backdrop()
 		# Esperamos frames de física para asegurar que las colisiones del terreno se registren en el servidor de físicas
-		var _rng_state_1 := _world_rng.state
 		await get_tree().physics_frame
 		await get_tree().physics_frame
-		_world_rng.state = _rng_state_1
 		await _create_rocky_foothills()
-		_rng_state_1 = _world_rng.state
 		await get_tree().physics_frame
 		await get_tree().physics_frame
-		_world_rng.state = _rng_state_1
 		_tm = Time.get_ticks_msec()
 	if not is_server:
 		await _create_grass_ground_cover()
@@ -7557,19 +7557,19 @@ func _create_mountain_backdrop() -> void:
 		var yaw: float = float(ridge["yaw"])
 		for i in range(count):
 			var offset := step * (float(i) - float(count - 1) * 0.5)
-			var pos := center + offset + Vector3(_world_rng.randf_range(-12.0, 12.0), 0.0, _world_rng.randf_range(-10.0, 10.0))
-			var peak_height: float = _world_rng.randf_range(14.0, 26.0)
-			var radius_x: float = _world_rng.randf_range(40.0, 75.0)
-			var radius_z: float = _world_rng.randf_range(30.0, 60.0)
-			var base_color: Color = shadow_color.lerp(mountain_color, _world_rng.randf_range(0.35, 0.95))
-			_create_mountain_peak("MountainPeak", pos, radius_x, radius_z, peak_height, yaw + _world_rng.randf_range(-14.0, 14.0), base_color)
+			var pos := center + offset + Vector3(_terrain_rng.randf_range(-12.0, 12.0), 0.0, _terrain_rng.randf_range(-10.0, 10.0))
+			var peak_height: float = _terrain_rng.randf_range(14.0, 26.0)
+			var radius_x: float = _terrain_rng.randf_range(40.0, 75.0)
+			var radius_z: float = _terrain_rng.randf_range(30.0, 60.0)
+			var base_color: Color = shadow_color.lerp(mountain_color, _terrain_rng.randf_range(0.35, 0.95))
+			_create_mountain_peak("MountainPeak", pos, radius_x, radius_z, peak_height, yaw + _terrain_rng.randf_range(-14.0, 14.0), base_color)
 
 func _create_rocky_foothills() -> void:
 	# En lugar de colinas gigantes y solapadas, generamos colinas suaves, espaciadas y de menor tamaño.
 	var num_hills := int(7 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0)) # ~75 colinas en total
 	var large_hill_count := 0
 	for i in range(num_hills):
-		var pos := Vector3(_world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, _world_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
+		var pos := Vector3(_terrain_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85), 0.0, _terrain_rng.randf_range(-MAP_EXTENT*0.85, MAP_EXTENT*0.85))
 		
 		# Mantener el centro del mapa plano para poder construir y empujar detrás del río
 		if Vector2(pos.x, pos.z).length() < 55.0:
@@ -7590,48 +7590,46 @@ func _create_rocky_foothills() -> void:
 		
 		# Avoid rivers — no hills on water (check after radius is known)
 		# ~25% de las colinas se convierten en montañas grandes con vegetación
-		var is_large_mountain := large_hill_count < 12 and _world_rng.randf() < 0.25
+		var is_large_mountain := large_hill_count < 12 and _terrain_rng.randf() < 0.25
 		var radius_x: float
 		var radius_z: float
 		var height: float
 		if is_large_mountain:
-			radius_x = _world_rng.randf_range(30.0, 60.0)
-			radius_z = _world_rng.randf_range(30.0, 60.0)
-			height = _world_rng.randf_range(10.0, 25.0)
+			radius_x = _terrain_rng.randf_range(30.0, 60.0)
+			radius_z = _terrain_rng.randf_range(30.0, 60.0)
+			height = _terrain_rng.randf_range(10.0, 25.0)
 			large_hill_count += 1
 		else:
-			radius_x = _world_rng.randf_range(6.0, 14.0)
-			radius_z = _world_rng.randf_range(6.0, 14.0)
-			height = _world_rng.randf_range(0.8, 2.8) # Muy suaves y caminables
+			radius_x = _terrain_rng.randf_range(6.0, 14.0)
+			radius_z = _terrain_rng.randf_range(6.0, 14.0)
+			height = _terrain_rng.randf_range(0.8, 2.8) # Muy suaves y caminables
 		
 		# Now check river with actual hill radius as margin
 		if _is_near_river(pos, max(radius_x, radius_z) + 5.0):
 			continue
 		
 		# Color de tierra verdosa para las colinas
-		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _world_rng.randf())
-		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _world_rng.randf_range(0, 360), hill_color)
+		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _terrain_rng.randf())
+		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _terrain_rng.randf_range(0, 360), hill_color)
 		# Esperar a que la colisión de esta montaña se registre en el motor de física
 		if is_large_mountain:
-			var _saved_rng_state := _world_rng.state
 			await get_tree().physics_frame
-			_world_rng.state = _saved_rng_state
 		# Añadir abundantes manojos de hierba en las colinas
 		var grass_count := 4 if not is_large_mountain else 60
 		for _hc in range(grass_count):
-			var angle := _world_rng.randf_range(0.0, TAU)
-			var r_dist := _world_rng.randf_range(0.1, max(radius_x, radius_z) * 0.85)
+			var angle := _terrain_rng.randf_range(0.0, TAU)
+			var r_dist := _terrain_rng.randf_range(0.1, max(radius_x, radius_z) * 0.85)
 			var hpos := pos + Vector3(cos(angle) * r_dist, 0, sin(angle) * r_dist)
 			hpos.y = _get_exact_ground_y(hpos.x, hpos.z) + 0.02
 			if _can_place_ground_vegetation(hpos):
-				_create_grass_clump(hpos, _world_rng.randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
+				_create_grass_clump(hpos, _terrain_rng.randf_range(0.35, 0.85), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _terrain_rng.randf()))
 		
 		# En montañas grandes, añadir árboles densos y hierba extra (sin arbustos)
 		if is_large_mountain:
 			var tree_count := int(radius_x * radius_z * 0.06)
 			for _tc in range(tree_count):
-				var t_angle := _world_rng.randf_range(0.0, TAU)
-				var t_dist := _world_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
+				var t_angle := _terrain_rng.randf_range(0.0, TAU)
+				var t_dist := _terrain_rng.randf_range(2.0, max(radius_x, radius_z) * 0.75)
 				var tpos := pos + Vector3(cos(t_angle) * t_dist, 0, sin(t_angle) * t_dist)
 				tpos.y = _get_exact_ground_y(tpos.x, tpos.z)
 				if tpos.y < 0.05:
@@ -7644,38 +7642,38 @@ func _create_rocky_foothills() -> void:
 			# Hierba procedural extra en lugar de arbustos
 			var extra_grass_count := int(radius_x * radius_z * 0.04)
 			for _gc in range(extra_grass_count):
-				var g_angle := _world_rng.randf_range(0.0, TAU)
-				var g_dist := _world_rng.randf_range(1.0, max(radius_x, radius_z) * 0.85)
+				var g_angle := _terrain_rng.randf_range(0.0, TAU)
+				var g_dist := _terrain_rng.randf_range(1.0, max(radius_x, radius_z) * 0.85)
 				var gpos := pos + Vector3(cos(g_angle) * g_dist, 0, sin(g_angle) * g_dist)
 				gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.02
 				if _can_place_ground_vegetation(gpos):
-					_create_grass_clump(gpos, _world_rng.randf_range(0.30, 0.75), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _world_rng.randf()))
+					_create_grass_clump(gpos, _terrain_rng.randf_range(0.30, 0.75), Color(0.22, 0.38, 0.14).lerp(Color(0.36, 0.48, 0.18), _terrain_rng.randf()))
 		# Piedras gigantes procedurales en montañas grandes
 		if is_large_mountain:
-			var boulder_count := 5 + _world_rng.randi() % 5
+			var boulder_count := 5 + _terrain_rng.randi() % 5
 			for _bc in range(boulder_count):
-				var b_angle := _world_rng.randf_range(0.0, TAU)
+				var b_angle := _terrain_rng.randf_range(0.0, TAU)
 				var b_dist: float
 				var b_scale: Vector3
-				var is_cave_boulder := _world_rng.randf() < 0.55
+				var is_cave_boulder := _terrain_rng.randf() < 0.55
 				if is_cave_boulder:
 					# 50% cerca de la cima, 50% en la base - formando cuevas
-					if _world_rng.randf() < 0.5:
-						b_dist = _world_rng.randf_range(0.0, max(radius_x, radius_z) * 0.3)
+					if _terrain_rng.randf() < 0.5:
+						b_dist = _terrain_rng.randf_range(0.0, max(radius_x, radius_z) * 0.3)
 					else:
-						b_dist = _world_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
+						b_dist = _terrain_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
 					b_scale = Vector3(
-						_world_rng.randf_range(4.0, 9.0),
-						_world_rng.randf_range(5.0, 12.0),
-						_world_rng.randf_range(4.0, 9.0)
+						_terrain_rng.randf_range(4.0, 9.0),
+						_terrain_rng.randf_range(5.0, 12.0),
+						_terrain_rng.randf_range(4.0, 9.0)
 					)
 				else:
 					# En la base de la montaña
-					b_dist = _world_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
+					b_dist = _terrain_rng.randf_range(max(radius_x, radius_z) * 0.6, max(radius_x, radius_z) * 0.95)
 					b_scale = Vector3(
-						_world_rng.randf_range(3.0, 7.0),
-						_world_rng.randf_range(3.0, 6.0),
-						_world_rng.randf_range(3.0, 7.0)
+						_terrain_rng.randf_range(3.0, 7.0),
+						_terrain_rng.randf_range(3.0, 6.0),
+						_terrain_rng.randf_range(3.0, 7.0)
 					)
 				var bpos := pos + Vector3(cos(b_angle) * b_dist, 0, sin(b_angle) * b_dist)
 				bpos.y = _get_exact_ground_y(bpos.x, bpos.z)
