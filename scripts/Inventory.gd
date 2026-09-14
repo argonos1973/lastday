@@ -318,6 +318,24 @@ func consume_one_type(item_type: String) -> bool:
 			return true
 	return false
 
+func consume_match_charge() -> bool:
+	for i in range(items.size() - 1, -1, -1):
+		var item = items[i]
+		if item == null or str(item.item_name) != "Cerillas":
+			continue
+		if item.durability <= 0.0:
+			items.remove_at(i)
+			changed.emit()
+			return false
+		item.reduce_durability(1.0)
+		if item.durability <= 0.0:
+			items.remove_at(i)
+			changed.emit()
+			return true
+		changed.emit()
+		return true
+	return false
+
 func get_total_weight() -> float:
 	var total := 0.0
 	for item in items:

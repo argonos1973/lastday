@@ -18,6 +18,7 @@ func simulate(ambient: float, shelter := false, clothes := 0.0, wet := 0.0, wind
 	return stats
 func _initialize():
 	var neutral = simulate(22.0)
+	var mild = simulate(21.0)
 	var cold = simulate(-5.0)
 	var warm_clothes = simulate(-5.0, false, 1.2)
 	var shelter = simulate(-5.0, true)
@@ -28,7 +29,8 @@ func _initialize():
 	var heavy = simulate(42.0, false, 0.0, 0.0, 0.0, 0.8)
 	var sun = simulate(35.0, false, 0.0, 0.0, 0.0, 0.0, 1.0)
 	var shade = simulate(35.0, true)
-	check(is_equal_approx(neutral.body_temperature, 36.6), "Comfortable environment maintains core temperature")
+	check(neutral.body_temperature < 36.4 and neutral.body_temperature > 35.8, "Mild outdoor temperature lowers the body equilibrium without causing hypothermia")
+	check(mild.body_temperature < 36.4, "21°C ambient temperature no longer leaves the character at 37°C")
 	check(cold.body_temperature < 35.4 and cold.health < neutral.health, "Cold lowers temperature and damages health")
 	check(warm_clothes.body_temperature > cold.body_temperature, "Insulation protects from cold")
 	check(shelter.body_temperature > cold.body_temperature, "Shelter moderates cold")
@@ -53,6 +55,6 @@ func _initialize():
 	neutral.body_temperature = 34.0
 	neutral.apply_external_heat(0.5, 37.5)
 	check(neutral.body_temperature == 34.5, "Fire warms a cold character gradually")
-	for stat in [neutral, cold, warm_clothes, shelter, windy, calm, wet, hot, heavy, sun, shade]: stat.free()
+	for stat in [neutral, mild, cold, warm_clothes, shelter, windy, calm, wet, hot, heavy, sun, shade]: stat.free()
 	print("TEMPERATURE: %d checks, %d failures" % [checks, failed])
 	quit(1 if failed else 0)

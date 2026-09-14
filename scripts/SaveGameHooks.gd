@@ -454,7 +454,7 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		var drop_at := str(drop.get("action_type", ""))
 		var drop_name := str(drop.get("name", ""))
 		var drop_type := str(drop.get("type", ""))
-		if drop_at == "wolf_meat_raw":
+		if drop_at == "wolf_meat_raw" or drop_at == "bird_meat_raw":
 			if main.has_method("_spawn_raw_meat_visual"):
 				main._spawn_raw_meat_visual(drop_id, drop_name, dpos)
 		elif drop_name == "Antorcha" and drop_type == "tool_torch":

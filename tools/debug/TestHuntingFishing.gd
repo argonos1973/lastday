@@ -23,7 +23,7 @@ func _initialize(): call_deferred("run")
 func fire(world: Node3D, pos: Vector3, direction: Vector3):
 	var bullet := Bullet.new()
 	bullet.velocity = direction * 800.0
-	bullet.impact.connect(func(c, _p, _d): hits.append(c))
+	bullet.impact.connect(func(c, _p, _d, _n): hits.append(c))
 	world.add_child(bullet)
 	bullet.global_position = pos
 	return bullet

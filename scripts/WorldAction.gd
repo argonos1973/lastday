@@ -88,7 +88,7 @@ func tick_growth(delta: float) -> void:
 		if growth >= grow_time:
 			action_state = "ready"
 			_update_crop_visual()
-	if action_type == "wolf_meat_raw" or action_type == "deer_meat_raw" or action_type == "fox_meat_raw":
+	if action_type == "wolf_meat_raw" or action_type == "deer_meat_raw" or action_type == "fox_meat_raw" or action_type == "bird_meat_raw":
 		if _rot_timer <= 0.0:
 			_rot_timer = 600.0
 		_rot_timer = max(0.0, _rot_timer - delta)
@@ -116,7 +116,7 @@ func get_interaction_text(_player = null) -> String:
 			if not _player_has_blade(_player):
 				return ""
 			return "Destripar - [F] | Coger - [C] (mochila)"
-		"wolf_meat_raw":
+		"wolf_meat_raw", "bird_meat_raw":
 			return "%s - [C] Coger | [M] Comer (cruda)" % display_name
 		"fell_tree":
 			if not _player_has_axe(_player):

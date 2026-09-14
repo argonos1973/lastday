@@ -466,6 +466,10 @@ var _rifle_weapon_offset: Node3D = null
 var _rifle_root: Node3D = null
 var _rifle_model: Node3D = null
 var _rifle_on_back: Node3D = null
+const BACK_SLOT_LEFT := 0
+const BACK_SLOT_RIGHT := 1
+var _stored_back_items: Array = [null, null]
+var _stored_back_visuals: Array = [null, null]
 var _rifle_on_back_strap: Node3D = null
 var _strap_skeleton: Skeleton3D = null
 var _strap_barrel_marker: Marker3D = null
@@ -477,6 +481,7 @@ var _strap_lower_offset: Marker3D = null
 var _strap_prev_pts: PackedVector3Array = PackedVector3Array()
 var _strap_initialized := false
 var _rifle_strap_system: RefCounted = null
+var _rifle_strap_update_accum := 0.0
 var _rifle_right_grip: Marker3D = null
 var _rifle_left_hand_grip: Marker3D = null
 var _rifle_stock_ref: Marker3D = null
@@ -592,6 +597,7 @@ var flashlight_charge := 0.0
 var held_index := 0
 var _consumption_pending := false
 var _held_item_reference = null
+var _held_item_external := false
 var equipped_clothing := ""
 var equipped_backpack := ""
 # Survival deformable clothing nodes inside the adapted model (mesh name -> node).
@@ -607,6 +613,8 @@ var _walk_bob := 0.0
 var _walk_intensity := 0.0
 var _turn_input := 0.0
 var _water_depth := 0.0
+
+var _water_step_timer := 0.0
 var _water_sink := 0.0
 var _water_notice_cooldown := 0.0
 var _water_query_timer := 0.0
@@ -1135,8 +1143,17 @@ func _process(delta: float) -> void:
 		var skel := _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
 		if skel != null:
 			_update_rifle_ik(skel, delta)
-	# Update rifle strap mesh in real-time to follow animations
-	_update_rifle_strap(delta)
+	# The strap rebuilds a procedural ribbon mesh. Thirty updates per second
+	# are visually indistinguishable from a per-frame rebuild and avoid doing
+	# mesh commits when no rifle is mounted on the back.
+	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
+		_rifle_strap_update_accum += delta
+		if _rifle_strap_system == null or _rifle_strap_update_accum >= (1.0 / 30.0):
+			var strap_delta := _rifle_strap_update_accum
+			_rifle_strap_update_accum = 0.0
+			_update_rifle_strap(strap_delta)
+	else:
+		_rifle_strap_update_accum = 0.0
 	# Camera overrides for debug views only
 	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera or _aerial_camera):
 		var char_forward := -global_basis.z.normalized()
@@ -1404,6 +1421,15 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_R and _has_rifle_equipped():
 			_reload_rifle()
 			return
+		# Atajos de equipo: H guarda el objeto que esta en la mano y J usa
+		# el primer objeto disponible de los hombros.
+		if event.keycode == KEY_H:
+			_store_held_item()
+			return
+		if event.keycode == KEY_J:
+			if not use_back_item():
+				notice.emit("No llevas nada en la espalda.")
+			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 
@@ -1477,7 +1503,7 @@ func _use_inventory_index(index: int) -> void:
 		_select_held_item(index)
 
 func _on_inventory_changed() -> void:
-	if inventory != null and _held_item_reference != null:
+	if not _held_item_external and inventory != null and _held_item_reference != null:
 		var current_index: int = inventory.items.find(_held_item_reference)
 		if current_index >= 0:
 			held_index = current_index
@@ -2887,6 +2913,129 @@ func _update_backpack_socket() -> void:
 	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
 
 var _hand_socket_offset := Vector3(0.10, 0.0, 0.0)
+var _generic_hand_grip := false
+var _hand_grip_curl := 1.0
+var _hand_grip_adjustment := Vector3.ZERO
+var _grip_modifier: SkeletonModifier3D
+
+func _palm_grip_offset() -> Vector3:
+	# Measure the actual imported rig rather than assuming centimetres/metres.
+	var middle := -1
+	for prefix in ["mixamorig:", "mixamorig_", ""]:
+		middle = _hand_skeleton.find_bone(prefix + "RightHandMiddle1")
+		if middle >= 0:
+			break
+	if middle < 0:
+		return Vector3(0.0, 0.08, 0.025)
+	var wrist := _hand_skeleton.get_bone_global_rest(_hand_bone_idx)
+	var knuckle := wrist.affine_inverse() * _hand_skeleton.get_bone_global_rest(middle).origin
+	var model_basis := third_person_model.global_basis.inverse() * _hand_skeleton.global_basis * wrist.basis
+	var palm_length := (model_basis * knuckle).length()
+	return Vector3(0.0, palm_length * 0.92, palm_length * 0.28) + _hand_grip_adjustment
+
+func _fit_held_prop_to_palm(item) -> void:
+	_generic_hand_grip = false
+	if item == null or third_person_hand_item_root == null:
+		return
+	# These actions carry their own authored hand/weapon animation.
+	if str(item.item_type) in ["weapon_rifle", "tool_fishing", "tool_torch"]:
+		return
+	if third_person_hand_item_root.get_child_count() == 0:
+		return
+	_generic_hand_grip = true
+	_hand_grip_curl = 1.0
+	_hand_grip_adjustment = Vector3.ZERO
+	var item_type := str(item.item_type)
+	var long_tool := item_type in ["tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "weapon"] or str(item.item_name) in ["Palo", "Palo afilado", "Madera", "Tronco", "Ramas", "Carne ensartada", "Pez ensartado", "Carne asada en palo"]
+	# Keep multi-part props together under one grip pivot.
+	var pivot := Node3D.new()
+	pivot.name = "PalmGripVisual"
+	for child in third_person_hand_item_root.get_children():
+		third_person_hand_item_root.remove_child(child)
+		pivot.add_child(child)
+		if long_tool and child is Node3D:
+			child.rotation = Vector3.ZERO
+	third_person_hand_item_root.add_child(pivot)
+	var bounds := _hierarchy_local_aabb(pivot)
+	if bounds.size.length_squared() < 0.000001:
+		return
+	var axis := bounds.size.max_axis_index()
+	var direction := Vector3.ZERO
+	direction[axis] = 1.0
+	# Handles run across the palm; fingers wrap around their cross-section.
+	pivot.quaternion = Quaternion(direction, Vector3.RIGHT)
+	var length := 0.22
+	if long_tool:
+		length = 0.65 if item_type != "weapon" else 0.25
+		if item_type == "food": length = 0.45
+		# El cuchillo importado tiene mucho margen vacio en el modelo y, con
+		# la escala generica de armas, queda demasiado pequeno en la mano.
+		if str(item.item_name) == "Cuchillo":
+			length = 0.38
+	elif item_type in ["clothing", "backpack"]:
+		length = 0.28
+	elif item_type == "resource":
+		length = 0.17
+	elif item_type == "tool_matches":
+		length = 0.15
+		_hand_grip_curl = 0.8
+		_hand_grip_adjustment = Vector3(0, 0.015, 0.025)
+	elif item_type == "medical":
+		length = 0.12
+	elif item_type == "battery":
+		length = 0.07
+	if str(item.item_name).begins_with("Lata de "):
+		length = 0.20
+		_hand_grip_curl = 0.85
+	elif item_type == "tool_matches":
+		length = 0.18
+	elif item_type == "water":
+		length = 0.27
+	elif str(item.item_name) in ["Naranja", "Higo", "Bayas silvestres"] or str(item.item_name).begins_with("Seta"):
+		length = 0.13
+	# Imported props are authored with generous empty margins; enlarge the
+	# normalized grip slightly so the object sits visibly inside the palm.
+	pivot.scale = Vector3.ONE * (length / bounds.size[axis]) * 1.30
+	var anchor := bounds.get_center()
+	if long_tool:
+		anchor[axis] = bounds.position[axis] + bounds.size[axis] * 0.22
+		anchor = _held_handle_center(pivot, axis, anchor, bounds.size[axis] * 0.10)
+	pivot.position = -(pivot.basis * anchor)
+	# Bulky objects need a more open grasp than a narrow handle.
+	if item_type in ["clothing", "backpack"]:
+		_hand_grip_curl = 0.65
+
+func _held_handle_center(root: Node3D, axis: int, fallback: Vector3, tolerance: float) -> Vector3:
+	# A blade/head makes the full AABB off-centre. Locate the handle section.
+	var total := Vector3.ZERO
+	var count := 0
+	var pending: Array = []
+	for child in root.get_children():
+		if child is Node3D:
+			pending.append([child, child.transform])
+	while not pending.is_empty():
+		var entry: Array = pending.pop_back()
+		var node: Node3D = entry[0]
+		var transform: Transform3D = entry[1]
+		if node is MeshInstance3D and node.mesh != null:
+			for surface in range(node.mesh.get_surface_count()):
+				var arrays: Array = node.mesh.surface_get_arrays(surface)
+				if arrays.is_empty():
+					continue
+				for vertex in arrays[Mesh.ARRAY_VERTEX]:
+					var point: Vector3 = transform * vertex
+					if absf(point[axis] - fallback[axis]) <= tolerance:
+						total += point
+						count += 1
+		for child in node.get_children():
+			if child is Node3D:
+				pending.append([child, transform * child.transform])
+	if count == 0:
+		return fallback
+	var center := total / count
+	center[axis] = fallback[axis]
+	return center
+
 var _head_worn_rel: Dictionary = {}
 
 func _update_hand_socket() -> void:
@@ -2903,8 +3052,11 @@ func _update_hand_socket() -> void:
 	if _rod_socket_active and third_person_animation_player != null:
 		var anim_time := third_person_animation_player.current_animation_position
 		rod_offset = _get_rod_socket_offset(anim_time)
-	third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset + rod_offset
-	var euler := bone_local.basis.get_euler()
+	if _generic_hand_grip:
+		third_person_hand_item_root.position = bone_local.origin + bone_local.basis.orthonormalized() * _palm_grip_offset()
+	else:
+		third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset + rod_offset
+	var euler := bone_local.basis.orthonormalized().get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
 func _update_torch_hand_socket() -> void:
@@ -2966,6 +3118,7 @@ func _update_head_worn_items() -> void:
 
 #region ENTORNO (agua, temperatura)
 func _update_water_state(delta: float) -> void:
+	_water_step_timer = maxf(0.0, _water_step_timer - delta)
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
 	_water_query_timer += delta
 	if _water_query_timer >= 0.25:
@@ -2974,6 +3127,14 @@ func _update_water_state(delta: float) -> void:
 		_water_depth = river_depth
 		is_in_water = river_depth > 0.02
 	if is_in_water:
+		if _water_step_timer <= 0.0 and Vector2(velocity.x, velocity.z).length() > 0.4:
+			var water_scene := get_tree().current_scene
+			if water_scene != null and water_scene.has_method("get_river_surface_y_at"):
+				var splash_pos := global_position
+				splash_pos.y = float(water_scene.get_river_surface_y_at(splash_pos))
+				_spawn_water_splash(splash_pos)
+				_spawn_water_ripples(splash_pos)
+			_water_step_timer = 0.45 if is_sprinting else 0.7
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = wetness
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
@@ -3271,6 +3432,11 @@ func _create_third_person_item_slots() -> void:
 		_drink_hand_root = Node3D.new()
 		_drink_hand_root.name = "DrinkHandSocket"
 		third_person_model.add_child(_drink_hand_root)
+	if _hand_skeleton != null:
+		_grip_modifier = preload("res://scripts/HeldGripModifier.gd").new()
+		_grip_modifier.name = "HeldGripModifier"
+		_grip_modifier.controller = self
+		_hand_skeleton.add_child(_grip_modifier)
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
 	if _head_skeleton != null:
@@ -4500,13 +4666,41 @@ func _load_gltf_node3d(path: String) -> Node3D:
 func _select_held_item(index: int) -> void:
 	if inventory == null or index < 0 or index >= inventory.items.size():
 		return
-	if _is_fishing and get_held_item() != inventory.items[index]:
+	var next_item = inventory.items[index]
+	var current_item = get_held_item()
+	if current_item != null and current_item != next_item:
+		# Cambiar de rifle/cana/palo a otro objeto guarda automaticamente el
+		# equipo largo en un hombro libre. Los objetos normales siguen en el
+		# inventario y solo se quitan de la mano.
+		if can_store_item_on_back(current_item):
+			store_held_on_back()
+			index = inventory.items.find(next_item)
+			if index < 0:
+				return
+		elif _is_back_only_item(current_item) or _held_item_external:
+			_store_held_item()
+			if get_held_item() != null:
+				return
+	if _is_fishing and current_item != next_item:
 		_is_fishing = false
 		_is_fishing_idle = false
 		_deactivate_rod_visual_overlay()
+	# Back equipment is never left as an inventory item while it is in the
+	# hands. Remove one physical unit and hold that unit externally.
+	if _is_back_only_item(next_item):
+		var detached = inventory.remove_index(index, 1)
+		if detached == null:
+			return
+		_held_selection_revision += 1
+		held_index = -1
+		_held_item_reference = detached
+		_held_item_external = true
+		_sync_held_item()
+		return
 	_held_selection_revision += 1
 	held_index = index
 	_held_item_reference = inventory.items[index]
+	_held_item_external = false
 	_sync_held_item()
 
 func restore_held_item(item_name: String, index: int) -> void:
@@ -4525,11 +4719,19 @@ func equip_item_by_name(item_name: String) -> void:
 			return
 
 func get_held_item():
-	if inventory == null or _held_item_reference == null:
+	if _held_item_reference == null:
+		return null
+	if _held_item_external:
+		return _held_item_reference
+	if inventory == null:
 		return null
 	if not inventory.items.has(_held_item_reference):
 		return null
 	return _held_item_reference
+
+func has_axe_in_hand() -> bool:
+	var item = get_held_item()
+	return item != null and str(item.item_name) == "Hacha" and (not item.has_method("is_broken") or not item.is_broken())
 
 #endregion
 
@@ -4585,6 +4787,7 @@ func stop_sleep() -> void:
 func clear_hands() -> void:
 	_held_selection_revision += 1
 	_held_item_reference = null
+	_held_item_external = false
 	_sync_held_item()
 
 func _cycle_held_item() -> void:
@@ -4808,13 +5011,33 @@ func _drink_held_item() -> void:
 		for child in third_person_hand_item_root.get_children():
 			third_person_hand_item_root.remove_child(child)
 			child.free()
+	_generic_hand_grip = false
 	_build_third_person_drink_bottle_left_hand()
 	_start_consumption(item, "drink", _drink_animation_length)
 
 func _drop_held_item() -> void:
 	var item = get_held_item()
 	if item == null:
+		# An item mounted on the back is outside the inventory by design. It
+		# still needs a single, physical drop path so releasing it cannot leave
+		# the back visual behind or create a second copy on the ground.
+		if _drop_stored_back_item():
+			return
 		notice.emit("No tienes nada que soltar.")
+		return
+	if _held_item_external:
+		var item_name := str(item.item_name)
+		var item_type := str(item.item_type)
+		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+		drop_pos.y = global_position.y
+		set_meta("last_dropped_durability", float(item.durability))
+		set_meta("last_dropped_max_durability", float(item.max_durability))
+		item_dropped.emit(item_name, item_type, float(item.weight), 1, float(item.use_value), drop_pos, get_current_clothing_color(item_name), item.is_broken(), float(item.spoilage))
+		_held_item_reference = null
+		_held_item_external = false
+		held_index = -1
+		_sync_held_item()
+		notice.emit("Sueltas %s." % item_name)
 		return
 	drop_inventory_item(inventory.items.find(item))
 
@@ -4824,7 +5047,20 @@ func _store_held_item() -> void:
 	if item == null:
 		notice.emit("No tienes nada en la mano.")
 		return
+	# Rifle, cana y palo afilado son equipo de espalda. Nunca se guardan como
+	# un objeto normal del inventario al pulsar H o el boton equivalente.
+	if _is_back_only_item(item):
+		store_held_on_back()
+		return
+	# Objects taken from a shoulder are held outside the inventory until the
+	# player explicitly stores them. Add that single physical unit now; normal
+	# inventory-held items are already present and only need their visual cleared.
+	if _held_item_external:
+		if inventory == null or not inventory.add_item(item):
+			notice.emit("No hay espacio para guardar %s." % item.item_name)
+			return
 	_held_item_reference = null
+	_held_item_external = false
 	# Clear hands visual - item stays in inventory but is not shown in hand
 	if hands != null:
 		hands.clear_hands()
@@ -4947,24 +5183,26 @@ func _throw_held_item(charge: float) -> void:
 	var item_use_value := float(item.use_value)
 	var item_spoilage := float(item.spoilage)
 	# Remove exactly one unit by identity, and leave the hand empty even for stacks.
-	var idx: int = inventory.items.find(item)
-	if idx < 0:
+	var idx: int = inventory.items.find(item) if inventory != null else -1
+	if idx < 0 and not _held_item_external:
 		thrown_visual.free()
 		return
 	_held_item_reference = null
+	_held_item_external = false
 	held_index = -1
 	_held_selection_revision += 1
-	var removed = inventory.remove_index(idx, 1)
-	if removed == null:
-		thrown_visual.free()
-		return
+	if idx >= 0:
+		var removed = inventory.remove_index(idx, 1)
+		if removed == null:
+			thrown_visual.free()
+			return
 	_sync_held_item()
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
 	var throw_force: float = lerp(THROW_MIN_FORCE, THROW_MAX_FORCE, charge) * weight_factor
 	notice.emit("Tiras %s." % item_name)
 	# Lanzar desde la posición de la cámara hacia donde mira
-	var launch_pos := camera.global_position
+	var launch_pos := third_person_hand_item_root.global_position if third_person_hand_item_root != null else camera.global_position
 	# Dirección real de la cámara (incluye pitch - donde apunta la vista)
 	var cam_dir := -camera.global_transform.basis.z.normalized()
 	# Añadir un pequeño ángulo hacia arriba para que no caiga de golpe
@@ -5029,7 +5267,9 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		if scene.has_method("_get_exact_ground_y"):
 			ground_y = float(scene.call("_get_exact_ground_y", body.global_position.x, body.global_position.z, body.global_position.y + 5.0))
 		var contact_y := water_surface_y if water_depth_now > 0.02 else ground_y
-		if (body.global_position.y <= contact_y + 0.10 and body.linear_velocity.y <= 0.5) or (speed < 0.28 and absf(body.linear_velocity.y) < 0.2):
+		var crossed_water_surface := water_depth_now > 0.02 and body.global_position.y <= water_surface_y + 0.08
+		var reached_ground := water_depth_now <= 0.02 and body.global_position.y <= contact_y + 0.10 and body.linear_velocity.y <= 0.5
+		if crossed_water_surface or reached_ground:
 			landed = true
 			land_pos = body.global_position
 			break
@@ -5050,6 +5290,12 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		_sink_thrown_item(body, land_pos)
 		# El item se pierde en el agua (no se puede recuperar)
 		return
+	# RigidBody origin is at its centre, so its Y value is deliberately above
+	# the floor. The world pickup, however, expects its origin on the ground.
+	if scene.has_method("_get_exact_ground_y"):
+		land_pos.y = float(scene.call("_get_exact_ground_y", land_pos.x, land_pos.z, land_pos.y + 5.0)) + 0.06
+	else:
+		land_pos.y = 0.06
 	body.queue_free()
 	# Drop normal en la posición de aterrizaje
 	item_dropped.emit(
@@ -5254,22 +5500,32 @@ func _spawn_water_ripples(at_pos: Vector3) -> void:
 func _sync_held_item() -> void:
 	var held_item = get_held_item()
 	if held_item == null:
+		_generic_hand_grip = false
 		_held_item_reference = null
+		_held_item_external = false
 		if hands != null:
 			hands.clear_hands()
 		_sync_third_person_equipment(null)
 		_update_crosshair(false)
 		return
-	held_index = inventory.items.find(held_item)
+	held_index = inventory.items.find(held_item) if inventory != null else -1
 	if hands != null:
 		hands.clear_hands()
 		hands.current_item = held_item
 	# Build the third-person prop after the item is marked as held. Several
 	# equipment paths consult hands.has_item_in_hands() while synchronizing.
 	_sync_third_person_equipment(held_item)
+	_fit_held_prop_to_palm(held_item)
+	_update_hand_socket()
 	_update_crosshair(_has_rifle_equipped())
 
 func _sync_third_person_equipment(held_item) -> void:
+	_generic_hand_grip = false
+	for stored_visual in _stored_back_visuals:
+		if stored_visual != null and is_instance_valid(stored_visual):
+			# El objeto del hombro sigue visible mientras se usa el otro
+			# hombro o se lleva algo en la mano.
+			stored_visual.visible = true
 	_rifle_in_hands = held_item != null and str(held_item.item_type) == "weapon_rifle"
 	# Hide torch character when not holding a torch
 	_torch_in_hands = held_item != null and str(held_item.item_type) == "tool_torch"
@@ -5303,6 +5559,8 @@ func _sync_third_person_equipment(held_item) -> void:
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
 	if not equip_has_bp:
 		for child in third_person_back_item_root.get_children():
+			if _stored_back_visuals.has(child):
+				continue
 			third_person_back_item_root.remove_child(child)
 			child.free()
 	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
@@ -5315,8 +5573,10 @@ func _sync_third_person_equipment(held_item) -> void:
 			if item != null and str(item.item_type) == "weapon_rifle":
 				_has_rifle_in_inventory = true
 				break
-	if _has_rifle_in_inventory and not _rifle_in_hands:
-		_build_rifle_on_back()
+	if _has_rifle_in_inventory and not _rifle_in_hands and not _has_stored_back_item_type("weapon_rifle") and _back_slot_count() < 2:
+		# A rifle shown on the back must be the same physical item that left the
+		# inventory. Do not render a second copy directly from the inventory.
+		_store_inventory_rifle_on_back()
 	else:
 		_clear_rifle_on_back()
 	if hands != null and hands.has_item_in_hands():
@@ -5333,7 +5593,10 @@ func _sync_third_person_equipment(held_item) -> void:
 		"backpack":
 			_build_third_person_tool(REAL_BACKPACK_MODEL, "ThirdPersonBackpack", Color(0.2, 0.25, 0.12))
 		"weapon":
-			_build_third_person_knife()
+			if str(held_item.item_name) == "Lanza":
+				_build_third_person_resource("Palo afilado")
+			else:
+				_build_third_person_knife()
 			_clear_rifle_attachment()
 		"weapon_rifle":
 			_build_third_person_rifle()
@@ -5342,12 +5605,12 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_flashlight()
 			_clear_rifle_attachment()
 		"food":
-			var fname := str(held_item.item_name)
-			if fname.find("ensartada") >= 0 or fname.find("asada") >= 0:
-				_build_third_person_can()
-			else:
-				_build_third_person_pack()
+			_build_held_food(str(held_item.item_name))
 			_clear_rifle_attachment()
+		"tool_matches":
+			# The imported matchbox contains helper meshes with offsets intended for
+			# the floor pickup. Use a compact hand prop so every part stays together.
+			_add_held_box(third_person_hand_item_root, "HeldMatches", Vector3(0.12, 0.05, 0.075), Vector3.ZERO, Color(0.38, 0.16, 0.07), Vector3.ZERO)
 		"water":
 			var wname := str(held_item.item_name)
 			if wname == "Botella de agua" or wname == "Botella de agua llena":
@@ -5361,14 +5624,16 @@ func _sync_third_person_equipment(held_item) -> void:
 		"battery":
 			_build_third_person_battery()
 			_clear_rifle_attachment()
-		"resource":
+		"tool_spear":
+			_build_third_person_resource("Palo afilado")
+		"resource", "material":
 			_build_third_person_resource(str(held_item.item_name))
 			_clear_rifle_attachment()
 		"seed":
 			_build_third_person_seed_bag()
 			_clear_rifle_attachment()
 		"clothing":
-			_build_third_person_clothing_bundle()
+			_build_held_clothing(str(held_item.item_name))
 			_clear_rifle_attachment()
 		"misc":
 			if str(held_item.item_name) == "Botella de plastico":
@@ -5400,6 +5665,77 @@ func _sync_third_person_equipment(held_item) -> void:
 		_:
 			_build_third_person_pack()
 			_clear_rifle_attachment()
+
+func _add_named_held_model(path: String, label: String) -> bool:
+	if not _try_add_model_to_parent(third_person_hand_item_root, path, label, Vector3.ZERO, Vector3.ZERO, Vector3.ONE):
+		return false
+	var node := third_person_hand_item_root.get_node_or_null(label) as Node3D
+	if node == null:
+		return false
+	var bounds := _hierarchy_local_aabb(node)
+	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
+	if extent <= 0.00001:
+		return true
+	var target := 0.16
+	if label == "HeldMatches": target = 0.13
+	elif label == "HeldClothing": target = 0.25
+	elif label == "HeldFish" or label == "HeldMeat" or label == "HeldFig": target = 0.18
+	node.scale *= target / extent
+	node.position = -bounds.get_center() * node.scale
+	return true
+
+func _build_held_food(item_name: String) -> void:
+	if item_name.begins_with("Lata de "):
+		var path := "res://assets/models/props/food_can_415g.glb" if item_name.begins_with("Lata de atun") else "res://assets/models/props/canned_food_low.glb"
+		_add_named_held_model(path, "HeldFoodCan")
+	elif "ensartad" in item_name or item_name == "Carne asada en palo":
+		_build_held_skewer(item_name)
+	elif item_name.begins_with("Carne"):
+		_add_named_held_model(REAL_MEAT_ON_STICK_MODEL, "HeldMeat")
+	elif item_name.begins_with("Pez"):
+		_add_named_held_model("res://assets/models/props/fish.glb", "HeldFish")
+	elif item_name == "Naranja":
+		_add_held_sphere(third_person_hand_item_root, "HeldOrange", Vector3.ONE * 0.08, Vector3.ZERO, Color(0.95, 0.35, 0.025), Vector3.ZERO)
+	elif item_name == "Higo":
+		_add_named_held_model("res://assets/models/props/fruit/fig.glb", "HeldFig")
+	elif item_name.begins_with("Seta"):
+		_add_named_held_model("res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb", "HeldMushroom")
+	elif item_name == "Bayas silvestres" or item_name == "Verduras":
+		for i in range(3):
+			var berry := item_name == "Bayas silvestres"
+			_add_held_sphere(third_person_hand_item_root, "HeldProduce%d" % i, Vector3.ONE * 0.025, Vector3((i - 1) * 0.035, 0.012 * (i % 2), 0), Color(0.4, 0.05, 0.12) if berry else Color(0.2, 0.45, 0.08), Vector3.ZERO)
+	else:
+		_build_third_person_pack()
+
+func _build_held_skewer(item_name: String) -> void:
+	# Use a common frame for the stick and food; imported origins differ wildly.
+	_add_held_cylinder(third_person_hand_item_root, "SkewerStick", 0.008, 0.50, Vector3.ZERO, Color(0.3, 0.18, 0.08), Vector3.ZERO)
+	var food := _load_external_node3d("res://assets/models/props/fish.glb" if item_name == "Pez ensartado" else REAL_MEAT_ON_STICK_MODEL)
+	if food == null:
+		return
+	food.name = "SkeweredFood"
+	var bounds := _hierarchy_local_aabb(food)
+	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
+	if extent <= 0.00001:
+		food.free()
+		return
+	food.scale = Vector3.ONE * (0.18 / extent)
+	food.position = Vector3(0, 0.14, 0) - food.basis * bounds.get_center()
+	third_person_hand_item_root.add_child(food)
+
+func _build_held_clothing(item_name: String) -> void:
+	var path := ""
+	match item_name:
+		"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
+		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
+		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
+		"Sombrero de pescador": path = POLY_FISHERMANS_HAT_MODEL
+		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = POLY_GARDEN_GLOVES_MODEL
+		_:
+			if item_name.begins_with("Pantalones"):
+				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
+	if path.is_empty() or not _add_named_held_model(path, "HeldClothing"):
+		_build_third_person_clothing_bundle()
 
 func _build_third_person_backpack() -> void:
 	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
@@ -5454,9 +5790,286 @@ func _disable_collision_recursive(node: Node) -> void:
 	for child in node.get_children():
 		_disable_collision_recursive(child)
 
+func can_store_held_on_back() -> bool:
+	return can_store_item_on_back(get_held_item())
+
+func _back_slot_count() -> int:
+	var count := 0
+	for slot in range(_stored_back_items.size()):
+		if _is_back_slot_occupied(slot):
+			count += 1
+	return count
+
+func _is_back_slot_occupied(slot: int) -> bool:
+	if slot < 0 or slot >= _stored_back_items.size():
+		return false
+	var entry = _stored_back_items[slot]
+	return entry is Dictionary and not str(entry.get("name", "")).is_empty()
+
+func _find_free_back_slot() -> int:
+	for slot in range(_stored_back_items.size()):
+		var entry = _stored_back_items[slot]
+		if not (entry is Dictionary) or str(entry.get("name", "")).is_empty():
+			return slot
+	return -1
+
+func _back_shoulder_label(slot: int) -> String:
+	return "izquierdo" if slot == BACK_SLOT_LEFT else "derecho"
+
+func _is_back_only_item(item) -> bool:
+	if item == null:
+		return false
+	var item_type := str(item.item_type)
+	return item_type == "weapon_rifle" or item_type == "tool_fishing" or item_type == "tool_spear" or str(item.item_name) == "Palo afilado"
+
+func _back_data_from_item(item) -> Dictionary:
+	if item == null:
+		return {}
+	return {
+		"name": str(item.item_name),
+		"type": str(item.item_type),
+		"weight": float(item.weight),
+		"use_value": float(item.use_value),
+		"durability": float(item.durability),
+		"max_durability": float(item.max_durability),
+		"spoilage": float(item.spoilage)
+	}
+
+func _has_stored_back_item_type(item_type: String) -> bool:
+	for entry in _stored_back_items:
+		if entry is Dictionary and str(entry.get("type", "")) == item_type:
+			return true
+	return false
+
+func _store_inventory_rifle_on_back() -> bool:
+	if inventory == null:
+		return false
+	var slot := _find_free_back_slot()
+	if slot < 0:
+		return false
+	var rifle_index := -1
+	var rifle = null
+	for index in range(inventory.items.size()):
+		var candidate = inventory.items[index]
+		if candidate != null and str(candidate.item_type) == "weapon_rifle":
+			rifle_index = index
+			rifle = candidate
+			break
+	if rifle_index < 0 or rifle == null:
+		return false
+	_stored_back_items[slot] = {
+		"name": str(rifle.item_name),
+		"type": str(rifle.item_type),
+		"weight": float(rifle.weight),
+		"use_value": float(rifle.use_value),
+		"durability": float(rifle.durability),
+		"max_durability": float(rifle.max_durability),
+		"spoilage": float(rifle.spoilage)
+	}
+	# Remove exactly one physical rifle. A stack, if present, keeps its
+	# remaining units in the inventory.
+	if int(rifle.quantity) > 1:
+		rifle.quantity -= 1
+	else:
+		inventory.items.remove_at(rifle_index)
+	_build_stored_back_visual(slot)
+	inventory.changed.emit()
+	notice.emit("Guardas el rifle en el hombro %s." % _back_shoulder_label(slot))
+	return true
+
+func can_store_item_on_back(item) -> bool:
+	if item == null or inventory == null or _find_free_back_slot() < 0:
+		return false
+	var item_type := str(item.item_type)
+	if item_type == "weapon_rifle":
+		return true
+	# Una caña hecha con cuerda ya lleva su propio cordel y se puede colgar.
+	if item_type == "tool_fishing":
+		return str(item.item_name) in ["Caña de pescar", "Caña simple"] or inventory.has_item_name("Cuerda")
+	# El palo afilado necesita una cuerda disponible para sujetarlo a la espalda.
+	if item_type == "tool_spear" or str(item.item_name) == "Palo afilado":
+		return inventory.has_item_name("Cuerda")
+	return false
+
+func get_back_item_data(slot: int) -> Dictionary:
+	if slot < 0 or slot >= _stored_back_items.size():
+		return {}
+	var data = _stored_back_items[slot]
+	return data.duplicate(true) if data is Dictionary else {}
+
+func use_back_item(slot: int = -1) -> bool:
+	if slot < 0:
+		# El atajo usa primero el hombro derecho, que es el ultimo ocupado.
+		if _is_back_slot_occupied(BACK_SLOT_RIGHT):
+			slot = BACK_SLOT_RIGHT
+		elif _is_back_slot_occupied(BACK_SLOT_LEFT):
+			slot = BACK_SLOT_LEFT
+	if slot < 0 or slot >= _stored_back_items.size():
+		return false
+	var data = _stored_back_items[slot]
+	if not data is Dictionary or str(data.get("name", "")).is_empty():
+		return false
+	# If the hand already carries back equipment, swap it directly into the
+	# shoulder slot being used. It must never be routed through the inventory.
+	var held_item = get_held_item()
+	var replacement_data: Dictionary = {}
+	if held_item != null and _is_back_only_item(held_item):
+		replacement_data = _back_data_from_item(held_item)
+		var held_inventory_index: int = inventory.items.find(held_item) if inventory != null else -1
+		if hands != null:
+			hands.clear_hands()
+		if third_person_hand_item_root != null:
+			for child in third_person_hand_item_root.get_children():
+				third_person_hand_item_root.remove_child(child)
+				child.free()
+		_held_item_reference = null
+		_held_item_external = false
+		held_index = -1
+		if held_inventory_index >= 0 and inventory != null:
+			inventory.remove_index(held_inventory_index, 1)
+	elif held_item != null:
+		_store_held_item()
+		if get_held_item() != null:
+			return false
+	var item_data: Dictionary = data.duplicate(true)
+	item_data["quantity"] = 1
+	var item = ItemScript.from_dict(item_data)
+	if item == null:
+		return false
+	var stored_visual = _stored_back_visuals[slot]
+	if stored_visual != null and is_instance_valid(stored_visual):
+		stored_visual.free()
+	_stored_back_visuals[slot] = null
+	_stored_back_items[slot] = replacement_data if not replacement_data.is_empty() else null
+	if not replacement_data.is_empty():
+		_build_stored_back_visual(slot)
+	_held_selection_revision += 1
+	held_index = -1
+	_held_item_reference = item
+	_held_item_external = true
+	_sync_held_item()
+	notice.emit("Usas %s desde el hombro %s." % [item.item_name, _back_shoulder_label(slot)])
+	return true
+
+func store_held_on_back() -> bool:
+	if not can_store_held_on_back():
+		if _back_slot_count() >= 2:
+			notice.emit("No hay un hombro libre para guardar ese objeto.")
+		else:
+			notice.emit("Ese objeto necesita una sujecion valida para la espalda.")
+		return false
+	var item = get_held_item()
+	if item == null:
+		return false
+	var slot := _find_free_back_slot()
+	if slot < 0:
+		notice.emit("No hay un hombro libre para guardar ese objeto.")
+		return false
+	_stored_back_items[slot] = _back_data_from_item(item)
+	# A back-mounted item is equipment, not an inventory stack. Remove the
+	# exact held unit so a stack of identical tools cannot duplicate or vanish.
+	var stored_index: int = inventory.items.find(item)
+	if stored_index >= 0:
+		inventory.remove_index(stored_index, 1)
+	if third_person_hand_item_root != null:
+		for child in third_person_hand_item_root.get_children():
+			third_person_hand_item_root.remove_child(child)
+			child.free()
+	_held_item_reference = null
+	held_index = -1
+	if hands != null:
+		hands.clear_hands()
+	_build_stored_back_visual(slot)
+	_generic_hand_grip = false
+	# Refresh all equipment flags after removing the held resource. This also
+	# prevents the fishing-rod state from rebuilding another hand prop.
+	_sync_held_item()
+	notice.emit("Guardas %s en el hombro %s." % [item.item_name, _back_shoulder_label(slot)])
+	return true
+
+func _drop_stored_back_item(slot: int = -1) -> bool:
+	if slot < 0:
+		# Drop the right shoulder first: it is the last slot filled and keeps
+		# the left shoulder stable while the player releases items one by one.
+		if _is_back_slot_occupied(BACK_SLOT_RIGHT):
+			slot = BACK_SLOT_RIGHT
+		elif _is_back_slot_occupied(BACK_SLOT_LEFT):
+			slot = BACK_SLOT_LEFT
+	if slot < 0 or slot >= _stored_back_items.size():
+		return false
+	var data = _stored_back_items[slot]
+	if not data is Dictionary or str(data.get("name", "")).is_empty():
+		return false
+	var item_name := str(data.get("name", ""))
+	var item_type := str(data.get("type", ""))
+	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+	drop_pos.y = global_position.y
+	var drop_color := get_current_clothing_color(item_name)
+	var durability := float(data.get("durability", 100.0))
+	var max_durability := float(data.get("max_durability", 100.0))
+	var is_broken := durability <= 0.0
+	set_meta("last_dropped_durability", durability)
+	set_meta("last_dropped_max_durability", max_durability)
+	var stored_visual = _stored_back_visuals[slot]
+	if stored_visual != null and is_instance_valid(stored_visual):
+		stored_visual.free()
+	_stored_back_visuals[slot] = null
+	_stored_back_items[slot] = null
+	var item_weight := float(data.get("weight", 0.0))
+	var item_use_value := float(data.get("use_value", 0.0))
+	var item_spoilage := float(data.get("spoilage", 0.0))
+	item_dropped.emit(item_name, item_type, item_weight, 1, item_use_value, drop_pos, drop_color, is_broken, item_spoilage)
+	_sync_held_item()
+	notice.emit("Sueltas %s del hombro %s." % [item_name, _back_shoulder_label(slot)])
+	return true
+
+func _build_stored_back_visual(slot: int) -> void:
+	if slot < 0 or slot >= _stored_back_items.size():
+		return
+	var old_visual = _stored_back_visuals[slot]
+	if old_visual != null and is_instance_valid(old_visual):
+		old_visual.queue_free()
+	var container := Node3D.new()
+	container.name = "StoredItemOnBack_%s" % _back_shoulder_label(slot).capitalize()
+	_stored_back_visuals[slot] = container
+	var data = _stored_back_items[slot]
+	if not data is Dictionary:
+		return
+	var path := ""
+	var item_type := str(data.get("type", ""))
+	if item_type == "weapon_rifle":
+		path = REAL_RIFLE_MODEL
+	elif item_type == "tool_fishing":
+		path = ROD_MODEL_PATH
+	else:
+		path = REAL_WOOD_STICK_MODEL
+	var visual := _load_external_node3d(path)
+	if visual == null or third_person_back_item_root == null:
+		return
+	var bounds := _hierarchy_local_aabb(visual)
+	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
+	if extent > 0.00001:
+		visual.scale = Vector3.ONE * (1.65 / extent)
+		visual.position = -bounds.get_center() * visual.scale
+		if item_type == "weapon_rifle":
+			visual.rotation_degrees = Vector3(90, 0, -15)
+		elif item_type == "tool_fishing":
+			# The rod asset is authored along local X. Rotate that axis into Y
+			# so it hangs vertically beside the spine instead of diagonally.
+			visual.rotation_degrees = Vector3(0, 0, 90)
+		else:
+			visual.rotation_degrees = Vector3(0, 0, 0)
+	_disable_collision_recursive(visual)
+	container.add_child(visual)
+	container.position = Vector3(-0.20 if slot == BACK_SLOT_LEFT else 0.20, 0.03, -0.25)
+	third_person_back_item_root.add_child(container)
+
 func _build_rifle_on_back() -> void:
 	_clear_rifle_on_back()
 	if third_person_back_item_root == null or not is_instance_valid(third_person_back_item_root):
+		return
+	var rifle_slot := _find_free_back_slot()
+	if rifle_slot < 0:
 		return
 	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
 	if skeleton == null or not is_instance_valid(skeleton):
@@ -5491,7 +6104,9 @@ func _build_rifle_on_back() -> void:
 	model.visible = true
 	_rifle_on_back.add_child(model)
 	_disable_collision_recursive(model)
-	_rifle_on_back.position = Vector3(0.12, 0.05, -0.25)
+	# Automatic rifle display also occupies a free shoulder so it cannot
+	# overlap a manually stored item or create a third object on the back.
+	_rifle_on_back.position = Vector3(-0.20 if rifle_slot == BACK_SLOT_LEFT else 0.20, 0.05, -0.25)
 	_rifle_on_back.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 	third_person_back_item_root.add_child(_rifle_on_back)
 	# Create Marker3D for strap attachment on the rifle
@@ -6215,15 +6830,14 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	_rifle_weapon_offset.force_update_transform()
 
 	# Shift the whole rifle along the real barrel line (from muzzle toward stock)
-	# without changing rotation or scale. Direction is taken from the actual Muzzle/Stock markers.
-	# Skip when sitting or prone to avoid the rifle sinking into the ground.
-	if not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
+	# without changing rotation or scale. Direction is taken from the actual
+	# muzzle and stock markers.
+	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
 		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
 		_rifle_root.global_position += barrel_dir * 0.40
 
-	# Raise the rifle slightly when aiming so the left hand reaches the handguard
-	if _is_aiming:
-		_rifle_root.global_position += Vector3.UP * 0.05
+	# While aiming the right-hand grip pivot above is authoritative. A later
+	# root translation would visibly detach the rifle from the palm.
 
 	# Force update so the grip marker's global transform is current
 	_rifle_root.force_update_transform()
@@ -6724,9 +7338,10 @@ func _find_bone_cached(cache_key: String, bone_name: String, skeleton: Skeleton3
 		_ik_bone_cache[cache_key] = idx
 	return idx
 
-# Linterna: no se muestra en tercera persona (efecto de luz es suficiente)
+# Grip-sized flashlight body and lens.
 func _build_third_person_flashlight() -> void:
-	return
+	_add_held_cylinder(third_person_hand_item_root, "FlashlightBody", 0.022, 0.16, Vector3.ZERO, Color(0.12, 0.14, 0.16), Vector3.ZERO)
+	_add_held_cylinder(third_person_hand_item_root, "FlashlightLens", 0.035, 0.025, Vector3(0, 0.08, 0), Color(0.8, 0.85, 0.9), Vector3.ZERO)
 
 func _build_third_person_can() -> void:
 	_build_third_person_meat_on_stick()
@@ -6751,7 +7366,8 @@ func _build_third_person_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_BOTTLE_MODEL, "ThirdPersonBottle", Vector3(0, 0, -0.12), Vector3(0, 0, 0), Vector3.ONE * 0.5)
 
 func _build_third_person_plastic_bottle() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015)
+	if _try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonPlasticBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.015):
+		_fix_bottle_materials(third_person_hand_item_root.get_node("ThirdPersonPlasticBottle"))
 
 # Drink bottle held in the LEFT hand, attached via BoneAttachment3D to the
 # left hand bone so it automatically follows the drink animation's pose.
@@ -6808,19 +7424,26 @@ func _clear_third_person_drink_bottle_left_hand() -> void:
 func _build_third_person_drink_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
 
-# Vendaje: sin modelo 3P (no es necesario, el efecto es instantáneo)
 func _build_third_person_bandage() -> void:
-	return
+	_add_held_cylinder(third_person_hand_item_root, "BandageRoll", 0.035, 0.08, Vector3.ZERO, Color(0.88, 0.86, 0.76), Vector3.ZERO)
 
-# Batería: sin modelo 3P
 func _build_third_person_battery() -> void:
-	return
+	_add_held_cylinder(third_person_hand_item_root, "BatteryBody", 0.014, 0.055, Vector3.ZERO, Color(0.15, 0.16, 0.18), Vector3.ZERO)
+	_add_held_cylinder(third_person_hand_item_root, "BatteryTerminal", 0.006, 0.004, Vector3(0, 0.029, 0), Color(0.7, 0.7, 0.72), Vector3.ZERO)
 
 func _build_third_person_resource(item_name: String) -> void:
-	if item_name == "Tronco" or item_name == "Madera" or item_name == "Ramas":
+	if item_name in ["Palo", "Palo afilado"]:
+		_try_add_model_to_parent(third_person_hand_item_root, REAL_WOOD_STICK_MODEL, "ThirdPersonStick", Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+	elif item_name == "Madera" or item_name == "Ramas":
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_WOOD_MODEL, "ThirdPersonWood", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.5)
 	elif item_name == "Piedra":
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.5)
+	elif item_name == "Tronco":
+		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/tree-log.glb", "HeldLog")
+	elif item_name == "Trapos":
+		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/bedroll.glb", "HeldRags")
+	else:
+		_build_third_person_pack()
 
 # Semillas: sin modelo 3P diferenciado, usa pack genérico
 func _build_third_person_seed_bag() -> void:
@@ -7759,7 +8382,7 @@ func _toggle_flashlight() -> void:
 			held.set_meta("torch_lit", true)
 			notice.emit("Antorcha encendida frotando palos.")
 			return
-		inventory.consume_item_name("Cerillas", 1)
+		inventory.consume_match_charge()
 		inventory.changed.emit()
 		torch_light.visible = true
 		held.set_meta("torch_lit", true)
@@ -8469,9 +9092,7 @@ func _melee_attack() -> void:
 		third_person_action_timer = 0.8
 		third_person_animation_player.play(third_person_attack_animation, 0.08)
 	# Determine damage and energy cost based on held item
-	var held = null
-	if inventory != null and not inventory.items.is_empty():
-		held = inventory.items[held_index]
+	var held = get_held_item()
 	var base_damage := 5.0  # bare fists
 	var energy_cost := 8.0
 	var attack_range := 3.0
@@ -8623,9 +9244,7 @@ func _melee_attack() -> void:
 func _has_rifle_equipped() -> bool:
 	if not _rifle_in_hands:
 		return false
-	if inventory == null or inventory.items.is_empty():
-		return false
-	var held = inventory.items[held_index]
+	var held = get_held_item()
 	if held == null:
 		return false
 	return held.item_type == "weapon_rifle"
@@ -8704,11 +9323,19 @@ func _create_scope_overlay() -> void:
 	var scope_script: GDScript = load("res://scripts/ScopeOverlay.gd")
 	_scope_overlay = scope_script.new()
 	_scope_overlay.name = "ScopeOverlay"
-	get_tree().current_scene.add_child(_scope_overlay)
+	var scope_layer := CanvasLayer.new()
+	scope_layer.name = "ScopeCanvas"
+	scope_layer.layer = 9
+	get_tree().current_scene.add_child(scope_layer)
+	scope_layer.add_child(_scope_overlay)
 
 func _remove_scope_overlay() -> void:
 	if _scope_overlay != null and is_instance_valid(_scope_overlay):
-		_scope_overlay.queue_free()
+		var scope_parent := _scope_overlay.get_parent()
+		if scope_parent is CanvasLayer:
+			scope_parent.queue_free()
+		else:
+			_scope_overlay.queue_free()
 	_scope_overlay = null
 
 func _initialize_rifle_ammo() -> void:
@@ -8770,7 +9397,7 @@ func _shoot_rifle() -> void:
 	if is_dead or _is_reloading or camera == null or held == null or held.item_type != "weapon_rifle":
 		return
 	# Capture the sight line before recoil moves the camera.
-	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + _aim_screen_offset
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
 	var cam_ray_origin := camera.project_ray_origin(aim_point)
 	var cam_ray_dir := camera.project_ray_normal(aim_point)
 	if _shoot_cooldown > 0.0:
@@ -8853,6 +9480,19 @@ func _shoot_rifle() -> void:
 		shot_origin = global_position + Vector3(0.0, 0.3, 0.0)
 	if is_instance_valid(_rifle_muzzle):
 		shot_origin = _rifle_muzzle.global_position
+	# Converge the muzzle ray on the point beneath the reticle. Parallel camera
+	# and muzzle rays miss nearby targets, especially through the scope.
+	var camera_origin: Vector3 = cam_ray_origin
+	var aim_query := PhysicsRayQueryParameters3D.create(camera_origin, camera_origin + aim_dir * RIFLE_RANGE)
+	aim_query.exclude = exclude_arr
+	aim_query.collide_with_areas = true
+	var aim_hit := space_state.intersect_ray(aim_query)
+	while not aim_hit.is_empty() and aim_hit.collider is Area3D and not ("hitbox" in str(aim_hit.collider.name).to_lower()):
+		exclude_arr.append(aim_hit.rid)
+		aim_query.exclude = exclude_arr
+		aim_hit = space_state.intersect_ray(aim_query)
+	var aim_target: Vector3 = aim_hit.position if not aim_hit.is_empty() else camera_origin + aim_dir * RIFLE_RANGE
+	aim_dir = (aim_target - shot_origin).normalized()
 	var hit_query := PhysicsRayQueryParameters3D.create(shot_origin, shot_origin + aim_dir * RIFLE_RANGE)
 	hit_query.exclude = exclude_arr
 	hit_query.collide_with_areas = true
@@ -8930,7 +9570,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			else:
 				target_node.take_damage(damage, false)
 			_spawn_blood_splatter(hit_pos)
-			_hit_marker(true)
+			_hit_marker(bool(target_node.get("_is_dead")))
 			return
 		# Handle net_player_proxy directly
 		if node.is_in_group("net_player_proxy"):
@@ -9082,7 +9722,7 @@ func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> vo
 	var dust_color := _guess_surface_dust_color(hit_normal, collider)
 	_spawn_impact_dust(hit_pos, hit_normal, dust_color)
 	_spawn_impact_chips(hit_pos, hit_normal, dust_color)
-	_spawn_bullet_hole_decal(hit_pos, hit_normal)
+	_spawn_bullet_hole_decal(hit_pos, hit_normal, collider)
 
 func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
 	# Heuristica por nombre del collider y sus padres
@@ -9193,7 +9833,7 @@ func _get_bullet_hole_texture() -> Texture2D:
 	_bullet_hole_texture = ImageTexture.create_from_image(img)
 	return _bullet_hole_texture
 
-func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3) -> void:
+func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = null) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -9211,7 +9851,10 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3) -> void:
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	quad.material = m
 	mi.mesh = quad
-	scene.add_child(mi)
+	if is_instance_valid(collider) and collider is Node3D:
+		collider.add_child(mi)
+	else:
+		scene.add_child(mi)
 	# +Z del quad mira hacia quien dispara (la cara visible)
 	var pos := hit_pos + hit_normal * 0.012
 	var up := Vector3.UP if absf(hit_normal.y) < 0.95 else Vector3.RIGHT
@@ -9397,10 +10040,7 @@ func _inventory_has_blade() -> bool:
 	return false
 
 func _quick_use_held_item_impl() -> void:
-	if inventory == null or inventory.items.is_empty():
-		return
-	held_index = clampi(held_index, 0, inventory.items.size() - 1)
-	var item = inventory.items[held_index]
+	var item = get_held_item()
 	if item == null:
 		return
 	match item.item_type:
@@ -9426,7 +10066,7 @@ func _eat_action() -> void:
 	print("[DEBUG _eat_action] target=%s is WorldAction=%s" % [target, target is WorldAction if target != null else false])
 	if target != null and target is WorldAction:
 		print("[DEBUG _eat_action] action_type=%s action_id=%s" % [target.action_type, target.action_id])
-		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw":
+		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw" or target.action_type == "bird_meat_raw":
 			var main := get_tree().current_scene
 			if main != null and main.has_method("handle_world_action_eat"):
 				print("[DEBUG _eat_action] Calling handle_world_action_eat")

@@ -10,6 +10,7 @@ var center_dot_color := Color(0.85, 0.0, 0.0, 0.95)
 var _wind_label: Label = null
 var _breath_label: Label = null
 var _flash := 0.0   # destello del fogonazo visible a traves de la mira
+var _hud_update_accum := 0.0
 
 func muzzle_flash() -> void:
 	_flash = 1.0
@@ -45,6 +46,12 @@ func _ready() -> void:
 	add_child(_breath_label)
 
 func _process(_delta: float) -> void:
+	_hud_update_accum += _delta
+	var refresh_hud := _hud_update_accum >= 0.10
+	if refresh_hud:
+		_hud_update_accum = 0.0
+	if not refresh_hud and _flash <= 0.0:
+		return
 	var player = get_tree().current_scene.get_node_or_null("Player")
 	if player == null or not is_instance_valid(player):
 		return

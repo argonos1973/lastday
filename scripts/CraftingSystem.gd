@@ -11,9 +11,9 @@ const RECIPES := [
 		"label": "Afilar palo con cuchillo/hacha"
 	},
 	{
-		"inputs": { "Palo afilado": 1, "Carne cruda": 1 },
-		"output": { "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.4, "use_value": 0.0 },
-		"label": "Crear caña de pescar con cebo"
+		"inputs": { "Palo afilado": 1, "Cuerda": 1 },
+		"output": { "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.4, "use_value": 0.0, "durability": 3.0, "max_durability": 3.0 },
+		"label": "Unir cuerda y palo afilado para crear una caña (3 usos)"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Piedra": 1 },
@@ -23,7 +23,7 @@ const RECIPES := [
 	{
 		"inputs": { "Palo": 1, "Cuerda": 1 },
 		"output": { "name": "Caña simple", "type": "tool_fishing", "weight": 0.3, "use_value": 0.0 },
-		"label": "Crear caña simple"
+		"label": "Crear caña simple con cuerda"
 	},
 	{
 		"inputs": { "Tronco": 1, "Cuchillo": 1 },
@@ -39,6 +39,11 @@ const RECIPES := [
 		"inputs": { "Palo afilado": 1, "Carne cruda": 1 },
 		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 20.0 },
 		"label": "Ensartar carne en palo"
+	},
+	{
+		"inputs": { "Palo afilado": 1, "Carne cruda de ave": 1 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.35, "use_value": 16.0 },
+		"label": "Ensartar carne de ave en palo"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Pez crudo": 1 },
@@ -59,6 +64,11 @@ const RECIPES := [
 		"inputs": { "Palo": 1, "Trapos": 1 },
 		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0 },
 		"label": "Crear antorcha con palo y trapos"
+	},
+	{
+		"inputs": { "Trapos": 2 },
+		"output": { "name": "Cuerda", "type": "resource", "weight": 0.1, "use_value": 0.0, "quantity": 1 },
+		"label": "Trenzar 2 trapos para hacer una cuerda"
 	},
 	{
 		"inputs": { "Pantalones militares": 1, "Cuchillo": 1 },

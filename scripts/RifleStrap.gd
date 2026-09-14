@@ -31,6 +31,12 @@ extends RefCounted
 # ================================================================
 
 var player: Node
+var _previous_points: Array[Vector3] = []
+var _cached_skeleton: Skeleton3D = null
+var _cached_bone_indices: Dictionary = {}
+var _procedural_mesh: MeshInstance3D = null
+var _last_mesh_points: Array[Vector3] = []
+var _last_mesh_center := Vector3.INF
 
 # ================================================================
 # CONFIGURACIÓN
@@ -63,7 +69,7 @@ const RIFLE_STRAP_SMOOTH_PASSES: int = 1
 # ACTUALIZAR CORREA
 # ================================================================
 
-func _update_rifle_strap(_delta: float) -> void:
+func _update_rifle_strap(delta: float) -> void:
 
 	# ============================================================
 	# VALIDACIONES
@@ -167,59 +173,13 @@ func _update_rifle_strap(_delta: float) -> void:
 	# BUSCAR HUESOS
 	# ============================================================
 
-	var spine2_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_Spine2",
-			"mixamorig:Spine2",
-			"Spine2"
-		]
-	)
-
-	var spine1_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_Spine1",
-			"mixamorig:Spine1",
-			"Spine1"
-		]
-	)
-
-	var spine_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_Spine",
-			"mixamorig:Spine",
-			"Spine"
-		]
-	)
-
-	var hips_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_Hips",
-			"mixamorig:Hips",
-			"Hips"
-		]
-	)
-
-	var left_shoulder_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_LeftShoulder",
-			"mixamorig:LeftShoulder",
-			"LeftShoulder"
-		]
-	)
-
-	var right_shoulder_idx: int = _strap_find_first_bone(
-		skeleton,
-		[
-			"mixamorig_RightShoulder",
-			"mixamorig:RightShoulder",
-			"RightShoulder"
-		]
-	)
+	var bone_indices := _resolve_bone_indices(skeleton)
+	var spine2_idx: int = int(bone_indices.get("spine2", -1))
+	var spine1_idx: int = int(bone_indices.get("spine1", -1))
+	var spine_idx: int = int(bone_indices.get("spine", -1))
+	var hips_idx: int = int(bone_indices.get("hips", -1))
+	var left_shoulder_idx: int = int(bone_indices.get("left_shoulder", -1))
+	var right_shoulder_idx: int = int(bone_indices.get("right_shoulder", -1))
 
 	# ============================================================
 	# FALLBACKS
@@ -682,6 +642,13 @@ func _update_rifle_strap(_delta: float) -> void:
 	# PROCEDURAL RIBBON MESH (100% continuo, sin cortes ni brechas)
 	# ============================================================
 
+	# Dampen interior ribbon movement while keeping both weapon anchors exact.
+	if _previous_points.size() == smooth_points.size():
+		var blend := 1.0 - exp(-18.0 * delta)
+		for i in range(1, smooth_points.size() - 1):
+			if _previous_points[i].distance_to(smooth_points[i]) < 0.25:
+				smooth_points[i] = _previous_points[i].lerp(smooth_points[i], blend)
+	_previous_points = smooth_points.duplicate()
 	_update_procedural_mesh(smooth_points, torso_center)
 
 	# Posicionar huesos por compatibilidad
@@ -743,6 +710,51 @@ func _strap_find_first_bone(
 			return idx
 
 	return -1
+
+func _resolve_bone_indices(skeleton: Skeleton3D) -> Dictionary:
+	if skeleton == null or not is_instance_valid(skeleton):
+		return {}
+	if _cached_skeleton == skeleton and not _cached_bone_indices.is_empty():
+		return _cached_bone_indices
+
+	var spine2_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_Spine2", "mixamorig:Spine2", "Spine2"
+	])
+	var spine1_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_Spine1", "mixamorig:Spine1", "Spine1"
+	])
+	var spine_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_Spine", "mixamorig:Spine", "Spine"
+	])
+	var hips_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_Hips", "mixamorig:Hips", "Hips"
+	])
+	var left_shoulder_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_LeftShoulder", "mixamorig:LeftShoulder", "LeftShoulder"
+	])
+	var right_shoulder_idx := _strap_find_first_bone(skeleton, [
+		"mixamorig_RightShoulder", "mixamorig:RightShoulder", "RightShoulder"
+	])
+
+	if spine2_idx < 0:
+		spine2_idx = spine1_idx
+	if spine1_idx < 0:
+		spine1_idx = spine2_idx
+	if spine_idx < 0:
+		spine_idx = spine1_idx
+	if hips_idx < 0:
+		hips_idx = spine_idx
+
+	_cached_skeleton = skeleton
+	_cached_bone_indices = {
+		"spine2": spine2_idx,
+		"spine1": spine1_idx,
+		"spine": spine_idx,
+		"hips": hips_idx,
+		"left_shoulder": left_shoulder_idx,
+		"right_shoulder": right_shoulder_idx
+	}
+	return _cached_bone_indices
 
 # ================================================================
 # TRANSFORM DEL HUESO EN ESPACIO LOCAL DE LA CORREA
@@ -1055,6 +1067,21 @@ func _update_procedural_mesh(smooth_points: Array[Vector3], torso_center: Vector
 		return
 
 	var parent_node: Node3D = player.third_person_model
+	var proc_mi := _procedural_mesh
+	if proc_mi == null or not is_instance_valid(proc_mi) or proc_mi.get_parent() != parent_node:
+		proc_mi = parent_node.find_child("ProceduralStrapMesh", true, false) as MeshInstance3D
+		_procedural_mesh = proc_mi
+		if proc_mi == null:
+			_last_mesh_points.clear()
+	if proc_mi != null and is_instance_valid(proc_mi) and _last_mesh_points.size() == smooth_points.size():
+		var mesh_changed := torso_center.distance_squared_to(_last_mesh_center) > 0.000001
+		if not mesh_changed:
+			for i in range(smooth_points.size()):
+				if smooth_points[i].distance_squared_to(_last_mesh_points[i]) > 0.000001:
+					mesh_changed = true
+					break
+		if not mesh_changed:
+			return
 
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -1107,11 +1134,11 @@ func _update_procedural_mesh(smooth_points: Array[Vector3], torso_center: Vector
 
 	var new_mesh: Mesh = st.commit()
 
-	var proc_mi: MeshInstance3D = parent_node.find_child("ProceduralStrapMesh", true, false) as MeshInstance3D
 	if proc_mi == null:
 		proc_mi = MeshInstance3D.new()
 		proc_mi.name = "ProceduralStrapMesh"
 		parent_node.add_child(proc_mi)
+		_procedural_mesh = proc_mi
 
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Color(0.08, 0.08, 0.08, 1.0)
@@ -1125,6 +1152,8 @@ func _update_procedural_mesh(smooth_points: Array[Vector3], torso_center: Vector
 	proc_mi.mesh = new_mesh
 	proc_mi.custom_aabb = AABB(Vector3(-5, -5, -5), Vector3(10, 10, 10))
 	proc_mi.visible = true
+	_last_mesh_points = smooth_points.duplicate()
+	_last_mesh_center = torso_center
 
 	if player._rifle_on_back_strap != null and is_instance_valid(player._rifle_on_back_strap):
 		player._rifle_on_back_strap.visible = false

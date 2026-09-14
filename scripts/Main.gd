@@ -434,7 +434,8 @@ const _LOADING_TIPS := [
 	"Afila un palo con el cuchillo para hacer un palo afilado.",
 	"Combina un palo afilado con una piedra para fabricar una lanza.",
 	"Combina un palo afilado con carne cruda para ensartarla y poder cocinarla.",
-	"Combina un palo con una cuerda para hacer una caña simple.",
+	"Trenza dos trapos para hacer una cuerda.",
+	"Combina una cuerda con un palo afilado para fabricar una caña de pescar de tres usos.",
 	"Combina un palo afilado con carne cruda para crear una caña de pescar con cebo.",
 	"Combina un palo con trapos para fabricar una antorcha.",
 	"Combina 2 troncos y 1 palo para construir una fogata.",
@@ -934,11 +935,13 @@ func _process(delta: float) -> void:
 		if _net_sync_timer >= 0.05:
 			_net_sync_timer = 0.0
 			_sync_local_player_state()
+			# Remote transforms and puppet visuals do not need a full-frame pass;
+			# network state is already sampled at 20 Hz.
+			_update_remote_players()
 		_inv_sync_timer += delta
 		if _inv_sync_timer >= 2.0:
 			_inv_sync_timer = 0.0
 			_sync_local_player_inventory()
-		_update_remote_players()
 
 func _tick_campfire_fires() -> void:
 	if campfire_fire_timers.is_empty():
@@ -1315,6 +1318,7 @@ func _update_weather_effects(delta: float) -> void:
 var _cloud_time := 0.0
 var _cloud_wind_direction := deg_to_rad(35.0)
 var _cloud_displacement := Vector3.ZERO
+var _weather_visual_refresh_accum := 0.0
 
 func _update_weather_visuals(delta: float) -> void:
 	_cloud_time += delta
@@ -1332,9 +1336,6 @@ func _update_weather_visuals(delta: float) -> void:
 	var material := world.environment.sky.sky_material as ShaderMaterial
 	if material == null:
 		return
-	material.set_shader_parameter("rain_intensity", clampf(_weather_visual.rain / 6.0, 0.0, 1.0))
-	material.set_shader_parameter("small_cloud_cover", _weather_visual.cloud)
-	material.set_shader_parameter("large_cloud_cover", _weather_visual.cloud)
 	# Open-Meteo provides meteorological degrees clockwise from north. Preserve
 	# the direction between updates and ease into a new reading so cloud layers
 	# drift continuously rather than snapping when weather refreshes.
@@ -1347,6 +1348,16 @@ func _update_weather_visuals(delta: float) -> void:
 	# by multiplying the new velocity by the entire elapsed session time.
 	var travel_direction := Vector3(-sin(_cloud_wind_direction), 0.0, cos(_cloud_wind_direction))
 	_cloud_displacement += travel_direction * cloud_wind_strength * 0.035 * delta
+	# Shader uniform updates are relatively expensive on the main thread. Keep
+	# the smooth CPU-side integration above at frame rate, but submit uniforms
+	# at 20 Hz, which is visually continuous and avoids needless stalls.
+	_weather_visual_refresh_accum += delta
+	if _weather_visual_refresh_accum < 0.05:
+		return
+	_weather_visual_refresh_accum = 0.0
+	material.set_shader_parameter("rain_intensity", clampf(_weather_visual.rain / 6.0, 0.0, 1.0))
+	material.set_shader_parameter("small_cloud_cover", _weather_visual.cloud)
+	material.set_shader_parameter("large_cloud_cover", _weather_visual.cloud)
 	material.set_shader_parameter("cloud_displacement", _cloud_displacement)
 	material.set_shader_parameter("wind_direction", _cloud_wind_direction)
 	material.set_shader_parameter("wind_strength", cloud_wind_strength)
@@ -2160,7 +2171,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 	for drop in dropped_items:
 		if not world_actions_by_id.has(str(drop["id"])):
 			var drop_at := str(drop.get("action_type", ""))
-			if drop_at == "wolf_meat_raw":
+			if drop_at in ["wolf_meat_raw", "bird_meat_raw"]:
 				var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
 				var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2])) if mpos_arr is Array else Vector3(drop["pos"].x, drop["pos"].y, drop["pos"].z)
 				_spawn_raw_meat_visual(str(drop["id"]), str(drop["name"]), mpos)
@@ -2308,7 +2319,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 				meat_name = "Carne cruda de ciervo"
 				meat_qty = 8
 			"bird":
-				meat_name = "Carne cruda"
+				meat_name = "Carne cruda de ave"
 				meat_qty = 1
 			"fox":
 				meat_name = "Carne cruda de zorro"
@@ -2318,6 +2329,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 				meat_qty = 4
 	# Spawn meat immediately on server and notify clients - clients delay puppet removal to match animation
 	if not collect_mode:
+		var meat_action_type := "bird_meat_raw" if meat_name == "Carne cruda de ave" else "wolf_meat_raw"
 		var base_pos: Vector3 = animal.global_position
 		for i in range(meat_qty):
 			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
@@ -2325,8 +2337,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var mpos := base_pos + offset
 			mpos.y = 0.06
 			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
-			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, "wolf_meat_raw")
-			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
+			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, meat_action_type)
+			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": meat_action_type})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
 		animal._remove_corpse()
@@ -3144,6 +3156,19 @@ func _net_add_looted_item(item_data: Dictionary) -> void:
 			if inv != null and inv.has_method("add_item"):
 				inv.add_item(item)
 
+func _is_water_drop_position(pos: Vector3) -> bool:
+	return has_method("get_river_depth_at") and float(get_river_depth_at(pos)) > 0.02
+
+func _play_water_drop_effect(pos: Vector3) -> void:
+	var splash_pos := pos
+	if has_method("get_river_surface_y_at"):
+		splash_pos.y = float(get_river_surface_y_at(pos))
+	if player != null and is_instance_valid(player):
+		if player.has_method("_spawn_water_splash"):
+			player.call("_spawn_water_splash", splash_pos)
+		if player.has_method("_spawn_water_ripples"):
+			player.call("_spawn_water_ripples", splash_pos)
+
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
@@ -3160,6 +3185,14 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			net.shelter_built.rpc_id(1, sh_id, pos)
 		else:
 			_built_shelters.append({"id": sh_id, "pos": pos})
+		return
+	# A normal drop made over the lake or river is lost below the surface too;
+	# it must not become a recoverable pickup floating at ground height.
+	if _is_water_drop_position(pos):
+		_play_water_drop_effect(pos)
+		if net != null and net.is_connected and not net.is_host:
+			var water_drop_id := "water_drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
+			net.item_dropped.rpc_id(1, water_drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 		return
 	if item_name == "Antorcha" and item_type == "tool_torch":
 		var torch_id := "player_torch_%d" % randi()
@@ -3229,11 +3262,15 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
+	if _is_water_drop_position(pos):
+		_play_water_drop_effect(pos)
+		return
 	var visual_name := "Pickup_" + drop_id
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
 	_mark_world_action_visual(visual_name)
-	var maction = _create_world_action(drop_id, "wolf_meat_raw", item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	var meat_action_type := "bird_meat_raw" if item_name == "Carne cruda de ave" else "wolf_meat_raw"
+	var maction = _create_world_action(drop_id, meat_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	if maction != null:
 		maction.set_meta("visual_name", visual_name)
 		maction.set_meta("item_name", item_name)
@@ -3243,6 +3280,9 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_use_value", 15.0)
 
 func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
+	if _is_water_drop_position(pos):
+		_play_water_drop_effect(pos)
+		return
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -3260,6 +3300,12 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.06)
 		if not _spawned_ok:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
+		else:
+			# Imported models have different origins (axe, can, matches, etc.).
+			# Always place their lowest visible point on the supplied ground height.
+			var landed_visual := get_node_or_null(NodePath(visual_name))
+			if landed_visual is Node3D:
+				_snap_node_bottom_to_y(landed_visual as Node3D, pos.y)
 		if lay_flat or pre_flat:
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
@@ -3346,6 +3392,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		action.set_meta("item_color", color)
 
 func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
+	if _is_water_drop_position(pos):
+		_play_water_drop_effect(pos)
+		return
 	if net != null and net.is_dedicated_server:
 		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 		if color.a > 0.0:
@@ -3356,6 +3405,10 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
+	# Old saves can contain tools with the generic "tool" type. Resolve named
+	# tools first so the inventory thumbnail never falls back to a box model.
+	if item_name == "Hacha":
+		return ["res://assets/models/props/simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
 	match item_type:
 		"water":
 			if item_name == "Botella de agua" or item_name == "Botella de agua llena":
@@ -3459,6 +3512,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 
 func _get_drop_scale(item_name: String, item_type: String) -> float:
+	if item_name == "Hacha":
+		return 1.0
 	match item_type:
 		"water":
 			if item_name == "Botella de agua" or item_name == "Botella de agua llena":
@@ -5436,6 +5491,14 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 		_remove_collision_from_node(tool_node)
 	var action = _create_world_action(id, action_type, label, pos, Vector3(1.2, 0.75, 1.2), Color(0.10, 0.095, 0.07), false, false)
 	action.set_meta("visual_name", visual_name)
+	action.set_meta("item_name", label)
+	action.set_meta("item_type", "tool_matches" if action_type == "matches_tool" else action_type)
+	action.set_meta("item_quantity", 1)
+	if action_type == "matches_tool":
+		action.set_meta("item_max_durability", 10.0)
+		action.set_meta("item_durability", 10.0)
+	action.set_meta("item_weight", 0.1)
+	action.set_meta("item_use_value", 0.0)
 
 func _create_mushrooms() -> void:
 	var mushroom_count := int(200 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0) / 7.9)
@@ -6292,7 +6355,7 @@ func _execute_world_action(action, actor) -> void:
 					net.world_action_completed.rpc_id(1, gut_action_id, gut_spawns, "", Vector3.ZERO)
 			)
 			return
-		"wolf_meat_raw":
+		"wolf_meat_raw", "bird_meat_raw":
 			var meat_item = ItemScript.create(
 				str(action.get_meta("item_name")),
 				str(action.get_meta("item_type")),
@@ -6587,7 +6650,7 @@ func _execute_world_action(action, actor) -> void:
 					hud.show_countdown("Encendiendo fogata", 1.5)
 				await get_tree().create_timer(1.5).timeout
 				if _scene_quitting: return
-				actor.inventory.consume_item_name("Cerillas", 1)
+				actor.inventory.consume_match_charge()
 				actor.inventory.changed.emit()
 			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
 				actor.inventory.consume_item_name("Palo", 2)
@@ -6687,7 +6750,8 @@ func _execute_world_action(action, actor) -> void:
 		"axe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Hacha", "tool_axe", 1.2, 1, 0.0), "Recoges un hacha. Ya puedes talar arboles.")
 		"matches_tool":
-			_finish_pickup_action(action, actor, ItemScript.create("Cerillas", "tool_matches", 0.1, 10, 0.0), "Recoges cerillas (10 usos). Ya puedes encender fogatas.")
+			var matches_item = ItemScript.create("Cerillas", "tool_matches", 0.1, 1, 0.0)
+			_finish_pickup_action(action, actor, matches_item, "Recoges una caja de cerillas (10 usos).")
 		"hoe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Azada", "tool_hoe", 0.9, 1, 0.0), "Recoges una azada para cultivar.")
 		"shovel_tool":
@@ -6748,7 +6812,7 @@ func _execute_world_action(action, actor) -> void:
 			_save_world_change_silent()
 		"fell_tree":
 			var held = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held == null or held.item_name != "Hacha":
+			if held == null or (actor.has_method("has_axe_in_hand") and not actor.has_axe_in_hand()) or (not actor.has_method("has_axe_in_hand") and held.item_name != "Hacha"):
 				actor.notice.emit("Necesitas tener el hacha en la mano para talar.")
 				return
 			if held.has_method("is_broken") and held.is_broken():
@@ -6846,7 +6910,7 @@ func _execute_world_action(action, actor) -> void:
 				net.world_action_completed.rpc_id(1, action.action_id, bush_spawns, "", Vector3.ZERO)
 		"cut_log":
 			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_l == null or held_l.item_name != "Hacha":
+			if held_l == null or (actor.has_method("has_axe_in_hand") and not actor.has_axe_in_hand()) or (not actor.has_method("has_axe_in_hand") and held_l.item_name != "Hacha"):
 				actor.notice.emit("Necesitas tener el hacha en la mano para cortar el tronco.")
 				return
 			if held_l.has_method("is_broken") and held_l.is_broken():
@@ -7015,6 +7079,9 @@ func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
+	if action.has_meta("item_max_durability"):
+		item.max_durability = float(action.get_meta("item_max_durability"))
+		item.durability = float(action.get_meta("item_durability", item.max_durability))
 	if not actor.inventory.add_item(item):
 		return
 	if actor.has_method("refresh_carry_capacity"):
@@ -7069,7 +7136,7 @@ func handle_world_action_collect(action, actor) -> void:
 			action.mark_depleted()
 			_save_world_change_silent()
 			_net_notify_pickup(action)
-		"wolf_meat_raw":
+		"wolf_meat_raw", "bird_meat_raw":
 			var raw_meat_item = ItemScript.create(
 				str(action.get_meta("item_name", "Carne cruda")),
 				"food",
@@ -7194,7 +7261,7 @@ func _execute_world_action_eat(action, actor) -> void:
 				actor.stats.changed.emit()
 				if actor.has_method("die"):
 					actor.die()
-		"wolf_meat_raw":
+		"wolf_meat_raw", "bird_meat_raw":
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_play_actor_action(actor, "plant", 3.0)
@@ -9861,7 +9928,7 @@ func _create_billboard_underbrush(pos: Vector3, height: float) -> bool:
 		add_child(plane)
 	return true
 
-func _pick_forest_tree_variant() -> int:
+func _pick_forest_tree_variant(rng = null) -> int:
 	var count := _forest_tree_meshes.size()
 	if count <= 1:
 		return 0
@@ -9869,7 +9936,8 @@ func _pick_forest_tree_variant() -> int:
 	# overly dominant when picked with equal (50/50) probability. Bias it
 	# down further and spread the rest evenly across remaining variants.
 	var birch_weight := 0.08
-	var r := _world_rng.randf()
+	var source_rng: RandomNumberGenerator = _world_rng if rng == null else rng
+	var r := source_rng.randf()
 	if count == 2:
 		return 1 if r < birch_weight else 0
 	var other_weight: float = (1.0 - birch_weight) / float(count - 1)
@@ -9883,6 +9951,11 @@ func _pick_forest_tree_variant() -> int:
 
 func _create_forest() -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
+	# El bosque usa su propio flujo aleatorio. Así las posiciones quedan
+	# estables aunque se añadan casas, rios u otros objetos que consuman RNG
+	# durante la creación del mapa.
+	var forest_rng := RandomNumberGenerator.new()
+	forest_rng.seed = WORLD_SEED * 104729 + 17
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.035)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
@@ -9900,8 +9973,8 @@ func _create_forest() -> void:
 	var interactive_count := 0
 	var all_tree_positions: Array = [] # Array[Vector3] for collision
 	for i in range(total_trees):
-		var x := _world_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
-		var z := _world_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
+		var x := forest_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
+		var z := forest_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
 		
 		# Mantener las zonas de construcción principales despejadas
 		if Vector2(x, z).length() < inner_clear_radius:
@@ -9917,15 +9990,15 @@ func _create_forest() -> void:
 		
 		# Batch non-interactive trees into MultiMesh
 		if not _forest_tree_meshes.is_empty():
-			var variant_idx := _pick_forest_tree_variant()
+			var variant_idx := _pick_forest_tree_variant(forest_rng)
 			var entry: Dictionary = _forest_tree_meshes[variant_idx]
-			var tree_scale := _world_rng.randf_range(0.8, 1.4)
+			var tree_scale := forest_rng.randf_range(0.8, 1.4)
 			var base_height: float = entry.get("height", 5.0)
 			var tree_height := base_height * tree_scale
 			if tree_height < 1.0:
 				tree_scale = 1.0 / max(0.01, base_height)
 			# Match original: rotation_degrees = Vector3(up_fix, 0, yaw), scale = uniform
-			var yaw_deg := _world_rng.randf_range(0, 360)
+			var yaw_deg := forest_rng.randf_range(0, 360)
 			var up_fix_deg: float = entry.get("up_fix_deg", -90.0)
 			var basis := Basis.from_euler(Vector3(deg_to_rad(up_fix_deg), 0, deg_to_rad(yaw_deg))).scaled(Vector3(tree_scale, tree_scale, tree_scale))
 			var world_xform := Transform3D(basis, pos)
@@ -9937,20 +10010,20 @@ func _create_forest() -> void:
 			_register_tree_in_grid({"pos": pos, "id": batch_tree_id, "visual_name": "Tree_%d" % batch_tree_id, "active": false, "multimesh": true, "variant_idx": variant_idx, "mm_transform": world_xform})
 			batched_count += 1
 		else:
-			_create_tree(pos, false)
+			_create_tree(pos, false, forest_rng)
 			interactive_count += 1
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
 		for _g in range(1):
-			var gpos := pos + Vector3(_world_rng.randf_range(-1.5, 1.5), 0.0, _world_rng.randf_range(-1.5, 1.5))
+			var gpos := pos + Vector3(forest_rng.randf_range(-1.5, 1.5), 0.0, forest_rng.randf_range(-1.5, 1.5))
 			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
 			if not _can_place_ground_vegetation(gpos):
-				_queue_grass_instance(gpos, _world_rng.randf_range(0.25, 0.55), _world_rng.randf_range(0.35, 0.65), base_color.lerp(color_var, _world_rng.randf()))
+				_queue_grass_instance(gpos, forest_rng.randf_range(0.25, 0.55), forest_rng.randf_range(0.35, 0.65), base_color.lerp(color_var, forest_rng.randf()))
 				
 		if i % 300 == 0:
-			var _saved_rng_state := _world_rng.state
+			var _saved_rng_state := forest_rng.state
 			await get_tree().process_frame
-			_world_rng.state = _saved_rng_state
+			forest_rng.state = _saved_rng_state
 	
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
@@ -10298,7 +10371,7 @@ func _deactivate_tree(entry: Dictionary) -> void:
 	entry.active = false
 	_active_tree_entries.erase(entry)
 
-func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
+func _create_tree(pos: Vector3, is_interactive: bool = true, rng = null) -> void:
 	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos, 2.8):
 		return
@@ -10311,11 +10384,12 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 	if _forest_tree_meshes.is_empty():
 		_load_forest_tree_pack()
 	if not made_visual and not _forest_tree_meshes.is_empty():
-		var entry = _forest_tree_meshes[_world_rng.randi() % _forest_tree_meshes.size()]
+		var source_rng: RandomNumberGenerator = _world_rng if rng == null else rng
+		var entry = _forest_tree_meshes[source_rng.randi() % _forest_tree_meshes.size()]
 		var src_mesh: ArrayMesh = entry.mesh
 		var branch_mesh: ArrayMesh = entry.get("branch_mesh", null)
 		var base_height: float = entry.get("height", entry.aabb.size.z)
-		var tree_scale := _world_rng.randf_range(0.8, 1.4)
+		var tree_scale := source_rng.randf_range(0.8, 1.4)
 		var tree_height := base_height * tree_scale
 		if tree_height < 1.0:
 			tree_scale = 1.0 / max(0.01, base_height)
@@ -10323,7 +10397,7 @@ func _create_tree(pos: Vector3, is_interactive: bool = true) -> void:
 		var mi := Node3D.new()
 		mi.name = visual_name
 		mi.position = pos
-		mi.rotation_degrees = Vector3(up_fix_deg, 0, _world_rng.randf_range(0, 360))
+		mi.rotation_degrees = Vector3(up_fix_deg, 0, source_rng.randf_range(0, 360))
 		mi.scale = Vector3(tree_scale, tree_scale, tree_scale)
 		var trunk_mi := MeshInstance3D.new()
 		trunk_mi.name = "Trunk"
@@ -11964,8 +12038,6 @@ func _setup_cinematic() -> void:
 	_cinematic_cam.far = 2000.0
 	add_child(_cinematic_cam)
 	_cinematic_cam.make_current()
-	if hud != null:
-		hud.visible = false
 	if day_cycle != null:
 		day_cycle.fixed_time = true
 	# Make rain particles bigger and more visible for cinematic

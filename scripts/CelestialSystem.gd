@@ -1,8 +1,9 @@
 extends Node3D
 
-# Observer location: Barcelona (used to compute the real visible night sky).
-const BCN_LAT_DEG := 41.3874
-const BCN_LON_DEG := 2.1686
+# Observer coordinates used to compute the real visible night sky. They are
+# kept private and are never shown as a city name in the HUD.
+const OBSERVER_LAT_DEG := 41.3874
+const OBSERVER_LON_DEG := 2.1686
 const STAR_DOME_RADIUS := 380.0
 
 # Real bright-star catalogue: [right ascension (hours), declination (deg), apparent magnitude].
@@ -44,12 +45,17 @@ var _real_star_radec: Array = []
 var _real_star_mats: Array = []
 var _real_star_phases: Array = []
 var _star_update_accum := 0.0
+var _twinkle_update_accum := 0.0
 var _twinkle_time := 0.0
 var star_field: Node3D = null
 var moon_field: Node3D = null
 
 func _process(delta: float) -> void:
 	_twinkle_time += delta
+	_twinkle_update_accum += delta
+	if star_field == null or not star_field.visible or _twinkle_update_accum < 0.05:
+		return
+	_twinkle_update_accum = 0.0
 	for i in range(_real_star_mats.size()):
 		var mat = _real_star_mats[i]
 		if mat is StandardMaterial3D:
@@ -63,7 +69,7 @@ func _julian_date_now() -> float:
 func _local_sidereal_deg() -> float:
 	var d := _julian_date_now() - 2451545.0
 	var gmst := 280.46061837 + 360.98564736629 * d
-	return fposmod(gmst + BCN_LON_DEG, 360.0)
+	return fposmod(gmst + OBSERVER_LON_DEG, 360.0)
 
 func _radec_to_world_dir(ra_rad: float, dec_rad: float, lst_rad: float, lat_rad: float) -> Vector3:
 	var ha := lst_rad - ra_rad
@@ -90,7 +96,7 @@ func create_star_field() -> void:
 	var star_mesh := QuadMesh.new()
 	star_mesh.size = Vector2(1.2, 1.2)
 	star_mesh.orientation = PlaneMesh.FACE_Z
-	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	var lat_rad := deg_to_rad(OBSERVER_LAT_DEG)
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
 	for entry in BRIGHT_STAR_CATALOG:
 		var ra_rad: float = deg_to_rad(float(entry[0]) * 15.0)
@@ -128,7 +134,7 @@ func create_star_field() -> void:
 func update_real_star_positions() -> void:
 	if _real_star_nodes.is_empty():
 		return
-	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	var lat_rad := deg_to_rad(OBSERVER_LAT_DEG)
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
 	for i in range(_real_star_nodes.size()):
 		var node = _real_star_nodes[i]
@@ -248,7 +254,7 @@ func get_real_moon_direction() -> Vector3:
 
 	# Convert equatorial to horizontal using local sidereal time and latitude
 	var lst_rad := deg_to_rad(_local_sidereal_deg())
-	var lat_rad := deg_to_rad(BCN_LAT_DEG)
+	var lat_rad := deg_to_rad(OBSERVER_LAT_DEG)
 	return _radec_to_world_dir(ra, dec, lst_rad, lat_rad)
 
 func _make_disc_mesh(radius: float, segments: int) -> ArrayMesh:

@@ -53,6 +53,11 @@ func _ready() -> void:
 			_material.set_shader_parameter("roughness_scale", 0.06)
 			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
 	if _material is ShaderMaterial:
+		if not _is_lake:
+			_material.set_shader_parameter("normal_scale", 0.16)
+			_material.set_shader_parameter("roughness_scale", 0.12)
+			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
+			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)
 	_update_mirror()
 
@@ -101,4 +106,4 @@ func _update_mirror() -> void:
 	var day_amount: float = 1.0 - _night_amount
 	var mirror_col: Color = Color(0.02, 0.03, 0.05).lerp(Color(0.62, 0.78, 0.97), day_amount)
 	mat.set_shader_parameter("mirror_color", mirror_col)
-	mat.set_shader_parameter("mirror_strength", 0.5 if _is_lake else 0.2)
+	mat.set_shader_parameter("mirror_strength", 0.5 if _is_lake else 0.35)

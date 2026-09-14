@@ -74,6 +74,10 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 		return false
 	var target_pos := (target as Node3D).global_position
 	var player_pos := player.global_position
+	if absf(target_pos.y - player_pos.y) > 2.0:
+		return false
+	if target is WorldAction and target.action_type == "pickup_item":
+		return player_pos.distance_to(target_pos) <= minf(interaction_distance, 2.0)
 	var flat_distance := Vector2(player_pos.x, player_pos.z).distance_to(Vector2(target_pos.x, target_pos.z))
 	var reach_padding := 0.0
 	if target is CollisionObject3D:
@@ -101,7 +105,11 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 	var best: Object = null
 	var best_dist := 999.0
 	for node in _cached_interactables:
+		if not is_instance_valid(node):
+			continue
 		if not (node is Node3D):
+			continue
+		if not _is_close_enough(player, node):
 			continue
 		if node is WorldAction:
 			var wa := node as WorldAction

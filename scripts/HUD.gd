@@ -20,6 +20,7 @@ var inventory_weight_label: Label
 var real_clock_label: Label
 var survival_label: Label
 var temp_label: Label
+var hand_stats_label: Label
 var _weather_timer := 0.0
 var _weather_http: HTTPRequest
 var _geo_http: HTTPRequest
@@ -27,6 +28,9 @@ var _real_temp := "--"
 var _real_temp_parsed := -999.0
 var _weather_loading := false
 var _weather_retry_timer := 0.0
+var _stats_refresh_timer := 0.0
+var _stats_dirty := true
+var _clock_refresh_timer := 0.0
 var _real_weather_code := -1
 var _real_rain := 0.0
 var _real_snow := 0.0
@@ -35,7 +39,7 @@ var _real_wind_direction := 0.0
 var _real_weather_desc := ""
 var _geo_lat := 41.38
 var _geo_lon := 2.17
-var _geo_location_name := "Barcelona"
+var _geo_location_name := ""
 var _geo_resolved := false
 var prompt_label: Label
 var crosshair_dot: ColorRect
@@ -53,6 +57,9 @@ var equipment_hand_label: Label
 var equipment_clothing_label: Label
 var equipment_backpack_label: Label
 var inventory_visible := false
+var _inventory_tween: Tween
+var _hand_store_button: Button
+var _back_use_buttons: Array[Button] = []
 var notice_timer := 0.0
 var countdown_label: Label = null
 var countdown_timer := 0.0
@@ -78,8 +85,12 @@ var _context_menu_has_eat := false
 var _context_menu_has_light := false
 var _context_menu_has_drink := false
 var _context_menu_has_cut := false
+var _context_menu_has_back := false
 
 func setup(new_player, new_day_cycle, new_main_node = null) -> void:
+	# Keep the HUD above world, weather and any fullscreen scene effects.  The
+	# night environment must darken the 3D world only, never the interface.
+	layer = 10
 	player = new_player
 	day_cycle = new_day_cycle
 	main_node = new_main_node
@@ -89,15 +100,24 @@ func setup(new_player, new_day_cycle, new_main_node = null) -> void:
 	player.prompt_changed.connect(_set_prompt)
 	player.notice.connect(show_notice)
 	player.inventory.changed.connect(_update_inventory)
-	player.stats.changed.connect(_update_stats)
+	player.stats.changed.connect(_on_stats_changed)
 	_update_inventory()
 	_update_stats()
+	_stats_dirty = false
 
 func _process(delta: float) -> void:
 	if player == null:
 		return
-	_update_stats()
-	_update_real_clock()
+	_ensure_hud_visibility()
+	_stats_refresh_timer += delta
+	if _stats_dirty and _stats_refresh_timer >= 0.10:
+		_stats_refresh_timer = 0.0
+		_stats_dirty = false
+		_update_stats()
+	_clock_refresh_timer += delta
+	if _clock_refresh_timer >= 0.25:
+		_clock_refresh_timer = 0.0
+		_update_real_clock()
 	_weather_timer += delta
 	if _weather_timer >= 60.0:
 		_weather_timer = 0.0
@@ -134,6 +154,24 @@ func _process(delta: float) -> void:
 			if _hit_marker_b != null:
 				_hit_marker_b.visible = false
 
+func _ensure_hud_visibility() -> void:
+	# Restore the interface in case a scene transition or a fullscreen night
+	# effect changed its visibility/modulation. The 3D cinematic/world lighting
+	# must never hide the gameplay HUD.
+	visible = true
+	if root != null:
+		root.visible = true
+		root.modulate = Color.WHITE
+		root.self_modulate = Color.WHITE
+	if status_panel != null:
+		status_panel.visible = true
+		status_panel.modulate = Color.WHITE
+	if notice_label != null and not notice_label.text.is_empty():
+		notice_label.visible = true
+	if inventory_visible and inventory_panel != null:
+		inventory_panel.visible = true
+		inventory_panel.modulate = Color(1.0, 1.0, 1.0, maxf(inventory_panel.modulate.a, 0.98))
+
 func show_countdown(text: String, duration: float) -> void:
 	countdown_text = text
 	countdown_total = duration
@@ -147,7 +185,10 @@ func hide_countdown() -> void:
 
 func toggle_inventory() -> void:
 	_close_context_menu()
+	if _inventory_tween != null and _inventory_tween.is_valid():
+		_inventory_tween.kill()
 	inventory_visible = not inventory_visible
+	inventory_panel.modulate.a = 1.0
 	if inventory_visible:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		inventory_panel.visible = true
@@ -155,11 +196,13 @@ func toggle_inventory() -> void:
 		_update_inventory()
 		inventory_panel.offset_transform_enabled = true
 		var tw := create_tween()
+		_inventory_tween = tw
 		tw.tween_property(inventory_panel, "offset_transform_position:x", 0.0, 0.25).from(80.0).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 		tw.parallel().tween_property(inventory_panel, "offset_transform_scale", Vector2.ONE, 0.25).from(Vector2(0.92, 0.92)).set_ease(Tween.EASE_OUT)
 	else:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		var tw2 := create_tween()
+		_inventory_tween = tw2
 		tw2.tween_property(inventory_panel, "offset_transform_position:x", 80.0, 0.2).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
 		tw2.parallel().tween_property(inventory_panel, "modulate:a", 0.0, 0.2)
 		await tw2.finished
@@ -200,7 +243,7 @@ func _build_real_clock_panel() -> void:
 	panel.offset_left = 18
 	panel.offset_top = 18
 	panel.offset_right = 250
-	panel.offset_bottom = 132
+	panel.offset_bottom = 154
 	panel.anchor_left = 0.0
 	panel.anchor_top = 0.0
 	panel.anchor_right = 0.0
@@ -231,6 +274,12 @@ func _build_real_clock_panel() -> void:
 	temp_label.add_theme_color_override("font_color", Color(0.70, 0.74, 0.68))
 	temp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(temp_label)
+
+	hand_stats_label = Label.new()
+	hand_stats_label.add_theme_font_size_override("font_size", 13)
+	hand_stats_label.add_theme_color_override("font_color", Color(0.82, 0.78, 0.58))
+	hand_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(hand_stats_label)
 
 	_weather_http = HTTPRequest.new()
 	_weather_http.timeout = 10.0
@@ -264,7 +313,7 @@ func _on_geo_received(result: int, response_code: int, _headers: PackedStringArr
 				if city is String and not city.is_empty():
 					_geo_location_name = city
 				_geo_resolved = true
-				print("[GEO] Location resolved: %s (%.2f, %.2f)" % [_geo_location_name, _geo_lat, _geo_lon])
+				print("[GEO] Coordinates resolved (%.2f, %.2f)" % [_geo_lat, _geo_lon])
 	_fetch_weather()
 
 func _fetch_weather() -> void:
@@ -345,8 +394,10 @@ func _update_real_clock() -> void:
 	if temp_label != null:
 		var ambient: float = _real_temp_parsed if _real_temp_parsed != -999.0 else day_cycle.get_ambient_temperature()
 		var weather_text := " | " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
-		var loc_text := " (%s)" % _geo_location_name
-		temp_label.text = "Ambiente: %.0f°C%s%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, loc_text, player.stats.body_temperature, player.stats.get_thermal_state()]
+		temp_label.text = "Ambiente: %.0f°C%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
+	if hand_stats_label != null:
+		var held_item = player.get_held_item() if player.has_method("get_held_item") else null
+		hand_stats_label.text = "Mano: %s" % (str(held_item.item_name) if held_item != null else "vacia")
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -578,8 +629,19 @@ func _build_inventory_panel() -> void:
 	columns.add_child(left)
 	_add_inventory_section_title(left, "EQUIPO")
 	equipment_hand_label = _add_equipment_line(left, "Manos", "Vacio")
+	_hand_store_button = Button.new()
+	_hand_store_button.text = "Guardar lo que llevo en la mano [H]"
+	_hand_store_button.pressed.connect(func(): player._store_held_item(); _update_inventory())
+	left.add_child(_hand_store_button)
 	equipment_clothing_label = _add_equipment_line(left, "Ropa", "Sin abrigo")
 	equipment_backpack_label = _add_equipment_line(left, "Mochila", "Sin mochila")
+	for back_slot in range(2):
+		var back_button := Button.new()
+		back_button.custom_minimum_size = Vector2(230, 38)
+		back_button.add_theme_font_size_override("font_size", 12)
+		back_button.pressed.connect(_on_use_back_item_pressed.bind(back_slot))
+		left.add_child(back_button)
+		_back_use_buttons.append(back_button)
 	_add_inventory_hint(left)
 
 	var right := VBoxContainer.new()
@@ -960,7 +1022,12 @@ func _update_stats() -> void:
 	_update_status_icons()
 	if _prev_health > player.stats.health + 0.1:
 		_damage_flash = 1.0
-	_prev_health = player.stats.health
+		_prev_health = player.stats.health
+
+func _on_stats_changed() -> void:
+	# SurvivalStats emits every simulation tick. Mark the HUD dirty and let the
+	# frame loop coalesce updates to 10 Hz, avoiding repeated Control relayouts.
+	_stats_dirty = true
 
 func _update_damage_overlay(delta: float) -> void:
 	if _damage_overlay == null or player == null:
@@ -979,6 +1046,7 @@ func _update_inventory() -> void:
 		return
 	_update_equipment_labels()
 	for child in inventory_grid.get_children():
+		inventory_grid.remove_child(child)
 		child.queue_free()
 	inventory_weight_label.text = "PESO %.1f / %.1f KG" % [
 		player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight(),
@@ -993,9 +1061,11 @@ func _update_inventory() -> void:
 func _update_equipment_labels() -> void:
 	if equipment_hand_label != null:
 		var hand_text := "Vacio"
-		if player.inventory.items.size() > 0:
-			var held_index: int = clampi(player.held_index, 0, player.inventory.items.size() - 1)
-			hand_text = player.inventory.items[held_index].item_name
+		var held_item = player.get_held_item()
+		if _hand_store_button != null:
+			_hand_store_button.disabled = held_item == null
+		if held_item != null:
+			hand_text = held_item.item_name
 			# Mostrar municion del rifle si esta equipado
 			if player.has_method("get_rifle_info") and player.has_method("_has_rifle_equipped") and player._has_rifle_equipped():
 				var ri: Dictionary = player.get_rifle_info()
@@ -1022,6 +1092,27 @@ func _update_equipment_labels() -> void:
 			player.inventory.max_weight
 		]
 		equipment_backpack_label.text = "Mochila\n%s\n%s" % [backpack_text, cap_text]
+	_update_back_item_buttons()
+
+func _update_back_item_buttons() -> void:
+	if player == null or not player.has_method("get_back_item_data"):
+		return
+	for slot in range(_back_use_buttons.size()):
+		var button := _back_use_buttons[slot]
+		var data: Dictionary = player.get_back_item_data(slot)
+		var shoulder := "izquierdo" if slot == 0 else "derecho"
+		if data.is_empty():
+			button.text = "Hombro %s: vacío" % shoulder
+			button.disabled = true
+		else:
+			button.text = "Usar %s (%s) [J]" % [str(data.get("name", "Objeto")), shoulder]
+			button.disabled = false
+
+func _on_use_back_item_pressed(slot: int) -> void:
+	if player == null or not player.has_method("use_back_item"):
+		return
+	if player.use_back_item(slot):
+		_update_inventory()
 
 func _create_inventory_slot(index: int, item) -> void:
 	var slot := PanelContainer.new()
@@ -1094,7 +1185,8 @@ func _create_inventory_slot(index: int, item) -> void:
 		label.text = "-"
 		label.add_theme_color_override("font_color", Color(0.36, 0.38, 0.34))
 	else:
-		label.text = "%s\nx%d" % [item.item_name, item.quantity]
+		var held_label := "EN MANO\n" if player != null and player.has_method("get_held_item") and player.get_held_item() == item else ""
+		label.text = "%s%s\nx%d" % [held_label, item.item_name, item.quantity]
 		if (item.item_name == "Botella de agua" or item.item_name == "Botella de agua llena") and item.has_method("durability_pct"):
 			var wpct := int(item.durability_pct() * 100.0)
 			label.text += "\nAgua: %d%%" % wpct
@@ -1334,6 +1426,10 @@ func handle_slot_click(mouse_pos: Vector2, button_index: int) -> void:
 			if rect.has_point(mouse_pos):
 				if button_index == MOUSE_BUTTON_MIDDLE:
 					# Drag & drop: pick up or swap
+					if _drag_source_index < 0 and i >= display_items.size() and player.get_held_item() != null:
+						player._store_held_item()
+						_update_inventory()
+						return
 					if _drag_source_index < 0:
 						if i < display_items.size() and display_items[i] != null:
 							_drag_source_index = i
@@ -1377,6 +1473,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	_context_menu_has_eat = false
 	_context_menu_has_light = false
 	_context_menu_has_cut = false
+	_context_menu_has_back = false
 	_context_menu = PanelContainer.new()
 	_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.04, 0.96), Color(0.72, 0.74, 0.40, 0.95), 2))
@@ -1385,7 +1482,8 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_menu.add_child(vbox)
 	var display_items: Array = _get_filtered_sorted_items()
-	var item = display_items[slot_index] if slot_index < display_items.size() else null
+	var held_item_for_menu = player.get_held_item() if player.has_method("get_held_item") else null
+	var item = held_item_for_menu if slot_index == display_items.size() and held_item_for_menu != null else (display_items[slot_index] if slot_index < display_items.size() else null)
 	if item == null:
 		return
 	var name_label := Label.new()
@@ -1399,6 +1497,14 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	use_btn.add_theme_font_size_override("font_size", 14)
 	use_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(use_btn)
+	var interactive_btn := Button.new()
+	interactive_btn.visible = false
+	var item_is_held: bool = player.get_held_item() == item
+	interactive_btn.text = "Guardar en inventario" if item_is_held else "Usar"
+	interactive_btn.add_theme_font_size_override("font_size", 14)
+	interactive_btn.custom_minimum_size = Vector2(220, 30)
+	interactive_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(interactive_btn)
 	# Add Beber button for water items
 	if str(item.item_type) == "water":
 		var drink_btn := Button.new()
@@ -1445,13 +1551,27 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 			cut_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(cut_btn)
 			_context_menu_has_cut = true
+	var can_hang := false
+	if player.has_method("can_store_item_on_back"):
+		can_hang = player.can_store_item_on_back(item)
+	elif player.has_method("can_store_held_on_back"):
+		can_hang = player.get_held_item() == item and player.can_store_held_on_back()
+	if can_hang:
+		var back_btn := Button.new()
+		back_btn.text = "Guardar en espalda"
+		back_btn.add_theme_font_size_override("font_size", 14)
+		back_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(back_btn)
+		_context_menu_has_back = true
 	var drop_btn := Button.new()
 	drop_btn.text = "Soltar"
 	drop_btn.add_theme_font_size_override("font_size", 14)
 	drop_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(drop_btn)
 	var store_btn := Button.new()
-	store_btn.text = "Guardar"
+	store_btn.text = "Guardar en inventario"
+	store_btn.visible = false
+	store_btn.custom_minimum_size = Vector2(220, 30)
 	store_btn.add_theme_font_size_override("font_size", 14)
 	store_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(store_btn)
@@ -1492,6 +1612,9 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		var idx := 2
 		var drink_index := -1
 		var eat_index := -1
+		var interactive_index := 2
+		var back_index := -1
+		idx = 3
 		var light_index := -1
 		if _context_menu_has_drink:
 			drink_index = idx
@@ -1506,6 +1629,9 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 		if _context_menu_has_cut:
 			cut_index = idx
 			idx += 1
+		if _context_menu_has_back:
+			back_index = idx
+			idx += 1
 		var drop_index := idx
 		idx += 1
 		var store_index := idx
@@ -1515,6 +1641,15 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 			var use_btn = vbox.get_child(1)
 			if use_btn is Button and use_btn.get_global_rect().has_point(mouse_pos):
 				_on_use_pressed()
+				return true
+			var interactive_btn = vbox.get_child(interactive_index)
+			if interactive_btn is Button and interactive_btn.get_global_rect().has_point(mouse_pos):
+				var contextual_idx := _get_real_inv_index(_context_menu_slot_index)
+				var contextual_item = player.inventory.items[contextual_idx] if contextual_idx >= 0 else null
+				if player.get_held_item() == contextual_item:
+					_on_store_pressed()
+				else:
+					_on_use_pressed()
 				return true
 			if drink_index >= 0:
 				var drink_btn = vbox.get_child(drink_index)
@@ -1535,6 +1670,11 @@ func handle_context_menu_click(mouse_pos: Vector2, button_index: int) -> bool:
 				var cut_btn = vbox.get_child(cut_index)
 				if cut_btn is Button and cut_btn.get_global_rect().has_point(mouse_pos):
 					_on_cut_clothing_pressed()
+					return true
+			if back_index >= 0:
+				var back_btn = vbox.get_child(back_index)
+				if back_btn is Button and back_btn.get_global_rect().has_point(mouse_pos):
+					_on_store_back_pressed()
 					return true
 			var drop_btn = vbox.get_child(drop_index)
 			if drop_btn is Button and drop_btn.get_global_rect().has_point(mouse_pos):
@@ -1639,6 +1779,28 @@ func _on_use_pressed() -> void:
 	if inventory_visible:
 		toggle_inventory()
 
+func _on_interactive_pressed() -> void:
+	var real_idx := _get_real_inv_index(selected_slot_index)
+	if real_idx < 0 or real_idx >= player.inventory.items.size():
+		return
+	player._select_held_item(real_idx)
+	player.notice.emit("Tienes %s en la mano." % player.inventory.items[real_idx].item_name)
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+
+func _on_store_back_pressed() -> void:
+	var real_idx := _get_real_inv_index(_context_menu_slot_index)
+	if real_idx >= 0 and player.get_held_item() != player.inventory.items[real_idx]:
+		player._select_held_item(real_idx)
+	if player.has_method("store_held_on_back"):
+		player.store_held_on_back()
+	selected_slot_index = -1
+	_close_context_menu()
+	if inventory_visible:
+		toggle_inventory()
+
 func _on_drop_pressed() -> void:
 	var real_idx := _get_real_inv_index(selected_slot_index)
 	if real_idx < 0 or real_idx >= player.inventory.items.size():
@@ -1664,9 +1826,6 @@ func _on_drink_pressed() -> void:
 		toggle_inventory()
 
 func _on_store_pressed() -> void:
-	var real_idx := _get_real_inv_index(selected_slot_index)
-	if real_idx < 0 or real_idx >= player.inventory.items.size():
-		return
 	if player.has_method("_store_held_item"):
 		player._store_held_item()
 	selected_slot_index = -1

@@ -40,6 +40,7 @@ var _perch_timer := 0.0
 var _perch_object: Node3D = null
 var _is_dead := false
 var _gutted := false
+var _butchering := false
 var _landed := false
 var is_puppet := false
 var health := 25.0
@@ -859,22 +860,35 @@ func get_interaction_text(player = null) -> String:
 	return "[F] Desplumar y obtener carne del pajaro" if _has_butchering_tool(player) else "Necesitas cuchillo o hacha para aprovechar el pajaro"
 
 func interact(player: Node) -> void:
-	if not _is_dead or not _landed or _gutted or not _has_butchering_tool(player):
+	if not _is_dead or not _landed or _gutted or _butchering or not _has_butchering_tool(player):
 		return
 	if player.global_position.distance_to(global_position) > 5.0:
 		return
+	_butchering = true
 	var net_node := get_node_or_null("/root/NetworkManager")
 	if net_node != null and net_node.is_connected:
+		var net_scene := get_tree().current_scene
+		if net_scene != null and net_scene.has_method("_play_actor_action"):
+			net_scene._play_actor_action(player, "plant", 3.0)
+			if net_scene.get("hud") != null and net_scene.hud.has_method("show_countdown"):
+				net_scene.hud.show_countdown("Desplumando ave", 3.0)
 		if is_puppet:
 			net_node.gut_animal.rpc_id(1, name, false)
 		else:
 			get_tree().current_scene._net_gut_animal(str(name), net_node.get_my_id(), false)
 		return
-	_gutted = true
 	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_play_actor_action"):
+		scene._play_actor_action(player, "plant", 3.0)
+		if scene.get("hud") != null and scene.hud.has_method("show_countdown"):
+			scene.hud.show_countdown("Desplumando ave", 3.0)
+	await get_tree().create_timer(3.0).timeout
+	if scene == null or not is_instance_valid(scene) or not is_instance_valid(self):
+		return
+	_gutted = true
+	_butchering = false
 	if scene.has_method("_spawn_ground_pickup"):
-		# Generic raw meat already supports skewering, cooking and spoilage.
-		scene._spawn_ground_pickup("Carne cruda", "food", global_position, 0.3, 1, 15.0, "bird_meat_%d" % get_instance_id(), "wolf_meat_raw")
+		scene._spawn_ground_pickup("Carne cruda de ave", "food", global_position, 0.3, 1, 15.0, "bird_meat_%d" % get_instance_id(), "bird_meat_raw")
 	queue_free()
 
 func puppet_apply(pos: Vector3, yaw: float, dead: bool, gutted: bool, landed: bool) -> void:

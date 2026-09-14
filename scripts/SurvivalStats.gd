@@ -92,10 +92,13 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	wetness = max(0.0, wetness - delta * dry_rate)
 
 	var protection: float = clamp(warmth + warmth_bonus, 0.0, 1.5)
-	var target_temperature := 36.6
-	# Ambient temperature effect: below 18°C starts cooling the body
-	if ambient_temperature < 18.0:
-		target_temperature -= (18.0 - ambient_temperature) * (0.08 / max(0.2, protection + 0.2))
+	# Outdoor equilibrium is lower than the sheltered core temperature. This
+	# makes a mild 21°C environment visibly affect the character instead of
+	# leaving the body fixed at 36.6-37°C until the weather becomes extreme.
+	var target_temperature := 36.1
+	# Ambient temperature effect: cool air starts exchanging heat below 22°C.
+	if ambient_temperature < 22.0:
+		target_temperature -= (22.0 - ambient_temperature) * (0.08 / (1.0 + protection))
 	# Hot ambient: above 28°C starts heating the body, clothing retains heat
 	if ambient_temperature > 28.0:
 		var heat_retention: float = clampf(1.0 + heat_retention_bonus, 0.3, 2.5)
@@ -116,9 +119,12 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			target_temperature += 0.8
 		if jumping:
 			target_temperature += 0.5
-	# Sun exposure during daytime raises body temperature when not sheltered
+	# Sun exposure during daytime raises body temperature when not sheltered.
+	# At a mild 21°C it is a small contribution; the previous fixed +0.6°C
+	# made the body appear stuck near 37°C even in cool weather.
 	if not night and not sheltered:
-		target_temperature += 0.6 * clampf(sun_exposure, 0.0, 1.0)
+		var sun_air_factor := clampf((ambient_temperature - 8.0) / 24.0, 0.0, 1.0)
+		target_temperature += 0.35 * clampf(sun_exposure, 0.0, 1.0) * sun_air_factor
 
 	if sheltered:
 		# Under a roof: warm up gradually towards comfortable temperature
@@ -135,7 +141,9 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		hot_food_temp_bonus = max(0.0, hot_food_temp_bonus - delta * 0.08)
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
-	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.03))
+	# React in seconds rather than taking several minutes to acknowledge a
+	# change in ambient conditions.
+	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.08))
 
 	if hunger <= 0.0:
 		health = max(0.0, health - 2.0 * delta)

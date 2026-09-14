@@ -14,6 +14,7 @@ var spoilage_rate := 0.0
 
 const PERISHABLE_FOODS := {
 	"Carne cruda": 0.5,
+	"Carne cruda de ave": 0.5,
 	"Carne cruda de ciervo": 0.5,
 	"Carne cruda de zorro": 0.5,
 	"Carne cruda de lobo": 0.5,
@@ -54,6 +55,11 @@ static func create(new_name: String, new_type: String, new_weight: float, new_qu
 	item.weight = new_weight
 	item.quantity = new_quantity
 	item.use_value = new_use_value
+	if new_type == "tool_matches":
+		# One physical box, with ten charges stored in durability.
+		item.quantity = 1
+		item.max_durability = 10.0
+		item.durability = 10.0
 	if new_type == "clothing" and CLOTHING_STORAGE.has(new_name):
 		item.storage_capacity = CLOTHING_STORAGE[new_name]
 	return item
@@ -72,6 +78,8 @@ func duplicate_stack():
 func can_stack_with(other) -> bool:
 	if other == null or item_name != other.item_name or item_type != other.item_type or use_value != other.use_value:
 		return false
+	if item_type == "tool_matches":
+		return false # each box keeps its own remaining-charge state
 	if weight != other.weight or durability != other.durability or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
 		return false
 	if get_meta_list().size() != other.get_meta_list().size():
@@ -113,6 +121,16 @@ static func from_dict(data: Dictionary):
 	item.max_durability = float(data.get("max_durability", 100.0))
 	item.storage_capacity = int(data.get("storage_capacity", 0))
 	item.spoilage = float(data.get("spoilage", 0.0))
+	# Older saves used the generic "tool" type for the axe. Normalize it so
+	# hands, inventory thumbnails and tree interaction all use the axe model.
+	if item.item_name == "Hacha" and item.item_type == "tool":
+		item.item_type = "tool_axe"
+	if item.item_type == "tool_matches":
+		# Migrate old saves where quantity represented the ten uses.
+		var old_quantity := int(data.get("quantity", 1))
+		item.quantity = 1
+		item.max_durability = float(data.get("max_durability", 10.0))
+		item.durability = float(data.get("durability", old_quantity if old_quantity > 1 else 10))
 	if item.item_type == "clothing" and item.storage_capacity == 0 and CLOTHING_STORAGE.has(item.item_name):
 		item.storage_capacity = CLOTHING_STORAGE[item.item_name]
 	if data.has("clothing_color"):

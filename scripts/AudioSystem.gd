@@ -80,6 +80,9 @@ var wolf_calls: Array = []
 var step_timer := 0.0
 var step_index := 0
 var animal_call_timer := 18.0
+var _spatial_audio_refresh_accum := 0.10
+var _cached_river_audio: Dictionary = {}
+var _cached_forest_audio: Dictionary = {}
 
 func setup(new_player, new_day_cycle) -> void:
 	player = new_player
@@ -94,9 +97,14 @@ func setup(new_player, new_day_cycle) -> void:
 func _process(delta: float) -> void:
 	if player == null or day_cycle == null:
 		return
-	_update_ambience()
-	_update_river(delta)
-	_update_forest_ambience(delta)
+	_spatial_audio_refresh_accum += delta
+	var refresh_spatial := _spatial_audio_refresh_accum >= 0.10
+	if refresh_spatial:
+		_spatial_audio_refresh_accum = 0.0
+	if refresh_spatial:
+		_update_ambience()
+	_update_river(delta, refresh_spatial)
+	_update_forest_ambience(delta, refresh_spatial)
 	_update_animal_calls(delta)
 	_update_footsteps(delta)
 
@@ -365,18 +373,21 @@ func _update_ambience() -> void:
 	if wind_player.stream != null:
 		wind_player.volume_db = -8.0 if player.in_shelter else -3.0
 
-func _update_river(delta: float) -> void:
+func _update_river(delta: float, refresh_spatial := true) -> void:
 	if river_player == null or river_player.stream == null:
 		return
-	var scene := get_tree().current_scene
-	if scene == null or not scene.has_method("get_nearest_river_audio_point"):
+	if refresh_spatial or _cached_river_audio.is_empty():
+		var scene := get_tree().current_scene
+		if scene == null or not scene.has_method("get_nearest_river_audio_point"):
+			_cached_river_audio.clear()
+		else:
+			var sampled = scene.call("get_nearest_river_audio_point", player.global_position)
+			_cached_river_audio = sampled if sampled is Dictionary else {}
+	if _cached_river_audio.is_empty():
 		river_player.volume_db = lerp(river_player.volume_db, -80.0, delta * 2.0)
 		return
-	var data = scene.call("get_nearest_river_audio_point", player.global_position)
-	if not (data is Dictionary):
-		return
-	var river_pos: Vector3 = data.get("position", player.global_position)
-	var distance: float = float(data.get("distance", 999.0))
+	var river_pos: Vector3 = _cached_river_audio.get("position", player.global_position)
+	var distance: float = float(_cached_river_audio.get("distance", 999.0))
 	river_player.global_position = river_pos
 	var target_volume := -80.0
 	if player.is_in_water:
@@ -387,18 +398,20 @@ func _update_river(delta: float) -> void:
 	if target_volume > -75.0 and not river_player.playing:
 		river_player.play()
 
-func _update_forest_ambience(delta: float) -> void:
+func _update_forest_ambience(delta: float, refresh_spatial := true) -> void:
 	if forest_player == null or player == null:
 		return
-	var scene := get_tree().current_scene
-	if scene == null or not scene.has_method("get_forest_audio_point"):
+	if refresh_spatial or _cached_forest_audio.is_empty():
+		var scene := get_tree().current_scene
+		if scene == null or not scene.has_method("get_forest_audio_point"):
+			_cached_forest_audio.clear()
+		else:
+			var sampled = scene.call("get_forest_audio_point", player.global_position)
+			_cached_forest_audio = sampled if sampled is Dictionary else {}
+	if _cached_forest_audio.is_empty():
 		forest_player.volume_db = lerp(forest_player.volume_db, -80.0, delta * 2.0)
 		return
-	var data = scene.call("get_forest_audio_point", player.global_position)
-	if not (data is Dictionary):
-		return
-	var forest_pos: Vector3 = data.get("position", player.global_position)
-	var distance: float = float(data.get("distance", 999.0))
+	var distance: float = float(_cached_forest_audio.get("distance", 999.0))
 	var target_vol := -80.0
 	if distance < 75.0:
 		target_vol = lerp(-5.0, -28.0, clamp((distance - 8.0) / 67.0, 0.0, 1.0))
