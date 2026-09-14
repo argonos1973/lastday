@@ -6806,13 +6806,19 @@ func _execute_world_action(action, actor) -> void:
 				"Higo":
 					fruit_use = 12.0
 					fruit_weight = 0.10
-			var new_item = ItemScript.create(fruit_name, fruit_type, fruit_weight, fruit_qty, fruit_use)
-			var added_ok: bool = actor.inventory.add_item(new_item)
-			if added_ok:
-				actor.notice.emit("Recoges %d %ss." % [fruit_qty, fruit_name.to_lower()])
-			else:
-				var w: float = actor.inventory.get_total_weight()
-				actor.notice.emit("No se añadio %s. Peso: %.1f/%.1f Slots: %d/%d" % [fruit_name, w, actor.inventory.max_weight, actor.inventory.items.size(), actor.inventory.max_slots])
+			# Drop fruit on the ground near the tree instead of adding to inventory.
+			# Spread them around the tree base so they don't overlap.
+			var tree_pos: Vector3 = action.global_position if action is Node3D else Vector3.ZERO
+			for fi in range(fruit_qty):
+				var f_angle := (float(fi) / float(fruit_qty)) * TAU + randf_range(-0.4, 0.4)
+				var f_dist := randf_range(1.2, 2.5)
+				var fpos := tree_pos + Vector3(cos(f_angle) * f_dist, 0.0, sin(f_angle) * f_dist)
+				fpos.y = _get_exact_ground_y(fpos.x, fpos.z) + 0.06
+				var drop_id := "fruit_%d_%d" % [Time.get_ticks_msec(), fi]
+				_spawn_dropped_item_visual(drop_id, fruit_name, fruit_type, fruit_weight, 1, fruit_use, fpos, Color(0, 0, 0, 0), false, 0.0)
+				if net != null and net.is_connected and not net.is_host:
+					net.item_dropped.rpc_id(1, drop_id, fruit_name, fruit_type, fruit_weight, 1, fruit_use, fpos, Color(0, 0, 0, 0))
+			actor.notice.emit("Recoges %d %ss del suelo." % [fruit_qty, fruit_name.to_lower()])
 			# Set cooldown: 300 seconds (5 minutes real time)
 			action.set_meta("fruit_ready_time", now + 300.0)
 			_save_world_change_silent()
