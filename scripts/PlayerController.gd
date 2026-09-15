@@ -5670,6 +5670,16 @@ func _sync_third_person_equipment(held_item) -> void:
 		_store_inventory_rifle_on_back()
 	else:
 		_clear_rifle_on_back()
+	# Caña de pescar: si está en el inventario y no en mano, moverla a la espalda
+	var _has_rod_in_inventory := false
+	if inventory != null and not inventory.items.is_empty():
+		for item in inventory.items:
+			if item != null and str(item.item_type) == "tool_fishing":
+				_has_rod_in_inventory = true
+				break
+	var _rod_in_hands := held_item != null and str(held_item.item_type) == "tool_fishing"
+	if _has_rod_in_inventory and not _rod_in_hands and not _has_stored_back_item_type("tool_fishing") and _back_slot_count() < 2:
+		_store_inventory_fishing_rod_on_back()
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			_build_third_person_rifle()
@@ -5947,39 +5957,45 @@ func _has_stored_back_item_type(item_type: String) -> bool:
 	return false
 
 func _store_inventory_rifle_on_back() -> bool:
+	return _store_inventory_item_type_on_back("weapon_rifle", "el rifle")
+
+func _store_inventory_fishing_rod_on_back() -> bool:
+	return _store_inventory_item_type_on_back("tool_fishing", "la caña")
+
+func _store_inventory_item_type_on_back(item_type: String, label: String) -> bool:
 	if inventory == null:
 		return false
 	var slot := _find_free_back_slot()
 	if slot < 0:
 		return false
-	var rifle_index := -1
-	var rifle = null
+	var item_index := -1
+	var item = null
 	for index in range(inventory.items.size()):
 		var candidate = inventory.items[index]
-		if candidate != null and str(candidate.item_type) == "weapon_rifle":
-			rifle_index = index
-			rifle = candidate
+		if candidate != null and str(candidate.item_type) == item_type:
+			item_index = index
+			item = candidate
 			break
-	if rifle_index < 0 or rifle == null:
+	if item_index < 0 or item == null:
 		return false
 	_stored_back_items[slot] = {
-		"name": str(rifle.item_name),
-		"type": str(rifle.item_type),
-		"weight": float(rifle.weight),
-		"use_value": float(rifle.use_value),
-		"durability": float(rifle.durability),
-		"max_durability": float(rifle.max_durability),
-		"spoilage": float(rifle.spoilage)
+		"name": str(item.item_name),
+		"type": str(item.item_type),
+		"weight": float(item.weight),
+		"use_value": float(item.use_value),
+		"durability": float(item.durability),
+		"max_durability": float(item.max_durability),
+		"spoilage": float(item.spoilage)
 	}
-	# Remove exactly one physical rifle. A stack, if present, keeps its
+	# Remove exactly one physical item. A stack, if present, keeps its
 	# remaining units in the inventory.
-	if int(rifle.quantity) > 1:
-		rifle.quantity -= 1
+	if int(item.quantity) > 1:
+		item.quantity -= 1
 	else:
-		inventory.items.remove_at(rifle_index)
+		inventory.items.remove_at(item_index)
 	_build_stored_back_visual(slot)
 	inventory.changed.emit()
-	notice.emit("Guardas el rifle en el hombro %s." % _back_shoulder_label(slot))
+	notice.emit("Guardas %s en el hombro %s." % [label, _back_shoulder_label(slot)])
 	return true
 
 func can_store_item_on_back(item) -> bool:
