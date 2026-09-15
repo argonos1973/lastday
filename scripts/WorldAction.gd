@@ -346,9 +346,12 @@ func _player_has_axe(player) -> bool:
 	var held = player.get_held_item()
 	if held == null:
 		return false
-	if held.item_type == "tool_axe":
+	if held.item_type in ["tool_axe", "axe_tool"]:
 		return true
 	if held.item_type == "tool" and held.item_name == "Hacha":
+		return true
+	# Fallback by name (matches PlayerController.has_axe_in_hand)
+	if str(held.item_name) == "Hacha":
 		return true
 	return false
 
@@ -360,7 +363,7 @@ func _player_has_blade(player) -> bool:
 		return false
 	if held.item_type == "weapon":
 		return true
-	if held.item_type == "tool_axe":
+	if held.item_type in ["tool_axe", "axe_tool"]:
 		return true
 	if held.item_type == "tool" and held.item_name == "Hacha":
 		return true

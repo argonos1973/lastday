@@ -123,7 +123,7 @@ static func from_dict(data: Dictionary):
 	item.spoilage = float(data.get("spoilage", 0.0))
 	# Older saves used the generic "tool" type for the axe. Normalize it so
 	# hands, inventory thumbnails and tree interaction all use the axe model.
-	if item.item_name == "Hacha" and item.item_type == "tool":
+	if item.item_name == "Hacha" and item.item_type in ["tool", "axe_tool"]:
 		item.item_type = "tool_axe"
 	if item.item_type == "tool_matches":
 		# Migrate old saves where quantity represented the ten uses.
