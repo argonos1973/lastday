@@ -12,7 +12,7 @@ class_name InteractionRaycast
 @export var camera_trace_distance := 7.0
 
 var _cached_interactables: Array = []
-var _interactable_cache_timer := 0.0
+var _interactable_cache_timer := -1
 
 func _ready() -> void:
 	target_position = Vector3(0.0, 0.0, -interaction_distance)
@@ -77,39 +77,43 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 	if absf(target_pos.y - player_pos.y) > 2.0:
 		return false
 	if target is WorldAction and target.action_type == "pickup_item":
-		return player_pos.distance_to(target_pos) <= minf(interaction_distance, 2.0)
-	var flat_distance := Vector2(player_pos.x, player_pos.z).distance_to(Vector2(target_pos.x, target_pos.z))
+		var reach := minf(interaction_distance, 2.0)
+		return player_pos.distance_squared_to(target_pos) <= reach * reach
+	var flat_distance_squared := Vector2(player_pos.x, player_pos.z).distance_squared_to(Vector2(target_pos.x, target_pos.z))
+	# árboles y arbustos requieren estar muy cerca
+	if target is WorldAction:
+		var wa := target as WorldAction
+		if wa.action_type == "fell_tree":
+			return flat_distance_squared <= 4.0
+		elif wa.action_type == "fell_bush":
+			return flat_distance_squared <= 2.25
 	var reach_padding := 0.0
 	if target is CollisionObject3D:
 		for child in (target as Node).get_children():
 			if child is CollisionShape3D and (child as CollisionShape3D).shape is BoxShape3D:
 				var box := (child as CollisionShape3D).shape as BoxShape3D
 				reach_padding = max(reach_padding, max(box.size.x, box.size.z) * 0.5)
-	# árboles y arbustos requieren estar muy cerca
-	if target is WorldAction:
-		var wa := target as WorldAction
-		if wa.action_type == "fell_tree":
-			return flat_distance <= 2.0
-		elif wa.action_type == "fell_bush":
-			return flat_distance <= 1.5
-	return flat_distance <= interaction_distance + reach_padding
+	var padded_reach := interaction_distance + reach_padding
+	return flat_distance_squared <= padded_reach * padded_reach
 
 func _find_nearest_interactable(player: Node3D) -> Object:
 	if player == null or player.get_tree() == null:
 		return null
-	_interactable_cache_timer += 1.0 / 60.0
-	if _interactable_cache_timer >= 0.5 or _cached_interactables.is_empty():
-		_interactable_cache_timer = 0.0
-		_cached_interactables = player.get_tree().get_nodes_in_group("interactable")
+	var now := Time.get_ticks_msec()
+	if _interactable_cache_timer < 0 or now >= _interactable_cache_timer:
+		_interactable_cache_timer = now + 500
+		_cached_interactables = player.get_tree().get_nodes_in_group("interactable").filter(func(node: Node): return not node is WorldAction)
 	var player_pos := player.global_position
+	var candidates := WorldAction.get_nearby_interactables(player_pos)
+	candidates.append_array(_cached_interactables)
+	candidates = candidates.filter(func(node): return is_instance_valid(node) and node.is_inside_tree() and node.is_in_group("interactable"))
+	candidates.sort_custom(func(a: Node, b: Node): return b.is_greater_than(a))
 	var best: Object = null
 	var best_dist := 999.0
-	for node in _cached_interactables:
+	for node in candidates:
 		if not is_instance_valid(node):
 			continue
 		if not (node is Node3D):
-			continue
-		if not _is_close_enough(player, node):
 			continue
 		if node is WorldAction:
 			var wa := node as WorldAction
@@ -118,6 +122,8 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 			# Only use fallback for choppable objects and pickup items
 			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log" and wa.action_type != "pickup_item" and wa.action_type != "eat_food" and wa.action_type != "light_campfire" and wa.action_type != "cook":
 				continue
+		if not _is_close_enough(player, node):
+			continue
 		var node_pos := (node as Node3D).global_position
 		var dx := player_pos.x - node_pos.x
 		var dz := player_pos.z - node_pos.z

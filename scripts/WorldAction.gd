@@ -2,7 +2,11 @@ extends StaticBody3D
 class_name WorldAction
 
 @export var action_id := ""
-@export var action_type := ""
+@export var action_type := "":
+	set(value):
+		_remove_interaction_index()
+		action_type = value
+		_update_interaction_index()
 @export var display_name := ""
 @export var depleted := false
 @export var repeatable := false
@@ -14,6 +18,67 @@ var _rot_timer := 0.0
 var _mesh_instance: MeshInstance3D
 var _collision: CollisionShape3D
 var _visual_children: Array[Node] = []
+
+const INTERACTION_CELL_SIZE := 4.0
+static var _interaction_cells: Dictionary = {}
+static var _wide_interactions: Dictionary = {}
+var _interaction_cell := Vector2i.ZERO
+var _interaction_indexed := false
+var _interaction_spatial := false
+
+func _enter_tree() -> void:
+	set_notify_transform(true)
+	_update_interaction_index()
+
+func _exit_tree() -> void:
+	_remove_interaction_index()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSFORM_CHANGED:
+		_update_interaction_index()
+
+func _update_interaction_index() -> void:
+	if not is_inside_tree():
+		return
+	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item"]
+	var pos := global_position
+	var cell := Vector2i(floori(pos.x / INTERACTION_CELL_SIZE), floori(pos.z / INTERACTION_CELL_SIZE))
+	if _interaction_indexed and _interaction_spatial == spatial and (not spatial or cell == _interaction_cell):
+		return
+	_remove_interaction_index()
+	_interaction_cell = cell
+	_interaction_spatial = spatial
+	if spatial:
+		if not _interaction_cells.has(cell):
+			_interaction_cells[cell] = {}
+		_interaction_cells[cell][get_instance_id()] = self
+	elif action_type in ["cut_log", "eat_food", "light_campfire", "cook"]:
+		_wide_interactions[get_instance_id()] = self
+	else:
+		return
+	_interaction_indexed = true
+
+func _remove_interaction_index() -> void:
+	if not _interaction_indexed:
+		return
+	if _interaction_spatial:
+		var entries: Dictionary = _interaction_cells.get(_interaction_cell, {})
+		entries.erase(get_instance_id())
+		if entries.is_empty():
+			_interaction_cells.erase(_interaction_cell)
+	else:
+		_wide_interactions.erase(get_instance_id())
+	_interaction_indexed = false
+
+static func get_nearby_interactables(pos: Vector3) -> Array:
+	var candidates: Array = _wide_interactions.values()
+	var min_cell := Vector2i(floori((pos.x - 2.0) / INTERACTION_CELL_SIZE), floori((pos.z - 2.0) / INTERACTION_CELL_SIZE))
+	var max_cell := Vector2i(floori((pos.x + 2.0) / INTERACTION_CELL_SIZE), floori((pos.z + 2.0) / INTERACTION_CELL_SIZE))
+	for x in range(min_cell.x, max_cell.x + 1):
+		for z in range(min_cell.y, max_cell.y + 1):
+			var entries: Dictionary = _interaction_cells.get(Vector2i(x, z), {})
+			candidates.append_array(entries.values())
+	return candidates
 
 func setup(id: String, type: String, label: String, size: Vector3, color: Color, can_repeat := false, marker_visible := true) -> void:
 	action_id = id
