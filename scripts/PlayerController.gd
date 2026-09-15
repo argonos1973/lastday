@@ -615,6 +615,9 @@ var _turn_input := 0.0
 var _water_depth := 0.0
 
 var _water_step_timer := 0.0
+var _water_step_left := false
+var _water_ripple_shader: Shader
+var _water_droplet_mesh: SphereMesh
 var _water_sink := 0.0
 var _water_notice_cooldown := 0.0
 var _water_query_timer := 0.0
@@ -3127,15 +3130,29 @@ func _update_water_state(delta: float) -> void:
 		_water_depth = river_depth
 		is_in_water = river_depth > 0.02
 	if is_in_water:
-		if _water_step_timer <= 0.0 and Vector2(velocity.x, velocity.z).length() > 0.4:
+		var water_speed := Vector2(velocity.x, velocity.z).length()
+		if _water_step_timer <= 0.0 and water_speed > 0.4 and is_on_floor():
 			var water_scene := get_tree().current_scene
-			var splash_pos := global_position
-			if water_scene != null and water_scene.has_method("get_river_surface_y_at"):
+			var motion := Vector3(velocity.x, 0.0, velocity.z)
+			_water_step_left = not _water_step_left
+			var side := -1.0 if _water_step_left else 1.0
+			var splash_pos := global_position + global_basis.x.normalized() * side * 0.16
+			if is_instance_valid(_hand_skeleton):
+				var foot_name := "LeftFoot" if _water_step_left else "RightFoot"
+				for prefix in ["mixamorig:", "mixamorig_", ""]:
+					var foot_idx := _hand_skeleton.find_bone(prefix + foot_name)
+					if foot_idx >= 0:
+						splash_pos = _hand_skeleton.global_transform * _hand_skeleton.get_bone_global_pose(foot_idx).origin
+						break
+			if water_scene != null and water_scene.has_method("get_river_surface_y_at") and water_scene.has_method("get_river_depth_at"):
+				if float(water_scene.get_river_depth_at(splash_pos)) > 0.02:
 					splash_pos.y = float(water_scene.get_river_surface_y_at(splash_pos))
-			_spawn_water_splash(splash_pos)
-			_spawn_water_ripples(splash_pos)
-			_play_water_step_sound(splash_pos)
-			_water_step_timer = 0.45 if is_sprinting else 0.7
+					var strength := clampf(water_speed / 5.0, 0.2, 0.8)
+					var spray_strength := strength * lerpf(1.0, 0.45, clampf(_water_depth / 1.2, 0.0, 1.0))
+					_spawn_water_splash(splash_pos, spray_strength, motion)
+					_spawn_water_ripples(splash_pos, strength, motion)
+					_play_water_step_sound(splash_pos)
+			_water_step_timer = clampf(0.95 / water_speed, 0.28, 0.65)
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = wetness
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
@@ -5453,79 +5470,120 @@ func _get_water_audio():
 		owner_node = owner_node.get_parent()
 	return null
 
-func _spawn_water_splash(at_pos: Vector3) -> void:
+func _spawn_water_splash(at_pos: Vector3, strength: float = 1.0, motion: Vector3 = Vector3.ZERO) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	strength = clampf(strength, 0.1, 1.0)
+	if _water_droplet_mesh == null:
+		_water_droplet_mesh = SphereMesh.new()
+		_water_droplet_mesh.radius = 0.012
+		_water_droplet_mesh.height = 0.034
+		_water_droplet_mesh.radial_segments = 8
+		_water_droplet_mesh.rings = 4
+		var droplet_mat := StandardMaterial3D.new()
+		droplet_mat.albedo_color = Color(0.64, 0.77, 0.80, 0.72)
+		droplet_mat.roughness = 0.16
+		droplet_mat.metallic_specular = 0.8
+		droplet_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		droplet_mat.vertex_color_use_as_albedo = true
+		_water_droplet_mesh.material = droplet_mat
 	var particles := GPUParticles3D.new()
 	particles.name = "WaterSplash"
-	particles.amount = 64
-	particles.lifetime = 1.0
-	particles.explosiveness = 1.0
+	particles.emitting = false
+	particles.amount = int(lerpf(14.0, 48.0, strength))
+	particles.lifetime = lerpf(0.38, 0.8, strength)
+	particles.explosiveness = 0.94
 	particles.one_shot = true
+	particles.local_coords = false
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var mat := ParticleProcessMaterial.new()
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 65.0
-	mat.initial_velocity_min = 2.0
-	mat.initial_velocity_max = 4.5
+	mat.direction = (Vector3.UP + motion.limit_length(5.0) * 0.12).normalized()
+	mat.spread = lerpf(48.0, 65.0, strength)
+	mat.initial_velocity_min = lerpf(0.65, 1.6, strength)
+	mat.initial_velocity_max = lerpf(1.2, 3.4, strength)
 	mat.gravity = Vector3(0, -9.8, 0)
-	mat.scale_min = 0.12
-	mat.scale_max = 0.45
-	mat.color = Color(0.75, 0.85, 0.95, 0.85)
-	mat.color_ramp = _make_fade_ramp(0.05, 0.5)
+	mat.scale_min = 0.35
+	mat.scale_max = lerpf(0.85, 1.5, strength)
+	mat.color_ramp = _make_fade_ramp(0.03, 0.35)
 	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	mat.emission_sphere_radius = 0.12
-	particles.visibility_aabb = AABB(Vector3(-4, -2, -4), Vector3(8, 6, 8))
+	mat.emission_sphere_radius = lerpf(0.045, 0.14, strength)
+	particles.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
 	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.12, 0.12), Color.WHITE)
+	particles.draw_pass_1 = _water_droplet_mesh
 	scene.add_child(particles)
-	particles.global_position = at_pos + Vector3(0, 0.1, 0)
+	particles.global_position = at_pos + Vector3(0, 0.025, 0)
 	particles.emitting = true
-	get_tree().create_timer(2.0).timeout.connect(func(): particles.queue_free())
+	var cleanup := particles.create_tween()
+	cleanup.tween_interval(particles.lifetime + 0.2)
+	cleanup.tween_callback(particles.queue_free)
 
 # Ondas concéntricas en el agua: anillos que se expanden y se desvanecen
-func _spawn_water_ripples(at_pos: Vector3) -> void:
+func _spawn_water_ripples(at_pos: Vector3, strength: float = 1.0, motion: Vector3 = Vector3.ZERO) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	for i in range(4):
+	strength = clampf(strength, 0.1, 1.0)
+	if _water_ripple_shader == null:
+		_water_ripple_shader = Shader.new()
+		_water_ripple_shader.code = """
+shader_type spatial;
+render_mode cull_disabled, blend_mix, depth_draw_never;
+uniform float progress = 0.0;
+uniform float travel = 1.0;
+uniform float phase = 0.0;
+uniform float opacity = 0.3;
+void vertex() {
+	vec2 radial = normalize(VERTEX.xz);
+	float angle = atan(radial.y, radial.x);
+	float wobble = sin(angle * 5.0 + phase) * 0.012 + sin(angle * 9.0 - phase) * 0.006;
+	VERTEX.xz += radial * (travel * progress + wobble * smoothstep(0.0, 0.2, progress));
+	VERTEX.y *= 1.0 - progress * 0.8;
+}
+void fragment() {
+	float breakup = 0.65 + 0.35 * sin(UV.x * 43.9823 + phase + progress * 2.0);
+	float envelope = smoothstep(0.0, 0.08, progress) * pow(1.0 - progress, 1.7);
+	ALBEDO = vec3(0.40, 0.57, 0.60);
+	ROUGHNESS = 0.19;
+	SPECULAR = 0.8;
+	ALPHA = opacity * envelope * breakup;
+}
+"""
+	var ring_count := 3 if strength >= 0.65 else 2
+	for i in range(ring_count):
 		var ring := MeshInstance3D.new()
 		ring.name = "WaterRipple_%d" % i
 		var ring_mesh := TorusMesh.new()
-		ring_mesh.inner_radius = 0.13
-		ring_mesh.outer_radius = 0.15
+		ring_mesh.inner_radius = 0.10
+		ring_mesh.outer_radius = 0.13
 		ring_mesh.rings = 64
-		ring_mesh.ring_segments = 8
+		ring_mesh.ring_segments = 6
 		ring.mesh = ring_mesh
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.8, 0.9, 1.0, 0.6)
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.no_depth_test = false
+		var mat := ShaderMaterial.new()
+		mat.shader = _water_ripple_shader
+		var travel := lerpf(0.45, 1.65, strength) * (1.0 - float(i) * 0.12)
+		mat.set_shader_parameter("travel", travel)
+		mat.set_shader_parameter("phase", randf_range(0.0, TAU))
+		mat.set_shader_parameter("opacity", lerpf(0.30, 0.55, strength) / (1.0 + float(i) * 0.4))
 		ring.material_override = mat
 		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ring.custom_aabb = AABB(Vector3(-2.0, -0.1, -2.0), Vector3(4.0, 0.2, 4.0))
 		scene.add_child(ring)
-		ring.global_position = at_pos + Vector3(0, 0.02, 0)
+		ring.global_position = at_pos + Vector3(0, 0.022 + float(i) * 0.002, 0)
+		ring.rotation.y = atan2(motion.x, motion.z)
+		ring.scale = Vector3(1.0, 0.22, 1.0 + minf(motion.length() * 0.025, 0.12))
 		# TorusMesh ya está orientado alrededor del eje Y: queda horizontal sobre
 		# la superficie del agua (rotarlo en X lo dejaba vertical).
 		# Animar expansión y fade
 		ring.visible = false
-		var delay := i * 0.20
-		var tween := create_tween()
+		var delay := i * 0.16
+		var tween := ring.create_tween()
 		tween.tween_interval(delay)
 		tween.tween_callback(func(): ring.visible = true)
-		var start_scale := 1.0
-		var end_scale := 9.0 + i * 2.0
-		tween.tween_method(func(s: float):
-			if not is_instance_valid(ring):
-				return
-			ring.scale = Vector3(s, 0.12, s)
-			var t := (s - start_scale) / (end_scale - start_scale)
-			mat.albedo_color.a = 0.6 * (1.0 - t)
-		, start_scale, end_scale, 2.4)
-		tween.tween_callback(func():
-			if is_instance_valid(ring):
-				ring.queue_free())
+		tween.tween_method(func(progress: float):
+			mat.set_shader_parameter("progress", progress)
+		, 0.0, 1.0, lerpf(1.1, 2.1, strength))
+		tween.tween_callback(ring.queue_free)
 #endregion
 
 
