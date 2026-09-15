@@ -13,6 +13,8 @@ class_name InteractionRaycast
 
 var _cached_interactables: Array = []
 var _interactable_cache_timer := -1
+var _cached_fell_trees: Array = []
+var _fell_tree_cache_timer := -1
 
 func _ready() -> void:
 	target_position = Vector3(0.0, 0.0, -interaction_distance)
@@ -105,6 +107,19 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 		_cached_interactables = player.get_tree().get_nodes_in_group("interactable").filter(func(node: Node): return not node is WorldAction)
 	var player_pos := player.global_position
 	var candidates := WorldAction.get_nearby_interactables(player_pos)
+	# Safety net: ensure fell_tree actions are always checked. Trees are rare
+	# (only a few active near the player at any time) so scanning them directly
+	# is cheap and guards against any spatial-index timing edge case.
+	var _has_fell_tree := false
+	for _c in candidates:
+		if _c is WorldAction and (_c as WorldAction).action_type == "fell_tree":
+			_has_fell_tree = true
+			break
+	if not _has_fell_tree:
+		if _fell_tree_cache_timer < 0 or now >= _fell_tree_cache_timer:
+			_fell_tree_cache_timer = now + 500
+			_cached_fell_trees = player.get_tree().get_nodes_in_group("world_actions").filter(func(n): return n is WorldAction and (n as WorldAction).action_type == "fell_tree")
+		candidates.append_array(_cached_fell_trees)
 	candidates.append_array(_cached_interactables)
 	candidates = candidates.filter(func(node): return is_instance_valid(node) and node.is_inside_tree() and node.is_in_group("interactable"))
 	candidates.sort_custom(func(a: Node, b: Node): return b.is_greater_than(a))
