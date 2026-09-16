@@ -133,7 +133,7 @@ static func from_dict(data: Dictionary):
 		item.durability = float(data.get("durability", old_quantity if old_quantity > 1 else 10))
 	if item.item_type == "clothing" and item.storage_capacity == 0 and CLOTHING_STORAGE.has(item.item_name):
 		item.storage_capacity = CLOTHING_STORAGE[item.item_name]
-	if data.has("clothing_color"):
+	if data.has("clothing_color") and item.item_type == "clothing":
 		var c_arr = data["clothing_color"]
 		if c_arr is Array and c_arr.size() >= 3:
 			item.set_meta("clothing_color", Color(float(c_arr[0]), float(c_arr[1]), float(c_arr[2]), float(c_arr[3]) if c_arr.size() > 3 else 1.0))

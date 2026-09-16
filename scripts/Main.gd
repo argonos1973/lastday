@@ -6381,7 +6381,7 @@ func _execute_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			if action.has_meta("item_color"):
+			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
@@ -7146,7 +7146,7 @@ func handle_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			if action.has_meta("item_color"):
+			if str(eat_item.item_type) == "clothing" and action.has_meta("item_color"):
 				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				eat_item.spoilage = float(action.get_meta("item_spoilage"))
@@ -7166,7 +7166,7 @@ func handle_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			if action.has_meta("item_color"):
+			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
