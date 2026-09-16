@@ -652,13 +652,8 @@ func _get_next_tip() -> String:
 func _cleanup_tent_rifle() -> void:
 	if player == null or not is_instance_valid(player) or player.inventory == null:
 		return
-	var has_rifle := false
-	for item in player.inventory.items:
-		if item != null and str(item.item_type) == "weapon_rifle":
-			has_rifle = true
-			break
-	if not has_rifle and not _depleted_action_ids.has("tent_loot_rifle"):
-		return
+	# The fixed tent rifle spawn no longer exists — always strip any leftover
+	# pickup from older saves (never touches a rifle already in the inventory).
 	# Remove the tent rifle WorldAction and its visual model
 	if world_actions_by_id.has("tent_loot_rifle"):
 		var action = world_actions_by_id["tent_loot_rifle"]
@@ -678,9 +673,9 @@ func _cleanup_tent_rifle() -> void:
 		rifle_visual.queue_free()
 	# Search for any node in world_action_visual group containing rifle in name
 	for node in get_tree().get_nodes_in_group("world_action_visual"):
-		if node is Node3D and (String(node.name).findn("rifle") >= 0 or String(node.name).findn("tent_loot_rifle") >= 0):
+		if node is Node3D and String(node.name).findn("tent_loot_rifle") >= 0:
 			node.queue_free()
-	if has_rifle and not _depleted_action_ids.has("tent_loot_rifle"):
+	if not _depleted_action_ids.has("tent_loot_rifle"):
 		_depleted_action_ids.append("tent_loot_rifle")
 
 func _process_loading_countdown(delta: float) -> void:
@@ -1737,11 +1732,6 @@ func _create_player() -> void:
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
-	# Equip rifle for testing
-	if player.inventory != null:
-		var rifle_item = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0)
-		player.inventory.add_item(rifle_item)
-		player.equip_item_by_name("Rifle francotirador")
 	# Apply pending spawn position if received before player was ready
 	if _has_pending_spawn_pos:
 		player.global_position = _pending_spawn_pos
@@ -5682,7 +5672,6 @@ func _create_house_loot() -> void:
 	_create_backpack_pickup("remote_barn_backpack_0", _find_pos_inside_house(remote_barn_origin, remote_barn_half_w - 1.0, remote_barn_half_d - 1.0) + Vector3(0, remote_barn_ground_y + 0.06, 0))
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
-		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)},
 		# --- Standard green military ---
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 		# --- Blue military variant A ---
@@ -5702,32 +5691,14 @@ func _create_house_loot() -> void:
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
 	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
-	# Guarantee rifle spawn in tent — use fixed ID so it doesn't respawn
-	# Check if player already has a rifle (player may not be created yet, check later)
-	var _player_has_rifle := false
-	if player != null and is_instance_valid(player) and player.inventory != null:
-		for _inv_item in player.inventory.items:
-			if str(_inv_item.item_type) == "weapon_rifle":
-				_player_has_rifle = true
-				break
-	# Also check if rifle was already picked up (depleted)
-	if _depleted_action_ids.has("tent_loot_rifle"):
-		_player_has_rifle = true
-	if not _player_has_rifle:
-		var rifle_data: Dictionary = tent_loot_pool[0].duplicate()
-		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-		rifle_data["pos"].y = tent_ground_y + 0.06
-		rifle_data["id"] = "tent_loot_rifle"
-		_create_pickup_item(rifle_data)
-	else:
-		# Consume the same RNG that _find_pos_inside_house would have consumed
-		# to keep the RNG state in sync for subsequent loot generation
-		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+	# Consume the RNG the old guaranteed rifle spawn used, so the rest of the
+	# tent loot keeps the same deterministic positions as before.
+	_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
-	# Limit to 1 pants max: pick 1 from pants pool (indices 1-4) and 1 from non-pants (5-8)
-	var pants_indices := [1, 2, 3, 4]
-	var other_indices := [5, 6, 7, 8]
+	# Limit to 1 pants max: pick 1 from pants pool (indices 0-3) and 1 from non-pants (4-7)
+	var pants_indices := [0, 1, 2, 3]
+	var other_indices := [4, 5, 6, 7]
 	var guaranteed_clothing: Array = []
 	guaranteed_clothing.append(pants_indices[_world_rng.randi() % pants_indices.size()])
 	guaranteed_clothing.append(other_indices[_world_rng.randi() % other_indices.size()])
@@ -5739,10 +5710,10 @@ func _create_house_loot() -> void:
 		g_data["id"] = "tent_loot_clothing_%d" % _tent_clothing_idx
 		_tent_clothing_idx += 1
 		_create_pickup_item(g_data)
-	# Additional random items (limited) — exclude rifle (index 0) from random pool
+	# Additional random items (limited)
 	var tent_num_items := 1 + _world_rng.randi() % 2
 	for _j in range(tent_num_items):
-		var template: Dictionary = tent_loot_pool[1 + _world_rng.randi() % (tent_loot_pool.size() - 1)]
+		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
 		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		loot_data["pos"].y = tent_ground_y + 0.06
@@ -5754,14 +5725,14 @@ func _create_house_loot() -> void:
 	var remote_tent_half_d := 5.5
 	var remote_tent_ground_y := _get_exact_ground_y(remote_tent_origin.x, remote_tent_origin.z)
 	var remote_tent_loot := [
-		tent_loot_pool[1], # green pants
-		tent_loot_pool[2], # blue pants
-		tent_loot_pool[3], # black pants
-		tent_loot_pool[4], # camo pants
-		tent_loot_pool[5], # gloves
-		tent_loot_pool[6], # canned stew
-		tent_loot_pool[7], # canned tuna
-		tent_loot_pool[8], # plastic bottle
+		tent_loot_pool[0], # green pants
+		tent_loot_pool[1], # blue pants
+		tent_loot_pool[2], # black pants
+		tent_loot_pool[3], # camo pants
+		tent_loot_pool[4], # gloves
+		tent_loot_pool[5], # canned stew
+		tent_loot_pool[6], # canned tuna
+		tent_loot_pool[7], # plastic bottle
 	]
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves)
 	var rt_pants_indices := [0, 1, 2, 3]
