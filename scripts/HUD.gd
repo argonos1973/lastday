@@ -15,6 +15,9 @@ var _prev_health: float = 100.0
 var root: Control
 var status_panel: PanelContainer
 var inventory_panel: PanelContainer
+var craft_panel: PanelContainer = null
+var craft_panel_visible := false
+var craft_panel_items: VBoxContainer = null
 var inventory_grid: GridContainer
 var inventory_weight_label: Label
 var real_clock_label: Label
@@ -215,6 +218,94 @@ func toggle_inventory() -> void:
 	if slot_action_label != null:
 		slot_action_label.text = ""
 
+func _build_craft_panel() -> void:
+	craft_panel = PanelContainer.new()
+	craft_panel.offset_left = 280
+	craft_panel.offset_top = 120
+	craft_panel.offset_right = 760
+	craft_panel.offset_bottom = 600
+	craft_panel.anchor_left = 0.0
+	craft_panel.anchor_top = 0.0
+	craft_panel.anchor_right = 0.0
+	craft_panel.anchor_bottom = 0.0
+	craft_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	craft_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.95), Color(0.45, 0.48, 0.42, 0.7), 1))
+	craft_panel.visible = false
+	root.add_child(craft_panel)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_STOP
+	craft_panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "Crafteo (inventario + suelo cercano) - [K] cerrar"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(title)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(460, 420)
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_child(scroll)
+	craft_panel_items = VBoxContainer.new()
+	craft_panel_items.add_theme_constant_override("separation", 4)
+	craft_panel_items.mouse_filter = Control.MOUSE_FILTER_STOP
+	scroll.add_child(craft_panel_items)
+
+func toggle_craft_panel() -> void:
+	if craft_panel == null:
+		return
+	craft_panel_visible = not craft_panel_visible
+	if craft_panel_visible:
+		_close_context_menu()
+		if inventory_visible:
+			toggle_inventory()
+		_update_craft_panel()
+		craft_panel.visible = true
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		craft_panel.visible = false
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _update_craft_panel() -> void:
+	if craft_panel_items == null or player == null or player.inventory == null:
+		return
+	for child in craft_panel_items.get_children():
+		child.queue_free()
+	var main = player.get_parent()
+	var ground_items: Array = []
+	if main != null and main.has_method("get_nearby_ground_items"):
+		ground_items = main.get_nearby_ground_items(player.global_position, 3.0)
+	var recipes := CraftingSystemScript.get_available_recipes_with_ground(player.inventory.items, ground_items)
+	if recipes.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "No hay recetas disponibles. Acerca los materiales al suelo."
+		empty_label.add_theme_font_size_override("font_size", 13)
+		empty_label.add_theme_color_override("font_color", Color(0.7, 0.65, 0.45))
+		empty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		craft_panel_items.add_child(empty_label)
+		return
+	for recipe in recipes:
+		var recipe_label = CraftingSystemScript.get_recipe_label(recipe)
+		var inputs_text = CraftingSystemScript.get_recipe_inputs_text(recipe)
+		var out: Dictionary = recipe["output"]
+		var out_name: String = str(out["name"])
+		var btn := Button.new()
+		btn.text = "%s\n  -> %s  |  %s" % [recipe_label, out_name, inputs_text]
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.custom_minimum_size = Vector2(440, 48)
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn.pressed.connect(_on_craft_panel_recipe_pressed.bind(recipe))
+		craft_panel_items.add_child(btn)
+
+func _on_craft_panel_recipe_pressed(recipe: Dictionary) -> void:
+	if player == null:
+		return
+	craft_panel_visible = false
+	craft_panel.visible = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if player.has_method("craft_recipe"):
+		player.craft_recipe(recipe)
+
 func show_notice(text: String) -> void:
 	notice_label.text = text
 	notice_timer = 4.0
@@ -234,6 +325,7 @@ func _build_ui() -> void:
 	_build_damage_overlay()
 	_build_status_panel()
 	_build_inventory_panel()
+	_build_craft_panel()
 	_build_center_messages()
 	_build_real_clock_panel()
 	_add_shadows_recursive(root)

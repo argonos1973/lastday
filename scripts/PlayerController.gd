@@ -1433,6 +1433,11 @@ func _input(event: InputEvent) -> void:
 			if not use_back_item():
 				notice.emit("No llevas nada en la espalda.")
 			return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_K:
+		var hud = get_parent().get_node_or_null("HUD")
+		if hud != null and hud.has_method("toggle_craft_panel"):
+			hud.toggle_craft_panel()
+			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 
