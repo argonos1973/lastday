@@ -166,6 +166,14 @@ func tick_growth(delta: float) -> void:
 func get_interaction_text(_player = null) -> String:
 	if has_meta("no_pickup") and bool(get_meta("no_pickup")):
 		return "%s - Ropa rota, no se puede coger" % display_name
+	# Indicador de putrefacción para comida en el suelo
+	var spoil_tag := ""
+	if has_meta("item_spoilage"):
+		var spoil: float = float(get_meta("item_spoilage", 0.0))
+		if spoil >= 100.0:
+			spoil_tag = " (PODRIDO)"
+		elif spoil >= 50.0:
+			spoil_tag = " (CADUCADO)"
 	if action_type == "farm_plot":
 		match action_state:
 			"planted":
@@ -200,11 +208,11 @@ func get_interaction_text(_player = null) -> String:
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat":
 			if _is_clothing():
 				if _player_has_knife(_player) and not _is_footwear():
-					return "%s - [F] Cortar para trapos | [C] Coger" % display_name
-				return "%s - [F] Equipar | [C] Coger" % display_name
-			return "%s - [C] Coger" % display_name
+					return "%s%s - [F] Cortar para trapos | [C] Coger" % [display_name, spoil_tag]
+				return "%s%s - [F] Equipar | [C] Coger" % [display_name, spoil_tag]
+			return "%s%s - [C] Coger" % [display_name, spoil_tag]
 		"eat_food":
-			return "%s - [M] Comer | [C] Coger" % display_name
+			return "%s%s - [M] Comer | [C] Coger" % [display_name, spoil_tag]
 		"wood", "stone":
 			return "%s - [C] Coger" % display_name
 		"forage":
