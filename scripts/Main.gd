@@ -4204,20 +4204,10 @@ func _get_world_y_extent(model_root: Node) -> float:
 	return maximum_y - minimum_y
 
 func _register_server_house_blockers() -> void:
-	var house_data := [
-		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
-		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0},
-		{"origin": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
-		{"origin": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
-		{"origin": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
-		{"origin": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
-		{"origin": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
-		{"origin": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
-		{"origin": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
-		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
-	]
-	for hd in house_data:
-		var origin: Vector3 = hd["origin"]
+	for hd in HOUSE_DATA:
+		if hd.get("barn", false):
+			continue
+		var origin: Vector3 = hd["pos"]
 		var half_w: float = hd["w"] * 0.5
 		var half_d: float = hd["d"] * 0.5
 		var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
@@ -8096,7 +8086,12 @@ const HOUSE_DATA := [
 	{"pos": Vector3(23, 0, 18), "w": 9.0, "d": 7.5},
 	{"pos": Vector3(42, 0, 26), "w": 12.5, "d": 10.0},
 	{"pos": Vector3(-12, 0, 42), "w": 8.0, "d": 7.0},
-	{"pos": Vector3(45, 0, 120), "w": 8.0, "d": 18.0},  # Barn
+	{"pos": Vector3(-35, 0, -40), "w": 10.5, "d": 8.5},
+	{"pos": Vector3(30, 0, -35), "w": 13.0, "d": 10.0},
+	{"pos": Vector3(-45, 0, -5), "w": 9.5, "d": 8.0},
+	{"pos": Vector3(35, 0, -8), "w": 11.0, "d": 9.0},
+	{"pos": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5},
+	{"pos": Vector3(45, 0, 120), "w": 8.0, "d": 18.0, "barn": true},
 ]
 
 func _is_player_in_house(pos: Vector3) -> bool:
@@ -8106,33 +8101,25 @@ func _is_player_in_house(pos: Vector3) -> bool:
 		var half_d: float = hd["d"] * 0.5
 		if abs(pos.x - house_pos.x) < half_w and abs(pos.z - house_pos.z) < half_d:
 			return true
-	return false
-
-func _is_loot_sheltered(pos: Vector3) -> bool:
-	if _is_player_in_house(pos):
-		return true
-	if _is_near_built_shelter(pos):
-		return true
-	# Check barn area
-	var barn_origin := Vector3(45, 0, 120)
-	if abs(pos.x - barn_origin.x) < 4.0 and abs(pos.z - barn_origin.z) < 9.0:
-		return true
-	# Check remote barn area
+	# Remote barn (same footprint as the main barn interior)
 	var remote_barn_origin := Vector3(-340, 0, 280)
 	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
-	# Check tent area
+	# Tent
 	var tent_origin := Vector3(48, 0, -48)
 	if abs(pos.x - tent_origin.x) < 4.0 and abs(pos.z - tent_origin.z) < 4.0:
 		return true
-	# Check remote tent area
+	# Remote tent
 	if _remote_tent_pos != Vector3.ZERO and abs(pos.x - _remote_tent_pos.x) < 4.0 and abs(pos.z - _remote_tent_pos.z) < 5.5:
 		return true
-	# Check hiking hut near lake
+	# Hiking hut near lake
 	var hut_origin := Vector3(250, 0, -258)
 	if abs(pos.x - hut_origin.x) < 6.0 and abs(pos.z - hut_origin.z) < 6.0:
 		return true
 	return false
+
+func _is_loot_sheltered(pos: Vector3) -> bool:
+	return _is_player_in_house(pos) or _is_near_built_shelter(pos)
 
 # Returns nearby dropped items (pickup_item / eat_food WorldActions) within
 # `radius` meters of `player_pos`. Each entry is a Dictionary with:
