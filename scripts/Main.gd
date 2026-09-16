@@ -1218,25 +1218,25 @@ func _create_weather_particles() -> void:
 	_rain_splash_particles.amount = 1500
 	_rain_splash_particles.local_coords = false
 	_rain_splash_particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_rain_splash_particles.lifetime = 0.5
+	_rain_splash_particles.lifetime = 0.35
 	_rain_splash_particles.explosiveness = 0.0
 	_rain_splash_particles.visibility_aabb = AABB(Vector3(-80, -40, -80), Vector3(160, 80, 160))
 	var splash_mat = ParticleProcessMaterial.new()
 	splash_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
 	splash_mat.emission_box_extents = Vector3(30, 0.02, 30)
 	splash_mat.direction = Vector3(0, 1.0, 0)
-	splash_mat.spread = 40.0
-	splash_mat.initial_velocity_min = 2.0
-	splash_mat.initial_velocity_max = 4.5
-	splash_mat.gravity = Vector3(0, -12.0, 0)
-	splash_mat.color = Color(0.75, 0.85, 1.0, 0.85)
-	splash_mat.scale_min = 0.15
-	splash_mat.scale_max = 0.35
+	splash_mat.spread = 25.0
+	splash_mat.initial_velocity_min = 1.2
+	splash_mat.initial_velocity_max = 2.8
+	splash_mat.gravity = Vector3(0, -14.0, 0)
+	splash_mat.color = Color(0.55, 0.68, 0.85, 0.38)
+	splash_mat.scale_min = 0.05
+	splash_mat.scale_max = 0.16
 	_rain_splash_process_mat = splash_mat
 	_rain_splash_particles.process_material = splash_mat
 	var splash_mesh = SphereMesh.new()
-	splash_mesh.radius = 0.08
-	splash_mesh.height = 0.16
+	splash_mesh.radius = 0.05
+	splash_mesh.height = 0.10
 	var splash_surface := StandardMaterial3D.new()
 	splash_surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	splash_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -1298,9 +1298,9 @@ func _update_weather_effects(delta: float) -> void:
 		if splash_active:
 			_rain_splash_particles.amount_ratio = float(int(clamp(rain_amount * 200, 200, 1500))) / 1500.0
 			if _rain_splash_process_mat != null:
-				_rain_splash_process_mat.initial_velocity_min = 3.0 if storm else 2.0
-				_rain_splash_process_mat.initial_velocity_max = 6.0 if storm else 4.5
-				_rain_splash_process_mat.spread = 55.0 if storm else 40.0
+				_rain_splash_process_mat.initial_velocity_min = 2.2 if storm else 1.2
+				_rain_splash_process_mat.initial_velocity_max = 4.2 if storm else 2.8
+				_rain_splash_process_mat.spread = 40.0 if storm else 25.0
 	# Snow (disable completely when no snow)
 	if _snow_particles != null:
 		var snow_active := snow_amount > 0.05 and not is_sheltered
@@ -3565,10 +3565,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			# The low-poly canned-food asset is authored in millimetres. The
 			# generic "Lata de comida" created by older saves uses this same
 			# model, so it must share the small scale as the stew cans.
-			if item_name == "Lata de comida" or item_name.begins_with("Lata de guiso"):
-				return 0.0005
 			if item_name.begins_with("Lata de atun"):
 				return 1.35
+			if item_name.begins_with("Lata de "):
+				return 0.0005
 			return 1.0
 		"backpack":
 			return 1.2
@@ -7243,8 +7243,11 @@ func _execute_world_action_eat(action, actor) -> void:
 	print("[DEBUG handle_world_action_eat] ENTER action_type=%s action_id=%s" % [action.action_type if action != null else "NULL", action.action_id if action != null else "NULL"])
 	match action.action_type:
 		"eat_food":
-			_hide_action_visual(action)
-			action.mark_depleted()
+			var eat_name0: String = str(action.get_meta("item_name", ""))
+			var is_portioned_can := eat_name0.begins_with("Lata de ") and eat_name0.ends_with(" abierta")
+			if not is_portioned_can:
+				_hide_action_visual(action)
+				action.mark_depleted()
 			_play_actor_action(actor, "plant", 1.2)
 			if hud != null:
 				hud.show_countdown("Comiendo", 1.2)
@@ -7257,13 +7260,27 @@ func _execute_world_action_eat(action, actor) -> void:
 			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
+			# Las latas abiertas se comen por porciones: cada uso gasta la mitad
+			# del contenido restante y solo se agotan al llegar a 0.
+			var eat_scale := 1.0
+			var can_new_dur := -1.0
+			if is_portioned_can:
+				var can_max := float(action.get_meta("item_max_durability", 100.0))
+				var can_dur := float(action.get_meta("item_durability", can_max))
+				if can_dur <= 0.0:
+					actor.notice.emit("La lata esta vacia.")
+					return
+				var bite := minf(can_max * 0.5, can_dur)
+				eat_scale = bite / can_max
+				can_new_dur = can_dur - bite
 			if food_spoilage2 >= 100.0 and actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(80.0)
 				actor.notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
 			elif food_spoilage2 >= 50.0 and actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(30.0)
 				actor.notice.emit("Comes comida en mal estado. Te sientes mal.")
-			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
+			var overate: bool = actor.stats.hunger >= actor.stats.max_stat - 2.0
+			if overate:
 				actor.stats.overeat_count += 1
 				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
 					actor.stats.get_sick(45.0)
@@ -7271,18 +7288,37 @@ func _execute_world_action_eat(action, actor) -> void:
 					actor.notice.emit("Has comido demasiado. Te sientes mal del estomago.")
 				else:
 					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
-			else:
+			if not overate or is_portioned_can:
 				var _oh_eat2: float = float(actor.stats.hunger)
 				var _ot_eat2: float = float(actor.stats.thirst)
 				var _ohp_eat2: float = float(actor.stats.health)
-				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
-				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
+				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value * eat_scale)
+				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20 * eat_scale)
+				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35 * eat_scale))
 				var _r_eat2: String = actor.inventory._fmt_restore(_oh_eat2, float(actor.stats.hunger), _ot_eat2, float(actor.stats.thirst), _ohp_eat2, float(actor.stats.health))
-				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat2])
+				if is_portioned_can:
+					var can_max2 := float(action.get_meta("item_max_durability", 100.0))
+					var left_pct := int(clampf(can_new_dur / can_max2, 0.0, 1.0) * 100.0)
+					if can_new_dur <= 0.0:
+						actor.notice.emit("Comes el ultimo trozo de %s.%s" % [eaten_name, _r_eat2])
+					else:
+						actor.notice.emit("Comes un poco de %s. Queda %d%%.%s" % [eaten_name, left_pct, _r_eat2])
+				else:
+					actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat2])
 			actor.stats.changed.emit()
+			if is_portioned_can:
+				var can_qty := int(action.get_meta("item_quantity", 1))
+				_apply_ground_craft_state(action.action_id, 0 if can_new_dur <= 0.0 else can_qty, maxf(can_new_dur, 0.0))
+				if can_new_dur <= 0.0:
+					_net_notify_pickup(action)
+				elif net != null and net.is_connected:
+					if net.is_host:
+						net.ground_craft_state_changed.rpc(action.action_id, can_qty, can_new_dur)
+					else:
+						net.ground_craft_state_changed.rpc_id(1, action.action_id, can_qty, can_new_dur)
+			else:
+				_net_notify_pickup(action)
 			_save_world_change_silent()
-			_net_notify_pickup(action)
 			if eaten_name == "Carne humana":
 				actor.notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
 				actor.stats.health = 0.0

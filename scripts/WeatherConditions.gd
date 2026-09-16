@@ -17,6 +17,7 @@ static func from_observation(code: int, rain: float, snow: float) -> Dictionary:
 			if code in [55, 57, 63, 67, 81]: minimum = 2.5
 			if code in [65, 82]: minimum = 6.0
 			state.rain = maxf(rain, minimum)
+			state.snow = 0.0
 			state.cloud = 0.75 + clampf(state.rain / 30.0, 0.0, 0.2)
 			state.darkness = clampf(state.rain * 0.06, 0.18, 0.45)
 			state.fog = clampf(state.rain * 0.0002, 0.0, 0.0015)
@@ -24,6 +25,6 @@ static func from_observation(code: int, rain: float, snow: float) -> Dictionary:
 			state.snow = maxf(snow, 0.1 if code in [71, 77] else 0.5)
 			state.cloud = 0.85; state.darkness = 0.2; state.fog = 0.001
 		95, 96, 99:
-			state.storm = true; state.rain = maxf(rain, 6.0)
+			state.storm = true; state.rain = maxf(rain, 6.0); state.snow = 0.0
 			state.cloud = 1.0; state.darkness = 0.6; state.fog = 0.002
 	return state
