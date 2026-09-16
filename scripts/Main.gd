@@ -1440,15 +1440,8 @@ func _extinguish_fires_in_rain(elapsed: float) -> void:
 			continue
 		var fire_name: String = cf.get("fire_name", "")
 		var cf_pos: Vector3 = cf.get("pos", Vector3.ZERO)
-		# Check if campfire is sheltered (inside a built shelter)
-		var sheltered := false
-		for sh in _built_shelters:
-			if sh is Dictionary:
-				var sh_pos: Vector3 = sh.get("pos", Vector3.ZERO)
-				if sh_pos.distance_to(cf_pos) < 4.0:
-					sheltered = true
-					break
-		if not sheltered and not fire_name.is_empty():
+		# Rain can't reach fires under any roof (houses, barns, tents, shelters)
+		if not _is_loot_sheltered(cf_pos) and not fire_name.is_empty():
 			_extinguish_fire_by_name(fire_name)
 			if player != null:
 				player.notice.emit("La lluvia ha apagado tu fogata.")
