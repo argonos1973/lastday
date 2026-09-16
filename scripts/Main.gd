@@ -8102,8 +8102,7 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
 	var result: Array = []
 	var r2 := radius * radius
-	for action_id in world_actions_by_id.keys():
-		var action = world_actions_by_id[action_id]
+	for action in WorldActionScript.get_nearby_interactables(player_pos, radius):
 		if action == null or not is_instance_valid(action):
 			continue
 		if action.depleted and not action.repeatable:

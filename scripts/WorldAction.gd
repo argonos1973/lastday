@@ -40,7 +40,7 @@ func _notification(what: int) -> void:
 func _update_interaction_index() -> void:
 	if not is_inside_tree():
 		return
-	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item"]
+	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]
 	var pos := global_position
 	var cell := Vector2i(floori(pos.x / INTERACTION_CELL_SIZE), floori(pos.z / INTERACTION_CELL_SIZE))
 	if _interaction_indexed and _interaction_spatial == spatial and (not spatial or cell == _interaction_cell):
@@ -70,10 +70,10 @@ func _remove_interaction_index() -> void:
 		_wide_interactions.erase(get_instance_id())
 	_interaction_indexed = false
 
-static func get_nearby_interactables(pos: Vector3) -> Array:
+static func get_nearby_interactables(pos: Vector3, pad: float = 2.0) -> Array:
 	var candidates: Array = _wide_interactions.values()
-	var min_cell := Vector2i(floori((pos.x - 2.0) / INTERACTION_CELL_SIZE), floori((pos.z - 2.0) / INTERACTION_CELL_SIZE))
-	var max_cell := Vector2i(floori((pos.x + 2.0) / INTERACTION_CELL_SIZE), floori((pos.z + 2.0) / INTERACTION_CELL_SIZE))
+	var min_cell := Vector2i(floori((pos.x - pad) / INTERACTION_CELL_SIZE), floori((pos.z - pad) / INTERACTION_CELL_SIZE))
+	var max_cell := Vector2i(floori((pos.x + pad) / INTERACTION_CELL_SIZE), floori((pos.z + pad) / INTERACTION_CELL_SIZE))
 	for x in range(min_cell.x, max_cell.x + 1):
 		for z in range(min_cell.y, max_cell.y + 1):
 			var entries: Dictionary = _interaction_cells.get(Vector2i(x, z), {})

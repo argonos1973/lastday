@@ -20,6 +20,8 @@ var craft_panel_visible := false
 var craft_panel_items: VBoxContainer = null
 var _craft_backdrop: ColorRect
 var _craft_hint: PanelContainer
+var _craft_hint_available := false
+var _craft_hint_timer := 0.0
 var _craft_materials: Label
 var _craft_tool: Label
 var _craft_count: Label
@@ -117,6 +119,10 @@ func _process(delta: float) -> void:
 	if player == null:
 		return
 	_ensure_hud_visibility()
+	_craft_hint_timer += delta
+	if _craft_hint_timer >= 0.4:
+		_craft_hint_timer = 0.0
+		_update_craft_hint_state()
 	_sync_craft_visibility()
 	_stats_refresh_timer += delta
 	if _stats_dirty and _stats_refresh_timer >= 0.10:
@@ -274,13 +280,13 @@ func _build_craft_panel() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heading.add_child(titles)
-	_craft_label(titles, "SUPERVIVENCIA  /  FABRICACIÓN", 12, Color(0.66, 0.75, 0.47))
-	_craft_label(titles, "Crafteo del suelo", 28, Color(0.94, 0.94, 0.86))
+	_craft_label(titles, "SUPERVIVENCIA  /  FABRICACIÓN", 11, Color(0.66, 0.75, 0.47))
+	_craft_label(titles, "Crafteo del suelo", 24, Color(0.94, 0.94, 0.86))
 	var close := _craft_button("Cerrar  [K / Esc]")
 	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	close.pressed.connect(toggle_craft_panel)
 	heading.add_child(close)
-	_craft_label(vbox, "Usa los materiales a menos de 3 m. Lo fabricado se queda en el suelo; el inventario no se utiliza.", 14, Color(0.69, 0.75, 0.68))
+	_craft_label(vbox, "Usa los materiales a menos de 3 m. Lo fabricado se queda en el suelo; el inventario no se utiliza.", 12, Color(0.69, 0.75, 0.68))
 	var materials_box := PanelContainer.new()
 	materials_box.add_theme_stylebox_override("panel", _panel_style(Color(0.09, 0.12, 0.095), Color(0.20, 0.27, 0.19), 1))
 	vbox.add_child(materials_box)
@@ -299,11 +305,12 @@ func _build_craft_panel() -> void:
 	section.add_child(refresh)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(scroll)
 	craft_panel_items = VBoxContainer.new()
 	craft_panel_items.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	craft_panel_items.add_theme_constant_override("separation", 10)
+	craft_panel_items.add_theme_constant_override("separation", 7)
 	scroll.add_child(craft_panel_items)
 	_craft_label(vbox, "Herramienta: en la mano o en el suelo · Los materiales de la mochila no cuentan.", 12, Color(0.62, 0.69, 0.61))
 	root.resized.connect(_layout_craft_panel)
@@ -356,7 +363,23 @@ func _sync_craft_visibility() -> void:
 	if _craft_backdrop != null:
 		_craft_backdrop.visible = craft_panel_visible
 	if _craft_hint != null:
-		_craft_hint.visible = not craft_panel_visible and not inventory_visible and player != null and not player.is_dead and not player.is_sleeping
+		_craft_hint.visible = _craft_hint_available and not craft_panel_visible and not inventory_visible and player != null and not player.is_dead and not player.is_sleeping
+
+func _update_craft_hint_state() -> void:
+	_craft_hint_available = false
+	if player == null:
+		return
+	var main = player.get_parent()
+	if main == null or not main.has_method("get_nearby_ground_items"):
+		return
+	var ground_items: Array = main.get_nearby_ground_items(player.global_position, 3.0)
+	if ground_items.is_empty():
+		return
+	var tools: Array = player.get_ground_crafting_tools()
+	for recipe in CraftingSystemScript.RECIPES:
+		if CraftingSystemScript.can_craft_with_ground(recipe, tools, ground_items):
+			_craft_hint_available = true
+			return
 
 func toggle_craft_panel() -> void:
 	if craft_panel == null:
@@ -429,23 +452,24 @@ func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, gr
 	var style := _panel_style(Color(0.09, 0.12, 0.10), Color(0.25, 0.32, 0.22) if ready else Color(0.20, 0.24, 0.21), 1)
 	style.set_corner_radius_all(8)
 	style.border_width_left = 4
-	style.content_margin_left = 16
-	style.content_margin_top = 14
-	style.content_margin_bottom = 14
+	style.content_margin_left = 12
+	style.content_margin_top = 9
+	style.content_margin_bottom = 9
+	style.content_margin_right = 10
 	card.add_theme_stylebox_override("panel", style)
 	craft_panel_items.add_child(card)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 18)
+	row.add_theme_constant_override("separation", 12)
 	card.add_child(row)
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	details.add_theme_constant_override("separation", 7)
+	details.add_theme_constant_override("separation", 4)
 	row.add_child(details)
-	_craft_label(details, "%s  ×%d" % [recipe.output.name, int(recipe.output.get("quantity", 1))], 21, Color(0.92, 0.93, 0.84))
-	_craft_label(details, CraftingSystemScript.get_recipe_label(recipe), 13, Color(0.65, 0.72, 0.65))
+	_craft_label(details, "%s  ×%d" % [recipe.output.name, int(recipe.output.get("quantity", 1))], 16, Color(0.92, 0.93, 0.84))
+	_craft_label(details, CraftingSystemScript.get_recipe_label(recipe), 12, Color(0.65, 0.72, 0.65))
 	var ingredients := HFlowContainer.new()
-	ingredients.add_theme_constant_override("h_separation", 6)
-	ingredients.add_theme_constant_override("v_separation", 6)
+	ingredients.add_theme_constant_override("h_separation", 5)
+	ingredients.add_theme_constant_override("v_separation", 4)
 	details.add_child(ingredients)
 	for input_name in recipe.inputs:
 		var needed: int = recipe.inputs[input_name]
@@ -462,8 +486,10 @@ func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, gr
 		pill.add_theme_stylebox_override("panel", _panel_style(Color(0.13, 0.19, 0.12) if enough else Color(0.23, 0.13, 0.10), Color(0, 0, 0, 0), 0))
 		ingredients.add_child(pill)
 		var input_label: String = "Cuchillo / hacha" if input_name == "Cuchillo" else input_name
-		_craft_label(pill, "%s  %d/%d" % [input_label, have, needed], 12, Color(0.77, 0.85, 0.61) if enough else Color(0.91, 0.65, 0.49), false)
+		_craft_label(pill, "%s  %d/%d" % [input_label, have, needed], 11, Color(0.77, 0.85, 0.61) if enough else Color(0.91, 0.65, 0.49), false)
 	var button := _craft_button("Fabricar" if ready else "Faltan recursos")
+	button.custom_minimum_size = Vector2(108, 30)
+	button.add_theme_font_size_override("font_size", 12)
 	button.disabled = not ready
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	button.set_meta("recipe", recipe)
