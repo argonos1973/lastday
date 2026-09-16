@@ -135,6 +135,16 @@ static func get_available_recipes(inventory_items: Array) -> Array:
 			available.append(recipe)
 	return available
 
+# Returns all recipes that can be crafted considering both inventory items
+# and nearby ground items. Ground items is an Array of Dictionaries with
+# "name", "type", "quantity" keys.
+static func get_available_recipes_with_ground(inventory_items: Array, ground_items: Array) -> Array:
+	var available := []
+	for recipe in RECIPES:
+		if _can_craft_with_ground(recipe, inventory_items, ground_items):
+			available.append(recipe)
+	return available
+
 # Returns all recipes that use the given item name as an input
 static func get_recipes_for_item(item_name: String, item_type: String = "") -> Array:
 	var result := []
@@ -153,6 +163,10 @@ static func get_recipes_for_item(item_name: String, item_type: String = "") -> A
 
 static func can_craft_with(recipe: Dictionary, inventory_items: Array) -> bool:
 	return _can_craft(recipe, inventory_items)
+
+# Check if a recipe can be crafted with inventory + ground items
+static func can_craft_with_ground(recipe: Dictionary, inventory_items: Array, ground_items: Array) -> bool:
+	return _can_craft_with_ground(recipe, inventory_items, ground_items)
 
 static func consume_inputs(recipe: Dictionary, inventory) -> void:
 	for input_name in recipe["inputs"]:
@@ -177,6 +191,33 @@ static func _can_craft(recipe: Dictionary, inventory_items: Array) -> bool:
 		if have < needed:
 			return false
 	return true
+
+static func _can_craft_with_ground(recipe: Dictionary, inventory_items: Array, ground_items: Array) -> bool:
+	for input_name in recipe["inputs"]:
+		var needed: int = recipe["inputs"][input_name]
+		var have := 0
+		# Count from inventory
+		for item in inventory_items:
+			if item == null:
+				continue
+			if _matches_input(input_name, item):
+				have += item.quantity
+		# Count from ground
+		for g in ground_items:
+			if _matches_ground_input(input_name, g):
+				have += int(g.get("quantity", 1))
+		if have < needed:
+			return false
+	return true
+
+static func _matches_ground_input(input_name: String, g: Dictionary) -> bool:
+	var gname: String = str(g.get("name", ""))
+	var gtype: String = str(g.get("type", ""))
+	if input_name == "ANY_CLOTHING":
+		return gtype == "clothing"
+	if gname == input_name or _is_substitute(input_name, gname):
+		return true
+	return false
 
 static func _matches_input(input_name: String, item) -> bool:
 	if item == null:

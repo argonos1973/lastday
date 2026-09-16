@@ -4875,9 +4875,50 @@ func craft_recipe(recipe: Dictionary) -> void:
 	if out["type"] == "shelter":
 		_craft_shelter()
 		return
+	# Try crafting with inventory only first (original path)
+	if CraftingSystemScript.craft(recipe, inventory):
+		_post_craft_success(recipe, out)
+		return
+	# If inventory-only failed, try combining inventory + nearby ground items
+	var main := get_parent()
+	if main == null or not main.has_method("get_nearby_ground_items"):
+		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
+		return
+	var ground_items: Array = main.get_nearby_ground_items(global_position, 3.0)
+	if not CraftingSystemScript.can_craft_with_ground(recipe, inventory.items, ground_items):
+		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios cerca.")
+		return
+	# Consume ground items first, then craft with what remains in inventory
+	for input_name in recipe["inputs"]:
+		var needed: int = recipe["inputs"][input_name]
+		if CraftingSystemScript._is_tool(input_name):
+			# Tools on the ground lose durability but are not consumed
+			var tool_on_ground := false
+			for g in ground_items:
+				if CraftingSystemScript._matches_ground_input(input_name, g):
+					tool_on_ground = true
+					break
+			if tool_on_ground:
+				main.consume_ground_item(input_name, 1, global_position, 3.0, true)
+				needed = 0  # Tool on ground satisfies the requirement
+		if needed <= 0:
+			continue
+		# Count what's in the inventory
+		var inv_have := 0
+		for item in inventory.items:
+			if item != null and CraftingSystemScript._matches_input(input_name, item):
+				inv_have += item.quantity
+		# Consume from ground what the inventory can't cover
+		var ground_needed := max(0, needed - inv_have)
+		if ground_needed > 0:
+			main.consume_ground_item(input_name, ground_needed, global_position, 3.0, false)
+	# Now craft with the remaining inventory items (ground items already consumed)
 	if not CraftingSystemScript.craft(recipe, inventory):
 		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
 		return
+	_post_craft_success(recipe, out)
+
+func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 	# Change equipment only after the transaction succeeded.
 	for slot in _equipped_slots.keys():
 		var clothing_name := str(_equipped_slots[slot])

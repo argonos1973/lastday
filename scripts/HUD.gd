@@ -1575,13 +1575,20 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	store_btn.add_theme_font_size_override("font_size", 14)
 	store_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(store_btn)
-	# Add combine button if there are recipes available for this item
+	# Add combine button if there are recipes available for this item.
+	# Consider both inventory items and nearby ground items so the player
+	# can craft from the ground without picking everything up first.
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
 	var recipes := CraftingSystemScript.get_recipes_for_item(item_name, item_type)
 	_context_menu_recipes = []
+	# Gather nearby ground items once for all recipe checks
+	var ground_items: Array = []
+	var main = player.get_parent()
+	if main != null and main.has_method("get_nearby_ground_items"):
+		ground_items = main.get_nearby_ground_items(player.global_position, 3.0)
 	for recipe in recipes:
-		if CraftingSystemScript._can_craft(recipe, player.inventory.items):
+		if CraftingSystemScript.can_craft_with_ground(recipe, player.inventory.items, ground_items):
 			var recipe_label = CraftingSystemScript.get_recipe_label(recipe)
 			var combine_btn := Button.new()
 			combine_btn.text = "Combinar: %s" % recipe_label

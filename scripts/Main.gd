@@ -22,6 +22,7 @@ const MaterialFactory = preload("res://scripts/MaterialFactory.gd")
 const NodeUtils = preload("res://scripts/NodeUtils.gd")
 const WildlifeRoutes = preload("res://scripts/WildlifeRoutes.gd")
 const BirdControllerScript = preload("res://scripts/BirdController.gd")
+const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 
 const MAP_EXTENT := 500.0
 
@@ -8081,6 +8082,91 @@ func _is_loot_sheltered(pos: Vector3) -> bool:
 	if abs(pos.x - hut_origin.x) < 6.0 and abs(pos.z - hut_origin.z) < 6.0:
 		return true
 	return false
+
+# Returns nearby dropped items (pickup_item / eat_food WorldActions) within
+# `radius` meters of `player_pos`. Each entry is a Dictionary with:
+#   "name", "type", "quantity", "action" (the WorldAction node to consume).
+# Tools (Cuchillo, Hacha, etc.) are included so recipes that need them
+# (e.g. tallar tronco) work from the ground.
+func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
+	var result: Array = []
+	var r2 := radius * radius
+	for action_id in world_actions_by_id.keys():
+		var action = world_actions_by_id[action_id]
+		if action == null or not is_instance_valid(action):
+			continue
+		if action.depleted and not action.repeatable:
+			continue
+		var atype: String = str(action.action_type)
+		if atype != "pickup_item" and atype != "eat_food":
+			continue
+		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
+			continue
+		var dx: float = action.global_position.x - player_pos.x
+		var dz: float = action.global_position.z - player_pos.z
+		if dx * dx + dz * dz > r2:
+			continue
+		var iname: String = str(action.get_meta("item_name", ""))
+		var itype: String = str(action.get_meta("item_type", ""))
+		var iqty: int = int(action.get_meta("item_quantity", 1))
+		if iname.is_empty():
+			continue
+		result.append({
+			"name": iname,
+			"type": itype,
+			"quantity": iqty,
+			"action": action
+		})
+	return result
+
+# Consume `amount` units of `item_name` from nearby ground items. Tools are
+# not consumed (they only lose durability). Returns the number of units
+# actually consumed. Consumed WorldActions are marked depleted.
+func consume_ground_item(item_name: String, amount: int, player_pos: Vector3, radius: float = 3.0, is_tool: bool = false) -> int:
+	var remaining := amount
+	var r2 := radius * radius
+	for action_id in world_actions_by_id.keys().duplicate():
+		if remaining <= 0:
+			break
+		var action = world_actions_by_id[action_id]
+		if action == null or not is_instance_valid(action):
+			continue
+		if action.depleted and not action.repeatable:
+			continue
+		var atype: String = str(action.action_type)
+		if atype != "pickup_item" and atype != "eat_food":
+			continue
+		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
+			continue
+		var iname: String = str(action.get_meta("item_name", ""))
+		if iname != item_name and not CraftingSystemScript._is_substitute(item_name, iname):
+			continue
+		var dx: float = action.global_position.x - player_pos.x
+		var dz: float = action.global_position.z - player_pos.z
+		if dx * dx + dz * dz > r2:
+			continue
+		if is_tool:
+			# Tools only lose durability, they are not consumed
+			if action.has_method("reduce_durability"):
+				action.reduce_durability(3.0)
+			remaining -= 1
+			continue
+		var iqty: int = int(action.get_meta("item_quantity", 1))
+		var take := mini(remaining, iqty)
+		remaining -= take
+		if take >= iqty:
+			# Mark the ground item as depleted
+			if action.has_method("mark_depleted"):
+				action.mark_depleted()
+			else:
+				action.depleted = true
+				action.remove_from_group("interactable")
+			_hide_action_visual(action)
+			_save_world_change_silent()
+			_net_notify_pickup(action)
+		else:
+			action.set_meta("item_quantity", iqty - take)
+	return amount - remaining
 
 func _update_loot_wear() -> void:
 	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
