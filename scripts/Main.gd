@@ -3451,7 +3451,11 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"food":
 			if item_name.begins_with("Carne cruda"):
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
-			if item_name == "Pez crudo" or item_name == "Pez ensartado" or item_name == "Pez cocinado":
+			if item_name == "Carne ensartada" or item_name == "Carne cocinada" or item_name == "Carne asada en palo":
+				return ["res://assets/models/props/skewer_meat.tscn", "res://assets/models/props/cc0_-_raw_meat_4.glb"]
+			if item_name == "Pez ensartado" or item_name == "Pez cocinado":
+				return ["res://assets/models/props/skewer_fish.tscn", "res://assets/models/props/fish.glb"]
+			if item_name == "Pez crudo":
 				return ["res://assets/models/props/fish.glb"]
 			if item_name == "Naranja":
 				return ["res://assets/models/props/fruit/apple.glb"]
