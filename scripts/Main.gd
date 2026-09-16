@@ -652,31 +652,27 @@ func _get_next_tip() -> String:
 func _cleanup_tent_rifle() -> void:
 	if player == null or not is_instance_valid(player) or player.inventory == null:
 		return
-	# The fixed tent rifle spawn no longer exists — always strip any leftover
-	# pickup from older saves (never touches a rifle already in the inventory).
-	# Remove the tent rifle WorldAction and its visual model
-	if world_actions_by_id.has("tent_loot_rifle"):
-		var action = world_actions_by_id["tent_loot_rifle"]
-		var vis_name: String = action.get_meta("visual_name", "")
-		if not vis_name.is_empty():
-			var vis_node := get_node_or_null(NodePath(vis_name))
-			if vis_node != null:
-				vis_node.queue_free()
-		_hide_action_visual(action)
-		action.mark_depleted()
-		if not _depleted_action_ids.has("tent_loot_rifle"):
-			_depleted_action_ids.append("tent_loot_rifle")
-		world_actions_by_id.erase("tent_loot_rifle")
-	# Also search for any leftover visual node by name
-	var rifle_visual := get_node_or_null("Pickup_tent_loot_rifle")
-	if rifle_visual != null:
-		rifle_visual.queue_free()
-	# Search for any node in world_action_visual group containing rifle in name
-	for node in get_tree().get_nodes_in_group("world_action_visual"):
-		if node is Node3D and String(node.name).findn("tent_loot_rifle") >= 0:
-			node.queue_free()
-	if not _depleted_action_ids.has("tent_loot_rifle"):
-		_depleted_action_ids.append("tent_loot_rifle")
+	# Strip leftover world pickups whose fixed ID is already marked collected.
+	# Each tent keeps its own rifle until that specific pickup is taken.
+	for rifle_id in ["tent_loot_rifle", "remote_tent_loot_rifle"]:
+		if not _depleted_action_ids.has(rifle_id):
+			continue
+		if world_actions_by_id.has(rifle_id):
+			var action = world_actions_by_id[rifle_id]
+			var vis_name: String = action.get_meta("visual_name", "")
+			if not vis_name.is_empty():
+				var vis_node := get_node_or_null(NodePath(vis_name))
+				if vis_node != null:
+					vis_node.queue_free()
+			_hide_action_visual(action)
+			action.mark_depleted()
+			world_actions_by_id.erase(rifle_id)
+		var rifle_visual := get_node_or_null("Pickup_" + rifle_id)
+		if rifle_visual != null:
+			rifle_visual.queue_free()
+		for node in get_tree().get_nodes_in_group("world_action_visual"):
+			if node is Node3D and String(node.name).findn(rifle_id) >= 0:
+				node.queue_free()
 
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
@@ -5687,13 +5683,22 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
+	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
 	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
-	# Consume the RNG the old guaranteed rifle spawn used, so the rest of the
-	# tent loot keeps the same deterministic positions as before.
-	_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+	# Guarantee a rifle in each military tent — fixed IDs so they don't respawn
+	if not _depleted_action_ids.has("tent_loot_rifle"):
+		var rifle_data: Dictionary = rifle_template.duplicate()
+		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		rifle_data["pos"].y = tent_ground_y + 0.06
+		rifle_data["id"] = "tent_loot_rifle"
+		_create_pickup_item(rifle_data)
+	else:
+		# Consume the same RNG that _find_pos_inside_house would have consumed
+		# to keep the RNG state in sync for subsequent loot generation
+		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 0-3) and 1 from non-pants (4-7)
@@ -5719,11 +5724,17 @@ func _create_house_loot() -> void:
 		loot_data["pos"].y = tent_ground_y + 0.06
 		loot_data["id"] = "tent_loot_extra_%d" % _j
 		_create_pickup_item(loot_data)
-	# Remote military tent loot — military-grade pool (no rifle, but backpack)
+	# Remote military tent loot — military-grade pool (rifle + backpack)
 	var remote_tent_origin := _remote_tent_pos
 	var remote_tent_half_w := 4.0
 	var remote_tent_half_d := 5.5
 	var remote_tent_ground_y := _get_exact_ground_y(remote_tent_origin.x, remote_tent_origin.z)
+	if not _depleted_action_ids.has("remote_tent_loot_rifle"):
+		var rt_rifle: Dictionary = rifle_template.duplicate()
+		rt_rifle["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		rt_rifle["pos"].y = remote_tent_ground_y + 0.06
+		rt_rifle["id"] = "remote_tent_loot_rifle"
+		_create_pickup_item(rt_rifle)
 	var remote_tent_loot := [
 		tent_loot_pool[0], # green pants
 		tent_loot_pool[1], # blue pants
