@@ -779,6 +779,17 @@ func _unhandled_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	if game_over:
 		return
+	if hud != null and player != null and not player.is_dead and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_K and not player.is_sleeping:
+			if _loot_panel != null:
+				_close_loot_ui()
+			hud.toggle_craft_panel()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_ESCAPE and hud.craft_panel_visible:
+			hud.toggle_craft_panel()
+			get_viewport().set_input_as_handled()
+			return
 	if hud != null and hud.inventory_visible and event is InputEventMouseButton and event.pressed:
 		if hud.handle_context_menu_click(event.position, event.button_index):
 			get_viewport().set_input_as_handled()
@@ -8098,75 +8109,107 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
 		if action.depleted and not action.repeatable:
 			continue
 		var atype: String = str(action.action_type)
-		if atype != "pickup_item" and atype != "eat_food":
+		if atype not in ["pickup_item", "eat_food", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]:
 			continue
 		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
 			continue
 		var dx: float = action.global_position.x - player_pos.x
 		var dz: float = action.global_position.z - player_pos.z
-		if dx * dx + dz * dz > r2:
+		if dx * dx + dz * dz > r2 or absf(action.global_position.y - player_pos.y) > 2.0:
 			continue
 		var iname: String = str(action.get_meta("item_name", ""))
 		var itype: String = str(action.get_meta("item_type", ""))
 		var iqty: int = int(action.get_meta("item_quantity", 1))
-		if iname.is_empty():
+		if iname.is_empty() or iqty <= 0:
 			continue
 		result.append({
 			"name": iname,
 			"type": itype,
 			"quantity": iqty,
+			"weight": float(action.get_meta("item_weight", 0.0)),
+			"use_value": float(action.get_meta("item_use_value", 0.0)),
+			"durability": float(action.get_meta("item_durability", 100.0)),
+			"max_durability": float(action.get_meta("item_max_durability", 100.0)),
+			"spoilage": float(action.get_meta("item_spoilage", 0.0)),
 			"action": action
 		})
 	return result
 
-# Consume `amount` units of `item_name` from nearby ground items. Tools are
-# not consumed (they only lose durability). Returns the number of units
-# actually consumed. Consumed WorldActions are marked depleted.
-func consume_ground_item(item_name: String, amount: int, player_pos: Vector3, radius: float = 3.0, is_tool: bool = false) -> int:
-	var remaining := amount
-	var r2 := radius * radius
-	for action_id in world_actions_by_id.keys().duplicate():
-		if remaining <= 0:
-			break
-		var action = world_actions_by_id[action_id]
-		if action == null or not is_instance_valid(action):
+func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
+	var ground_items := get_nearby_ground_items(actor.global_position)
+	var plan := CraftingSystemScript.plan_ground_craft(recipe, actor.get_ground_crafting_tools(), ground_items)
+	if plan.is_empty():
+		return false
+	var output = plan.output
+	var pos: Vector3 = actor.global_position - actor.global_basis.z * 0.8
+	pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.06
+	var drop_positions: Array[Vector3] = []
+	for index in range(output.quantity):
+		var drop_pos: Vector3 = pos + actor.global_basis.x * (float(index) - float(output.quantity - 1) * 0.5) * 0.45
+		drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z) + 0.06
+		if _is_water_drop_position(drop_pos):
+			CraftingSystemScript.craft_error = "Necesitas suelo seco para dejar lo fabricado."
+			return false
+		drop_positions.append(drop_pos)
+	for source in plan.sources:
+		var item = source.item
+		if int(source.quantity) == int(item.quantity) and float(source.durability) == float(item.durability):
 			continue
-		if action.depleted and not action.repeatable:
-			continue
-		var atype: String = str(action.action_type)
-		if atype != "pickup_item" and atype != "eat_food":
-			continue
-		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
-			continue
-		var iname: String = str(action.get_meta("item_name", ""))
-		if iname != item_name and not CraftingSystemScript._is_substitute(item_name, iname):
-			continue
-		var dx: float = action.global_position.x - player_pos.x
-		var dz: float = action.global_position.z - player_pos.z
-		if dx * dx + dz * dz > r2:
-			continue
-		if is_tool:
-			# Tools only lose durability, they are not consumed
-			if action.has_method("reduce_durability"):
-				action.reduce_durability(3.0)
-			remaining -= 1
-			continue
-		var iqty: int = int(action.get_meta("item_quantity", 1))
-		var take := mini(remaining, iqty)
-		remaining -= take
-		if take >= iqty:
-			# Mark the ground item as depleted
-			if action.has_method("mark_depleted"):
-				action.mark_depleted()
-			else:
-				action.depleted = true
-				action.remove_from_group("interactable")
-			_hide_action_visual(action)
-			_save_world_change_silent()
-			_net_notify_pickup(action)
+		if source.action != null:
+			var action = source.action
+			_apply_ground_craft_state(action.action_id, int(source.quantity), float(source.durability))
+			if net != null and net.is_connected:
+				if net.is_host:
+					net.ground_craft_state_changed.rpc(action.action_id, int(source.quantity), float(source.durability))
+				else:
+					net.ground_craft_state_changed.rpc_id(1, action.action_id, int(source.quantity), float(source.durability))
 		else:
-			action.set_meta("item_quantity", iqty - take)
-	return amount - remaining
+			item.quantity = int(source.quantity)
+			item.durability = float(source.durability)
+			if item.quantity <= 0:
+				var was_held: bool = actor.get_held_item() == item
+				actor.inventory.items.erase(item)
+				if was_held:
+					actor.clear_hands()
+	if output.item_type in ["campfire", "shelter"]:
+		_on_item_dropped(output.item_type, output.item_type, 0.0, 1, 0.0, pos)
+	else:
+		for drop_pos in drop_positions:
+			actor.set_meta("last_dropped_durability", output.durability)
+			actor.set_meta("last_dropped_max_durability", output.max_durability)
+			_on_item_dropped(output.item_name, output.item_type, output.weight, 1, output.use_value, drop_pos, Color(0, 0, 0, 0), false, output.spoilage)
+	actor.inventory.changed.emit()
+	_save_world_change_silent()
+	return true
+
+func _apply_ground_craft_state(action_id: String, quantity: int, durability: float) -> bool:
+	var action = world_actions_by_id.get(action_id)
+	if not is_instance_valid(action) or action.depleted:
+		return false
+	if quantity < 0 or quantity > int(action.get_meta("item_quantity", 1)) or not is_finite(durability) or durability < 0.0 or durability > float(action.get_meta("item_durability", 100.0)):
+		return false
+	action.set_meta("item_quantity", quantity)
+	action.set_meta("item_durability", durability)
+	action.set_meta("item_max_durability", float(action.get_meta("item_max_durability", 100.0)))
+	var persisted := false
+	for entry in _dropped_items:
+		if str(entry.get("id", "")) == action_id:
+			entry["qty"] = quantity
+			entry["durability"] = durability
+			entry["max_durability"] = action.get_meta("item_max_durability")
+			persisted = true
+			break
+	if quantity > 0 and not persisted:
+		_dropped_items.append({"id": action_id, "name": action.get_meta("item_name"), "type": action.get_meta("item_type"), "qty": quantity, "weight": action.get_meta("item_weight", 0.0), "use": action.get_meta("item_use_value", 0.0), "pos": action.global_position, "durability": durability, "max_durability": action.get_meta("item_max_durability"), "spoilage": action.get_meta("item_spoilage", 0.0)})
+	if quantity == 0:
+		_hide_action_visual(action)
+		action.mark_depleted()
+		if not _depleted_action_ids.has(action_id):
+			_depleted_action_ids.append(action_id)
+		for index in range(_dropped_items.size() - 1, -1, -1):
+			if str(_dropped_items[index].get("id", "")) == action_id:
+				_dropped_items.remove_at(index)
+	return true
 
 func _update_loot_wear() -> void:
 	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed

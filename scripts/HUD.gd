@@ -18,6 +18,11 @@ var inventory_panel: PanelContainer
 var craft_panel: PanelContainer = null
 var craft_panel_visible := false
 var craft_panel_items: VBoxContainer = null
+var _craft_backdrop: ColorRect
+var _craft_hint: PanelContainer
+var _craft_materials: Label
+var _craft_tool: Label
+var _craft_count: Label
 var inventory_grid: GridContainer
 var inventory_weight_label: Label
 var real_clock_label: Label
@@ -112,6 +117,7 @@ func _process(delta: float) -> void:
 	if player == null:
 		return
 	_ensure_hud_visibility()
+	_sync_craft_visibility()
 	_stats_refresh_timer += delta
 	if _stats_dirty and _stats_refresh_timer >= 0.10:
 		_stats_refresh_timer = 0.0
@@ -187,10 +193,14 @@ func hide_countdown() -> void:
 	countdown_label.visible = false
 
 func toggle_inventory() -> void:
+	if craft_panel_visible:
+		craft_panel_visible = false
+		craft_panel.hide()
 	_close_context_menu()
 	if _inventory_tween != null and _inventory_tween.is_valid():
 		_inventory_tween.kill()
 	inventory_visible = not inventory_visible
+	_sync_craft_visibility()
 	inventory_panel.modulate.a = 1.0
 	if inventory_visible:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -219,92 +229,262 @@ func toggle_inventory() -> void:
 		slot_action_label.text = ""
 
 func _build_craft_panel() -> void:
+	_craft_hint = PanelContainer.new()
+	_craft_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_craft_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_craft_hint.offset_left = -288
+	_craft_hint.offset_top = -66
+	_craft_hint.offset_right = -24
+	_craft_hint.offset_bottom = -24
+	_craft_hint.add_theme_stylebox_override("panel", _panel_style(Color(0.055, 0.075, 0.065, 0.94), Color(0.36, 0.43, 0.30), 1))
+	root.add_child(_craft_hint)
+	var hint_row := HBoxContainer.new()
+	hint_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint_row.add_theme_constant_override("separation", 14)
+	_craft_hint.add_child(hint_row)
+	_craft_label(hint_row, "[K]", 18, Color(0.78, 0.86, 0.55), false)
+	_craft_label(hint_row, "Crafteo del suelo", 16, Color(0.92, 0.93, 0.85), false)
+	_craft_backdrop = ColorRect.new()
+	_craft_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_craft_backdrop.color = Color(0.015, 0.025, 0.02, 0.68)
+	_craft_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_craft_backdrop.z_index = 70
+	_craft_backdrop.hide()
+	root.add_child(_craft_backdrop)
 	craft_panel = PanelContainer.new()
-	craft_panel.offset_left = 280
-	craft_panel.offset_top = 120
-	craft_panel.offset_right = 760
-	craft_panel.offset_bottom = 600
-	craft_panel.anchor_left = 0.0
-	craft_panel.anchor_top = 0.0
-	craft_panel.anchor_right = 0.0
-	craft_panel.anchor_bottom = 0.0
+	craft_panel.z_index = 71
 	craft_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	craft_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.95), Color(0.45, 0.48, 0.42, 0.7), 1))
-	craft_panel.visible = false
+	var frame := _panel_style(Color(0.055, 0.075, 0.065, 0.99), Color(0.35, 0.43, 0.30), 1)
+	frame.set_corner_radius_all(12)
+	frame.content_margin_left = 24
+	frame.content_margin_right = 24
+	frame.content_margin_top = 20
+	frame.content_margin_bottom = 18
+	frame.shadow_color = Color(0, 0, 0, 0.55)
+	frame.shadow_size = 20
+	craft_panel.add_theme_stylebox_override("panel", frame)
+	craft_panel.hide()
 	root.add_child(craft_panel)
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
-	vbox.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_theme_constant_override("separation", 14)
 	craft_panel.add_child(vbox)
-	var title := Label.new()
-	title.text = "Crafteo (inventario + suelo cercano) - [K] cerrar"
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(title)
+	var heading := HBoxContainer.new()
+	heading.add_theme_constant_override("separation", 16)
+	vbox.add_child(heading)
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_child(titles)
+	_craft_label(titles, "SUPERVIVENCIA  /  FABRICACIÓN", 12, Color(0.66, 0.75, 0.47))
+	_craft_label(titles, "Crafteo del suelo", 28, Color(0.94, 0.94, 0.86))
+	var close := _craft_button("Cerrar  [K / Esc]")
+	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	close.pressed.connect(toggle_craft_panel)
+	heading.add_child(close)
+	_craft_label(vbox, "Usa los materiales a menos de 3 m. Lo fabricado se queda en el suelo; el inventario no se utiliza.", 14, Color(0.69, 0.75, 0.68))
+	var materials_box := PanelContainer.new()
+	materials_box.add_theme_stylebox_override("panel", _panel_style(Color(0.09, 0.12, 0.095), Color(0.20, 0.27, 0.19), 1))
+	vbox.add_child(materials_box)
+	var materials_list := VBoxContainer.new()
+	materials_list.add_theme_constant_override("separation", 6)
+	materials_box.add_child(materials_list)
+	_craft_label(materials_list, "MATERIALES EN EL SUELO", 12, Color(0.73, 0.80, 0.55))
+	_craft_materials = _craft_label(materials_list, "", 14, Color(0.9, 0.91, 0.84))
+	_craft_materials.max_lines_visible = 2
+	_craft_tool = _craft_label(materials_list, "", 13, Color(0.69, 0.75, 0.68))
+	var section := HBoxContainer.new()
+	vbox.add_child(section)
+	_craft_count = _craft_label(section, "", 13, Color(0.78, 0.84, 0.58))
+	var refresh := _craft_button("Actualizar materiales")
+	refresh.pressed.connect(_update_craft_panel)
+	section.add_child(refresh)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(460, 420)
-	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(scroll)
 	craft_panel_items = VBoxContainer.new()
-	craft_panel_items.add_theme_constant_override("separation", 4)
-	craft_panel_items.mouse_filter = Control.MOUSE_FILTER_STOP
+	craft_panel_items.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_panel_items.add_theme_constant_override("separation", 10)
 	scroll.add_child(craft_panel_items)
+	_craft_label(vbox, "Herramienta: en la mano o en el suelo · Los materiales de la mochila no cuentan.", 12, Color(0.62, 0.69, 0.61))
+	root.resized.connect(_layout_craft_panel)
+	_layout_craft_panel()
+
+func _layout_craft_panel() -> void:
+	if craft_panel == null:
+		return
+	var screen := root.size if root.size.x > 0.0 else get_viewport().get_visible_rect().size
+	var panel_size := Vector2(minf(960.0, screen.x - 32.0), minf(720.0, screen.y - 40.0))
+	craft_panel.size = panel_size
+	craft_panel.position = (screen - panel_size) * 0.5
+
+func _craft_label(parent: Node, text: String, font_size: int, color: Color, wrap: bool = true) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if wrap:
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(label)
+	return label
+
+func _craft_button(text: String) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(140, 38)
+	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_color_override("font_color", Color(0.92, 0.95, 0.80))
+	button.add_theme_color_override("font_disabled_color", Color(0.53, 0.58, 0.52))
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var fill := Color(0.18, 0.25, 0.14)
+		var border := Color(0.40, 0.50, 0.27)
+		if state == "hover" or state == "focus":
+			fill = Color(0.27, 0.36, 0.19)
+			border = Color(0.70, 0.81, 0.44)
+		elif state == "pressed":
+			fill = Color(0.12, 0.18, 0.10)
+		elif state == "disabled":
+			fill = Color(0.10, 0.13, 0.11)
+			border = Color(0.22, 0.27, 0.23)
+		var style := _panel_style(fill, border, 1)
+		style.set_corner_radius_all(6)
+		button.add_theme_stylebox_override(state, style)
+	return button
+
+func _sync_craft_visibility() -> void:
+	if _craft_backdrop != null:
+		_craft_backdrop.visible = craft_panel_visible
+	if _craft_hint != null:
+		_craft_hint.visible = not craft_panel_visible and not inventory_visible and player != null and not player.is_dead and not player.is_sleeping
 
 func toggle_craft_panel() -> void:
 	if craft_panel == null:
 		return
+	if not craft_panel_visible and inventory_visible:
+		toggle_inventory()
 	craft_panel_visible = not craft_panel_visible
 	if craft_panel_visible:
 		_close_context_menu()
-		if inventory_visible:
-			toggle_inventory()
 		_update_craft_panel()
 		craft_panel.visible = true
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	else:
 		craft_panel.visible = false
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_sync_craft_visibility()
 
 func _update_craft_panel() -> void:
-	if craft_panel_items == null or player == null or player.inventory == null:
+	if craft_panel_items == null or player == null:
 		return
 	for child in craft_panel_items.get_children():
+		craft_panel_items.remove_child(child)
 		child.queue_free()
 	var main = player.get_parent()
 	var ground_items: Array = []
 	if main != null and main.has_method("get_nearby_ground_items"):
 		ground_items = main.get_nearby_ground_items(player.global_position, 3.0)
-	var recipes := CraftingSystemScript.get_available_recipes_with_ground(player.inventory.items, ground_items)
+	var tools: Array = player.get_ground_crafting_tools()
+	var totals := {}
+	for entry in ground_items:
+		totals[entry.name] = int(totals.get(entry.name, 0)) + int(entry.quantity)
+	var material_names: Array = totals.keys()
+	material_names.sort()
+	var summary := PackedStringArray()
+	for item_name in material_names:
+		summary.append("%s ×%d" % [item_name, totals[item_name]])
+	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo a menos de 3 m."
+	_craft_materials.tooltip_text = _craft_materials.text
+	_craft_tool.text = "Herramienta en mano: %s" % tools[0].item_name if not tools.is_empty() else "Sin herramienta en mano. Puedes usar una herramienta válida que esté en el suelo."
+	var recipes: Array = []
+	var ready_count := 0
+	for recipe in CraftingSystemScript.RECIPES:
+		var relevant := false
+		for input_name in recipe.inputs:
+			if CraftingSystemScript._is_tool(input_name):
+				continue
+			for entry in ground_items:
+				if CraftingSystemScript._matches_ground_input(input_name, entry):
+					relevant = true
+		if not relevant:
+			continue
+		var ready := CraftingSystemScript.can_craft_with_ground(recipe, tools, ground_items)
+		recipes.append({"recipe": recipe, "ready": ready})
+		if ready:
+			ready_count += 1
+	recipes.sort_custom(func(a, b): return a.ready and not b.ready)
+	_craft_count.text = "%d DISPONIBLES  /  %d RECETAS DEL SUELO" % [ready_count, recipes.size()]
 	if recipes.is_empty():
-		var empty_label := Label.new()
-		empty_label.text = "No hay recetas disponibles. Acerca los materiales al suelo."
-		empty_label.add_theme_font_size_override("font_size", 13)
-		empty_label.add_theme_color_override("font_color", Color(0.7, 0.65, 0.45))
-		empty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		craft_panel_items.add_child(empty_label)
-		return
-	for recipe in recipes:
-		var recipe_label = CraftingSystemScript.get_recipe_label(recipe)
-		var inputs_text = CraftingSystemScript.get_recipe_inputs_text(recipe)
-		var out: Dictionary = recipe["output"]
-		var out_name: String = str(out["name"])
-		var btn := Button.new()
-		btn.text = "%s\n  -> %s  |  %s" % [recipe_label, out_name, inputs_text]
-		btn.add_theme_font_size_override("font_size", 13)
-		btn.custom_minimum_size = Vector2(440, 48)
-		btn.mouse_filter = Control.MOUSE_FILTER_STOP
-		btn.pressed.connect(_on_craft_panel_recipe_pressed.bind(recipe))
-		craft_panel_items.add_child(btn)
+		var empty := VBoxContainer.new()
+		empty.add_theme_constant_override("separation", 12)
+		craft_panel_items.add_child(empty)
+		_craft_label(empty, "Prepara tu zona de trabajo", 22, Color(0.85, 0.88, 0.75))
+		_craft_label(empty, "Deja troncos, palos, trapos u otros materiales a tus pies y pulsa Actualizar materiales. Las recetas aparecerán aquí.", 16, Color(0.65, 0.73, 0.65))
+		_craft_label(empty, "Ejemplo: un tronco en el suelo + un hacha en la mano = dos palos en el suelo.", 14, Color(0.73, 0.80, 0.55))
+	for entry in recipes:
+		_build_ground_recipe_card(entry.recipe, entry.ready, tools, ground_items)
+
+func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, ground_items: Array) -> void:
+	var card := PanelContainer.new()
+	var style := _panel_style(Color(0.09, 0.12, 0.10), Color(0.25, 0.32, 0.22) if ready else Color(0.20, 0.24, 0.21), 1)
+	style.set_corner_radius_all(8)
+	style.border_width_left = 4
+	style.content_margin_left = 16
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	card.add_theme_stylebox_override("panel", style)
+	craft_panel_items.add_child(card)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	card.add_child(row)
+	var details := VBoxContainer.new()
+	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.add_theme_constant_override("separation", 7)
+	row.add_child(details)
+	_craft_label(details, "%s  ×%d" % [recipe.output.name, int(recipe.output.get("quantity", 1))], 21, Color(0.92, 0.93, 0.84))
+	_craft_label(details, CraftingSystemScript.get_recipe_label(recipe), 13, Color(0.65, 0.72, 0.65))
+	var ingredients := HFlowContainer.new()
+	ingredients.add_theme_constant_override("h_separation", 6)
+	ingredients.add_theme_constant_override("v_separation", 6)
+	details.add_child(ingredients)
+	for input_name in recipe.inputs:
+		var needed: int = recipe.inputs[input_name]
+		var have := 0
+		for entry in ground_items:
+			if CraftingSystemScript._matches_ground_input(input_name, entry):
+				have += int(entry.quantity)
+		if CraftingSystemScript._is_tool(input_name):
+			for tool in tools:
+				if CraftingSystemScript._matches_input(input_name, tool):
+					have += int(tool.quantity)
+		var enough := have >= needed
+		var pill := PanelContainer.new()
+		pill.add_theme_stylebox_override("panel", _panel_style(Color(0.13, 0.19, 0.12) if enough else Color(0.23, 0.13, 0.10), Color(0, 0, 0, 0), 0))
+		ingredients.add_child(pill)
+		var input_label: String = "Cuchillo / hacha" if input_name == "Cuchillo" else input_name
+		_craft_label(pill, "%s  %d/%d" % [input_label, have, needed], 12, Color(0.77, 0.85, 0.61) if enough else Color(0.91, 0.65, 0.49), false)
+	var button := _craft_button("Fabricar" if ready else "Faltan recursos")
+	button.disabled = not ready
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	button.set_meta("recipe", recipe)
+	button.tooltip_text = "El resultado se deja en el suelo. Las herramientas pierden durabilidad." if ready else "Acerca los materiales que faltan o equipa la herramienta. No se usa el inventario."
+	button.pressed.connect(_on_craft_panel_recipe_pressed.bind(recipe))
+	row.add_child(button)
 
 func _on_craft_panel_recipe_pressed(recipe: Dictionary) -> void:
-	if player == null:
+	if player == null or not craft_panel_visible:
 		return
+	call_deferred("_craft_panel_recipe", recipe)
 	craft_panel_visible = false
 	craft_panel.visible = false
+	_sync_craft_visibility()
+
+func _craft_panel_recipe(recipe: Dictionary) -> void:
+	if not is_instance_valid(player):
+		return
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if player.has_method("craft_recipe"):
-		player.craft_recipe(recipe)
+		player.craft_recipe(recipe, true)
 
 func show_notice(text: String) -> void:
 	notice_label.text = text
@@ -1668,19 +1848,14 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	store_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(store_btn)
 	# Add combine button if there are recipes available for this item.
-	# Consider both inventory items and nearby ground items so the player
-	# can craft from the ground without picking everything up first.
+	# Inventory recipes use inventory items only; ground crafting is done
+	# through the [K] ground craft panel.
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
 	var recipes := CraftingSystemScript.get_recipes_for_item(item_name, item_type)
 	_context_menu_recipes = []
-	# Gather nearby ground items once for all recipe checks
-	var ground_items: Array = []
-	var main = player.get_parent()
-	if main != null and main.has_method("get_nearby_ground_items"):
-		ground_items = main.get_nearby_ground_items(player.global_position, 3.0)
 	for recipe in recipes:
-		if CraftingSystemScript.can_craft_with_ground(recipe, player.inventory.items, ground_items):
+		if CraftingSystemScript._can_craft(recipe, player.inventory.items):
 			var recipe_label = CraftingSystemScript.get_recipe_label(recipe)
 			var combine_btn := Button.new()
 			combine_btn.text = "Combinar: %s" % recipe_label

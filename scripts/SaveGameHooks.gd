@@ -440,7 +440,11 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 	var dropped = data.get("dropped_items", [])
 	for drop in dropped:
 		var drop_id := str(drop.get("id", ""))
-		if drop_id.is_empty() or main.world_actions_by_id.has(drop_id):
+		if drop_id.is_empty():
+			continue
+		if main.world_actions_by_id.has(drop_id):
+			if main.has_method("_apply_ground_craft_state"):
+				main._apply_ground_craft_state(drop_id, int(drop.get("qty", 1)), float(drop.get("durability", 100.0)))
 			continue
 		# Skip if this item was already picked up (depleted)
 		if main._depleted_action_ids.has(drop_id):

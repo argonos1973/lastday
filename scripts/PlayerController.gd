@@ -1433,11 +1433,6 @@ func _input(event: InputEvent) -> void:
 			if not use_back_item():
 				notice.emit("No llevas nada en la espalda.")
 			return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_K:
-		var hud = get_parent().get_node_or_null("HUD")
-		if hud != null and hud.has_method("toggle_craft_panel"):
-			hud.toggle_craft_panel()
-			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 
@@ -4869,10 +4864,25 @@ func _craft_shelter() -> void:
 	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
 	notice.emit("Has construido un refugio.")
 
-func craft_recipe(recipe: Dictionary) -> void:
-	if inventory == null:
+func get_ground_crafting_tools() -> Array:
+	var held = get_held_item()
+	if held != null and CraftingSystemScript._is_tool(str(held.item_name)) and not held.is_broken():
+		return [held]
+	return []
+
+func craft_recipe(recipe: Dictionary, from_ground: bool = false) -> void:
+	if inventory == null or not CraftingSystemScript.RECIPES.has(recipe):
 		return
 	var out: Dictionary = recipe["output"]
+	if from_ground:
+		var main := get_parent()
+		if main == null or not main.has_method("craft_ground_recipe"):
+			return
+		if not main.craft_ground_recipe(self, recipe):
+			notice.emit(CraftingSystemScript.craft_error)
+			return
+		_post_craft_success(recipe, out)
+		return
 	# Fogata uses the full campfire flow with animation + spawn
 	if out["type"] == "campfire":
 		_craft_campfire()
@@ -4881,43 +4891,6 @@ func craft_recipe(recipe: Dictionary) -> void:
 		_craft_shelter()
 		return
 	# Try crafting with inventory only first (original path)
-	if CraftingSystemScript.craft(recipe, inventory):
-		_post_craft_success(recipe, out)
-		return
-	# If inventory-only failed, try combining inventory + nearby ground items
-	var main := get_parent()
-	if main == null or not main.has_method("get_nearby_ground_items"):
-		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
-		return
-	var ground_items: Array = main.get_nearby_ground_items(global_position, 3.0)
-	if not CraftingSystemScript.can_craft_with_ground(recipe, inventory.items, ground_items):
-		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios cerca.")
-		return
-	# Consume ground items first, then craft with what remains in inventory
-	for input_name in recipe["inputs"]:
-		var needed: int = recipe["inputs"][input_name]
-		if CraftingSystemScript._is_tool(input_name):
-			# Tools on the ground lose durability but are not consumed
-			var tool_on_ground := false
-			for g in ground_items:
-				if CraftingSystemScript._matches_ground_input(input_name, g):
-					tool_on_ground = true
-					break
-			if tool_on_ground:
-				main.consume_ground_item(input_name, 1, global_position, 3.0, true)
-				needed = 0  # Tool on ground satisfies the requirement
-		if needed <= 0:
-			continue
-		# Count what's in the inventory
-		var inv_have := 0
-		for item in inventory.items:
-			if item != null and CraftingSystemScript._matches_input(input_name, item):
-				inv_have += item.quantity
-		# Consume from ground what the inventory can't cover
-		var ground_needed := max(0, needed - inv_have)
-		if ground_needed > 0:
-			main.consume_ground_item(input_name, ground_needed, global_position, 3.0, false)
-	# Now craft with the remaining inventory items (ground items already consumed)
 	if not CraftingSystemScript.craft(recipe, inventory):
 		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
 		return

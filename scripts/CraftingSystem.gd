@@ -135,16 +135,6 @@ static func get_available_recipes(inventory_items: Array) -> Array:
 			available.append(recipe)
 	return available
 
-# Returns all recipes that can be crafted considering both inventory items
-# and nearby ground items. Ground items is an Array of Dictionaries with
-# "name", "type", "quantity" keys.
-static func get_available_recipes_with_ground(inventory_items: Array, ground_items: Array) -> Array:
-	var available := []
-	for recipe in RECIPES:
-		if _can_craft_with_ground(recipe, inventory_items, ground_items):
-			available.append(recipe)
-	return available
-
 # Returns all recipes that use the given item name as an input
 static func get_recipes_for_item(item_name: String, item_type: String = "") -> Array:
 	var result := []
@@ -211,6 +201,8 @@ static func _can_craft_with_ground(recipe: Dictionary, inventory_items: Array, g
 	return true
 
 static func _matches_ground_input(input_name: String, g: Dictionary) -> bool:
+	if _is_tool(input_name) and float(g.get("durability", 100.0)) <= 0.0:
+		return false
 	var gname: String = str(g.get("name", ""))
 	var gtype: String = str(g.get("type", ""))
 	if input_name == "ANY_CLOTHING":
@@ -231,6 +223,48 @@ static func _matches_input(input_name: String, item) -> bool:
 	return false
 
 static var craft_error := ""
+
+static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_items: Array) -> Dictionary:
+	craft_error = ""
+	if not RECIPES.has(recipe):
+		craft_error = "Receta desconocida."
+		return {}
+	var sources: Array = []
+	for entry in ground_items:
+		var item = ItemScript.create(entry.name, entry.type, float(entry.get("weight", 0.0)), int(entry.quantity), float(entry.get("use_value", 0.0)))
+		item.durability = float(entry.get("durability", 100.0))
+		item.max_durability = float(entry.get("max_durability", 100.0))
+		item.spoilage = float(entry.get("spoilage", 0.0))
+		sources.append({"item": item, "action": entry.action, "quantity": item.quantity, "durability": item.durability})
+	# Carried entries are tools only (e.g. the held axe); materials must be
+	# on the ground. The ground panel never consumes inventory materials.
+	for item in carried_tools:
+		if item != null and _is_tool(str(item.item_name)):
+			sources.append({"item": item, "action": null, "quantity": item.quantity, "durability": item.durability})
+	for input_name in recipe.inputs:
+		var needed: int = recipe.inputs[input_name]
+		var ordered := sources.duplicate()
+		if _is_tool(input_name):
+			ordered.reverse()
+		for source in ordered:
+			if needed <= 0:
+				break
+			if source.quantity <= 0 or not _matches_input(input_name, source.item):
+				continue
+			var take := mini(needed, int(source.quantity))
+			if _is_tool(input_name):
+				source.durability = maxf(0.0, float(source.durability) - 3.0)
+			else:
+				source.quantity -= take
+			needed -= take
+		if needed > 0:
+			craft_error = "Faltan materiales cercanos: %dx %s." % [needed, input_name]
+			return {}
+	var out: Dictionary = recipe.output
+	var output = ItemScript.create(out.name, out.type, out.weight, int(out.get("quantity", 1)), out.use_value)
+	output.durability = float(out.get("durability", output.durability))
+	output.max_durability = float(out.get("max_durability", output.durability))
+	return {"sources": sources, "output": output}
 
 static func craft(recipe: Dictionary, inventory) -> bool:
 	craft_error = ""

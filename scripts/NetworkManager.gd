@@ -491,6 +491,21 @@ func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0
 	if scene != null and scene.has_method("_net_player_died"):
 		scene._net_player_died(sender, inventory_data)
 
+@rpc("any_peer", "reliable")
+func ground_craft_state_changed(action_id: String, quantity: int, durability: float) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not is_host and sender != 1:
+		return
+	var scene := get_tree().current_scene
+	if scene == null or not scene.has_method("_apply_ground_craft_state"):
+		return
+	if not scene._apply_ground_craft_state(action_id, quantity, durability):
+		return
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false) and peer.get_peer(pid) != null:
+				ground_craft_state_changed.rpc_id(pid, action_id, quantity, durability)
+
 func get_player_list() -> Dictionary:
 	return players
 
