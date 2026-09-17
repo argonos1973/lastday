@@ -2355,13 +2355,16 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 			mi.material_override = mat
 	# If this is a head-slot item and we have a head bone, store the relative
 	# transform so _update_head_worn_items() can follow the bone each frame.
+	# The offset is captured against the bone REST pose, not the current
+	# animated pose — the anchor above was computed from the bind-pose AABB,
+	# so equipping while crouched/sitting must not bake that pose's offset.
 	if CLOTHING_SLOTS.get(item_name, "") == "head" and _head_skeleton != null and _head_bone_idx >= 0:
-		var bone_pose := _head_skeleton.get_bone_global_pose(_head_bone_idx)
+		var bone_rest := _head_skeleton.get_bone_global_rest(_head_bone_idx)
 		var skel_global := _head_skeleton.global_transform
-		var bone_world := skel_global * bone_pose
+		var rest_world := skel_global * bone_rest
 		var local_to_model := third_person_model.global_transform.affine_inverse()
-		var bone_local := local_to_model * bone_world
-		_head_worn_rel[worn_name] = bone_local.affine_inverse() * node.transform
+		var rest_local := local_to_model * rest_world
+		_head_worn_rel[worn_name] = rest_local.affine_inverse() * node.transform
 		_update_head_worn_items()
 
 # Body AABB collected directly from get_aabb() without going through
@@ -2436,10 +2439,16 @@ func _local_aabb_in(frame: Node3D, root: Node, exclude_worn: bool) -> AABB:
 	return combined
 
 func _collect_body_meshes(node: Node, result: Array, exclude_worn: bool) -> void:
-	if exclude_worn and node.name.begins_with("Worn_"):
-		return
-	if exclude_worn and (node.name == "BackpackSocket" or node.name == "HandsSocket"):
-		return
+	if exclude_worn:
+		# Skip everything attached at runtime (worn garments, sockets, held
+		# props, fishing-rod overlays, rifle attachments). Their meshes inflate
+		# the body AABB — a rod overlay alone pushes the clothing anchor metres
+		# above the head.
+		var n := String(node.name)
+		if n.begins_with("Worn_") or n.begins_with("RodVisual_") or n.begins_with("BoneAttachment") or n.ends_with("Socket"):
+			return
+		if n in ["RifleSlingRoot", "RifleRoot", "WeaponOffset", "MuzzleFlash"]:
+			return
 	if node is MeshInstance3D:
 		result.append(node)
 	for child in node.get_children():
