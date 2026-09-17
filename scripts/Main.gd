@@ -6475,10 +6475,12 @@ func _execute_world_action(action, actor) -> void:
 				# Equip first so carry capacity expands before the weight check in
 				# add_item runs — otherwise a previous drop (which shrinks capacity
 				# without removing carried items) can make the weight check fail
-				# and silently block re-equipping the backpack.
+				# and silently block re-equipping the backpack. On failure restore
+				# the previously equipped backpack instead of unequipping it.
+				var _prev_bp := str(actor.equipped_backpack)
 				actor.equip_backpack(item.item_name)
 				if not actor.inventory.add_item(item):
-					actor.equip_backpack("")
+					actor.equip_backpack(_prev_bp)
 					return
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 				_hide_action_visual(action)
@@ -6749,11 +6751,12 @@ func _execute_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, ItemScript.create("Pico", "tool_pickaxe", 1.35, 1, 0.0), "Recoges un pico.")
 		"backpack_pickup":
 			_play_actor_action(actor, "pickup", 0.3)
+			var _prev_bp := str(actor.equipped_backpack) if "equipped_backpack" in actor else ""
 			if actor.has_method("equip_backpack"):
 				actor.equip_backpack("Mochila pequena")
 			if not actor.inventory.add_item(ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)):
 				if actor.has_method("equip_backpack"):
-					actor.equip_backpack("")
+					actor.equip_backpack(_prev_bp)
 				return
 			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
@@ -7176,7 +7179,14 @@ func handle_world_action_collect(action, actor) -> void:
 				if action.has_meta("item_durability"):
 					item.durability = float(action.get_meta("item_durability"))
 			_play_actor_action(actor, "pickup", 0.8)
-			if str(item.item_type) == "clothing":
+			if str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
+				var _prev_bp := str(actor.equipped_backpack)
+				actor.equip_backpack(item.item_name)
+				if not actor.inventory.add_item(item):
+					actor.equip_backpack(_prev_bp)
+					return
+				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
+			elif str(item.item_type) == "clothing":
 				if not actor.inventory.add_item(item):
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return

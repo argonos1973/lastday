@@ -2507,6 +2507,14 @@ func equip_backpack(item_name: String) -> void:
 	if inventory != null:
 		inventory.changed.emit()
 
+func _has_backpack_in_inventory() -> bool:
+	if inventory == null:
+		return false
+	for it in inventory.items:
+		if it != null and str(it.item_type) == "backpack":
+			return true
+	return false
+
 func refresh_carry_capacity() -> void:
 	_recalculate_carry_capacity()
 	_sync_held_item()
@@ -2571,12 +2579,14 @@ func _drop_excess_items(count: int) -> void:
 		var item = inventory.items[i]
 		if item == null:
 			continue
-		# Don't drop equipped clothing
+		# Don't drop equipped clothing or the equipped backpack
 		var is_equipped := false
 		for slot_val in _equipped_slots.values():
 			if str(slot_val) == str(item.item_name):
 				is_equipped = true
 				break
+		if str(item.item_type) == "backpack" and not equipped_backpack.is_empty():
+			is_equipped = true
 		if is_equipped:
 			continue
 		var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
@@ -5127,9 +5137,6 @@ func drop_inventory_item(index: int) -> void:
 	var item = inventory.items[index]
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
-	if item_type == "backpack":
-		equipped_backpack = ""
-		_recalculate_carry_capacity()
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
 	if item_type == "tool_torch":
@@ -5157,6 +5164,11 @@ func drop_inventory_item(index: int) -> void:
 		is_broken = item.is_broken()
 	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
 	inventory.remove_index(index, drop_qty)
+	# Only unequip the backpack once its last unit leaves the inventory — a
+	# stacked second backpack must keep the worn one equipped.
+	if item_type == "backpack" and not _has_backpack_in_inventory():
+		equipped_backpack = ""
+		_recalculate_carry_capacity()
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)
 	_sync_held_item()
@@ -5195,9 +5207,6 @@ func _throw_held_item(charge: float) -> void:
 	var item_type := str(item.item_type)
 	var item_weight := float(item.weight)
 	# Mismo preprocesamiento que drop_inventory_item para agua/ropa/antorcha
-	if item_type == "backpack":
-		equipped_backpack = ""
-		_recalculate_carry_capacity()
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
 	if item_type == "tool_torch":
@@ -5233,6 +5242,9 @@ func _throw_held_item(charge: float) -> void:
 		if removed == null:
 			thrown_visual.free()
 			return
+	if item_type == "backpack" and not _has_backpack_in_inventory():
+		equipped_backpack = ""
+		_recalculate_carry_capacity()
 	_sync_held_item()
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
