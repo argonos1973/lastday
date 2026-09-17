@@ -1724,7 +1724,7 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	player.position = LAKE_TEST_SPAWN
+	player.position = _get_random_spawn_pos()
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
