@@ -666,9 +666,57 @@ func setup_as_puppet() -> void:
 					_head_bone_idx = _head_skeleton.find_bone(bone_name)
 					if _head_bone_idx != -1:
 						break
+	# PvP: puppets are the only shootable representation of remote players —
+	# give them damage hitboxes so rifle rays connect and headshots register.
+	add_to_group("remote_player")
+	_create_puppet_hitboxes()
 	set_process(true)
 	set_process_input(false)
 	set_physics_process(false)
+
+func _create_puppet_hitboxes() -> void:
+	if not is_puppet or _collision_shape != null:
+		return
+	# The rifle ray only honors Area3D nodes named *Hitbox — a torso capsule
+	# plus a sphere glued to the head bone so headshots track animations.
+	var body_area := Area3D.new()
+	body_area.name = "BodyHitbox"
+	body_area.monitoring = false
+	var body_col := CollisionShape3D.new()
+	var body_capsule := CapsuleShape3D.new()
+	body_capsule.radius = 0.32
+	body_capsule.height = 1.35
+	body_col.shape = body_capsule
+	body_col.position.y = 0.75
+	body_area.add_child(body_col)
+	add_child(body_area)
+	if _head_skeleton != null and _head_bone_idx >= 0:
+		var attach := BoneAttachment3D.new()
+		attach.name = "HeadHitboxAttach"
+		attach.bone_name = _head_skeleton.get_bone_name(_head_bone_idx)
+		_head_skeleton.add_child(attach)
+		var head_area := Area3D.new()
+		head_area.name = "HeadHitbox"
+		head_area.monitoring = false
+		var head_col := CollisionShape3D.new()
+		var head_sphere := SphereShape3D.new()
+		# Bone space is in centimetres — the armature carries a 0.01 scale.
+		head_sphere.radius = 20.0
+		head_col.shape = head_sphere
+		head_col.position = Vector3(0.0, 16.0, 0.0)
+		head_area.add_child(head_col)
+		attach.add_child(head_area)
+	else:
+		var head_area := Area3D.new()
+		head_area.name = "HeadHitbox"
+		head_area.monitoring = false
+		var head_col := CollisionShape3D.new()
+		var head_sphere := SphereShape3D.new()
+		head_sphere.radius = 0.22
+		head_col.shape = head_sphere
+		head_col.position.y = 1.58
+		head_area.add_child(head_col)
+		add_child(head_area)
 
 var _puppet_clothing := ""
 var _puppet_held := ""
@@ -9208,20 +9256,21 @@ func _update_torch(delta: float) -> void:
 
 
 #region VIDA, DAÑO Y COMBATE
-func take_damage(amount: float, from_knife: bool = false) -> void:
+func take_damage(amount: float, from_knife: bool = false, weapon: String = "melee") -> void:
 	if is_puppet:
-		# Puppet: send damage to server via RPC
+		# Puppet: send damage to server via RPC — the server validates range
+		# per weapon type before applying it to the real player.
 		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 		if net_node != null:
 			var peer_id: int = get_meta("peer_id", 0)
 			if peer_id != 0:
-				net_node.damage_player.rpc_id(1, peer_id, amount)
+				net_node.damage_player.rpc_id(1, peer_id, amount, weapon)
 		_spawn_blood_splatter()
 		return
 	apply_damage(amount)
 
 func apply_damage(amount: float) -> void:
-	if is_dead:
+	if is_puppet or is_dead:
 		return
 	if is_sleeping:
 		stop_sleep()
@@ -9711,7 +9760,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			while parent != null:
 				if parent == self:
 					break
-				if parent.has_method("take_damage") and (parent.is_in_group("wildlife") or parent.is_in_group("npc") or parent.is_in_group("net_player_proxy")):
+				if parent.has_method("take_damage") and _is_rifle_damage_target(parent):
 					target_node = parent
 					break
 				parent = parent.get_parent()
@@ -9720,7 +9769,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			while parent != null:
 				if parent == self:
 					break
-				if parent.has_method("take_damage") and (parent.is_in_group("wildlife") or parent.is_in_group("npc") or parent.is_in_group("net_player_proxy")):
+				if parent.has_method("take_damage") and _is_rifle_damage_target(parent):
 					target_node = parent
 					break
 				parent = parent.get_parent()
@@ -9729,15 +9778,15 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			while walked != null:
 				if walked == self:
 					break
-				if walked.has_method("take_damage") and (walked.is_in_group("wildlife") or walked.is_in_group("npc") or walked.is_in_group("net_player_proxy")):
+				if walked.has_method("take_damage") and _is_rifle_damage_target(walked):
 					target_node = walked
 					break
 				walked = walked.get_parent()
 		if target_node != null:
 			if is_headshot:
-				target_node.take_damage(damage * 3.0, false)
+				_apply_rifle_target_damage(target_node, damage * 3.0)
 			else:
-				target_node.take_damage(damage, false)
+				_apply_rifle_target_damage(target_node, damage)
 			_spawn_blood_splatter(hit_pos)
 			_hit_marker(bool(target_node.get("_is_dead")))
 			return
@@ -9771,6 +9820,43 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 	# Non-living surface: dust puff, debris chips and a bullet hole decal
 	_spawn_bullet_impact(hit_pos, hit_normal, collider)
 	_hit_marker(false)
+
+func _is_rifle_damage_target(node: Node) -> bool:
+	return node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("net_player_proxy") or node.is_in_group("remote_player")
+
+func _apply_rifle_target_damage(target: Node, amount: float) -> void:
+	# Remote-player puppets report the weapon so the server can validate the
+	# shot distance per weapon type; NPCs use their own two-arg signature.
+	if target.is_in_group("remote_player"):
+		target.take_damage(amount, false, "rifle")
+	else:
+		target.take_damage(amount, false)
+
+func _spawn_bullet_tracer(from_pos: Vector3, dir: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene == null or dir.length_squared() < 0.001:
+		return
+	# Short-lived bright streak so remote shots are seen, not only heard.
+	var tracer := MeshInstance3D.new()
+	tracer.name = "BulletTracer"
+	var mesh := BoxMesh.new()
+	var length := 14.0
+	mesh.size = Vector3(0.02, 0.02, length)
+	tracer.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.9, 0.55, 0.9)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.8, 0.35)
+	mat.emission_energy_multiplier = 3.0
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	tracer.material_override = mat
+	scene.add_child(tracer)
+	var forward := dir.normalized()
+	tracer.global_position = from_pos + forward * (length * 0.5)
+	tracer.look_at(from_pos + forward * length, Vector3.UP)
+	var t := get_tree().create_timer(0.09)
+	t.timeout.connect(func(): if is_instance_valid(tracer): tracer.queue_free())
 
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
 	var scene := get_tree().current_scene
@@ -10119,6 +10205,9 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
 		third_person_action_timer = 1.0
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	_play_shoot_sound()
+	# Show the shot itself — tracer streak + muzzle flash at the reported muzzle.
+	_spawn_bullet_tracer(_origin, _dir)
+	_spawn_muzzle_flash(_origin, _dir)
 
 func _play_pain_sound() -> void:
 	if _pain_sound_timer > 0.0:

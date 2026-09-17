@@ -420,13 +420,14 @@ func broadcast_player_death(peer_id: int, pos: Vector3, rot: float) -> void:
 	if scene != null and scene.has_method("_net_player_death_broadcast"):
 		scene._net_player_death_broadcast(peer_id, pos, rot)
 
-# Client tells server to damage another player (PvP)
+# Client tells server to damage another player (PvP). `weapon` lets the
+# server validate the hit distance per weapon type (melee vs rifle).
 @rpc("any_peer", "reliable")
-func damage_player(target_peer_id: int, amount: float) -> void:
+func damage_player(target_peer_id: int, amount: float, weapon: String = "melee") -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_damage_player"):
-		scene._net_damage_player(target_peer_id, amount, sender)
+		scene._net_damage_player(target_peer_id, amount, sender, weapon)
 
 # Client tells server to damage an animal
 @rpc("any_peer", "reliable")
@@ -594,12 +595,14 @@ func get_my_id() -> int:
 # Client tells server it fired the rifle (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
-	if is_host and peer != null:
-		for pid in players.keys():
-			if pid != shooter_id and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-				if peer.get_peer(pid) != null:
-					player_shot_rifle.rpc_id(pid, shooter_id, origin, dir)
 	var scene := get_tree().current_scene
+	if is_host and peer != null:
+		# Don't relay shots from dead or unknown shooters.
+		if scene == null or not scene.has_method("_is_shooter_valid") or scene._is_shooter_valid(shooter_id):
+			for pid in players.keys():
+				if pid != shooter_id and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
+					if peer.get_peer(pid) != null:
+						player_shot_rifle.rpc_id(pid, shooter_id, origin, dir)
 	if scene != null and scene.has_method("_net_player_shot_rifle"):
 		scene._net_player_shot_rifle(shooter_id, origin, dir)
 

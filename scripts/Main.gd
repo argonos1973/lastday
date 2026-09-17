@@ -2237,6 +2237,13 @@ func _net_item_picked_up(action_id: String) -> void:
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
 
+# Host-side check: the shooter must have a live proxy for the shot to count.
+func _is_shooter_valid(shooter_id: int) -> bool:
+	if net == null or not net.is_host or shooter_id == net.get_my_id():
+		return true
+	var sp: Node3D = server_proxies.get(shooter_id)
+	return sp != null and not sp.get_meta("proxy_dead", false)
+
 func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
 	if remote_players.has(shooter_id):
 		var rp: Node3D = remote_players[shooter_id]
@@ -2377,7 +2384,7 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 				_spawn_raw_meat_visual(mid, mname, mpos)
 	)
 
-func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void:
+func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon: String = "melee") -> void:
 	if net == null or not net.is_host:
 		return
 	# Find target proxy: check active proxies first, then disconnected ones
@@ -2393,8 +2400,10 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 	if proxy == null:
 		return
 	var is_dead: bool = proxy.get_meta("proxy_dead", false)
-	if is_dead:
+	if is_dead or target_peer_id == sender:
 		return
+	# Clamp reported damage: rifle body/head max, melee a fixed cap.
+	amount = minf(amount, 600.0)
 	# Check distance if sender has a proxy
 	var sender_proxy: Node3D = null
 	if server_proxies.has(sender):
@@ -2406,8 +2415,14 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int) -> void
 				sender_proxy = sp2
 				break
 	if sender_proxy != null:
+		# Rifle hits are legitimately long-range; melee stays close-quarters.
+		var max_reach := 5.0
+		if weapon == "rifle":
+			max_reach = 170.0
+		elif weapon != "melee":
+			return
 		var dist := sender_proxy.global_position.distance_to(proxy.global_position)
-		if dist > 5.0:
+		if dist > max_reach:
 			return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
