@@ -1726,7 +1726,7 @@ func _create_player() -> void:
 	player.name = "Player"
 	# TEMP TEST: spawn on the lake shore next to the rowboat (revert to
 	# _get_random_spawn_pos() when done testing).
-	player.position = Vector3(258, _get_ground_height(Vector3(258, 0, -264)) + 0.5, -264)
+	player.position = Vector3(258, _get_exact_ground_y(258, -264) + 0.5, -264)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -8776,8 +8776,8 @@ func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
 	# Beached on the shore facing the lake hut — fixed position so every
 	# client and save generates the identical boat.
 	var rz: float = size.y * 0.5 * 0.85
-	var boat_pos := center + across * (rz + 0.6) + along * 10.0
-	boat_pos.y = _get_ground_height(boat_pos) + 0.02
+	var boat_pos := center + across * (rz + 1.2) + along * 10.0
+	boat_pos.y = _get_exact_ground_y(boat_pos.x, boat_pos.z) + 0.02
 	var boat := Node3D.new()
 	boat.name = "LakeRowboat"
 	boat.position = boat_pos
