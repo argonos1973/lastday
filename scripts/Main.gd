@@ -8783,13 +8783,14 @@ func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
 	boat.position = boat_pos
 	boat.rotation_degrees.y = rad_to_deg(angle) + 18.0
 	var model: Node = packed.instantiate()
+	model.scale = Vector3.ONE * 1.8
 	var wood_mat := StandardMaterial3D.new()
 	wood_mat.albedo_color = Color(0.32, 0.20, 0.11)
 	wood_mat.roughness = 0.85
 	_apply_material_recursive(model, wood_mat)
 	boat.add_child(model)
 	add_child(boat)
-	_create_invisible_collision_box_rotated("LakeRowboatCollision", boat_pos, Vector3(1.7, 0.5, 2.2), boat.rotation_degrees.y)
+	_create_invisible_collision_box_rotated("LakeRowboatCollision", boat_pos, Vector3(3.2, 0.9, 4.0), boat.rotation_degrees.y)
 
 func _apply_material_recursive(node: Node, mat: Material) -> void:
 	if node is MeshInstance3D:
