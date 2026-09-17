@@ -2074,10 +2074,13 @@ func _on_use_pressed() -> void:
 		return
 	var item = player.inventory.items[real_idx]
 	var itype := str(item.item_type)
-	# Clothing equips directly in one step; other items go to hand first.
+	# Clothing and backpacks equip directly in one step; other items go to hand first.
 	if itype == "clothing":
 		var _inv_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
 		player.equip_clothing(str(item.item_name), _inv_color)
+	elif itype == "backpack":
+		player.equip_backpack(str(item.item_name))
+		player.notice.emit("Te equipas %s. Puedes cargar mas." % item.item_name)
 	else:
 		player._select_held_item(real_idx)
 	selected_slot_index = -1
