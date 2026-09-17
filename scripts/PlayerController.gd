@@ -354,6 +354,7 @@ var _rowing_model_transform := Transform3D.IDENTITY
 var _rowing_camera_transform := Transform3D.IDENTITY
 var _rowing_view_yaw := 0.0
 var _rowing_view_height := 3.5
+var _rowing_view_dist := 7.0
 var _rowing_animation := "rowing/Stroke"
 var is_prone := false
 var _sit_cooldown := 0.0
@@ -1308,6 +1309,11 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion:
 			_rowing_view_yaw -= event.relative.x * mouse_sensitivity
 			_rowing_view_height = clampf(_rowing_view_height + event.relative.y * 0.015, 1.5, 6.0)
+		elif event is InputEventMouseButton and event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_rowing_view_dist = clampf(_rowing_view_dist - 0.8, 3.0, 14.0)
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_rowing_view_dist = clampf(_rowing_view_dist + 0.8, 3.0, 14.0)
 		elif event.is_action_pressed("interact") and not event.is_echo():
 			rowing_boat.request_exit()
 		return
@@ -8329,6 +8335,7 @@ func begin_rowing(boat: Node3D) -> void:
 		_rowing_camera_transform = camera.transform
 	_rowing_view_yaw = 0.0
 	_rowing_view_height = 3.5
+	_rowing_view_dist = 7.0
 	is_sleeping = false
 	is_sitting = false
 	is_prone = false
@@ -8373,7 +8380,7 @@ func update_rowing_pose(time: float) -> void:
 	_update_hand_socket()
 	_update_head_worn_items()
 	if camera != null and not is_puppet:
-		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * 7.0, _rowing_view_height, cos(_rowing_view_yaw) * 7.0))
+		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * _rowing_view_dist, _rowing_view_height, cos(_rowing_view_yaw) * _rowing_view_dist))
 		camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
 
 func end_rowing(pos: Vector3) -> void:
