@@ -7852,6 +7852,7 @@ func _create_mountain_river() -> void:
 		if size.x >= 60.0:
 			await _create_lake_bank_tall_grass(center, size, yaw)
 			await _create_lake_shore_rocks(center, size, yaw)
+			_create_lake_rowboat(center, size, yaw)
 
 func _catmull_rom(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var t2 := t * t
@@ -8757,6 +8758,42 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 			var _saved_rng_state := _world_rng.state
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
+
+var _rowboat_spawned := false
+
+func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
+	if _rowboat_spawned:
+		return
+	_rowboat_spawned = true
+	var packed: PackedScene = load("res://assets/models/props/wooden_rowboat.glb")
+	if packed == null:
+		return
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	# Beached on the shore facing the lake hut — fixed position so every
+	# client and save generates the identical boat.
+	var rz: float = size.y * 0.5 * 0.85
+	var boat_pos := center + across * (rz + 0.6) + along * 10.0
+	boat_pos.y = _get_ground_height(boat_pos) + 0.02
+	var boat := Node3D.new()
+	boat.name = "LakeRowboat"
+	boat.position = boat_pos
+	boat.rotation_degrees.y = rad_to_deg(angle) + 18.0
+	var model: Node = packed.instantiate()
+	var wood_mat := StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.32, 0.20, 0.11)
+	wood_mat.roughness = 0.85
+	_apply_material_recursive(model, wood_mat)
+	boat.add_child(model)
+	add_child(boat)
+	_create_invisible_collision_box_rotated("LakeRowboatCollision", boat_pos, Vector3(1.7, 0.5, 2.2), boat.rotation_degrees.y)
+
+func _apply_material_recursive(node: Node, mat: Material) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_override = mat
+	for child in node.get_children():
+		_apply_material_recursive(child, mat)
 
 func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, radius_z: float, height: float, yaw: float, color: Color) -> void:
 	if not node_name.contains("SnowCap"):
