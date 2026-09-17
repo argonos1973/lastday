@@ -515,6 +515,12 @@ func _start_game() -> void:
 	if _started:
 		return
 	_started = true
+	# A non-saved character starts a fresh game: drop the old save so it can
+	# never be restored over the new run or linger as a stale "Continuar" slot.
+	var gsess := get_node_or_null("/root/GameSession")
+	var sgm := get_node_or_null("/root/SaveGameManager")
+	if gsess != null and sgm != null and gsess.selected_character_id != "saved" and sgm.has_save():
+		sgm.delete_save()
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
 
 func _apply_char_selection() -> void:
