@@ -591,6 +591,11 @@ func _update_footsteps(delta: float) -> void:
 	# Water footsteps use input timing instead of the previous frame's velocity.
 	# This also works while wading deeply, where CharacterBody3D may not report
 	# itself as being on the floor.
+	if is_instance_valid(player.get("rowing_boat")):
+		_stop_walk_run()
+		stop_water_step()
+		step_timer = 0.0
+		return
 	if player.is_in_water:
 		_stop_walk_run()
 		var water_input: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")

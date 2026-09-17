@@ -5,6 +5,9 @@ const CYCLE := 2.0
 const MAX_SPEED := 3.2
 const HULL_MARGIN := 3.0
 const BOARD_REACH := 4.6
+const WATER_Y := 0.24
+const OAR_SPLASH_PATH := "res://objetocaeagua.mp3"
+const WAKE_LOOP_PATH := "res://andarporagua.mp3"
 
 var lake_center := Vector3.ZERO
 var lake_size := Vector2(150, 90)
@@ -29,6 +32,14 @@ var _network_yaw := 0.0
 var _sequence := 0
 var _last_sequence := -1
 var _request_times: Dictionary = {}
+var _wake: GPUParticles3D
+var _oar_splash_l: GPUParticles3D
+var _oar_splash_r: GPUParticles3D
+var _oar_audio: AudioStreamPlayer3D
+var _wake_audio: AudioStreamPlayer3D
+var _prev_rowing_time := 0.0
+var _fx_prev_pos := Vector3.ZERO
+var _fx_speed := 0.0
 
 func _ready() -> void:
 	world = get_parent()
@@ -51,6 +62,8 @@ func _ready() -> void:
 			animation_player = players[0]
 			animation_player.play("Animation")
 			animation_player.pause()
+		_create_water_fx()
+	_fx_prev_pos = position
 	_network_position = position
 	_network_yaw = rotation.y
 	if _networked() and not _authority():
@@ -229,6 +242,7 @@ func _process(delta: float) -> void:
 		animation_player.seek(rowing_time, true)
 	if is_instance_valid(passenger):
 		passenger.update_rowing_pose(rowing_time)
+	_update_water_fx(delta)
 
 func _sync_passenger() -> void:
 	if occupant == 0:
@@ -312,6 +326,126 @@ func find_exit_position() -> Dictionary:
 
 func passenger_prompt() -> String:
 	return "W/S: remar | A/D: girar | F: salir del bote" if _can_exit else "W/S: remar | A/D: girar | Acercate a la orilla para salir"
+
+func _create_water_fx() -> void:
+	_wake = _make_spray(140, 1.5, false)
+	_wake.name = "WakeFx"
+	var wake_mat := _wake.process_material as ParticleProcessMaterial
+	wake_mat.emission_box_extents = Vector3(0.7, 0.03, 0.3)
+	wake_mat.initial_velocity_min = 0.35
+	wake_mat.initial_velocity_max = 1.0
+	wake_mat.scale_min = 0.09
+	wake_mat.scale_max = 0.32
+	_wake.position = Vector3(0, WATER_Y, 2.5)
+	add_child(_wake)
+	_oar_splash_l = _make_splash(Vector3(-1.15, WATER_Y, 0.35))
+	_oar_splash_r = _make_splash(Vector3(1.15, WATER_Y, 0.35))
+	_oar_audio = AudioStreamPlayer3D.new()
+	_oar_audio.name = "OarSplashAudio"
+	_oar_audio.unit_size = 5.0
+	_oar_audio.max_distance = 45.0
+	_oar_audio.stream = _load_fx_stream(OAR_SPLASH_PATH)
+	_oar_audio.position = Vector3(0, WATER_Y, 0.3)
+	add_child(_oar_audio)
+	_wake_audio = AudioStreamPlayer3D.new()
+	_wake_audio.name = "WakeAudio"
+	_wake_audio.unit_size = 4.0
+	_wake_audio.max_distance = 30.0
+	var wake_stream := _load_fx_stream(WAKE_LOOP_PATH)
+	if wake_stream is AudioStreamMP3:
+		# Skip the recording intro; loop_offset keeps the loop in the useful part.
+		wake_stream.loop = true
+		wake_stream.loop_offset = 4.0
+	_wake_audio.stream = wake_stream
+	_wake_audio.volume_db = -80.0
+	add_child(_wake_audio)
+
+func _make_splash(pos: Vector3) -> GPUParticles3D:
+	var splash := _make_spray(20, 0.8, true)
+	splash.name = "OarSplash" + ("L" if pos.x < 0 else "R")
+	splash.position = pos
+	add_child(splash)
+	return splash
+
+func _make_spray(amount: int, lifetime: float, one_shot: bool) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.amount = amount
+	p.lifetime = lifetime
+	p.local_coords = false
+	p.one_shot = one_shot
+	p.explosiveness = 1.0 if one_shot else 0.0
+	p.emitting = false
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.visibility_aabb = AABB(Vector3(-30, -5, -30), Vector3(60, 10, 60))
+	var mat := ParticleProcessMaterial.new()
+	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	mat.emission_box_extents = Vector3(0.2, 0.02, 0.2)
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 32.0
+	mat.initial_velocity_min = 0.9
+	mat.initial_velocity_max = 2.4
+	mat.gravity = Vector3(0, -7.0, 0)
+	mat.scale_min = 0.05
+	mat.scale_max = 0.16
+	mat.color = Color(0.72, 0.84, 0.92, 0.55)
+	p.process_material = mat
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.05
+	mesh.height = 0.09
+	var surf := StandardMaterial3D.new()
+	surf.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	surf.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	surf.albedo_color = Color(0.78, 0.88, 0.95, 0.6)
+	mesh.material = surf
+	p.draw_pass_1 = mesh
+	return p
+
+func _load_fx_stream(path: String) -> AudioStream:
+	if ResourceLoader.exists(path):
+		var loaded = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		if loaded is AudioStream:
+			return loaded
+	var disk_path := ProjectSettings.globalize_path(path)
+	if path.get_extension().to_lower() == "mp3" and FileAccess.file_exists(disk_path):
+		var mp3 := AudioStreamMP3.load_from_file(disk_path)
+		if mp3 is AudioStream:
+			return mp3
+	return null
+
+func _update_water_fx(delta: float) -> void:
+	if _wake == null:
+		return
+	var dist := Vector2(global_position.x - _fx_prev_pos.x, global_position.z - _fx_prev_pos.z).length()
+	_fx_speed = dist / maxf(delta, 0.0001)
+	_fx_prev_pos = global_position
+	var moving := _fx_speed > 0.35
+	_wake.emitting = moving
+	if _wake_audio != null and _wake_audio.stream != null:
+		var target := -80.0
+		if moving:
+			target = lerpf(-16.0, -6.0, clampf(_fx_speed / MAX_SPEED, 0.0, 1.0))
+		_wake_audio.volume_db = lerpf(_wake_audio.volume_db, target, clampf(delta * 4.0, 0.0, 1.0))
+		if _wake_audio.volume_db > -55.0 and not _wake_audio.playing:
+			_wake_audio.play()
+		elif _wake_audio.volume_db < -55.0 and _wake_audio.playing:
+			_wake_audio.stop()
+	if rowing and rowing_time < _prev_rowing_time:
+		_stroke_splash()
+	_prev_rowing_time = rowing_time
+
+func _stroke_splash() -> void:
+	if _oar_splash_l != null:
+		_oar_splash_l.restart()
+	if _oar_splash_r != null:
+		_oar_splash_r.restart()
+	if _oar_audio != null and _oar_audio.stream != null:
+		_oar_audio.pitch_scale = randf_range(0.92, 1.08)
+		_oar_audio.volume_db = randf_range(-5.0, -1.0)
+		_oar_audio.play(2.0)
+		var audio := _oar_audio
+		get_tree().create_timer(1.4).timeout.connect(func():
+			if is_instance_valid(audio) and audio.playing:
+				audio.stop())
 
 func _send_state() -> void:
 	if not _networked() or not _authority():

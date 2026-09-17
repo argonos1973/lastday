@@ -167,6 +167,24 @@ func run() -> void:
 	check(boat.occupant == 1, "Client ignores stale snapshots")
 	boat.apply_network_state({"seq": 3, "pos": original, "yaw": 0.3, "occupant": 0, "time": 0.5, "rowing": false, "exit": Vector3(260, 0.2, -267), "can_exit": true})
 	check(actor.rowing_boat == null and actor.position.z == -267, "Client applies safe exit")
+	check(boat.get_node_or_null("WakeFx") != null, "Wake particles created")
+	check(boat.get_node_or_null("OarSplashL") != null and boat.get_node_or_null("OarSplashR") != null, "Oar splash emitters created")
+	var wake: GPUParticles3D = boat.get_node_or_null("WakeFx")
+	if wake != null:
+		boat._fx_prev_pos = boat.global_position
+		boat.global_position -= boat.global_basis.z * 0.05
+		boat._update_water_fx(1.0 / 60.0)
+		check(wake.emitting, "Wake emits while the boat moves")
+		boat._fx_prev_pos = boat.global_position
+		boat._update_water_fx(1.0 / 60.0)
+		check(not wake.emitting, "Wake stops when the boat is still")
+	actor.rowing_boat = boat
+	actor.position = Vector3(250, 0.2, -307)
+	actor.is_in_water = true
+	actor._water_query_timer = 1.0
+	actor._update_water_state(0.3)
+	check(not actor.is_in_water, "Rowing player is not flagged as wading")
+	actor.rowing_boat = null
 	world.net = null
 	if OS.get_cmdline_user_args().has("--preview"):
 		boat.position = original

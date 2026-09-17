@@ -3223,7 +3223,10 @@ func _update_water_state(delta: float) -> void:
 	_water_step_timer = maxf(0.0, _water_step_timer - delta)
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
 	_water_query_timer += delta
-	if _water_query_timer >= 0.25:
+	if is_instance_valid(rowing_boat):
+		_water_depth = 0.0
+		is_in_water = false
+	elif _water_query_timer >= 0.25:
 		_water_query_timer = 0.0
 		var river_depth := _query_river_depth()
 		_water_depth = river_depth
