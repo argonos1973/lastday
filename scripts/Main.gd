@@ -1724,11 +1724,9 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	# Test hook: LASTDAY_LAKE_SPAWN=1 starts the player on the lake shore.
-	if OS.get_environment("LASTDAY_LAKE_SPAWN") == "1":
-		player.position = Vector3(258, _get_ground_height(Vector3(258, 0, -264)) + 0.5, -264)
-	else:
-		player.position = _get_random_spawn_pos()
+	# TEMP TEST: spawn on the lake shore next to the rowboat (revert to
+	# _get_random_spawn_pos() when done testing).
+	player.position = Vector3(258, _get_ground_height(Vector3(258, 0, -264)) + 0.5, -264)
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)

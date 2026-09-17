@@ -282,9 +282,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	var pos_arr = data.get("pos", [8.0, 0.4, 2.5])
 	if pos_arr is Array and pos_arr.size() >= 3:
 		player.global_position = Vector3(float(pos_arr[0]), float(pos_arr[1]), float(pos_arr[2]))
-	# Test hook: LASTDAY_LAKE_SPAWN=1 teleports to the lake shore even on a loaded save.
-	if OS.get_environment("LASTDAY_LAKE_SPAWN") == "1":
-		player.global_position = Vector3(258, 2.0, -264)
+	# TEMP TEST: also land on the lake shore when continuing a saved game.
+	player.global_position = Vector3(258, 2.0, -264)
 	# Rotation
 	player.rotation.y = float(data.get("rot", 0.0))
 	# Reset velocity
