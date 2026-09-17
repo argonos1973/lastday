@@ -8,9 +8,7 @@ static func maybe_insert_saved_character(inicio: Node) -> void:
 	var saved_cfg: Dictionary = sgm.get_saved_character_config()
 	if saved_cfg.is_empty():
 		return
-	# Append (not prepend) so the default selection stays a new character and
-	# "Un jugador" starts a fresh game; the saved slot is reached via arrows.
-	inicio.CHAR_CONFIGS.append(saved_cfg)
+	inicio.CHAR_CONFIGS.insert(0, saved_cfg)
 
 static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	_remove_existing_info(inicio)
