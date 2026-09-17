@@ -3751,6 +3751,10 @@ func _create_map() -> void:
 	if not is_server:
 		await _create_mountain_river()
 		await get_tree().process_frame
+	else:
+		for segment in river_segments_data:
+			if segment.size.x >= 60.0:
+				_create_lake_rowboat(segment.center, segment.size, segment.yaw)
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_road()
@@ -8762,13 +8766,10 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 			_world_rng.state = _saved_rng_state
 
 var _rowboat_spawned := false
+var lake_rowboat: StaticBody3D
 
 func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
 	if _rowboat_spawned:
-		return
-	_rowboat_spawned = true
-	var packed: PackedScene = load("res://assets/models/props/wooden_rowboat.glb")
-	if packed == null:
 		return
 	var angle := deg_to_rad(yaw)
 	var along := Vector3(cos(angle), 0, -sin(angle))
@@ -8777,20 +8778,16 @@ func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
 	# client and save generates the identical boat.
 	var rz: float = size.y * 0.5 * 0.85
 	var boat_pos := center + across * (rz - 2.0) + along * 10.0
-	boat_pos.y = _get_exact_ground_y(boat_pos.x, boat_pos.z) + 0.02
-	var boat := Node3D.new()
+	var boat := preload("res://scripts/Rowboat.gd").new()
 	boat.name = "LakeRowboat"
-	boat.position = boat_pos
+	boat.lake_center = center
+	boat.lake_size = size
+	boat.lake_yaw = angle
+	boat.position = boat.clamp_to_lake(boat_pos)
 	boat.rotation_degrees.y = rad_to_deg(angle) + 18.0
-	var model: Node = packed.instantiate()
-	model.scale = Vector3.ONE * 2.4
-	var wood_mat := StandardMaterial3D.new()
-	wood_mat.albedo_color = Color(0.32, 0.20, 0.11)
-	wood_mat.roughness = 0.85
-	_apply_material_recursive(model, wood_mat)
-	boat.add_child(model)
+	lake_rowboat = boat
 	add_child(boat)
-	_create_invisible_collision_box_rotated("LakeRowboatCollision", boat_pos, Vector3(4.2, 1.1, 5.0), boat.rotation_degrees.y)
+	_rowboat_spawned = true
 
 func _apply_material_recursive(node: Node, mat: Material) -> void:
 	if node is MeshInstance3D:

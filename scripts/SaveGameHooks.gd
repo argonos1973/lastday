@@ -35,6 +35,10 @@ static func maybe_load_saved_game(main: Node, player: Node) -> void:
 		return
 	apply_saved_player_data(player, save_data.get("player", {}))
 	apply_saved_world_data(main, save_data.get("world", {}))
+	if is_instance_valid(main.get("lake_rowboat")):
+		var boat_data: Dictionary = save_data.get("world", {}).get("rowboat", {})
+		var aboard: bool = save_data.get("player", {}).get("rowboat_aboard", false)
+		main.lake_rowboat.restore_state(boat_data, player if aboard else null)
 	# Merge duplicate stacks (e.g. torches that were in separate slots)
 	if player != null and is_instance_valid(player) and player.inventory != null:
 		player.inventory.merge_stacks()
@@ -87,6 +91,7 @@ static func collect_player_data(player: Node) -> Dictionary:
 	var data := {}
 	data["pos"] = [player.global_position.x, player.global_position.y, player.global_position.z]
 	data["rot"] = player.rotation.y
+	data["rowboat_aboard"] = is_instance_valid(player.get("rowing_boat"))
 	data["rifle_ammo"] = {"initialized": player._rifle_ammo_initialized, "magazine": player._rifle_magazine, "reserve": player._rifle_reserve_ammo}
 	var anim := "idle"
 	if player.has_method("_get_current_anim"):
@@ -152,6 +157,8 @@ static func collect_player_data(player: Node) -> Dictionary:
 
 static func collect_world_data(main: Node) -> Dictionary:
 	var data := {}
+	if is_instance_valid(main.get("lake_rowboat")):
+		data["rowboat"] = main.lake_rowboat.save_state()
 	# Depleted action IDs (trees chopped, mushrooms eaten, etc.)
 	data["depleted_action_ids"] = main.get("_depleted_action_ids").duplicate()
 	# Dropped items in the world

@@ -22,6 +22,7 @@ var client_id := ""
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
+var rowboat_state: Dictionary = {}
 
 func _load_or_generate_client_id() -> void:
 	# Dedicated server doesn't need a client_id — skip to avoid overwriting client's file
@@ -171,6 +172,7 @@ func close_connection() -> void:
 	is_connected = false
 	is_host = false
 	players.clear()
+	rowboat_state.clear()
 
 func _on_peer_connected(id: int) -> void:
 	# Only server has direct ENet connections to all peers — set timeout there
@@ -284,8 +286,23 @@ func _check_all_ready() -> void:
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
 func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false) -> void:
+	if is_host and multiplayer.get_remote_sender_id() != id:
+		return
 	if not players.has(id):
 		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
+	var boat_scene := get_tree().current_scene
+	if is_host and boat_scene != null and is_instance_valid(boat_scene.get("lake_rowboat")):
+		var boat = boat_scene.lake_rowboat
+		if boat.occupant == id:
+			pos = boat.global_position
+			rot = boat.rotation.y + PI
+			anim = "rowing/Stroke"
+			held_item = ""
+			is_aiming = false
+			sleeping = false
+			sitting = false
+			prone = false
+			crouching = false
 	# Ignore position updates from reconnecting clients (they're still at spawn pos)
 	if is_host:
 		var scene := get_tree().current_scene
@@ -588,6 +605,31 @@ func door_state_changed(door_name: String, is_open: bool) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_door_state_changed"):
 		scene._net_door_state_changed(door_name, is_open)
+
+@rpc("any_peer", "reliable")
+func request_rowboat(action: String) -> void:
+	if not is_host:
+		return
+	var scene := get_tree().current_scene
+	if scene != null and is_instance_valid(scene.get("lake_rowboat")):
+		scene.lake_rowboat.request_action(multiplayer.get_remote_sender_id(), action)
+
+@rpc("any_peer", "unreliable_ordered")
+func rowboat_input(axis: Vector2) -> void:
+	if not is_host:
+		return
+	var scene := get_tree().current_scene
+	if scene != null and is_instance_valid(scene.get("lake_rowboat")):
+		scene.lake_rowboat.accept_input(multiplayer.get_remote_sender_id(), axis)
+
+@rpc("authority", "reliable")
+func sync_rowboat(state: Dictionary) -> void:
+	if is_host:
+		return
+	rowboat_state = state
+	var scene := get_tree().current_scene
+	if scene != null and is_instance_valid(scene.get("lake_rowboat")):
+		scene.lake_rowboat.apply_network_state(state)
 
 func get_my_id() -> int:
 	return multiplayer.get_unique_id()

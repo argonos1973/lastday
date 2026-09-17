@@ -349,6 +349,12 @@ var is_sleeping_on_bed := false
 var _saved_collision_mask := 0xFFFFFFFF
 var _bed_sleep_position := Vector3.ZERO
 var is_sitting := false
+var rowing_boat: Node3D
+var _rowing_model_transform := Transform3D.IDENTITY
+var _rowing_camera_transform := Transform3D.IDENTITY
+var _rowing_view_yaw := 0.0
+var _rowing_view_height := 3.5
+var _rowing_animation := "rowing/Stroke"
 var is_prone := false
 var _sit_cooldown := 0.0
 var _auto_sleep_triggered := false
@@ -732,6 +738,8 @@ var _puppet_top_camo := false
 var _puppet_bottom_camo := false
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
+	if is_instance_valid(rowing_boat) and not anim.to_lower().contains("dead"):
+		return
 	if is_dead:
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
@@ -1068,8 +1076,8 @@ func _process(delta: float) -> void:
 					_puppet_swap_to_naked()
 		return
 	# Detectar hold de F y G por polling (mas fiable que eventos)
-	var f_held := Input.is_key_pressed(KEY_F)
-	var g_held := Input.is_key_pressed(KEY_G)
+	var f_held := Input.is_key_pressed(KEY_F) and not is_instance_valid(rowing_boat)
+	var g_held := Input.is_key_pressed(KEY_G) and not is_instance_valid(rowing_boat)
 	# F: press ya llama _interact() en _input; aqui solo track hold para guardar
 	if f_held and not _f_holding:
 		_f_holding = true
@@ -1295,6 +1303,13 @@ func _input(event: InputEvent) -> void:
 	if is_puppet or is_dead:
 		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return
+	if is_instance_valid(rowing_boat):
+		if event is InputEventMouseMotion:
+			_rowing_view_yaw -= event.relative.x * mouse_sensitivity
+			_rowing_view_height = clampf(_rowing_view_height + event.relative.y * 0.015, 1.5, 6.0)
+		elif event.is_action_pressed("interact") and not event.is_echo():
+			rowing_boat.request_exit()
 		return
 	# Abandon the fishing cast/idle-with-line state as soon as any key or mouse
 	# button is pressed, returning the player to the normal controllable pose.
@@ -2794,6 +2809,17 @@ func _physics_process(delta: float) -> void:
 			velocity.y = 0.0
 		move_and_slide()
 		_update_death_pose(delta)
+		return
+	if is_instance_valid(rowing_boat):
+		velocity = Vector3.ZERO
+		is_moving = false
+		is_sprinting = false
+		is_in_water = false
+		_water_depth = 0.0
+		_water_sink = 0.0
+		_update_interaction_prompt()
+		_update_flashlight(delta)
+		_update_torch(delta)
 		return
 	if is_sleeping:
 		velocity.x = 0.0
@@ -4749,6 +4775,9 @@ func _load_gltf_node3d(path: String) -> Node3D:
 	return null
 
 func _select_held_item(index: int) -> void:
+	if is_instance_valid(rowing_boat):
+		notice.emit("Necesitas las manos libres para remar.")
+		return
 	if inventory == null or index < 0 or index >= inventory.items.size():
 		return
 	var next_item = inventory.items[index]
@@ -7952,6 +7981,8 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 
 #region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
 func _update_third_person_animation(moving: bool, delta: float) -> void:
+	if is_instance_valid(rowing_boat):
+		return
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
 		return
@@ -8257,6 +8288,119 @@ func _loop_third_person_animation(animation_name: String) -> void:
 	if length > 0.0 and third_person_animation_player.current_animation_position >= length - 0.05:
 		third_person_animation_player.play(animation_name, 0.25)
 
+func _nearby_rowboat() -> Node3D:
+	var main := get_tree().current_scene
+	if main == null or is_dead or is_sleeping:
+		return null
+	var boat = main.get("lake_rowboat")
+	if is_instance_valid(boat) and boat.can_board_from(global_position):
+		return boat
+	return null
+
+func _load_rowing_animation() -> void:
+	if third_person_animation_player == null or third_person_animation_player.has_animation(_rowing_animation):
+		return
+	var source: Node = preload("res://assets/animations/rowing.glb").instantiate()
+	var source_player := _find_animation_player(source)
+	var source_skeleton := _find_skeleton(source)
+	var target_skeleton := _find_skeleton(third_person_model)
+	if source_player != null and source_skeleton != null and target_skeleton != null:
+		var animation: Animation = source_player.get_animation("Animation").duplicate(true)
+		for i in range(animation.get_track_count() - 1, -1, -1):
+			var bone := _extract_mixamo_bone_name(str(animation.track_get_path(i)))
+			if bone.is_empty() or (animation.track_get_type(i) != Animation.TYPE_ROTATION_3D and not bone.ends_with("Hips")):
+				animation.remove_track(i)
+		_retarget_rotation_tracks_with_source(animation, target_skeleton, source_skeleton)
+		_retarget_animation_to_character_skeleton(animation)
+		animation.length = 2.0
+		animation.loop_mode = Animation.LOOP_LINEAR
+		var library := AnimationLibrary.new()
+		library.add_animation("Stroke", animation)
+		third_person_animation_player.add_animation_library("rowing", library)
+	source.free()
+
+func begin_rowing(boat: Node3D) -> void:
+	if is_instance_valid(rowing_boat) or is_dead or third_person_model == null:
+		return
+	_load_rowing_animation()
+	rowing_boat = boat
+	_rowing_model_transform = third_person_model.transform
+	if camera != null:
+		_rowing_camera_transform = camera.transform
+	_rowing_view_yaw = 0.0
+	_rowing_view_height = 3.5
+	is_sleeping = false
+	is_sitting = false
+	is_prone = false
+	is_crouching = false
+	is_jumping = false
+	_is_falling_from_height = false
+	_is_fishing = false
+	_is_fishing_idle = false
+	_fishing_session += 1
+	_deactivate_rod_visual_overlay()
+	third_person_action_animation = ""
+	third_person_action_timer = 0.0
+	if not is_puppet:
+		if _is_aiming:
+			_toggle_aim()
+		if get_held_item() != null:
+			_store_held_item()
+		_f_holding = false
+		_g_holding = false
+		_throw_charging = false
+		var main := get_tree().current_scene
+		if main != null and main.get("hud") != null:
+			main.hud.hide_countdown()
+	_update_crouch_collision()
+	third_person_model.position = Vector3.ZERO
+	third_person_model.rotation = Vector3(0, PI, 0)
+	third_person_model.visible = true
+	velocity = Vector3.ZERO
+	var rowing_skeleton := _find_skeleton(third_person_model)
+	if rowing_skeleton != null:
+		rowing_skeleton.reset_bone_poses()
+	if third_person_animation_player != null and third_person_animation_player.has_animation(_rowing_animation):
+		third_person_animation_player.play(_rowing_animation)
+		third_person_animation_player.pause()
+
+func update_rowing_pose(time: float) -> void:
+	if not is_instance_valid(rowing_boat):
+		return
+	if third_person_animation_player != null and third_person_animation_player.has_animation(_rowing_animation):
+		third_person_animation_player.seek(time, true)
+	_update_backpack_socket()
+	_update_hand_socket()
+	_update_head_worn_items()
+	if camera != null and not is_puppet:
+		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * 7.0, _rowing_view_height, cos(_rowing_view_yaw) * 7.0))
+		camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
+
+func end_rowing(pos: Vector3) -> void:
+	rowing_boat = null
+	global_position = pos
+	velocity = Vector3.ZERO
+	is_in_water = false
+	_water_depth = 0.0
+	_water_sink = 0.0
+	_is_falling_from_height = false
+	_fall_height = 0.0
+	_max_fall_height = 0.0
+	if third_person_model != null:
+		third_person_model.transform = _rowing_model_transform
+	if camera != null:
+		camera.transform = _rowing_camera_transform
+	if third_person_model != null:
+		var rowing_skeleton := _find_skeleton(third_person_model)
+		if rowing_skeleton != null:
+			rowing_skeleton.reset_bone_poses()
+	if third_person_animation_player != null:
+		third_person_animation_player.speed_scale = 1.0
+		if not is_dead:
+			third_person_animation_player.play(third_person_idle_animation, 0.15)
+	if not is_puppet:
+		prompt_changed.emit("")
+
 func _get_current_anim() -> String:
 	if is_dead:
 		return "dead"
@@ -8266,6 +8410,10 @@ func _get_current_anim() -> String:
 
 func _interact() -> void:
 	if _interact_busy:
+		return
+	var boat_target := _nearby_rowboat()
+	if boat_target != null:
+		boat_target.interact(self)
 		return
 	if _has_fishing_rod_in_hand() and not _is_fishing:
 		var fishing_state := _get_fishing_water_state()
@@ -8411,6 +8559,13 @@ func _collect() -> void:
 
 #region INTERACCIÓN Y UI
 func _update_interaction_prompt() -> void:
+	if is_instance_valid(rowing_boat):
+		prompt_changed.emit(rowing_boat.passenger_prompt())
+		return
+	var boat_target := _nearby_rowboat()
+	if boat_target != null:
+		prompt_changed.emit(boat_target.get_interaction_text(self))
+		return
 	if is_sleeping:
 		prompt_changed.emit("")
 		return
