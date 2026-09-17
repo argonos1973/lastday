@@ -1460,12 +1460,18 @@ func _create_inventory_slot(index: int, item) -> void:
 		# Fishing rod is long and thin — zoom in so it fills the thumbnail
 		if str(item.item_type) == "tool_fishing":
 			frame_zoom = 0.35
+		# Botas survival uses the full Remy model — show only the shoes mesh, painted black
+		var only_mesh := ""
+		var mesh_tint := Color(0, 0, 0, 0)
+		if str(item.item_name) == "Botas survival":
+			only_mesh = "shoes"
+			mesh_tint = Color(0.05, 0.05, 0.05)
 		if not model_paths.is_empty():
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumbnail.add_child(thumb3d)
-			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom)
+			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint)
 		else:
 			var thumb_icon := HudIconScript.new()
 			thumb_icon.custom_minimum_size = Vector2(36, 30)

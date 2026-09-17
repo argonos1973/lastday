@@ -34,7 +34,7 @@ func _ready() -> void:
 	_model_root = Node3D.new()
 	_viewport.add_child(_model_root)
 
-func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0) -> void:
+func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0)) -> void:
 	for child in _model_root.get_children():
 		child.queue_free()
 	if _model_root == null:
@@ -57,6 +57,21 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	if inst == null:
 		return
 	_model_root.add_child(inst)
+	if not only_mesh_name.is_empty():
+		var all_meshes: Array = []
+		_collect_meshes(inst, all_meshes)
+		for mi in all_meshes:
+			var m := mi as MeshInstance3D
+			if m == null:
+				continue
+			if m.name.to_lower() == only_mesh_name.to_lower():
+				if tint.a > 0.0:
+					var mat := StandardMaterial3D.new()
+					mat.albedo_color = tint
+					mat.roughness = 0.9
+					m.material_override = mat
+			else:
+				m.visible = false
 	inst.scale = Vector3.ONE * scale_value
 	inst.rotation_degrees = extra_rotation_deg
 	_frame_camera(inst, frame_zoom)
@@ -70,7 +85,7 @@ func _frame_camera(inst: Node3D, frame_zoom: float = 1.0) -> void:
 	var first := true
 	for mi in meshes:
 		var mesh_inst := mi as MeshInstance3D
-		if mesh_inst.mesh == null:
+		if mesh_inst.mesh == null or not mesh_inst.visible:
 			continue
 		var local_box: AABB = mesh_inst.mesh.get_aabb()
 		var world_box: AABB = mesh_inst.global_transform * local_box
