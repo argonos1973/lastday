@@ -122,6 +122,60 @@ static func make_main_ground_material(_fc: Color) -> StandardMaterial3D:
 	_mat_cache["main_ground"] = m
 	return m
 
+static func forest_variation_texture() -> Texture2D:
+	if _tex_cache.has("forest_variation"):
+		return _tex_cache["forest_variation"]
+	var noise := FastNoiseLite.new()
+	noise.seed = 1337
+	noise.frequency = 0.035
+	noise.fractal_octaves = 3
+	var texture := NoiseTexture2D.new()
+	texture.width = 256
+	texture.height = 256
+	texture.seamless = true
+	texture.noise = noise
+	_tex_cache["forest_variation"] = texture
+	return texture
+
+static func make_forest_ground_material() -> ShaderMaterial:
+	if _mat_cache.has("forest_ground"):
+		return _mat_cache["forest_ground"]
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/forest_ground.gdshader")
+	var base := "res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_"
+	material.set_shader_parameter("leaf_albedo", load_texture(base + "diffuse_2k.jpg"))
+	material.set_shader_parameter("leaf_normal", load_texture(base + "nor_gl_2k.jpg"))
+	material.set_shader_parameter("leaf_roughness", load_texture(base + "rough_2k.jpg"))
+	material.set_shader_parameter("soil_albedo", load_texture(POLY_ROCKY_TERRAIN_DIFF))
+	material.set_shader_parameter("variation", forest_variation_texture())
+	_mat_cache["forest_ground"] = material
+	return material
+
+static func make_forest_rock_material() -> ShaderMaterial:
+	if _mat_cache.has("forest_rock"):
+		return _mat_cache["forest_rock"]
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/forest_rock.gdshader")
+	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCKY_TERRAIN_DIFF))
+	material.set_shader_parameter("rock_height", load_texture("res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"))
+	material.set_shader_parameter("variation", forest_variation_texture())
+	_mat_cache["forest_rock"] = material
+	return material
+
+static func make_forest_foliage_material(source: StandardMaterial3D) -> ShaderMaterial:
+	var key := "forest_foliage_%d" % source.get_instance_id()
+	if _mat_cache.has(key):
+		return _mat_cache[key]
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/forest_foliage.gdshader")
+	material.set_shader_parameter("albedo_texture", source.albedo_texture)
+	material.set_shader_parameter("albedo_tint", source.albedo_color)
+	material.set_shader_parameter("uv_scale", source.uv1_scale)
+	material.set_shader_parameter("uv_offset", source.uv1_offset)
+	material.set_shader_parameter("alpha_cutoff", source.alpha_scissor_threshold)
+	_mat_cache[key] = material
+	return material
+
 static func make_grass_blade_material() -> StandardMaterial3D:
 	if _mat_cache.has("grass_blade"):
 		return _mat_cache["grass_blade"]

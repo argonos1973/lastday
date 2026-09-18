@@ -116,15 +116,16 @@ var _forest_multimesh_centers: Array[Vector3] = []
 var _forest_multimesh_radii: Array[float] = []
 var _hidden_tree_transforms: Dictionary = {} # Vector3 pos key -> original Transform3D
 var _cut_remains_positions: Dictionary = {} # Vector3 rounded pos -> bool (prevent duplicate stumps)
-const FOREST_MM_VISIBLE_RADIUS := 55.0
-const FOREST_MM_HIDE_RADIUS := 75.0
+const FOREST_MM_VISIBLE_RADIUS := 140.0
+const FOREST_MM_HIDE_RADIUS := 165.0
 var _forest_collision_grid: Dictionary = {} # cell_key -> Array[Vector3]
 var _forest_collision_grid_size := 25.0
 var _forest_collision_active_cells: Dictionary = {} # cell_key -> StaticBody3D
 var _forest_collision_radius := 35.0
 var _forest_collision_check_timer := 0.0
-var _cached_leafy_material: StandardMaterial3D = null
-var _mountain_shared_material: StandardMaterial3D = null
+var _cached_leafy_material: Material = null
+var _mountain_shared_material: Material = null
+var _forest_rock_meshes: Array[ArrayMesh] = []
 var _generated_hills: Array = []
 var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
@@ -8865,10 +8866,7 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.mesh = mesh
 	if not node_name.contains("SnowCap") and _cached_leafy_material != null:
 		if _mountain_shared_material == null:
-			_mountain_shared_material = _cached_leafy_material.duplicate() as StandardMaterial3D
-			_mountain_shared_material.uv1_triplanar = true
-			_mountain_shared_material.uv1_scale = Vector3(0.08, 0.08, 0.08)
-			_mountain_shared_material.albedo_color = Color(0.35, 0.55, 0.20)
+			_mountain_shared_material = _cached_leafy_material
 		mesh_instance.material_override = _mountain_shared_material
 	else:
 		mesh_instance.material_override = MaterialFactory.make_material(color, true)
@@ -10080,8 +10078,8 @@ func _create_grass_carpet() -> void:
 		for cz in range(cells_z):
 			if _world_rng.randf() < 0.45:
 				continue
-			var px := -coverage + float(cx) * spacing + _world_rng.randf_range(-0.5, 0.5)
-			var pz := -coverage + float(cz) * spacing + _world_rng.randf_range(-0.5, 0.5)
+			var px := -coverage + float(cx) * spacing + _world_rng.randf_range(-2.7, 2.7)
+			var pz := -coverage + float(cz) * spacing + _world_rng.randf_range(-2.7, 2.7)
 			var pos := Vector3(px, _get_exact_ground_y(px, pz) + 0.012, pz)
 			if not _can_place_ground_vegetation(pos):
 				continue
@@ -10222,6 +10220,7 @@ func _create_forest() -> void:
 			interactive_count += 1
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
+		_scatter_forest_grass(pos)
 		for _g in range(1):
 			var gpos := pos + Vector3(forest_rng.randf_range(-1.5, 1.5), 0.0, forest_rng.randf_range(-1.5, 1.5))
 			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
@@ -10240,6 +10239,20 @@ func _create_forest() -> void:
 	# Hide MultiMesh instances for trees that were already cut in a previous session
 	_hide_depleted_forest_trees()
 
+func _scatter_forest_grass(pos: Vector3) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(pos) ^ 0xF04E57
+	var patch := 0.5 + 0.5 * sin(pos.x * 0.055 + sin(pos.z * 0.08) * 2.0)
+	for i in range(2 + int(patch * 5.0)):
+		var angle := rng.randf_range(0, TAU)
+		var distance := rng.randf_range(1.1, 3.8)
+		var point := pos + Vector3(cos(angle), 0, sin(angle)) * distance
+		if not _can_place_ground_vegetation(point):
+			continue
+		point.y = _get_exact_ground_y(point.x, point.z) + 0.008
+		var color := Color(0.19, 0.29, 0.095).lerp(Color(0.36, 0.38, 0.16), rng.randf())
+		_queue_grass_instance(point, rng.randf_range(0.18, 0.46), rng.randf_range(0.26, 0.55), color)
+
 func _hide_depleted_forest_trees() -> void:
 	if _depleted_action_ids.is_empty():
 		return
@@ -10249,6 +10262,20 @@ func _hide_depleted_forest_trees() -> void:
 			if _depleted_action_ids.has(action_id):
 				_hide_multimesh_tree_at(entry.pos)
 				_create_cut_tree_remains(entry.pos)
+
+func _spatial_instance_batches(transforms: Array, cell_size: float, batch_size: int) -> Array:
+	var cells: Dictionary = {}
+	for i in range(transforms.size()):
+		var pos: Vector3 = (transforms[i] as Transform3D).origin
+		var key := Vector2i(floori(pos.x / cell_size), floori(pos.z / cell_size))
+		if not cells.has(key):
+			cells[key] = []
+		cells[key].append(i)
+	var batches: Array = []
+	for indices: Array in cells.values():
+		for start in range(0, indices.size(), batch_size):
+			batches.append(indices.slice(start, mini(start + batch_size, indices.size())))
+	return batches
 
 func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 	if _forest_tree_meshes.is_empty():
@@ -10262,11 +10289,10 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 		var entry: Dictionary = _forest_tree_meshes[variant_idx]
 		var src_mesh: ArrayMesh = entry.mesh
 		# Create sub-batches for visibility culling
-		var num_batches := int(ceil(float(transforms.size()) / float(BATCH_SIZE)))
-		for b in range(num_batches):
-			var start := b * BATCH_SIZE
-			var end_idx: int = min(start + BATCH_SIZE, transforms.size())
-			var count: int = end_idx - start
+		var spatial_batches := _spatial_instance_batches(transforms, 32.0, BATCH_SIZE)
+		for b in range(spatial_batches.size()):
+			var indices: Array = spatial_batches[b]
+			var count := indices.size()
 			if count <= 0:
 				continue
 			var multimesh := MultiMesh.new()
@@ -10275,21 +10301,21 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 			multimesh.instance_count = count
 			var center := Vector3.ZERO
 			for j in range(count):
-				var t: Transform3D = transforms[start + j]
+				var t: Transform3D = transforms[indices[j]]
 				multimesh.set_instance_transform(j, t)
 				center += t.origin
 			center /= float(count)
 			# Calculate batch radius (max distance from center to any tree)
 			var batch_radius := 0.0
 			for j in range(count):
-				var t: Transform3D = transforms[start + j]
+				var t: Transform3D = transforms[indices[j]]
 				var d := center.distance_to(t.origin)
 				if d > batch_radius:
 					batch_radius = d
 			var mmi := MultiMeshInstance3D.new()
 			mmi.name = "ForestMM_%d_%d" % [variant_idx, b]
 			mmi.multimesh = multimesh
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			add_child(mmi)
 			_forest_multimesh_nodes.append(mmi)
 			_forest_multimesh_centers.append(center)
@@ -10304,11 +10330,11 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				branch_multimesh.mesh = branch_mesh
 				branch_multimesh.instance_count = count
 				for j in range(count):
-					branch_multimesh.set_instance_transform(j, transforms[start + j])
+					branch_multimesh.set_instance_transform(j, transforms[indices[j]])
 				var branch_mmi := MultiMeshInstance3D.new()
 				branch_mmi.name = "ForestMM_%d_%d_leaves" % [variant_idx, b]
 				branch_mmi.multimesh = branch_multimesh
-				branch_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				branch_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 				add_child(branch_mmi)
 				_forest_multimesh_nodes.append(branch_mmi)
 				_forest_multimesh_centers.append(center)
@@ -10335,6 +10361,7 @@ func _update_forest_visibility() -> void:
 			should_show = dist < (FOREST_MM_VISIBLE_RADIUS + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if dist < 65.0 + batch_radius else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _create_forest_collision(positions: Array) -> void:
 	# Register tree positions in a spatial grid for on-demand collision creation
@@ -10459,7 +10486,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 	var trunk_mi := MeshInstance3D.new()
 	trunk_mi.name = "Trunk"
 	trunk_mi.mesh = src_mesh
-	trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	trunk_mi.visibility_range_end = 120.0
 	trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	mi.add_child(trunk_mi)
@@ -10467,7 +10494,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 		var branch_mi := MeshInstance3D.new()
 		branch_mi.name = "Branches"
 		branch_mi.mesh = branch_mesh
-		branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		branch_mi.visibility_range_end = 120.0
 		branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		mi.add_child(branch_mi)
@@ -10610,8 +10637,7 @@ func _create_tree(pos: Vector3, is_interactive: bool = true, rng = null) -> void
 		var trunk_mi := MeshInstance3D.new()
 		trunk_mi.name = "Trunk"
 		trunk_mi.mesh = src_mesh
-		if pos.length() > 15.0:
-			trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _tree_shadow_enabled(pos) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		trunk_mi.visibility_range_end = 120.0
 		trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		mi.add_child(trunk_mi)
@@ -10619,8 +10645,7 @@ func _create_tree(pos: Vector3, is_interactive: bool = true, rng = null) -> void
 			var branch_mi := MeshInstance3D.new()
 			branch_mi.name = "Branches"
 			branch_mi.mesh = branch_mesh
-			if pos.length() > 15.0:
-				branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _tree_shadow_enabled(pos) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			branch_mi.visibility_range_end = 120.0
 			branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			mi.add_child(branch_mi)
@@ -10655,6 +10680,11 @@ func _create_tree(pos: Vector3, is_interactive: bool = true, rng = null) -> void
 			var _tree_entry := {"pos": pos, "visual_name": visual_name, "id": tree_id, "active": false, "multimesh": false}
 			_tree_registry.append(_tree_entry)
 			_register_tree_in_grid(_tree_entry)
+
+func _tree_shadow_enabled(pos: Vector3) -> bool:
+	if player != null and is_instance_valid(player):
+		return pos.distance_to(player.global_position) < 80.0
+	return pos.length() < 80.0
 
 func _load_forest_tree_pack() -> void:
 	var scene_resource = _get_external_scene_resource(FOREST_TREE_PACK_MODEL)
@@ -10724,6 +10754,11 @@ func _load_forest_tree_pack() -> void:
 				# coverage at all distances (small tradeoff: some texture
 				# aliasing/shimmer far away, but no more disappearing leaves).
 				sm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+				return MaterialFactory.make_forest_foliage_material(sm)
+			sm.roughness = 0.96
+			sm.metallic = 0.0
+			sm.albedo_color = sm.albedo_color * Color(0.88, 0.85, 0.78)
+			sm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 			return sm
 		return mat
 	# Trunk variant "02" (white-bark birch) is a bare/leafless tree in the
@@ -10887,37 +10922,42 @@ func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
 	rng.seed = variant_seed
 	var vertices := PackedVector3Array()
 	var indices := PackedInt32Array()
-	var blade_count := 14 + rng.randi() % 9
+	var uvs := PackedVector2Array()
+	var blade_count := 16 + rng.randi() % 9
 	for i in range(blade_count):
 		var angle := rng.randf_range(0.0, TAU)
-		var spread := rng.randf_range(0.05, 1.0)
+		var spread := sqrt(rng.randf()) * 0.95
 		var base := Vector3(cos(angle) * spread, 0.0, sin(angle) * spread)
-		var blade_height := rng.randf_range(0.55, 1.25)
-		var blade_width := rng.randf_range(0.12, 0.32)
-		var lean_x := cos(angle + rng.randf_range(-0.55, 0.55)) * rng.randf_range(0.08, 0.28)
-		var lean_z := sin(angle + rng.randf_range(-0.55, 0.55)) * rng.randf_range(0.08, 0.28)
-		var right := Vector3(cos(angle + PI * 0.5), 0.0, sin(angle + PI * 0.5)) * blade_width
-		var mid := base + Vector3(lean_x * 0.4, blade_height * 0.5, lean_z * 0.4)
-		var tip := base + Vector3(lean_x, blade_height, lean_z)
-		var mid_right := right * 0.65
+		var blade_height := rng.randf_range(0.48, 1.2)
+		var blade_width := rng.randf_range(0.035, 0.085)
+		var lean := Vector3(cos(angle), 0, sin(angle)) * rng.randf_range(0.22, 0.68)
+		var right := Vector3(-sin(angle), 0, cos(angle)) * blade_width
 		var start_index := vertices.size()
-		vertices.append(base - right)
-		vertices.append(base + right)
-		vertices.append(mid - mid_right)
-		vertices.append(mid + mid_right)
-		vertices.append(tip)
-		indices.append_array(PackedInt32Array([
-			start_index, start_index + 1, start_index + 2,
-			start_index + 1, start_index + 3, start_index + 2,
-			start_index + 2, start_index + 3, start_index + 4
-		]))
+		for segment in range(3):
+			var t := float(segment) / 3.0
+			var center := base + Vector3.UP * blade_height * t + lean * t * t
+			var width := right * (1.0 - t * 0.82)
+			vertices.append(center - width)
+			vertices.append(center + width)
+			uvs.append(Vector2(0, t))
+			uvs.append(Vector2(1, t))
+		vertices.append(base + Vector3.UP * blade_height + lean)
+		uvs.append(Vector2(0.5, 1))
+		for segment in range(2):
+			var j := start_index + segment * 2
+			indices.append_array(PackedInt32Array([j, j + 1, j + 2, j + 1, j + 3, j + 2]))
+		indices.append_array(PackedInt32Array([start_index + 4, start_index + 5, start_index + 6]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
+	var surface := SurfaceTool.new()
+	surface.create_from(mesh, 0)
+	surface.generate_normals()
+	return surface.commit()
 
 func _ensure_grass_batches() -> void:
 	if not grass_batch_meshes.is_empty():
@@ -10926,21 +10966,7 @@ func _ensure_grass_batches() -> void:
 		grass_batch_meshes.append(_build_grass_variant_mesh(0x9E37 + i * 1013))
 		grass_batch_transforms.append([])
 		grass_batch_colors.append([])
-	var std_mat := StandardMaterial3D.new()
-	std_mat.roughness = 0.96
-	std_mat.metallic = 0.0
-	std_mat.vertex_color_use_as_albedo = true
-	std_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	std_mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
-	var noise := FastNoiseLite.new()
-	noise.seed = randi()
-	noise.frequency = 0.085
-	noise.fractal_octaves = 3
-	var texture := NoiseTexture2D.new()
-	texture.width = 96
-	texture.height = 96
-	texture.noise = noise
-	std_mat.albedo_texture = texture
+	var texture := MaterialFactory.forest_variation_texture()
 	# Crear shader de viento preservando la textura
 	_ensure_wind_shader()
 	var wind_mat := ShaderMaterial.new()
@@ -10962,29 +10988,37 @@ func _ensure_wind_shader() -> void:
 	_wind_shader = Shader.new()
 	_wind_shader.code = """
 shader_type spatial;
-render_mode cull_disabled, depth_draw_opaque, diffuse_lambert, specular_disabled;
+render_mode cull_disabled, depth_draw_opaque, diffuse_burley;
 
-uniform sampler2D albedo_tex : source_color;
+uniform sampler2D albedo_tex : filter_linear_mipmap, repeat_enable;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform float wind_strength = 0.15;
 uniform float wind_speed = 1.5;
 uniform float wind_frequency = 2.0;
 uniform float time_var = 0.0;
+varying vec2 world_xz;
 
 void vertex() {
-	float world_x = (MODEL_MATRIX * vec4(VERTEX, 1.0)).x;
-	float world_z = (MODEL_MATRIX * vec4(VERTEX, 1.0)).z;
-	float height_factor = VERTEX.y;
-	float wind_phase = world_x * wind_frequency + world_z * wind_frequency * 0.7 + time_var * wind_speed;
-	float sway = sin(wind_phase) * wind_strength * height_factor;
-	float sway2 = sin(wind_phase * 1.7 + 0.5) * wind_strength * 0.5 * height_factor;
-	VERTEX.x += sway;
-	VERTEX.z += sway2;
+	world_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	float height_factor = UV.y * UV.y;
+	float wind_phase = dot(world_xz, vec2(0.7, 0.45)) * wind_frequency + time_var * wind_speed;
+	float gust = sin(wind_phase) + 0.35 * sin(wind_phase * 0.43 + time_var * 0.7);
+	vec3 wind = vec3(gust, 0.0, gust * 0.45) * wind_strength * height_factor;
+	VERTEX += inverse(mat3(MODEL_MATRIX)) * wind;
+	float distance_to_camera = distance(MODEL_MATRIX[3].xz, CAMERA_POSITION_WORLD.xz);
+	VERTEX.y *= 1.0 - smoothstep(48.0, 68.0, distance_to_camera);
 }
 
 void fragment() {
-	vec4 tex = texture(albedo_tex, UV);
-	ALBEDO = tex.rgb * albedo_color.rgb * COLOR.rgb;
+	float patch = texture(albedo_tex, world_xz * 0.018).r;
+	float blade = mix(0.69, 1.12, smoothstep(0.0, 0.85, UV.y));
+	float vein = 0.90 + 0.10 * sin(UV.x * 3.14159);
+	vec3 dry_tint = mix(vec3(0.90, 1.0, 0.86), vec3(1.15, 1.02, 0.74), smoothstep(0.48, 0.7, patch));
+	ALBEDO = albedo_color.rgb * COLOR.rgb * dry_tint * blade * vein;
+	NORMAL = normalize((FRONT_FACING ? NORMAL : -NORMAL) + vec3(0.0, 0.18, 0.0));
+	ROUGHNESS = 0.94;
+	SPECULAR = 0.12;
+	BACKLIGHT = ALBEDO * 0.28 * UV.y;
 }
 """
 
@@ -11019,11 +11053,15 @@ func _update_grass_visibility() -> void:
 	_grass_any_visible = any_visible
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
+	if not _can_place_ground_vegetation(pos):
+		return
 	_ensure_grass_batches()
-	var variant := randi() % GRASS_BATCH_VARIANTS
-	var basis := Basis(Vector3.UP, randf_range(0.0, TAU)).scaled(Vector3(radius, height, radius))
+	var grass_rng := RandomNumberGenerator.new()
+	grass_rng.seed = hash(pos)
+	var variant := grass_rng.randi() % GRASS_BATCH_VARIANTS
+	var basis := Basis(Vector3.UP, grass_rng.randf_range(0.0, TAU)).scaled(Vector3(radius, height, radius))
 	(grass_batch_transforms[variant] as Array).append(Transform3D(basis, pos))
-	(grass_batch_colors[variant] as Array).append(color)
+	(grass_batch_colors[variant] as Array).append(color.lerp(Color(0.35, 0.33, 0.16), grass_rng.randf_range(0.08, 0.28)))
 
 func _ensure_tall_grass_batches() -> void:
 	if not _tall_grass_meshes.is_empty():
@@ -11078,19 +11116,11 @@ func _flush_grass_batches() -> void:
 		if transforms.is_empty():
 			continue
 		# Sort by spatial grid cell so batches contain nearby instances
-		var indices := range(transforms.size())
-		indices.sort_custom(func(a: int, b: int) -> bool:
-			var pa: Vector3 = (transforms[a] as Transform3D).origin
-			var pb: Vector3 = (transforms[b] as Transform3D).origin
-			var ka := int(pa.x / GRID_CELL) * 10000 + int(pa.z / GRID_CELL)
-			var kb := int(pb.x / GRID_CELL) * 10000 + int(pb.z / GRID_CELL)
-			return ka < kb
-		)
-		var num_batches := int(ceil(float(transforms.size()) / float(GRASS_BATCH_SIZE)))
-		for b in range(num_batches):
-			var start := b * GRASS_BATCH_SIZE
-			var end_idx: int = min(start + GRASS_BATCH_SIZE, indices.size())
-			var count: int = end_idx - start
+		var spatial_batches := _spatial_instance_batches(transforms, GRID_CELL, GRASS_BATCH_SIZE)
+		for b in range(spatial_batches.size()):
+			var indices: Array = spatial_batches[b]
+			var start := 0
+			var count := indices.size()
 			if count <= 0:
 				continue
 			var multimesh := MultiMesh.new()
@@ -11130,19 +11160,11 @@ func _flush_grass_batches() -> void:
 			var t_colors: Array = _tall_grass_colors[variant]
 			if t_transforms.is_empty():
 				continue
-			var indices := range(t_transforms.size())
-			indices.sort_custom(func(a: int, b: int) -> bool:
-				var pa: Vector3 = (t_transforms[a] as Transform3D).origin
-				var pb: Vector3 = (t_transforms[b] as Transform3D).origin
-				var ka := int(pa.x / GRID_CELL) * 10000 + int(pa.z / GRID_CELL)
-				var kb := int(pb.x / GRID_CELL) * 10000 + int(pb.z / GRID_CELL)
-				return ka < kb
-			)
-			var num_batches := int(ceil(float(t_transforms.size()) / float(GRASS_BATCH_SIZE)))
-			for b in range(num_batches):
-				var start := b * GRASS_BATCH_SIZE
-				var end_idx: int = min(start + GRASS_BATCH_SIZE, indices.size())
-				var count: int = end_idx - start
+			var spatial_batches := _spatial_instance_batches(t_transforms, GRID_CELL, GRASS_BATCH_SIZE)
+			for b in range(spatial_batches.size()):
+				var indices: Array = spatial_batches[b]
+				var start := 0
+				var count := indices.size()
 				if count <= 0:
 					continue
 				var multimesh := MultiMesh.new()
@@ -11471,47 +11493,15 @@ func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3,
 	add_child(mesh_instance)
 
 func _create_leafy_floor_ground() -> void:
-	var leafy_texture = _extract_texture_from_glb(LEAFY_FLOOR_MODEL)
-	if leafy_texture == null:
-		_create_visual_plane("TerrainSurface", Vector3(0, 0.003, 0), Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0), Color(0.17, 0.20, 0.145))
-		var ts := get_node_or_null("TerrainSurface") as MeshInstance3D
-		if ts != null:
-			_cached_leafy_material = ts.material_override as StandardMaterial3D
-		return
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "TerrainSurface"
 	mesh_instance.position = Vector3(0, 0.003, 0)
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
-	mesh.subdivide_width = int(MAP_EXTENT / 10.0)
-	mesh.subdivide_depth = int(MAP_EXTENT / 10.0)
 	mesh_instance.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.45, 0.65, 0.28)
-	material.albedo_texture = leafy_texture
-	material.roughness = 0.97
-	material.metallic = 0.0
-	material.uv1_scale = Vector3(MAP_EXTENT * 0.3, MAP_EXTENT * 0.3, 1.0)
-	_cached_leafy_material = material
-	mesh_instance.material_override = material
+	_cached_leafy_material = MaterialFactory.make_forest_ground_material()
+	mesh_instance.material_override = _cached_leafy_material
 	add_child(mesh_instance)
-	var dirt_mi := MeshInstance3D.new()
-	dirt_mi.name = "TerrainSurfaceDirt"
-	dirt_mi.position = Vector3(0, 0.002, 0)
-	var dirt_mesh := PlaneMesh.new()
-	dirt_mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
-	dirt_mesh.subdivide_width = int(MAP_EXTENT / 10.0)
-	dirt_mesh.subdivide_depth = int(MAP_EXTENT / 10.0)
-	dirt_mi.mesh = dirt_mesh
-	var dirt_mat := StandardMaterial3D.new()
-	dirt_mat.albedo_color = Color(0.48, 0.38, 0.26, 0.5)
-	dirt_mat.albedo_texture = leafy_texture
-	dirt_mat.roughness = 0.97
-	dirt_mat.metallic = 0.0
-	dirt_mat.uv1_scale = Vector3(44.0, 44.0, 1.0)
-	dirt_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	dirt_mi.material_override = dirt_mat
-	add_child(dirt_mi)
 
 func _extract_texture_from_glb(path: String) -> Texture2D:
 	var root: Node3D = null
@@ -11689,11 +11679,47 @@ func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = Vector3(_world_rng.randf_range(-4.0, 4.0), _world_rng.randf_range(0.0, 360.0), _world_rng.randf_range(-4.0, 4.0))
 	mesh_instance.scale = scale_value
-	mesh_instance.mesh = _get_shared_sphere_mesh()
-	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.6, 1.6, 1.0))
+	var is_rock := texture_path in [POLY_ROCK_07_DIFF, POLY_BOULDER_DIFF, MaterialFactory.POLY_RIVER_PEBBLES_DIFF]
+	if is_rock:
+		mesh_instance.mesh = _get_forest_rock_mesh(pos)
+		mesh_instance.material_override = MaterialFactory.make_forest_rock_material()
+	else:
+		mesh_instance.mesh = _get_shared_sphere_mesh()
+		mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + texture_path, texture_path, fallback_color, Vector3(1.6, 1.6, 1.0))
 	mesh_instance.visibility_range_end = 80.0
 	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
+
+func _get_forest_rock_mesh(pos: Vector3) -> ArrayMesh:
+	if _forest_rock_meshes.is_empty():
+		for variant in range(5):
+			var sphere := SphereMesh.new()
+			sphere.radius = 1.0
+			sphere.height = 2.0
+			sphere.radial_segments = 16
+			sphere.rings = 10
+			var arrays := sphere.get_mesh_arrays()
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var noise := FastNoiseLite.new()
+			noise.seed = 841 + variant * 97
+			noise.frequency = 1.9
+			noise.fractal_octaves = 2
+			for i in range(vertices.size()):
+				var v := vertices[i]
+				v *= 0.86 + noise.get_noise_3dv(v) * 0.27
+				v.y = clampf(v.y, -0.68, 0.73 + variant * 0.025)
+				v.x += v.y * (0.06 + variant * 0.025)
+				vertices[i] = v
+			arrays[Mesh.ARRAY_VERTEX] = vertices
+			arrays[Mesh.ARRAY_NORMAL] = null
+			arrays[Mesh.ARRAY_TANGENT] = null
+			var mesh := ArrayMesh.new()
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			var surface := SurfaceTool.new()
+			surface.create_from(mesh, 0)
+			surface.generate_normals()
+			_forest_rock_meshes.append(surface.commit())
+	return _forest_rock_meshes[posmod(hash(pos), _forest_rock_meshes.size())]
 
 func _get_shared_sphere_mesh() -> SphereMesh:
 	if _shared_sphere_mesh == null:
