@@ -167,6 +167,7 @@ func run() -> void:
 	check(boat.occupant == 1, "Client ignores stale snapshots")
 	boat.apply_network_state({"seq": 3, "pos": original, "yaw": 0.3, "occupant": 0, "time": 0.5, "rowing": false, "exit": Vector3(260, 0.2, -267), "can_exit": true})
 	check(actor.rowing_boat == null and actor.position.z == -267, "Client applies safe exit")
+	net.is_host = true
 	check(boat.get_node_or_null("WakeFx") != null, "Wake particles created")
 	check(boat.get_node_or_null("OarSplashL") != null and boat.get_node_or_null("OarSplashR") != null, "Oar splash emitters created")
 	var wake: GPUParticles3D = boat.get_node_or_null("WakeFx")
@@ -176,8 +177,70 @@ func run() -> void:
 		boat._update_water_fx(1.0 / 60.0)
 		check(wake.emitting, "Wake emits while the boat moves")
 		boat._fx_prev_pos = boat.global_position
-		boat._update_water_fx(1.0 / 60.0)
+		boat._update_water_fx(0.5)
 		check(not wake.emitting, "Wake stops when the boat is still")
+	var bow: GPUParticles3D = boat.get_node_or_null("BowFoamL")
+	var churn: GPUParticles3D = boat.get_node_or_null("OarFoamL")
+	check(bow != null and boat.get_node_or_null("BowFoamR") != null, "Bow foam created on both sides")
+	check(churn != null and boat.get_node_or_null("OarFoamR") != null, "Oar surface foam created")
+	if bow != null and churn != null:
+		check((wake.process_material as ParticleProcessMaterial).gravity == Vector3.ZERO, "Wake stays on the water surface")
+		check((bow.process_material as ParticleProcessMaterial).spread == 0.0, "Surface foam has no vertical spread")
+		check(wake.draw_pass_1 is PlaneMesh and not wake.local_coords, "Foam lies flat and remains behind in world space")
+		boat._fx_prev_pos = boat.global_position
+		boat.global_position -= boat.global_basis.z * 0.3
+		boat._update_water_fx(0.1)
+		check(bow.emitting and bow.position.z < 0, "Forward movement produces bow foam")
+		check(bow.amount_ratio > 0.2 and bow.amount_ratio <= 1.0, "Foam density scales with speed")
+		boat.global_position += boat.global_basis.z * 0.9
+		boat._update_water_fx(0.3)
+		check(bow.emitting and bow.position.z > 0 and wake.position.z < 0, "Reverse movement swaps leading foam and wake")
+		boat.global_position += Vector3(100, 0, 0)
+		boat._update_water_fx(1.0 / 60.0)
+		check(not bow.emitting and not wake.emitting, "Teleports do not produce a water burst")
+		boat.rowing = true
+		boat.rowing_time = 0.25
+		boat._process(0.1)
+		boat.rowing_time = 0.5
+		boat._process(0.25)
+		check(churn.emitting, "Oar churn emits during the power stroke")
+		check(absf(churn.position.x) > 1.7 and is_equal_approx(churn.position.y, BoatScript.WATER_Y), "Oar foam follows the blade water contact, not the hull")
+		var contact := churn.position
+		boat.rowing_time = 0.75
+		boat._process(0.25)
+		check(contact.distance_to(churn.position) > 0.05, "Foam follows the animated oar")
+		boat.rowing_time = 1.5
+		boat._process(0.75)
+		check(not churn.emitting, "Oar churn stops during recovery")
+		boat.rowing = false
+		boat._update_water_fx(0.5)
+		check(not churn.emitting and not bow.emitting, "Idle boat stops generating foam")
+		var intensity := boat._fx_speed
+		boat._update_water_fx(0)
+		check(is_equal_approx(boat._fx_speed, intensity), "Zero delta does not create artificial speed")
+		for frame in range(180):
+			if frame % 3 == 0:
+				boat.global_position -= boat.global_basis.z * BoatScript.MAX_SPEED / 60.0
+			boat._update_water_fx(1.0 / 180.0)
+		check(boat._fx_speed > BoatScript.MAX_SPEED * 0.85, "High render rates preserve wake intensity between physics ticks")
+		boat.rotation.y += PI * 0.5
+		boat._fx_velocity = Vector3.ZERO
+		boat.global_position -= boat.global_basis.z * 0.3
+		boat._update_water_fx(0.1)
+		check(bow.emitting and bow.position.z < 0, "Bow follows the boat heading after turning")
+		boat._update_water_fx(0.5)
+		boat.rowing = true
+		boat.rowing_time = 0.2
+		var interrupted_strokes := 0
+		for frame in range(120):
+			if frame % 3 == 0:
+				boat.rowing_time += 1.0 / 60.0
+			boat._process(1.0 / 180.0)
+			if frame > 60 and not churn.emitting:
+				interrupted_strokes += 1
+		check(interrupted_strokes == 0, "High render rates do not interrupt or retrigger oar splashes between physics ticks")
+		boat.rowing = false
+		boat._update_water_fx(0.5)
 	actor.rowing_boat = boat
 	actor.position = Vector3(250, 0.2, -307)
 	actor.is_in_water = true
@@ -188,6 +251,7 @@ func run() -> void:
 	world.net = null
 	if OS.get_cmdline_user_args().has("--preview"):
 		boat.position = original
+		boat.rotation.y = 0
 		actor.position = Vector3(260, 0.2, -268)
 		boat._request_times.clear()
 		boat.request_action(1, "enter")
@@ -204,9 +268,31 @@ func run() -> void:
 		env.environment.ambient_light_color = Color.WHITE
 		env.environment.ambient_light_energy = 0.7
 		world.add_child(env)
-		actor.camera.global_position = boat.position + Vector3(5, 4, 6)
-		actor.camera.look_at(boat.position + Vector3.UP)
-		await process_frame
+		var water := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(120, 120)
+		water.mesh = plane
+		water.material_override = load("res://shaders/river_water.tres").duplicate()
+		water.material_override.set_shader_parameter("use_vertex_waves", false)
+		water.material_override.set_shader_parameter("use_foam", false)
+		water.material_override.set_shader_parameter("normal_scale", 0.10)
+		water.material_override.set_shader_parameter("uv1_scale", Vector2(8, 8))
+		water.position = boat.position + Vector3(0, BoatScript.WATER_Y - 0.035, 0)
+		world.add_child(water)
+		actor.camera.fov = 45
+		boat._fx_prev_pos = boat.global_position
+		boat.speed = 2.8
+		boat.rowing_time = 0.0
+		var elapsed := 0.0
+		while elapsed < 2.65:
+			await process_frame
+			var dt := minf(world.get_process_delta_time(), 0.05)
+			elapsed += dt
+			boat.accept_input(1, Vector2(0, -1))
+			boat.simulate(dt)
+			boat._process(dt)
+			actor.camera.global_position = boat.position + Vector3(7, 6, -8)
+			actor.camera.look_at(boat.position + Vector3(0, 0.2, 0))
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/lastday_rowboat_preview.png")
 	world._scene_quitting = true

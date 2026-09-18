@@ -36,10 +36,22 @@ var _wake: GPUParticles3D
 var _oar_splash_l: GPUParticles3D
 var _oar_splash_r: GPUParticles3D
 var _oar_audio: AudioStreamPlayer3D
+var _oar_audio_remaining := 0.0
 var _wake_audio: AudioStreamPlayer3D
-var _prev_rowing_time := 0.0
 var _fx_prev_pos := Vector3.ZERO
 var _fx_speed := 0.0
+var _fx_velocity := Vector3.ZERO
+var _bow_foam: Array[GPUParticles3D] = []
+var _bow_spray: Array[GPUParticles3D] = []
+var _oar_foam: Array[GPUParticles3D] = []
+var _oar_ripples: Array[GPUParticles3D] = []
+var _oars: Array[Node3D] = []
+var _blade_points := [Vector3(-1.283951, -0.863600, -1.250282), Vector3(1.264295, -0.852445, -1.235754)]
+var _previous_blades: Array[Vector3] = []
+var _blade_velocities := [Vector3.ZERO, Vector3.ZERO]
+var _oar_pulling := [false, false]
+var _foam_texture: Texture2D
+var _ripple_texture: Texture2D
 
 func _ready() -> void:
 	world = get_parent()
@@ -63,7 +75,7 @@ func _ready() -> void:
 			animation_player.play("Animation")
 			animation_player.pause()
 		_create_water_fx()
-	_fx_prev_pos = position
+	_fx_prev_pos = global_position
 	_network_position = position
 	_network_yaw = rotation.y
 	if _networked() and not _authority():
@@ -328,18 +340,44 @@ func passenger_prompt() -> String:
 	return "W/S: remar | A/D: girar | F: salir del bote" if _can_exit else "W/S: remar | A/D: girar | Acercate a la orilla para salir"
 
 func _create_water_fx() -> void:
-	_wake = _make_spray(140, 1.5, false)
+	_foam_texture = _water_particle_texture(false)
+	_ripple_texture = _water_particle_texture(true)
+	_wake = _make_foam(130, 2.6)
 	_wake.name = "WakeFx"
 	var wake_mat := _wake.process_material as ParticleProcessMaterial
-	wake_mat.emission_box_extents = Vector3(0.7, 0.03, 0.3)
-	wake_mat.initial_velocity_min = 0.35
-	wake_mat.initial_velocity_max = 1.0
-	wake_mat.scale_min = 0.09
-	wake_mat.scale_max = 0.32
+	wake_mat.emission_box_extents = Vector3(0.55, 0, 0.16)
+	wake_mat.scale_min = 0.8
+	wake_mat.scale_max = 1.3
 	_wake.position = Vector3(0, WATER_Y, 2.5)
 	add_child(_wake)
-	_oar_splash_l = _make_splash(Vector3(-1.15, WATER_Y, 0.35))
-	_oar_splash_r = _make_splash(Vector3(1.15, WATER_Y, 0.35))
+	for i in range(2):
+		var side := -1.0 if i == 0 else 1.0
+		var suffix := "L" if i == 0 else "R"
+		var foam := _make_foam(64, 1.8)
+		foam.name = "BowFoam" + suffix
+		foam.position = Vector3(side * 0.72, WATER_Y, -2.4)
+		add_child(foam)
+		_bow_foam.append(foam)
+		var spray := _make_spray(24, 0.55, false)
+		spray.name = "BowSpray" + suffix
+		spray.position = foam.position
+		add_child(spray)
+		_bow_spray.append(spray)
+		var churn := _make_foam(40, 1.6)
+		churn.name = "OarFoam" + suffix
+		add_child(churn)
+		_oar_foam.append(churn)
+		var ripple := _make_foam(2, 1.2, true)
+		ripple.name = "OarRipple" + suffix
+		ripple.one_shot = true
+		ripple.explosiveness = 0.8
+		add_child(ripple)
+		_oar_ripples.append(ripple)
+		var oar := visual.find_child("OarLeft" if i == 0 else "OarRight", true, false) as Node3D
+		_oars.append(oar)
+		_previous_blades.append(to_local(oar.to_global(_blade_points[i])) if oar != null else Vector3.ZERO)
+	_oar_splash_l = _make_splash(Vector3(-2.1, WATER_Y, -1))
+	_oar_splash_r = _make_splash(Vector3(2.1, WATER_Y, -1))
 	_oar_audio = AudioStreamPlayer3D.new()
 	_oar_audio.name = "OarSplashAudio"
 	_oar_audio.unit_size = 5.0
@@ -361,11 +399,71 @@ func _create_water_fx() -> void:
 	add_child(_wake_audio)
 
 func _make_splash(pos: Vector3) -> GPUParticles3D:
-	var splash := _make_spray(20, 0.8, true)
+	var splash := _make_spray(36, 0.6, false)
 	splash.name = "OarSplash" + ("L" if pos.x < 0 else "R")
 	splash.position = pos
 	add_child(splash)
 	return splash
+
+func _water_particle_texture(ripple: bool) -> Texture2D:
+	var image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	var noise := FastNoiseLite.new()
+	noise.seed = 73
+	noise.frequency = 0.18
+	for y in range(96):
+		for x in range(96):
+			var p := (Vector2(x, y) - Vector2(47.5, 47.5)) / 47.5
+			var radius := p.length()
+			var grain := noise.get_noise_2d(x, y) * 0.5 + 0.5
+			var alpha := 0.0
+			if ripple:
+				alpha = exp(-pow((radius - 0.72 + (grain - 0.5) * 0.06) / 0.045, 2.0)) * smoothstep(0.2, 0.7, grain) * 0.6
+			else:
+				alpha = (1.0 - smoothstep(0.3, 1.0, radius)) * smoothstep(0.32, 0.7, grain)
+			image.set_pixel(x, y, Color(0.86, 0.94, 0.96, alpha))
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
+
+func _particle_fade() -> GradientTexture1D:
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.12, 0.55, 1.0])
+	gradient.colors = PackedColorArray([Color(1, 1, 1, 0), Color.WHITE, Color(1, 1, 1, 0.65), Color(1, 1, 1, 0)])
+	var texture := GradientTexture1D.new()
+	texture.gradient = gradient
+	return texture
+
+func _make_foam(amount: int, lifetime: float, ripple := false) -> GPUParticles3D:
+	var p := _make_spray(amount, lifetime, false)
+	var mat := p.process_material as ParticleProcessMaterial
+	mat.gravity = Vector3.ZERO
+	mat.direction = Vector3.BACK
+	mat.spread = 0.0
+	mat.initial_velocity_min = 0.08
+	mat.initial_velocity_max = 0.18
+	mat.emission_box_extents = Vector3(0.09, 0, 0.09)
+	mat.scale_min = 0.35 if ripple else 0.22
+	mat.scale_max = 0.55 if ripple else 0.48
+	mat.color = Color(0.88, 0.96, 1, 0.65)
+	var curve := Curve.new()
+	curve.add_point(Vector2(0, 0.25))
+	curve.add_point(Vector2(0.25, 0.6))
+	curve.add_point(Vector2(1, 1.0))
+	var growth := CurveTexture.new()
+	growth.curve = curve
+	mat.scale_curve = growth
+	mat.scale_min *= 3.5 if ripple else 2.6
+	mat.scale_max *= 3.5 if ripple else 2.6
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2.ONE
+	var surf := StandardMaterial3D.new()
+	surf.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	surf.vertex_color_use_as_albedo = true
+	surf.albedo_texture = _ripple_texture if ripple else _foam_texture
+	surf.roughness = 1.0
+	surf.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.material = surf
+	p.draw_pass_1 = mesh
+	return p
 
 func _make_spray(amount: int, lifetime: float, one_shot: bool) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
@@ -374,28 +472,32 @@ func _make_spray(amount: int, lifetime: float, one_shot: bool) -> GPUParticles3D
 	p.local_coords = false
 	p.one_shot = one_shot
 	p.explosiveness = 1.0 if one_shot else 0.0
+	p.randomness = 0.65
 	p.emitting = false
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	p.visibility_aabb = AABB(Vector3(-30, -5, -30), Vector3(60, 10, 60))
+	p.visibility_aabb = AABB(Vector3(-16, -2, -16), Vector3(32, 6, 32))
 	var mat := ParticleProcessMaterial.new()
 	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	mat.emission_box_extents = Vector3(0.2, 0.02, 0.2)
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 32.0
-	mat.initial_velocity_min = 0.9
-	mat.initial_velocity_max = 2.4
-	mat.gravity = Vector3(0, -7.0, 0)
-	mat.scale_min = 0.05
-	mat.scale_max = 0.16
-	mat.color = Color(0.72, 0.84, 0.92, 0.55)
+	mat.emission_box_extents = Vector3(0.12, 0.015, 0.12)
+	mat.direction = Vector3(0, 1, 0.4).normalized()
+	mat.spread = 28.0
+	mat.initial_velocity_min = 0.65
+	mat.initial_velocity_max = 1.5
+	mat.gravity = Vector3(0, -5.0, 0)
+	mat.scale_min = 0.018
+	mat.scale_max = 0.045
+	mat.color = Color(0.8, 0.91, 0.96, 0.7)
+	mat.color_ramp = _particle_fade()
 	p.process_material = mat
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.05
-	mesh.height = 0.09
+	mesh.radius = 0.5
+	mesh.height = 1.0
+	mesh.radial_segments = 6
+	mesh.rings = 3
 	var surf := StandardMaterial3D.new()
-	surf.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	surf.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	surf.albedo_color = Color(0.78, 0.88, 0.95, 0.6)
+	surf.vertex_color_use_as_albedo = true
+	surf.roughness = 0.25
 	mesh.material = surf
 	p.draw_pass_1 = mesh
 	return p
@@ -413,39 +515,101 @@ func _load_fx_stream(path: String) -> AudioStream:
 	return null
 
 func _update_water_fx(delta: float) -> void:
-	if _wake == null:
+	if _wake == null or delta <= 0.0:
 		return
-	var dist := Vector2(global_position.x - _fx_prev_pos.x, global_position.z - _fx_prev_pos.z).length()
-	_fx_speed = dist / maxf(delta, 0.0001)
+	var displacement := global_position - _fx_prev_pos
+	displacement.y = 0
 	_fx_prev_pos = global_position
-	var moving := _fx_speed > 0.35
+	var teleported := displacement.length() > maxf(1.0, MAX_SPEED * delta * 2.5)
+	var velocity := displacement / delta
+	_fx_velocity = Vector3.ZERO if teleported else _fx_velocity.lerp(velocity, 1.0 - exp(-delta * 12.0))
+	_fx_speed = minf(_fx_velocity.length(), MAX_SPEED)
+	var moving := _fx_speed > 0.18
+	var strength := clampf(_fx_speed / MAX_SPEED, 0.0, 1.0)
+	var travel := 1.0 if _fx_velocity.dot(-global_basis.z) >= 0 else -1.0
+	_wake.position.z = 2.5 * travel
 	_wake.emitting = moving
+	_wake.amount_ratio = maxf(0.05, strength)
+	var wake_mat := _wake.process_material as ParticleProcessMaterial
+	wake_mat.direction = Vector3(0, 0, travel)
+	wake_mat.initial_velocity_min = 0.08 + strength * 0.12
+	wake_mat.initial_velocity_max = 0.2 + strength * 0.35
+	for i in range(_bow_foam.size()):
+		var side := -1.0 if i == 0 else 1.0
+		var foam := _bow_foam[i]
+		foam.position = Vector3(side * (0.72 if travel > 0 else 0.38), WATER_Y, -2.4 if travel > 0 else 2.1)
+		foam.emitting = moving
+		foam.amount_ratio = maxf(0.05, strength)
+		var mat := foam.process_material as ParticleProcessMaterial
+		mat.direction = Vector3(side * 0.85, 0, travel).normalized()
+		mat.initial_velocity_min = 0.15 + strength * 0.3
+		mat.initial_velocity_max = 0.3 + strength * 0.65
+		var spray := _bow_spray[i]
+		spray.position = foam.position
+		spray.emitting = moving and strength > 0.3
+		spray.amount_ratio = maxf(0.05, strength * strength)
+		var spray_mat := spray.process_material as ParticleProcessMaterial
+		spray_mat.direction = Vector3(side * 0.7, 0.65, travel * 0.5).normalized()
+		spray_mat.initial_velocity_min = 0.3 + strength * 0.3
+		spray_mat.initial_velocity_max = 0.5 + strength * 0.75
 	if _wake_audio != null and _wake_audio.stream != null:
-		var target := -80.0
-		if moving:
-			target = lerpf(-16.0, -6.0, clampf(_fx_speed / MAX_SPEED, 0.0, 1.0))
-		_wake_audio.volume_db = lerpf(_wake_audio.volume_db, target, clampf(delta * 4.0, 0.0, 1.0))
+		var target := lerpf(-24.0, -8.0, strength) if moving else -80.0
+		_wake_audio.volume_db = lerpf(_wake_audio.volume_db, target, 1.0 - exp(-delta * 4.0))
+		_wake_audio.pitch_scale = lerpf(0.85, 1.05, strength)
 		if _wake_audio.volume_db > -55.0 and not _wake_audio.playing:
 			_wake_audio.play()
 		elif _wake_audio.volume_db < -55.0 and _wake_audio.playing:
 			_wake_audio.stop()
-	if rowing and rowing_time < _prev_rowing_time:
-		_stroke_splash()
-	_prev_rowing_time = rowing_time
+	_oar_audio_remaining = maxf(0.0, _oar_audio_remaining - delta)
+	if _oar_audio != null and (_oar_audio_remaining == 0.0 or not rowing):
+		_oar_audio.stop()
+	_update_oar_fx(delta, teleported)
 
-func _stroke_splash() -> void:
-	if _oar_splash_l != null:
-		_oar_splash_l.restart()
-	if _oar_splash_r != null:
-		_oar_splash_r.restart()
+func _update_oar_fx(delta: float, teleported: bool) -> void:
+	var entered := false
+	for i in range(_oars.size()):
+		var oar := _oars[i]
+		if oar == null:
+			continue
+		var blade := to_local(oar.to_global(_blade_points[i]))
+		var pivot := to_local(oar.global_position)
+		var measured_velocity := (blade - _previous_blades[i]) / delta
+		_blade_velocities[i] = _blade_velocities[i].lerp(measured_velocity, 1.0 - exp(-delta * 18.0)) if rowing and not teleported else Vector3.ZERO
+		var blade_velocity: Vector3 = _blade_velocities[i]
+		_previous_blades[i] = blade
+		var depth := pivot.y - blade.y
+		var contact := pivot.lerp(blade, clampf((pivot.y - WATER_Y) / maxf(depth, 0.001), 0.0, 1.0))
+		contact.y = WATER_Y
+		var pulling := rowing and not teleported and blade.y < WATER_Y and blade_velocity.z > 0.15 and blade_velocity.length() < 6.0
+		var force := clampf(blade_velocity.length() / 2.0, 0.15, 1.0)
+		var spray := _oar_splash_l if i == 0 else _oar_splash_r
+		spray.position = contact
+		spray.emitting = pulling
+		spray.amount_ratio = force
+		var spray_mat := spray.process_material as ParticleProcessMaterial
+		spray_mat.direction = Vector3(blade_velocity.x * 0.25, 0.9, 0.6).normalized()
+		spray_mat.initial_velocity_max = lerpf(0.8, 1.6, force)
+		var foam := _oar_foam[i]
+		foam.position = contact
+		foam.emitting = pulling
+		foam.amount_ratio = force
+		var foam_mat := foam.process_material as ParticleProcessMaterial
+		foam_mat.direction = Vector3(blade_velocity.x, 0, maxf(0.1, blade_velocity.z)).normalized()
+		if pulling and not _oar_pulling[i]:
+			_oar_ripples[i].position = contact
+			_oar_ripples[i].restart()
+			entered = true
+		_oar_pulling[i] = pulling
+	if entered and _oar_audio != null and not _oar_audio.playing:
+		_oar_audio.position = (_oar_foam[0].position + _oar_foam[1].position) * 0.5
+		_play_stroke_audio()
+
+func _play_stroke_audio() -> void:
 	if _oar_audio != null and _oar_audio.stream != null:
-		_oar_audio.pitch_scale = randf_range(0.92, 1.08)
-		_oar_audio.volume_db = randf_range(-5.0, -1.0)
+		_oar_audio.pitch_scale = randf_range(0.94, 1.06)
+		_oar_audio.volume_db = randf_range(-7.0, -4.0)
 		_oar_audio.play(2.0)
-		var audio := _oar_audio
-		get_tree().create_timer(1.4).timeout.connect(func():
-			if is_instance_valid(audio) and audio.playing:
-				audio.stop())
+		_oar_audio_remaining = 1.0
 
 func _send_state() -> void:
 	if not _networked() or not _authority():
