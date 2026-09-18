@@ -62,6 +62,16 @@ static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Ca
 			candidate.z = clamp(candidate.z, -WORLD_LIMIT, WORLD_LIMIT)
 			if is_allowed.call(candidate):
 				return candidate
+	# Some water bodies (the lake is ~130 m across) are wider than max_radius.
+	# Keep expanding instead of returning a disallowed point in the water.
+	for radius in [36.0, 48.0, 62.0, 80.0, 105.0, 140.0]:
+		for i in range(24):
+			var angle := TAU * float(i) / 24.0
+			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+			candidate.x = clamp(candidate.x, -WORLD_LIMIT, WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -WORLD_LIMIT, WORLD_LIMIT)
+			if is_allowed.call(candidate):
+				return candidate
 	return origin
 
 static func random_pos_far_from(origin: Vector3, min_dist: float, world_range: float) -> Vector3:

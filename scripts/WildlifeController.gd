@@ -206,7 +206,7 @@ func _sanitize_patrol_points() -> void:
 				patrol_points[i] = safe
 
 func _nearest_allowed_point(origin: Vector3):
-	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0]:
+	for radius in [2.0, 4.0, 6.0, 9.0, 13.0, 18.0, 26.0, 36.0, 48.0, 62.0, 80.0, 105.0]:
 		for i in range(16):
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)

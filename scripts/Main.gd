@@ -5404,7 +5404,7 @@ func _check_wildlife_respawn() -> void:
 	if total_wolf < 18 and total_wolf <= total_fox and total_wolf <= total_deer:
 		var center := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		for _retry in range(30):
-			if not _is_near_wildlife_blocker(center, 5.0):
+			if is_wildlife_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
@@ -5414,6 +5414,10 @@ func _check_wildlife_respawn() -> void:
 		_create_deer_pair(deer_route)
 	elif total_fox < 10:
 		var fox_zone := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+		for _retry in range(30):
+			if is_wildlife_allowed_at(fox_zone):
+				break
+			fox_zone = Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 	# Respawn birds if population drops below threshold
