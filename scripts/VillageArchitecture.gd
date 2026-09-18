@@ -45,15 +45,15 @@ static func decorate(world: Node3D, origin: Vector3, label: String, width: float
 	var palette := [Color(0.18,0.25,0.21),Color(0.25,0.30,0.32),Color(0.32,0.20,0.14)]
 	batch(root,"Woodwork",wood,palette[absi(label.hash()) % palette.size()],0.88)
 	batch(root,"RainwaterMetal",metal,Color(0.16,0.18,0.18),0.72)
-	# World-aligned brick keeps texel scale continuous across window cutouts.
-	# Use the moss-free brick set: plaster_brick_01 has broad green stains.
+	# World-aligned weathered plaster keeps texel scale continuous across
+	# window cutouts; grime and ivy decals add the damp, overgrown decay.
 	var wall := StandardMaterial3D.new()
-	wall.albedo_texture = load("res://assets/external/textures/red_brick_03/red_brick_03_diff_4k.jpg")
-	wall.roughness_texture = load("res://assets/external/textures/red_brick_03/red_brick_03_rough_4k.jpg")
-	wall.albedo_color = [Color(0.92,0.88,0.83),Color(0.85,0.82,0.78),Color(0.90,0.82,0.74)][absi(label.hash()) % 3]
+	wall.albedo_texture = load("res://assets/textures/overgrowth/plaster_aged_2k.jpg")
+	wall.albedo_color = [Color(0.95,0.94,0.88),Color(0.88,0.88,0.82),Color(0.91,0.86,0.78)][absi(label.hash()) % 3]
+	wall.roughness = 0.93
 	wall.uv1_triplanar = true
 	wall.uv1_world_triplanar = true
-	wall.uv1_scale = Vector3.ONE * 0.8
+	wall.uv1_scale = Vector3(0.30, 0.5, 0.30)
 	wall.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	for child in world.get_children():
 		if child is StaticBody3D and str(child.name).begins_with(label+" "):

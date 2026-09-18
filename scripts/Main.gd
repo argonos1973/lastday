@@ -233,6 +233,12 @@ const TEX_RUST_DIFF := TEX_DIR + "rusty_metal_03/rusty_metal_03_diff_4k.jpg"
 const TEX_WOOD_FLOOR_DIFF := TEX_DIR + "wood_floor_deck/wood_floor_deck_diff_4k.jpg"
 const TEX_CONCRETE_DIFF := TEX_DIR + "concrete_floor_02/concrete_floor_02_diff_4k.jpg"
 const TEX_BRICK_DIFF := TEX_DIR + "red_brick_03/red_brick_03_diff_4k.jpg"
+const TEX_OVERGROWTH_DIR := "res://assets/textures/overgrowth/"
+const TEX_IVY_SHEET := TEX_OVERGROWTH_DIR + "ivy_sheet.png"
+const TEX_IVY_DRAPE := TEX_OVERGROWTH_DIR + "ivy_drape.png"
+const TEX_WALL_GRIME := TEX_OVERGROWTH_DIR + "wall_grime.png"
+const TEX_MOSS_PATCH := TEX_OVERGROWTH_DIR + "moss_patch.png"
+const TEX_PLASTER_AGED := TEX_OVERGROWTH_DIR + "plaster_aged_2k.jpg"
 const BED_MODEL_PATH := "res://assets/models/props/post_apocalyptic_bed.glb"
 const BACKPACK_ITEM_SCENE := "res://scenes/items/BackpackItem.tscn"
 const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
@@ -4612,6 +4618,7 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	# Door lintel
 	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
 	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c)
+	_create_house_ivy(origin, label, half_w, half_d, height, wall_t)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
 	preload("res://scripts/VillageArchitecture.gd").interior(self, origin, label, width, depth, height)
 	# Roof collision
@@ -4672,17 +4679,29 @@ func _create_house_floor(origin: Vector3, label: String, width: float, depth: fl
 	add_child(body)
 
 func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, half_d: float) -> void:
-	# Sparse grass around houses — just a few weeds near walls
-	for i in range(20):
-		var side := -1.0 if i % 2 == 0 else 1.0
-		var pos := origin + Vector3(side * _world_rng.randf_range(half_w + 0.2, half_w + 0.95), 0.0, _world_rng.randf_range(-(half_d - 0.1), half_d + 0.1))
+	# Dense weeds hugging the wall bases — the houses read as abandoned.
+	var base_color := Color(0.17, 0.33, 0.10)
+	var color_var := Color(0.35, 0.43, 0.15)
+	for i in range(160):
+		var side := _world_rng.randi() % 4
+		var pos: Vector3
+		match side:
+			0:
+				pos = Vector3(origin.x + _world_rng.randf_range(-half_w, half_w), 0.0, origin.z - half_d + _world_rng.randf_range(-0.75, 0.35))
+			1:
+				pos = Vector3(origin.x + _world_rng.randf_range(-half_w, half_w), 0.0, origin.z + half_d + _world_rng.randf_range(-0.35, 0.75))
+			2:
+				pos = Vector3(origin.x - half_w + _world_rng.randf_range(-0.75, 0.35), 0.0, origin.z + _world_rng.randf_range(-half_d, half_d))
+			_:
+				pos = Vector3(origin.x + half_w + _world_rng.randf_range(-0.35, 0.75), 0.0, origin.z + _world_rng.randf_range(-half_d, half_d))
+		# Keep the doorway and front path walkable.
+		if pos.z > origin.z and absf(pos.x - origin.x) < 1.6:
+			continue
 		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
-		_create_house_grass_asset(label + " SideGrass", pos, _world_rng.randf_range(0.22, 0.45))
-	for i in range(15):
-		var fb := 1.0 if i % 2 == 0 else -1.0
-		var pos := origin + Vector3(_world_rng.randf_range(-(half_w - 0.2), half_w - 0.2), 0.0, fb * _world_rng.randf_range(half_d + 0.2, half_d + 0.95))
-		pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.02
-		_create_house_grass_asset(label + " WallWeed", pos, _world_rng.randf_range(0.20, 0.42))
+		var h := _world_rng.randf_range(0.18, 0.55)
+		var r := _world_rng.randf_range(0.22, 0.5)
+		var c := base_color.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
+		_queue_grass_instance(pos, h, r, c)
 	# Light grass fill from house edge to 12 units
 	var grass_radius: float = max(half_w, half_d) + 2.0
 	for i in range(500):
@@ -4694,6 +4713,135 @@ func _create_house_overgrowth(origin: Vector3, label: String, half_w: float, hal
 
 func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: float) -> void:
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), _world_rng.randf()))
+
+func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: float, height: float, wall_t: float) -> void:
+	var ivy_mat := MaterialFactory.make_overgrowth_material("ivy_sheet", TEX_IVY_SHEET, 0.28)
+	var drape_mat := MaterialFactory.make_overgrowth_material("ivy_drape", TEX_IVY_DRAPE, 0.3)
+	var grime_mat := MaterialFactory.make_overgrowth_material("wall_grime", TEX_WALL_GRIME, 0.0, true)
+	grime_mat.albedo_color = Color(0.68, 0.70, 0.64)
+	var moss_mat := MaterialFactory.make_overgrowth_material("moss_patch", TEX_MOSS_PATCH, 0.45)
+	var face_z := half_d + wall_t * 0.5 + 0.03
+	var face_x := half_w + wall_t * 0.5 + 0.03
+	var faces := [
+		{"u_axis": "x", "side": -1.0, "extent": half_w, "face": face_z, "is_front": false},
+		{"u_axis": "x", "side": 1.0, "extent": half_w, "face": face_z, "is_front": true},
+		{"u_axis": "z", "side": -1.0, "extent": half_d, "face": face_x, "is_front": false},
+		{"u_axis": "z", "side": 1.0, "extent": half_d, "face": face_x, "is_front": false},
+	]
+	for face in faces:
+		var u_axis: String = face["u_axis"]
+		var side: float = face["side"]
+		var extent: float = face["extent"]
+		var face_off: float = face["face"]
+		var is_front: bool = face["is_front"]
+		# Damp grime rising from the ground. Split on the front so the doorway stays clear.
+		if is_front:
+			for edge in [-1.0, 1.0]:
+				var gw := extent - 1.0
+				if gw > 0.3:
+					var gu: float = edge * (1.0 + gw * 0.5)
+					_create_wall_decal(origin, label + " Grime", u_axis, side, face_off, gu, -0.05, gw, 1.1, grime_mat, false)
+		else:
+			_create_wall_decal(origin, label + " Grime", u_axis, side, face_off, 0.0, -0.05, extent * 2.0 + 0.4, 1.1, grime_mat, false)
+		# Climbing ivy sheets anchored at the ground — always one near each corner.
+		var anchor_us := [-(extent - 0.9), extent - 0.9]
+		for anchor_u in anchor_us:
+			var pw := _world_rng.randf_range(1.8, 2.8)
+			var ph := _world_rng.randf_range(2.2, min(3.8, height - 0.1))
+			var au: float = anchor_u + _world_rng.randf_range(-0.5, 0.5)
+			if is_front and absf(au) < 1.9:
+				continue
+			_create_wall_decal(origin, label + " Ivy", u_axis, side, face_off + 0.02, au, 0.0, pw, ph, ivy_mat, _world_rng.randf() < 0.5)
+		var panels := 1 + _world_rng.randi() % 2
+		for i in range(panels):
+			var pw := _world_rng.randf_range(1.6, 2.6)
+			var ph := _world_rng.randf_range(1.8, min(3.4, height - 0.2))
+			var u := _world_rng.randf_range(-(extent - 0.4), extent - 0.4)
+			if is_front and absf(u) < 1.9:
+				continue
+			_create_wall_decal(origin, label + " Ivy", u_axis, side, face_off + 0.02, u, 0.0, pw, ph, ivy_mat, _world_rng.randf() < 0.5)
+		# Low bushy patches thicken the base growth between the tall climbers.
+		var bushes := 2 + _world_rng.randi() % 2
+		for i in range(bushes):
+			var bw := _world_rng.randf_range(1.4, 2.4)
+			var bh := _world_rng.randf_range(0.9, 1.6)
+			var u := _world_rng.randf_range(-(extent - 0.3), extent - 0.3)
+			if is_front and absf(u) < 1.9:
+				continue
+			_create_wall_decal(origin, label + " Ivy", u_axis, side, face_off + 0.03, u, 0.0, bw, bh, ivy_mat, _world_rng.randf() < 0.5)
+		# Strands hanging from the eave line.
+		var drapes := 1 + _world_rng.randi() % 2
+		for i in range(drapes):
+			var dw := _world_rng.randf_range(0.6, 1.4)
+			var dh := _world_rng.randf_range(0.5, 1.2)
+			var u := _world_rng.randf_range(-(extent - 0.5), extent - 0.5)
+			if is_front and absf(u) < 1.9:
+				continue
+			var top := height - 0.15 - _world_rng.randf_range(0.0, 0.8)
+			_create_wall_decal(origin, label + " Drape", u_axis, side, face_off + 0.02, u, top - dh, dw, dh, drape_mat, false)
+	_create_house_roof_moss(origin, label, half_w, half_d, height, moss_mat)
+
+var _house_decal_seq := 0
+
+func _create_wall_decal(origin: Vector3, node_name: String, u_axis: String, side: float, face_off: float, u: float, y_bottom: float, w: float, h: float, mat: Material, mirror: bool) -> void:
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(w, h)
+	var mesh_instance := MeshInstance3D.new()
+	_house_decal_seq += 1
+	mesh_instance.name = "%s_%d" % [node_name, _house_decal_seq]
+	mesh_instance.mesh = plane
+	mesh_instance.material_override = mat
+	if u_axis == "x":
+		mesh_instance.position = origin + Vector3(u, y_bottom + h * 0.5, side * face_off)
+		mesh_instance.rotation_degrees.y = 0.0 if side > 0.0 else 180.0
+	else:
+		mesh_instance.position = origin + Vector3(side * face_off, y_bottom + h * 0.5, u)
+		mesh_instance.rotation_degrees.y = 90.0 if side > 0.0 else -90.0
+	if mirror:
+		mesh_instance.scale.x = -1.0
+	add_child(mesh_instance)
+
+func _create_house_roof_moss(origin: Vector3, label: String, half_w: float, half_d: float, height: float, moss_mat: Material) -> void:
+	var roof_w := half_w * 2.0 + 1.2
+	var roof_d := half_d * 2.0 + 0.8
+	var roof_h := 1.85
+	var run := roof_d * 0.5
+	var pitch := atan2(roof_h, run)
+	var roof_base_y := height - 0.1
+	var count := 5 + _world_rng.randi() % 4
+	for i in range(count):
+		var side := 1.0 if _world_rng.randf() < 0.5 else -1.0
+		var from_eave := _world_rng.randf_range(0.05, run * 0.8)
+		var z_off := side * (run - from_eave)
+		var y := roof_base_y + tan(pitch) * from_eave + 0.03
+		var x := _world_rng.randf_range(-roof_w * 0.38, roof_w * 0.38)
+		var w := _world_rng.randf_range(1.4, 3.0)
+		var h := w * _world_rng.randf_range(0.5, 0.8)
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(w, h)
+		var mesh_instance := MeshInstance3D.new()
+		_house_decal_seq += 1
+		mesh_instance.name = "%s Moss_%d" % [label, _house_decal_seq]
+		mesh_instance.mesh = plane
+		mesh_instance.material_override = moss_mat
+		mesh_instance.position = origin + Vector3(x, y, z_off)
+		mesh_instance.rotation_degrees.x = -90.0 + rad_to_deg(pitch) * side
+		add_child(mesh_instance)
+	# A couple of patches straddling the ridge.
+	for i in range(1 + _world_rng.randi() % 2):
+		var side := 1.0 if _world_rng.randf() < 0.5 else -1.0
+		var x := _world_rng.randf_range(-roof_w * 0.3, roof_w * 0.3)
+		var w := _world_rng.randf_range(1.0, 2.0)
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(w, w * 0.6)
+		var mesh_instance := MeshInstance3D.new()
+		_house_decal_seq += 1
+		mesh_instance.name = "%s RidgeMoss_%d" % [label, _house_decal_seq]
+		mesh_instance.mesh = plane
+		mesh_instance.material_override = moss_mat
+		mesh_instance.position = origin + Vector3(x, roof_base_y + roof_h + 0.04, side * 0.25)
+		mesh_instance.rotation_degrees.x = -90.0 + rad_to_deg(pitch) * side
+		add_child(mesh_instance)
 
 func _create_barn_grass(origin: Vector3, half_w: float, half_d: float, ground_y: float) -> void:
 	# Short procedural grass hugging barn exterior walls
@@ -8885,7 +9033,7 @@ func _create_house_details(origin: Vector3, label: String, width: float, depth: 
 	var front_seg_w: float = half_w - 1.8 * 0.5 - return_w + 0.5
 	var win_w: float = min(1.5, front_seg_w * 0.72)
 	var win_h: float = win_w * 0.8
-	_create_visual_gable_roof(label + " Roof", origin + Vector3(0, height - 0.1, 0), width + 1.2, depth + 0.8, 1.85, Color(0.14, 0.065, 0.035))
+	_create_visual_gable_roof(label + " Roof", origin + Vector3(0, height - 0.1, 0), width + 1.2, depth + 0.8, 1.85, Color(0.11, 0.085, 0.06))
 	_create_house_exterior_assets(origin, label, half_w, half_d, height)
 	_create_static_box(label + " Chimney", origin + Vector3(half_w * 0.6, height + 0.35, -(half_d * 0.38)), Vector3(0.62, 1.25, 0.62), Color(0.11, 0.08, 0.065))
 	_create_house_doorway(origin, label, half_d, height)
@@ -11053,8 +11201,6 @@ func _update_grass_visibility() -> void:
 	_grass_any_visible = any_visible
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
-	if not _can_place_ground_vegetation(pos):
-		return
 	_ensure_grass_batches()
 	var grass_rng := RandomNumberGenerator.new()
 	grass_rng.seed = hash(pos)
@@ -11341,8 +11487,10 @@ func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: 
 	mesh_instance.mesh = _get_shared_box_mesh()
 	mesh_instance.scale = size
 	mesh_instance.position.y = size.y * 0.5
-	var uv_scale := Vector3(max(size.x, size.z) / 1.4, size.y / 1.4, 1.0)
-	mesh_instance.material_override = MaterialFactory.make_textured_material(node_name + TEX_BRICK_DIFF, TEX_BRICK_DIFF, Color(0.62, 0.46, 0.38), uv_scale)
+	var uv_scale := Vector3(max(size.x, size.z) / 2.2, size.y / 2.2, 1.0)
+	var wall_mat := MaterialFactory.make_textured_material(node_name + TEX_PLASTER_AGED, TEX_PLASTER_AGED, Color(0.70, 0.70, 0.64), uv_scale)
+	wall_mat.uv1_offset = Vector3(_world_rng.randf(), _world_rng.randf(), 0.0)
+	mesh_instance.material_override = wall_mat
 	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -11825,7 +11973,7 @@ func _create_visual_gable_roof(node_name: String, pos: Vector3, width: float, de
 		_roof_texture = _extract_texture_from_glb(MODULAR_ROOF_MODEL)
 	if _roof_texture != null:
 		var roof_mat := StandardMaterial3D.new()
-		roof_mat.albedo_color = Color(0.85, 0.75, 0.65)
+		roof_mat.albedo_color = Color(0.48, 0.45, 0.40)
 		roof_mat.albedo_texture = _roof_texture
 		roof_mat.roughness = 0.95
 		roof_mat.metallic = 0.0

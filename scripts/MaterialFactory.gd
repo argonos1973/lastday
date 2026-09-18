@@ -293,6 +293,24 @@ static func make_cutout_material(key: String, tp: String, _ap: String) -> Standa
 	_mat_cache[ck] = m
 	return m
 
+static func make_overgrowth_material(key: String, tp: String, scissor: float = 0.4, soft: bool = false) -> StandardMaterial3D:
+	var ck := "overgrowth_" + key
+	if _mat_cache.has(ck):
+		return _mat_cache[ck]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(1, 1, 1, 1)
+	m.roughness = 0.95
+	m.metallic = 0.0
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_texture = load_texture(tp)
+	if soft:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	else:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		m.alpha_scissor_threshold = scissor
+	_mat_cache[ck] = m
+	return m
+
 static func make_camo_texture(bc: Color = Color(0.2, 0.25, 0.15)) -> ImageTexture:
 	var ck := str(bc)
 	if _camo_cache.has(ck):
