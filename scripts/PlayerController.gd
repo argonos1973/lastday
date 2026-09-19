@@ -899,10 +899,10 @@ func _apply_puppet_appearance() -> void:
 			if tmat.albedo_texture == null:
 				tmat.albedo_texture = _make_camo_texture()
 				tmat.albedo_color = Color.WHITE
+				MaterialFactory.cloth_detail(tmat, "jersey")
+			top_mi.material_override = tmat
 		else:
-			tmat.albedo_texture = null
-			tmat.albedo_color = _puppet_top_color
-		top_mi.material_override = tmat
+			top_mi.material_override = MaterialFactory.make_clothing_material("top", _puppet_top_color)
 	# Apply Bottoms
 	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
 	if bot_mi != null:
@@ -916,21 +916,14 @@ func _apply_puppet_appearance() -> void:
 			if bmat.albedo_texture == null:
 				bmat.albedo_texture = _make_camo_texture()
 				bmat.albedo_color = Color.WHITE
+				MaterialFactory.cloth_detail(bmat, "denim")
+			bot_mi.material_override = bmat
 		else:
-			bmat.albedo_texture = null
-			bmat.albedo_color = _puppet_bottom_color
-		bot_mi.material_override = bmat
+			bot_mi.material_override = MaterialFactory.make_clothing_material("bottom", _puppet_bottom_color)
 	# Apply Shoes
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
-		var skey := "puppet_shoes"
-		var smat: StandardMaterial3D = _skin_mat_cache.get(skey) as StandardMaterial3D
-		if smat == null:
-			smat = StandardMaterial3D.new()
-			smat.roughness = 0.8
-			_skin_mat_cache[skey] = smat
-		smat.albedo_color = _puppet_shoes_color
-		shoes_mi.material_override = smat
+		shoes_mi.material_override = MaterialFactory.make_clothing_material("shoes", _puppet_shoes_color)
 	# Apply skin color
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
@@ -1725,11 +1718,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 					body_mi.visible = false
 		# Apply loot color to the clothing mesh if provided
 		if clothing_color.a > 0.0 and bn != null:
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = clothing_color
-			mat.roughness = 0.8
-			mat.metallic = 0.0
-			bn.material_override = mat
+			bn.material_override = _clothing_material_for(bn.name, clothing_color)
 	elif SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, true, clothing_color)
 	else:
@@ -1743,11 +1732,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 		if cloth_mi != null:
 			cloth_mi.visible = true
 			if clothing_color.a > 0.0:
-				var mat := StandardMaterial3D.new()
-				mat.albedo_color = clothing_color
-				mat.roughness = 0.8
-				mat.metallic = 0.0
-				cloth_mi.material_override = mat
+				cloth_mi.material_override = _clothing_material_for(cloth_mi.name, clothing_color)
 		# Hide Desnudo_* parts covered by this clothing item
 		if DEFAULT_SKIN_HIDES.has(item_name):
 			for skin_name in DEFAULT_SKIN_HIDES[item_name]:
@@ -1892,18 +1877,12 @@ func _init_survival_clothing(root: Node) -> void:
 				_survival_cloth_nodes[mi.name] = mi
 				mi.visible = false
 				if mi.name == "cloth_hands" or mi.name == "cloth_feet":
-					var black_mat := StandardMaterial3D.new()
-					black_mat.albedo_color = Color(0.05, 0.05, 0.05)
-					black_mat.roughness = 0.9
-					mi.material_override = black_mat
+					mi.material_override = _clothing_material_for(mi.name, Color(0.05, 0.05, 0.05))
 			elif body_names.has(mi.name):
 				_survival_body_nodes[mi.name] = mi
 				mi.visible = false
 				if mi.name == "Shoes":
-					var shoe_mat := StandardMaterial3D.new()
-					shoe_mat.albedo_color = Color(0.85, 0.82, 0.78)
-					shoe_mat.roughness = 0.8
-					mi.material_override = shoe_mat
+					mi.material_override = _clothing_material_for("Shoes", Color(0.85, 0.82, 0.78))
 		for c in node.get_children():
 			stack.append(c)
 	# Hide all Desnudo_* parts at init (character starts clothed)
@@ -1930,6 +1909,29 @@ func _init_survival_clothing(root: Node) -> void:
 			dmi.visible = true
 	# Add the head/face from inicio.glb (player_with_clothes.glb lacks face geometry)
 	_add_head_mesh()
+
+# Maps a clothing mesh to its Blender-baked fabric (jersey shirt, denim pants,
+# leather footwear) so the equipped color still tints a detailed material.
+func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial3D:
+	var kind := "denim"
+	match mesh_name:
+		"Tops":
+			kind = "top"
+		"Bottoms":
+			kind = "bottom"
+		"Shoes":
+			kind = "shoes"
+		"soldier_legs":
+			kind = "soldier"
+		"cloth_hands":
+			kind = "gloves"
+		"cloth_feet":
+			kind = "boots"
+		"Ch42_Shirt":
+			kind = "jersey"
+		"Ch42_Sneakers":
+			kind = "leather"
+	return MaterialFactory.make_clothing_material(kind, color)
 
 # Applies the selected character's colors (clothing, hair, skin) to the
 # player_with_clothes.glb meshes. Colors are read from GameSession.
@@ -1962,10 +1964,10 @@ func _apply_character_colors() -> void:
 			if tmat.albedo_texture == null:
 				tmat.albedo_texture = _make_camo_texture()
 				tmat.albedo_color = Color.WHITE
+				MaterialFactory.cloth_detail(tmat, "jersey")
+			top_mi.material_override = tmat
 		else:
-			tmat.albedo_texture = null
-			tmat.albedo_color = top_color
-		top_mi.material_override = tmat
+			top_mi.material_override = MaterialFactory.make_clothing_material("top", top_color)
 	# Apply Bottoms
 	var bot_mi: MeshInstance3D = _find_mesh_in_third_person("Bottoms")
 	if bot_mi != null:
@@ -1978,20 +1980,14 @@ func _apply_character_colors() -> void:
 			if bmat.albedo_texture == null:
 				bmat.albedo_texture = _make_camo_texture()
 				bmat.albedo_color = Color.WHITE
+				MaterialFactory.cloth_detail(bmat, "denim")
+			bot_mi.material_override = bmat
 		else:
-			bmat.albedo_texture = null
-			bmat.albedo_color = bottom_color
-		bot_mi.material_override = bmat
+			bot_mi.material_override = MaterialFactory.make_clothing_material("bottom", bottom_color)
 	# Apply Shoes
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
-		var smat: StandardMaterial3D = _skin_mat_cache.get("char_shoes") as StandardMaterial3D
-		if smat == null:
-			smat = StandardMaterial3D.new()
-			smat.roughness = 0.8
-			_skin_mat_cache["char_shoes"] = smat
-		smat.albedo_color = shoes_color
-		shoes_mi.material_override = smat
+		shoes_mi.material_override = MaterialFactory.make_clothing_material("shoes", shoes_color)
 	# Apply skin color to Desnudo_* (bare skin) and Body_* (base body)
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
@@ -2304,28 +2300,20 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 	if mi != null:
 		mi.visible = worn
 		if worn and loot_color.a > 0.0:
+			mi.material_override = _clothing_material_for(mesh_name, loot_color)
+		elif worn and cfg.has("camo"):
 			var mat := StandardMaterial3D.new()
-			mat.albedo_color = loot_color
-			mat.roughness = 0.85
-			mat.metallic = 0.0
+			mat.albedo_texture = _make_camo_texture(cfg["camo"])
+			mat.albedo_color = Color.WHITE
+			MaterialFactory.cloth_detail(mat, "denim")
 			mi.material_override = mat
-		elif worn and (cfg.has("tint") or cfg.has("camo")):
-			var mat := StandardMaterial3D.new()
-			mat.roughness = 0.85
-			mat.metallic = 0.0
-			if cfg.has("camo"):
-				mat.albedo_texture = _make_camo_texture(cfg["camo"])
-				mat.albedo_color = Color.WHITE
-			else:
-				mat.albedo_color = cfg["tint"]
-			mi.material_override = mat
+		elif worn and cfg.has("tint"):
+			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
 		elif worn:
 			if mesh_name.begins_with("soldier_"):
-				var sol_mat := StandardMaterial3D.new()
-				sol_mat.albedo_color = Color(0.15, 0.18, 0.12)
-				sol_mat.roughness = 0.85
-				sol_mat.metallic = 0.0
-				mi.material_override = sol_mat
+				mi.material_override = _clothing_material_for(mesh_name, Color(0.15, 0.18, 0.12))
+			elif mesh_name == "cloth_hands":
+				mi.material_override = _clothing_material_for(mesh_name, Color(0.28, 0.22, 0.15))
 			else:
 				mi.material_override = null
 	# Build reverse map: body mesh name -> default clothing item name

@@ -222,11 +222,19 @@ func _apply_preview_colors(model: Node3D, def: CharacterDefinition) -> void:
 		var name_lower := mesh_inst.name.to_lower()
 		if name_lower.find("hair") >= 0 or name_lower.find("head") >= 0:
 			mat.albedo_color = def.hair_color
+			mesh_inst.material_override = mat
 		elif name_lower.find("body") >= 0 or name_lower.find("skin") >= 0:
 			mat.albedo_color = def.skin_color
+			mesh_inst.material_override = mat
 		else:
-			mat.albedo_color = def.clothing_color
-		mesh_inst.material_override = mat
+			var kind := "denim"
+			if name_lower.find("tops") >= 0 or name_lower.find("shirt") >= 0:
+				kind = "top" if name_lower == "tops" else "jersey"
+			elif name_lower.find("bottoms") >= 0:
+				kind = "bottom"
+			elif name_lower.find("shoes") >= 0 or name_lower.find("sneakers") >= 0:
+				kind = "shoes" if name_lower == "shoes" else "leather"
+			mesh_inst.material_override = MaterialFactory.make_clothing_material(kind, def.clothing_color)
 
 func _on_next() -> void:
 	if _definitions.is_empty():

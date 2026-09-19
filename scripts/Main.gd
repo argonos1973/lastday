@@ -4758,12 +4758,12 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 					_create_wall_decal(origin, label + " Grime", u_axis, side, face_off, gu, -0.05, gw, base_height, grime_mat, false)
 		else:
 			_create_wall_decal(origin, label + " Grime", u_axis, side, face_off, 0.0, -0.05, extent * 2.0 + 0.4, base_height, grime_mat, false)
-		for i in range(ceili(extent) * 2):
-			var mw := _world_rng.randf_range(1.3, 2.4)
+		for i in range(ceili(extent) * 3):
+			var mw := _world_rng.randf_range(1.3, 2.8)
 			var mu := _world_rng.randf_range(-extent + mw * 0.5, extent - mw * 0.5)
 			if is_front and absf(mu) - mw * 0.5 < 1.0:
 				continue
-			_create_wall_decal(origin, label + " BaseMoss", u_axis, side, face_off + 0.01, mu, 0.0, mw, base_height * _world_rng.randf_range(0.7, 1.0), moss_mat, _world_rng.randf() < 0.5)
+			_create_wall_decal(origin, label + " BaseMoss", u_axis, side, face_off + 0.01, mu, 0.0, mw, base_height * _world_rng.randf_range(0.75, 1.0), moss_mat, _world_rng.randf() < 0.5)
 		# Climbing ivy sheets anchored at the ground — always one near each corner.
 		var anchor_us := [-(extent - 0.55), extent - 0.55]
 		for anchor_u in anchor_us:
@@ -4775,7 +4775,7 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 			_create_wall_growth(origin, label + " Ivy", u_axis, side, face_off + 0.02, Rect2(au - pw * 0.5, 0.0, pw, ph), openings, ivy_mat, _world_rng.randf() < 0.5)
 		# Extra tall climbers thicken the wall between the corners; the window
 		# openings carve them into side strips so glass stays uncovered.
-		var climbers := 1 + _world_rng.randi() % 2
+		var climbers := 2 + _world_rng.randi() % 2
 		for i in range(climbers):
 			var cw := _world_rng.randf_range(1.3, 2.2)
 			var ch := _world_rng.randf_range(height * 0.55, height - 0.15)
@@ -4783,7 +4783,7 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 			if is_front and absf(u) - cw * 0.5 < 1.0:
 				continue
 			_create_wall_growth(origin, label + " Ivy", u_axis, side, face_off + 0.02, Rect2(u - cw * 0.5, 0.0, cw, ch), openings, ivy_mat, _world_rng.randf() < 0.5)
-		var panels := 1 + _world_rng.randi() % 3
+		var panels := 2 + _world_rng.randi() % 3
 		for i in range(panels):
 			var pw := _world_rng.randf_range(1.6, 3.0)
 			var ph := _world_rng.randf_range(1.8, min(3.6, height - 0.15))
@@ -4793,7 +4793,7 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 			_create_wall_growth(origin, label + " Ivy", u_axis, side, face_off + 0.02, Rect2(u - pw * 0.5, 0.0, pw, ph), openings, ivy_mat, _world_rng.randf() < 0.5)
 		# Mid-height patches spread the growth across the wall face, parting
 		# around the windows instead of climbing over them.
-		var patches := 1 + _world_rng.randi() % 2
+		var patches := 2 + _world_rng.randi() % 2
 		for i in range(patches):
 			var pw := _world_rng.randf_range(1.2, 2.4)
 			var ph := _world_rng.randf_range(1.2, 2.0)
@@ -4803,7 +4803,7 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 				continue
 			_create_wall_growth(origin, label + " Ivy", u_axis, side, face_off + 0.04, Rect2(u - pw * 0.5, y0, pw, ph), openings, ivy_mat, _world_rng.randf() < 0.5)
 		# Low bushy patches thicken the base growth between the tall climbers.
-		var bushes := 4 + _world_rng.randi() % 3
+		var bushes := 5 + _world_rng.randi() % 3
 		for i in range(bushes):
 			var bw := _world_rng.randf_range(1.4, 2.4)
 			var bh := _world_rng.randf_range(0.9, 1.6)
@@ -4812,7 +4812,7 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 				continue
 			_create_wall_growth(origin, label + " Ivy", u_axis, side, face_off + 0.03, Rect2(u - bw * 0.5, 0.0, bw, bh), openings, ivy_mat, _world_rng.randf() < 0.5)
 		# Strands hanging from the eave line.
-		var drapes := 2 + _world_rng.randi() % 2
+		var drapes := 3 + _world_rng.randi() % 2
 		for i in range(drapes):
 			var dw := _world_rng.randf_range(0.6, 1.4)
 			var dh := _world_rng.randf_range(0.5, 1.2)

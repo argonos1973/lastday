@@ -9,6 +9,7 @@ const POLY_GRASS_DRY_DIFF := "res://assets/external/polyhaven/grass_medium_01/te
 const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
 const POLY_RIVER_PEBBLES_DIFF := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg"
 const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
+const CLOTH_DIR := "res://assets/textures/clothing/"
 const SKY_HDRI_CANDIDATES := ["res://assets/hdri/kloofendal_48d_partly_cloudy_4k.exr"]
 const REALISTIC_SKY_SHADER := "res://shaders/realistic_sky.gdshader"
 
@@ -176,6 +177,35 @@ static func make_forest_foliage_material(source: StandardMaterial3D) -> ShaderMa
 	material.set_shader_parameter("alpha_cutoff", source.alpha_scissor_threshold)
 	_mat_cache[key] = material
 	return material
+
+static func _cloth_prefix(kind: String) -> String:
+	if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"]:
+		return "garment_" + kind
+	return "cloth_" + kind
+
+static func cloth_detail(m: StandardMaterial3D, kind: String) -> void:
+	var prefix := _cloth_prefix(kind)
+	m.normal_enabled = true
+	m.normal_texture = load_texture(CLOTH_DIR + prefix + "_normal.png")
+	# Leather has broader grain; woven fabric needs subtler relief at game distance.
+	m.normal_scale = 0.18 if kind in ["top", "jersey"] else 0.25
+	m.roughness_texture = load_texture(CLOTH_DIR + prefix + "_roughness.png")
+	m.roughness = 1.0
+	m.metallic = 0.0
+	m.metallic_specular = 0.35 if kind in ["shoes", "boots", "gloves", "leather"] else 0.2
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+
+static func make_clothing_material(kind: String, color: Color) -> StandardMaterial3D:
+	var key := "cloth_%s_%s" % [kind, color.to_html()]
+	if _mat_cache.has(key):
+		return _mat_cache[key]
+	var prefix := _cloth_prefix(kind)
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load_texture(CLOTH_DIR + prefix + "_albedo.png")
+	m.albedo_color = color
+	cloth_detail(m, kind)
+	_mat_cache[key] = m
+	return m
 
 static func make_grass_blade_material() -> StandardMaterial3D:
 	if _mat_cache.has("grass_blade"):
