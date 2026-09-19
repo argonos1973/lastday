@@ -23,9 +23,8 @@ void fragment() {
 	stone += texture(rock_albedo, p.xz).rgb * w.y;
 	stone += texture(rock_albedo, p.xy).rgb * w.z;
 	float patches = texture(variation, world_position.xz * 0.16).r;
-	float moss = smoothstep(0.48, 0.67, patches) * smoothstep(0.25, 0.85, n.y);
 	float damp = 1.0 - smoothstep(-0.65, 0.2, local_height);
-	ALBEDO = stone * mix(vec3(0.78, 0.77, 0.71), vec3(0.40, 0.49, 0.26), moss * 0.62) * (1.0 - damp * 0.17);
+	ALBEDO = stone * mix(vec3(0.90, 0.88, 0.82), vec3(0.68, 0.67, 0.62), patches * 0.5) * (1.0 - damp * 0.17);
 	float h = texture(rock_height, p.zy).r * w.x + texture(rock_height, p.xz).r * w.y + texture(rock_height, p.xy).r * w.z;
 	vec3 dpdx = dFdx(VERTEX);
 	vec3 dpdy = dFdy(VERTEX);
@@ -34,6 +33,6 @@ void fragment() {
 	float determinant = dot(dpdx, r1);
 	vec3 gradient = sign(determinant) * (dFdx(h) * r1 + dFdy(h) * r2);
 	NORMAL = normalize(abs(determinant) * NORMAL - gradient * 0.055);
-	ROUGHNESS = mix(0.91, 1.0, moss);
+	ROUGHNESS = 0.95;
 	SPECULAR = 0.2;
 }

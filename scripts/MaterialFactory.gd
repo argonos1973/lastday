@@ -8,6 +8,7 @@ static var _camo_cache: Dictionary = {}
 const POLY_GRASS_DRY_DIFF := "res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_dry_diff_4k.png"
 const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
 const POLY_RIVER_PEBBLES_DIFF := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg"
+const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
 const SKY_HDRI_CANDIDATES := ["res://assets/hdri/kloofendal_48d_partly_cloudy_4k.exr"]
 const REALISTIC_SKY_SHADER := "res://shaders/realistic_sky.gdshader"
 
@@ -156,7 +157,7 @@ static func make_forest_rock_material() -> ShaderMaterial:
 		return _mat_cache["forest_rock"]
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://shaders/forest_rock.gdshader")
-	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCKY_TERRAIN_DIFF))
+	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCK_07_DIFF))
 	material.set_shader_parameter("rock_height", load_texture("res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"))
 	material.set_shader_parameter("variation", forest_variation_texture())
 	_mat_cache["forest_rock"] = material
