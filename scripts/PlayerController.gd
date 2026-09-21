@@ -29,7 +29,7 @@ const REAL_HOE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB fo
 const REAL_SHOVEL_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-shovel.glb"
 const REAL_HAMMER_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hammer.glb"
 const REAL_PICKAXE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-pickaxe.glb"
-const REAL_BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
+const REAL_BACKPACK_MODEL := "res://assets/characters/adapted/backpack_detailed.glb"
 const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
@@ -50,10 +50,14 @@ const CLOTHING_VISUALS := {
 const ADAPTED_PLAYER_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
 
 const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
+const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
 
 # Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
+	"Chaqueta de campaña verde": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
+	"Chaqueta de campaña azul": {"mesh": "field_jacket_navy", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
+	"Chaqueta de campaña arena": {"mesh": "field_jacket_sand", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
@@ -62,6 +66,13 @@ const SURVIVAL_CLOTHING := {
 	"Pantalones militares negros II": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.02, 0.03)},
 	"Pantalones camuflaje": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.18, 0.22, 0.13)},
 	"Pantalones camuflaje desert": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.32, 0.28, 0.16)},
+	# Military jackets reuse the soldier_torso mesh (long sleeves cover the arms);
+	# body_shows keeps Body_torso visible so the neck doesn't leave a hole.
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"]},
+	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.04, 0.08)},
+	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.02, 0.03)},
+	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
+	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
 }
 
 # Maps clothing slot to possible mesh names in custom character models.
@@ -82,6 +93,9 @@ const DEFAULT_CLOTHING := {
 }
 
 const DEFAULT_SKIN_HIDES := {
+	"Chaqueta de campaña verde": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta de campaña azul": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta de campaña arena": ["Desnudo_torso", "Desnudo_arms"],
 	"Camiseta": ["Desnudo_torso"],
 	"Pantalones": ["Desnudo_legs"],
 	"Zapatillas": ["Desnudo_feet"],
@@ -93,9 +107,17 @@ const DEFAULT_SKIN_HIDES := {
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
 	"Botas survival": ["Desnudo_feet"],
+	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta militar azul": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta militar negra II": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta camuflaje": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta camuflaje desert": ["Desnudo_torso", "Desnudo_arms"],
 }
 
 const DEFAULT_BODY_HIDES := {
+	"Chaqueta de campaña verde": ["Body_arms"],
+	"Chaqueta de campaña azul": ["Body_arms"],
+	"Chaqueta de campaña arena": ["Body_arms"],
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
@@ -104,6 +126,9 @@ const DEFAULT_BODY_HIDES := {
 # Map of body zones covered by each clothing item.
 # Used for debug messages and to know which body regions to restore on unequip.
 const CLOTHING_COVERED_ZONES := {
+	"Chaqueta de campaña verde": ["torso", "brazos"],
+	"Chaqueta de campaña azul": ["torso", "brazos"],
+	"Chaqueta de campaña arena": ["torso", "brazos"],
 	"Camiseta": ["torso"],
 	"Pantalones": ["cadera", "piernas"],
 	"Zapatillas": ["pies"],
@@ -112,6 +137,11 @@ const CLOTHING_COVERED_ZONES := {
 	"Pantalones militares negros II": ["cadera", "piernas"],
 	"Pantalones camuflaje": ["cadera", "piernas"],
 	"Pantalones camuflaje desert": ["cadera", "piernas"],
+	"Chaqueta militar": ["torso", "brazos"],
+	"Chaqueta militar azul": ["torso", "brazos"],
+	"Chaqueta militar negra II": ["torso", "brazos"],
+	"Chaqueta camuflaje": ["torso", "brazos"],
+	"Chaqueta camuflaje desert": ["torso", "brazos"],
 	"Guantes survival": ["manos"],
 	"Guantes militares": ["manos"],
 	"Botas survival": ["pies"],
@@ -121,6 +151,9 @@ const CLOTHING_COVERED_ZONES := {
 
 # Maps each clothing item to a body slot for exchange logic.
 const CLOTHING_SLOTS := {
+	"Chaqueta de campaña verde": "torso",
+	"Chaqueta de campaña azul": "torso",
+	"Chaqueta de campaña arena": "torso",
 	"Camiseta": "torso",
 	"Pantalones": "legs",
 	"Zapatillas": "feet",
@@ -132,6 +165,11 @@ const CLOTHING_SLOTS := {
 	"Pantalones militares negros II": "legs",
 	"Pantalones camuflaje": "legs",
 	"Pantalones camuflaje desert": "legs",
+	"Chaqueta militar": "torso",
+	"Chaqueta militar azul": "torso",
+	"Chaqueta militar negra II": "torso",
+	"Chaqueta camuflaje": "torso",
+	"Chaqueta camuflaje desert": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
 }
@@ -139,6 +177,9 @@ const CLOTHING_SLOTS := {
 # Warmth value per clothing item. Higher = warmer.
 # Short sleeves / shorts give little warmth; jackets and long pants give more.
 const CLOTHING_WARMTH := {
+	"Chaqueta de campaña verde": 0.25,
+	"Chaqueta de campaña azul": 0.25,
+	"Chaqueta de campaña arena": 0.25,
 	"Camiseta": 0.05,
 	"Pantalones": 0.08,
 	"Zapatillas": 0.05,
@@ -149,6 +190,11 @@ const CLOTHING_WARMTH := {
 	"Pantalones militares negros II": 0.20,
 	"Pantalones camuflaje": 0.20,
 	"Pantalones camuflaje desert": 0.20,
+	"Chaqueta militar": 0.30,
+	"Chaqueta militar azul": 0.30,
+	"Chaqueta militar negra II": 0.30,
+	"Chaqueta camuflaje": 0.30,
+	"Chaqueta camuflaje desert": 0.30,
 	"Guantes militares": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
@@ -164,6 +210,9 @@ const CLOTHING_HEAT_PROTECTION := {
 # Heavy clothing retains heat (bad in hot weather); light/short items ventilate (good in hot weather).
 # 0.0 = neutral, positive = retains heat, negative = ventilates (cools down).
 const CLOTHING_HEAT_RETENTION := {
+	"Chaqueta de campaña verde": 0.20,
+	"Chaqueta de campaña azul": 0.20,
+	"Chaqueta de campaña arena": 0.20,
 	"Camiseta": 0.0,
 	"Pantalones": 0.05,
 	"Zapatillas": 0.0,
@@ -174,6 +223,11 @@ const CLOTHING_HEAT_RETENTION := {
 	"Pantalones militares negros II": 0.25,
 	"Pantalones camuflaje": 0.25,
 	"Pantalones camuflaje desert": 0.15,
+	"Chaqueta militar": 0.30,
+	"Chaqueta militar azul": 0.30,
+	"Chaqueta militar negra II": 0.30,
+	"Chaqueta camuflaje": 0.30,
+	"Chaqueta camuflaje desert": 0.20,
 	"Guantes militares": 0.08,
 	"Guantes de trabajo": 0.05,
 	"Sombrero de pescador": 0.0,
@@ -1865,15 +1919,12 @@ func _init_survival_clothing(root: Node) -> void:
 			body_names[String(h)] = true
 	for dname in DEFAULT_CLOTHING:
 		body_names[String(DEFAULT_CLOTHING[dname])] = true
-	var _unused_soldier_meshes := ["soldier_torso"]
 	var stack: Array = [root]
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		if node is MeshInstance3D:
 			var mi := node as MeshInstance3D
-			if mi.name in _unused_soldier_meshes:
-				mi.visible = false
-			elif wanted.has(mi.name):
+			if wanted.has(mi.name):
 				_survival_cloth_nodes[mi.name] = mi
 				mi.visible = false
 				if mi.name == "cloth_hands" or mi.name == "cloth_feet":
@@ -1921,7 +1972,7 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 			kind = "bottom"
 		"Shoes":
 			kind = "shoes"
-		"soldier_legs":
+		"soldier_legs", "soldier_torso":
 			kind = "soldier"
 		"cloth_hands":
 			kind = "gloves"
@@ -1931,7 +1982,14 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 			kind = "jersey"
 		"Ch42_Sneakers":
 			kind = "leather"
-	return MaterialFactory.make_clothing_material(kind, color)
+	# The jacket sits over the waistband like a shirt; the pants must stay flat
+	# so their belt/holster geometry doesn't poke through the garment above.
+	var grow := -999.0
+	if mesh_name == "soldier_torso":
+		grow = 2.5
+	elif mesh_name == "soldier_legs":
+		grow = -0.5
+	return MaterialFactory.make_clothing_material(kind, color, grow)
 
 # Applies the selected character's colors (clothing, hair, skin) to the
 # player_with_clothes.glb meshes. Colors are read from GameSession.
@@ -1988,11 +2046,14 @@ func _apply_character_colors() -> void:
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
 		shoes_mi.material_override = MaterialFactory.make_clothing_material("shoes", shoes_color)
-	# Apply skin color to Desnudo_* (bare skin) and Body_* (base body)
+	# Apply skin color to Desnudo_* (bare skin) and Body_* (base body). The skin
+	# shrinks ~8 mm so its surface never pokes through the tight clothing meshes
+	# (the painted underwear in the source body texture showed as a dark belly
+	# patch where the shirt hugs the torso).
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
-		_tint_mesh(bmi, skin_color, 0.9)
+		_tint_mesh(bmi, skin_color, 0.9, -0.008)
 	# Apply hair color to Hair mesh if it exists in the model
 	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
 	_tint_mesh(hair_mi, hair_color, 0.8)
@@ -2051,20 +2112,23 @@ func _skeleton_height(skel: Skeleton3D) -> float:
 		max_y = max(max_y, gp.origin.y)
 	return max_y - min_y
 
-func _tint_mesh(mi: MeshInstance3D, color: Color, roughness: float = 0.9) -> void:
+func _tint_mesh(mi: MeshInstance3D, color: Color, roughness: float = 0.9, shrink: float = 0.0) -> void:
 	if mi == null:
 		return
 	var orig := mi.get_active_material(0)
+	var mat: StandardMaterial3D
 	if orig != null and orig is StandardMaterial3D:
-		var mat := (orig as StandardMaterial3D).duplicate()
+		mat = (orig as StandardMaterial3D).duplicate()
 		mat.albedo_color = color
 		mat.roughness = roughness
-		mi.material_override = mat
 	else:
-		var mat2 := StandardMaterial3D.new()
-		mat2.albedo_color = color
-		mat2.roughness = roughness
-		mi.material_override = mat2
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = color
+		mat.roughness = roughness
+	if shrink != 0.0:
+		mat.grow = true
+		mat.grow_amount = shrink
+	mi.material_override = mat
 
 func _find_mesh_in_third_person(mesh_name: String) -> MeshInstance3D:
 	if third_person_model == null:
@@ -2297,15 +2361,25 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 	var cfg: Dictionary = SURVIVAL_CLOTHING[item_name]
 	var mesh_name := String(cfg["mesh"])
 	var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
+	if mi == null and worn and MilitaryJackets.VARIANTS.has(item_name):
+		mi = MilitaryJackets.attach(third_person_model, item_name)
+		if mi != null:
+			_survival_cloth_nodes[mesh_name] = mi
 	if mi != null:
 		mi.visible = worn
-		if worn and loot_color.a > 0.0:
+		if MilitaryJackets.VARIANTS.has(item_name):
+			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
+			mi.material_override = null
+		elif worn and loot_color.a > 0.0:
 			mi.material_override = _clothing_material_for(mesh_name, loot_color)
 		elif worn and cfg.has("camo"):
 			var mat := StandardMaterial3D.new()
 			mat.albedo_texture = _make_camo_texture(cfg["camo"])
 			mat.albedo_color = Color.WHITE
-			MaterialFactory.cloth_detail(mat, "denim")
+			MaterialFactory.cloth_detail(mat, "soldier")
+			if mesh_name == "soldier_torso":
+				mat.grow = true
+				mat.grow_amount = 2.5
 			mi.material_override = mat
 		elif worn and cfg.has("tint"):
 			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
@@ -2346,6 +2420,13 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 			var body_mi: MeshInstance3D = _find_mesh_in_third_person(String(body_name))
 			if body_mi != null:
 				body_mi.visible = not worn
+	# Some garments cover skin but still need a base Body_* part underneath
+	# (e.g. the jacket covers the chest yet Body_torso provides the neck).
+	if cfg.has("body_shows"):
+		for body_name in cfg["body_shows"]:
+			var body_mi: MeshInstance3D = _find_mesh_in_third_person(String(body_name))
+			if body_mi != null:
+				body_mi.visible = worn
 
 # Attaches and fits a clothing model onto the body relative to its measured
 # bounding box, so the player is visibly wearing it (e.g. the life vest on the
@@ -5953,7 +6034,7 @@ func _build_held_skewer(item_name: String) -> void:
 	third_person_hand_item_root.add_child(food)
 
 func _build_held_clothing(item_name: String) -> void:
-	var path := ""
+	var path := MilitaryJackets.pickup_path(item_name)
 	match item_name:
 		"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
@@ -6258,17 +6339,41 @@ func _drop_stored_back_item(slot: int = -1) -> bool:
 	notice.emit("Sueltas %s del hombro %s." % [item_name, _back_shoulder_label(slot)])
 	return true
 
+func _stored_rod_upright_rotation(visual: Node3D) -> Quaternion:
+	# Imported parent nodes can tilt the shaft even when its AABB is mostly X.
+	# Use the longest mesh's actual transformed axis, not the assembly's AABB.
+	var longest := 0.0
+	var shaft_axis := Vector3.RIGHT
+	var stack: Array = [[visual, Transform3D.IDENTITY]]
+	while not stack.is_empty():
+		var entry: Array = stack.pop_back()
+		var node: Node = entry[0]
+		var frame: Transform3D = entry[1]
+		if node is MeshInstance3D and node.mesh != null:
+			var size: Vector3 = node.get_aabb().size
+			for axis_index in range(3):
+				var axis := Vector3.ZERO
+				axis[axis_index] = size[axis_index]
+				var transformed := frame.basis * axis
+				if transformed.length() > longest:
+					longest = transformed.length()
+					shaft_axis = transformed.normalized()
+		for child in node.get_children():
+			if child is Node3D:
+				stack.append([child, frame * child.transform])
+	return Quaternion(shaft_axis, Vector3.UP)
+
 func _build_stored_back_visual(slot: int) -> void:
 	if slot < 0 or slot >= _stored_back_items.size():
 		return
 	var old_visual = _stored_back_visuals[slot]
 	if old_visual != null and is_instance_valid(old_visual):
+		if old_visual.get_parent() != null:
+			old_visual.get_parent().remove_child(old_visual)
 		old_visual.queue_free()
-	var container := Node3D.new()
-	container.name = "StoredItemOnBack_%s" % _back_shoulder_label(slot).capitalize()
-	_stored_back_visuals[slot] = container
+	_stored_back_visuals[slot] = null
 	var data = _stored_back_items[slot]
-	if not data is Dictionary:
+	if not data is Dictionary or third_person_back_item_root == null:
 		return
 	var path := ""
 	var item_type := str(data.get("type", ""))
@@ -6279,23 +6384,29 @@ func _build_stored_back_visual(slot: int) -> void:
 	else:
 		path = REAL_WOOD_STICK_MODEL
 	var visual := _load_external_node3d(path)
-	if visual == null or third_person_back_item_root == null:
+	if visual == null:
 		return
-	var bounds := _hierarchy_local_aabb(visual)
+	var container := Node3D.new()
+	container.name = "StoredItemOnBack_%s" % _back_shoulder_label(slot).capitalize()
+	_stored_back_visuals[slot] = container
+	visual.position = Vector3.ZERO
+	visual.scale = Vector3.ONE
+	if item_type == "weapon_rifle":
+		visual.rotation_degrees = Vector3(90, 0, -15)
+	elif item_type == "tool_fishing":
+		visual.quaternion = _stored_rod_upright_rotation(visual)
+	else:
+		visual.rotation_degrees = Vector3.ZERO
+	container.add_child(visual)
+	# Measure after rotation, then scale and center the complete assembly once.
+	# Moving individual meshes would separate the reel, handle and shaft.
+	var bounds := _hierarchy_local_aabb(container)
 	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
 	if extent > 0.00001:
-		visual.scale = Vector3.ONE * (1.65 / extent)
-		visual.position = -bounds.get_center() * visual.scale
-		if item_type == "weapon_rifle":
-			visual.rotation_degrees = Vector3(90, 0, -15)
-		elif item_type == "tool_fishing":
-			# The rod asset is authored along local X. Rotate that axis into Y
-			# so it hangs vertically beside the spine instead of diagonally.
-			visual.rotation_degrees = Vector3(0, 0, 90)
-		else:
-			visual.rotation_degrees = Vector3(0, 0, 0)
+		var fit_scale := 1.65 / extent
+		visual.scale = Vector3.ONE * fit_scale
+		visual.position = -bounds.get_center() * fit_scale
 	_disable_collision_recursive(visual)
-	container.add_child(visual)
 	container.position = Vector3(-0.20 if slot == BACK_SLOT_LEFT else 0.20, 0.03, -0.25)
 	third_person_back_item_root.add_child(container)
 
@@ -10414,22 +10525,8 @@ func from_dict(data: Dictionary) -> void:
 	inventory.max_slots = int(data.get("inventory_max_slots", inventory.max_slots))
 	inventory.max_weight = float(data.get("inventory_max_weight", inventory.max_weight))
 	if data.get("inventory", null) is Array:
-		var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
-		var _filtered_inv: Array = []
-		for d in data["inventory"]:
-			var _in := str(d.get("item_name", ""))
-			if _in not in _removed_items:
-				_filtered_inv.append(d)
-		inventory.from_array(_filtered_inv)
+		inventory.from_array(data["inventory"])
 	equipped_clothing = str(data.get("equipped_clothing", equipped_clothing))
-	if not equipped_clothing.is_empty():
-		var _removed_items2 := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
-		var _filtered_eq: Array = []
-		for _s in equipped_clothing.split(","):
-			var _sn := str(_s).strip_edges()
-			if not _sn.is_empty() and _sn not in _removed_items2:
-				_filtered_eq.append(_sn)
-		equipped_clothing = ",".join(_filtered_eq)
 	equipped_backpack = str(data.get("equipped_backpack", equipped_backpack))
 	flashlight_charge = float(data.get("flashlight_charge", flashlight_charge))
 	wetness = float(data.get("wetness", wetness))

@@ -587,7 +587,7 @@ func _update_char_view() -> void:
 				_fit_char_preview(model, true)
 				_play_preview_animation(model)
 			else:
-				_apply_preview_colors(model, cfg)
+				_apply_preview_colors(model, cfg, true)
 				_fit_char_preview(model, false)
 				_play_preview_animation(model)
 
@@ -714,7 +714,10 @@ func _hide_export_helpers(root: Node) -> void:
 	for c in root.get_children():
 		_hide_export_helpers(c)
 
-func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
+func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false) -> void:
+	# Remy.glb binds in metres; player_with_clothes.glb binds in centimetres.
+	# The garment grow values are tuned in cm, so meter models get 0.01.
+	var us := 0.01 if meter_units else 1.0
 	var top_val: Variant = cfg.get("top", Color(0.5, 0.5, 0.5))
 	var bottom_val: Variant = cfg.get("bottom", Color(0.3, 0.3, 0.3))
 	var shoes_color: Color = cfg.get("shoes", Color(0.15, 0.15, 0.15))
@@ -725,29 +728,30 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
 	_collect_meshes(model, meshes)
 	for mi in meshes:
 		var mesh_inst := mi as MeshInstance3D
+		var name_lower := mesh_inst.name.to_lower()
+		var cloth_kind := MaterialFactory.clothing_kind_for_mesh(mesh_inst.name)
+		if name_lower.find("hair") < 0 and not cloth_kind.is_empty():
+			if name_lower.find("shoes") >= 0:
+				mesh_inst.material_override = MaterialFactory.make_clothing_material("shoes", shoes_color, -999.0, us)
+			elif name_lower.find("bottoms") >= 0:
+				if bottom_val is String and bottom_val == "camo":
+					mesh_inst.material_override = _camo_material(camo_tex, cloth_kind, us)
+				else:
+					mesh_inst.material_override = MaterialFactory.make_clothing_material("bottom", bottom_val as Color, -999.0, us)
+			elif name_lower.find("tops") >= 0:
+				if top_val is String and top_val == "camo":
+					mesh_inst.material_override = _camo_material(camo_tex, cloth_kind, us)
+				else:
+					mesh_inst.material_override = MaterialFactory.make_clothing_material("top", top_val as Color, -999.0, us)
+			elif name_lower.find("cloth_") >= 0:
+				mesh_inst.material_override = MaterialFactory.make_clothing_material(cloth_kind, Color(0.05, 0.05, 0.05), -999.0, us)
+			else:
+				mesh_inst.material_override = MaterialFactory.make_clothing_material(cloth_kind, Color(0.2, 0.25, 0.12), -999.0, us)
+			continue
 		var mat := StandardMaterial3D.new()
 		mat.roughness = 0.8
-		var name_lower := mesh_inst.name.to_lower()
 		if name_lower.find("hair") >= 0:
 			mat.albedo_color = hair_color
-		elif name_lower.find("shoes") >= 0:
-			mat.albedo_color = shoes_color
-		elif name_lower.find("bottoms") >= 0:
-			if bottom_val is String and bottom_val == "camo":
-				mat.albedo_texture = camo_tex
-			else:
-				mat.albedo_color = bottom_val as Color
-		elif name_lower.find("tops") >= 0:
-			if top_val is String and top_val == "camo":
-				mat.albedo_texture = camo_tex
-			else:
-				mat.albedo_color = top_val as Color
-		elif name_lower.find("cloth_") >= 0:
-			mat.albedo_color = Color(0.05, 0.05, 0.05)
-			mat.roughness = 0.9
-		elif name_lower.find("soldier_") >= 0:
-			mat.albedo_color = Color(0.2, 0.25, 0.12)
-			mat.roughness = 0.85
 		elif name_lower.find("desnudo") >= 0 or name_lower.find("body") >= 0 or name_lower.find("skin") >= 0 or name_lower.find("head") >= 0:
 			mat.albedo_color = skin_color
 		elif name_lower.find("eyes") >= 0:
@@ -757,6 +761,14 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary) -> void:
 		else:
 			mat.albedo_color = skin_color
 		mesh_inst.material_override = mat
+
+func _camo_material(camo_tex: Texture2D, kind: String, unit_scale: float = 1.0) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = camo_tex
+	mat.albedo_color = Color.WHITE
+	mat.roughness = 0.8
+	MaterialFactory.cloth_detail(mat, kind if not kind.is_empty() else "denim", unit_scale)
+	return mat
 
 func _make_camo_texture() -> ImageTexture:
 	var size := 256

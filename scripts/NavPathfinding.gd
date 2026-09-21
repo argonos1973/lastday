@@ -2,10 +2,11 @@ class_name NavPathfinding
 extends RefCounted
 
 var _grid: Dictionary = {}
-var _grid_size := 182
+var _grid_size := 484 # Covers the wildlife world limits (-480 to +480 m).
 var _cell_size := 2.0
 var _built := false
 var _door_open_cache: Dictionary = {}
+var _search := AStarGrid2D.new()
 
 func world_to_grid(pos: Vector3) -> Vector2i:
 	return Vector2i(int(round(pos.x / _cell_size)) + _grid_size / 2, int(round(pos.z / _cell_size)) + _grid_size / 2)
@@ -39,25 +40,34 @@ func build(blockers: Array, river_segments: Array) -> void:
 				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
 					_grid[cell] = true
 	_block_river_cells(river_segments)
+	_search.region = Rect2i(0, 0, _grid_size, _grid_size)
+	_search.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_search.update()
+	for x in range(_grid_size):
+		for z in range(_grid_size):
+			var cell := Vector2i(x, z)
+			_search.set_point_solid(cell, is_cell_blocked(cell))
 	_built = true
 
 func _block_river_cells(river_segments: Array) -> void:
 	for segment in river_segments:
 		var size: Vector2 = segment["size"]
-		if size.x < 60.0:
-			continue
 		var center: Vector3 = segment["center"]
 		var yaw: float = deg_to_rad(float(segment["yaw"]))
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))
-		var half_length := size.x * 0.5
-		var half_width := size.y * 0.5
-		var steps_l := int(ceil(size.x / _cell_size)) + 1
-		var steps_w := int(ceil(size.y / _cell_size)) + 1
+		# Match the movement water boundary, with room for a grid cell's corners.
+		var margin := 1.2 + _cell_size * 0.71
+		var half_length := size.x * (0.425 if size.x >= 60.0 else 0.5) + margin
+		var half_width := size.y * (0.425 if size.x >= 60.0 else 0.5) + margin
+		var steps_l := int(ceil(half_length * 4.0 / _cell_size)) + 1
+		var steps_w := int(ceil(half_width * 4.0 / _cell_size)) + 1
 		for i in range(steps_l + 1):
 			var local_along: float = lerp(-half_length, half_length, float(i) / float(steps_l))
 			for j in range(steps_w + 1):
 				var local_across: float = lerp(-half_width, half_width, float(j) / float(steps_w))
+				if size.x >= 60.0 and pow(local_along / half_length, 2) + pow(local_across / half_width, 2) > 1.0:
+					continue
 				var world_pos: Vector3 = center + along * local_along + across * local_across
 				var cell := world_to_grid(world_pos)
 				if cell.x >= 0 and cell.x < _grid_size and cell.y >= 0 and cell.y < _grid_size:
@@ -77,16 +87,14 @@ func find_path(start: Vector3, goal: Vector3) -> Array:
 		return [goal]
 	var start_cell := world_to_grid(start)
 	var goal_cell := world_to_grid(goal)
-	if start_cell == goal_cell:
-		return [goal]
 	if is_cell_blocked(goal_cell):
 		goal_cell = _nearest_free_cell(goal_cell)
-		if goal_cell == start_cell:
-			return [goal]
 	if is_cell_blocked(start_cell):
 		start_cell = _nearest_free_cell(start_cell)
-		if start_cell == goal_cell:
-			return [goal]
+	if is_cell_blocked(start_cell) or is_cell_blocked(goal_cell):
+		return []
+	if start_cell == goal_cell:
+		return [grid_to_world(goal_cell)]
 	return _astar(start_cell, goal_cell, start)
 
 func _nearest_free_cell(cell: Vector2i) -> Vector2i:
@@ -101,28 +109,15 @@ func _nearest_free_cell(cell: Vector2i) -> Vector2i:
 	return cell
 
 func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> Array:
-	var came_from: Dictionary = {}
-	var visited: Dictionary = {}
-	var queue: Array = [start_cell]
-	visited[start_cell] = true
-	var head := 0
-	var max_iterations := 8000
-	var iterations := 0
-	while head < queue.size() and iterations < max_iterations:
-		iterations += 1
-		var current: Vector2i = queue[head]
-		head += 1
-		if current == goal_cell:
-			return _reconstruct_path(came_from, current, start_world)
-		for neighbor in _get_neighbors(current):
-			if visited.has(neighbor):
-				continue
-			if is_cell_blocked(neighbor):
-				continue
-			visited[neighbor] = true
-			came_from[neighbor] = current
-			queue.append(neighbor)
-	return []
+	# A partial path leads to the reachable shore when the target is in water
+	# or on a disconnected bank. Never fall back to walking straight through it.
+	var cells := _search.get_id_path(start_cell, goal_cell, true)
+	var path: Array = []
+	for cell in cells:
+		path.append(grid_to_world(cell))
+	if path.size() > 1 and _is_path_clear(start_world, path[1]):
+		path.pop_front()
+	return _smooth_path(path)
 
 func _get_neighbors(cell: Vector2i) -> Array:
 	return [
@@ -172,15 +167,21 @@ func _is_path_clear(a: Vector3, b: Vector3) -> bool:
 	if dist < 0.01:
 		return true
 	var dir := diff.normalized()
-	var steps := int(ceil(dist / _cell_size))
-	for i in range(1, steps):
-		var pos := a + dir * (float(i) * _cell_size)
+	var steps := int(ceil(dist / (_cell_size * 0.25)))
+	var previous := world_to_grid(a)
+	for i in range(steps + 1):
+		var pos := a + dir * (dist * float(i) / float(steps))
 		var cell := world_to_grid(pos)
 		if is_cell_blocked(cell):
 			return false
+		if cell.x != previous.x and cell.y != previous.y:
+			if is_cell_blocked(Vector2i(cell.x, previous.y)) or is_cell_blocked(Vector2i(previous.x, cell.y)):
+				return false
+		previous = cell
 	return true
 
 func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_doorway: Callable) -> void:
+	var previous := _door_open_cache.duplicate()
 	_door_open_cache.clear()
 	for blocker in blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
@@ -225,3 +226,8 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 				var local_z := world_pos.z - blocker_pos.z
 				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
 					_door_open_cache[cell] = true
+	if _built:
+		for cell in previous:
+			_search.set_point_solid(cell, is_cell_blocked(cell))
+		for cell in _door_open_cache:
+			_search.set_point_solid(cell, is_cell_blocked(cell))

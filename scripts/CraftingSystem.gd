@@ -96,6 +96,31 @@ const RECIPES := [
 		"label": "Cortar pantalones camuflaje desert con cuchillo para hacer trapos"
 	},
 	{
+		"inputs": { "Chaqueta militar": 1, "Cuchillo": 1 },
+		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
+		"label": "Cortar chaqueta militar con cuchillo para hacer trapos"
+	},
+	{
+		"inputs": { "Chaqueta militar azul": 1, "Cuchillo": 1 },
+		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
+		"label": "Cortar chaqueta militar azul con cuchillo para hacer trapos"
+	},
+	{
+		"inputs": { "Chaqueta militar negra II": 1, "Cuchillo": 1 },
+		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
+		"label": "Cortar chaqueta militar negra con cuchillo para hacer trapos"
+	},
+	{
+		"inputs": { "Chaqueta camuflaje": 1, "Cuchillo": 1 },
+		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
+		"label": "Cortar chaqueta camuflaje con cuchillo para hacer trapos"
+	},
+	{
+		"inputs": { "Chaqueta camuflaje desert": 1, "Cuchillo": 1 },
+		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 3 },
+		"label": "Cortar chaqueta camuflaje desert con cuchillo para hacer trapos"
+	},
+	{
 		"inputs": { "Guantes militares": 1, "Cuchillo": 1 },
 		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 1 },
 		"label": "Cortar guantes militares con cuchillo para hacer trapos"

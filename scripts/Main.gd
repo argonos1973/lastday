@@ -1,6 +1,7 @@
 extends Node3D
 
 const PlayerControllerScript = preload("res://scripts/PlayerController.gd")
+const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
 const SaveGameHooks = preload("res://scripts/SaveGameHooks.gd")
 const HUDScript = preload("res://scripts/HUD.gd")
 const DayNightCycleScript = preload("res://scripts/DayNightCycle.gd")
@@ -244,7 +245,7 @@ const WATER_BOTTLE_ITEM_SCENE := "res://scenes/items/WaterBottleItem.tscn"
 const PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const CANNED_FOOD_LOW_MODEL := "res://assets/models/props/canned_food_low.glb"
 const FOOD_CAN_415G_MODEL := "res://assets/models/props/food_can_415g.glb"
-const ROOT_BACKPACK_MODEL := ROOT_GLB_DIR + "low_poly_game_ready_military_tactical_backpack.glb"
+const ROOT_BACKPACK_MODEL := "res://assets/characters/adapted/backpack_detailed.glb"
 const ABANDONED_JUNK_CAR_MODEL := ROOT_GLB_DIR + "abandoned_junk_car.glb"
 const SCRAP_BARRICADE_CAR_MODEL := ROOT_GLB_DIR + "scrap_barricade_car_free_raw_scan.glb"
 const SCRAP_CAR_Y_CORRECTION := -0.6
@@ -2047,7 +2048,6 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		_pending_restore_data = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching]
 		return
 	var ItemScript = load("res://scripts/Item.gd")
-	var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
 	if player.has_node("Inventory"):
 		var inv = player.get_node("Inventory")
 		if inv != null and "items" in inv:
@@ -2055,8 +2055,6 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 			for d in items_data:
 				var item = ItemScript.from_dict(d)
 				if item != null:
-					if str(item.item_name) in _removed_items:
-						continue
 					inv.items.append(item)
 	if player.get("stats") != null:
 		player.stats.health = health
@@ -2086,13 +2084,6 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	if not equipped_backpack.is_empty():
 		player.equip_backpack(equipped_backpack)
 	if not equipped_clothing.is_empty():
-		var _filtered: Array = []
-		for _s in equipped_clothing.split(","):
-			var _sn := str(_s).strip_edges()
-			if not _sn.is_empty() and _sn not in _removed_items:
-				_filtered.append(_sn)
-		equipped_clothing = ",".join(_filtered)
-	if not equipped_clothing.is_empty():
 		# Unequip all default clothing first to clear their meshes
 		if "_equipped_slots" in player:
 			var old_slots: Dictionary = player._equipped_slots.duplicate()
@@ -2107,11 +2098,14 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		var slots := equipped_clothing.split(",")
 		for slot_name in slots:
 			if not slot_name.is_empty():
+				var _load_color := Color(0, 0, 0, 0)
 				var _found_in_inv := false
 				if player.get("inventory") != null:
 					for inv_item in player.inventory.items:
 						if str(inv_item.item_name) == slot_name:
 							_found_in_inv = true
+							if inv_item.has_meta("clothing_color"):
+								_load_color = inv_item.get_meta("clothing_color")
 							break
 				if not _found_in_inv and player.get("inventory") != null:
 					var ItemScript2 = load("res://scripts/Item.gd")
@@ -2124,7 +2118,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 						_w = 0.4
 						_u = 0.08
 					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
-				player.equip_clothing(slot_name)
+				player.equip_clothing(slot_name, _load_color)
 	player.restore_held_item(held_item, held_idx)
 	# Restore sitting/prone/crouching state AFTER equipment so animations are correct
 	if prone and not player.is_prone:
@@ -3307,8 +3301,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Botas survival"]
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert"]
+	var lay_flat := item_name in ["Botas survival"] or MilitaryJackets.VARIANTS.has(item_name)
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var is_rifle := item_type == "weapon_rifle"
 	if is_rifle:
@@ -3351,10 +3345,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 				if mi is MeshInstance3D:
 					var m := mi as MeshInstance3D
 					if m.name.to_lower() == "shoes":
-						var mat := StandardMaterial3D.new()
-						mat.albedo_color = Color(0.05, 0.05, 0.05)
-						mat.roughness = 0.9
-						m.material_override = mat
+						m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
 					else:
 						m.visible = false
 	# Apply the dropped clothing's actual color (preserved from equip/inventory).
@@ -3373,8 +3364,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 						drop_color = gsess.selected_shoes_color
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
-	var military_black_names := ["Pantalones militares azules", "Pantalones militares negros II", "Guantes militares"]
-	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert"]
+	var military_black_names := ["Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar azul", "Chaqueta militar negra II"]
+	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	if item_name in military_black_names:
 		var mil_node := get_node_or_null(NodePath(visual_name))
 		if mil_node is Node3D:
@@ -3424,6 +3415,8 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
+	if MilitaryJackets.VARIANTS.has(item_name):
+		return [MilitaryJackets.pickup_path(item_name)]
 	# Old saves can contain tools with the generic "tool" type. Resolve named
 	# tools first so the inventory thumbnail never falls back to a box model.
 	if item_name == "Hacha":
@@ -3521,6 +3514,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return ["res://assets/characters/Remy.glb"]
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
+				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
+					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
 				"Guantes militares":
 					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
 				_:
@@ -3535,6 +3530,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 
 func _get_drop_scale(item_name: String, item_type: String) -> float:
+	if MilitaryJackets.VARIANTS.has(item_name):
+		return 0.5
 	if item_name == "Hacha":
 		return 1.0
 	match item_type:
@@ -3608,6 +3605,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Botas survival":
 					return 0.8
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
+					return 0.8
+				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
 					return 0.8
 				"Guantes militares":
 					return 1.2
@@ -5868,6 +5867,9 @@ func _create_house_loot() -> void:
 	_create_backpack_pickup("remote_barn_backpack_0", _find_pos_inside_house(remote_barn_origin, remote_barn_half_w - 1.0, remote_barn_half_d - 1.0) + Vector3(0, remote_barn_ground_y + 0.06, 0))
 	# Military tent loot — military-grade pool
 	var tent_loot_pool := [
+		{"name": "Chaqueta de campaña verde", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.25, "paths": [MilitaryJackets.pickup_path("Chaqueta de campaña verde")], "scale": 0.5, "rot": Vector3(90, 25, 0), "color": Color.WHITE},
+		{"name": "Chaqueta de campaña azul", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.25, "paths": [MilitaryJackets.pickup_path("Chaqueta de campaña azul")], "scale": 0.5, "rot": Vector3(90, 80, 0), "color": Color.WHITE},
+		{"name": "Chaqueta de campaña arena", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.25, "paths": [MilitaryJackets.pickup_path("Chaqueta de campaña arena")], "scale": 0.5, "rot": Vector3(90, 150, 0), "color": Color.WHITE},
 		# --- Standard green military ---
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
 		# --- Blue military variant A ---
@@ -5876,6 +5878,12 @@ func _create_house_loot() -> void:
 		{"name": "Pantalones militares negros II", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
 		# --- Camo military ---
 		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 100, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
+		# --- Military jackets ---
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
+		{"name": "Chaqueta militar azul", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 70, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
+		{"name": "Chaqueta militar negra II", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
+		{"name": "Chaqueta camuflaje", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 110, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
+		{"name": "Chaqueta camuflaje desert", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Gloves ---
 		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
 		# --- Supplies ---
@@ -6056,7 +6064,20 @@ func _apply_color_material_recursive(node: Node3D, color: Color) -> void:
 	while not stack.is_empty():
 		var n: Node = stack.pop_back()
 		if n is MeshInstance3D:
-			(n as MeshInstance3D).material_override = mat
+			var mi := n as MeshInstance3D
+			var kind := MaterialFactory.clothing_kind_for_mesh(str(mi.name))
+			if not kind.is_empty():
+				mi.material_override = MaterialFactory.make_clothing_material(kind, color, 0.0)
+			else:
+				# Keep imported seams and leather grain on accessories with their own UVs.
+				for slot in range(mi.mesh.get_surface_count() if mi.mesh != null else 0):
+					var source := mi.get_active_material(slot)
+					if source is StandardMaterial3D:
+						var tinted := source.duplicate() as StandardMaterial3D
+						tinted.albedo_color = color
+						mi.set_surface_override_material(slot, tinted)
+					else:
+						mi.set_surface_override_material(slot, mat)
 		for c in n.get_children():
 			stack.append(c)
 
@@ -6115,7 +6136,10 @@ func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 		var n: Node = stack.pop_back()
 		if n is MeshInstance3D:
 			var mi := n as MeshInstance3D
-			mi.material_override = mat
+			var detailed := mat.duplicate() as StandardMaterial3D
+			var kind := MaterialFactory.clothing_kind_for_mesh(str(mi.name))
+			MaterialFactory.cloth_detail(detailed, kind if not kind.is_empty() else "denim", 0.0)
+			mi.material_override = detailed
 		for c in n.get_children():
 			stack.append(c)
 
@@ -6169,10 +6193,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 				if mi is MeshInstance3D:
 					var m := mi as MeshInstance3D
 					if m.name.to_lower() == "shoes":
-						var mat := StandardMaterial3D.new()
-						mat.albedo_color = Color(0.05, 0.05, 0.05)
-						mat.roughness = 0.9
-						m.material_override = mat
+						m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
 					else:
 						m.visible = false
 	# Remy clothing: hide all meshes except the relevant one, paint with color
@@ -6186,10 +6207,8 @@ func _create_pickup_item(data: Dictionary) -> void:
 				if mi is MeshInstance3D:
 					var m := mi as MeshInstance3D
 					if m.name.to_lower() == remy_mesh_name:
-						var mat := StandardMaterial3D.new()
-						mat.albedo_color = color
-						mat.roughness = 0.85
-						m.material_override = mat
+						var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
+						m.material_override = MaterialFactory.make_clothing_material(kind if not kind.is_empty() else "denim", color, 0.0)
 					else:
 						m.visible = false
 	# Apply tint or camo material to military clothing pickups
@@ -6349,10 +6368,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 			if mi is MeshInstance3D:
 				var m := mi as MeshInstance3D
 				if m.name.to_lower() == "shoes":
-					var mat := StandardMaterial3D.new()
-					mat.albedo_color = Color(0.05, 0.05, 0.05)
-					mat.roughness = 0.9
-					m.material_override = mat
+					m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
 				else:
 					m.visible = false
 	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"

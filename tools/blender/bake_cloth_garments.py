@@ -31,7 +31,9 @@ GARMENTS = [
     {"obj": "Tops", "diffuse": "Remy_Top_Diffuse", "normal": "Remy_Top_Normal", "prefix": "garment_top", "kind": "jersey"},
     {"obj": "Bottoms", "diffuse": "Remy_Bottom_Diffuse", "normal": "Remy_Bottom_Normal", "prefix": "garment_bottom", "kind": "denim"},
     {"obj": "Shoes", "diffuse": "Remy_Shoes_Diffuse", "normal": "Remy_Shoes_Normal", "prefix": "garment_shoes", "kind": "leather"},
-    {"obj": "soldier_legs", "diffuse": "Soldier_Body_diffuse", "normal": "Soldier_Body_normal", "prefix": "garment_soldier", "kind": "denim"},
+    # All soldier_* meshes share material Soldier_body1.001, hence one UV atlas:
+    # bake them together so torso (jacket), hands and feet also get coverage.
+    {"obj": "soldier_legs", "objs": ["soldier_legs", "soldier_torso", "soldier_hands", "soldier_feet"], "diffuse": "Soldier_Body_diffuse", "normal": "Soldier_Body_normal", "prefix": "garment_soldier", "kind": "denim"},
     {"obj": "cloth_hands", "diffuse": None, "normal": None, "prefix": "garment_gloves", "kind": "leather"},
     {"obj": "cloth_feet", "diffuse": None, "normal": None, "prefix": "garment_boots", "kind": "leather"},
 ]
@@ -120,20 +122,38 @@ def weave_height(tree, uv, kind):
     return mix(tree, 0.38, pebble, fiber), fiber
 
 
-def bake_emit(obj, mat, emission_socket, value, target, filename):
+def bake_emit(objs, mat, emission_socket, value, target, filename, save=True):
     put(mat.node_tree, emission_socket, value)
     target_node.image = target
     mat.node_tree.nodes.active = target_node
     bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
     bpy.ops.object.bake(type="EMIT")
-    target.filepath_raw = str(OUT / filename)
-    target.file_format = "PNG"
-    target.save()
+    if save:
+        target.filepath_raw = str(OUT / filename)
+        target.file_format = "PNG"
+        target.save()
     pixels = np.empty(args.size * args.size * 4, dtype=np.float32)
     target.pixels.foreach_get(pixels)
     return pixels.reshape(args.size, args.size, 4)
+
+
+def high_pass_detail(pixels):
+    # Remove the broad shading baked into the source diffuse (belly shadows,
+    # knee patches, dark toe caps) while keeping high-frequency detail like
+    # seams, pockets and laces. Black bake padding is excluded from the blur.
+    h, w = args.size, args.size
+    lum = pixels[:, :, :3].mean(axis=2)
+    valid = (lum > 0.02).astype(np.float32)
+    f = 32
+    def coarse_mean(a):
+        blocks = a.reshape(h // f, f, w // f, f).mean(axis=(1, 3))
+        return np.kron(blocks, np.ones((f, f)))
+    blurred = coarse_mean(lum * valid) / np.maximum(coarse_mean(valid), 1e-3)
+    detail = np.clip(lum / np.maximum(blurred, 0.05), 0.55, 1.30)
+    return np.stack([detail, detail, detail, np.ones_like(detail)], axis=-1).astype(np.float32).reshape(-1, 4)
 
 
 def load_image_pixels(name):
@@ -150,14 +170,19 @@ def load_image_pixels(name):
 for garment in GARMENTS:
     if args.only and garment["obj"] not in args.only.split(","):
         continue
-    obj = bpy.data.objects.get(garment["obj"])
-    if obj is None or obj.type != "MESH":
+    for o in bpy.data.objects:
+        if o.type == "MESH":
+            o.hide_render = False
+    objs = [bpy.data.objects.get(n) for n in garment.get("objs", [garment["obj"]])]
+    objs = [o for o in objs if o is not None and o.type == "MESH"]
+    if not objs:
         print("GARMENT_MISSING", garment["obj"], flush=True)
         continue
     material = bpy.data.materials.new("Bake_" + garment["obj"])
     material.use_nodes = True
-    obj.data.materials.clear()
-    obj.data.materials.append(material)
+    for o in objs:
+        o.data.materials.clear()
+        o.data.materials.append(material)
     tree = material.node_tree
     tree.nodes.clear()
     output = node(tree, "ShaderNodeOutputMaterial")
@@ -167,21 +192,33 @@ for garment in GARMENTS:
     weave, fiber = weave_height(tree, uv, garment["kind"])
     wear = noise(tree, uv, 2.6, 4)
     wear_mask = ramp(tree, wear, [(0.30, (0.86, 0.85, 0.83)), (0.60, (1, 1, 1))])
+    target_node = node(tree, "ShaderNodeTexImage")
+    detail_socket = None
     if garment["diffuse"]:
         diffuse_tex = node(tree, "ShaderNodeTexImage")
         diffuse_tex.image = bpy.data.images[garment["diffuse"]]
         lum = node(tree, "ShaderNodeRGBToBW")
         put(tree, lum.inputs[0], diffuse_tex.outputs["Color"])
-        # Retain the source stitching, laces, pockets and panel contrast when tinted.
-        base = ramp(tree, lum.outputs[0], [(0.01, (0.12, 0.12, 0.12)), (0.8, (0.94, 0.93, 0.91))])
+        # Pre-bake the source luminance, then flatten its broad shading (dirt
+        # and contact shadows tint as ugly blotches) and keep only the local
+        # contrast of seams, pockets and laces.
+        lum_tmp = bpy.data.images.new("lumtmp_" + garment["obj"], width=args.size, height=args.size, alpha=False)
+        lum_pixels = bake_emit(objs, material, emission.inputs["Color"], lum.outputs[0], lum_tmp, "_lumtmp.png", save=False)
+        bpy.data.images.remove(lum_tmp)
+        lum_hp = bpy.data.images.new("lumhp_" + garment["obj"], width=args.size, height=args.size, alpha=False)
+        lum_hp.colorspace_settings.name = "Non-Color"
+        lum_hp.pixels.foreach_set(high_pass_detail(lum_pixels).ravel())
+        detail_tex = node(tree, "ShaderNodeTexImage")
+        detail_tex.image = lum_hp
+        detail_socket = detail_tex.outputs["Color"]
+        base = ramp(tree, detail_socket, [(0.72, (0.66, 0.66, 0.66)), (1.0, (0.88, 0.87, 0.85)), (1.12, (0.95, 0.94, 0.92))])
     else:
         base = ramp(tree, noise(tree, uv, 3.0, 4), [(0.2, (0.80, 0.79, 0.76)), (0.8, (0.93, 0.92, 0.90))])
-        lum = None
     weave_shade = ramp(tree, weave, [(0.20, (0.80, 0.80, 0.80)), (0.80, (1, 1, 1))])
     color = mix(tree, 0.20, base, weave_shade, "MULTIPLY")
     color = mix(tree, 0.45, color, wear_mask, "MULTIPLY")
-    if lum is not None:
-        height = mix(tree, 0.28, weave, lum.outputs[0])
+    if detail_socket is not None:
+        height = mix(tree, 0.28, weave, detail_socket)
     else:
         height = weave
     height = mix(tree, 0.18, height, fiber)
@@ -192,10 +229,13 @@ for garment in GARMENTS:
     put(tree, xyz.inputs[0], generated)
     vertical = xyz.outputs["Y"]
     if garment["obj"] in ["Shoes", "cloth_feet"]:
-        sole = calc(tree, "LESS_THAN", vertical, 0.18 if garment["obj"] == "Shoes" else 0.13)
-        welt = calc(tree, "LESS_THAN", calc(tree, "ABSOLUTE", calc(tree, "SUBTRACT", vertical, 0.20 if garment["obj"] == "Shoes" else 0.15)), 0.013)
+        # Keep the dark sole only at the bottom strip — a higher threshold
+        # swallowed the toe cap and rendered the toes black.
+        sole = calc(tree, "LESS_THAN", vertical, 0.09 if garment["obj"] == "Shoes" else 0.08)
+        welt = calc(tree, "LESS_THAN", calc(tree, "ABSOLUTE", calc(tree, "SUBTRACT", vertical, 0.11 if garment["obj"] == "Shoes" else 0.10)), 0.013)
         tread = wave(tree, generated, 25, 0, "Z")
-        sole_color = mix(tree, 0.12, (0.13, 0.13, 0.13, 1), tread)
+        # Light rubber sole — near-black read as a dirt blob once tinted.
+        sole_color = mix(tree, 0.52, (0.60, 0.58, 0.52, 1), tread)
         color = mix(tree, sole, color, sole_color)
         color = mix(tree, welt, color, (0.65, 0.62, 0.56, 1))
         roughness = mix(tree, sole, roughness, (0.94,)*3 + (1,))
@@ -216,35 +256,14 @@ for garment in GARMENTS:
         cuff = calc(tree, "MAXIMUM", cuff_l, cuff_r)
         color = mix(tree, cuff, color, (0.20, 0.19, 0.17, 1))
         roughness = mix(tree, cuff, roughness, (0.85, 0.85, 0.85, 1))
-    target_node = node(tree, "ShaderNodeTexImage")
     target = bpy.data.images.new("bake_" + garment["obj"], width=args.size, height=args.size, alpha=False)
-    albedo_pixels = bake_emit(obj, material, emission.inputs["Color"], color, target, garment["prefix"] + "_albedo.png")
-    height_pixels = bake_emit(obj, material, emission.inputs["Color"], height, target, garment["prefix"] + "_height.png")
-    bake_emit(obj, material, emission.inputs["Color"], roughness, target, garment["prefix"] + "_roughness.png")
-    surface = height_pixels[:, :, 0]
-    dx = (np.roll(surface, -1, axis=1) - np.roll(surface, 1, axis=1)) * 2.4
-    dy = (np.roll(surface, -1, axis=0) - np.roll(surface, 1, axis=0)) * 2.4
-    nx, ny, nz = -dx, -dy, np.ones_like(dx)
-    if garment["normal"]:
-        loaded = load_image_pixels(garment["normal"])
-        if loaded is not None:
-            src, sw, sh = loaded
-            if (sw, sh) != (args.size, args.size):
-                yi = (np.linspace(0, sh - 1, args.size)).astype(int)
-                xi = (np.linspace(0, sw - 1, args.size)).astype(int)
-                src = src[np.ix_(yi, xi)]
-            nx += (src[:, :, 0] * 2.0 - 1.0) * 0.85
-            ny += (src[:, :, 1] * 2.0 - 1.0) * 0.85
-    normals = np.stack([nx, ny, nz], axis=2)
-    normals /= np.linalg.norm(normals, axis=2, keepdims=True)
-    rgba = np.ones_like(height_pixels)
-    rgba[:, :, :3] = normals * 0.5 + 0.5
+    albedo_pixels = bake_emit(objs, material, emission.inputs["Color"], color, target, garment["prefix"] + "_albedo.png")
+    height_pixels = bake_emit(objs, material, emission.inputs["Color"], height, target, garment["prefix"] + "_height.png")
+    bake_emit(objs, material, emission.inputs["Color"], roughness, target, garment["prefix"] + "_roughness.png")
     normal_img = bpy.data.images.new("n_" + garment["obj"], width=args.size, height=args.size, alpha=True)
     normal_img.colorspace_settings.name = "Non-Color"
-    normal_img.pixels.foreach_set(rgba.astype(np.float32).ravel())
     normal_img.filepath_raw = str(OUT / (garment["prefix"] + "_normal.png"))
     normal_img.file_format = "PNG"
-    normal_img.save()
     # Cycles computes tangent normals with the actual UV orientation and margins.
     # This avoids embossed UV seams from differentiating a baked atlas as an image.
     bsdf = node(tree, "ShaderNodeBsdfPrincipled")
@@ -265,14 +284,39 @@ for garment in GARMENTS:
     put(tree, output.inputs["Surface"], bsdf.outputs[0])
     target_node.image = normal_img
     tree.nodes.active = target_node
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
     bpy.ops.object.bake(type="NORMAL", normal_space="TANGENT")
     normal_img.save()
+    # Crevice shadows inside pockets, seams and folds read as "real cloth".
+    # Hide every other mesh: the skin/body meshes sitting under the garment
+    # would otherwise occlude it and bake big dark blotches.
+    for other in bpy.data.objects:
+        if other.type == "MESH":
+            other.hide_render = other not in objs
+    ao_img = bpy.data.images.new("ao_" + garment["obj"], width=args.size, height=args.size, alpha=False)
+    ao_img.colorspace_settings.name = "Non-Color"
+    ao_img.filepath_raw = str(OUT / (garment["prefix"] + "_ao.png"))
+    ao_img.file_format = "PNG"
+    target_node.image = ao_img
+    bpy.ops.object.bake(type="AO", margin=scene.render.bake.margin)
+    # Keep crevice shading subtle on tintable clothing, especially dark variants.
+    ao_pixels = np.empty(args.size * args.size * 4, dtype=np.float32)
+    ao_img.pixels.foreach_get(ao_pixels)
+    ao_pixels = ao_pixels.reshape(-1, 4)
+    ao_pixels[:, :3] = 0.65 + 0.35 * ao_pixels[:, :3]
+    ao_img.pixels.foreach_set(ao_pixels.ravel())
+    ao_img.save()
     print("GARMENT_BAKED", garment["obj"], garment["prefix"], flush=True)
 
 print("GARMENTS_COMPLETE", flush=True)
 if args.save_blend:
+    selected_names = args.only.split(",") if args.only else [g["obj"] for g in GARMENTS]
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and obj.name not in ["Shoes", "cloth_feet", "cloth_hands", "soldier_legs"]:
+        if obj.type == "MESH" and obj.name not in selected_names:
             obj.hide_render = True
             obj.hide_set(True)
+    bpy.ops.file.pack_all()
     bpy.ops.wm.save_as_mainfile(filepath=str(Path(args.save_blend).resolve()))

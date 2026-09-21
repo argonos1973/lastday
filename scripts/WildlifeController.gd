@@ -17,6 +17,8 @@ var _last_position := Vector3.ZERO
 var _current_path: Array = []
 var _path_index := 0
 var _path_recalc_timer := 0.0
+var _route_waiting := false
+var _shore_escape_target: Variant = null
 var _debug_timer := 0.0
 var _attack_timer := 0.0
 var _attack_cooldown := 0.0
@@ -221,13 +223,16 @@ func _nearest_allowed_point(origin: Vector3):
 # can cross the water out of the trap.
 func _escape_if_trapped(delta: float) -> bool:
 	if _is_position_allowed(global_position):
+		_shore_escape_target = null
 		return false
 	# Don't escape from inside a house with a closed door - wolf should stay trapped
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_is_inside_closed_house"):
 		if scene.call("_is_inside_closed_house", global_position):
 			return false
-	var safe = _nearest_allowed_point(global_position)
+	if _shore_escape_target == null:
+		_shore_escape_target = _nearest_allowed_point(global_position)
+	var safe = _shore_escape_target
 	if safe == null:
 		return false
 	var dir: Vector3 = (safe - global_position)
@@ -235,11 +240,14 @@ func _escape_if_trapped(delta: float) -> bool:
 	if dir.length() < 0.01:
 		return false
 	dir = dir.normalized()
-	var step := move_speed * 2.2 * delta
+	var step := minf(move_speed * 2.2 * delta, global_position.distance_to(safe))
 	var next_pos := global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)
 	next_pos.z = clamp(next_pos.z, -WORLD_LIMIT, WORLD_LIMIT)
 	global_position = next_pos
+	_snap_to_terrain()
+	_current_path.clear()
+	_path_recalc_timer = 0.0
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * 6.0)
 	_walk_time += delta * move_speed * 5.0
 	_animate_legs(delta)
@@ -398,11 +406,11 @@ func _process(delta: float) -> void:
 			_idle_cooldown = randf_range(8.0, 18.0)
 		return
 	_path_recalc_timer -= delta
-	if _current_path.is_empty() or _path_index >= _current_path.size() or _path_recalc_timer <= 0.0:
+	if _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
 		_path_recalc_timer = 1.2
-	var move_target: Vector3 = target
+	var move_target: Vector3 = global_position
 	if _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
 		var to_waypoint: Vector3 = waypoint - global_position
@@ -413,7 +421,11 @@ func _process(delta: float) -> void:
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
-	_move_towards(move_target, speed, delta, 6.0)
+	_route_waiting = move_target.distance_to(global_position) < 0.1 or speed <= 0.0
+	if _route_waiting:
+		_play_animation_by_name("idle")
+	else:
+		_move_towards(move_target, speed, delta, 6.0)
 	if global_position.distance_to(_last_position) > 0.01:
 		_walk_time += delta * speed * 4.8
 		_animate_legs(delta)
@@ -525,7 +537,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-		if dist_to_player < 60.0:
+		if dist_to_player < 60.0 or (_state == "chase_player" and dist_to_player < 110.0):
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
 			if height_diff >= 1.8 and not _can_reach_player():
 				_state = "patrol"
@@ -611,21 +623,9 @@ func _wolf_ai(delta: float) -> Dictionary:
 					else:
 						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
 				if _chase_stuck_time > 4.0:
-					_state = "patrol"
 					_chase_stuck_time = 0.0
-					_chase_target = null
-					_chase_cooldown = 10.0
-					_play_wolf_sound("growl")
-					var farthest_patrol: Vector3 = patrol_points[0]
-					var farthest_dist := 0.0
-					for pp in patrol_points:
-						var d: float = global_position.distance_to(pp)
-						if d > farthest_dist:
-							farthest_dist = d
-							farthest_patrol = pp
-					target = farthest_patrol
-					speed = move_speed * 2.0
-					_play_animation_by_name("trot")
+					# Keep tracking the player while the route searches along the bank.
+					_path_recalc_timer = 0.0
 			var sep := _compute_wolf_separation(3.5)
 			if sep.length() > 0.01:
 				target += sep
@@ -1406,6 +1406,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:
+	if _route_waiting or _idle_timer > 0.0 or _wolf_eating_timer > 0.0:
+		_stuck_time = 0.0
+		_progress_timer = 0.0
+		_last_position = global_position
+		_progress_ref_pos = global_position
+		return
 	if global_position.distance_to(_last_position) < 0.015:
 		_stuck_time += delta
 	else:
@@ -1454,6 +1460,9 @@ func _update_stuck_timer(delta: float) -> void:
 func _retarget_from_blocked_route() -> void:
 	_current_path.clear()
 	_path_index = 0
+	_path_recalc_timer = 0.0
+	if _state == "chase_player":
+		return
 	if patrol_points.size() <= 1:
 		return
 	var new_index := target_index
@@ -1561,7 +1570,7 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	# Profundidad de agua: al igual que el jugador, vadear rios/lagos frena al animal
 	if _water_depth > 0.02:
 		speed *= lerp(0.72, 0.32, clamp(_water_depth, 0.0, 1.0))
-	var step := speed * delta
+	var step := minf(speed * delta, global_position.distance_to(target_pos))
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -WORLD_LIMIT, WORLD_LIMIT)
 	next_pos.z = clamp(next_pos.z, -WORLD_LIMIT, WORLD_LIMIT)
@@ -1783,8 +1792,6 @@ func _can_reach_player() -> bool:
 	var path: Array = scene.call("find_path_wildlife", global_position, _player.global_position)
 	if path.is_empty():
 		return false
-	if path.size() == 1:
-		return true
 	var last_point: Vector3 = path[path.size() - 1]
 	var dist := last_point.distance_to(_player.global_position)
 	return dist < 3.0

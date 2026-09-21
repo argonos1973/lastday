@@ -183,29 +183,66 @@ static func _cloth_prefix(kind: String) -> String:
 		return "garment_" + kind
 	return "cloth_" + kind
 
-static func cloth_detail(m: StandardMaterial3D, kind: String) -> void:
+static func cloth_detail(m: StandardMaterial3D, kind: String, unit_scale: float = 1.0) -> void:
 	var prefix := _cloth_prefix(kind)
 	m.normal_enabled = true
 	m.normal_texture = load_texture(CLOTH_DIR + prefix + "_normal.png")
 	# Leather has broader grain; woven fabric needs subtler relief at game distance.
-	m.normal_scale = 0.18 if kind in ["top", "jersey"] else 0.25
+	m.normal_scale = 0.4 if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"] else 0.25
 	m.roughness_texture = load_texture(CLOTH_DIR + prefix + "_roughness.png")
 	m.roughness = 1.0
 	m.metallic = 0.0
 	m.metallic_specular = 0.35 if kind in ["shoes", "boots", "gloves", "leather"] else 0.2
+	# Baked AO darkens pockets, seams and folds; a touch of parallax lets the
+	# garment relief shift with the view angle.
+	var baked := kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"]
+	if baked:
+		m.ao_enabled = true
+		m.ao_texture = load_texture(CLOTH_DIR + prefix + "_ao.png")
+		m.ao_light_affect = 0.1
+		m.heightmap_enabled = true
+		m.heightmap_texture = load_texture(CLOTH_DIR + prefix + "_height.png")
+		m.heightmap_scale = 0.001
+		m.heightmap_deep_parallax = false
+		# The garment mesh hugs the skinned body; inflate it so the
+		# Body_*/Desnudo_* surfaces can't poke through during animation.
+		# Values are tuned for the player_with_clothes bind space (1.0 ≈ 1 cm);
+		# meter-space models (Remy.glb previews, loose pickups) must pass
+		# unit_scale=0.01 or the garment explodes metres off the body.
+		m.grow = true
+		m.grow_amount = {"top": 3.0, "bottom": 1.0, "soldier": 0.0, "shoes": 2.5, "boots": 1.0, "gloves": 0.6}.get(kind, 0.5) * unit_scale
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 
-static func make_clothing_material(kind: String, color: Color) -> StandardMaterial3D:
-	var key := "cloth_%s_%s" % [kind, color.to_html()]
+static func make_clothing_material(kind: String, color: Color, grow_override: float = -999.0, unit_scale: float = 1.0) -> StandardMaterial3D:
+	var key := "cloth_%s_%s_%s_%s" % [kind, color.to_html(), grow_override, unit_scale]
 	if _mat_cache.has(key):
 		return _mat_cache[key]
 	var prefix := _cloth_prefix(kind)
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = load_texture(CLOTH_DIR + prefix + "_albedo.png")
 	m.albedo_color = color
-	cloth_detail(m, kind)
+	cloth_detail(m, kind, unit_scale)
+	if grow_override > -900.0:
+		m.grow = true
+		m.grow_amount = grow_override * unit_scale
 	_mat_cache[key] = m
 	return m
+
+static func clothing_kind_for_mesh(mesh_name: String) -> String:
+	var mesh_id := mesh_name.to_lower()
+	if "soldier" in mesh_id:
+		return "soldier"
+	if mesh_id == "cloth_hands":
+		return "gloves"
+	if mesh_id == "cloth_feet":
+		return "boots"
+	if "shoes" in mesh_id:
+		return "shoes"
+	if "bottoms" in mesh_id:
+		return "bottom"
+	if "tops" in mesh_id:
+		return "top"
+	return ""
 
 static func make_grass_blade_material() -> StandardMaterial3D:
 	if _mat_cache.has("grass_blade"):

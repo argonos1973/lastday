@@ -69,13 +69,11 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if pd.is_empty():
 		return
 	var eq := str(pd.get("equipped_clothing", ""))
-	var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
-	var _filtered_eq: Array = []
+	var equipped_items: Array = []
 	for _s in eq.split(",", false):
 		var _sn := str(_s).strip_edges()
-		if not _sn.is_empty() and _sn not in _removed_items:
-			_filtered_eq.append(_sn)
-	var equipped_items: Array = _filtered_eq
+		if not _sn.is_empty():
+			equipped_items.append(_sn)
 	# Build a map of item_name -> clothing_color from save inventory
 	var inv_colors: Dictionary = {}
 	var inv: Array = pd.get("inventory", [])
@@ -121,12 +119,14 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Survival/military approximations on base meshes
 	var is_survival_feet := feet_item == "Botas survival"
 	var is_military_legs := legs_item.find("Pantalones m") >= 0
+	var is_military_torso := torso_item.find("Chaqueta") >= 0
 	# Determine which clothing meshes to show
 	var show_tops := has_torso and (torso_item == "Camiseta")
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
 	var show_cloth_feet := has_feet and is_survival_feet
 	var show_soldier_legs := has_legs and is_military_legs
+	var show_soldier_torso := has_torso and is_military_torso
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
 	for mi in meshes:
@@ -159,13 +159,21 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl == "body_hands":
 			m.visible = false
 		elif nl == "body_feet":
-			m.visible = has_feet and (is_survival_feet or feet_item == "Zapatillas")
+			# Matches in-game _BODY_HIDES: footwear always hides Body_feet — the
+			# shoe doesn't cover the toes and Remy's bare-foot texture shows through.
+			m.visible = false
 		elif nl == "body_torso":
 			m.visible = has_torso
+			if m.visible:
+				_mat(m, skin_color)
 		elif nl == "body_arms":
-			m.visible = has_torso
+			m.visible = has_torso and not is_military_torso
+			if m.visible:
+				_mat(m, skin_color)
 		elif nl == "body_legs":
 			m.visible = has_legs and not is_military_legs
+			if m.visible:
+				_mat(m, skin_color)
 		elif nl == "desnudo_torso":
 			m.visible = not has_torso
 			if m.visible:
@@ -192,8 +200,18 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl.begins_with("soldier_"):
 			if nl == "soldier_legs":
 				m.visible = show_soldier_legs
-				if m.visible and legs_item.find("militares ") >= 0:
-					_mat(m, _MILITARY_TINTS.get(legs_item, Color(0.2, 0.25, 0.12)))
+				if m.visible:
+					if legs_item.find("camuflaje") >= 0:
+						_mat_camo(m)
+					else:
+						_mat(m, _MILITARY_TINTS.get(legs_item, Color(0.2, 0.25, 0.12)))
+			elif nl == "soldier_torso":
+				m.visible = show_soldier_torso
+				if m.visible:
+					if torso_item.find("camuflaje") >= 0:
+						_mat_camo(m)
+					else:
+						_mat(m, _MILITARY_TINTS.get(torso_item, Color(0.2, 0.25, 0.12)))
 			else:
 				m.visible = false
 		elif nl == "cube":
@@ -215,7 +233,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
-const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"]}
+const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"]}
 const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Pantalones militares":["Body_legs"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
 const _SURV_CLOTH := {"Botas survival":"cloth_feet","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
@@ -236,15 +254,29 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 			hide.append("Bottoms")
 		elif n.find("Pantalones c") >= 0 and not hide.has("Bottoms"):
 			hide.append("Bottoms")
+		elif n.find("Chaqueta") >= 0 and not hide.has("Tops"):
+			hide.append("Tops")
 	for mi in meshes:
 		var m := mi as MeshInstance3D
 		if hide.has(m.name):
 			m.visible = false
 
 static func _mat(m: MeshInstance3D, c: Color) -> void:
+	var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
+	if not kind.is_empty():
+		var grow := -999.0
+		if str(m.name) == "soldier_torso":
+			grow = 2.5
+		elif str(m.name) == "soldier_legs":
+			grow = -0.5
+		m.material_override = MaterialFactory.make_clothing_material(kind, c, grow)
+		return
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = c
 	mat.roughness = 0.8
+	# Skin/body meshes shrink slightly so they stay under the clothing meshes.
+	mat.grow = true
+	mat.grow_amount = -0.8
 	m.material_override = mat
 
 static var _camo_texture_cache: Dictionary = {}
@@ -279,6 +311,11 @@ static func _mat_camo(m: MeshInstance3D) -> void:
 	mat.albedo_texture = _make_camo_texture()
 	mat.albedo_color = Color.WHITE
 	mat.roughness = 0.8
+	var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
+	MaterialFactory.cloth_detail(mat, kind if not kind.is_empty() else "denim")
+	if str(m.name) == "soldier_torso":
+		mat.grow = true
+		mat.grow_amount = 2.5
 	m.material_override = mat
 
 static func _c(s: String) -> Color:
@@ -323,6 +360,8 @@ static func _add_preview_backpack(model: Node3D) -> void:
 const _MILITARY_TINTS := {
 	"Pantalones militares azules": Color(0.02, 0.04, 0.08),
 	"Pantalones militares negros II": Color(0.02, 0.02, 0.03),
+	"Chaqueta militar azul": Color(0.02, 0.04, 0.08),
+	"Chaqueta militar negra II": Color(0.02, 0.02, 0.03),
 }
 
 const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
@@ -450,9 +489,7 @@ static func _add_preview_gloves(model: Node3D, item_name: String) -> void:
 	# Apply glove material
 	var is_military := item_name.find("militar") >= 0
 	var glove_color := Color(0.2, 0.2, 0.2) if is_military else Color(0.35, 0.25, 0.15)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = glove_color
-	cloth_hands_mi.material_override = mat
+	cloth_hands_mi.material_override = MaterialFactory.make_clothing_material("gloves", glove_color)
 
 static func _find_skeleton(root: Node) -> Skeleton3D:
 	if root is Skeleton3D:

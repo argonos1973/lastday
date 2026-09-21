@@ -234,7 +234,8 @@ func _apply_preview_colors(model: Node3D, def: CharacterDefinition) -> void:
 				kind = "bottom"
 			elif name_lower.find("shoes") >= 0 or name_lower.find("sneakers") >= 0:
 				kind = "shoes" if name_lower == "shoes" else "leather"
-			mesh_inst.material_override = MaterialFactory.make_clothing_material(kind, def.clothing_color)
+			# Remy.glb binds in metres; grow values are tuned in cm.
+			mesh_inst.material_override = MaterialFactory.make_clothing_material(kind, def.clothing_color, -999.0, 0.01)
 
 func _on_next() -> void:
 	if _definitions.is_empty():

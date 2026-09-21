@@ -44,6 +44,11 @@ const CLOTHING_STORAGE := {
 	"Pantalones militares negros II": 4,
 	"Pantalones camuflaje": 4,
 	"Pantalones camuflaje desert": 4,
+	"Chaqueta militar": 5,
+	"Chaqueta militar azul": 5,
+	"Chaqueta militar negra II": 5,
+	"Chaqueta camuflaje": 5,
+	"Chaqueta camuflaje desert": 5,
 	"Guantes de trabajo": 1,
 	"Sombrero de pescador": 1,
 }
