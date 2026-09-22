@@ -570,11 +570,24 @@ func _ready() -> void:
 		world_streaming_mgr.setup(self)
 		sector_persistence_mgr = SectorPersistenceManager.new()
 		add_child(sector_persistence_mgr)
+		net.player_connected.connect(_on_remote_player_connected)
+		net.player_disconnected.connect(_on_remote_player_disconnected)
 		# Restore the server save before generating so reconnecting players get
 		# their position/state back instead of a random spawn.
 		SaveGameHooks.preload_saved_world_state(self)
 		await _create_map()
 		_load_server_world_state()
+		# Clients that registered before this scene existed were never matched:
+		# spawn their proxies and run the saved-state match now.
+		for pid in net.players.keys():
+			if pid == net.get_my_id():
+				continue
+			if not server_proxies.has(pid):
+				_spawn_server_proxy(pid)
+			var sweep_cid: String = str(net.players[pid].get("client_id", ""))
+			var sweep_proxy: Node3D = server_proxies.get(pid)
+			if not sweep_cid.is_empty() and sweep_proxy != null and str(sweep_proxy.get_meta("client_id", "")) != sweep_cid:
+				_match_proxy_to_client(pid, sweep_cid)
 		return
 	# Create loading overlay FIRST, before any heavy initialization
 	_create_loading_overlay()
@@ -2056,14 +2069,15 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
 			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching, existing.get_meta("saved_extra", {}))
 	else:
-		# No existing proxy — set client_id on the freshly created proxy if it exists
-		if server_proxies.has(peer_id):
-			server_proxies[peer_id].set_meta("client_id", cid)
-		else:
+		# No persisted proxy — ensure the live proxy exists before deciding
+		# (the register RPC can arrive before _update_server_proxies spawns it).
+		if not server_proxies.has(peer_id):
 			pending_client_ids[peer_id] = cid
+			_spawn_server_proxy(peer_id)
+		server_proxies[peer_id].set_meta("client_id", cid)
 		# Restore this client from the server save if they played before a restart
 		var saved: Dictionary = _server_saved_players.get(cid, {})
-		if not saved.is_empty() and server_proxies.has(peer_id):
+		if not saved.is_empty():
 			_server_saved_players.erase(cid)
 			var proxy: Node3D = server_proxies[peer_id]
 			for key in _SERVER_PLAYER_FIELDS.keys():
@@ -2194,6 +2208,21 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 		proxy.set_meta("saved_extra", extra)
 
 func _apply_pending_restore() -> void:
+	# Deliver server state that arrived while Inicio was still the current scene
+	if net != null and not net.is_dedicated_server:
+		if net._has_buffered_spawn_pos:
+			net._has_buffered_spawn_pos = false
+			_apply_net_spawn_pos(net._buffered_spawn_pos)
+		if net._has_buffered_restore:
+			var rb: Array = net._buffered_restore
+			net._has_buffered_restore = false
+			net._buffered_restore = []
+			_apply_restored_inventory(rb[0], rb[1], rb[2], rb[3], rb[4], rb[5], rb[6], rb[7], rb[8], rb[9], rb[10], rb[11], rb[12], rb[13] if rb.size() > 13 else {})
+		if net._has_buffered_world_state:
+			var wb: Array = net._buffered_world_state
+			net._has_buffered_world_state = false
+			net._buffered_world_state = []
+			_net_sync_world_state(wb[0], wb[1], wb[2], wb[3], wb[4], wb[5])
 	if _pending_restore_data.is_empty():
 		return
 	var d = _pending_restore_data
@@ -2802,8 +2831,10 @@ func _update_server_proxies(delta: float) -> void:
 			continue
 		var data: Dictionary = net.players[pid]
 		var proxy: Node3D = server_proxies[pid]
-		# Only update proxy position if client has sent real position data
-		if data.has("pos"):
+		# Only update proxy position if client has sent real position data;
+		# while reconnecting, players[pid]["pos"] is still the SPAWN_POS
+		# placeholder written at register and must not stomp the restored pos.
+		if data.has("pos") and not proxy.get_meta("reconnecting", false):
 			proxy.set_meta("has_real_pos", true)
 			proxy.global_position = data["pos"]
 			proxy.set_meta("in_built_shelter", _is_near_built_shelter(proxy.global_position))

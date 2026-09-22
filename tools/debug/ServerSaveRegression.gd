@@ -157,6 +157,18 @@ func run() -> void:
 	check(fresh.global_position.distance_to(Vector3(3.0, 0.4, 4.0)) < 0.001, "restored proxy placed at saved position")
 	check(fresh.get_meta("saved_extra", {}).get("back_items", []).size() == 1, "restored proxy keeps extra meta")
 
+	# Register-RPC-before-proxy race: a saved player whose proxy has not been
+	# spawned yet must still be restored (previously fell through to a random
+	# spawn because server_proxies.has(peer_id) was false).
+	world._server_saved_players["cid_race"] = {"pos": [7.0, 0.4, 8.0], "inventory": [{"name": "Pan"}], "health": 66.0}
+	world._match_proxy_to_client(9, "cid_race")
+	check(world.server_proxies.has(9), "missing proxy spawned synchronously during match")
+	if world.server_proxies.has(9):
+		var race_proxy: Node3D = world.server_proxies[9]
+		check(race_proxy.global_position.distance_to(Vector3(7.0, 0.4, 8.0)) < 0.001, "raced proxy placed at saved position")
+		check(str(race_proxy.get_meta("client_id", "")) == "cid_race", "raced proxy gets client_id")
+	check(not world._server_saved_players.has("cid_race"), "raced player entry consumed")
+
 	# Unknown client falls back to normal new-player flow
 	var fresh2 := Node3D.new()
 	world.add_child(fresh2)

@@ -342,11 +342,23 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 					continue
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on)
 
+# Server->client payloads buffered when they arrive while the client is still
+# in Inicio.tscn (before Main.tscn and its player exist). Main consumes them.
+var _buffered_spawn_pos := Vector3.ZERO
+var _has_buffered_spawn_pos := false
+var _buffered_restore: Array = []
+var _has_buffered_restore := false
+var _buffered_world_state: Array = []
+var _has_buffered_world_state := false
+
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_net_spawn_pos"):
 		scene.call("_apply_net_spawn_pos", pos)
+	else:
+		_buffered_spawn_pos = pos
+		_has_buffered_spawn_pos = true
 
 @rpc("any_peer", "reliable")
 func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
@@ -360,6 +372,9 @@ func restore_player_inventory(items_data: Array, health: float, hunger: float, t
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
 		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
+	else:
+		_buffered_restore = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra]
+		_has_buffered_restore = true
 
 # Client sends final position to server reliably before quitting
 @rpc("any_peer", "reliable")
@@ -624,6 +639,9 @@ func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Arra
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_sync_world_state"):
 		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters)
+	elif not is_host:
+		_buffered_world_state = [depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters]
+		_has_buffered_world_state = true
 
 # Client tells server a door was toggled (server relays to all other clients)
 @rpc("any_peer", "reliable")
