@@ -7,16 +7,19 @@ static func maybe_insert_saved_character(inicio: Node) -> void:
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
 	if sgm == null:
 		return
+	var existing_ids: Array = []
+	for c in inicio.CHAR_CONFIGS:
+		existing_ids.append(str(c.get("id", "")))
 	# Server-saved character first so the local save stays at index 0
 	var net = inicio.get_node_or_null("/root/NetworkManager")
-	if sgm.has_server_save() and net != null:
+	if sgm.has_server_save() and net != null and not existing_ids.has("saved_server"):
 		var server_save: Dictionary = sgm.load_server_game()
 		var pdata: Dictionary = server_save.get("players", {}).get(str(net.client_id), {})
 		if not pdata.is_empty():
 			var scfg := _server_character_config(pdata)
 			if not scfg.is_empty():
 				inicio.CHAR_CONFIGS.insert(0, scfg)
-	if not sgm.has_save():
+	if not sgm.has_save() or existing_ids.has("saved"):
 		return
 	var saved_cfg: Dictionary = sgm.get_saved_character_config()
 	if saved_cfg.is_empty():
@@ -105,6 +108,7 @@ static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	lbl.add_theme_font_size_override("font_size", 13)
 	lbl.add_theme_color_override("font_color", Color(0.6, 0.8, 0.95) if is_server else Color(0.8, 0.85, 0.6))
 	lbl.name = "SavedCharInfo"
+	lbl.add_to_group("__saved_char_info")
 	var char_panel = inicio._char_name_label.get_parent()
 	if char_panel != null:
 		char_panel.add_child(lbl)
@@ -116,9 +120,11 @@ static func _remove_existing_info(inicio: Node) -> void:
 	var char_panel = inicio._char_name_label.get_parent()
 	if char_panel == null:
 		return
-	var existing = char_panel.get_node_or_null("SavedCharInfo")
-	if existing != null:
-		existing.queue_free()
+	# Remove every leftover label: duplicate names are auto-renamed on add
+	# ("@SavedCharInfo@N"), so a name lookup misses the older ones.
+	for n in char_panel.get_children():
+		if n.is_in_group("__saved_char_info"):
+			n.queue_free()
 
 static func apply_saved_camo(gsess: Node, cfg: Dictionary) -> void:
 	if not cfg.get("is_saved", false):
@@ -135,8 +141,8 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if sgm == null:
 		return
 	var raw_pd: Dictionary = _saved_player_data(model, cfg)
-	if raw_pd.is_empty():
-		return
+	# Even with no player payload, fall through so the starter outfit below
+	# dresses the preview instead of leaving the raw (naked) GLB state.
 	var pd := _equipment_fields(raw_pd)
 	var eq := str(pd.get("equipped_clothing", ""))
 	var equipped_items: Array = []
@@ -144,6 +150,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		var _sn := str(_s).strip_edges()
 		if not _sn.is_empty():
 			equipped_items.append(_sn)
+	# Saves without clothing data (e.g. a proxy that never synced equipment)
+	# fall back to the standard starter outfit instead of a naked preview.
+	if equipped_items.is_empty():
+		equipped_items = ["Camiseta", "Pantalones", "Zapatillas"]
 	# Build a map of item_name -> clothing_color from save inventory
 	var inv_colors: Dictionary = {}
 	var inv: Array = pd.get("inventory", [])
