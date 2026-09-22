@@ -142,6 +142,7 @@ var _display_props_stripped := {}
 var river_segments_data: Array = []
 var wildlife_blockers: Array = []
 var _wildlife_respawn_timer := 0.0
+var _server_save_timer := 0.0
 var campfire_positions: Array = []
 var torch_fire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
@@ -569,7 +570,11 @@ func _ready() -> void:
 		world_streaming_mgr.setup(self)
 		sector_persistence_mgr = SectorPersistenceManager.new()
 		add_child(sector_persistence_mgr)
-		_create_map()
+		# Restore the server save before generating so reconnecting players get
+		# their position/state back instead of a random spawn.
+		SaveGameHooks.preload_saved_world_state(self)
+		await _create_map()
+		_load_server_world_state()
 		return
 	# Create loading overlay FIRST, before any heavy initialization
 	_create_loading_overlay()
@@ -872,6 +877,12 @@ func _process(delta: float) -> void:
 		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
+		# Periodic save: SIGTERM kills never reach NOTIFICATION_WM_CLOSE_REQUEST,
+		# so without this a killed server loses every change since the last save.
+		_server_save_timer += delta
+		if _server_save_timer >= 60.0:
+			_server_save_timer = 0.0
+			_save_world_change_silent()
 		return
 	# Single player: respawn wildlife periodically (no net)
 	if net == null or not net.is_connected:
@@ -1657,6 +1668,33 @@ func _save_server_world() -> void:
 			players[cid] = _server_saved_players[cid]
 	sgm.save_server_game(SaveGameHooksScript.collect_world_data(self), players)
 
+# Dedicated server counterpart of apply_saved_world_data: restores the state the
+# server relays to clients (drop lists, campfires, doors, corpses, rowboat).
+# No visual nodes are spawned — world actions don't exist server-side.
+func _load_server_world_state() -> void:
+	var sgm = get_node_or_null("/root/SaveGameManager")
+	if sgm == null or not sgm.has_server_save():
+		return
+	var server_save: Dictionary = sgm.load_server_game()
+	var world_data: Dictionary = server_save.get("world", {})
+	if world_data.is_empty():
+		return
+	_dropped_items = (world_data.get("dropped_items", []) as Array).duplicate(true)
+	_built_campfires = (world_data.get("built_campfires", []) as Array).duplicate(true)
+	_lit_campfires = (world_data.get("lit_campfires", []) as Array).duplicate(true)
+	_built_shelters = (world_data.get("built_shelters", []) as Array).duplicate(true)
+	for door_name in world_data.get("open_doors", []):
+		_server_door_states[str(door_name)] = true
+	# Campfire burn-down continues across restarts; timers store remaining ms.
+	var saved_cf_timers: Dictionary = world_data.get("campfire_fire_timers", {})
+	var now_ms := Time.get_ticks_msec()
+	for fire_name in saved_cf_timers.keys():
+		campfire_fire_timers[fire_name] = now_ms + maxi(int(saved_cf_timers[fire_name]), 0)
+	_pending_dead_wildlife.append_array(world_data.get("dead_wildlife", []))
+	_apply_pending_dead_wildlife()
+	if is_instance_valid(lake_rowboat):
+		lake_rowboat.restore_state(world_data.get("rowboat", {}), null)
+
 func _collect_server_players() -> Dictionary:
 	var out := {}
 	if net == null or not net.is_host:
@@ -1890,6 +1928,9 @@ func _on_remote_player_disconnected(id: int) -> void:
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
 		net._sync_player_list.rpc(net.players.duplicate(true))
+		# Persist the departing player's last known position/state right away
+		if net.is_dedicated_server:
+			_save_world_change_silent()
 
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state

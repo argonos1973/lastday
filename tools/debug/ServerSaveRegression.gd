@@ -164,6 +164,24 @@ func run() -> void:
 	world._match_proxy_to_client(8, "cid_unknown")
 	check(fresh2.get_meta("client_id", "") == "cid_unknown", "new player proxy gets client_id")
 
+	# --- Server world-state restore (post-restart, no visuals spawned) ---
+	sgm.save_server_game({
+		"dropped_items": [{"id": "drop_1", "name": "Lata", "pos": [1.0, 0.1, 2.0]}],
+		"built_campfires": [{"id": "cf_1", "pos": [4.0, 0.0, 5.0]}],
+		"lit_campfires": [{"id": "cf_1", "pos": [4.0, 0.0, 5.0], "fire_name": "fire_cf_1"}],
+		"built_shelters": [{"id": "sh_1", "pos": [6.0, 0.0, 7.0]}],
+		"open_doors": ["house_1 Door"],
+		"campfire_fire_timers": {"fire_cf_1": 30000},
+		"dead_wildlife": [{"name": "Wolf_9", "type": "wolf", "pos": [0.0, 0.0, 0.0], "rot": 0.0}],
+	}, {})
+	world._load_server_world_state()
+	check(world._dropped_items.size() == 1, "server restores dropped item list")
+	check(world._built_campfires.size() == 1, "server restores built campfires")
+	check(world._lit_campfires.size() == 1, "server restores lit campfires")
+	check(world._built_shelters.size() == 1, "server restores built shelters")
+	check(world._server_door_states.get("house_1 Door", false) == true, "server restores open door states")
+	check(world.campfire_fire_timers.has("fire_cf_1"), "server restores campfire burn timers")
+
 	# --- Host (non-dedicated) also uses server save, with full own-player payload ---
 	net.is_dedicated_server = false
 	net.client_id = "host_cid"
