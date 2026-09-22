@@ -525,7 +525,9 @@ func _start_game() -> void:
 		# The server-save card belongs to multiplayer; picking it for a local run
 		# must not wipe the single-player save.
 		var cid := String(gsess.selected_character_id)
-		if cid != "saved" and cid != "saved_server" and sgm.has_save():
+		# Only a fresh single-player run may drop the local save; joining or
+		# hosting a server never touches savegame.json.
+		if _mode == "single" and cid != "saved" and cid != "saved_server" and sgm.has_save():
 			sgm.delete_save()
 		# Hosting with any other character starts a fresh server world.
 		if _mode == "host" and cid != "saved_server" and sgm.has_server_save():

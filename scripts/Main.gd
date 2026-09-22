@@ -3371,10 +3371,13 @@ func _on_player_died() -> void:
 		hud.show_notice("Has muerto. Volviendo a la pantalla de inicio...")
 		await get_tree().create_timer(3.0).timeout
 		if _scene_quitting: return
-	# Delete saves AFTER the wait so no auto-save can re-create them
-	SaveSystemScript.delete_save()
-	if sgm != null and sgm.has_method("delete_save"):
-		sgm.delete_save()
+	# Delete saves AFTER the wait so no auto-save can re-create them.
+	# Only single-player death wipes the local save — on a server the death
+	# lives in server_savegame.json and the local run must stay untouched.
+	if net == null or not net.is_connected:
+		SaveSystemScript.delete_save()
+		if sgm != null and sgm.has_method("delete_save"):
+			sgm.delete_save()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
 
