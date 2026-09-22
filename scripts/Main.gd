@@ -143,6 +143,12 @@ var river_segments_data: Array = []
 var wildlife_blockers: Array = []
 var _wildlife_respawn_timer := 0.0
 var _server_save_timer := 0.0
+# Dedicated-server graceful shutdown: stdin console commands, stop-file poll
+# (tools/stop_server.sh touches it) and the OS close request.
+const SERVER_STOP_FLAG := "user://stop_server.flag"
+var _server_quit_requested := false
+var _server_stop_check := 0.0
+var _server_stdin_thread: Thread = null
 var campfire_positions: Array = []
 var torch_fire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
@@ -572,6 +578,7 @@ func _ready() -> void:
 		add_child(sector_persistence_mgr)
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
+		_setup_server_console()
 		# Restore the server save before generating so reconnecting players get
 		# their position/state back instead of a random spawn.
 		SaveGameHooks.preload_saved_world_state(self)
@@ -876,6 +883,18 @@ func _process(delta: float) -> void:
 		_loot_wear_timer = 0.0
 		_update_loot_wear()
 	if net != null and net.is_dedicated_server:
+		# Graceful shutdown: console 'quit' command or stop-file flag
+		if _server_quit_requested:
+			_server_quit_requested = false
+			_request_server_shutdown()
+			return
+		_server_stop_check += delta
+		if _server_stop_check >= 2.0:
+			_server_stop_check = 0.0
+			if FileAccess.file_exists(SERVER_STOP_FLAG):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(SERVER_STOP_FLAG))
+				_request_server_shutdown()
+				return
 		# Update proxy positions from client sync data
 		_update_server_proxies(delta)
 		# Server broadcasts animal state to clients
@@ -1962,6 +1981,50 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
+
+func _setup_server_console() -> void:
+	# Take over quit handling so every exit path saves the world first
+	get_tree().auto_accept_quit = false
+	if FileAccess.file_exists(SERVER_STOP_FLAG):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SERVER_STOP_FLAG))
+	_server_stdin_thread = Thread.new()
+	_server_stdin_thread.start(_stdin_command_loop)
+	print("[SERVER] Comandos: 'status' | 'save' | 'quit' — o ejecuta tools/stop_server.sh")
+
+func _stdin_command_loop() -> void:
+	while true:
+		var line := OS.read_string_from_stdin().strip_edges().to_lower()
+		if line.is_empty():
+			OS.delay_msec(500)
+			continue
+		match line:
+			"quit", "exit", "stop", "q":
+				_server_quit_requested = true
+				return
+			"save":
+				call_deferred("_save_world_change_silent")
+			"status", "players":
+				call_deferred("_print_server_status")
+			"help", "?":
+				print("[SERVER] Comandos: 'status' | 'save' | 'quit'")
+
+func _print_server_status() -> void:
+	if net == null:
+		return
+	var online := 0
+	for pid in net.players.keys():
+		if pid != net.get_my_id() and not net.players[pid].get("offline", false):
+			online += 1
+	print("[SERVER] conectados=%d offline=%d guardados=%d" % [online, proxy_by_client_id.size(), _server_saved_players.size()])
+
+func _request_server_shutdown() -> void:
+	print("[SERVER] Cerrando: guardando mundo...")
+	_save_server_world()
+	get_tree().quit()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and net != null and net.is_dedicated_server:
+		_request_server_shutdown()
 
 var _military_tent_pos := Vector3.ZERO
 var _remote_tent_pos := Vector3.ZERO
