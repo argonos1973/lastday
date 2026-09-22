@@ -20,6 +20,27 @@ static func maybe_load_saved_game(main: Node, player: Node) -> void:
 	if main == null or not is_instance_valid(main):
 		return
 	if main.net != null and main.net.is_connected:
+		# Pure clients never touch save files — the server sends world state via RPC
+		if not main.net.is_host:
+			return
+		# Server/host mode: restore world from the server save, never the single-player file
+		var sgm := main.get_node_or_null("/root/SaveGameManager")
+		if sgm == null or not sgm.has_server_save():
+			return
+		var server_save: Dictionary = sgm.load_server_game()
+		if server_save.is_empty():
+			return
+		apply_saved_world_data(main, server_save.get("world", {}))
+		if is_instance_valid(main.get("lake_rowboat")):
+			var boat_data: Dictionary = server_save.get("world", {}).get("rowboat", {})
+			main.lake_rowboat.restore_state(boat_data, null)
+		# Host (non-dedicated): restore own player saved under its client_id
+		if not main.net.is_dedicated_server and player != null and is_instance_valid(player):
+			var pdata: Dictionary = server_save.get("players", {}).get(str(main.net.client_id), {})
+			if not pdata.is_empty():
+				apply_saved_player_data(player, pdata)
+				if player.inventory != null:
+					player.inventory.merge_stacks()
 		return
 	# Enable auto-save for single player
 	var sgm = main.get_node_or_null("/root/SaveGameManager")
@@ -46,17 +67,28 @@ static func maybe_load_saved_game(main: Node, player: Node) -> void:
 static func preload_saved_world_state(main: Node) -> void:
 	if main == null or not is_instance_valid(main):
 		return
-	if main.net != null and main.net.is_connected:
-		return
-	var gsess: Node = main.get_node_or_null("/root/GameSession")
-	if gsess == null or gsess.selected_character_id != "saved":
-		return
+	var save_data: Dictionary = {}
 	var sgm = main.get_node_or_null("/root/SaveGameManager")
-	if sgm == null or not sgm.has_save():
-		return
-	var save_data: Dictionary = sgm.load_game()
-	if save_data.is_empty():
-		return
+	if main.net != null and main.net.is_connected:
+		# Pure clients never touch save files — the server sends world state via RPC
+		if not main.net.is_host:
+			return
+		# Server/host mode: preload from the server save, never the single-player file
+		if sgm == null or not sgm.has_server_save():
+			return
+		save_data = sgm.load_server_game()
+		if save_data.is_empty():
+			return
+		main._server_saved_players = save_data.get("players", {})
+	else:
+		var gsess: Node = main.get_node_or_null("/root/GameSession")
+		if gsess == null or gsess.selected_character_id != "saved":
+			return
+		if sgm == null or not sgm.has_save():
+			return
+		save_data = sgm.load_game()
+		if save_data.is_empty():
+			return
 	var world_data: Dictionary = save_data.get("world", {})
 	# Pre-load depleted action IDs so world generation can skip cut trees
 	var depleted = world_data.get("depleted_action_ids", [])
@@ -137,10 +169,23 @@ static func collect_player_data(player: Node) -> Dictionary:
 	# Backpack
 	var eb = player.get("equipped_backpack")
 	data["equipped_backpack"] = str(eb) if eb != null else ""
+	# Items carried on the back/shoulders (rifle, fishing rod, spear). Storing
+	# them removes them from inventory.items, so they must be saved separately
+	# or they are lost on load.
+	var back_items: Array = []
+	var stored_back = player.get("_stored_back_items")
+	if stored_back is Array:
+		for entry in stored_back:
+			back_items.append(entry.duplicate(true) if entry is Dictionary else {})
+	data["back_items"] = back_items
 	# Empty hands are a state, not the item at the inventory cursor.
 	var actual_held = player.get_held_item()
 	data["held_item"] = str(actual_held.item_name) if actual_held != null else ""
 	data["held_index"] = player.inventory.items.find(actual_held) if actual_held != null else -1
+	# Back equipment (rifle, rod, spear) held in the hands lives outside the
+	# inventory, so its index is always -1. Persist the full payload or loading
+	# cannot rebuild it and the item is silently deleted.
+	data["held_item_data"] = actual_held.to_dict() if actual_held != null else {}
 	# Character appearance
 	var gsess: Node = Engine.get_main_loop().get_root().get_node_or_null("/root/GameSession")
 	if gsess != null:
@@ -290,7 +335,8 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	if pos_arr is Array and pos_arr.size() >= 3:
 		player.global_position = Vector3(float(pos_arr[0]), float(pos_arr[1]), float(pos_arr[2]))
 	# TEMP TEST: also land on the lake shore when continuing a saved game.
-	player.global_position = Vector3(258, 2.0, -264)
+	if OS.is_debug_build() and "--debug-lake-spawn" in OS.get_cmdline_user_args():
+		player.global_position = Vector3(258, 2.0, -264)
 	# Rotation
 	player.rotation.y = float(data.get("rot", 0.0))
 	# Reset velocity
@@ -400,12 +446,26 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	var equipped_backpack := str(data.get("equipped_backpack", ""))
 	if not equipped_backpack.is_empty() and player.has_method("equip_backpack"):
 		player.equip_backpack(equipped_backpack)
+	# Restore items carried on the back — they are not part of the inventory list
+	var back_items = data.get("back_items", [])
+	if back_items is Array and "_stored_back_items" in player:
+		for slot in range(mini(back_items.size(), player._stored_back_items.size())):
+			var entry = back_items[slot]
+			if entry is Dictionary and not str(entry.get("name", "")).is_empty():
+				player._stored_back_items[slot] = entry.duplicate(true)
+				if player.has_method("_build_stored_back_visual"):
+					player._build_stored_back_visual(slot)
+			else:
+				player._stored_back_items[slot] = null
 	# Restore only an explicitly saved held item, including empty hands.
 	var ammo: Dictionary = data.get("rifle_ammo", {})
 	player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
 	player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
 	player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
-	player.restore_held_item(str(data.get("held_item", "")), int(data.get("held_index", -1)))
+	var held_item_data = data.get("held_item_data", {})
+	if not held_item_data is Dictionary:
+		held_item_data = {}
+	player.restore_held_item(str(data.get("held_item", "")), int(data.get("held_index", -1)), held_item_data)
 	# State flags — don't restore sleeping to prevent being stuck on load
 	player.is_sleeping = false
 	player.is_sitting = bool(data.get("sitting", false))

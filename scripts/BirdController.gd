@@ -48,6 +48,7 @@ var current_anim_keyword := "fly"
 var _flee_timer := 0.0
 var _flee_origin := Vector3.ZERO
 var _corpse_age := 0.0
+var _flies_attached := false
 var _use_external_model := false
 
 # Drinking states
@@ -71,6 +72,7 @@ var flock_id := 0
 var _flock_neighbors: Array = []
 var _neighbor_update_timer := 0.0
 var _velocity := Vector3.ZERO
+var _route_generation := 0
 
 const BIRD_MODEL_PATH := "res://assets/external/bird/simple_bird.glb"
 const BIRD_TARGET_HEIGHT := 0.6
@@ -332,12 +334,30 @@ func _process(delta: float) -> void:
 	var target: Vector3 = patrol_points[target_index]
 	var flat_dist := sqrt(pow(target.x - global_position.x, 2) + pow(target.z - global_position.z, 2))
 	if flat_dist < 5.0:
-		target_index = (target_index + 1) % patrol_points.size()
+		target_index += 1
+		if target_index >= patrol_points.size():
+			_regenerate_route()
+			target_index = 0
 		_target_height = randf_range(FLIGHT_HEIGHT_MIN, FLIGHT_HEIGHT_MAX)
 
 	# Animate wings
 	_wing_phase += delta * _wing_speed
 	_animate_wings()
+
+# Al completar el circuito la bandada genera una ruta nueva. La semilla depende
+# solo de flock_id y de la generacion, asi todos los miembros calculan los mismos
+# waypoints y la bandada no se dispersa. El primer waypoint es un punto lejano
+# del borde del mapa para que el vuelo cruce zonas nuevas en cada ciclo.
+func _regenerate_route() -> void:
+	_route_generation += 1
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(flock_id) * 73856093 + _route_generation * 19349663
+	var far_angle := rng.randf_range(0.0, TAU)
+	var far := Vector3(cos(far_angle), 0.0, sin(far_angle)) * rng.randf_range(380.0, 460.0)
+	var route: Array = [far]
+	var allowed := func(_p: Vector3) -> bool: return true
+	route.append_array(WildlifeRoutes.build_roaming_route(rng, far, 36, 150.0, 300.0, allowed))
+	patrol_points = route
 
 func _try_start_drinking() -> bool:
 	var scene := get_tree().current_scene
@@ -805,6 +825,7 @@ func take_damage(amount: float, from_knife: bool = false) -> void:
 			net_node.damage_animal.rpc_id(1, name, amount, from_knife)
 		return
 	health = maxf(0.0, health - amount)
+	_spawn_hit_feedback()
 	if health > 0.0:
 		return
 	_is_dead = true
@@ -814,8 +835,75 @@ func take_damage(amount: float, from_knife: bool = false) -> void:
 	if _animation_player != null:
 		_animation_player.stop()
 
+func _spawn_hit_feedback() -> void:
+	var net_node := get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.is_dedicated_server:
+		return
+	# Blood splatter: reuse the player's improved effect when available
+	var scene := get_tree().current_scene
+	var player_node := scene.get_node_or_null("Player") if scene != null else null
+	if player_node != null and player_node.has_method("_spawn_blood_splatter"):
+		player_node._spawn_blood_splatter(global_position)
+	else:
+		var drops := GPUParticles3D.new()
+		drops.amount = 20
+		drops.lifetime = 0.6
+		drops.explosiveness = 1.0
+		drops.randomness = 0.9
+		drops.one_shot = true
+		var mat := ParticleProcessMaterial.new()
+		mat.spread = 70.0
+		mat.initial_velocity_min = 2.0
+		mat.initial_velocity_max = 5.0
+		mat.gravity = Vector3(0, -18.0, 0)
+		mat.color = Color(0.45, 0.01, 0.01, 1.0)
+		drops.process_material = mat
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.04, 0.04)
+		var qmat := StandardMaterial3D.new()
+		qmat.albedo_color = Color(0.45, 0.01, 0.01, 1.0)
+		qmat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		qmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		qmat.vertex_color_use_as_albedo = true
+		quad.material = qmat
+		drops.draw_pass_1 = quad
+		scene.add_child(drops)
+		drops.global_position = global_position
+		drops.emitting = true
+		drops.finished.connect(drops.queue_free)
+	# Distress squawk if close enough to hear
+	var dist := 999.0
+	if player_node != null and player_node is Node3D:
+		dist = global_position.distance_to((player_node as Node3D).global_position)
+	if dist > 18.0:
+		return
+	var stream: AudioStream = null
+	var path := "res://assets/audio/pajaro_herido.wav"
+	if ResourceLoader.exists(path):
+		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream == null:
+		return
+	var player := AudioStreamPlayer3D.new()
+	player.stream = stream
+	player.volume_db = -4.0 - (dist / 18.0) * 10.0
+	player.pitch_scale = randf_range(0.9, 1.2)
+	add_child(player)
+	player.play()
+	player.finished.connect(player.queue_free)
+
 func _update_falling(delta: float) -> void:
 	_corpse_age += delta
+	if _corpse_age > 45.0 and not _flies_attached:
+		# Moscas sobre el cadaver; el enjambre se libera con el pajaro
+		_flies_attached = true
+		var swarm := FlySwarm.new()
+		swarm.name = "FlySwarm"
+		swarm.position = Vector3(0.0, 0.25, 0.0)
+		add_child(swarm)
 	if _corpse_age > 300.0:
 		queue_free()
 		return

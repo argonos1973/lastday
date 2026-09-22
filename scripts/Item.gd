@@ -85,7 +85,8 @@ func can_stack_with(other) -> bool:
 		return false
 	if item_type == "tool_matches":
 		return false # each box keeps its own remaining-charge state
-	if weight != other.weight or durability != other.durability or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
+	# Durability merges by weighted average, so used tools/consumables still stack.
+	if weight != other.weight or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
 		return false
 	if get_meta_list().size() != other.get_meta_list().size():
 		return false

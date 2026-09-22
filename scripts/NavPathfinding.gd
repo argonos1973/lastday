@@ -7,6 +7,10 @@ var _cell_size := 2.0
 var _built := false
 var _door_open_cache: Dictionary = {}
 var _search := AStarGrid2D.new()
+var _regions := PackedInt32Array()
+var _region_edges: Array = []
+var _region_groups := PackedInt32Array()
+var _door_regions: Dictionary = {}
 
 func world_to_grid(pos: Vector3) -> Vector2i:
 	return Vector2i(int(round(pos.x / _cell_size)) + _grid_size / 2, int(round(pos.z / _cell_size)) + _grid_size / 2)
@@ -16,6 +20,7 @@ func grid_to_world(cell: Vector2i) -> Vector3:
 
 func build(blockers: Array, river_segments: Array) -> void:
 	_grid.clear()
+	_door_open_cache.clear()
 	for blocker in blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var radius: float = float(blocker.get("radius", 1.8))
@@ -42,12 +47,111 @@ func build(blockers: Array, river_segments: Array) -> void:
 	_block_river_cells(river_segments)
 	_search.region = Rect2i(0, 0, _grid_size, _grid_size)
 	_search.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+
 	_search.update()
+	_regions.resize(_grid_size * _grid_size)
+	_regions.fill(0)
 	for x in range(_grid_size):
 		for z in range(_grid_size):
 			var cell := Vector2i(x, z)
-			_search.set_point_solid(cell, is_cell_blocked(cell))
+			var blocked := is_cell_blocked(cell)
+			_search.set_point_solid(cell, blocked)
+			_regions[z * _grid_size + x] = -1 if blocked else 0
+	_build_regions()
 	_built = true
+
+func _build_regions() -> void:
+	_region_edges = [[]]
+	var queue := PackedInt32Array()
+	queue.resize(_regions.size())
+	for origin in range(_regions.size()):
+		if _regions[origin] != 0:
+			continue
+		var region := _region_edges.size()
+		var edges: Array[Vector2i] = []
+		var head := 0
+		var tail := 1
+		queue[0] = origin
+		_regions[origin] = region
+		while head < tail:
+			var index := queue[head]
+			head += 1
+			var boundary := false
+			for neighbor in [index - 1, index + 1, index - _grid_size, index + _grid_size]:
+				if _regions[neighbor] < 0:
+					boundary = true
+				elif _regions[neighbor] == 0:
+					_regions[neighbor] = region
+					queue[tail] = neighbor
+					tail += 1
+			if boundary:
+				edges.append(Vector2i(index % _grid_size, index / _grid_size))
+		_region_edges.append(edges)
+	_update_region_groups()
+
+func _region_root(region: int) -> int:
+	while _region_groups[region] != region:
+		region = _region_groups[region]
+	return region
+
+func _update_region_groups() -> void:
+	_region_groups = PackedInt32Array(range(_region_edges.size()))
+	_door_regions.clear()
+	for origin: Vector2i in _door_open_cache:
+		if is_cell_blocked(origin) or _door_regions.has(origin):
+			continue
+		var cells: Array[Vector2i] = [origin]
+		var adjacent: Dictionary = {}
+		_door_regions[origin] = 0
+		var head := 0
+		while head < cells.size():
+			var cell := cells[head]
+			head += 1
+			for direction in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var neighbor: Vector2i = cell + direction
+				if neighbor.x < 1 or neighbor.y < 1 or neighbor.x >= _grid_size - 1 or neighbor.y >= _grid_size - 1:
+					continue
+				if _door_open_cache.has(neighbor):
+					if not _door_regions.has(neighbor):
+						_door_regions[neighbor] = 0
+						cells.append(neighbor)
+				else:
+					var region := _regions[neighbor.y * _grid_size + neighbor.x]
+					if region > 0:
+						adjacent[region] = true
+		var group := _region_groups.size()
+		_region_groups.append(group)
+		for region: int in adjacent:
+			_region_groups[_region_root(region)] = group
+		for cell in cells:
+			_door_regions[cell] = group
+	for region in range(_region_groups.size()):
+		_region_groups[region] = _region_root(region)
+
+func _cell_region(cell: Vector2i) -> int:
+	return _door_regions.get(cell, _regions[cell.y * _grid_size + cell.x])
+
+func _reachable_goal(start: Vector2i, goal: Vector2i) -> Vector2i:
+	var group := _region_groups[_cell_region(start)]
+	if group == _region_groups[_cell_region(goal)]:
+		return goal
+	var nearest := start
+	var distance := Vector2(start).distance_squared_to(Vector2(goal))
+	for region in range(1, _region_edges.size()):
+		if _region_groups[region] != group:
+			continue
+		for cell: Vector2i in _region_edges[region]:
+			var candidate_distance := Vector2(cell).distance_squared_to(Vector2(goal))
+			if candidate_distance < distance:
+				nearest = cell
+				distance = candidate_distance
+	for cell: Vector2i in _door_regions:
+		if _region_groups[_cell_region(cell)] == group:
+			var candidate_distance := Vector2(cell).distance_squared_to(Vector2(goal))
+			if candidate_distance < distance:
+				nearest = cell
+				distance = candidate_distance
+	return nearest
 
 func _block_river_cells(river_segments: Array) -> void:
 	for segment in river_segments:
@@ -111,7 +215,11 @@ func _nearest_free_cell(cell: Vector2i) -> Vector2i:
 func _astar(start_cell: Vector2i, goal_cell: Vector2i, start_world: Vector3) -> Array:
 	# A partial path leads to the reachable shore when the target is in water
 	# or on a disconnected bank. Never fall back to walking straight through it.
-	var cells := _search.get_id_path(start_cell, goal_cell, true)
+	goal_cell = _reachable_goal(start_cell, goal_cell)
+	var goal_world := grid_to_world(goal_cell)
+	if _is_path_clear(start_world, goal_world):
+		return [goal_world]
+	var cells := _search.get_id_path(start_cell, goal_cell, false)
 	var path: Array = []
 	for cell in cells:
 		path.append(grid_to_world(cell))
@@ -152,10 +260,15 @@ func _smooth_path(path: Array) -> Array:
 	var current_idx := 0
 	while current_idx < path.size() - 1:
 		var farthest := current_idx + 1
-		for j in range(path.size() - 1, current_idx + 1, -1):
-			if _is_path_clear(path[current_idx], path[j]):
-				farthest = j
+		var stride := 2
+		while farthest < path.size() - 1:
+			var candidate := mini(current_idx + stride, path.size() - 1)
+			if not _is_path_clear(path[current_idx], path[candidate]):
 				break
+			farthest = candidate
+			if stride >= 32:
+				break
+			stride *= 2
 		smoothed.append(path[farthest])
 		current_idx = farthest
 	return smoothed
@@ -167,7 +280,7 @@ func _is_path_clear(a: Vector3, b: Vector3) -> bool:
 	if dist < 0.01:
 		return true
 	var dir := diff.normalized()
-	var steps := int(ceil(dist / (_cell_size * 0.25)))
+	var steps := int(ceil(dist / (_cell_size * 0.5)))
 	var previous := world_to_grid(a)
 	for i in range(steps + 1):
 		var pos := a + dir * (dist * float(i) / float(steps))
@@ -226,8 +339,9 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 				var local_z := world_pos.z - blocker_pos.z
 				if abs(local_x) <= 1.5 and local_z >= -5.2 and local_z <= 10.0:
 					_door_open_cache[cell] = true
-	if _built:
+	if _built and previous != _door_open_cache:
 		for cell in previous:
 			_search.set_point_solid(cell, is_cell_blocked(cell))
 		for cell in _door_open_cache:
 			_search.set_point_solid(cell, is_cell_blocked(cell))
+		_update_region_groups()

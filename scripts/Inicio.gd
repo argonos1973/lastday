@@ -517,10 +517,19 @@ func _start_game() -> void:
 	_started = true
 	# A non-saved character starts a fresh game: drop the old save so it can
 	# never be restored over the new run or linger as a stale "Continuar" slot.
+	# Cinematic mode only stages a showcase — it must never touch the save.
 	var gsess := get_node_or_null("/root/GameSession")
 	var sgm := get_node_or_null("/root/SaveGameManager")
-	if gsess != null and sgm != null and gsess.selected_character_id != "saved" and sgm.has_save():
-		sgm.delete_save()
+	var is_cinematic := OS.get_cmdline_user_args().has("--cinematic")
+	if not is_cinematic and gsess != null and sgm != null:
+		# The server-save card belongs to multiplayer; picking it for a local run
+		# must not wipe the single-player save.
+		var cid := String(gsess.selected_character_id)
+		if cid != "saved" and cid != "saved_server" and sgm.has_save():
+			sgm.delete_save()
+		# Hosting with any other character starts a fresh server world.
+		if _mode == "host" and cid != "saved_server" and sgm.has_server_save():
+			sgm.delete_server_save()
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
 
 func _apply_char_selection() -> void:

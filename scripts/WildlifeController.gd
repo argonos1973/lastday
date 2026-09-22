@@ -29,6 +29,7 @@ var _noise_attract_timer := 0.0
 var _chase_stuck_time := 0.0
 var _reach_check_timer := 0.0
 var _chase_cooldown := 0.0
+var _retreat_target := Vector3.ZERO
 var _wait_near_timer := 0.0
 var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
@@ -43,6 +44,7 @@ var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
 var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
+var _flies_attached := false
 var _wolf_ai_debug_timer := 0.0
 var _resolve_player_timer := 0.0
 var health := 240.0
@@ -77,6 +79,7 @@ static var _shared_cylinder: CylinderMesh = null
 
 # LOD de IA: reduce frecuencia de actualización para animales lejanos
 var _ai_lod_timer := 0.0
+var _ai_lod_clock := 0.0
 const AI_LOD_NEAR := 40.0   # Distancia: IA completa cada frame
 const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
 const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
@@ -131,7 +134,7 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		_prey_flee_timer = 8.0
 		_chase_cooldown = 10.0
 		_spawn_blood_splatter()
-		_play_wolf_pain_sound()
+		_play_pain_sound()
 		if health <= 0.0:
 			_is_dead = true
 			_hit_flash_timer = 2.0
@@ -148,7 +151,7 @@ func take_damage(amount: float, from_knife: bool) -> void:
 	_prey_flee_timer = 8.0
 	_chase_cooldown = 10.0
 	_spawn_blood_splatter()
-	_play_wolf_pain_sound()
+	_play_pain_sound()
 	if health <= 0.0:
 		_is_dead = true
 		_hit_flash_timer = 2.0
@@ -190,6 +193,9 @@ func setup(kind: String, points: Array) -> void:
 	target_index = 1 if patrol_points.size() > 1 else 0
 	move_speed = 1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35)
 	_speed_jitter = randf_range(0.85, 1.18)
+	# Golden-ratio phase spread: sequential wildlife names produce consecutive
+	# hashes, so a plain mod clusters them into the same update frame.
+	_ai_lod_clock = fposmod(hash(name) * 0.618033988749895, 1.0)
 	_wander_timer = randf_range(0.0, 4.0)
 	_idle_cooldown = randf_range(4.0, 14.0)
 	if animal_type == "wolf":
@@ -270,11 +276,15 @@ func _process(delta: float) -> void:
 			_rot_timer = max(0.0, _rot_timer - delta)
 			if _rot_timer <= 0.0:
 				_remove_corpse()
+			else:
+				_update_corpse_flies()
 		return
 	if _is_dead:
 		_rot_timer = max(0.0, _rot_timer - delta)
 		if _rot_timer <= 0.0:
 			_remove_corpse()
+		else:
+			_update_corpse_flies()
 		return
 	if patrol_points.size() < 2:
 		return
@@ -283,8 +293,6 @@ func _process(delta: float) -> void:
 		if _resolve_player_timer >= 0.5:
 			_resolve_player_timer = 0.0
 			_resolve_player()
-	if _escape_if_trapped(delta):
-		return
 	# ---- LOD de IA por distancia al jugador ----
 	var dist_to_player := 0.0
 	if _player != null and is_instance_valid(_player):
@@ -303,14 +311,18 @@ func _process(delta: float) -> void:
 			lod_interval = 0.25
 		if lod_interval > 0.0:
 			_ai_lod_timer += delta
-			if _ai_lod_timer < lod_interval:
+			_ai_lod_clock += delta
+			if _ai_lod_clock < lod_interval:
 				return
+			_ai_lod_clock = fmod(_ai_lod_clock, lod_interval)
 			# Procesar con el tiempo acumulado, no solo el frame actual
 			delta = _ai_lod_timer
 			_ai_lod_timer = 0.0
 		else:
 			_ai_lod_timer = 0.0
 	# -------------------------------------------
+	if _escape_if_trapped(delta):
+		return
 	_update_stuck_timer(delta)
 	_update_water_depth(delta)
 	# Salida forzada de un atasco: tiene prioridad sobre la IA normal
@@ -451,6 +463,26 @@ func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 	_chase_target = null
 	_state = "patrol"
 
+func _retreat_from_player() -> Dictionary:
+	var away := global_position - _player.global_position
+	away.y = 0.0
+	if away.length_squared() < 0.0001:
+		away = Vector3.RIGHT
+	_retreat_target = _clamp_flee_goal(global_position, away, 30.0)
+	_state = "retreat"
+	_chase_target = null
+	_chase_cooldown = 10.0
+	_chase_stuck_time = 0.0
+	_reach_check_timer = 0.0
+	_noise_attract_timer = 0.0
+	_wait_near_timer = 0.0
+	_current_path.clear()
+	_path_index = 0
+	_path_recalc_timer = 0.0
+	_play_wolf_sound("growl")
+	_play_animation_by_name("trot")
+	return {"target": _retreat_target, "speed": move_speed * 2.0}
+
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
@@ -479,6 +511,16 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_chase_cooldown = 10.0
 			_play_animation_by_name("run")
 			return {"target": target, "speed": speed}
+	if _state == "retreat":
+		if _chase_cooldown > 0.0:
+			if global_position.distance_to(_retreat_target) < 1.6:
+				_route_waiting = true
+				_play_animation_by_name("idle")
+				return {"target": global_position, "speed": 0.0}
+			_play_animation_by_name("trot")
+			return {"target": _retreat_target, "speed": move_speed * 2.0}
+		_state = "patrol"
+		_path_recalc_timer = 0.0
 	# State: wait_near
 	if _state == "wait_near" and _wait_near_timer > 0.0:
 		_wait_near_timer -= delta
@@ -539,17 +581,13 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_wolf_ai_debug_timer = 5.0
 		if dist_to_player < 60.0 or (_state == "chase_player" and dist_to_player < 110.0):
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
-			if height_diff >= 1.8 and not _can_reach_player():
-				_state = "patrol"
-				_chase_target = null
-				_chase_cooldown = 8.0
-				_play_wolf_sound("growl")
-				var away := (global_position - _player.global_position).normalized()
-				away.y = 0.0
-				target = _clamp_flee_goal(global_position, away, 30.0)
-				speed = move_speed * 2.0
-				_play_animation_by_name("trot")
-				return {"target": target, "speed": speed}
+			_reach_check_timer -= delta
+			if _state != "chase_player" or _reach_check_timer <= 0.0 or height_diff >= 1.8:
+				_reach_check_timer = 1.0
+				if not _can_reach_player():
+					return _retreat_from_player()
+				# Keep tracking the player while the route searches along the bank.
+				_chase_stuck_time = 0.0
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
@@ -557,23 +595,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 1.5
 			else:
 				speed = move_speed * 4.0
-			if height_diff >= 1.8 and not _can_reach_player():
-				_chase_stuck_time += delta * 2.0
-				if _chase_stuck_time > 1.5:
-					_state = "patrol"
-					_chase_stuck_time = 0.0
-					_chase_target = null
-					_chase_cooldown = 10.0
-					_play_wolf_sound("growl")
-					var away := (global_position - _player.global_position).normalized()
-					away.y = 0.0
-					target = _clamp_flee_goal(global_position, away, 40.0)
-					speed = move_speed * 2.5
-					_play_animation_by_name("trot")
-				else:
-					target = _player.global_position
-					_play_animation_by_name("run")
-			elif flat_dist <= 4.0 and height_diff < 1.8:
+			if flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
 					_attack_timer = randf_range(5.0, 10.0)
@@ -610,22 +632,6 @@ func _wolf_ai(delta: float) -> Dictionary:
 			else:
 				_play_animation_by_name("run")
 				target = _player.global_position
-				_reach_check_timer -= delta
-				if _reach_check_timer <= 0.0:
-					_reach_check_timer = 1.0
-					if not _can_reach_player():
-						_chase_stuck_time += 3.0
-					else:
-						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
-				else:
-					if _stuck_time > 0.3:
-						_chase_stuck_time += delta
-					else:
-						_chase_stuck_time = max(0.0, _chase_stuck_time - delta * 0.5)
-				if _chase_stuck_time > 4.0:
-					_chase_stuck_time = 0.0
-					# Keep tracking the player while the route searches along the bank.
-					_path_recalc_timer = 0.0
 			var sep := _compute_wolf_separation(3.5)
 			if sep.length() > 0.01:
 				target += sep
@@ -1200,9 +1206,7 @@ func _find_nearest_meat_pickup() -> Node3D:
 		return null
 	var nearest: Node3D = null
 	var nearest_dist := 9999.0
-	var actions_dict: Dictionary = scene.get("world_actions_by_id") if scene.get("world_actions_by_id") != null else {}
-	for action_id in actions_dict.keys():
-		var action = actions_dict[action_id]
+	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
 		if not is_instance_valid(action) or not action is Node3D:
 			continue
 		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
@@ -1214,6 +1218,19 @@ func _find_nearest_meat_pickup() -> Node3D:
 			nearest_dist = d
 			nearest = action as Node3D
 	return nearest
+
+# Las moscas acuden al cabo de ~45 s muerto y desaparecen con el cadaver
+# (el enjambre es hijo de este nodo y se libera con el).
+func _update_corpse_flies() -> void:
+	if _flies_attached:
+		return
+	if _rot_timer > 255.0:
+		return
+	_flies_attached = true
+	var swarm := FlySwarm.new()
+	swarm.name = "FlySwarm"
+	swarm.position = Vector3(0.0, 0.35, 0.0)
+	add_child(swarm)
 
 func _remove_corpse() -> void:
 	remove_from_group("interactable")
@@ -1242,8 +1259,42 @@ func _spawn_blood_splatter() -> void:
 	var player_node := get_tree().current_scene.get_node_or_null("Player")
 	if player_node != null and player_node.has_method("_spawn_blood_splatter"):
 		player_node._spawn_blood_splatter(global_position + Vector3(0, 0.8, 0))
+		return
+	_spawn_local_blood_burst(global_position + Vector3(0, 0.8, 0))
 
-func _play_wolf_pain_sound() -> void:
+func _spawn_local_blood_burst(at_pos: Vector3) -> void:
+	var drops := GPUParticles3D.new()
+	drops.name = "BloodDrops"
+	drops.amount = 36
+	drops.lifetime = 0.7
+	drops.explosiveness = 1.0
+	drops.randomness = 0.9
+	drops.one_shot = true
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0, 1, 0)
+	mat.spread = 70.0
+	mat.initial_velocity_min = 3.0
+	mat.initial_velocity_max = 7.0
+	mat.gravity = Vector3(0, -18.0, 0)
+	mat.scale_min = 0.4
+	mat.scale_max = 1.0
+	mat.color = Color(0.45, 0.01, 0.01, 1.0)
+	drops.process_material = mat
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.06, 0.06)
+	var qmat := StandardMaterial3D.new()
+	qmat.albedo_color = Color(0.45, 0.01, 0.01, 1.0)
+	qmat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	qmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	qmat.vertex_color_use_as_albedo = true
+	quad.material = qmat
+	drops.draw_pass_1 = quad
+	get_tree().current_scene.add_child(drops)
+	drops.global_position = at_pos
+	drops.emitting = true
+	drops.finished.connect(drops.queue_free)
+
+func _play_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		return
@@ -1255,9 +1306,9 @@ func _play_wolf_pain_sound() -> void:
 		return
 	if _wolf_pain_player == null:
 		_wolf_pain_player = AudioStreamPlayer.new()
-		_wolf_pain_player.name = "WolfPainSound"
+		_wolf_pain_player.name = "PainSound"
 		add_child(_wolf_pain_player)
-	var path := "res://assets/audio/loboherido.wav"
+	var path := "res://assets/audio/loboherido.wav" if animal_type == "wolf" else "res://assets/audio/animal_herido.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
@@ -1340,6 +1391,11 @@ func _update_wolf_sounds(delta: float) -> void:
 func _play_wolf_sound(sound_type: String) -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
+		# Dedicated servers can't play audio: relay events to clients so each
+		# puppet plays the sound locally. Ambient growls are already generated
+		# per-client by the puppet's own _update_wolf_sounds.
+		if (sound_type == "howl" or sound_type == "attack") and _net.is_connected:
+			_net.animal_sound.rpc(name, sound_type)
 		return
 	if sound_type == "howl":
 		var player_node_h := get_tree().current_scene.get_node_or_null("Player")

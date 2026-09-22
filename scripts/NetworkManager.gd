@@ -41,10 +41,11 @@ func _load_or_generate_client_id() -> void:
 		f2.store_string(client_id)
 
 func _ready() -> void:
-	# Auto-start dedicated server if --server argument is passed
+	# Auto-start dedicated server if --server argument is passed or this is a dedicated-server export
 	var args := OS.get_cmdline_args()
 	var user_args := OS.get_cmdline_user_args()
-	if args.has("--server") or user_args.has("--server"):
+	var dedicated_build := OS.has_feature("dedicated_server")
+	if args.has("--server") or user_args.has("--server") or dedicated_build:
 		is_dedicated_server = true
 	_load_or_generate_client_id()
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -52,7 +53,7 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
-	if args.has("--server") or user_args.has("--server"):
+	if args.has("--server") or user_args.has("--server") or dedicated_build:
 		pass # print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
 
@@ -348,17 +349,17 @@ func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = 
 		scene.call("_apply_net_spawn_pos", pos)
 
 @rpc("any_peer", "reliable")
-func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
-		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
+		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
 
 @rpc("authority", "reliable")
-func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
-		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
+		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
 
 # Client sends final position to server reliably before quitting
 @rpc("any_peer", "reliable")
@@ -410,11 +411,42 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 # animal_id -> { "type": String, "pos": Vector3, "rot": float, "anim": String, "dead": bool }
 var animals: Dictionary = {}
 
+var _animals_gen := -1
+var _animals_seen := {}
+
 @rpc("authority", "unreliable_ordered")
 func sync_animals(data: Dictionary) -> void:
-	# Merge chunks instead of replacing (server may split into multiple packets)
+	# Chunks carry "_gen"/"_total" so a broadcast split across packets is only
+	# pruned once every chunk arrived. Without this, animals deleted on the
+	# server lingered forever client-side.
+	var gen := int(data.get("_gen", -1))
+	var total := int(data.get("_total", -1))
+	if gen < 0:
+		# Legacy chunk without batch info: plain merge.
+		for key in data.keys():
+			animals[key] = data[key]
+		return
+	if gen != _animals_gen:
+		_animals_gen = gen
+		_animals_seen = {}
 	for key in data.keys():
+		if key == "_gen" or key == "_total":
+			continue
 		animals[key] = data[key]
+		_animals_seen[key] = true
+	if total >= 0 and _animals_seen.size() >= total:
+		# Batch complete: drop animals the server stopped sending.
+		for key in animals.keys():
+			if not _animals_seen.has(key):
+				animals.erase(key)
+
+# Server tells specific client to apply damage
+# Server relays wolf sound events (howl, attack) so client puppets play them.
+@rpc("authority", "unreliable")
+func animal_sound(animal_name: String, sound_type: String) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_animal_sound"):
+		scene._net_animal_sound(animal_name, sound_type)
 
 # Server tells specific client to apply damage
 @rpc("authority", "reliable")
@@ -632,6 +664,10 @@ func sync_rowboat(state: Dictionary) -> void:
 		scene.lake_rowboat.apply_network_state(state)
 
 func get_my_id() -> int:
+	if multiplayer == null or not multiplayer.has_multiplayer_peer():
+		return 1
+	if peer != null and peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return 1
 	return multiplayer.get_unique_id()
 
 # Client tells server it fired the rifle (server relays to all other clients)

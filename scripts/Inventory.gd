@@ -18,7 +18,9 @@ func add_item(item) -> bool:
 		return false
 	for existing in items:
 		if existing.can_stack_with(item):
-			existing.quantity += item.quantity
+			var total: int = existing.quantity + item.quantity
+			existing.durability = (existing.durability * existing.quantity + item.durability * item.quantity) / total
+			existing.quantity = total
 			# Use the higher spoilage when stacking perishable items
 			if existing.is_perishable() and item.spoilage > existing.spoilage:
 				existing.spoilage = item.spoilage
@@ -37,7 +39,9 @@ func merge_stacks() -> void:
 		var j := i + 1
 		while j < items.size():
 			if items[i].can_stack_with(items[j]):
-				items[i].quantity += items[j].quantity
+				var total: int = items[i].quantity + items[j].quantity
+				items[i].durability = (items[i].durability * items[i].quantity + items[j].durability * items[j].quantity) / total
+				items[i].quantity = total
 				# Use the higher spoilage when merging perishable stacks
 				if items[i].is_perishable() and items[j].spoilage > items[i].spoilage:
 					items[i].spoilage = items[j].spoilage

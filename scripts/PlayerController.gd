@@ -702,6 +702,16 @@ func setup_as_puppet() -> void:
 		var gs := get_node_or_null("/root/GameState")
 		if gs != null:
 			puppet_model_path = gs.get_selected_model_path()
+	# The puppet needs the torch light so puppet_set_torch can show it lit
+	# (the same light a local player gets in _create_body).
+	torch_light = OmniLight3D.new()
+	torch_light.name = "TorchLight"
+	torch_light.visible = false
+	torch_light.light_energy = 5.0
+	torch_light.omni_range = 22.0
+	torch_light.omni_attenuation = 0.8
+	torch_light.light_color = Color(1.0, 0.7, 0.3)
+	torch_light.shadow_enabled = false
 	_create_third_person_model()
 	if third_person_model != null:
 		third_person_model.visible = true
@@ -1014,8 +1024,22 @@ func puppet_set_torch(lit: bool) -> void:
 func puppet_set_flashlight(on: bool) -> void:
 	if not is_puppet:
 		return
-	if flashlight != null:
-		flashlight.visible = on
+	if flashlight == null:
+		# Local players mount the spotlight on the camera; puppets have no
+		# camera, so attach it to the chest of the model facing forward.
+		flashlight = SpotLight3D.new()
+		flashlight.name = "Flashlight"
+		flashlight.visible = false
+		flashlight.light_energy = 3.0
+		flashlight.spot_range = 18.0
+		flashlight.spot_angle = 35.0
+		var host: Node3D = third_person_model if third_person_model != null else self
+		host.add_child(flashlight)
+		# The model is rotated 180 deg on Y (line ~8538), so flip the spot to
+		# face the character's forward direction, with the camera's downtilt.
+		flashlight.position = Vector3(0.0, 1.35, 0.0)
+		flashlight.rotation_degrees = Vector3(-8.0, 180.0, 0.0)
+	flashlight.visible = on
 
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
@@ -1057,6 +1081,12 @@ func _update_puppet_held_item(item_name: String) -> void:
 		return
 	# Always clean up rifle bone attachment when switching items
 	_clear_rifle_attachment()
+	# The torch lives in the torch hand socket, not the item root — clear it
+	# when the remote player swaps to anything else.
+	if item_name != "Antorcha" and _torch_hand_root != null and is_instance_valid(_torch_hand_root) and _torch_hand_root.get_child_count() > 0:
+		_clear_torch_attachment()
+		if torch_light != null:
+			torch_light.visible = false
 	# Clear current held item
 	for child in third_person_hand_item_root.get_children():
 		third_person_hand_item_root.remove_child(child)
@@ -1065,6 +1095,11 @@ func _update_puppet_held_item(item_name: String) -> void:
 		return
 	# Build visual based on item name
 	match item_name:
+		"Antorcha":
+			# The torch hangs from the torch hand socket; puppet_set_torch
+			# toggles its light according to the remote player's state.
+			_build_third_person_torch()
+			return
 		"Cuchillo":
 			_build_third_person_knife()
 		"Rifle francotirador":
@@ -1077,6 +1112,14 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
 		"Pico":
 			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4))
+		"Linterna":
+			_build_third_person_flashlight()
+		"Caña de pescar":
+			_build_third_person_fishing_rod()
+		"Palo afilado", "Lanza":
+			_build_third_person_resource("Palo afilado")
+		"Cerillas":
+			_add_held_box(third_person_hand_item_root, "HeldMatches", Vector3(0.12, 0.05, 0.075), Vector3.ZERO, Color(0.38, 0.16, 0.07), Vector3.ZERO)
 		"Botella de agua":
 			_build_third_person_plastic_bottle()
 		"Botella de agua llena":
@@ -4895,12 +4938,51 @@ func _select_held_item(index: int) -> void:
 	_held_item_external = false
 	_sync_held_item()
 
-func restore_held_item(item_name: String, index: int) -> void:
+func restore_held_item(item_name: String, index: int, item_data: Dictionary = {}) -> void:
 	clear_hands()
-	if inventory == null or item_name.is_empty() or index < 0 or index >= inventory.items.size():
+	if inventory == null or item_name.is_empty():
 		return
-	if str(inventory.items[index].item_name) == item_name:
+	if index >= 0 and index < inventory.items.size() and str(inventory.items[index].item_name) == item_name:
 		_select_held_item(index)
+		return
+	# The saved index can be stale after migrations or stack merges; fall back
+	# to a name match so a valid held item is not dropped on load.
+	for i in range(inventory.items.size()):
+		var candidate = inventory.items[i]
+		if candidate != null and str(candidate.item_name) == item_name:
+			_select_held_item(i)
+			return
+	# Back equipment held in the hands is kept outside the inventory, so saves
+	# carry the item payload instead of an index. Rebuild that single external
+	# unit — the same state use_back_item() produces — instead of losing it.
+	var item = ItemScript.from_dict(item_data) if not item_data.is_empty() else null
+	if item == null:
+		item = _legacy_held_back_item(item_name)
+	if item != null and _is_back_only_item(item):
+		item.quantity = 1
+		_held_selection_revision += 1
+		held_index = -1
+		_held_item_reference = item
+		_held_item_external = true
+		_sync_held_item()
+
+func _legacy_held_back_item(item_name: String):
+	# Older saves stored only the held name, never held_item_data. Rebuild the
+	# long equipment that can legitimately sit outside the inventory.
+	var back_type := ""
+	var weight := 1.0
+	if item_name.findn("rifle") >= 0 or item_name.findn("fusil") >= 0:
+		back_type = "weapon_rifle"
+		weight = 3.5
+	elif item_name.findn("caña") >= 0 or item_name.findn("cana") >= 0:
+		back_type = "tool_fishing"
+		weight = 1.2
+	elif item_name == "Palo afilado":
+		back_type = "tool_spear"
+		weight = 0.8
+	if back_type.is_empty():
+		return null
+	return ItemScript.create(item_name, back_type, weight, 1, 0.0)
 
 func equip_item_by_name(item_name: String) -> void:
 	if inventory == null:
@@ -9582,16 +9664,16 @@ func _melee_attack() -> void:
 	if held != null:
 		match held.item_type:
 			"weapon":
-				base_damage = 25.0
+				base_damage = 60.0
 				energy_cost = 4.0
 				is_knife = true
 			"tool_axe":
-				base_damage = 35.0
+				base_damage = 65.0
 				energy_cost = 10.0
 				attack_range = 3.5
 			"tool":
 				if held.item_name == "Hacha":
-					base_damage = 35.0
+					base_damage = 65.0
 					energy_cost = 10.0
 					attack_range = 3.5
 				elif held.item_name == "Pico":

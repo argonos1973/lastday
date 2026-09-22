@@ -40,6 +40,10 @@ func _notification(what: int) -> void:
 func _update_interaction_index() -> void:
 	if not is_inside_tree():
 		return
+	if action_type == "wolf_meat_raw":
+		add_to_group("wolf_meat_pickups")
+	elif is_in_group("wolf_meat_pickups"):
+		remove_from_group("wolf_meat_pickups")
 	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]
 	var pos := global_position
 	var cell := Vector2i(floori(pos.x / INTERACTION_CELL_SIZE), floori(pos.z / INTERACTION_CELL_SIZE))
@@ -136,6 +140,9 @@ func mark_depleted() -> void:
 	collision_mask = 0
 	remove_from_group("interactable")
 	_clear_visual_children()
+	var swarm := get_node_or_null("FlySwarm")
+	if swarm != null:
+		swarm.queue_free()
 	# Auto-register in Main's depleted list so it persists across save/load
 	var main := get_tree().current_scene
 	if main != null and main.get("_depleted_action_ids") != null:
@@ -240,13 +247,19 @@ func get_interaction_text(_player = null) -> String:
 		"light_campfire":
 			return "Encender fogata - [F] (cerillas o 2 palos)"
 		"cook":
+			if get_meta("cooking", false):
+				return ""
 			if _player != null and _player.has_method("get_held_item"):
 				var held = _player.get_held_item()
 				if held != null and held.item_name == "Carne ensartada":
 					return "Cocinar carne ensartada - [F]"
 				if held != null and held.item_name == "Pez ensartado":
 					return "Cocinar pez ensartado - [F]"
-			return ""
+				var inv = _player.get("inventory")
+				if inv != null and inv.has_method("has_item_name"):
+					if inv.has_item_name("Carne ensartada") or inv.has_item_name("Pez ensartado"):
+						return "Cocinar - [F] (pondras la carne ensartada en la mano)"
+			return "Fogata encendida - lleva carne o pez ensartado en la mano"
 		"shelter":
 			return "Desmontar refugio - [F] (recuperar 11 palos)"
 	return "%s - [F]" % display_name

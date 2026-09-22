@@ -28,7 +28,7 @@ var overdrink_count := 0
 var hunger_decay := 0.12
 var thirst_decay := 0.22
 var energy_decay := 0.06
-var sleep_decay := 0.15
+var sleep_decay := 0.08
 var cold_decay := 0.012
 
 func add_hot_food(charges: int) -> void:
@@ -84,7 +84,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if body_temperature > 37.5:
 		sleep_mult *= 1.4
 	if night:
-		sleep_mult *= 2.0
+		sleep_mult *= 3.0
 	sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult * sleep_factor)
 
 	# Wet clothes dry faster when it's warm, slower when cold
@@ -173,8 +173,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		if sick_timer <= 0.0:
 			sick = false
 		health = max(0.0, health - 1.0 * delta)
-	# Passive slow health regen when not suffering any critical condition
-	if not sick and hunger > 0.0 and thirst > 0.0 and sleep > 50.0 and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
+	# Passive slow health regen when not suffering any critical condition.
+	# health > 0.0: regenerating before the death check below would resurrect
+	# a player killed by external damage (wolf hits) every tick, making them
+	# immortal at 0 HP while fed and rested.
+	if health > 0.0 and not sick and hunger > 0.0 and thirst > 0.0 and sleep > 50.0 and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2

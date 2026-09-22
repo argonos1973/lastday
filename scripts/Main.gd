@@ -41,10 +41,12 @@ var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
 var nav = null
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
+var _server_saved_players: Dictionary = {}  # client_id -> saved player data (server save)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
 var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
+var _animal_broadcast_gen := 0
 var _cached_wildlife: Array = []
 var _wildlife_cache_timer := 0.0
 var _water_night_timer := 0.0
@@ -1612,11 +1614,100 @@ func _build_save_data() -> Dictionary:
 func _save_world_change_silent() -> void:
 	if game_over:
 		return
+	if net != null and net.is_connected:
+		# Connected modes never touch the single-player save; the host/dedicated
+		# persists everything into the server save instead.
+		if net.is_host:
+			_save_server_world()
+		return
 	var sgm = get_node_or_null("/root/SaveGameManager")
 	if sgm != null and player != null and is_instance_valid(player):
 		var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
 		if SaveGameHooksScript != null:
 			sgm.save_game(SaveGameHooksScript.collect_player_data(player), SaveGameHooksScript.collect_world_data(self))
+
+const _SERVER_PLAYER_FIELDS := {
+	"inventory": "saved_inventory",
+	"health": "saved_health",
+	"hunger": "saved_hunger",
+	"thirst": "saved_thirst",
+	"clothing": "saved_clothing",
+	"backpack": "saved_backpack",
+	"held_item": "saved_held_item",
+	"held_idx": "saved_held_idx",
+	"sleeping": "saved_sleeping",
+	"sitting": "saved_sitting",
+	"prone": "saved_prone",
+	"crouching": "saved_crouching",
+	"rot": "saved_rot",
+	"extra": "saved_extra",
+}
+
+func _save_server_world() -> void:
+	var sgm = get_node_or_null("/root/SaveGameManager")
+	if sgm == null:
+		return
+	var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
+	if SaveGameHooksScript == null:
+		return
+	var players := _collect_server_players()
+	# Keep saved players that never reconnected so they survive further restarts
+	for cid in _server_saved_players.keys():
+		if not players.has(cid):
+			players[cid] = _server_saved_players[cid]
+	sgm.save_server_game(SaveGameHooksScript.collect_world_data(self), players)
+
+func _collect_server_players() -> Dictionary:
+	var out := {}
+	if net == null or not net.is_host:
+		return out
+	var proxies: Array = []
+	proxies.append_array(server_proxies.values())
+	proxies.append_array(proxy_by_client_id.values())
+	var seen := {}
+	for proxy in proxies:
+		if proxy == null or not is_instance_valid(proxy):
+			continue
+		var cid: String = proxy.get_meta("client_id", "")
+		if cid.is_empty():
+			var pid: int = int(proxy.get_meta("peer_id", -1))
+			if pid > 0 and net.players.has(pid):
+				cid = str(net.players[pid].get("client_id", ""))
+		if cid.is_empty() or seen.has(cid):
+			continue
+		seen[cid] = true
+		var pdata := {}
+		for key in _SERVER_PLAYER_FIELDS.keys():
+			var meta_name: String = _SERVER_PLAYER_FIELDS[key]
+			if proxy.has_meta(meta_name):
+				pdata[key] = proxy.get_meta(meta_name)
+		var sp: Vector3 = proxy.get_meta("saved_pos", proxy.global_position)
+		pdata["pos"] = [sp.x, sp.y, sp.z]
+		pdata["dead"] = proxy.get_meta("proxy_dead", false)
+		# Appearance + name from the live player table (used by the start-screen preview)
+		var pid2: int = int(proxy.get_meta("peer_id", -1))
+		if pid2 <= 0 or not net.players.has(pid2):
+			# Fallback: find the players entry by client_id
+			for any_pid in net.players.keys():
+				if str(net.players[any_pid].get("client_id", "")) == cid:
+					pid2 = any_pid
+					break
+		if pid2 > 0 and net.players.has(pid2):
+			var npd: Dictionary = net.players[pid2]
+			pdata["char_name"] = str(npd.get("char_name", npd.get("name", "")))
+			for ck in ["top_color", "bottom_color", "shoes_color", "hair_color", "skin_color"]:
+				if npd.get(ck) is Color:
+					pdata[ck] = SaveGameHooks._color_to_str(npd[ck])
+			for fk in ["top_camo", "bottom_camo"]:
+				if npd.has(fk):
+					pdata[fk] = npd[fk]
+		out[cid] = pdata
+	# Hosting player: store the full player payload under its own client_id
+	if not net.is_dedicated_server and player != null and is_instance_valid(player):
+		var my_cid := str(net.client_id)
+		if not my_cid.is_empty():
+			out[my_cid] = SaveGameHooks.collect_player_data(player)
+	return out
 
 func sleep_at_shelter() -> void:
 	player.stats.rest(6.0)
@@ -1731,8 +1822,7 @@ func _create_day_night() -> void:
 func _create_player() -> void:
 	player = PlayerControllerScript.new()
 	player.name = "Player"
-	# Spawn on the village road, between the abandoned houses.
-	player.position = Vector3(9.0, _get_exact_ground_y(9.0, 6.0) + 0.5, 6.0)
+	player.position = _get_random_spawn_pos()
 	add_child(player)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
@@ -1807,12 +1897,12 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	if _scene_quitting: return
 	_send_world_state_to_client(peer_id)
 
-func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
 	if net != null and net.peer != null:
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
-		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching)
+		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
 		# Also sync world state (open doors, depleted resources, etc.) to reconnecting client
 		_send_world_state_to_client(peer_id)
 		# Clear reconnecting flag so server accepts position updates from this client
@@ -1893,7 +1983,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				server_proxies[peer_id].set_meta("client_id", cid)
 			# Send spawn position with restored inventory (not sitting/prone/crouching since player died)
 			var spawn_pos: Vector3 = _get_random_spawn_pos()
-			call_deferred("_delayed_send_reconnect_state", peer_id, spawn_pos, dead_inv, dead_hp, dead_hunger, dead_thirst, dead_clothing, dead_backpack, dead_held, dead_held_idx, false, false, dead_rot, false, false)
+			call_deferred("_delayed_send_reconnect_state", peer_id, spawn_pos, dead_inv, dead_hp, dead_hunger, dead_thirst, dead_clothing, dead_backpack, dead_held, dead_held_idx, false, false, dead_rot, false, false, existing.get_meta("saved_extra", {}))
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):
@@ -1923,13 +2013,38 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_prone: bool = existing.get_meta("saved_prone", false)
 			var saved_crouching: bool = existing.get_meta("saved_crouching", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching, existing.get_meta("saved_extra", {}))
 	else:
 		# No existing proxy — set client_id on the freshly created proxy if it exists
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("client_id", cid)
 		else:
 			pending_client_ids[peer_id] = cid
+		# Restore this client from the server save if they played before a restart
+		var saved: Dictionary = _server_saved_players.get(cid, {})
+		if not saved.is_empty() and server_proxies.has(peer_id):
+			_server_saved_players.erase(cid)
+			var proxy: Node3D = server_proxies[peer_id]
+			for key in _SERVER_PLAYER_FIELDS.keys():
+				if saved.has(key):
+					proxy.set_meta(_SERVER_PLAYER_FIELDS[key], saved[key])
+			var sp = saved.get("pos", null)
+			if sp is Array and sp.size() >= 3:
+				proxy.global_position = Vector3(float(sp[0]), float(sp[1]), float(sp[2]))
+			proxy.set_meta("saved_pos", proxy.global_position)
+			var saved_inv: Array = saved.get("inventory", [])
+			var saved_clothing: String = str(saved.get("clothing", ""))
+			var saved_backpack: String = str(saved.get("backpack", ""))
+			var saved_held: String = str(saved.get("held_item", ""))
+			var saved_held_idx: int = int(saved.get("held_idx", 0))
+			var saved_rot: float = float(saved.get("rot", 0.0))
+			var saved_extra: Dictionary = saved.get("extra", {})
+			if bool(saved.get("dead", false)):
+				# Player was dead when the server stopped: respawn fresh, keep inventory
+				call_deferred("_delayed_send_reconnect_state", peer_id, _get_random_spawn_pos(), saved_inv, 100.0, float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, false, false, saved_rot, false, false, saved_extra)
+			else:
+				call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
+			return
 		# Send spawn position to new player too (so client knows when to start sending position)
 		call_deferred("_delayed_send_new_player_state", peer_id)
 
@@ -2008,7 +2123,7 @@ func _send_character_appearance() -> void:
 	net.sync_character_appearance.rpc(char_name_str, gs.selected_top_color, gs.selected_bottom_color, gs.selected_shoes_color, gs.selected_hair_color, gs.selected_skin_color, top_camo, bottom_camo)
 
 # Server: store player inventory/stats/equipment on their proxy
-func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+func _store_player_inventory(peer_id: int, items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	var proxy: Node3D = null
 	if server_proxies.has(peer_id):
 		proxy = server_proxies[peer_id]
@@ -2034,18 +2149,20 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 	proxy.set_meta("saved_crouching", crouching)
 	proxy.set_meta("saved_rot", rot)
 	proxy.set_meta("saved_pos", proxy.global_position)
+	if not extra.is_empty():
+		proxy.set_meta("saved_extra", extra)
 
 func _apply_pending_restore() -> void:
 	if _pending_restore_data.is_empty():
 		return
 	var d = _pending_restore_data
 	_pending_restore_data = []
-	_apply_restored_inventory(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12])
+	_apply_restored_inventory(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13] if d.size() > 13 else {})
 
 # Client: restore inventory/stats/equipment from server on reconnect
-func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false) -> void:
+func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	if player == null:
-		_pending_restore_data = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching]
+		_pending_restore_data = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra]
 		return
 	var ItemScript = load("res://scripts/Item.gd")
 	if player.has_node("Inventory"):
@@ -2060,6 +2177,10 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.stats.health = health
 		player.stats.hunger = hunger
 		player.stats.thirst = thirst
+		# Extended stats (sleep, energy, temperature, sickness, survival_seconds...)
+		var stats_extra: Dictionary = extra.get("stats_extra", {})
+		for sk in stats_extra.keys():
+			player.stats.set(sk, stats_extra[sk])
 		player.stats.changed.emit()
 	# Restore rotation
 	player.rotation.y = rot
@@ -2119,7 +2240,27 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 						_u = 0.08
 					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
 				player.equip_clothing(slot_name, _load_color)
-	player.restore_held_item(held_item, held_idx)
+	# Back-slotted equipment (rifle, rod, spear) lives outside the inventory
+	var back_items = extra.get("back_items", [])
+	if back_items is Array and "_stored_back_items" in player:
+		for slot in range(mini(back_items.size(), player._stored_back_items.size())):
+			var entry = back_items[slot]
+			if entry is Dictionary and not str(entry.get("name", "")).is_empty():
+				player._stored_back_items[slot] = entry.duplicate(true)
+				if player.has_method("_build_stored_back_visual"):
+					player._build_stored_back_visual(slot)
+			else:
+				player._stored_back_items[slot] = null
+	# Rifle magazine/reserve
+	var ammo: Dictionary = extra.get("rifle_ammo", {})
+	if not ammo.is_empty():
+		player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
+		player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
+		player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
+	var held_payload = extra.get("held_item_data", {})
+	if not held_payload is Dictionary:
+		held_payload = {}
+	player.restore_held_item(held_item, held_idx, held_payload)
 	# Restore sitting/prone/crouching state AFTER equipment so animations are correct
 	if prone and not player.is_prone:
 		player.is_prone = true
@@ -2284,11 +2425,22 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) ->
 					net.animal_hit.rpc_id(pid, real_name)
 
 func _net_animal_hit(animal_name: String) -> void:
-	# Find the puppet for this animal and play pain sound
+	# Find the puppet for this animal and play hit feedback
 	var puppet_name := "Puppet_" + animal_name
 	var puppet := get_node_or_null(puppet_name)
-	if puppet != null and puppet.has_method("_play_wolf_pain_sound"):
-		puppet._play_wolf_pain_sound()
+	if puppet == null:
+		return
+	if puppet.has_method("_spawn_hit_feedback"):
+		puppet._spawn_hit_feedback() # birds: blood + squawk
+	if puppet.has_method("_play_pain_sound"):
+		puppet._play_pain_sound()
+	if puppet.has_method("_spawn_blood_splatter"):
+		puppet._spawn_blood_splatter()
+
+func _net_animal_sound(animal_name: String, sound_type: String) -> void:
+	var puppet := get_node_or_null("Puppet_" + animal_name)
+	if puppet != null and puppet.has_method("_play_wolf_sound"):
+		puppet._play_wolf_sound(sound_type)
 
 func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = false) -> void:
 	if net == null or not net.is_host:
@@ -2825,7 +2977,28 @@ func _sync_local_player_inventory() -> void:
 	var prone: bool = player.is_prone
 	var crouching: bool = player.is_crouching
 	var rot: float = player.rotation.y
-	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching)
+	# Extended state that has no fixed RPC argument: back slots, externally-held
+	# equipment payload, rifle ammo and the rest of the survival stats.
+	var extra := {}
+	if "_stored_back_items" in player:
+		var back_items: Array = []
+		for entry in player._stored_back_items:
+			back_items.append(entry.duplicate(true) if entry is Dictionary else {})
+		extra["back_items"] = back_items
+	if "_held_item_external" in player and player._held_item_external and actual_held != null:
+		extra["held_item_data"] = actual_held.to_dict()
+	extra["rifle_ammo"] = {
+		"initialized": player._rifle_ammo_initialized,
+		"magazine": player._rifle_magazine,
+		"reserve": player._rifle_reserve_ammo,
+	}
+	if player.stats != null and player.stats.has_method("to_dict"):
+		var stats_extra: Dictionary = player.stats.to_dict()
+		stats_extra.erase("health")
+		stats_extra.erase("hunger")
+		stats_extra.erase("thirst")
+		extra["stats_extra"] = stats_extra
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching, extra)
 
 func _update_remote_players() -> void:
 	if net == null:
@@ -2950,20 +3123,24 @@ func _broadcast_animals() -> void:
 	_animal_debug_timer += 1
 	if _animal_debug_timer >= 50:
 		_animal_debug_timer = 0
-	# Split into chunks to stay under MTU
+	# Split into chunks that stay under the UDP MTU (~1392 B). Each entry is
+	# roughly 110-140 bytes serialized; cap the serialized size, not the count,
+	# so big wildlife populations don't produce oversized unreliable packets.
+	# "_gen"/"_total" let the client drop animals the server stopped sending.
+	_animal_broadcast_gen += 1
+	var chunk := {}
 	var keys := data.keys()
-	var half := int(ceil(float(keys.size()) / 2.0))
-	var chunk1 := {}
-	var chunk2 := {}
 	for i in range(keys.size()):
-		if i < half:
-			chunk1[keys[i]] = data[keys[i]]
-		else:
-			chunk2[keys[i]] = data[keys[i]]
-	if not chunk1.is_empty():
-		net.sync_animals.rpc(chunk1)
-	if not chunk2.is_empty():
-		net.sync_animals.rpc(chunk2)
+		chunk[keys[i]] = data[keys[i]]
+		if var_to_bytes(chunk).size() > 900:
+			chunk["_gen"] = _animal_broadcast_gen
+			chunk["_total"] = keys.size()
+			net.sync_animals.rpc(chunk)
+			chunk = {}
+	if not chunk.is_empty() or keys.is_empty():
+		chunk["_gen"] = _animal_broadcast_gen
+		chunk["_total"] = keys.size()
+		net.sync_animals.rpc(chunk)
 
 # Client: spawn/update visual-only puppet animals from server data
 func _update_puppet_animals() -> void:
@@ -3475,7 +3652,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"tool_pickaxe":
 			return [SURVIVAL_TOOL_MODELS["pickaxe"]]
 		"tool_spear":
-			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+			return ["res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb", "res://assets/models/props/wood_stick.glb"]
 		"tool_fishing":
 			return ["res://assets/models/props/cana_de_pescar.glb"]
 		"tool_torch":
@@ -5533,6 +5710,11 @@ func _create_wildlife() -> void:
 	for bs in bird_start_zones:
 		_bird_flock_counter += 1
 		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bs, 40, 150.0, 300.0, bird_always_allowed)
+		# Primer destino en el lado opuesto del mapa: la bandada cruza el centro en su primer vuelo
+		var far := Vector3(-bs.x, 0.0, -bs.z) + Vector3(_world_rng.randf_range(-60.0, 60.0), 0.0, _world_rng.randf_range(-60.0, 60.0))
+		far.x = clampf(far.x, -440.0, 440.0)
+		far.z = clampf(far.z, -440.0, 440.0)
+		bird_route.push_front(far)
 		var flock_size := 2
 		for i in range(flock_size):
 			var offset := Vector3(_world_rng.randf_range(-8, 8), 0.0, _world_rng.randf_range(-8, 8))
@@ -5599,6 +5781,8 @@ func _check_wildlife_respawn() -> void:
 		var bird_always_allowed := func(_pos: Vector3) -> bool: return true
 		var bird_start := Vector3(randf_range(-350, 350), 0.0, randf_range(-350, 350))
 		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bird_start, 30, 100.0, 200.0, bird_always_allowed)
+		var far := Vector3(randf_range(-440.0, 440.0), 0.0, randf_range(-440.0, 440.0))
+		bird_route.push_front(far)
 		var flock_size := 1
 		_bird_flock_counter += 1
 		for i in range(flock_size):
@@ -6887,6 +7071,14 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("La fogata no esta encendida.")
 				return
 			var held_c = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if (held_c == null or (held_c.item_name != "Carne ensartada" and held_c.item_name != "Pez ensartado")) and actor.inventory != null and actor.has_method("_select_held_item"):
+				# Put the skewer in hand automatically so cooking works with [F]
+				for _ci in range(actor.inventory.items.size()):
+					var _it = actor.inventory.items[_ci]
+					if _it != null and (str(_it.item_name) == "Carne ensartada" or str(_it.item_name) == "Pez ensartado"):
+						actor._select_held_item(_ci)
+						held_c = actor.get_held_item()
+						break
 			if held_c == null or (held_c.item_name != "Carne ensartada" and held_c.item_name != "Pez ensartado"):
 				actor.notice.emit("Necesitas tener carne o pez ensartado en la mano para cocinar.")
 				return
@@ -6895,11 +7087,13 @@ func _execute_world_action(action, actor) -> void:
 			# Make sure the meat/fish on stick is visible in hand during cooking
 			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
+			action.set_meta("cooking", true)
 			_play_actor_action(actor, "cook", 10.0)
 			actor.notice.emit("Cocinando en la fogata...")
 			if hud != null:
 				hud.show_countdown("Cocinando", 10.0)
 			await get_tree().create_timer(10.0).timeout
+			action.set_meta("cooking", false)
 			if _scene_quitting: return
 			# Revalidar: el jugador sigue teniendo el item ensartado en la mano?
 			var held_after = actor.get_held_item() if actor.has_method("get_held_item") else null
@@ -7614,19 +7808,10 @@ func _net_campfire_built(cf_id: String, pos: Vector3) -> void:
 	_spawn_player_campfire_with_id(cf_id, pos)
 
 func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
-	var stick_path := "res://assets/models/props/wood_stick.glb"
-	# Two vertical support poles at the back end, left and right
-	_try_instance_external_scene([stick_path], "PlayerShelter_%s_SupportA" % sh_id, pos + Vector3(-0.9, 0.3, -2.0), Vector3(1.0, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
-	_try_instance_external_scene([stick_path], "PlayerShelter_%s_SupportB" % sh_id, pos + Vector3(0.9, 0.3, -2.0), Vector3(1.0, 0.4, 0.4), Vector3(0, 0, 90), false, 0.0)
-	# 9 long thin roof sticks leaning from front to back
-	var offsets := [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
-	for i in range(9):
-		_try_instance_external_scene([stick_path], "PlayerShelter_%s_Roof_%d" % [sh_id, i], pos + Vector3(offsets[i], 0.4, 0.8), Vector3(1.5, 0.4, 0.4), Vector3(-50, 0, 90), false, 0.0)
-	# Camouflage net draped over the roof (fitted to the real stick geometry)
-	_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "PlayerShelter_%s_Net" % sh_id, pos + Vector3(0.0, 1.0, 0.0), Vector3(1.0, 1.0, 1.0), Vector3(0, 0, 0), false, 0.0)
-	_fit_shelter_net(sh_id)
-	# Apply camouflage material
-	_apply_shelter_camouflage(sh_id)
+	if world_actions_by_id.has(sh_id):
+		return
+	# One model keeps the frame, covering and bedding together on load/sync/removal.
+	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE, Vector3.ZERO, false, 0.0)
 	# Register as world action so it syncs
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
@@ -8439,6 +8624,20 @@ func _apply_ground_craft_state(action_id: String, quantity: int, durability: flo
 				_dropped_items.remove_at(index)
 	return true
 
+# Segundos que tarda la carne totalmente podrida en desaparecer con sus moscas
+const ROT_MEAT_REMOVE_SECONDS := 120.0
+
+func _attach_flies_to_drop(drop_id: String) -> void:
+	var target := get_node_or_null(NodePath("Pickup_" + drop_id)) as Node3D
+	if target == null and world_actions_by_id.has(drop_id):
+		target = world_actions_by_id[drop_id] as Node3D
+	if target == null or target.get_node_or_null("FlySwarm") != null:
+		return
+	var swarm := FlySwarm.new()
+	swarm.name = "FlySwarm"
+	swarm.position = Vector3(0.0, 0.12, 0.0)
+	target.add_child(swarm)
+
 func _update_loot_wear() -> void:
 	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
 	# 100 wear = ~1000s (16min) sheltered, ~1500s (25min) exposed
@@ -8471,6 +8670,29 @@ func _update_loot_wear() -> void:
 					var wa = world_actions_by_id[entry_id]
 					if wa != null and is_instance_valid(wa):
 						wa.set_meta("item_spoilage", spoil)
+				if spoil >= 100.0:
+					# Totalmente podrida: las moscas acuden y la carne acaba
+					# desapareciendo junto con el enjambre (hijo del pickup).
+					if not bool(entry.get("flies", false)):
+						entry["flies"] = true
+						_attach_flies_to_drop(entry_id)
+					var rot_left := float(entry.get("rot_left", ROT_MEAT_REMOVE_SECONDS)) - 5.0
+					entry["rot_left"] = rot_left
+					if rot_left <= 0.0:
+						removed_ids.append(entry_id)
+						_dropped_items.remove_at(i)
+						var vnode2 := get_node_or_null(NodePath("Pickup_" + entry_id))
+						if vnode2 != null:
+							vnode2.queue_free()
+						if world_actions_by_id.has(entry_id):
+							var wa2 = world_actions_by_id[entry_id]
+							if wa2 != null and is_instance_valid(wa2):
+								var swarm2: Node = wa2.get_node_or_null("FlySwarm")
+								if swarm2 != null:
+									swarm2.queue_free()
+						if not _depleted_action_ids.has(entry_id):
+							_depleted_action_ids.append(entry_id)
+						continue
 		if _is_loot_sheltered(pos):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))
@@ -12458,9 +12680,28 @@ var _cinematic_phase := "day"
 var _cinematic_lightning_timer := 0.0
 var _cinematic_campfires: Array = []
 var _cinematic_player_seated := false
+var _cinematic_wolves_spawned := false
+var _cinematic_boating := false
+var _cinematic_fire_timer := 0.0
+var _record_dir := ""
+var _record_frame := 0
 
 func _setup_cinematic() -> void:
 	_cinematic_active = true
+	# Never persist the staged positions/equipment the showcase creates.
+	var sgm_cin: Node = get_node_or_null("/root/SaveGameManager")
+	if sgm_cin != null:
+		sgm_cin.set("_auto_save_enabled", false)
+	var cin_args := OS.get_cmdline_user_args()
+	var ridx := cin_args.find("--record")
+	if ridx >= 0 and ridx + 1 < cin_args.size():
+		_record_dir = str(cin_args[ridx + 1])
+		DirAccess.make_dir_recursive_absolute(_record_dir)
+		print("[cinematic] recording frames to %s" % _record_dir)
+		# macOS pauses rendering for fully occluded windows (App Nap) and the
+		# viewport texture then returns the same stale frame forever.
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_move_to_foreground()
 	_cinematic_cam = Camera3D.new()
 	_cinematic_cam.name = "CinematicCamera"
 	_cinematic_cam.fov = 65.0
@@ -12468,6 +12709,11 @@ func _setup_cinematic() -> void:
 	_cinematic_cam.far = 2000.0
 	add_child(_cinematic_cam)
 	_cinematic_cam.make_current()
+	if hud != null:
+		# HUD._ensure_hud_visibility() re-shows the layer every frame; stop its
+		# processing so the showcase stays clean.
+		hud.set_process(false)
+		hud.visible = false
 	if day_cycle != null:
 		day_cycle.fixed_time = true
 	# Make rain particles bigger and more visible for cinematic
@@ -12552,6 +12798,26 @@ func _setup_cinematic() -> void:
 		var rp := _remote_tent_pos
 		var rgy := _get_exact_ground_y(rp.x, rp.z)
 		_cinematic_shots[15] = ["Tienda militar remota", Vector3(rp.x + 15, rgy + 12, rp.z + 15), Vector3(rp.x, rgy + 2, rp.z), 10.0, "day"]
+	if cin_args.has("--reel"):
+		# Short showcase reel (~2:20). The optional 6th field selects a tracking
+		# mode: "boat" frames lake_rowboat, "player" frames the character.
+		_cinematic_shots = [
+			["El pueblo", Vector3(0, 22, 38), Vector3(0, 2, 0), 9.0, "day"],
+			["Calles en ruinas", Vector3(18, 10, 12), Vector3(34, 2, -8), 8.0, "day"],
+			["El bosque", Vector3(-120, 28, -80), Vector3(-180, 5, -120), 8.0, "day"],
+			["Pajaros", Vector3(-140, 48, -95), Vector3(-110, 42, -75), 7.0, "day"],
+			["El lago", Vector3(250, 45, -270), Vector3(250, 2, -310), 9.0, "day"],
+			["El bote", Vector3(7, 2.5, -11), Vector3.ZERO, 11.0, "boat", "boat"],
+			["Remando", Vector3(-9, 3.0, -8), Vector3.ZERO, 9.0, "boat", "boat"],
+			["Lobos", Vector3(8.5, 2.6, 9.5), Vector3.ZERO, 10.0, "wolves", "player"],
+			["El rifle", Vector3(4.6, 1.3, -4.2), Vector3.ZERO, 10.0, "shooting", "player"],
+			["Atardecer", Vector3(300, 55, -100), Vector3(0, 5, 0), 8.0, "sunset"],
+			["Tormenta", Vector3(0, 28, 30), Vector3(0, 2, 0), 11.0, "storm"],
+			["Rayos sobre el lago", Vector3(250, 32, -268), Vector3(250, 2, -310), 10.0, "storm"],
+			["Tormenta en el bosque", Vector3(-120, 24, -80), Vector3(-180, 5, -120), 9.0, "storm"],
+			["Fogata nocturna", Vector3(252, 2.8, -252), Vector3(249.5, 1.2, -254.5), 11.0, "night_fire_sit"],
+			["Noche estrellada", Vector3(250, 38, -278), Vector3(250, 2, -310), 8.0, "night"],
+		]
 	_cinematic_label = Label.new()
 	_cinematic_label.name = "CinematicLabel"
 	_cinematic_label.visible = false
@@ -12578,7 +12844,63 @@ func _cinematic_apply_phase(phase: String) -> void:
 	_cinematic_phase = phase
 	if day_cycle == null:
 		return
+	if phase != "boat" and _cinematic_boating:
+		_cinematic_boating = false
+		if is_instance_valid(lake_rowboat) and lake_rowboat.occupant != 0:
+			lake_rowboat.exit_position = lake_rowboat.return_position if lake_rowboat.return_position != Vector3.ZERO else lake_rowboat.global_position
+			lake_rowboat._release_passenger()
+	if phase != "night_fire_sit" and player != null and is_instance_valid(player):
+		player.is_sitting = false
+		_cinematic_player_seated = false
 	match phase:
+		"boat":
+			day_cycle.time_of_day = 11.0
+			_weather_target = {"cloud": 0.2, "rain": 0.0, "darkness": 0.05, "fog": 0.0}
+			_weather_visual = _weather_target.duplicate()
+			_storm_active = false
+			if is_instance_valid(lake_rowboat) and player != null and is_instance_valid(player):
+				if lake_rowboat.occupant == 0:
+					var bp: Vector3 = lake_rowboat.global_position
+					player.global_position = bp + Vector3(1.2, 0.0, 0.0)
+					player.velocity = Vector3.ZERO
+					lake_rowboat.request_action(lake_rowboat.local_peer(), "enter")
+				_cinematic_boating = true
+		"wolves":
+			day_cycle.time_of_day = 16.0
+			_weather_target = {"cloud": 0.35, "rain": 0.0, "darkness": 0.1, "fog": 0.001}
+			_weather_visual = _weather_target.duplicate()
+			_storm_active = false
+			if not _cinematic_wolves_spawned and player != null and is_instance_valid(player):
+				_cinematic_wolves_spawned = true
+				var wgy := _get_exact_ground_y(9.0, 4.0)
+				player.global_position = Vector3(9.0, wgy, 4.0)
+				player.rotation.y = deg_to_rad(115.0)
+				var wolf_route: Array = []
+				for i in range(6):
+					var a := TAU * float(i) / 6.0
+					wolf_route.append(player.global_position + Vector3(cos(a) * 12.0, 0.0, sin(a) * 12.0))
+				for i in range(3):
+					_create_wildlife_animal("wolf", wolf_route)
+		"shooting":
+			day_cycle.time_of_day = 15.0
+			_weather_target = {"cloud": 0.2, "rain": 0.0, "darkness": 0.05, "fog": 0.0}
+			_weather_visual = _weather_target.duplicate()
+			_storm_active = false
+			if player != null and is_instance_valid(player):
+				var sgy := _get_exact_ground_y(9.0, 4.0)
+				player.global_position = Vector3(9.0, sgy, 4.0)
+				player.rotation.y = deg_to_rad(115.0)
+				var held = player.get_held_item()
+				if held == null or str(held.item_type) != "weapon_rifle":
+					if player._has_stored_back_item_type("weapon_rifle"):
+						player.use_back_item(-1)
+					else:
+						player.equip_item_by_name("Rifle francotirador")
+				player._rifle_ammo_initialized = true
+				player._rifle_magazine = player.RIFLE_MAG_SIZE
+				if player.stats != null:
+					player.stats.energy = 100.0
+				_cinematic_fire_timer = 1.2
 		"day":
 			day_cycle.time_of_day = 12.0
 			_weather_target = {"cloud": 0.15, "rain": 0.0, "darkness": 0.05, "fog": 0.0}
@@ -12606,7 +12928,11 @@ func _cinematic_apply_phase(phase: String) -> void:
 			_weather_visual = {"cloud": 0.1, "rain": 0.0, "darkness": 0.0, "fog": 0.0}
 			_storm_active = false
 			_cinematic_spawn_campfires()
-			if not _cinematic_player_seated and player != null and is_instance_valid(player):
+			if player != null and is_instance_valid(player):
+				var seat_gy := _get_exact_ground_y(249.5, -254.5)
+				player.global_position = Vector3(249.5, seat_gy, -254.5)
+				player.rotation.y = deg_to_rad(180.0)
+				player.velocity = Vector3.ZERO
 				player.is_sitting = true
 				_cinematic_player_seated = true
 		"storm":
@@ -12640,6 +12966,10 @@ func _process_cinematic(delta: float) -> void:
 	_cinematic_time += delta
 	_cinematic_shot_elapsed += delta
 	if _cinematic_shot_idx >= _cinematic_shots.size():
+		if not _record_dir.is_empty():
+			print("[cinematic] recording finished: %d frames" % _record_frame)
+			get_tree().quit()
+			return
 		_cinematic_shot_idx = 0
 		_cinematic_shot_elapsed = 0.0
 	var shot: Array = _cinematic_shots[_cinematic_shot_idx]
@@ -12660,6 +12990,19 @@ func _process_cinematic(delta: float) -> void:
 			_cinematic_lightning_timer = randf_range(3.0, 8.0)
 			_apply_lightning_flash(1.0)
 			_create_lightning_bolt()
+	# Showcase shots keep the actor alive and fed so nothing interrupts the take.
+	if player != null and is_instance_valid(player) and player.get("stats") != null:
+		player.stats.health = maxf(player.stats.health, 80.0)
+		player.stats.energy = maxf(player.stats.energy, 30.0)
+	# Shooting shots fire the rifle on a slow cadence for the muzzle flash.
+	if shot_phase == "shooting":
+		_cinematic_fire_timer -= delta
+		if _cinematic_fire_timer <= 0.0 and player != null and is_instance_valid(player):
+			player._shoot_rifle()
+			_cinematic_fire_timer = 2.0
+	# Boat shots keep rowing forward so the camera can track a moving hull.
+	if _cinematic_boating and is_instance_valid(lake_rowboat) and lake_rowboat.occupant != 0:
+		lake_rowboat.accept_input(lake_rowboat.occupant, Vector2(0.0, -0.7))
 	# Force weather visuals to target immediately for storm
 	if shot_phase == "storm":
 		_weather_visual = _weather_target.duplicate()
@@ -12697,10 +13040,24 @@ func _process_cinematic(delta: float) -> void:
 	var orbit_angle := _cinematic_time * 0.15
 	var orbit_radius := 8.0
 	var offset := Vector3(cos(orbit_angle) * orbit_radius, sin(_cinematic_time * 0.3) * 3.0, sin(orbit_angle) * orbit_radius)
-	_cinematic_cam.global_position = shot_pos + offset
-	_cinematic_cam.look_at(shot_look, Vector3.UP)
+	var shot_mode := str(shot[5]) if shot.size() > 5 else ""
+	var cam_pos := shot_pos
+	var cam_look := shot_look
+	if shot_mode == "boat" and is_instance_valid(lake_rowboat):
+		cam_pos = lake_rowboat.global_position + shot_pos
+		cam_look = lake_rowboat.global_position + Vector3(0.0, 0.9, 0.0)
+	elif shot_mode == "player" and player != null and is_instance_valid(player):
+		cam_pos = player.global_position + shot_pos
+		cam_look = player.global_position + Vector3(0.0, 1.4, 0.0)
+	_cinematic_cam.global_position = cam_pos + (offset if shot_mode.is_empty() else offset * 0.15)
+	_cinematic_cam.look_at(cam_look, Vector3.UP)
 	if _cinematic_shot_elapsed >= shot_dur:
 		_cinematic_shot_idx += 1
 		_cinematic_shot_elapsed = 0.0
+	if not _record_dir.is_empty():
+		var frame_image := get_viewport().get_texture().get_image()
+		if frame_image != null:
+			frame_image.save_jpg("%s/frame_%05d.jpg" % [_record_dir, _record_frame], 0.92)
+			_record_frame += 1
 
 #endregion

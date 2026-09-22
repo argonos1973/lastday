@@ -2,8 +2,9 @@ extends SceneTree
 
 class World extends Node3D:
 	var nav := NavPathfinding.new()
+	var no_route := false
 	func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
-		return nav.find_path(start, goal)
+		return [] if no_route else nav.find_path(start, goal)
 	func is_wildlife_allowed_at(pos: Vector3) -> bool:
 		return not nav.is_cell_blocked(nav.world_to_grid(pos))
 	func _get_exact_ground_y(_x: float, _z: float) -> float:
@@ -75,12 +76,18 @@ func run() -> void:
 	wolf.position = Vector3(0, 0, -20)
 	wolf._current_path.clear()
 	wolf._path_recalc_timer = 0.0
-	for frame in range(450):
+	wolf._reach_check_timer = 0.0
+	var initial_distance := wolf.position.distance_to(player.position)
+	for frame in range(90):
 		wolf._process(1.0 / 30.0)
-	check(wolf._state == "chase_player" and wolf._chase_cooldown == 0.0, "Wolf keeps tracking an unreachable player")
-	check(world.is_wildlife_allowed_at(wolf.position) and wolf.position.z < 0.0, "Waiting wolf stays on reachable land")
-	player.position = Vector3(20, 0, -20)
-	for frame in range(300):
+	check(wolf._state == "retreat" and wolf._chase_cooldown > 0.0, "Wolf abandons an unreachable player")
+	check(wolf._chase_target == null, "Retreat clears the chase target")
+	check(wolf.position.distance_to(player.position) > initial_distance + 5.0, "Wolf moves away instead of waiting at the shore")
+	check(world.is_wildlife_allowed_at(wolf.position) and wolf.position.z < 0.0, "Retreating wolf stays on reachable land")
+	player.position = wolf.position + Vector3(8, 0, 0)
+	wolf._process(1.0 / 30.0)
+	check(wolf._state == "retreat", "Wolf must not immediately chase again during retreat")
+	for frame in range(900):
 		wolf._process(1.0 / 30.0)
 		if wolf.position.distance_to(player.position) < 4.1:
 			break
@@ -96,7 +103,26 @@ func run() -> void:
 	check(not world.nav._search.is_point_solid(center), "Open doorway updates path search")
 	world.nav.update_door_cache([], func(_p, _b): return false, func(_p, _b): return false)
 	check(world.nav._search.is_point_solid(center), "Closed doorway restores path obstacle")
+	world.nav.build([], [])
+	wolf.position = Vector3.ZERO
+	player.position = Vector3(0, 3, 0)
+	wolf._state = "patrol"
+	wolf._chase_cooldown = 0.0
+	var retreat := wolf._wolf_ai(1.0 / 30.0)
+	check(wolf._state == "retreat" and retreat["target"].distance_to(wolf.position) > 20.0, "Wolf retreats from an elevated player, even directly overhead")
+	for frame in range(90):
+		wolf._process(1.0 / 30.0)
+	check(wolf.position.distance_to(player.position) > 8.0, "Elevated player triggers sustained retreat, not a one-frame turn")
+	wolf._chase_cooldown = 0.0
+	wolf._state = "chase_player"
+	wolf._reach_check_timer = 0.0
+	wolf._attack_cooldown = 0.0
+	player.position = wolf.position + Vector3(2, 0, 0)
+	world.no_route = true
+	wolf._wolf_ai(1.0 / 30.0)
+	check(wolf._state == "retreat", "Empty route triggers retreat even within attack range")
+	check(wolf._attack_cooldown == 0.0, "Wolf must not attack an unreachable nearby player")
 	world.free()
 	if failures == 0:
-		print("PASS: river detour, full-map coverage, pursuit, safe water goals, shore escape and disconnected bank")
+		print("PASS: river detour, full-map coverage, safe shores, retreat from unreachable players and pursuit after cooldown")
 	quit(1 if failures else 0)

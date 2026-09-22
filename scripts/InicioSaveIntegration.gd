@@ -1,14 +1,82 @@
 extends Node
 class_name InicioSaveIntegration
 
+const MilitaryJacketsScript = preload("res://scripts/MilitaryJackets.gd")
+
 static func maybe_insert_saved_character(inicio: Node) -> void:
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
-	if sgm == null or not sgm.has_save():
+	if sgm == null:
+		return
+	# Server-saved character first so the local save stays at index 0
+	var net = inicio.get_node_or_null("/root/NetworkManager")
+	if sgm.has_server_save() and net != null:
+		var server_save: Dictionary = sgm.load_server_game()
+		var pdata: Dictionary = server_save.get("players", {}).get(str(net.client_id), {})
+		if not pdata.is_empty():
+			var scfg := _server_character_config(pdata)
+			if not scfg.is_empty():
+				inicio.CHAR_CONFIGS.insert(0, scfg)
+	if not sgm.has_save():
 		return
 	var saved_cfg: Dictionary = sgm.get_saved_character_config()
 	if saved_cfg.is_empty():
 		return
 	inicio.CHAR_CONFIGS.insert(0, saved_cfg)
+
+# Build a character card from a server-save player entry. Two payload shapes
+# exist: the lightweight proxy dict (remote players) and the full
+# collect_player_data dict (the hosting player).
+static func _server_character_config(pdata: Dictionary) -> Dictionary:
+	var name := str(pdata.get("char_name", ""))
+	if name.is_empty():
+		name = "Superviviente"
+	return {
+		"id": "saved_server",
+		"name": name,
+		"top": _str_to_color(str(pdata.get("top_color", "0.5,0.5,0.5"))),
+		"bottom": _str_to_color(str(pdata.get("bottom_color", "0.3,0.3,0.3"))),
+		"shoes": _str_to_color(str(pdata.get("shoes_color", "0.15,0.15,0.15"))),
+		"hair": _str_to_color(str(pdata.get("hair_color", "0.2,0.15,0.1"))),
+		"skin": _str_to_color(str(pdata.get("skin_color", "0.8,0.7,0.6"))),
+		"top_camo": pdata.get("top_camo", false),
+		"bottom_camo": pdata.get("bottom_camo", false),
+		"is_saved": true,
+		"is_server_save": true,
+	}
+
+# Player payload for a saved card: local savegame for single-player cards,
+# server_savegame.json players[client_id] for server cards.
+static func _saved_player_data(inicio: Node, cfg: Dictionary) -> Dictionary:
+	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
+	if sgm == null:
+		return {}
+	if cfg.get("is_server_save", false):
+		var net = inicio.get_node_or_null("/root/NetworkManager")
+		if net == null or not sgm.has_server_save():
+			return {}
+		var pdata: Dictionary = sgm.load_server_game().get("players", {}).get(str(net.client_id), {})
+		return pdata
+	return sgm.get_saved_player()
+
+# Normalize the equipment fields shared by both payload shapes.
+static func _equipment_fields(pd: Dictionary) -> Dictionary:
+	return {
+		"equipped_clothing": str(pd.get("equipped_clothing", pd.get("clothing", ""))),
+		"inventory": pd.get("inventory", []),
+		"survival_seconds": _survival_seconds(pd),
+	}
+
+static func _survival_seconds(pd: Dictionary) -> float:
+	if pd.has("stats"):
+		return float(pd["stats"].get("survival_seconds", 0.0))
+	var extra: Dictionary = pd.get("extra", {})
+	return float(extra.get("stats_extra", {}).get("survival_seconds", 0.0))
+
+static func _str_to_color(s: String) -> Color:
+	var parts := s.split(",")
+	if parts.size() >= 3:
+		return Color(float(parts[0]), float(parts[1]), float(parts[2]))
+	return Color(0.5, 0.5, 0.5)
 
 static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	_remove_existing_info(inicio)
@@ -17,11 +85,12 @@ static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
 	if sgm == null:
 		return
-	var player_data: Dictionary = sgm.get_saved_player()
+	var player_data: Dictionary = _saved_player_data(inicio, cfg)
 	if player_data.is_empty():
 		return
-	var info_text := "Continuar partida\n"
-	var survival_seconds: float = float(player_data.get("survival_seconds", 0.0))
+	var is_server := bool(cfg.get("is_server_save", false))
+	var info_text := "Continuar en servidor\n" if is_server else "Continuar partida local\n"
+	var survival_seconds: float = _survival_seconds(player_data)
 	var total_seconds: int = int(survival_seconds)
 	var days: int = total_seconds / 86400
 	var hrs: int = (total_seconds / 3600) % 24
@@ -34,7 +103,7 @@ static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	lbl.text = info_text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.add_theme_font_size_override("font_size", 13)
-	lbl.add_theme_color_override("font_color", Color(0.8, 0.85, 0.6))
+	lbl.add_theme_color_override("font_color", Color(0.6, 0.8, 0.95) if is_server else Color(0.8, 0.85, 0.6))
 	lbl.name = "SavedCharInfo"
 	var char_panel = inicio._char_name_label.get_parent()
 	if char_panel != null:
@@ -65,9 +134,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var sgm = model.get_node_or_null("/root/SaveGameManager")
 	if sgm == null:
 		return
-	var pd: Dictionary = sgm.get_saved_player()
-	if pd.is_empty():
+	var raw_pd: Dictionary = _saved_player_data(model, cfg)
+	if raw_pd.is_empty():
 		return
+	var pd := _equipment_fields(raw_pd)
 	var eq := str(pd.get("equipped_clothing", ""))
 	var equipped_items: Array = []
 	for _s in eq.split(",", false):
@@ -120,13 +190,16 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var is_survival_feet := feet_item == "Botas survival"
 	var is_military_legs := legs_item.find("Pantalones m") >= 0
 	var is_military_torso := torso_item.find("Chaqueta") >= 0
+	# Field jackets are a separate skinned GLB hung on the skeleton (same as
+	# in-game MilitaryJackets.attach), not the soldier_torso mesh.
+	var is_field_torso := MilitaryJacketsScript.VARIANTS.has(torso_item)
 	# Determine which clothing meshes to show
 	var show_tops := has_torso and (torso_item == "Camiseta")
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
 	var show_cloth_feet := has_feet and is_survival_feet
 	var show_soldier_legs := has_legs and is_military_legs
-	var show_soldier_torso := has_torso and is_military_torso
+	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
 	for mi in meshes:
@@ -218,6 +291,11 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			m.visible = false
 		elif nl.begins_with("default"):
 			m.visible = false
+	# Field jacket: same skinned GLB and bone remap the game uses
+	if is_field_torso:
+		var jacket := MilitaryJacketsScript.attach(model, torso_item)
+		if jacket != null:
+			jacket.visible = true
 	# Add backpack
 	var backpack := str(pd.get("equipped_backpack", ""))
 	if not backpack.is_empty():
