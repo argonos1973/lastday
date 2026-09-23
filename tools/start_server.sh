@@ -5,7 +5,11 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_PATH="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_APP="$PROJECT_PATH/build/macos/LastDayServer.app"
-USER_DIR="$HOME/Library/Application Support/Godot/app_userdata/Un dia mas"
+if [ "$(uname)" = "Darwin" ]; then
+	USER_DIR="$HOME/Library/Application Support/Godot/app_userdata/Un dia mas"
+else
+	USER_DIR="$HOME/.local/share/godot/app_userdata/Un dia mas"
+fi
 
 # Parada limpia de cualquier instancia previa: el flag hace que el servidor
 # guarde el mundo antes de terminar el proceso.
@@ -19,6 +23,15 @@ pkill -f "LastDayServer" 2>/dev/null
 sleep 1
 
 echo "Iniciando servidor dedicado..."
+if [ "$(uname)" != "Darwin" ]; then
+	# Linux: binario exportado con el preset "Linux Server" (arranca solo), o el editor.
+	LINUX_SERVER="$PROJECT_PATH/build/linux/LastDayServer.x86_64"
+	if [ -x "$LINUX_SERVER" ]; then
+		exec "$LINUX_SERVER" 2>&1
+	fi
+	GODOT_BIN="${GODOT_BIN:-/home/sami/bin/godot}"
+	exec "$GODOT_BIN" --path "$PROJECT_PATH" --headless --server 2>&1
+fi
 if [ -f "$SERVER_APP/Contents/MacOS/applet" ]; then
 	# Launcher applet (tools/make_server_launcher.sh): añade icono en el Dock
 	# y soporta Salir — guarda el mundo y termina el proceso.
