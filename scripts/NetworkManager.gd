@@ -318,9 +318,13 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 		if scene != null and scene.server_proxies.has(id):
 			if scene.server_proxies[id].get_meta("reconnecting", false):
 				return
-			# Force dead anim for dead proxies
+			# Dead proxies are pinned at the death position where the loot
+			# dropped — late syncs from the dying client must not move the
+			# corpse. Still relay the dead state onward.
 			if scene.server_proxies[id].get_meta("proxy_dead", false):
 				anim = "dead"
+				pos = players[id].get("pos", pos)
+				rot = players[id].get("rot", rot)
 				equipped_clothing = ""
 				held_item = ""
 				equipped_backpack = ""
@@ -392,6 +396,13 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	if not players.has(sender):
 		pass # print("[PERSIST] final_player_state: peer %d not in players dict, ignoring" % sender)
 		return
+	var scene := get_tree().current_scene
+	# Dead players stay pinned at the death position where their loot dropped —
+	# a late final-state packet must not drag the corpse away from the items.
+	if players[sender].get("anim", "") == "dead":
+		return
+	if scene != null and scene.server_proxies.has(sender) and scene.server_proxies[sender].get_meta("proxy_dead", false):
+		return
 	players[sender]["pos"] = pos
 	players[sender]["rot"] = rot
 	players[sender]["anim"] = anim
@@ -402,7 +413,6 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	players[sender]["sitting"] = sitting
 	players[sender]["prone"] = prone
 	players[sender]["crouching"] = crouching
-	var scene := get_tree().current_scene
 	if scene != null and scene.server_proxies.has(sender):
 		var proxy: Node3D = scene.server_proxies[sender]
 		proxy.global_position = pos
@@ -558,11 +568,11 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 
 # Client tells server its player died (server drops inventory as loot)
 @rpc("any_peer", "reliable")
-func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0.0, thirst: float = 0.0, clothing: String = "", backpack: String = "", held: String = "", held_index: int = 0, sleeping: bool = false, sitting: bool = false, rot: float = 0.0) -> void:
+func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0.0, thirst: float = 0.0, clothing: String = "", backpack: String = "", held: String = "", held_index: int = 0, sleeping: bool = false, sitting: bool = false, rot: float = 0.0, death_pos: Vector3 = Vector3.ZERO) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_died"):
-		scene._net_player_died(sender, inventory_data)
+		scene._net_player_died(sender, inventory_data, death_pos)
 
 @rpc("any_peer", "reliable")
 func ground_craft_state_changed(action_id: String, quantity: int, durability: float) -> void:

@@ -2794,12 +2794,30 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
 
-func _net_player_died(peer_id: int, inventory_data: Array = []) -> void:
+func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vector3 = Vector3.ZERO) -> void:
 	if net == null or not net.is_host:
 		return
-	if not server_proxies.has(peer_id):
+	# The death RPC can arrive after the disconnect already parked the proxy —
+	# check both maps or the kill would silently keep the inventory.
+	var proxy: Node3D = null
+	if server_proxies.has(peer_id):
+		proxy = server_proxies[peer_id]
+	else:
+		for cid in proxy_by_client_id.keys():
+			var dp: Node3D = proxy_by_client_id[cid]
+			if dp != null and dp.get_meta("peer_id", -1) == peer_id:
+				proxy = dp
+				break
+	if proxy == null:
 		return
-	var proxy: Node3D = server_proxies[peer_id]
+	# Anchor corpse and loot to the client's real death position. The proxy's
+	# last synced position can lag several meters behind, and final_player_state
+	# would otherwise move the corpse (net.players pos) away from the loot.
+	if death_pos != Vector3.ZERO:
+		proxy.global_position = death_pos
+		proxy.set_meta("saved_pos", death_pos)
+		if net.players.has(peer_id):
+			net.players[peer_id]["pos"] = death_pos
 	# Update saved inventory from the death notification if provided
 	if not inventory_data.is_empty():
 		proxy.set_meta("saved_inventory", inventory_data)
@@ -2834,11 +2852,13 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var angle := TAU * float(i) / float(max(1, saved_inv.size())) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(1.5, 3.0), 0.0, sin(angle) * randf_range(1.5, 3.0))
 		var dpos := pos + offset
-		dpos.y = 0.06
+		# Loot sits at the corpse's height — a fixed y buried items under
+		# elevated terrain or house floors.
+		dpos.y = pos.y
 		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
+		# _spawn_ground_pickup already persists the drop into _dropped_items
 		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did)
 		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse})
-		_dropped_items.append({"id": did, "name": iname, "type": itype, "weight": iweight, "qty": iqty, "use": iuse, "pos": [dpos.x, dpos.y, dpos.z]})
 	_save_world_change_silent()
 	# Notify all clients to spawn the loot
 	if net.peer != null:
@@ -3426,7 +3446,8 @@ func _on_player_died() -> void:
 			if player.inventory != null and player.inventory.items.size() > 0:
 				held = player.inventory.items[held_idx].item_name
 		var rot_y: float = player.rotation.y if player != null else 0.0
-		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y)
+		var death_pos: Vector3 = player.global_position if player != null else Vector3.ZERO
+		net.notify_death.rpc_id(1, items_data, hp, hunger, thirst, clothing, backpack, held, held_idx, false, false, rot_y, death_pos)
 	# Disable auto-save immediately to prevent saving dead player state
 	var sgm = get_node_or_null("/root/SaveGameManager")
 	if sgm != null:

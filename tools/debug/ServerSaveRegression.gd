@@ -18,6 +18,10 @@ class World extends "res://scripts/Main.gd":
 		sent_restore.append([peer_id, pos])
 	func _delayed_send_spawn_pos(peer_id: int, pos: Vector3) -> void:
 		sent_spawn_only.append([peer_id, pos])
+	var spawned_pickups: Array = []
+	func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "") -> void:
+		spawned_pickups.append(pos)
+		_dropped_items.append({"id": fixed_id, "name": item_name, "type": item_type, "weight": weight, "qty": qty, "use": use_value, "pos": [pos.x, pos.y, pos.z], "action_type": "pickup_item"})
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -258,6 +262,27 @@ func run() -> void:
 	check(world.sent_restore.any(func(e): return e[0] == 7), "saved record sends inventory restore")
 	check(world.sent_restore.any(func(e): return e[0] == 60), "stateful rebind sends inventory restore")
 	check(world.sent_spawn_only.any(func(e): return e[0] == 8), "new player gets spawn position only")
+
+	# Death: loot drops at the client's real death position — not the proxy's
+	# stale last-synced pos — and the corpse stays pinned to it.
+	net.players[80] = {"client_id": "cid_dying", "pos": Vector3(1.0, 0.4, 1.0), "anim": "run"}
+	var dying := Node3D.new()
+	dying.set_meta("client_id", "cid_dying")
+	dying.set_meta("peer_id", 80)
+	dying.set_meta("saved_inventory", [{"name": "Hacha", "type": "tool", "weight": 1.0, "quantity": 1}])
+	world.add_child(dying)
+	dying.global_position = Vector3(1.0, 0.4, 1.0)
+	world.server_proxies[80] = dying
+	var death_p := Vector3(30.0, 0.45, -25.0)
+	world._net_player_died(80, [{"name": "Hacha", "type": "tool", "weight": 1.0, "quantity": 1}], death_p)
+	check(dying.global_position.distance_to(death_p) < 0.001, "death anchors proxy to real death position")
+	check((net.players[80]["pos"] as Vector3).distance_to(death_p) < 0.001, "death anchors player list position")
+	check(dying.get_meta("proxy_dead", false), "death marks proxy dead")
+	check(world.spawned_pickups.size() == 1 and (world.spawned_pickups[0] as Vector3).distance_to(death_p) < 5.0, "death loot spawns around the corpse")
+	check((dying.get_meta("saved_inventory", []) as Array).is_empty(), "dropped inventory cleared from proxy")
+	world.server_proxies.erase(80)
+	net.players.erase(80)
+	dying.queue_free()
 
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({
