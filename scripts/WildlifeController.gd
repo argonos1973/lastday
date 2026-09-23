@@ -609,11 +609,19 @@ func _wolf_ai(delta: float) -> Dictionary:
 							var hp: float = _player.get_meta("proxy_health", 100.0)
 							hp = max(0.0, hp - 25.0)
 							_player.set_meta("proxy_health", hp)
+							# saved_health is what a reconnect restores — server-
+							# applied damage must land there too.
+							_player.set_meta("saved_health", hp)
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
 								_player.add_to_group("interactable")
 								var scene_node := get_tree().current_scene
+								# The dead character's gear must reach the
+								# ground — without the drop it would vanish
+								# silently inside the dead record.
+								if scene_node != null and scene_node.has_method("_drop_player_loot"):
+									scene_node._drop_player_loot(peer_id, _player)
 								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
 									scene_node._broadcast_player_death(peer_id, _player)
 						elif peer_id != 0:

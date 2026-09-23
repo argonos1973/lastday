@@ -614,6 +614,10 @@ func _ready() -> void:
 	if net != null:
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
+		if net.is_connected:
+			_mp_session = true
+			if not net.is_host and not net.connection_failed.is_connected(_on_net_connection_lost):
+				net.connection_failed.connect(_on_net_connection_lost)
 		if not net.is_dedicated_server:
 			for pid in net.players.keys():
 				if pid != net.get_my_id():
@@ -774,6 +778,9 @@ var _quit_countdown := 0.0
 var _quit_active := false
 var _quit_final_sent := false
 var _scene_quitting := false
+# True once this scene ran inside a multiplayer session. A client that loses
+# its server mid-game must never fall back to writing the local save.
+var _mp_session := false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_0:
@@ -1657,9 +1664,11 @@ func _build_save_data() -> Dictionary:
 func _save_world_change_silent() -> void:
 	if game_over:
 		return
-	if net != null and net.is_connected:
+	if net != null and (net.is_connected or _mp_session):
 		# Connected modes never touch the single-player save; the host/dedicated
-		# persists everything into the server save instead.
+		# persists everything into the server save instead. _mp_session covers a
+		# client whose server went away mid-game — its multiplayer state must
+		# not leak into savegame.json either.
 		if net.is_host:
 			_save_server_world()
 		return
@@ -1726,7 +1735,7 @@ func _load_server_world_state() -> void:
 	var seen_drop_ids := {}
 	for i in range(_dropped_items.size() - 1, -1, -1):
 		var did: String = str(_dropped_items[i].get("id", ""))
-		if seen_drop_ids.has(did):
+		if seen_drop_ids.has(did) or _depleted_action_ids.has(did):
 			_dropped_items.remove_at(i)
 		else:
 			seen_drop_ids[did] = true
@@ -1923,6 +1932,19 @@ func _create_player() -> void:
 
 
 #region RED Y MULTIPLAYER (MultiplayerSync)
+# Client: the server went away mid-game. The session can no longer be synced
+# or saved (multiplayer state must never reach savegame.json), so bail out to
+# the menu instead of leaving a desynced zombie world running.
+func _on_net_connection_lost() -> void:
+	if _scene_quitting or _quit_active or net == null or net.is_host:
+		return
+	_scene_quitting = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	call_deferred("_return_to_inicio")
+
+func _return_to_inicio() -> void:
+	get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
+
 func _on_remote_player_connected(id: int) -> void:
 	if net == null:
 		return
@@ -2171,6 +2193,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# position once, then treat the character as dead.
 			_drop_player_loot(peer_id, existing)
 			was_dead = true
+		elif was_dead and not existing.get_meta("loot_dropped", false):
+			# Died while parked without running the drop (e.g. killed by wolves
+			# offline): the gear must still reach the ground before the corpse
+			# is freed — otherwise it silently vanishes.
+			_drop_player_loot(peer_id, existing)
 		# A proxy without saved_* metas never received a state sync from its
 		# client — it has nothing to restore. Sending an empty restore would
 		# wipe the client's starting gear, so send the spawn position only.
@@ -2372,14 +2399,19 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 				break
 	if proxy == null:
 		return
-	proxy.set_meta("saved_inventory", items_data)
-	proxy.set_meta("saved_health", health)
+	# A corpse is immutable: a late periodic sync must not refill its inventory
+	# (corpse looting would duplicate it). The same applies while the proxy is
+	# flagged "reconnecting" — the client hasn't applied the restore yet and
+	# would overwrite the saved state with its default gear.
+	if proxy.get_meta("proxy_dead", false) or proxy.get_meta("reconnecting", false):
+		return
+	proxy.set_meta("saved_inventory", _sanitize_inventory_data(items_data))
+	proxy.set_meta("saved_health", clampf(health, 0.0, 100.0))
 	# Keep proxy_health in sync with the client's reported hp — the server-side
 	# decay/damage loops tick it, and without this a heal would never lift it.
-	if not proxy.get_meta("proxy_dead", false):
-		proxy.set_meta("proxy_health", health)
-	proxy.set_meta("saved_hunger", hunger)
-	proxy.set_meta("saved_thirst", thirst)
+	proxy.set_meta("proxy_health", clampf(health, 0.0, 100.0))
+	proxy.set_meta("saved_hunger", clampf(hunger, 0.0, 100.0))
+	proxy.set_meta("saved_thirst", clampf(thirst, 0.0, 100.0))
 	proxy.set_meta("saved_clothing", equipped_clothing)
 	proxy.set_meta("saved_backpack", equipped_backpack)
 	proxy.set_meta("saved_held_item", held_item)
@@ -2393,7 +2425,47 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 	if not extra.is_empty():
 		proxy.set_meta("saved_extra", extra)
 
+# Client-supplied item arrays are structurally sanitized before they reach the
+# authoritative record: malformed entries are dropped and numeric fields
+# clamped. Full server-side inventory authority is out of scope for a coop
+# game — this blocks junk and absurd payloads without breaking legit items.
+func _sanitize_inventory_data(items_data: Array) -> Array:
+	var clean: Array = []
+	for entry in items_data:
+		if not entry is Dictionary:
+			continue
+		var c: Dictionary = (entry as Dictionary).duplicate(true)
+		var iname := str(c.get("name", c.get("item_name", "")))
+		if iname.is_empty() or iname.length() > 80:
+			continue
+		c["name"] = iname
+		c["quantity"] = clampi(int(c.get("quantity", 1)), 1, 999)
+		c["weight"] = clampf(float(c.get("weight", 0.1)), 0.0, 100.0)
+		c["use_value"] = clampf(float(c.get("use_value", 0.0)), -100.0, 100.0)
+		clean.append(c)
+		if clean.size() >= 300:
+			break
+	return clean
+
+# Distance check for client-originated world actions on the server: the
+# sender needs a live proxy within reach of the target position.
+func _sender_within(sender_id: int, pos: Vector3, max_dist: float) -> bool:
+	if not pos.is_finite():
+		return false
+	var sp: Node3D = server_proxies.get(sender_id)
+	if sp == null:
+		for cid in proxy_by_client_id.keys():
+			var p: Node3D = proxy_by_client_id[cid]
+			if p != null and int(p.get_meta("peer_id", -1)) == sender_id:
+				sp = p
+				break
+	if sp == null or not is_instance_valid(sp):
+		return false
+	return sp.global_position.distance_to(pos) <= max_dist
+
 func _apply_pending_restore() -> void:
+	for action_id in _depleted_action_ids.duplicate():
+		_net_item_picked_up(str(action_id))
 	# Deliver server state that arrived while Inicio was still the current scene
 	if net != null and not net.is_dedicated_server:
 		if net._has_buffered_spawn_pos:
@@ -2451,6 +2523,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	if player == null:
 		_pending_restore_data = [items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra]
 		return
+	var was_initializing: bool = player._initializing
+	player._initializing = true
 	var ItemScript = load("res://scripts/Item.gd")
 	if player.has_node("Inventory"):
 		var inv = player.get_node("Inventory")
@@ -2488,21 +2562,25 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 	# Restore sleeping state
 	if sleeping and not player.is_sleeping:
 		player.start_sleep(player.global_position, true)
-	# Restore equipped items
-	if not equipped_backpack.is_empty():
+	# Restore equipped items — an authoritative empty value means "nothing
+	# equipped", so the default outfit must be stripped rather than kept.
+	if equipped_backpack.is_empty():
+		player.equipped_backpack = ""
+	else:
 		player.equip_backpack(equipped_backpack)
+	# Unequip all current clothing first to clear their meshes — including the
+	# default outfit, so an empty saved outfit really restores a naked state.
+	if "_equipped_slots" in player:
+		var old_slots: Dictionary = player._equipped_slots.duplicate()
+		player._equipped_slots.clear()
+		for old_item in old_slots.values():
+			var oitem := str(old_item)
+			if not oitem.is_empty():
+				player.unequip_clothing(oitem)
+	# Also unequip any default items that were equipped at _ready
+	for default_item in ["Camiseta", "Pantalones", "Zapatillas"]:
+		player.unequip_clothing(default_item)
 	if not equipped_clothing.is_empty():
-		# Unequip all default clothing first to clear their meshes
-		if "_equipped_slots" in player:
-			var old_slots: Dictionary = player._equipped_slots.duplicate()
-			player._equipped_slots.clear()
-			for old_item in old_slots.values():
-				var oitem := str(old_item)
-				if not oitem.is_empty():
-					player.unequip_clothing(oitem)
-		# Also unequip any default items that were equipped at _ready
-		for default_item in ["Camiseta", "Pantalones", "Zapatillas"]:
-			player.unequip_clothing(default_item)
 		var slots := equipped_clothing.split(",")
 		for slot_name in slots:
 			if not slot_name.is_empty():
@@ -2568,6 +2646,10 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player._force_crouch = true
 		player.is_crouching = true
 		player._update_crouch_collision()
+	player._initializing = was_initializing
+	player.refresh_carry_capacity()
+	if player.inventory != null:
+		player.inventory.changed.emit()
 
 # Called by RPC from client on server to damage a real animal
 func _send_world_state_to_client(peer_id: int) -> void:
@@ -2587,12 +2669,10 @@ func _send_world_state_to_client(peer_id: int) -> void:
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
 	for action_id in depleted_ids:
-		if world_actions_by_id.has(action_id):
-			var action = world_actions_by_id[action_id]
-			_hide_action_visual(action)
-			action.mark_depleted()
-			world_actions_by_id.erase(action_id)
+		_net_item_picked_up(str(action_id))
 	for drop in dropped_items:
+		if _depleted_action_ids.has(str(drop["id"])):
+			continue
 		if not world_actions_by_id.has(str(drop["id"])):
 			var drop_at := str(drop.get("action_type", ""))
 			if drop_at in ["wolf_meat_raw", "bird_meat_raw"]:
@@ -2650,21 +2730,40 @@ func _apply_pending_doors() -> void:
 	for door_name in applied:
 		_pending_open_doors.erase(door_name)
 
-func _net_item_picked_up(action_id: String) -> void:
-	if net != null and net.is_dedicated_server:
-		if not _depleted_action_ids.has(action_id):
-			_depleted_action_ids.append(action_id)
-		# Remove from _dropped_items so it doesn't sync to new clients
-		for i in range(_dropped_items.size() - 1, -1, -1):
-			if str(_dropped_items[i].get("id", "")) == action_id:
-				_dropped_items.remove_at(i)
+func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
+	# Host: a client-reported pickup must be plausible. Dynamic drops carry a
+	# server-known position, so the sender's proxy has to be within reach.
+	# (Static world-loot positions aren't tracked on the dedicated server;
+	# those ids are accepted but still deduped below.)
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		var drop_pos := Vector3.INF
+		for entry in _dropped_items:
+			if str(entry.get("id", "")) == action_id:
+				var ep = entry.get("pos")
+				if ep is Vector3:
+					drop_pos = ep
+				elif ep is Array and ep.size() >= 3:
+					drop_pos = Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
 				break
+		if drop_pos != Vector3.INF and not _sender_within(sender_id, drop_pos, 8.0):
+			return false
+	var changed := not _depleted_action_ids.has(action_id)
+	if changed:
+		_depleted_action_ids.append(action_id)
+	# Remove from _dropped_items so it doesn't sync to new clients
+	for i in range(_dropped_items.size() - 1, -1, -1):
+		if str(_dropped_items[i].get("id", "")) == action_id:
+			_dropped_items.remove_at(i)
+			changed = true
 	# Remove the picked up item from this client's world
 	if world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
+	if changed and net != null and net.is_host:
+		_save_world_change_silent()
+	return true
 
 # Host-side check: the shooter must have a live proxy for the shot to count.
 func _is_shooter_valid(shooter_id: int) -> bool:
@@ -2698,11 +2797,20 @@ func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 			door._tween.set_ease(Tween.EASE_OUT)
 			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
 
-func _net_damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
+func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0) -> void:
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
 	var real_name := animal_name.replacen("Puppet_", "")
 	var animal := get_node_or_null(real_name)
-	if animal != null and animal.has_method("take_damage"):
+	if animal == null:
+		return
+	# Clamp the reported hit and require the sender to be within weapon reach —
+	# otherwise any client could kill any animal from anywhere on the map.
+	amount = clampf(amount, 0.0, 600.0)
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		var reach := 8.0 if from_knife else 175.0
+		if not _sender_within(sender_id, animal.global_position, reach):
+			return
+	if animal.has_method("take_damage"):
 		animal.take_damage(amount, from_knife)
 	# Server broadcasts hit to all clients so puppets play pain sound
 	if net != null and net.is_host and net.peer != null:
@@ -2867,6 +2975,9 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
 	proxy.set_meta("proxy_health", hp)
+	# saved_health is what a reconnect restores — server-applied damage must
+	# land there too or a quick disconnect heals the player for free.
+	proxy.set_meta("saved_health", hp)
 	if hp <= 0.0:
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
@@ -2899,19 +3010,22 @@ func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vecto
 				break
 	if proxy == null:
 		return
+	# A corpse whose loot already dropped is immutable: a repeated notify_death
+	# must not teleport it away from its items nor refill its inventory (corpse
+	# looting would then hand those items out — infinite duplication).
+	if proxy.get_meta("loot_dropped", false):
+		return
 	# Anchor corpse and loot to the client's real death position. The proxy's
 	# last synced position can lag several meters behind, and final_player_state
 	# would otherwise move the corpse (net.players pos) away from the loot.
-	if death_pos != Vector3.ZERO:
+	if death_pos != Vector3.ZERO and death_pos.is_finite():
 		proxy.global_position = death_pos
 		proxy.set_meta("saved_pos", death_pos)
 		if net.players.has(peer_id):
 			net.players[peer_id]["pos"] = death_pos
 	# Update saved inventory from the death notification if provided
 	if not inventory_data.is_empty():
-		proxy.set_meta("saved_inventory", inventory_data)
-	if proxy.get_meta("loot_dropped", false):
-		return
+		proxy.set_meta("saved_inventory", _sanitize_inventory_data(inventory_data))
 	if not proxy.get_meta("proxy_dead", false):
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
@@ -2927,10 +3041,29 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	proxy.set_meta("loot_dropped", true)
 	var pos: Vector3 = proxy.global_position
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
+	# Equipment that lives outside the inventory also belongs to the corpse's
+	# loot — it must fall to the ground, not vanish with the dead character.
+	# Items already inside the inventory (e.g. the held item) drop via the
+	# inventory list only, so they are not duplicated here.
+	var inv_names := {}
+	for d0 in saved_inv:
+		if d0 is Dictionary:
+			inv_names[str(d0.get("name", d0.get("item_name", "")))] = true
+	var drop_source: Array = saved_inv.duplicate()
+	var saved_extra: Dictionary = proxy.get_meta("saved_extra", {})
+	for be in saved_extra.get("back_items", []):
+		if be is Dictionary and not str(be.get("name", "")).is_empty():
+			drop_source.append(be)
+	var bp_name := str(proxy.get_meta("saved_backpack", ""))
+	if not bp_name.is_empty() and not inv_names.has(bp_name):
+		drop_source.append({"name": bp_name, "type": "backpack", "weight": 0.8, "quantity": 1, "use_value": 0.0})
+	for cname in str(proxy.get_meta("saved_clothing", "")).split(",", false):
+		if not cname.is_empty() and not inv_names.has(cname):
+			drop_source.append({"name": cname, "type": "clothing", "weight": 0.3, "quantity": 1, "use_value": 0.05})
 	# Drop each item as a pickup on the server and notify all clients
 	var drops: Array = []
-	for i in range(saved_inv.size()):
-		var d: Dictionary = saved_inv[i]
+	for i in range(drop_source.size()):
+		var d: Dictionary = drop_source[i]
 		var iname: String = str(d.get("name", d.get("item_name", "")))
 		var itype: String = str(d.get("type", d.get("item_type", "")))
 		var iweight: float = float(d.get("weight", 0.1))
@@ -2938,7 +3071,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var iuse: float = float(d.get("use_value", 0.0))
 		if iname.is_empty():
 			continue
-		var angle := TAU * float(i) / float(max(1, saved_inv.size())) + randf_range(-0.3, 0.3)
+		var angle := TAU * float(i) / float(max(1, drop_source.size())) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(1.5, 3.0), 0.0, sin(angle) * randf_range(1.5, 3.0))
 		var dpos := pos + offset
 		# Loot sits at the corpse's height — a fixed y buried items under
@@ -2948,7 +3081,6 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		# _spawn_ground_pickup already persists the drop into _dropped_items
 		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did)
 		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse})
-	_save_world_change_silent()
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -2964,6 +3096,9 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
+	proxy.set_meta("saved_backpack", "")
+	proxy.set_meta("saved_held_item", "")
+	proxy.set_meta("saved_extra", {})
 	# Clear saved clothing and strip the proxy's visual clothing
 	var dead_clothing: String = proxy.get_meta("saved_clothing", "")
 	if not dead_clothing.is_empty():
@@ -2977,7 +3112,10 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 					rp = child
 					break
 		if rp != null and rp.has_method("puppet_apply_visuals"):
-			rp.puppet_apply_visuals("", rp.get("_puppet_held") if rp.get("_puppet_held") != null else "", proxy.get_meta("saved_backpack", ""))
+			rp.puppet_apply_visuals("", rp.get("_puppet_held") if rp.get("_puppet_held") != null else "", "")
+	# Save AFTER clearing — a snapshot taken mid-drop would persist the items
+	# both on the ground and inside the corpse's record.
+	_save_world_change_silent()
 
 func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 	if net == null or net.peer == null:
@@ -3028,6 +3166,11 @@ func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
 	var proxy: Node3D = server_proxies[dead_peer_id]
 	if not proxy.get_meta("proxy_dead", false):
 		return
+	# The requester must stand next to the corpse — listing its items from
+	# across the map is both an information leak and a setup for remote loot.
+	# (sender_id 0 / the host itself skips the check — it loots locally.)
+	if requester_id != 0 and requester_id != net.get_my_id() and not _sender_within(requester_id, proxy.global_position, 6.0):
+		return
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
 	if net.peer != null and net.peer.get_peer(requester_id) != null:
 		net.send_loot.rpc_id(requester_id, dead_peer_id, saved_inv)
@@ -3043,12 +3186,10 @@ func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
 	if item_index < 0 or item_index >= saved_inv.size():
 		return
-	# Verify taker is close enough to the corpse
-	if server_proxies.has(taker_id):
-		var taker_proxy: Node3D = server_proxies[taker_id]
-		var dist := taker_proxy.global_position.distance_to(proxy.global_position)
-		if dist > 5.0:
-			return
+	# Verify taker is close enough to the corpse — a missing proxy is a reject,
+	# not a free pass. (sender_id 0 / the host itself skips the check.)
+	if taker_id != 0 and taker_id != net.get_my_id() and not _sender_within(taker_id, proxy.global_position, 6.0):
+		return
 	var item_data: Dictionary = saved_inv[item_index]
 	saved_inv.remove_at(item_index)
 	proxy.set_meta("saved_inventory", saved_inv)
@@ -3121,6 +3262,12 @@ func _update_server_proxies(delta: float) -> void:
 		var dp: Node3D = proxy_by_client_id[cid]
 		if dp.get_meta("proxy_dead", false):
 			continue
+		# Spawn protection must keep expiring while parked — a frozen timer
+		# would make a player who disconnected inside the window permanently
+		# immune to wolves.
+		var dpt: float = dp.get_meta("protection_timer", 0.0)
+		if dpt > 0.0:
+			dp.set_meta("protection_timer", max(0.0, dpt - delta))
 		# Update shelter meta so wolf AI protects disconnected players inside shelters
 		dp.set_meta("in_built_shelter", _is_near_built_shelter(dp.global_position))
 
@@ -3847,18 +3994,35 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	if color.a > 0.0:
 		action.set_meta("item_color", color)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
+func _track_dropped_item(entry: Dictionary) -> void:
+	var drop_id := str(entry.get("id", ""))
+	if _depleted_action_ids.has(drop_id) or _dropped_items.any(func(drop): return str(drop.get("id", "")) == drop_id):
+		return
+	_dropped_items.append(entry)
+
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0) -> bool:
+	# Host: a client can only drop near itself and with a sane payload —
+	# otherwise arbitrary items could be spawned anywhere on the map.
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if drop_id.is_empty() or item_name.is_empty() or item_name.length() > 80 or not _sender_within(sender_id, pos, 12.0):
+			return false
+	if _depleted_action_ids.has(drop_id):
+		return false
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
-		return
-	if net != null and net.is_dedicated_server:
+		return true
+	item_weight = clampf(item_weight, 0.0, 100.0)
+	item_quantity = clampi(item_quantity, 1, 999)
+	item_use_value = clampf(item_use_value, -100.0, 100.0)
+	if net != null and net.is_host:
 		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 		if color.a > 0.0:
 			drop_entry["color"] = [color.r, color.g, color.b, color.a]
-		_dropped_items.append(drop_entry)
+		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
-		return
+		return true
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+	return true
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	if MilitaryJackets.VARIANTS.has(item_name):
@@ -6851,12 +7015,23 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 				"action_type": actual_action_type
 			})
 
-func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
+func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3, sender_id: int = 0) -> bool:
+	# Host: validate the client-originated payload before applying or relaying
+	# — spawn entries must be sane and land near the sender, or arbitrary items
+	# could be injected anywhere on the map.
+	var check_sender: bool = net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id()
+	if check_sender and spawns.size() > 16:
+		return false
 	if net != null and net.is_dedicated_server:
 		if not action_id.is_empty() and not _depleted_action_ids.has(action_id):
 			_depleted_action_ids.append(action_id)
 		for spawn in spawns:
-			_dropped_items.append(spawn)
+			var s: Dictionary = _sanitize_spawn_entry(spawn)
+			if s.is_empty():
+				continue
+			if check_sender and not _sender_within(sender_id, s["pos"], 15.0):
+				continue
+			_track_dropped_item(s)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -6868,17 +7043,47 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 	# _dropped_items above — spawning visuals would double-append them.
 	if net == null or not net.is_dedicated_server:
 		for spawn in spawns:
+			if not spawn is Dictionary:
+				continue
 			var spawn_id := str(spawn.get("id", ""))
 			if not world_actions_by_id.has(spawn_id):
+				var spos = spawn.get("pos")
+				if not spos is Vector3:
+					continue
 				_spawn_ground_pickup(
-					spawn["name"], spawn["type"], spawn["pos"],
-					spawn["weight"], spawn["qty"], spawn["use"], spawn_id
+					str(spawn.get("name", "")), str(spawn.get("type", "")), spos,
+					float(spawn.get("weight", 0.1)), int(spawn.get("qty", 1)), float(spawn.get("use", 0.0)), spawn_id
 				)
 	# Create extra visual if specified
 	if extra_visual == "tree_remains":
 		_create_cut_tree_remains(extra_pos)
 	elif extra_visual == "cabin":
 		_build_player_cabin(extra_pos)
+	return true
+
+# Normalize a client-supplied spawn dict into a safe dropped-item entry;
+# returns {} when the payload is malformed.
+func _sanitize_spawn_entry(spawn) -> Dictionary:
+	if not spawn is Dictionary:
+		return {}
+	var s: Dictionary = (spawn as Dictionary).duplicate(true)
+	var sname := str(s.get("name", ""))
+	if sname.is_empty() or sname.length() > 80:
+		return {}
+	var spos = s.get("pos")
+	var spos_v := Vector3.INF
+	if spos is Vector3:
+		spos_v = spos
+	elif spos is Array and spos.size() >= 3:
+		spos_v = Vector3(float(spos[0]), float(spos[1]), float(spos[2]))
+	if not spos_v.is_finite():
+		return {}
+	s["name"] = sname
+	s["pos"] = spos_v
+	s["qty"] = clampi(int(s.get("qty", s.get("quantity", 1))), 1, 999)
+	s["weight"] = clampf(float(s.get("weight", 0.1)), 0.0, 100.0)
+	s["use"] = clampf(float(s.get("use", s.get("use_value", 0.0))), -100.0, 100.0)
+	return s
 
 
 func _hide_action_visual(action) -> void:
@@ -7781,17 +7986,18 @@ func _net_notify_pickup(action) -> void:
 	if net != null and net.is_connected and not net.is_host:
 		var picked_id: String = action.action_id
 		net.item_picked_up.rpc_id(1, picked_id)
+	elif net != null and net.is_connected and net.is_host:
+		net.item_picked_up.rpc(action.action_id)
 	# In single player or host, track depleted locally so it persists in save
-	if net == null or not net.is_connected or net.is_host:
-		var picked_id_local: String = action.action_id
-		if not _depleted_action_ids.has(picked_id_local):
-			_depleted_action_ids.append(picked_id_local)
+	var picked_id_local: String = action.action_id
+	if not _depleted_action_ids.has(picked_id_local):
+		_depleted_action_ids.append(picked_id_local)
 	# Remove from _dropped_items so it doesn't respawn / re-save as a ghost duplicate
 	var picked_action_id: String = action.action_id
 	for i in range(_dropped_items.size() - 1, -1, -1):
 		if str(_dropped_items[i].get("id", "")) == picked_action_id:
 			_dropped_items.remove_at(i)
-			break
+	_save_world_change_silent()
 
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
@@ -8078,12 +8284,17 @@ func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 	var campfire_action = _create_world_action(cf_id, "light_campfire", "Fogata apagada", pos, Vector3(1.2, 0.8, 1.2), Color(0.12, 0.08, 0.04), false, false)
 	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
 
-func _net_campfire_built(cf_id: String, pos: Vector3) -> void:
+func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> bool:
+	# A client can only build where its proxy actually stands.
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, pos, 15.0):
+			return false
 	if net != null and net.is_dedicated_server:
 		_built_campfires.append({"id": cf_id, "pos": pos})
 	if world_actions_by_id.has(cf_id):
-		return
+		return true
 	_spawn_player_campfire_with_id(cf_id, pos)
+	return true
 
 func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
 	if world_actions_by_id.has(sh_id):
@@ -8167,14 +8378,32 @@ func _apply_shelter_camouflage(sh_id: String) -> void:
 		for mi in meshes:
 			(mi as MeshInstance3D).material_override = camo_mat
 
-func _net_shelter_built(sh_id: String, pos: Vector3) -> void:
+func _net_shelter_built(sh_id: String, pos: Vector3, sender_id: int = 0) -> bool:
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, pos, 15.0):
+			return false
 	if net != null and net.is_dedicated_server:
 		_built_shelters.append({"id": sh_id, "pos": pos})
 	if world_actions_by_id.has(sh_id):
-		return
+		return true
 	_spawn_player_shelter_with_id(sh_id, pos)
+	return true
 
-func _net_shelter_dismantled(sh_id: String) -> void:
+func _net_shelter_dismantled(sh_id: String, sender_id: int = 0) -> bool:
+	# The sender must stand next to the shelter being torn down — a remote id
+	# alone must not be enough to delete someone else's build.
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		var sh_pos := Vector3.INF
+		for entry in _built_shelters:
+			if entry is Dictionary and str(entry.get("id", "")) == sh_id:
+				var ep = entry.get("pos")
+				if ep is Vector3:
+					sh_pos = ep
+				elif ep is Array and ep.size() >= 3:
+					sh_pos = Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
+				break
+		if sh_pos.is_finite() and not _sender_within(sender_id, sh_pos, 10.0):
+			return false
 	if net != null and net.is_dedicated_server:
 		for i in range(_built_shelters.size() - 1, -1, -1):
 			if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
@@ -8198,15 +8427,19 @@ func _net_shelter_dismantled(sh_id: String) -> void:
 			_hide_action_visual(action)
 			action.mark_depleted()
 		world_actions_by_id.erase(sh_id)
+	return true
 
-func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
+func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sender_id: int = 0) -> bool:
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, pos, 15.0):
+			return false
 	if net != null and net.is_dedicated_server:
 		_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
 	if not world_actions_by_id.has(action_id):
-		return
+		return true
 	var action = world_actions_by_id[action_id]
 	if action.get_meta("lit", false):
-		return
+		return true
 	_create_campfire_fire(action.position + Vector3(0, 0.15, 0), fire_name)
 	action.set_meta("lit", true)
 	action.set_meta("lit_time", Time.get_ticks_msec())
@@ -8214,6 +8447,7 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> vo
 	action.action_type = "cook"
 	action.display_name = "Fogata encendida"
 	action.repeatable = true
+	return true
 
 func _create_quaternius_environment_props() -> void:
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))

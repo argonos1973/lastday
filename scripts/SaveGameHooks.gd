@@ -7,7 +7,9 @@ const DoorScript = preload("res://scripts/Door.gd")
 static func maybe_save_game(main: Node, player: Node) -> void:
 	if main == null or not is_instance_valid(main):
 		return
-	if main.net != null and main.net.is_connected:
+	# _mp_session covers a client whose server disconnected mid-game: its
+	# multiplayer state must never be written into the local save either.
+	if main.net != null and (main.net.is_connected or main.get("_mp_session") == true):
 		return
 	if player == null or not is_instance_valid(player):
 		return
