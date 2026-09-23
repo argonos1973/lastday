@@ -307,6 +307,27 @@ func run() -> void:
 	if world.server_proxies.has(90):
 		check(not (world.server_proxies[90] as Node3D).has_meta("saved_inventory"), "dead record leaves no gear metas on fresh proxy")
 
+	# hp<=0 without a death flag (quit while dying / decay between saves) counts
+	# as dead: gear drops once at the record position, then a fresh start.
+	var pickups_before := world.spawned_pickups.size()
+	world._server_saved_players["cid_hp0"] = {"pos": [7.0, 0.4, 7.0], "health": 0.0, "inventory": [{"name": "Hacha"}, {"name": "Pan"}], "clothing": "Camiseta"}
+	world._match_proxy_to_client(91, "cid_hp0")
+	await process_frame
+	await process_frame
+	check(world.sent_spawn_only.any(func(e): return e[0] == 91), "hp0 record sends spawn position only")
+	check(not world.sent_restore.any(func(e): return e[0] == 91), "hp0 record never restores inventory")
+	check(not world._server_saved_players.has("cid_hp0"), "hp0 record baseline erased")
+	check(world.spawned_pickups.size() == pickups_before + 2, "hp0 record drops the corpse gear once")
+	if world.server_proxies.has(91):
+		var hp0_proxy: Node3D = world.server_proxies[91]
+		check(not hp0_proxy.has_meta("saved_inventory") and not hp0_proxy.has_meta("loot_dropped"), "hp0 proxy is clean for the fresh character")
+
+	# An offline peer (parked in proxy_by_client_id) must not respawn a bare
+	# ghost proxy — it would hijack the cid in the save dedup and strip fields.
+	net.players[77] = {"client_id": "cid_off", "offline": true}
+	world._update_server_proxies(0.016)
+	check(not world.server_proxies.has(77), "offline peer does not respawn a ghost proxy")
+
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({
 		"dropped_items": [{"id": "drop_1", "name": "Lata", "pos": [1.0, 0.1, 2.0]}],

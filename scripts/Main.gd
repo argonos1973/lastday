@@ -1721,6 +1721,15 @@ func _load_server_world_state() -> void:
 	if world_data.is_empty():
 		return
 	_dropped_items = (world_data.get("dropped_items", []) as Array).duplicate(true)
+	# Older saves can contain the same drop twice (double-append bug). Dedup by
+	# id so clients don't get two pickups at the same spot.
+	var seen_drop_ids := {}
+	for i in range(_dropped_items.size() - 1, -1, -1):
+		var did: String = str(_dropped_items[i].get("id", ""))
+		if seen_drop_ids.has(did):
+			_dropped_items.remove_at(i)
+		else:
+			seen_drop_ids[did] = true
 	_built_campfires = (world_data.get("built_campfires", []) as Array).duplicate(true)
 	_lit_campfires = (world_data.get("lit_campfires", []) as Array).duplicate(true)
 	_built_shelters = (world_data.get("built_shelters", []) as Array).duplicate(true)
@@ -2156,6 +2165,12 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				break
 	if existing != null:
 		var was_dead: bool = existing.get_meta("proxy_dead", false)
+		if not was_dead and float(existing.get_meta("saved_health", 100.0)) <= 0.0:
+			# hp reached 0 without a formal death (quit while dying, or the
+			# decay killed it between saves). Drop the gear at the corpse
+			# position once, then treat the character as dead.
+			_drop_player_loot(peer_id, existing)
+			was_dead = true
 		# A proxy without saved_* metas never received a state sync from its
 		# client — it has nothing to restore. Sending an empty restore would
 		# wipe the client's starting gear, so send the spawn position only.
@@ -2217,7 +2232,22 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# Restore this client from the server save if they played before a restart
 		var saved: Dictionary = _server_saved_players.get(cid, {})
 		if not saved.is_empty():
-			if bool(saved.get("dead", false)):
+			if bool(saved.get("dead", false)) or float(saved.get("health", 100.0)) <= 0.0:
+				# A record with hp<=0 but no death flag means the character died
+				# without the drop running (quit at 0 hp, or the decay killed it
+				# between saves): drop its gear at the record position once so
+				# the loot still exists, then start a fresh character.
+				if not bool(saved.get("dead", false)):
+					var rec_inv: Array = saved.get("inventory", [])
+					if not rec_inv.is_empty():
+						var dead_proxy: Node3D = server_proxies[peer_id]
+						var rec_pos = saved.get("pos", null)
+						if rec_pos is Array and rec_pos.size() >= 3:
+							dead_proxy.global_position = Vector3(float(rec_pos[0]), float(rec_pos[1]), float(rec_pos[2]))
+						dead_proxy.set_meta("saved_inventory", rec_inv)
+						_drop_player_loot(peer_id, dead_proxy)
+						dead_proxy.remove_meta("loot_dropped")
+						dead_proxy.remove_meta("saved_inventory")
 				# Dead record: fresh start. Erase the baseline so its fields
 				# can't merge back into the new character's record, and don't
 				# copy any saved_* metas onto the fresh proxy.
@@ -2344,6 +2374,10 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 		return
 	proxy.set_meta("saved_inventory", items_data)
 	proxy.set_meta("saved_health", health)
+	# Keep proxy_health in sync with the client's reported hp — the server-side
+	# decay/damage loops tick it, and without this a heal would never lift it.
+	if not proxy.get_meta("proxy_dead", false):
+		proxy.set_meta("proxy_health", health)
 	proxy.set_meta("saved_hunger", hunger)
 	proxy.set_meta("saved_thirst", thirst)
 	proxy.set_meta("saved_clothing", equipped_clothing)
@@ -3029,10 +3063,14 @@ func _update_server_proxies(delta: float) -> void:
 	for pid in net.players.keys():
 		if pid == net.get_my_id():
 			continue
+		var data: Dictionary = net.players[pid]
+		if data.get("offline", false):
+			# Parked in proxy_by_client_id — respawning a bare proxy here would
+			# hijack the cid in the save dedup and strip the record's fields/pos.
+			continue
 		if not server_proxies.has(pid):
 			_spawn_server_proxy(pid)
 			continue
-		var data: Dictionary = net.players[pid]
 		var proxy: Node3D = server_proxies[pid]
 		# Only update proxy position if client has sent real position data;
 		# while reconnecting, players[pid]["pos"] is still the SPAWN_POS
@@ -6844,16 +6882,22 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_use_value", use_value)
 	# Persist the pickup so it survives save/load and syncs to new clients
 	if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
-		_dropped_items.append({
-			"id": id,
-			"name": item_name,
-			"type": item_type,
-			"weight": weight,
-			"qty": qty,
-			"use": use_value,
-			"pos": [pos.x, pos.y, pos.z],
-			"action_type": actual_action_type
-		})
+		var already_tracked := false
+		for e in _dropped_items:
+			if str(e.get("id", "")) == id:
+				already_tracked = true
+				break
+		if not already_tracked:
+			_dropped_items.append({
+				"id": id,
+				"name": item_name,
+				"type": item_type,
+				"weight": weight,
+				"qty": qty,
+				"use": use_value,
+				"pos": [pos.x, pos.y, pos.z],
+				"action_type": actual_action_type
+			})
 
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
 	if net != null and net.is_dedicated_server:
@@ -6867,14 +6911,17 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-	# Spawn any items that resulted from the action (skip if already spawned locally)
-	for spawn in spawns:
-		var spawn_id := str(spawn.get("id", ""))
-		if not world_actions_by_id.has(spawn_id):
-			_spawn_ground_pickup(
-				spawn["name"], spawn["type"], spawn["pos"],
-				spawn["weight"], spawn["qty"], spawn["use"], spawn_id
-			)
+	# Spawn any items that resulted from the action (skip if already spawned
+	# locally). On the dedicated server the drops were already persisted into
+	# _dropped_items above — spawning visuals would double-append them.
+	if net == null or not net.is_dedicated_server:
+		for spawn in spawns:
+			var spawn_id := str(spawn.get("id", ""))
+			if not world_actions_by_id.has(spawn_id):
+				_spawn_ground_pickup(
+					spawn["name"], spawn["type"], spawn["pos"],
+					spawn["weight"], spawn["qty"], spawn["use"], spawn_id
+				)
 	# Create extra visual if specified
 	if extra_visual == "tree_remains":
 		_create_cut_tree_remains(extra_pos)
