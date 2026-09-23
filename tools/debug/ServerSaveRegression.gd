@@ -327,6 +327,8 @@ func run() -> void:
 	net.players[77] = {"client_id": "cid_off", "offline": true}
 	world._update_server_proxies(0.016)
 	check(not world.server_proxies.has(77), "offline peer does not respawn a ghost proxy")
+	check(not offproxy.get_meta("proxy_dead", false), "offline proxy does not starve to death")
+	check(not offproxy.has_meta("saved_hunger"), "offline proxy stats stay frozen")
 
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({

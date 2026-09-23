@@ -3083,40 +3083,10 @@ func _update_server_proxies(delta: float) -> void:
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
 			proxy.set_meta("protection_timer", max(0.0, pt - delta))
-		# Tick survival stats for active connected players (server-authoritative)
-		if not data.get("offline", false) and not proxy.get_meta("proxy_dead", false):
-			var proxy_in_shelter: bool = proxy.get_meta("in_built_shelter", false) or _is_player_in_house(proxy.global_position)
-			var proxy_ambient: float = 20.0
-			if day_cycle != null:
-				proxy_ambient = day_cycle.get_ambient_temperature()
-			if hud != null and hud._real_temp_parsed != -999.0:
-				proxy_ambient = hud._real_temp_parsed
-			if _is_player_in_house(proxy.global_position):
-				proxy_ambient = clamp(proxy_ambient, 12.0, 28.0)
-			if proxy.get_meta("in_built_shelter", false):
-				proxy_ambient = clamp(proxy_ambient, 10.0, 30.0)
-			var p_hunger: float = proxy.get_meta("saved_hunger", 100.0)
-			var p_thirst: float = proxy.get_meta("saved_thirst", 100.0)
-			var p_hp: float = proxy.get_meta("proxy_health", 100.0)
-			var p_sleeping: bool = data.get("sleeping", false)
-			var p_sprinting: bool = data.get("anim", "").find("sprint") >= 0
-			var p_moving: bool = data.get("anim", "idle") != "idle"
-			var sleep_factor := 0.3 if p_sleeping else 1.0
-			p_hunger = max(0.0, p_hunger - 0.12 * delta * (2.0 if p_moving else 1.0) * sleep_factor)
-			p_thirst = max(0.0, p_thirst - 0.22 * delta * (3.0 if p_sprinting else 1.0) * (2.0 if p_moving else 1.0) * sleep_factor)
-			if p_hunger <= 0.0:
-				p_hp = max(0.0, p_hp - 1.0 * delta)
-			if p_thirst <= 0.0:
-				p_hp = max(0.0, p_hp - 1.5 * delta)
-			proxy.set_meta("saved_hunger", p_hunger)
-			proxy.set_meta("saved_thirst", p_thirst)
-			proxy.set_meta("proxy_health", p_hp)
-			if p_hp <= 0.0:
-				proxy.set_meta("proxy_dead", true)
-				proxy.remove_from_group("net_player_proxy")
-				proxy.add_to_group("interactable")
-				_drop_player_loot(pid, proxy)
-				_broadcast_player_death(pid, proxy)
+		# Connected players are authoritative over their own survival stats —
+		# they sync hunger/thirst/health every 2s via sync_player_inventory.
+		# A parallel server-side decay would diverge from the client's real
+		# stats and could kill a healthy player and drop their loot.
 	# Broadcast offline proxies to all connected clients
 	# Check both server_proxies (just disconnected) and proxy_by_client_id (fully offline)
 	var offline_proxies: Dictionary = {}
@@ -3144,33 +3114,15 @@ func _update_server_proxies(delta: float) -> void:
 			if net.peer != null and net.peer.get_peer(connected_pid) == null:
 				continue
 			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false)
-	# Tick survival stats for disconnected proxies (hunger, thirst, health decay)
+	# Disconnected proxies keep the body in the world (wolves can still attack
+	# it), but their survival stats freeze while offline — logging out must not
+	# starve the character and dump its inventory on the ground.
 	for cid in proxy_by_client_id.keys():
 		var dp: Node3D = proxy_by_client_id[cid]
 		if dp.get_meta("proxy_dead", false):
 			continue
 		# Update shelter meta so wolf AI protects disconnected players inside shelters
 		dp.set_meta("in_built_shelter", _is_near_built_shelter(dp.global_position))
-		var d_hunger: float = dp.get_meta("saved_hunger", 100.0)
-		var d_thirst: float = dp.get_meta("saved_thirst", 100.0)
-		var d_hp: float = dp.get_meta("proxy_health", 100.0)
-		# Decay rates: hunger -0.5/s, thirst -0.7/s (slower than active player)
-		d_hunger = max(0.0, d_hunger - 0.5 * delta)
-		d_thirst = max(0.0, d_thirst - 0.7 * delta)
-		# Health damage from starvation/dehydration
-		if d_hunger <= 0.0:
-			d_hp = max(0.0, d_hp - 1.0 * delta)
-		if d_thirst <= 0.0:
-			d_hp = max(0.0, d_hp - 1.5 * delta)
-		dp.set_meta("saved_hunger", d_hunger)
-		dp.set_meta("saved_thirst", d_thirst)
-		dp.set_meta("proxy_health", d_hp)
-		if d_hp <= 0.0:
-			dp.set_meta("proxy_dead", true)
-			dp.remove_from_group("net_player_proxy")
-			dp.add_to_group("interactable")
-			_drop_player_loot(dp.get_meta("peer_id", 0), dp)
-			_broadcast_player_death(dp.get_meta("peer_id", 0), dp)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
