@@ -8918,6 +8918,10 @@ func _attach_flies_to_drop(drop_id: String) -> void:
 	target.add_child(swarm)
 
 func _update_loot_wear() -> void:
+	# Dedicated server: dropped loot is authoritative and must persist
+	# unchanged until the server restarts — no weather wear or rot removal.
+	if net != null and net.is_dedicated_server:
+		return
 	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
 	# 100 wear = ~1000s (16min) sheltered, ~1500s (25min) exposed
 	var removed_ids: Array = []
