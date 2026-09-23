@@ -284,6 +284,17 @@ func run() -> void:
 	net.players.erase(80)
 	dying.queue_free()
 
+	# Server character appearance: a client_id with a saved record gets its own
+	# stored look back (the Inicio card must not reskin the server character).
+	world._server_saved_players["cid_look"] = {"char_name": "Soldado", "top_color": "0.1,0.2,0.3", "bottom_color": "0.4,0.5,0.6", "top_camo": true}
+	var aargs: Array = world._saved_appearance_args("cid_look")
+	check(aargs.size() == 8, "saved appearance payload built for known client_id")
+	if aargs.size() == 8:
+		check(str(aargs[0]) == "Soldado", "saved appearance keeps character name")
+		check((aargs[1] as Color).is_equal_approx(Color(0.1, 0.2, 0.3)), "saved appearance keeps top color")
+		check(aargs[6] == true, "saved appearance keeps camo flag")
+	check(world._saved_appearance_args("cid_norecord").is_empty(), "no appearance payload for unknown client_id")
+
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({
 		"dropped_items": [{"id": "drop_1", "name": "Lata", "pos": [1.0, 0.1, 2.0]}],

@@ -2090,6 +2090,35 @@ func _get_random_spawn_pos() -> Vector3:
 	var h := _get_ground_height(fb)
 	return Vector3(fb.x, h + 0.4, fb.z)
 
+# Appearance args for restore_character_appearance, or [] when the record
+# carries none — the server character is bound to the one the player started
+# with until it dies, so the Inicio card must not reskin it.
+func _saved_appearance_args(cid: String) -> Array:
+	var saved: Dictionary = _server_saved_players.get(cid, {})
+	if saved.is_empty():
+		return []
+	var char_name := str(saved.get("char_name", ""))
+	if char_name.is_empty() and not saved.has("top_color"):
+		return []
+	var SaveHooksScript = load("res://scripts/SaveGameHooks.gd")
+	return [char_name,
+		SaveHooksScript._str_to_color(str(saved.get("top_color", ""))),
+		SaveHooksScript._str_to_color(str(saved.get("bottom_color", ""))),
+		SaveHooksScript._str_to_color(str(saved.get("shoes_color", ""))),
+		SaveHooksScript._str_to_color(str(saved.get("hair_color", ""))),
+		SaveHooksScript._str_to_color(str(saved.get("skin_color", ""))),
+		bool(saved.get("top_camo", false)), bool(saved.get("bottom_camo", false))]
+
+func _delayed_send_saved_appearance(peer_id: int, cid: String) -> void:
+	await get_tree().create_timer(2.0).timeout
+	if _scene_quitting: return
+	if net == null or net.peer == null:
+		return
+	var args := _saved_appearance_args(cid)
+	if args.is_empty():
+		return
+	net.restore_character_appearance.rpc_id(peer_id, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7])
+
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	_delayed_send_spawn_pos(peer_id, _get_random_spawn_pos())
 
@@ -2170,6 +2199,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
 			var saved_pos: Vector3 = existing.get_meta("saved_pos", existing.global_position)
+			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			if bare_proxy:
 				call_deferred("_delayed_send_spawn_pos", peer_id, saved_pos)
 				return
@@ -2221,12 +2251,15 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			if bare_record:
 				var bare_pos: Vector3 = _get_random_spawn_pos() if bool(saved.get("dead", false)) else proxy.global_position
 				call_deferred("_delayed_send_spawn_pos", peer_id, bare_pos)
+				if not bool(saved.get("dead", false)):
+					call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 				return
 			if bool(saved.get("dead", false)):
 				# Player was dead when the server stopped: respawn fresh, keep inventory
 				call_deferred("_delayed_send_reconnect_state", peer_id, _get_random_spawn_pos(), saved_inv, 100.0, float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, false, false, saved_rot, false, false, saved_extra)
 			else:
 				call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
+				call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			return
 		# Send spawn position to new player too (so client knows when to start sending position)
 		call_deferred("_delayed_send_new_player_state", peer_id)
@@ -2351,11 +2384,42 @@ func _apply_pending_restore() -> void:
 			net._has_buffered_world_state = false
 			net._buffered_world_state = []
 			_net_sync_world_state(wb[0], wb[1], wb[2], wb[3], wb[4], wb[5])
+		if net._has_buffered_appearance:
+			var ab: Array = net._buffered_appearance
+			net._has_buffered_appearance = false
+			net._buffered_appearance = []
+			_apply_restored_appearance(ab[0], ab[1], ab[2], ab[3], ab[4], ab[5], ab[6], ab[7])
 	if _pending_restore_data.is_empty():
 		return
 	var d = _pending_restore_data
 	_pending_restore_data = []
 	_apply_restored_inventory(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13] if d.size() > 13 else {})
+
+# Client: the server is authoritative over which character a client_id owns —
+# apply its saved appearance over whatever card was picked in Inicio.
+func _apply_restored_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	var gs := get_node_or_null("/root/GameSession")
+	if gs == null:
+		return
+	if top_color.a > 0.0:
+		gs.selected_top_color = top_color
+	if bottom_color.a > 0.0:
+		gs.selected_bottom_color = bottom_color
+	if shoes_color.a > 0.0:
+		gs.selected_shoes_color = shoes_color
+	if hair_color.a > 0.0:
+		gs.selected_hair_color = hair_color
+	if skin_color.a > 0.0:
+		gs.selected_skin_color = skin_color
+	gs.set_meta("top_camo", top_camo)
+	gs.set_meta("bottom_camo", bottom_camo)
+	if not char_name.is_empty():
+		gs.set_meta("char_name", char_name)
+	if player != null and is_instance_valid(player) and player.has_method("_apply_character_colors"):
+		player._apply_character_colors()
+	# Echo the canonical appearance so the live player entry and future saves
+	# keep the server character, not the card picked this session.
+	_send_character_appearance()
 
 # Client: restore inventory/stats/equipment from server on reconnect
 func _apply_restored_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:

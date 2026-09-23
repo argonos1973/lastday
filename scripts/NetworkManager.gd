@@ -169,6 +169,8 @@ func join_game(ip: String) -> bool:
 	_has_buffered_restore = false
 	_buffered_world_state = []
 	_has_buffered_world_state = false
+	_buffered_appearance = []
+	_has_buffered_appearance = false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
 	return true
@@ -362,6 +364,8 @@ var _buffered_restore: Array = []
 var _has_buffered_restore := false
 var _buffered_world_state: Array = []
 var _has_buffered_world_state := false
+var _buffered_appearance: Array = []
+var _has_buffered_appearance := false
 
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
@@ -773,6 +777,18 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 				if peer.get_peer(pid) == null:
 					continue
 				sync_character_appearance_remote.rpc_id(pid, sender, char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
+
+# Server sends the persisted character appearance back to its owner on
+# reconnect — the client_id's server character is fixed until it dies, so
+# whatever card was picked in Inicio gets overridden.
+@rpc("authority", "reliable")
+func restore_character_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_apply_restored_appearance"):
+		scene._apply_restored_appearance(char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
+	else:
+		_buffered_appearance = [char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo]
+		_has_buffered_appearance = true
 
 # Server relays character appearance to a specific client
 @rpc("authority", "reliable")
