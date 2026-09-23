@@ -295,6 +295,18 @@ func run() -> void:
 		check(aargs[6] == true, "saved appearance keeps camo flag")
 	check(world._saved_appearance_args("cid_norecord").is_empty(), "no appearance payload for unknown client_id")
 
+	# Dead record: fresh start — spawn-only, baseline erased so the corpse's
+	# gear can't merge back into the new character's record.
+	world._server_saved_players["cid_dead"] = {"pos": [9.0, 0.4, 9.0], "inventory": [{"name": "Hacha"}], "clothing": "Camiseta", "dead": true}
+	world._match_proxy_to_client(90, "cid_dead")
+	await process_frame
+	await process_frame
+	check(world.sent_spawn_only.any(func(e): return e[0] == 90), "dead record sends spawn position only")
+	check(not world.sent_restore.any(func(e): return e[0] == 90), "dead record never restores inventory")
+	check(not world._server_saved_players.has("cid_dead"), "dead record baseline erased")
+	if world.server_proxies.has(90):
+		check(not (world.server_proxies[90] as Node3D).has_meta("saved_inventory"), "dead record leaves no gear metas on fresh proxy")
+
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({
 		"dropped_items": [{"id": "drop_1", "name": "Lata", "pos": [1.0, 0.1, 2.0]}],

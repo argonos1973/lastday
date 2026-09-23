@@ -2161,28 +2161,18 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# wipe the client's starting gear, so send the spawn position only.
 		var bare_proxy := not existing.has_meta("saved_inventory")
 		if was_dead:
-			# Read saved metadata before freeing the dead proxy
-			var dead_inv: Array = existing.get_meta("saved_inventory", [])
-			var dead_hp: float = 100.0  # Reset HP on respawn after death
-			var dead_hunger: float = existing.get_meta("saved_hunger", 100.0)
-			var dead_thirst: float = existing.get_meta("saved_thirst", 100.0)
-			var dead_clothing: String = existing.get_meta("saved_clothing", "")
-			var dead_backpack: String = existing.get_meta("saved_backpack", "")
-			var dead_held: String = existing.get_meta("saved_held_item", "")
-			var dead_held_idx: int = existing.get_meta("saved_held_idx", 0)
-			var dead_rot: float = existing.get_meta("saved_rot", 0.0)
-			var dead_extra: Dictionary = existing.get_meta("saved_extra", {})
+			# Death means a fresh start: free the corpse proxy and respawn as a
+			# new character with default gear. The loot stays in the world —
+			# nothing of the dead character follows the new one.
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
 			# Set client_id on the freshly-created proxy so it persists for next disconnect
 			if server_proxies.has(peer_id):
 				server_proxies[peer_id].set_meta("client_id", cid)
-			# Send spawn position with restored inventory (not sitting/prone/crouching since player died)
-			var spawn_pos: Vector3 = _get_random_spawn_pos()
-			if bare_proxy:
-				call_deferred("_delayed_send_spawn_pos", peer_id, spawn_pos)
-			else:
-				call_deferred("_delayed_send_reconnect_state", peer_id, spawn_pos, dead_inv, dead_hp, dead_hunger, dead_thirst, dead_clothing, dead_backpack, dead_held, dead_held_idx, false, false, dead_rot, false, false, dead_extra)
+			# Drop the dead record's baseline so the merge can't refill the new
+			# character's record with the corpse's gear.
+			_server_saved_players.erase(cid)
+			call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos())
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):
@@ -2227,6 +2217,13 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# Restore this client from the server save if they played before a restart
 		var saved: Dictionary = _server_saved_players.get(cid, {})
 		if not saved.is_empty():
+			if bool(saved.get("dead", false)):
+				# Dead record: fresh start. Erase the baseline so its fields
+				# can't merge back into the new character's record, and don't
+				# copy any saved_* metas onto the fresh proxy.
+				_server_saved_players.erase(cid)
+				call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos())
+				return
 			# Keep the entry: it is the merge baseline for future saves.
 			var proxy: Node3D = server_proxies[peer_id]
 			for key in _SERVER_PLAYER_FIELDS.keys():
@@ -2249,17 +2246,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# Restore the position but let the client keep its default outfit.
 			var bare_record := not saved.has("inventory") and not saved.has("clothing")
 			if bare_record:
-				var bare_pos: Vector3 = _get_random_spawn_pos() if bool(saved.get("dead", false)) else proxy.global_position
-				call_deferred("_delayed_send_spawn_pos", peer_id, bare_pos)
-				if not bool(saved.get("dead", false)):
-					call_deferred("_delayed_send_saved_appearance", peer_id, cid)
-				return
-			if bool(saved.get("dead", false)):
-				# Player was dead when the server stopped: respawn fresh, keep inventory
-				call_deferred("_delayed_send_reconnect_state", peer_id, _get_random_spawn_pos(), saved_inv, 100.0, float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, false, false, saved_rot, false, false, saved_extra)
-			else:
-				call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
+				call_deferred("_delayed_send_spawn_pos", peer_id, proxy.global_position)
 				call_deferred("_delayed_send_saved_appearance", peer_id, cid)
+				return
+			call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
+			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			return
 		# Send spawn position to new player too (so client knows when to start sending position)
 		call_deferred("_delayed_send_new_player_state", peer_id)
