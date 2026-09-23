@@ -1987,8 +1987,12 @@ func _setup_server_console() -> void:
 	get_tree().auto_accept_quit = false
 	if FileAccess.file_exists(SERVER_STOP_FLAG):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SERVER_STOP_FLAG))
-	_server_stdin_thread = Thread.new()
-	_server_stdin_thread.start(_stdin_command_loop)
+	# A thread blocked on read_string_from_stdin crashes teardown when stdin is
+	# /dev/null (Finder/Dock launches), so only listen on a real console.
+	# (StdinType enum is not exposed to GDScript in 4.7: 1 == CONSOLE.)
+	if OS.get_stdin_type() == 1:
+		_server_stdin_thread = Thread.new()
+		_server_stdin_thread.start(_stdin_command_loop)
 	print("[SERVER] Comandos: 'status' | 'save' | 'quit' — o ejecuta tools/stop_server.sh")
 
 func _stdin_command_loop() -> void:
@@ -2017,12 +2021,22 @@ func _print_server_status() -> void:
 			online += 1
 	print("[SERVER] conectados=%d offline=%d guardados=%d" % [online, proxy_by_client_id.size(), _server_saved_players.size()])
 
+var _server_shutdown_started := false
+
 func _request_server_shutdown() -> void:
+	if _server_shutdown_started:
+		return
+	_server_shutdown_started = true
 	print("[SERVER] Cerrando: guardando mundo...")
-	_save_server_world()
+	# Set the quit flag first: SceneTree exits at the end of this iteration, so
+	# the process still terminates even if the world save below fails.
 	get_tree().quit()
+	_save_server_world()
 
 func _notification(what: int) -> void:
+	# NOTE: headless dedicated_server exports never receive this notification —
+	# Godot's applicationShouldTerminate only forwards it for a real window.
+	# The LastDayServer.app launcher applet covers Dock > Salir via the stop flag.
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and net != null and net.is_dedicated_server:
 		_request_server_shutdown()
 
