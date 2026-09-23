@@ -161,6 +161,14 @@ func join_game(ip: String) -> bool:
 	if err != OK:
 		push_error("No se pudo conectar al servidor: %d" % err)
 		return false
+	# Drop state buffered during a previous session — a stale restore consumed
+	# after this connect would overwrite the fresh player's gear.
+	_buffered_spawn_pos = Vector3.ZERO
+	_has_buffered_spawn_pos = false
+	_buffered_restore = []
+	_has_buffered_restore = false
+	_buffered_world_state = []
+	_has_buffered_world_state = false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
 	return true

@@ -363,9 +363,12 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 			player.stats.survival_seconds = float(data.get("survival_seconds", 0.0))
 			player.stats.changed.emit()
 	# Inventory — filter out removed clothing items (migrated out of the game)
+	# Records without an "inventory" key are bare (appearance-only) entries:
+	# clearing would wipe the starting gear and leave the character without
+	# clothes, so only replace the inventory when the field is present.
 	var _removed_items := ["Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
 	var items_data = data.get("inventory", [])
-	if player.has_node("Inventory"):
+	if data.has("inventory") and player.has_node("Inventory"):
 		var inv = player.get_node("Inventory")
 		if inv != null and "items" in inv:
 			inv.items.clear()

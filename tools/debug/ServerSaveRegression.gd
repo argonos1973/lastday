@@ -8,10 +8,16 @@ extends SceneTree
 const SaveHooksScript = preload("res://scripts/SaveGameHooks.gd")
 
 class World extends "res://scripts/Main.gd":
+	var sent_restore: Array = []
+	var sent_spawn_only: Array = []
 	func _ready() -> void:
 		set_process(false)
 		set_physics_process(false)
 		set_process_input(false)
+	func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
+		sent_restore.append([peer_id, pos])
+	func _delayed_send_spawn_pos(peer_id: int, pos: Vector3) -> void:
+		sent_spawn_only.append([peer_id, pos])
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -221,6 +227,37 @@ func run() -> void:
 	world.server_proxies[8] = fresh2
 	world._match_proxy_to_client(8, "cid_unknown")
 	check(fresh2.get_meta("client_id", "") == "cid_unknown", "new player proxy gets client_id")
+
+	# Bare saved record (appearance/pos only, no state keys — e.g. stripped by
+	# an old corrupt save): restore the position but never send an empty
+	# inventory restore, which would wipe the client's starting gear.
+	world._server_saved_players["cid_bare"] = {"pos": [5.0, 0.4, 6.0], "char_name": "Bare"}
+	world._match_proxy_to_client(11, "cid_bare")
+	await process_frame
+	await process_frame
+	check(world.sent_spawn_only.any(func(e): return e[0] == 11), "bare record sends spawn position only")
+	check(not world.sent_restore.any(func(e): return e[0] == 11), "bare record never sends empty inventory restore")
+	if world.server_proxies.has(11):
+		check(world.server_proxies[11].global_position.distance_to(Vector3(5.0, 0.4, 6.0)) < 0.001, "bare record still restores position")
+
+	# Bare live proxy (no saved_* metas — its client never synced): same rule.
+	var bare_live := Node3D.new()
+	bare_live.set_meta("client_id", "cid_barelive")
+	world.add_child(bare_live)
+	bare_live.global_position = Vector3(12.0, 0.4, 13.0)
+	bare_live.set_meta("saved_pos", bare_live.global_position)
+	world.proxy_by_client_id["cid_barelive"] = bare_live
+	world._match_proxy_to_client(70, "cid_barelive")
+	await process_frame
+	await process_frame
+	check(world.sent_spawn_only.any(func(e): return e[0] == 70), "bare live proxy sends spawn position only")
+	check(not world.sent_restore.any(func(e): return e[0] == 70), "bare live proxy never sends empty restore")
+	check(world.server_proxies.get(70) == bare_live, "bare live proxy rebound to new peer")
+
+	# Records/proxies with real state still get the full restore.
+	check(world.sent_restore.any(func(e): return e[0] == 7), "saved record sends inventory restore")
+	check(world.sent_restore.any(func(e): return e[0] == 60), "stateful rebind sends inventory restore")
+	check(world.sent_spawn_only.any(func(e): return e[0] == 8), "new player gets spawn position only")
 
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({

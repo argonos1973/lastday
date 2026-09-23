@@ -2091,10 +2091,16 @@ func _get_random_spawn_pos() -> Vector3:
 	return Vector3(fb.x, h + 0.4, fb.z)
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
+	_delayed_send_spawn_pos(peer_id, _get_random_spawn_pos())
+
+# Spawn position only, no inventory restore — for new players and for bare
+# records/proxies that carry no real state. Sending an empty restore would
+# wipe the client's starting gear and leave the character without clothes.
+func _delayed_send_spawn_pos(peer_id: int, pos: Vector3) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
 	if net != null and net.peer != null:
-		net.set_client_spawn_pos.rpc_id(peer_id, _get_random_spawn_pos())
+		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -2121,6 +2127,10 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				break
 	if existing != null:
 		var was_dead: bool = existing.get_meta("proxy_dead", false)
+		# A proxy without saved_* metas never received a state sync from its
+		# client — it has nothing to restore. Sending an empty restore would
+		# wipe the client's starting gear, so send the spawn position only.
+		var bare_proxy := not existing.has_meta("saved_inventory")
 		if was_dead:
 			# Read saved metadata before freeing the dead proxy
 			var dead_inv: Array = existing.get_meta("saved_inventory", [])
@@ -2132,6 +2142,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var dead_held: String = existing.get_meta("saved_held_item", "")
 			var dead_held_idx: int = existing.get_meta("saved_held_idx", 0)
 			var dead_rot: float = existing.get_meta("saved_rot", 0.0)
+			var dead_extra: Dictionary = existing.get_meta("saved_extra", {})
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
 			# Set client_id on the freshly-created proxy so it persists for next disconnect
@@ -2139,7 +2150,10 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				server_proxies[peer_id].set_meta("client_id", cid)
 			# Send spawn position with restored inventory (not sitting/prone/crouching since player died)
 			var spawn_pos: Vector3 = _get_random_spawn_pos()
-			call_deferred("_delayed_send_reconnect_state", peer_id, spawn_pos, dead_inv, dead_hp, dead_hunger, dead_thirst, dead_clothing, dead_backpack, dead_held, dead_held_idx, false, false, dead_rot, false, false, existing.get_meta("saved_extra", {}))
+			if bare_proxy:
+				call_deferred("_delayed_send_spawn_pos", peer_id, spawn_pos)
+			else:
+				call_deferred("_delayed_send_reconnect_state", peer_id, spawn_pos, dead_inv, dead_hp, dead_hunger, dead_thirst, dead_clothing, dead_backpack, dead_held, dead_held_idx, false, false, dead_rot, false, false, dead_extra)
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):
@@ -2156,6 +2170,9 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			server_proxies[peer_id] = existing
 			# Send position and inventory to reconnecting client (delayed so scene is loaded)
 			var saved_pos: Vector3 = existing.get_meta("saved_pos", existing.global_position)
+			if bare_proxy:
+				call_deferred("_delayed_send_spawn_pos", peer_id, saved_pos)
+				return
 			var saved_inv: Array = existing.get_meta("saved_inventory", [])
 			var saved_hp: float = existing.get_meta("saved_health", 100.0)
 			var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
@@ -2196,6 +2213,15 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_held_idx: int = int(saved.get("held_idx", 0))
 			var saved_rot: float = float(saved.get("rot", 0.0))
 			var saved_extra: Dictionary = saved.get("extra", {})
+			# A bare record (appearance/position only, e.g. from an old corrupted
+			# save or a proxy that never synced) carries no state to restore —
+			# sending an empty restore would wipe the client's starting gear.
+			# Restore the position but let the client keep its default outfit.
+			var bare_record := not saved.has("inventory") and not saved.has("clothing")
+			if bare_record:
+				var bare_pos: Vector3 = _get_random_spawn_pos() if bool(saved.get("dead", false)) else proxy.global_position
+				call_deferred("_delayed_send_spawn_pos", peer_id, bare_pos)
+				return
 			if bool(saved.get("dead", false)):
 				# Player was dead when the server stopped: respawn fresh, keep inventory
 				call_deferred("_delayed_send_reconnect_state", peer_id, _get_random_spawn_pos(), saved_inv, 100.0, float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, false, false, saved_rot, false, false, saved_extra)
