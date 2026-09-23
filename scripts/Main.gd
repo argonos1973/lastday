@@ -2447,11 +2447,8 @@ func _sanitize_inventory_data(items_data: Array) -> Array:
 			break
 	return clean
 
-# Distance check for client-originated world actions on the server: the
-# sender needs a live proxy within reach of the target position.
-func _sender_within(sender_id: int, pos: Vector3, max_dist: float) -> bool:
-	if not pos.is_finite():
-		return false
+# Resolve the live proxy a sender peer owns (connected or parked).
+func _server_proxy_for_sender(sender_id: int) -> Node3D:
 	var sp: Node3D = server_proxies.get(sender_id)
 	if sp == null:
 		for cid in proxy_by_client_id.keys():
@@ -2459,9 +2456,88 @@ func _sender_within(sender_id: int, pos: Vector3, max_dist: float) -> bool:
 			if p != null and int(p.get_meta("peer_id", -1)) == sender_id:
 				sp = p
 				break
+	return sp
+
+# Distance check for client-originated world actions on the server: the
+# sender needs a live proxy within reach of the target position.
+func _sender_within(sender_id: int, pos: Vector3, max_dist: float) -> bool:
+	if not pos.is_finite():
+		return false
+	var sp := _server_proxy_for_sender(sender_id)
 	if sp == null or not is_instance_valid(sp):
 		return false
 	return sp.global_position.distance_to(pos) <= max_dist
+
+# Keep the sender's persisted inventory coherent with world actions so a quit
+# inside the sync window can't resurrect a dropped item (or lose a pickup).
+func _saved_inventory_remove(sender_id: int, item_name: String, item_type: String, qty: int) -> void:
+	if sender_id == 0 or sender_id == net.get_my_id():
+		return
+	var sp := _server_proxy_for_sender(sender_id)
+	if sp == null or not sp.has_meta("saved_inventory"):
+		return
+	var sinv: Array = sp.get_meta("saved_inventory", []).duplicate(true)
+	var remaining := qty
+	for i in range(sinv.size() - 1, -1, -1):
+		var e = sinv[i]
+		if e is Dictionary and str(e.get("name", "")) == item_name and str(e.get("type", "")) == item_type:
+			var q := int(e.get("quantity", 1))
+			if q <= remaining:
+				remaining -= q
+				sinv.remove_at(i)
+			else:
+				e["quantity"] = q - remaining
+				remaining = 0
+			if remaining <= 0:
+				break
+	sp.set_meta("saved_inventory", sinv)
+	var sx: Dictionary = sp.get_meta("saved_extra", {}).duplicate(true)
+	if str(sp.get_meta("saved_held_item", "")) == item_name:
+		sp.set_meta("saved_held_item", "")
+		sp.set_meta("saved_held_idx", -1)
+		sx.erase("held_item_data")
+	# Back-stored equipment also lives outside the inventory; a drop from the
+	# shoulder must clear its saved slot too.
+	var backs: Array = sx.get("back_items", [])
+	for i in range(backs.size()):
+		var be = backs[i]
+		if be is Dictionary and str(be.get("name", "")) == item_name:
+			backs[i] = {}
+	sx["back_items"] = backs
+	sp.set_meta("saved_extra", sx)
+
+func _saved_inventory_add(sender_id: int, action_id: String) -> void:
+	if sender_id == 0 or sender_id == net.get_my_id():
+		return
+	var sp := _server_proxy_for_sender(sender_id)
+	if sp == null or not sp.has_meta("saved_inventory"):
+		return
+	var item_dict := {}
+	for entry in _dropped_items:
+		if str(entry.get("id", "")) == action_id:
+			item_dict = {"name": str(entry.get("name", "")), "type": str(entry.get("type", "")), "weight": float(entry.get("weight", 0.1)), "quantity": int(entry.get("qty", 1)), "use_value": float(entry.get("use", 0.0))}
+			if entry.has("durability"):
+				item_dict["durability"] = float(entry.get("durability", 100.0))
+				item_dict["max_durability"] = float(entry.get("max_durability", 100.0))
+			if entry.has("spoilage"):
+				item_dict["spoilage"] = float(entry.get("spoilage", 0.0))
+			if entry.has("color"):
+				item_dict["clothing_color"] = entry["color"]
+			break
+	if item_dict.is_empty() and world_actions_by_id.has(action_id):
+		var action = world_actions_by_id[action_id]
+		if action != null and action.has_meta("item_name"):
+			item_dict = {"name": str(action.get_meta("item_name")), "type": str(action.get_meta("item_type", "misc")), "weight": float(action.get_meta("item_weight", 0.1)), "quantity": int(action.get_meta("item_quantity", 1)), "use_value": float(action.get_meta("item_use_value", 0.0))}
+			if action.has_meta("item_durability"):
+				item_dict["durability"] = float(action.get_meta("item_durability", 100.0))
+				item_dict["max_durability"] = float(action.get_meta("item_max_durability", 100.0))
+			if action.has_meta("item_spoilage"):
+				item_dict["spoilage"] = float(action.get_meta("item_spoilage", 0.0))
+	if item_dict.is_empty() or str(item_dict.get("name", "")).is_empty():
+		return
+	var sinv: Array = sp.get_meta("saved_inventory", []).duplicate(true)
+	sinv.append(item_dict)
+	sp.set_meta("saved_inventory", sinv)
 
 func _apply_pending_restore() -> void:
 	for action_id in _depleted_action_ids.duplicate():
@@ -2747,6 +2823,10 @@ func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
 				break
 		if drop_pos != Vector3.INF and not _sender_within(sender_id, drop_pos, 8.0):
 			return false
+	# The pickup enters the sender's inventory — record it so a quit before the
+	# next sync can't lose the item (it is already depleted from the world).
+	if net != null and net.is_host:
+		_saved_inventory_add(sender_id, action_id)
 	var changed := not _depleted_action_ids.has(action_id)
 	if changed:
 		_depleted_action_ids.append(action_id)
@@ -3776,6 +3856,13 @@ func _play_water_drop_effect(pos: Vector3) -> void:
 			player.call("_spawn_water_ripples", splash_pos)
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
+	# El emit se produce antes de que drop_inventory_item quite el objeto del
+	# inventario, así que la sync va diferida al frame siguiente y captura el
+	# estado final. Sin esto, salir del servidor dentro de la ventana de 2 s
+	# dejaba saved_inventory con el objeto -> al reconectar aparecía en la mano
+	# y además en el suelo (duplicado real).
+	if net != null and net.is_connected and not net.is_host:
+		call_deferred("_sync_local_player_inventory")
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -4008,6 +4095,11 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 			return false
 	if _depleted_action_ids.has(drop_id):
 		return false
+	if net != null and net.is_host:
+		# The drop left the sender's inventory — mirror that immediately so a
+		# quit inside the sync window can't resurrect it on reconnect. Applies
+		# to water drops too: the item is lost below the surface either way.
+		_saved_inventory_remove(sender_id, item_name, item_type, clampi(item_quantity, 1, 999))
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return true
@@ -7986,6 +8078,10 @@ func _net_notify_pickup(action) -> void:
 	if net != null and net.is_connected and not net.is_host:
 		var picked_id: String = action.action_id
 		net.item_picked_up.rpc_id(1, picked_id)
+		# Same reconnect window as drops: the pickup enters the inventory now,
+		# so push it to the server on the next idle frame instead of waiting
+		# for the 2-second periodic sync.
+		call_deferred("_sync_local_player_inventory")
 	elif net != null and net.is_connected and net.is_host:
 		net.item_picked_up.rpc(action.action_id)
 	# In single player or host, track depleted locally so it persists in save
