@@ -1694,10 +1694,19 @@ func _save_server_world() -> void:
 	if SaveGameHooksScript == null:
 		return
 	var players := _collect_server_players()
-	# Keep saved players that never reconnected so they survive further restarts
+	# _server_saved_players is a persistent baseline: entries are kept after a
+	# player reconnects. Merge missing fields so a bare proxy (e.g. a duplicate
+	# spawned during a reconnect race) can never strip saved clothing/inventory.
 	for cid in _server_saved_players.keys():
+		var baseline: Dictionary = _server_saved_players[cid]
 		if not players.has(cid):
-			players[cid] = _server_saved_players[cid]
+			players[cid] = baseline
+		else:
+			var rec: Dictionary = players[cid]
+			for k in baseline.keys():
+				if not rec.has(k):
+					rec[k] = baseline[k]
+	_server_saved_players = players.duplicate(true)
 	sgm.save_server_game(SaveGameHooksScript.collect_world_data(self), players)
 
 # Dedicated server counterpart of apply_saved_world_data: restores the state the
@@ -2092,9 +2101,25 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 
 # Match reconnecting client to their persisted proxy by client_id
 func _match_proxy_to_client(peer_id: int, cid: String) -> void:
+	var existing: Node3D = null
 	if proxy_by_client_id.has(cid):
-		var existing: Node3D = proxy_by_client_id[cid]
+		existing = proxy_by_client_id[cid]
 		proxy_by_client_id.erase(cid)
+	else:
+		# A reconnect can arrive before the old peer's disconnect is processed:
+		# the proxy is then still live under the stale peer_id. Rebind it instead
+		# of spawning a duplicate — a fresh bare proxy would fall through to the
+		# new-player path (random spawn) and its empty metas would strip the
+		# persisted record (clothing, inventory...) on the next save.
+		for pid in server_proxies.keys():
+			if pid == peer_id:
+				continue
+			var p: Node3D = server_proxies[pid]
+			if p != null and str(p.get_meta("client_id", "")) == cid:
+				existing = p
+				server_proxies.erase(pid)
+				break
+	if existing != null:
 		var was_dead: bool = existing.get_meta("proxy_dead", false)
 		if was_dead:
 			# Read saved metadata before freeing the dead proxy
@@ -2155,7 +2180,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 		# Restore this client from the server save if they played before a restart
 		var saved: Dictionary = _server_saved_players.get(cid, {})
 		if not saved.is_empty():
-			_server_saved_players.erase(cid)
+			# Keep the entry: it is the merge baseline for future saves.
 			var proxy: Node3D = server_proxies[peer_id]
 			for key in _SERVER_PLAYER_FIELDS.keys():
 				if saved.has(key):

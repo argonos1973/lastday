@@ -146,12 +146,14 @@ func run() -> void:
 	check(_local_save_hash(sgm) == local_hash_before, "preload does not touch local save")
 
 	# --- Reconnect restore: saved player data lands on the fresh proxy ---
+	# Use a cid not claimed by any live proxy so this exercises the save path.
+	world._server_saved_players["cid_restore"] = {"pos": [3.0, 0.4, 4.0], "inventory": [{"name": "Hacha"}], "extra": {"back_items": [{"name": "Rifle francotirador"}]}}
 	var fresh := Node3D.new()
 	fresh.name = "ServerProxy_7"
 	world.add_child(fresh)
 	world.server_proxies[7] = fresh
-	world._match_proxy_to_client(7, "cid_abc")
-	check(not world._server_saved_players.has("cid_abc"), "restored player entry consumed")
+	world._match_proxy_to_client(7, "cid_restore")
+	check(world._server_saved_players.has("cid_restore"), "restored player entry kept as merge baseline")
 	var rinv: Array = fresh.get_meta("saved_inventory", [])
 	check(rinv.size() == 1 and str(rinv[0].get("name", "")) == "Hacha", "restored proxy keeps saved inventory meta")
 	check(fresh.global_position.distance_to(Vector3(3.0, 0.4, 4.0)) < 0.001, "restored proxy placed at saved position")
@@ -167,7 +169,51 @@ func run() -> void:
 		var race_proxy: Node3D = world.server_proxies[9]
 		check(race_proxy.global_position.distance_to(Vector3(7.0, 0.4, 8.0)) < 0.001, "raced proxy placed at saved position")
 		check(str(race_proxy.get_meta("client_id", "")) == "cid_race", "raced proxy gets client_id")
-	check(not world._server_saved_players.has("cid_race"), "raced player entry consumed")
+	check(world._server_saved_players.has("cid_race"), "raced player entry kept as merge baseline")
+
+	# Reconnect racing ahead of the disconnect: the proxy is still live under a
+	# stale peer_id — it must be rebound, not duplicated into a bare proxy.
+	var stale := Node3D.new()
+	stale.set_meta("client_id", "cid_stale")
+	stale.set_meta("saved_clothing", "Camiseta,Pantalones")
+	stale.set_meta("saved_inventory", [{"name": "Cuerda"}])
+	world.add_child(stale)
+	stale.global_position = Vector3(44.0, 0.4, 45.0)
+	stale.set_meta("saved_pos", stale.global_position)
+	world.server_proxies[50] = stale
+	var dupe := Node3D.new()
+	world.add_child(dupe)
+	world.server_proxies[60] = dupe
+	world._match_proxy_to_client(60, "cid_stale")
+	check(not world.server_proxies.has(50), "stale peer_id proxy removed on rebind")
+	check(world.server_proxies.get(60) == stale, "reconnect rebinds existing proxy to new peer_id")
+	check(str(stale.get_meta("saved_clothing", "")) == "Camiseta,Pantalones", "rebound proxy keeps saved clothing")
+	check(not is_instance_valid(dupe) or dupe.is_queued_for_deletion(), "fresh duplicate proxy freed on rebind")
+
+	# A bare proxy must never strip fields the baseline already saved.
+	# (cid_race's live proxy at peer 9 is still around — remove it first so the
+	# bare one is the only claim on a fresh cid.)
+	if world.server_proxies.has(9):
+		var race_p: Node3D = world.server_proxies[9]
+		world.server_proxies.erase(9)
+		race_p.queue_free()
+	var bare := Node3D.new()
+	bare.set_meta("client_id", "cid_race")
+	bare.set_meta("peer_id", 77)
+	world.add_child(bare)
+	bare.global_position = Vector3(9.0, 0.4, 9.0)
+	world.server_proxies[77] = bare
+	net.players[77] = {"client_id": "cid_race", "char_name": "RaceChar"}
+	world._save_world_change_silent()
+	var merged: Dictionary = sgm.load_server_game().get("players", {}).get("cid_race", {})
+	check(not merged.is_empty(), "bare proxy still produces a player record")
+	check(merged.has("health") and float(merged.get("health")) == 66.0, "baseline fills health stripped from bare proxy")
+	check(merged.has("inventory") and merged["inventory"].size() == 1, "baseline fills inventory stripped from bare proxy")
+	var mp: Array = merged.get("pos", [])
+	check(mp.size() == 3 and is_equal_approx(float(mp[0]), 9.0), "live proxy position wins over baseline")
+	world.server_proxies.erase(77)
+	bare.queue_free()
+	net.players.erase(77)
 
 	# Unknown client falls back to normal new-player flow
 	var fresh2 := Node3D.new()
