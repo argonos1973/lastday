@@ -2576,7 +2576,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color)
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)))
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -8918,10 +8918,6 @@ func _attach_flies_to_drop(drop_id: String) -> void:
 	target.add_child(swarm)
 
 func _update_loot_wear() -> void:
-	# Dedicated server: dropped loot is authoritative and must persist
-	# unchanged until the server restarts — no weather wear or rot removal.
-	if net != null and net.is_dedicated_server:
-		return
 	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
 	# 100 wear = ~1000s (16min) sheltered, ~1500s (25min) exposed
 	var removed_ids: Array = []
@@ -8995,6 +8991,11 @@ func _update_loot_wear() -> void:
 			if not _depleted_action_ids.has(drop_id):
 				_depleted_action_ids.append(drop_id)
 	if not removed_ids.is_empty():
+		# Tell connected clients to drop the visuals/actions too — otherwise
+		# they keep seeing ghost items that no longer exist on the server.
+		if net != null and net.is_dedicated_server and net.peer != null:
+			for rid in removed_ids:
+				net.item_picked_up.rpc(str(rid))
 		_save_world_change_silent()
 
 func _is_near_built_shelter(pos: Vector3) -> bool:
