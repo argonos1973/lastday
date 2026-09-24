@@ -45,6 +45,7 @@ var _clock_refresh_timer := 0.0
 var _real_weather_code := -1
 var _real_rain := 0.0
 var _real_snow := 0.0
+var _real_cloud_cover := -1.0
 var _real_wind_speed := 0.0
 var _real_wind_direction := 0.0
 var _real_weather_desc := ""
@@ -621,7 +622,7 @@ func _fetch_weather() -> void:
 	if not is_instance_valid(_weather_http):
 		return
 	_weather_loading = true
-	var url := "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&current=temperature_2m,weather_code,rain,snowfall,wind_speed_10m,wind_direction_10m&timezone=auto" % [_geo_lat, _geo_lon]
+	var url := "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&current=temperature_2m,weather_code,rain,snowfall,cloud_cover,wind_speed_10m,wind_direction_10m&timezone=auto" % [_geo_lat, _geo_lon]
 	var err := _weather_http.request(url, [], HTTPClient.METHOD_GET, "")
 	if err != OK:
 		_weather_loading = false
@@ -649,6 +650,8 @@ func _on_weather_received(result: int, response_code: int, _headers: PackedStrin
 				_real_snow = maxf(float(current.snowfall), 0.0)
 				# Wind was added after the original weather request. Keep older or
 				# incomplete responses valid and retain the last usable reading.
+				if current.get("cloud_cover") is float or current.get("cloud_cover") is int:
+					_real_cloud_cover = clampf(float(current.cloud_cover) / 100.0, 0.0, 1.0)
 				if current.get("wind_speed_10m") is float or current.get("wind_speed_10m") is int:
 					_real_wind_speed = maxf(float(current.wind_speed_10m), 0.0)
 				if current.get("wind_direction_10m") is float or current.get("wind_direction_10m") is int:

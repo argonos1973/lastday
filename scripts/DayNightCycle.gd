@@ -97,9 +97,11 @@ func _update_lighting() -> void:
 	sun.light_energy = lerp(0.0, 1.5, day_amount) * (1.0 - weather_darkness)
 	sun.shadow_enabled = day_amount > 0.05
 	if star_field != null:
-		star_field.visible = night_amount > 0.85 and weather_cloud_cover < 0.65
+		star_field.visible = night_amount > 0.85 and weather_cloud_cover < 0.75
 	if moon_field != null:
-		moon_field.visible = night_amount > 0.35 and weather_cloud_cover < 0.85
+		# The moon shines through broken cloud — hide it only on nearly
+		# covered or storm skies.
+		moon_field.visible = night_amount > 0.35 and weather_cloud_cover < 0.92
 	# Moon illumination factor: if moon is up, provide a little light —
 	# a full moon lights noticeably more than a thin crescent.
 	var moon_illum := 0.0

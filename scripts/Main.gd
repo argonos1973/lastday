@@ -1335,7 +1335,7 @@ func _update_weather_effects(delta: float) -> void:
 		return
 	var weather_elapsed := _weather_effect_timer
 	_weather_effect_timer = 0.0
-	var weather := WeatherConditionsScript.from_observation(hud._real_weather_code, hud._real_rain, hud._real_snow)
+	var weather := WeatherConditionsScript.from_observation(hud._real_weather_code, hud._real_rain, hud._real_snow, hud._real_cloud_cover)
 	var rain_amount: float = weather.rain
 	var snow_amount: float = weather.snow
 	var storm: bool = weather.storm

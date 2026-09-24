@@ -71,6 +71,22 @@ func run() -> void:
 
 	# 4. Direction sanity: returns a unit vector.
 	check(absf(moon_dir.length() - 1.0) < 0.01, "Moon direction is normalized")
+
+	# 5. Measured cloud cover overrides the coarse WMO bucket: an "overcast"
+	# code 3 with only 74% real cover must not hide the moon (threshold 0.92)
+	# nor the stars (threshold 0.75). Precipitation keeps a 0.75 floor.
+	var WC := preload("res://scripts/WeatherConditions.gd")
+	var w_bucket: Dictionary = WC.from_observation(3, 0.0, 0.0)
+	check(float(w_bucket["cloud"]) > 0.85, "Code 3 without measured cover -> overcast bucket")
+	var w_meas: Dictionary = WC.from_observation(3, 0.0, 0.0, 0.74)
+	var cloud_meas: float = float(w_meas["cloud"])
+	check(absf(cloud_meas - 0.74) < 0.001, "Measured 74% cover overrides code-3 bucket")
+	check(cloud_meas < 0.92, "Moon stays visible at 74%% cover (%.2f < 0.92)" % cloud_meas)
+	check(cloud_meas < 0.75, "Stars stay visible at 74%% cover (%.2f < 0.75)" % cloud_meas)
+	var w_rain: Dictionary = WC.from_observation(61, 2.0, 0.0, 0.30)
+	check(float(w_rain["cloud"]) >= 0.75, "Rain keeps a cloud floor even with low measured cover")
+	var w_clear: Dictionary = WC.from_observation(0, 0.0, 0.0, 0.05)
+	check(float(w_clear["cloud"]) < 0.2, "Clear night with low measured cover stays clear")
 	print("disc moved from ", disc_pos_before, " to ", disc.position)
 	print("RESULT: %s (%d failures)" % ["PASS" if _failures == 0 else "FAIL", _failures])
 	quit(0 if _failures == 0 else 1)

@@ -1,7 +1,7 @@
 extends RefCounted
 ## Shared WMO weather interpretation. Amounts are mm of rain and cm of snow.
 
-static func from_observation(code: int, rain: float, snow: float) -> Dictionary:
+static func from_observation(code: int, rain: float, snow: float, measured_cloud := -1.0) -> Dictionary:
 	var state := {"cloud": 0.1, "darkness": 0.0, "fog": 0.0,
 		"rain": maxf(rain, 0.0), "snow": maxf(snow, 0.0), "storm": false}
 	match code:
@@ -27,4 +27,11 @@ static func from_observation(code: int, rain: float, snow: float) -> Dictionary:
 		95, 96, 99:
 			state.storm = true; state.rain = maxf(rain, 6.0); state.snow = 0.0
 			state.cloud = 1.0; state.darkness = 0.6; state.fog = 0.002
+	# The WMO code buckets cloud cover coarsely (e.g. "overcast" = 0.88 even at
+	# 70% real cover, which wrongly hides the moon/stars on broken-cloud nights).
+	# The measured percentage is authoritative when available — but precipitation
+	# always implies at least a mostly-covered sky.
+	if measured_cloud >= 0.0:
+		var floor_cover := 0.75 if (state.rain > 0.1 or state.snow > 0.05 or state.storm) else 0.0
+		state.cloud = maxf(clampf(measured_cloud, 0.0, 1.0), floor_cover)
 	return state
