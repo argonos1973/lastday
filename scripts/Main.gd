@@ -9496,6 +9496,8 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	mesh_instance.set_is_lake(is_lake)
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
+	_create_shore_band(center, size, yaw)
+	_scatter_shore_props(center, size, yaw)
 	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
 
@@ -9658,7 +9660,7 @@ func _create_river_end_blend(center: Vector3, size: Vector2, yaw: float) -> void
 			if not _can_place_ground_vegetation(cap_pos, -1.0):
 				continue
 			if i % 6 == 0:
-				_create_polyhaven_boulder(cap_pos + across * side * _world_rng.randf_range(0.15, 0.55), Vector3(_world_rng.randf_range(0.30, 0.78), _world_rng.randf_range(0.12, 0.36), _world_rng.randf_range(0.30, 0.78)))
+				_create_shore_stone(cap_pos + across * side * _world_rng.randf_range(0.15, 0.55), Vector3(_world_rng.randf_range(0.30, 0.78), _world_rng.randf_range(0.12, 0.36), _world_rng.randf_range(0.30, 0.78)))
 			elif i % 3 == 0:
 				_create_river_pebble_cluster(cap_pos, along, across, side)
 			else:
@@ -9689,7 +9691,7 @@ func _create_river_seam_cover(center: Vector3, size: Vector2, yaw: float) -> voi
 			if not _can_place_ground_vegetation(seam_pos, -1.0):
 				continue
 			if i % 4 == 0:
-				_create_polyhaven_boulder(seam_pos + across * side * _world_rng.randf_range(0.0, 0.45), Vector3(_world_rng.randf_range(0.24, 0.62), _world_rng.randf_range(0.10, 0.28), _world_rng.randf_range(0.24, 0.62)))
+				_create_shore_stone(seam_pos + across * side * _world_rng.randf_range(0.0, 0.45), Vector3(_world_rng.randf_range(0.24, 0.62), _world_rng.randf_range(0.10, 0.28), _world_rng.randf_range(0.24, 0.62)))
 			elif i % 3 == 0:
 				_create_river_pebble_cluster(seam_pos, along, across, side)
 			else:
@@ -9697,12 +9699,243 @@ func _create_river_seam_cover(center: Vector3, size: Vector2, yaw: float) -> voi
 				_create_grass_clump(seam_pos + along * end * _world_rng.randf_range(0.0, 0.75), _world_rng.randf_range(1.10, 1.95), Color(0.12, 0.28, 0.08).lerp(Color(0.34, 0.43, 0.13), _world_rng.randf()))
 
 func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3, side: float) -> void:
+	# Half the clusters come from the Blender pebble patch (real small stones);
+	# the rest are small textured spheres — pebble-sized, not slabs.
+	if _world_rng.randf() < 0.5 and _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * _world_rng.randf_range(0.55, 1.0), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
+		return
 	for i in range(3 + _world_rng.randi() % 4):
 		var pebble_pos: Vector3 = pos + along * _world_rng.randf_range(-0.65, 0.65) + across * side * _world_rng.randf_range(-0.22, 0.56)
 		pebble_pos.y = 0.055
-		var pebble_scale: Vector3 = Vector3(_world_rng.randf_range(0.12, 0.34), _world_rng.randf_range(0.035, 0.09), _world_rng.randf_range(0.10, 0.30))
+		var pebble_scale: Vector3 = Vector3(_world_rng.randf_range(0.05, 0.15), _world_rng.randf_range(0.02, 0.05), _world_rng.randf_range(0.05, 0.13))
 		var texture_path: String = MaterialFactory.POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else POLY_ROCK_07_DIFF
 		_create_textured_visual_sphere("RiverPebbleClusterStone", pebble_pos, pebble_scale, texture_path, Color(0.30, 0.29, 0.25))
+		_apply_rock_material(get_child(get_child_count() - 1))
+
+# --- Orillas reales: banda texturizada de arena/barro + props de Blender ---
+
+const SHORE_TEX_DIR := "res://assets/textures/shore/"
+const SHORE_PROP_DIR := "res://assets/models/props/shore/"
+const SHORE_DRIFTWOOD := [SHORE_PROP_DIR + "shore_driftwood_a.glb", SHORE_PROP_DIR + "shore_driftwood_b.glb"]
+const SHORE_FLATSTONES := [SHORE_PROP_DIR + "shore_flatstone_a.glb", SHORE_PROP_DIR + "shore_flatstone_b.glb", SHORE_PROP_DIR + "shore_flatstone_c.glb"]
+const SHORE_PEBBLES := [SHORE_PROP_DIR + "shore_pebbles_a.glb"]
+static var _shore_band_material: StandardMaterial3D = null
+
+func _get_shore_band_material() -> StandardMaterial3D:
+	if _shore_band_material != null:
+		return _shore_band_material
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_albedo.png")
+	mat.normal_enabled = true
+	mat.normal_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_normal.png")
+	mat.roughness = 0.9
+	mat.roughness_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_roughness.png")
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	# Alpha blend so the land edge feathers into the terrain; vertex alpha
+	# fades the strip ends where river segments join or a river finishes.
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	_shore_band_material = mat
+	return mat
+
+func _shore_ground_y(world_x: float, world_z: float) -> float:
+	return _get_ground_height(Vector3(world_x, 0.0, world_z)) + 0.008
+
+func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	var is_lake := size.x >= 60.0
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var tangents := PackedFloat32Array()
+	var uvs := PackedVector2Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	var half_l: float = size.x * 0.5
+	var half_w: float = size.y * 0.5
+	# Cross-shore profile shared by river and lake: [fraction out, y, uv_v].
+	# The inner rows sit below the water surface so the sand continues under
+	# the shallows instead of ending in a hard water/terrain seam.
+	const ROWS := [
+		{"off": 0.00, "y": -0.085, "v": 0.00},
+		{"off": 0.42, "y": -0.020, "v": 0.30},
+		{"off": 0.72, "y": 0.020, "v": 0.62},
+		{"off": 1.00, "y": -999.0, "v": 1.00},
+	]
+	if is_lake:
+		var rx: float = half_l * 0.86
+		var rz: float = half_w * 0.86
+		var band_in: float = -half_w * 0.16
+		var band_out: float = 3.2
+		var steps := 96
+		var wobble_phase := _world_rng.randf_range(0.0, TAU)
+		var mean_r: float = (rx + rz) * 0.5
+		for i in range(steps + 1):
+			var theta := float(i) / float(steps) * TAU
+			var nx_raw: float = cos(theta) / rx
+			var nz_raw: float = sin(theta) / rz
+			var n_len: float = sqrt(nx_raw * nx_raw + nz_raw * nz_raw)
+			var nx: float = nx_raw / max(0.01, n_len)
+			var nz: float = nz_raw / max(0.01, n_len)
+			var ex: float = cos(theta) * rx
+			var ez: float = sin(theta) * rz
+			var u_dist: float = theta * mean_r / 4.5
+			# Tangent along the shore for the normal map.
+			var tangent := Vector3(-sin(theta) * rx, 0, cos(theta) * rz).normalized()
+			for r in ROWS:
+				var off: float = lerp(band_in, band_out, float(r["off"]))
+				var lx: float = ex + nx * off
+				var lz: float = ez + nz * off
+				var world := center + along * lx + across * lz
+				var vy: float = float(r["y"])
+				if vy < -100.0:
+					vy = _shore_ground_y(world.x, world.z)
+				vertices.append(Vector3(lx, vy, lz))
+				normals.append(Vector3.UP)
+				tangents.append_array([tangent.x, tangent.y, tangent.z, 1.0])
+				uvs.append(Vector2(u_dist, float(r["v"])))
+				colors.append(Color(1, 1, 1, 1))
+		var row_count: int = ROWS.size()
+		for i in range(steps):
+			for r in range(row_count - 1):
+				var a := i * row_count + r
+				var b := (i + 1) * row_count + r
+				indices.append(a)
+				indices.append(b)
+				indices.append(a + 1)
+				indices.append(a + 1)
+				indices.append(b)
+				indices.append(b + 1)
+	else:
+		var wobble_phase2 := _world_rng.randf_range(0.0, TAU)
+		var row_count: int = ROWS.size()
+		for side_value in [-1.0, 1.0]:
+			var side: float = side_value
+			var base_index: int = vertices.size()
+			# Strip extends past the segment ends so it overlaps the next
+			# segment's strip — no gap at the spline joints.
+			var x0: float = -half_l - 1.4
+			var x1: float = half_l + 1.4
+			var step := 0.85
+			var count := int((x1 - x0) / step) + 1
+			for i in range(count + 1):
+				var lx: float = min(x0 + float(i) * step, x1)
+				var edge_wobble: float = sin(lx * 0.42 + wobble_phase2 + side * 2.1) * 0.22
+				var u_dist: float = lx / 4.5
+				var end_alpha := 1.0
+				if i < 2:
+					end_alpha = float(i) * 0.5
+				elif i > count - 2:
+					end_alpha = float(count - i) * 0.5
+				for r in ROWS:
+					var off: float = float(r["off"])
+					var lz: float
+					var vy: float = float(r["y"])
+					if vy < -100.0:
+						lz = side * (half_w + 0.6 + 1.8 + edge_wobble)
+						var world := center + along * lx + across * lz
+						vy = _shore_ground_y(world.x, world.z)
+					else:
+						# off sweeps from inside the water to the waterline
+						lz = side * lerp(half_w * 0.68, half_w * 1.02, off)
+					vertices.append(Vector3(lx, vy, lz))
+					normals.append(Vector3.UP)
+					tangents.append_array([1.0, 0.0, 0.0, 1.0])
+					uvs.append(Vector2(u_dist, float(r["v"])))
+					colors.append(Color(1, 1, 1, end_alpha))
+			for i in range(count):
+				for r in range(row_count - 1):
+					var a := base_index + i * row_count + r
+					var b := base_index + (i + 1) * row_count + r
+					indices.append(a)
+					indices.append(b)
+					indices.append(a + 1)
+					indices.append(a + 1)
+					indices.append(b)
+					indices.append(b + 1)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TANGENT] = tangents
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "ShoreBand"
+	mi.mesh = mesh
+	mi.material_override = _get_shore_band_material()
+	mi.position = center
+	mi.rotation_degrees = Vector3(0, yaw, 0)
+	add_child(mi)
+
+func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	var is_lake := size.x >= 60.0
+	var attempts := 16 if is_lake else 8
+	for i in range(attempts):
+		var pos: Vector3
+		var shore_dir: Vector3
+		if is_lake:
+			var half_l: float = size.x * 0.5
+			var half_w: float = size.y * 0.5
+			var theta := _world_rng.randf_range(0.0, TAU)
+			var rx: float = half_l * 0.86
+			var rz: float = half_w * 0.86
+			var nx: float = cos(theta) / rx
+			var nz: float = sin(theta) / rz
+			var n_len: float = sqrt(nx * nx + nz * nz)
+			nx /= max(0.01, n_len)
+			nz /= max(0.01, n_len)
+			var off := _world_rng.randf_range(-0.3, 2.6)
+			pos = center + along * (cos(theta) * rx + nx * off) + across * (sin(theta) * rz + nz * off)
+			shore_dir = Vector3(-sin(theta) * rx, 0, cos(theta) * rz).normalized()
+		else:
+			var side := -1.0 if i % 2 == 0 else 1.0
+			pos = center + along * _world_rng.randf_range(-size.x * 0.46, size.x * 0.46) + across * side * _world_rng.randf_range(size.y * 0.42, size.y * 0.5 + 2.0)
+			shore_dir = along
+		if get_river_depth_at(pos) > 0.015:
+			continue
+		if not _can_place_ground_vegetation(pos, -1.0):
+			continue
+		var ground_y := _get_ground_height(pos) + 0.01
+		pos.y = ground_y
+		var roll := _world_rng.randf()
+		if roll < 0.20:
+			# Driftwood lies roughly parallel to the waterline
+			var tangent_yaw := rad_to_deg(atan2(-shore_dir.z, shore_dir.x)) + _world_rng.randf_range(-28.0, 28.0)
+			var sc := _world_rng.randf_range(0.7, 1.1)
+			if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_DRIFTWOOD, _world_rng), "ShoreDriftwood", pos, Vector3.ONE * sc, Vector3(0, tangent_yaw, 0), false, 0.0):
+				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.48, 0.42, 0.36))
+		elif roll < 0.60:
+			_create_shore_stone(pos, Vector3(_world_rng.randf_range(0.3, 0.8), _world_rng.randf_range(0.15, 0.4), _world_rng.randf_range(0.3, 0.8)))
+		else:
+			var sc3 := _world_rng.randf_range(0.5, 0.95)
+			_try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * sc3, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
+
+# Flat water-worn stone for river/lake edges — falls back to the textured
+# boulder if the Blender props are unavailable.
+func _create_shore_stone(pos: Vector3, fallback_scale: Vector3) -> void:
+	var sc := _world_rng.randf_range(0.4, 0.95)
+	if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_FLATSTONES, _world_rng), "ShoreFlatStone", pos, Vector3(sc, sc * 0.6, sc), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
+		_apply_rock_material(get_child(get_child_count() - 1))
+		return
+	_create_polyhaven_boulder(pos, fallback_scale)
+
+# The Blender shore props ship flat colors; the triplanar forest-rock shader
+# gives them real grain and darkens their base like a wet waterline stone.
+func _apply_rock_material(node: Node, tint := Vector3(0.50, 0.54, 0.58)) -> void:
+	var mat := MaterialFactory.make_forest_rock_material(tint)
+	var meshes: Array = []
+	NodeUtils.collect_mesh_instances(node, meshes)
+	for mi in meshes:
+		(mi as MeshInstance3D).material_override = mat
 
 #endregion
 
@@ -9736,7 +9969,7 @@ func _decorate_river_area(center: Vector3, size: Vector2, yaw: float) -> void:
 		if not _can_place_ground_vegetation(bank_pos, -1.0):
 			continue
 		if i % 5 == 0:
-			_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.35, 1.15), _world_rng.randf_range(0.18, 0.55), _world_rng.randf_range(0.35, 1.05)))
+			_create_shore_stone(bank_pos, Vector3(_world_rng.randf_range(0.35, 1.15), _world_rng.randf_range(0.18, 0.55), _world_rng.randf_range(0.35, 1.05)))
 		elif i % 5 == 1:
 			_create_river_pebble_cluster(bank_pos, along, across, side)
 		else:
@@ -9896,7 +10129,7 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 		bank_pos.y = _get_ground_height(bank_pos) + 0.01
 		var side: float = 1.0 if sin(theta) >= 0.0 else -1.0
 		if i % 5 == 0:
-			_create_polyhaven_boulder(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
+			_create_shore_stone(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
 			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.5, 0.5), _world_rng.randf_range(1.0, 1.6), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
 			_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 0.6), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
 		elif i % 5 == 1:

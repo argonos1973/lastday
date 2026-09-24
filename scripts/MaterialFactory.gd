@@ -153,15 +153,17 @@ static func make_forest_ground_material() -> ShaderMaterial:
 	_mat_cache["forest_ground"] = material
 	return material
 
-static func make_forest_rock_material() -> ShaderMaterial:
-	if _mat_cache.has("forest_rock"):
-		return _mat_cache["forest_rock"]
+static func make_forest_rock_material(tint := Vector3(1.0, 1.0, 1.0)) -> ShaderMaterial:
+	var key := "forest_rock" if tint == Vector3.ONE else "forest_rock_%s" % tint
+	if _mat_cache.has(key):
+		return _mat_cache[key]
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://shaders/forest_rock.gdshader")
 	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCK_07_DIFF))
 	material.set_shader_parameter("rock_height", load_texture("res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"))
 	material.set_shader_parameter("variation", forest_variation_texture())
-	_mat_cache["forest_rock"] = material
+	material.set_shader_parameter("tint", tint)
+	_mat_cache[key] = material
 	return material
 
 static func make_forest_foliage_material(source: StandardMaterial3D) -> ShaderMaterial:
