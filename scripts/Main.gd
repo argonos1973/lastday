@@ -3376,6 +3376,34 @@ func _update_server_proxies(delta: float) -> void:
 			dp.set_meta("protection_timer", max(0.0, dpt - delta))
 		# Update shelter meta so wolf AI protects disconnected players inside shelters
 		dp.set_meta("in_built_shelter", _is_near_built_shelter(dp.global_position))
+		# A parked body standing in a lit campfire still burns — fire is an
+		# acute hazard even though survival stats are frozen offline.
+		if not campfire_positions.is_empty():
+			var dp_pos := dp.global_position
+			for fire_pos in campfire_positions:
+				var fdx: float = fire_pos.x - dp_pos.x
+				var fdz: float = fire_pos.z - dp_pos.z
+				if fdx * fdx + fdz * fdz < 0.36:
+					_damage_offline_proxy(dp, 5.0 * delta)
+					break
+
+# Fire (or any server-side hazard) damage for a parked offline body — mirrors
+# the wolf kill path: proxy_health and saved_health drop, then loot + death
+# broadcast at zero.
+func _damage_offline_proxy(proxy: Node3D, amount: float) -> void:
+	var hp: float = proxy.get_meta("proxy_health", 100.0)
+	hp = max(0.0, hp - amount)
+	proxy.set_meta("proxy_health", hp)
+	proxy.set_meta("saved_health", hp)
+	if hp > 0.0:
+		return
+	proxy.set_meta("proxy_dead", true)
+	proxy.remove_from_group("net_player_proxy")
+	proxy.add_to_group("interactable")
+	var dead_pid: int = proxy.get_meta("peer_id", 0)
+	_drop_player_loot(dead_pid, proxy)
+	proxy.set_meta("death_broadcasted", true)
+	_broadcast_player_death(dead_pid, proxy)
 
 func _spawn_remote_player(id: int) -> void:
 	if remote_players.has(id):
