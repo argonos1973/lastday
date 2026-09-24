@@ -579,8 +579,14 @@ func _ready() -> void:
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
 		_setup_server_console()
-		# Restore the server save before generating so reconnecting players get
-		# their position/state back instead of a random spawn.
+		# Each server boot is a fresh world: drops, doors, loot, corpses and
+		# player records only live for the session. Delete the previous save
+		# before the world-state preload so clean quits and crashes alike
+		# restart clean. Reconnects within the session still use the
+		# in-memory _server_saved_players baseline.
+		var sgm_boot = get_node_or_null("/root/SaveGameManager")
+		if sgm_boot != null and sgm_boot.has_method("delete_server_save"):
+			sgm_boot.delete_server_save()
 		SaveGameHooks.preload_saved_world_state(self)
 		await _create_map()
 		_load_server_world_state()

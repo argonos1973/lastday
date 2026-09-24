@@ -99,6 +99,8 @@ func load_server_game() -> Dictionary:
 func delete_server_save() -> void:
 	if has_server_save():
 		DirAccess.remove_absolute(SERVER_SAVE_PATH)
+	if FileAccess.file_exists(SERVER_BACKUP_PATH):
+		DirAccess.remove_absolute(SERVER_BACKUP_PATH)
 
 func _write_save_atomic(temp_path: String, save_path: String, backup_path: String, data: Dictionary) -> bool:
 	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
