@@ -84,6 +84,10 @@ func _ready() -> void:
 	_build_hitbox()
 
 func _build_bird() -> void:
+	# Dedicated server: skip model loading — only AI state and position matter
+	var net_node := get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.is_dedicated_server:
+		return
 	if _try_load_external_model():
 		_use_external_model = true
 		_set_visibility_range(_bird_root, 600.0)
@@ -900,10 +904,12 @@ func _update_falling(delta: float) -> void:
 	if _corpse_age > 45.0 and not _flies_attached:
 		# Moscas sobre el cadaver; el enjambre se libera con el pajaro
 		_flies_attached = true
-		var swarm := FlySwarm.new()
-		swarm.name = "FlySwarm"
-		swarm.position = Vector3(0.0, 0.25, 0.0)
-		add_child(swarm)
+		var _net := get_node_or_null("/root/NetworkManager")
+		if _net == null or not _net.is_dedicated_server:
+			var swarm := FlySwarm.new()
+			swarm.name = "FlySwarm"
+			swarm.position = Vector3(0.0, 0.25, 0.0)
+			add_child(swarm)
 	if _corpse_age > 300.0:
 		queue_free()
 		return
