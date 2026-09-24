@@ -34,7 +34,7 @@ func _ready() -> void:
 	_model_root = Node3D.new()
 	_viewport.add_child(_model_root)
 
-func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0)) -> void:
+func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0)) -> void:
 	for child in _model_root.get_children():
 		child.queue_free()
 	if _model_root == null:
@@ -72,6 +72,39 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 					m.material_override = mat
 			else:
 				m.visible = false
+	elif camo.a > 0.0:
+		# Camouflage garments show the same generated camo cloth the character
+		# wears when no loot color overrides it.
+		var camo_meshes: Array = []
+		_collect_meshes(inst, camo_meshes)
+		for mi in camo_meshes:
+			var m := mi as MeshInstance3D
+			if m == null:
+				continue
+			var cmat := StandardMaterial3D.new()
+			cmat.albedo_texture = MaterialFactory.make_camo_texture(camo)
+			cmat.albedo_color = Color.WHITE
+			MaterialFactory.cloth_detail(cmat, "soldier", 0.01)
+			m.material_override = cmat
+	elif tint.a > 0.0:
+		# Clothing thumbnails tint every mesh with the same cloth material the
+		# character wears so the inventory color matches the equipped garment.
+		var all_meshes2: Array = []
+		_collect_meshes(inst, all_meshes2)
+		for mi in all_meshes2:
+			var m := mi as MeshInstance3D
+			if m == null:
+				continue
+			var kind := MaterialFactory.clothing_kind_for_mesh(m.name)
+			if kind.is_empty():
+				var mat := StandardMaterial3D.new()
+				mat.albedo_color = tint
+				mat.roughness = 0.9
+				m.material_override = mat
+			else:
+				# Pickup models are meter-space: unit_scale 0.01 keeps the
+				# garment grow offsets in the centimeter range.
+				m.material_override = MaterialFactory.make_clothing_material(kind, tint, -999.0, 0.01)
 	inst.scale = Vector3.ONE * scale_value
 	inst.rotation_degrees = extra_rotation_deg
 	_frame_camera(inst, frame_zoom)

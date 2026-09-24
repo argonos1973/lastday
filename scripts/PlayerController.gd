@@ -8921,6 +8921,19 @@ func _find_nearby_world_action():
 			best = node
 	return best
 
+# Only one torch burns at a time: when lighting a stacked torch, split one
+# unit off so the unlit remainder keeps stacking and the lit unit stays single.
+func _split_torch_for_lighting(held):
+	if held == null or int(held.quantity) <= 1 or inventory == null:
+		return held
+	held.quantity -= 1
+	var lit_torch = held.duplicate_stack()
+	lit_torch.quantity = 1
+	inventory.items.append(lit_torch)
+	_held_item_reference = lit_torch
+	inventory.changed.emit()
+	return lit_torch
+
 func _toggle_flashlight() -> void:
 	var held = get_held_item()
 	if held != null and str(held.item_type) == "tool_torch":
@@ -8945,12 +8958,14 @@ func _toggle_flashlight() -> void:
 				_hud.show_countdown("Encendiendo antorcha con palos", 8.0)
 			await get_tree().create_timer(8.0).timeout
 			torch_light.visible = true
+			held = _split_torch_for_lighting(held)
 			held.set_meta("torch_lit", true)
 			notice.emit("Antorcha encendida frotando palos.")
 			return
 		inventory.consume_match_charge()
 		inventory.changed.emit()
 		torch_light.visible = true
+		held = _split_torch_for_lighting(held)
 		held.set_meta("torch_lit", true)
 		notice.emit("Antorcha encendida con cerillas.")
 		return

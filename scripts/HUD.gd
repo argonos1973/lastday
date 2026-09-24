@@ -4,6 +4,7 @@ class_name HUD
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const HudIconScript = preload("res://scripts/HudIcon.gd")
 const ItemThumbnail3DScript = preload("res://scripts/ItemThumbnail3D.gd")
+const MilitaryJacketsScript = preload("res://scripts/MilitaryJackets.gd")
 
 var player
 var day_cycle
@@ -1463,21 +1464,29 @@ func _create_inventory_slot(index: int, item) -> void:
 		# Botas survival uses the full Remy model — show only the shoes mesh, painted black
 		var only_mesh := ""
 		var mesh_tint := Color(0, 0, 0, 0)
+		var mesh_camo := Color(0, 0, 0, 0)
 		if str(item.item_name) == "Botas survival":
 			only_mesh = "shoes"
 			mesh_tint = Color(0.05, 0.05, 0.05)
+		elif str(item.item_type) == "clothing":
+			# Tint the garment with the same color/material it has when worn.
+			var cloth_colors := _clothing_thumbnail_colors(item)
+			mesh_tint = cloth_colors["tint"]
+			mesh_camo = cloth_colors["camo"]
 		if not model_paths.is_empty():
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumbnail.add_child(thumb3d)
-			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint)
+			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint, mesh_camo)
 		else:
 			var thumb_icon := HudIconScript.new()
 			thumb_icon.custom_minimum_size = Vector2(36, 30)
 			thumb_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumb_icon.set_shape(_item_icon_shape(item))
-			thumb_icon.set_icon_color(_item_thumbnail_color(item))
+			# The panel fill is already the item color — lighten the icon so it
+			# reads against its own background instead of blending into it.
+			thumb_icon.set_icon_color(_item_thumbnail_color(item).lightened(0.55))
 			thumbnail.add_child(thumb_icon)
 
 	var label := Label.new()
@@ -1527,6 +1536,8 @@ func _item_thumbnail_color(item) -> Color:
 		return Color(1.0, 0.5, 0.05)
 	if item.item_name == "Higo":
 		return Color(0.35, 0.2, 0.08)
+	if item.item_name == "Trapos":
+		return Color(0.42, 0.36, 0.26)
 	match str(item.item_type):
 		"food":
 			return Color(0.50, 0.20, 0.08)
@@ -1563,11 +1574,47 @@ func _item_thumbnail_color(item) -> Color:
 		_:
 			return Color(0.18, 0.18, 0.16)
 
+# Mirror the character's worn-material priority so the inventory thumbnail
+# shows the same color the garment has while equipped.
+func _clothing_thumbnail_colors(item) -> Dictionary:
+	var result := {"tint": Color(0, 0, 0, 0), "camo": Color(0, 0, 0, 0)}
+	var iname := str(item.item_name)
+	# Field jackets keep their authored materials on the character too.
+	if MilitaryJacketsScript.VARIANTS.has(iname):
+		return result
+	if item.has_meta("clothing_color"):
+		var c: Color = item.get_meta("clothing_color")
+		if c.a > 0.0:
+			result["tint"] = c
+			return result
+	var cfg: Dictionary = PlayerController.SURVIVAL_CLOTHING.get(iname, {})
+	if cfg.has("camo"):
+		result["camo"] = cfg["camo"]
+	elif cfg.has("tint"):
+		result["tint"] = cfg["tint"]
+	elif str(cfg.get("mesh", "")).begins_with("soldier_"):
+		result["tint"] = Color(0.15, 0.18, 0.12)
+	elif str(cfg.get("mesh", "")) == "cloth_hands":
+		result["tint"] = Color(0.28, 0.22, 0.15)
+	else:
+		# Default clothing without a stored color wears the session colors.
+		var gsess := get_node_or_null("/root/GameSession")
+		match iname:
+			"Camiseta":
+				result["tint"] = gsess.selected_top_color if gsess != null else Color(0.5, 0.5, 0.5)
+			"Pantalones":
+				result["tint"] = gsess.selected_bottom_color if gsess != null else Color(0.3, 0.3, 0.3)
+			"Zapatillas":
+				result["tint"] = gsess.selected_shoes_color if gsess != null else Color(0.15, 0.15, 0.15)
+	return result
+
 func _item_icon_shape(item) -> String:
 	if item.item_name == "Naranja":
 		return "circle"
 	if item.item_name == "Higo":
 		return "pear"
+	if item.item_name == "Trapos":
+		return "cloth"
 	match str(item.item_type):
 		"food":
 			return "apple"

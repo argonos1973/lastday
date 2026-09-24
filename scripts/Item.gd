@@ -85,12 +85,26 @@ func can_stack_with(other) -> bool:
 		return false
 	if item_type == "tool_matches":
 		return false # each box keeps its own remaining-charge state
+	# A lit torch burns individually; unlit ones stack whether the torch_lit
+	# flag was stored (picked up) or never set (crafted/dropped).
+	if item_type == "tool_torch":
+		if bool(get_meta("torch_lit", false)) or bool(other.get_meta("torch_lit", false)):
+			return false
 	# Durability merges by weighted average, so used tools/consumables still stack.
 	if weight != other.weight or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
 		return false
-	if get_meta_list().size() != other.get_meta_list().size():
+	var meta_count: int = get_meta_list().size()
+	var other_meta_count: int = other.get_meta_list().size()
+	if item_type == "tool_torch":
+		if has_meta("torch_lit"):
+			meta_count -= 1
+		if other.has_meta("torch_lit"):
+			other_meta_count -= 1
+	if meta_count != other_meta_count:
 		return false
 	for key in get_meta_list():
+		if item_type == "tool_torch" and key == "torch_lit":
+			continue
 		if not other.has_meta(key) or get_meta(key) != other.get_meta(key):
 			return false
 	if is_perishable() and absf(spoilage - other.spoilage) > 25.0:

@@ -3921,7 +3921,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			torch_durability = float(player.get_meta("last_torch_durability", 600.0))
 		if player != null and player.has_meta("last_torch_lit"):
 			torch_lit = bool(player.get_meta("last_torch_lit", false))
-		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit)
+		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit, item_quantity)
 		_dropped_items.append({"id": torch_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": [pos.x, pos.y, pos.z], "durability": torch_durability, "lit": torch_lit})
 		_save_world_change_silent()
 		return
@@ -7388,7 +7388,7 @@ func _execute_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, meat_item, "Recoges %s." % meat_item.item_name)
 		"pickup_torch":
 			var torch_dur := float(action.get_meta("torch_durability", 0.0))
-			var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, 1, 0.0)
+			var torch_item = ItemScript.create("Antorcha", "tool_torch", 0.3, maxi(1, int(action.get_meta("item_quantity", 1))), 0.0)
 			torch_item.durability = torch_dur
 			torch_item.max_durability = 600.0
 			var torch_lit := bool(action.get_meta("torch_lit", false))
@@ -10374,7 +10374,7 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	effects.small = false
 	light.add_child(effects)
 
-func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit: bool = false) -> void:
+func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit: bool = false, quantity: int = 1) -> void:
 	var visual_name := "PlacedTorch_" + torch_id
 	var spawned := _try_instance_external_scene(["res://assets/animations/torch_stick.glb"], visual_name, pos + Vector3(0, 0.3, 0), Vector3.ONE * 0.5, Vector3(0, randf_range(0, 360), 90), false, 0.0)
 	if not spawned:
@@ -10399,7 +10399,7 @@ func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit:
 		action.set_meta("item_name", "Antorcha")
 		action.set_meta("item_type", "tool_torch")
 		action.set_meta("item_weight", 0.3)
-		action.set_meta("item_quantity", 1)
+		action.set_meta("item_quantity", quantity)
 		action.set_meta("item_use_value", 0.0)
 		action.set_meta("torch_durability", durability)
 		action.set_meta("torch_lit", lit)

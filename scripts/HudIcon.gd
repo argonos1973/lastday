@@ -70,6 +70,24 @@ func _draw() -> void:
 			_draw_circle_icon(c, s)
 		"pear":
 			_draw_pear(c, s)
+		"cloth":
+			_draw_cloth(c, s)
+
+func _draw_cloth(c: Vector2, s: Vector2) -> void:
+	var w: float = min(s.x, s.y) * 0.52
+	# A small pile of folded rags: one soft slab with two darker fold creases.
+	var pile := PackedVector2Array([
+		c + Vector2(-w * 0.72, w * 0.30),
+		c + Vector2(-w * 0.66, -w * 0.06),
+		c + Vector2(-w * 0.28, -w * 0.34),
+		c + Vector2(w * 0.30, -w * 0.30),
+		c + Vector2(w * 0.68, -w * 0.02),
+		c + Vector2(w * 0.64, w * 0.30),
+	])
+	draw_colored_polygon(pile, icon_color)
+	var crease := icon_color.darkened(0.4)
+	draw_line(c + Vector2(-w * 0.55, w * 0.02), c + Vector2(w * 0.52, w * 0.08), crease, maxf(1.5, w * 0.09))
+	draw_line(c + Vector2(-w * 0.38, -w * 0.18), c + Vector2(w * 0.30, -w * 0.14), crease, maxf(1.0, w * 0.07))
 
 func _draw_circle_icon(c: Vector2, s: Vector2) -> void:
 	var r: float = min(s.x, s.y) * 0.28
