@@ -512,9 +512,9 @@ func _craft_panel_recipe(recipe: Dictionary) -> void:
 	if player.has_method("craft_recipe"):
 		player.craft_recipe(recipe, true)
 
-func show_notice(text: String) -> void:
+func show_notice(text: String, duration: float = 4.0) -> void:
 	notice_label.text = text
-	notice_timer = 4.0
+	notice_timer = duration
 	notice_label.offset_transform_enabled = true
 	notice_label.offset_transform_position = Vector2(0.0, -30.0)
 	notice_label.modulate.a = 0.0

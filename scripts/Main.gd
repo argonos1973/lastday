@@ -663,7 +663,10 @@ func _ready() -> void:
 		_loading_bg = null
 		_loading_tip_label = null
 	if hud != null:
-		hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
+		if _offline_death_notice_pending:
+			_try_show_offline_death_notice()
+		else:
+			hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
 	# Cinematic mode
 	var user_args := OS.get_cmdline_user_args()
 	if user_args.has("--cinematic"):
@@ -730,6 +733,7 @@ func _process_loading_countdown(delta: float) -> void:
 		_loading_label = null
 		_loading_bg = null
 		_loading_tip_label = null
+		_try_show_offline_death_notice()
 		return
 	var secs := ceili(_loading_countdown)
 	if _loading_label != null:
@@ -2389,8 +2393,10 @@ var _offline_death_notice_pending := false
 func _try_show_offline_death_notice() -> void:
 	if not _offline_death_notice_pending:
 		return
-	if hud != null:
-		hud.show_notice("Tu personaje murio mientras estabas desconectado. Empiezas de cero; tu equipo quedo donde cayo el cuerpo.")
+	# Wait until the loading overlay is gone too — a notice shown during load
+	# is invisible and the generic welcome notice would overwrite it anyway.
+	if hud != null and _loading_overlay == null:
+		hud.show_notice("Tu personaje murio mientras estabas desconectado. Empiezas de cero; tu equipo quedo donde cayo el cuerpo.", 8.0)
 		_offline_death_notice_pending = false
 
 func _send_character_appearance() -> void:
@@ -4357,7 +4363,6 @@ func _create_hud() -> void:
 	hud = HUDScript.new()
 	add_child(hud)
 	hud.setup(player, day_cycle, self)
-	_try_show_offline_death_notice()
 
 func _create_debug_overlay() -> void:
 	_debug_overlay = CanvasLayer.new()
