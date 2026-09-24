@@ -2156,11 +2156,11 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 # Spawn position only, no inventory restore — for new players and for bare
 # records/proxies that carry no real state. Sending an empty restore would
 # wipe the client's starting gear and leave the character without clothes.
-func _delayed_send_spawn_pos(peer_id: int, pos: Vector3) -> void:
+func _delayed_send_spawn_pos(peer_id: int, pos: Vector3, died: bool = false) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
 	if net != null and net.peer != null:
-		net.set_client_spawn_pos.rpc_id(peer_id, pos)
+		net.set_client_spawn_pos.rpc_id(peer_id, pos, died)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
@@ -2214,7 +2214,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# Drop the dead record's baseline so the merge can't refill the new
 			# character's record with the corpse's gear.
 			_server_saved_players.erase(cid)
-			call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos())
+			call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):
@@ -2279,7 +2279,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				# can't merge back into the new character's record, and don't
 				# copy any saved_* metas onto the fresh proxy.
 				_server_saved_players.erase(cid)
-				call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos())
+				call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
 				return
 			# Keep the entry: it is the merge baseline for future saves.
 			var proxy: Node3D = server_proxies[peer_id]
@@ -2364,14 +2364,28 @@ var _has_received_spawn_pos := false
 var _pending_spawn_pos: Vector3 = Vector3.ZERO
 var _has_pending_spawn_pos := false
 
-func _apply_net_spawn_pos(pos: Vector3) -> void:
+func _apply_net_spawn_pos(pos: Vector3, died: bool = false) -> void:
 	_has_received_spawn_pos = true
+	if died:
+		_offline_death_notice_pending = true
 	if player != null:
 		player.global_position = pos
 	else:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
 	_send_character_appearance()
+	_try_show_offline_death_notice()
+
+# Set when the server reports the saved character died while offline. Held
+# until the HUD exists so the notice is never silently dropped.
+var _offline_death_notice_pending := false
+
+func _try_show_offline_death_notice() -> void:
+	if not _offline_death_notice_pending:
+		return
+	if hud != null:
+		hud.show_notice("Tu personaje murio mientras estabas desconectado. Empiezas de cero; tu equipo quedo donde cayo el cuerpo.")
+		_offline_death_notice_pending = false
 
 func _send_character_appearance() -> void:
 	if net == null or not net.is_connected or net.is_dedicated_server:
@@ -2546,7 +2560,7 @@ func _apply_pending_restore() -> void:
 	if net != null and not net.is_dedicated_server:
 		if net._has_buffered_spawn_pos:
 			net._has_buffered_spawn_pos = false
-			_apply_net_spawn_pos(net._buffered_spawn_pos)
+			_apply_net_spawn_pos(net._buffered_spawn_pos, net._buffered_spawn_died)
 		if net._has_buffered_restore:
 			var rb: Array = net._buffered_restore
 			net._has_buffered_restore = false
@@ -4337,6 +4351,7 @@ func _create_hud() -> void:
 	hud = HUDScript.new()
 	add_child(hud)
 	hud.setup(player, day_cycle, self)
+	_try_show_offline_death_notice()
 
 func _create_debug_overlay() -> void:
 	_debug_overlay = CanvasLayer.new()

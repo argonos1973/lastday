@@ -165,6 +165,7 @@ func join_game(ip: String) -> bool:
 	# after this connect would overwrite the fresh player's gear.
 	_buffered_spawn_pos = Vector3.ZERO
 	_has_buffered_spawn_pos = false
+	_buffered_spawn_died = false
 	_buffered_restore = []
 	_has_buffered_restore = false
 	_buffered_world_state = []
@@ -363,6 +364,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 # in Inicio.tscn (before Main.tscn and its player exist). Main consumes them.
 var _buffered_spawn_pos := Vector3.ZERO
 var _has_buffered_spawn_pos := false
+var _buffered_spawn_died := false
 var _buffered_restore: Array = []
 var _has_buffered_restore := false
 var _buffered_world_state: Array = []
@@ -373,10 +375,14 @@ var _has_buffered_appearance := false
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
 	var scene := get_tree().current_scene
+	# _arg2 carries "died while offline" so the client can warn that this is a
+	# fresh character, not a silent relocation.
+	var died: bool = _arg2 is bool and _arg2
 	if scene != null and scene.has_method("_apply_net_spawn_pos"):
-		scene.call("_apply_net_spawn_pos", pos)
+		scene.call("_apply_net_spawn_pos", pos, died)
 	else:
 		_buffered_spawn_pos = pos
+		_buffered_spawn_died = died
 		_has_buffered_spawn_pos = true
 
 @rpc("any_peer", "reliable")
