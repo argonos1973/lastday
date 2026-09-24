@@ -79,7 +79,16 @@ static func compute_node_world_aabb(node: Node3D) -> AABB:
 		return AABB(node.global_position, Vector3.ZERO)
 	return combined
 
-static func shuffled_paths(paths: Array) -> Array:
+static func shuffled_paths(paths: Array, rng: RandomNumberGenerator = null) -> Array:
 	var shuffled := paths.duplicate()
-	shuffled.shuffle()
+	if rng == null:
+		shuffled.shuffle()
+		return shuffled
+	# Seeded Fisher-Yates so world generation stays deterministic; Array.shuffle()
+	# uses the global RNG whose position varies with per-frame runtime consumers.
+	for i in range(shuffled.size() - 1, 0, -1):
+		var j := rng.randi() % (i + 1)
+		var tmp: Variant = shuffled[i]
+		shuffled[i] = shuffled[j]
+		shuffled[j] = tmp
 	return shuffled
