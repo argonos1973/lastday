@@ -1113,14 +1113,14 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 		var dx: float = fire_pos.x - ppos.x
 		var dz: float = fire_pos.z - ppos.z
 		var dist_sq: float = dx * dx + dz * dz
-		if dist_sq < 1.44:
+		if dist_sq < 0.36:
 			player_node.stats.health -= 5.0 * delta
 			emit_stats = true
 			if randf() < delta * 2.0:
 				player_node.notice.emit("Te quemas al estar demasiado cerca del fuego.")
 		elif dist_sq < 16.0:
 			var dist: float = sqrt(dist_sq)
-			var warmth_factor: float = 1.0 - (dist - 1.2) / 2.8
+			var warmth_factor: float = 1.0 - (dist - 0.6) / 3.4
 			player_node.stats.apply_external_heat(warmth_factor * 3.0 * delta, 38.0)
 			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
 			emit_stats = true
@@ -10357,14 +10357,15 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	# Store expiry time (5 minutes from now)
 	var expiry_time := Time.get_ticks_msec() + 300000
 	campfire_fire_timers[node_name] = expiry_time
-	# Point light for warm glow
+	# Point light for warm glow — a campfire is the strongest light source,
+	# brighter and wider-reaching than any torch (held torch: 5.0/22.0).
 	var light := OmniLight3D.new()
 	light.name = node_name + "Light"
 	light.position = pos
 	light.light_color = Color(1.0, 0.65, 0.25)
-	light.light_energy = 3.0
-	light.omni_range = 8.0
-	light.omni_attenuation = 1.2
+	light.light_energy = 7.0
+	light.omni_range = 24.0
+	light.omni_attenuation = 0.95
 	light.shadow_enabled = false
 	light.add_to_group("omni_lights")
 	add_child(light)
