@@ -961,6 +961,10 @@ func _process(delta: float) -> void:
 		if celestial._star_update_accum >= 2.0:
 			celestial._star_update_accum = 0.0
 			celestial.update_real_star_positions()
+			celestial.update_moon_position()
+			var phase: Dictionary = celestial.get_real_moon_phase_data()
+			var moon_up: bool = celestial.get_real_moon_direction().y > 0.02
+			day_cycle.moon_illumination = float(phase["illumination"]) if moon_up else 0.0
 	_shelter_check_timer += delta
 	if _shelter_check_timer >= 0.5:
 		_shelter_check_timer = 0.0

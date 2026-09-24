@@ -157,8 +157,8 @@ func update_moon_position() -> void:
 	var phase := get_real_moon_phase_data()
 	var illumination: float = phase["illumination"]
 	var waxing: bool = phase["waxing"]
-	var offset := disc_radius * 2.0 * illumination * (-1.0 if waxing else 1.0)
-	var right_dir := Vector3(moon_dir.z, 0.0, -moon_dir.x).normalized()
+	var offset := _phase_shadow_offset(disc_radius, illumination, waxing)
+	var right_dir := _moon_right_dir(moon_dir)
 	for child in moon_field.get_children():
 		if not child is MeshInstance3D:
 			continue
@@ -193,9 +193,9 @@ func create_moon_field() -> void:
 	shadow.name = "RealPhaseMoonShadow"
 	var illumination: float = phase["illumination"]
 	var waxing: bool = phase["waxing"]
-	var offset := disc_radius * 2.0 * illumination * (-1.0 if waxing else 1.0)
+	var offset := _phase_shadow_offset(disc_radius, illumination, waxing)
 	# Offset the shadow disc perpendicular to the moon's elevation in sky
-	var right_dir := Vector3(moon_dir.z, 0.0, -moon_dir.x).normalized()
+	var right_dir := _moon_right_dir(moon_dir)
 	shadow.position = moon_pos + right_dir * offset
 	shadow.mesh = _make_disc_mesh(disc_radius * 1.02, 96)
 	shadow.material_override = _make_celestial_material(Color(0.012, 0.016, 0.035, 0.96), Color(0.0, 0.0, 0.0), 0.0)
@@ -210,9 +210,22 @@ func create_moon_field() -> void:
 	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	moon_field.add_child(glow)
 
-func get_real_moon_phase_data() -> Dictionary:
-	var unix_time: float = Time.get_unix_time_from_system()
-	var julian_date: float = unix_time / 86400.0 + 2440587.5
+func _moon_right_dir(moon_dir: Vector3) -> Vector3:
+	var flat := Vector3(moon_dir.z, 0.0, -moon_dir.x)
+	if flat.length_squared() < 0.0001:
+		return Vector3.RIGHT
+	return flat.normalized()
+
+# Shadow-disc offset for a given illumination. The shadow (radius ~1.02R)
+# must sit beyond R+r at full moon or a dark sliver remains on the disc.
+func _phase_shadow_offset(disc_radius: float, illumination: float, waxing: bool) -> float:
+	return disc_radius * 2.1 * illumination * (-1.0 if waxing else 1.0)
+
+# julian_date < 0 means "right now" — tests can inject a specific date.
+func get_real_moon_phase_data(julian_date := -1.0) -> Dictionary:
+	if julian_date < 0.0:
+		var unix_time: float = Time.get_unix_time_from_system()
+		julian_date = unix_time / 86400.0 + 2440587.5
 	var synodic_month: float = 29.530588853
 	var known_new_moon_jd: float = 2451550.1
 	var age: float = fposmod(julian_date - known_new_moon_jd, synodic_month)

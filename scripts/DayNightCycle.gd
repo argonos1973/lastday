@@ -16,6 +16,8 @@ var lightning_intensity := 0.0
 var world_environment: WorldEnvironment
 var star_field: Node3D
 var moon_field: Node3D
+# Real moon illumination fraction (0=new .. 1=full), refreshed by Main.
+var moon_illumination := 1.0
 
 var _real_time_initialized := false
 var _lighting_update_accum := 999.0
@@ -97,11 +99,12 @@ func _update_lighting() -> void:
 	if star_field != null:
 		star_field.visible = night_amount > 0.85 and weather_cloud_cover < 0.65
 	if moon_field != null:
-		moon_field.visible = night_amount > 0.75 and weather_cloud_cover < 0.85
-	# Moon illumination factor: if moon is up, provide a little light
+		moon_field.visible = night_amount > 0.35 and weather_cloud_cover < 0.85
+	# Moon illumination factor: if moon is up, provide a little light —
+	# a full moon lights noticeably more than a thin crescent.
 	var moon_illum := 0.0
 	if moon_field != null and moon_field.visible:
-		moon_illum = 0.08
+		moon_illum = 0.03 + 0.09 * moon_illumination
 	if world_environment != null and world_environment.environment != null:
 		var night_bg := Color(0.001, 0.001, 0.002)
 		world_environment.environment.background_color = night_bg.lerp(Color(0.56, 0.76, 0.96), day_amount)
