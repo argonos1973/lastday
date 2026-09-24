@@ -565,8 +565,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		# Skip if player is near a lit campfire
-		if _is_near_lit_campfire(_player.global_position, 10.0):
+		# Skip if player is near a lit campfire or under a roof (closed house,
+		# barn, tent, shelter). The roof check also stops damage through walls,
+		# since the attack range test ignores obstacles.
+		var scene := get_tree().current_scene
+		var out_of_reach := _is_near_lit_campfire(_player.global_position, 10.0)
+		if not out_of_reach and scene != null and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected(_player.global_position):
+			out_of_reach = true
+		if out_of_reach:
 			_state = "patrol"
 			_chase_target = null
 			_chase_cooldown = 3.0
@@ -1822,6 +1828,10 @@ func _resolve_player() -> void:
 				continue
 			# Skip proxies inside a built shelter (protected from animals)
 			if p.get_meta("in_built_shelter", false):
+				continue
+			# Skip proxies under a roof: closed house, barn, tent, shelter —
+			# evaluated live so a door opened later re-exposes the body.
+			if scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected((p as Node3D).global_position):
 				continue
 			var d: float = global_position.distance_to((p as Node3D).global_position)
 			if d < nearest_dist:

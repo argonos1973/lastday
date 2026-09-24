@@ -9367,6 +9367,37 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 			return true
 	return false
 
+# Wolf safety: anything under a roof is out of reach. Houses only count while
+# their door is closed — an open door lets a wolf walk in. Barns, the tent and
+# built shelters have no lockable door, so the roof alone protects. Evaluated
+# live (not cached) so a door opened later or a fire going out changes the
+# answer immediately.
+func _is_pos_wolf_protected(pos: Vector3) -> bool:
+	if _is_near_built_shelter(pos):
+		return true
+	for i in range(HOUSE_DATA.size()):
+		var hd: Dictionary = HOUSE_DATA[i]
+		var house_pos: Vector3 = hd["pos"]
+		if absf(pos.x - house_pos.x) < hd["w"] * 0.5 and absf(pos.z - house_pos.z) < hd["d"] * 0.5:
+			if hd.get("barn", false):
+				return true
+			return not _is_named_door_open("Casa abandonada %d Door" % (i + 1))
+	# Remote barn and military tent: roofed, no door.
+	if absf(pos.x - (-340.0)) < 4.0 and absf(pos.z - 280.0) < 9.0:
+		return true
+	if absf(pos.x - 48.0) < 4.0 and absf(pos.z - (-48.0)) < 4.0:
+		return true
+	return false
+
+func _is_named_door_open(door_name: String) -> bool:
+	# Live node state first (clients, single player, host); the server-side
+	# state dict is the fallback for dedicated servers where Door nodes do
+	# not exist.
+	var door := get_node_or_null(NodePath(door_name))
+	if door != null and is_instance_valid(door):
+		return bool(door.get("is_open"))
+	return bool(_server_door_states.get(door_name, false))
+
 func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	var is_lake := size.x >= 60.0
 	# Water-textured bottom plane to hide terrain showing through transparent water
