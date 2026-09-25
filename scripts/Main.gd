@@ -9768,8 +9768,8 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 	# the shallows instead of ending in a hard water/terrain seam.
 	const ROWS := [
 		{"off": 0.00, "y": -0.085, "v": 0.00},
-		{"off": 0.42, "y": -0.020, "v": 0.30},
-		{"off": 0.72, "y": 0.020, "v": 0.62},
+		{"off": 0.42, "y": -0.040, "v": 0.30},
+		{"off": 0.72, "y": -0.020, "v": 0.62},
 		{"off": 1.00, "y": -999.0, "v": 1.00},
 	]
 	if is_lake:
