@@ -8319,7 +8319,11 @@ func _execute_world_action_eat(action, actor) -> void:
 		"eat_food":
 			var eat_name0: String = str(action.get_meta("item_name", ""))
 			var is_portioned_can := eat_name0.begins_with("Lata de ") and eat_name0.ends_with(" abierta")
-			if not is_portioned_can:
+			var pile_qty := int(action.get_meta("item_quantity", 1))
+			# Una pila con varias unidades se come de una en una: solo se
+			# consume el ultimo trozo cuando la cantidad llega a cero.
+			var pile_partial: bool = not is_portioned_can and pile_qty > 1
+			if not is_portioned_can and not pile_partial:
 				_hide_action_visual(action)
 				action.mark_depleted()
 			_play_actor_action(actor, "plant", 1.2)
@@ -8390,6 +8394,17 @@ func _execute_world_action_eat(action, actor) -> void:
 						net.ground_craft_state_changed.rpc(action.action_id, can_qty, can_new_dur)
 					else:
 						net.ground_craft_state_changed.rpc_id(1, action.action_id, can_qty, can_new_dur)
+			elif pile_partial:
+				var pile_left := int(action.get_meta("item_quantity", 1)) - 1
+				var pile_dur := float(action.get_meta("item_durability", 100.0))
+				_apply_ground_craft_state(action.action_id, pile_left, pile_dur)
+				if pile_left <= 0:
+					_net_notify_pickup(action)
+				elif net != null and net.is_connected:
+					if net.is_host:
+						net.ground_craft_state_changed.rpc(action.action_id, pile_left, pile_dur)
+					else:
+						net.ground_craft_state_changed.rpc_id(1, action.action_id, pile_left, pile_dur)
 			else:
 				_net_notify_pickup(action)
 			_save_world_change_silent()
