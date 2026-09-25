@@ -10753,12 +10753,9 @@ func _eat_action() -> void:
 			else:
 				target.interact(self)
 			return
-	if inventory != null and not inventory.items.is_empty():
-		held_index = clampi(held_index, 0, inventory.items.size() - 1)
-		var item = inventory.items[held_index]
-		if item != null and item.item_type == "food":
-			_eat_held_item()
-			return
+	# Solo se come lo que se lleva en la mano. M nunca saca comida del
+	# inventario por atajo (antes comia items[held_index] clampeado).
+	_eat_held_item()
 
 func _light_action() -> void:
 	var target = _get_interaction_target()

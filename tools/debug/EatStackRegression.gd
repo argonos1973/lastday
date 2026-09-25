@@ -182,6 +182,14 @@ func _initialize() -> void:
 	await create_timer(2.2).timeout
 	check(_count_name(eat_player, "Pez crudo") == 0, "M with no target eats the held fish (got %d)" % _count_name(eat_player, "Pez crudo"))
 
+	# Case 9: M with EMPTY hands must never pull food straight from inventory.
+	_add_raw_stack(eat_player, "Higo", 0.10, 2, 12.0)
+	eat_player.clear_hands()
+	eat_player._consumption_pending = false
+	eat_player._eat_action()
+	await create_timer(2.2).timeout
+	check(_count_name(eat_player, "Higo") == 2, "M with empty hands eats nothing from inventory (got %d)" % _count_name(eat_player, "Higo"))
+
 	player.free()
 	world.free()
 	eat_player.free()
