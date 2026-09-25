@@ -3233,7 +3233,7 @@ func _notify_tamed_wolves_pvp(sender: int, target_peer_id: int, proxy: Node3D, s
 		elif tamed == str(sender) and sender != target_peer_id and w.global_position.distance_to(proxy.global_position) < 55.0:
 			w.notify_threat(proxy, 22.0)
 
-func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vector3 = Vector3.ZERO) -> void:
+func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vector3 = Vector3.ZERO, backpack_name: String = "", held_item: String = "") -> void:
 	if net == null or not net.is_host:
 		return
 	# The death RPC can arrive after the disconnect already parked the proxy —
@@ -3265,6 +3265,12 @@ func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vecto
 	# Update saved inventory from the death notification if provided
 	if not inventory_data.is_empty():
 		proxy.set_meta("saved_inventory", _sanitize_inventory_data(inventory_data))
+	# La mochila y la mano reportadas en la muerte son el estado real del momento
+	# (el sync de inventario corre cada 2 s y puede quedar obsoleto/rechazado).
+	if not backpack_name.is_empty():
+		proxy.set_meta("saved_backpack", backpack_name)
+	if not held_item.is_empty():
+		proxy.set_meta("saved_held_item", held_item)
 	if not proxy.get_meta("proxy_dead", false):
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
@@ -3294,6 +3300,10 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		if be is Dictionary and not str(be.get("name", "")).is_empty():
 			drop_source.append(be)
 	var bp_name := str(proxy.get_meta("saved_backpack", ""))
+	# Fallback: el broadcast de estado (20 Hz) suele tener la mochila mas fresca
+	# que el meta (solo se escribe en el sync de inventario cada 2 s).
+	if bp_name.is_empty() and net != null and net.players.has(peer_id):
+		bp_name = str(net.players[peer_id].get("equipped_backpack", ""))
 	if not bp_name.is_empty() and not inv_names.has(bp_name):
 		drop_source.append({"name": bp_name, "type": "backpack", "weight": 0.8, "quantity": 1, "use_value": 0.0})
 	for cname in str(proxy.get_meta("saved_clothing", "")).split(",", false):

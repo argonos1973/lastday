@@ -620,7 +620,7 @@ func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_died"):
-		scene._net_player_died(sender, inventory_data, death_pos)
+		scene._net_player_died(sender, inventory_data, death_pos, backpack, held)
 
 @rpc("any_peer", "reliable")
 func ground_craft_state_changed(action_id: String, quantity: int, durability: float) -> void:
