@@ -1024,15 +1024,10 @@ func _cycle_sort_mode() -> void:
 
 func _get_filtered_sorted_items() -> Array:
 	var filtered: Array = []
-	# El item en mano no se muestra en el grid de inventario: ya esta en la mano
-	var held_item = null
-	if player != null and player.has_method("get_held_item"):
-		held_item = player.get_held_item()
+	# El item en mano tambien se muestra (con la etiqueta EN MANO): ocultarlo
+	# hacia que un stack sostenido pareciera desaparecer del inventario.
 	for item in player.inventory.items:
 		if item == null:
-			continue
-		# Saltar el item que esta actualmente en la mano
-		if held_item != null and item == held_item:
 			continue
 		if _inv_category_filter != "all":
 			var itype := str(item.item_type)
@@ -1368,6 +1363,8 @@ func _update_equipment_labels() -> void:
 			_hand_store_button.disabled = held_item == null
 		if held_item != null:
 			hand_text = held_item.item_name
+			if int(held_item.quantity) > 1:
+				hand_text += " x%d" % int(held_item.quantity)
 			# Mostrar municion del rifle si esta equipado
 			if player.has_method("get_rifle_info") and player.has_method("_has_rifle_equipped") and player._has_rifle_equipped():
 				var ri: Dictionary = player.get_rifle_info()

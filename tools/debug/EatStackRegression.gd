@@ -17,6 +17,15 @@ class TestWorld extends "res://scripts/Main.gd":
 	func _save_world_change_silent() -> void:
 		pass
 
+class TestNet extends Node:
+	var is_connected := true
+	var is_host := false
+	var is_dedicated_server := false
+	var peer = ENetMultiplayerPeer.new()
+	var client_id := 77
+	func get_my_id() -> int:
+		return 77
+
 var failures := 0
 
 func check(ok: bool, label: String) -> void:
@@ -116,8 +125,31 @@ func _initialize() -> void:
 	# Drop tracking stays consistent: partial eats keep the entry, the last one removes it.
 	check(world._dropped_items.is_empty(), "Depleted pile leaves no drop record")
 
+	# Case 6: multiplayer client — a stale restore_player_inventory landing
+	# during the 2s eat animation must cancel the pending eat rather than
+	# consume an item the authoritative snapshot still contains.
+	var mp_world := TestWorld.new()
+	root.add_child(mp_world)
+	var mp_net := TestNet.new()
+	mp_world.add_child(mp_net)
+	mp_world.net = mp_net
+	var mp_player := TestPlayer.new()
+	mp_world.add_child(mp_player)
+	mp_world.player = mp_player
+	_add_raw_stack(mp_player, "Higo", 0.10, 2, 12.0)
+	var mp_idx: int = _slots_of(mp_player, "Higo")[0]
+	_eat_fig_via_player(mp_player, mp_idx)
+	# The eat is animating; a late restore with the server's pre-eat snapshot
+	# (still 2 figs) replaces the inventory before the timer fires.
+	var stale_inv: Array = [ItemScript.create("Higo", "food", 0.10, 2, 12.0).to_dict()]
+	mp_world._apply_restored_inventory(stale_inv, 100.0, 60.0, 60.0, "", "", "", 0, false, false, 0.0, false, false, {})
+	await create_timer(2.2).timeout
+	check(_count_name(mp_player, "Higo") == 2, "Stale restore mid-eat cancels the eat, no item lost or duplicated (got %d)" % _count_name(mp_player, "Higo"))
+
 	player.free()
 	world.free()
+	mp_player.free()
+	mp_world.free()
 	if failures == 0:
 		print("EatStackRegression: ALL PASS")
 	else:
