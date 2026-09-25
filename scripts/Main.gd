@@ -9501,6 +9501,7 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	mesh_instance.add_to_group("river_water")
 	add_child(mesh_instance)
 	_create_shore_band(center, size, yaw)
+	preload("res://scripts/RiverbankDetails.gd").create(self, center, size, yaw)
 	_scatter_shore_props(center, size, yaw)
 	await _create_river_edge_blend(center, size, yaw)
 	_create_river_end_blend(center, size, yaw)
@@ -9729,12 +9730,14 @@ func _get_shore_band_material() -> StandardMaterial3D:
 	if _shore_band_material != null:
 		return _shore_band_material
 	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_albedo.png")
+	mat.albedo_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_reference_albedo.png")
 	mat.normal_enabled = true
-	mat.normal_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_normal.png")
+	mat.normal_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_reference_normal.png")
 	mat.roughness = 0.9
 	mat.roughness_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_roughness.png")
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	# Shorter U repeat so the pebble grain reads as gravel, not long streaks.
+	mat.uv1_scale = Vector3(1.7, 1.0, 1.0)
 	# Alpha blend so the land edge feathers into the terrain; vertex alpha
 	# fades the strip ends where river segments join or a river finishes.
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
