@@ -143,39 +143,41 @@ flecks = noise(60, 2, 7.7)
 # Cross-shore position with organic wobble so the wet edge meanders.
 wobbled_v = calc("ADD", v, calc("MULTIPLY", calc("SUBTRACT", medium, 0.5), 0.14))
 
-# Base substrate gradient: silt -> wet mud -> wet sand -> damp sand -> dry dirt.
+# Base substrate gradient: dark river shore, not beach sand — silt -> wet mud
+# -> wet gravel-mud -> damp dirt -> dirt that melts into the terrain.
 substrate = ramp(wobbled_v, [
-    (0.00, (0.070, 0.066, 0.042)),   # submerged silt, olive-dark
-    (0.12, (0.125, 0.105, 0.068)),   # saturated mud at the waterline
-    (0.32, (0.225, 0.180, 0.118)),   # wet sand
-    (0.55, (0.345, 0.290, 0.198)),   # damp sand
-    (0.78, (0.420, 0.362, 0.256)),   # drying sand/dirt
-    (1.00, (0.435, 0.388, 0.272)),   # dry dirt blending toward terrain
+    (0.00, (0.048, 0.046, 0.032)),   # submerged silt, olive-dark
+    (0.14, (0.082, 0.072, 0.050)),   # saturated mud at the waterline
+    (0.36, (0.128, 0.108, 0.074)),   # wet gravel-mud
+    (0.58, (0.175, 0.152, 0.104)),   # damp dirt-gravel
+    (0.80, (0.205, 0.182, 0.128)),   # drying dirt
+    (1.00, (0.215, 0.192, 0.134)),   # dirt blending toward terrain
 ])
 
 # Algae / waterline stain: a thin, subtle olive tint just above the silt.
 algae_band = ramp(wobbled_v, [(0.05, (0, 0, 0, 0)), (0.11, (0.38, 0.38, 0.38, 1)), (0.20, (0, 0, 0, 0))])
 substrate = mix(algae_band, substrate, (0.125, 0.145, 0.062, 1))
 
-# Pebbles: voronoi cell dots confined to the dry half of the strip.
+# Gravel/pebbles: voronoi cell dots spread over most of the strip — a real
+# shore is stony from the waterline up, not just on the dry edge.
 vor = node("ShaderNodeTexVoronoi", voronoi_dimensions="4D", distance="EUCLIDEAN", feature="F1")
 put(vor.inputs["Vector"], periodic)
 put(vor.inputs["W"], 2.9)
-vor.inputs["Scale"].default_value = 11.0
-pebble_mask = ramp(vor.outputs["Distance"], [(0.022, (1, 1, 1, 1)), (0.042, (0, 0, 0, 0))])
-pebble_zone = ramp(wobbled_v, [(0.30, (0, 0, 0, 0)), (0.48, (1, 1, 1, 1)), (0.97, (1, 1, 1, 1))])
+vor.inputs["Scale"].default_value = 9.0
+pebble_mask = ramp(vor.outputs["Distance"], [(0.024, (1, 1, 1, 1)), (0.048, (0, 0, 0, 0))])
+pebble_zone = ramp(wobbled_v, [(0.10, (0, 0, 0, 0)), (0.26, (1, 1, 1, 1)), (0.97, (1, 1, 1, 1))])
 pebble_id = noise(140, 1, 4.4)
 pebble_color = ramp(pebble_id, [
-    (0.15, (0.13, 0.12, 0.105)),
-    (0.45, (0.28, 0.25, 0.20)),
-    (0.75, (0.47, 0.42, 0.33)),
-    (1.00, (0.20, 0.17, 0.14)),
+    (0.15, (0.075, 0.070, 0.062)),
+    (0.45, (0.175, 0.158, 0.128)),
+    (0.75, (0.31, 0.275, 0.215)),
+    (1.00, (0.115, 0.098, 0.082)),
 ])
 pebbles = mix(calc("MULTIPLY", pebble_mask, pebble_zone), substrate, pebble_color)
 
 # Dark organic flecks / debris on the dry side.
-debris_mask = ramp(flecks, [(0.56, (0, 0, 0, 0)), (0.62, (0.65, 0.65, 0.65, 1)), (0.70, (0, 0, 0, 0))])
-debris_zone = ramp(wobbled_v, [(0.45, (0, 0, 0, 0)), (0.75, (1, 1, 1, 1))])
+debris_mask = ramp(flecks, [(0.50, (0, 0, 0, 0)), (0.58, (0.75, 0.75, 0.75, 1)), (0.68, (0, 0, 0, 0))])
+debris_zone = ramp(wobbled_v, [(0.30, (0, 0, 0, 0)), (0.60, (1, 1, 1, 1))])
 debris = mix(calc("MULTIPLY", debris_mask, debris_zone), (1, 1, 1, 1), (0.10, 0.085, 0.055, 1))
 
 color = mix(0.25, pebbles, grain, "MULTIPLY")

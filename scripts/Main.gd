@@ -9626,12 +9626,12 @@ func _create_river_edge_blend(center: Vector3, size: Vector2, yaw: float) -> voi
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for side_value in [-1.0, 1.0]:
 		var side: float = side_value
-		for i in range(120):
+		for i in range(80):
 			var edge_pos: Vector3 = center + along * _world_rng.randf_range(-size.x * 0.53, size.x * 0.53) + across * side * _world_rng.randf_range(size.y * 0.51, size.y * 0.92)
 			edge_pos.y = 0.041 + _world_rng.randf_range(0.0, 0.006)
 			if not _can_place_ground_vegetation(edge_pos, -1.0):
 				continue
-			if i % 6 == 0:
+			if i % 14 == 0:
 				_create_river_pebble_cluster(edge_pos, along, across, side)
 			if _world_rng.randf() < 0.98:
 				var grass_pos: Vector3 = edge_pos + across * side * _world_rng.randf_range(0.10, 1.45) + along * _world_rng.randf_range(-0.90, 0.90)
@@ -9656,16 +9656,16 @@ func _create_river_end_blend(center: Vector3, size: Vector2, yaw: float) -> void
 	var across := Vector3(sin(angle), 0, cos(angle))
 	for end_value in [-1.0, 1.0]:
 		var end: float = end_value
-		for i in range(120):
+		for i in range(60):
 			var side := -1.0 if _world_rng.randf() < 0.5 else 1.0
 			var cap_pos: Vector3 = center + along * end * _world_rng.randf_range(size.x * 0.36, size.x * 0.66) + across * _world_rng.randf_range(-size.y * 0.92, size.y * 0.92)
 			cap_pos += across * side * _world_rng.randf_range(0.0, 0.68)
 			cap_pos.y = 0.052
 			if not _can_place_ground_vegetation(cap_pos, -1.0):
 				continue
-			if i % 6 == 0:
+			if i % 15 == 0:
 				_create_shore_stone(cap_pos + across * side * _world_rng.randf_range(0.15, 0.55), Vector3(_world_rng.randf_range(0.30, 0.78), _world_rng.randf_range(0.12, 0.36), _world_rng.randf_range(0.30, 0.78)))
-			elif i % 3 == 0:
+			elif i % 7 == 0:
 				_create_river_pebble_cluster(cap_pos, along, across, side)
 			else:
 				_create_river_reed_cluster(cap_pos, _world_rng.randf_range(1.25, 2.25), side)
@@ -9688,15 +9688,15 @@ func _create_river_seam_cover(center: Vector3, size: Vector2, yaw: float) -> voi
 	for end_value in [-1.0, 1.0]:
 		var end: float = end_value
 		var seam_center: Vector3 = center + along * end * size.x * 0.50
-		for i in range(44):
+		for i in range(30):
 			var side := -1.0 if i % 2 == 0 else 1.0
 			var seam_pos: Vector3 = seam_center + across * _world_rng.randf_range(-size.y * 0.58, size.y * 0.58) + along * end * _world_rng.randf_range(-0.35, 1.20)
 			seam_pos.y = 0.054
 			if not _can_place_ground_vegetation(seam_pos, -1.0):
 				continue
-			if i % 4 == 0:
+			if i % 10 == 0:
 				_create_shore_stone(seam_pos + across * side * _world_rng.randf_range(0.0, 0.45), Vector3(_world_rng.randf_range(0.24, 0.62), _world_rng.randf_range(0.10, 0.28), _world_rng.randf_range(0.24, 0.62)))
-			elif i % 3 == 0:
+			elif i % 6 == 0:
 				_create_river_pebble_cluster(seam_pos, along, across, side)
 			else:
 				_create_river_reed_cluster(seam_pos + across * side * _world_rng.randf_range(0.05, 0.50), _world_rng.randf_range(1.35, 2.35), side)
@@ -9706,6 +9706,7 @@ func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3,
 	# Half the clusters come from the Blender pebble patch (real small stones);
 	# the rest are small textured spheres — pebble-sized, not slabs.
 	if _world_rng.randf() < 0.5 and _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * _world_rng.randf_range(0.55, 1.0), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
+		_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.34, 0.35, 0.37))
 		return
 	for i in range(3 + _world_rng.randi() % 4):
 		var pebble_pos: Vector3 = pos + along * _world_rng.randf_range(-0.65, 0.65) + across * side * _world_rng.randf_range(-0.22, 0.56)
@@ -9772,7 +9773,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 		var rx: float = half_l * 0.86
 		var rz: float = half_w * 0.86
 		var band_in: float = -half_w * 0.16
-		var band_out: float = 3.2
+		var band_out: float = 1.7
 		var steps := 96
 		var wobble_phase := _world_rng.randf_range(0.0, TAU)
 		var mean_r: float = (rx + rz) * 0.5
@@ -9838,7 +9839,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 					var lz: float
 					var vy: float = float(r["y"])
 					if vy < -100.0:
-						lz = side * (half_w + 0.6 + 1.8 + edge_wobble)
+						lz = side * (half_w + 0.35 + 0.95 + edge_wobble * 0.7)
 						var world := center + along * lx + across * lz
 						vy = _shore_ground_y(world.x, world.z)
 					else:
@@ -9882,7 +9883,7 @@ func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
 	var along := Vector3(cos(angle), 0, -sin(angle))
 	var across := Vector3(sin(angle), 0, cos(angle))
 	var is_lake := size.x >= 60.0
-	var attempts := 16 if is_lake else 8
+	var attempts := 10 if is_lake else 5
 	for i in range(attempts):
 		var pos: Vector3
 		var shore_dir: Vector3
@@ -9911,17 +9912,18 @@ func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
 		var ground_y := _get_ground_height(pos) + 0.01
 		pos.y = ground_y
 		var roll := _world_rng.randf()
-		if roll < 0.20:
+		if roll < 0.28:
 			# Driftwood lies roughly parallel to the waterline
 			var tangent_yaw := rad_to_deg(atan2(-shore_dir.z, shore_dir.x)) + _world_rng.randf_range(-28.0, 28.0)
 			var sc := _world_rng.randf_range(0.7, 1.1)
 			if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_DRIFTWOOD, _world_rng), "ShoreDriftwood", pos, Vector3.ONE * sc, Vector3(0, tangent_yaw, 0), false, 0.0):
-				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.48, 0.42, 0.36))
-		elif roll < 0.60:
+				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.40, 0.35, 0.29))
+		elif roll < 0.55:
 			_create_shore_stone(pos, Vector3(_world_rng.randf_range(0.3, 0.8), _world_rng.randf_range(0.15, 0.4), _world_rng.randf_range(0.3, 0.8)))
 		else:
 			var sc3 := _world_rng.randf_range(0.5, 0.95)
-			_try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * sc3, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
+			if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * sc3, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
+				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.34, 0.35, 0.37))
 
 # Flat water-worn stone for river/lake edges — falls back to the textured
 # boulder if the Blender props are unavailable.
@@ -9934,7 +9936,7 @@ func _create_shore_stone(pos: Vector3, fallback_scale: Vector3) -> void:
 
 # The Blender shore props ship flat colors; the triplanar forest-rock shader
 # gives them real grain and darkens their base like a wet waterline stone.
-func _apply_rock_material(node: Node, tint := Vector3(0.50, 0.54, 0.58)) -> void:
+func _apply_rock_material(node: Node, tint := Vector3(0.38, 0.40, 0.42)) -> void:
 	var mat := MaterialFactory.make_forest_rock_material(tint)
 	var meshes: Array = []
 	NodeUtils.collect_mesh_instances(node, meshes)
@@ -9972,14 +9974,14 @@ func _decorate_river_area(center: Vector3, size: Vector2, yaw: float) -> void:
 		bank_pos.y = 0.045
 		if not _can_place_ground_vegetation(bank_pos, -1.0):
 			continue
-		if i % 5 == 0:
+		if i % 10 == 0:
 			_create_shore_stone(bank_pos, Vector3(_world_rng.randf_range(0.35, 1.15), _world_rng.randf_range(0.18, 0.55), _world_rng.randf_range(0.35, 1.05)))
 		elif i % 5 == 1:
 			_create_river_pebble_cluster(bank_pos, along, across, side)
 		else:
 			_create_river_reed_cluster(bank_pos, _world_rng.randf_range(0.75, 1.35), side)
 			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.55, 0.55) + across * side * _world_rng.randf_range(0.25, 0.75), _world_rng.randf_range(0.62, 1.05), Color(0.14, 0.29, 0.10).lerp(Color(0.34, 0.42, 0.14), _world_rng.randf()))
-		if _world_rng.randf() < 0.45:
+		if _world_rng.randf() < 0.18:
 			var pebble_pos := center + along * _world_rng.randf_range(-size.x * 0.48, size.x * 0.48) + across * side * _world_rng.randf_range(size.y * 0.35, size.y * 0.72)
 			pebble_pos.y = 0.041
 			_create_river_pebble_cluster(pebble_pos, along, across, side)
@@ -10111,7 +10113,7 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 	var half_l := size.x * 0.5
 	var half_w := size.y * 0.5
 	# Boulders and rocks around the elliptical lake shore, same band as grass
-	var total_iters := 800
+	var total_iters := 340
 	for i in range(total_iters):
 		var theta := float(i) / float(total_iters) * TAU + _world_rng.randf_range(-0.05, 0.05)
 		# Absolute offset in meters from the 0.85 ellipse boundary
@@ -10132,11 +10134,11 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 			continue
 		bank_pos.y = _get_ground_height(bank_pos) + 0.01
 		var side: float = 1.0 if sin(theta) >= 0.0 else -1.0
-		if i % 5 == 0:
+		if i % 10 == 0:
 			_create_shore_stone(bank_pos, Vector3(_world_rng.randf_range(0.5, 1.2), _world_rng.randf_range(0.25, 0.6), _world_rng.randf_range(0.5, 1.1)))
 			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.5, 0.5), _world_rng.randf_range(1.0, 1.6), Color(0.10, 0.26, 0.08).lerp(Color(0.28, 0.40, 0.11), _world_rng.randf()))
 			_create_grass_clump(bank_pos + across * side * _world_rng.randf_range(0.2, 0.6), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
-		elif i % 5 == 1:
+		elif i % 10 == 5:
 			_create_river_pebble_cluster(bank_pos, along, across, side)
 			_create_grass_clump(bank_pos, _world_rng.randf_range(0.8, 1.4), Color(0.12, 0.28, 0.08).lerp(Color(0.30, 0.42, 0.12), _world_rng.randf()))
 			_create_grass_clump(bank_pos + along * _world_rng.randf_range(-0.4, 0.4) + across * _world_rng.randf_range(-0.4, 0.4), _world_rng.randf_range(0.4, 0.8), Color(0.15, 0.33, 0.10).lerp(Color(0.30, 0.42, 0.15), _world_rng.randf()))
