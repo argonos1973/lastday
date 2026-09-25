@@ -2999,7 +2999,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 			var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 			var mpos := base_pos + offset
-			mpos.y = 0.06
+			mpos.y = _get_exact_ground_y(mpos.x, mpos.z, base_pos.y + 0.5) + 0.06
 			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, meat_action_type)
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": meat_action_type})
@@ -3188,9 +3188,9 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var angle := TAU * float(i) / float(max(1, drop_source.size())) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(1.5, 3.0), 0.0, sin(angle) * randf_range(1.5, 3.0))
 		var dpos := pos + offset
-		# Loot sits at the corpse's height — a fixed y buried items under
-		# elevated terrain or house floors.
-		dpos.y = pos.y
+		# Cada drop se fija a la superficie real bajo su punto — la y del cadáver
+		# dejaba items enterrados bajo terreno elevado o flotando en pendientes.
+		dpos.y = _get_exact_ground_y(dpos.x, dpos.z, pos.y + 0.5)
 		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
 		# _spawn_ground_pickup already persists the drop into _dropped_items
 		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did)
@@ -3925,6 +3925,9 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	# y además en el suelo (duplicado real).
 	if net != null and net.is_connected and not net.is_host:
 		call_deferred("_sync_local_player_inventory")
+	# El drop llega a la altura del jugador — bajarlo a la superficie real evita
+	# objetos flotando al soltar en bordes de colina o sobre desniveles.
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -3974,10 +3977,10 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		elif animal_kind == "fox":
 			model_path = "res://assets/external/fox/FoxAnimated.glb"
 		var p := pos
-		p.y = 0.1
+		p.y = pos.y + 0.1
 		var drop_id := "animal_drop_%d" % Time.get_ticks_msec()
 		var visual_name := "Pickup_" + drop_id
-		_try_instance_external_scene([model_path], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, 0.06)
+		_try_instance_external_scene([model_path], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, p.y)
 		_mark_world_action_visual(visual_name)
 		var action = _create_world_action(drop_id, "gut_wolf", item_name, p, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 		action.set_meta("visual_name", visual_name)
@@ -4020,9 +4023,10 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	var visual_name := "Pickup_" + drop_id
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
-	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, pos.y)
 	_mark_world_action_visual(visual_name)
 	var meat_action_type := "bird_meat_raw" if item_name == "Carne cruda de ave" else "wolf_meat_raw"
 	var maction = _create_world_action(drop_id, meat_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
@@ -4038,6 +4042,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
+	# La y recibida puede venir de una posición elevada o de un save antiguo —
+	# fijarla a la superficie real evita drops flotando en el aire.
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -4052,7 +4059,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	elif lay_flat:
 		rot.x += 90.0
 	if not paths.is_empty():
-		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.06)
+		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, pos.y)
 		if not _spawned_ok:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		else:
@@ -4064,7 +4071,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		if lay_flat or pre_flat:
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
-				_snap_node_bottom_to_y(laid as Node3D, 0.06)
+				_snap_node_bottom_to_y(laid as Node3D, pos.y)
 		_mark_world_action_visual(visual_name)
 	else:
 		# Fallback: no model available, create a simple shape
@@ -4165,6 +4172,9 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return true
+	# La posición del cliente puede venir elevada (drops a la altura del jugador
+	# o aterrizajes sobre colliders altos) — fijarla a la superficie real.
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	item_weight = clampf(item_weight, 0.0, 100.0)
 	item_quantity = clampi(item_quantity, 1, 999)
 	item_use_value = clampf(item_use_value, -100.0, 100.0)
@@ -7150,12 +7160,15 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	if _depleted_action_ids.has(id):
 		return
+	# Los llamadores pueden pasar una y heredada (altura del actor, y fija a 0) —
+	# fijar el pickup a la superficie real evita objetos enterrados o flotando.
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5) + 0.02
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var drop_scale := _get_drop_scale(item_name, item_type)
 	var spawned := false
 	if not paths.is_empty():
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, pos.y)
 	if not spawned:
 		if item_name == "Trapos":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), Vector3(0, randf_range(0, 360), 0))
@@ -7380,10 +7393,10 @@ func _execute_world_action(action, actor) -> void:
 				var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 				var mpos := animal_pos + offset
-				mpos.y = 0.06
+				mpos.y = _get_exact_ground_y(mpos.x, mpos.z, animal_pos.y + 0.5) + 0.06
 				var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 				var mvis := "Pickup_" + mid
-				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.06)
+				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, mpos.y)
 				_mark_world_action_visual(mvis)
 				var maction = _create_world_action(mid, "wolf_meat_raw", meat_name, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 				maction.set_meta("visual_name", mvis)
@@ -8099,7 +8112,7 @@ func _execute_world_action(action, actor) -> void:
 			if not actor.inventory.add_item(palo_item):
 				# Inventory full or too heavy — drop palos on the ground
 				var drop_pos: Vector3 = Vector3(action.global_position) + Vector3(0.5, 0.0, 0.5)
-				drop_pos.y = 0.06
+				drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z, action.global_position.y + 0.5) + 0.06
 				_spawn_ground_pickup("Palo", "material", drop_pos, 0.3, 11, 0.0)
 				_dropped_items.append({"id": "dismantle_palos_%d" % Time.get_ticks_msec(), "name": "Palo", "type": "material", "weight": 0.3, "qty": 11, "use": 0.0, "pos": [drop_pos.x, drop_pos.y, drop_pos.z]})
 				actor.notice.emit("No tienes espacio o peso para 11 palos. Los has dejado en el suelo.")
@@ -11795,6 +11808,10 @@ func _update_forest_collision() -> void:
 			body.name = "ForestCol_%d_%d" % [key.x, key.y]
 			body.collision_layer = 1
 			body.collision_mask = 1
+			# El cilindro del tronco llega a 6 m — no es suelo caminable, así que
+			# el raycast de altura debe atravesarlo (si no, los drops aterrizan
+			# flotando encima del collider invisible del árbol).
+			body.add_to_group("prop_collision")
 			var trunk_shape := CylinderShape3D.new()
 			trunk_shape.radius = 0.25
 			trunk_shape.height = 6.0
@@ -12210,9 +12227,9 @@ func _create_cut_tree_remains(pos: Vector3) -> void:
 	_create_visual_cylinder("CutTreeStumpTop", pos + Vector3(0, 0.585, 0), 0.33, 0.035, Color(0.36, 0.24, 0.12), Vector3.ZERO)
 	var yaw_a := _remains_rng.randf_range(0.0, 180.0)
 	var yaw_b := yaw_a + _remains_rng.randf_range(42.0, 86.0)
-	if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CutTreeLogAssetA", pos + Vector3(0.72, 0.12, 0.18), Vector3.ONE * 0.75, Vector3(0, yaw_a, 0), true, 0.06):
+	if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CutTreeLogAssetA", pos + Vector3(0.72, 0.12, 0.18), Vector3.ONE * 0.75, Vector3(0, yaw_a, 0), true, pos.y + 0.06):
 		_create_visual_cylinder("CutTreeLogA", pos + Vector3(0.72, 0.22, 0.18), 0.18, 2.2, Color(0.20, 0.12, 0.055), Vector3(90, yaw_a, 0))
-	if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CutTreeLogAssetB", pos + Vector3(-0.58, 0.12, -0.28), Vector3.ONE * 0.62, Vector3(0, yaw_b, 0), true, 0.06):
+	if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CutTreeLogAssetB", pos + Vector3(-0.58, 0.12, -0.28), Vector3.ONE * 0.62, Vector3(0, yaw_b, 0), true, pos.y + 0.06):
 		_create_visual_cylinder("CutTreeLogB", pos + Vector3(-0.58, 0.20, -0.28), 0.15, 1.65, Color(0.16, 0.09, 0.04), Vector3(90, yaw_b, 0))
 	for i in range(3):
 		var branch_pos := pos + Vector3(_remains_rng.randf_range(-0.7, 0.7), 0.10, _remains_rng.randf_range(-0.7, 0.7))

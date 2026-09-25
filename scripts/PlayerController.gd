@@ -5552,6 +5552,7 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	var landed := false
 	var land_pos := start_pos
 	var timeout := 8.0
+	var rest_time := 0.0
 	while not landed and timeout > 0.0 and is_instance_valid(body):
 		await get_tree().physics_frame
 		timeout -= 0.016
@@ -5566,7 +5567,14 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		var contact_y := water_surface_y if water_depth_now > 0.02 else ground_y
 		var crossed_water_surface := water_depth_now > 0.02 and body.global_position.y <= water_surface_y + 0.08
 		var reached_ground := water_depth_now <= 0.02 and body.global_position.y <= contact_y + 0.10 and body.linear_velocity.y <= 0.5
-		if crossed_water_surface or reached_ground:
+		# Un objeto quieto apoyado sobre algo que no es suelo (p.ej. la tapa del
+		# collider de un tronco) no cumple reached_ground — tras un reposo breve
+		# se toma como aterrizado y el drop final se baja a la superficie real.
+		if speed < 0.25:
+			rest_time += 0.016
+		else:
+			rest_time = 0.0
+		if crossed_water_surface or reached_ground or rest_time > 0.8:
 			landed = true
 			land_pos = body.global_position
 			break
