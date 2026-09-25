@@ -29,7 +29,11 @@ raw=np.empty(1024*1024*4,dtype=np.float32);gravel.pixels.foreach_get(raw)
 band=raw.reshape((1024,1024,4))[320:576].copy()
 v=np.linspace(0,1,256)[:,None,None]
 band[:,:,:3]*=(.62-.32*v)*np.array([.92,.90,.80])[None,None,:]
-fade=np.clip((1-v[:,:,0])/.24,0,1)*np.clip(v[:,:,0]/.35,0,1)
+# Band array index 0 = PNG bottom = mesh v=1 (land edge); index 255 = mesh
+# v=0 (deep underwater). Alpha must die below the waterline (~mesh v 0.62,
+# script v ~0.4) so the bank dissolves into the riverbed through the water
+# instead of showing as a straight textured shelf.
+fade=np.clip((0.52-v[:,:,0])/.12,0,1)*np.clip(v[:,:,0]/.35,0,1)
 band[:,:,3]=fade*fade*(3-2*fade)
 image=bpy.data.images.new('Reference wet gravel',width=1024,height=256,alpha=True)
 image.pixels.foreach_set(band.ravel());image.file_format='PNG'
