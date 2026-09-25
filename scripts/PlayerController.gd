@@ -5397,10 +5397,9 @@ func drop_inventory_item(index: int) -> void:
 		elif item.is_broken():
 			item_name = "Botella de plastico"
 			item_type = "misc"
-	# Soltar vacía la mano por completo: se suelta el stack entero, no una
-	# unidad. Con drop_qty=1 el resto del stack quedaba en la mano y, como el
-	# HUD no muestra la cantidad del objeto sostenido, parecía una duplicación.
-	var drop_qty := int(item.quantity)
+	# Soltar deja caer una sola unidad del stack; el resto se queda en el
+	# inventario (y en la mano si era el objeto sostenido).
+	var drop_qty := 1
 	var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 	drop_pos.y = global_position.y
 	var drop_color := get_current_clothing_color(item_name)
