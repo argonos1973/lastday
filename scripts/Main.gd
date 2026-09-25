@@ -9737,7 +9737,7 @@ func _get_shore_band_material() -> StandardMaterial3D:
 	mat.roughness_texture = MaterialFactory.load_texture(SHORE_TEX_DIR + "shore_band_roughness.png")
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	# Shorter U repeat so the pebble grain reads as gravel, not long streaks.
-	mat.uv1_scale = Vector3(1.7, 1.0, 1.0)
+	mat.uv1_scale = Vector3(2.0, 1.0, 1.0)
 	# Alpha blend so the land edge feathers into the terrain; vertex alpha
 	# fades the strip ends where river segments join or a river finishes.
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -9776,7 +9776,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 		var rx: float = half_l * 0.86
 		var rz: float = half_w * 0.86
 		var band_in: float = -half_w * 0.16
-		var band_out: float = 1.7
+		var band_out: float = 0.9
 		var steps := 96
 		var wobble_phase := _world_rng.randf_range(0.0, TAU)
 		var mean_r: float = (rx + rz) * 0.5
@@ -9792,8 +9792,11 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 			var u_dist: float = theta * mean_r / 4.5
 			# Tangent along the shore for the normal map.
 			var tangent := Vector3(-sin(theta) * rx, 0, cos(theta) * rz).normalized()
+			# The land edge of the band wanders: some stretches of grass reach
+			# the waterline, others expose a wider muddy apron.
+			var edge_wobble_l: float = sin(theta * 3.0 + wobble_phase) * 0.35 + sin(theta * 7.3 + wobble_phase * 1.7) * 0.15
 			for r in ROWS:
-				var off: float = lerp(band_in, band_out, float(r["off"]))
+				var off: float = lerp(band_in, band_out, float(r["off"])) + edge_wobble_l * float(r["off"])
 				var lx: float = ex + nx * off
 				var lz: float = ez + nz * off
 				var world := center + along * lx + across * lz
@@ -9830,7 +9833,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 			var count := int((x1 - x0) / step) + 1
 			for i in range(count + 1):
 				var lx: float = min(x0 + float(i) * step, x1)
-				var edge_wobble: float = sin(lx * 0.42 + wobble_phase2 + side * 2.1) * 0.22
+				var edge_wobble: float = sin(lx * 0.42 + wobble_phase2 + side * 2.1) * 0.30 + sin(lx * 1.35 + wobble_phase2 * 2.0) * 0.16
 				var u_dist: float = lx / 4.5
 				var end_alpha := 1.0
 				if i < 2:
@@ -9842,7 +9845,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 					var lz: float
 					var vy: float = float(r["y"])
 					if vy < -100.0:
-						lz = side * (half_w + 0.35 + 0.95 + edge_wobble * 0.7)
+						lz = side * (half_w + 0.70 + edge_wobble)
 						var world := center + along * lx + across * lz
 						vy = _shore_ground_y(world.x, world.z)
 					else:

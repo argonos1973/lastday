@@ -29,7 +29,7 @@ raw=np.empty(1024*1024*4,dtype=np.float32);gravel.pixels.foreach_get(raw)
 band=raw.reshape((1024,1024,4))[320:576].copy()
 v=np.linspace(0,1,256)[:,None,None]
 band[:,:,:3]*=(.62-.32*v)*np.array([.92,.90,.80])[None,None,:]
-fade=np.clip((1-v[:,:,0])/.24,0,1)*np.clip(v[:,:,0]/.16,0,1)
+fade=np.clip((1-v[:,:,0])/.24,0,1)*np.clip(v[:,:,0]/.35,0,1)
 band[:,:,3]=fade*fade*(3-2*fade)
 image=bpy.data.images.new('Reference wet gravel',width=1024,height=256,alpha=True)
 image.pixels.foreach_set(band.ravel());image.file_format='PNG'
