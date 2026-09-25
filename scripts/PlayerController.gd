@@ -10741,25 +10741,24 @@ func _quick_use_held_item_impl() -> void:
 					target.interact(self)
 
 func _eat_action() -> void:
+	# Una accion comestible apuntada tiene prioridad: el prompt muestra
+	# "[M] Comer" sobre ese objeto, asi que M debe comerlo a el y no el
+	# objeto que ya llevamos en la mano (p.ej. un pez sostenido).
+	var target = _get_interaction_target()
+	if target != null and target is WorldAction:
+		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw" or target.action_type == "bird_meat_raw":
+			var main := get_tree().current_scene
+			if main != null and main.has_method("handle_world_action_eat"):
+				main.handle_world_action_eat(target, self)
+			else:
+				target.interact(self)
+			return
 	if inventory != null and not inventory.items.is_empty():
 		held_index = clampi(held_index, 0, inventory.items.size() - 1)
 		var item = inventory.items[held_index]
 		if item != null and item.item_type == "food":
-			print("[DEBUG _eat_action] Eating from INVENTORY: %s" % item.item_name)
 			_eat_held_item()
 			return
-	var target = _get_interaction_target()
-	print("[DEBUG _eat_action] target=%s is WorldAction=%s" % [target, target is WorldAction if target != null else false])
-	if target != null and target is WorldAction:
-		print("[DEBUG _eat_action] action_type=%s action_id=%s" % [target.action_type, target.action_id])
-		if target.action_type == "eat_food" or target.action_type == "wolf_meat_raw" or target.action_type == "bird_meat_raw":
-			var main := get_tree().current_scene
-			if main != null and main.has_method("handle_world_action_eat"):
-				print("[DEBUG _eat_action] Calling handle_world_action_eat")
-				main.handle_world_action_eat(target, self)
-			else:
-				print("[DEBUG _eat_action] No handle_world_action_eat, calling interact")
-				target.interact(self)
 
 func _light_action() -> void:
 	var target = _get_interaction_target()

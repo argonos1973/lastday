@@ -3,10 +3,13 @@ extends SceneTree
 const ItemScript = preload("res://scripts/Item.gd")
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
+	var forced_target = null
 	func _create_body() -> void:
 		pass
 	func _capture_mouse() -> void:
 		pass
+	func _get_interaction_target():
+		return forced_target
 
 class TestWorld extends "res://scripts/Main.gd":
 	func _ready() -> void:
@@ -146,8 +149,43 @@ func _initialize() -> void:
 	await create_timer(2.2).timeout
 	check(_count_name(mp_player, "Higo") == 2, "Stale restore mid-eat cancels the eat, no item lost or duplicated (got %d)" % _count_name(mp_player, "Higo"))
 
+	# Case 7: fish held in hand + M while looking at a ground mushroom must eat
+	# the mushroom, not the held fish.
+	var eat_world := TestWorld.new()
+	root.add_child(eat_world)
+	current_scene = eat_world  # _eat_action routes through get_tree().current_scene
+	var eat_player := TestPlayer.new()
+	eat_world.add_child(eat_player)
+	eat_world.player = eat_player
+	eat_player.stats.hunger = 50.0
+	eat_player.stats.thirst = 50.0
+	_add_raw_stack(eat_player, "Pez crudo", 0.55, 1, 24.0)
+	_add_raw_stack(eat_player, "Seta", 0.05, 1, 8.0)
+	var fish_idx: int = _slots_of(eat_player, "Pez crudo")[0]
+	eat_player._select_held_item(fish_idx)
+	check(eat_player.get_held_item() != null and str(eat_player.get_held_item().item_name) == "Pez crudo", "Fish is in hand")
+	var seta = eat_world._create_world_action("regression_seta", "eat_food", "Seta", Vector3(1, 0, 1), Vector3.ONE, Color.WHITE, false, false)
+	seta.set_meta("item_name", "Seta")
+	seta.set_meta("item_type", "food")
+	seta.set_meta("item_use_value", 8.0)
+	seta.set_meta("item_spoilage", 0.0)
+	eat_player.forced_target = seta
+	eat_player._eat_action()
+	await create_timer(1.5).timeout
+	check(_count_name(eat_player, "Pez crudo") == 1, "M on a targeted mushroom keeps the held fish (got %d)" % _count_name(eat_player, "Pez crudo"))
+	check(seta.depleted, "M on a targeted mushroom eats the mushroom")
+
+	# Case 8: M with food in hand and no eatable target still eats the held item.
+	eat_player.forced_target = null
+	eat_player._consumption_pending = false
+	eat_player._eat_action()
+	await create_timer(2.2).timeout
+	check(_count_name(eat_player, "Pez crudo") == 0, "M with no target eats the held fish (got %d)" % _count_name(eat_player, "Pez crudo"))
+
 	player.free()
 	world.free()
+	eat_player.free()
+	eat_world.free()
 	mp_player.free()
 	mp_world.free()
 	if failures == 0:
