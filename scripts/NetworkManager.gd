@@ -543,6 +543,22 @@ func animal_hit(animal_name: String) -> void:
 	if scene != null and scene.has_method("_net_animal_hit"):
 		scene._net_animal_hit(animal_name)
 
+# Cliente pide un comando a su lobo domesticado; el servidor valida que el peer
+# sea el dueño antes de obedecer.
+@rpc("any_peer", "reliable")
+func command_wolf(animal_name: String, mode: String) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_command_wolf"):
+		scene._net_command_wolf(animal_name, mode, sender)
+
+# Aviso puntual del servidor a un cliente concreto (domesticación, órdenes, ...)
+@rpc("authority", "reliable")
+func notice_to_client(text: String) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_notice"):
+		scene._net_notice(text)
+
 # Client tells server to gut an animal (server processes and relays to all clients)
 @rpc("any_peer", "reliable")
 func gut_animal(animal_name: String, collect_mode: bool = false) -> void:

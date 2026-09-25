@@ -9859,7 +9859,12 @@ func _melee_attack() -> void:
 			closest_dist = sqrt(d_sq)
 	if closest_target != null:
 		if closest_target.has_method("take_damage"):
-			closest_target.take_damage(base_damage, is_knife)
+			# Wildlife recibe el atacante: un lobo al que golpeas pierde la
+			# confianza ganada y uno domesticado se defiende.
+			if closest_target is WildlifeController:
+				closest_target.take_damage(base_damage, is_knife, self)
+			else:
+				closest_target.take_damage(base_damage, is_knife)
 		elif closest_target.is_in_group("net_player_proxy"):
 			# Server proxy: apply damage directly on server
 			var peer_id: int = closest_target.get_meta("peer_id", 0)
@@ -10264,6 +10269,8 @@ func _apply_rifle_target_damage(target: Node, amount: float) -> void:
 	# shot distance per weapon type; NPCs use their own two-arg signature.
 	if target.is_in_group("remote_player"):
 		target.take_damage(amount, false, "rifle")
+	elif target is WildlifeController:
+		target.take_damage(amount, false, self)
 	else:
 		target.take_damage(amount, false)
 

@@ -328,6 +328,24 @@ static func collect_world_data(main: Node) -> Dictionary:
 				"rot_timer": float(node.get("_rot_timer"))
 			})
 	data["dead_wildlife"] = dead_wildlife
+	# Lobos domesticados — el vínculo con el jugador local sobrevive al save/load
+	var tamed_wildlife := []
+	for node in main.get_tree().get_nodes_in_group("wildlife"):
+		if node == null or not is_instance_valid(node):
+			continue
+		if str(node.get("tamed_to")) == "" or node.get("_is_dead") == true:
+			continue
+		var stay: Vector3 = node.get("_stay_pos")
+		tamed_wildlife.append({
+			"name": node.name,
+			"owner": str(node.get("tamed_to")),
+			"pos": [node.global_position.x, node.global_position.y, node.global_position.z],
+			"mode": str(node.get("_follow_mode")),
+			"stay_pos": [stay.x, stay.y, stay.z],
+			"health": float(node.get("health")),
+			"hunger": float(node.get("_wolf_hunger"))
+		})
+	data["tamed_wildlife"] = tamed_wildlife
 	return data
 
 static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
@@ -665,6 +683,37 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			if "_pending_dead_wildlife" not in main:
 				main._pending_dead_wildlife = []
 			main._pending_dead_wildlife.append(dw)
+	# Lobos domesticados — restaurar vínculo tras la carga
+	var tamed_wl = data.get("tamed_wildlife", [])
+	for tw in tamed_wl:
+		var tw_name := str(tw.get("name", ""))
+		var tw_found := false
+		for node in main.get_tree().get_nodes_in_group("wildlife"):
+			if node == null or not is_instance_valid(node):
+				continue
+			if node.name == tw_name:
+				_apply_tamed_wildlife_entry(node, tw)
+				tw_found = true
+				break
+		if not tw_found:
+			if "_pending_tamed_wildlife" not in main:
+				main._pending_tamed_wildlife = []
+			main._pending_tamed_wildlife.append(tw)
+
+static func _apply_tamed_wildlife_entry(node: Node, tw: Dictionary) -> void:
+	var tw_pos_raw = tw.get("pos", null)
+	if tw_pos_raw is Array and tw_pos_raw.size() >= 3:
+		node.global_position = Vector3(float(tw_pos_raw[0]), float(tw_pos_raw[1]), float(tw_pos_raw[2]))
+	node.set("tamed_to", str(tw.get("owner", "local")))
+	node.set("_follow_mode", str(tw.get("mode", "follow")))
+	var tw_stay_raw = tw.get("stay_pos", null)
+	if tw_stay_raw is Array and tw_stay_raw.size() >= 3:
+		node.set("_stay_pos", Vector3(float(tw_stay_raw[0]), float(tw_stay_raw[1]), float(tw_stay_raw[2])))
+	if tw.has("health"):
+		node.set("health", float(tw["health"]))
+	if tw.has("hunger"):
+		node.set("_wolf_hunger", float(tw["hunger"]))
+	node.set("_state", "follow" if str(tw.get("mode", "follow")) == "follow" else "guard")
 
 static func _color_to_str(c: Color) -> String:
 	return "%.4f,%.4f,%.4f" % [c.r, c.g, c.b]

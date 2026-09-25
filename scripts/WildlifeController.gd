@@ -85,6 +85,23 @@ const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
 const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
 const AI_LOD_CULL := 200.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
 
+# Domesticación de lobos. La autoridad es el servidor (o el mundo local en SP);
+# los clientes solo ven el estado replicado y envían comandos por RPC.
+# tamed_to: "" = salvaje, "local" = jugador local (SP/host), str(peer_id) en servidor.
+const TAME_FEEDINGS := 3          # comidas válidas para domesticar
+const TAME_FEED_RADIUS := 15.0    # quien alimenta debe seguir cerca al comer
+const TAME_GUARD_SECONDS := 60.0  # luto junto al cadáver del dueño antes de volverse salvaje
+var tamed_to := ""
+var _tame_progress := {}          # feeder_id -> nº de comidas
+var _follow_mode := "follow"      # "follow" | "stay" (solo con tamed_to != "")
+var _stay_pos := Vector3.ZERO
+var _wolf_foe: Node3D = null      # lobo enemigo en combate canino
+var _foe_timer := 0.0
+var _threat_player: Node3D = null # jugador que dañó al dueño (o al que el dueño atacó)
+var _threat_timer := 0.0
+var _owner_node: Node3D = null
+var _owner_dead_timer := 0.0
+
 # Cache de grupo wildlife para evitar get_nodes_in_group cada frame
 var _cached_wildlife: Array = []
 var _wildlife_cache_timer := 0.0
@@ -124,7 +141,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		_play_animation_by_name(anim)
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
-func take_damage(amount: float, from_knife: bool) -> void:
+func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void:
 	if not is_puppet:
 		# Real animal — apply damage directly
 		if _is_dead:
@@ -135,12 +152,14 @@ func take_damage(amount: float, from_knife: bool) -> void:
 		_chase_cooldown = 10.0
 		_spawn_blood_splatter()
 		_play_pain_sound()
+		_note_attack(attacker)
 		if health <= 0.0:
 			_is_dead = true
 			_hit_flash_timer = 2.0
 			_rot_timer = 300.0
 			if _animation_player != null:
 				_animation_player.stop()
+			_release_owner_record()
 			_lie_corpse_flat()
 		return
 	# Puppet: apply damage locally for immediate visual feedback
@@ -348,6 +367,7 @@ func _process(delta: float) -> void:
 				_hit_flash_timer = 2.0
 				if _animation_player != null:
 					_animation_player.stop()
+				_release_owner_record()
 				_lie_corpse_flat()
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
@@ -362,7 +382,7 @@ func _process(delta: float) -> void:
 						_wolf_eating_target._remove_corpse()
 					elif _wolf_eating_target.has_meta("proxy_dead") and _wolf_eating_target.get_meta("proxy_dead", false):
 						_gut_player_corpse(_wolf_eating_target)
-					elif "action_type" in _wolf_eating_target and str(_wolf_eating_target.action_type) == "wolf_meat_raw":
+					elif "action_type" in _wolf_eating_target and _is_meat_action(_wolf_eating_target):
 						_consume_meat_pickup(_wolf_eating_target)
 				_wolf_eating_target = null
 			return
@@ -496,8 +516,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
 	# (Removed: non-hungry wolves flee — now they always attack if player is close)
-	# Flee from player when attacked or when gunshot heard nearby
-	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player):
+	# Flee from player when attacked or when gunshot heard nearby.
+	# Un lobo domesticado no huye de su amenaza designada: su trabajo es defender.
+	# Y ningun lobo abandona un combate canino en curso.
+	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player) and tamed_to == "" and _wolf_foe == null:
 		var flee_dist := global_position.distance_to(_player.global_position)
 		if flee_dist < 50.0:
 			var away := global_position - _player.global_position
@@ -560,6 +582,37 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_state = "patrol"
 		_chase_stuck_time = 0.0
 		_chase_cooldown = 5.0
+	# Combate lobo-vs-lobo: un enemigo canino tiene prioridad sobre todo lo demás
+	_foe_timer = max(0.0, _foe_timer - delta)
+	# El lobo domesticado vigila si un lobo salvaje persigue a su dueño
+	if tamed_to != "" and _wolf_foe == null:
+		var owner_for_foe := _resolve_owner()
+		if owner_for_foe != null:
+			var foe := _find_wolf_threatening(owner_for_foe)
+			if foe != null:
+				_wolf_foe = foe
+				_foe_timer = 20.0
+	if _wolf_foe != null:
+		if not is_instance_valid(_wolf_foe) or _wolf_foe.get("_is_dead") or _foe_timer <= 0.0 or global_position.distance_to(_wolf_foe.global_position) > 70.0:
+			_wolf_foe = null
+		else:
+			_state = "fight_wolf"
+			var foe_dist := global_position.distance_to(_wolf_foe.global_position)
+			if foe_dist <= 3.0 and _attack_cooldown <= 0.0:
+				_attack_cooldown = 2.5
+				_wolf_foe.take_damage(25.0, false, self)
+				_play_wolf_sound("attack")
+			_play_animation_by_name("run")
+			return {"target": _wolf_foe.global_position, "speed": 0.0 if foe_dist <= 3.0 else move_speed * 3.2}
+	# Lobo domesticado: seguir/guardar al dueño o defenderlo de una amenaza
+	_threat_timer = max(0.0, _threat_timer - delta)
+	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_timer <= 0.0 or _threat_player.get_meta("proxy_dead", false) or _threat_player.get("is_dead") == true):
+		_threat_player = null
+	if tamed_to != "":
+		var tamed := _tamed_ai(delta)
+		if bool(tamed.get("handled", false)):
+			return tamed
+		# Si no está "handled", _player apunta a la amenaza y sigue la persecución normal
 	# Priority 0: chase player (highest priority)
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
 		var dist_to_player := global_position.distance_to(_player.global_position)
@@ -705,6 +758,24 @@ func _wolf_ai(delta: float) -> Dictionary:
 			speed = move_speed * 1.0
 			_play_animation_by_name("walk")
 		return {"target": target, "speed": speed}
+	# Recelo: quien le dio de comer deja de ser presa; el lobo lo observa
+	# manteniendo distancia (~8 m) en vez de atacar — la señal de progreso.
+	if not _tame_progress.is_empty():
+		var feeder := _nearest_feeder_in_range(14.0)
+		if feeder != null:
+			_state = "wary"
+			var to_feeder := feeder.global_position - global_position
+			to_feeder.y = 0.0
+			var fd := to_feeder.length()
+			if fd > 9.0:
+				_play_animation_by_name("walk")
+				return {"target": feeder.global_position - to_feeder.normalized() * 8.0, "speed": move_speed * 1.2}
+			if fd < 5.0:
+				_play_animation_by_name("walk")
+				return {"target": global_position - to_feeder.normalized() * 3.0, "speed": move_speed}
+			rotation.y = lerp_angle(rotation.y, atan2(to_feeder.x, to_feeder.z), delta * 3.0)
+			_play_animation_by_name("idle")
+			return {"target": global_position, "speed": 0.0}
 	# Priority 3: hunt nearby prey (deer, fox) when hungry
 	if is_hungry:
 		var nearest_prey := _find_nearest_prey()
@@ -953,6 +1024,10 @@ func _corpse_item_name() -> String:
 
 func get_interaction_text(player = null) -> String:
 	if not _is_dead:
+		if animal_type == "wolf" and tamed_to != "":
+			if _is_owner_actor(player):
+				return "Lobo domesticado - [F] %s" % ("Quieto" if _follow_mode == "follow" else "Seguir")
+			return "Lobo domesticado"
 		return ""
 	var an := _animal_name()
 	var an_cap := _animal_name_cap()
@@ -965,6 +1040,8 @@ func get_interaction_text(player = null) -> String:
 
 func interact(player: Node) -> void:
 	if not _is_dead:
+		if animal_type == "wolf" and tamed_to != "":
+			_interact_tamed(player)
 		return
 	var an := _animal_name()
 	if _gutted:
@@ -1192,6 +1269,13 @@ func _gut_player_corpse(proxy: Node3D) -> void:
 				continue
 			net_node.animal_gutted.rpc_id(pid, animal_name, drops)
 
+func _is_meat_action(a: Node) -> bool:
+	if a == null or not ("action_type" in a):
+		return false
+	if str(a.action_type) in ["wolf_meat_raw", "bird_meat_raw", "deer_meat_raw", "fox_meat_raw"]:
+		return true
+	return a.is_in_group("wolf_meat_pickups")
+
 func _consume_meat_pickup(action: Node3D) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
@@ -1200,6 +1284,11 @@ func _consume_meat_pickup(action: Node3D) -> void:
 	var action_id := ""
 	if "action_id" in action:
 		action_id = str(action.action_id)
+	# Domesticación: la carne tirada por un jugador cercano genera confianza.
+	# La meta dropped_by la pone Main al crear el drop (peer_id en servidor,
+	# "local" en SP/host).
+	if action.has_meta("dropped_by"):
+		_register_feeding(str(action.get_meta("dropped_by")))
 	# Remove the meat pickup from the world
 	if not action_id.is_empty() and scene.has_method("_net_item_picked_up"):
 		scene._net_item_picked_up(action_id)
@@ -1223,8 +1312,8 @@ func _find_nearest_meat_pickup() -> Node3D:
 	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
 		if not is_instance_valid(action) or not action is Node3D:
 			continue
-		if not ("action_type" in action) or str(action.action_type) != "wolf_meat_raw":
-			continue
+		# El grupo recoge tanto los pickups de destripar (wolf_meat_raw) como
+		# la carne que un jugador suelta en el suelo (marcada con dropped_by).
 		if action.get("depleted"):
 			continue
 		var d := global_position.distance_to((action as Node3D).global_position)
@@ -1232,6 +1321,328 @@ func _find_nearest_meat_pickup() -> Node3D:
 			nearest_dist = d
 			nearest = action as Node3D
 	return nearest
+
+#region DOMESTICACIÓN DE LOBOS
+
+# Identidad del que puede domesticar: "local" para el jugador de esta instancia
+# (SP/host), str(peer_id) para proxies de red.
+func _feeder_key(node: Node) -> String:
+	if node == null or not is_instance_valid(node):
+		return ""
+	if node.is_in_group("net_player_proxy"):
+		var pid := int(node.get_meta("peer_id", 0))
+		return str(pid) if pid != 0 else ""
+	if node.name == "Player":
+		return "local"
+	return ""
+
+func _find_feeder_node(feeder_id: String) -> Node3D:
+	var scene := get_tree().current_scene
+	if feeder_id == "local":
+		if scene != null:
+			var p := scene.get_node_or_null("Player")
+			if p is Node3D and is_instance_valid(p):
+				return p
+		return null
+	var pid := int(feeder_id)
+	if pid == 0:
+		return null
+	for pr in get_tree().get_nodes_in_group("net_player_proxy"):
+		if int(pr.get_meta("peer_id", -1)) == pid:
+			return pr
+	# El proxy desconectado sale del grupo pero sigue existiendo (cadáver/loot)
+	if scene != null and "server_proxies" in scene:
+		for pr in scene.server_proxies.values():
+			if pr != null and int(pr.get_meta("peer_id", -1)) == pid:
+				return pr
+		if "proxy_by_client_id" in scene:
+			for pr in scene.proxy_by_client_id.values():
+				if pr != null and int(pr.get_meta("peer_id", -1)) == pid:
+					return pr
+	return null
+
+func _nearest_feeder_in_range(radius: float) -> Node3D:
+	var best: Node3D = null
+	var best_d := radius
+	for id in _tame_progress.keys():
+		var n := _find_feeder_node(str(id))
+		if n == null:
+			continue
+		var d := global_position.distance_to(n.global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	return best
+
+func _resolve_owner() -> Node3D:
+	if _owner_node != null and is_instance_valid(_owner_node):
+		return _owner_node
+	_owner_node = _find_feeder_node(tamed_to)
+	return _owner_node
+
+func _register_feeding(feeder_id: String) -> void:
+	if feeder_id.is_empty() or tamed_to != "":
+		return
+	var feeder := _find_feeder_node(feeder_id)
+	if feeder == null:
+		return
+	# Solo cuenta si quien la tiró sigue cerca: no confía en quien tira y huye.
+	if global_position.distance_to(feeder.global_position) > TAME_FEED_RADIUS:
+		return
+	var n := int(_tame_progress.get(feeder_id, 0)) + 1
+	_tame_progress[feeder_id] = n
+	if n >= TAME_FEEDINGS:
+		if _owner_has_wolf(feeder_id):
+			_notify_owner_msg(feeder, "El lobo te acepta, pero ya tienes un lobo fiel.")
+			return
+		_tame(feeder_id, feeder)
+	else:
+		if _player == feeder:
+			_player = null
+		_notify_owner_msg(feeder, "El lobo devora la carne y te observa... parece menos hostil.")
+
+func _tame(feeder_id: String, feeder: Node3D) -> void:
+	tamed_to = feeder_id
+	_tame_progress.clear()
+	_follow_mode = "follow"
+	_player = null
+	_chase_target = null
+	_wolf_foe = null
+	_threat_player = null
+	_owner_node = feeder
+	_state = "follow"
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_record_tamed_wolf"):
+		scene._record_tamed_wolf(feeder_id, name)
+	_notify_owner_msg(feeder, "El lobo te ha aceptado: te acompaña y te defiende. Pulsa F sobre el para darle ordenes.")
+	_play_wolf_sound("howl")
+
+# Un jugador solo puede tener un lobo domesticado a la vez
+func _owner_has_wolf(feeder_id: String) -> bool:
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self or not (node is WildlifeController):
+			continue
+		var w := node as WildlifeController
+		if w.animal_type == "wolf" and not w._is_dead and w.tamed_to == feeder_id:
+			return true
+	return false
+
+func _go_wild() -> void:
+	var old_owner := tamed_to
+	tamed_to = ""
+	_follow_mode = "follow"
+	_threat_player = null
+	_threat_timer = 0.0
+	_owner_node = null
+	_tame_progress.clear()
+	_state = "patrol"
+	_chase_target = null
+	if not old_owner.is_empty():
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("_clear_tamed_wolf_record"):
+			scene._clear_tamed_wolf_record(old_owner)
+
+func _release_owner_record() -> void:
+	# El lobo muere: el registro de "lobo domesticado" del dueño desaparece para
+	# que una reconexión no resucite el vínculo sobre un cadáver.
+	if tamed_to.is_empty():
+		return
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_clear_tamed_wolf_record"):
+		scene._clear_tamed_wolf_record(tamed_to)
+
+# IA del lobo domesticado. Devuelve {"handled": true, target, speed} si gestiona
+# el movimiento, o {"handled": false} tras asignar _player = amenaza para que la
+# persecución normal de _wolf_ai se encargue del ataque (reutiliza distancias,
+# protecciones de techo/refugio y el daño a proxies ya existentes).
+func _tamed_ai(delta: float) -> Dictionary:
+	var owner := _resolve_owner()
+	if _threat_player != null and is_instance_valid(_threat_player):
+		_player = _threat_player
+		return {"handled": false}
+	_player = null
+	if owner == null:
+		_state = "guard"
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
+	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento)
+	if _wolf_hunger < _wolf_hunger_threshold:
+		var meat := _find_nearest_meat_pickup()
+		if meat != null:
+			var dm := global_position.distance_to(meat.global_position)
+			if dm < 2.0:
+				_wolf_eating_timer = 8.0
+				_wolf_eating_target = meat
+				_state = "eating"
+				_play_animation_by_name("idle")
+				return {"handled": true, "target": global_position, "speed": 0.0}
+			elif dm < 25.0:
+				_state = "seek_corpse"
+				_seek_corpse_timer = 15.0
+				_play_animation_by_name("trot")
+				return {"handled": true, "target": meat.global_position, "speed": move_speed * 2.5}
+	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
+	var owner_dead := bool(owner.get_meta("proxy_dead", false))
+	if not owner_dead and owner.name == "Player":
+		owner_dead = bool(owner.get("is_dead"))
+	if owner_dead:
+		_state = "guard"
+		_owner_dead_timer += delta
+		if _owner_dead_timer >= TAME_GUARD_SECONDS:
+			_go_wild()
+			_play_animation_by_name("walk")
+			return {"handled": true, "target": patrol_points[target_index], "speed": move_speed}
+		var corpse_pos: Vector3 = owner.global_position
+		if global_position.distance_to(corpse_pos) > 6.0:
+			_play_animation_by_name("trot")
+			return {"handled": true, "target": corpse_pos, "speed": move_speed * 2.0}
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
+	_owner_dead_timer = 0.0
+	# "Quieto" o dueño desconectado: guarda la posición marcada / la última conocida
+	var disconnected := bool(owner.get_meta("disconnected", false))
+	if _follow_mode == "stay" or disconnected:
+		var guard_pos: Vector3 = _stay_pos if _follow_mode == "stay" else owner.global_position
+		_state = "guard"
+		if global_position.distance_to(guard_pos) > 5.0:
+			_play_animation_by_name("trot")
+			return {"handled": true, "target": guard_pos, "speed": move_speed * 1.8}
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
+	# Seguir al dueño con offset lateral (~2.6 m) y velocidad por distancia
+	_state = "follow"
+	var od := global_position.distance_to(owner.global_position)
+	if od < 2.8:
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
+	if od > 75.0:
+		# Catch-up: a esa distancia nadie lo ve reaparecer; evita perderlo en
+		# ríos o zonas sin ruta.
+		global_position = owner.global_position + Vector3(randf_range(-3.0, 3.0), 0.0, randf_range(-3.0, 3.0))
+		_snap_to_terrain()
+		_current_path.clear()
+		_path_index = 0
+	var to_wolf := global_position - owner.global_position
+	to_wolf.y = 0.0
+	var off := to_wolf.normalized() * 2.6 if to_wolf.length() > 0.05 else Vector3(2.6, 0.0, 0.0)
+	var spd := move_speed * 1.4
+	var anim := "walk"
+	if od > 26.0:
+		spd = move_speed * 3.2
+		anim = "run"
+	elif od > 9.0:
+		spd = move_speed * 2.1
+		anim = "trot"
+	_play_animation_by_name(anim)
+	return {"handled": true, "target": owner.global_position + off, "speed": spd}
+
+# Un lobo salvaje que persiga/ataque al dueño se convierte en enemigo del domesticado
+func _find_wolf_threatening(owner: Node3D) -> Node3D:
+	for node in _cached_wildlife:
+		if not is_instance_valid(node) or node == self or not (node is WildlifeController):
+			continue
+		var w := node as WildlifeController
+		if w.is_puppet or w.animal_type != "wolf" or w._is_dead:
+			continue
+		if w.tamed_to == tamed_to:
+			continue  # lobos del mismo dueño no se atacan
+		if w._player != owner and w._chase_target != owner:
+			continue
+		if global_position.distance_to(owner.global_position) < 45.0:
+			return w
+	return null
+
+# Marca a un jugador como amenaza durante `duration` segundos (lo persigue y ataca).
+func notify_threat(node: Node3D, duration: float = 20.0) -> void:
+	if node == null or not is_instance_valid(node) or tamed_to.is_empty():
+		return
+	if _feeder_key(node) == tamed_to:
+		return  # jamás ataca a su dueño
+	_threat_player = node
+	_threat_timer = duration
+	# La defensa responde de inmediato, sin esperar el cooldown de retirada
+	_chase_cooldown = minf(_chase_cooldown, 0.8)
+	_prey_flee_timer = 0.0
+
+# Quien daña al lobo: pierde su confianza y, si el lobo es domesticado, se vuelve amenaza.
+func _note_attack(attacker: Node) -> void:
+	if attacker == null or attacker == self or not is_instance_valid(attacker):
+		return
+	if attacker is WildlifeController:
+		var w := attacker as WildlifeController
+		if w.animal_type == "wolf" and not w._is_dead and w.tamed_to != tamed_to:
+			# Devuelve el mordisco: combate lobo-vs-lobo
+			_wolf_foe = w
+			_foe_timer = 20.0
+		return
+	var key := _feeder_key(attacker)
+	if key.is_empty():
+		return
+	_tame_progress.erase(key)
+	if not tamed_to.is_empty() and key != tamed_to:
+		notify_threat(attacker as Node3D, 25.0)
+
+func _notify_owner_msg(owner: Node, msg: String) -> void:
+	var scene := get_tree().current_scene
+	if scene == null or owner == null or not is_instance_valid(owner):
+		return
+	if owner.name == "Player":
+		var h = scene.get("hud")
+		if h != null and h.has_method("show_notice"):
+			h.show_notice(msg)
+		elif owner.has_signal("notice"):
+			owner.notice.emit(msg)
+		return
+	var pid := int(owner.get_meta("peer_id", 0))
+	var net_node := scene.get_node_or_null("/root/NetworkManager")
+	if pid != 0 and net_node != null and net_node.has_method("notice_to_client"):
+		if net_node.peer != null and net_node.peer.get_peer(pid) != null:
+			net_node.notice_to_client.rpc_id(pid, msg)
+
+# ¿Este actor es el dueño del lobo? En cliente compara con mi peer_id; el lobo
+# real del servidor solo ve "local" (host) — los proxies nunca interactúan.
+func _is_owner_actor(player: Node) -> bool:
+	if player == null or tamed_to.is_empty():
+		return false
+	if tamed_to == "local":
+		return player.name == "Player"
+	var net_node = null
+	if get_tree() != null and get_tree().current_scene != null:
+		net_node = get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if net_node != null and net_node.has_method("get_my_id"):
+		return str(net_node.get_my_id()) == tamed_to
+	return false
+
+func apply_command(mode: String) -> void:
+	# mode: "toggle" | "follow" | "stay"
+	if mode == "toggle":
+		_follow_mode = "stay" if _follow_mode == "follow" else "follow"
+	elif mode == "stay" or mode == "follow":
+		_follow_mode = mode
+	else:
+		return
+	if _follow_mode == "stay":
+		_stay_pos = global_position
+	var owner := _resolve_owner()
+	_notify_owner_msg(owner, "El lobo guarda esta zona." if _follow_mode == "stay" else "El lobo te sigue.")
+
+func _interact_tamed(player: Node) -> void:
+	if is_puppet:
+		# Cliente: el servidor valida que el peer sea el dueño
+		if _is_owner_actor(player):
+			var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+			if net_node != null and net_node.has_method("command_wolf"):
+				net_node.command_wolf.rpc_id(1, name.replacen("Puppet_", ""), "toggle")
+		elif player != null and player.has_signal("notice"):
+			player.notice.emit("El lobo solo obedece a su dueño.")
+		return
+	if not _is_owner_actor(player):
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("El lobo solo obedece a su dueño.")
+		return
+	apply_command("toggle")
+
+#endregion
 
 # Las moscas acuden al cabo de ~45 s muerto y desaparecen con el cadaver
 # (el enjambre es hijo de este nodo y se libera con el).
@@ -1799,10 +2210,21 @@ func _is_near_lit_campfire(pos: Vector3, radius: float) -> bool:
 	return false
 
 func _resolve_player() -> void:
+	if tamed_to != "":
+		# Domesticado: solo persigue a la amenaza designada, nunca a otros
+		# jugadores por su cuenta (y jamás a su dueño).
+		if _threat_player != null and is_instance_valid(_threat_player) and _threat_timer > 0.0:
+			_player = _threat_player
+		else:
+			_player = null
+		return
 	if _player != null and is_instance_valid(_player):
 		# Check if player moved too far or became invalid
 		if _player.is_in_group("net_player_proxy"):
 			# Re-evaluate: find nearest proxy each time
+			_player = null
+		elif _tame_progress.has(_feeder_key(_player)):
+			# Empezó a alimentarlo a media persecución: deja de ser presa
 			_player = null
 		else:
 			return
@@ -1816,6 +2238,10 @@ func _resolve_player() -> void:
 		var nearest_dist := 99999.0
 		for p in proxies:
 			if not (p is Node3D):
+				continue
+			# Quien lo alimenta deja de ser presa aunque aún no lo haya domesticado
+			var feeder_pid := int(p.get_meta("peer_id", 0))
+			if feeder_pid != 0 and _tame_progress.has(str(feeder_pid)):
 				continue
 			# Skip proxies with active spawn protection
 			if p.get_meta("protection_timer", 0.0) > 0.0:
@@ -1847,6 +2273,8 @@ func _resolve_player() -> void:
 				_wolf_ai_debug_timer = 5.0
 	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
+	if _player != null and _tame_progress.has("local"):
+		_player = null
 
 func _request_path(start: Vector3, goal: Vector3) -> Array:
 	var scene := get_tree().current_scene

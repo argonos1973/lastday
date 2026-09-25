@@ -94,6 +94,7 @@ var _storm_active := false
 var _storm_notice_sent := false
 var _thunder_timer: Timer = null
 var _pending_dead_wildlife: Array = []
+var _pending_tamed_wildlife: Array = []
 var _dead_wildlife_names: Dictionary = {} # name -> true, for respawn check
 var _tree_id_counter := 0
 var _tree_registry: Array = [] # {pos, visual_name, id, active}
@@ -647,6 +648,7 @@ func _ready() -> void:
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
 	_apply_pending_dead_wildlife()
+	_apply_pending_tamed_wildlife()
 	# If no save existed, create one now with the initial player state.
 	# A join in flight (_mp_session) must not write a single-player save.
 	if net == null or (not net.is_connected and not _mp_session):
@@ -2267,6 +2269,9 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_crouching: bool = existing.get_meta("saved_crouching", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
 			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching, existing.get_meta("saved_extra", {}))
+			# El lobo domesticado sobrevive a la desconexión dentro de la sesión
+			var ex_extra: Dictionary = existing.get_meta("saved_extra", {})
+			call_deferred("_restore_tamed_wolf", peer_id, str(ex_extra.get("tamed_wolf", "")))
 	else:
 		# No persisted proxy — ensure the live proxy exists before deciding
 		# (the register RPC can arrive before _update_server_proxies spawns it).
@@ -2326,6 +2331,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				return
 			call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
 			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
+			call_deferred("_restore_tamed_wolf", peer_id, str(saved_extra.get("tamed_wolf", "")))
 			return
 		# Send spawn position to new player too (so client knows when to start sending position)
 		call_deferred("_delayed_send_new_player_state", peer_id)
@@ -2924,14 +2930,116 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 		var reach := 8.0 if from_knife else 175.0
 		if not _sender_within(sender_id, animal.global_position, reach):
 			return
+	var attacker_proxy: Node3D = null
+	if sender_id != 0:
+		if server_proxies.has(sender_id):
+			attacker_proxy = server_proxies[sender_id]
+		else:
+			for cid in proxy_by_client_id.keys():
+				var ap: Node3D = proxy_by_client_id[cid]
+				if ap.get_meta("peer_id", 0) == sender_id:
+					attacker_proxy = ap
+					break
 	if animal.has_method("take_damage"):
-		animal.take_damage(amount, from_knife)
+		# Solo los terrestres (WildlifeController) conocen al atacante; los
+		# pájaros conservan la firma de dos argumentos.
+		if animal is WildlifeController:
+			animal.take_damage(amount, from_knife, attacker_proxy)
+		else:
+			animal.take_damage(amount, from_knife)
 	# Server broadcasts hit to all clients so puppets play pain sound
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not net.players[pid].get("offline", false):
 				if net.peer.get_peer(pid) != null:
 					net.animal_hit.rpc_id(pid, real_name)
+
+# Comando de lobo domesticado desde un cliente: solo obedece a su dueño.
+func _net_command_wolf(animal_name: String, mode: String, sender: int = 0) -> void:
+	if net == null or not net.is_host:
+		return
+	var real_name := animal_name.replacen("Puppet_", "")
+	var animal := get_node_or_null(real_name)
+	if animal == null or not is_instance_valid(animal):
+		return
+	if str(animal.get("tamed_to")) != str(sender) or sender == 0:
+		return
+	# Debe estar cerca de su lobo para darle órdenes
+	if server_proxies.has(sender):
+		var proxy: Node3D = server_proxies[sender]
+		if proxy.global_position.distance_to(animal.global_position) > 12.0:
+			return
+	if animal.has_method("apply_command"):
+		animal.apply_command(mode)
+
+# Registro del vínculo dueño->lobo en el estado persistente del servidor
+# (saved_extra viaja con la reconexión en la misma sesión).
+func _record_tamed_wolf(feeder_id: String, wolf_name: String) -> void:
+	var pid := int(feeder_id)
+	if pid == 0:
+		return
+	if server_proxies.has(pid):
+		var proxy: Node3D = server_proxies[pid]
+		var extra: Dictionary = proxy.get_meta("saved_extra", {}).duplicate(true)
+		extra["tamed_wolf"] = wolf_name
+		proxy.set_meta("saved_extra", extra)
+	for cid in _server_saved_players.keys():
+		var rec: Dictionary = _server_saved_players[cid]
+		var rec_extra: Dictionary = rec.get("extra", {})
+		if rec_extra.get("tamed_wolf", "") == wolf_name and not _cid_belongs_to_peer(cid, pid):
+			rec_extra.erase("tamed_wolf")
+			rec["extra"] = rec_extra
+	# También en el baseline del dueño por si el proxy aún no estaba en _server_saved_players
+	var owner_cid := ""
+	if net.players.has(pid):
+		owner_cid = str(net.players[pid].get("client_id", ""))
+	if not owner_cid.is_empty() and _server_saved_players.has(owner_cid):
+		var e2: Dictionary = _server_saved_players[owner_cid].get("extra", {}).duplicate(true)
+		e2["tamed_wolf"] = wolf_name
+		_server_saved_players[owner_cid]["extra"] = e2
+
+func _clear_tamed_wolf_record(feeder_id: String) -> void:
+	var pid := int(feeder_id)
+	if pid == 0:
+		return
+	var proxies: Array = []
+	if server_proxies.has(pid):
+		proxies.append(server_proxies[pid])
+	for cid in proxy_by_client_id.keys():
+		var dp: Node3D = proxy_by_client_id[cid]
+		if dp != null and dp.get_meta("peer_id", -1) == pid:
+			proxies.append(dp)
+	for proxy in proxies:
+		var extra: Dictionary = proxy.get_meta("saved_extra", {}).duplicate(true)
+		if extra.has("tamed_wolf"):
+			extra.erase("tamed_wolf")
+			proxy.set_meta("saved_extra", extra)
+	for cid in _server_saved_players.keys():
+		var rec: Dictionary = _server_saved_players[cid]
+		var rec_extra: Dictionary = rec.get("extra", {})
+		if rec_extra.has("tamed_wolf") and _cid_belongs_to_peer(cid, pid):
+			rec_extra = rec_extra.duplicate(true)
+			rec_extra.erase("tamed_wolf")
+			rec["extra"] = rec_extra
+
+func _cid_belongs_to_peer(cid: String, pid: int) -> bool:
+	if net != null and net.players.has(pid):
+		return str(net.players[pid].get("client_id", "")) == cid
+	return false
+
+# Re-vincula al lobo con su dueño tras reconectar (misma sesión de servidor).
+func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
+	if wolf_name.is_empty():
+		return
+	var w := get_node_or_null(wolf_name)
+	if w != null and is_instance_valid(w) and not w.get("_is_dead") and w.get("tamed_to") == "":
+		w.tamed_to = str(pid)
+		w.set("_follow_mode", "follow")
+		w.set("_state", "follow")
+
+func _net_notice(text: String) -> void:
+	if hud != null:
+		hud.show_notice(text)
 
 func _net_animal_hit(animal_name: String) -> void:
 	# Find the puppet for this animal and play hit feedback
@@ -3107,6 +3215,23 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# Send damage to the target client if still connected
 		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
+	# asiste el ataque (solo si el lobo está cerca del combate).
+	_notify_tamed_wolves_pvp(sender, target_peer_id, proxy, sender_proxy)
+
+func _notify_tamed_wolves_pvp(sender: int, target_peer_id: int, proxy: Node3D, sender_proxy: Node3D) -> void:
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if not is_instance_valid(w) or not (w is Node3D):
+			continue
+		if w.get("animal_type") != "wolf" or w.get("is_puppet") or w.get("_is_dead"):
+			continue
+		var tamed := str(w.get("tamed_to"))
+		if tamed.is_empty():
+			continue
+		if tamed == str(target_peer_id) and sender_proxy != null and w.global_position.distance_to(proxy.global_position) < 55.0:
+			w.notify_threat(sender_proxy, 22.0)
+		elif tamed == str(sender) and sender != target_peer_id and w.global_position.distance_to(proxy.global_position) < 55.0:
+			w.notify_threat(proxy, 22.0)
 
 func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vector3 = Vector3.ZERO) -> void:
 	if net == null or not net.is_host:
@@ -3671,7 +3796,9 @@ func _broadcast_animals() -> void:
 			"g": bool(animal.get("_gutted")),
 			"h": round(float(hunger_val) * 10.0) / 10.0 if hunger_val != null else 0.0,
 			"landed": animal._landed if animal is BirdController else false,
-			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0
+			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0,
+			"tamed": str(animal.get("tamed_to")),
+			"fm": str(animal.get("_follow_mode"))
 		}
 	net.animals = data
 	_animal_debug_timer += 1
@@ -3729,6 +3856,8 @@ func _update_puppet_animals() -> void:
 				if p.animal_type == "wolf":
 					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
+					p.tamed_to = str(d.get("tamed", ""))
+					p._follow_mode = str(d.get("fm", "follow"))
 	# Remove puppets that no longer exist on the server (unless dead/gutted - those are removed by _net_animal_gutted after animation)
 	var stale := []
 	for aid in puppet_animals.keys():
@@ -3994,6 +4123,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage)
+	_tag_meat_drop(drop_id, item_name, "local")
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 	if spoilage > 0.0:
 		drop_entry["spoilage"] = spoilage
@@ -4186,7 +4316,30 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	if world_actions_by_id.has(drop_id):
 		return true
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+	# El servidor necesita saber quién la tiró para la domesticación de lobos;
+	# el drop del propio host llega ya etiquetado por _on_item_dropped.
+	var dropper := "local"
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		dropper = str(sender_id)
+	_tag_meat_drop(drop_id, item_name, dropper)
 	return true
+
+# La carne/pez tirado por un jugador puede ser comido por un lobo hambriento;
+# recordar quién lo soltó permite que ese jugador gane su confianza.
+func _tag_meat_drop(drop_id: String, item_name: String, feeder_key: String) -> void:
+	if not _is_meat_item_name(item_name):
+		return
+	if not world_actions_by_id.has(drop_id):
+		return
+	var wa = world_actions_by_id[drop_id]
+	if wa == null or not is_instance_valid(wa):
+		return
+	wa.set_meta("dropped_by", feeder_key)
+	wa.set_meta("wolf_food", true)
+	wa.add_to_group("wolf_meat_pickups")
+
+func _is_meat_item_name(n: String) -> bool:
+	return n.begins_with("Carne") or n.begins_with("Pez")
 
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	if MilitaryJackets.VARIANTS.has(item_name):
@@ -6461,6 +6614,19 @@ func _apply_pending_dead_wildlife() -> void:
 				_dead_wildlife_names[dw_name] = true
 				break
 	_pending_dead_wildlife.clear()
+
+func _apply_pending_tamed_wildlife() -> void:
+	if _pending_tamed_wildlife.is_empty():
+		return
+	for tw in _pending_tamed_wildlife:
+		var tw_name := str(tw.get("name", ""))
+		for node in get_tree().get_nodes_in_group("wildlife"):
+			if node == null or not is_instance_valid(node):
+				continue
+			if node.name == tw_name and str(node.get("tamed_to")) == "":
+				SaveGameHooks._apply_tamed_wildlife_entry(node, tw)
+				break
+	_pending_tamed_wildlife.clear()
 
 #endregion
 

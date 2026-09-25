@@ -40,7 +40,7 @@ func _notification(what: int) -> void:
 func _update_interaction_index() -> void:
 	if not is_inside_tree():
 		return
-	if action_type == "wolf_meat_raw":
+	if action_type == "wolf_meat_raw" or has_meta("wolf_food"):
 		add_to_group("wolf_meat_pickups")
 	elif is_in_group("wolf_meat_pickups"):
 		remove_from_group("wolf_meat_pickups")
