@@ -7,9 +7,10 @@ const DoorScript = preload("res://scripts/Door.gd")
 static func maybe_save_game(main: Node, player: Node) -> void:
 	if main == null or not is_instance_valid(main):
 		return
-	# _mp_session covers a client whose server disconnected mid-game: its
-	# multiplayer state must never be written into the local save either.
-	if main.net != null and (main.net.is_connected or main.get("_mp_session") == true):
+	# _mp_session covers a client whose server disconnected mid-game, and a
+	# non-null peer covers a join still in flight: neither may touch the local
+	# single-player save.
+	if main.net != null and (main.net.is_connected or main.net.peer != null or main.get("_mp_session") == true):
 		return
 	if player == null or not is_instance_valid(player):
 		return
@@ -21,7 +22,9 @@ static func maybe_save_game(main: Node, player: Node) -> void:
 static func maybe_load_saved_game(main: Node, player: Node) -> void:
 	if main == null or not is_instance_valid(main):
 		return
-	if main.net != null and main.net.is_connected:
+	# A join still in flight (peer created, handshake pending) is multiplayer too:
+	# it must not fall through to the single-player save path below.
+	if main.net != null and (main.net.is_connected or main.net.peer != null):
 		# Pure clients never touch save files — the server sends world state via RPC
 		if not main.net.is_host:
 			return
@@ -71,7 +74,8 @@ static func preload_saved_world_state(main: Node) -> void:
 		return
 	var save_data: Dictionary = {}
 	var sgm = main.get_node_or_null("/root/SaveGameManager")
-	if main.net != null and main.net.is_connected:
+	# peer != null also covers a join in flight (handshake still pending).
+	if main.net != null and (main.net.is_connected or main.net.peer != null):
 		# Pure clients never touch save files — the server sends world state via RPC
 		if not main.net.is_host:
 			return

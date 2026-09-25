@@ -514,6 +514,13 @@ func _on_net_failed() -> void:
 func _start_game() -> void:
 	if _started:
 		return
+	# A join that never connected (dead server or it died during the wait) must
+	# not enter the world as if it were single-player — it would load and
+	# overwrite savegame.json (open doors, drops) with the local save.
+	if _mode == "join" and (_net == null or not _net.is_connected):
+		if _status_label != null:
+			_status_label.text = "Fallo de conexion"
+		return
 	_started = true
 	# A non-saved character starts a fresh game: drop the old save so it can
 	# never be restored over the new run or linger as a stale "Continuar" slot.

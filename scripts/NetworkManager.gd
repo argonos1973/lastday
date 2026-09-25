@@ -62,6 +62,7 @@ func start_dedicated_server() -> bool:
 	var err := peer.create_server(PORT, MAX_PLAYERS)
 	if err != OK:
 		push_error("No se pudo crear el servidor: %d" % err)
+		peer = null
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = true
@@ -75,6 +76,7 @@ func host_game() -> bool:
 	var err := peer.create_server(PORT, MAX_PLAYERS)
 	if err != OK:
 		push_error("No se pudo crear el servidor: %d" % err)
+		peer = null
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = true
@@ -160,6 +162,7 @@ func join_game(ip: String) -> bool:
 	var err := peer.create_client(ip, PORT)
 	if err != OK:
 		push_error("No se pudo conectar al servidor: %d" % err)
+		peer = null
 		return false
 	# Drop state buffered during a previous session — a stale restore consumed
 	# after this connect would overwrite the fresh player's gear.
@@ -227,12 +230,11 @@ func _on_connected_to_server() -> void:
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
-	is_connected = false
+	close_connection()
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
-	is_connected = false
-	players.clear()
+	close_connection()
 	connection_failed.emit()
 
 @rpc("any_peer", "reliable")

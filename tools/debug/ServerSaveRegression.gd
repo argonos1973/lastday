@@ -16,7 +16,7 @@ class World extends "res://scripts/Main.gd":
 		set_process_input(false)
 	func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 		sent_restore.append([peer_id, pos])
-	func _delayed_send_spawn_pos(peer_id: int, pos: Vector3) -> void:
+	func _delayed_send_spawn_pos(peer_id: int, pos: Vector3, died: bool = false) -> void:
 		sent_spawn_only.append([peer_id, pos])
 	var spawned_pickups: Array = []
 	func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "") -> void:
@@ -358,6 +358,56 @@ func run() -> void:
 	var hsave: Dictionary = sgm.load_server_game()
 	check(hsave.get("players", {}).has("host_cid"), "host saves own player under client_id")
 	check(_local_save_hash(sgm) == local_hash_before, "host save still leaves local savegame.json alone")
+
+	# --- Join in flight: peer created but handshake pending (dead/slow server).
+	# It must still count as multiplayer — otherwise the client falls into the
+	# single-player path and savegame.json leaks into the session (open doors).
+	net.is_connected = false
+	net.is_host = false
+	net.is_dedicated_server = false
+	net.peer = ENetMultiplayerPeer.new()
+	var save_path: String = sgm.get_save_path()
+	var bak_path := "user://saves/savegame.bak.json"
+	var had_local: bool = FileAccess.file_exists(save_path)
+	var old_main := FileAccess.get_file_as_string(save_path) if had_local else ""
+	var had_bak: bool = FileAccess.file_exists(bak_path)
+	var old_bak := FileAccess.get_file_as_string(bak_path) if had_bak else ""
+	var gsess = root.get_node_or_null("/root/GameSession")
+	var old_cid := ""
+	if gsess != null:
+		old_cid = str(gsess.selected_character_id)
+		gsess.selected_character_id = "saved"
+	sgm.save_game({"pos": [0.0, 0.4, 0.0]}, {"open_doors": ["Leak Door"], "depleted_action_ids": ["leak_cut"], "picked_up_loot_ids": ["leak_loot"]})
+	world._pending_open_doors.clear()
+	world._depleted_action_ids.erase("leak_cut")
+	world._depleted_action_ids.erase("leak_loot")
+	SaveHooksScript.preload_saved_world_state(world)
+	SaveHooksScript.maybe_load_saved_game(world, host_player)
+	check(world._pending_open_doors.is_empty(), "join in flight never loads single-player open_doors")
+	check(not world._depleted_action_ids.has("leak_cut"), "join in flight never loads single-player depleted ids")
+	check(not world._depleted_action_ids.has("leak_loot"), "join in flight never loads picked-up loot ids")
+	world._mp_session = false
+	var pre_write_hash := _local_save_hash(sgm)
+	SaveHooksScript.maybe_save_game(world, host_player)
+	check(_local_save_hash(sgm) == pre_write_hash, "join in flight never writes savegame.json")
+	# Restore the real local save byte-for-byte
+	if had_local:
+		var rf := FileAccess.open(save_path, FileAccess.WRITE)
+		if rf != null:
+			rf.store_string(old_main)
+			rf.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+	if had_bak:
+		var bf := FileAccess.open(bak_path, FileAccess.WRITE)
+		if bf != null:
+			bf.store_string(old_bak)
+			bf.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(bak_path))
+	if gsess != null:
+		gsess.selected_character_id = old_cid
+	net.peer = null
 
 	# Restore previous server save state
 	sgm.delete_server_save()

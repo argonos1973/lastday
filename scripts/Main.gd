@@ -620,7 +620,10 @@ func _ready() -> void:
 	if net != null:
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
-		if net.is_connected:
+		# A join still in flight (peer created, handshake pending) already counts
+		# as a multiplayer session — otherwise a dead or slow server falls through
+		# to the single-player path and loads/writes savegame.json.
+		if net.is_connected or net.peer != null:
 			_mp_session = true
 			if not net.is_host and not net.connection_failed.is_connected(_on_net_connection_lost):
 				net.connection_failed.connect(_on_net_connection_lost)
@@ -644,8 +647,9 @@ func _ready() -> void:
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
 	_apply_pending_dead_wildlife()
-	# If no save existed, create one now with the initial player state
-	if net == null or not net.is_connected:
+	# If no save existed, create one now with the initial player state.
+	# A join in flight (_mp_session) must not write a single-player save.
+	if net == null or (not net.is_connected and not _mp_session):
 		var sgm_init = get_node_or_null("/root/SaveGameManager")
 		if sgm_init != null and not sgm_init.has_save():
 			_save_world_change_silent()
@@ -890,7 +894,7 @@ func _process(delta: float) -> void:
 		if _quit_countdown <= 0.0:
 			_quit_active = false
 			_scene_quitting = true
-			if net != null and net.is_connected:
+			if net != null:
 				net.close_connection()
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 			get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
