@@ -267,7 +267,11 @@ func use_index(index: int, stats) -> bool:
 		"medical":
 			var _ohp: float = float(stats.health)
 			stats.health = min(stats.max_health, stats.health + item.use_value)
-			item_used.emit("Venda usada." + _fmt_restore(0.0, 0.0, 0.0, 0.0, _ohp, float(stats.health)))
+			var _feet_msg := ""
+			if stats.get("feet_wound") != null and float(stats.get("feet_wound")) > 0.0:
+				stats.set("feet_wound", 0.0)
+				_feet_msg = " Vendas las heridas de tus pies."
+			item_used.emit("Venda usada." + _feet_msg + _fmt_restore(0.0, 0.0, 0.0, 0.0, _ohp, float(stats.health)))
 			remove_index(index)
 			return true
 		"clothing":

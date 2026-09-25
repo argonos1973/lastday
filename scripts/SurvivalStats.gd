@@ -19,6 +19,7 @@ var wetness := 0.0
 var sick := false
 var sick_timer := 0.0
 var dead := false
+var feet_wound := 0.0
 var hot_food_charges := 0
 var hot_food_temp_bonus := 0.0
 var survival_seconds := 0.0
@@ -229,6 +230,7 @@ func do_sleep(hours: float) -> void:
 		return
 	sleep = min(max_stat, sleep + 5.0 * hours)
 	energy = min(max_stat, energy + 3.0 * hours)
+	feet_wound = max(0.0, feet_wound - 30.0 * hours)
 	# Only heal during sleep if not starving or dehydrated
 	if sleep >= max_stat and hunger > 0.0 and thirst > 0.0:
 		health = min(max_stat, health + 8.0 * hours)
@@ -283,6 +285,7 @@ func to_dict() -> Dictionary:
 		"survival_seconds": survival_seconds,
 		"overeat_count": overeat_count,
 		"overdrink_count": overdrink_count,
+		"feet_wound": feet_wound,
 		"dead": dead
 	}
 
@@ -303,5 +306,6 @@ func from_dict(data: Dictionary) -> void:
 	survival_seconds = float(data.get("survival_seconds", 0.0))
 	overeat_count = int(data.get("overeat_count", 0))
 	overdrink_count = int(data.get("overdrink_count", 0))
+	feet_wound = float(data.get("feet_wound", 0.0))
 	dead = bool(data.get("dead", health <= 0.0))
 	changed.emit()

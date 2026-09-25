@@ -321,6 +321,13 @@ const LEGS_CARRY_SLOTS := 2
 const LEGS_CARRY_WEIGHT := 2.0
 const FEET_CARRY_SLOTS := 1
 const FEET_CARRY_WEIGHT := 1.0
+# Descalzo: heridas en los pies por caminar/correr sin calzado
+const FEET_WOUND_THRESHOLD := 15.0   # a partir de aqui las heridas duelen y drenan salud
+const FEET_WOUND_WALK_RATE := 0.9    # gravedad por segundo caminando descalzo
+const FEET_WOUND_RUN_RATE := 5.5     # gravedad por segundo corriendo descalzo
+const FEET_DPS_WALK := 0.14          # hp/s con heridas, caminando descalzo
+const FEET_DPS_RUN := 0.9            # hp/s con heridas, corriendo descalzo
+const FEET_COLD_AMBIENT := 14.0      # bajo esta temperatura ambiente los pies descalzos enfrian
 const HANDS_CARRY_SLOTS := 1
 const HANDS_CARRY_WEIGHT := 1.0
 const HEAD_CARRY_SLOTS := 1
@@ -651,6 +658,11 @@ const DOUBLE_TAP_WINDOW := 0.3
 var is_crouching := false
 var _force_crouch := false
 var is_moving := false
+var _feet_blood_timer := 0.0
+var _feet_notice_timer := 0.0
+var _feet_cold_notice_timer := 0.0
+var _feet_emit_timer := 0.0
+var _feet_wounded_notice := false
 var in_shelter := false
 var is_in_water := false
 var wetness := 0.0
@@ -3054,6 +3066,8 @@ func _physics_process(delta: float) -> void:
 		is_sprinting = false
 
 	speed *= stats.get_thermal_speed_multiplier()
+	# Cojera: las heridas en los pies reducen la velocidad (hasta -22%)
+	speed *= 1.0 - 0.22 * clampf((stats.feet_wound - 40.0) / 60.0, 0.0, 1.0)
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	if is_jumping:
@@ -3087,6 +3101,7 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		velocity.y = 0.0
 
+	_update_barefoot(delta)
 	_update_walk_motion(delta, input_dir.length())
 	_update_rod_visual_overlay()
 	_interaction_prompt_timer += delta
@@ -3381,16 +3396,7 @@ func _update_water_state(delta: float) -> void:
 	else:
 		if wetness <= 0.0:
 			return
-		var ambient: float = 12.0
-		var scene := get_tree().current_scene
-		if scene != null and scene.has_method("get_day_cycle"):
-			var dc = scene.call("get_day_cycle")
-			if dc != null and dc.has_method("get_ambient_temperature"):
-				ambient = float(dc.call("get_ambient_temperature"))
-		if scene != null and scene.has_method("get_hud"):
-			var hud = scene.call("get_hud")
-			if hud != null and hud.get("_real_temp_parsed") != null and float(hud.get("_real_temp_parsed")) != -999.0:
-				ambient = float(hud.get("_real_temp_parsed"))
+		var ambient: float = _ambient_temperature()
 		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008
 		wetness = max(0.0, wetness - delta * dry_rate)
 		stats.wetness = wetness
@@ -3406,6 +3412,64 @@ func _query_river_depth() -> float:
 	if scene != null and scene.has_method("get_river_depth_at"):
 		return float(scene.call("get_river_depth_at", global_position))
 	return 0.0
+
+func _ambient_temperature() -> float:
+	var ambient: float = 12.0
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("get_day_cycle"):
+		var dc = scene.call("get_day_cycle")
+		if dc != null and dc.has_method("get_ambient_temperature"):
+			ambient = float(dc.call("get_ambient_temperature"))
+	if scene != null and scene.has_method("get_hud"):
+		var hud = scene.call("get_hud")
+		if hud != null and hud.get("_real_temp_parsed") != null and float(hud.get("_real_temp_parsed")) != -999.0:
+			ambient = float(hud.get("_real_temp_parsed"))
+	return ambient
+
+func _is_barefoot() -> bool:
+	return str(_equipped_slots.get("feet", "")).is_empty()
+
+func _is_on_walkable_ground() -> bool:
+	return is_on_floor()
+
+func _update_barefoot(delta: float) -> void:
+	if stats == null or is_dead or is_puppet:
+		return
+	_feet_notice_timer = maxf(0.0, _feet_notice_timer - delta)
+	_feet_cold_notice_timer = maxf(0.0, _feet_cold_notice_timer - delta)
+	var barefoot := _is_barefoot()
+	var abusing := barefoot and is_moving and _is_on_walkable_ground() and not is_in_water
+	if abusing:
+		stats.feet_wound = minf(100.0, stats.feet_wound + (FEET_WOUND_RUN_RATE if is_sprinting else FEET_WOUND_WALK_RATE) * delta)
+		if stats.feet_wound >= FEET_WOUND_THRESHOLD:
+			if not _feet_wounded_notice:
+				_feet_wounded_notice = true
+				notice.emit("Tienes los pies heridos por ir descalzo. Cada paso duele.")
+			stats.health = maxf(0.0, stats.health - (FEET_DPS_RUN if is_sprinting else FEET_DPS_WALK) * delta)
+			_feet_emit_timer += delta
+			if _feet_emit_timer >= 0.5:
+				_feet_emit_timer = 0.0
+				stats.changed.emit()
+			if _feet_notice_timer <= 0.0:
+				_feet_notice_timer = 25.0
+				notice.emit("Correr descalzo desgarra tus pies." if is_sprinting else "Caminar descalzo te daña los pies.")
+			if is_sprinting:
+				_feet_blood_timer -= delta
+				if _feet_blood_timer <= 0.0:
+					_feet_blood_timer = 0.45
+					_spawn_blood_splatter(global_position + Vector3(0, 0.08, 0), 0.45)
+	else:
+		var recovery := 2.0 if not barefoot else 0.35
+		stats.feet_wound = maxf(0.0, stats.feet_wound - recovery * delta)
+		if stats.feet_wound < FEET_WOUND_THRESHOLD:
+			_feet_wounded_notice = false
+	if barefoot and _is_on_walkable_ground() and not is_in_water:
+		var ambient := _ambient_temperature()
+		if ambient < FEET_COLD_AMBIENT:
+			stats.body_temperature = maxf(31.0, stats.body_temperature - (FEET_COLD_AMBIENT - ambient) * 0.004 * delta)
+			if _feet_cold_notice_timer <= 0.0:
+				_feet_cold_notice_timer = 40.0
+				notice.emit("El frío cala en tus pies descalzos.")
 
 func _create_body() -> void:
 	floor_max_angle = deg_to_rad(65.0)
@@ -10229,7 +10293,7 @@ func _spawn_bullet_tracer(from_pos: Vector3, dir: Vector3) -> void:
 	var t := get_tree().create_timer(0.09)
 	t.timeout.connect(func(): if is_instance_valid(tracer): tracer.queue_free())
 
-func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
+func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -10237,7 +10301,7 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
 	# Gotas: pequenas, rapidas, con gravedad fuerte
 	var drops := GPUParticles3D.new()
 	drops.name = "BloodDrops"
-	drops.amount = 40
+	drops.amount = max(4, int(40 * strength))
 	drops.lifetime = 0.8
 	drops.explosiveness = 1.0
 	drops.randomness = 0.9
@@ -10245,8 +10309,8 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = Vector3(0, 1, 0)
 	mat.spread = 70.0
-	mat.initial_velocity_min = 3.0
-	mat.initial_velocity_max = 8.0
+	mat.initial_velocity_min = 3.0 * strength
+	mat.initial_velocity_max = 8.0 * strength
 	mat.gravity = Vector3(0, -18.0, 0)
 	mat.scale_min = 0.4
 	mat.scale_max = 1.1
@@ -10262,7 +10326,7 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO) -> void:
 	# Niebla: nube roja oscura que se expande y disipa
 	var mist := GPUParticles3D.new()
 	mist.name = "BloodMist"
-	mist.amount = 14
+	mist.amount = max(2, int(14 * strength))
 	mist.lifetime = 0.7
 	mist.explosiveness = 0.8
 	mist.randomness = 1.0
