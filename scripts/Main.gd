@@ -9545,8 +9545,7 @@ func _create_mountain_river() -> void:
 		_decorate_river_area(center, size, yaw)
 		await _create_dense_river_bank_vegetation(center, size, yaw)
 		_create_river_seam_cover(center, size, yaw)
-		if _world_rng.randf() < 0.72:
-			_create_fish_school(center, size, yaw)
+		_create_fish_school(center, size, yaw)
 	# Extra tall grass around lake segments (large sizes indicate lake)
 	for segment in segments:
 		var center: Vector3 = segment["center"]
@@ -10576,20 +10575,10 @@ func _apply_rock_material(node: Node, tint := Vector3(0.38, 0.40, 0.42)) -> void
 
 #region VEGETACIÓN Y NATURALEZA (VegetationBuilder)
 func _create_fish_school(center: Vector3, size: Vector2, yaw: float) -> void:
-	var angle := deg_to_rad(yaw)
-	var along := Vector3(cos(angle), 0, -sin(angle))
-	var across := Vector3(sin(angle), 0, cos(angle))
-	var count := 2 + _world_rng.randi() % 3
-	var is_lake := size.x >= 60.0
-	for i in range(count):
+	for spec in FishControllerScript.school_specs(center, size, yaw):
 		var fish = FishControllerScript.new()
 		fish.name = "RiverFish"
-		var fish_center := center + along * _world_rng.randf_range(-size.x * 0.36, size.x * 0.36) + across * _world_rng.randf_range(-size.y * 0.22, size.y * 0.22)
-		if is_lake:
-			fish_center.y = center.y - _world_rng.randf_range(1.5, 3.0)
-		else:
-			fish_center.y = center.y + 0.035
-		fish.setup(fish_center, along, across, _world_rng.randf_range(size.x * 0.22, size.x * 0.55), _world_rng.randf_range(size.y * 0.18, size.y * 0.45))
+		fish.setup(spec.center, spec.along, spec.across, spec.length, spec.width, spec.seed, spec.species)
 		add_child(fish)
 
 func _decorate_river_area(center: Vector3, size: Vector2, yaw: float) -> void:
@@ -13527,9 +13516,37 @@ func _create_leafy_floor_ground() -> void:
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
 	mesh_instance.mesh = mesh
-	_cached_leafy_material = MaterialFactory.make_forest_ground_material()
+	_cached_leafy_material = MaterialFactory.make_forest_ground_material().duplicate()
+	_cached_leafy_material.set_shader_parameter("cut_water_channels", true)
+	_cached_leafy_material.set_shader_parameter("terrain_extent", MAP_EXTENT)
+	_cached_leafy_material.set_shader_parameter("water_channel_mask", _make_water_channel_mask())
 	mesh_instance.material_override = _cached_leafy_material
 	add_child(mesh_instance)
+
+func _make_water_channel_mask() -> ImageTexture:
+	# Rasterize once; one texture lookup avoids looping over every river per pixel.
+	const RESOLUTION := 4096
+	var image := Image.create(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
+	var pixel_size := MAP_EXTENT * 2.0 / RESOLUTION
+	for segment in river_segments_data:
+		var center: Vector3 = segment.center
+		var size: Vector2 = segment.size
+		var angle := deg_to_rad(float(segment.yaw))
+		var forward := Vector2(cos(angle), -sin(angle))
+		var side := Vector2(sin(angle), cos(angle))
+		var radius := size.length() * .5
+		var min_x := clampi(int((center.x-radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
+		var max_x := clampi(int((center.x+radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
+		var min_z := clampi(int((center.z-radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
+		var max_z := clampi(int((center.z+radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
+		for z in range(min_z,max_z+1):
+			for x in range(min_x,max_x+1):
+				var offset := Vector2((x+.5)*pixel_size-MAP_EXTENT-center.x,(z+.5)*pixel_size-MAP_EXTENT-center.z)
+				var local := Vector2(offset.dot(forward)/size.x,offset.dot(side)/size.y)
+				var inside := local.length() < .40 if size.x >= 60.0 else absf(local.x)<.48 and absf(local.y)<.43
+				if inside:
+					image.set_pixel(x,z,Color.WHITE)
+	return ImageTexture.create_from_image(image)
 
 func _extract_texture_from_glb(path: String) -> Texture2D:
 	var root: Node3D = null

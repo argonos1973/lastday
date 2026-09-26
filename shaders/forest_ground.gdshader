@@ -7,6 +7,9 @@ uniform sampler2D leaf_roughness : filter_linear_mipmap_anisotropic, repeat_enab
 uniform sampler2D soil_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D variation : filter_linear_mipmap, repeat_enable;
 uniform float leaf_scale = 0.45;
+uniform bool cut_water_channels = false;
+uniform sampler2D water_channel_mask : filter_nearest, repeat_disable;
+uniform float terrain_extent = 500.0;
 varying vec3 world_position;
 varying vec3 world_normal;
 
@@ -16,6 +19,7 @@ void vertex() {
 }
 
 void fragment() {
+	if (cut_water_channels && texture(water_channel_mask, world_position.xz/(terrain_extent*2.0)+vec2(.5)).r > .5) { discard; }
 	vec3 n = normalize(world_normal);
 	vec3 weights = pow(abs(n), vec3(4.0));
 	weights /= max(dot(weights, vec3(1.0)), 0.001);

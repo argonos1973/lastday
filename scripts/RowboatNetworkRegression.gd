@@ -68,6 +68,7 @@ func run() -> void:
 		check(moved, "ENet host simulated remote rowing input")
 		check(boat.occupant == 0, "Disconnect releases authoritative seat")
 	else:
+		net.water_world_time = -10000.0 # Must be replaced by the server's fish clock.
 		boat.set_physics_process(false)
 		for i in range(50):
 			if api.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
@@ -103,6 +104,7 @@ func run() -> void:
 				net.rowboat_input.rpc_id(1, Vector2(0, -1))
 				await create_timer(0.1).timeout
 			check(boat.position.distance_to(initial) > 2.0, "ENet client receives moving boat snapshots")
+			check(net.water_world_time >= 0.0, "ENet client receives authoritative fish animation clock")
 			net.rowboat_input.rpc_id(1, Vector2.ZERO)
 			net.request_rowboat.rpc_id(1, "exit")
 			await create_timer(0.3).timeout

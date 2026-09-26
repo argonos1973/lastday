@@ -1,141 +1,117 @@
 extends Node3D
 class_name FishController
 
-const SimpleObjLoaderScript = preload("res://scripts/SimpleObjLoader.gd")
-
+const Loader = preload("res://scripts/SimpleObjLoader.gd")
+const FishShader = preload("res://shaders/fish_skin.gdshader")
+const MODEL_PATHS := [
+    "res://assets/external/quaternius_fish_obj/OBJ/Fish1.obj",
+    "res://assets/external/quaternius_fish_obj/OBJ/Fish2.obj",
+    "res://assets/external/quaternius_fish_obj/OBJ/Fish3.obj",
+]
+const COLORS := [Color(.19,.25,.21),Color(.30,.28,.17),Color(.24,.30,.32)]
 var center := Vector3.ZERO
-var along := Vector3.FORWARD
-var across := Vector3.RIGHT
+var along := Vector3.RIGHT
+var across := Vector3.BACK
 var length := 8.0
 var width := 1.5
-var speed := 0.6
+var speed := .6
 var phase := 0.0
-var _local_forward := 0.0
-var _local_side := 0.0
-var _heading := 0.0
-var _wander_seed := 0.0
-var _last_position := Vector3.ZERO
-var _side_target := 0.0
+var species := 0
+var body_length := .18
+var _time := 0.0
+var _visual: Node3D
+var _materials: Array[ShaderMaterial] = []
+static var _models: Dictionary = {}
 
-func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_length: float, swim_width: float) -> void:
-	center = new_center
-	along = new_along.normalized()
-	across = new_across.normalized()
-	length = swim_length
-	width = swim_width
-	speed = randf_range(0.85, 1.55)
-	phase = randf_range(0.0, TAU)
-	_local_forward = randf_range(-length * 0.28, length * 0.28)
-	_local_side = randf_range(-width * 0.24, width * 0.24)
-	_heading = randf_range(-0.18, 0.18)
-	_wander_seed = randf_range(0.0, TAU)
-	_side_target = _local_side
-	position = center + along * _local_forward + across * _local_side + Vector3(0.0, 0.0, 0.0)
-	_last_position = position
-	_build_fish()
+static func school_specs(origin: Vector3, size: Vector2, yaw: float) -> Array:
+    var rng := RandomNumberGenerator.new()
+    rng.seed = hash([origin,size,yaw,"fish_v2"])
+    var lake := size.x >= 60.0
+    var count := rng.randi_range(24,36) if lake else rng.randi_range(3,5)
+    var forward := Vector3(cos(deg_to_rad(yaw)),0,-sin(deg_to_rad(yaw)))
+    var side := Vector3(sin(deg_to_rad(yaw)),0,cos(deg_to_rad(yaw)))
+    var result: Array = []
+    for i in range(count):
+        var p := origin + forward*rng.randf_range(-.18,.18)*size.x + side*rng.randf_range(-.15,.15)*size.y
+        if lake:
+            var angle := TAU*float(i)/count + rng.randf_range(-.05,.05)
+            var radius := rng.randf_range(.31,.37)
+            p = origin + forward*cos(angle)*size.x*radius + side*sin(angle)*size.y*radius
+        p.y = origin.y - rng.randf_range(.20,.38)
+        result.append({"center":p,"along":forward,"across":side,"length":rng.randf_range(1.8,4.0) if lake else size.x*rng.randf_range(.15,.30),"width":1.0 if lake else size.y*.22,"seed":rng.randi(),"species":i%3})
+    return result
+
+func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_length: float, swim_width: float, seed_value: int = 1, variant: int = 0) -> void:
+    center = new_center
+    along = new_along.normalized()
+    across = new_across.normalized()
+    length = swim_length
+    width = swim_width
+    var rng := RandomNumberGenerator.new()
+    rng.seed = seed_value
+    species = posmod(variant,3)
+    body_length = [.14,.20,.25][species]*rng.randf_range(.78,1.12)
+    speed = rng.randf_range(.22,.48)
+    phase = rng.randf_range(0,TAU)
+    _build_fish()
+    update_pose(0.0)
+
+func pose_at(seconds: float) -> Vector3:
+    var p := phase + seconds*speed/maxf(length*.42,1.0)
+    return center + along*sin(p)*length*.42 + across*cos(p*.5+phase)*width*.30 + Vector3.UP*sin(p*1.7)*.015
+
+func update_pose(seconds: float) -> void:
+    position = pose_at(seconds)
+    var direction := pose_at(seconds+.05)-position
+    if direction.length_squared() > .0000001:
+        rotation.y = atan2(direction.x,direction.z)
+    if _visual != null:
+        _visual.rotation.y = sin(seconds*(7.0+species)+phase)*.045
+    for material in _materials:
+        material.set_shader_parameter("swim_time",seconds*(7.0+species)+phase)
 
 func _process(delta: float) -> void:
-	phase += delta * speed
-	var previous_side := _local_side
-	_local_forward += speed * delta
-	var wrapped := false
-	if _local_forward > length * 0.48:
-		_local_forward = -length * 0.48
-		_side_target = randf_range(-width * 0.24, width * 0.24)
-		wrapped = true
-	else:
-		_side_target = sin(phase * 0.72 + _wander_seed) * width * 0.25 + sin(phase * 1.21 + _wander_seed * 0.7) * width * 0.08
-	_local_side = lerp(_local_side, clamp(_side_target, -width * 0.35, width * 0.35), delta * 0.85)
-	position = center + along * _local_forward + across * _local_side
-	var side_velocity: float = (_local_side - previous_side) / max(0.001, delta)
-	var move_dir: Vector3 = along * speed + across * side_velocity
-	if wrapped:
-		move_dir = along
-	if move_dir.length() > 0.01:
-		rotation.y = atan2(move_dir.x, move_dir.z)
-	rotation.z = lerp_angle(rotation.z, sin(phase * 3.2 + _wander_seed) * 0.055, delta * 5.0)
-	_last_position = position
+    _time += delta
+    var network := get_node_or_null("/root/NetworkManager")
+    var seconds := _time
+    if network != null and network.get("is_connected") == true:
+        seconds = float(network.get("water_world_time"))
+    update_pose(seconds)
 
 func _build_fish() -> void:
-	if _try_build_external_fish():
-		return
-	var body := MeshInstance3D.new()
-	body.name = "FishBody"
-	var mesh := SphereMesh.new()
-	mesh.radius = randf_range(0.09, 0.15)
-	mesh.height = randf_range(0.22, 0.34)
-	mesh.radial_segments = 10
-	mesh.rings = 5
-	body.mesh = mesh
-	body.scale = Vector3(0.75, 0.42, 1.45)
-	body.material_override = _make_material(Color(0.16, 0.22, 0.20).lerp(Color(0.32, 0.34, 0.28), randf()))
-	add_child(body)
-
-	var tail := MeshInstance3D.new()
-	tail.name = "FishTail"
-	var tail_mesh := PrismMesh.new()
-	tail_mesh.size = Vector3(0.16, 0.12, 0.06)
-	tail.mesh = tail_mesh
-	tail.position = Vector3(0.0, 0.0, -0.22)
-	tail.rotation_degrees.x = 90.0
-	tail.material_override = body.material_override
-	add_child(tail)
-
-func _try_build_external_fish() -> bool:
-	var candidates := [
-		"res://assets/external/quaternius_fish_obj/OBJ/Fish1.obj",
-		"res://assets/external/quaternius_fish_obj/OBJ/Fish2.obj",
-		"res://assets/external/quaternius_fish_obj/OBJ/Fish3.obj"
-	]
-	for path in candidates:
-		var node := _load_external_node3d(path)
-		if node == null:
-			continue
-		node.name = "ExternalFishModel"
-		node.scale = Vector3.ONE * randf_range(0.10, 0.18)
-		node.rotation_degrees = Vector3.ZERO
-		add_child(node)
-		return true
-	return false
-
-func _load_external_node3d(path: String) -> Node3D:
-	var instance: Node = null
-	if ResourceLoader.exists(path):
-		var loaded = load(path)
-		if loaded is PackedScene:
-			instance = (loaded as PackedScene).instantiate()
-	if instance == null and path.get_extension().to_lower() == "obj":
-		instance = SimpleObjLoaderScript.new().load_node3d(path, Color(0.16, 0.22, 0.20).lerp(Color(0.32, 0.34, 0.28), randf()))
-	if instance == null and (path.get_extension().to_lower() == "gltf" or path.get_extension().to_lower() == "glb"):
-		instance = _load_gltf_node3d(path)
-	if instance is Node3D:
-		return instance as Node3D
-	if instance != null:
-		instance.queue_free()
-	return null
-
-func _load_gltf_node3d(path: String) -> Node3D:
-	if ResourceLoader.exists(path):
-		var loaded = load(path)
-		if loaded is PackedScene:
-			return (loaded as PackedScene).instantiate() as Node3D
-	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
-	if not FileAccess.file_exists(disk_path):
-		return null
-	var document := GLTFDocument.new()
-	var state := GLTFState.new()
-	var error := document.append_from_file(disk_path, state)
-	if error != OK:
-		return null
-	var generated_scene := document.generate_scene(state)
-	if generated_scene is Node3D:
-		return generated_scene as Node3D
-	if generated_scene != null:
-		generated_scene.queue_free()
-	return null
-
-func _make_material(color: Color) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.8
-	return material
+    if not _models.has(species):
+        var model := Loader.new().load_node3d(MODEL_PATHS[species],COLORS[species])
+        if model != null:
+            var packed := PackedScene.new()
+            # Loader children already belong to the loaded root in normal use;
+            # explicit ownership keeps every surface in the cached scene.
+            for child in model.find_children("*","",true,false):
+                child.owner = model
+            packed.pack(model)
+            _models[species] = packed
+            model.free()
+    if not _models.has(species):
+        return
+    _visual = (_models[species] as PackedScene).instantiate()
+    add_child(_visual)
+    var bounds := AABB()
+    var first := true
+    var parts := _visual.find_children("*","MeshInstance3D",true,false)
+    if _visual is MeshInstance3D:
+        parts.push_front(_visual)
+    for part in parts:
+        var mi := part as MeshInstance3D
+        var box := mi.transform*mi.get_aabb()
+        bounds = box if first else bounds.merge(box)
+        first = false
+        var mat := ShaderMaterial.new()
+        mat.shader = FishShader
+        mat.set_shader_parameter("back_color",COLORS[species])
+        mat.set_shader_parameter("model_min",mi.get_aabb().position)
+        mat.set_shader_parameter("model_size",mi.get_aabb().size)
+        mat.set_shader_parameter("pattern",species)
+        _materials.append(mat)
+        mi.material_override = mat
+    var ratio := body_length/maxf(bounds.size.z,.001)
+    _visual.scale = Vector3.ONE*ratio
+    _visual.position = -bounds.get_center()*ratio

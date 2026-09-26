@@ -34,15 +34,20 @@ void vertex() {
 
 void fragment() {
     vec2 flow = current_direction * flow_speed * flow_direction_multiplier;
-    if (!use_river_flow) { flow = vec2(.025,.018); }
+    if (!use_river_flow) { flow = vec2(.10,.07); }
     vec2 p = world_pos.xz;
     // Different wavelengths/speeds avoid a uniformly pulsing surface.
     vec3 n1 = texture(water_noise_1,p*.48 - flow*TIME*.18).rgb*2.0-1.0;
     vec3 n2 = texture(water_noise_2,p*.91 + vec2(.37,.19) - flow*TIME*.11).rgb*2.0-1.0;
-    vec3 ripple = normalize(vec3(n1.xy+n2.xy*.45,1.0));
-    NORMAL_MAP = ripple*.5+.5;
-    NORMAL_MAP_DEPTH = normal_scale;
-    if (!FRONT_FACING) { NORMAL = -NORMAL; }
+    float wind_wave = dot(p,vec2(2.3,1.4))-TIME*1.6;
+    float cross_wave = dot(p,vec2(-3.1,4.2))+TIME*1.1;
+    vec2 slopes = vec2(cos(wind_wave)*.30,cos(cross_wave)*.18);
+    vec3 ripple = normalize(vec3(n1.xy+n2.xy*.45+slopes,1.0));
+    // Procedural river/lake meshes have no tangent arrays. World-space
+    // normals keep the animated ripples visible on those meshes as well.
+    vec3 world_normal = normalize(vec3(-ripple.x*normal_scale,ripple.z,-ripple.y*normal_scale));
+    NORMAL = normalize((VIEW_MATRIX*vec4(world_normal,0.0)).xyz);
+    if (dot(NORMAL,VIEW) < 0.0) { NORMAL = -NORMAL; }
     // Depth approximation from mesh UVs: the river crosses the channel on
     // UV.y 0..1 and the lake runs from center (.5,.5) to the rim, so the
     // shoreline needs no depth texture (unavailable in Compatibility).
@@ -51,7 +56,8 @@ void fragment() {
         : 1.0 - clamp(length(UV-vec2(.5))*2.0, 0.0, 1.0);
     float absorption = 1.0-exp(-edge_dist*beers_law*4.5);
     float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),mirror_fresnel_power);
-    ALBEDO = mix(water_color,night_water_color,night_amount);
+    vec3 tint = mix(water_color,night_water_color,night_amount);
+    ALBEDO = mix(tint,mirror_color,fresnel*mirror_strength*.65);
     ROUGHNESS = roughness_scale;
     METALLIC = mirror_strength * 0.55;
     SPECULAR = 1.0;

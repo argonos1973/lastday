@@ -129,8 +129,26 @@ func _get_all_local_ips() -> Array:
 
 var _dedicated_bind_retries := 0
 var _dedicated_bind_wait := 0.0
+var water_world_time := 0.0
+var _water_clock_timer := 0.0
+
+@rpc("authority", "unreliable_ordered")
+func sync_water_clock(seconds: float) -> void:
+	if is_host or not is_finite(seconds) or seconds < 0.0:
+		return
+	water_world_time = seconds
+
+static func accepts_player_state(host: bool, sender: int, player_id: int) -> bool:
+	# Clients only accept the server relay; a peer cannot impersonate another.
+	return sender == player_id if host else sender == 1
 
 func _process(_delta: float) -> void:
+	water_world_time += _delta
+	if is_host and is_connected and multiplayer.has_multiplayer_peer():
+		_water_clock_timer += _delta
+		if _water_clock_timer >= 2.0:
+			_water_clock_timer = 0.0
+			sync_water_clock.rpc(water_world_time)
 	if _dedicated_bind_retries > 0:
 		_dedicated_bind_wait += _delta
 		if _dedicated_bind_wait >= 1.0:
@@ -200,6 +218,8 @@ func join_game(ip: String) -> bool:
 	return true
 
 func close_connection() -> void:
+	water_world_time = 0.0
+	_water_clock_timer = 0.0
 	if peer != null:
 		peer.close()
 		peer = null
@@ -320,7 +340,7 @@ func _check_all_ready() -> void:
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
 func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false) -> void:
-	if is_host and multiplayer.get_remote_sender_id() != id:
+	if not accepts_player_state(is_host, multiplayer.get_remote_sender_id(), id):
 		return
 	# A NaN/inf position would poison proxies, broadcasts and the saved record.
 	if not pos.is_finite() or not is_finite(rot):

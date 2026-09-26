@@ -49,7 +49,7 @@ func _ready() -> void:
 		_captured_cloud_darkness = _cloud_darkness
 		if _material is ShaderMaterial:
 			_material.set_shader_parameter("use_foam", false)
-			_material.set_shader_parameter("normal_scale", 0.10)
+			_material.set_shader_parameter("normal_scale", 0.26)
 			_material.set_shader_parameter("roughness_scale", 0.06)
 			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
 	if _material is ShaderMaterial:
@@ -59,7 +59,7 @@ func _ready() -> void:
 		_material.set_shader_parameter("wave_height", .012 if _is_lake else .025)
 		_material.set_shader_parameter("beers_law", .65 if _is_lake else .9)
 		if not _is_lake:
-			_material.set_shader_parameter("normal_scale", 0.16)
+			_material.set_shader_parameter("normal_scale", 0.38)
 			_material.set_shader_parameter("roughness_scale", 0.12)
 			_material.set_shader_parameter("water_color", Color(0.055, 0.105, 0.085))
 			_material.set_shader_parameter("use_foam", true)

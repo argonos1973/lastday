@@ -76,12 +76,14 @@ func run() -> void:
 	var main := TestWorld.new()
 	world.add_child(main)
 	main._world_rng.seed = 424242
-	var seg := {"center": Vector3(0, 0, 0), "size": Vector2(26, 5.6), "yaw": 0.0}
+	var seg := {"center": Vector3(0, 0.085, 0), "size": Vector2(26, 5.6), "yaw": 0.0}
 	if lake_preview:
 		seg.size = Vector2(150,90)
-		seg.center = Vector3(250,0,-307)
+		seg.center = Vector3(250,0.085,-307)
 	main.river_segments_data = [seg]
 	await main._create_river_segment(seg.center, seg.size, seg.yaw)
+	main._create_fish_school(seg.center, seg.size, seg.yaw)
+	main._create_leafy_floor_ground()
 	var names := {}
 	for c in main.get_children():
 		names[str(c.name).split("@")[0].rstrip("0123456789")] = true
@@ -122,4 +124,9 @@ func run() -> void:
 	var img := root.get_texture().get_image()
 	var ok := img.save_png("/tmp/lastday_lake_shore_preview.png" if lake_preview else "/tmp/lastday_shore_preview.png")
 	print("SHORE_PREVIEW_SAVED " + str(ok))
+	if "--motion" in OS.get_cmdline_user_args():
+		for frame in range(60):
+			await create_timer(.05).timeout
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("/tmp/water_motion_%03d.png" % frame)
 	quit(0 if ok == OK else 1)
