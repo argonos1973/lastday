@@ -62,7 +62,10 @@ func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_le
 
 func pose_at(seconds: float) -> Vector3:
     var p := phase + seconds*speed/maxf(length*.42,1.0)
-    return center + along*sin(p)*length*.42 + across*cos(p*.5+phase)*width*.30 + Vector3.UP*sin(p*1.7)*.015
+    # Alternate shallow passes with gentle dives; avoid every fish cresting
+    # the surface simultaneously for its entire route.
+    var dive := (sin(seconds*.32+phase)+1.0)*.065
+    return center + along*sin(p)*length*.42 + across*cos(p*.5+phase)*width*.30 + Vector3.UP*(sin(p*1.7)*.015-dive)
 
 func update_pose(seconds: float) -> void:
     position = pose_at(seconds)

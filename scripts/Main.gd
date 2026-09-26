@@ -10365,6 +10365,8 @@ func _get_shore_band_material() -> StandardMaterial3D:
 	# Alpha blend so the land edge feathers into the terrain; vertex alpha
 	# fades the strip ends where river segments join or a river finishes.
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Draw the submerged bank before the transparent water surface.
+	mat.render_priority = -1
 	mat.vertex_color_use_as_albedo = true
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL

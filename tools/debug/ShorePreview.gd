@@ -24,8 +24,13 @@ func run() -> void:
 
 	var environment := WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.62, 0.71, 0.78)
+	env.background_mode = Environment.BG_SKY
+	var sky := Sky.new()
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color(.19,.36,.57)
+	sky_material.sky_horizon_color = Color(.65,.72,.78)
+	sky.sky_material = sky_material
+	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.65, 0.73, 0.84)
 	env.ambient_light_energy = 0.5
@@ -36,7 +41,7 @@ func run() -> void:
 	sun.rotation_degrees = Vector3(-42, -32, 0)
 	sun.light_color = Color(1.0, 0.91, 0.76)
 	sun.light_energy = 1.15
-	sun.shadow_enabled = true
+	sun.shadow_enabled = not "--no-shadows" in OS.get_cmdline_user_args()
 	sun.directional_shadow_max_distance = 85
 	world.add_child(sun)
 
@@ -104,6 +109,8 @@ func run() -> void:
 	var hide_cluster := OS.get_cmdline_user_args().has("--hide-cluster")
 	for c in main.get_children():
 		var n := str(c.name)
+		if "--water-only" in OS.get_cmdline_user_args() and c is Node3D:
+			c.visible = n.begins_with("MountainRiverWater") or n.begins_with("RiverBottom")
 		if hide_props and (n.begins_with("@Node3D") or n.contains("Shore") and not n.contains("Band")):
 			c.visible = false
 		if hide_cluster and (n.contains("PebbleCluster") or n.begins_with("@MeshInstance3D")):
@@ -128,5 +135,6 @@ func run() -> void:
 		for frame in range(60):
 			await create_timer(.05).timeout
 			await RenderingServer.frame_post_draw
-			root.get_texture().get_image().save_png("/tmp/water_motion_%03d.png" % frame)
+			var prefix := "/tmp/lake_motion_" if lake_preview else "/tmp/river_motion_"
+			root.get_texture().get_image().save_png(prefix + "%03d.png" % frame)
 	quit(0 if ok == OK else 1)

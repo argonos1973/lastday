@@ -34,7 +34,7 @@ func _ready() -> void:
 		_reflection.cull_mask = 0xFFFFF & ~((1 << 19) | (1 << 18))
 		_reflection.reflection_mask = 1 << 19
 		_reflection.mesh_lod_threshold = 8.0
-		_reflection.box_projection = true
+		_reflection.box_projection = false
 		_reflection.enable_shadows = false
 		_reflection.intensity = 1.0
 		_reflection.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
@@ -50,7 +50,7 @@ func _ready() -> void:
 		if _material is ShaderMaterial:
 			_material.set_shader_parameter("use_foam", false)
 			_material.set_shader_parameter("normal_scale", 0.26)
-			_material.set_shader_parameter("roughness_scale", 0.06)
+			_material.set_shader_parameter("roughness_scale", 0.16)
 			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
 	if _material is ShaderMaterial:
 		var direction := global_basis.x.normalized()
@@ -60,7 +60,7 @@ func _ready() -> void:
 		_material.set_shader_parameter("beers_law", .65 if _is_lake else .9)
 		if not _is_lake:
 			_material.set_shader_parameter("normal_scale", 0.38)
-			_material.set_shader_parameter("roughness_scale", 0.12)
+			_material.set_shader_parameter("roughness_scale", 0.20)
 			_material.set_shader_parameter("water_color", Color(0.055, 0.105, 0.085))
 			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)

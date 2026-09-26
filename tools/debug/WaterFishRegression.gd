@@ -39,7 +39,7 @@ func run() -> void:
                 smooth = smooth and p.distance_to(fish.pose_at(float(t)+.0167))<.02
             fish.free()
         check(species.size()==3,"three distinct meshes")
-        check(small and actual_scale,"actual mesh length 11–28 cm including root mesh")
+        check(small and actual_scale,"actual mesh length 12–32 cm including root mesh")
         check(contained and submerged,"paths stay underwater inside rotated banks for 10 minutes")
         check(smooth,"continuous paths without wrap teleport")
         var mask := world._make_water_channel_mask().get_image()
