@@ -57,17 +57,23 @@ func _ready() -> void:
 		pass # print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
 
-func start_dedicated_server() -> bool:
+func start_dedicated_server(from_retry: bool = false) -> bool:
 	peer = ENetMultiplayerPeer.new()
 	var err := peer.create_server(PORT, MAX_PLAYERS)
 	if err != OK:
-		push_error("No se pudo crear el servidor: %d" % err)
+		push_error("[SERVER] No se pudo bindear el puerto %d (err %d) — ¿queda otro servidor vivo?" % [PORT, err])
 		peer = null
+		# A process without a bound socket still deletes the save and generates
+		# a world nobody can join — retry briefly while an old instance finishes
+		# releasing the port, then exit so a zombie is never left serving.
+		if not from_retry:
+			_dedicated_bind_retries = 10
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	is_connected = true
 	is_dedicated_server = true
+	_dedicated_bind_retries = 0
 	_start_broadcast()
 	return true
 
@@ -121,7 +127,21 @@ func _get_all_local_ips() -> Array:
 		result.append(str(ips[0]))
 	return result
 
+var _dedicated_bind_retries := 0
+var _dedicated_bind_wait := 0.0
+
 func _process(_delta: float) -> void:
+	if _dedicated_bind_retries > 0:
+		_dedicated_bind_wait += _delta
+		if _dedicated_bind_wait >= 1.0:
+			_dedicated_bind_wait = 0.0
+			_dedicated_bind_retries -= 1
+			if start_dedicated_server(true):
+				print("[SERVER] Puerto %d libre tras reintento — servidor activo" % PORT)
+			elif _dedicated_bind_retries <= 0:
+				push_error("[SERVER] El puerto %d sigue ocupado — cerrando esta instancia" % PORT)
+				get_tree().quit()
+				return
 	if is_host:
 		# Listen for probe packets from clients doing active scan
 		if _probe_listener != null:

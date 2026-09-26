@@ -1,7 +1,8 @@
 #!/bin/bash
 # Detiene el servidor dedicado de forma limpia: guarda el mundo y cierra el proceso.
 # Uso: ./stop_server.sh
-# El flag vive en user://, que depende del OS:
+# El flag lleva el PID del server a parar (un PID por línea) para que una
+# instancia nueva nunca se coma la petición de parada de otra.
 #   macOS: ~/Library/Application Support/Godot/app_userdata/Un dia mas
 #   Linux: ~/.local/share/godot/app_userdata/Un dia mas
 if [ "$(uname)" = "Darwin" ]; then
@@ -9,6 +10,12 @@ if [ "$(uname)" = "Darwin" ]; then
 else
 	FLAG="$HOME/.local/share/godot/app_userdata/Un dia mas/stop_server.flag"
 fi
+PIDS="$(pgrep -fi 'LastDayServerCore|LastDayServer\.x86_64|LastDayServer\.exe|godot.*--server|Un dia mas.*--headless' 2>/dev/null | tr '\n' ' ')"
+if [ -z "${PIDS// /}" ]; then
+	echo "No hay servidor en ejecución."
+	rm -f "$FLAG"
+	exit 0
+fi
 mkdir -p "$(dirname "$FLAG")"
-touch "$FLAG"
-echo "Parada solicitada: el servidor guardará el mundo y terminará en unos segundos."
+printf '%s\n' $PIDS > "$FLAG"
+echo "Parada solicitada (PID $PIDS): el servidor guardará el mundo y terminará en unos segundos."

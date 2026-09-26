@@ -39,8 +39,10 @@ end idle
 
 on quit
 	if serverPID > 0 then
+		-- Write our PID into the flag: a new server instance must never eat a
+		-- stop request that is still addressed to this process.
 		try
-			do shell script "touch " & quoted form of flagPath
+			do shell script "printf '%s' " & quoted form of (serverPID as string) & " > " & quoted form of flagPath
 		end try
 		-- The server polls the flag every 2 s and saves before exiting.
 		repeat 40 times

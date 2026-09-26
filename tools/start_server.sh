@@ -11,16 +11,25 @@ else
 	USER_DIR="$HOME/.local/share/godot/app_userdata/Un dia mas"
 fi
 
-# Parada limpia de cualquier instancia previa: el flag hace que el servidor
-# guarde el mundo antes de terminar el proceso.
-if pgrep -f "LastDayServer|godot.*--server" >/dev/null 2>&1; then
+# Parada limpia de cualquier instancia previa: el flag lleva los PID y el
+# servidor guarda el mundo antes de terminar. Esperamos a que el proceso
+# muera de verdad antes de lanzar — si arrancamos con el viejo vivo, el nuevo
+# no puede bindear el puerto y el cliente sigue hablando con el mundo viejo.
+PATTERN='LastDayServer|godot.*--server|Un dia mas.*--headless'
+PIDS="$(pgrep -fi "$PATTERN" 2>/dev/null | tr '\n' ' ')"
+if [ -n "${PIDS// /}" ]; then
 	mkdir -p "$USER_DIR"
-	touch "$USER_DIR/stop_server.flag"
-	sleep 4
+	printf '%s\n' $PIDS > "$USER_DIR/stop_server.flag"
+	for i in $(seq 1 15); do
+		sleep 1
+		pgrep -fi "$PATTERN" >/dev/null 2>&1 || break
+	done
 fi
-pkill -f "godot.*--server" 2>/dev/null
-pkill -f "LastDayServer" 2>/dev/null
-sleep 1
+pkill -fi "$PATTERN" 2>/dev/null
+for i in $(seq 1 10); do
+	pgrep -fi "$PATTERN" >/dev/null 2>&1 || break
+	sleep 1
+done
 
 echo "Iniciando servidor dedicado..."
 if [ "$(uname)" != "Darwin" ]; then

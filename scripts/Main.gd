@@ -914,8 +914,7 @@ func _process(delta: float) -> void:
 		_server_stop_check += delta
 		if _server_stop_check >= 2.0:
 			_server_stop_check = 0.0
-			if FileAccess.file_exists(SERVER_STOP_FLAG):
-				DirAccess.remove_absolute(ProjectSettings.globalize_path(SERVER_STOP_FLAG))
+			if _consume_server_stop_flag():
 				_request_server_shutdown()
 				return
 		# Update proxy positions from client sync data
@@ -2045,8 +2044,7 @@ func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: f
 func _setup_server_console() -> void:
 	# Take over quit handling so every exit path saves the world first
 	get_tree().auto_accept_quit = false
-	if FileAccess.file_exists(SERVER_STOP_FLAG):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(SERVER_STOP_FLAG))
+	_cleanup_stale_stop_flag()
 	# A thread blocked on read_string_from_stdin crashes teardown when stdin is
 	# /dev/null (Finder/Dock launches), so only listen on a real console.
 	# (StdinType enum is not exposed to GDScript in 4.7: 1 == CONSOLE.)
@@ -2082,6 +2080,68 @@ func _print_server_status() -> void:
 	print("[SERVER] conectados=%d offline=%d guardados=%d" % [online, proxy_by_client_id.size(), _server_saved_players.size()])
 
 var _server_shutdown_started := false
+
+# The stop flag carries the PID(s) it wants stopped (one per line), written by
+# stop_server.sh / start_server.sh / the macOS launcher. A flag naming only
+# other PIDs belongs to a server that is still shutting down — ignoring it here
+# (instead of deleting it like the old code did) is what keeps a "restart" from
+# stranding a zombie process that keeps serving the previous world. An empty
+# or unparseable flag is a manual kill-all request and is honored.
+func _consume_server_stop_flag() -> bool:
+	var path := ProjectSettings.globalize_path(SERVER_STOP_FLAG)
+	if not FileAccess.file_exists(path):
+		return false
+	var content := ""
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f != null:
+		content = f.get_as_text().strip_edges()
+		f.close()
+	var my_pid := OS.get_process_id()
+	var tokens := content.replace("\n", " ").replace(",", " ").split(" ", false)
+	var mine := false
+	var names_other := false
+	var remaining: Array = []
+	for t in tokens:
+		var pid := int(t)
+		if pid <= 0:
+			continue
+		if pid == my_pid:
+			mine = true
+		else:
+			names_other = true
+			remaining.append(t)
+	if mine:
+		if remaining.is_empty():
+			DirAccess.remove_absolute(path)
+		else:
+			var fw := FileAccess.open(path, FileAccess.WRITE)
+			if fw != null:
+				fw.store_string("\n".join(remaining) + "\n")
+				fw.close()
+		return true
+	if not names_other:
+		DirAccess.remove_absolute(path)
+		return true
+	# Flag targets only other processes: leave it for them, unless it is stale
+	# (servers poll every 2 s; >30 s old means nobody is left to consume it).
+	var mtime := int(FileAccess.get_modified_time(path))
+	if mtime > 0 and Time.get_unix_time_from_system() - float(mtime) > 30.0:
+		DirAccess.remove_absolute(path)
+	return false
+
+# Boot cleanup: only drop flags too old to belong to a live server (>30 s —
+# the poll consumes real requests within 2 s). A fresh flag is left alone so a
+# pending stop request is never eaten by a new instance mid-shutdown.
+func _cleanup_stale_stop_flag() -> void:
+	var path := ProjectSettings.globalize_path(SERVER_STOP_FLAG)
+	if not FileAccess.file_exists(path):
+		return
+	var mtime := int(FileAccess.get_modified_time(path))
+	var age := 99999.0
+	if mtime > 0:
+		age = Time.get_unix_time_from_system() - float(mtime)
+	if age > 30.0:
+		DirAccess.remove_absolute(path)
 
 func _request_server_shutdown() -> void:
 	if _server_shutdown_started:
