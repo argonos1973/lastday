@@ -1,5 +1,5 @@
 #!/bin/bash
-# Detiene el servidor dedicado de forma limpia: guarda el mundo y cierra el proceso.
+# Detiene el servidor dedicado de forma limpia: borra el mundo de la sesión y cierra el proceso.
 # Uso: ./stop_server.sh
 # El flag lleva el PID del server a parar (un PID por línea) para que una
 # instancia nueva nunca se coma la petición de parada de otra.
@@ -18,4 +18,4 @@ if [ -z "${PIDS// /}" ]; then
 fi
 mkdir -p "$(dirname "$FLAG")"
 printf '%s\n' $PIDS > "$FLAG"
-echo "Parada solicitada (PID $PIDS): el servidor guardará el mundo y terminará en unos segundos."
+echo "Parada solicitada (PID $PIDS): el servidor borrará el mundo de la sesión y terminará en unos segundos."

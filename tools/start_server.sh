@@ -12,7 +12,7 @@ else
 fi
 
 # Parada limpia de cualquier instancia previa: el flag lleva los PID y el
-# servidor guarda el mundo antes de terminar. Esperamos a que el proceso
+# servidor borra el mundo de la sesión antes de terminar. Esperamos a que el proceso
 # muera de verdad antes de lanzar — si arrancamos con el viejo vivo, el nuevo
 # no puede bindear el puerto y el cliente sigue hablando con el mundo viejo.
 PATTERN='LastDayServer|godot.*--server|Un dia mas.*--headless'

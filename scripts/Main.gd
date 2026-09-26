@@ -2147,11 +2147,14 @@ func _request_server_shutdown() -> void:
 	if _server_shutdown_started:
 		return
 	_server_shutdown_started = true
-	print("[SERVER] Cerrando: guardando mundo...")
-	# Set the quit flag first: SceneTree exits at the end of this iteration, so
-	# the process still terminates even if the world save below fails.
+	print("[SERVER] Cerrando: eliminando mundo de la sesión...")
+	# The server world is per-session: on shutdown the save is deleted so no
+	# doors/drops/loot/player records ever reach the next boot. Mid-session
+	# autosaves still run (60 s timer + 'save' command) for in-session state.
+	var sgm := get_node_or_null("/root/SaveGameManager")
+	if sgm != null and sgm.has_method("delete_server_save"):
+		sgm.delete_server_save()
 	get_tree().quit()
-	_save_server_world()
 
 func _notification(what: int) -> void:
 	# NOTE: headless dedicated_server exports never receive this notification —

@@ -335,7 +335,8 @@ static func collect_world_data(main: Node) -> Dictionary:
 			continue
 		if str(node.get("tamed_to")) == "" or node.get("_is_dead") == true:
 			continue
-		var stay: Vector3 = node.get("_stay_pos")
+		var stay_v = node.get("_stay_pos")
+		var stay: Vector3 = stay_v if stay_v is Vector3 else node.global_position
 		tamed_wildlife.append({
 			"name": node.name,
 			"owner": str(node.get("tamed_to")),

@@ -4,7 +4,7 @@
 -- dedicated_server build is headless, so Godot's applicationShouldTerminate
 -- never forwards NOTIFICATION_WM_CLOSE_REQUEST to scripts. This applet takes
 -- the stop-flag path instead: on quit it touches user://stop_server.flag and
--- the server saves the world and exits by itself.
+-- the server deletes the session world and exits by itself.
 
 global serverPID
 global flagPath
@@ -44,7 +44,7 @@ on quit
 		try
 			do shell script "printf '%s' " & quoted form of (serverPID as string) & " > " & quoted form of flagPath
 		end try
-		-- The server polls the flag every 2 s and saves before exiting.
+		-- The server polls the flag every 2 s and wipes the session world before exiting.
 		repeat 40 times
 			try
 				do shell script "kill -0 " & serverPID
