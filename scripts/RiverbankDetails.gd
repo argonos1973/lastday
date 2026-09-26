@@ -19,11 +19,7 @@ static func _load_meshes() -> void:
 			_meshes[variant] = (parts[0] as MeshInstance3D).mesh
 		source.free()
 
-static func create(world: Node3D, center: Vector3, size: Vector2, yaw: float) -> Node3D:
-	_load_meshes()
-	var root := Node3D.new()
-	root.name = "ReferenceRiverbanks"
-	world.add_child(root)
+static func placements(world: Node3D, center: Vector3, size: Vector2, yaw: float) -> Array:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([center, size, yaw])
 	var along := Vector3(cos(deg_to_rad(yaw)), 0, -sin(deg_to_rad(yaw)))
@@ -63,6 +59,14 @@ static func create(world: Node3D, center: Vector3, size: Vector2, yaw: float) ->
 			var length_scale := clampf(size.x / count / 6.0, .65, 1.05) if not lake else 1.0
 			var basis := Basis(tangent * length_scale * rng.randf_range(.92, 1.08), Vector3.UP, outward * rng.randf_range(.85, 1.10))
 			batches[i % 3].append(Transform3D(basis, pos))
+	return batches
+
+static func create(world: Node3D, center: Vector3, size: Vector2, yaw: float) -> Node3D:
+	_load_meshes()
+	var root := Node3D.new()
+	root.name = "ReferenceRiverbanks"
+	world.add_child(root)
+	var batches := placements(world, center, size, yaw)
 	for variant in range(3):
 		if batches[variant].is_empty() or _meshes[variant] == null:
 			continue

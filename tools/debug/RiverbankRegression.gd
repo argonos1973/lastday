@@ -25,28 +25,23 @@ func run() -> void:
 	for yaw in [0.0, 48.0, 180.0]:
 		var center := Vector3(150,0,-130)
 		var bank := Banks.create(world, center, Vector2(30,8), yaw)
-		await process_frame
-		await process_frame
+		var batches := Banks.placements(world, center, Vector2(30,8), yaw)
 		var across := Vector3(sin(deg_to_rad(yaw)),0,cos(deg_to_rad(yaw)))
 		var sides := [0,0]
 		for node in bank.get_children():
 			var mm: MultiMesh = node.multimesh
 			check(mm.mesh.get_aabb().size.x < 6.5, "Imported module uses metre scale")
-			for i in range(mm.instance_count):
-				var t := mm.get_instance_transform(i)
+		for batch in batches:
+			for t: Transform3D in batch:
 				var side := (t.origin-center).dot(across)
 				sides[0 if side < 0 else 1] += 1
 				check(t.basis.z.dot(across)*side > 0, "Grass side faces land on both banks")
 		check(sides[0] > 0 and sides[1] > 0, "Both river banks receive modules")
 		bank.free()
 	var lake := Banks.create(world, Vector3.ZERO, Vector2(150,90), 0)
-	await process_frame
-	await process_frame
 	var count := 0
-	for node in lake.get_children():
-		var mm: MultiMesh = node.multimesh
-		for i in range(mm.instance_count):
-			var t := mm.get_instance_transform(i)
+	for batch in Banks.placements(world, Vector3.ZERO, Vector2(150,90), 0):
+		for t: Transform3D in batch:
 			check(t.origin.dot(t.basis.z) > 0, "Lake grass points out of water")
 			count += 1
 	check(count > 40 and count < 90, "Lake coverage is bounded and surrounds the lake")

@@ -1,182 +1,69 @@
 shader_type spatial;
-render_mode depth_draw_always, cull_disabled;
+render_mode blend_mix, depth_draw_opaque, cull_disabled;
 
-group_uniforms water;
-uniform vec3 water_color : source_color;
-uniform sampler2D water_noise_1;
-uniform sampler2D water_noise_2;
-
-group_uniforms vertex_waves;
-uniform bool use_vertex_waves = false;
-uniform float wave_height : hint_range(0.0, 2.0, 0.1) = 0.2;
-uniform float wave_speed : hint_range(0.0, 1.0, 0.01) = 0.05;
-uniform float wave_scale : hint_range(1.0, 50.0, 1.0) = 10.0;
-
-group_uniforms rendering;
-uniform bool double_sided = true;
-uniform vec4 surface_bottom : source_color = vec4(0.29, 0.53, 0.67, 0.65);
-
-group_uniforms depth;
-uniform float depth_distance : hint_range(0.0, 10.0, 0.1) = 0.5;
-uniform float water_color_ratio : hint_range(0.0, 1.0, 0.1) = 0.5;
-uniform float beers_law : hint_range(0.0, 20.0, 0.1) = 3.0;
-
-group_uniforms surface;
-uniform float normal_scale : hint_range(0.0, 1.0, 0.1) = 0.5;
-uniform float roughness_scale : hint_range(0.0, 1.0, 0.1) = 0.2;
-
-group_uniforms river_flow;
-uniform bool use_river_flow = false;
-uniform float flow_speed : hint_range(0.0, 10.0, 0.1) = 1.0;
-uniform float flow_direction_multiplier : hint_range(-1.0, 1.0, 0.1) = 1.0;
-uniform vec2 uv1_scale = vec2(50.0, 1.0);
-uniform vec2 uv1_offset = vec2(0.0, 0.0);
-uniform bool debug_tangent = false;
-
-group_uniforms foam;
-uniform bool use_foam = false;
-uniform bool debug_foam = false;
-uniform sampler2D foam_texture : repeat_enable;
-uniform float foam_uv_scale : hint_range(0.001, 1.0, 0.001) = 0.01;
-uniform float foam_scale : hint_range(1.0, 100.0, 1.0) = 25.0;
-uniform float foam_speed : hint_range(0.0, 2.0, 0.1) = 0.4;
-uniform float foam_falloff_distance : hint_range(0.0, 2.0, 0.1) = 0.4;
-uniform float foam_edge_distance : hint_range(0.0, 1.0, 0.1) = 0.2;
-uniform float foam_edge_bias : hint_range(0.0, 1.0, 0.1) = 0.1;
-uniform vec3 foam_color : source_color = vec3(0.8, 0.8, 0.8);
-
-group_uniforms camera;
-uniform float camera_near = 0.05;
-uniform float camera_far = 200.0;
-
-group_uniforms night;
-uniform float night_amount : hint_range(0.0, 1.0) = 0.0;
-uniform vec3 night_water_color : source_color = vec3(0.012, 0.035, 0.060);
-
-group_uniforms mirror;
-uniform vec3 mirror_color : source_color = vec3(0.62, 0.78, 0.97);
-uniform float mirror_strength : hint_range(0.0, 1.0) = 0.35;
-uniform float mirror_fresnel_power : hint_range(0.5, 8.0) = 3.0;
-
-varying vec4 world_uv;
-varying vec2 flow_direction;
-varying flat vec2 TANGENT_DEBUG;
+uniform sampler2D depth_texture : hint_depth_texture, repeat_disable, filter_nearest;
+uniform sampler2D water_noise_1 : repeat_enable, filter_linear_mipmap;
+uniform sampler2D water_noise_2 : repeat_enable, filter_linear_mipmap;
+uniform sampler2D foam_texture : repeat_enable, filter_linear_mipmap;
+uniform vec3 water_color : source_color = vec3(.055,.105,.085);
+uniform vec3 night_water_color : source_color = vec3(.009,.018,.025);
+uniform float night_amount = 0.0;
+uniform float normal_scale = .22;
+uniform float roughness_scale = .18;
+uniform float beers_law = .8;
+uniform bool use_vertex_waves = true;
+uniform float wave_height = .025;
+uniform bool use_river_flow = true;
+uniform vec2 current_direction = vec2(1.0,0.0);
+uniform float flow_speed = .35;
+uniform float flow_direction_multiplier = -1.0;
+uniform bool use_foam = true;
+uniform vec3 foam_color : source_color = vec3(.55,.57,.50);
+uniform float mirror_strength = .35;
+uniform vec3 mirror_color : source_color = vec3(.62,.78,.97);
+uniform float mirror_fresnel_power = 5.0;
 varying vec3 world_pos;
 
-float edge(float near, float far, float depth){
-	depth = 1.0 - 2.0 * depth;
-	return near * far / (far + depth * (near - far));
-}
-
 void vertex() {
-	world_uv = MODEL_MATRIX * vec4(VERTEX, 1.0);
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-
-	if (use_vertex_waves) {
-		vec2 wave_uv = world_pos.xz / wave_scale;
-		wave_uv.x += TIME * wave_speed;
-		wave_uv.y += TIME * wave_speed * 0.5;
-		wave_uv = mod(wave_uv, 1.0);
-
-		float noise1 = texture(water_noise_1, wave_uv).r;
-		float noise2 = texture(water_noise_2, wave_uv * 0.5 + vec2(TIME * wave_speed * 0.3, 0.0)).r;
-		noise2 = mod(noise2, 1.0);
-
-		float wave_offset = (noise1 + noise2) * 0.5 - 0.5;
-		VERTEX.y += wave_offset * wave_height;
-	}
-
-	if (use_river_flow) {
-		flow_direction = vec2(1.0, 0.0);
-		if (debug_tangent) {
-			TANGENT_DEBUG = normalize(TANGENT.xz);
-		} else {
-			TANGENT_DEBUG = vec2(0.0);
-		}
-	} else {
-		flow_direction = vec2(0.0, 1.0);
-		TANGENT_DEBUG = vec2(0.0);
-	}
+    world_pos = (MODEL_MATRIX * vec4(VERTEX,1.0)).xyz;
+    if (use_vertex_waves) {
+        float wave = sin(dot(world_pos.xz,vec2(.74,.35)) + TIME*.8);
+        wave += sin(dot(world_pos.xz,vec2(-.33,1.17)) - TIME*1.1)*.4;
+        VERTEX.y += wave * wave_height * .5;
+    }
 }
 
 void fragment() {
-	if (!double_sided && !FRONT_FACING) {
-		discard;
-	}
-
-	vec2 _uv;
-
-	if (debug_tangent && use_river_flow) {
-		vec2 tangent_dir = TANGENT_DEBUG;
-		ALBEDO = vec3(tangent_dir.x * 0.5 + 0.5, 0.0, tangent_dir.y * 0.5 + 0.5);
-		ALPHA = 1.0;
-	} else {
-	 
-	if (use_river_flow) { 
-		vec2 flow_offset = TIME * flow_speed * flow_direction * flow_direction_multiplier / uv1_scale.x;
-		_uv = (UV + flow_offset) * uv1_scale + uv1_offset;
-	} else { 
-		_uv = world_uv.xz;
-	}
-
-	float scaled_time = use_river_flow ? TIME * flow_speed / uv1_scale.x : TIME;
-	float spatial_freq = use_river_flow ? 25.0 / uv1_scale.x : 25.0;
-	float distortion_x = sin(scaled_time + (_uv.x + _uv.y) * spatial_freq) * 0.01;
-	float distortion_y = cos(scaled_time + (_uv.x - _uv.y) * spatial_freq) * 0.01;
-	
-	_uv.x += distortion_x;
-	_uv.y += distortion_y;
-
-	NORMAL_MAP = mix(texture(water_noise_1, _uv).rgb, texture(water_noise_2, _uv).rgb, (sin(TIME * flow_speed) + 1.0) / 2.0);
-
-	if (FRONT_FACING) {
-		ALBEDO = water_color;
-		NORMAL_MAP_DEPTH = normal_scale;
-	} else {
-		NORMAL = -NORMAL;
-		NORMAL_MAP = vec3(NORMAL_MAP.xy, 1.0);
-		ALBEDO = surface_bottom.rgb;
-		NORMAL_MAP_DEPTH = normal_scale;
-	}
-
-	ALPHA = clamp(0.55 + water_color_ratio * 0.35, 0.55, 0.95);
-
-	ROUGHNESS = roughness_scale;
-
-	// Night darkening
-	ALBEDO = mix(ALBEDO, night_water_color, night_amount);
-	ALPHA = mix(ALPHA, 0.94, night_amount * 0.5);
-
-	// Reflejo tipo espejo: mas visible en angulos rasantes (Fresnel), color acorde a la hora del dia
-	float mirror_fresnel = pow(clamp(1.0 - dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), mirror_fresnel_power);
-	// Real sky and scene reflections come from the reflection probe.
-	SPECULAR = 1.0;
-	METALLIC = mirror_strength * 0.55;
-	ALPHA = mix(ALPHA, 1.0, mirror_fresnel);
-
-	if (use_foam) {
-		float edgePatternScroll = TIME * foam_speed;
-
-		vec2 world_uv_foam = world_pos.xz * foam_uv_scale;
-		vec2 scaledUV = world_uv_foam * foam_scale;
-
-		// Edge-based foam: stronger near riverbanks (UV.y close to 0 or 1)
-		float edge_dist = min(UV.y, 1.0 - UV.y) * 2.0;
-		float falloff = clamp(1.0 - edge_dist / max(foam_falloff_distance, 0.001) + foam_edge_bias, 0.0, 1.0);
-		float channelA = texture(foam_texture, scaledUV - vec2(edgePatternScroll, cos(scaledUV.x))).r;
-		float channelB = texture(foam_texture, scaledUV * 0.5 + vec2(sin(scaledUV.y), edgePatternScroll)).b;
-
-		float mask = (channelA + channelB) * 0.95;
-		mask = pow(mask, 2.0);
-		mask = clamp(mask, 0.0, 1.0);
-
-		vec3 edge = foam_color * falloff;
-
-		if (debug_foam) {
-			ALBEDO = vec3(falloff, mask, 0.0);
-		} else {
-			ALBEDO += clamp(edge - vec3(mask), 0.0, 1.0) * falloff;
-		}
-	}
-	}
+    vec2 flow = current_direction * flow_speed * flow_direction_multiplier;
+    if (!use_river_flow) { flow = vec2(.025,.018); }
+    vec2 p = world_pos.xz;
+    // Different wavelengths/speeds avoid a uniformly pulsing surface.
+    vec3 n1 = texture(water_noise_1,p*.48 - flow*TIME*.18).rgb*2.0-1.0;
+    vec3 n2 = texture(water_noise_2,p*.91 + vec2(.37,.19) - flow*TIME*.11).rgb*2.0-1.0;
+    vec3 ripple = normalize(vec3(n1.xy+n2.xy*.45,1.0));
+    NORMAL_MAP = ripple*.5+.5;
+    NORMAL_MAP_DEPTH = normal_scale;
+    if (!FRONT_FACING) { NORMAL = -NORMAL; }
+    float depth = texture(depth_texture,SCREEN_UV).r;
+    vec3 ndc = vec3(SCREEN_UV*2.0-1.0,depth);
+    #if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+        ndc.z = depth*2.0-1.0;
+    #endif
+    vec4 scene_view = INV_PROJECTION_MATRIX * vec4(ndc,1.0);
+    scene_view.xyz /= scene_view.w;
+    float thickness = max(0.0,VERTEX.z-scene_view.z);
+    float absorption = 1.0-exp(-min(thickness,20.0)*beers_law);
+    float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),5.0);
+    ALBEDO = mix(water_color,night_water_color,night_amount);
+    ROUGHNESS = roughness_scale;
+    METALLIC = 0.0;
+    SPECULAR = .5;
+    ALPHA = clamp(.13+absorption*.70+fresnel*.23,.13,.96);
+    if (use_foam) {
+        float contact = (1.0-smoothstep(.015,.14,thickness))*smoothstep(.002,.025,thickness);
+        float flecks = smoothstep(.62,.82,texture(foam_texture,p*.9-flow*TIME*.12).r);
+        float foam = contact*flecks*.35;
+        ALBEDO = mix(ALBEDO,foam_color,foam);
+        ROUGHNESS = mix(ROUGHNESS,.75,foam);
+    }
 }

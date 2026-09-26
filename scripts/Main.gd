@@ -9682,7 +9682,7 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	var bottom_plane := PlaneMesh.new()
 	if is_lake:
 		bottom_plane.size = Vector2(size.x * 0.92, size.y * 0.92)
-		bottom_mesh.position.y = -0.15
+		bottom_mesh.position.y = center.y - 4.0
 		var lake_bottom_mat := StandardMaterial3D.new()
 		lake_bottom_mat.albedo_color = Color(0.04, 0.07, 0.10)
 		lake_bottom_mat.roughness = 1.0
@@ -9692,9 +9692,14 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 		bottom_mesh.material_override = lake_bottom_mat
 	else:
 		bottom_plane.size = Vector2(size.x * 1.02, size.y * 1.02)
-		bottom_mesh.position.y = 0.04
+		bottom_mesh.position.y = center.y - 0.65
 		bottom_mesh.mesh = bottom_plane
-		bottom_mesh.material_override = MaterialFactory.make_river_water_material()
+		var riverbed := StandardMaterial3D.new()
+		riverbed.albedo_texture = load("res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg")
+		riverbed.albedo_color = Color(.24,.28,.22)
+		riverbed.roughness = 1.0
+		riverbed.uv1_scale = Vector3(size.x / 3.0, size.y / 3.0, 1.0)
+		bottom_mesh.material_override = riverbed
 	add_child(bottom_mesh)
 	var mesh_instance = RiverWaterScript.new()
 	mesh_instance.name = "MountainRiverWater"

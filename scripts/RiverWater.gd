@@ -53,10 +53,15 @@ func _ready() -> void:
 			_material.set_shader_parameter("roughness_scale", 0.06)
 			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
 	if _material is ShaderMaterial:
+		var direction := global_basis.x.normalized()
+		_material.set_shader_parameter("current_direction", Vector2(direction.x, direction.z))
+		_material.set_shader_parameter("use_river_flow", not _is_lake)
+		_material.set_shader_parameter("wave_height", .012 if _is_lake else .025)
+		_material.set_shader_parameter("beers_law", .65 if _is_lake else .9)
 		if not _is_lake:
 			_material.set_shader_parameter("normal_scale", 0.16)
 			_material.set_shader_parameter("roughness_scale", 0.12)
-			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
+			_material.set_shader_parameter("water_color", Color(0.055, 0.105, 0.085))
 			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)
 	_update_mirror()
@@ -76,7 +81,8 @@ func _process(delta: float) -> void:
 			# A tiny alternating movement explicitly invalidates a cached probe.
 			_reflection.global_position.y += 0.001 if _reflection.get_meta("raised", false) == false else -0.001
 			_reflection.set_meta("raised", not _reflection.get_meta("raised", false))
-	position.y = _base_y + sin(_time * 1.35 + global_position.x * 0.05) * 0.009
+	# Waves belong to the shader; moving whole segments separates their seams.
+	position.y = _base_y
 	if _material is StandardMaterial3D:
 		var standard := _material as StandardMaterial3D
 		standard.uv1_offset.x = fmod(_time * 0.055, 1.0)
