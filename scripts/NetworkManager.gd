@@ -616,23 +616,53 @@ func item_picked_up(action_id: String) -> void:
 
 # Client tells server it dropped an item in the world (server relays to all other clients)
 @rpc("any_peer", "reliable")
-func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0)) -> void:
+func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), contents: Array = []) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if is_host:
 		# The authority validates first — a rejected drop is neither applied
 		# nor relayed to other clients.
-		if scene != null and scene.has_method("_net_item_dropped") and not scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, sender):
+		if scene != null and scene.has_method("_net_item_dropped") and not scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, sender, contents):
 			return
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
 					if peer.get_peer(pid) != null:
-						item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+						item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, contents)
 		return
 	# Client: spawn the visual for a server-relayed drop.
 	if scene != null and scene.has_method("_net_item_dropped"):
-		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, 0, contents)
+
+# Cliente: saca un objeto de una mochila tirada en el suelo
+@rpc("any_peer", "reliable")
+func backpack_take(drop_id: String, item_index: int) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if is_host and scene != null and scene.has_method("_net_backpack_take"):
+		scene._net_backpack_take(sender, drop_id, item_index)
+
+# Cliente: mete un objeto dentro de una mochila tirada en el suelo
+@rpc("any_peer", "reliable")
+func backpack_store(drop_id: String, item_dict: Dictionary) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if is_host and scene != null and scene.has_method("_net_backpack_store"):
+		scene._net_backpack_store(sender, drop_id, item_dict)
+
+# Host → cliente que sacó: le entrega el objeto
+@rpc("authority", "reliable")
+func backpack_give(item_dict: Dictionary) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_backpack_give"):
+		scene._net_backpack_give(item_dict)
+
+# Host → todos: contenido actualizado de la mochila tirada
+@rpc("authority", "reliable")
+func backpack_contents_synced(drop_id: String, contents: Array) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_backpack_contents_synced"):
+		scene._net_backpack_contents_synced(drop_id, contents)
 
 # Client tells server its player died (server drops inventory as loot)
 @rpc("any_peer", "reliable")

@@ -11,6 +11,10 @@ class_name Item
 @export var storage_capacity := 0
 var spoilage := 0.0
 var spoilage_rate := 0.0
+# Objetos guardados dentro del contenedor (mochila). Solo se usa cuando el
+# objeto está tirado en el suelo o sin equipar; al equiparse la mochila su
+# contenido se fusiona de nuevo con el inventario plano.
+var contents: Array = []
 
 const PERISHABLE_FOODS := {
 	"Carne cruda": 0.5,
@@ -76,6 +80,9 @@ func duplicate_stack():
 	dup.storage_capacity = storage_capacity
 	dup.spoilage = spoilage
 	dup.spoilage_rate = spoilage_rate
+	for c in contents:
+		if c != null:
+			dup.contents.append(c.duplicate_stack())
 	for key in get_meta_list():
 		dup.set_meta(key, get_meta(key))
 	return dup
@@ -90,6 +97,9 @@ func can_stack_with(other) -> bool:
 	if item_type == "tool_torch":
 		if bool(get_meta("torch_lit", false)) or bool(other.get_meta("torch_lit", false)):
 			return false
+	# A container with items inside never merges into another stack.
+	if not contents.is_empty() or not other.contents.is_empty():
+		return false
 	# Durability merges by weighted average, so used tools/consumables still stack.
 	if weight != other.weight or max_durability != other.max_durability or storage_capacity != other.storage_capacity:
 		return false
@@ -127,6 +137,12 @@ func to_dict() -> Dictionary:
 	if has_meta("clothing_color"):
 		var c: Color = get_meta("clothing_color")
 		d["clothing_color"] = [c.r, c.g, c.b, c.a]
+	if not contents.is_empty():
+		var cdata: Array = []
+		for c in contents:
+			if c != null:
+				cdata.append(c.to_dict())
+		d["contents"] = cdata
 	return d
 
 static func from_dict(data: Dictionary):
@@ -157,6 +173,12 @@ static func from_dict(data: Dictionary):
 		var c_arr = data["clothing_color"]
 		if c_arr is Array and c_arr.size() >= 3:
 			item.set_meta("clothing_color", Color(float(c_arr[0]), float(c_arr[1]), float(c_arr[2]), float(c_arr[3]) if c_arr.size() > 3 else 1.0))
+	if data.has("contents") and data["contents"] is Array:
+		for cd in data["contents"]:
+			if cd is Dictionary:
+				var ci = from_dict(cd)
+				if ci != null:
+					item.contents.append(ci)
 	return item
 
 func is_broken() -> bool:

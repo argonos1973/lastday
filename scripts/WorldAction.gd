@@ -213,6 +213,10 @@ func get_interaction_text(_player = null) -> String:
 		"build_cabin":
 			return "%s - [F] Construir cabana" % display_name
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat":
+			if action_type == "backpack_pickup" or str(get_meta("item_type", "")) == "backpack":
+				var n_contents: int = (get_meta("contents", []) as Array).size()
+				var count_tag := " (%d)" % n_contents if n_contents > 0 else ""
+				return "%s%s%s - [C] Coger | [K] Abrir" % [display_name, spoil_tag, count_tag]
 			if _is_clothing():
 				if _player_has_knife(_player) and not _is_footwear():
 					return "%s%s - [F] Cortar para trapos | [C] Coger" % [display_name, spoil_tag]

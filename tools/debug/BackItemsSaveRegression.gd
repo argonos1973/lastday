@@ -18,8 +18,10 @@ class TestWorld extends "res://scripts/Main.gd":
 		pass
 	func _save_world_change_silent() -> void:
 		saved_world = SaveHooks.collect_world_data(self)
-	func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
-		_create_world_action(drop_id, "pickup_item", item_name, pos, Vector3.ONE, Color.WHITE, false, false)
+	func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = []) -> void:
+		var action = _create_world_action(drop_id, "pickup_item", item_name, pos, Vector3.ONE, Color.WHITE, false, false)
+		if not contents.is_empty():
+			action.set_meta("contents", contents)
 
 class TestNetwork extends Node:
 	var is_host := true

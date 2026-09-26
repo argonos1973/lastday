@@ -2726,6 +2726,16 @@ func _recalculate_carry_capacity() -> void:
 		return
 	if _initializing:
 		return
+	var cap := _compute_carry_capacity(true)
+	var slots: int = cap["slots"]
+	var weight: float = cap["weight"]
+	var old_max: int = inventory.max_slots
+	inventory.max_slots = slots
+	inventory.max_weight = weight
+	if not _initializing and slots < old_max and inventory.items.size() > slots:
+		_drop_excess_items(inventory.items.size() - slots)
+
+func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 	var slots := BASE_CARRY_SLOTS
 	var weight := BASE_CARRY_WEIGHT
 	# Bonus per equipped clothing slot
@@ -2760,15 +2770,52 @@ func _recalculate_carry_capacity() -> void:
 				slots += HEAD_CARRY_SLOTS
 				weight += HEAD_CARRY_WEIGHT
 	# Backpack bonus only if actually equipped (not just in inventory)
-	if not equipped_backpack.is_empty():
+	if with_backpack and not equipped_backpack.is_empty():
 		slots += SMALL_BACKPACK_SLOTS
 		weight += SMALL_BACKPACK_WEIGHT
-	# If new max_slots is lower than current item count, drop excess
-	var old_max: int = inventory.max_slots
-	inventory.max_slots = slots
-	inventory.max_weight = weight
-	if not _initializing and slots < old_max and inventory.items.size() > slots:
-		_drop_excess_items(inventory.items.size() - slots)
+	return {"slots": slots, "weight": weight}
+
+# Suelta la última mochila: los objetos que ya no caben sin su bonus se meten
+# dentro del propio drop (meta "pending_backpack_contents" → WorldAction "contents")
+# en vez de desparramarse por el suelo. Llamar DESPUÉS de quitar la mochila del
+# inventario. Devuelve los dicts serializados.
+func _pack_backpack_drop_contents() -> Array:
+	if inventory == null:
+		return []
+	# Otra mochila en inventario → no hay pérdida de capacidad.
+	if _has_backpack_in_inventory():
+		return []
+	var slots: int = int(_compute_carry_capacity(false)["slots"])
+	var overflow: int = inventory.items.size() - slots
+	if overflow <= 0:
+		return []
+	var held = get_held_item()
+	var contents: Array = []
+	var taken: Array = []
+	# Desde el final del inventario, igual que _drop_excess_items.
+	for i in range(inventory.items.size() - 1, -1, -1):
+		if contents.size() >= overflow:
+			break
+		var item = inventory.items[i]
+		if item == null or item == held:
+			continue
+		var is_equipped := false
+		for slot_val in _equipped_slots.values():
+			if str(slot_val) == str(item.item_name):
+				is_equipped = true
+				break
+		if is_equipped or str(item.item_type) == "backpack":
+			continue
+		contents.append(item.to_dict())
+		taken.append(item)
+	for item in taken:
+		var ri: int = inventory.items.find(item)
+		if ri >= 0:
+			inventory.remove_index(ri, int(item.quantity))
+	if not contents.is_empty():
+		inventory.changed.emit()
+		notice.emit("El resto de objetos quedan dentro de la mochila.")
+	return contents
 
 func _drop_excess_items(count: int) -> void:
 	if inventory == null or count <= 0:
@@ -5474,13 +5521,26 @@ func drop_inventory_item(index: int) -> void:
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
-	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
 	inventory.remove_index(index, drop_qty)
-	# Only unequip the backpack once its last unit leaves the inventory — a
-	# stacked second backpack must keep the worn one equipped.
-	if item_type == "backpack" and not _has_backpack_in_inventory():
-		equipped_backpack = ""
-		_recalculate_carry_capacity()
+	if item_type == "backpack":
+		# El contenido anidado viaja con la unidad soltada solo cuando el stack
+		# sale del todo del inventario.
+		var packed: Array = []
+		if inventory.items.find(item) < 0:
+			for c in item.contents:
+				if c != null:
+					packed.append(c.to_dict())
+			item.contents.clear()
+		# Only unequip the backpack once its last unit leaves the inventory — a
+		# stacked second backpack must keep the worn one equipped.
+		if not _has_backpack_in_inventory():
+			# El exceso no cabe sin la mochila: viaja dentro del drop, no al suelo.
+			packed.append_array(_pack_backpack_drop_contents())
+			equipped_backpack = ""
+			_recalculate_carry_capacity()
+		if not packed.is_empty():
+			set_meta("pending_backpack_contents", packed)
+	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
 	if held_index >= inventory.items.size():
 		held_index = max(0, inventory.items.size() - 1)
 	_sync_held_item()
@@ -5554,9 +5614,19 @@ func _throw_held_item(charge: float) -> void:
 		if removed == null:
 			thrown_visual.free()
 			return
-	if item_type == "backpack" and not _has_backpack_in_inventory():
-		equipped_backpack = ""
-		_recalculate_carry_capacity()
+	# Mochila lanzada: el contenido anidado y el exceso que deja de caber se
+	# empaquetan dentro del drop (viajan por drop_data hasta el aterrizaje).
+	var thrown_contents: Array = []
+	if item_type == "backpack":
+		if idx >= 0 and inventory.items.find(item) < 0:
+			for c in item.contents:
+				if c != null:
+					thrown_contents.append(c.to_dict())
+			item.contents.clear()
+		if not _has_backpack_in_inventory():
+			thrown_contents.append_array(_pack_backpack_drop_contents())
+			equipped_backpack = ""
+			_recalculate_carry_capacity()
 	_sync_held_item()
 	# Fuerza de lanzamiento: la carga se escala, el peso la reduce
 	var weight_factor := 1.0 / (1.0 + item_weight * 0.5)
@@ -5570,11 +5640,11 @@ func _throw_held_item(charge: float) -> void:
 	var launch_dir := (cam_dir + Vector3(0, 0.15, 0)).normalized()
 	var launch_vel: Vector3 = launch_dir * throw_force
 	# Lanzar el objeto con física real (RigidBody3D)
-	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, thrown_visual)
+	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, thrown_visual, thrown_contents)
 
 # Crea un RigidBody3D que vuela con física real (gravedad, colisiones).
 # Al aterrizar genera el drop; si cae al agua: splash + ondas + hundimiento.
-func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, prepared_visual: Node3D) -> void:
+func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, prepared_visual: Node3D, contents: Array = []) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -5610,7 +5680,8 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		"item_use_value": item_use_value,
 		"color": color,
 		"broken": broken,
-		"spoilage": spoilage
+		"spoilage": spoilage,
+		"contents": contents
 	}
 	# Monitorear colisiones para detectar aterrizaje
 	var landed := false
@@ -5668,6 +5739,9 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		land_pos.y = 0.06
 	body.queue_free()
 	# Drop normal en la posición de aterrizaje
+	var landed_contents: Array = drop_data.get("contents", [])
+	if not landed_contents.is_empty():
+		set_meta("pending_backpack_contents", landed_contents)
 	item_dropped.emit(
 		drop_data["item_name"], drop_data["item_type"],
 		drop_data["item_weight"], 1, drop_data["item_use_value"],

@@ -831,13 +831,26 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_K and not player.is_sleeping:
 			if _loot_panel != null:
 				_close_loot_ui()
-			hud.toggle_craft_panel()
+			if _backpack_panel != null:
+				_close_backpack_ui()
+				get_viewport().set_input_as_handled()
+				return
+			var k_target = player._get_interaction_target() if player.has_method("_get_interaction_target") else null
+			if _is_backpack_container(k_target):
+				_toggle_backpack_ui(k_target)
+			else:
+				hud.toggle_craft_panel()
 			get_viewport().set_input_as_handled()
 			return
-		if event.keycode == KEY_ESCAPE and hud.craft_panel_visible:
-			hud.toggle_craft_panel()
-			get_viewport().set_input_as_handled()
-			return
+		if event.keycode == KEY_ESCAPE:
+			if _backpack_panel != null:
+				_close_backpack_ui()
+				get_viewport().set_input_as_handled()
+				return
+			if hud.craft_panel_visible:
+				hud.toggle_craft_panel()
+				get_viewport().set_input_as_handled()
+				return
 	if hud != null and hud.inventory_visible and event is InputEventMouseButton and event.pressed:
 		if hud.handle_context_menu_click(event.position, event.button_index):
 			get_viewport().set_input_as_handled()
@@ -2869,7 +2882,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)))
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []))
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -4104,6 +4117,296 @@ func _net_add_looted_item(item_data: Dictionary) -> void:
 			if inv != null and inv.has_method("add_item"):
 				inv.add_item(item)
 
+# ---------- Contenido de mochilas en el suelo (opción K) ----------
+
+var _backpack_panel: PanelContainer = null
+var _backpack_action = null
+
+func _is_backpack_container(target) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	var at = target.get("action_type")
+	if at != null and str(at) == "backpack_pickup":
+		return true
+	return str(target.get_meta("item_type", "")) == "backpack"
+
+func _toggle_backpack_ui(action) -> void:
+	if _backpack_panel != null and _backpack_action == action:
+		_close_backpack_ui()
+		return
+	_backpack_action = action
+	_refresh_backpack_ui()
+
+func _close_backpack_ui() -> void:
+	if _backpack_panel != null:
+		_backpack_panel.queue_free()
+		_backpack_panel = null
+	_backpack_action = null
+	if player != null and not player.is_dead:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _refresh_backpack_ui() -> void:
+	if hud == null or _backpack_action == null or not is_instance_valid(_backpack_action):
+		_backpack_panel = null
+		_backpack_action = null
+		return
+	if _backpack_panel != null:
+		_backpack_panel.queue_free()
+	_backpack_panel = PanelContainer.new()
+	_backpack_panel.custom_minimum_size = Vector2(400, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.05, 0.04, 0.96)
+	style.border_color = Color(0.72, 0.74, 0.40, 0.95)
+	style.border_width_left = 2
+	style.border_width_right = 2
+	style.border_width_top = 2
+	style.border_width_bottom = 2
+	_backpack_panel.add_theme_stylebox_override("panel", style)
+	_backpack_panel.position = Vector2(280, 120)
+	_backpack_panel.z_index = 50
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_backpack_panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "%s - [K] para cerrar" % str(_backpack_action.display_name)
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
+	vbox.add_child(title)
+	var contents: Array = _backpack_action.get_meta("contents", [])
+	var head := Label.new()
+	head.text = "Dentro:"
+	head.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
+	vbox.add_child(head)
+	if contents.is_empty():
+		var empty := Label.new()
+		empty.text = "Vacia."
+		empty.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
+		vbox.add_child(empty)
+	else:
+		for i in range(contents.size()):
+			var cd: Dictionary = contents[i]
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			vbox.add_child(row)
+			var name_label := Label.new()
+			name_label.text = "%s x%d" % [str(cd.get("name", "???")), int(cd.get("quantity", 1))]
+			name_label.custom_minimum_size = Vector2(230, 24)
+			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+			row.add_child(name_label)
+			var take_btn := Button.new()
+			take_btn.text = "Coger"
+			take_btn.custom_minimum_size = Vector2(80, 28)
+			var idx := i
+			take_btn.pressed.connect(func(): _backpack_take(idx))
+			row.add_child(take_btn)
+	# Meter objetos del inventario dentro de la mochila tirada
+	if player != null and player.inventory != null:
+		var sep := HSeparator.new()
+		vbox.add_child(sep)
+		var head2 := Label.new()
+		head2.text = "Meter desde el inventario:"
+		head2.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
+		vbox.add_child(head2)
+		var held = player.get_held_item() if player.has_method("get_held_item") else null
+		var equipped_names := {}
+		for sv in player._equipped_slots.values():
+			equipped_names[str(sv)] = true
+		var any := false
+		var scroll := ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(390, 0)
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var sbox := VBoxContainer.new()
+		sbox.add_theme_constant_override("separation", 4)
+		sbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll.add_child(sbox)
+		vbox.add_child(scroll)
+		for i in range(player.inventory.items.size()):
+			var it = player.inventory.items[i]
+			if it == null or it == held or str(it.item_type) == "backpack" or equipped_names.has(str(it.item_name)):
+				continue
+			any = true
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			sbox.add_child(row)
+			var name_label := Label.new()
+			name_label.text = "%s x%d" % [str(it.item_name), int(it.quantity)]
+			name_label.custom_minimum_size = Vector2(230, 24)
+			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+			row.add_child(name_label)
+			var store_btn := Button.new()
+			store_btn.text = "Meter"
+			store_btn.custom_minimum_size = Vector2(80, 28)
+			var idx := i
+			store_btn.pressed.connect(func(): _backpack_store(idx))
+			row.add_child(store_btn)
+		if not any:
+			var empty2 := Label.new()
+			empty2.text = "No llevas nada que se pueda meter."
+			empty2.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
+			sbox.add_child(empty2)
+	hud.add_child(_backpack_panel)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _set_backpack_entry_contents(drop_id: String, contents: Array) -> void:
+	for e in _dropped_items:
+		if str(e.get("id", "")) == drop_id:
+			e["contents"] = contents
+			return
+
+func _backpack_drop_pos(drop_id: String, action) -> Vector3:
+	if action != null and is_instance_valid(action):
+		return action.global_position
+	for e in _dropped_items:
+		if str(e.get("id", "")) == drop_id:
+			var p = e.get("pos")
+			if p is Vector3:
+				return p
+			if p is Array and p.size() >= 3:
+				return Vector3(float(p[0]), float(p[1]), float(p[2]))
+	return Vector3.INF
+
+func _broadcast_backpack_contents(drop_id: String, contents: Array) -> void:
+	if net == null or not net.is_host or net.peer == null:
+		return
+	for pid in net.players.keys():
+		if pid == multiplayer.get_unique_id() or net.players[pid].get("offline", false):
+			continue
+		if net.peer.get_peer(pid) == null:
+			continue
+		net.backpack_contents_synced.rpc_id(pid, drop_id, contents)
+
+# Coger un objeto de la mochila tirada → inventario.
+func _backpack_take(item_index: int) -> void:
+	var action = _backpack_action
+	if action == null or not is_instance_valid(action):
+		_close_backpack_ui()
+		return
+	var drop_id := str(action.action_id)
+	if net != null and net.is_connected and not net.is_host:
+		net.backpack_take.rpc_id(1, drop_id, item_index)
+		return
+	# Host / offline: aplicar directamente al jugador local.
+	var contents: Array = action.get_meta("contents", [])
+	if item_index < 0 or item_index >= contents.size():
+		return
+	var cd = contents[item_index]
+	if not cd is Dictionary:
+		return
+	var item = ItemScript.from_dict(cd)
+	if item == null:
+		return
+	if player == null or player.inventory == null or not player.inventory.add_item(item):
+		if player != null:
+			player.notice.emit("No tienes espacio para sacarlo.")
+		return
+	contents = contents.duplicate(true)
+	contents.remove_at(item_index)
+	action.set_meta("contents", contents)
+	_set_backpack_entry_contents(drop_id, contents)
+	_save_world_change_silent()
+	_broadcast_backpack_contents(drop_id, contents)
+	_refresh_backpack_ui()
+
+# Meter un objeto del inventario dentro de la mochila tirada.
+func _backpack_store(inv_index: int) -> void:
+	var action = _backpack_action
+	if action == null or not is_instance_valid(action):
+		_close_backpack_ui()
+		return
+	if player == null or player.inventory == null or inv_index < 0 or inv_index >= player.inventory.items.size():
+		return
+	var item = player.inventory.items[inv_index]
+	if item == null or str(item.item_type) == "backpack":
+		return
+	var cd: Dictionary = item.to_dict()
+	var drop_id := str(action.action_id)
+	if net != null and net.is_connected and not net.is_host:
+		player.inventory.remove_index(inv_index, int(item.quantity))
+		net.backpack_store.rpc_id(1, drop_id, cd)
+		return
+	player.inventory.remove_index(inv_index, int(item.quantity))
+	var contents: Array = (action.get_meta("contents", []) as Array).duplicate(true)
+	contents.append(cd)
+	action.set_meta("contents", contents)
+	_set_backpack_entry_contents(drop_id, contents)
+	_save_world_change_silent()
+	_broadcast_backpack_contents(drop_id, contents)
+	_refresh_backpack_ui()
+
+# Host: un cliente saca un objeto de la mochila.
+func _net_backpack_take(sender_id: int, drop_id: String, item_index: int) -> void:
+	var action = world_actions_by_id.get(drop_id)
+	var contents: Array = []
+	var found := false
+	if action != null and is_instance_valid(action):
+		contents = action.get_meta("contents", [])
+		found = true
+	else:
+		for e in _dropped_items:
+			if str(e.get("id", "")) == drop_id:
+				contents = (e.get("contents", []) as Array).duplicate(true)
+				found = true
+				break
+	if not found or item_index < 0 or item_index >= contents.size():
+		return
+	var drop_pos := _backpack_drop_pos(drop_id, action)
+	if sender_id != 0 and sender_id != net.get_my_id() and not _sender_within(sender_id, drop_pos, 8.0):
+		return
+	var cd = contents[item_index]
+	if not cd is Dictionary:
+		return
+	contents.remove_at(item_index)
+	if action != null and is_instance_valid(action):
+		action.set_meta("contents", contents)
+	_set_backpack_entry_contents(drop_id, contents)
+	_save_world_change_silent()
+	_broadcast_backpack_contents(drop_id, contents)
+	net.backpack_give.rpc_id(sender_id, cd)
+
+# Host: un cliente mete un objeto en la mochila.
+func _net_backpack_store(sender_id: int, drop_id: String, item_dict: Dictionary) -> void:
+	var nm := str(item_dict.get("name", ""))
+	if nm.is_empty() or nm.length() > 80 or str(item_dict.get("type", "")) == "backpack":
+		return
+	var action = world_actions_by_id.get(drop_id)
+	var drop_pos := _backpack_drop_pos(drop_id, action)
+	if drop_pos == Vector3.INF:
+		return
+	if sender_id != 0 and sender_id != net.get_my_id() and not _sender_within(sender_id, drop_pos, 8.0):
+		return
+	var contents: Array = []
+	if action != null and is_instance_valid(action):
+		contents = (action.get_meta("contents", []) as Array).duplicate(true)
+	contents.append(item_dict)
+	if action != null and is_instance_valid(action):
+		action.set_meta("contents", contents)
+	_set_backpack_entry_contents(drop_id, contents)
+	_save_world_change_silent()
+	_broadcast_backpack_contents(drop_id, contents)
+
+# Cliente: el host entrega el objeto sacado de la mochila.
+func _net_backpack_give(item_dict: Dictionary) -> void:
+	if player == null:
+		return
+	var item = ItemScript.from_dict(item_dict)
+	if item == null:
+		return
+	if player.inventory != null and player.inventory.add_item(item):
+		player.notice.emit("Sacas %s de la mochila." % item.item_name)
+	else:
+		var dpos: Vector3 = player.global_position + (player.global_transform.basis * Vector3.FORWARD * 0.8)
+		player.item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), dpos, Color(0, 0, 0, 0), false, float(item.spoilage))
+		player.notice.emit("Sin espacio: %s cae al suelo." % item.item_name)
+
+# Cliente: el host publica el contenido actualizado de la mochila.
+func _net_backpack_contents_synced(drop_id: String, contents: Array) -> void:
+	if world_actions_by_id.has(drop_id):
+		var a = world_actions_by_id[drop_id]
+		if a != null and is_instance_valid(a):
+			a.set_meta("contents", contents)
+	if _backpack_panel != null and _backpack_action != null and str(_backpack_action.action_id) == drop_id:
+		_refresh_backpack_ui()
+
 func _is_water_drop_position(pos: Vector3) -> bool:
 	return has_method("get_river_depth_at") and float(get_river_depth_at(pos)) > 0.02
 
@@ -4120,11 +4423,18 @@ func _play_water_drop_effect(pos: Vector3) -> void:
 			player.call("_spawn_water_ripples", splash_pos)
 
 func _on_item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
-	# El emit se produce antes de que drop_inventory_item quite el objeto del
-	# inventario, así que la sync va diferida al frame siguiente y captura el
-	# estado final. Sin esto, salir del servidor dentro de la ventana de 2 s
-	# dejaba saved_inventory con el objeto -> al reconectar aparecía en la mano
-	# y además en el suelo (duplicado real).
+	# Contenido empaquetado por _pack_backpack_drop_contents al soltar la última
+	# mochila: viaja dentro del drop en vez de caer como objetos sueltos.
+	var pending_contents: Array = []
+	if player != null and player.has_meta("pending_backpack_contents"):
+		pending_contents = player.get_meta("pending_backpack_contents")
+		player.remove_meta("pending_backpack_contents")
+	if item_type != "backpack":
+		pending_contents = []
+	# La sync va diferida al frame siguiente y captura el estado final del
+	# inventario (ya sin el objeto soltado). Sin esto, salir del servidor
+	# dentro de la ventana de 2 s dejaba saved_inventory con el objeto -> al
+	# reconectar aparecía en la mano y además en el suelo (duplicado real).
 	if net != null and net.is_connected and not net.is_host:
 		call_deferred("_sync_local_player_inventory")
 	# El drop llega a la altura del jugador — bajarlo a la superficie real evita
@@ -4195,13 +4505,15 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents)
 	_tag_meat_drop(drop_id, item_name, "local")
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 	if spoilage > 0.0:
 		drop_entry["spoilage"] = spoilage
 	if color.a > 0.0:
 		drop_entry["color"] = [color.r, color.g, color.b, color.a]
+	if not pending_contents.is_empty():
+		drop_entry["contents"] = pending_contents
 	# Preservar durabilidad del item soltado
 	var drop_durability := 0.0
 	var drop_max_durability := 0.0
@@ -4220,7 +4532,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 				wa.set_meta("item_max_durability", drop_max_durability)
 	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
-		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
 	if _is_water_drop_position(pos):
@@ -4241,7 +4553,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = []) -> void:
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
@@ -4345,6 +4657,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
 	action.set_meta("item_use_value", item_use_value)
+	if not contents.is_empty():
+		action.set_meta("contents", contents)
 	# Set spoilage for all perishable food items (not just eat_food)
 	if item_type == "food":
 		action.set_meta("item_spoilage", spoilage)
@@ -4359,7 +4673,7 @@ func _track_dropped_item(entry: Dictionary) -> void:
 		return
 	_dropped_items.append(entry)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0) -> bool:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = []) -> bool:
 	# Host: a client can only drop near itself and with a sane payload —
 	# otherwise arbitrary items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
@@ -4381,14 +4695,17 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	item_weight = clampf(item_weight, 0.0, 100.0)
 	item_quantity = clampi(item_quantity, 1, 999)
 	item_use_value = clampf(item_use_value, -100.0, 100.0)
+	contents = contents.slice(0, 64)
 	if net != null and net.is_host:
 		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 		if color.a > 0.0:
 			drop_entry["color"] = [color.r, color.g, color.b, color.a]
+		if not contents.is_empty():
+			drop_entry["contents"] = contents
 		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
 		return true
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents)
 	# El servidor necesita saber quién la tiró para la domesticación de lobos;
 	# el drop del propio host llega ya etiquetado por _on_item_dropped.
 	var dropper := "local"
@@ -8087,10 +8404,25 @@ func _execute_world_action(action, actor) -> void:
 			var _prev_bp := str(actor.equipped_backpack) if "equipped_backpack" in actor else ""
 			if actor.has_method("equip_backpack"):
 				actor.equip_backpack("Mochila pequena")
-			if not actor.inventory.add_item(ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)):
+			var bp_item = ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)
+			if action.has_meta("contents"):
+				for cd in action.get_meta("contents"):
+					if cd is Dictionary:
+						var ci = ItemScript.from_dict(cd)
+						if ci != null:
+							bp_item.contents.append(ci)
+			if not actor.inventory.add_item(bp_item):
 				if actor.has_method("equip_backpack"):
 					actor.equip_backpack(_prev_bp)
 				return
+			# Al equiparla, su contenido vuelve al inventario plano.
+			if not bp_item.contents.is_empty():
+				var leftover: Array = []
+				for ci in bp_item.contents:
+					if ci != null and actor.inventory.add_item(ci):
+						continue
+					leftover.append(ci)
+				bp_item.contents = leftover
 			if actor.has_method("_sync_held_item"):
 				actor._sync_held_item()
 			actor.notice.emit("Recoges una mochila pequena. Puedes cargar mas.")
@@ -8516,6 +8848,13 @@ func handle_world_action_collect(action, actor) -> void:
 				item.max_durability = float(action.get_meta("item_max_durability"))
 				if action.has_meta("item_durability"):
 					item.durability = float(action.get_meta("item_durability"))
+			# Mochila con contenido: los objetos viajan dentro del item
+			if str(item.item_type) == "backpack" and action.has_meta("contents"):
+				for cd in action.get_meta("contents"):
+					if cd is Dictionary:
+						var ci = ItemScript.from_dict(cd)
+						if ci != null:
+							item.contents.append(ci)
 			_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				var _prev_bp := str(actor.equipped_backpack)
@@ -8523,6 +8862,13 @@ func handle_world_action_collect(action, actor) -> void:
 				if not actor.inventory.add_item(item):
 					actor.equip_backpack(_prev_bp)
 					return
+				# Al equiparla, su contenido vuelve al inventario plano.
+				var leftover: Array = []
+				for ci in item.contents:
+					if ci != null and actor.inventory.add_item(ci):
+						continue
+					leftover.append(ci)
+				item.contents = leftover
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 			elif str(item.item_type) == "clothing":
 				if not actor.inventory.add_item(item):
