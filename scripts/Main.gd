@@ -7857,7 +7857,7 @@ func _execute_world_action(action, actor) -> void:
 					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
 						actor.inventory.remove_index(i)
 						break
-				var filled_bottle = ItemScript.create("Botella de agua llena", "water", 0.4, 1, 25.0)
+				var filled_bottle = ItemScript.create("Botella de agua llena", "water", 0.4, 1, 100.0)
 				filled_bottle.max_durability = 100.0
 				filled_bottle.durability = 100.0
 				if actor.inventory.add_item(filled_bottle):

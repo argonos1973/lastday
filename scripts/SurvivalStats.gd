@@ -27,7 +27,7 @@ var overeat_count := 0
 var overdrink_count := 0
 
 var hunger_decay := 0.12
-var thirst_decay := 0.22
+var thirst_decay := 0.10
 var energy_decay := 0.06
 var sleep_decay := 0.08
 var cold_decay := 0.012
