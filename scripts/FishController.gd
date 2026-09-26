@@ -8,7 +8,8 @@ const MODEL_PATHS := [
     "res://assets/external/quaternius_fish_obj/OBJ/Fish2.obj",
     "res://assets/external/quaternius_fish_obj/OBJ/Fish3.obj",
 ]
-const COLORS := [Color(.19,.25,.21),Color(.30,.28,.17),Color(.24,.30,.32)]
+# Más luminosos que el agua para que el pez se distinga nadando bajo la superficie.
+const COLORS := [Color(.34,.44,.38),Color(.44,.41,.26),Color(.36,.45,.48)]
 var center := Vector3.ZERO
 var along := Vector3.RIGHT
 var across := Vector3.BACK
@@ -37,7 +38,10 @@ static func school_specs(origin: Vector3, size: Vector2, yaw: float) -> Array:
             var angle := TAU*float(i)/count + rng.randf_range(-.05,.05)
             var radius := rng.randf_range(.31,.37)
             p = origin + forward*cos(angle)*size.x*radius + side*sin(angle)*size.y*radius
-        p.y = origin.y - rng.randf_range(.20,.38)
+        # El lomo cresta la superficie: sumergidos son invisibles y solo se ve
+        # una línea finísima — las "rayas" eran los peces medio ocultos.
+        var half_h: float = [.16,.22,.28][i%3]*.22
+        p.y = origin.y + rng.randf_range(.0,.025) - half_h
         result.append({"center":p,"along":forward,"across":side,"length":rng.randf_range(1.8,4.0) if lake else size.x*rng.randf_range(.15,.30),"width":1.0 if lake else size.y*.22,"seed":rng.randi(),"species":i%3})
     return result
 
@@ -50,7 +54,7 @@ func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_le
     var rng := RandomNumberGenerator.new()
     rng.seed = seed_value
     species = posmod(variant,3)
-    body_length = [.14,.20,.25][species]*rng.randf_range(.78,1.12)
+    body_length = [.16,.22,.28][species]*rng.randf_range(.78,1.12)
     speed = rng.randf_range(.22,.48)
     phase = rng.randf_range(0,TAU)
     _build_fish()

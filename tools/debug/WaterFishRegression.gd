@@ -26,7 +26,7 @@ func run() -> void:
             var fish := Fish.new()
             fish.setup(spec.center,spec.along,spec.across,spec.length,spec.width,spec.seed,spec.species)
             species[fish.species] = true
-            small = small and fish.body_length >= .10 and fish.body_length < .29
+            small = small and fish.body_length >= .10 and fish.body_length < .34
             var visual := fish.get_child(0) as Node3D
             if visual is MeshInstance3D:
                 actual_scale = actual_scale and is_equal_approx(visual.get_aabb().size.z*visual.scale.z,fish.body_length)
@@ -35,7 +35,7 @@ func run() -> void:
             for t in range(0,600,3):
                 var p := fish.pose_at(float(t))
                 contained = contained and world.get_river_depth_at(p)>.05
-                submerged = submerged and p.y < origin.y-.15 and p.y>origin.y-.5
+                submerged = submerged and p.y < origin.y+.02 and p.y>origin.y-.5
                 smooth = smooth and p.distance_to(fish.pose_at(float(t)+.0167))<.02
             fish.free()
         check(species.size()==3,"three distinct meshes")

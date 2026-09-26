@@ -10089,7 +10089,8 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	bottom_mesh.rotation_degrees = Vector3(0, yaw, 0)
 	var bottom_plane := PlaneMesh.new()
 	if is_lake:
-		bottom_plane.size = Vector2(size.x * 0.92, size.y * 0.92)
+		# Cubre el anillo recortado por la máscara de cauce (borde del mesh ~.50).
+		bottom_plane.size = Vector2(size.x * 1.10, size.y * 1.10)
 		bottom_mesh.position.y = center.y - 4.0
 		var lake_bottom_mat := StandardMaterial3D.new()
 		lake_bottom_mat.albedo_color = Color(0.04, 0.07, 0.10)
@@ -10099,7 +10100,9 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 		bottom_mesh.mesh = bottom_plane
 		bottom_mesh.material_override = lake_bottom_mat
 	else:
-		bottom_plane.size = Vector2(size.x * 1.02, size.y * 1.02)
+		# La máscara recorta terreno hasta medio_paso+1.1 m del cauce; el lecho
+		# tiene que cubrir ese hueco o se vería el vacío bajo los bordes.
+		bottom_plane.size = Vector2(size.x * 1.30, size.y * 1.50)
 		bottom_mesh.position.y = center.y - 0.65
 		bottom_mesh.mesh = bottom_plane
 		var riverbed := StandardMaterial3D.new()
@@ -13543,7 +13546,10 @@ func _make_water_channel_mask() -> ImageTexture:
 			for x in range(min_x,max_x+1):
 				var offset := Vector2((x+.5)*pixel_size-MAP_EXTENT-center.x,(z+.5)*pixel_size-MAP_EXTENT-center.z)
 				var local := Vector2(offset.dot(forward)/size.x,offset.dot(side)/size.y)
-				var inside := local.length() < .40 if size.x >= 60.0 else absf(local.x)<.48 and absf(local.y)<.43
+				# El agua cubre hasta el medio de size + jitter de bordes
+				# (~0.8 m). Una máscara más estrecha dejaba franjas de terreno
+				# bajo el agua — las "rayas" paralelas al cauce.
+				var inside := local.length() < .50 if size.x >= 60.0 else absf(offset.dot(forward))<size.x*.5+1.5 and absf(offset.dot(side))<size.y*.5+1.1
 				if inside:
 					image.set_pixel(x,z,Color.WHITE)
 	return ImageTexture.create_from_image(image)
