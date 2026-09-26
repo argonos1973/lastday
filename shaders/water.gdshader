@@ -1,7 +1,6 @@
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_disabled;
 
-uniform sampler2D depth_texture : hint_depth_texture, repeat_disable, filter_nearest;
 uniform sampler2D water_noise_1 : repeat_enable, filter_linear_mipmap;
 uniform sampler2D water_noise_2 : repeat_enable, filter_linear_mipmap;
 uniform sampler2D foam_texture : repeat_enable, filter_linear_mipmap;
@@ -44,23 +43,22 @@ void fragment() {
     NORMAL_MAP = ripple*.5+.5;
     NORMAL_MAP_DEPTH = normal_scale;
     if (!FRONT_FACING) { NORMAL = -NORMAL; }
-    float depth = texture(depth_texture,SCREEN_UV).r;
-    vec3 ndc = vec3(SCREEN_UV*2.0-1.0,depth);
-    #if CURRENT_RENDERER == RENDERER_COMPATIBILITY
-        ndc.z = depth*2.0-1.0;
-    #endif
-    vec4 scene_view = INV_PROJECTION_MATRIX * vec4(ndc,1.0);
-    scene_view.xyz /= scene_view.w;
-    float thickness = max(0.0,VERTEX.z-scene_view.z);
-    float absorption = 1.0-exp(-min(thickness,20.0)*beers_law);
-    float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),5.0);
+    // Depth approximation from mesh UVs: the river crosses the channel on
+    // UV.y 0..1 and the lake runs from center (.5,.5) to the rim, so the
+    // shoreline needs no depth texture (unavailable in Compatibility).
+    float edge_dist = use_river_flow
+        ? min(UV.y, 1.0-UV.y)*2.0
+        : 1.0 - clamp(length(UV-vec2(.5))*2.0, 0.0, 1.0);
+    float absorption = 1.0-exp(-edge_dist*beers_law*4.5);
+    float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),mirror_fresnel_power);
     ALBEDO = mix(water_color,night_water_color,night_amount);
     ROUGHNESS = roughness_scale;
-    METALLIC = 0.0;
-    SPECULAR = .5;
-    ALPHA = clamp(.13+absorption*.70+fresnel*.23,.13,.96);
+    METALLIC = mirror_strength * 0.55;
+    SPECULAR = 1.0;
+    ALPHA = clamp(.13+absorption*.78,.13,.96);
+    ALPHA = mix(ALPHA, 1.0, fresnel*mirror_strength);
     if (use_foam) {
-        float contact = (1.0-smoothstep(.015,.14,thickness))*smoothstep(.002,.025,thickness);
+        float contact = (1.0-smoothstep(.02,.16,edge_dist))*smoothstep(.001,.03,edge_dist);
         float flecks = smoothstep(.62,.82,texture(foam_texture,p*.9-flow*TIME*.12).r);
         float foam = contact*flecks*.35;
         ALBEDO = mix(ALBEDO,foam_color,foam);
