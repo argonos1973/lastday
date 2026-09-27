@@ -265,7 +265,9 @@ func get_interaction_text(_player = null) -> String:
 						return "Cocinar - [F] (pondras la carne ensartada en la mano)"
 			return "Fogata encendida - lleva carne o pez ensartado en la mano"
 		"shelter":
-			return "Desmontar refugio - [F] (recuperar 11 palos)"
+			var stash_n: int = (get_meta("contents", []) as Array).size()
+			var stash_tag := " (%d)" % stash_n if stash_n > 0 else ""
+			return "Desmontar - [F] (recuperar 11 palos) | Objetos%s - [K]" % stash_tag
 	return "%s - [F]" % display_name
 
 func to_dict() -> Dictionary:

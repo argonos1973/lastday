@@ -836,7 +836,8 @@ func _input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 			var k_target = player._get_interaction_target() if player.has_method("_get_interaction_target") else null
-			if _is_backpack_container(k_target):
+			var k_is_shelter: bool = k_target != null and str(k_target.get("action_type", "")) == "shelter"
+			if _is_backpack_container(k_target) or k_is_shelter:
 				_toggle_backpack_ui(k_target)
 			else:
 				hud.toggle_craft_panel()
@@ -2928,6 +2929,9 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 	for sh in shelters:
 		if not world_actions_by_id.has(str(sh["id"])):
 			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"])
+		var sh_action = world_actions_by_id.get(str(sh["id"]))
+		if sh_action != null and is_instance_valid(sh_action):
+			sh_action.set_meta("contents", sh.get("contents", []))
 
 func _apply_pending_doors() -> void:
 	if _pending_open_doors.is_empty():
@@ -4279,6 +4283,12 @@ func _set_backpack_entry_contents(drop_id: String, contents: Array) -> void:
 	for e in _dropped_items:
 		if str(e.get("id", "")) == drop_id:
 			e["contents"] = contents
+			return
+	# Los refugios guardan su alijo en _built_shelters: viaja en sync_world_state
+	# a los nuevos clientes y en el save de un jugador.
+	for sh in _built_shelters:
+		if str(sh.get("id", "")) == drop_id:
+			sh["contents"] = contents
 			return
 
 func _backpack_drop_pos(drop_id: String, action) -> Vector3:
@@ -8688,6 +8698,10 @@ func _execute_world_action(action, actor) -> void:
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 		"shelter":
+			var stash_contents: Array = action.get_meta("contents", [])
+			if not stash_contents.is_empty():
+				actor.notice.emit("El refugio tiene objetos dentro. Sacalos con [K] antes de desmontarlo.")
+				return
 			_play_actor_action(actor, "forage", 3.0)
 			if hud != null:
 				hud.show_countdown("Desmontando refugio", 3.0)
@@ -9223,6 +9237,10 @@ func _net_shelter_built(sh_id: String, pos: Vector3, sender_id: int = 0) -> bool
 	return true
 
 func _net_shelter_dismantled(sh_id: String, sender_id: int = 0) -> bool:
+	# Never tear down a stocked stash: items inside would be deleted.
+	var sh_action = world_actions_by_id.get(sh_id)
+	if sh_action != null and is_instance_valid(sh_action) and not (sh_action.get_meta("contents", []) as Array).is_empty():
+		return false
 	# The sender must stand next to the shelter being torn down — a remote id
 	# alone must not be enough to delete someone else's build.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():

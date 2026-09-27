@@ -158,6 +158,35 @@ func run() -> void:
 	var empty_bp = ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)
 	check(not empty_bp.can_stack_with(bp_with_contents), "A filled backpack never merges into a stack")
 
+	# Refugio de palos: el alijo usa el mismo flujo que la mochila — contents en
+	# la action, _built_shelters lo persiste para sync/save, y desmontar un
+	# refugio con objetos dentro se rechaza.
+	var sh_id := "player_shelter_test"
+	world._spawn_player_shelter_with_id(sh_id, Vector3(20, 0, 20))
+	var sh_action = world.world_actions_by_id.get(sh_id)
+	check(sh_action != null, "Built shelter registers a world action")
+	world._built_shelters.append({"id": sh_id, "pos": Vector3(20, 0, 20)})
+	if sh_action != null:
+		check(str(sh_action.action_type) == "shelter", "Shelter world action type")
+		check(str(sh_action.get_interaction_text(player)).contains("[K]"), "Shelter prompt offers [K] for the stash")
+		player.inventory.add_item(ItemScript.create("Palo", "resource", 0.3, 1, 0.0))
+		var p_idx: int = player.inventory.items.size() - 1
+		check(p_idx >= 0, "Inventory has a Palo for the stash")
+		if p_idx >= 0:
+			world._backpack_action = sh_action
+			var inv_before: int = player.inventory.items.size()
+			world._backpack_store(p_idx)
+			check(player.inventory.items.size() == inv_before - 1, "Meter moves the item into the shelter stash")
+			check((sh_action.get_meta("contents", []) as Array).size() == 1, "Shelter action stores the stash")
+			check((world._built_shelters[0].get("contents", []) as Array).size() == 1, "built_shelters entry carries the stash for sync/save")
+		check(world._net_shelter_dismantled(sh_id, 0) == false, "Dismantling a stocked shelter is refused")
+		check(world.world_actions_by_id.has(sh_id), "Refused shelter stays in the world")
+		world._backpack_take(0)
+		check((sh_action.get_meta("contents", []) as Array).is_empty(), "Coger empties the shelter stash")
+		check(world._net_shelter_dismantled(sh_id, 0) == true, "Empty shelter dismantles normally")
+		check(not world.world_actions_by_id.has(sh_id), "Dismantled shelter leaves the world")
+		world._backpack_action = null
+
 	world.free()
 	player.free()
 	if failures == 0:
