@@ -4245,8 +4245,9 @@ func _refresh_backpack_ui() -> void:
 			equipped_names[str(sv)] = true
 		var any := false
 		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(390, 0)
+		scroll.custom_minimum_size = Vector2(390, 160)
 		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		var sbox := VBoxContainer.new()
 		sbox.add_theme_constant_override("separation", 4)
 		sbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
