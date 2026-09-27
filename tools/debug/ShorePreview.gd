@@ -89,6 +89,12 @@ func run() -> void:
 	await main._create_river_segment(seg.center, seg.size, seg.yaw)
 	main._create_fish_school(seg.center, seg.size, seg.yaw)
 	main._create_leafy_floor_ground()
+	if "--diffuse" in OS.get_cmdline_user_args():
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = Color(.4,.48,.54)
+		for water in main.get_children():
+			if water is RiverWater:
+				water.material_override.set_shader_parameter("mirror_strength",0.0)
 	var names := {}
 	for c in main.get_children():
 		names[str(c.name).split("@")[0].rstrip("0123456789")] = true
@@ -123,6 +129,9 @@ func run() -> void:
 	if lake_preview:
 		camera.position = seg.center + Vector3(-10,2.3,41.5)
 		camera.look_at(seg.center + Vector3(4,0,38))
+	if "--player-view" in OS.get_cmdline_user_args():
+		camera.position = seg.center + Vector3(0,1.7,40.0 if lake_preview else 3.5)
+		camera.look_at(seg.center + Vector3(0,-.05,34.5 if lake_preview else .7))
 	camera.fov = 50
 	camera.current = true
 	for i in range(14):

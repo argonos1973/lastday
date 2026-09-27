@@ -61,6 +61,13 @@ void fragment() {
     float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),mirror_fresnel_power);
     vec3 tint = mix(water_color,night_water_color,night_amount);
     ALBEDO = mix(tint,mirror_color,fresnel*mirror_strength*.65);
+    // Sparse advected highlights make the current readable even in diffuse
+    // lighting, where moving reflection normals alone are nearly invisible.
+    vec2 drift = use_river_flow ? current_direction*flow_direction_multiplier*TIME*.48 : vec2(TIME*.11,TIME*.07);
+    float patch = texture(foam_texture,(p-drift)*.42).r;
+    float broken = texture(foam_texture,(p-drift*.73)*1.37+vec2(.21,.61)).r;
+    float crests = smoothstep(.50,.66,patch)*smoothstep(.44,.62,broken);
+    ALBEDO = mix(ALBEDO,foam_color,crests*(use_river_flow ? .30 : .17));
     // Distant tiny ripples blend together instead of producing glittering aliasing.
     ROUGHNESS = roughness_scale + smoothstep(18.0,85.0,length(VERTEX))*.12;
     METALLIC = 0.0;
