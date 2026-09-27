@@ -80,6 +80,10 @@ func run() -> void:
 	boat.position = boat.clamp_to_lake(Vector3(260, 0, -270))
 	world.lake_rowboat = boat
 	world.add_child(boat)
+	var reflection_safe := boat.visual != null
+	for part in boat.find_children("*", "GeometryInstance3D", true, false):
+		reflection_safe = reflection_safe and part.layers == 1 << 17 and part.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	check(reflection_safe, "Hull and wake do not cast a water shadow or enter cached lake reflections")
 	boat.set_physics_process(false)
 	boat.set_process(false)
 	await physics_frame

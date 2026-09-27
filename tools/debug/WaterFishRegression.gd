@@ -16,6 +16,25 @@ func run() -> void:
         check(specs == Fish.school_specs(origin,size,37.0),"deterministic school " + str(size))
         check(specs.size() >= (36 if size.x>60 else 7),"population includes lake")
         world.river_segments_data = [{"center":origin,"size":size,"yaw":37.0}]
+        if size.x > 60:
+            var bands := [0,0,0]
+            for spec in specs:
+                var offset: Vector3 = spec.center-origin
+                var radius := Vector2(offset.dot(spec.along)/size.x,offset.dot(spec.across)/size.y).length()
+                bands[0 if radius<.16 else (1 if radius<.34 else 2)] += 1
+            check(bands[0]>=8 and bands[1]>=8 and bands[2]>=8,"fish cover center, middle and shoreline")
+            var lake_mesh := world._make_lake_mesh(size)
+            var vertices: PackedVector3Array = lake_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+            var maximum := 0.0
+            for v in vertices:
+                maximum = maxf(maximum,Vector2(v.x/size.x,v.z/size.y).length())
+            check(is_equal_approx(maximum,.425),"rendered lake matches swimming and boat boundary")
+            var excludes_trees := true
+            for i in range(64):
+                var a := TAU*i/64.0
+                var p: Vector3 = origin + specs[0].along*cos(a)*size.x*.424 + specs[0].across*sin(a)*size.y*.424
+                excludes_trees = excludes_trees and not world._can_place_ground_vegetation(p,2.0)
+            check(excludes_trees,"tree exclusion covers the full visible lake perimeter")
         var species := {}
         var contained := true
         var small := true

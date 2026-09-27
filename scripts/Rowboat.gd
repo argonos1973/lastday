@@ -75,6 +75,10 @@ func _ready() -> void:
 			animation_player.play("Animation")
 			animation_player.pause()
 		_create_water_fx()
+		# Neither hull nor wake belongs in the lake's cached reflection.
+		for part in find_children("*", "GeometryInstance3D", true, false):
+			part.layers = 1 << 17
+			part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_fx_prev_pos = global_position
 	_network_position = position
 	_network_yaw = rotation.y

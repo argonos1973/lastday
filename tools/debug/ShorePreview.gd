@@ -47,7 +47,7 @@ func run() -> void:
 
 	# Two ground slabs flanking the river channel so the real river segment
 	# (which owns its water + bottom planes) stays visible between them.
-	for gz in ([] if lake_preview else [-1.0, 1.0]):
+	for gz in ([] if lake_preview or not "--legacy-ground" in OS.get_cmdline_user_args() else [-1.0, 1.0]):
 		var ground := MeshInstance3D.new()
 		var ground_mesh := PlaneMesh.new()
 		ground_mesh.size = Vector2(60, 14)
@@ -58,7 +58,7 @@ func run() -> void:
 		ground_mat.roughness = 0.95
 		ground.material_override = ground_mat
 		world.add_child(ground)
-	if lake_preview:
+	if lake_preview and "--legacy-ground" in OS.get_cmdline_user_args():
 		var surface := SurfaceTool.new()
 		surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 		for i in range(160):
@@ -88,6 +88,8 @@ func run() -> void:
 	main.river_segments_data = [seg]
 	await main._create_river_segment(seg.center, seg.size, seg.yaw)
 	main._create_fish_school(seg.center, seg.size, seg.yaw)
+	if lake_preview:
+		main._create_lake_rowboat(seg.center,seg.size,seg.yaw)
 	main._create_leafy_floor_ground()
 	if "--diffuse" in OS.get_cmdline_user_args():
 		env.background_mode = Environment.BG_COLOR

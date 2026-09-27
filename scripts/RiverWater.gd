@@ -30,8 +30,8 @@ func _ready() -> void:
 		_reflection.size = Vector3(bounds.x + 100.0, 100.0, bounds.z + 100.0)
 		_reflection.position.y = 1.5
 		_reflection.max_distance = maxf(bounds.x, bounds.z) + 100.0
-		# Grass blades don't contribute useful detail to a lake cubemap.
-		_reflection.cull_mask = 0xFFFFF & ~((1 << 19) | (1 << 18))
+		# Exclude grass, water and moving objects from the cached cubemap.
+		_reflection.cull_mask = 0xFFFFF & ~((1 << 19) | (1 << 18) | (1 << 17))
 		_reflection.reflection_mask = 1 << 19
 		_reflection.mesh_lod_threshold = 8.0
 		_reflection.box_projection = false

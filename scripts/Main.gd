@@ -9752,7 +9752,7 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 		var half_length := size.x * 0.5
 		var half_width := size.y * 0.5
 		if size.x >= 60.0:
-			# Lake: elliptical boundary slightly inside visual mesh (0.85 < 0.87 min wobble)
+			# Shared ellipse used by the rendered surface and vegetation exclusion.
 			var ellipse_rx: float = half_length * 0.85
 			var ellipse_rz: float = half_width * 0.85
 			var norm_f: float = local_forward / max(0.01, ellipse_rx)
@@ -9780,7 +9780,7 @@ func get_river_surface_y_at(world_pos: Vector3) -> float:
 		var offset := world_pos - center
 		var f := offset.dot(along) / maxf(size.x * 0.5, 0.01)
 		var s := offset.dot(across) / maxf(size.y * 0.5, 0.01)
-		var inside := sqrt(f * f + s * s) <= 0.86 if size.x >= 60.0 else absf(f) <= 1.0 and absf(s) <= 1.0
+		var inside := sqrt(f * f + s * s) <= 0.85 if size.x >= 60.0 else absf(f) <= 1.0 and absf(s) <= 1.0
 		if inside:
 			return center.y
 	return 0.085
@@ -10190,26 +10190,14 @@ func _make_lake_mesh(size: Vector2) -> ArrayMesh:
 	vertices.append(Vector3(0.0, 0.0, 0.0))
 	normals.append(Vector3.UP)
 	uvs.append(Vector2(0.5, 0.5))
-	# Generate smooth irregular elliptical boundary
-	var edge_scale: Array[float] = []
-	for i in range(radial_steps + 1):
-		var angle: float = float(i) / float(radial_steps) * TAU
-		var wobble: float = sin(angle * 3.0) * 0.04 + sin(angle * 7.0) * 0.025 + sin(angle * 13.0) * 0.015
-		edge_scale.append(0.90 + wobble)
-	# Smooth edge scale
-	for pass_idx in range(2):
-		var smoothed: Array[float] = []
-		for i in range(radial_steps + 1):
-			var prev_idx: int = (i - 1 + radial_steps) % radial_steps
-			var next_idx: int = (i + 1) % radial_steps
-			smoothed.append(lerp(edge_scale[i], (edge_scale[prev_idx] + edge_scale[next_idx]) * 0.5, 0.4))
-		edge_scale = smoothed
+	# Match swimming, boat bounds, tree exclusion and the terrain cutout.
+	# An independently wobbled surface previously extended over dry land/trees.
 	# Generate rings from center to edge
 	for ring in range(1, ring_steps + 1):
 		var ring_t: float = float(ring) / float(ring_steps)
 		for i in range(radial_steps + 1):
 			var angle: float = float(i) / float(radial_steps) * TAU
-			var r: float = edge_scale[i] * ring_t
+			var r: float = 0.85 * ring_t
 			var x: float = cos(angle) * r * half_length
 			var z: float = sin(angle) * r * half_width
 			vertices.append(Vector3(x, 0.0, z))
@@ -10446,9 +10434,9 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 		{"off": 1.00, "y": -999.0, "v": 1.00},
 	]
 	if is_lake:
-		var rx: float = half_l * 0.86
-		var rz: float = half_w * 0.86
-		var band_in: float = -half_w * 0.16
+		var rx: float = half_l * 0.85
+		var rz: float = half_w * 0.85
+		var band_in: float = -1.8
 		var band_out: float = 0.9
 		var steps := 96
 		var wobble_phase := _world_rng.randf_range(0.0, TAU)
@@ -10570,8 +10558,8 @@ func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
 			var half_l: float = size.x * 0.5
 			var half_w: float = size.y * 0.5
 			var theta := _world_rng.randf_range(0.0, TAU)
-			var rx: float = half_l * 0.86
-			var rz: float = half_w * 0.86
+			var rx: float = half_l * 0.85
+			var rz: float = half_w * 0.85
 			var nx: float = cos(theta) / rx
 			var nz: float = sin(theta) / rz
 			var n_len: float = sqrt(nx * nx + nz * nz)
@@ -13598,7 +13586,7 @@ func _make_water_channel_mask() -> ImageTexture:
 				# El agua cubre hasta el medio de size + jitter de bordes
 				# (~0.8 m). Una máscara más estrecha dejaba franjas de terreno
 				# bajo el agua — las "rayas" paralelas al cauce.
-				var inside := local.length() < .50 if size.x >= 60.0 else absf(offset.dot(forward))<size.x*.5+1.5 and absf(offset.dot(side))<size.y*.5+1.1
+				var inside := local.length() < .425 if size.x >= 60.0 else absf(offset.dot(forward))<size.x*.5+1.5 and absf(offset.dot(side))<size.y*.5+1.1
 				if inside:
 					image.set_pixel(x,z,Color.WHITE)
 	return ImageTexture.create_from_image(image)

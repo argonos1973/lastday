@@ -28,18 +28,17 @@ static func school_specs(origin: Vector3, size: Vector2, yaw: float) -> Array:
     var rng := RandomNumberGenerator.new()
     rng.seed = hash([origin,size,yaw,"fish_v2"])
     var lake := size.x >= 60.0
-    var count := rng.randi_range(90,108) if lake else rng.randi_range(7,10)
+    var count := rng.randi_range(144,162) if lake else rng.randi_range(7,10)
     var forward := Vector3(cos(deg_to_rad(yaw)),0,-sin(deg_to_rad(yaw)))
     var side := Vector3(sin(deg_to_rad(yaw)),0,cos(deg_to_rad(yaw)))
     var result: Array = []
     for i in range(count):
         var p := origin + forward*rng.randf_range(-.18,.18)*size.x + side*rng.randf_range(-.15,.15)*size.y
         if lake:
-            var angle := TAU*float(i)/count + rng.randf_range(-.05,.05)
-            var radius := rng.randf_range(.385,.397)
+            # One third stays near banks; the rest covers the lake interior.
+            var angle := TAU*fmod(float(i)*.61803398875,1.0)
+            var radius := rng.randf_range(.375,.39) if i%3==0 else sqrt(fmod(float(i)*.754877666+.17,1.0))*.35
             p = origin + forward*cos(angle)*size.x*radius + side*sin(angle)*size.y*radius
-        # El lomo cresta la superficie: sumergidos son invisibles y solo se ve
-        # una línea finísima — las "rayas" eran los peces medio ocultos.
         var half_h: float = [.22,.32,.42][i%3]*.30
         # Keep the fish immediately beneath the moving surface, where they are
         # legible from the shore while still looking submerged.
@@ -110,6 +109,7 @@ func _build_fish() -> void:
         parts.push_front(_visual)
     for part in parts:
         var mi := part as MeshInstance3D
+        mi.layers = 1 << 17 # Exclude moving fish from cached lake reflections.
         var box := mi.transform*mi.get_aabb()
         bounds = box if first else bounds.merge(box)
         first = false
