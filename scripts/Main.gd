@@ -2727,7 +2727,9 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 				if item != null:
 					inv.items.append(item)
 	if player.get("stats") != null:
-		player.stats.health = health
+		# hp<=0 sería un restore-cadáver: el servidor decide la muerte vía
+		# el flag died del spawn, nunca restaurando vida 0 aquí.
+		player.stats.health = maxf(health, 1.0)
 		player.stats.hunger = hunger
 		player.stats.thirst = thirst
 		# Extended stats (sleep, energy, temperature, sickness, survival_seconds...)
@@ -3762,6 +3764,9 @@ func _sync_local_player_inventory() -> void:
 		stats_extra.erase("health")
 		stats_extra.erase("hunger")
 		stats_extra.erase("thirst")
+		# La bandera dead nunca viaja en stats_extra: la muerte la decide el
+		# servidor (registro/proxy), un restore no puede "matar" al cliente.
+		stats_extra.erase("dead")
 		extra["stats_extra"] = stats_extra
 	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching, extra)
 

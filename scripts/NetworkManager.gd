@@ -364,7 +364,15 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	if is_host:
 		var scene := get_tree().current_scene
 		if scene != null and scene.server_proxies.has(id):
-			if scene.server_proxies[id].get_meta("reconnecting", false):
+			var proxy: Node3D = scene.server_proxies[id]
+			# First real position sync = the client finished loading the world.
+			# Restart spawn protection now so its 30s cover actual gameplay —
+			# otherwise it expires during the loading screen and wolves can
+			# maul the proxy before the player even sees it.
+			if not proxy.get_meta("client_live", false):
+				proxy.set_meta("client_live", true)
+				proxy.set_meta("protection_timer", 30.0)
+			if proxy.get_meta("reconnecting", false):
 				return
 			# Dead proxies are pinned at the death position where the loot
 			# dropped — late syncs from the dying client must not move the

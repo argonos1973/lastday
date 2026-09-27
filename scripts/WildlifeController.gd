@@ -614,7 +614,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return tamed
 		# Si no está "handled", _player apunta a la amenaza y sigue la persecución normal
 	# Priority 0: chase player (highest priority)
-	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false):
+	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()

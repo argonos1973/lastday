@@ -122,6 +122,29 @@ func run() -> void:
 	wolf._wolf_ai(1.0 / 30.0)
 	check(wolf._state == "retreat", "Empty route triggers retreat even within attack range")
 	check(wolf._attack_cooldown == 0.0, "Wolf must not attack an unreachable nearby player")
+	# Spawn protection must drop a proxy even mid-chase: the timer only covers
+	# real gameplay now (refreshed on the client's first position sync), so a
+	# wolf camping the spawn cannot maul a player still on the loading screen.
+	var proxy := Node3D.new()
+	world.add_child(proxy)
+	proxy.add_to_group("net_player_proxy")
+	proxy.set_meta("peer_id", 99)
+	proxy.set_meta("has_real_pos", true)
+	proxy.set_meta("protection_timer", 30.0)
+	proxy.position = wolf.position + Vector3(5, 0, 0)
+	world.no_route = false
+	wolf._player = proxy
+	wolf._state = "patrol"
+	wolf._chase_cooldown = 0.0
+	wolf._attack_cooldown = 0.0
+	wolf._wolf_ai(1.0 / 30.0)
+	check(wolf._state != "chase_player", "Spawn-protected proxy must not be chased, even mid-lock")
+	proxy.set_meta("protection_timer", 0.0)
+	wolf._chase_cooldown = 0.0
+	wolf._attack_cooldown = 0.0
+	wolf._wolf_ai(1.0 / 30.0)
+	check(wolf._state == "chase_player", "Expired protection makes the proxy attackable again")
+	proxy.free()
 	world.free()
 	if failures == 0:
 		print("PASS: river detour, full-map coverage, safe shores, retreat from unreachable players and pursuit after cooldown")
