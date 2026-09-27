@@ -72,6 +72,7 @@ var wind_player: AudioStreamPlayer
 var rain_player: AudioStreamPlayer
 var thunder_player: AudioStreamPlayer
 var river_player: AudioStreamPlayer3D
+var campfire_player: AudioStreamPlayer3D
 var footstep_player: AudioStreamPlayer3D
 var water_object_splash_player: AudioStreamPlayer3D
 var water_footstep_player: AudioStreamPlayer3D
@@ -97,6 +98,7 @@ var animal_call_timer := 18.0
 var _spatial_audio_refresh_accum := 0.10
 var _cached_river_audio: Dictionary = {}
 var _cached_forest_audio: Dictionary = {}
+var _cached_campfire_audio: Dictionary = {}
 
 func setup(new_player, new_day_cycle) -> void:
 	player = new_player
@@ -118,6 +120,7 @@ func _process(delta: float) -> void:
 	if refresh_spatial:
 		_update_ambience()
 	_update_river(delta, refresh_spatial)
+	_update_campfire(delta, refresh_spatial)
 	_update_forest_ambience(delta, refresh_spatial)
 	_update_animal_calls(delta)
 	_update_footsteps(delta)
@@ -154,6 +157,13 @@ func _create_players() -> void:
 	river_player.max_distance = 62.0
 	river_player.volume_db = -80.0
 	add_child(river_player)
+
+	campfire_player = AudioStreamPlayer3D.new()
+	campfire_player.name = "CampfireCrackle"
+	campfire_player.unit_size = 2.4
+	campfire_player.max_distance = 26.0
+	campfire_player.volume_db = -80.0
+	add_child(campfire_player)
 
 	footstep_player = AudioStreamPlayer3D.new()
 	footstep_player.name = "Footsteps"
@@ -217,6 +227,7 @@ func _load_audio() -> void:
 	_assign_loop(ambient_night_player, _load_first_stream(AMBIENT_NIGHT_PATHS))
 	_assign_loop(wind_player, _load_first_stream(WIND_PATHS))
 	_assign_loop_3d(river_player, _load_first_stream(RIVER_WATER_PATHS))
+	campfire_player.stream = _generate_campfire_stream()
 	walk_stream = _load_stream_from_path(WALK_SOUND_PATH)
 	run_stream = _load_stream_from_path(RUN_SOUND_PATH)
 	if walk_stream is AudioStreamMP3:
@@ -434,6 +445,79 @@ func _update_river(delta: float, refresh_spatial := true) -> void:
 	river_player.volume_db = lerp(river_player.volume_db, target_volume, delta * 3.2)
 	if target_volume > -75.0 and not river_player.playing:
 		river_player.play()
+
+func _update_campfire(delta: float, refresh_spatial := true) -> void:
+	if campfire_player == null or campfire_player.stream == null or player == null:
+		return
+	if refresh_spatial or _cached_campfire_audio.is_empty():
+		_cached_campfire_audio.clear()
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("get_lit_campfire_positions"):
+			var best := INF
+			var best_pos := Vector3.ZERO
+			for fp in scene.call("get_lit_campfire_positions"):
+				var d: float = player.global_position.distance_to(fp)
+				if d < best:
+					best = d
+					best_pos = fp
+			if best < 30.0:
+				_cached_campfire_audio = {"position": best_pos, "distance": best}
+	if _cached_campfire_audio.is_empty():
+		campfire_player.volume_db = lerp(campfire_player.volume_db, -80.0, delta * 3.0)
+		return
+	campfire_player.global_position = _cached_campfire_audio["position"]
+	var distance: float = _cached_campfire_audio["distance"]
+	var target := -80.0
+	if distance < 16.0:
+		target = lerp(-2.5, -30.0, clamp((distance - 1.2) / 14.8, 0.0, 1.0))
+	campfire_player.volume_db = lerp(campfire_player.volume_db, target, delta * 4.0)
+	if target > -75.0 and not campfire_player.playing:
+		campfire_player.play()
+
+func _generate_campfire_stream() -> AudioStream:
+	# Crepitado procedural: siseo grave continuo (el fuego) + chasquidos
+	# cortos aleatorios con decaimiento exponencial (la lena). Bucle de 4 s.
+	var sample_rate := 22050
+	var duration := 4.0
+	var num_samples := int(sample_rate * duration)
+	var data := PackedByteArray()
+	data.resize(num_samples * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20240917
+	var pops: Array = []
+	var pt := rng.randf_range(0.02, 0.10)
+	while pt < duration - 0.04:
+		pops.append([int(pt * sample_rate), sample_rate * rng.randf_range(0.002, 0.011), rng.randf_range(0.16, 0.5)])
+		pt += rng.randf_range(0.012, 0.16)
+	var next_pop := 0
+	var low1 := 0.0
+	var low2 := 0.0
+	for i in range(num_samples):
+		low1 = lerp(low1, rng.randf_range(-1.0, 1.0), 0.06)
+		low2 = lerp(low2, low1, 0.3)
+		var s: float = low2 * (0.14 + 0.05 * sin(i * 0.00017) * sin(i * 0.000037))
+		while next_pop < pops.size() and int(pops[next_pop][0]) + int(pops[next_pop][1] * 3.0) <= i:
+			next_pop += 1
+		for lookahead in range(2):
+			var pi := next_pop + lookahead
+			if pi >= pops.size():
+				break
+			var start := int(pops[pi][0])
+			if i >= start:
+				var age := float(i - start)
+				s += rng.randf_range(-1.0, 1.0) * float(pops[pi][2]) * exp(-age / float(pops[pi][1]))
+		var sample := int(clamp(s, -1.0, 1.0) * 32767)
+		data[i * 2] = sample & 0xFF
+		data[i * 2 + 1] = (sample >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = sample_rate
+	stream.stereo = false
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = num_samples
+	stream.data = data
+	return stream
 
 func _update_forest_ambience(delta: float, refresh_spatial := true) -> void:
 	if forest_player == null or player == null:
