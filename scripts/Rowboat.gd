@@ -196,10 +196,14 @@ func accept_input(sender: int, axis: Vector2) -> void:
 	_input_age = 0.0
 	if occupant_standing:
 		# De pie en el casco el vector lleva el desplazamiento local del
-		# ocupante (x = bordo, y = proa-popa), no la direccion de remo.
-		_stand_offset = Vector3(clampf(axis.x, -0.6, 0.6), STAND_Y, clampf(axis.y, -2.1, 2.0))
+		# ocupante (x = bordo, y = proa-popa), no la direccion de remo. Se
+		# permite pasar de la borda: simulate() lo detecta como caida al agua.
+		_stand_offset = Vector3(clampf(axis.x, -1.0, 1.0), STAND_Y, clampf(axis.y, -2.6, 2.7))
 	else:
 		_axis = axis.limit_length(1.0)
+
+func _offset_overboard(off: Vector3) -> bool:
+	return absf(off.x) > 0.85 or off.z < -2.45 or off.z > 2.55
 
 func water_local(pos: Vector3) -> Vector3:
 	return (pos - lake_center).rotated(Vector3.UP, -lake_yaw)
@@ -223,6 +227,11 @@ func simulate(delta: float) -> void:
 	_input_age += delta
 	if _input_age > 0.5 or occupant == 0:
 		_axis = Vector2.ZERO
+	if occupant != 0 and occupant_standing and _offset_overboard(_stand_offset):
+		# El ocupante camino mas alla de la borda: cae al agua ahi mismo.
+		exit_position = clamp_to_lake(global_position + global_basis * Vector3(_stand_offset.x, 0.0, _stand_offset.z))
+		_release_passenger()
+		return
 	var can_row := occupant != 0 and not occupant_standing
 	rowing = can_row and _axis.length_squared() > 0.01
 	var steer := _axis if can_row else Vector2.ZERO
@@ -255,7 +264,13 @@ func _physics_process(delta: float) -> void:
 			exit_position = global_position if _occupant_dead() else return_position
 			_release_passenger()
 		if occupant == local_peer() and not _dedicated():
-			accept_input(occupant, _local_input())
+			var inp := _local_input()
+			if occupant_standing:
+				var host_actor := _actor_for(occupant)
+				var lo = host_actor.get("_boat_local_offset") if host_actor != null else null
+				if lo is Vector2:
+					inp = Vector2(lo.x, lo.y)
+			accept_input(occupant, inp)
 		simulate(delta)
 		_exit_timer -= delta
 		if _exit_timer <= 0:

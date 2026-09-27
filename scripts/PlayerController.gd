@@ -3013,8 +3013,8 @@ func _physics_process(delta: float) -> void:
 		if _boat_standing:
 			var boat_move := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 			is_moving = boat_move.length_squared() > 0.001
-			_boat_local_offset.x = clampf(_boat_local_offset.x + boat_move.x * 1.6 * delta, -0.55, 0.55)
-			_boat_local_offset.y = clampf(_boat_local_offset.y + boat_move.y * 1.6 * delta, -2.0, 1.9)
+			_boat_local_offset.x = clampf(_boat_local_offset.x + boat_move.x * 1.6 * delta, -1.0, 1.0)
+			_boat_local_offset.y = clampf(_boat_local_offset.y + boat_move.y * 1.6 * delta, -2.6, 2.7)
 			global_position = rowing_boat.to_global(Vector3(_boat_local_offset.x, 0.5, _boat_local_offset.y))
 			var facing := rowing_boat.global_basis * Vector3(-sin(_rowing_view_yaw), 0.0, -cos(_rowing_view_yaw))
 			rotation.y = atan2(-facing.x, -facing.z)
