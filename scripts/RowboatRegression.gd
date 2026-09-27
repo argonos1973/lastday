@@ -125,6 +125,15 @@ func run() -> void:
 	check(boat._axis.length() <= 1.001, "Clamp oversized input")
 	boat.simulate(0.6)
 	check(boat._axis == Vector2.ZERO and not boat.rowing, "Input timeout stops rowing")
+	boat.rowing_time = 0.3
+	for i in range(120):
+		boat.simulate(1.0 / 60.0)
+	check(boat.rowing_time == 0.0, "Released oars settle back to rest pose")
+	boat.rowing_time = 1.7
+	for i in range(120):
+		boat.simulate(1.0 / 60.0)
+	check(boat.rowing_time == 0.0, "Late stroke settles forward into rest pose")
+	check(boat.occupant == 1, "Resting keeps the character seated in the boat")
 	boat.position = boat.clamp_to_lake(boat.lake_center)
 	check(boat.find_exit_position().is_empty(), "Cannot exit in deep water")
 	boat._request_times.clear()

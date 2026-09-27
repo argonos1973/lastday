@@ -213,6 +213,16 @@ func simulate(delta: float) -> void:
 		speed = 0.0
 	if rowing:
 		rowing_time = fposmod(rowing_time + delta, CYCLE)
+	else:
+		_settle_rowing_time(delta)
+
+func _settle_rowing_time(delta: float) -> void:
+	# Sin entrada, remos y pose vuelven al reposo del ciclo en lugar de quedar
+	# congelados a media braçada. Soltar WASD = dejar de remar, seguir sentado.
+	var rest := 0.0 if rowing_time <= CYCLE * 0.5 else CYCLE
+	rowing_time = move_toward(rowing_time, rest, delta * 1.4)
+	if rowing_time >= CYCLE:
+		rowing_time = 0.0
 
 func _physics_process(delta: float) -> void:
 	if world.get("_scene_quitting") == true:
@@ -253,6 +263,8 @@ func _process(delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, _network_yaw, 1.0 - exp(-delta * 18.0))
 		if rowing:
 			rowing_time = fposmod(rowing_time + delta, CYCLE)
+		elif occupant != 0:
+			_settle_rowing_time(delta)
 	_sync_passenger()
 	if animation_player != null:
 		animation_player.seek(rowing_time, true)
@@ -341,7 +353,7 @@ func find_exit_position() -> Dictionary:
 	return {}
 
 func passenger_prompt() -> String:
-	return "W/S: remar | A/D: girar | F: salir del bote" if _can_exit else "W/S: remar | A/D: girar | Acercate a la orilla para salir"
+	return "F: salir del bote" if _can_exit else "Acercate a la orilla para salir"
 
 func _create_water_fx() -> void:
 	_foam_texture = _water_particle_texture(false)
