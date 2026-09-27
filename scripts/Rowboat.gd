@@ -6,6 +6,7 @@ const MAX_SPEED := 3.2
 const HULL_MARGIN := 3.0
 const BOARD_REACH := 4.6
 const WATER_Y := 0.24
+const STAND_Y := 0.5
 const OAR_SPLASH_PATH := "res://objetocaeagua.mp3"
 const WAKE_LOOP_PATH := "res://andarporagua.mp3"
 
@@ -13,6 +14,7 @@ var lake_center := Vector3.ZERO
 var lake_size := Vector2(150, 90)
 var lake_yaw := 0.0
 var occupant := 0
+var occupant_standing := false
 var rowing_time := 0.0
 var rowing := false
 var speed := 0.0
@@ -23,6 +25,7 @@ var visual: Node3D
 var animation_player: AnimationPlayer
 var passenger: Node3D
 var _axis := Vector2.ZERO
+var _stand_offset := Vector3.ZERO
 var _input_age := 0.0
 var _send_timer := 0.0
 var _exit_timer := 0.0
@@ -126,6 +129,12 @@ func request_exit() -> void:
 	else:
 		world.net.request_rowboat.rpc_id(1, "exit")
 
+func request_toggle_stand() -> void:
+	if _authority():
+		request_action(local_peer(), "stand")
+	else:
+		world.net.request_rowboat.rpc_id(1, "stand")
+
 func _actor_for(peer_id: int) -> Node3D:
 	if peer_id == local_peer() and world.get("player") != null:
 		return world.player
@@ -164,6 +173,8 @@ func request_action(sender: int, action: String) -> void:
 		return_position = pos
 		occupant = sender
 		_axis = Vector2.ZERO
+		_stand_offset = Vector3.ZERO
+		occupant_standing = false
 		_input_age = 0.0
 		_sync_passenger()
 	elif action == "exit" and occupant == sender:
@@ -172,13 +183,23 @@ func request_action(sender: int, action: String) -> void:
 			return
 		exit_position = shore.position
 		_release_passenger()
+	elif action == "stand" and occupant == sender:
+		occupant_standing = not occupant_standing
+		_axis = Vector2.ZERO
+		if not occupant_standing:
+			_stand_offset = Vector3.ZERO
 	_send_state()
 
 func accept_input(sender: int, axis: Vector2) -> void:
 	if not _authority() or sender != occupant or occupant == 0 or not axis.is_finite():
 		return
-	_axis = axis.limit_length(1.0)
 	_input_age = 0.0
+	if occupant_standing:
+		# De pie en el casco el vector lleva el desplazamiento local del
+		# ocupante (x = bordo, y = proa-popa), no la direccion de remo.
+		_stand_offset = Vector3(clampf(axis.x, -0.6, 0.6), STAND_Y, clampf(axis.y, -2.1, 2.0))
+	else:
+		_axis = axis.limit_length(1.0)
 
 func water_local(pos: Vector3) -> Vector3:
 	return (pos - lake_center).rotated(Vector3.UP, -lake_yaw)
@@ -202,10 +223,12 @@ func simulate(delta: float) -> void:
 	_input_age += delta
 	if _input_age > 0.5 or occupant == 0:
 		_axis = Vector2.ZERO
-	rowing = occupant != 0 and _axis.length_squared() > 0.01
-	var target_speed := -_axis.y * MAX_SPEED
+	var can_row := occupant != 0 and not occupant_standing
+	rowing = can_row and _axis.length_squared() > 0.01
+	var steer := _axis if can_row else Vector2.ZERO
+	var target_speed := -steer.y * MAX_SPEED
 	speed = move_toward(speed, target_speed, delta * (1.3 if rowing else 2.0))
-	rotation.y -= _axis.x * delta * 0.7
+	rotation.y -= steer.x * delta * 0.7
 	var proposed := global_position - global_basis.z * speed * delta
 	if contains_hull(proposed):
 		global_position = proposed
@@ -246,7 +269,13 @@ func _physics_process(delta: float) -> void:
 		_input_age += delta
 		if _input_age >= 0.1:
 			_input_age = 0.0
-			world.net.rowboat_input.rpc_id(1, _local_input())
+			var send := _local_input()
+			if occupant_standing:
+				var actor := _actor_for(occupant)
+				var lo = actor.get("_boat_local_offset") if actor != null else null
+				if lo is Vector2:
+					send = Vector2(lo.x, lo.y)
+			world.net.rowboat_input.rpc_id(1, send)
 	_send_timer += delta
 	if _authority() and _send_timer >= 0.1:
 		_send_timer = 0.0
@@ -281,8 +310,16 @@ func _sync_passenger() -> void:
 	if passenger != actor:
 		passenger = actor
 		passenger.begin_rowing(self)
-	passenger.global_position = global_position
-	passenger.rotation.y = rotation.y + PI
+	if occupant_standing:
+		var off := _stand_offset
+		if actor == world.get("player"):
+			var lo = actor.get("_boat_local_offset")
+			if lo is Vector2:
+				off = Vector3(lo.x, STAND_Y, lo.y)
+		passenger.global_position = global_position + global_basis * off
+	else:
+		passenger.global_position = global_position
+		passenger.rotation.y = rotation.y + PI
 
 func _occupant_dead() -> bool:
 	var actor := _actor_for(occupant)
@@ -298,6 +335,8 @@ func _release_passenger() -> void:
 	var old_id := occupant
 	occupant = 0
 	_axis = Vector2.ZERO
+	_stand_offset = Vector3.ZERO
+	occupant_standing = false
 	speed = 0.0
 	rowing = false
 	if is_instance_valid(passenger):
@@ -313,6 +352,9 @@ func _release_passenger() -> void:
 
 func _sync_authoritative_position() -> void:
 	if occupant == 0 or not _networked() or not world.net.players.has(occupant):
+		return
+	if occupant_standing:
+		# De pie el cliente ya envia su posicion real dentro del casco.
 		return
 	world.net.players[occupant]["pos"] = global_position
 	world.net.players[occupant]["rot"] = rotation.y + PI
@@ -353,7 +395,15 @@ func find_exit_position() -> Dictionary:
 	return {}
 
 func passenger_prompt() -> String:
-	return "F: salir del bote" if _can_exit else "Acercate a la orilla para salir"
+	var stand_hint := "E: sentarse" if occupant_standing else "E: ponerse de pie"
+	if occupant_standing:
+		var actor := _actor_for(occupant)
+		if actor != null and actor.has_method("get_held_item"):
+			var held = actor.get_held_item()
+			if held != null and str(held.get("item_type", "")) == "tool_fishing":
+				stand_hint += " | LMB: lanzar"
+	var exit_hint := "F: salir del bote" if _can_exit else "Acercate a la orilla para salir"
+	return exit_hint + " | " + stand_hint
 
 func _create_water_fx() -> void:
 	_foam_texture = _water_particle_texture(false)
@@ -631,7 +681,7 @@ func _send_state() -> void:
 	if not _networked() or not _authority():
 		return
 	_sequence += 1
-	var state := {"seq": _sequence, "pos": global_position, "yaw": rotation.y, "occupant": occupant, "time": rowing_time, "rowing": rowing, "exit": exit_position, "can_exit": _can_exit}
+	var state := {"seq": _sequence, "pos": global_position, "yaw": rotation.y, "occupant": occupant, "standing": occupant_standing, "offset": _stand_offset, "time": rowing_time, "rowing": rowing, "exit": exit_position, "can_exit": _can_exit}
 	for id in world.net.players:
 		if id != local_peer() and not world.net.players[id].get("offline", false) and world.net.peer.get_peer(id) != null:
 			world.net.sync_rowboat.rpc_id(id, state)
@@ -647,6 +697,9 @@ func apply_network_state(state: Dictionary) -> void:
 		occupant = next_occupant
 	_network_position = state.pos
 	_network_yaw = state.yaw
+	occupant_standing = bool(state.get("standing", false))
+	var off = state.get("offset", Vector3.ZERO)
+	_stand_offset = off if off is Vector3 else Vector3.ZERO
 	rowing_time = state.time
 	rowing = state.rowing
 	_can_exit = state.can_exit

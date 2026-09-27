@@ -411,6 +411,8 @@ var _saved_collision_mask := 0xFFFFFFFF
 var _bed_sleep_position := Vector3.ZERO
 var is_sitting := false
 var rowing_boat: Node3D
+var _boat_local_offset := Vector2.ZERO
+var _boat_standing := false
 var _rowing_model_transform := Transform3D.IDENTITY
 var _rowing_camera_transform := Transform3D.IDENTITY
 var _rowing_view_yaw := 0.0
@@ -815,7 +817,7 @@ var _puppet_top_camo := false
 var _puppet_bottom_camo := false
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
-	if is_instance_valid(rowing_boat) and not anim.to_lower().contains("dead"):
+	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
 		return
 	if is_dead:
 		# Still update position for dead puppets (corpse sync)
@@ -1411,14 +1413,29 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion:
 			_rowing_view_yaw -= event.relative.x * mouse_sensitivity
 			_rowing_view_height = clampf(_rowing_view_height + event.relative.y * 0.015, 1.5, 6.0)
-		elif event is InputEventMouseButton and event.pressed:
-			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-				_rowing_view_dist = clampf(_rowing_view_dist - 0.8, 3.0, 14.0)
-			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				_rowing_view_dist = clampf(_rowing_view_dist + 0.8, 3.0, 14.0)
+			return
+		if event is InputEventMouseButton:
+			if event.pressed:
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					_rowing_view_dist = clampf(_rowing_view_dist - 0.8, 3.0, 14.0)
+					return
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					_rowing_view_dist = clampf(_rowing_view_dist + 0.8, 3.0, 14.0)
+					return
+				elif event.button_index == MOUSE_BUTTON_LEFT and _boat_standing and _has_fishing_rod_in_hand() and not _is_fishing:
+					_start_fishing_near_water()
+					return
+			if not _boat_standing:
+				return
 		elif event.is_action_pressed("interact") and not event.is_echo():
 			rowing_boat.request_exit()
-		return
+			return
+		elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+			rowing_boat.request_toggle_stand()
+			return
+		if not _boat_standing:
+			return
+		# De pie en la barca el resto de entradas corren como si estuviera en tierra.
 	# Abandon the fishing cast/idle-with-line state as soon as any key or mouse
 	# button is pressed, returning the player to the normal controllable pose.
 	var _pressed_key_or_button: bool = (event is InputEventKey and event.pressed and not event.echo) \
@@ -2989,11 +3006,21 @@ func _physics_process(delta: float) -> void:
 		return
 	if is_instance_valid(rowing_boat):
 		velocity = Vector3.ZERO
-		is_moving = false
 		is_sprinting = false
 		is_in_water = false
 		_water_depth = 0.0
 		_water_sink = 0.0
+		if _boat_standing:
+			var boat_move := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+			is_moving = boat_move.length_squared() > 0.001
+			_boat_local_offset.x = clampf(_boat_local_offset.x + boat_move.x * 1.6 * delta, -0.55, 0.55)
+			_boat_local_offset.y = clampf(_boat_local_offset.y + boat_move.y * 1.6 * delta, -2.0, 1.9)
+			global_position = rowing_boat.to_global(Vector3(_boat_local_offset.x, 0.5, _boat_local_offset.y))
+			var facing := rowing_boat.global_basis * Vector3(-sin(_rowing_view_yaw), 0.0, -cos(_rowing_view_yaw))
+			rotation.y = atan2(-facing.x, -facing.z)
+			_update_third_person_animation(is_moving, delta)
+		else:
+			is_moving = false
 		_update_interaction_prompt()
 		_update_flashlight(delta)
 		_update_torch(delta)
@@ -5007,7 +5034,7 @@ func _load_gltf_node3d(path: String) -> Node3D:
 	return null
 
 func _select_held_item(index: int) -> void:
-	if is_instance_valid(rowing_boat):
+	if is_instance_valid(rowing_boat) and not _boat_standing:
 		notice.emit("Necesitas las manos libres para remar.")
 		return
 	if inventory == null or index < 0 or index >= inventory.items.size():
@@ -8319,7 +8346,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 
 #region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
 func _update_third_person_animation(moving: bool, delta: float) -> void:
-	if is_instance_valid(rowing_boat):
+	if is_instance_valid(rowing_boat) and not _boat_standing:
 		return
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
@@ -8668,6 +8695,8 @@ func begin_rowing(boat: Node3D) -> void:
 	_rowing_view_yaw = 0.0
 	_rowing_view_height = 3.5
 	_rowing_view_dist = 7.0
+	_boat_standing = false
+	_boat_local_offset = Vector2.ZERO
 	is_sleeping = false
 	is_sitting = false
 	is_prone = false
@@ -8706,7 +8735,10 @@ func begin_rowing(boat: Node3D) -> void:
 func update_rowing_pose(time: float) -> void:
 	if not is_instance_valid(rowing_boat):
 		return
-	if third_person_animation_player != null and third_person_animation_player.has_animation(_rowing_animation):
+	var standing := bool(rowing_boat.get("occupant_standing"))
+	if standing != _boat_standing:
+		_set_boat_standing(standing)
+	if not standing and third_person_animation_player != null and third_person_animation_player.has_animation(_rowing_animation):
 		third_person_animation_player.seek(time, true)
 	_update_backpack_socket()
 	_update_hand_socket()
@@ -8715,8 +8747,41 @@ func update_rowing_pose(time: float) -> void:
 		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * _rowing_view_dist, _rowing_view_height, cos(_rowing_view_yaw) * _rowing_view_dist))
 		camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
 
+func _set_boat_standing(standing: bool) -> void:
+	_boat_standing = standing
+	if standing:
+		_boat_local_offset = Vector2.ZERO
+		if third_person_model != null:
+			third_person_model.transform = _rowing_model_transform
+		if third_person_animation_player != null and not third_person_idle_animation.is_empty():
+			third_person_animation_player.play(third_person_idle_animation, 0.15)
+	else:
+		if not is_puppet:
+			if _is_aiming:
+				_toggle_aim()
+			_is_fishing = false
+			_is_fishing_idle = false
+			_fishing_session += 1
+			_deactivate_rod_visual_overlay()
+			third_person_action_animation = ""
+			third_person_action_timer = 0.0
+			var main := get_tree().current_scene
+			if main != null and main.get("hud") != null and main.hud.has_method("hide_countdown"):
+				main.hud.hide_countdown()
+			notice.emit("")
+			if get_held_item() != null:
+				_store_held_item()
+		if third_person_model != null:
+			third_person_model.position = Vector3.ZERO
+			third_person_model.rotation = Vector3(0, PI, 0)
+		if third_person_animation_player != null and third_person_animation_player.has_animation(_rowing_animation):
+			third_person_animation_player.play(_rowing_animation)
+			third_person_animation_player.pause()
+
 func end_rowing(pos: Vector3) -> void:
 	rowing_boat = null
+	_boat_standing = false
+	_boat_local_offset = Vector2.ZERO
 	global_position = pos
 	velocity = Vector3.ZERO
 	is_in_water = false
@@ -8951,6 +9016,24 @@ func _get_fishing_water_state() -> Dictionary:
 	var result := {"near": false, "facing": false, "point": Vector3.ZERO}
 	if is_in_water:
 		_fishing_water_cache_pos = Vector3.INF
+		return result
+	if is_instance_valid(rowing_boat):
+		# De pie en la barca el lance cae unos metros por delante, sobre el agua.
+		if not _boat_standing:
+			return result
+		var cast_forward := global_transform.basis * Vector3.FORWARD
+		cast_forward.y = 0.0
+		if cast_forward.length_squared() < 0.0001:
+			return result
+		var cast_pos := global_position + cast_forward.normalized() * 4.0
+		var boat_main := get_tree().current_scene
+		if boat_main == null or not boat_main.has_method("get_river_depth_at"):
+			return result
+		if boat_main.get_river_depth_at(cast_pos) <= 0.05:
+			return result
+		result["near"] = true
+		result["facing"] = true
+		result["point"] = Vector3(cast_pos.x, boat_main.get_river_surface_y_at(cast_pos), cast_pos.z)
 		return result
 	# Cache: only recompute the expensive nearest-water scan when the player has
 	# moved more than 0.5m or rotated since the last call. Facing is recomputed
