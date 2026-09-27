@@ -2198,9 +2198,22 @@ var _spawn_zones: Array = [
 	Vector3(-60.0, 0.4, -200.0)
 ]
 
+func _distance_to_nearest_live_wolf(pos: Vector3) -> float:
+	var nearest := INF
+	if not is_inside_tree():
+		return nearest
+	for node in get_tree().get_nodes_in_group("wildlife_wolf"):
+		if node is WildlifeController and not node._is_dead:
+			var d: float = Vector2(node.global_position.x - pos.x, node.global_position.z - pos.z).length()
+			if d < nearest:
+				nearest = d
+	return nearest
+
 func _get_random_spawn_pos() -> Vector3:
 	var spawn_rng := RandomNumberGenerator.new()
 	spawn_rng.randomize()
+	var best_pos := Vector3.ZERO
+	var best_wolf_dist := -1.0
 	for _attempt in range(20):
 		var zone: Vector3 = _spawn_zones[spawn_rng.randi() % _spawn_zones.size()]
 		var offset_x: float = spawn_rng.randf_range(-3.0, 3.0)
@@ -2208,8 +2221,18 @@ func _get_random_spawn_pos() -> Vector3:
 		var base_pos := Vector3(zone.x + offset_x, 0.0, zone.z + offset_z)
 		if _is_near_river(base_pos, 30.0):
 			continue
-		var h := _get_ground_height(base_pos)
-		return Vector3(base_pos.x, h + 0.4, base_pos.z)
+		# Los lobos detectan al jugador a <60 m; exige el doble para que el
+		# personaje no aparezca dentro del radio de agresión de ninguno.
+		var wolf_dist := _distance_to_nearest_live_wolf(base_pos)
+		if wolf_dist >= 120.0:
+			var h := _get_ground_height(base_pos)
+			return Vector3(base_pos.x, h + 0.4, base_pos.z)
+		if wolf_dist > best_wolf_dist:
+			best_wolf_dist = wolf_dist
+			best_pos = base_pos
+	if best_wolf_dist >= 0.0:
+		var hb := _get_ground_height(best_pos)
+		return Vector3(best_pos.x, hb + 0.4, best_pos.z)
 	# Fallback: use center zone (safely inland) with ground height
 	var fb := Vector3(8.0, 0.0, 2.5)
 	if _is_near_river(fb, 30.0):
