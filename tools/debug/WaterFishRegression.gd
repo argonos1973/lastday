@@ -14,7 +14,7 @@ func run() -> void:
         var origin := Vector3(32,.085,-24)
         var specs := Fish.school_specs(origin,size,37.0)
         check(specs == Fish.school_specs(origin,size,37.0),"deterministic school " + str(size))
-        check(specs.size() >= (24 if size.x>60 else 3),"population includes lake")
+        check(specs.size() >= (36 if size.x>60 else 7),"population includes lake")
         world.river_segments_data = [{"center":origin,"size":size,"yaw":37.0}]
         var species := {}
         var contained := true
@@ -26,7 +26,7 @@ func run() -> void:
             var fish := Fish.new()
             fish.setup(spec.center,spec.along,spec.across,spec.length,spec.width,spec.seed,spec.species)
             species[fish.species] = true
-            small = small and fish.body_length >= .10 and fish.body_length < .34
+            small = small and fish.body_length >= .17 and fish.body_length < .48
             var visual := fish.get_child(0) as Node3D
             if visual is MeshInstance3D:
                 actual_scale = actual_scale and is_equal_approx(visual.get_aabb().size.z*visual.scale.z,fish.body_length)
@@ -39,7 +39,7 @@ func run() -> void:
                 smooth = smooth and p.distance_to(fish.pose_at(float(t)+.0167))<.02
             fish.free()
         check(species.size()==3,"three distinct meshes")
-        check(small and actual_scale,"actual mesh length 12–32 cm including root mesh")
+        check(small and actual_scale,"actual mesh length 17–48 cm including root mesh")
         check(contained and submerged,"paths stay underwater inside rotated banks for 10 minutes")
         check(smooth,"continuous paths without wrap teleport")
         var mask := world._make_water_channel_mask().get_image()

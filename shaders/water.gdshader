@@ -1,5 +1,7 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled;
+// Do not write the water plane into the depth buffer: fish and the riverbed
+// must remain visible through the transparent surface.
+render_mode blend_mix, depth_draw_never, cull_disabled;
 
 uniform sampler2D water_noise_1 : repeat_enable, filter_linear_mipmap;
 uniform sampler2D water_noise_2 : repeat_enable, filter_linear_mipmap;
@@ -27,7 +29,7 @@ void vertex() {
     world_pos = (MODEL_MATRIX * vec4(VERTEX,1.0)).xyz;
     if (use_vertex_waves) {
         // Low-frequency noise avoids the long parallel ridges of sine waves.
-        float wave = textureLod(foam_texture,world_pos.xz*.027+vec2(TIME*.004,-TIME*.003),0.0).r-.5;
+        float wave = textureLod(foam_texture,world_pos.xz*.043+vec2(TIME*.018,-TIME*.013),0.0).r-.5;
         VERTEX.y += wave * wave_height;
     }
 }
@@ -37,10 +39,10 @@ void fragment() {
     if (!use_river_flow) { flow = vec2(.10,.07); }
     vec2 p = world_pos.xz;
     // Independent rotated noise layers: no periodic cosine bands.
-    vec3 n1 = texture(water_noise_1,p*.48 - flow*TIME*.18).rgb*2.0-1.0;
+    vec3 n1 = texture(water_noise_1,p*.48 - flow*TIME*.46).rgb*2.0-1.0;
     mat2 turn = mat2(vec2(.6,.8),vec2(-.8,.6));
-    vec3 n2 = texture(water_noise_2,turn*(p*.79-flow*TIME*.13)+vec2(.37,.19)).rgb*2.0-1.0;
-    vec3 broad = texture(water_noise_1,p*.17+vec2(-TIME*.009,TIME*.012)).rgb*2.0-1.0;
+    vec3 n2 = texture(water_noise_2,turn*(p*.79-flow*TIME*.29)+vec2(.37,.19)).rgb*2.0-1.0;
+    vec3 broad = texture(water_noise_1,p*.17+vec2(-TIME*.027,TIME*.035)).rgb*2.0-1.0;
     float distant = smoothstep(12.0,90.0,length(VERTEX));
     vec2 slopes = (n1.xy+transpose(turn)*n2.xy*.55)*(1.0-distant*.85)+broad.xy*.4;
     vec3 ripple = normalize(vec3(slopes,1.0));
@@ -63,7 +65,7 @@ void fragment() {
     ROUGHNESS = roughness_scale + smoothstep(18.0,85.0,length(VERTEX))*.12;
     METALLIC = 0.0;
     SPECULAR = .35;
-    ALPHA = clamp(.13+absorption*.66,.13,.92);
+    ALPHA = clamp(.10+absorption*.57,.10,.78);
     ALPHA = mix(ALPHA, 1.0, fresnel*mirror_strength);
     if (use_foam) {
         float contact = (1.0-smoothstep(.02,.16,edge_dist))*smoothstep(.001,.03,edge_dist);

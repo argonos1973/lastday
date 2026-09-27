@@ -28,7 +28,7 @@ static func school_specs(origin: Vector3, size: Vector2, yaw: float) -> Array:
     var rng := RandomNumberGenerator.new()
     rng.seed = hash([origin,size,yaw,"fish_v2"])
     var lake := size.x >= 60.0
-    var count := rng.randi_range(24,36) if lake else rng.randi_range(3,5)
+    var count := rng.randi_range(36,48) if lake else rng.randi_range(7,10)
     var forward := Vector3(cos(deg_to_rad(yaw)),0,-sin(deg_to_rad(yaw)))
     var side := Vector3(sin(deg_to_rad(yaw)),0,cos(deg_to_rad(yaw)))
     var result: Array = []
@@ -40,8 +40,10 @@ static func school_specs(origin: Vector3, size: Vector2, yaw: float) -> Array:
             p = origin + forward*cos(angle)*size.x*radius + side*sin(angle)*size.y*radius
         # El lomo cresta la superficie: sumergidos son invisibles y solo se ve
         # una línea finísima — las "rayas" eran los peces medio ocultos.
-        var half_h: float = [.16,.22,.28][i%3]*.22
-        p.y = origin.y + rng.randf_range(.0,.025) - half_h
+        var half_h: float = [.22,.32,.42][i%3]*.30
+        # Keep the fish immediately beneath the moving surface, where they are
+        # legible from the shore while still looking submerged.
+        p.y = origin.y - half_h
         result.append({"center":p,"along":forward,"across":side,"length":rng.randf_range(1.8,4.0) if lake else size.x*rng.randf_range(.15,.30),"width":1.0 if lake else size.y*.22,"seed":rng.randi(),"species":i%3})
     return result
 
@@ -54,7 +56,7 @@ func setup(new_center: Vector3, new_along: Vector3, new_across: Vector3, swim_le
     var rng := RandomNumberGenerator.new()
     rng.seed = seed_value
     species = posmod(variant,3)
-    body_length = [.16,.22,.28][species]*rng.randf_range(.78,1.12)
+    body_length = [.22,.32,.42][species]*rng.randf_range(.78,1.12)
     speed = rng.randf_range(.22,.48)
     phase = rng.randf_range(0,TAU)
     _build_fish()
@@ -64,7 +66,7 @@ func pose_at(seconds: float) -> Vector3:
     var p := phase + seconds*speed/maxf(length*.42,1.0)
     # Alternate shallow passes with gentle dives; avoid every fish cresting
     # the surface simultaneously for its entire route.
-    var dive := (sin(seconds*.32+phase)+1.0)*.065
+    var dive := (sin(seconds*.32+phase)+1.0)*.035
     return center + along*sin(p)*length*.42 + across*cos(p*.5+phase)*width*.30 + Vector3.UP*(sin(p*1.7)*.015-dive)
 
 func update_pose(seconds: float) -> void:

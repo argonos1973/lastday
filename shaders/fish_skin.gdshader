@@ -17,6 +17,7 @@ void fragment() {
     if (pattern == 1) { color *= 1.0-smoothstep(.65,.95,stripe)*.28; }
     if (pattern == 2) { color = mix(color,color*.55,(1.0-smoothstep(.025,.06,abs(body_uv.y-.51)))*.5); }
     ALBEDO = color;
+    EMISSION = color*.16;
     ROUGHNESS = .36;
     METALLIC = .18;
     SPECULAR = .65;
