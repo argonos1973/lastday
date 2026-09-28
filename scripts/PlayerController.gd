@@ -1177,8 +1177,8 @@ func _process(delta: float) -> void:
 					_puppet_swap_to_naked()
 		return
 	# Detectar hold de F y G por polling (mas fiable que eventos)
-	var f_held := Input.is_key_pressed(KEY_F) and not is_instance_valid(rowing_boat)
-	var g_held := Input.is_key_pressed(KEY_G) and not is_instance_valid(rowing_boat)
+	var f_held := Input.is_key_pressed(KEY_F) and (not is_instance_valid(rowing_boat) or _boat_standing)
+	var g_held := Input.is_key_pressed(KEY_G) and (not is_instance_valid(rowing_boat) or _boat_standing)
 	# F: press ya llama _interact() en _input; aqui solo track hold para guardar
 	if f_held and not _f_holding:
 		_f_holding = true
@@ -8736,7 +8736,11 @@ func update_rowing_pose(time: float) -> void:
 	_update_head_worn_items()
 	if camera != null and not is_puppet:
 		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * _rowing_view_dist, _rowing_view_height, cos(_rowing_view_yaw) * _rowing_view_dist))
-		camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
+		if _boat_standing:
+			var fwd := rowing_boat.global_basis * Vector3(-sin(_rowing_view_yaw), 0.0, -cos(_rowing_view_yaw))
+			camera.look_at(global_position + Vector3.UP * 1.45 + fwd * 6.0)
+		else:
+			camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
 
 func _set_boat_standing(standing: bool) -> void:
 	_boat_standing = standing
@@ -9084,6 +9088,10 @@ func _get_aim_collider():
 		_collect_child_collision_rids(self, _cached_exclude_rids)
 		_cached_rids_dirty = false
 	query.exclude = _cached_exclude_rids
+	if is_instance_valid(rowing_boat):
+		var boat_exclude: Array[RID] = _cached_exclude_rids.duplicate()
+		_collect_child_collision_rids(rowing_boat, boat_exclude)
+		query.exclude = boat_exclude
 	var result := camera.get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return null
@@ -10066,7 +10074,7 @@ func _current_spread_deg() -> float:
 		spread_deg *= 0.3
 	if is_moving:
 		spread_deg *= 2.5
-	if not is_on_floor():
+	if not is_on_floor() and not (is_instance_valid(rowing_boat) and _boat_standing):
 		spread_deg *= 4.0
 	return minf(spread_deg, 12.0)
 
@@ -10265,6 +10273,8 @@ func _shoot_rifle() -> void:
 		_collect_child_collision_rids(self, _cached_exclude_rids)
 		_cached_rids_dirty = false
 	var exclude_arr: Array[RID] = _cached_exclude_rids.duplicate()
+	if is_instance_valid(rowing_boat):
+		_collect_child_collision_rids(rowing_boat, exclude_arr)
 	# Hitscan: la camara apunta donde mira el jugador. Aplicar spread al rayo
 	# de la camara y castear directamente — dano, particulas y fogonazo ocurren
 	# en el mismo frame. Sin proyectil que se pierda ni retardo visible.

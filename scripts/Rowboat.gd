@@ -415,8 +415,12 @@ func passenger_prompt() -> String:
 		var actor := _actor_for(occupant)
 		if actor != null and actor.has_method("get_held_item"):
 			var held = actor.get_held_item()
-			if held != null and str(held.get("item_type", "")) == "tool_fishing":
-				stand_hint += " | LMB: lanzar"
+			if held != null:
+				match str(held.get("item_type", "")):
+					"tool_fishing":
+						stand_hint += " | LMB: lanzar"
+					"weapon_rifle":
+						stand_hint += " | LMB: disparar | RMB: apuntar"
 	var exit_hint := "F: salir del bote" if _can_exit else "Acercate a la orilla para salir"
 	return exit_hint + " | " + stand_hint
 

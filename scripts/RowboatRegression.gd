@@ -150,6 +150,16 @@ func run() -> void:
 	actor._boat_local_offset = Vector2(0.4, -1.0)
 	boat._process(0.016)
 	check(actor.global_position.distance_to(boat.to_global(Vector3(0.4, BoatScript.STAND_Y, -1.0))) < 0.05, "Local standing offset carried by the hull")
+	var cam_fwd := -actor.camera.global_basis.z
+	var expect_fwd := (boat.global_basis * Vector3(0, 0, -1)).normalized()
+	check(cam_fwd.dot(expect_fwd) > 0.8, "Standing camera looks ahead of the character")
+	actor.camera.global_position = boat.global_position + Vector3(0, 2.0, -8.0)
+	actor.camera.look_at(boat.global_position, Vector3.UP)
+	var prev_range := actor.interaction_distance
+	actor.interaction_distance = 30.0
+	var aim_col = actor._get_aim_collider()
+	check(aim_col != boat, "Standing aim ray is not stopped by the hull")
+	actor.interaction_distance = prev_range
 	boat.accept_input(1, Vector2(50, 50))
 	check(absf(boat._stand_offset.x) <= 1.01 and absf(boat._stand_offset.z) <= 2.71, "Server clamps occupant offset to hull rim")
 	boat._request_times.clear()
