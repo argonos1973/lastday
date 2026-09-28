@@ -4,6 +4,7 @@ const MainScript = preload("res://scripts/Main.gd")
 const PlayerScript = preload("res://scripts/PlayerController.gd")
 const BoatScript = preload("res://scripts/Rowboat.gd")
 const SaveHooks = preload("res://scripts/SaveGameHooks.gd")
+const ItemScript = preload("res://scripts/Item.gd")
 
 class TestWorld extends MainScript:
 	func _ready() -> void:
@@ -181,6 +182,44 @@ func run() -> void:
 	boat._request_times.clear()
 	boat.request_action(1, "stand")
 	check(boat.occupant == 1 and boat.occupant_standing, "Stands up in deep water")
+	boat._process(0.016)
+	var rod = ItemScript.create("Caña de pescar", "tool_fishing", 0.8)
+	actor.inventory.items.append(rod)
+	actor._held_item_reference = rod
+	actor._has_fishing_rod = true
+	check(actor._has_fishing_rod_in_hand(), "Rod equipped while standing")
+	var fish_state := actor._get_fishing_water_state()
+	check(bool(fish_state.get("near", false)) and bool(fish_state.get("facing", false)), "Standing cast finds open water")
+	actor._start_fishing_near_water()
+	check(actor._is_fishing, "Casting from the deck starts fishing")
+	actor._fishing_session += 1
+	actor._is_fishing = false
+	actor._is_fishing_idle = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		var cast_ev := InputEventMouseButton.new()
+		cast_ev.button_index = MOUSE_BUTTON_LEFT
+		cast_ev.pressed = true
+		actor._input(cast_ev)
+		check(actor._is_fishing, "LMB press while standing casts the line")
+		actor._fishing_session += 1
+		actor._is_fishing = false
+		actor._is_fishing_idle = false
+	actor._held_item_reference = null
+	boat._request_times.clear()
+	boat.request_action(1, "stand")
+	check(not boat.occupant_standing, "Sits back down to test auto-stand")
+	boat._process(0.016)
+	check(not actor._boat_standing, "Seated state synced before equipping")
+	boat._request_times.clear()
+	actor._select_held_item(actor.inventory.items.find(rod))
+	var held_sel = actor.get_held_item()
+	check(boat.occupant_standing and held_sel != null and str(held_sel.item_type) == "tool_fishing", "Selecting the rod while seated stands the character")
+	boat._process(0.016)
+	check(actor._boat_standing, "Auto-stand syncs to the local occupant")
+	actor._fishing_session += 1
+	actor._is_fishing = false
+	actor._is_fishing_idle = false
 	boat.accept_input(1, Vector2(0.95, 0))
 	boat.simulate(1.0 / 60.0)
 	check(boat.occupant == 0 and actor.rowing_boat == null, "Stepping over the gunwale drops the occupant into the water")

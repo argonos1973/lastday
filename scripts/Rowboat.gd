@@ -418,7 +418,8 @@ func passenger_prompt() -> String:
 			if held != null:
 				match str(held.get("item_type", "")):
 					"tool_fishing":
-						stand_hint += " | LMB: lanzar"
+						# Con la caña en la mano F lanza: salir es sentarse y luego F.
+						return "LMB/F: lanzar | E: sentarse"
 					"weapon_rifle":
 						stand_hint += " | LMB: disparar | RMB: apuntar"
 	var exit_hint := "F: salir del bote" if _can_exit else "Acercate a la orilla para salir"

@@ -1424,7 +1424,13 @@ func _input(event: InputEvent) -> void:
 			if not _boat_standing:
 				return
 		elif event.is_action_pressed("interact") and not event.is_echo():
-			rowing_boat.request_exit()
+			# Con la caña en la mano, F lanza el hilo como en la orilla; para
+			# salir hay que sentarse primero (E) o guardar la caña.
+			if _boat_standing and _has_fishing_rod_in_hand():
+				if not _is_fishing:
+					_start_fishing_near_water()
+			else:
+				rowing_boat.request_exit()
 			return
 		elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
 			rowing_boat.request_toggle_stand()
@@ -5024,10 +5030,14 @@ func _load_gltf_node3d(path: String) -> Node3D:
 		generated_scene.queue_free()
 	return null
 
+func _request_stand_for_items() -> void:
+	# Sacar equipo remando te pone de pie automaticamente en lugar de bloquearse.
+	if is_instance_valid(rowing_boat) and not _boat_standing and not bool(rowing_boat.get("occupant_standing")):
+		rowing_boat.request_toggle_stand()
+
 func _select_held_item(index: int) -> void:
 	if is_instance_valid(rowing_boat) and not _boat_standing:
-		notice.emit("Necesitas las manos libres para remar.")
-		return
+		_request_stand_for_items()
 	if inventory == null or index < 0 or index >= inventory.items.size():
 		return
 	var next_item = inventory.items[index]
@@ -6462,6 +6472,7 @@ func get_back_item_data(slot: int) -> Dictionary:
 	return data.duplicate(true) if data is Dictionary else {}
 
 func use_back_item(slot: int = -1) -> bool:
+	_request_stand_for_items()
 	if slot < 0:
 		# El atajo usa primero el hombro derecho, que es el ultimo ocupado.
 		if _is_back_slot_occupied(BACK_SLOT_RIGHT):
@@ -8920,8 +8931,12 @@ func _start_fishing_near_water() -> void:
 		# Drop the fish on the ground instead of adding to inventory
 		var drop_pos := global_position + (-global_basis.z * 0.8)
 		drop_pos.y = 0.1
+		if is_instance_valid(rowing_boat):
+			# En la barca el pez queda sobre la cubierta, no bajo el casco.
+			drop_pos = global_position + (-global_basis.z * 0.6)
+			drop_pos.y = global_position.y + 0.05
 		item_dropped.emit("Pez crudo", "food", 0.55, 1, 24.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
-		notice.emit("Pescas un pez. Lo has dejado en el suelo.")
+		notice.emit("Pescas un pez. Lo dejas en la barca." if is_instance_valid(rowing_boat) else "Pescas un pez. Lo has dejado en el suelo.")
 	else:
 		notice.emit("No pica nada.")
 	if held != null and held.has_method("reduce_durability"):
@@ -8998,7 +9013,9 @@ func _fishing_attempt_valid(session: int, rod, origin: Vector3) -> bool:
 		return false
 	if rod == null or get_held_item() != rod or rod.is_broken():
 		return false
-	if global_position.distance_to(origin) > 1.0:
+	# En la barca la posicion la lleva el casco: una deriva suave no debe
+	# cancelar el lance (el limite de 1 m es para quien pesca a pie).
+	if not is_instance_valid(rowing_boat) and global_position.distance_to(origin) > 1.0:
 		return false
 	var water := _get_fishing_water_state()
 	return bool(water.get("near", false)) and bool(water.get("facing", false))
