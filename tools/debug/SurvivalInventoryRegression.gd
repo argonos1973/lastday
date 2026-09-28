@@ -12,9 +12,15 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _capture_mouse() -> void:
 		pass
 
-class TestWorld extends Node3D:
-	var hud = null
+class TestWorld extends "res://scripts/Main.gd":
 	var collected := 0
+	func _ready() -> void:
+		set_process(false)
+		set_physics_process(false)
+	func _exit_tree() -> void:
+		pass
+	func _save_world_change_silent() -> void:
+		pass
 	func handle_world_action_collect(action, _player) -> void:
 		collected += 1
 		action.mark_depleted()
@@ -71,10 +77,51 @@ func run() -> void:
 		["Mochila pequena", "backpack", 0.7], ["Pez crudo", "food", 0.3]]
 	for row in sample:
 		player.inventory.add_item(ItemData.create(row[0], row[1], row[2]))
+	var axe = ItemData.create("Hacha", "tool_axe", 1.2)
+	player.inventory.items.append(axe)
+	player._select_held_item(player.inventory.items.find(axe))
+	if "--preview" in OS.get_cmdline_user_args():
+		player._initializing = true
+		player.equip_clothing("Chaqueta militar")
+		player.equip_clothing("Pantalones militares")
+		player.equip_clothing("Botas survival")
+		player.equip_backpack("Mochila pequena")
+		player._initializing = false
+		player._update_third_person_animation(false, 0.1)
+		await process_frame
+		player._update_backpack_socket()
+		player._update_hand_socket()
+	else:
+		player.third_person_model = Node3D.new()
+		player.add_child(player.third_person_model)
+		var skeleton := Skeleton3D.new()
+		skeleton.name = "BodySkeleton"
+		skeleton.add_bone("Root")
+		skeleton.add_bone("Head")
+		skeleton.set_bone_pose_position(1, Vector3(0, 1.7, 0))
+		player.third_person_model.add_child(skeleton)
+		var attachment := BoneAttachment3D.new()
+		attachment.name = "BoneAttachment3D_RightHand"
+		attachment.bone_name = "Root"
+		skeleton.add_child(attachment)
+		var weapon := MeshInstance3D.new()
+		weapon.name = "WeaponMesh"
+		weapon.mesh = BoxMesh.new()
+		weapon.scale = Vector3.ONE * 100.0
+		attachment.add_child(weapon)
+		for socket_name in ["HandsSocket", "BackpackSocket"]:
+			var socket := Node3D.new()
+			socket.name = socket_name
+			player.third_person_model.add_child(socket)
+			var prop := MeshInstance3D.new()
+			prop.name = "EquipmentMesh"
+			prop.mesh = BoxMesh.new()
+			socket.add_child(prop)
 	var hud = preload("res://scripts/HUD.gd").new()
 	world.add_child(hud)
 	hud.set_process(false)
 	hud.player = player
+	hud.main_node = world
 	hud.root = Control.new()
 	hud.root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud.add_child(hud.root)
@@ -116,6 +163,34 @@ func run() -> void:
 	for frame in range(4):
 		await process_frame
 	check(screen.cargo.get_child_count() > 0, "Inventory screen renders compartments")
+	var portrait_model = screen.portrait._model_root.get_child(0)
+	check(portrait_model.get_node_or_null("HandsSocket") != null, "Portrait keeps held-item socket")
+	check(portrait_model.get_node_or_null("BackpackSocket") != null, "Portrait keeps backpack socket")
+	if not "--preview" in OS.get_cmdline_user_args():
+		check(portrait_model.get_node_or_null("BodySkeleton/BoneAttachment3D_RightHand/WeaponMesh") != null, "Portrait keeps bone-attached equipment")
+		check(screen.portrait._cam.size < 3.0, "Large accessories do not shrink the body framing")
+	var previous_portrait: String = screen.portrait_signature
+	player._select_held_item(player.inventory.items.find(find_item(player, "Cuchillo")))
+	screen.request_refresh(true)
+	await process_frame
+	await process_frame
+	check(screen.portrait_signature != previous_portrait, "Switching held items refreshes the portrait")
+	player._select_held_item(player.inventory.items.find(axe))
+	var card = screen.make_card(screen.item_text(axe), {"item": axe, "label": axe.item_name}, "pockets")
+	screen.cargo.add_child(card)
+	await process_frame
+	var thumbnails: Array = card.find_children("*", "SubViewportContainer", true, false)
+	check(thumbnails.size() == 1, "Item card uses the actual 3D model")
+	if thumbnails.size() == 1:
+		check(thumbnails[0]._model_root.get_child_count() == 1, "Thumbnail loads a model, not an empty viewport")
+		if thumbnails[0]._model_root.get_child_count() == 1:
+			check(thumbnails[0]._model_root.get_child(0).scene_file_path == world._get_drop_model_paths(axe.item_name, axe.item_type)[0], "Thumbnail uses the same asset as world pickups")
+	for label in card.find_children("*", "Label", true, false):
+		check(not "kg" in label.text and not "EQUIPADO" in label.text and not "EN MANOS" in label.text, "Cards keep detailed text in the tooltip")
+	for bar in card.find_children("*", "ProgressBar", true, false):
+		check(bar.get_combined_minimum_size().y <= 4.0, "Condition bar stays thin")
+	check("kg" in card.tooltip_text, "Item weight remains available in tooltip")
+	card.queue_free()
 	screen.search.text = "cuchillo"
 	screen.request_refresh(true)
 	await process_frame
@@ -127,9 +202,23 @@ func run() -> void:
 	if "--preview" in OS.get_cmdline_user_args():
 		root.size = Vector2i(1280, 800)
 		await create_timer(2.0).timeout
+		var source_hand: Node3D = player.third_person_hand_item_root
+		var preview_hand: Node3D = screen.portrait._model_root.get_child(0).get_node("HandsSocket")
+		check(source_hand.get_child_count() > 0, "Preview fixture has a real held prop")
+		check(preview_hand.get_child_count() == source_hand.get_child_count(), "Portrait retains all held geometry")
+		check(source_hand.get_node_or_null("PalmGripVisual/ThirdPersonAxe") != null, "Preview fixture holds the axe, not the previous knife")
+		for mesh in source_hand.find_children("*", "MeshInstance3D", true, false):
+			var copy = preview_hand.get_node_or_null(source_hand.get_path_to(mesh))
+			check(copy != null and copy.mesh == mesh.mesh and copy.visible == mesh.visible, "Portrait matches held mesh: " + str(source_hand.get_path_to(mesh)))
+		check(player.third_person_back_item_root.get_child_count() > 0, "Preview fixture wears a real backpack")
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/lastday_inventory_preview.png")
-		print("Preview: /tmp/lastday_inventory_preview.png")
+		screen.portrait_yaw = 2.5
+		screen._position_portrait_camera()
+		await process_frame
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("/tmp/lastday_inventory_back_preview.png")
+		print("Preview: /tmp/lastday_inventory_preview.png; /tmp/lastday_inventory_back_preview.png")
 	print("Inventory regression: %d failures" % failures)
 	world.queue_free()
 	await process_frame

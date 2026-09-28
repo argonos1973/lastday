@@ -19,6 +19,9 @@ var refresh_pending := false
 var _vicinity_timer := 0.0
 var portrait: SubViewportContainer
 var portrait_signature := ""
+var portrait_focus := Vector3.ZERO
+var portrait_yaw := 0.5
+var portrait_dragging := false
 const PICKUPS := ["pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat", "eat_food", "wood", "stone", "wolf_meat_raw", "bird_meat_raw", "pickup_torch"]
 
 func setup(owner_hud) -> void:
@@ -77,6 +80,7 @@ func setup(owner_hud) -> void:
 		if not visible:
 			menu.hide()
 		else:
+			portrait_signature = ""
 			request_refresh(true))
 	request_refresh(true)
 
@@ -173,7 +177,8 @@ func refresh() -> void:
 			child.queue_free()
 	var carry_weight: float = player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight()
 	weight.text = "%.1f / %.1f kg · %d / %d espacios" % [carry_weight, player.inventory.max_weight, player.inventory.items.size(), player.inventory.max_slots]
-	var floor_card = make_card("SUELO · alcance 2 m\nArrastra aquí para soltar una unidad", {}, "ground")
+	var floor_card = make_card("Soltar al suelo", {}, "ground")
+	floor_card.tooltip_text = "Arrastra aquí para soltar una unidad. Alcance de recogida: 2 m."
 	vicinity.add_child(floor_card)
 	for action in ground:
 		vicinity.add_child(make_card(action.display_name, {"world": action, "label": action.display_name}, ""))
@@ -184,17 +189,21 @@ func refresh() -> void:
 	if portrait != null:
 		equipment.add_child(portrait)
 	equipment.add_child(text_label("MANOS", 16))
-	equipment.add_child(make_card("Manos libres\nArrastra un objeto aquí" if held == null else item_text(held), {} if held == null else {"item": held, "label": held.item_name}, "hands"))
+	equipment.add_child(make_card("Manos libres" if held == null else item_text(held), {} if held == null else {"item": held, "label": held.item_name}, "hands"))
 	if held != null:
-		button(equipment, "Guardar en inventario", func(): player._store_held_item(); request_refresh(true))
+		button(equipment, "Guardar", func(): player._store_held_item(); request_refresh(true))
 	equipment.add_child(text_label("EQUIPAMIENTO", 16))
-	var equip_zone = make_card("Vestir / equipar\nArrastra ropa o mochila", {}, "equipment")
+	var equip_zone = make_card("Equipar", {}, "equipment")
+	equip_zone.tooltip_text = "Arrastra ropa o una mochila aquí para equiparla."
 	equipment.add_child(equip_zone)
-	for slot in ["head", "torso", "hands", "legs", "feet"]:
-		var names := {"head": "Cabeza", "torso": "Torso", "hands": "Guantes", "legs": "Piernas", "feet": "Pies"}
-		var name: String = str(player._equipped_slots.get(slot, ""))
+	var equipment_grid := GridContainer.new()
+	equipment_grid.columns = 2
+	equipment.add_child(equipment_grid)
+	for slot in ["head", "torso", "hands", "legs", "feet", "backpack"]:
+		var names := {"head": "Cabeza", "torso": "Torso", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
+		var name: String = player.equipped_backpack if slot == "backpack" else str(player._equipped_slots.get(slot, ""))
 		var item = find_item(name)
-		equipment.add_child(make_card(names[slot] + " · " + (name if not name.is_empty() else "Vacío"), {} if item == null else {"item": item, "label": name}, "equipment"))
+		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equipment"))
 	for slot in range(2):
 		var data: Dictionary = player.get_back_item_data(slot)
 		button(equipment, "Hombro %d · %s" % [slot + 1, data.get("name", "Vacío")], func(): player.use_back_item(slot); request_refresh(true))
@@ -206,14 +215,16 @@ func refresh() -> void:
 		var items: Array = groups[container.id]
 		cargo.add_child(make_card("%s   %d / %d" % [container.name, items.size(), container.capacity], {}, container.id))
 		var grid := GridContainer.new()
-		grid.columns = 2
+		grid.columns = 3
 		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cargo.add_child(grid)
 		for item in items:
 			if matches_filter(item):
 				grid.add_child(make_card(item_text(item), {"item": item, "label": item.item_name}, container.id))
 		if items.size() < container.capacity:
-			grid.add_child(make_card("+ Espacio libre", {}, container.id))
+			var free_slot = make_card("+", {}, container.id)
+			free_slot.tooltip_text = "Espacio libre: arrastra un objeto aquí."
+			grid.add_child(free_slot)
 
 func item_text(item) -> String:
 	var state: String = "EN MANOS · " if player.get_held_item() == item else ""
@@ -238,63 +249,118 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	card.payload = payload
 	card.destination = destination
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size = Vector2(0, 58)
-	card.add_theme_stylebox_override("panel", style(Color(0.085, 0.10, 0.09, 0.95)))
-	var row := HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(row)
-	if payload.has("item"):
-		var icon = preload("res://scripts/HudIcon.gd").new()
-		icon.custom_minimum_size = Vector2(38, 42)
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		icon.set_shape(hud._item_icon_shape(payload.item))
-		icon.set_icon_color(hud._item_thumbnail_color(payload.item).lightened(0.5))
-		row.add_child(icon)
+	card.custom_minimum_size = Vector2(0, 32)
+	var panel := style(Color(0.085, 0.10, 0.09, 0.95))
+	panel.set_content_margin_all(6)
+	card.add_theme_stylebox_override("panel", panel)
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(details)
-	var label := text_label(title)
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(details)
+	var item = payload.get("item")
+	if payload.has("world"):
+		var action = payload.world
+		var types := {"pickup_torch": "tool_torch", "backpack_pickup": "backpack", "wolf_meat_raw": "food", "bird_meat_raw": "food", "axe_tool": "tool_axe", "hoe_tool": "tool_hoe", "shovel_tool": "tool_shovel", "hammer_tool": "tool_hammer", "pickaxe_tool": "tool_pickaxe", "matches_tool": "tool_matches"}
+		var type: String = types.get(action.action_type, str(action.get_meta("item_type", "resource")))
+		var name: String = {"wood": "Tronco", "stone": "Piedra"}.get(action.action_type, str(action.get_meta("item_name", action.display_name)))
+		item = preload("res://scripts/Item.gd").create(name, type, float(action.get_meta("item_weight", 0.0)), int(action.get_meta("item_quantity", 1)))
+		if action.has_meta("item_color"):
+			item.set_meta("clothing_color", action.get_meta("item_color"))
+	if item != null:
+		card.custom_minimum_size.x = 96
+		var image := Control.new()
+		image.custom_minimum_size.y = 78
+		image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		details.add_child(image)
+		add_item_thumbnail(image, item)
+		if item.quantity > 1:
+			var quantity := text_label("×%d" % item.quantity, 13)
+			quantity.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+			quantity.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+			image.add_child(quantity)
+		if payload.has("item") and (player.get_held_item() == item or player._equipped_slots.values().has(item.item_name) or player.equipped_backpack == item.item_name):
+			panel.border_color = Color(0.65, 0.74, 0.43)
+	var label := text_label(str(item.item_name) if item != null else title, 12 if item != null else 13)
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if item != null else HORIZONTAL_ALIGNMENT_LEFT
 	details.add_child(label)
 	if payload.has("item"):
 		var condition := ProgressBar.new()
 		condition.custom_minimum_size.y = 3
 		condition.show_percentage = false
-		condition.value = payload.item.durability_pct() * 100.0
+		condition.value = item.durability_pct() * 100.0
 		condition.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		condition.add_theme_stylebox_override("background", style(Color(0.14, 0.15, 0.14)))
+		var background := StyleBoxFlat.new()
+		background.bg_color = Color(0.14, 0.15, 0.14)
+		condition.add_theme_stylebox_override("background", background)
 		var fill := StyleBoxFlat.new()
 		fill.bg_color = Color(0.52, 0.62, 0.34) if condition.value > 50 else Color(0.77, 0.48, 0.25)
 		condition.add_theme_stylebox_override("fill", fill)
 		details.add_child(condition)
-	card.tooltip_text = title + "\nDoble clic: usar · Clic derecho: opciones"
+	card.tooltip_text = (item_text(item) if payload.has("item") else title) + "\nDoble clic: usar · Clic derecho: opciones"
 	return card
+
+func add_item_thumbnail(parent: Control, item) -> void:
+	var thumbnail = preload("res://scripts/ItemThumbnail3D.gd").new()
+	thumbnail.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	thumbnail.ready.connect(func():
+		var paths: Array = []
+		var scale_value := 1.0
+		if hud.main_node != null and hud.main_node.has_method("_get_drop_model_paths"):
+			paths = hud.main_node._get_drop_model_paths(item.item_name, item.item_type)
+			scale_value = hud.main_node._get_drop_scale(item.item_name, item.item_type)
+		if item.item_name == "Trapos":
+			paths = []
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT}
+		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
+		if not only_mesh.is_empty():
+			colors.tint = Color(0.05, 0.05, 0.05)
+		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo)
+		if paths.is_empty() and item.item_name == "Trapos":
+			var mesh := MeshInstance3D.new()
+			var cylinder := CylinderMesh.new()
+			cylinder.top_radius = 0.25
+			cylinder.bottom_radius = 0.25
+			cylinder.height = 0.06
+			mesh.mesh = cylinder
+			var material := StandardMaterial3D.new()
+			material.albedo_color = Color(0.9, 0.85, 0.7)
+			mesh.material_override = material
+			thumbnail._model_root.add_child(mesh)
+			thumbnail._frame_camera(mesh)
+		thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+		thumbnail.resized.connect(func(): thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE)
+	, CONNECT_ONE_SHOT)
+	parent.add_child(thumbnail)
 
 func update_portrait() -> void:
 	if player.third_person_model == null:
 		return
-	var current: String = str(player._equipped_slots) + player.equipped_backpack
+	var held = player.get_held_item()
+	var current: String = str(player.third_person_model.get_instance_id()) + str(player._equipped_slots) + player.equipped_backpack + str(player.inventory.to_array())
+	current += str(held.to_dict()) if held != null else ""
+	for slot in range(2):
+		current += str(player.get_back_item_data(slot))
 	if portrait != null and portrait_signature == current:
 		return
 	if portrait != null:
 		portrait.queue_free()
 	portrait_signature = current
 	portrait = preload("res://scripts/ItemThumbnail3D.gd").new()
-	portrait.custom_minimum_size = Vector2(0, 260)
+	portrait.custom_minimum_size = Vector2(0, 290)
 	equipment.add_child(portrait)
+	portrait.mouse_filter = Control.MOUSE_FILTER_STOP
+	portrait.tooltip_text = "Arrastra para girar y ver el equipo."
+	portrait.gui_input.connect(_portrait_input)
 	var model: Node3D = player.third_person_model.duplicate(0)
 	model.process_mode = Node.PROCESS_MODE_DISABLED
-	# Quita los accesorios en tiempo real (sockets de manos/espalda,
-	# attachments de rifle, overlays de caña, luces) — su geometria infla el
-	# AABB de encuadre y el personaje salia minusculo. El retrato queda con
-	# cuerpo + ropa puesta (Worn_*).
+	# Conserva los accesorios en tiempo real (sockets de manos/espalda,
+	# attachments de rifle y overlays de caña), sin usarlos para encuadrar.
+	# Solo se retiran luces y colisiones del duplicado del retrato.
+	# El cuerpo, la ropa y el equipo mantienen su estado visual real.
 	var removable: Array = []
 	for node in model.find_children("*", "", true, false):
-		var n := String(node.name)
-		if node is Light3D or node is BoneAttachment3D or n.begins_with("RodVisual_") or n.begins_with("BoneAttachment") or n.ends_with("Socket"):
-			removable.append(node)
-		elif n in ["RifleSlingRoot", "RifleRoot", "WeaponOffset", "MuzzleFlash"]:
+		if node is Light3D or node is CollisionObject3D:
 			removable.append(node)
 	for node in removable:
 		if is_instance_valid(node) and node.get_parent() != null:
@@ -310,8 +376,8 @@ func update_portrait() -> void:
 	# de los huesos del esqueleto.
 	var box := AABB()
 	var first_bone := true
-	for node in model.find_children("*", "Skeleton3D", true, false):
-		var skel := node as Skeleton3D
+	var skel: Skeleton3D = player._find_skeleton(model)
+	if skel != null:
 		for i in range(skel.get_bone_count()):
 			var bone_pos: Vector3 = skel.to_global(skel.get_bone_global_pose(i).origin)
 			if first_bone:
@@ -325,14 +391,27 @@ func update_portrait() -> void:
 	box = box.grow(0.06)
 	# El hueso de la cabeza nace en el cuello: la coronilla queda ~0.2 m arriba.
 	box.size.y += 0.2
-	var focus: Vector3 = box.get_center()
-	cam.size = maxf(box.size.y * 0.93, 0.8)
-	cam.position = focus + Vector3(0.55, 0.35, 1.0).normalized() * 4.5
-	cam.look_at(focus, Vector3.UP)
+	portrait_focus = box.get_center()
+	cam.size = maxf(box.size.y, 0.8)
 	cam.near = 0.05
 	cam.far = 20.0
-	portrait._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_position_portrait_camera()
 	equipment.remove_child(portrait)
+
+func _position_portrait_camera() -> void:
+	var cam: Camera3D = portrait._cam
+	cam.position = portrait_focus + Vector3(sin(portrait_yaw), 0.18, cos(portrait_yaw)).normalized() * 4.5
+	cam.look_at(portrait_focus, Vector3.UP)
+	portrait._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+func _portrait_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		portrait_dragging = event.pressed
+		portrait.accept_event()
+	elif event is InputEventMouseMotion and portrait_dragging and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		portrait_yaw -= event.relative.x * 0.012
+		_position_portrait_camera()
+		portrait.accept_event()
 
 func button(parent: Control, title: String, action: Callable) -> void:
 	var control := Button.new()
