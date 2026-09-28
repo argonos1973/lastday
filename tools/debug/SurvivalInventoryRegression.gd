@@ -70,6 +70,16 @@ func run() -> void:
 	var before: Array = player.inventory.to_array()
 	check(not Cargo.move(rags, "missing", player.inventory, capacity), "Reject nonexistent compartment")
 	check(before == player.inventory.to_array(), "Rejected transfer preserves items")
+	var tiny_containers := [{"id": "pockets", "capacity": 1}, {"id": "backpack", "capacity": 1}]
+	var blocker = ItemData.create("Piedra", "resource", 0.3)
+	blocker.cargo_location = "backpack"
+	rags.cargo_location = "pockets"
+	player.inventory.items.append(blocker)
+	var full_before: Array = player.inventory.to_array()
+	check(not Cargo.can_move(rags, "backpack", player.inventory, tiny_containers), "Full cargo rejects drag preview")
+	check(not Cargo.move(rags, "backpack", player.inventory, tiny_containers), "Full cargo rejects transfer")
+	check(full_before == player.inventory.to_array(), "Rejected drag and drop do not mutate cargo")
+	player.inventory.items.erase(blocker)
 	var sample := [
 		["Cuchillo", "weapon", 0.4], ["Botella de agua", "water", 1.0],
 		["Cerillas", "tool_matches", 0.05], ["Caña de pescar", "tool_fishing", 0.8],
@@ -131,6 +141,18 @@ func run() -> void:
 	hud.inventory_visible = true
 	hud.inventory_panel.show()
 	var screen = hud.survival_inventory
+	var jacket = find_item(player, "Chaqueta militar")
+	check(screen.can_transfer({"item": jacket}, "equip:torso", {}), "Jacket fits torso")
+	check(not screen.can_transfer({"item": jacket}, "equip:feet", {}), "Jacket rejected by feet slot")
+	check(not screen.can_transfer({"item": axe}, "equip:torso", {}), "Tools rejected by clothing slots")
+	screen.open_split(rags)
+	screen.split_amount.value = 2
+	screen.split_dialog.confirmed.emit()
+	screen.split_dialog.hide()
+	check(rags.quantity == 6, "Split dialog separates the requested quantity")
+	var separated = player.inventory.items.back()
+	check(separated.quantity == 2 and separated.item_name == rags.item_name, "Split dialog preserves the new stack")
+	check(player.inventory.combine_stack(separated, rags), "Split dialog stack can merge again")
 	var action = preload("res://scripts/WorldAction.gd").new()
 	action.action_type = "pickup_item"
 	action.display_name = "Palo"
@@ -191,6 +213,15 @@ func run() -> void:
 		check(bar.get_combined_minimum_size().y <= 4.0, "Condition bar stays thin")
 	check("kg" in card.tooltip_text, "Item weight remains available in tooltip")
 	card.queue_free()
+	screen.toggle_compartment("pockets")
+	await process_frame
+	await process_frame
+	check(screen.collapsed_compartments.get("pockets", false), "Compartment keeps collapsed state")
+	var collapsed_count: int = screen.cargo.get_child_count()
+	screen.toggle_compartment("pockets")
+	await process_frame
+	await process_frame
+	check(screen.cargo.get_child_count() == collapsed_count + 1, "Reopening compartment restores its grid")
 	screen.search.text = "cuchillo"
 	screen.request_refresh(true)
 	await process_frame

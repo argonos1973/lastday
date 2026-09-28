@@ -13,6 +13,10 @@ var weight: Label
 var search: LineEdit
 var menu: PopupMenu
 var actions: Array[Callable] = []
+var split_dialog: ConfirmationDialog
+var split_amount: SpinBox
+var split_item
+var collapsed_compartments: Dictionary = {}
 var signature := ""
 var selected_filter := "all"
 var refresh_pending := false
@@ -76,9 +80,29 @@ func setup(owner_hud) -> void:
 		if id >= 0 and id < actions.size():
 			actions[id].call()
 		request_refresh(true))
+	split_dialog = ConfirmationDialog.new()
+	split_dialog.title = "Separar pila"
+	split_dialog.ok_button_text = "Separar"
+	split_dialog.cancel_button_text = "Cancelar"
+	var split_layout := VBoxContainer.new()
+	split_layout.add_child(text_label("Unidades para la nueva pila", 16))
+	split_amount = SpinBox.new()
+	split_amount.min_value = 1
+	split_amount.step = 1
+	split_amount.custom_minimum_size.x = 280
+	split_layout.add_child(split_amount)
+	split_dialog.add_child(split_layout)
+	add_child(split_dialog)
+	split_dialog.confirmed.connect(func():
+		if not player.inventory.split_stack(split_item, int(split_amount.value)):
+			player.notice.emit("No se puede separar: revisa la cantidad y el espacio libre.")
+		split_item = null
+		request_refresh(true))
 	visibility_changed.connect(func():
 		if not visible:
 			menu.hide()
+			split_dialog.hide()
+			split_item = null
 		else:
 			portrait_signature = ""
 			request_refresh(true))
@@ -156,7 +180,7 @@ func reachable(action) -> bool:
 
 func refresh() -> void:
 	refresh_pending = false
-	if not visible or menu.visible or get_viewport().gui_is_dragging():
+	if not visible or menu.visible or split_dialog.visible or get_viewport().gui_is_dragging():
 		return
 	var ground := nearby()
 	var state := str(player.inventory.to_array()) + str(player._equipped_slots) + str(player.get_held_item()) + str(player.equipped_backpack)
@@ -203,7 +227,7 @@ func refresh() -> void:
 		var names := {"head": "Cabeza", "torso": "Torso", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
 		var name: String = player.equipped_backpack if slot == "backpack" else str(player._equipped_slots.get(slot, ""))
 		var item = find_item(name)
-		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equipment"))
+		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equip:" + slot))
 	for slot in range(2):
 		var data: Dictionary = player.get_back_item_data(slot)
 		button(equipment, "Hombro %d · %s" % [slot + 1, data.get("name", "Vacío")], func(): player.use_back_item(slot); request_refresh(true))
@@ -213,7 +237,13 @@ func refresh() -> void:
 		containers.append({"id": "overflow", "name": "SIN ESPACIO", "capacity": groups.overflow.size()})
 	for container in containers:
 		var items: Array = groups[container.id]
-		cargo.add_child(make_card("%s   %d / %d" % [container.name, items.size(), container.capacity], {}, container.id))
+		var folded: bool = bool(collapsed_compartments.get(container.id, false)) and search.text.is_empty() and selected_filter == "all"
+		var header = make_card("%s  %s   %d / %d" % ["▸" if folded else "▾", container.name, items.size(), container.capacity], {}, container.id)
+		header.set_meta("compartment_header", container.id)
+		header.tooltip_text = "Clic: plegar / desplegar. Arrastra aquí para guardar."
+		cargo.add_child(header)
+		if folded:
+			continue
 		var grid := GridContainer.new()
 		grid.columns = 3
 		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -225,6 +255,10 @@ func refresh() -> void:
 			var free_slot = make_card("+", {}, container.id)
 			free_slot.tooltip_text = "Espacio libre: arrastra un objeto aquí."
 			grid.add_child(free_slot)
+
+func toggle_compartment(id: String) -> void:
+	collapsed_compartments[id] = not bool(collapsed_compartments.get(id, false))
+	request_refresh(true)
 
 func item_text(item) -> String:
 	var state: String = "EN MANOS · " if player.get_held_item() == item else ""
@@ -428,12 +462,22 @@ func find_item(name: String):
 
 func can_transfer(data: Dictionary, destination: String, target: Dictionary) -> bool:
 	if data.has("world"):
-		return destination not in ["", "ground", "equipment", "hands"] and reachable(data.world)
-	if not data.has("item") or not player.inventory.items.has(data.item):
+		return destination in Cargo.compartments(player).map(func(c): return c.id) and reachable(data.world)
+	if not data.has("item") or data.item == null:
 		return false
+	var item = data.item
+	if not player.inventory.items.has(item):
+		return player.get_held_item() == item and destination == "ground"
+	if destination.begins_with("equip:"):
+		var slot := destination.trim_prefix("equip:")
+		return (item.item_type == "backpack" and slot == "backpack") or (item.item_type == "clothing" and player.CLOTHING_SLOTS.get(item.item_name, "") == slot)
 	if destination == "equipment":
-		return data.item.item_type in ["clothing", "backpack"]
-	return not destination.is_empty() or target.has("item")
+		return item.item_type == "backpack" or (item.item_type == "clothing" and player.CLOTHING_SLOTS.has(item.item_name))
+	if destination in ["ground", "hands"]:
+		return true
+	if target.has("item") and player.inventory.items.has(target.item) and target.item != item and target.item.can_stack_with(item, true):
+		return true
+	return Cargo.can_move(item, destination, player.inventory, Cargo.compartments(player))
 
 func transfer(data: Dictionary, destination: String, target: Dictionary) -> void:
 	if not can_transfer(data, destination, target):
@@ -441,10 +485,13 @@ func transfer(data: Dictionary, destination: String, target: Dictionary) -> void
 	if data.has("world"):
 		collect(data.world)
 	elif destination == "ground":
-		player.drop_inventory_item(player.inventory.items.find(data.item))
+		if player.inventory.items.has(data.item):
+			player.drop_inventory_item(player.inventory.items.find(data.item))
+		else:
+			player._drop_held_item()
 	elif destination == "hands":
 		player._select_held_item(player.inventory.items.find(data.item))
-	elif destination == "equipment":
+	elif destination == "equipment" or destination.begins_with("equip:"):
 		equip(data.item)
 	elif target.has("item") and target.item != data.item and target.item.can_stack_with(data.item, true):
 		# Store a held source before removing its resource during merge.
@@ -479,6 +526,17 @@ func activate(data: Dictionary) -> void:
 			player._select_held_item(player.inventory.items.find(data.item))
 	request_refresh(true)
 
+func open_split(item) -> void:
+	if not player.inventory.items.has(item) or item.quantity < 2:
+		return
+	split_item = item
+	split_dialog.title = "Separar: " + str(item.item_name)
+	split_amount.max_value = item.quantity - 1
+	split_amount.value = maxi(1, item.quantity / 2)
+	split_dialog.popup_centered()
+	split_amount.get_line_edit().grab_focus()
+	split_amount.get_line_edit().select_all()
+
 func add_action(title: String, callback: Callable) -> void:
 	menu.add_item(title, actions.size())
 	actions.append(callback)
@@ -507,9 +565,10 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					player._select_held_item(player.inventory.items.find(item))
 					player._toggle_flashlight())
 			if item.quantity > 1:
-				add_action("Separar la mitad", func():
-					if not player.inventory.split_stack(item, maxi(1, item.quantity / 2)):
-						player.notice.emit("Necesitas un espacio libre para separar la pila."))
+				add_action("Separar unidades…", func(): open_split(item))
+			for container in Cargo.compartments(player):
+				if container.id != item.cargo_location and Cargo.can_move(item, container.id, player.inventory, Cargo.compartments(player)):
+					add_action("Mover a " + str(container.name).to_lower(), func(): transfer({"item": item}, container.id, {}))
 			if player.can_store_item_on_back(item):
 				add_action("Colgar en la espalda", func():
 					player._select_held_item(player.inventory.items.find(item))

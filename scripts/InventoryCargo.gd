@@ -46,8 +46,36 @@ static func arrange(items: Array, containers: Array) -> Dictionary:
 			groups.overflow.append(item)
 	return groups
 
-static func move(item, destination: String, inventory, containers: Array) -> bool:
+# Hover validation must not assign cargo locations or emit inventory changes.
+static func can_move(item, destination: String, inventory, containers: Array) -> bool:
 	if not inventory.items.has(item):
+		return false
+	var capacities := {}
+	var counts := {}
+	for container in containers:
+		capacities[container.id] = container.capacity
+		counts[container.id] = 0
+	if not capacities.has(destination):
+		return false
+	var assigned := {}
+	var pending: Array = []
+	for entry in inventory.items:
+		var location: String = entry.cargo_location
+		if capacities.has(location) and counts[location] < capacities[location]:
+			counts[location] += 1
+			assigned[entry] = location
+		else:
+			pending.append(entry)
+	for entry in pending:
+		for container in containers:
+			if counts[container.id] < capacities[container.id]:
+				counts[container.id] += 1
+				assigned[entry] = container.id
+				break
+	return assigned.get(item, "") == destination or counts[destination] < capacities[destination]
+
+static func move(item, destination: String, inventory, containers: Array) -> bool:
+	if not can_move(item, destination, inventory, containers):
 		return false
 	var groups := arrange(inventory.items, containers)
 	for container in containers:

@@ -79,6 +79,8 @@ func run() -> void:
 	boat.name = "LakeRowboat"
 	boat.lake_center = Vector3(250, 0.085, -307)
 	boat.position = boat.clamp_to_lake(Vector3(260, 0, -270))
+	# Bow is +Z on the imported hull; face it into the lake like the real spawn yaw.
+	boat.rotation.y = PI
 	world.lake_rowboat = boat
 	world.add_child(boat)
 	var reflection_safe := boat.visual != null
@@ -105,7 +107,7 @@ func run() -> void:
 		skeleton.force_update_all_bone_transforms()
 		for pair in [["Left", "Right", Vector3(0.731112, 0.368468, 0.543565)], ["Right", "Left", Vector3(-0.745247, 0.378858, 0.558715)]]:
 			var oar: Node3D = boat.visual.find_child("Oar" + pair[0], true, false)
-			var target: Vector3 = oar.to_global(pair[2]) + Vector3(0, 0.02, -0.14)
+			var target: Vector3 = oar.to_global(pair[2]) + boat.global_basis * Vector3(0, 0.02, -0.14)
 			var wrist: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone("mixamorig_" + pair[1] + "Hand")).origin
 			max_grip_error = maxf(max_grip_error, wrist.distance_to(target))
 	print("MAX_GRIP_ERROR=", max_grip_error)
@@ -152,7 +154,7 @@ func run() -> void:
 	boat._process(0.016)
 	check(actor.global_position.distance_to(boat.to_global(Vector3(0.4, BoatScript.STAND_Y, -1.0))) < 0.05, "Local standing offset carried by the hull")
 	var cam_fwd := -actor.camera.global_basis.z
-	var expect_fwd := (boat.global_basis * Vector3(0, 0, -1)).normalized()
+	var expect_fwd := (boat.global_basis * Vector3(0, 0, 1)).normalized()
 	check(cam_fwd.dot(expect_fwd) > 0.8, "Standing camera looks ahead of the character")
 	actor.camera.global_position = boat.global_position + Vector3(0, 2.0, -8.0)
 	actor.camera.look_at(boat.global_position, Vector3.UP)
@@ -179,6 +181,9 @@ func run() -> void:
 		boat.accept_input(1, Vector2(0, -1))
 		boat.simulate(1.0 / 60.0)
 	check(boat.contains_hull(boat.position) and boat.speed == 0.0, "Hull cannot cross lake boundary")
+	# The hull rests against the boundary; bring it back over open water so the
+	# standing cast does not land on the shallow rim it just sailed into.
+	boat.position = boat.clamp_to_lake(boat.lake_center)
 	boat._request_times.clear()
 	boat.request_action(1, "stand")
 	check(boat.occupant == 1 and boat.occupant_standing, "Stands up in deep water")
@@ -206,6 +211,7 @@ func run() -> void:
 		actor._is_fishing = false
 		actor._is_fishing_idle = false
 	actor._held_item_reference = null
+	actor._has_fishing_rod = false
 	boat._request_times.clear()
 	boat.request_action(1, "stand")
 	check(not boat.occupant_standing, "Sits back down to test auto-stand")
@@ -283,7 +289,7 @@ func run() -> void:
 	var wake: GPUParticles3D = boat.get_node_or_null("WakeFx")
 	if wake != null:
 		boat._fx_prev_pos = boat.global_position
-		boat.global_position -= boat.global_basis.z * 0.05
+		boat.global_position += boat.global_basis.z * 0.05
 		boat._update_water_fx(1.0 / 60.0)
 		check(wake.emitting, "Wake emits while the boat moves")
 		boat._fx_prev_pos = boat.global_position
@@ -298,13 +304,13 @@ func run() -> void:
 		check((bow.process_material as ParticleProcessMaterial).spread == 0.0, "Surface foam has no vertical spread")
 		check(wake.draw_pass_1 is PlaneMesh and not wake.local_coords, "Foam lies flat and remains behind in world space")
 		boat._fx_prev_pos = boat.global_position
-		boat.global_position -= boat.global_basis.z * 0.3
+		boat.global_position += boat.global_basis.z * 0.3
 		boat._update_water_fx(0.1)
-		check(bow.emitting and bow.position.z < 0, "Forward movement produces bow foam")
+		check(bow.emitting and bow.position.z > 0, "Forward movement produces bow foam")
 		check(bow.amount_ratio > 0.2 and bow.amount_ratio <= 1.0, "Foam density scales with speed")
-		boat.global_position += boat.global_basis.z * 0.9
+		boat.global_position -= boat.global_basis.z * 0.9
 		boat._update_water_fx(0.3)
-		check(bow.emitting and bow.position.z > 0 and wake.position.z < 0, "Reverse movement swaps leading foam and wake")
+		check(bow.emitting and bow.position.z < 0 and wake.position.z > 0, "Reverse movement swaps leading foam and wake")
 		boat.global_position += Vector3(100, 0, 0)
 		boat._update_water_fx(1.0 / 60.0)
 		check(not bow.emitting and not wake.emitting, "Teleports do not produce a water burst")
@@ -330,14 +336,14 @@ func run() -> void:
 		check(is_equal_approx(boat._fx_speed, intensity), "Zero delta does not create artificial speed")
 		for frame in range(180):
 			if frame % 3 == 0:
-				boat.global_position -= boat.global_basis.z * BoatScript.MAX_SPEED / 60.0
+				boat.global_position += boat.global_basis.z * BoatScript.MAX_SPEED / 60.0
 			boat._update_water_fx(1.0 / 180.0)
 		check(boat._fx_speed > BoatScript.MAX_SPEED * 0.85, "High render rates preserve wake intensity between physics ticks")
 		boat.rotation.y += PI * 0.5
 		boat._fx_velocity = Vector3.ZERO
-		boat.global_position -= boat.global_basis.z * 0.3
+		boat.global_position += boat.global_basis.z * 0.3
 		boat._update_water_fx(0.1)
-		check(bow.emitting and bow.position.z < 0, "Bow follows the boat heading after turning")
+		check(bow.emitting and bow.position.z > 0, "Bow follows the boat heading after turning")
 		boat._update_water_fx(0.5)
 		boat.rowing = true
 		boat.rowing_time = 0.2

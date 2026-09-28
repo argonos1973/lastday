@@ -10859,7 +10859,7 @@ func _create_lake_rowboat(center: Vector3, size: Vector2, yaw: float) -> void:
 	boat.lake_size = size
 	boat.lake_yaw = angle
 	boat.position = boat.clamp_to_lake(boat_pos)
-	boat.rotation_degrees.y = rad_to_deg(angle) + 18.0
+	boat.rotation_degrees.y = rad_to_deg(angle) + 198.0
 	lake_rowboat = boat
 	add_child(boat)
 	_rowboat_spawned = true

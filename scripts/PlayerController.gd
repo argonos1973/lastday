@@ -3008,7 +3008,7 @@ func _physics_process(delta: float) -> void:
 		_water_depth = 0.0
 		_water_sink = 0.0
 		if _boat_standing:
-			var boat_move := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+			var boat_move := _boat_movement_input()
 			is_moving = boat_move.length_squared() > 0.001
 			_boat_local_offset.x = clampf(_boat_local_offset.x + boat_move.x * 1.6 * delta, -1.0, 1.0)
 			_boat_local_offset.y = clampf(_boat_local_offset.y + boat_move.y * 1.6 * delta, -2.6, 2.7)
@@ -8690,6 +8690,40 @@ func _load_rowing_animation() -> void:
 		third_person_animation_player.add_animation_library("rowing", library)
 	source.free()
 
+func _boat_movement_input() -> Vector2:
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED or get_tree().paused or _is_fishing or _consumption_pending:
+		return Vector2.ZERO
+	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var relative := Vector3(input.x, 0, input.y).rotated(Vector3.UP, _rowing_view_yaw)
+	return Vector2(relative.x, relative.z)
+
+func prepare_to_row() -> bool:
+	if is_dead or _consumption_pending or _interact_busy:
+		return false
+	if get_held_item() != null:
+		_store_held_item()
+		if get_held_item() != null:
+			notice.emit("Necesitas las manos libres para sentarte a remar.")
+			return false
+	return true
+
+func _cancel_boat_actions() -> void:
+	_is_fishing = false
+	_is_fishing_idle = false
+	_fishing_session += 1
+	_deactivate_rod_visual_overlay()
+	third_person_action_animation = ""
+	third_person_action_timer = 0.0
+	_f_holding = false
+	_g_holding = false
+	_throw_charging = false
+	if not is_puppet:
+		if _is_aiming:
+			_toggle_aim()
+		var main := get_tree().current_scene
+		if main != null and main.get("hud") != null and main.hud.has_method("hide_countdown"):
+			main.hud.hide_countdown()
+
 func begin_rowing(boat: Node3D) -> void:
 	if is_instance_valid(rowing_boat) or is_dead or third_person_model == null:
 		return
@@ -8698,7 +8732,7 @@ func begin_rowing(boat: Node3D) -> void:
 	_rowing_model_transform = third_person_model.transform
 	if camera != null:
 		_rowing_camera_transform = camera.transform
-	_rowing_view_yaw = 0.0
+	_rowing_view_yaw = PI
 	_rowing_view_height = 3.5
 	_rowing_view_dist = 7.0
 	_boat_standing = false
@@ -8750,12 +8784,17 @@ func update_rowing_pose(time: float) -> void:
 	_update_hand_socket()
 	_update_head_worn_items()
 	if camera != null and not is_puppet:
-		camera.global_position = rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * _rowing_view_dist, _rowing_view_height, cos(_rowing_view_yaw) * _rowing_view_dist))
+		var desired := rowing_boat.to_global(Vector3(sin(_rowing_view_yaw) * _rowing_view_dist, _rowing_view_height, cos(_rowing_view_yaw) * _rowing_view_dist))
+		var pivot := global_position + Vector3.UP * (1.45 if _boat_standing else 0.9)
+		var query := PhysicsRayQueryParameters3D.create(pivot, desired, 1)
+		query.exclude = [get_rid(), rowing_boat.get_rid()]
+		var obstruction := get_world_3d().direct_space_state.intersect_ray(query)
+		camera.global_position = desired if obstruction.is_empty() else obstruction.position + obstruction.normal * 0.2
 		if _boat_standing:
 			var fwd := rowing_boat.global_basis * Vector3(-sin(_rowing_view_yaw), 0.0, -cos(_rowing_view_yaw))
-			camera.look_at(global_position + Vector3.UP * 1.45 + fwd * 6.0)
+			camera.look_at(pivot + fwd * 6.0)
 		else:
-			camera.look_at(rowing_boat.global_position + Vector3.UP * 0.9)
+			camera.look_at(pivot)
 
 func _set_boat_standing(standing: bool) -> void:
 	_boat_standing = standing
@@ -8789,6 +8828,7 @@ func _set_boat_standing(standing: bool) -> void:
 			third_person_animation_player.pause()
 
 func end_rowing(pos: Vector3) -> void:
+	_cancel_boat_actions()
 	rowing_boat = null
 	_boat_standing = false
 	_boat_prompt_shown = ""
@@ -8796,6 +8836,7 @@ func end_rowing(pos: Vector3) -> void:
 	_boat_local_offset = Vector2.ZERO
 	global_position = pos
 	velocity = Vector3.ZERO
+	_water_query_timer = 0.25
 	is_in_water = false
 	_water_depth = 0.0
 	_water_sink = 0.0
@@ -9123,6 +9164,7 @@ func _get_aim_collider():
 	query.exclude = _cached_exclude_rids
 	if is_instance_valid(rowing_boat):
 		var boat_exclude: Array[RID] = _cached_exclude_rids.duplicate()
+		boat_exclude.append(rowing_boat.get_rid())
 		_collect_child_collision_rids(rowing_boat, boat_exclude)
 		query.exclude = boat_exclude
 	var result := camera.get_world_3d().direct_space_state.intersect_ray(query)
@@ -10307,6 +10349,7 @@ func _shoot_rifle() -> void:
 		_cached_rids_dirty = false
 	var exclude_arr: Array[RID] = _cached_exclude_rids.duplicate()
 	if is_instance_valid(rowing_boat):
+		exclude_arr.append(rowing_boat.get_rid())
 		_collect_child_collision_rids(rowing_boat, exclude_arr)
 	# Hitscan: la camara apunta donde mira el jugador. Aplicar spread al rayo
 	# de la camara y castear directamente — dano, particulas y fogonazo ocurren

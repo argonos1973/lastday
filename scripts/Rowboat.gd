@@ -35,6 +35,7 @@ var _network_yaw := 0.0
 var _sequence := 0
 var _last_sequence := -1
 var _request_times: Dictionary = {}
+var _surface_wake: MeshInstance3D
 var _wake: GPUParticles3D
 var _oar_splash_l: GPUParticles3D
 var _oar_splash_r: GPUParticles3D
@@ -130,6 +131,11 @@ func request_exit() -> void:
 		world.net.request_rowboat.rpc_id(1, "exit")
 
 func request_toggle_stand() -> void:
+	# Empty hands before asking to sit; a full inventory/back can refuse storage.
+	if occupant_standing:
+		var actor := _actor_for(local_peer())
+		if actor != null and not actor.prepare_to_row():
+			return
 	if _authority():
 		request_action(local_peer(), "stand")
 	else:
@@ -184,6 +190,9 @@ func request_action(sender: int, action: String) -> void:
 		exit_position = shore.position
 		_release_passenger()
 	elif action == "stand" and occupant == sender:
+		var actor := _actor_for(sender)
+		if occupant_standing and actor != null and not bool(actor.get("is_puppet")) and not actor.prepare_to_row():
+			return
 		occupant_standing = not occupant_standing
 		_axis = Vector2.ZERO
 		if not occupant_standing:
@@ -238,7 +247,7 @@ func simulate(delta: float) -> void:
 	var target_speed := -steer.y * MAX_SPEED
 	speed = move_toward(speed, target_speed, delta * (1.3 if rowing else 2.0))
 	rotation.y -= steer.x * delta * 0.7
-	var proposed := global_position - global_basis.z * speed * delta
+	var proposed := global_position + global_basis.z * speed * delta
 	if contains_hull(proposed):
 		global_position = proposed
 	else:
@@ -368,14 +377,13 @@ func _release_passenger() -> void:
 func _sync_authoritative_position() -> void:
 	if occupant == 0 or not _networked() or not world.net.players.has(occupant):
 		return
-	if occupant_standing:
-		# De pie el cliente ya envia su posicion real dentro del casco.
-		return
-	world.net.players[occupant]["pos"] = global_position
-	world.net.players[occupant]["rot"] = rotation.y + PI
+	var authoritative_pos := to_global(_stand_offset) if occupant_standing else global_position
+	world.net.players[occupant]["pos"] = authoritative_pos
+	if not occupant_standing:
+		world.net.players[occupant]["rot"] = rotation.y + PI
 	var proxy: Node = world.server_proxies.get(occupant)
 	if proxy != null:
-		proxy.global_position = global_position
+		proxy.global_position = authoritative_pos
 
 func find_exit_position() -> Dictionary:
 	var p := water_local(global_position)
@@ -426,20 +434,23 @@ func passenger_prompt() -> String:
 	return exit_hint + " | " + stand_hint
 
 func _create_water_fx() -> void:
+	_surface_wake = preload("res://scripts/RowboatWake.gd").new()
+	_surface_wake.name = "SurfaceWake"
+	add_child(_surface_wake)
 	_foam_texture = _water_particle_texture(false)
 	_ripple_texture = _water_particle_texture(true)
-	_wake = _make_foam(130, 2.6)
+	_wake = _make_foam(70, 2.2)
 	_wake.name = "WakeFx"
 	var wake_mat := _wake.process_material as ParticleProcessMaterial
 	wake_mat.emission_box_extents = Vector3(0.55, 0, 0.16)
-	wake_mat.scale_min = 0.8
-	wake_mat.scale_max = 1.3
+	wake_mat.scale_min = 0.3
+	wake_mat.scale_max = 0.65
 	_wake.position = Vector3(0, WATER_Y, 2.5)
 	add_child(_wake)
 	for i in range(2):
 		var side := -1.0 if i == 0 else 1.0
 		var suffix := "L" if i == 0 else "R"
-		var foam := _make_foam(64, 1.8)
+		var foam := _make_foam(40, 1.4)
 		foam.name = "BowFoam" + suffix
 		foam.position = Vector3(side * 0.72, WATER_Y, -2.4)
 		add_child(foam)
@@ -529,7 +540,7 @@ func _make_foam(amount: int, lifetime: float, ripple := false) -> GPUParticles3D
 	mat.emission_box_extents = Vector3(0.09, 0, 0.09)
 	mat.scale_min = 0.35 if ripple else 0.22
 	mat.scale_max = 0.55 if ripple else 0.48
-	mat.color = Color(0.88, 0.96, 1, 0.65)
+	mat.color = Color(0.72, 0.84, 0.81, 0.38)
 	var curve := Curve.new()
 	curve.add_point(Vector2(0, 0.25))
 	curve.add_point(Vector2(0.25, 0.6))
@@ -612,22 +623,25 @@ func _update_water_fx(delta: float) -> void:
 	_fx_speed = minf(_fx_velocity.length(), MAX_SPEED)
 	var moving := _fx_speed > 0.18
 	var strength := clampf(_fx_speed / MAX_SPEED, 0.0, 1.0)
-	var travel := 1.0 if _fx_velocity.dot(-global_basis.z) >= 0 else -1.0
-	_wake.position.z = 2.5 * travel
+	# The imported hull's pointed bow is +Z; its flat transom is -Z.
+	var travel := 1.0 if _fx_velocity.dot(global_basis.z) >= 0 else -1.0
+	_wake.position.z = -2.5 * travel
+	if _surface_wake != null:
+		_surface_wake.advance(delta, to_global(Vector3(0, WATER_Y + 0.01, -2.4 * travel)), global_basis.x, strength if moving else 0.0, teleported)
 	_wake.emitting = moving
 	_wake.amount_ratio = maxf(0.05, strength)
 	var wake_mat := _wake.process_material as ParticleProcessMaterial
-	wake_mat.direction = Vector3(0, 0, travel)
+	wake_mat.direction = Vector3(0, 0, -travel)
 	wake_mat.initial_velocity_min = 0.08 + strength * 0.12
 	wake_mat.initial_velocity_max = 0.2 + strength * 0.35
 	for i in range(_bow_foam.size()):
 		var side := -1.0 if i == 0 else 1.0
 		var foam := _bow_foam[i]
-		foam.position = Vector3(side * (0.72 if travel > 0 else 0.38), WATER_Y, -2.4 if travel > 0 else 2.1)
+		foam.position = Vector3(side * (0.32 if travel > 0 else 0.65), WATER_Y, 2.55 if travel > 0 else -2.35)
 		foam.emitting = moving
 		foam.amount_ratio = maxf(0.05, strength)
 		var mat := foam.process_material as ParticleProcessMaterial
-		mat.direction = Vector3(side * 0.85, 0, travel).normalized()
+		mat.direction = Vector3(side * 0.85, 0, -travel).normalized()
 		mat.initial_velocity_min = 0.15 + strength * 0.3
 		mat.initial_velocity_max = 0.3 + strength * 0.65
 		var spray := _bow_spray[i]
@@ -635,7 +649,7 @@ func _update_water_fx(delta: float) -> void:
 		spray.emitting = moving and strength > 0.3
 		spray.amount_ratio = maxf(0.05, strength * strength)
 		var spray_mat := spray.process_material as ParticleProcessMaterial
-		spray_mat.direction = Vector3(side * 0.7, 0.65, travel * 0.5).normalized()
+		spray_mat.direction = Vector3(side * 0.7, 0.65, -travel * 0.5).normalized()
 		spray_mat.initial_velocity_min = 0.3 + strength * 0.3
 		spray_mat.initial_velocity_max = 0.5 + strength * 0.75
 	if _wake_audio != null and _wake_audio.stream != null:
