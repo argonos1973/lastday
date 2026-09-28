@@ -375,8 +375,7 @@ var _hand_bone_idx: int = -1
 var _head_skeleton: Skeleton3D = null
 var _head_bone_idx: int = -1
 var _backpack_rest_pos: Vector3 = Vector3(0.0, -0.05, -0.18)
-var _backpack_crouch_offset: Vector3 = Vector3(0.0, -0.12, -0.06)
-var _backpack_action_offset: Vector3 = Vector3(0.0, -0.18, -0.10)
+var _backpack_rest_basis_inverse := Basis.IDENTITY
 var third_person_left_arm: Node3D
 var third_person_right_arm: Node3D
 var third_person_left_leg: Node3D
@@ -733,6 +732,7 @@ func setup_as_puppet() -> void:
 				_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
 				if _spine_bone_idx != -1:
 					break
+			_bind_backpack_socket()
 			_hand_skeleton = _spine_skeleton
 			_hand_bone_idx = -1
 			if _hand_skeleton != null:
@@ -3182,6 +3182,16 @@ func _physics_process(delta: float) -> void:
 
 
 #region SOCKETS Y ACCESORIOS (mochila, manos, cabeza)
+func _bind_backpack_socket() -> void:
+	if _spine_skeleton == null or _spine_bone_idx < 0:
+		return
+	var skeleton_local := third_person_model.global_transform.affine_inverse() * _spine_skeleton.global_transform
+	var rest_basis := skeleton_local.basis * _spine_skeleton.get_bone_global_rest(_spine_bone_idx).basis
+	_backpack_rest_basis_inverse = rest_basis.orthonormalized().inverse()
+	if not _spine_skeleton.skeleton_updated.is_connected(_update_backpack_socket):
+		_spine_skeleton.skeleton_updated.connect(_update_backpack_socket)
+	_update_backpack_socket()
+
 func _update_backpack_socket() -> void:
 	if _spine_skeleton == null or _spine_bone_idx < 0 or third_person_back_item_root == null:
 		return
@@ -3192,16 +3202,8 @@ func _update_backpack_socket() -> void:
 	var bone_world := skel_global * bone_pose
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var bone_local := local_to_model * bone_world
-	var offset := _backpack_rest_pos
-	var tilt := 0.0
-	if third_person_action_timer > 0.0:
-		offset += _backpack_action_offset
-		tilt = 12.0
-	elif is_crouching:
-		offset += _backpack_crouch_offset
-		tilt = 8.0
-	third_person_back_item_root.position = bone_local.origin + offset
-	third_person_back_item_root.rotation_degrees = Vector3(tilt, 0.0, 0.0)
+	var orientation := bone_local.basis.orthonormalized() * _backpack_rest_basis_inverse
+	third_person_back_item_root.transform = Transform3D(orientation, bone_local.origin + orientation * _backpack_rest_pos)
 
 var _hand_socket_offset := Vector3(0.10, 0.0, 0.0)
 var _generic_hand_grip := false
@@ -3770,6 +3772,7 @@ func _create_third_person_item_slots() -> void:
 			_spine_bone_idx = _spine_skeleton.find_bone(bone_name)
 			if _spine_bone_idx != -1:
 				break
+	_bind_backpack_socket()
 	_hand_skeleton = _spine_skeleton
 	_hand_bone_idx = -1
 	_left_hand_bone_idx = -1
