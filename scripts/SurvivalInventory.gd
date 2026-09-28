@@ -281,17 +281,56 @@ func update_portrait() -> void:
 		portrait.queue_free()
 	portrait_signature = current
 	portrait = preload("res://scripts/ItemThumbnail3D.gd").new()
-	portrait.custom_minimum_size = Vector2(0, 240)
+	portrait.custom_minimum_size = Vector2(0, 260)
 	equipment.add_child(portrait)
 	var model: Node3D = player.third_person_model.duplicate(0)
 	model.process_mode = Node.PROCESS_MODE_DISABLED
+	# Quita los accesorios en tiempo real (sockets de manos/espalda,
+	# attachments de rifle, overlays de caña, luces) — su geometria infla el
+	# AABB de encuadre y el personaje salia minusculo. El retrato queda con
+	# cuerpo + ropa puesta (Worn_*).
+	var removable: Array = []
+	for node in model.find_children("*", "", true, false):
+		var n := String(node.name)
+		if node is Light3D or node is BoneAttachment3D or n.begins_with("RodVisual_") or n.begins_with("BoneAttachment") or n.ends_with("Socket"):
+			removable.append(node)
+		elif n in ["RifleSlingRoot", "RifleRoot", "WeaponOffset", "MuzzleFlash"]:
+			removable.append(node)
+	for node in removable:
+		if is_instance_valid(node) and node.get_parent() != null:
+			node.get_parent().remove_child(node)
+			node.free()
 	portrait._model_root.add_child(model)
-	model.position = Vector3.ZERO
 	model.rotation = Vector3.ZERO
 	model.visible = true
 	for mesh in model.find_children("*", "MeshInstance3D", true, false):
 		mesh.layers = 1
-	portrait._frame_camera(model)
+	# Los meshes del personaje son skinned: su AABB estatico esta en escala
+	# centimetros y _frame_camera no sirve. El encuadre sale de la pose real
+	# de los huesos del esqueleto.
+	var box := AABB()
+	var first_bone := true
+	for node in model.find_children("*", "Skeleton3D", true, false):
+		var skel := node as Skeleton3D
+		for i in range(skel.get_bone_count()):
+			var bone_pos: Vector3 = skel.to_global(skel.get_bone_global_pose(i).origin)
+			if first_bone:
+				box = AABB(bone_pos, Vector3.ZERO)
+				first_bone = false
+			else:
+				box = box.expand(bone_pos)
+	var cam: Camera3D = portrait._cam
+	if first_bone:
+		box = AABB(Vector3(-0.4, -0.95, -0.4), Vector3(0.8, 1.9, 0.8))
+	box = box.grow(0.06)
+	# El hueso de la cabeza nace en el cuello: la coronilla queda ~0.2 m arriba.
+	box.size.y += 0.2
+	var focus: Vector3 = box.get_center()
+	cam.size = maxf(box.size.y * 0.93, 0.8)
+	cam.position = focus + Vector3(0.55, 0.35, 1.0).normalized() * 4.5
+	cam.look_at(focus, Vector3.UP)
+	cam.near = 0.05
+	cam.far = 20.0
 	portrait._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	equipment.remove_child(portrait)
 
