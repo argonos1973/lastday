@@ -115,7 +115,7 @@ func _check_network_restore(backpack: String = "") -> void:
 		check(not restored._initializing, "Network restore releases the initialization guard")
 	check(not restored.is_dead and restored.stats.health == 80.0, "Network restore keeps the living player alive")
 	check(restored.equipped_backpack == backpack, "Network restore keeps the saved backpack")
-	check(restored.inventory.max_slots == 8 + (restored.SMALL_BACKPACK_SLOTS if not backpack.is_empty() else 0), "Capacity is recalculated from the complete restored equipment")
+	check(restored.inventory.max_slots == restored.BASE_CARRY_SLOTS + restored.TORSO_CARRY_SLOTS + restored.LEGS_CARRY_SLOTS + (restored.SMALL_BACKPACK_SLOTS if not backpack.is_empty() else 0), "Capacity is recalculated from the complete restored equipment")
 	restored._initializing = true
 	world._apply_restored_inventory(items, 80.0, 70.0, 60.0, clothing, backpack, "", -1, false, false, 0.0)
 	check(restored._initializing and drops.is_empty(), "Nested initialization stays guarded without drops")

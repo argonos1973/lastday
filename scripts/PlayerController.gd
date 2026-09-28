@@ -319,8 +319,6 @@ const TORSO_CARRY_SLOTS := 2
 const TORSO_CARRY_WEIGHT := 2.0
 const LEGS_CARRY_SLOTS := 2
 const LEGS_CARRY_WEIGHT := 2.0
-const FEET_CARRY_SLOTS := 1
-const FEET_CARRY_WEIGHT := 1.0
 # Descalzo: heridas en los pies por caminar/correr sin calzado
 const FEET_WOUND_THRESHOLD := 15.0   # a partir de aqui las heridas duelen y drenan salud
 const FEET_WOUND_WALK_RATE := 0.9    # gravedad por segundo caminando descalzo
@@ -328,8 +326,6 @@ const FEET_WOUND_RUN_RATE := 5.5     # gravedad por segundo corriendo descalzo
 const FEET_DPS_WALK := 0.14          # hp/s con heridas, caminando descalzo
 const FEET_DPS_RUN := 0.9            # hp/s con heridas, corriendo descalzo
 const FEET_COLD_AMBIENT := 14.0      # bajo esta temperatura ambiente los pies descalzos enfrian
-const HANDS_CARRY_SLOTS := 1
-const HANDS_CARRY_WEIGHT := 1.0
 const HEAD_CARRY_SLOTS := 1
 const HEAD_CARRY_WEIGHT := 0.5
 const SMALL_BACKPACK_SLOTS := 8
@@ -2774,15 +2770,6 @@ func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 				if is_military:
 					slots += 2
 					weight += 2.0
-			"feet":
-				slots += FEET_CARRY_SLOTS
-				weight += FEET_CARRY_WEIGHT
-			"hands":
-				slots += HANDS_CARRY_SLOTS
-				weight += HANDS_CARRY_WEIGHT
-				if is_military:
-					slots += 1
-					weight += 0.5
 			"head":
 				slots += HEAD_CARRY_SLOTS
 				weight += HEAD_CARRY_WEIGHT
