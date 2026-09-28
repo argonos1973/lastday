@@ -362,6 +362,29 @@ func swap_items(index_a: int, index_b: int) -> void:
 	items[index_b] = tmp
 	changed.emit()
 
+func split_stack(item, amount: int) -> bool:
+	if not items.has(item) or amount <= 0 or amount >= item.quantity or items.size() >= max_slots:
+		return false
+	var separated = item.duplicate_stack()
+	separated.quantity = amount
+	separated.cargo_location = ""
+	separated.stack_separated = true
+	item.quantity -= amount
+	items.append(separated)
+	changed.emit()
+	return true
+
+func combine_stack(source, target) -> bool:
+	if source == target or not items.has(source) or not items.has(target) or not target.can_stack_with(source, true):
+		return false
+	var total: int = source.quantity + target.quantity
+	target.durability = (source.durability * source.quantity + target.durability * target.quantity) / total
+	target.spoilage = maxf(source.spoilage, target.spoilage)
+	target.quantity = total
+	items.erase(source)
+	changed.emit()
+	return true
+
 func move_item(from_index: int, to_index: int) -> void:
 	if from_index < 0 or from_index >= items.size():
 		return

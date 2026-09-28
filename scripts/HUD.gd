@@ -16,6 +16,7 @@ var _prev_health: float = 100.0
 var root: Control
 var status_panel: PanelContainer
 var inventory_panel: PanelContainer
+var survival_inventory: PanelContainer
 var craft_panel: PanelContainer = null
 var craft_panel_visible := false
 var craft_panel_items: VBoxContainer = null
@@ -881,6 +882,13 @@ func _update_status_icons() -> void:
 		_set_vital_bar("sick", 1.0)
 
 func _build_inventory_panel() -> void:
+	survival_inventory = preload("res://scripts/SurvivalInventory.gd").new()
+	root.add_child(survival_inventory)
+	survival_inventory.setup(self)
+	inventory_panel = survival_inventory
+	inventory_panel.visible = inventory_visible
+
+func _build_legacy_inventory_panel() -> void:
 	inventory_panel = PanelContainer.new()
 	inventory_panel.anchor_left = 0.5
 	inventory_panel.anchor_top = 0.0
@@ -1339,6 +1347,9 @@ func _update_damage_overlay(delta: float) -> void:
 	_damage_overlay.color = Color(0.4, 0.0, 0.0, total_alpha)
 
 func _update_inventory() -> void:
+	if survival_inventory != null:
+		survival_inventory.request_refresh()
+		return
 	if player == null or inventory_grid == null:
 		return
 	_update_equipment_labels()

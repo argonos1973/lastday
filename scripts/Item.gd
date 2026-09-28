@@ -15,6 +15,9 @@ var spoilage_rate := 0.0
 # objeto está tirado en el suelo o sin equipar; al equiparse la mochila su
 # contenido se fusiona de nuevo con el inventario plano.
 var contents: Array = []
+# Stable cargo compartment; independent of sorting and display indices.
+var cargo_location := ""
+var stack_separated := false
 
 const PERISHABLE_FOODS := {
 	"Carne cruda": 0.5,
@@ -78,6 +81,8 @@ func duplicate_stack():
 	dup.durability = durability
 	dup.max_durability = max_durability
 	dup.storage_capacity = storage_capacity
+	dup.cargo_location = cargo_location
+	dup.stack_separated = stack_separated
 	dup.spoilage = spoilage
 	dup.spoilage_rate = spoilage_rate
 	for c in contents:
@@ -87,7 +92,9 @@ func duplicate_stack():
 		dup.set_meta(key, get_meta(key))
 	return dup
 
-func can_stack_with(other) -> bool:
+func can_stack_with(other, manual := false) -> bool:
+	if other != null and not manual and (stack_separated or other.stack_separated or (not cargo_location.is_empty() and not other.cargo_location.is_empty() and cargo_location != other.cargo_location)):
+		return false
 	if other == null or item_name != other.item_name or item_type != other.item_type or use_value != other.use_value:
 		return false
 	if item_type == "tool_matches":
@@ -132,6 +139,8 @@ func to_dict() -> Dictionary:
 		"max_durability": max_durability,
 		"storage_capacity": storage_capacity
 	}
+	d["cargo_location"] = cargo_location
+	d["stack_separated"] = stack_separated
 	if is_perishable():
 		d["spoilage"] = spoilage
 	if has_meta("clothing_color"):
@@ -156,6 +165,8 @@ static func from_dict(data: Dictionary):
 	item.durability = float(data.get("durability", 100.0))
 	item.max_durability = float(data.get("max_durability", 100.0))
 	item.storage_capacity = int(data.get("storage_capacity", 0))
+	item.cargo_location = str(data.get("cargo_location", ""))
+	item.stack_separated = bool(data.get("stack_separated", false))
 	item.spoilage = float(data.get("spoilage", 0.0))
 	# Older saves used the generic "tool" type for the axe. Normalize it so
 	# hands, inventory thumbnails and tree interaction all use the axe model.

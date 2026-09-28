@@ -2804,16 +2804,17 @@ func _pack_backpack_drop_contents() -> Array:
 		return []
 	var slots: int = int(_compute_carry_capacity(false)["slots"])
 	var overflow: int = inventory.items.size() - slots
-	if overflow <= 0:
-		return []
 	var held = get_held_item()
 	var contents: Array = []
 	var taken: Array = []
-	# Desde el final del inventario, igual que _drop_excess_items.
-	for i in range(inventory.items.size() - 1, -1, -1):
-		if contents.size() >= overflow:
-			break
-		var item = inventory.items[i]
+	# Explicitly stored backpack cargo travels with the dropped backpack,
+	# even if other pockets have room. Legacy saves still use overflow packing.
+	var candidates: Array = inventory.items.duplicate()
+	candidates.reverse()
+	candidates.sort_custom(func(a, b): return a.cargo_location == "backpack" and b.cargo_location != "backpack")
+	for item in candidates:
+		if contents.size() >= overflow and item.cargo_location != "backpack":
+			continue
 		if item == null or item == held:
 			continue
 		var is_equipped := false

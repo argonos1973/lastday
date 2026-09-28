@@ -1934,6 +1934,8 @@ func _create_day_night() -> void:
 	day_cycle = DayNightCycleScript.new()
 	day_cycle.name = "DayNightCycle"
 	add_child(day_cycle)
+	if OS.get_cmdline_user_args().has("--noon"):
+		day_cycle.fixed_time = true
 	day_cycle.sun = get_node("Sun") as DirectionalLight3D
 	day_cycle.world_environment = get_node("WorldEnvironment") as WorldEnvironment
 	if celestial != null:
