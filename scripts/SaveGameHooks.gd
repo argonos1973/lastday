@@ -360,7 +360,7 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	if pos_arr is Array and pos_arr.size() >= 3:
 		player.global_position = Vector3(float(pos_arr[0]), float(pos_arr[1]), float(pos_arr[2]))
 	# TEMP TEST: also land on the lake shore when continuing a saved game.
-	if OS.is_debug_build() and "--debug-lake-spawn" in OS.get_cmdline_user_args():
+	if "--debug-lake-spawn" in OS.get_cmdline_user_args():
 		var dbg_main = player.get_tree().current_scene if player.is_inside_tree() else null
 		if dbg_main != null and dbg_main.has_method("_apply_debug_lake_spawn"):
 			dbg_main._apply_debug_lake_spawn()
