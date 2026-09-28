@@ -2489,7 +2489,7 @@ var _pending_spawn_pos: Vector3 = Vector3.ZERO
 var _has_pending_spawn_pos := false
 
 func _debug_lake_spawn_active() -> bool:
-	return OS.is_debug_build() and "--debug-lake-spawn" in OS.get_cmdline_user_args()
+	return "--debug-lake-spawn" in OS.get_cmdline_user_args()
 
 func _apply_debug_lake_spawn() -> void:
 	# Orilla del lago junto a la cabana (250,-258) y el bote (260,-271).
