@@ -2488,12 +2488,27 @@ var _has_received_spawn_pos := false
 var _pending_spawn_pos: Vector3 = Vector3.ZERO
 var _has_pending_spawn_pos := false
 
+func _debug_lake_spawn_active() -> bool:
+	return OS.is_debug_build() and "--debug-lake-spawn" in OS.get_cmdline_user_args()
+
+func _apply_debug_lake_spawn() -> void:
+	# Orilla del lago junto a la cabana (250,-258) y el bote (260,-271).
+	if player == null:
+		return
+	var sx := 257.0
+	var sz := -267.5
+	var gy := _get_exact_ground_y(sx, sz)
+	player.global_position = Vector3(sx, maxf(gy, 0.35) + 0.1, sz)
+	player.rotation.y = -0.75
+
 func _apply_net_spawn_pos(pos: Vector3, died: bool = false) -> void:
 	_has_received_spawn_pos = true
 	if died:
 		_offline_death_notice_pending = true
 	if player != null:
 		player.global_position = pos
+		if _debug_lake_spawn_active():
+			_apply_debug_lake_spawn()
 	else:
 		_pending_spawn_pos = pos
 		_has_pending_spawn_pos = true
