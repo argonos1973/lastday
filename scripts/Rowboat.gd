@@ -416,7 +416,7 @@ func passenger_prompt() -> String:
 		if actor != null and actor.has_method("get_held_item"):
 			var held = actor.get_held_item()
 			if held != null:
-				match str(held.get("item_type", "")):
+				match str(held.item_type):
 					"tool_fishing":
 						# Con la caña en la mano F lanza: salir es sentarse y luego F.
 						return "LMB/F: lanzar | E: sentarse"

@@ -414,6 +414,9 @@ var _rowing_view_yaw := 0.0
 var _rowing_view_height := 3.5
 var _rowing_view_dist := 7.0
 var _rowing_animation := "rowing/Stroke"
+var _boat_prompt_shown := ""
+var _boat_prompt_timer := 0.0
+const BOAT_PROMPT_SECONDS := 5.0
 var is_prone := false
 var _sit_cooldown := 0.0
 var _auto_sleep_triggered := false
@@ -3015,6 +3018,7 @@ func _physics_process(delta: float) -> void:
 			_update_third_person_animation(is_moving, delta)
 		else:
 			is_moving = false
+		_boat_prompt_timer = maxf(0.0, _boat_prompt_timer - delta)
 		_update_interaction_prompt()
 		_update_flashlight(delta)
 		_update_torch(delta)
@@ -8787,6 +8791,8 @@ func _set_boat_standing(standing: bool) -> void:
 func end_rowing(pos: Vector3) -> void:
 	rowing_boat = null
 	_boat_standing = false
+	_boat_prompt_shown = ""
+	_boat_prompt_timer = 0.0
 	_boat_local_offset = Vector2.ZERO
 	global_position = pos
 	velocity = Vector3.ZERO
@@ -8928,15 +8934,19 @@ func _start_fishing_near_water() -> void:
 		_deactivate_rod_visual_overlay()
 		return
 	if caught_fish:
-		# Drop the fish on the ground instead of adding to inventory
-		var drop_pos := global_position + (-global_basis.z * 0.8)
-		drop_pos.y = 0.1
-		if is_instance_valid(rowing_boat):
-			# En la barca el pez queda sobre la cubierta, no bajo el casco.
-			drop_pos = global_position + (-global_basis.z * 0.6)
-			drop_pos.y = global_position.y + 0.05
-		item_dropped.emit("Pez crudo", "food", 0.55, 1, 24.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
-		notice.emit("Pescas un pez. Lo dejas en la barca." if is_instance_valid(rowing_boat) else "Pescas un pez. Lo has dejado en el suelo.")
+		var on_boat := is_instance_valid(rowing_boat)
+		var stored := false
+		if on_boat and inventory != null:
+			# En la barca el pez va directo al inventario; sin hueco cae en cubierta.
+			stored = inventory.add_item(ItemScript.create("Pez crudo", "food", 0.55, 1, 24.0))
+		if stored:
+			notice.emit("Pescas un pez.")
+		else:
+			# Drop the fish on the ground instead of adding to inventory
+			var drop_pos := global_position + (-global_basis.z * (0.6 if on_boat else 0.8))
+			drop_pos.y = global_position.y + 0.05 if on_boat else 0.1
+			item_dropped.emit("Pez crudo", "food", 0.55, 1, 24.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+			notice.emit("Pescas un pez. Lo dejas en la barca." if on_boat else "Pescas un pez. Lo has dejado en el suelo.")
 	else:
 		notice.emit("No pica nada.")
 	if held != null and held.has_method("reduce_durability"):
@@ -8974,7 +8984,13 @@ func _collect() -> void:
 #region INTERACCIÓN Y UI
 func _update_interaction_prompt() -> void:
 	if is_instance_valid(rowing_boat):
-		prompt_changed.emit(rowing_boat.passenger_prompt())
+		# El aviso del bote se muestra unos segundos y luego se oculta solo;
+		# reaparece cuando cambia el estado (entrar, sentarse, poder salir...).
+		var boat_text: String = rowing_boat.passenger_prompt()
+		if boat_text != _boat_prompt_shown:
+			_boat_prompt_shown = boat_text
+			_boat_prompt_timer = BOAT_PROMPT_SECONDS
+		prompt_changed.emit(boat_text if _boat_prompt_timer > 0.0 else "")
 		return
 	var boat_target := _nearby_rowboat()
 	if boat_target != null:

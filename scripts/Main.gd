@@ -4464,7 +4464,17 @@ func _net_backpack_contents_synced(drop_id: String, contents: Array) -> void:
 		_refresh_backpack_ui()
 
 func _is_water_drop_position(pos: Vector3) -> bool:
-	return has_method("get_river_depth_at") and float(get_river_depth_at(pos)) > 0.02
+	if not (has_method("get_river_depth_at") and float(get_river_depth_at(pos)) > 0.02):
+		return false
+	return not _pos_on_rowboat_deck(pos)
+
+# Dentro de la huella del casco y por encima de la linea de flotacion un drop
+# cae sobre la cubierta, no al agua (el raycast de suelo ignora prop_collision).
+func _pos_on_rowboat_deck(pos: Vector3) -> bool:
+	if not is_instance_valid(lake_rowboat):
+		return false
+	var local: Vector3 = lake_rowboat.global_transform.affine_inverse() * pos
+	return absf(local.x) <= 1.05 and absf(local.z - 0.15) <= 2.8 and pos.y > lake_rowboat.global_position.y + 0.3
 
 func _play_water_drop_effect(pos: Vector3) -> void:
 	var splash_pos := pos
@@ -4495,7 +4505,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		call_deferred("_sync_local_player_inventory")
 	# El drop llega a la altura del jugador — bajarlo a la superficie real evita
 	# objetos flotando al soltar en bordes de colina o sobre desniveles.
-	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+	if not _pos_on_rowboat_deck(pos):
+		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -4615,7 +4626,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		return
 	# La y recibida puede venir de una posición elevada o de un save antiguo —
 	# fijarla a la superficie real evita drops flotando en el aire.
-	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+	if not _pos_on_rowboat_deck(pos):
+		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -4747,7 +4759,8 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 		return true
 	# La posición del cliente puede venir elevada (drops a la altura del jugador
 	# o aterrizajes sobre colliders altos) — fijarla a la superficie real.
-	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+	if not _pos_on_rowboat_deck(pos):
+		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	item_weight = clampf(item_weight, 0.0, 100.0)
 	item_quantity = clampi(item_quantity, 1, 999)
 	item_use_value = clampf(item_use_value, -100.0, 100.0)

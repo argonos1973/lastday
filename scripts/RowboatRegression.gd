@@ -220,6 +220,19 @@ func run() -> void:
 	actor._fishing_session += 1
 	actor._is_fishing = false
 	actor._is_fishing_idle = false
+	var fish_deck := boat.to_global(Vector3(0, BoatScript.STAND_Y, 0))
+	check(world._pos_on_rowboat_deck(fish_deck), "Deck drop position detected")
+	check(not world._is_water_drop_position(fish_deck), "Drops on deck are not lost to the water")
+	check(world._is_water_drop_position(fish_deck + Vector3(3, 0, 0)), "Drops beside the hull still splash")
+	var seen_text := {"t": "init"}
+	actor.prompt_changed.connect(func(t): seen_text["t"] = t)
+	actor._boat_prompt_shown = ""
+	actor._boat_prompt_timer = 0.0
+	actor._update_interaction_prompt()
+	check(str(seen_text["t"]).contains("E:"), "Boat prompt appears on state change")
+	actor._boat_prompt_timer = 0.0
+	actor._update_interaction_prompt()
+	check(seen_text["t"] == "", "Boat prompt fades after a few seconds")
 	boat.accept_input(1, Vector2(0.95, 0))
 	boat.simulate(1.0 / 60.0)
 	check(boat.occupant == 0 and actor.rowing_boat == null, "Stepping over the gunwale drops the occupant into the water")
