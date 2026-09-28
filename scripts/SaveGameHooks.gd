@@ -361,7 +361,11 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 		player.global_position = Vector3(float(pos_arr[0]), float(pos_arr[1]), float(pos_arr[2]))
 	# TEMP TEST: also land on the lake shore when continuing a saved game.
 	if OS.is_debug_build() and "--debug-lake-spawn" in OS.get_cmdline_user_args():
-		player.global_position = Vector3(258, 2.0, -264)
+		var dbg_main = player.get_tree().current_scene if player.is_inside_tree() else null
+		if dbg_main != null and dbg_main.has_method("_apply_debug_lake_spawn"):
+			dbg_main._apply_debug_lake_spawn()
+		else:
+			player.global_position = Vector3(257.0, 0.6, -267.5)
 	# Rotation
 	player.rotation.y = float(data.get("rot", 0.0))
 	# Reset velocity
