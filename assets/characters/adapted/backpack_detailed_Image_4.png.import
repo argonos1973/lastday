@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cot8p7hddpp1p"
-path="res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.ctex"
+path.s3tc="res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.s3tc.ctex"
+path.etc2="res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "284c598c876ffd6352126b13fa3f1620"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/backpack_detailed_Image_4.png"
-dest_files=["res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.ctex"]
+dest_files=["res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.s3tc.ctex", "res://.godot/imported/backpack_detailed_Image_4.png-cdfdcc66ff07b9b45abb94d9c63a9e5a.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=2048
 detect_3d/compress_to=1

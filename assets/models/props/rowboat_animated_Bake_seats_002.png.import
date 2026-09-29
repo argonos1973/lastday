@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://yiy5lrolukyv"
-path="res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.ctex"
+path.s3tc="res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.s3tc.ctex"
+path.etc2="res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "2f4841edcec1763fa01680f52d50004c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/rowboat_animated_Bake_seats_002.png"
-dest_files=["res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.ctex"]
+dest_files=["res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.s3tc.ctex", "res://.godot/imported/rowboat_animated_Bake_seats_002.png-e53b26fcd326e4ab05dfc16406db2a33.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

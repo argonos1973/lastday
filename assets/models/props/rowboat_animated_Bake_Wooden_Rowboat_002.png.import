@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://didbpe8gh6xib"
-path="res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.ctex"
+path.s3tc="res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.s3tc.ctex"
+path.etc2="res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "eccede42cef4c875289ed20b06599f36"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/rowboat_animated_Bake_Wooden_Rowboat_002.png"
-dest_files=["res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.ctex"]
+dest_files=["res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.s3tc.ctex", "res://.godot/imported/rowboat_animated_Bake_Wooden_Rowboat_002.png-628002d55daf2ba8cfd2af85b08a8fa7.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cbh8ifrql35e4"
-path="res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.ctex"
+path.s3tc="res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.s3tc.ctex"
+path.etc2="res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/dirt_road/Ground038_1K-JPG_Roughness.jpg"
-dest_files=["res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.ctex"]
+dest_files=["res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.s3tc.ctex", "res://.godot/imported/Ground038_1K-JPG_Roughness.jpg-a02007d3e2217a5a5cffd2f1860fd909.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

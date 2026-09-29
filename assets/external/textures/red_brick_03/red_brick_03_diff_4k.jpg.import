@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://s1tsfohc6q31"
-path="res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.ctex"
+path.s3tc="res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.s3tc.ctex"
+path.etc2="res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/textures/red_brick_03/red_brick_03_diff_4k.jpg"
-dest_files=["res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.ctex"]
+dest_files=["res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.s3tc.ctex", "res://.godot/imported/red_brick_03_diff_4k.jpg-0fb1b4253c9d9b9b35fceab93e0d3989.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

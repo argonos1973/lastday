@@ -13193,7 +13193,7 @@ func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) ->
 func _flush_grass_batches() -> void:
 	if grass_batch_meshes.is_empty():
 		return
-	const GRASS_BATCH_SIZE := 200
+	const GRASS_BATCH_SIZE := 800
 	const GRID_CELL := 25.0
 	for variant in range(grass_batch_meshes.size()):
 		var transforms: Array = grass_batch_transforms[variant]
@@ -13624,7 +13624,9 @@ func _make_water_channel_mask() -> ImageTexture:
 func _extract_texture_from_glb(path: String) -> Texture2D:
 	var root: Node3D = null
 	if ResourceLoader.exists(path):
-		var loaded = load(path)
+		# CACHE_MODE_IGNORE: we only need the albedo texture — caching the whole
+		# scene would pin heavy meshes/textures (e.g. leafy_floor.glb ~60MB) forever.
+		var loaded = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 		if loaded is PackedScene:
 			root = (loaded as PackedScene).instantiate() as Node3D
 	if root == null:

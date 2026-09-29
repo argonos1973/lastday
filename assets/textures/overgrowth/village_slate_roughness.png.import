@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ctm5d56a36u32"
-path="res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.ctex"
+path.s3tc="res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.s3tc.ctex"
+path.etc2="res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/overgrowth/village_slate_roughness.png"
-dest_files=["res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.ctex"]
+dest_files=["res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.s3tc.ctex", "res://.godot/imported/village_slate_roughness.png-d23006de7cae4338af1d58cedb143a5c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

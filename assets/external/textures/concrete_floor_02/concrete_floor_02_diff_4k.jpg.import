@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cqvie1gyhmu6c"
-path="res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.ctex"
+path.s3tc="res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.s3tc.ctex"
+path.etc2="res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg"
-dest_files=["res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.ctex"]
+dest_files=["res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.s3tc.ctex", "res://.godot/imported/concrete_floor_02_diff_4k.jpg-34ed51f428748cfc7ca99852cf6b4e2c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

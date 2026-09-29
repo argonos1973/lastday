@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dim5j71p80l1n"
-path="res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.ctex"
+path.s3tc="res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.s3tc.ctex"
+path.etc2="res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "5b7c72c28e3ae7a7d279ebc2e407d44c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/quaternius_zombie_apocalypse/Environment/glTF/Container_Green_Zombie_Atlas.png"
-dest_files=["res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.ctex"]
+dest_files=["res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.s3tc.ctex", "res://.godot/imported/Container_Green_Zombie_Atlas.png-4d3f67c9c962c3cdd723d8b5ebfbc103.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

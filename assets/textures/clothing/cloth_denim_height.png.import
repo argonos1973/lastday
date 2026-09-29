@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://xdlgprtpfetq"
-path="res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.ctex"
+path.s3tc="res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.s3tc.ctex"
+path.etc2="res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/cloth_denim_height.png"
-dest_files=["res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.ctex"]
+dest_files=["res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.s3tc.ctex", "res://.godot/imported/cloth_denim_height.png-ac5577b91a40c5d3955f49dc22bccdf3.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

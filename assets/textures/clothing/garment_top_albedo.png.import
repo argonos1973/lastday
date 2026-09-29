@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c881d21myc7kd"
-path="res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.ctex"
+path.s3tc="res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.s3tc.ctex"
+path.etc2="res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/garment_top_albedo.png"
-dest_files=["res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.ctex"]
+dest_files=["res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.s3tc.ctex", "res://.godot/imported/garment_top_albedo.png-f75a532d48cb6292ebfb74913c205849.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

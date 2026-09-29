@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://3k1dn1cxa1le"
-path="res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.ctex"
+path.s3tc="res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.s3tc.ctex"
+path.etc2="res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_rough_2k.jpg"
-dest_files=["res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.ctex"]
+dest_files=["res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.s3tc.ctex", "res://.godot/imported/forest_leaves_02_rough_2k.jpg-09b855be5f2b477d28793ef970ed98ad.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

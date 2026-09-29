@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dlmm2qcyxfl2f"
-path="res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.ctex"
+path.s3tc="res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.s3tc.ctex"
+path.etc2="res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/cloth_leather_height.png"
-dest_files=["res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.ctex"]
+dest_files=["res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.s3tc.ctex", "res://.godot/imported/cloth_leather_height.png-37f07e5ed40b683dbc71099c89398610.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

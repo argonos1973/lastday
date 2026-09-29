@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://boefbfdjn7upc"
-path="res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.ctex"
+path.s3tc="res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.s3tc.ctex"
+path.etc2="res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e2aecd4798149679431e2a55634d9b41"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/cana_de_pescar_5.png"
-dest_files=["res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.ctex"]
+dest_files=["res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.s3tc.ctex", "res://.godot/imported/cana_de_pescar_5.png-d643af3f315dc4d03974f5dbb3d25cdf.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

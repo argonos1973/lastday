@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://hdvkr7vj75kc"
-path="res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.ctex"
+path.s3tc="res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.s3tc.ctex"
+path.etc2="res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/overgrowth/village_clay_albedo.png"
-dest_files=["res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.ctex"]
+dest_files=["res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.s3tc.ctex", "res://.godot/imported/village_clay_albedo.png-55f0c753bcaf6b0d0d924fa5f9f0d6dc.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

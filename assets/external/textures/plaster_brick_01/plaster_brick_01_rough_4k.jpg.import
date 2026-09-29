@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dupyc2m3ba2j"
-path="res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.ctex"
+path.s3tc="res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.s3tc.ctex"
+path.etc2="res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/textures/plaster_brick_01/plaster_brick_01_rough_4k.jpg"
-dest_files=["res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.ctex"]
+dest_files=["res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.s3tc.ctex", "res://.godot/imported/plaster_brick_01_rough_4k.jpg-2fc9b32e27eb06e24fe2dd07549cdebe.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

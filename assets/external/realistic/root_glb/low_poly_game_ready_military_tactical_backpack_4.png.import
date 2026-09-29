@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://brxc2kddv6q44"
-path="res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.ctex"
+path.s3tc="res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.s3tc.ctex"
+path.etc2="res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "284c598c876ffd6352126b13fa3f1620"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack_4.png"
-dest_files=["res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.ctex"]
+dest_files=["res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.s3tc.ctex", "res://.godot/imported/low_poly_game_ready_military_tactical_backpack_4.png-0dd39c38bce36f841eeb9ed6ee5e3cbe.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=2048
 detect_3d/compress_to=1

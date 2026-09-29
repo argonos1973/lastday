@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bu3iq15houtt1"
-path="res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.ctex"
+path.s3tc="res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.s3tc.ctex"
+path.etc2="res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/cloth_leather_albedo.png"
-dest_files=["res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.ctex"]
+dest_files=["res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.s3tc.ctex", "res://.godot/imported/cloth_leather_albedo.png-a3f303dd7147fbd1e0d2182308ae3916.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

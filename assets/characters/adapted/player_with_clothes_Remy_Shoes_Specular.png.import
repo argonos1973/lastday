@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bjukxsm6n5qhk"
-path="res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.ctex"
+path.s3tc="res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.s3tc.ctex"
+path.etc2="res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "ea2e6b4090fb3022dd98e1023a72af0c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/player_with_clothes_Remy_Shoes_Specular.png"
-dest_files=["res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.ctex"]
+dest_files=["res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.s3tc.ctex", "res://.godot/imported/player_with_clothes_Remy_Shoes_Specular.png-760a9d84a50b6df2c7d9be002084a5df.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

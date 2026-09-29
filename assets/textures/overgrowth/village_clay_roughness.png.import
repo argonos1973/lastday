@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dqyfmko87njln"
-path="res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.ctex"
+path.s3tc="res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.s3tc.ctex"
+path.etc2="res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/overgrowth/village_clay_roughness.png"
-dest_files=["res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.ctex"]
+dest_files=["res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.s3tc.ctex", "res://.godot/imported/village_clay_roughness.png-4a6031d698968eaab4e934f784896c55.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

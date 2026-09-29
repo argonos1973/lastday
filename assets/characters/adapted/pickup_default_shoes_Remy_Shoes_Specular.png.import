@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://2fq2e1x2xlmm"
-path="res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.ctex"
+path.s3tc="res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "ea2e6b4090fb3022dd98e1023a72af0c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/pickup_default_shoes_Remy_Shoes_Specular.png"
-dest_files=["res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.ctex"]
+dest_files=["res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.s3tc.ctex", "res://.godot/imported/pickup_default_shoes_Remy_Shoes_Specular.png-6e20126fc677bbff09cf05cd68b8fae5.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

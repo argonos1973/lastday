@@ -3,25 +3,27 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b64rj17p8vx5l"
-path="res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.ctex"
+path.s3tc="res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.s3tc.ctex"
+path.etc2="res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/quaternius_stylized_nature_megakit/glTF/Bark_NormalTree.png"
-dest_files=["res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.ctex"]
+dest_files=["res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.s3tc.ctex", "res://.godot/imported/Bark_NormalTree.png-b9ab0b23150c33600cd67b78ad2c4404.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
-compress/normal_map=0
+compress/normal_map=1
 compress/channel_pack=0
 mipmaps/generate=false
 mipmaps/limit=-1

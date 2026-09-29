@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dpx53c5obckap"
-path="res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.ctex"
+path.s3tc="res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.s3tc.ctex"
+path.etc2="res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_cutout_1024.png"
-dest_files=["res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.ctex"]
+dest_files=["res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.s3tc.ctex", "res://.godot/imported/grass_medium_01_cutout_1024.png-905a16f4b0440b4ad548e486fb0d6155.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

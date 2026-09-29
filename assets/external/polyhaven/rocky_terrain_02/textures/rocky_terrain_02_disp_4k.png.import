@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b01pcl2pdh81p"
-path="res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.ctex"
+path.s3tc="res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.s3tc.ctex"
+path.etc2="res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"
-dest_files=["res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.ctex"]
+dest_files=["res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.s3tc.ctex", "res://.godot/imported/rocky_terrain_02_disp_4k.png-9d76c37270b9269801ccb2f12c522b97.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -36,5 +38,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=2048
 detect_3d/compress_to=1

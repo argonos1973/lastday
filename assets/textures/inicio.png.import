@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ccbt40lhsi8pg"
-path="res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.ctex"
+path.s3tc="res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.s3tc.ctex"
+path.etc2="res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/inicio.png"
-dest_files=["res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.ctex"]
+dest_files=["res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.s3tc.ctex", "res://.godot/imported/inicio.png-9f9ba4c30e6b72427251537333b8a682.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

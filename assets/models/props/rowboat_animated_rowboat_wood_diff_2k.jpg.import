@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://mvp2kr8s1wvv"
-path="res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.ctex"
+path.s3tc="res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.s3tc.ctex"
+path.etc2="res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4eabd99c5f563fb87abb0c5880fff833"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/rowboat_animated_rowboat_wood_diff_2k.jpg"
-dest_files=["res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.ctex"]
+dest_files=["res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.s3tc.ctex", "res://.godot/imported/rowboat_animated_rowboat_wood_diff_2k.jpg-a9dcb1f4989946726a2b18803de664fe.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

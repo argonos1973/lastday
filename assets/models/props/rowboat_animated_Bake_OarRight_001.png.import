@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b6u07bvmdiqim"
-path="res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.ctex"
+path.s3tc="res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.s3tc.ctex"
+path.etc2="res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "fe03e48901e9756f34116b5bec9120e4"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/rowboat_animated_Bake_OarRight_001.png"
-dest_files=["res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.ctex"]
+dest_files=["res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.s3tc.ctex", "res://.godot/imported/rowboat_animated_Bake_OarRight_001.png-9752bc6a8b5541228c2feb39830ffd57.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://btk4hatg5ype1"
-path="res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.ctex"
+path.s3tc="res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.s3tc.ctex"
+path.etc2="res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "cc5fb52005de45150478e910ba869b82"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/external/realistic/root_glb/tool__axe_weapon_model_cs2_3.png"
-dest_files=["res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.ctex"]
+dest_files=["res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.s3tc.ctex", "res://.godot/imported/tool__axe_weapon_model_cs2_3.png-7348bf6046034b3f657c31e46f4f3d94.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

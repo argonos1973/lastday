@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dgr7vkgndykpc"
-path="res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.ctex"
+path.s3tc="res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.s3tc.ctex"
+path.etc2="res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/tree_billboards/png/flare_pine_03.png"
-dest_files=["res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.ctex"]
+dest_files=["res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.s3tc.ctex", "res://.godot/imported/flare_pine_03.png-0ab946da0cfcf314822985f8a20fd806.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

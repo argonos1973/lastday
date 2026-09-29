@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://chjm8swygs2y6"
-path="res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.ctex"
+path.s3tc="res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.s3tc.ctex"
+path.etc2="res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/garment_gloves_albedo.png"
-dest_files=["res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.ctex"]
+dest_files=["res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.s3tc.ctex", "res://.godot/imported/garment_gloves_albedo.png-73353095d392bf9bc8d4d56879bca899.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

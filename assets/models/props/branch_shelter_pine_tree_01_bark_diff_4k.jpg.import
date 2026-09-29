@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cun20cvjoqnpb"
-path="res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.ctex"
+path.s3tc="res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.s3tc.ctex"
+path.etc2="res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "91451b3b29919fbb1f8d4525cddfe493"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/branch_shelter_pine_tree_01_bark_diff_4k.jpg"
-dest_files=["res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.ctex"]
+dest_files=["res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.s3tc.ctex", "res://.godot/imported/branch_shelter_pine_tree_01_bark_diff_4k.jpg-b34270590c273892a702f1f9fe335c28.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

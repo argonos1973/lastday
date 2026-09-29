@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://caochqh1moahc"
-path="res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.ctex"
+path.s3tc="res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.s3tc.ctex"
+path.etc2="res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/textures/wood_floor_deck/wood_floor_deck_diff_4k.jpg"
-dest_files=["res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.ctex"]
+dest_files=["res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.s3tc.ctex", "res://.godot/imported/wood_floor_deck_diff_4k.jpg-a0b8732a340472776cec4a8c812550ed.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

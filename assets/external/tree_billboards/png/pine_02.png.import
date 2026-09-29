@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dhejwhb3y6g7w"
-path="res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.ctex"
+path.s3tc="res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.s3tc.ctex"
+path.etc2="res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/tree_billboards/png/pine_02.png"
-dest_files=["res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.ctex"]
+dest_files=["res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.s3tc.ctex", "res://.godot/imported/pine_02.png-629f7ee60d7db3a4f3d929dccf4e51cc.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

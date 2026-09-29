@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://djl167rb3e4tf"
-path="res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.ctex"
+path.s3tc="res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.s3tc.ctex"
+path.etc2="res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "16b9eef0ecd0280304aa201cf1135e94"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/rowboat_animated_Bake_skeleton_1_002.png"
-dest_files=["res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.ctex"]
+dest_files=["res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.s3tc.ctex", "res://.godot/imported/rowboat_animated_Bake_skeleton_1_002.png-90f46b85ce14db7985150bef759349a6.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

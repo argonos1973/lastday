@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://8dfipujaahd"
-path="res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.ctex"
+path.s3tc="res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.s3tc.ctex"
+path.etc2="res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/external/polyhaven/periwinkle_plant/textures/periwinkle_plant_diff_4k.jpg"
-dest_files=["res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.ctex"]
+dest_files=["res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.s3tc.ctex", "res://.godot/imported/periwinkle_plant_diff_4k.jpg-9eec130ab8570c49475de4b5f474b44b.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
