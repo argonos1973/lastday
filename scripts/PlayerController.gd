@@ -1732,7 +1732,7 @@ func get_current_clothing_color(item_name: String) -> Color:
 				return gsess.selected_shoes_color
 	return Color(0, 0, 0, 0)
 
-func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)) -> void:
+func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0), source_item = null) -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
 		slot = CLOTHING_SLOTS[item_name]
@@ -1858,6 +1858,20 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 		_wear_clothing_visual(item_name, clothing_color)
 	if not slot.is_empty():
 		_equipped_slots[slot] = item_name
+		# Vincula la prenda equipada con su Item para que su humedad propia
+		# alimente la humedad efectiva (ropa seca = menos enfriamiento).
+		var item_ref = source_item
+		if item_ref == null and inventory != null:
+			for it in inventory.items:
+				if it != null and str(it.item_name) == item_name and str(it.get_meta("equipped_slot", "")) == "":
+					item_ref = it
+					break
+		if item_ref != null:
+			item_ref.set_meta("equipped_slot", slot)
+			# Vestirse con la piel empapada traspasa algo de humedad a la ropa.
+			item_ref.wetness = maxf(float(item_ref.wetness), wetness * 0.35)
+			if stats != null:
+				stats.wetness = _effective_wetness()
 	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
 	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
 	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
@@ -1910,6 +1924,13 @@ func unequip_clothing(item_name: String) -> void:
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
+		if inventory != null:
+			for it in inventory.items:
+				if it != null and str(it.item_name) == item_name and str(it.get_meta("equipped_slot", "")) == slot:
+					it.remove_meta("equipped_slot")
+					break
+		if stats != null:
+			stats.wetness = _effective_wetness()
 	if equipped_clothing == item_name:
 		equipped_clothing = ""
 	_recalculate_carry_capacity()
@@ -3462,7 +3483,8 @@ func _update_water_state(delta: float) -> void:
 					_play_water_step_sound(splash_pos)
 			_water_step_timer = clampf(0.95 / water_speed, 0.28, 0.65)
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
-		stats.wetness = wetness
+		_soaked_each_equipped(delta * (0.38 + _water_depth * 0.55))
+		stats.wetness = _effective_wetness()
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
 		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + _water_depth))
 		_stats_emit_timer += delta
@@ -3473,23 +3495,92 @@ func _update_water_state(delta: float) -> void:
 			notice.emit("Te mojas. La ropa fria te roba calor.")
 			_water_notice_cooldown = 8.0
 	else:
-		if wetness <= 0.0:
+		if wetness <= 0.0 and not _any_equipped_wet():
 			return
 		# Rain/snow keeps clothes wet — Main refreshes _rain_wetting each
 		# weather tick; without this gate the per-frame dry rate (~0.1/s)
 		# outran the 2-second rain wet gain and clothes never got wet.
 		if _rain_wetting:
+			# stats.tick keeps drying its own wetness copy — pin it back to
+			# the real (clothes + skin) value each frame while it rains.
+			stats.wetness = _effective_wetness()
 			return
 		var ambient: float = _ambient_temperature()
 		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008
 		wetness = max(0.0, wetness - delta * dry_rate)
-		stats.wetness = wetness
+		_dry_each_equipped(delta * dry_rate)
+		stats.wetness = _effective_wetness()
 		if wetness > 0.05:
 			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.008 * wetness)
 			_stats_emit_timer += delta
 			if _stats_emit_timer >= 0.25:
 				_stats_emit_timer = 0.0
 				stats.changed.emit()
+
+# Peso de cobertura de cada slot sobre la humedad efectiva del cuerpo.
+const SLOT_WET_WEIGHT := {"torso": 0.35, "legs": 0.30, "feet": 0.10, "hands": 0.10, "head": 0.15}
+
+func _equipped_item_for_slot(slot: String):
+	if inventory == null:
+		return null
+	for it in inventory.items:
+		if it != null and str(it.get_meta("equipped_slot", "")) == slot:
+			return it
+	var equipped_name := str(_equipped_slots.get(slot, ""))
+	if equipped_name.is_empty():
+		return null
+	for it in inventory.items:
+		if it != null and str(it.item_name) == equipped_name and str(it.get_meta("equipped_slot", "")) == "":
+			return it
+	return null
+
+func _effective_wetness() -> float:
+	# La humedad que enfría es la de la ropa encima; la piel descubierta usa
+	# la humedad corporal. Así una muda seca se refleja al instante.
+	var eff := 0.0
+	for slot in SLOT_WET_WEIGHT:
+		var item = _equipped_item_for_slot(slot)
+		eff += (item.wetness if item != null else wetness) * float(SLOT_WET_WEIGHT[slot])
+	return clampf(eff, 0.0, 1.0)
+
+func _any_equipped_wet() -> bool:
+	for slot in SLOT_WET_WEIGHT:
+		var item = _equipped_item_for_slot(slot)
+		if item != null and item.wetness > 0.001:
+			return true
+	return false
+
+func _soaked_each_equipped(amount: float) -> void:
+	for slot in SLOT_WET_WEIGHT:
+		var item = _equipped_item_for_slot(slot)
+		if item != null:
+			item.wetness = minf(1.0, item.wetness + amount)
+
+func _dry_each_equipped(amount: float) -> void:
+	for slot in SLOT_WET_WEIGHT:
+		var item = _equipped_item_for_slot(slot)
+		if item != null:
+			item.wetness = maxf(0.0, item.wetness - amount)
+
+func apply_precipitation_wetness(gain: float) -> void:
+	# La lluvia empapa la ropa equipada; la piel solo se moja donde queda
+	# descubierta (más un poco de traspaso bajo la ropa empapada).
+	var covered := 0.0
+	for slot in SLOT_WET_WEIGHT:
+		var item = _equipped_item_for_slot(slot)
+		if item != null:
+			item.wetness = minf(1.0, item.wetness + gain)
+			covered += float(SLOT_WET_WEIGHT[slot])
+	wetness = minf(1.0, wetness + gain * ((1.0 - covered) + 0.2 * covered))
+	if stats != null:
+		stats.wetness = _effective_wetness()
+
+func apply_warmth_drying(amount: float) -> void:
+	# Fuego/antorcha: seca la piel y la ropa equipada por igual.
+	wetness = maxf(0.0, wetness - amount)
+	_dry_each_equipped(amount)
+	if stats != null:
+		stats.wetness = _effective_wetness()
 
 func _query_river_depth() -> float:
 	var scene := get_tree().current_scene
@@ -9915,9 +10006,8 @@ func _update_torch(delta: float) -> void:
 		torch_light.light_energy = 1.0 + 4.0 * clamp(pct, 0.0, 1.0)
 		torch_light.light_color = Color(1.0, 0.6 + 0.3 * clamp(pct, 0.0, 1.0), 0.2 + 0.2 * clamp(pct, 0.0, 1.0))
 		stats.apply_external_heat(delta * 1.5 * pct, 37.5)
-		if wetness > 0.0:
-			wetness = max(0.0, wetness - delta * 0.03 * pct)
-			stats.wetness = wetness
+		if wetness > 0.0 or _any_equipped_wet():
+			apply_warmth_drying(delta * 0.03 * pct)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0

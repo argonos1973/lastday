@@ -18,6 +18,9 @@ var contents: Array = []
 # Stable cargo compartment; independent of sorting and display indices.
 var cargo_location := ""
 var stack_separated := false
+# Humedad propia de la prenda (0-1). Solo la ropa equipada se moja con la
+# lluvia o el agua; una muda seca en la mochila se conserva seca.
+var wetness := 0.0
 
 const PERISHABLE_FOODS := {
 	"Carne cruda": 0.5,
@@ -85,10 +88,13 @@ func duplicate_stack():
 	dup.stack_separated = stack_separated
 	dup.spoilage = spoilage
 	dup.spoilage_rate = spoilage_rate
+	dup.wetness = wetness
 	for c in contents:
 		if c != null:
 			dup.contents.append(c.duplicate_stack())
 	for key in get_meta_list():
+		if str(key) == "equipped_slot":
+			continue
 		dup.set_meta(key, get_meta(key))
 	return dup
 
@@ -126,6 +132,9 @@ func can_stack_with(other, manual := false) -> bool:
 			return false
 	if is_perishable() and absf(spoilage - other.spoilage) > 25.0:
 		return false
+	# Una prenda mojada no se funde con una seca: conservan su estado.
+	if absf(wetness - other.wetness) > 0.05:
+		return false
 	return true
 
 func to_dict() -> Dictionary:
@@ -141,6 +150,8 @@ func to_dict() -> Dictionary:
 	}
 	d["cargo_location"] = cargo_location
 	d["stack_separated"] = stack_separated
+	if wetness > 0.001:
+		d["wetness"] = wetness
 	if is_perishable():
 		d["spoilage"] = spoilage
 	if has_meta("clothing_color"):
@@ -168,6 +179,7 @@ static func from_dict(data: Dictionary):
 	item.cargo_location = str(data.get("cargo_location", ""))
 	item.stack_separated = bool(data.get("stack_separated", false))
 	item.spoilage = float(data.get("spoilage", 0.0))
+	item.wetness = float(data.get("wetness", 0.0))
 	# Older saves used the generic "tool" type for the axe. Normalize it so
 	# hands, inventory thumbnails and tree interaction all use the axe model.
 	if item.item_name == "Hacha" and item.item_type in ["tool", "axe_tool"]:

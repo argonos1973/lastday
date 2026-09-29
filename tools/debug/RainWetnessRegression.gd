@@ -102,5 +102,50 @@ func run() -> void:
 			stats3.wetness = minf(1.0, stats3.wetness + 0.3)
 	check(stats3.body_temperature < stats2.body_temperature, "Soaked clothes cool even in warm weather")
 
+	# ---- Per-garment wetness: dry clothes are reflected immediately ----
+	const ItemScript = preload("res://scripts/Item.gd")
+
+	# Soaked naked-equivalent player; equip a dry jacket -> effective wetness drops.
+	player.wetness = 0.8
+	player._rain_wetting = false
+	var jacket = ItemScript.create("Chaqueta militar", "clothing", 1.0)
+	player.inventory.items.append(jacket)
+	player._equipped_slots["torso"] = "Chaqueta militar"
+	jacket.set_meta("equipped_slot", "torso")
+	# equip path traspasa algo de humedad de la piel a la prenda
+	jacket.wetness = maxf(jacket.wetness, player.wetness * 0.35)
+	player.stats.wetness = player._effective_wetness()
+	check(player.stats.wetness < 0.8, "Equipping a dry jacket lowers effective wetness")
+	check(player.stats.wetness > 0.3, "Wet skin under clothes still counts")
+
+	# Rain wets the worn garment, not a stored spare.
+	var spare = ItemScript.create("Camiseta", "clothing", 0.3)
+	player.inventory.items.append(spare)
+	player.apply_precipitation_wetness(0.3)
+	check(jacket.wetness > spare.wetness, "Rain soaks the worn garment first")
+	check(spare.wetness <= 0.001, "Spare clothes in the pack stay dry")
+
+	# Warmth drying reaches equipped garments too.
+	var jw0: float = jacket.wetness
+	player.apply_warmth_drying(0.1)
+	check(jacket.wetness < jw0, "Fire dries the worn garment, not just the skin")
+	check(player.stats.wetness < 0.8, "Fire updates effective wetness")
+
+	# Wet garment keeps drying on the per-frame path when rain stops.
+	jacket.wetness = 0.6
+	player.wetness = 0.0
+	for i in range(40):
+		player._update_water_state(0.1)
+	check(jacket.wetness < 0.6, "Worn garment dries once rain stops")
+
+	# Wetness round-trips through item serialization (saves + MP restore).
+	var packed: Dictionary = jacket.to_dict()
+	var unpacked = ItemScript.from_dict(packed)
+	check(absf(unpacked.wetness - jacket.wetness) < 0.001, "Item wetness survives save/load")
+	var wet_a = ItemScript.create("Camiseta", "clothing", 0.3)
+	var wet_b = ItemScript.create("Camiseta", "clothing", 0.3)
+	wet_b.wetness = 0.9
+	check(not wet_a.can_stack_with(wet_b), "Wet and dry garments do not merge")
+
 	print("RAIN_WETNESS_ERRORS=", errors)
 	quit(1 if errors > 0 else 0)

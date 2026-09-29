@@ -511,7 +511,7 @@ func equip(item) -> void:
 	if not player.inventory.items.has(item):
 		return
 	if item.item_type == "clothing":
-		player.equip_clothing(item.item_name, item.get_meta("clothing_color", Color(0, 0, 0, 0)))
+		player.equip_clothing(item.item_name, item.get_meta("clothing_color", Color(0, 0, 0, 0)), item)
 	elif item.item_type == "backpack":
 		player.equip_backpack(item.item_name)
 	request_refresh(true)

@@ -1145,7 +1145,10 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - (dist - 0.6) / 3.4
 			player_node.stats.apply_external_heat(warmth_factor * 3.0 * delta, 38.0)
-			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
+			if player_node.has_method("apply_warmth_drying"):
+				player_node.apply_warmth_drying(warmth_factor * 0.05 * delta)
+			else:
+				player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.05 * delta)
 			emit_stats = true
 	if emit_stats:
 		_campfire_emit_timer += delta
@@ -1166,7 +1169,10 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - dist / 2.0
 			player_node.stats.apply_external_heat(warmth_factor * 1.5 * delta, 37.5)
-			player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.02 * delta)
+			if player_node.has_method("apply_warmth_drying"):
+				player_node.apply_warmth_drying(warmth_factor * 0.02 * delta)
+			else:
+				player_node.stats.wetness = max(0.0, player_node.stats.wetness - warmth_factor * 0.02 * delta)
 			emit_stats = true
 	if emit_stats:
 		_campfire_emit_timer += delta
@@ -1399,10 +1405,9 @@ func _update_weather_effects(delta: float) -> void:
 		var wet_gain: float = weather_elapsed * 0.20 * clamp(rain_amount * 0.5, 0.1, 1.0)
 		if rain_amount <= 0.1 and snow_amount > 0.05:
 			wet_gain = weather_elapsed * 0.05 * clamp(snow_amount, 0.1, 1.0)
-		var was_dry: bool = player.wetness <= 0.02
-		player.wetness = min(1.0, player.wetness + wet_gain)
-		player.stats.wetness = player.wetness
-		if was_dry and player.wetness > 0.05:
+		var was_dry: bool = player.stats.wetness <= 0.02
+		player.apply_precipitation_wetness(wet_gain)
+		if was_dry and player.stats.wetness > 0.05:
 			player.notice.emit("La ropa se empapa. El frío cala.")
 	# Storm lightning and thunder
 	_storm_active = storm
