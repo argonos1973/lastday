@@ -667,6 +667,7 @@ var _feet_wounded_notice := false
 var in_shelter := false
 var is_in_water := false
 var wetness := 0.0
+var _rain_wetting := false
 var flashlight_charge := 0.0
 var held_index := 0
 var _consumption_pending := false
@@ -3473,6 +3474,11 @@ func _update_water_state(delta: float) -> void:
 			_water_notice_cooldown = 8.0
 	else:
 		if wetness <= 0.0:
+			return
+		# Rain/snow keeps clothes wet — Main refreshes _rain_wetting each
+		# weather tick; without this gate the per-frame dry rate (~0.1/s)
+		# outran the 2-second rain wet gain and clothes never got wet.
+		if _rain_wetting:
 			return
 		var ambient: float = _ambient_temperature()
 		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008

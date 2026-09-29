@@ -1391,11 +1391,19 @@ func _update_weather_effects(delta: float) -> void:
 		_snow_particles.visible = snow_active
 		if snow_active:
 			_snow_particles.amount_ratio = float(int(clamp(snow_amount * 200, 150, 1200))) / 1200.0
-	# Wetness from rain
-	if rain_amount > 0.1 and not is_sheltered:
+	# Wetness from rain (snow wets a little too). While exposed the player's
+	# per-frame drying stays suspended — _rain_wetting gates it.
+	var exposed_to_precip: bool = not is_sheltered and (rain_amount > 0.1 or snow_amount > 0.05)
+	player._rain_wetting = exposed_to_precip
+	if exposed_to_precip:
 		var wet_gain: float = weather_elapsed * 0.20 * clamp(rain_amount * 0.5, 0.1, 1.0)
+		if rain_amount <= 0.1 and snow_amount > 0.05:
+			wet_gain = weather_elapsed * 0.05 * clamp(snow_amount, 0.1, 1.0)
+		var was_dry: bool = player.wetness <= 0.02
 		player.wetness = min(1.0, player.wetness + wet_gain)
 		player.stats.wetness = player.wetness
+		if was_dry and player.wetness > 0.05:
+			player.notice.emit("La ropa se empapa. El frío cala.")
 	# Storm lightning and thunder
 	_storm_active = storm
 	if storm:
