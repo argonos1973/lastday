@@ -287,6 +287,23 @@ func run() -> void:
 	check(boat.get_node_or_null("WakeFx") != null, "Wake particles created")
 	check(boat.get_node_or_null("OarSplashL") != null and boat.get_node_or_null("OarSplashR") != null, "Oar splash emitters created")
 	var wake: GPUParticles3D = boat.get_node_or_null("WakeFx")
+	var ribbon = boat._surface_wake
+	if ribbon != null:
+		ribbon.advance(0.1, Vector3.ZERO, Vector3.RIGHT, 0.8, true)
+		for step in range(35):
+			ribbon.advance(0.1, Vector3(0, 0, step * 0.25), Vector3.RIGHT, 0.8, false)
+		check(ribbon.mesh.get_surface_count() == 5, "Wake uses five bounded surfaces for spreading waves and center turbulence")
+		var old_position: Vector3 = ribbon.samples[0].pos
+		ribbon.advance(0.1, Vector3(0.2, 0, 8.6), Vector3.FORWARD, 0.8, false)
+		check(ribbon.samples[0].pos == old_position, "Turning leaves old wake samples fixed on the water")
+		var old_track: int = ribbon.track
+		ribbon.advance(0.1, Vector3(0.2, 0, 8.6), Vector3.RIGHT, 0.0, false)
+		ribbon.advance(0.1, Vector3(0.4, 0, 8.6), Vector3.RIGHT, 0.8, false)
+		check(ribbon.track > old_track, "Restart separates the new trail from the old one")
+		ribbon.advance(9.0, Vector3.ZERO, Vector3.RIGHT, 0.0, false)
+		check(ribbon.samples.is_empty() and ribbon.mesh.get_surface_count() == 0, "Wake fades completely after stopping")
+		ribbon.advance(0.1, Vector3.ZERO, Vector3.RIGHT, 0.8, true)
+		check(ribbon.samples.is_empty(), "Teleport clears wake geometry")
 	if wake != null:
 		boat._fx_prev_pos = boat.global_position
 		boat.global_position += boat.global_basis.z * 0.05
@@ -366,9 +383,9 @@ func run() -> void:
 	actor.rowing_boat = null
 	world.net = null
 	if OS.get_cmdline_user_args().has("--preview"):
-		boat.position = original
+		boat.position = boat.clamp_to_lake(boat.lake_center)
 		boat.rotation.y = 0
-		actor.position = Vector3(260, 0.2, -268)
+		actor.position = boat.position + Vector3(0, 0.2, -1)
 		boat._request_times.clear()
 		boat.request_action(1, "enter")
 		boat.rowing_time = 0.5
@@ -400,7 +417,7 @@ func run() -> void:
 		boat.speed = 2.8
 		boat.rowing_time = 0.0
 		var elapsed := 0.0
-		while elapsed < 2.65:
+		while elapsed < 6.65:
 			await process_frame
 			var dt := minf(world.get_process_delta_time(), 0.05)
 			elapsed += dt
@@ -409,6 +426,7 @@ func run() -> void:
 			boat._process(dt)
 			actor.camera.global_position = boat.position + Vector3(7, 6, -8)
 			actor.camera.look_at(boat.position + Vector3(0, 0.2, 0))
+		print("PREVIEW_SPEED=", boat._fx_speed, " WAKE_SAMPLES=", boat._surface_wake.samples.size())
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/lastday_rowboat_preview.png")
 	world._scene_quitting = true

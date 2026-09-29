@@ -439,7 +439,7 @@ func _create_water_fx() -> void:
 	add_child(_surface_wake)
 	_foam_texture = _water_particle_texture(false)
 	_ripple_texture = _water_particle_texture(true)
-	_wake = _make_foam(70, 2.2)
+	_wake = _make_foam(90, 3.0)
 	_wake.name = "WakeFx"
 	var wake_mat := _wake.process_material as ParticleProcessMaterial
 	wake_mat.emission_box_extents = Vector3(0.55, 0, 0.16)
@@ -464,7 +464,7 @@ func _create_water_fx() -> void:
 		churn.name = "OarFoam" + suffix
 		add_child(churn)
 		_oar_foam.append(churn)
-		var ripple := _make_foam(2, 1.2, true)
+		var ripple := _make_foam(2, 2.1, true)
 		ripple.name = "OarRipple" + suffix
 		ripple.one_shot = true
 		ripple.explosiveness = 0.8
@@ -514,7 +514,7 @@ func _water_particle_texture(ripple: bool) -> Texture2D:
 			var grain := noise.get_noise_2d(x, y) * 0.5 + 0.5
 			var alpha := 0.0
 			if ripple:
-				alpha = exp(-pow((radius - 0.72 + (grain - 0.5) * 0.06) / 0.045, 2.0)) * smoothstep(0.2, 0.7, grain) * 0.6
+				alpha = exp(-pow((radius - 0.72 + (grain - 0.5) * 0.025) / 0.035, 2.0)) * lerpf(0.45, 0.85, grain)
 			else:
 				alpha = (1.0 - smoothstep(0.3, 1.0, radius)) * smoothstep(0.32, 0.7, grain)
 			image.set_pixel(x, y, Color(0.86, 0.94, 0.96, alpha))
@@ -541,6 +541,10 @@ func _make_foam(amount: int, lifetime: float, ripple := false) -> GPUParticles3D
 	mat.scale_min = 0.35 if ripple else 0.22
 	mat.scale_max = 0.55 if ripple else 0.48
 	mat.color = Color(0.72, 0.84, 0.81, 0.38)
+	if ripple:
+		mat.initial_velocity_min = 0.0
+		mat.initial_velocity_max = 0.0
+		mat.color = Color(0.76, 0.87, 0.88, 0.55)
 	var curve := Curve.new()
 	curve.add_point(Vector2(0, 0.25))
 	curve.add_point(Vector2(0.25, 0.6))
@@ -557,6 +561,8 @@ func _make_foam(amount: int, lifetime: float, ripple := false) -> GPUParticles3D
 	surf.vertex_color_use_as_albedo = true
 	surf.albedo_texture = _ripple_texture if ripple else _foam_texture
 	surf.roughness = 1.0
+	surf.no_depth_test = false
+	surf.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	surf.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mesh.material = surf
 	p.draw_pass_1 = mesh
@@ -629,7 +635,7 @@ func _update_water_fx(delta: float) -> void:
 	if _surface_wake != null:
 		_surface_wake.advance(delta, to_global(Vector3(0, WATER_Y + 0.01, -2.4 * travel)), global_basis.x, strength if moving else 0.0, teleported)
 	_wake.emitting = moving
-	_wake.amount_ratio = maxf(0.05, strength)
+	_wake.amount_ratio = maxf(0.05, strength * strength)
 	var wake_mat := _wake.process_material as ParticleProcessMaterial
 	wake_mat.direction = Vector3(0, 0, -travel)
 	wake_mat.initial_velocity_min = 0.08 + strength * 0.12
