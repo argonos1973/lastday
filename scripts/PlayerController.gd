@@ -1746,6 +1746,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 			if inventory != null:
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
+						set_meta("last_dropped_wetness", float(inventory.items[i].wetness))
 						inventory.remove_index(i)
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
@@ -2880,6 +2881,7 @@ func _drop_excess_items(count: int) -> void:
 		var qty: int = int(item.quantity)
 		set_meta("last_dropped_durability", float(item.durability))
 		set_meta("last_dropped_max_durability", float(item.max_durability))
+		set_meta("last_dropped_wetness", float(item.wetness))
 		var is_broken := false
 		if item.has_method("is_broken"):
 			is_broken = item.is_broken()
@@ -2998,6 +3000,7 @@ func _physics_process(delta: float) -> void:
 				overflow_pos.y = global_position.y
 				if overflow_item != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
+					set_meta("last_dropped_wetness", float(overflow_item.wetness))
 					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
 				inventory.remove_index(inventory.items.size() - 1)
 			while inventory.get_total_weight() > inventory.max_weight and inventory.items.size() > 0:
@@ -3006,6 +3009,7 @@ func _physics_process(delta: float) -> void:
 				overflow_pos2.y = global_position.y
 				if overflow_item2 != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
+					set_meta("last_dropped_wetness", float(overflow_item2.wetness))
 					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
 				inventory.items.remove_at(inventory.items.size() - 1)
 			if held_index >= inventory.items.size():
@@ -5569,6 +5573,7 @@ func _drop_held_item() -> void:
 		drop_pos.y = global_position.y
 		set_meta("last_dropped_durability", float(item.durability))
 		set_meta("last_dropped_max_durability", float(item.max_durability))
+		set_meta("last_dropped_wetness", float(item.wetness))
 		item_dropped.emit(item_name, item_type, float(item.weight), 1, float(item.use_value), drop_pos, get_current_clothing_color(item_name), item.is_broken(), float(item.spoilage))
 		_held_item_reference = null
 		_held_item_external = false
@@ -5651,6 +5656,7 @@ func drop_inventory_item(index: int) -> void:
 	# (mismo patron que last_torch_durability)
 	set_meta("last_dropped_durability", float(item.durability))
 	set_meta("last_dropped_max_durability", float(item.max_durability))
+	set_meta("last_dropped_wetness", float(item.wetness))
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
@@ -5728,6 +5734,7 @@ func _throw_held_item(charge: float) -> void:
 	var drop_color := get_current_clothing_color(item_name)
 	set_meta("last_dropped_durability", float(item.durability))
 	set_meta("last_dropped_max_durability", float(item.max_durability))
+	set_meta("last_dropped_wetness", float(item.wetness))
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
@@ -6690,6 +6697,7 @@ func _drop_stored_back_item(slot: int = -1) -> bool:
 	var is_broken := durability <= 0.0
 	set_meta("last_dropped_durability", durability)
 	set_meta("last_dropped_max_durability", max_durability)
+	set_meta("last_dropped_wetness", float(data.get("wetness", 0.0)))
 	var stored_visual = _stored_back_visuals[slot]
 	if stored_visual != null and is_instance_valid(stored_visual):
 		stored_visual.free()

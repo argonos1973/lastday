@@ -644,23 +644,23 @@ func item_picked_up(action_id: String) -> void:
 
 # Client tells server it dropped an item in the world (server relays to all other clients)
 @rpc("any_peer", "reliable")
-func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), contents: Array = []) -> void:
+func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), contents: Array = [], wetness: float = 0.0) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var scene := get_tree().current_scene
 	if is_host:
 		# The authority validates first — a rejected drop is neither applied
 		# nor relayed to other clients.
-		if scene != null and scene.has_method("_net_item_dropped") and not scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, sender, contents):
+		if scene != null and scene.has_method("_net_item_dropped") and not scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, sender, contents, wetness):
 			return
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
 					if peer.get_peer(pid) != null:
-						item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, contents)
+						item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, contents, wetness)
 		return
 	# Client: spawn the visual for a server-relayed drop.
 	if scene != null and scene.has_method("_net_item_dropped"):
-		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, 0, contents)
+		scene._net_item_dropped(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, 0, contents, wetness)
 
 # Cliente: saca un objeto de una mochila tirada en el suelo
 @rpc("any_peer", "reliable")

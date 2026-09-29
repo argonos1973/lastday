@@ -2693,6 +2693,8 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 				item_dict["spoilage"] = float(entry.get("spoilage", 0.0))
 			if entry.has("color"):
 				item_dict["clothing_color"] = entry["color"]
+			if entry.has("wetness"):
+				item_dict["wetness"] = float(entry.get("wetness", 0.0))
 			break
 	if item_dict.is_empty() and world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -2703,6 +2705,8 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 				item_dict["max_durability"] = float(action.get_meta("item_max_durability", 100.0))
 			if action.has_meta("item_spoilage"):
 				item_dict["spoilage"] = float(action.get_meta("item_spoilage", 0.0))
+			if action.has_meta("item_wetness"):
+				item_dict["wetness"] = float(action.get_meta("item_wetness", 0.0))
 	if item_dict.is_empty() or str(item_dict.get("name", "")).is_empty():
 		return
 	var sinv: Array = sp.get_meta("saved_inventory", []).duplicate(true)
@@ -2938,7 +2942,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []))
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []), float(drop.get("wetness", 0.0)))
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -3462,9 +3466,10 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		# dejaba items enterrados bajo terreno elevado o flotando en pendientes.
 		dpos.y = _get_exact_ground_y(dpos.x, dpos.z, pos.y + 0.5)
 		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
+		var iwet: float = float(d.get("wetness", 0.0))
 		# _spawn_ground_pickup already persists the drop into _dropped_items
-		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did)
-		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse})
+		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did, "", iwet)
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet})
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -3477,7 +3482,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			for drop in drops:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
-				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos)
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, Color(0, 0, 0, 0), [], float(drop.get("wetness", 0.0)))
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 	proxy.set_meta("saved_backpack", "")
@@ -4464,6 +4469,7 @@ func _net_backpack_give(item_dict: Dictionary) -> void:
 		player.notice.emit("Sacas %s de la mochila." % item.item_name)
 	else:
 		var dpos: Vector3 = player.global_position + (player.global_transform.basis * Vector3.FORWARD * 0.8)
+		player.set_meta("last_dropped_wetness", float(item.wetness))
 		player.item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), dpos, Color(0, 0, 0, 0), false, float(item.spoilage))
 		player.notice.emit("Sin espacio: %s cae al suelo." % item.item_name)
 
@@ -4508,6 +4514,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	if player != null and player.has_meta("pending_backpack_contents"):
 		pending_contents = player.get_meta("pending_backpack_contents")
 		player.remove_meta("pending_backpack_contents")
+	# Humedad de la prenda soltada: viaja por meta del jugador (mismo patrón
+	# que last_dropped_durability) para no cambiar la firma de la señal.
+	var drop_wetness := 0.0
+	if player != null:
+		drop_wetness = float(player.get_meta("last_dropped_wetness", 0.0))
+		player.remove_meta("last_dropped_wetness")
 	if item_type != "backpack":
 		pending_contents = []
 	# La sync va diferida al frame siguiente y captura el estado final del
@@ -4585,7 +4597,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness)
 	_tag_meat_drop(drop_id, item_name, "local")
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
 	if spoilage > 0.0:
@@ -4610,9 +4622,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			if wa != null and is_instance_valid(wa):
 				wa.set_meta("item_durability", drop_durability)
 				wa.set_meta("item_max_durability", drop_max_durability)
+	if drop_wetness > 0.001:
+		drop_entry["wetness"] = drop_wetness
 	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
-		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents)
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents, drop_wetness)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
 	if _is_water_drop_position(pos):
@@ -4633,7 +4647,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = []) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = [], wetness: float = 0.0) -> void:
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
@@ -4743,6 +4757,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	# Set spoilage for all perishable food items (not just eat_food)
 	if item_type == "food":
 		action.set_meta("item_spoilage", spoilage)
+	if wetness > 0.001:
+		action.set_meta("item_wetness", wetness)
 	if broken:
 		action.set_meta("no_pickup", true)
 	if color.a > 0.0:
@@ -4754,7 +4770,7 @@ func _track_dropped_item(entry: Dictionary) -> void:
 		return
 	_dropped_items.append(entry)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = []) -> bool:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0) -> bool:
 	# Host: a client can only drop near itself and with a sane payload —
 	# otherwise arbitrary items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
@@ -4784,10 +4800,12 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 			drop_entry["color"] = [color.r, color.g, color.b, color.a]
 		if not contents.is_empty():
 			drop_entry["contents"] = contents
+		if wetness > 0.001:
+			drop_entry["wetness"] = wetness
 		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
 		return true
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness)
 	# El servidor necesita saber quién la tiró para la domesticación de lobos;
 	# el drop del propio host llega ya etiquetado por _on_item_dropped.
 	var dropper := "local"
@@ -7794,7 +7812,7 @@ func _create_cut_log_action(pos: Vector3) -> void:
 	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
 	action.set_meta("visual_name", visual_name)
 
-func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "") -> void:
+func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "", wetness: float = 0.0) -> void:
 	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	if _depleted_action_ids.has(id):
 		return
@@ -7835,6 +7853,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_weight", weight)
 	action.set_meta("item_quantity", qty)
 	action.set_meta("item_use_value", use_value)
+	if wetness > 0.001:
+		action.set_meta("item_wetness", wetness)
 	# Persist the pickup so it survives save/load and syncs to new clients
 	if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
 		var already_tracked := false
@@ -7843,7 +7863,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 				already_tracked = true
 				break
 		if not already_tracked:
-			_dropped_items.append({
+			var tracked := {
 				"id": id,
 				"name": item_name,
 				"type": item_type,
@@ -7852,7 +7872,10 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 				"use": use_value,
 				"pos": [pos.x, pos.y, pos.z],
 				"action_type": actual_action_type
-			})
+			}
+			if wetness > 0.001:
+				tracked["wetness"] = wetness
+			_dropped_items.append(tracked)
 
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3, sender_id: int = 0) -> bool:
 	# Host: validate the client-originated payload before applying or relaying
@@ -8929,6 +8952,8 @@ func handle_world_action_collect(action, actor) -> void:
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
+			if action.has_meta("item_wetness"):
+				item.wetness = float(action.get_meta("item_wetness"))
 			# Restaurar durabilidad preservada al soltar
 			if action.has_meta("item_max_durability"):
 				item.max_durability = float(action.get_meta("item_max_durability"))
