@@ -53,6 +53,7 @@ func run() -> void:
 	boat.name = "LakeRowboat"
 	boat.lake_center = Vector3(250, 0.085, -307)
 	boat.position = boat.clamp_to_lake(Vector3(260, 0, -270))
+	boat.rotation.y = PI
 	world.lake_rowboat = boat
 	world.add_child(boat)
 	var initial := boat.position

@@ -15,21 +15,31 @@ fi
 # servidor borra el mundo de la sesión antes de terminar. Esperamos a que el proceso
 # muera de verdad antes de lanzar — si arrancamos con el viejo vivo, el nuevo
 # no puede bindear el puerto y el cliente sigue hablando con el mundo viejo.
+# NUNCA se fuerza el cierre: un pkill interrumpiría el borrado del mundo de la
+# sesión a mitad de camino. Si los PID marcados no responden al flag, abortamos.
 PATTERN='LastDayServer|godot.*--server|Un dia mas.*--headless'
 PIDS="$(pgrep -fi "$PATTERN" 2>/dev/null | tr '\n' ' ')"
 if [ -n "${PIDS// /}" ]; then
 	mkdir -p "$USER_DIR"
 	printf '%s\n' $PIDS > "$USER_DIR/stop_server.flag"
-	for i in $(seq 1 15); do
+	echo "Parada limpia solicitada a: $PIDS"
+	# Solo esperamos a los PID marcados por el flag — otro proceso que case el
+	# patrón (p.ej. un servidor lanzado entre tanto) no nos bloquea ni lo tocamos.
+	alive=""
+	for i in $(seq 1 45); do
+		alive=""
+		for p in $PIDS; do
+			kill -0 "$p" 2>/dev/null && alive="$alive $p"
+		done
+		[ -z "$alive" ] && break
 		sleep 1
-		pgrep -fi "$PATTERN" >/dev/null 2>&1 || break
 	done
+	if [ -n "$alive" ]; then
+		echo "ERROR: el servidor no respondió a la parada limpia (PID$alive)." >&2
+		echo "No se fuerza el cierre — revisa el proceso o detenlo manualmente." >&2
+		exit 1
+	fi
 fi
-pkill -fi "$PATTERN" 2>/dev/null
-for i in $(seq 1 10); do
-	pgrep -fi "$PATTERN" >/dev/null 2>&1 || break
-	sleep 1
-done
 
 echo "Iniciando servidor dedicado..."
 if [ "$(uname)" != "Darwin" ]; then

@@ -58,6 +58,9 @@ func _ready() -> void:
 		start_dedicated_server()
 
 func start_dedicated_server(from_retry: bool = false) -> bool:
+	if not from_retry:
+		close_connection()
+		is_dedicated_server = true
 	peer = ENetMultiplayerPeer.new()
 	var err := peer.create_server(PORT, MAX_PLAYERS)
 	if err != OK:
@@ -78,6 +81,7 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 	return true
 
 func host_game() -> bool:
+	close_connection()
 	peer = ENetMultiplayerPeer.new()
 	var err := peer.create_server(PORT, MAX_PLAYERS)
 	if err != OK:
@@ -142,6 +146,18 @@ static func accepts_player_state(host: bool, sender: int, player_id: int) -> boo
 	# Clients only accept the server relay; a peer cannot impersonate another.
 	return sender == player_id if host else sender == 1
 
+func _accepts_client_request(sender: int) -> bool:
+	if not is_host:
+		return false
+	# sender 0 = llamada local sin RPC; sender == id propio = loopback del host
+	# jugador (host_game también tiene personaje). Solo clientes remotos se validan.
+	if sender == 0 or sender == multiplayer.get_unique_id():
+		return true
+	return sender > 1 and players.has(sender) and not bool(players[sender].get("offline", false))
+
+func _accepts_world_sender(sender: int) -> bool:
+	return _accepts_client_request(sender) if is_host else sender == 1
+
 func _process(_delta: float) -> void:
 	water_world_time += _delta
 	if is_host and is_connected and multiplayer.has_multiplayer_peer():
@@ -188,6 +204,9 @@ func _process(_delta: float) -> void:
 				_broadcast_server.put_packet(msg.to_utf8_buffer())
 
 func _exit_tree() -> void:
+	_close_discovery_sockets()
+
+func _close_discovery_sockets() -> void:
 	if _broadcast_server != null:
 		_broadcast_server.close()
 		_broadcast_server = null
@@ -196,28 +215,35 @@ func _exit_tree() -> void:
 		_probe_listener = null
 
 func join_game(ip: String) -> bool:
+	close_connection()  # clears buffered state from any previous session
 	peer = ENetMultiplayerPeer.new()
 	var err := peer.create_client(ip, PORT)
 	if err != OK:
 		push_error("No se pudo conectar al servidor: %d" % err)
 		peer = null
 		return false
-	# Drop state buffered during a previous session — a stale restore consumed
-	# after this connect would overwrite the fresh player's gear.
-	_buffered_spawn_pos = Vector3.ZERO
-	_has_buffered_spawn_pos = false
-	_buffered_spawn_died = false
-	_buffered_restore = []
-	_has_buffered_restore = false
-	_buffered_world_state = []
-	_has_buffered_world_state = false
-	_buffered_appearance = []
-	_has_buffered_appearance = false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
 	return true
 
 func close_connection() -> void:
+	_close_discovery_sockets()
+	_broadcast_timer = 0.0
+	_dedicated_bind_retries = 0
+	_dedicated_bind_wait = 0.0
+	is_dedicated_server = false
+	_buffered_spawn_pos = Vector3.ZERO
+	_has_buffered_spawn_pos = false
+	_buffered_spawn_died = false
+	_buffered_restore.clear()
+	_has_buffered_restore = false
+	_buffered_world_state.clear()
+	_has_buffered_world_state = false
+	_buffered_appearance.clear()
+	_has_buffered_appearance = false
+	animals.clear()
+	_animals_seen.clear()
+	_animals_gen = -1
 	water_world_time = 0.0
 	_water_clock_timer = 0.0
 	if peer != null:
@@ -279,8 +305,15 @@ func _on_server_disconnected() -> void:
 
 @rpc("any_peer", "reliable")
 func _register_player(id: int, player_name: String, cid: String = "") -> void:
-	if not is_host:
+	var sender := multiplayer.get_remote_sender_id()
+	if not is_host or sender <= 1 or sender != id or cid.length() > 128 or player_name.length() > 80:
 		return
+	# Registration is idempotent; a replay must not reset a live character.
+	if players.has(id) and not players[id].get("offline", false):
+		return
+	for pid in players:
+		if not cid.is_empty() and pid != id and players[pid].get("client_id", "") == cid and not players[pid].get("offline", false):
+			return
 	pass # print("[PERSIST] _register_player: id=%d name=%s cid=%s" % [id, player_name, cid])
 	players[id] = {
 		"name": player_name,
@@ -438,6 +471,8 @@ func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = 
 @rpc("any_peer", "reliable")
 func sync_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender) or not is_finite(health) or not is_finite(hunger) or not is_finite(thirst) or not is_finite(rot) or items_data.size() > 256:
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
 		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
@@ -455,6 +490,8 @@ func restore_player_inventory(items_data: Array, health: float, hunger: float, t
 @rpc("any_peer", "reliable")
 func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	pass # print("[PERSIST] final_player_state received from peer %d: pos=%s rot=%.2f sitting=%s prone=%s crouching=%s" % [sender, pos, rot, sitting, prone, crouching])
 	if not pos.is_finite() or not is_finite(rot):
 		return
@@ -519,6 +556,8 @@ func sync_animals(data: Dictionary) -> void:
 	# server lingered forever client-side.
 	var gen := int(data.get("_gen", -1))
 	var total := int(data.get("_total", -1))
+	if gen >= 0 and gen < _animals_gen:
+		return
 	if gen < 0:
 		# Legacy chunk without batch info: plain merge.
 		for key in data.keys():
@@ -572,6 +611,8 @@ func broadcast_player_death(peer_id: int, pos: Vector3, rot: float) -> void:
 @rpc("any_peer", "reliable")
 func damage_player(target_peer_id: int, amount: float, weapon: String = "melee") -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_damage_player"):
 		scene._net_damage_player(target_peer_id, amount, sender, weapon)
@@ -580,6 +621,8 @@ func damage_player(target_peer_id: int, amount: float, weapon: String = "melee")
 @rpc("any_peer", "reliable")
 func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_damage_animal"):
 		scene._net_damage_animal(animal_name, amount, from_knife, sender)
@@ -596,6 +639,8 @@ func animal_hit(animal_name: String) -> void:
 @rpc("any_peer", "reliable")
 func command_wolf(animal_name: String, mode: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_command_wolf"):
 		scene._net_command_wolf(animal_name, mode, sender)
@@ -611,6 +656,8 @@ func notice_to_client(text: String) -> void:
 @rpc("any_peer", "reliable")
 func gut_animal(animal_name: String, collect_mode: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_gut_animal"):
 		scene._net_gut_animal(animal_name, sender, collect_mode)
@@ -626,6 +673,8 @@ func animal_gutted(animal_name: String, meat_drops: Array) -> void:
 @rpc("any_peer", "reliable")
 func item_picked_up(action_id: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		# The authority validates first — a rejected pickup is neither applied
@@ -646,6 +695,8 @@ func item_picked_up(action_id: String) -> void:
 @rpc("any_peer", "reliable")
 func item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), contents: Array = [], wetness: float = 0.0) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		# The authority validates first — a rejected drop is neither applied
@@ -666,6 +717,8 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 @rpc("any_peer", "reliable")
 func backpack_take(drop_id: String, item_index: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host and scene != null and scene.has_method("_net_backpack_take"):
 		scene._net_backpack_take(sender, drop_id, item_index)
@@ -674,6 +727,8 @@ func backpack_take(drop_id: String, item_index: int) -> void:
 @rpc("any_peer", "reliable")
 func backpack_store(drop_id: String, item_dict: Dictionary) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host and scene != null and scene.has_method("_net_backpack_store"):
 		scene._net_backpack_store(sender, drop_id, item_dict)
@@ -696,6 +751,8 @@ func backpack_contents_synced(drop_id: String, contents: Array) -> void:
 @rpc("any_peer", "reliable")
 func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0.0, thirst: float = 0.0, clothing: String = "", backpack: String = "", held: String = "", held_index: int = 0, sleeping: bool = false, sitting: bool = false, rot: float = 0.0, death_pos: Vector3 = Vector3.ZERO) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_died"):
 		scene._net_player_died(sender, inventory_data, death_pos, backpack, held)
@@ -703,7 +760,7 @@ func notify_death(inventory_data: Array = [], hp: float = 0.0, hunger: float = 0
 @rpc("any_peer", "reliable")
 func ground_craft_state_changed(action_id: String, quantity: int, durability: float) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	if not is_host and sender != 1:
+	if not _accepts_world_sender(sender):
 		return
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("_apply_ground_craft_state"):
@@ -726,6 +783,8 @@ func get_player_list() -> Dictionary:
 @rpc("any_peer", "reliable")
 func world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		# The authority validates first — a rejected action is neither applied
@@ -745,6 +804,8 @@ func world_action_completed(action_id: String, spawns: Array, extra_visual: Stri
 @rpc("any_peer", "reliable")
 func campfire_built(cf_id: String, pos: Vector3) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		if scene != null and scene.has_method("_net_campfire_built") and not scene._net_campfire_built(cf_id, pos, sender):
@@ -762,6 +823,8 @@ func campfire_built(cf_id: String, pos: Vector3) -> void:
 @rpc("any_peer", "reliable")
 func shelter_built(sh_id: String, pos: Vector3) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		if scene != null and scene.has_method("_net_shelter_built") and not scene._net_shelter_built(sh_id, pos, sender):
@@ -779,6 +842,8 @@ func shelter_built(sh_id: String, pos: Vector3) -> void:
 @rpc("any_peer", "reliable")
 func shelter_dismantled(sh_id: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		if scene != null and scene.has_method("_net_shelter_dismantled") and not scene._net_shelter_dismantled(sh_id, sender):
@@ -796,6 +861,8 @@ func shelter_dismantled(sh_id: String) -> void:
 @rpc("any_peer", "reliable")
 func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	var scene := get_tree().current_scene
 	if is_host:
 		if scene != null and scene.has_method("_net_campfire_lit") and not scene._net_campfire_lit(action_id, fire_name, pos, sender):
@@ -823,6 +890,8 @@ func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Arra
 @rpc("any_peer", "reliable")
 func door_state_changed(door_name: String, is_open: bool) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
@@ -834,19 +903,21 @@ func door_state_changed(door_name: String, is_open: bool) -> void:
 
 @rpc("any_peer", "reliable")
 func request_rowboat(action: String) -> void:
-	if not is_host:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
 		return
 	var scene := get_tree().current_scene
 	if scene != null and is_instance_valid(scene.get("lake_rowboat")):
-		scene.lake_rowboat.request_action(multiplayer.get_remote_sender_id(), action)
+		scene.lake_rowboat.request_action(sender, action)
 
 @rpc("any_peer", "unreliable_ordered")
 func rowboat_input(axis: Vector2) -> void:
-	if not is_host:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender) or not axis.is_finite():
 		return
 	var scene := get_tree().current_scene
 	if scene != null and is_instance_valid(scene.get("lake_rowboat")):
-		scene.lake_rowboat.accept_input(multiplayer.get_remote_sender_id(), axis)
+		scene.lake_rowboat.accept_input(sender, axis)
 
 @rpc("authority", "reliable")
 func sync_rowboat(state: Dictionary) -> void:
@@ -867,6 +938,12 @@ func get_my_id() -> int:
 # Client tells server it fired the rifle (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender) or (is_host and shooter_id != sender):
+		return
+	if not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 0.0001:
+		return
+	dir = dir.normalized()
 	var scene := get_tree().current_scene
 	if is_host and peer != null:
 		# Don't relay shots from dead or unknown shooters.
@@ -882,6 +959,8 @@ func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
 @rpc("any_peer", "reliable")
 func request_loot(dead_peer_id: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_request_loot"):
 		scene._net_request_loot(sender, dead_peer_id)
@@ -897,6 +976,8 @@ func send_loot(dead_peer_id: int, items_data: Array) -> void:
 @rpc("any_peer", "reliable")
 func take_loot(dead_peer_id: int, item_index: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_take_loot"):
 		scene._net_take_loot(sender, dead_peer_id, item_index)
@@ -912,6 +993,8 @@ func add_looted_item(item_data: Dictionary) -> void:
 @rpc("any_peer", "reliable")
 func sync_character_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender) or char_name.length() > 80:
+		return
 	if not players.has(sender):
 		return
 	players[sender]["char_name"] = char_name
