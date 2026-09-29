@@ -128,6 +128,16 @@ func run() -> void:
 	check(boat._axis.length() <= 1.001, "Clamp oversized input")
 	boat.simulate(0.6)
 	check(boat._axis == Vector2.ZERO and not boat.rowing, "Input timeout stops rowing")
+	actor._physics_process(1.0 / 60.0)
+	check(not actor.is_rowing, "Idle passenger is not marked as rowing")
+	boat.accept_input(1, Vector2(0, -1))
+	boat.simulate(1.0 / 60.0)
+	actor._physics_process(1.0 / 60.0)
+	check(actor.is_rowing and boat.rowing, "Rowing counts as exertion for survival drain")
+	boat._axis = Vector2.ZERO
+	boat.simulate(1.0 / 60.0)
+	actor._physics_process(1.0 / 60.0)
+	check(not actor.is_rowing, "Releasing the oars clears rowing exertion")
 	boat.rowing_time = 0.3
 	for i in range(120):
 		boat.simulate(1.0 / 60.0)

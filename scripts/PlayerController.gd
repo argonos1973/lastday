@@ -658,6 +658,7 @@ const DOUBLE_TAP_WINDOW := 0.3
 var is_crouching := false
 var _force_crouch := false
 var is_moving := false
+var is_rowing := false
 var _feet_blood_timer := 0.0
 var _feet_notice_timer := 0.0
 var _feet_cold_notice_timer := 0.0
@@ -3008,6 +3009,7 @@ func _physics_process(delta: float) -> void:
 		_water_depth = 0.0
 		_water_sink = 0.0
 		if _boat_standing:
+			is_rowing = false
 			var boat_move := _boat_movement_input()
 			is_moving = boat_move.length_squared() > 0.001
 			_boat_local_offset.x = clampf(_boat_local_offset.x + boat_move.x * 1.6 * delta, -1.0, 1.0)
@@ -3017,7 +3019,9 @@ func _physics_process(delta: float) -> void:
 			rotation.y = atan2(-facing.x, -facing.z)
 			_update_third_person_animation(is_moving, delta)
 		else:
+			# Remar exige como caminar: el occupante no se desplaza pero si trabaja.
 			is_moving = false
+			is_rowing = bool(rowing_boat.get("rowing"))
 		_boat_prompt_timer = maxf(0.0, _boat_prompt_timer - delta)
 		_update_interaction_prompt()
 		_update_flashlight(delta)
@@ -8831,6 +8835,7 @@ func end_rowing(pos: Vector3) -> void:
 	_cancel_boat_actions()
 	rowing_boat = null
 	_boat_standing = false
+	is_rowing = false
 	_boat_prompt_shown = ""
 	_boat_prompt_timer = 0.0
 	_boat_local_offset = Vector2.ZERO

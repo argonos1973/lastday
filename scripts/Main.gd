@@ -1001,7 +1001,7 @@ func _process(delta: float) -> void:
 	# Use real weather temperature when available
 	if hud != null and hud._real_temp_parsed != -999.0:
 		ambient_temp = hud._real_temp_parsed
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving, player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
 	_update_weather_effects(delta)
 	_tick_stat_warnings(delta, player)
 	_apply_campfire_effect(player, delta)
