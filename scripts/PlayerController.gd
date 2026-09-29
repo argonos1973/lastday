@@ -3642,13 +3642,21 @@ func _update_barefoot(delta: float) -> void:
 		stats.feet_wound = maxf(0.0, stats.feet_wound - recovery * delta)
 		if stats.feet_wound < FEET_WOUND_THRESHOLD:
 			_feet_wounded_notice = false
-	if barefoot and _is_on_walkable_ground() and not is_in_water:
+	# Calzado mojado enfría los pies como ir descalzo, en proporción a su
+	# humedad (hasta un 65% del efecto); seco o mojado en charcos cuenta igual.
+	var feet_cover_wet := 0.0
+	if not barefoot:
+		var feet_item = _equipped_item_for_slot("feet")
+		if feet_item != null:
+			feet_cover_wet = float(feet_item.wetness)
+	var feet_chill := 1.0 if barefoot else feet_cover_wet * 0.65
+	if feet_chill > 0.0 and _is_on_walkable_ground() and not is_in_water:
 		var ambient := _ambient_temperature()
 		if ambient < FEET_COLD_AMBIENT:
-			stats.body_temperature = maxf(31.0, stats.body_temperature - (FEET_COLD_AMBIENT - ambient) * 0.004 * delta)
+			stats.body_temperature = maxf(31.0, stats.body_temperature - (FEET_COLD_AMBIENT - ambient) * 0.004 * feet_chill * delta)
 			if _feet_cold_notice_timer <= 0.0:
 				_feet_cold_notice_timer = 40.0
-				notice.emit("El frío cala en tus pies descalzos.")
+				notice.emit("El frío cala en tus pies descalzos." if barefoot else "El calzado mojado te hiela los pies.")
 
 func _create_body() -> void:
 	floor_max_angle = deg_to_rad(65.0)

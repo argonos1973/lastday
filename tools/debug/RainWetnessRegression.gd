@@ -147,5 +147,27 @@ func run() -> void:
 	wet_b.wetness = 0.9
 	check(not wet_a.can_stack_with(wet_b), "Wet and dry garments do not merge")
 
+	# ---- Footwear: shoes get wet in rain and carry the wet indicator ----
+	var shoes = ItemScript.create("Zapatillas", "clothing", 0.4)
+	player.inventory.items.append(shoes)
+	shoes.set_meta("equipped_slot", "feet")
+	player._equipped_slots["feet"] = "Zapatillas"
+	player.apply_precipitation_wetness(0.5)
+	check(shoes.wetness > 0.0, "Shoes get wet in the rain")
+	check(shoes.is_wet() and shoes.wet_state() == 2, "Wet shoes report MOJADO")
+	check(shoes.wet_state_label() == "MOJADO", "Wet state label is MOJADO")
+	jacket.wetness = 0.9
+	check(jacket.wet_state_label() == "EMPAPADO", "Soaked garment reports EMPAPADO")
+	var dry = ItemScript.create("Camiseta", "clothing", 0.3)
+	check(not dry.is_wet() and dry.wet_state_label() == "SECO", "Dry garment reports SECO")
+
+	# A soaked shoe feeds the effective wetness through the feet slot weight.
+	player.wetness = 0.0
+	jacket.wetness = 0.0
+	shoes.wetness = 0.0
+	check(player._effective_wetness() < 0.001, "Dry feet slot adds no wetness")
+	shoes.wetness = 1.0
+	check(absf(player._effective_wetness() - 0.1) < 0.01, "Soaked shoes add the feet weight")
+
 	print("RAIN_WETNESS_ERRORS=", errors)
 	quit(1 if errors > 0 else 0)

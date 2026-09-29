@@ -253,6 +253,39 @@ func spoil_state_color() -> Color:
 		_:
 			return Color(0.5, 0.8, 0.3)
 
+func wet_state() -> int:
+	# 0 = seca, 1 = húmeda, 2 = mojada, 3 = empapada
+	if wetness >= 0.8:
+		return 3
+	if wetness >= 0.45:
+		return 2
+	if wetness > 0.02:
+		return 1
+	return 0
+
+func wet_state_label() -> String:
+	match wet_state():
+		3:
+			return "EMPAPADO"
+		2:
+			return "MOJADO"
+		1:
+			return "HÚMEDO"
+		_:
+			return "SECO"
+
+func wet_state_color() -> Color:
+	match wet_state():
+		3:
+			return Color(0.30, 0.60, 1.0)
+		2:
+			return Color(0.40, 0.70, 0.95)
+		_:
+			return Color(0.55, 0.75, 0.85)
+
+func is_wet() -> bool:
+	return wet_state() > 0
+
 func tick_spoilage(delta: float) -> void:
 	if not is_perishable():
 		return

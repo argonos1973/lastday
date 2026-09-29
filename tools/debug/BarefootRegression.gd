@@ -124,6 +124,19 @@ func _initialize() -> void:
 	check(abs(st2.feet_wound - 33.0) < 0.01, "feet_wound survives save/load (got %.1f)" % st2.feet_wound)
 	st2.free()
 
+	# Case 9: soaked shoes chill the feet like partial barefoot; dry ones don't.
+	player.stats.feet_wound = 0.0
+	player.equip_clothing("Zapatillas")
+	var shoe = player._equipped_item_for_slot("feet")
+	scene.day_cycle.temp = 0.0
+	var dry_t: float = player.stats.body_temperature
+	_drive_barefoot(player, 10.0, false)
+	check(is_equal_approx(player.stats.body_temperature, dry_t), "Dry shoes block feet chill (%.2f)" % player.stats.body_temperature)
+	shoe.wetness = 1.0
+	_drive_barefoot(player, 10.0, false)
+	check(player.stats.body_temperature < dry_t - 0.1, "Soaked shoes chill feet (%.2f -> %.2f)" % [dry_t, player.stats.body_temperature])
+	scene.day_cycle.temp = 25.0
+
 	player.free()
 	scene.free()
 	if failures == 0:

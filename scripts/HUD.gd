@@ -1091,6 +1091,8 @@ func _show_inv_tooltip(item, slot_rect: Rect2) -> void:
 		lines.append("Estado: %s" % item.spoil_state_label())
 	if item.has_method("get_spoilage_rate") and item.get_spoilage_rate() > 0.0:
 		lines.append("Caduca en ~%.0f min" % ((100.0 - float(item.spoilage)) / float(item.get_spoilage_rate()) / 60.0))
+	if item.has_method("is_wet") and item.is_wet():
+		lines.append("Humedad: %d%% (%s)" % [int(float(item.wetness) * 100.0), item.wet_state_label()])
 	if item.storage_capacity > 0:
 		lines.append("Almacenamiento: +%d slots" % item.storage_capacity)
 	_inv_tooltip_label.text = "\n".join(lines)
@@ -1536,6 +1538,9 @@ func _create_inventory_slot(index: int, item) -> void:
 		if item.has_method("is_perishable") and item.is_perishable():
 			label.text += "\n[%s]" % item.spoil_state_label()
 			label.add_theme_color_override("font_color", item.spoil_state_color())
+		if item.has_method("is_wet") and item.is_wet():
+			label.text += "\n[%s]" % item.wet_state_label()
+			label.add_theme_color_override("font_color", item.wet_state_color())
 	box.add_child(label)
 
 func _item_thumbnail_color(item) -> Color:

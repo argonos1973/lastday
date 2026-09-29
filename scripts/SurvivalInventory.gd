@@ -264,6 +264,8 @@ func item_text(item) -> String:
 	var state: String = "EN MANOS · " if player.get_held_item() == item else ""
 	if player._equipped_slots.values().has(item.item_name) or item.item_name == player.equipped_backpack:
 		state += "EQUIPADO · "
+	if item.has_method("is_wet") and item.is_wet():
+		state += "%s · " % item.wet_state_label()
 	return "%s%s\nx%d · %.2f kg · %d%%" % [state, item.item_name, item.quantity, item.weight * item.quantity, item.durability_pct() * 100]
 
 func matches_filter(item) -> bool:
@@ -300,6 +302,7 @@ func make_card(title: String, payload: Dictionary, destination: String):
 		item = preload("res://scripts/Item.gd").create(name, type, float(action.get_meta("item_weight", 0.0)), int(action.get_meta("item_quantity", 1)))
 		if action.has_meta("item_color"):
 			item.set_meta("clothing_color", action.get_meta("item_color"))
+		item.wetness = float(action.get_meta("item_wetness", 0.0))
 	if item != null:
 		card.custom_minimum_size.x = 96
 		var image := Control.new()
@@ -317,6 +320,9 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	var label := text_label(str(item.item_name) if item != null else title, 12 if item != null else 13)
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if item != null else HORIZONTAL_ALIGNMENT_LEFT
+	if item != null and item.has_method("is_wet") and item.is_wet():
+		label.text += "\n[%s]" % item.wet_state_label()
+		label.add_theme_color_override("font_color", item.wet_state_color())
 	details.add_child(label)
 	if payload.has("item"):
 		var condition := ProgressBar.new()
