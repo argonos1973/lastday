@@ -1233,7 +1233,7 @@ func _broadcast_wolf_meat_drops(corpse: Node3D) -> void:
 			continue
 		if net_node.players[pid].get("offline", false):
 			continue
-		if net_node.peer.get_peer(pid) == null:
+		if not net_node.peer_alive(pid):
 			continue
 		net_node.animal_gutted.rpc_id(pid, animal_name, drops)
 
@@ -1265,7 +1265,7 @@ func _gut_player_corpse(proxy: Node3D) -> void:
 				continue
 			if net_node.players[pid].get("offline", false):
 				continue
-			if net_node.peer.get_peer(pid) == null:
+			if not net_node.peer_alive(pid):
 				continue
 			net_node.animal_gutted.rpc_id(pid, animal_name, drops)
 
@@ -1299,7 +1299,7 @@ func _consume_meat_pickup(action: Node3D) -> void:
 				continue
 			if net_node.players[pid].get("offline", false):
 				continue
-			if net_node.peer.get_peer(pid) == null:
+			if not net_node.peer_alive(pid):
 				continue
 			net_node.item_picked_up.rpc_id(pid, action_id)
 
@@ -1596,7 +1596,7 @@ func _notify_owner_msg(owner: Node, msg: String) -> void:
 	var pid := int(owner.get_meta("peer_id", 0))
 	var net_node := scene.get_node_or_null("/root/NetworkManager")
 	if pid != 0 and net_node != null and net_node.has_method("notice_to_client"):
-		if net_node.peer != null and net_node.peer.get_peer(pid) != null:
+		if net_node.peer != null and net_node.peer_alive(pid):
 			net_node.notice_to_client.rpc_id(pid, msg)
 
 # ¿Este actor es el dueño del lobo? En cliente compara con mi peer_id; el lobo

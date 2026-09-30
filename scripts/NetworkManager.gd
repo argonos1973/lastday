@@ -5,13 +5,18 @@ signal player_disconnected(id: int)
 signal connection_failed()
 signal connection_succeeded()
 signal all_players_ready()
+signal auth_rejected(reason: String)
 
 const PORT := 5005
 const DISCOVERY_PORT := 5006
 const MAX_PLAYERS := 4
 const SPAWN_POS := Vector3(8.0, 0.4, 2.5)
+# Servidor público: WebSocket local al que solo llega cloudflared.
+const WS_PORT := 8081
+const WS_BIND := "127.0.0.1"
+const OFFICIAL_SERVER_URL := "wss://servidor.cronicasdesupervivencia.com"
 
-var peer: ENetMultiplayerPeer = null
+var peer: MultiplayerPeer = null
 var is_host := false
 var is_connected := false
 var is_dedicated_server := false
@@ -19,6 +24,9 @@ var _broadcast_server: PacketPeerUDP = null
 var _probe_listener: PacketPeerUDP = null
 var _broadcast_timer := 0.0
 var client_id := ""
+var _public_server := false
+var _server_password := ""
+var _join_password := ""
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
@@ -40,12 +48,23 @@ func _load_or_generate_client_id() -> void:
 	if f2 != null:
 		f2.store_string(client_id)
 
+func _arg_value(flag: String) -> String:
+	for src in [OS.get_cmdline_args(), OS.get_cmdline_user_args()]:
+		var i: int = src.find(flag)
+		if i >= 0 and i + 1 < src.size():
+			return String(src[i + 1])
+	return ""
+
 func _ready() -> void:
 	# Auto-start dedicated server if --server argument is passed or this is a dedicated-server export
 	var args := OS.get_cmdline_args()
 	var user_args := OS.get_cmdline_user_args()
 	var dedicated_build := OS.has_feature("dedicated_server")
-	if args.has("--server") or user_args.has("--server") or dedicated_build:
+	var public_arg := args.has("--server-public") or user_args.has("--server-public")
+	if public_arg:
+		_public_server = true
+		_server_password = _arg_value("--password")
+	if args.has("--server") or user_args.has("--server") or dedicated_build or public_arg:
 		is_dedicated_server = true
 	_load_or_generate_client_id()
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -53,7 +72,7 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
-	if args.has("--server") or user_args.has("--server") or dedicated_build:
+	if is_dedicated_server:
 		pass # print("[NETWORK] Starting dedicated server...")
 		start_dedicated_server()
 
@@ -61,10 +80,22 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 	if not from_retry:
 		close_connection()
 		is_dedicated_server = true
-	peer = ENetMultiplayerPeer.new()
-	var err := peer.create_server(PORT, MAX_PLAYERS)
+	var err := OK
+	var bind_port := PORT
+	if _public_server:
+		# Solo cloudflared (mismo host) alcanza este socket — sin UDP ni LAN.
+		var ws := WebSocketMultiplayerPeer.new()
+		err = ws.create_server(WS_PORT, WS_BIND)
+		bind_port = WS_PORT
+		if err == OK:
+			peer = ws
+	else:
+		var enet := ENetMultiplayerPeer.new()
+		err = enet.create_server(PORT, MAX_PLAYERS)
+		if err == OK:
+			peer = enet
 	if err != OK:
-		push_error("[SERVER] No se pudo bindear el puerto %d (err %d) — ¿queda otro servidor vivo?" % [PORT, err])
+		push_error("[SERVER] No se pudo bindear el puerto %d (err %d) — ¿queda otro servidor vivo?" % [bind_port, err])
 		peer = null
 		# A process without a bound socket still deletes the save and generates
 		# a world nobody can join — retry briefly while an old instance finishes
@@ -77,13 +108,17 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 	is_connected = true
 	is_dedicated_server = true
 	_dedicated_bind_retries = 0
-	_start_broadcast()
+	if _public_server:
+		print("[SERVER] Público WebSocket en %s:%d" % [WS_BIND, WS_PORT])
+	else:
+		_start_broadcast()
 	return true
 
 func host_game() -> bool:
 	close_connection()
-	peer = ENetMultiplayerPeer.new()
-	var err := peer.create_server(PORT, MAX_PLAYERS)
+	var enet := ENetMultiplayerPeer.new()
+	var err := enet.create_server(PORT, MAX_PLAYERS)
+	peer = enet
 	if err != OK:
 		push_error("No se pudo crear el servidor: %d" % err)
 		peer = null
@@ -158,6 +193,13 @@ func _accepts_client_request(sender: int) -> bool:
 func _accepts_world_sender(sender: int) -> bool:
 	return _accepts_client_request(sender) if is_host else sender == 1
 
+func peer_alive(pid: int) -> bool:
+	if peer == null:
+		return false
+	if peer is ENetMultiplayerPeer:
+		return (peer as ENetMultiplayerPeer).get_peer(pid) != null
+	return multiplayer.get_peers().has(pid)
+
 func _process(_delta: float) -> void:
 	water_world_time += _delta
 	if is_host and is_connected and multiplayer.has_multiplayer_peer():
@@ -214,10 +256,24 @@ func _close_discovery_sockets() -> void:
 		_probe_listener.close()
 		_probe_listener = null
 
-func join_game(ip: String) -> bool:
+func join_game(ip: String, password: String = "") -> bool:
 	close_connection()  # clears buffered state from any previous session
-	peer = ENetMultiplayerPeer.new()
-	var err := peer.create_client(ip, PORT)
+	_join_password = password
+	var target := ip.strip_edges()
+	var err := OK
+	if target.begins_with("ws://") or target.begins_with("wss://"):
+		var ws := WebSocketMultiplayerPeer.new()
+		if target.begins_with("wss://"):
+			err = ws.create_client(target, TLSOptions.client())
+		else:
+			err = ws.create_client(target)
+		if err == OK:
+			peer = ws
+	else:
+		var enet := ENetMultiplayerPeer.new()
+		err = enet.create_client(target, PORT)
+		if err == OK:
+			peer = enet
 	if err != OK:
 		push_error("No se pudo conectar al servidor: %d" % err)
 		peer = null
@@ -256,9 +312,10 @@ func close_connection() -> void:
 	rowboat_state.clear()
 
 func _on_peer_connected(id: int) -> void:
-	# Only server has direct ENet connections to all peers — set timeout there
-	if is_host and peer != null:
-		var enet_peer := peer.get_peer(id)
+	# Only server has direct ENet connections to all peers — set timeout there.
+	# WebSocket ya hereda la detección de pares muertos de TCP.
+	if is_host and peer is ENetMultiplayerPeer:
+		var enet_peer := (peer as ENetMultiplayerPeer).get_peer(id)
 		if enet_peer != null:
 			enet_peer.set_timeout(120000, 120000, 180000)
 	# Don't send player list here — wait for _register_player so client_id is processed
@@ -280,8 +337,8 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	# Generous timeout so we don't drop the server while loading the world
-	if peer != null:
-		var server_peer := peer.get_peer(1)
+	if peer is ENetMultiplayerPeer:
+		var server_peer := (peer as ENetMultiplayerPeer).get_peer(1)
 		if server_peer != null:
 			server_peer.set_timeout(120000, 120000, 180000)
 	is_connected = true
@@ -292,7 +349,7 @@ func _on_connected_to_server() -> void:
 		"rot": 0.0,
 		"ready": true
 	}
-	_register_player.rpc_id(1, my_id, players[my_id]["name"], client_id)
+	_register_player.rpc_id(1, my_id, players[my_id]["name"], client_id, _join_password)
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
@@ -303,11 +360,37 @@ func _on_server_disconnected() -> void:
 	close_connection()
 	connection_failed.emit()
 
+@rpc("authority", "reliable")
+func _auth_rejected(reason: String = "password") -> void:
+	if is_host:
+		return
+	auth_rejected.emit(reason)
+
+func _reject_registration(sender: int, reason: String) -> void:
+	_auth_rejected.rpc_id(sender, reason)
+	# Deja que el RPC se envíe antes de cortar la conexión.
+	await get_tree().create_timer(0.25).timeout
+	var p := multiplayer.multiplayer_peer
+	if p != null:
+		p.disconnect_peer(sender)
+
 @rpc("any_peer", "reliable")
-func _register_player(id: int, player_name: String, cid: String = "") -> void:
+func _register_player(id: int, player_name: String, cid: String = "", pw: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not is_host or sender <= 1 or sender != id or cid.length() > 128 or player_name.length() > 80:
 		return
+	if not _server_password.is_empty() and pw != _server_password:
+		_reject_registration(sender, "password")
+		return
+	if _public_server:
+		# WebSocket no tiene el límite de pares de ENet — se aplica aquí.
+		var online := 0
+		for pid in players:
+			if not players[pid].get("offline", false):
+				online += 1
+		if online >= MAX_PLAYERS:
+			_reject_registration(sender, "full")
+			return
 	# Registration is idempotent; a replay must not reset a live character.
 	if players.has(id) and not players[id].get("offline", false):
 		return
@@ -344,7 +427,10 @@ func _register_player(id: int, player_name: String, cid: String = "") -> void:
 	# Send updated list to all clients (including new one)
 	_sync_player_list.rpc(players.duplicate(true))
 	# Send current positions of all online players to the new client
-	if peer != null and peer.get_peer(id) != null:
+	var peer_alive := true
+	if peer is ENetMultiplayerPeer:
+		peer_alive = (peer as ENetMultiplayerPeer).get_peer(id) != null
+	if peer_alive:
 		for pid in players.keys():
 			if pid == id or pid == multiplayer.get_unique_id():
 				continue
@@ -439,7 +525,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				if players[pid].get("offline", false):
 					continue
 				# Skip peers that are not actually connected
-				if peer.get_peer(pid) == null:
+				if not peer_alive(pid):
 					continue
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on)
 
@@ -684,7 +770,7 @@ func item_picked_up(action_id: String) -> void:
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						item_picked_up.rpc_id(pid, action_id)
 		return
 	# Client: authoritative broadcast — apply unconditionally.
@@ -706,7 +792,7 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						item_dropped.rpc_id(pid, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, contents, wetness)
 		return
 	# Client: spawn the visual for a server-relayed drop.
@@ -769,7 +855,7 @@ func ground_craft_state_changed(action_id: String, quantity: int, durability: fl
 		return
 	if is_host and peer != null:
 		for pid in players.keys():
-			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false) and peer.get_peer(pid) != null:
+			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false) and peer_alive(pid):
 				ground_craft_state_changed.rpc_id(pid, action_id, quantity, durability)
 
 func get_player_list() -> Dictionary:
@@ -794,7 +880,7 @@ func world_action_completed(action_id: String, spawns: Array, extra_visual: Stri
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						world_action_completed.rpc_id(pid, action_id, spawns, extra_visual, extra_pos)
 		return
 	if scene != null and scene.has_method("_net_world_action_completed"):
@@ -813,7 +899,7 @@ func campfire_built(cf_id: String, pos: Vector3) -> void:
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						campfire_built.rpc_id(pid, cf_id, pos)
 		return
 	if scene != null and scene.has_method("_net_campfire_built"):
@@ -832,7 +918,7 @@ func shelter_built(sh_id: String, pos: Vector3) -> void:
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						shelter_built.rpc_id(pid, sh_id, pos)
 		return
 	if scene != null and scene.has_method("_net_shelter_built"):
@@ -851,7 +937,7 @@ func shelter_dismantled(sh_id: String) -> void:
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						shelter_dismantled.rpc_id(pid, sh_id)
 		return
 	if scene != null and scene.has_method("_net_shelter_dismantled"):
@@ -870,7 +956,7 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						campfire_lit.rpc_id(pid, action_id, fire_name, pos)
 		return
 	if scene != null and scene.has_method("_net_campfire_lit"):
@@ -895,7 +981,7 @@ func door_state_changed(door_name: String, is_open: bool) -> void:
 	if is_host and peer != null:
 		for pid in players.keys():
 			if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-				if peer.get_peer(pid) != null:
+				if peer_alive(pid):
 					door_state_changed.rpc_id(pid, door_name, is_open)
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_door_state_changed"):
@@ -950,7 +1036,7 @@ func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
 		if scene == null or not scene.has_method("_is_shooter_valid") or scene._is_shooter_valid(shooter_id):
 			for pid in players.keys():
 				if pid != shooter_id and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
-					if peer.get_peer(pid) != null:
+					if peer_alive(pid):
 						player_shot_rifle.rpc_id(pid, shooter_id, origin, dir)
 	if scene != null and scene.has_method("_net_player_shot_rifle"):
 		scene._net_player_shot_rifle(shooter_id, origin, dir)
@@ -1011,7 +1097,7 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 			if pid != sender and pid != multiplayer.get_unique_id():
 				if players[pid].get("offline", false):
 					continue
-				if peer.get_peer(pid) == null:
+				if not peer_alive(pid):
 					continue
 				sync_character_appearance_remote.rpc_id(pid, sender, char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
 

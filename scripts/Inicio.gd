@@ -8,7 +8,9 @@ var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
 var _net = null
 var _ip_edit: LineEdit = null
+var _pw_edit: LineEdit = null
 var _btn_connect: Button = null
+var _rejected := false
 var _status_label: Label = null
 var _discovery: PacketPeerUDP = null
 var _discovered_ips: Array = []
@@ -61,7 +63,9 @@ func _ready() -> void:
 		_net = get_node("/root/NetworkManager")
 		_net.connection_succeeded.connect(_on_net_connected)
 		_net.connection_failed.connect(_on_net_failed)
-		if _net.join_game(ip):
+		_net.auth_rejected.connect(_on_auth_rejected)
+		var pw := String(args[2]) if args.size() >= 3 else ""
+		if _net.join_game(ip, pw):
 			pass # print("[CLIENT] Conectando a %s..." % ip)
 			_mode = "join"
 			get_tree().create_timer(1.0).timeout.connect(_start_game)
@@ -201,9 +205,19 @@ func _ready() -> void:
 	btn_join.pressed.connect(_on_show_join)
 	vbox.add_child(btn_join)
 
+	var btn_official := Button.new()
+	btn_official.text = "  Servidor oficial"
+	btn_official.custom_minimum_size = Vector2(240, 48)
+	btn_official.add_theme_font_size_override("font_size", 18)
+	btn_official.add_theme_stylebox_override("normal", btn_style)
+	btn_official.add_theme_stylebox_override("hover", btn_hover)
+	btn_official.add_theme_stylebox_override("pressed", btn_pressed)
+	btn_official.pressed.connect(_on_join_official)
+	vbox.add_child(btn_official)
+
 	# IP input (hidden initially)
 	_ip_edit = LineEdit.new()
-	_ip_edit.placeholder_text = "IP del host (ej: 192.168.1.100)"
+	_ip_edit.placeholder_text = "IP del host o wss://servidor"
 	_ip_edit.text = _load_saved_ip()
 	_ip_edit.custom_minimum_size = Vector2(240, 38)
 	_ip_edit.visible = false
@@ -223,6 +237,15 @@ func _ready() -> void:
 	ip_style.content_margin_right = 10
 	_ip_edit.add_theme_stylebox_override("normal", ip_style)
 	vbox.add_child(_ip_edit)
+
+	_pw_edit = LineEdit.new()
+	_pw_edit.placeholder_text = "Contraseña (si el servidor la pide)"
+	_pw_edit.secret = true
+	_pw_edit.custom_minimum_size = Vector2(240, 38)
+	_pw_edit.visible = false
+	_pw_edit.add_theme_font_size_override("font_size", 16)
+	_pw_edit.add_theme_stylebox_override("normal", ip_style)
+	vbox.add_child(_pw_edit)
 
 	var btn_connect := Button.new()
 	btn_connect.text = "  Conectar"
@@ -467,8 +490,15 @@ func _on_host() -> void:
 
 func _on_show_join() -> void:
 	_ip_edit.visible = true
+	_pw_edit.visible = true
 	_btn_connect.visible = true
 	_ip_edit.grab_focus()
+
+func _on_join_official() -> void:
+	_ip_edit.text = NetworkManagerScript.OFFICIAL_SERVER_URL
+	_rejected = false
+	_on_show_join()
+	_pw_edit.grab_focus()
 
 func _on_join() -> void:
 	if _started:
@@ -482,11 +512,18 @@ func _on_join() -> void:
 	_net = get_node("/root/NetworkManager")
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
-	if _net.join_game(ip):
+	_net.auth_rejected.connect(_on_auth_rejected)
+	_rejected = false
+	if _net.join_game(ip, _pw_edit.text.strip_edges()):
 		_status_label.text = "Conectando a %s..." % ip
 		_mode = "join"
 	else:
 		_status_label.text = "Error al conectar"
+
+func _on_auth_rejected(reason: String) -> void:
+	_rejected = true
+	if _status_label != null:
+		_status_label.text = "Servidor lleno" if reason == "full" else "Contraseña incorrecta"
 
 func _save_ip(ip: String) -> void:
 	var cfg := ConfigFile.new()
@@ -507,7 +544,7 @@ func _on_net_connected() -> void:
 	get_tree().create_timer(0.3).timeout.connect(_start_game)
 
 func _on_net_failed() -> void:
-	if _status_label != null:
+	if _status_label != null and not _rejected:
 		_status_label.text = "Fallo de conexion"
 	_net = null
 
@@ -518,7 +555,7 @@ func _start_game() -> void:
 	# not enter the world as if it were single-player — it would load and
 	# overwrite savegame.json (open doors, drops) with the local save.
 	if _mode == "join" and (_net == null or not _net.is_connected):
-		if _status_label != null:
+		if _status_label != null and not _rejected:
 			_status_label.text = "Fallo de conexion"
 		return
 	_started = true

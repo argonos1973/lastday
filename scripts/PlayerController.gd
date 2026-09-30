@@ -10233,12 +10233,12 @@ func _melee_attack() -> void:
 							closest_target.set_meta("death_broadcasted", true)
 							scene_node._broadcast_player_death(peer_id, closest_target)
 					var net_node2 := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node2 != null and net_node2.peer != null and net_node2.peer.get_peer(peer_id) != null:
+					if net_node2 != null and net_node2.peer != null and net_node2.peer_alive(peer_id):
 						net_node2.force_death_to_client.rpc_id(peer_id)
 				else:
 					# Send damage to the client if connected
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node != null and net_node.peer != null and net_node.peer.get_peer(peer_id) != null:
+					if net_node != null and net_node.peer != null and net_node.peer_alive(peer_id):
 						net_node.apply_damage_to_client.rpc_id(peer_id, base_damage)
 		elif closest_target.has_method("apply_damage"):
 			closest_target.apply_damage(base_damage)

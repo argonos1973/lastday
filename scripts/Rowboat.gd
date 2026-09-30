@@ -723,7 +723,7 @@ func _send_state() -> void:
 	_sequence += 1
 	var state := {"seq": _sequence, "pos": global_position, "yaw": rotation.y, "occupant": occupant, "standing": occupant_standing, "offset": _stand_offset, "time": rowing_time, "rowing": rowing, "exit": exit_position, "can_exit": _can_exit}
 	for id in world.net.players:
-		if id != local_peer() and not world.net.players[id].get("offline", false) and world.net.peer.get_peer(id) != null:
+		if id != local_peer() and not world.net.players[id].get("offline", false) and world.net.peer_alive(id):
 			world.net.sync_rowboat.rpc_id(id, state)
 
 func apply_network_state(state: Dictionary) -> void:

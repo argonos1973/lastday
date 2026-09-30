@@ -3090,7 +3090,7 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not net.players[pid].get("offline", false):
-				if net.peer.get_peer(pid) != null:
+				if net.peer_alive(pid):
 					net.animal_hit.rpc_id(pid, real_name)
 
 # Comando de lobo domesticado desde un cliente: solo obedece a su dueño.
@@ -3263,7 +3263,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 				continue
 			if net.players[pid].get("offline", false):
 				continue
-			if net.peer.get_peer(pid) == null:
+			if not net.peer_alive(pid):
 				continue
 			net.animal_gutted.rpc_id(pid, animal_name, meat_drops)
 
@@ -3348,11 +3348,11 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		proxy.set_meta("death_broadcasted", true)
 		_broadcast_player_death(target_peer_id, proxy)
 		# Force death on the target client if connected
-		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+		if net.peer != null and net.peer_alive(target_peer_id):
 			net.force_death_to_client.rpc_id(target_peer_id)
 	else:
 		# Send damage to the target client if still connected
-		if net.peer != null and net.peer.get_peer(target_peer_id) != null:
+		if net.peer != null and net.peer_alive(target_peer_id):
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
 	# asiste el ataque (solo si el lobo está cerca del combate).
@@ -3477,7 +3477,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				continue
 			if net.players[pid].get("offline", false):
 				continue
-			if net.peer.get_peer(pid) == null:
+			if not net.peer_alive(pid):
 				continue
 			for drop in drops:
 				var dpos_arr = drop["pos"]
@@ -3520,7 +3520,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		if net.players[pid].get("offline", false):
 			continue
-		if net.peer.get_peer(pid) == null:
+		if not net.peer_alive(pid):
 			continue
 		net.broadcast_player_death.rpc_id(pid, peer_id, pos, rot)
 	# Also send via sync_player_state as backup
@@ -3532,7 +3532,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		if net.players[pid].get("offline", false):
 			continue
-		if net.peer.get_peer(pid) == null:
+		if not net.peer_alive(pid):
 			continue
 		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack, false, false, false, false, false, false, false, false)
 
@@ -3561,7 +3561,7 @@ func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
 	if requester_id != 0 and requester_id != net.get_my_id() and not _sender_within(requester_id, proxy.global_position, 6.0):
 		return
 	var saved_inv: Array = proxy.get_meta("saved_inventory", [])
-	if net.peer != null and net.peer.get_peer(requester_id) != null:
+	if net.peer != null and net.peer_alive(requester_id):
 		net.send_loot.rpc_id(requester_id, dead_peer_id, saved_inv)
 
 func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
@@ -3583,7 +3583,7 @@ func _net_take_loot(taker_id: int, dead_peer_id: int, item_index: int) -> void:
 	saved_inv.remove_at(item_index)
 	proxy.set_meta("saved_inventory", saved_inv)
 	# Notify the taker's client to add the item to their inventory
-	if net.peer != null and net.peer.get_peer(taker_id) != null:
+	if net.peer != null and net.peer_alive(taker_id):
 		net.add_looted_item.rpc_id(taker_id, item_data)
 
 func _update_server_proxies(delta: float) -> void:
@@ -3641,7 +3641,7 @@ func _update_server_proxies(delta: float) -> void:
 			if net.players[connected_pid].get("offline", false):
 				continue
 			# Check if peer is actually still connected before sending RPC
-			if net.peer != null and net.peer.get_peer(connected_pid) == null:
+			if net.peer != null and not net.peer_alive(connected_pid):
 				continue
 			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false)
 	# Disconnected proxies keep the body in the world (wolves can still attack
@@ -4345,7 +4345,7 @@ func _broadcast_backpack_contents(drop_id: String, contents: Array) -> void:
 	for pid in net.players.keys():
 		if pid == multiplayer.get_unique_id() or net.players[pid].get("offline", false):
 			continue
-		if net.peer.get_peer(pid) == null:
+		if not net.peer_alive(pid):
 			continue
 		net.backpack_contents_synced.rpc_id(pid, drop_id, contents)
 
