@@ -41,3 +41,4 @@ lastday2.app/
 # Local video captures
 *.mkv
 *.mp4
+server_secret.cfg

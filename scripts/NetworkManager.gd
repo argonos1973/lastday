@@ -15,8 +15,15 @@ const SPAWN_POS := Vector3(8.0, 0.4, 2.5)
 const WS_PORT := 8081
 const WS_BIND := "127.0.0.1"
 const OFFICIAL_SERVER_URL := "wss://servidor.cronicasdesupervivencia.com"
-# El cliente la envía solo al entrar por "Servidor oficial" — el jugador no la ve.
-const OFFICIAL_SERVER_PASSWORD := "undia-4d375e"
+# Cargada de res://server_secret.cfg (gitignored — fuera del repo). El cliente
+# la envía solo al entrar por "Servidor oficial" — el jugador no la ve.
+static var OFFICIAL_SERVER_PASSWORD := _load_official_password()
+
+static func _load_official_password() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load("res://server_secret.cfg") == OK:
+		return String(cfg.get_value("official", "password", ""))
+	return ""
 
 var peer: MultiplayerPeer = null
 var is_host := false
