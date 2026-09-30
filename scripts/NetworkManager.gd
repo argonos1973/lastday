@@ -374,6 +374,9 @@ func _auth_rejected(reason: String = "password") -> void:
 	if is_host:
 		return
 	auth_rejected.emit(reason)
+	# Corta en local de inmediato — sin esperar al disconnect del servidor,
+	# para que un intento de entrar al mundo falle el guard de is_connected.
+	close_connection()
 
 func _reject_registration(sender: int, reason: String) -> void:
 	_auth_rejected.rpc_id(sender, reason)

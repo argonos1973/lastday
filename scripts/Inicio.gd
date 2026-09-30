@@ -63,11 +63,11 @@ func _ready() -> void:
 		_net.connection_succeeded.connect(_on_net_connected)
 		_net.connection_failed.connect(_on_net_failed)
 		_net.auth_rejected.connect(_on_auth_rejected)
+		_net.all_players_ready.connect(_on_net_ready)
 		var pw := String(args[2]) if args.size() >= 3 else ""
 		if _net.join_game(ip, pw):
 			pass # print("[CLIENT] Conectando a %s..." % ip)
 			_mode = "join"
-			get_tree().create_timer(1.0).timeout.connect(_start_game)
 		else:
 			pass # print("[CLIENT] Error al conectar a %s" % ip)
 		return
@@ -491,6 +491,7 @@ func _on_join_official() -> void:
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
 	_net.auth_rejected.connect(_on_auth_rejected)
+	_net.all_players_ready.connect(_on_net_ready)
 	_rejected = false
 	if _net.join_game(NetworkManagerScript.OFFICIAL_SERVER_URL, NetworkManagerScript.OFFICIAL_SERVER_PASSWORD):
 		_status_label.text = "Conectando al servidor oficial..."
@@ -511,6 +512,7 @@ func _on_join() -> void:
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
 	_net.auth_rejected.connect(_on_auth_rejected)
+	_net.all_players_ready.connect(_on_net_ready)
 	_rejected = false
 	if _net.join_game(ip):
 		_status_label.text = "Conectando..."
@@ -537,6 +539,16 @@ func _load_saved_ip() -> String:
 	return ""
 
 func _on_net_connected() -> void:
+	if _status_label != null:
+		_status_label.text = "Conectado, cargando..."
+	# En join el mundo solo arranca tras _sync_player_list (registro aceptado):
+	# un rechazo puede tardar ~0.5 s y el guard de _start_game debe fallar.
+	if _mode != "join":
+		get_tree().create_timer(0.3).timeout.connect(_start_game)
+
+func _on_net_ready() -> void:
+	if _mode != "join" or _started:
+		return
 	if _status_label != null:
 		_status_label.text = "Conectado!"
 	get_tree().create_timer(0.3).timeout.connect(_start_game)
