@@ -267,8 +267,14 @@ func _close_discovery_sockets() -> void:
 
 func join_game(ip: String, password: String = "") -> bool:
 	close_connection()  # clears buffered state from any previous session
-	_join_password = password
 	var target := ip.strip_edges()
+	# El host oficial autentica siempre con la pw embebida, da igual la vía
+	# (botón, IP guardada, wss:// escrito a mano o dominio sin esquema).
+	if target == OFFICIAL_SERVER_URL or target == "servidor.cronicasdesupervivencia.com":
+		target = OFFICIAL_SERVER_URL
+		if password.is_empty():
+			password = OFFICIAL_SERVER_PASSWORD
+	_join_password = password
 	var err := OK
 	if target.begins_with("ws://") or target.begins_with("wss://"):
 		var ws := WebSocketMultiplayerPeer.new()
