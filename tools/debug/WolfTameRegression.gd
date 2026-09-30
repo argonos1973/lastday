@@ -7,9 +7,10 @@ class TestWorld extends Node3D:
 	var removed_actions: Array = []
 	var recorded_wolves := {}
 	var cleared_wolves: Array = []
+	var blocked_goal := Vector3.INF
 
 	func find_path_wildlife(_start: Vector3, goal: Vector3) -> Array:
-		return [goal]
+		return [] if goal == blocked_goal else [goal]
 	func is_wildlife_allowed_at(_pos: Vector3) -> bool:
 		return true
 	func _get_exact_ground_y(_x: float, _z: float) -> float:
@@ -23,6 +24,26 @@ class TestWorld extends Node3D:
 		recorded_wolves[feeder_id] = wolf_name
 	func _clear_tamed_wolf_record(feeder_id: String) -> void:
 		cleared_wolves.append(feeder_id)
+
+class ServerWorld extends "res://scripts/Main.gd":
+	func _ready() -> void:
+		set_process(false)
+		set_physics_process(false)
+		set_process_input(false)
+	func _exit_tree() -> void:
+		pass
+	func _save_world_change_silent() -> void:
+		pass
+	func _delayed_send_saved_appearance(_peer_id: int, _cid: String) -> void:
+		pass
+	func _delayed_send_spawn_pos(_peer_id: int, _pos: Vector3, _died: bool = false) -> void:
+		pass
+	func _delayed_send_reconnect_state(_peer_id: int, _pos: Vector3, _inv: Array, _hp: float, _hunger: float, _thirst: float, _clothing: String, _backpack: String, _held_item: String, _held_idx: int, _sleeping: bool, _sitting: bool, _rot: float, _prone: bool = false, _crouching: bool = false, _extra: Dictionary = {}) -> void:
+		pass
+
+class TestBird extends BirdController:
+	func _ready() -> void:
+		set_process(false)
 
 class TestPlayer extends Node3D:
 	signal notice(text)
@@ -256,6 +277,179 @@ func run() -> void:
 	check(world.cleared_wolves.has("11"), "Going wild clears the server record")
 
 	world.free()
+	await test_feeding_priority()
+	await test_server_persistence()
 	if failures == 0:
 		print("WolfTameRegression: ALL PASS")
 	quit(1 if failures else 0)
+
+func test_feeding_priority() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player := TestPlayer.new()
+	player.name = "Player"
+	world.add_child(player)
+	player.position = Vector3(10, 0, 0)
+	var wolf := make_wolf(world, Vector3.ZERO)
+	wolf._wolf_hunger = 20.0
+	for i in range(3):
+		var meat := spawn_meat(world, Vector3(1, 0, 0), "local")
+		wolf._process(0.5)
+		check(wolf._wolf_eating_target == meat, "Real AI accepts nearby offering %d before attacking feeder" % (i + 1))
+		if wolf._wolf_eating_target != meat:
+			break
+		wolf._process(8.0)
+		check(world.removed_actions.has(meat.action_id), "Eating actually consumes the offered pickup")
+		await process_frame
+	check(wolf.tamed_to == "local", "Three real AI feeding cycles tame the wolf")
+	wolf.free()
+	wolf = make_wolf(world, Vector3.ZERO)
+	var food := spawn_meat(world, Vector3(1, 0, 0), "local")
+	wolf._resolve_player()
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "A full wolf is not pacified by an offering")
+	wolf._wolf_hunger = 20.0
+	food.remove_meta("dropped_by")
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "Unattributed meat does not suppress an attack")
+	food.set_meta("dropped_by", "local")
+	player.position = Vector3(20, 0, 0)
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "A distant offering does not pacify the wolf")
+	player.position = Vector3(10, 0, 0)
+	food.depleted = true
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "Depleted food cannot distract the wolf")
+	food.depleted = false
+	world.blocked_goal = food.global_position
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "Unreachable food does not suppress pursuit")
+	world.blocked_goal = Vector3.INF
+	food.position = Vector3(5, 0, 0)
+	var approach := wolf._wolf_ai(0.05)
+	check(wolf._state == "seek_corpse" and approach["target"] == food.global_position, "Hungry wolf approaches a reachable offering")
+	wolf._prey_flee_timer = 5.0
+	wolf._wolf_ai(0.05)
+	check(wolf._wolf_eating_target == null, "Food does not cancel fleeing after an attack")
+	player.is_dead = true
+	wolf._register_feeding("local")
+	check(wolf._tame_progress.is_empty(), "A dead player cannot gain feeding trust")
+	player.is_dead = false
+	wolf._prey_flee_timer = 0.0
+	var proxy := make_proxy(world, 7, Vector3(10, 0, 0))
+	food.set_meta("dropped_by", "7")
+	food.position = Vector3(1, 0, 0)
+	wolf._player = null
+	wolf._resolve_player()
+	wolf._wolf_ai(0.05)
+	check(wolf._wolf_eating_target == food, "Real AI also accepts a remote player's first offering")
+	proxy.set_meta("disconnected", true)
+	wolf._process(8.0)
+	check(not wolf._tame_progress.has("7"), "Disconnecting before the meal ends grants no trust")
+	world.free()
+
+func sync_inventory(world: ServerWorld, pid: int, extra: Dictionary) -> void:
+	world._store_player_inventory(pid, [], 100.0, 100.0, 100.0, "", "", "", -1, false, false, 0.0, false, false, extra)
+
+func test_server_persistence() -> void:
+	var world := ServerWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var net := root.get_node("NetworkManager")
+	world.net = net
+	net.is_host = true
+	net.players = {7: {"client_id": "wolf_owner"}, 11: {"client_id": "other_owner"}}
+	var owner := make_proxy(world, 7, Vector3(4, 0, 0))
+	owner.set_meta("client_id", "wolf_owner")
+	world.server_proxies[7] = owner
+	world._server_saved_players["wolf_owner"] = {"extra": {}}
+	var wolf := make_wolf(world, Vector3.ZERO)
+	for i in range(3):
+		wolf._register_feeding("7")
+	check(owner.get_meta("saved_extra", {}).get("tamed_wolf", "") == wolf.name, "Taming records the wolf on the real server proxy")
+	var extra := {"stats_extra": {"sleep": 80.0}, "tamed_wolf": "untrusted_wolf"}
+	sync_inventory(world, 7, extra)
+	check(owner.get_meta("saved_extra", {}).get("tamed_wolf", "") == wolf.name, "Inventory sync cannot replace server-owned wolf identity")
+	check(extra["tamed_wolf"] == "untrusted_wolf", "Sanitizing the wolf record does not mutate the incoming payload")
+	sync_inventory(world, 7, {"stats_extra": {"sleep": 75.0}})
+	check(owner.get_meta("saved_extra", {}).get("tamed_wolf", "") == wolf.name, "Inventory sync without a wolf preserves the bond")
+	check(owner.get_meta("saved_extra", {}).get("stats_extra", {}).get("sleep") == 75.0, "Client survival stats still update")
+	wolf.apply_command("stay")
+	var stay_pos := wolf._stay_pos
+	world.server_proxies.erase(7)
+	world.proxy_by_client_id["wolf_owner"] = owner
+	owner.set_meta("disconnected", true)
+	net.players.erase(7)
+	net.players[9] = {"client_id": "wolf_owner"}
+	wolf._owner_node = null
+	world._match_proxy_to_client(9, "wolf_owner")
+	await process_frame
+	check(wolf.tamed_to == "9", "Actual reconnect rebinds the wolf to the new peer")
+	check(wolf._resolve_owner() == owner, "Reconnected wolf resolves the correct owner proxy")
+	check(wolf._follow_mode == "stay" and wolf._stay_pos == stay_pos, "Reconnect preserves the stay command and position")
+	world._net_command_wolf(wolf.name, "follow", 11)
+	check(wolf._follow_mode == "stay", "Another player cannot command the reconnected wolf")
+	world._net_command_wolf(wolf.name, "follow", 9)
+	check(wolf._follow_mode == "follow", "Reconnected owner can command its wolf")
+	wolf.notify_threat(owner)
+	check(wolf._threat_player == null, "Reconnected owner is never treated as a threat")
+	var second := make_wolf(world, Vector3(1, 0, 0))
+	for i in range(3):
+		second._register_feeding("9")
+	check(second.tamed_to.is_empty(), "Reconnect does not allow taming a second wolf")
+
+	var other := make_proxy(world, 11, Vector3(3, 0, 0))
+	other.set_meta("client_id", "other_owner")
+	world.server_proxies[11] = other
+	world._restore_tamed_wolf(11, wolf.name)
+	check(wolf.tamed_to == "9", "Restoration cannot steal another player's wolf")
+	var bird := TestBird.new()
+	world.add_child(bird)
+	bird.add_to_group("wildlife")
+	var deer := make_wolf(world, Vector3(20, 0, 0))
+	deer.animal_type = "deer"
+	var data := SaveGameHooks.collect_world_data(world)
+	var entries: Array = data.get("tamed_wildlife", [])
+	check(entries.size() == 1, "World collection with birds and wild animals saves only the tamed wolf")
+	if entries.size() == 1:
+		var restored := make_wolf(world, Vector3(30, 0, 0))
+		SaveGameHooks._apply_tamed_wildlife_entry(restored, entries[0])
+		check(restored.tamed_to == wolf.tamed_to and restored.health == wolf.health, "Tamed wolf state survives a world-data round trip")
+		check(restored._wolf_hunger == wolf._wolf_hunger and restored._stay_pos == wolf._stay_pos, "Hunger and stay position survive the round trip")
+		check(restored._owner_client_id == "wolf_owner", "Persistent owner identity survives the round trip")
+		var local_entry: Dictionary = entries[0].duplicate(true)
+		local_entry.erase("owner_client_id")
+		local_entry["owner"] = "local"
+		local_entry["mode"] = "stay"
+		SaveGameHooks._apply_tamed_wildlife_entry(restored, local_entry)
+		check(restored.tamed_to == "local" and restored._follow_mode == "stay", "Existing single-player saves without client identity still restore")
+		restored.free()
+
+	world.server_proxies.erase(9)
+	world.proxy_by_client_id["wolf_owner"] = owner
+	owner.set_meta("disconnected", true)
+	net.players.erase(9)
+	wolf._go_wild()
+	check(not owner.get_meta("saved_extra", {}).has("tamed_wolf"), "Going wild clears a disconnected owner's proxy record")
+	check(not world._server_saved_players["wolf_owner"].get("extra", {}).has("tamed_wolf"), "Going wild clears the offline owner's saved baseline")
+	world.proxy_by_client_id.erase("wolf_owner")
+	world.server_proxies[9] = owner
+	owner.set_meta("reconnecting", false)
+	sync_inventory(world, 9, {"tamed_wolf": str(wolf.name)})
+	check(not owner.get_meta("saved_extra", {}).has("tamed_wolf"), "A stale client snapshot cannot recreate a released bond")
+	world._restore_tamed_wolf(9, wolf.name)
+	check(wolf.tamed_to.is_empty(), "A stale restore cannot retame a released wolf")
+	net.players[9] = {"client_id": "wolf_owner"}
+	owner.set_meta("disconnected", false)
+	for i in range(3):
+		wolf._register_feeding("9")
+	check(wolf.tamed_to == "9", "The same owner can tame the released wolf again normally")
+	wolf.take_damage(999.0, false, other)
+	check(not owner.get_meta("saved_extra", {}).has("tamed_wolf"), "Wolf death clears the real server proxy record")
+	check(not world._server_saved_players["wolf_owner"].get("extra", {}).has("tamed_wolf"), "Wolf death clears the real saved baseline")
+	world._restore_tamed_wolf(11, wolf.name)
+	check(wolf._is_dead and wolf.tamed_to != "11", "Restoration cannot revive or transfer a dead wolf")
+	world.free()
+	net.players.clear()
+	net.is_host = false

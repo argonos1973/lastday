@@ -331,15 +331,16 @@ static func collect_world_data(main: Node) -> Dictionary:
 	# Lobos domesticados — el vínculo con el jugador local sobrevive al save/load
 	var tamed_wildlife := []
 	for node in main.get_tree().get_nodes_in_group("wildlife"):
-		if node == null or not is_instance_valid(node):
+		if not is_instance_valid(node) or not node is WildlifeController:
 			continue
-		if str(node.get("tamed_to")) == "" or node.get("_is_dead") == true:
+		if node.animal_type != "wolf" or node.tamed_to.is_empty() or node._is_dead or node.is_puppet:
 			continue
 		var stay_v = node.get("_stay_pos")
 		var stay: Vector3 = stay_v if stay_v is Vector3 else node.global_position
 		tamed_wildlife.append({
 			"name": node.name,
 			"owner": str(node.get("tamed_to")),
+			"owner_client_id": node._owner_client_id,
 			"pos": [node.global_position.x, node.global_position.y, node.global_position.z],
 			"mode": str(node.get("_follow_mode")),
 			"stay_pos": [stay.x, stay.y, stay.z],
@@ -709,6 +710,10 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			main._pending_tamed_wildlife.append(tw)
 
 static func _apply_tamed_wildlife_entry(node: Node, tw: Dictionary) -> void:
+	if not is_instance_valid(node) or not node is WildlifeController or node.animal_type != "wolf" or node._is_dead or node.is_puppet:
+		return
+	node._owner_node = null
+	node._owner_client_id = str(tw.get("owner_client_id", ""))
 	var tw_pos_raw = tw.get("pos", null)
 	if tw_pos_raw is Array and tw_pos_raw.size() >= 3:
 		node.global_position = Vector3(float(tw_pos_raw[0]), float(tw_pos_raw[1]), float(tw_pos_raw[2]))

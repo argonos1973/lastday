@@ -2368,6 +2368,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			var saved_pos: Vector3 = existing.get_meta("saved_pos", existing.global_position)
 			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			if bare_proxy:
+				_restore_tamed_wolf(peer_id, str(existing.get_meta("saved_extra", {}).get("tamed_wolf", "")))
 				call_deferred("_delayed_send_spawn_pos", peer_id, saved_pos)
 				return
 			var saved_inv: Array = existing.get_meta("saved_inventory", [])
@@ -2441,6 +2442,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# Restore the position but let the client keep its default outfit.
 			var bare_record := not saved.has("inventory") and not saved.has("clothing")
 			if bare_record:
+				_restore_tamed_wolf(peer_id, str(saved_extra.get("tamed_wolf", "")))
 				call_deferred("_delayed_send_spawn_pos", peer_id, proxy.global_position)
 				call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 				return
@@ -2593,7 +2595,12 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 	proxy.set_meta("saved_rot", rot)
 	proxy.set_meta("saved_pos", proxy.global_position)
 	if not extra.is_empty():
-		proxy.set_meta("saved_extra", extra)
+		var saved_extra: Dictionary = proxy.get_meta("saved_extra", {})
+		var updated_extra := extra.duplicate(true)
+		updated_extra.erase("tamed_wolf")
+		if saved_extra.has("tamed_wolf"):
+			updated_extra["tamed_wolf"] = saved_extra["tamed_wolf"]
+		proxy.set_meta("saved_extra", updated_extra)
 
 # Client-supplied item arrays are structurally sanitized before they reach the
 # authoritative record: malformed entries are dropped and numeric fields
@@ -3164,17 +3171,26 @@ func _clear_tamed_wolf_record(feeder_id: String) -> void:
 func _cid_belongs_to_peer(cid: String, pid: int) -> bool:
 	if net != null and net.players.has(pid):
 		return str(net.players[pid].get("client_id", "")) == cid
-	return false
+	var proxy := _server_proxy_for_sender(pid)
+	return is_instance_valid(proxy) and str(proxy.get_meta("client_id", "")) == cid
 
 # Re-vincula al lobo con su dueño tras reconectar (misma sesión de servidor).
 func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
-	if wolf_name.is_empty():
+	if net == null or not net.is_host or wolf_name.is_empty():
 		return
-	var w := get_node_or_null(wolf_name)
-	if w != null and is_instance_valid(w) and not w.get("_is_dead") and w.get("tamed_to") == "":
-		w.tamed_to = str(pid)
-		w.set("_follow_mode", "follow")
-		w.set("_state", "follow")
+	var owner: Node3D = server_proxies.get(pid)
+	if not is_instance_valid(owner) or owner.get_meta("proxy_dead", false):
+		return
+	var w := get_node_or_null(wolf_name) as WildlifeController
+	if w == null or w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty():
+		return
+	var cid := str(owner.get_meta("client_id", ""))
+	if cid.is_empty() or (w._owner_client_id != cid and not (w._owner_client_id.is_empty() and w._owner_node == owner)):
+		return
+	w.tamed_to = str(pid)
+	w._owner_client_id = cid
+	w._owner_node = owner
+	_record_tamed_wolf(str(pid), str(w.name))
 
 func _net_notice(text: String) -> void:
 	if hud != null:

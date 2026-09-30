@@ -100,6 +100,7 @@ var _foe_timer := 0.0
 var _threat_player: Node3D = null # jugador que dañó al dueño (o al que el dueño atacó)
 var _threat_timer := 0.0
 var _owner_node: Node3D = null
+var _owner_client_id := ""
 var _owner_dead_timer := 0.0
 
 # Cache de grupo wildlife para evitar get_nodes_in_group cada frame
@@ -613,6 +614,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if bool(tamed.get("handled", false)):
 			return tamed
 		# Si no está "handled", _player apunta a la amenaza y sigue la persecución normal
+	if tamed_to.is_empty() and is_hungry and _prey_flee_timer <= 0.0 and _can_feed_from(_player):
+		var feeder_id := _feeder_key(_player)
+		if not feeder_id.is_empty() and global_position.distance_to(_player.global_position) <= TAME_FEED_RADIUS:
+			var offering := _find_nearest_meat_pickup(feeder_id)
+			if offering != null and global_position.distance_to(offering.global_position) <= TAME_FEED_RADIUS and not _request_path(global_position, offering.global_position).is_empty():
+				if _state == "chase_player":
+					_path_recalc_timer = 0.0
+				_chase_target = null
+				return _seek_meat_pickup(offering)
 	# Priority 0: chase player (highest priority)
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
@@ -726,23 +736,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 	# Priority 1.5: detect gutted meat pickups from far away (60m)
 	if is_hungry:
 		var meat := _find_nearest_meat_pickup()
-		if meat != null:
-			var dist_to_meat := global_position.distance_to(meat.global_position)
-			if dist_to_meat < 2.0:
-				_wolf_eating_timer = 8.0
-				_wolf_eating_target = meat
-				_state = "eating"
-				target = global_position
-				speed = 0.0
-				_play_animation_by_name("idle")
-				return {"target": target, "speed": speed}
-			elif dist_to_meat < 60.0:
-				_state = "seek_corpse"
-				_seek_corpse_timer = 15.0
-				target = meat.global_position
-				speed = move_speed * 2.5
-				_play_animation_by_name("trot")
-				return {"target": target, "speed": speed}
+		if meat != null and global_position.distance_to(meat.global_position) < 60.0:
+			return _seek_meat_pickup(meat)
 	# Priority 2: investigate noise (only when hungry)
 	if is_hungry and _noise_attract_timer > 0.0:
 		_state = "investigate"
@@ -1277,6 +1272,8 @@ func _is_meat_action(a: Node) -> bool:
 	return a.is_in_group("wolf_meat_pickups")
 
 func _consume_meat_pickup(action: Node3D) -> void:
+	if not is_instance_valid(action) or action.is_queued_for_deletion() or action.get("depleted") == true:
+		return
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -1303,14 +1300,28 @@ func _consume_meat_pickup(action: Node3D) -> void:
 				continue
 			net_node.item_picked_up.rpc_id(pid, action_id)
 
-func _find_nearest_meat_pickup() -> Node3D:
+func _seek_meat_pickup(meat: Node3D) -> Dictionary:
+	if global_position.distance_to(meat.global_position) < 2.0:
+		_wolf_eating_timer = 8.0
+		_wolf_eating_target = meat
+		_state = "eating"
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
+	_state = "seek_corpse"
+	_seek_corpse_timer = 15.0
+	_play_animation_by_name("trot")
+	return {"handled": true, "target": meat.global_position, "speed": move_speed * 2.5}
+
+func _find_nearest_meat_pickup(feeder_id: String = "") -> Node3D:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return null
 	var nearest: Node3D = null
 	var nearest_dist := 9999.0
 	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
-		if not is_instance_valid(action) or not action is Node3D:
+		if not is_instance_valid(action) or not action is Node3D or action.is_queued_for_deletion():
+			continue
+		if not feeder_id.is_empty() and str(action.get_meta("dropped_by", "")) != feeder_id:
 			continue
 		# El grupo recoge tanto los pickups de destripar (wolf_meat_raw) como
 		# la carne que un jugador suelta en el suelo (marcada con dropped_by).
@@ -1380,11 +1391,14 @@ func _resolve_owner() -> Node3D:
 	_owner_node = _find_feeder_node(tamed_to)
 	return _owner_node
 
+func _can_feed_from(feeder: Node3D) -> bool:
+	return is_instance_valid(feeder) and not feeder.is_queued_for_deletion() and not feeder.get_meta("proxy_dead", false) and not feeder.get_meta("disconnected", false) and feeder.get("is_dead") != true
+
 func _register_feeding(feeder_id: String) -> void:
-	if feeder_id.is_empty() or tamed_to != "":
+	if feeder_id.is_empty() or tamed_to != "" or _is_dead:
 		return
 	var feeder := _find_feeder_node(feeder_id)
-	if feeder == null:
+	if not _can_feed_from(feeder):
 		return
 	# Solo cuenta si quien la tiró sigue cerca: no confía en quien tira y huye.
 	if global_position.distance_to(feeder.global_position) > TAME_FEED_RADIUS:
@@ -1410,6 +1424,8 @@ func _tame(feeder_id: String, feeder: Node3D) -> void:
 	_wolf_foe = null
 	_threat_player = null
 	_owner_node = feeder
+	_owner_client_id = str(feeder.get_meta("client_id", ""))
+	_owner_dead_timer = 0.0
 	_state = "follow"
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_record_tamed_wolf"):
@@ -1434,6 +1450,8 @@ func _go_wild() -> void:
 	_threat_player = null
 	_threat_timer = 0.0
 	_owner_node = null
+	_owner_client_id = ""
+	_owner_dead_timer = 0.0
 	_tame_progress.clear()
 	_state = "patrol"
 	_chase_target = null
@@ -1468,19 +1486,8 @@ func _tamed_ai(delta: float) -> Dictionary:
 	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento)
 	if _wolf_hunger < _wolf_hunger_threshold:
 		var meat := _find_nearest_meat_pickup()
-		if meat != null:
-			var dm := global_position.distance_to(meat.global_position)
-			if dm < 2.0:
-				_wolf_eating_timer = 8.0
-				_wolf_eating_target = meat
-				_state = "eating"
-				_play_animation_by_name("idle")
-				return {"handled": true, "target": global_position, "speed": 0.0}
-			elif dm < 25.0:
-				_state = "seek_corpse"
-				_seek_corpse_timer = 15.0
-				_play_animation_by_name("trot")
-				return {"handled": true, "target": meat.global_position, "speed": move_speed * 2.5}
+		if meat != null and global_position.distance_to(meat.global_position) < 25.0:
+			return _seek_meat_pickup(meat)
 	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
 	var owner_dead := bool(owner.get_meta("proxy_dead", false))
 	if not owner_dead and owner.name == "Player":
