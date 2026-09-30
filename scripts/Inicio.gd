@@ -8,7 +8,6 @@ var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
 var _net = null
 var _ip_edit: LineEdit = null
-var _pw_edit: LineEdit = null
 var _btn_connect: Button = null
 var _rejected := false
 var _status_label: Label = null
@@ -237,15 +236,6 @@ func _ready() -> void:
 	ip_style.content_margin_right = 10
 	_ip_edit.add_theme_stylebox_override("normal", ip_style)
 	vbox.add_child(_ip_edit)
-
-	_pw_edit = LineEdit.new()
-	_pw_edit.placeholder_text = "Contraseña (si el servidor la pide)"
-	_pw_edit.secret = true
-	_pw_edit.custom_minimum_size = Vector2(240, 38)
-	_pw_edit.visible = false
-	_pw_edit.add_theme_font_size_override("font_size", 16)
-	_pw_edit.add_theme_stylebox_override("normal", ip_style)
-	vbox.add_child(_pw_edit)
 
 	var btn_connect := Button.new()
 	btn_connect.text = "  Conectar"
@@ -490,15 +480,23 @@ func _on_host() -> void:
 
 func _on_show_join() -> void:
 	_ip_edit.visible = true
-	_pw_edit.visible = true
 	_btn_connect.visible = true
 	_ip_edit.grab_focus()
 
 func _on_join_official() -> void:
-	_ip_edit.text = NetworkManagerScript.OFFICIAL_SERVER_URL
+	if _started:
+		return
+	_apply_char_selection()
+	_net = get_node("/root/NetworkManager")
+	_net.connection_succeeded.connect(_on_net_connected)
+	_net.connection_failed.connect(_on_net_failed)
+	_net.auth_rejected.connect(_on_auth_rejected)
 	_rejected = false
-	_on_show_join()
-	_pw_edit.grab_focus()
+	if _net.join_game(NetworkManagerScript.OFFICIAL_SERVER_URL, NetworkManagerScript.OFFICIAL_SERVER_PASSWORD):
+		_status_label.text = "Conectando al servidor oficial..."
+		_mode = "join"
+	else:
+		_status_label.text = "Error al conectar"
 
 func _on_join() -> void:
 	if _started:
@@ -514,8 +512,8 @@ func _on_join() -> void:
 	_net.connection_failed.connect(_on_net_failed)
 	_net.auth_rejected.connect(_on_auth_rejected)
 	_rejected = false
-	if _net.join_game(ip, _pw_edit.text.strip_edges()):
-		_status_label.text = "Conectando a %s..." % ip
+	if _net.join_game(ip):
+		_status_label.text = "Conectando..."
 		_mode = "join"
 	else:
 		_status_label.text = "Error al conectar"

@@ -15,6 +15,8 @@ const SPAWN_POS := Vector3(8.0, 0.4, 2.5)
 const WS_PORT := 8081
 const WS_BIND := "127.0.0.1"
 const OFFICIAL_SERVER_URL := "wss://servidor.cronicasdesupervivencia.com"
+# El cliente la envía solo al entrar por "Servidor oficial" — el jugador no la ve.
+const OFFICIAL_SERVER_PASSWORD := "undia-4d375e"
 
 var peer: MultiplayerPeer = null
 var is_host := false
