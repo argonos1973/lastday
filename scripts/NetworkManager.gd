@@ -398,6 +398,7 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 	if not is_host or sender <= 1 or sender != id or cid.length() > 128 or player_name.length() > 80:
 		return
 	if not _server_password.is_empty() and pw != _server_password:
+		push_error("[AUTH] pw mismatch peer=%d got_len=%d want_len=%d" % [sender, pw.length(), _server_password.length()])
 		_reject_registration(sender, "password")
 		return
 	if _public_server:
