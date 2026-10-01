@@ -2332,8 +2332,11 @@ func _delayed_send_spawn_pos(peer_id: int, pos: Vector3, died: bool = false) -> 
 		if server_proxies.has(peer_id):
 			server_proxies[peer_id].set_meta("reconnecting", false)
 
-# Match reconnecting client to their persisted proxy by client_id
-func _match_proxy_to_client(peer_id: int, cid: String) -> void:
+# Match reconnecting client to their persisted proxy by client_id.
+# Returns true when a LIVE character was restored (reclaim) — the caller then
+# keeps its stored name; false means a fresh character is starting (new or
+# respawn after death) and the server will ask the client for a name.
+func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 	var existing: Node3D = null
 	if proxy_by_client_id.has(cid):
 		existing = proxy_by_client_id[cid]
@@ -2382,6 +2385,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# character's record with the corpse's gear.
 			_server_saved_players.erase(cid)
 			call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
+			return false
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
 			if server_proxies.has(peer_id):
@@ -2402,7 +2406,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			if bare_proxy:
 				_restore_tamed_wolf(peer_id, str(existing.get_meta("saved_extra", {}).get("tamed_wolf", "")))
 				call_deferred("_delayed_send_spawn_pos", peer_id, saved_pos)
-				return
+				return true
 			var saved_inv: Array = existing.get_meta("saved_inventory", [])
 			var saved_hp: float = existing.get_meta("saved_health", 100.0)
 			var saved_hunger: float = existing.get_meta("saved_hunger", 100.0)
@@ -2420,6 +2424,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 			# El lobo domesticado sobrevive a la desconexión dentro de la sesión
 			var ex_extra: Dictionary = existing.get_meta("saved_extra", {})
 			call_deferred("_restore_tamed_wolf", peer_id, str(ex_extra.get("tamed_wolf", "")))
+			return true
 	else:
 		# No persisted proxy — ensure the live proxy exists before deciding
 		# (the register RPC can arrive before _update_server_proxies spawns it).
@@ -2451,7 +2456,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				# copy any saved_* metas onto the fresh proxy.
 				_server_saved_players.erase(cid)
 				call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
-				return
+				return false
 			# Keep the entry: it is the merge baseline for future saves.
 			var proxy: Node3D = server_proxies[peer_id]
 			for key in _SERVER_PLAYER_FIELDS.keys():
@@ -2477,13 +2482,14 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> void:
 				_restore_tamed_wolf(peer_id, str(saved_extra.get("tamed_wolf", "")))
 				call_deferred("_delayed_send_spawn_pos", peer_id, proxy.global_position)
 				call_deferred("_delayed_send_saved_appearance", peer_id, cid)
-				return
+				return true
 			call_deferred("_delayed_send_reconnect_state", peer_id, proxy.global_position, saved_inv, float(saved.get("health", 100.0)), float(saved.get("hunger", 100.0)), float(saved.get("thirst", 100.0)), saved_clothing, saved_backpack, saved_held, saved_held_idx, bool(saved.get("sleeping", false)), bool(saved.get("sitting", false)), saved_rot, bool(saved.get("prone", false)), bool(saved.get("crouching", false)), saved_extra)
 			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			call_deferred("_restore_tamed_wolf", peer_id, str(saved_extra.get("tamed_wolf", "")))
-			return
+			return true
 		# Send spawn position to new player too (so client knows when to start sending position)
 		call_deferred("_delayed_send_new_player_state", peer_id)
+		return false
 
 func _spawn_server_proxy(id: int) -> void:
 	if server_proxies.has(id):

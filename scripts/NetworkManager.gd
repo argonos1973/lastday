@@ -6,6 +6,10 @@ signal connection_failed()
 signal connection_succeeded()
 signal all_players_ready()
 signal auth_rejected(reason: String)
+# El servidor pide el nombre del jugador cuando la conexión abre un personaje
+# nuevo (no hay personaje vivo que reclamar o murió). El cliente responde con
+# submit_player_name.
+signal player_name_required()
 
 const PORT := 5005
 const DISCOVERY_PORT := 5006
@@ -406,6 +410,30 @@ func _on_server_disconnected() -> void:
 	close_connection()
 	connection_failed.emit()
 
+# El servidor pide el nombre solo para personajes nuevos; con un personaje
+# vivo reclamado el nombre guardado gana y no se pregunta.
+@rpc("authority", "reliable")
+func request_player_name() -> void:
+	if is_host:
+		return
+	player_name_required.emit()
+
+@rpc("any_peer", "reliable")
+func submit_player_name(new_name: String) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not is_host or not players.has(sender):
+		return
+	# Solo un registro marcado como personaje nuevo acepta el nombre — un
+	# jugador no puede renombrar un personaje vivo en mitad de sesión.
+	if not players[sender].get("needs_name", false):
+		return
+	new_name = new_name.strip_edges()
+	if new_name.is_empty() or new_name.length() > 80:
+		return
+	players[sender].erase("needs_name")
+	players[sender]["name"] = new_name
+	_broadcast_player_list()
+
 @rpc("authority", "reliable")
 func _auth_rejected(reason: String = "password") -> void:
 	if is_host:
@@ -481,13 +509,20 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			players.erase(old_pid_to_remove)
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_match_proxy_to_client"):
-			scene.call("_match_proxy_to_client", id, cid)
-			# En reclaim el nombre del personaje vivo es el del registro del
-			# servidor — el nombre tecleado en esta conexión no lo reemplaza.
-			if scene.has_method("_saved_appearance_args"):
-				var saved_app: Array = scene.call("_saved_appearance_args", cid)
-				if not saved_app.is_empty() and not str(saved_app[0]).is_empty():
-					players[id]["name"] = str(saved_app[0])
+			var reclaimed := bool(scene.call("_match_proxy_to_client", id, cid))
+			if reclaimed:
+				# En reclaim el nombre del personaje vivo es el del registro del
+				# servidor — no se vuelve a preguntar mientras la partida siga.
+				if scene.has_method("_saved_appearance_args"):
+					var saved_app: Array = scene.call("_saved_appearance_args", cid)
+					if not saved_app.is_empty() and not str(saved_app[0]).is_empty():
+						players[id]["name"] = str(saved_app[0])
+			else:
+				# Personaje nuevo o respawn tras muerte: el servidor pide el
+				# nombre. Va antes del broadcast de la lista para que llegue a
+				# la pantalla de conexión antes que all_players_ready.
+				players[id]["needs_name"] = true
+				request_player_name.rpc_id(id)
 			# After matching, update player position from restored proxy
 			if scene.server_proxies.has(id):
 				players[id]["pos"] = scene.server_proxies[id].global_position
@@ -522,6 +557,7 @@ func _public_player_list() -> Dictionary:
 		var e = out[pid]
 		if e is Dictionary:
 			e.erase("client_id")
+			e.erase("needs_name")
 	return out
 
 # La lista solo se envía a peers registrados — nunca .rpc() broadcast, que

@@ -25,7 +25,7 @@ var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
 var _name_panel: PanelContainer = null
 var _name_edit: LineEdit = null
-var _pending_join_target := ""
+var _name_request_pending := false
 
 # Los args de linea de comandos persisten durante todo el proceso. Este flag
 # evita que volver al menu (p.ej. con Shift+Q) rearranque el juego solo.
@@ -67,6 +67,14 @@ func _ready() -> void:
 		_net.connection_failed.connect(_on_net_failed)
 		_net.auth_rejected.connect(_on_auth_rejected)
 		_net.all_players_ready.connect(_on_net_ready)
+		# Cliente de linea de comandos (debug): responde el nombre solo.
+		var cli_name := "Jugador"
+		var ni := args.find("--name")
+		if ni >= 0 and ni + 1 < args.size():
+			cli_name = args[ni + 1]
+			_net.pending_player_name = cli_name
+		_net.player_name_required.connect(func():
+			_net.submit_player_name.rpc_id(1, cli_name))
 		var pw := String(args[2]) if args.size() >= 3 else ""
 		if _net.join_game(ip, pw):
 			pass # print("[CLIENT] Conectando a %s..." % ip)
@@ -489,7 +497,7 @@ func _on_show_join() -> void:
 func _on_join_official() -> void:
 	if _started:
 		return
-	_prompt_player_name(NetworkManagerScript.OFFICIAL_SERVER_URL)
+	_begin_join(NetworkManagerScript.OFFICIAL_SERVER_URL)
 
 func _on_join() -> void:
 	if _started:
@@ -499,12 +507,34 @@ func _on_join() -> void:
 		_status_label.text = "Introduce una IP"
 		return
 	_save_ip(ip)
-	_prompt_player_name(ip)
+	_begin_join(ip)
 
-# Al unirse a un servidor se pide el nombre del jugador: sera el nombre del
-# personaje en el registro del servidor y se mantiene hasta que muera.
-func _prompt_player_name(target: String) -> void:
-	_pending_join_target = target
+func _begin_join(target: String) -> void:
+	_apply_char_selection()
+	_net = get_node("/root/NetworkManager")
+	_net.connection_succeeded.connect(_on_net_connected)
+	_net.connection_failed.connect(_on_net_failed)
+	_net.auth_rejected.connect(_on_auth_rejected)
+	_net.all_players_ready.connect(_on_net_ready)
+	_net.player_name_required.connect(_on_player_name_required)
+	_name_request_pending = false
+	_rejected = false
+	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
+	if _net.join_game(target, pw):
+		_status_label.text = "Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando..."
+		_mode = "join"
+	else:
+		_status_label.text = "Error al conectar"
+
+# El servidor pide el nombre solo cuando la conexion abre un personaje nuevo:
+# con un personaje vivo en el registro del servidor se entra directo con el
+# nombre guardado — solo se vuelve a preguntar al morir o reiniciar.
+func _on_player_name_required() -> void:
+	_name_request_pending = true
+	if not _started:
+		_prompt_player_name()
+
+func _prompt_player_name() -> void:
 	if _name_panel == null:
 		_name_panel = PanelContainer.new()
 		var pw := 340.0
@@ -586,7 +616,15 @@ func _prompt_player_name(target: String) -> void:
 		btn_cancel.custom_minimum_size = Vector2(120, 38)
 		btn_cancel.add_theme_font_size_override("font_size", 16)
 		btn_cancel.add_theme_stylebox_override("normal", btn_style)
-		btn_cancel.pressed.connect(func(): _name_panel.visible = false)
+		btn_cancel.pressed.connect(func():
+			_name_panel.visible = false
+			_name_request_pending = false
+			if _net != null:
+				_net.close_connection()
+				_net = null
+			_mode = ""
+			if _status_label != null:
+				_status_label.text = "Conexion cancelada")
 		btn_row.add_child(btn_cancel)
 	# Prefill con el nombre del personaje seleccionado — se puede editar.
 	if _char_index >= 0 and _char_index < CHAR_CONFIGS.size():
@@ -602,29 +640,15 @@ func _on_name_confirmed() -> void:
 		_name_edit.grab_focus()
 		return
 	_name_panel.visible = false
-	var target := _pending_join_target
-	_pending_join_target = ""
-	_do_join(target, pname)
-
-func _do_join(target: String, player_name: String) -> void:
-	_apply_char_selection()
-	# El nombre tecleado manda: es el nombre del personaje en este servidor.
+	_name_request_pending = false
+	# El nombre tecleado es el nombre del personaje en este servidor.
 	var gsess := get_node_or_null("/root/GameSession")
 	if gsess != null:
-		gsess.set_meta("char_name", player_name)
-	_net = get_node("/root/NetworkManager")
-	_net.pending_player_name = player_name
-	_net.connection_succeeded.connect(_on_net_connected)
-	_net.connection_failed.connect(_on_net_failed)
-	_net.auth_rejected.connect(_on_auth_rejected)
-	_net.all_players_ready.connect(_on_net_ready)
-	_rejected = false
-	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
-	if _net.join_game(target, pw):
-		_status_label.text = "Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando..."
-		_mode = "join"
-	else:
-		_status_label.text = "Error al conectar"
+		gsess.set_meta("char_name", pname)
+	if _net != null:
+		_net.submit_player_name.rpc_id(1, pname)
+	if not _started:
+		_start_game()
 
 func _on_auth_rejected(reason: String) -> void:
 	_rejected = true
@@ -657,7 +681,16 @@ func _on_net_ready() -> void:
 		return
 	if _status_label != null:
 		_status_label.text = "Conectado!"
-	get_tree().create_timer(0.3).timeout.connect(_start_game)
+	get_tree().create_timer(0.3).timeout.connect(_maybe_start_game)
+
+func _maybe_start_game() -> void:
+	if _started or _mode != "join":
+		return
+	# Si el servidor pidio nombre (personaje nuevo) el mundo espera al prompt.
+	if _name_request_pending:
+		_prompt_player_name()
+		return
+	_start_game()
 
 func _on_net_failed() -> void:
 	if _status_label != null and not _rejected:
