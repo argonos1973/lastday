@@ -94,16 +94,22 @@ func _initialize() -> void:
 		"bare-fist attack plays the punch (got '%s')" % player.third_person_action_animation)
 	check(ap.current_animation == "punch/PunchExternal",
 		"animation player is playing the punch (got '%s')" % ap.current_animation)
+	check(target.damage_calls == 0, "no damage before the punch lands (got %d)" % target.damage_calls)
+	# The strike resolves at the swing's contact frame (~0.95 s into the punch).
+	await create_timer(1.05).timeout
 	check(target.damage_calls == 1, "facing target takes one damage event (got %d)" % target.damage_calls)
 	check(absf(target.total_damage - 10.0) < 0.01, "bare-fist punch deals 10 damage (got %.1f)" % target.total_damage)
 
 	# Cooldown: a second immediate click must not re-hit.
+	player._attack_cooldown = 1.0
 	player._melee_attack()
+	await create_timer(1.05).timeout
 	check(target.damage_calls == 1, "cooldown blocks an immediate second punch (got %d)" % target.damage_calls)
 
 	# After the cooldown each punch lands again.
 	player._attack_cooldown = 0.0
 	player._melee_attack()
+	await create_timer(1.05).timeout
 	check(target.damage_calls == 2, "each valid punch deals damage (got %d)" % target.damage_calls)
 	check(absf(target.total_damage - 20.0) < 0.01, "two punches deal 20 damage (got %.1f)" % target.total_damage)
 
@@ -111,6 +117,7 @@ func _initialize() -> void:
 	player._attack_cooldown = 0.0
 	target.position = player.global_position + Vector3(0, 0, 2.0)
 	player._melee_attack()
+	await create_timer(1.05).timeout
 	check(target.damage_calls == 2, "target behind the player is not hit")
 
 	# With a knife the swing animation is preserved (not the punch).
@@ -123,6 +130,7 @@ func _initialize() -> void:
 	player._melee_attack()
 	check(player.third_person_action_animation == player.third_person_attack_animation,
 		"knife keeps the swing animation (got '%s')" % player.third_person_action_animation)
+	await create_timer(0.6).timeout
 	check(target.damage_calls == 3, "knife hit still damages the facing target")
 
 	if failures == 0:

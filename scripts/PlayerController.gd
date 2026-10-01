@@ -437,6 +437,8 @@ var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
 var _pain_audio_player: AudioStreamPlayer = null
 var _shoot_audio_player: AudioStreamPlayer = null
+var _swing_audio_player: AudioStreamPlayer = null
+var _impact_audio_player: AudioStreamPlayer = null
 var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
@@ -910,6 +912,12 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		if not target.is_empty() and third_person_animation_player.has_animation(target):
 			third_person_animation_player.play(target, 0.15)
 			_puppet_current_anim = anim
+			# Melee combat audio follows the synced clip: the victim's flinch
+			# carries the impact thud, a thrown swing carries the whoosh.
+			if target == third_person_hit_animation:
+				_play_punch_impact_sound()
+			elif target == third_person_punch_animation or target == third_person_attack_animation:
+				_play_melee_swing_sound()
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String) -> void:
 	if not is_puppet:
@@ -5022,6 +5030,7 @@ func _play_hit_reaction() -> void:
 	third_person_action_animation = third_person_hit_animation
 	third_person_action_timer = 0.55
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
+	_play_punch_impact_sound()
 
 func _update_death_pose(delta: float) -> void:
 	if _beaten_death:
@@ -10363,6 +10372,15 @@ func _melee_attack() -> void:
 	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
 	_attack_cooldown = 0.7 if is_knife else 1.0
+	_play_melee_swing_sound()
+	# Resolve the strike at the swing's contact frame so the damage, blood and
+	# victim flinch land when the arm actually reaches — not at click time.
+	var impact_delay := 0.95 if attack_anim_name == third_person_punch_animation else 0.45
+	get_tree().create_timer(impact_delay).timeout.connect(_resolve_melee_strike.bind(base_damage, is_knife, attack_range, held))
+
+func _resolve_melee_strike(base_damage: float, is_knife: bool, attack_range: float, held) -> void:
+	if is_dead or not is_inside_tree():
+		return
 	# Damage the closest target (wildlife or player) in range
 	var closest_target: Node3D = null
 	var closest_dist := attack_range
@@ -11229,6 +11247,42 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
 	# Show the shot itself — tracer streak + muzzle flash at the reported muzzle.
 	_spawn_bullet_tracer(_origin, _dir)
 	_spawn_muzzle_flash(_origin, _dir)
+
+func _load_wav_stream(path: String) -> AudioStream:
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			stream = AudioStreamWAV.load_from_file(disk_path)
+	return stream
+
+func _play_melee_swing_sound() -> void:
+	if _swing_audio_player == null:
+		_swing_audio_player = AudioStreamPlayer.new()
+		_swing_audio_player.name = "MeleeSwingSound"
+		add_child(_swing_audio_player)
+	var stream := _load_wav_stream("res://assets/audio/punch_swing.wav")
+	if stream == null:
+		return
+	_swing_audio_player.stream = stream
+	_swing_audio_player.volume_db = 2.0
+	_swing_audio_player.pitch_scale = randf_range(0.9, 1.15)
+	_swing_audio_player.play()
+
+func _play_punch_impact_sound() -> void:
+	if _impact_audio_player == null:
+		_impact_audio_player = AudioStreamPlayer.new()
+		_impact_audio_player.name = "PunchImpactSound"
+		add_child(_impact_audio_player)
+	var stream := _load_wav_stream("res://assets/audio/punch_impact.wav")
+	if stream == null:
+		return
+	_impact_audio_player.stream = stream
+	_impact_audio_player.volume_db = 3.0
+	_impact_audio_player.pitch_scale = randf_range(0.85, 1.1)
+	_impact_audio_player.play()
 
 func _play_pain_sound() -> void:
 	if _pain_sound_timer > 0.0:
