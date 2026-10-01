@@ -577,7 +577,10 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 			# dropped — late syncs from the dying client must not move the
 			# corpse. Still relay the dead state onward.
 			if scene.server_proxies[id].get_meta("proxy_dead", false):
-				anim = "dead"
+				# Keep the server-recorded death anim (e.g. "dead_melee") so a
+				# late client sync does not downgrade the kill cause.
+				var stored_anim := str(players[id].get("anim", ""))
+				anim = stored_anim if stored_anim.begins_with("dead") else "dead"
 				pos = players[id].get("pos", pos)
 				rot = players[id].get("rot", rot)
 				equipped_clothing = ""
@@ -667,7 +670,7 @@ func final_player_state(pos: Vector3, rot: float, anim: String, equipped_clothin
 	var scene := get_tree().current_scene
 	# Dead players stay pinned at the death position where their loot dropped —
 	# a late final-state packet must not drag the corpse away from the items.
-	if players[sender].get("anim", "") == "dead":
+	if players[sender].get("anim", "").begins_with("dead"):
 		return
 	if scene != null and scene.server_proxies.has(sender) and scene.server_proxies[sender].get_meta("proxy_dead", false):
 		return
@@ -758,19 +761,20 @@ func apply_damage_to_client(amount: float) -> void:
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount)
 
-# Server tells specific client that they are dead (HP reached 0 on server)
+# Server tells specific client that they are dead (HP reached 0 on server).
+# `cause` lets the victim pick the right death visual ("melee" = beaten).
 @rpc("authority", "reliable")
-func force_death_to_client() -> void:
+func force_death_to_client(cause: String = "") -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_force_death"):
-		scene._net_force_death()
+		scene._net_force_death(cause)
 
 # Server reliably broadcasts player death to all clients
 @rpc("authority", "reliable")
-func broadcast_player_death(peer_id: int, pos: Vector3, rot: float) -> void:
+func broadcast_player_death(peer_id: int, pos: Vector3, rot: float, cause: String = "") -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_death_broadcast"):
-		scene._net_player_death_broadcast(peer_id, pos, rot)
+		scene._net_player_death_broadcast(peer_id, pos, rot, cause)
 
 # Client tells server to damage another player (PvP). `weapon` lets the
 # server validate the hit distance per weapon type (melee vs rifle).

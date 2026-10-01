@@ -2515,15 +2515,19 @@ func _net_apply_damage(amount: float) -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
 
-func _net_force_death() -> void:
+func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	if player.get("is_dead") == true:
+		# The server may still upgrade the death visual (e.g. a melee kill that
+		# raced a local environmental death).
+		if cause == "melee" and player.has_method("_apply_melee_death_visual"):
+			player._apply_melee_death_visual()
 		return
 	if game_over:
 		return
 	if player.has_method("die"):
-		player.die()
+		player.die(cause)
 	# Trigger death handler to notify server and close game
 	# (game_over guard in _on_player_died prevents double call if stats.died already triggered it)
 	_on_player_died()
@@ -3408,10 +3412,13 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# Drop loot immediately on server using saved inventory
 		_drop_player_loot(target_peer_id, proxy)
 		proxy.set_meta("death_broadcasted", true)
-		_broadcast_player_death(target_peer_id, proxy)
+		# The server knows the validated weapon — only melee kills play the
+		# beaten-death animation on the victim and on remote puppets.
+		var death_cause := "melee" if weapon == "melee" else ""
+		_broadcast_player_death(target_peer_id, proxy, death_cause)
 		# Force death on the target client if connected
 		if net.peer != null and net.peer_alive(target_peer_id):
-			net.force_death_to_client.rpc_id(target_peer_id)
+			net.force_death_to_client.rpc_id(target_peer_id, death_cause)
 	else:
 		# Send damage to the target client if still connected
 		if net.peer != null and net.peer_alive(target_peer_id):
@@ -3567,12 +3574,15 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	# both on the ground and inside the corpse's record.
 	_save_world_change_silent()
 
-func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
+func _broadcast_player_death(peer_id: int, proxy: Node3D, cause: String = "") -> void:
 	if net == null or net.peer == null:
 		return
+	# "dead_melee" keeps the kill cause inside the generic anim field so
+	# sync_player_state backup packets and late joiners reproduce it too.
+	var death_anim := "dead_melee" if cause == "melee" else "dead"
 	# Update player list entry
 	if net.players.has(peer_id):
-		net.players[peer_id]["anim"] = "dead"
+		net.players[peer_id]["anim"] = death_anim
 	var pos: Vector3 = proxy.global_position
 	var rot: float = proxy.rotation.y
 	# Send reliable death broadcast to all clients
@@ -3583,7 +3593,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		if not net.peer_alive(pid):
 			continue
-		net.broadcast_player_death.rpc_id(pid, peer_id, pos, rot)
+		net.broadcast_player_death.rpc_id(pid, peer_id, pos, rot, cause)
 	# Also send via sync_player_state as backup
 	var clothing := ""
 	var held := ""
@@ -3595,9 +3605,9 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D) -> void:
 			continue
 		if not net.peer_alive(pid):
 			continue
-		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, "dead", clothing, held, backpack, false, false, false, false, false, false, false, false)
+		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, death_anim, clothing, held, backpack, false, false, false, false, false, false, false, false)
 
-func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float) -> void:
+func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float, cause: String = "") -> void:
 	# Reliable death notification from server — apply immediately to puppet
 	if not remote_players.has(peer_id):
 		return
@@ -3605,7 +3615,7 @@ func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float) -> void
 	if not is_instance_valid(rp):
 		return
 	if rp.has_method("puppet_apply"):
-		rp.puppet_apply(pos, rot, "dead")
+		rp.puppet_apply(pos, rot, "dead_melee" if cause == "melee" else "dead")
 		rp.puppet_apply_visuals("", "", "")
 
 func _net_request_loot(requester_id: int, dead_peer_id: int) -> void:
@@ -3948,7 +3958,7 @@ func _update_remote_players() -> void:
 			rp.puppet_set_flashlight(remote_flashlight_on)
 		if is_offline:
 			# Snap to exact position for offline characters
-			if anim == "dead":
+			if anim.begins_with("dead"):
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(target_pos, target_rot, anim)
 					rp.puppet_apply_visuals("", "", "")
@@ -3963,7 +3973,7 @@ func _update_remote_players() -> void:
 				rp.rotation.y = target_rot
 		else:
 			# Smooth interpolation for active players
-			if rp.get("is_dead") == true or anim == "dead":
+			if rp.get("is_dead") == true or anim.begins_with("dead"):
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(target_pos, target_rot, anim)
 					rp.puppet_apply_visuals("", "", "")

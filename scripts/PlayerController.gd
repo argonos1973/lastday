@@ -259,6 +259,7 @@ const THIRD_PERSON_EXTERNAL_FISH_ANIMATION := "FishExternal"
 const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
 const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
 const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
+const THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION := "MeleeDeathExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -298,6 +299,7 @@ const TORCH_CROUCH_IDLE_FBX := "res://assets/animations/Crouch Torch Idle 01.glb
 const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forward.glb"
 const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
+const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forward 02.glb"
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
@@ -396,6 +398,7 @@ var third_person_fish_animation := ""
 var third_person_interact_animation := ""
 var third_person_attack_animation := ""
 var third_person_punch_animation := ""
+var third_person_melee_death_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -465,6 +468,8 @@ var _torch_animations_loaded := false
 var _drink_animation_loaded := false
 var _drink_animation_length := 2.0
 var _punch_animation_loaded := false
+var _melee_death_animation_loaded := false
+var _beaten_death := false
 var _torch_in_hands := false
 var _has_fishing_rod := false
 var _rod_walk_animation := ""
@@ -842,7 +847,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		if _death_anim_played:
 			return
 		_death_anim_played = true
-		if third_person_animation_player != null:
+		if anim.to_lower().find("melee") >= 0:
+			_apply_melee_death_visual()
+		if not _beaten_death and third_person_animation_player != null:
 			third_person_animation_player.stop()
 		_puppet_current_anim = anim
 		return
@@ -4147,6 +4154,10 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	# current_animation name is synced over the network and remote players resolve it
 	# against their own animation player.
 	_load_punch_animation()
+	# Death-by-beating clip (Standing Death Forward 02.glb). Puppets load it too:
+	# the server tags melee kills in the death broadcast and remote players play
+	# the same retargeted clip instead of the procedural fall.
+	_load_melee_death_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -4944,8 +4955,12 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 	else:
 		_deactivate_rod_visual_overlay()
 
-func die() -> void:
+func die(cause: String = "") -> void:
 	if is_dead:
+		# Already down (e.g. a local death raced the server's order): still honor a
+		# melee-death order so the corpse matches what the server broadcast.
+		if cause == "melee":
+			_apply_melee_death_visual()
 		return
 	is_dead = true
 	_is_aiming = false
@@ -4959,7 +4974,9 @@ func die() -> void:
 	stats.health = 0.0
 	stats.dead = true
 	stats.changed.emit()
-	if third_person_animation_player != null:
+	if cause == "melee":
+		_apply_melee_death_visual()
+	if not _beaten_death and third_person_animation_player != null:
 		third_person_animation_player.stop()
 	# Unequip all clothing so the body shows naked parts
 	for slot in _equipped_slots.keys():
@@ -4967,7 +4984,24 @@ func die() -> void:
 		if not equipped_item.is_empty():
 			unequip_clothing(equipped_item)
 
+func _apply_melee_death_visual() -> void:
+	if _beaten_death:
+		return
+	if third_person_animation_player == null:
+		return
+	if third_person_melee_death_animation.is_empty() or not third_person_animation_player.has_animation(third_person_melee_death_animation):
+		return
+	_beaten_death = true
+	# Undo the procedural fall in case it already ran: the clip owns the fall now.
+	var character: Node3D = third_person_model if third_person_model != null else body_mesh
+	if character != null:
+		character.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+		character.position = Vector3(0.0, third_person_ground_offset, 0.0)
+	third_person_animation_player.play(third_person_melee_death_animation, 0.1)
+
 func _update_death_pose(delta: float) -> void:
+	if _beaten_death:
+		return
 	death_pose_time += delta
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
 	if character == null:
@@ -8988,7 +9022,7 @@ func end_rowing(pos: Vector3) -> void:
 
 func _get_current_anim() -> String:
 	if is_dead:
-		return "dead"
+		return "dead_melee" if _beaten_death else "dead"
 	if third_person_animation_player != null:
 		return third_person_animation_player.current_animation
 	return "idle"
@@ -9534,6 +9568,58 @@ func _load_punch_animation() -> void:
 	third_person_animation_player.add_animation_library("punch", punch_lib)
 	if third_person_animation_player.has_animation("punch/" + THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION):
 		third_person_punch_animation = "punch/" + THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION
+
+func _load_melee_death_animation() -> void:
+	if _melee_death_animation_loaded:
+		return
+	_melee_death_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(MELEE_DEATH_ANIMATION_GLB):
+		return
+	var loaded = load(MELEE_DEATH_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_NONE
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	# Keep the animated hips Y so the body actually drops to the ground; X/Z stay
+	# locked to the rest pose so the corpse remains centered on the network spot.
+	_remove_non_hips_position_tracks(copied, false, 0.0, true)
+	_normalize_hips_anim_y_offset(copied, skel)
+	instance.queue_free()
+	var death_lib: AnimationLibrary = AnimationLibrary.new()
+	death_lib.add_animation(THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("melee_death", death_lib)
+	if third_person_animation_player.has_animation("melee_death/" + THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION):
+		third_person_melee_death_animation = "melee_death/" + THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
@@ -10295,10 +10381,10 @@ func _melee_attack() -> void:
 							scene_node._drop_player_loot(peer_id, closest_target)
 						if scene_node.has_method("_broadcast_player_death") and not closest_target.get_meta("death_broadcasted", false):
 							closest_target.set_meta("death_broadcasted", true)
-							scene_node._broadcast_player_death(peer_id, closest_target)
+							scene_node._broadcast_player_death(peer_id, closest_target, "melee")
 					var net_node2 := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 					if net_node2 != null and net_node2.peer != null and net_node2.peer_alive(peer_id):
-						net_node2.force_death_to_client.rpc_id(peer_id)
+						net_node2.force_death_to_client.rpc_id(peer_id, "melee")
 				else:
 					# Send damage to the client if connected
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
