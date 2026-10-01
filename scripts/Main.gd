@@ -859,6 +859,10 @@ func _input(event: InputEvent) -> void:
 				hud.toggle_craft_panel()
 			get_viewport().set_input_as_handled()
 			return
+		if event.keycode == KEY_P:
+			hud.toggle_players_list()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_ESCAPE:
 			if _backpack_panel != null:
 				_close_backpack_ui()

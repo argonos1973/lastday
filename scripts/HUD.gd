@@ -91,6 +91,11 @@ var _inv_tooltip_label: Label = null
 var _drag_source_index := -1
 var _drag_visual: Control = null
 var _debug_temp_timer := 0.0
+var players_panel: PanelContainer = null
+var players_list_box: VBoxContainer = null
+var players_hint: Label = null
+var players_list_visible := false
+var _players_refresh_timer := 0.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
@@ -171,6 +176,85 @@ func _process(delta: float) -> void:
 				_hit_marker_a.visible = false
 			if _hit_marker_b != null:
 				_hit_marker_b.visible = false
+	if players_list_visible:
+		_players_refresh_timer += delta
+		if _players_refresh_timer >= 0.5:
+			_players_refresh_timer = 0.0
+			_update_players_list()
+
+func _build_players_panel() -> void:
+	var net = get_node_or_null("/root/NetworkManager")
+	var is_mp: bool = net != null and net.has_method("join_game") and (net.get("is_connected") or net.get("peer") != null)
+	# Tiny hint below the clock panel — multiplayer only.
+	players_hint = Label.new()
+	players_hint.text = "[P] Jugadores"
+	players_hint.position = Vector2(20, 158)
+	players_hint.add_theme_font_size_override("font_size", 12)
+	players_hint.add_theme_color_override("font_color", Color(0.6, 0.62, 0.55, 0.8))
+	players_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	players_hint.visible = is_mp
+	root.add_child(players_hint)
+
+	players_panel = PanelContainer.new()
+	players_panel.offset_left = 18
+	players_panel.offset_top = 178
+	players_panel.anchor_left = 0.0
+	players_panel.anchor_top = 0.0
+	players_panel.anchor_right = 0.0
+	players_panel.anchor_bottom = 0.0
+	players_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	players_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
+	players_panel.visible = false
+	root.add_child(players_panel)
+	players_list_box = VBoxContainer.new()
+	players_list_box.add_theme_constant_override("separation", 3)
+	players_list_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	players_panel.add_child(players_list_box)
+
+func toggle_players_list() -> void:
+	var net = get_node_or_null("/root/NetworkManager")
+	if net == null or not (net.get("is_connected") or net.get("peer") != null):
+		return
+	players_list_visible = not players_list_visible
+	if players_panel != null:
+		players_panel.visible = players_list_visible
+	if players_hint != null:
+		players_hint.visible = not players_list_visible
+	if players_list_visible:
+		_update_players_list()
+
+func _update_players_list() -> void:
+	if players_list_box == null:
+		return
+	for c in players_list_box.get_children():
+		c.queue_free()
+	var title := Label.new()
+	title.add_theme_font_size_override("font_size", 13)
+	title.add_theme_color_override("font_color", Color(0.72, 0.68, 0.42))
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	players_list_box.add_child(title)
+	var count := 0
+	var net = get_node_or_null("/root/NetworkManager")
+	if net != null:
+		var my_id: int = net.get_my_id() if net.has_method("get_my_id") else -1
+		var ids: Array = net.players.keys()
+		ids.sort()
+		for pid in ids:
+			var pdata: Dictionary = net.players[pid]
+			if pdata.get("offline", false):
+				continue
+			var pname := str(pdata.get("char_name", ""))
+			if pname.is_empty():
+				pname = str(pdata.get("name", "Jugador"))
+			var dead := str(pdata.get("anim", "")).begins_with("dead")
+			var line := Label.new()
+			line.text = "• %s%s%s" % [pname, " (tú)" if pid == my_id else "", " †" if dead else ""]
+			line.add_theme_font_size_override("font_size", 15)
+			line.add_theme_color_override("font_color", Color(0.5, 0.48, 0.42) if dead else Color(0.9, 0.9, 0.84))
+			line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			players_list_box.add_child(line)
+			count += 1
+	title.text = "JUGADORES (%d)" % count
 
 func _ensure_hud_visibility() -> void:
 	# Restore the interface in case a scene transition or a fullscreen night
@@ -537,6 +621,7 @@ func _build_ui() -> void:
 	_build_craft_panel()
 	_build_center_messages()
 	_build_real_clock_panel()
+	_build_players_panel()
 	_add_shadows_recursive(root)
 
 func _build_real_clock_panel() -> void:

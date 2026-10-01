@@ -23,6 +23,9 @@ var _char_index := 0
 var _char_name_label: Label = null
 var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
+var _name_panel: PanelContainer = null
+var _name_edit: LineEdit = null
+var _pending_join_target := ""
 
 # Los args de linea de comandos persisten durante todo el proceso. Este flag
 # evita que volver al menu (p.ej. con Shift+Q) rearranque el juego solo.
@@ -486,18 +489,7 @@ func _on_show_join() -> void:
 func _on_join_official() -> void:
 	if _started:
 		return
-	_apply_char_selection()
-	_net = get_node("/root/NetworkManager")
-	_net.connection_succeeded.connect(_on_net_connected)
-	_net.connection_failed.connect(_on_net_failed)
-	_net.auth_rejected.connect(_on_auth_rejected)
-	_net.all_players_ready.connect(_on_net_ready)
-	_rejected = false
-	if _net.join_game(NetworkManagerScript.OFFICIAL_SERVER_URL, NetworkManagerScript.OFFICIAL_SERVER_PASSWORD):
-		_status_label.text = "Conectando al servidor oficial..."
-		_mode = "join"
-	else:
-		_status_label.text = "Error al conectar"
+	_prompt_player_name(NetworkManagerScript.OFFICIAL_SERVER_URL)
 
 func _on_join() -> void:
 	if _started:
@@ -507,15 +499,129 @@ func _on_join() -> void:
 		_status_label.text = "Introduce una IP"
 		return
 	_save_ip(ip)
+	_prompt_player_name(ip)
+
+# Al unirse a un servidor se pide el nombre del jugador: sera el nombre del
+# personaje en el registro del servidor y se mantiene hasta que muera.
+func _prompt_player_name(target: String) -> void:
+	_pending_join_target = target
+	if _name_panel == null:
+		_name_panel = PanelContainer.new()
+		var pw := 340.0
+		var screen_w := get_viewport().get_visible_rect().size.x
+		var screen_h := get_viewport().get_visible_rect().size.y
+		_name_panel.position = Vector2(screen_w * 0.5 - pw * 0.5, screen_h * 0.5 - 90)
+		_name_panel.custom_minimum_size = Vector2(pw, 0)
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0.08, 0.08, 0.12, 0.95)
+		bg.border_width_left = 2
+		bg.border_width_right = 2
+		bg.border_width_top = 2
+		bg.border_width_bottom = 2
+		bg.border_color = Color(0.2, 0.2, 0.3, 0.9)
+		bg.corner_radius_top_left = 12
+		bg.corner_radius_top_right = 12
+		bg.corner_radius_bottom_left = 12
+		bg.corner_radius_bottom_right = 12
+		bg.content_margin_left = 20
+		bg.content_margin_right = 20
+		bg.content_margin_top = 18
+		bg.content_margin_bottom = 18
+		_name_panel.add_theme_stylebox_override("panel", bg)
+		add_child(_name_panel)
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 12)
+		_name_panel.add_child(vbox)
+		var title := Label.new()
+		title.text = "NOMBRE DE JUGADOR"
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title.add_theme_font_size_override("font_size", 18)
+		title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
+		vbox.add_child(title)
+		_name_edit = LineEdit.new()
+		_name_edit.placeholder_text = "Tu nombre..."
+		_name_edit.max_length = 24
+		_name_edit.custom_minimum_size = Vector2(280, 38)
+		_name_edit.add_theme_font_size_override("font_size", 16)
+		var edit_style := StyleBoxFlat.new()
+		edit_style.bg_color = Color(0.05, 0.05, 0.08, 0.9)
+		edit_style.border_color = Color(0.3, 0.3, 0.4)
+		edit_style.border_width_left = 1
+		edit_style.border_width_right = 1
+		edit_style.border_width_top = 1
+		edit_style.border_width_bottom = 1
+		edit_style.corner_radius_top_left = 6
+		edit_style.corner_radius_top_right = 6
+		edit_style.corner_radius_bottom_left = 6
+		edit_style.corner_radius_bottom_right = 6
+		edit_style.content_margin_left = 10
+		edit_style.content_margin_right = 10
+		_name_edit.add_theme_stylebox_override("normal", edit_style)
+		_name_edit.text_submitted.connect(func(_t): _on_name_confirmed())
+		vbox.add_child(_name_edit)
+		var btn_row := HBoxContainer.new()
+		btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		btn_row.add_theme_constant_override("separation", 12)
+		vbox.add_child(btn_row)
+		var btn_style := StyleBoxFlat.new()
+		btn_style.bg_color = Color(0.15, 0.2, 0.3, 0.9)
+		btn_style.border_color = Color(0.3, 0.4, 0.5)
+		btn_style.border_width_left = 1
+		btn_style.border_width_right = 1
+		btn_style.border_width_top = 1
+		btn_style.border_width_bottom = 1
+		btn_style.corner_radius_top_left = 8
+		btn_style.corner_radius_top_right = 8
+		btn_style.corner_radius_bottom_left = 8
+		btn_style.corner_radius_bottom_right = 8
+		var btn_go := Button.new()
+		btn_go.text = "Entrar"
+		btn_go.custom_minimum_size = Vector2(120, 38)
+		btn_go.add_theme_font_size_override("font_size", 16)
+		btn_go.add_theme_stylebox_override("normal", btn_style)
+		btn_go.pressed.connect(_on_name_confirmed)
+		btn_row.add_child(btn_go)
+		var btn_cancel := Button.new()
+		btn_cancel.text = "Cancelar"
+		btn_cancel.custom_minimum_size = Vector2(120, 38)
+		btn_cancel.add_theme_font_size_override("font_size", 16)
+		btn_cancel.add_theme_stylebox_override("normal", btn_style)
+		btn_cancel.pressed.connect(func(): _name_panel.visible = false)
+		btn_row.add_child(btn_cancel)
+	# Prefill con el nombre del personaje seleccionado — se puede editar.
+	if _char_index >= 0 and _char_index < CHAR_CONFIGS.size():
+		_name_edit.text = str(CHAR_CONFIGS[_char_index].get("name", ""))
+	_name_panel.visible = true
+	_name_edit.grab_focus()
+	_name_edit.select_all()
+
+func _on_name_confirmed() -> void:
+	var pname := _name_edit.text.strip_edges()
+	if pname.is_empty():
+		_name_edit.placeholder_text = "Escribe un nombre"
+		_name_edit.grab_focus()
+		return
+	_name_panel.visible = false
+	var target := _pending_join_target
+	_pending_join_target = ""
+	_do_join(target, pname)
+
+func _do_join(target: String, player_name: String) -> void:
 	_apply_char_selection()
+	# El nombre tecleado manda: es el nombre del personaje en este servidor.
+	var gsess := get_node_or_null("/root/GameSession")
+	if gsess != null:
+		gsess.set_meta("char_name", player_name)
 	_net = get_node("/root/NetworkManager")
+	_net.pending_player_name = player_name
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
 	_net.auth_rejected.connect(_on_auth_rejected)
 	_net.all_players_ready.connect(_on_net_ready)
 	_rejected = false
-	if _net.join_game(ip):
-		_status_label.text = "Conectando..."
+	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
+	if _net.join_game(target, pw):
+		_status_label.text = "Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando..."
 		_mode = "join"
 	else:
 		_status_label.text = "Error al conectar"

@@ -40,6 +40,9 @@ var client_id := ""
 var _public_server := false
 var _server_password := ""
 var _join_password := ""
+# Nombre tecleado en el menu al unirse a un servidor — se consume al conectar
+# y viaja en _register_player como nombre del personaje (hasta que muera).
+var pending_player_name := ""
 
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
@@ -380,13 +383,19 @@ func _on_connected_to_server() -> void:
 			server_peer.set_timeout(120000, 120000, 180000)
 	is_connected = true
 	var my_id := multiplayer.get_unique_id()
+	# El nombre pedido en el menu al unirse (pending_player_name) es el nombre
+	# del personaje: viaja en el registro y se mantiene hasta que muera.
+	var my_name := pending_player_name.strip_edges()
+	pending_player_name = ""
+	if my_name.is_empty():
+		my_name = "Jugador_%d" % my_id
 	players[my_id] = {
-		"name": "Jugador_%d" % my_id,
+		"name": my_name,
 		"pos": SPAWN_POS,
 		"rot": 0.0,
 		"ready": true
 	}
-	_register_player.rpc_id(1, my_id, players[my_id]["name"], client_id, _join_password)
+	_register_player.rpc_id(1, my_id, my_name, client_id, _join_password)
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
@@ -417,6 +426,9 @@ func _reject_registration(sender: int, reason: String) -> void:
 @rpc("any_peer", "reliable")
 func _register_player(id: int, player_name: String, cid: String = "", pw: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	player_name = player_name.strip_edges()
+	if player_name.is_empty():
+		player_name = "Jugador_%d" % sender
 	if not is_host or sender <= 1 or sender != id or cid.length() > 128 or player_name.length() > 80:
 		return
 	if not _server_password.is_empty() and pw != _server_password:
@@ -470,6 +482,12 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_match_proxy_to_client"):
 			scene.call("_match_proxy_to_client", id, cid)
+			# En reclaim el nombre del personaje vivo es el del registro del
+			# servidor — el nombre tecleado en esta conexión no lo reemplaza.
+			if scene.has_method("_saved_appearance_args"):
+				var saved_app: Array = scene.call("_saved_appearance_args", cid)
+				if not saved_app.is_empty() and not str(saved_app[0]).is_empty():
+					players[id]["name"] = str(saved_app[0])
 			# After matching, update player position from restored proxy
 			if scene.server_proxies.has(id):
 				players[id]["pos"] = scene.server_proxies[id].global_position
