@@ -3633,10 +3633,26 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var angle := TAU * float(i) / float(max(1, drop_source.size())) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(1.5, 3.0), 0.0, sin(angle) * randf_range(1.5, 3.0))
 		var dpos := pos + offset
+		# El loot del cadáver no puede caer al agua: los clientes solo muestran
+		# un splash allí (sin visual ni acción) y el objeto queda inalcanzable.
+		# Re-muestrea hacia la orilla y, en último caso, al punto del cadáver.
+		if _is_water_drop_position(dpos):
+			var landed := false
+			for attempt in range(6):
+				var alt := pos + Vector3(cos(randf() * TAU), 0.0, sin(randf() * TAU)) * randf_range(0.8, 2.2)
+				if not _is_water_drop_position(alt):
+					dpos = alt
+					landed = true
+					break
+			if not landed:
+				dpos = pos
 		# Cada drop se fija a la superficie real bajo su punto — la y del cadáver
 		# dejaba items enterrados bajo terreno elevado o flotando en pendientes.
 		dpos.y = _get_exact_ground_y(dpos.x, dpos.z, pos.y + 0.5)
-		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
+		# peer_id en el id: dos muertes procesadas en el mismo milisegundo
+		# compartirían "death_loot_<ticks>_<i>" y la segunda quedaría
+		# deduplicada fuera de _dropped_items — loot del cadáver perdido.
+		var did := "death_loot_%d_%d_%d" % [peer_id, Time.get_ticks_msec(), i]
 		var iwet: float = float(d.get("wetness", 0.0))
 		var dcol := _clothing_drop_color(iname, victim_pdata, d)
 		# _spawn_ground_pickup already persists the drop into _dropped_items

@@ -151,6 +151,34 @@ func _initialize() -> void:
 			bp_count += 1
 	check(bp_count == 1, "Backpack listed in inventory is not duplicated (got %d)" % bp_count)
 
+	# --- Death loot must never land in water: clients only show a splash for
+	# water drops (no visual, no action), so the item is silently unreachable.
+	# A corpse by the shore still drops its gear on land. ---
+	drops_before = server._dropped_items.size()
+	# River rect covers x in [10, 30] at z=10 — the corpse at x=10 sits right at
+	# the waterline and every outward scatter to +x would sink without resampling.
+	server.river_segments_data = [{"center": Vector3(20.0, 0.0, 10.0), "size": Vector2(20.0, 10.0), "yaw": 0.0}]
+	snet.players[82] = {"name": "dead5", "pos": Vector3(10, 0, 10), "client_id": "char_E"}
+	var proxy5 := _make_proxy(server, 82, "char_E", Vector3(10, 0, 10))
+	proxy5.set_meta("saved_inventory", [
+		{"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "quantity": 1, "use_value": 0.07},
+		{"name": "Higo", "type": "food", "weight": 0.1, "quantity": 2, "use_value": 12.0}
+	])
+	proxy5.set_meta("saved_clothing", "Camiseta,Pantalones,Zapatillas")
+	server._net_player_died(82, [], Vector3(10, 0, 10))
+	var names5 := {}
+	var water_drops := 0
+	for e in server._dropped_items.slice(drops_before):
+		names5[str(e.get("name", ""))] = true
+		var pa = e.get("pos", [])
+		if pa is Array and pa.size() >= 3:
+			var dp := Vector3(float(pa[0]), float(pa[1]), float(pa[2]))
+			if server._is_water_drop_position(dp):
+				water_drops += 1
+	check(names5.has("Sombrero de pescador"), "Hat drops from corpse record")
+	check(water_drops == 0, "No corpse loot lands in water (got %d)" % water_drops)
+	server.river_segments_data = []
+
 	# --- Door toggles are validated server-side: known door + sender in reach ---
 	var dproxy := _make_proxy(server, 81, "char_door", Vector3(22.0, 0.0, 21.0))
 	check(server._net_door_state_changed("Casa abandonada 3 Door", true, 81), "door toggle accepted next to the door")
