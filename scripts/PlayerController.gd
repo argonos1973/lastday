@@ -258,6 +258,7 @@ const THIRD_PERSON_EXTERNAL_GATHER_ANIMATION := "GatherExternal"
 const THIRD_PERSON_EXTERNAL_FISH_ANIMATION := "FishExternal"
 const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
 const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
+const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -296,6 +297,7 @@ const TORCH_CROUCH_TURN_RIGHT_FBX := "res://assets/animations/Crouch Torch Turn 
 const TORCH_CROUCH_IDLE_FBX := "res://assets/animations/Crouch Torch Idle 01.glb"
 const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forward.glb"
 const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
+const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
@@ -393,6 +395,7 @@ var third_person_gather_animation := ""
 var third_person_fish_animation := ""
 var third_person_interact_animation := ""
 var third_person_attack_animation := ""
+var third_person_punch_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -461,6 +464,7 @@ var _torch_crouch_walk_animation := ""
 var _torch_animations_loaded := false
 var _drink_animation_loaded := false
 var _drink_animation_length := 2.0
+var _punch_animation_loaded := false
 var _torch_in_hands := false
 var _has_fishing_rod := false
 var _rod_walk_animation := ""
@@ -872,6 +876,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_jump_down_animation
 			elif lower.find("jump") >= 0:
 				target = third_person_jump_animation
+			elif lower.find("punch") >= 0:
+				target = third_person_punch_animation
 			elif lower.find("attack") >= 0:
 				target = third_person_attack_animation
 			elif lower.find("sit") >= 0:
@@ -3145,7 +3151,7 @@ func _physics_process(delta: float) -> void:
 		speed = crouch_speed * 0.8
 		is_sprinting = false
 	# Lock movement while attacking
-	if third_person_action_timer > 0.0 and third_person_action_animation == third_person_attack_animation:
+	if third_person_action_timer > 0.0 and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
 		direction = Vector3.ZERO
 		speed = 0.0
 		is_sprinting = false
@@ -4021,7 +4027,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		if warm_rifle != null:
 			warm_rifle.queue_free()
 	var names := third_person_animation_player.get_animation_list()
-	var non_loop_keywords := ["jump", "attack", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar", "riflefire"]
+	var non_loop_keywords := ["jump", "attack", "punch", "dying", "dead", "drink", "interact", "gather", "plant", "fish", "coger", "recoger", "beber", "muerto", "pegar", "riflefire"]
 	for animation_name in names:
 		var name_text := String(animation_name)
 		var animation := third_person_animation_player.get_animation(animation_name)
@@ -4137,6 +4143,10 @@ func _setup_third_person_animation(character: Node3D) -> void:
 			drink_anim.loop_mode = Animation.LOOP_LINEAR
 	# Custom drink animation converted from Drinking.fbx, overrides the pre-built one if it loads successfully
 	_load_drink_animation()
+	# Bare-fist melee punch (Cross Punch.glb). Puppets also need it: the attacker's
+	# current_animation name is synced over the network and remote players resolve it
+	# against their own animation player.
+	_load_punch_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -9476,6 +9486,55 @@ func _load_drink_animation() -> void:
 		third_person_drink_animation = "drink/" + THIRD_PERSON_EXTERNAL_DRINK_ANIMATION
 		_drink_animation_length = copied.length
 
+func _load_punch_animation() -> void:
+	if _punch_animation_loaded:
+		return
+	_punch_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(PUNCH_ANIMATION_GLB):
+		return
+	var loaded = load(PUNCH_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_NONE
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	instance.queue_free()
+	var punch_lib: AnimationLibrary = AnimationLibrary.new()
+	punch_lib.add_animation(THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("punch", punch_lib)
+	if third_person_animation_player.has_animation("punch/" + THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION):
+		third_person_punch_animation = "punch/" + THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION
+
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
 		return
@@ -10084,16 +10143,21 @@ func _melee_attack() -> void:
 	if stats.energy < 5.0:
 		notice.emit("Estas demasiado cansado para atacar.")
 		return
-	# Play attack animation
-	if not third_person_attack_animation.is_empty() and third_person_animation_player != null:
-		var atk_anim := third_person_animation_player.get_animation(third_person_attack_animation)
-		if atk_anim != null:
-			atk_anim.loop_mode = Animation.LOOP_NONE
-		third_person_action_animation = third_person_attack_animation
-		third_person_action_timer = 0.8
-		third_person_animation_player.play(third_person_attack_animation, 0.08)
 	# Determine damage and energy cost based on held item
 	var held = get_held_item()
+	# Play attack animation — bare fists use the cross punch clip
+	var attack_anim_name := third_person_attack_animation
+	if held == null and not third_person_punch_animation.is_empty():
+		attack_anim_name = third_person_punch_animation
+	if not attack_anim_name.is_empty() and third_person_animation_player != null:
+		var atk_anim := third_person_animation_player.get_animation(attack_anim_name)
+		if atk_anim != null:
+			atk_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = attack_anim_name
+		# The cross punch lands at ~0.95 s into its 2 s clip — give it enough
+		# action time for the strike to read before blending back.
+		third_person_action_timer = 0.8 if attack_anim_name == third_person_attack_animation else minf(1.15, atk_anim.length if atk_anim != null else 1.15)
+		third_person_animation_player.play(attack_anim_name, 0.08)
 	var base_damage := 5.0  # bare fists
 	var energy_cost := 8.0
 	var attack_range := 3.0
