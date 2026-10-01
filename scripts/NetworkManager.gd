@@ -756,10 +756,10 @@ func animal_sound(animal_name: String, sound_type: String) -> void:
 
 # Server tells specific client to apply damage
 @rpc("authority", "reliable")
-func apply_damage_to_client(amount: float) -> void:
+func apply_damage_to_client(amount: float, weapon: String = "") -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_apply_damage"):
-		scene._net_apply_damage(amount)
+		scene._net_apply_damage(amount, weapon)
 
 # Server tells specific client that they are dead (HP reached 0 on server).
 # `cause` lets the victim pick the right death visual ("melee" = beaten).

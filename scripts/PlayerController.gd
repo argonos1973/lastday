@@ -260,6 +260,7 @@ const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
 const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
 const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
 const THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION := "MeleeDeathExternal"
+const THIRD_PERSON_EXTERNAL_HIT_ANIMATION := "HitExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -300,6 +301,7 @@ const TORCH_CROUCH_WALK_FBX := "res://assets/animations/Crouch Torch Walk Forwar
 const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
 const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forward 02.glb"
+const HIT_ANIMATION_GLB := "res://assets/animations/Head Hit.glb"
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
@@ -399,6 +401,7 @@ var third_person_interact_animation := ""
 var third_person_attack_animation := ""
 var third_person_punch_animation := ""
 var third_person_melee_death_animation := ""
+var third_person_hit_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -469,6 +472,7 @@ var _drink_animation_loaded := false
 var _drink_animation_length := 2.0
 var _punch_animation_loaded := false
 var _melee_death_animation_loaded := false
+var _hit_animation_loaded := false
 var _beaten_death := false
 var _torch_in_hands := false
 var _has_fishing_rod := false
@@ -833,6 +837,10 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
 		rotation.y = rot
+		# A melee-tagged death packet may arrive after a generic "dead" sync —
+		# upgrade the corpse to the beaten visual instead of staying procedural.
+		if not _beaten_death and anim.to_lower().find("melee") >= 0:
+			_apply_melee_death_visual()
 		return
 	global_position = pos
 	rotation.y = rot
@@ -883,6 +891,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_jump_down_animation
 			elif lower.find("jump") >= 0:
 				target = third_person_jump_animation
+			elif lower.find("hit") >= 0:
+				target = third_person_hit_animation
 			elif lower.find("punch") >= 0:
 				target = third_person_punch_animation
 			elif lower.find("attack") >= 0:
@@ -4158,6 +4168,9 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	# the server tags melee kills in the death broadcast and remote players play
 	# the same retargeted clip instead of the procedural fall.
 	_load_melee_death_animation()
+	# Hit reaction (Head Hit.glb) — the victim plays it on validated melee
+	# damage; the synced anim name makes remote puppets flinch too.
+	_load_hit_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -4998,6 +5011,17 @@ func _apply_melee_death_visual() -> void:
 		character.rotation_degrees = Vector3(0.0, 180.0, 0.0)
 		character.position = Vector3(0.0, third_person_ground_offset, 0.0)
 	third_person_animation_player.play(third_person_melee_death_animation, 0.1)
+
+func _play_hit_reaction() -> void:
+	if is_dead or third_person_animation_player == null:
+		return
+	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
+		return
+	# Route through the action-anim slot so the clip also travels in
+	# sync_player_state — remote puppets see the victim flinch too.
+	third_person_action_animation = third_person_hit_animation
+	third_person_action_timer = 0.55
+	third_person_animation_player.play(third_person_hit_animation, 0.06)
 
 func _update_death_pose(delta: float) -> void:
 	if _beaten_death:
@@ -9621,6 +9645,55 @@ func _load_melee_death_animation() -> void:
 	if third_person_animation_player.has_animation("melee_death/" + THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION):
 		third_person_melee_death_animation = "melee_death/" + THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION
 
+func _load_hit_animation() -> void:
+	if _hit_animation_loaded:
+		return
+	_hit_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(HIT_ANIMATION_GLB):
+		return
+	var loaded = load(HIT_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_NONE
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	instance.queue_free()
+	var hit_lib: AnimationLibrary = AnimationLibrary.new()
+	hit_lib.add_animation(THIRD_PERSON_EXTERNAL_HIT_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("hit", hit_lib)
+	if third_person_animation_player.has_animation("hit/" + THIRD_PERSON_EXTERNAL_HIT_ANIMATION):
+		third_person_hit_animation = "hit/" + THIRD_PERSON_EXTERNAL_HIT_ANIMATION
+
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
 		return
@@ -10194,6 +10267,11 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 			if peer_id != 0:
 				net_node.damage_player.rpc_id(1, peer_id, amount, weapon)
 		_spawn_blood_splatter()
+		# Instant feedback on the attacker's screen — the victim's own client
+		# also plays it via apply_damage_to_client, and its synced anim name
+		# replays the flinch on every other puppet.
+		if weapon == "melee":
+			_play_hit_reaction()
 		return
 	apply_damage(amount)
 
@@ -10244,7 +10322,7 @@ func _melee_attack() -> void:
 		# action time for the strike to read before blending back.
 		third_person_action_timer = 0.8 if attack_anim_name == third_person_attack_animation else minf(1.15, atk_anim.length if atk_anim != null else 1.15)
 		third_person_animation_player.play(attack_anim_name, 0.08)
-	var base_damage := 5.0  # bare fists
+	var base_damage := 10.0  # bare fists
 	var energy_cost := 8.0
 	var attack_range := 3.0
 	var is_knife := false
@@ -10389,7 +10467,7 @@ func _melee_attack() -> void:
 					# Send damage to the client if connected
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 					if net_node != null and net_node.peer != null and net_node.peer_alive(peer_id):
-						net_node.apply_damage_to_client.rpc_id(peer_id, base_damage)
+						net_node.apply_damage_to_client.rpc_id(peer_id, base_damage, "melee")
 		elif closest_target.has_method("apply_damage"):
 			closest_target.apply_damage(base_damage)
 		if held != null and held.has_method("reduce_durability"):
@@ -10752,7 +10830,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 				else:
 					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 					if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
-						net_node.apply_damage_to_client.rpc_id(peer_id, damage)
+						net_node.apply_damage_to_client.rpc_id(peer_id, damage, "rifle")
 			_spawn_blood_splatter(hit_pos)
 			_hit_marker(true)
 			return

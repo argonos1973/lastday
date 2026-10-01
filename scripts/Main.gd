@@ -2510,10 +2510,13 @@ func _spawn_server_proxy(id: int) -> void:
 		if w is Node3D and w.has_method("_wolf_ai"):
 			w.set("_chase_cooldown", 8.0)
 
-# Called by RPC from server on client to apply wolf damage
-func _net_apply_damage(amount: float) -> void:
+# Called by RPC from server on client to apply wolf/PvP damage.
+# `weapon` tags the source: "melee" triggers the hit-reaction flinch.
+func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
+		if weapon == "melee" and player.has_method("_play_hit_reaction"):
+			player._play_hit_reaction()
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
@@ -3383,7 +3386,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 	if proxy == null:
 		return
 	var is_dead: bool = proxy.get_meta("proxy_dead", false)
-	if is_dead or target_peer_id == sender:
+	if target_peer_id == sender:
 		return
 	# Clamp reported damage: rifle body/head max, melee a fixed cap.
 	amount = minf(amount, 600.0)
@@ -3399,6 +3402,18 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 			return
 		if not _sender_within(sender, proxy.global_position, max_reach):
 			return
+	if is_dead:
+		# A raced client-side death (its own notify_death flagged the proxy
+		# first) must not drop the melee cause: a validated melee hit on the
+		# corpse still upgrades it to the beaten-death clip on the victim and
+		# every observer — but it never re-drops loot nor re-broadcasts twice.
+		if weapon == "melee":
+			var stored_anim := str(net.players.get(target_peer_id, {}).get("anim", ""))
+			if not stored_anim.begins_with("dead_melee"):
+				_broadcast_player_death(target_peer_id, proxy, "melee")
+				if net.peer != null and net.peer_alive(target_peer_id):
+					net.force_death_to_client.rpc_id(target_peer_id, "melee")
+		return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
 	proxy.set_meta("proxy_health", hp)
@@ -3420,9 +3435,10 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		if net.peer != null and net.peer_alive(target_peer_id):
 			net.force_death_to_client.rpc_id(target_peer_id, death_cause)
 	else:
-		# Send damage to the target client if still connected
+		# Send damage to the target client if still connected — melee hits also
+		# carry the weapon so the victim plays the head-hit flinch.
 		if net.peer != null and net.peer_alive(target_peer_id):
-			net.apply_damage_to_client.rpc_id(target_peer_id, amount)
+			net.apply_damage_to_client.rpc_id(target_peer_id, amount, weapon)
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
 	# asiste el ataque (solo si el lobo está cerca del combate).
 	_notify_tamed_wolves_pvp(sender, target_peer_id, proxy, sender_proxy)

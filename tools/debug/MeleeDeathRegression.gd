@@ -166,6 +166,56 @@ func _initialize() -> void:
 	check(plain_puppet.is_dead and not plain_puppet._beaten_death, "generic dead puppet keeps the procedural fall")
 	check(not plain_puppet.third_person_animation_player.is_playing(), "generic dead puppet stops its animation player")
 
+	# --- Raced packets: generic "dead" first, melee tag afterwards upgrades ---
+	var race_puppet: Node = _make_player()
+	await process_frame
+	race_puppet.set_process(false)
+	race_puppet.set_physics_process(false)
+	race_puppet.is_puppet = true
+	_mount_model(race_puppet)
+	await process_frame
+	race_puppet.puppet_apply(Vector3.ZERO, 0.0, "dead")
+	check(race_puppet.is_dead and not race_puppet._beaten_death, "raced puppet starts procedural-dead")
+	race_puppet.puppet_apply(Vector3.ZERO, 0.0, "dead_melee")
+	check(race_puppet._beaten_death, "late dead_melee upgrades the corpse to the beaten clip")
+	check(race_puppet.third_person_animation_player.current_animation == "melee_death/MeleeDeathExternal",
+		"upgraded corpse plays the melee death clip (got '%s')" % race_puppet.third_person_animation_player.current_animation)
+
+	# --- Hit reaction: melee damage plays Head Hit on the victim ---
+	var hitter: Node = _make_player()
+	await process_frame
+	hitter.set_process(false)
+	hitter.set_physics_process(false)
+	hitter.notice.connect(func(_t): pass)
+	_mount_model(hitter)
+	await process_frame
+	var hit_ap: AnimationPlayer = hitter.third_person_animation_player
+	check(not hitter.third_person_hit_animation.is_empty(), "hit animation resolved (got '')")
+	check(hit_ap.has_animation("hit/HitExternal"), "player has hit/HitExternal")
+	var client_side := ServerWorld.new()
+	root.add_child(client_side)
+	client_side.player = hitter
+	client_side._net_apply_damage(10.0, "melee")
+	check(absf(hitter.stats.health - 90.0) < 0.01, "melee hit deals damage (hp=%.1f)" % float(hitter.stats.health))
+	check(hit_ap.current_animation == "hit/HitExternal" and hit_ap.is_playing(),
+		"melee hit plays the flinch clip (got '%s')" % hit_ap.current_animation)
+	check(hitter._get_current_anim() == "hit/HitExternal", "flinch travels through the synced anim name")
+	hit_ap.stop()
+	client_side._net_apply_damage(10.0, "")
+	check(not hit_ap.is_playing(), "non-melee damage does not trigger the flinch")
+
+	# --- A remote puppet replays the victim's synced flinch clip ---
+	var hit_puppet: Node = _make_player()
+	await process_frame
+	hit_puppet.set_process(false)
+	hit_puppet.set_physics_process(false)
+	hit_puppet.is_puppet = true
+	_mount_model(hit_puppet)
+	await process_frame
+	hit_puppet.puppet_apply(Vector3.ZERO, 0.0, "hit/HitExternal")
+	check(hit_puppet.third_person_animation_player.current_animation == "hit/HitExternal",
+		"remote puppet plays the synced flinch (got '%s')" % hit_puppet.third_person_animation_player.current_animation)
+
 	# --- Server: only validated melee kills carry the melee cause ---
 	var server := ServerWorld.new()
 	root.add_child(server)
@@ -206,6 +256,32 @@ func _initialize() -> void:
 	check(victim_rifle.get_meta("proxy_dead", false), "rifle kill flags the proxy dead")
 	check(str(snet.players[78].get("anim", "")) == "dead",
 		"rifle kill keeps the generic dead anim (got '%s')" % str(snet.players[78].get("anim", "")))
+
+	# --- Raced client death: notify_death lands before the validated melee hit ---
+	var raced := Node3D.new()
+	server.add_child(raced)
+	raced.global_position = Vector3(12, 0, 10)
+	raced.set_meta("peer_id", 79)
+	raced.set_meta("client_id", "vic3")
+	raced.set_meta("proxy_health", 8.0)
+	raced.set_meta("saved_inventory", [])
+	server.server_proxies[79] = raced
+	snet.players[79] = {"name": "victim_raced", "pos": raced.global_position, "client_id": "vic3", "anim": ""}
+	# The victim's own client flags the proxy dead before the melee RPC arrives.
+	server._net_player_died(79, [], raced.global_position)
+	check(raced.get_meta("proxy_dead", false), "self-report flags the raced proxy dead")
+	check(str(snet.players[79].get("anim", "")) == "dead",
+		"raced death starts generic (got '%s')" % str(snet.players[79].get("anim", "")))
+	server._net_damage_player(79, 10.0, 9, "melee")
+	check(str(snet.players[79].get("anim", "")) == "dead_melee",
+		"late melee kill upgrades the raced corpse (got '%s')" % str(snet.players[79].get("anim", "")))
+	# A repeat melee hit must not rebroadcast — the upgrade is one-shot.
+	server._net_damage_player(79, 10.0, 9, "melee")
+	check(str(snet.players[79].get("anim", "")) == "dead_melee", "repeat melee hit stays dead_melee")
+	# A rifle hit on the corpse must not rewrite the cause.
+	snet.players[78]["anim"] = "dead"
+	server._net_damage_player(78, 10.0, 9, "rifle")
+	check(str(snet.players[78].get("anim", "")) == "dead", "rifle hit on a corpse keeps generic dead")
 
 	server.free()
 	if failures == 0:

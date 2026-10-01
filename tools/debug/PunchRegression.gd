@@ -95,7 +95,7 @@ func _initialize() -> void:
 	check(ap.current_animation == "punch/PunchExternal",
 		"animation player is playing the punch (got '%s')" % ap.current_animation)
 	check(target.damage_calls == 1, "facing target takes one damage event (got %d)" % target.damage_calls)
-	check(absf(target.total_damage - 5.0) < 0.01, "bare-fist punch deals 5 damage (got %.1f)" % target.total_damage)
+	check(absf(target.total_damage - 10.0) < 0.01, "bare-fist punch deals 10 damage (got %.1f)" % target.total_damage)
 
 	# Cooldown: a second immediate click must not re-hit.
 	player._melee_attack()
@@ -105,7 +105,7 @@ func _initialize() -> void:
 	player._attack_cooldown = 0.0
 	player._melee_attack()
 	check(target.damage_calls == 2, "each valid punch deals damage (got %d)" % target.damage_calls)
-	check(absf(target.total_damage - 10.0) < 0.01, "two punches deal 10 damage (got %.1f)" % target.total_damage)
+	check(absf(target.total_damage - 20.0) < 0.01, "two punches deal 20 damage (got %.1f)" % target.total_damage)
 
 	# Behind the target => no hit (facing check).
 	player._attack_cooldown = 0.0
