@@ -557,7 +557,6 @@ func _public_player_list() -> Dictionary:
 		var e = out[pid]
 		if e is Dictionary:
 			e.erase("client_id")
-			e.erase("needs_name")
 	return out
 
 # La lista solo se envía a peers registrados — nunca .rpc() broadcast, que

@@ -29,6 +29,10 @@ const MAP_EXTENT := 500.0
 
 var player
 var hud
+# Toast "X se ha conectado": pids ya anunciados + si la primera lista se
+# sembro en silencio (los que ya estaban dentro no son "nuevas conexiones").
+var _announced_player_ids: Dictionary = {}
+var _player_list_seeded := false
 var day_cycle
 var radio
 var audio_system
@@ -648,6 +652,8 @@ func _ready() -> void:
 			for pid in net.players.keys():
 				if pid != net.get_my_id():
 					_spawn_remote_player(pid)
+		if not net.all_players_ready.is_connected(_on_player_list_updated):
+			net.all_players_ready.connect(_on_player_list_updated)
 	_set_loading_phase("Generando mundo...")
 	_create_environment()
 	_create_day_night()
@@ -660,6 +666,9 @@ func _ready() -> void:
 		_create_audio()
 		_create_hud()
 		_create_weather_particles()
+		# Cubre joins que llegaron durante la carga del mundo (sin HUD aun).
+		if net != null:
+			_on_player_list_updated()
 	_apply_pending_doors()
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
@@ -2012,6 +2021,47 @@ func _on_net_connection_lost() -> void:
 
 func _return_to_inicio() -> void:
 	get_tree().change_scene_to_file("res://scenes/Inicio.tscn")
+
+# Toast "X se ha conectado" al actualizarse la lista (cada _sync_player_list
+# emite all_players_ready). La primera lista tras entrar siembra en silencio
+# los que ya estaban dentro — solo se anuncian conexiones posteriores, y una
+# entrada a la que aun le falta el nombre (needs_name) espera al submit.
+func _on_player_list_updated() -> void:
+	if net == null or not net.is_connected:
+		return
+	var my_id: int = net.get_my_id()
+	var present := {}
+	var names_new: Array = []
+	for pid in net.players.keys():
+		if pid == my_id:
+			continue
+		var pdata: Dictionary = net.players[pid]
+		if pdata.get("offline", false):
+			continue
+		present[pid] = true
+		if _announced_player_ids.has(pid):
+			continue
+		if pdata.get("needs_name", false):
+			continue
+		_announced_player_ids[pid] = true
+		var pname := str(pdata.get("char_name", ""))
+		if pname.is_empty():
+			pname = str(pdata.get("name", "Jugador"))
+		names_new.append(pname)
+	# Un peer que se fue antes de anunciarse no cuenta para la siguiente
+	# aparicion de su id.
+	for pid in _announced_player_ids.keys():
+		if not present.has(pid):
+			_announced_player_ids.erase(pid)
+	if hud == null:
+		return
+	if not _player_list_seeded:
+		_player_list_seeded = true
+		if not names_new.is_empty():
+			hud.show_notice("En el servidor: %s" % ", ".join(PackedStringArray(names_new)), 6.0)
+		return
+	for pname in names_new:
+		hud.show_notice("%s se ha conectado" % pname, 4.0)
 
 func _on_remote_player_connected(id: int) -> void:
 	if net == null:
