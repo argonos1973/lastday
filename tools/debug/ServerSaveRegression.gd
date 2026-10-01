@@ -19,9 +19,9 @@ class World extends "res://scripts/Main.gd":
 	func _delayed_send_spawn_pos(peer_id: int, pos: Vector3, died: bool = false) -> void:
 		sent_spawn_only.append([peer_id, pos])
 	var spawned_pickups: Array = []
-	func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "") -> void:
+	func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "", wetness: float = 0.0) -> void:
 		spawned_pickups.append(pos)
-		_dropped_items.append({"id": fixed_id, "name": item_name, "type": item_type, "weight": weight, "qty": qty, "use": use_value, "pos": [pos.x, pos.y, pos.z], "action_type": "pickup_item"})
+		_dropped_items.append({"id": fixed_id, "name": item_name, "type": item_type, "weight": weight, "qty": qty, "use": use_value, "pos": [pos.x, pos.y, pos.z], "action_type": "pickup_item", "wetness": wetness})
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:

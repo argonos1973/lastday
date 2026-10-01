@@ -89,19 +89,22 @@ func _initialize() -> void:
 	for e in drops:
 		check(server.world_actions_by_id.has(str(e.get("id", ""))), "Drop %s has a world action" % str(e.get("name", "")))
 
-	# --- Backpack arrives only via the death RPC (saved_backpack meta stale) ---
+	# --- Death RPC payload is not trusted: only the server record drops ---
 	var drops_before := server._dropped_items.size()
-	snet.players[78] = {"name": "dead2", "pos": Vector3(20, 0, 20), "client_id": "char_B"}
+	snet.players[78] = {"name": "dead2", "pos": Vector3(20, 0, 20), "client_id": "char_B", "equipped_backpack": "Mochila grande"}
 	var proxy2 := _make_proxy(server, 78, "char_B", Vector3(20, 0, 20))
 	var inv2: Array = [{"name": "Lata de atun", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 0.0}]
 	proxy2.set_meta("saved_inventory", inv2)
 	proxy2.set_meta("saved_backpack", "")
-	server._net_player_died(78, inv2, Vector3(20, 0, 20), "Mochila grande", "Cuchillo")
+	# The RPC declares gear the server never saw — it must not spawn.
+	server._net_player_died(78, [{"name": "Rifle francotirador", "type": "weapon_rifle", "quantity": 99}], Vector3(20, 0, 20), "Mochila inventada", "Cuchillo")
 	var names2 := {}
 	for e in server._dropped_items.slice(drops_before):
 		names2[str(e.get("name", ""))] = true
-	check(names2.has("Mochila grande"), "Backpack from death RPC drops despite empty meta")
-	check(names2.has("Lata de atun"), "RPC death still drops inventory")
+	check(names2.has("Mochila grande"), "Backpack drops from the live player-state record")
+	check(names2.has("Lata de atun"), "Death drops the server-side inventory")
+	check(not names2.has("Mochila inventada"), "Fabricated RPC backpack does not drop")
+	check(not names2.has("Rifle francotirador"), "Fabricated RPC inventory does not drop")
 	check(str(proxy2.get_meta("saved_backpack", "")) == "", "saved_backpack cleared after drop")
 	# A repeated death notification must not refill or duplicate the corpse.
 	server._net_player_died(78, inv2, Vector3(20, 0, 20), "Mochila grande", "")
@@ -133,6 +136,16 @@ func _initialize() -> void:
 		if str(e.get("name", "")) == "Mochila":
 			bp_count += 1
 	check(bp_count == 1, "Backpack listed in inventory is not duplicated (got %d)" % bp_count)
+
+	# --- Door toggles are validated server-side: known door + sender in reach ---
+	var dproxy := _make_proxy(server, 81, "char_door", Vector3(22.0, 0.0, 21.0))
+	check(server._net_door_state_changed("Casa abandonada 3 Door", true, 81), "door toggle accepted next to the door")
+	check(server._server_door_states.get("Casa abandonada 3 Door", false) == true, "door state recorded")
+	dproxy.global_position = Vector3(-50.0, 0.0, -50.0)
+	check(not server._net_door_state_changed("Casa abandonada 4 Door", true, 81), "door toggle rejected when sender is far away")
+	check(not server._net_door_state_changed("Puerta inventada", true, 81), "unknown door name rejected")
+	server.server_proxies.erase(81)
+	dproxy.queue_free()
 
 	# A DIFFERENT character joins later: the world-state sync must respawn every
 	# drop on their client as a visible, interactable pickup.

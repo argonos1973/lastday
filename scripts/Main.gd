@@ -81,6 +81,22 @@ var _built_campfires: Array = []
 var _built_shelters: Array = []
 var _lit_campfires: Array = []
 var _server_door_states: Dictionary = {}
+# Posición de las puertas interactivas para validar toggles en el servidor
+# dedicado, que no instancia los nodos Door. Derivada de las llamadas a
+# _create_house de _create_map: puerta = origen + (-0.9, 0, depth/2).
+# Mantener sincronizada si cambian las casas.
+const _HOUSE_DOOR_LAYOUT := [
+	["Casa abandonada 1", -25.0, -18.0, 9.4],
+	["Casa abandonada 2", -38.0, 18.0, 11.0],
+	["Casa abandonada 3", 23.0, 18.0, 7.5],
+	["Casa abandonada 4", 42.0, 26.0, 10.0],
+	["Casa abandonada 5", -12.0, 42.0, 7.0],
+	["Casa abandonada 6", -35.0, -40.0, 8.5],
+	["Casa abandonada 7", 30.0, -35.0, 10.0],
+	["Casa abandonada 8", -45.0, -5.0, 8.0],
+	["Casa abandonada 9", 35.0, -8.0, 9.0],
+	["Casa abandonada 10", -20.0, 30.0, 6.5],
+]
 var _pending_open_doors: Array = []
 var _pending_restore_data: Array = []
 # Storm lightning state
@@ -1998,9 +2014,11 @@ func _on_remote_player_connected(id: int) -> void:
 		return
 	if id == net.get_my_id():
 		return
-	# Server: create a proxy node for wildlife AI to target (no visual avatar needed)
+	# Server: el proxy se crea al registrarse (_match_proxy_to_client o el
+	# barrido de _update_server_proxies), no al conectar el transporte — un
+	# peer que nunca completa _register_player no debe dejar un cuerpo
+	# fantasma en el mundo ni ser objetivo para la fauna.
 	if net.is_dedicated_server:
-		_spawn_server_proxy(id)
 		call_deferred("_delayed_send_world_state", id)
 	else:
 		_spawn_remote_player(id)
@@ -2044,24 +2062,34 @@ func _on_remote_player_disconnected(id: int) -> void:
 		if not cid.is_empty():
 			proxy_by_client_id[cid] = sp
 		else:
-			pass
+			# Un proxy sin client_id no tiene identidad persistente — es lo que
+			# queda de un peer que se fue sin registrarse; no hay nada que
+			# conservar y quedaba como objetivo fantasma para la fauna.
+			sp.queue_free()
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
-		net._sync_player_list.rpc(net.players.duplicate(true))
+		net._broadcast_player_list()
 		# Persist the departing player's last known position/state right away
 		if net.is_dedicated_server:
 			_save_world_change_silent()
 
+# Solo merece estado un peer que completó el registro y sigue conectado — un
+# fantasma que nunca se registró (o uno que ya se fue) no recibe nada, y los
+# RPCs a ids muertos solo producían errores.
+func _peer_can_receive(peer_id: int) -> bool:
+	return net != null and net.peer != null and net.players.has(peer_id) \
+		and not net.players[peer_id].get("offline", false) and net.peer_alive(peer_id)
+
 func _delayed_send_world_state(peer_id: int) -> void:
 	# Wait a bit for the client to load the scene before sending world state
 	await get_tree().create_timer(2.0).timeout
-	if _scene_quitting: return
+	if _scene_quitting or not _peer_can_receive(peer_id): return
 	_send_world_state_to_client(peer_id)
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
-	if net != null and net.peer != null:
+	if _peer_can_receive(peer_id):
 		net.set_client_spawn_pos.rpc_id(peer_id, pos)
 		net.restore_player_inventory.rpc_id(peer_id, inv, hp, hunger, thirst, clothing, backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
 		# Also sync world state (open doors, depleted resources, etc.) to reconnecting client
@@ -2278,7 +2306,7 @@ func _saved_appearance_args(cid: String) -> Array:
 func _delayed_send_saved_appearance(peer_id: int, cid: String) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
-	if net == null or net.peer == null:
+	if not _peer_can_receive(peer_id):
 		return
 	var args := _saved_appearance_args(cid)
 	if args.is_empty():
@@ -2294,7 +2322,7 @@ func _delayed_send_new_player_state(peer_id: int) -> void:
 func _delayed_send_spawn_pos(peer_id: int, pos: Vector3, died: bool = false) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return
-	if net != null and net.peer != null:
+	if _peer_can_receive(peer_id):
 		net.set_client_spawn_pos.rpc_id(peer_id, pos, died)
 		# Clear reconnecting flag so server accepts position updates from this client
 		if server_proxies.has(peer_id):
@@ -2914,6 +2942,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 func _send_world_state_to_client(peer_id: int) -> void:
 	if net == null:
 		return
+	if net.is_host and (not net.players.has(peer_id) or net.players[peer_id].get("offline", false)):
+		return
 	var open_doors: Array = []
 	# On dedicated server, doors don't exist as nodes — use the tracked state dictionary
 	if net.is_dedicated_server:
@@ -3007,6 +3037,10 @@ func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
 				elif ep is Array and ep.size() >= 3:
 					drop_pos = Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
 				break
+		if drop_pos == Vector3.INF:
+			var wa = world_actions_by_id.get(action_id)
+			if wa is Node3D and is_instance_valid(wa):
+				drop_pos = wa.global_position
 		if drop_pos != Vector3.INF and not _sender_within(sender_id, drop_pos, 8.0):
 			return false
 	# The pickup enters the sender's inventory — record it so a quit before the
@@ -3044,7 +3078,28 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> v
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
 			rp.play_rifle_shot_remote(origin, dir)
 
-func _net_door_state_changed(door_name: String, is_open: bool) -> void:
+# El servidor dedicado no instancia nodos Door — deriva la posición de la
+# puerta desde la tabla _HOUSE_DOOR_LAYOUT (bisagra del marco).
+func _server_door_position(door_name: String) -> Vector3:
+	for h in _HOUSE_DOOR_LAYOUT:
+		if door_name == String(h[0]) + " Door":
+			return Vector3(float(h[1]) - 0.9, 0.0, float(h[2]) + float(h[3]) * 0.5)
+	return Vector3.INF
+
+func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 0) -> bool:
+	# En el host un toggle remoto tiene que venir de una puerta conocida y al
+	# alcance del proxy del emisor — si no cualquier cliente podía abrir o
+	# cerrar cualquier puerta del mapa desde cualquier sitio.
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		var door_pos := Vector3.INF
+		for d in get_tree().get_nodes_in_group("doors"):
+			if d is Door and d.name == door_name:
+				door_pos = (d as Node3D).global_position
+				break
+		if not door_pos.is_finite():
+			door_pos = _server_door_position(door_name)
+		if not door_pos.is_finite() or not _sender_within(sender_id, door_pos, 10.0):
+			return false
 	_server_door_states[door_name] = is_open
 	# Also update the visual door if it exists (non-dedicated server or client)
 	var door: Door = null
@@ -3062,6 +3117,7 @@ func _net_door_state_changed(door_name: String, is_open: bool) -> void:
 			door._tween.set_trans(Tween.TRANS_SINE)
 			door._tween.set_ease(Tween.EASE_OUT)
 			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
+	return true
 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0) -> void:
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
@@ -3226,12 +3282,10 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 		return
 	if animal.get("_gutted"):
 		return
-	# Verify sender is close enough (anti-cheat)
-	if server_proxies.has(sender):
-		var sender_proxy: Node3D = server_proxies[sender]
-		var dist := sender_proxy.global_position.distance_to(animal.global_position)
-		if dist > 5.0:
-			return
+	# Verify sender is close enough (anti-cheat) — a missing proxy fails
+	# closed now instead of skipping the check entirely.
+	if sender != 0 and sender != net.get_my_id() and not _sender_within(sender, animal.global_position, 5.0):
+		return
 	if animal is BirdController and not animal._landed:
 		return
 	# Mark as gutted
@@ -3329,25 +3383,17 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		return
 	# Clamp reported damage: rifle body/head max, melee a fixed cap.
 	amount = minf(amount, 600.0)
-	# Check distance if sender has a proxy
-	var sender_proxy: Node3D = null
-	if server_proxies.has(sender):
-		sender_proxy = server_proxies[sender]
-	else:
-		for cid2 in proxy_by_client_id.keys():
-			var sp2: Node3D = proxy_by_client_id[cid2]
-			if sp2.get_meta("peer_id", 0) == sender:
-				sender_proxy = sp2
-				break
-	if sender_proxy != null:
+	var sender_proxy: Node3D = _server_proxy_for_sender(sender)
+	if sender != 0 and sender != net.get_my_id():
 		# Rifle hits are legitimately long-range; melee stays close-quarters.
+		# _sender_within fails closed when the attacker has no proxy — a
+		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
 		if weapon == "rifle":
 			max_reach = 170.0
 		elif weapon != "melee":
 			return
-		var dist := sender_proxy.global_position.distance_to(proxy.global_position)
-		if dist > max_reach:
+		if not _sender_within(sender, proxy.global_position, max_reach):
 			return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
@@ -3409,23 +3455,22 @@ func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vecto
 	# looting would then hand those items out — infinite duplication).
 	if proxy.get_meta("loot_dropped", false):
 		return
-	# Anchor corpse and loot to the client's real death position. The proxy's
-	# last synced position can lag several meters behind, and final_player_state
-	# would otherwise move the corpse (net.players pos) away from the loot.
-	if death_pos != Vector3.ZERO and death_pos.is_finite():
+	# Anchor corpse and loot to the client's reported death position only when
+	# plausible — a fabricated position must not teleport the loot across the
+	# map. The proxy's last synced position can lag several meters behind, and
+	# final_player_state would otherwise move the corpse (net.players pos)
+	# away from the loot.
+	if death_pos != Vector3.ZERO and death_pos.is_finite() and death_pos.distance_to(proxy.global_position) <= 40.0:
 		proxy.global_position = death_pos
 		proxy.set_meta("saved_pos", death_pos)
 		if net.players.has(peer_id):
 			net.players[peer_id]["pos"] = death_pos
-	# Update saved inventory from the death notification if provided
-	if not inventory_data.is_empty():
-		proxy.set_meta("saved_inventory", _sanitize_inventory_data(inventory_data))
-	# La mochila y la mano reportadas en la muerte son el estado real del momento
-	# (el sync de inventario corre cada 2 s y puede quedar obsoleto/rechazado).
-	if not backpack_name.is_empty():
-		proxy.set_meta("saved_backpack", backpack_name)
-	if not held_item.is_empty():
-		proxy.set_meta("saved_held_item", held_item)
+	# El loot cae del registro del servidor (saved_*), nunca del payload del
+	# cliente — los drops/pickups ya mantienen saved_inventory al día en cada
+	# acción de mundo, así que un notify_death fabricado no puede crear items
+	# de la nada. inventory_data/backpack_name/held_item solo se conservan en
+	# la firma por compatibilidad del protocolo.
+
 	if not proxy.get_meta("proxy_dead", false):
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
@@ -7900,6 +7945,15 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 	var check_sender: bool = net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id()
 	if check_sender and spawns.size() > 16:
 		return false
+	# The completed action and any extra visual must be near the sender too —
+	# otherwise a client could deplete far-away actions or build a cabin
+	# anywhere on the map.
+	if check_sender:
+		var action_node = world_actions_by_id.get(action_id)
+		if action_node is Node3D and is_instance_valid(action_node) and not _sender_within(sender_id, action_node.global_position, 15.0):
+			return false
+		if not extra_visual.is_empty() and not _sender_within(sender_id, extra_pos, 15.0):
+			return false
 	if net != null and net.is_dedicated_server:
 		if not action_id.is_empty() and not _depleted_action_ids.has(action_id):
 			_depleted_action_ids.append(action_id)
@@ -9216,12 +9270,20 @@ func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 	var campfire_action = _create_world_action(cf_id, "light_campfire", "Fogata apagada", pos, Vector3(1.2, 0.8, 1.2), Color(0.12, 0.08, 0.04), false, false)
 	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
 
+# Dedup helper for the tracked-build arrays — a repeated RPC must not append
+# the same id twice (the entries persist in the world state and the save).
+func _tracked_has_id(list: Array, entry_id: String) -> bool:
+	for e in list:
+		if e is Dictionary and str(e.get("id", "")) == entry_id:
+			return true
+	return false
+
 func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> bool:
 	# A client can only build where its proxy actually stands.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
-	if net != null and net.is_dedicated_server:
+	if net != null and net.is_dedicated_server and not _tracked_has_id(_built_campfires, cf_id):
 		_built_campfires.append({"id": cf_id, "pos": pos})
 	if world_actions_by_id.has(cf_id):
 		return true
@@ -9314,7 +9376,7 @@ func _net_shelter_built(sh_id: String, pos: Vector3, sender_id: int = 0) -> bool
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
-	if net != null and net.is_dedicated_server:
+	if net != null and net.is_dedicated_server and not _tracked_has_id(_built_shelters, sh_id):
 		_built_shelters.append({"id": sh_id, "pos": pos})
 	if world_actions_by_id.has(sh_id):
 		return true
@@ -9369,7 +9431,9 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sende
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
-	if net != null and net.is_dedicated_server:
+	# Dedup del append: un RPC repetido no debe hinchar _lit_campfires
+	# (persiste en el save); el resto del flujo queda igual.
+	if net != null and net.is_dedicated_server and not _tracked_has_id(_lit_campfires, action_id):
 		_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
 	if not world_actions_by_id.has(action_id):
 		return true
