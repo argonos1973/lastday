@@ -3503,6 +3503,32 @@ func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vecto
 		proxy.set_meta("death_broadcasted", true)
 		_broadcast_player_death(peer_id, proxy)
 
+func _clothing_drop_color(item_name: String, pdata: Dictionary, item: Dictionary = {}) -> Color:
+	# Customizable garments (the character-creator clothes) must drop with the
+	# dead player's real colors: prefer the item's own stored clothing_color,
+	# then the victim's appearance from the server record. Without this every
+	# client would tint the drop with its own local player colors.
+	var saved_col = item.get("clothing_color", null)
+	if saved_col is Color and (saved_col as Color).a > 0.0:
+		return saved_col
+	if saved_col is Array and saved_col.size() >= 3:
+		return Color(float(saved_col[0]), float(saved_col[1]), float(saved_col[2]))
+	var key := ""
+	match item_name:
+		"Camiseta": key = "top_color"
+		"Pantalones": key = "bottom_color"
+		"Zapatillas": key = "shoes_color"
+		_:
+			return Color(0, 0, 0, 0)
+	var v = pdata.get(key)
+	if v is Color:
+		return v
+	if v is String:
+		return SaveGameHooks._str_to_color(v)
+	if v is Array and v.size() >= 3:
+		return Color(float(v[0]), float(v[1]), float(v[2]))
+	return Color(0, 0, 0, 0)
+
 func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	if proxy.get_meta("loot_dropped", false):
 		return
@@ -3534,6 +3560,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			drop_source.append({"name": cname, "type": "clothing", "weight": 0.3, "quantity": 1, "use_value": 0.05})
 	# Drop each item as a pickup on the server and notify all clients
 	var drops: Array = []
+	var victim_pdata: Dictionary = net.players.get(peer_id, {}) if net != null else {}
 	for i in range(drop_source.size()):
 		var d: Dictionary = drop_source[i]
 		var iname: String = str(d.get("name", d.get("item_name", "")))
@@ -3551,9 +3578,10 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		dpos.y = _get_exact_ground_y(dpos.x, dpos.z, pos.y + 0.5)
 		var did := "death_loot_%d_%d" % [Time.get_ticks_msec(), i]
 		var iwet: float = float(d.get("wetness", 0.0))
+		var dcol := _clothing_drop_color(iname, victim_pdata, d)
 		# _spawn_ground_pickup already persists the drop into _dropped_items
-		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did, "", iwet)
-		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet})
+		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did, "", iwet, dcol)
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol})
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -3566,7 +3594,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			for drop in drops:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
-				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, Color(0, 0, 0, 0), [], float(drop.get("wetness", 0.0)))
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)))
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 	proxy.set_meta("saved_backpack", "")
@@ -7899,7 +7927,7 @@ func _create_cut_log_action(pos: Vector3) -> void:
 	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
 	action.set_meta("visual_name", visual_name)
 
-func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "", wetness: float = 0.0) -> void:
+func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "", wetness: float = 0.0, color: Color = Color(0, 0, 0, 0)) -> void:
 	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	if _depleted_action_ids.has(id):
 		return
@@ -7932,6 +7960,20 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 					m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
 				else:
 					m.visible = false
+	# Character-creator garments carry their owner's color in the drop; without
+	# it fall back to the local player's colors (self drops) — same behavior as
+	# _spawn_dropped_item_visual.
+	if item_name in ["Camiseta", "Pantalones", "Zapatillas"] and ground_node is Node3D:
+		var drop_color := color
+		if drop_color.a <= 0.0:
+			var gsess := get_node_or_null("/root/GameSession")
+			if gsess != null:
+				drop_color = gsess.selected_top_color
+				if item_name == "Pantalones":
+					drop_color = gsess.selected_bottom_color
+				elif item_name == "Zapatillas":
+					drop_color = gsess.selected_shoes_color
+		_apply_color_material_recursive(ground_node, drop_color)
 	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -7942,6 +7984,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_use_value", use_value)
 	if wetness > 0.001:
 		action.set_meta("item_wetness", wetness)
+	if color.a > 0.0:
+		action.set_meta("item_color", color)
 	# Persist the pickup so it survives save/load and syncs to new clients
 	if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
 		var already_tracked := false
@@ -7962,6 +8006,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 			}
 			if wetness > 0.001:
 				tracked["wetness"] = wetness
+			if color.a > 0.0:
+				tracked["color"] = [color.r, color.g, color.b, color.a]
 			_dropped_items.append(tracked)
 
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3, sender_id: int = 0) -> bool:

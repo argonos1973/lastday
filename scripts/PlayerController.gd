@@ -302,6 +302,11 @@ const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
 const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forward 02.glb"
 const HIT_ANIMATION_GLB := "res://assets/animations/Head Hit.glb"
+# Swing timers: the clip's contact frame, and the lead so the whoosh peaks
+# just before impact instead of firing at click time.
+const MELEE_PUNCH_IMPACT_DELAY := 0.95
+const MELEE_SWING_IMPACT_DELAY := 0.45
+const MELEE_SWING_SOUND_LEAD := 0.25
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
@@ -917,7 +922,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			if target == third_person_hit_animation:
 				_play_punch_impact_sound()
 			elif target == third_person_punch_animation or target == third_person_attack_animation:
-				_play_melee_swing_sound()
+				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String) -> void:
 	if not is_puppet:
@@ -10433,10 +10438,10 @@ func _melee_attack() -> void:
 	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
 	_attack_cooldown = 0.7 if is_knife else 1.0
-	_play_melee_swing_sound()
+	var impact_delay := MELEE_PUNCH_IMPACT_DELAY if attack_anim_name == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY
+	_schedule_melee_swing_sound(impact_delay)
 	# Resolve the strike at the swing's contact frame so the damage, blood and
 	# victim flinch land when the arm actually reaches — not at click time.
-	var impact_delay := 0.95 if attack_anim_name == third_person_punch_animation else 0.45
 	get_tree().create_timer(impact_delay).timeout.connect(_resolve_melee_strike.bind(base_damage, is_knife, attack_range, held))
 
 func _resolve_melee_strike(base_damage: float, is_knife: bool, attack_range: float, held) -> void:
@@ -11318,6 +11323,14 @@ func _load_wav_stream(path: String) -> AudioStream:
 		if FileAccess.file_exists(disk_path):
 			stream = AudioStreamWAV.load_from_file(disk_path)
 	return stream
+
+func _schedule_melee_swing_sound(impact_delay: float) -> void:
+	# The whoosh belongs to the arm's extension, not the initial recoil —
+	# schedule it just ahead of the contact frame.
+	var tree := get_tree()
+	if tree == null:
+		return
+	tree.create_timer(maxf(impact_delay - MELEE_SWING_SOUND_LEAD, 0.0)).timeout.connect(_play_melee_swing_sound)
 
 func _play_melee_swing_sound() -> void:
 	if _swing_audio_player == null:

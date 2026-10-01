@@ -55,7 +55,7 @@ func _initialize() -> void:
 	var snet := ServerNet.new()
 	server.add_child(snet)
 	server.net = snet
-	snet.players[77] = {"name": "dead", "pos": Vector3(10, 0, 10), "client_id": "char_A"}
+	snet.players[77] = {"name": "dead", "pos": Vector3(10, 0, 10), "client_id": "char_A", "top_color": Color(0.8, 0.2, 0.1), "bottom_color": Color(0.1, 0.3, 0.7)}
 
 	# A connected character carrying loot, a backpack, shoulder gear and clothes.
 	var inv: Array = [
@@ -84,6 +84,20 @@ func _initialize() -> void:
 	check(names.has("Venda"), "Medical drops")
 	check(names.has("Mochila pequena"), "Backpack itself drops")
 	check(names.has("Camiseta") and names.has("Pantalones"), "Worn clothing drops")
+	# Customizable clothing keeps the dead player's own colors in the drop —
+	# otherwise observers tint it with their local player colors.
+	var shirt_col := Color(0, 0, 0, 0)
+	var pants_col := Color(0, 0, 0, 0)
+	for e in drops:
+		var carr = e.get("color", [])
+		if not (carr is Array) or carr.size() < 3:
+			continue
+		if str(e.get("name", "")) == "Camiseta":
+			shirt_col = Color(float(carr[0]), float(carr[1]), float(carr[2]))
+		elif str(e.get("name", "")) == "Pantalones":
+			pants_col = Color(float(carr[0]), float(carr[1]), float(carr[2]))
+	check(shirt_col.is_equal_approx(Color(0.8, 0.2, 0.1)), "Shirt drops with the victim's top color")
+	check(pants_col.is_equal_approx(Color(0.1, 0.3, 0.7)), "Pants drop with the victim's bottom color")
 	check(names.has("Caña de pescar"), "Back-stored gear drops")
 	check((proxy.get_meta("saved_inventory", []) as Array).is_empty(), "Corpse record cleared after drop")
 	for e in drops:
