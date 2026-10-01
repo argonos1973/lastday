@@ -1066,9 +1066,15 @@ func puppet_set_state_flags(sleeping: bool, sitting: bool, prone: bool, crouchin
 	is_prone = prone
 	is_crouching = crouching
 
+var _puppet_torch_lit := false
+
 func puppet_set_torch(lit: bool) -> void:
 	if not is_puppet:
 		return
+	# El estado encendido viaja por sync_player_state y se re-aplica en cada
+	# rebuild del modelo (_build_third_person_torch fuerza visible=false si
+	# mira el meta torch_lit, que el puppet no tiene).
+	_puppet_torch_lit = lit
 	if torch_light != null:
 		torch_light.visible = lit
 
@@ -1134,8 +1140,9 @@ func _update_puppet_held_item(item_name: String) -> void:
 	_clear_rifle_attachment()
 	# The torch lives in the torch hand socket, not the item root — clear it
 	# when the remote player swaps to anything else.
-	if item_name != "Antorcha" and _torch_hand_root != null and is_instance_valid(_torch_hand_root) and _torch_hand_root.get_child_count() > 0:
-		_clear_torch_attachment()
+	if item_name != "Antorcha":
+		if _torch_hand_root != null and is_instance_valid(_torch_hand_root) and _torch_hand_root.get_child_count() > 0:
+			_clear_torch_attachment()
 		if torch_light != null:
 			torch_light.visible = false
 	# Clear current held item
@@ -2814,7 +2821,11 @@ func _recalculate_carry_capacity() -> void:
 	var old_max: int = inventory.max_slots
 	inventory.max_slots = slots
 	inventory.max_weight = weight
-	if not _initializing and slots < old_max and inventory.items.size() > slots:
+	# Un muerto no expulsa objetos por capacidad: die() desequipa la ropa y cada
+	# unequip reduce los slots, lo que soltaba items (p. ej. el sombrero) antes
+	# de que el servidor repartiera el loot del cadáver — y sus item_dropped
+	# llegaban rechazados (proxy_dead) o duplicados.
+	if not _initializing and not is_dead and slots < old_max and inventory.items.size() > slots:
 		_drop_excess_items(inventory.items.size() - slots)
 
 func _compute_carry_capacity(with_backpack := true) -> Dictionary:
@@ -5055,7 +5066,8 @@ func die(cause: String = "") -> void:
 	_death_anim_played = true
 	death_pose_time = 0.0
 	_apply_view_mode()
-	flashlight.visible = false
+	if flashlight != null:
+		flashlight.visible = false
 	velocity = Vector3.ZERO
 	stats.health = 0.0
 	stats.dead = true
@@ -10228,14 +10240,19 @@ func _build_third_person_torch() -> void:
 
 	# Torch animations from Mixamo handle the arm pose; no manual bone override needed.
 	if torch_light != null:
-		var has_lit_meta = held != null and held.has_meta("torch_lit")
-		var lit_value = false
-		if has_lit_meta:
-			lit_value = bool(held.get_meta("torch_lit", false))
-		if held != null and str(held.item_type) == "tool_torch" and not held.is_broken() and lit_value:
-			torch_light.visible = true
+		if is_puppet:
+			# El puppet no tiene inventario con meta torch_lit: el estado
+			# encendido lo dicta el remoto via puppet_set_torch.
+			torch_light.visible = _puppet_torch_lit
 		else:
-			torch_light.visible = false
+			var has_lit_meta = held != null and held.has_meta("torch_lit")
+			var lit_value = false
+			if has_lit_meta:
+				lit_value = bool(held.get_meta("torch_lit", false))
+			if held != null and str(held.item_type) == "tool_torch" and not held.is_broken() and lit_value:
+				torch_light.visible = true
+			else:
+				torch_light.visible = false
 
 func _detach_torch_light_from_tip() -> void:
 	if torch_light == null or third_person_model == null:
