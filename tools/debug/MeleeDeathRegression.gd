@@ -119,6 +119,14 @@ func _initialize() -> void:
 	# A repeated force-death with the same cause is idempotent.
 	player.die("melee")
 	check(player._beaten_death, "repeated melee death keeps the beaten visual")
+	# The corpse must actually reach the ground — a raw source-axis copy once
+	# left it floating ~2.7 m up (the vertical drop lives in skeleton +Z, not Y).
+	await create_timer(2.6).timeout
+	var hips_idx: int = skel.find_bone("mixamorig_Hips")
+	if hips_idx == -1:
+		hips_idx = skel.find_bone("mixamorig:Hips")
+	var hips_model_y: float = model.to_local(skel.to_global(skel.get_bone_global_pose(hips_idx).origin)).y
+	check(hips_model_y < 0.8, "corpse hips land on the ground (y=%.2f)" % hips_model_y)
 
 	# --- Non-melee death keeps the procedural fall ---
 	var natural: Node = _make_player()

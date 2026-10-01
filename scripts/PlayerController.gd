@@ -4315,6 +4315,66 @@ func _remove_non_hips_position_tracks(animation: Animation, allow_hips_y: bool =
 # the original relative vertical motion (e.g. a crouch/lean) but anchored to
 # the character's actual standing height instead of the source rig's own
 # coordinate baseline, which otherwise causes a visible offset/deformation.
+# Basis product along the node chain root → node (excluding root's own basis):
+# maps positions expressed in `node`'s local space into `root`'s model space.
+func _node_chain_basis(root: Node, node: Node3D) -> Basis:
+	var chain: Array[Node3D] = []
+	var n := node
+	while n != null and n != root:
+		chain.push_front(n)
+		n = n.get_parent()
+	var b := Basis.IDENTITY
+	for c in chain:
+		b = b * c.transform.basis
+	return b
+
+# The death clip's hips track lives in the source rig's skeleton space, whose
+# axes do not match the target rig (source: +Y is forward, +Z is down after the
+# FBX -90°X armature fixup; target: +Y is up). Copying Y→Y leaves the corpse
+# floating ~2.7 m up. Convert the delta through world space instead, keeping
+# only the vertical drop so the body folds down on top of its network spot.
+func _retarget_death_hips_track(animation: Animation, tgt_skel: Skeleton3D, src_anim: Animation, src_skel: Skeleton3D, src_root: Node3D) -> void:
+	if tgt_skel == null or src_skel == null or src_anim == null:
+		return
+	var src_hips := src_skel.find_bone("mixamorig_Hips")
+	if src_hips == -1:
+		src_hips = src_skel.find_bone("mixamorig:Hips")
+	var tgt_hips := tgt_skel.find_bone("mixamorig_Hips")
+	if tgt_hips == -1:
+		tgt_hips = tgt_skel.find_bone("mixamorig:Hips")
+	if src_hips == -1 or tgt_hips == -1:
+		return
+	var src_basis := _node_chain_basis(src_root, src_skel)
+	var tgt_inv := _node_chain_basis(third_person_model, tgt_skel).inverse()
+	var src_rest := src_skel.get_bone_rest(src_hips).origin
+	var tgt_rest := tgt_skel.get_bone_rest(tgt_hips).origin
+	# Read the vertical fall from the untouched source clip…
+	var src_vals: Array[Vector3] = []
+	for t in range(src_anim.get_track_count()):
+		if src_anim.track_get_type(t) != Animation.TYPE_POSITION_3D:
+			continue
+		var p := str(src_anim.track_get_path(t))
+		if p.find("Hips") < 0:
+			continue
+		var kc := src_anim.track_get_key_count(t)
+		for k in range(kc):
+			var src_val: Vector3 = src_anim.track_get_key_value(t, k)
+			var world_delta := src_basis * (src_val - src_rest)
+			src_vals.append(Vector3(0.0, world_delta.y, 0.0))
+	# …and write it back into the target clip's hips track (already rest-locked).
+	var i := 0
+	for t in range(animation.get_track_count()):
+		if animation.track_get_type(t) != Animation.TYPE_POSITION_3D:
+			continue
+		var p := str(animation.track_get_path(t))
+		if p.find("Hips") < 0:
+			continue
+		var kc := animation.track_get_key_count(t)
+		for k in range(kc):
+			if i < src_vals.size():
+				animation.track_set_key_value(t, k, tgt_rest + tgt_inv * src_vals[i])
+				i += 1
+
 func _normalize_hips_anim_y_offset(animation: Animation, skeleton: Skeleton3D) -> void:
 	if skeleton == null:
 		return
@@ -9643,10 +9703,11 @@ func _load_melee_death_animation() -> void:
 	copied.step = 0.0166667
 	_retarget_animation_to_character_skeleton(copied)
 	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
-	# Keep the animated hips Y so the body actually drops to the ground; X/Z stay
-	# locked to the rest pose so the corpse remains centered on the network spot.
-	_remove_non_hips_position_tracks(copied, false, 0.0, true)
-	_normalize_hips_anim_y_offset(copied, skel)
+	# Lock every position track to rest (hips included), then write the hips
+	# fall back in — converted through world space because the rig's skeleton
+	# axes differ from plain Y-up (the vertical drop lives in skeleton +Z).
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	_retarget_death_hips_track(copied, skel, best_anim, src_skeleton, instance)
 	instance.queue_free()
 	var death_lib: AnimationLibrary = AnimationLibrary.new()
 	death_lib.add_animation(THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION, copied)
