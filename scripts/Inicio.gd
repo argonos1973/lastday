@@ -906,6 +906,9 @@ func _update_char_view() -> void:
 
 const PREVIEW_IDLE_SCENE := "res://assets/animations/Idle.fbx"
 static var _preview_idle_anim: Animation = null
+# Rest rotations del esqueleto fuente (Idle.fbx): el rig FBX liga con otros
+# ejes que los GLB y las rotaciones absolutas tuerce la pose (cabeza girada).
+static var _preview_idle_rest: Dictionary = {}
 
 func _load_preview_idle_animation() -> Animation:
 	if _preview_idle_anim != null:
@@ -918,6 +921,10 @@ func _load_preview_idle_animation() -> Animation:
 	if player == null:
 		inst.free()
 		return null
+	var src_skel := SaveIntegration._find_skeleton(inst)
+	if src_skel != null:
+		for i in range(src_skel.get_bone_count()):
+			_preview_idle_rest[src_skel.get_bone_name(i)] = src_skel.get_bone_rest(i).basis.get_rotation_quaternion()
 	var best: Animation = null
 	for anim_name in player.get_animation_list():
 		var a := player.get_animation(anim_name)
@@ -979,11 +986,25 @@ func _retarget_preview_animation(anim: Animation, model: Node, player: Animation
 		if colon < 0:
 			anim.remove_track(t)
 			continue
-		var bone := _resolve_preview_bone(skel, path_text.substr(colon + 1))
-		if bone.is_empty() or anim.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+		var src_bone := path_text.substr(colon + 1)
+		var bone := _resolve_preview_bone(skel, src_bone)
+		# La toma mixamo_com lleva un gesto de "mirar alrededor" en cuello y
+		# cabeza — para el menu el personaje debe mirar al frente siempre.
+		if bone.is_empty() or anim.track_get_type(t) != Animation.TYPE_ROTATION_3D or bone.find("Head") >= 0 or bone.find("Neck") >= 0:
 			anim.remove_track(t)
 			continue
 		anim.track_set_path(t, NodePath("%s:%s" % [skel_path, bone]))
+		# Compensa el rest pose distinto del rig fuente (misma formula que
+		# PlayerController._retarget_rotation_tracks): new = tgt*src^-1*old.
+		var src_rest: Quaternion = _preview_idle_rest.get(src_bone, Quaternion.IDENTITY)
+		var tgt_idx := skel.find_bone(bone)
+		var tgt_rest := skel.get_bone_rest(tgt_idx).basis.get_rotation_quaternion()
+		var offset := tgt_rest * src_rest.inverse()
+		if offset == Quaternion.IDENTITY:
+			continue
+		for k in range(anim.track_get_key_count(t)):
+			var rot: Quaternion = anim.track_get_key_value(t, k)
+			anim.track_set_key_value(t, k, offset * rot)
 
 func _resolve_preview_bone(skel: Skeleton3D, name_in: String) -> String:
 	var candidates: Array = [name_in]

@@ -20,7 +20,11 @@ func run() -> void:
 		return
 	var scene = packed.instantiate()
 	root.add_child(scene)
-	for frame in range(60):
+	var _n := 60
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--frames="):
+			_n = int(argument.trim_prefix("--frames="))
+	for frame in range(_n):
 		await process_frame
 	await RenderingServer.frame_post_draw
 	var output := "/tmp/lastday_inicio.png"

@@ -70,6 +70,15 @@ func _run() -> void:
 	_ok(retargeted != null and retargeted.get_track_count() > 0, "retargeted idle keeps tracks (%d)" % (retargeted.get_track_count() if retargeted else -1))
 	_ok(ok_paths > 0, "retargeted tracks resolve on Remy skeleton (%d)" % ok_paths)
 	_ok(retargeted != null and retargeted.loop_mode == Animation.LOOP_LINEAR, "idle loops")
+	# La toma mixamo_com lleva "mirar alrededor" en cuello/cabeza — el menu
+	# debe mantener la cabeza al frente: esas pistas no se retargetan.
+	var head_tracks := 0
+	if retargeted != null:
+		for t in range(retargeted.get_track_count()):
+			var p := str(retargeted.track_get_path(t))
+			if p.find("Head") >= 0 or p.find("Neck") >= 0:
+				head_tracks += 1
+	_ok(head_tracks == 0, "head/neck tracks dropped (idle must face forward)")
 	# La pose realmente cambia al avanzar el player (no es un play muerto).
 	if player != null and skel != null:
 		var spine_idx := skel.find_bone("mixamorig_Spine")
