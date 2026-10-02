@@ -2,6 +2,8 @@ extends Node3D
 ## Shared fire/smoke for placed fires and the held torch. Parent owns lifetime.
 var small := false
 var flicker := true
+## World-space point where smoke is emitted (house chimney top). null = at the fire.
+var smoke_origin: Variant = null
 var _flame: CPUParticles3D
 var _smoke: CPUParticles3D
 var _phase := 0.0
@@ -14,6 +16,8 @@ func _ready() -> void:
 	_smoke = _make_particles(true)
 	add_child(_flame)
 	add_child(_smoke)
+	if smoke_origin is Vector3:
+		_smoke.global_position = smoke_origin
 
 func _make_particles(smoke: bool) -> CPUParticles3D:
 	var particles := CPUParticles3D.new()

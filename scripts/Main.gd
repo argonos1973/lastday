@@ -177,6 +177,9 @@ var _server_stdin_thread: Thread = null
 var campfire_positions: Array = []
 var torch_fire_positions: Array = []
 var campfire_fire_timers: Dictionary = {}
+# House chimney records: {"bounds": Rect2 footprint, "top": Vector3 world exit}.
+# Fires lit inside a house emit smoke from the chimney instead of indoors.
+var _house_chimneys: Array = []
 var game_over := false
 var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
@@ -11364,6 +11367,10 @@ func _create_house_details(origin: Vector3, label: String, width: float, depth: 
 	var chimney_x: float = half_w * 0.46 * style["chimney_side"]
 	var chimney_y := height - 0.1 + rise * (1.0 - absf(chimney_x) / run) + 0.2
 	_create_static_box(label + " Chimney", origin + Vector3(chimney_x, chimney_y, -(half_d * 0.38)), Vector3(0.62, 1.5, 0.62), Color(0.25, 0.22, 0.19))
+	_house_chimneys.append({
+		"bounds": Rect2(Vector2(origin.x - half_w, origin.z - half_d), Vector2(width, depth)),
+		"top": origin + Vector3(chimney_x, chimney_y + 1.58, -(half_d * 0.38)),
+	})
 	_create_house_doorway(origin, label, half_d, height)
 	_create_house_windows(origin, label, half_w, half_d, front_seg_c, height, win_w, win_h)
 	preload("res://scripts/VillageArchitecture.gd").decorate(self, origin, label, width, depth, height, front_seg_c, win_w, style)
@@ -11708,6 +11715,13 @@ func _create_house_interior(origin: Vector3, label: String, id_prefix: String, w
 					if stove_actual_gap < -0.001:
 						push_warning("[STOVE] %s OVERLAP with cabinet! Gap=%.4f" % [label, stove_actual_gap])
 
+func _chimney_top_for(pos: Vector3) -> Variant:
+	var p := Vector2(pos.x, pos.z)
+	for rec in _house_chimneys:
+		if (rec["bounds"] as Rect2).has_point(p):
+			return rec["top"]
+	return null
+
 func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	campfire_positions.append(pos)
 	# Store expiry time (5 minutes from now)
@@ -11729,6 +11743,9 @@ func _create_campfire_fire(pos: Vector3, node_name: String) -> void:
 	var effects := preload("res://scripts/FireVisuals.gd").new()
 	effects.name = "FireVisuals"
 	effects.small = false
+	var chimney_top: Variant = _chimney_top_for(pos)
+	if chimney_top is Vector3:
+		effects.smoke_origin = chimney_top
 	light.add_child(effects)
 
 func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit: bool = false, quantity: int = 1) -> void:
@@ -11783,6 +11800,9 @@ func _create_torch_fire(node_name: String, pos: Vector3, durability: float) -> v
 	var effects := preload("res://scripts/FireVisuals.gd").new()
 	effects.name = "FireVisuals"
 	effects.small = true
+	var torch_chimney_top: Variant = _chimney_top_for(pos)
+	if torch_chimney_top is Vector3:
+		effects.smoke_origin = torch_chimney_top
 	light.add_child(effects)
 
 func _create_visible_house_interior_details(_origin: Vector3, _label: String) -> void:
