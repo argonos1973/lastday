@@ -505,14 +505,14 @@ func _on_single_player() -> void:
 	# quita y se restaura la tarjeta que el jugador tenia elegida.
 	_set_picker_locked(false)
 	_mode = "single"
-	_restore_prejoin_card()
+	_exit_join_pick()
 	_apply_char_selection()
 	_start_game()
 
 func _on_host() -> void:
 	if _started:
 		return
-	_restore_prejoin_card()
+	_exit_join_pick()
 	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	if _net.host_game():
@@ -663,7 +663,7 @@ func _prompt_player_name() -> void:
 				_net.close_connection()
 				_net = null
 			_mode = ""
-			_restore_prejoin_card()
+			_exit_join_pick()
 			if _status_label != null:
 				_status_label.text = "Conexion cancelada")
 		btn_row.add_child(btn_cancel)
@@ -832,7 +832,7 @@ func _on_net_failed() -> void:
 		_status_label.text = "Fallo de conexion"
 	_set_picker_locked(false)
 	_mode = ""
-	_restore_prejoin_card()
+	_exit_join_pick()
 	_net = null
 
 func _start_game() -> void:
@@ -920,6 +920,16 @@ func _restore_prejoin_card() -> void:
 			_char_index = i
 			break
 	_prejoin_card_id = ""
+
+func _exit_join_pick() -> void:
+	# La tarjeta saved_server solo existe mientras el servidor la tiene
+	# reclamada: al salir del join sin entrar se retira para que nunca quede
+	# como "partida" seleccionable.
+	for i in range(CHAR_CONFIGS.size() - 1, -1, -1):
+		if str(CHAR_CONFIGS[i].get("id", "")) == "saved_server":
+			CHAR_CONFIGS.remove_at(i)
+	_restore_prejoin_card()
+	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
 	_update_char_view()
 
 func _on_char_next() -> void:

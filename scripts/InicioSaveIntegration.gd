@@ -10,42 +10,16 @@ static func maybe_insert_saved_character(inicio: Node) -> void:
 	var existing_ids: Array = []
 	for c in inicio.CHAR_CONFIGS:
 		existing_ids.append(str(c.get("id", "")))
-	# Server-saved character first so the local save stays at index 0
-	var net = inicio.get_node_or_null("/root/NetworkManager")
-	if sgm.has_server_save() and net != null and not existing_ids.has("saved_server"):
-		var server_save: Dictionary = sgm.load_server_game()
-		var pdata: Dictionary = server_save.get("players", {}).get(str(net.client_id), {})
-		if not pdata.is_empty():
-			var scfg := _server_character_config(pdata)
-			if not scfg.is_empty():
-				inicio.CHAR_CONFIGS.insert(0, scfg)
+	# La tarjeta saved_server nunca se ofrece en reposo: en multiplayer el
+	# personaje lo decide el servidor — el reclaim la inserta bajo bloqueo y
+	# un personaje nuevo nace de las tarjetas base. Solo la partida local es
+	# seleccionable en el menu.
 	if not sgm.has_save() or existing_ids.has("saved"):
 		return
 	var saved_cfg: Dictionary = sgm.get_saved_character_config()
 	if saved_cfg.is_empty():
 		return
 	inicio.CHAR_CONFIGS.insert(0, saved_cfg)
-
-# Build a character card from a server-save player entry. Two payload shapes
-# exist: the lightweight proxy dict (remote players) and the full
-# collect_player_data dict (the hosting player).
-static func _server_character_config(pdata: Dictionary) -> Dictionary:
-	var name := str(pdata.get("char_name", ""))
-	if name.is_empty():
-		name = "Superviviente"
-	return {
-		"id": "saved_server",
-		"name": name,
-		"top": _str_to_color(str(pdata.get("top_color", "0.5,0.5,0.5"))),
-		"bottom": _str_to_color(str(pdata.get("bottom_color", "0.3,0.3,0.3"))),
-		"shoes": _str_to_color(str(pdata.get("shoes_color", "0.15,0.15,0.15"))),
-		"hair": _str_to_color(str(pdata.get("hair_color", "0.2,0.15,0.1"))),
-		"skin": _str_to_color(str(pdata.get("skin_color", "0.8,0.7,0.6"))),
-		"top_camo": pdata.get("top_camo", false),
-		"bottom_camo": pdata.get("bottom_camo", false),
-		"is_saved": true,
-		"is_server_save": true,
-	}
 
 # Player payload for a saved card: local savegame for single-player cards,
 # server_savegame.json players[client_id] for server cards. A "server_pd"

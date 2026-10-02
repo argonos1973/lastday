@@ -10,6 +10,20 @@ extends SceneTree
 
 var _failures := 0
 
+class FakeSGM extends Node:
+	# Simula un SaveGameManager con partida local y save de servidor.
+	func has_save() -> bool:
+		return true
+	func has_server_save() -> bool:
+		return true
+	func load_server_game() -> Dictionary:
+		return {"players": {"cid1": {"char_name": "SrvChar", "top_color": "0.4,0.4,0.4"}}}
+	func get_saved_character_config() -> Dictionary:
+		return {"id": "saved", "name": "Local", "top": Color(0.3,0.3,0.3),
+			"bottom": Color(0.2,0.2,0.2), "shoes": Color(0.1,0.1,0.1),
+			"hair": Color(0.2,0.15,0.1), "skin": Color(0.8,0.7,0.6),
+			"is_saved": true}
+
 func _ok(cond: bool, msg: String) -> void:
 	if cond:
 		print("PASS: %s" % msg)
@@ -172,7 +186,7 @@ func _run() -> void:
 		"is_saved": true,
 	})
 	inicio._char_index = 0
-	inicio._prejoin_card_id = "saved_server"
+	inicio._prejoin_card_id = "saved"
 	inicio._mode = "join"
 	inicio._clamp_to_selectable_card()
 	_ok(not inicio._is_mp_save_card(inicio.CHAR_CONFIGS[inicio._char_index]),
@@ -185,20 +199,65 @@ func _run() -> void:
 	_ok(not seen_ids.has("saved") and not seen_ids.has("saved_server"),
 		"join nav never lands on save cards (saw %s)" % str(seen_ids.keys()))
 	_ok(seen_ids.has("remy") and seen_ids.has("dris"), "join nav still reaches base characters")
-	# De vuelta al menu (fallo/cancel/single): se restaura la tarjeta previa.
+	# De vuelta al menu (fallo/cancel/single): la tarjeta del servidor se
+	# retira y se restaura la tarjeta previa al join.
 	inicio._mode = ""
-	inicio._restore_prejoin_card()
-	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "saved_server",
+	inicio._exit_join_pick()
+	var ss_left := false
+	for c in inicio.CHAR_CONFIGS:
+		if str(c.get("id", "")) == "saved_server":
+			ss_left = true
+	_ok(not ss_left, "leaving join removes the transient server card")
+	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "saved",
 		"leaving join restores the previously selected card")
+	inicio._on_char_next()
 	inicio._on_char_prev()
 	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "saved",
-		"menu nav reaches save cards again")
+		"menu nav reaches the local save card again")
 	inicio._prejoin_card_id = ""
 	inicio._mode = "join"
 	inicio._on_char_prev()
 	_ok(not inicio._is_mp_save_card(inicio.CHAR_CONFIGS[inicio._char_index]),
 		"join prev arrow also skips save cards")
 	inicio._mode = ""
+
+	# --- 8) saved_server nunca existe en reposo ---
+	# Limpia las tarjetas insertadas por los tests anteriores.
+	for i in range(inicio.CHAR_CONFIGS.size() - 1, -1, -1):
+		var cid := str(inicio.CHAR_CONFIGS[i].get("id", ""))
+		if cid == "saved" or cid == "saved_server":
+			inicio.CHAR_CONFIGS.remove_at(i)
+	var fsgm := FakeSGM.new()
+	fsgm.name = "SaveGameManager"
+	root.add_child(fsgm)
+	SaveInt.maybe_insert_saved_character(inicio)
+	var srv_count := 0
+	var saved_count := 0
+	for c in inicio.CHAR_CONFIGS:
+		var cid := str(c.get("id", ""))
+		if cid == "saved_server":
+			srv_count += 1
+		elif cid == "saved":
+			saved_count += 1
+	_ok(srv_count == 0, "resting picker never gets a saved_server card")
+	_ok(saved_count == 1, "local save card still offered for single player")
+
+	# El reclaim la inserta (locked); salir del join la retira de nuevo.
+	inicio._mode = "join"
+	var lock_idx: int = inicio._upsert_server_card(payload)
+	_ok(str(inicio.CHAR_CONFIGS[lock_idx].get("id", "")) == "saved_server",
+		"reclaim inserts the server card")
+	inicio._char_index = 2
+	inicio._prejoin_card_id = "marc"
+	inicio._exit_join_pick()
+	var still_there := false
+	for c in inicio.CHAR_CONFIGS:
+		if str(c.get("id", "")) == "saved_server":
+			still_there = true
+	_ok(not still_there, "exit join removes the transient server card")
+	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "marc",
+		"exit join restores the prejoin card")
+	fsgm.queue_free()
 
 	inicio.queue_free()
 	print("PreviewLockRegression: %s" % ("ALL PASS" if _failures == 0 else "%d FAILURES" % _failures))
