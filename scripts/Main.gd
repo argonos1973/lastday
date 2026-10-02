@@ -2368,11 +2368,15 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 	var args := _saved_appearance_args(cid)
 	if not args.is_empty():
 		payload["char_name"] = args[0]
-		payload["top"] = args[1]
-		payload["bottom"] = args[2]
-		payload["shoes"] = args[3]
-		payload["hair"] = args[4]
-		payload["skin"] = args[5]
+		# Records without synced colors parse to alpha=0 — sending them would
+		# paint the locked card (and the player via _send_character_appearance)
+		# pitch black. Only forward real colors; the client falls back to its
+		# last-known card colors (same guard as _apply_restored_appearance).
+		var color_keys := ["top", "bottom", "shoes", "hair", "skin"]
+		for i in range(color_keys.size()):
+			var c: Color = args[i + 1]
+			if c.a > 0.0:
+				payload[color_keys[i]] = c
 		payload["top_camo"] = args[6]
 		payload["bottom_camo"] = args[7]
 	var clothing := ""

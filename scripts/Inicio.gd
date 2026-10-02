@@ -754,20 +754,40 @@ func _on_server_character_locked(payload: Dictionary) -> void:
 	if _mode == "join" and not _started and not _name_request_pending and _btn_enter != null and _net != null and _net.is_connected:
 		_btn_enter.visible = true
 
+# Solo colores con alpha>0 cuentan: un registro sin apariencia produce
+# Color(0,0,0,0) y pintaria la tarjeta — y el personaje — de negro.
+# Server colors with alpha 0 mean "no data" (record never synced appearance) —
+# transparent black would paint the character pitch black. Keep the card's
+# previous color when valid, else the project default. Never propagate a==0.
+static func _payload_color(payload: Dictionary, key: String, existing: Variant, default_color: Color) -> Color:
+	var c: Variant = payload.get(key, null)
+	if c is Color and c.a > 0.0:
+		return c
+	if existing is Color and existing.a > 0.0:
+		return existing
+	return default_color
+
 func _upsert_server_card(payload: Dictionary) -> int:
 	var char_name := str(payload.get("char_name", ""))
 	if char_name.is_empty() or char_name.begins_with("Jugador_"):
 		char_name = "Superviviente"
+	# Fallbacks: colores de la tarjeta saved_server existente (ultimo estado
+	# conocido local) o los defaults si nunca hubo una.
+	var existing := {}
+	for c in CHAR_CONFIGS:
+		if str(c.get("id", "")) == "saved_server":
+			existing = c
+			break
 	var cfg := {
 		"id": "saved_server",
 		"name": char_name,
-		"top": payload.get("top", Color(0.5, 0.5, 0.5)),
-		"bottom": payload.get("bottom", Color(0.3, 0.3, 0.3)),
-		"shoes": payload.get("shoes", Color(0.15, 0.15, 0.15)),
-		"hair": payload.get("hair", Color(0.2, 0.15, 0.1)),
-		"skin": payload.get("skin", Color(0.8, 0.7, 0.6)),
-		"top_camo": bool(payload.get("top_camo", false)),
-		"bottom_camo": bool(payload.get("bottom_camo", false)),
+		"top": _payload_color(payload, "top", existing.get("top"), Color(0.5, 0.5, 0.5)),
+		"bottom": _payload_color(payload, "bottom", existing.get("bottom"), Color(0.3, 0.3, 0.3)),
+		"shoes": _payload_color(payload, "shoes", existing.get("shoes"), Color(0.15, 0.15, 0.15)),
+		"hair": _payload_color(payload, "hair", existing.get("hair"), Color(0.2, 0.15, 0.1)),
+		"skin": _payload_color(payload, "skin", existing.get("skin"), Color(0.8, 0.7, 0.6)),
+		"top_camo": bool(payload.get("top_camo", existing.get("top_camo", false))),
+		"bottom_camo": bool(payload.get("bottom_camo", existing.get("bottom_camo", false))),
 		"is_saved": true,
 		"is_server_save": true,
 		"server_pd": {

@@ -144,6 +144,19 @@ func _run() -> void:
 	_ok(str(ef.get("held_item", "")) == "Cuchillo", "equipment fields carry held item")
 	_ok(int(ef.get("survival_seconds", 0)) == 1500, "equipment fields carry survival time")
 
+	# Un payload sin colores reales (registro sin apariencia -> alpha 0) no
+	# debe pintar la tarjeta de negro: conserva los colores ya conocidos.
+	var bare := {"char_name": "Sami", "top": Color(0,0,0,0), "skin": Color(0,0,0,0)}
+	var idx2: int = inicio._upsert_server_card(bare)
+	var cfg2: Dictionary = inicio.CHAR_CONFIGS[idx2]
+	_ok((cfg2["top"] as Color).a > 0.0, "zero-alpha top falls back to known color")
+	_ok((cfg2["skin"] as Color).a > 0.0, "zero-alpha skin falls back to known color")
+	_ok((cfg2["top"] as Color) == Color(0.4, 0.5, 0.2), "keeps previous card colors when payload has none")
+	# Una tarjeta ya ennegrecida por un payload anterior se cura a defaults.
+	inicio.CHAR_CONFIGS[idx2]["skin"] = Color(0,0,0,0)
+	var idx3: int = inicio._upsert_server_card(bare)
+	_ok(inicio.CHAR_CONFIGS[idx3]["skin"] == Color(0.8, 0.7, 0.6), "stale zero-alpha card color heals to default")
+
 	# --- 6) needs_name (personaje nuevo/muerto): picker libre ---
 	inicio._set_picker_locked(false)
 	_ok(not inicio._mp_locked, "unlock releases the flag")
