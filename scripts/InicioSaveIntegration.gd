@@ -48,8 +48,12 @@ static func _server_character_config(pdata: Dictionary) -> Dictionary:
 	}
 
 # Player payload for a saved card: local savegame for single-player cards,
-# server_savegame.json players[client_id] for server cards.
+# server_savegame.json players[client_id] for server cards. A "server_pd"
+# payload embedded in the card wins — it carries the live equipment the
+# server sent on reclaim, fresher than the local preview file.
 static func _saved_player_data(inicio: Node, cfg: Dictionary) -> Dictionary:
+	if cfg.has("server_pd"):
+		return cfg["server_pd"]
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
 	if sgm == null:
 		return {}
@@ -65,6 +69,8 @@ static func _saved_player_data(inicio: Node, cfg: Dictionary) -> Dictionary:
 static func _equipment_fields(pd: Dictionary) -> Dictionary:
 	return {
 		"equipped_clothing": str(pd.get("equipped_clothing", pd.get("clothing", ""))),
+		"equipped_backpack": str(pd.get("equipped_backpack", pd.get("backpack", ""))),
+		"held_item": str(pd.get("held_item", "")),
 		"inventory": pd.get("inventory", []),
 		"survival_seconds": _survival_seconds(pd),
 	}

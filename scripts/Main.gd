@@ -2360,6 +2360,54 @@ func _saved_appearance_args(cid: String) -> Array:
 		SaveHooksScript._str_to_color(str(saved.get("skin_color", ""))),
 		bool(saved.get("top_camo", false)), bool(saved.get("bottom_camo", false))]
 
+# Payload for NetworkManager.notify_character_locked — the locked menu card
+# for a reclaiming client: server-owned appearance plus the equipment the
+# character is carrying right now, so the preview shows it as it is in-game.
+func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
+	var payload: Dictionary = {}
+	var args := _saved_appearance_args(cid)
+	if not args.is_empty():
+		payload["char_name"] = args[0]
+		payload["top"] = args[1]
+		payload["bottom"] = args[2]
+		payload["shoes"] = args[3]
+		payload["hair"] = args[4]
+		payload["skin"] = args[5]
+		payload["top_camo"] = args[6]
+		payload["bottom_camo"] = args[7]
+	var clothing := ""
+	var backpack := ""
+	var held := ""
+	var inventory: Array = []
+	var survival_seconds := 0.0
+	# The live proxy just rebound to this peer is authoritative; the baseline
+	# record is the fallback for proxies that never synced equipment metas.
+	if server_proxies.has(peer_id):
+		var proxy: Node3D = server_proxies[peer_id]
+		clothing = str(proxy.get_meta("saved_clothing", ""))
+		backpack = str(proxy.get_meta("saved_backpack", ""))
+		held = str(proxy.get_meta("saved_held_item", ""))
+		inventory = proxy.get_meta("saved_inventory", [])
+		var ex: Dictionary = proxy.get_meta("saved_extra", {})
+		survival_seconds = float(ex.get("stats_extra", {}).get("survival_seconds", 0.0))
+	var saved: Dictionary = _server_saved_players.get(cid, {})
+	if clothing.is_empty():
+		clothing = str(saved.get("clothing", ""))
+	if backpack.is_empty():
+		backpack = str(saved.get("backpack", ""))
+	if held.is_empty():
+		held = str(saved.get("held_item", ""))
+	if inventory.is_empty():
+		inventory = saved.get("inventory", [])
+	if survival_seconds <= 0.0:
+		survival_seconds = float(saved.get("extra", {}).get("stats_extra", {}).get("survival_seconds", 0.0))
+	payload["equipped_clothing"] = clothing
+	payload["equipped_backpack"] = backpack
+	payload["held_item"] = held
+	payload["inventory"] = inventory
+	payload["survival_seconds"] = survival_seconds
+	return payload
+
 func _delayed_send_saved_appearance(peer_id: int, cid: String) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting: return

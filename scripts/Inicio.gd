@@ -21,11 +21,19 @@ var _scan_subnet := "192.168.0"
 
 var _char_index := 0
 var _char_name_label: Label = null
+var _char_title_label: Label = null
 var _char_preview_anchor: Node3D = null
 var _char_preview_cam: Camera3D = null
+var _btn_prev: Button = null
+var _btn_next: Button = null
+var _btn_enter: Button = null
 var _name_panel: PanelContainer = null
 var _name_edit: LineEdit = null
 var _name_request_pending := false
+# El servidor reivindico un personaje vivo: el selector queda bloqueado sobre
+# la tarjeta saved_server hasta entrar. Solo se libera en partida nueva o
+# tras morir (cuando el servidor pide nombre).
+var _mp_locked := false
 
 # Los args de linea de comandos persisten durante todo el proceso. Este flag
 # evita que volver al menu (p.ej. con Shift+Q) rearranque el juego solo.
@@ -269,6 +277,19 @@ func _ready() -> void:
 	_status_label.custom_minimum_size = Vector2(240, 24)
 	vbox.add_child(_status_label)
 
+	# Boton "Entrar" para el personaje bloqueado del servidor: aparece solo
+	# cuando el servidor reclama un personaje vivo tras conectar.
+	_btn_enter = Button.new()
+	_btn_enter.text = "  Entrar"
+	_btn_enter.custom_minimum_size = Vector2(240, 44)
+	_btn_enter.add_theme_font_size_override("font_size", 17)
+	_btn_enter.add_theme_stylebox_override("normal", btn_style)
+	_btn_enter.add_theme_stylebox_override("hover", btn_hover)
+	_btn_enter.add_theme_stylebox_override("pressed", btn_pressed)
+	_btn_enter.visible = false
+	_btn_enter.pressed.connect(_on_enter_locked)
+	vbox.add_child(_btn_enter)
+
 	# --- Right panel: Character selection ---
 	var char_panel := PanelContainer.new()
 	char_panel.position = Vector2(screen_w * 0.5 - total_w * 0.5 + left_panel_w + 40, screen_h - 440)
@@ -302,6 +323,7 @@ func _ready() -> void:
 	char_title.add_theme_font_size_override("font_size", 20)
 	char_title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
 	char_vbox.add_child(char_title)
+	_char_title_label = char_title
 
 	_char_name_label = Label.new()
 	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -356,6 +378,7 @@ func _ready() -> void:
 	prev_btn.add_theme_stylebox_override("pressed", btn_pressed)
 	prev_btn.pressed.connect(_on_char_prev)
 	nav_hbox.add_child(prev_btn)
+	_btn_prev = prev_btn
 
 	var next_btn := Button.new()
 	next_btn.text = ">"
@@ -366,6 +389,7 @@ func _ready() -> void:
 	next_btn.add_theme_stylebox_override("pressed", btn_pressed)
 	next_btn.pressed.connect(_on_char_next)
 	nav_hbox.add_child(next_btn)
+	_btn_next = next_btn
 
 	_update_char_view()
 
@@ -472,6 +496,8 @@ func _exit_tree() -> void:
 func _on_single_player() -> void:
 	if _started:
 		return
+	# Un jugador: seleccion libre — cualquier bloqueo de un join previo se quita.
+	_set_picker_locked(false)
 	_apply_char_selection()
 	_mode = "single"
 	_start_game()
@@ -510,14 +536,18 @@ func _on_join() -> void:
 	_begin_join(ip)
 
 func _begin_join(target: String) -> void:
-	_apply_char_selection()
+	# La tarjeta elegida no se aplica todavia: si el servidor reclama un
+	# personaje vivo, la seleccion queda bloqueada a ese personaje; si pide
+	# nombre (personaje nuevo o muerto) se aplica la tarjeta elegida entonces.
 	_net = get_node("/root/NetworkManager")
 	_net.connection_succeeded.connect(_on_net_connected)
 	_net.connection_failed.connect(_on_net_failed)
 	_net.auth_rejected.connect(_on_auth_rejected)
 	_net.all_players_ready.connect(_on_net_ready)
 	_net.player_name_required.connect(_on_player_name_required)
+	_net.server_character_locked.connect(_on_server_character_locked)
 	_name_request_pending = false
+	_set_picker_locked(false)
 	_rejected = false
 	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
 	if _net.join_game(target, pw):
@@ -641,6 +671,9 @@ func _on_name_confirmed() -> void:
 		return
 	_name_panel.visible = false
 	_name_request_pending = false
+	# La seleccion local se aplica aqui: para personaje nuevo/muerto vale la
+	# tarjeta elegida; en reclaim con placeholder queda la del servidor.
+	_apply_char_selection()
 	# El nombre tecleado es el nombre del personaje en este servidor.
 	var gsess := get_node_or_null("/root/GameSession")
 	if gsess != null:
@@ -690,11 +723,83 @@ func _maybe_start_game() -> void:
 	if _name_request_pending:
 		_prompt_player_name()
 		return
+	# Personaje reclamado: el picker ya muestra la tarjeta del servidor; el
+	# mundo arranca al pulsar Entrar para que se vea el equipo que lleva.
+	if _mp_locked:
+		if _btn_enter != null:
+			_btn_enter.visible = true
+		if _status_label != null:
+			_status_label.text = "Tu personaje sigue en el servidor"
+		return
 	_start_game()
+
+func _on_enter_locked() -> void:
+	if _started or not _mp_locked:
+		return
+	_start_game()
+
+# El servidor reivindico el personaje vivo de este cliente: inserta/actualiza
+# la tarjeta saved_server con los datos reales de la partida, salta a ella y
+# bloquea las flechas. La apariencia/equipo vienen del servidor, no del save
+# local, asi el preview muestra exactamente lo que lleva puesto en juego.
+func _on_server_character_locked(payload: Dictionary) -> void:
+	_char_index = _upsert_server_card(payload)
+	_update_char_view()
+	# GameSession debe llevar el personaje del servidor: sync/restores lo usan.
+	_apply_char_selection()
+	_set_picker_locked(true)
+	if _status_label != null and _status_label.text.begins_with("Conect"):
+		_status_label.text = "Personaje encontrado en el servidor"
+	# Si la lista ya llego antes que este aviso, respeta tambien el Entrar.
+	if _mode == "join" and not _started and not _name_request_pending and _btn_enter != null and _net != null and _net.is_connected:
+		_btn_enter.visible = true
+
+func _upsert_server_card(payload: Dictionary) -> int:
+	var char_name := str(payload.get("char_name", ""))
+	if char_name.is_empty() or char_name.begins_with("Jugador_"):
+		char_name = "Superviviente"
+	var cfg := {
+		"id": "saved_server",
+		"name": char_name,
+		"top": payload.get("top", Color(0.5, 0.5, 0.5)),
+		"bottom": payload.get("bottom", Color(0.3, 0.3, 0.3)),
+		"shoes": payload.get("shoes", Color(0.15, 0.15, 0.15)),
+		"hair": payload.get("hair", Color(0.2, 0.15, 0.1)),
+		"skin": payload.get("skin", Color(0.8, 0.7, 0.6)),
+		"top_camo": bool(payload.get("top_camo", false)),
+		"bottom_camo": bool(payload.get("bottom_camo", false)),
+		"is_saved": true,
+		"is_server_save": true,
+		"server_pd": {
+			"clothing": str(payload.get("equipped_clothing", "")),
+			"backpack": str(payload.get("equipped_backpack", "")),
+			"held_item": str(payload.get("held_item", "")),
+			"inventory": payload.get("inventory", []),
+			"extra": {"stats_extra": {"survival_seconds": float(payload.get("survival_seconds", 0.0))}},
+		},
+	}
+	for i in range(CHAR_CONFIGS.size()):
+		if str(CHAR_CONFIGS[i].get("id", "")) == "saved_server":
+			CHAR_CONFIGS[i] = cfg
+			return i
+	CHAR_CONFIGS.push_front(cfg)
+	return 0
+
+func _set_picker_locked(locked: bool) -> void:
+	_mp_locked = locked
+	if _btn_prev != null:
+		_btn_prev.disabled = locked
+	if _btn_next != null:
+		_btn_next.disabled = locked
+	if _char_title_label != null:
+		_char_title_label.text = "PERSONAJE EN SERVIDOR" if locked else "SELECCIONA PERSONAJE"
+	if not locked and _btn_enter != null:
+		_btn_enter.visible = false
 
 func _on_net_failed() -> void:
 	if _status_label != null and not _rejected:
 		_status_label.text = "Fallo de conexion"
+	_set_picker_locked(false)
 	_net = null
 
 func _start_game() -> void:
@@ -756,10 +861,14 @@ func _apply_char_selection() -> void:
 		SaveIntegration.apply_saved_camo(gsess, cfg)
 
 func _on_char_next() -> void:
+	if _mp_locked:
+		return
 	_char_index = (_char_index + 1) % CHAR_CONFIGS.size()
 	_update_char_view()
 
 func _on_char_prev() -> void:
+	if _mp_locked:
+		return
 	_char_index = (_char_index - 1 + CHAR_CONFIGS.size()) % CHAR_CONFIGS.size()
 	_update_char_view()
 
@@ -795,7 +904,54 @@ func _update_char_view() -> void:
 				_fit_char_preview(model, false)
 				_play_preview_animation(model)
 
+const PREVIEW_IDLE_SCENE := "res://assets/animations/Idle.fbx"
+static var _preview_idle_anim: Animation = null
+
+func _load_preview_idle_animation() -> Animation:
+	if _preview_idle_anim != null:
+		return _preview_idle_anim
+	var packed := load(PREVIEW_IDLE_SCENE)
+	if not (packed is PackedScene):
+		return null
+	var inst := (packed as PackedScene).instantiate()
+	var player := _find_animation_player(inst)
+	if player == null:
+		inst.free()
+		return null
+	var best: Animation = null
+	for anim_name in player.get_animation_list():
+		var a := player.get_animation(anim_name)
+		if a != null and (best == null or a.length > best.length):
+			best = a
+	if best != null:
+		_preview_idle_anim = best
+	inst.free()
+	return _preview_idle_anim
+
 func _play_preview_animation(model: Node3D) -> void:
+	# Idle.fbx del proyecto retargetado al esqueleto del modelo — las rigs del
+	# menu son Mixamo como el clip, asi que basta resolver el nombre del hueso.
+	var src := _load_preview_idle_animation()
+	var skel := SaveIntegration._find_skeleton(model)
+	if src != null and skel != null:
+		var player := _find_animation_player(model)
+		if player == null:
+			player = AnimationPlayer.new()
+			player.name = "PreviewAnimPlayer"
+			model.add_child(player)
+			player.root_node = player.get_path_to(model)
+		var anim := src.duplicate(true)
+		anim.loop_mode = Animation.LOOP_LINEAR
+		_retarget_preview_animation(anim, model, player, skel)
+		var lib := player.get_animation_library("preview") if player.has_animation_library("preview") else null
+		if lib == null:
+			lib = AnimationLibrary.new()
+			player.add_animation_library("preview", lib)
+		if lib.has_animation("idle"):
+			lib.remove_animation("idle")
+		lib.add_animation("idle", anim)
+		player.play("preview/idle")
+		return
 	var anim_player := _find_animation_player(model)
 	if anim_player != null:
 		var anims := anim_player.get_animation_list()
@@ -808,6 +964,47 @@ func _play_preview_animation(model: Node3D) -> void:
 			chosen = anims[0]
 		if not chosen.is_empty():
 			anim_player.play(chosen)
+
+# Reapunta las pistas del clip a la ruta real del esqueleto del modelo y
+# descarta posiciones/escalas: player_with_clothes liga en centimetros y Remy
+# en metros — solo las rotaciones son seguras entre rigs.
+func _retarget_preview_animation(anim: Animation, model: Node, player: AnimationPlayer, skel: Skeleton3D) -> void:
+	var anim_root: Node = player.get_node_or_null(player.root_node)
+	if anim_root == null:
+		anim_root = model
+	var skel_path := str(anim_root.get_path_to(skel))
+	for t in range(anim.get_track_count() - 1, -1, -1):
+		var path_text := str(anim.track_get_path(t))
+		var colon := path_text.find(":")
+		if colon < 0:
+			anim.remove_track(t)
+			continue
+		var bone := _resolve_preview_bone(skel, path_text.substr(colon + 1))
+		if bone.is_empty() or anim.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+			anim.remove_track(t)
+			continue
+		anim.track_set_path(t, NodePath("%s:%s" % [skel_path, bone]))
+
+func _resolve_preview_bone(skel: Skeleton3D, name_in: String) -> String:
+	var candidates: Array = [name_in]
+	if name_in.begins_with("mixamorig:"):
+		candidates.append("mixamorig_" + name_in.substr("mixamorig:".length()))
+	elif name_in.begins_with("mixamorig_"):
+		candidates.append("mixamorig:" + name_in.substr("mixamorig_".length()))
+	var digit_index := name_in.find("mixamorig")
+	if digit_index >= 0:
+		var after := name_in.substr(digit_index + "mixamorig".length())
+		var d_end := 0
+		while d_end < after.length() and after[d_end] >= '0' and after[d_end] <= '9':
+			d_end += 1
+		if d_end > 0 and d_end < after.length() and after[d_end] == '_':
+			var bare := after.substr(d_end + 1)
+			candidates.append("mixamorig_" + bare)
+			candidates.append("mixamorig:" + bare)
+	for candidate in candidates:
+		if skel.find_bone(candidate) != -1:
+			return candidate
+	return ""
 
 func _find_animation_player(root: Node) -> AnimationPlayer:
 	if root is AnimationPlayer:

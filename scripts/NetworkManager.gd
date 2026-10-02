@@ -10,6 +10,9 @@ signal auth_rejected(reason: String)
 # nuevo (no hay personaje vivo que reclamar o murió). El cliente responde con
 # submit_player_name.
 signal player_name_required()
+# Server reclaimed a live character for this client — the menu picker locks
+# to that character (payload: name, colors, current equipment).
+signal server_character_locked(payload: Dictionary)
 
 const PORT := 5005
 const DISCOVERY_PORT := 5006
@@ -528,6 +531,10 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 				if known_name.is_empty() or known_name.begins_with("Jugador_"):
 					players[id]["needs_name"] = true
 					request_player_name.rpc_id(id)
+				# Bloquea la seleccion en el menu: el personaje del servidor es
+				# el que se inicio la partida y no puede cambiarse hasta morir.
+				if scene.has_method("_character_lock_payload"):
+					notify_character_locked.rpc_id(id, scene.call("_character_lock_payload", id, cid))
 			else:
 				# Personaje nuevo o respawn tras muerte: el servidor pide el
 				# nombre. Va antes del broadcast de la lista para que llegue a
@@ -1277,6 +1284,13 @@ func restore_character_appearance(char_name: String, top_color: Color, bottom_co
 	else:
 		_buffered_appearance = [char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo]
 		_has_buffered_appearance = true
+
+# Server tells a reclaiming client its character is locked: the menu must
+# show that character (with its equipment) instead of a free selection.
+# Sent before the player-list broadcast so it lands before all_players_ready.
+@rpc("authority", "reliable")
+func notify_character_locked(payload: Dictionary) -> void:
+	server_character_locked.emit(payload)
 
 # Server relays character appearance to a specific client
 @rpc("authority", "reliable")
