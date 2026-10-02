@@ -2995,6 +2995,24 @@ func _update_crouch_collision() -> void:
 		capsule.height = 1.75
 		_collision_shape.position.y = bottom_y + 0.875
 
+func _update_sprint_state(input_dir: Vector2) -> void:
+	# Sprint: double-tap forward to toggle, hold forward to keep sprinting
+	var forward_held := Input.is_action_pressed("move_forward") and input_dir.y < -0.1
+	if Input.is_action_just_pressed("move_forward"):
+		var now := Time.get_ticks_msec() / 1000.0
+		# Armar el sprint exige un mínimo de energía para que un doble-tap
+		# con la reserva agotada no produzca un micro-arranque de un frame.
+		if now - _last_forward_press_time < DOUBLE_TAP_WINDOW and stats.energy > 10.0:
+			_sprint_double_tap = true
+		_last_forward_press_time = now
+	if not forward_held:
+		_sprint_double_tap = false
+	# Sin stamina el sprint no parpadea: el toggle se suelta y el personaje
+	# pasa directo a paso normal hasta un nuevo doble-tap de avance.
+	if _sprint_double_tap and stats.energy <= 4.0:
+		_sprint_double_tap = false
+	is_sprinting = _sprint_double_tap and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
+
 #endregion
 
 
@@ -3174,16 +3192,7 @@ func _physics_process(delta: float) -> void:
 	if _force_crouch and input_dir.length() < 0.1:
 		is_crouching = true
 	_update_crouch_collision()
-	# Sprint: double-tap forward to toggle, hold forward to keep sprinting
-	var forward_held := Input.is_action_pressed("move_forward") and input_dir.y < -0.1
-	if Input.is_action_just_pressed("move_forward"):
-		var now := Time.get_ticks_msec() / 1000.0
-		if now - _last_forward_press_time < DOUBLE_TAP_WINDOW:
-			_sprint_double_tap = true
-		_last_forward_press_time = now
-	if not forward_held:
-		_sprint_double_tap = false
-	is_sprinting = _sprint_double_tap and not is_crouching and stats.energy > 4.0 and input_dir.length() > 0.1
+	_update_sprint_state(input_dir)
 	var carry := _get_carry_weight_ratio()
 	var effective_max_energy: float = stats.max_stat * (1.0 - carry * 0.5)
 	# Cannot sprint when heavily loaded
