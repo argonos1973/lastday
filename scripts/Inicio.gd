@@ -34,6 +34,11 @@ var _name_request_pending := false
 # la tarjeta saved_server hasta entrar. Solo se libera en partida nueva o
 # tras morir (cuando el servidor pide nombre).
 var _mp_locked := false
+# En un join las tarjetas guardadas (partida local y la del servidor) no son
+# elegibles: un personaje nuevo nace de las tarjetas base — el reclaim fija
+# saved_server por su cuenta. Se guarda la tarjeta previa para restaurarla
+# si la conexion falla o se cancela.
+var _prejoin_card_id := ""
 
 # Los args de linea de comandos persisten durante todo el proceso. Este flag
 # evita que volver al menu (p.ej. con Shift+Q) rearranque el juego solo.
@@ -496,15 +501,18 @@ func _exit_tree() -> void:
 func _on_single_player() -> void:
 	if _started:
 		return
-	# Un jugador: seleccion libre — cualquier bloqueo de un join previo se quita.
+	# Un jugador: seleccion libre — cualquier bloqueo de un join previo se
+	# quita y se restaura la tarjeta que el jugador tenia elegida.
 	_set_picker_locked(false)
-	_apply_char_selection()
 	_mode = "single"
+	_restore_prejoin_card()
+	_apply_char_selection()
 	_start_game()
 
 func _on_host() -> void:
 	if _started:
 		return
+	_restore_prejoin_card()
 	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	if _net.host_game():
@@ -553,6 +561,8 @@ func _begin_join(target: String) -> void:
 	if _net.join_game(target, pw):
 		_status_label.text = "Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando..."
 		_mode = "join"
+		_prejoin_card_id = str(CHAR_CONFIGS[_char_index].get("id", "")) if _char_index >= 0 and _char_index < CHAR_CONFIGS.size() else ""
+		_clamp_to_selectable_card()
 	else:
 		_status_label.text = "Error al conectar"
 
@@ -653,6 +663,7 @@ func _prompt_player_name() -> void:
 				_net.close_connection()
 				_net = null
 			_mode = ""
+			_restore_prejoin_card()
 			if _status_label != null:
 				_status_label.text = "Conexion cancelada")
 		btn_row.add_child(btn_cancel)
@@ -820,6 +831,8 @@ func _on_net_failed() -> void:
 	if _status_label != null and not _rejected:
 		_status_label.text = "Fallo de conexion"
 	_set_picker_locked(false)
+	_mode = ""
+	_restore_prejoin_card()
 	_net = null
 
 func _start_game() -> void:
@@ -880,16 +893,53 @@ func _apply_char_selection() -> void:
 		gsess.set_meta("char_name", cfg["name"])
 		SaveIntegration.apply_saved_camo(gsess, cfg)
 
+# En modo join solo se elige personaje nuevo: las tarjetas guardadas
+# ("saved" partida local y "saved_server") no se ofrecen. En cualquier otro
+# modo (menu, host, un jugador) todas las tarjetas son elegibles.
+func _is_mp_save_card(cfg: Dictionary) -> bool:
+	var cid := str(cfg.get("id", ""))
+	return cid == "saved" or cid == "saved_server"
+
+func _card_selectable(cfg: Dictionary) -> bool:
+	return _mode != "join" or not _is_mp_save_card(cfg)
+
+func _clamp_to_selectable_card() -> void:
+	var n := CHAR_CONFIGS.size()
+	for i in range(n):
+		var idx := (_char_index + i) % n
+		if _card_selectable(CHAR_CONFIGS[idx]):
+			_char_index = idx
+			_update_char_view()
+			return
+
+func _restore_prejoin_card() -> void:
+	if _prejoin_card_id.is_empty():
+		return
+	for i in range(CHAR_CONFIGS.size()):
+		if str(CHAR_CONFIGS[i].get("id", "")) == _prejoin_card_id:
+			_char_index = i
+			break
+	_prejoin_card_id = ""
+	_update_char_view()
+
 func _on_char_next() -> void:
 	if _mp_locked:
 		return
-	_char_index = (_char_index + 1) % CHAR_CONFIGS.size()
+	var n := CHAR_CONFIGS.size()
+	for _i in range(n):
+		_char_index = (_char_index + 1) % n
+		if _card_selectable(CHAR_CONFIGS[_char_index]):
+			break
 	_update_char_view()
 
 func _on_char_prev() -> void:
 	if _mp_locked:
 		return
-	_char_index = (_char_index - 1 + CHAR_CONFIGS.size()) % CHAR_CONFIGS.size()
+	var n := CHAR_CONFIGS.size()
+	for _i in range(n):
+		_char_index = (_char_index - 1 + n) % n
+		if _card_selectable(CHAR_CONFIGS[_char_index]):
+			break
 	_update_char_view()
 
 func _update_char_view() -> void:

@@ -163,6 +163,43 @@ func _run() -> void:
 	_ok(not inicio._btn_prev.disabled and not inicio._btn_next.disabled, "nav re-enabled")
 	_ok(str(inicio._char_title_label.text) == "SELECCIONA PERSONAJE", "title restored")
 
+	# --- 7) Join pick: las tarjetas guardadas no son elegibles ---
+	# Añade una tarjeta de partida local junto a la saved_server ya insertada.
+	inicio.CHAR_CONFIGS.insert(1, {
+		"id": "saved", "name": "Local", "top": Color(0.3, 0.3, 0.3),
+		"bottom": Color(0.2, 0.2, 0.2), "shoes": Color(0.1, 0.1, 0.1),
+		"hair": Color(0.2, 0.15, 0.1), "skin": Color(0.8, 0.7, 0.6),
+		"is_saved": true,
+	})
+	inicio._char_index = 0
+	inicio._prejoin_card_id = "saved_server"
+	inicio._mode = "join"
+	inicio._clamp_to_selectable_card()
+	_ok(not inicio._is_mp_save_card(inicio.CHAR_CONFIGS[inicio._char_index]),
+		"join clamps off the saved_server card")
+	# Navegacion completa: nunca aterriza en tarjetas guardadas.
+	var seen_ids := {}
+	for _i in range(inicio.CHAR_CONFIGS.size()):
+		inicio._on_char_next()
+		seen_ids[str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", ""))] = true
+	_ok(not seen_ids.has("saved") and not seen_ids.has("saved_server"),
+		"join nav never lands on save cards (saw %s)" % str(seen_ids.keys()))
+	_ok(seen_ids.has("remy") and seen_ids.has("dris"), "join nav still reaches base characters")
+	# De vuelta al menu (fallo/cancel/single): se restaura la tarjeta previa.
+	inicio._mode = ""
+	inicio._restore_prejoin_card()
+	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "saved_server",
+		"leaving join restores the previously selected card")
+	inicio._on_char_prev()
+	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "saved",
+		"menu nav reaches save cards again")
+	inicio._prejoin_card_id = ""
+	inicio._mode = "join"
+	inicio._on_char_prev()
+	_ok(not inicio._is_mp_save_card(inicio.CHAR_CONFIGS[inicio._char_index]),
+		"join prev arrow also skips save cards")
+	inicio._mode = ""
+
 	inicio.queue_free()
 	print("PreviewLockRegression: %s" % ("ALL PASS" if _failures == 0 else "%d FAILURES" % _failures))
 	quit(1 if _failures > 0 else 0)
