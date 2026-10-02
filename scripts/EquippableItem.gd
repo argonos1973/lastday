@@ -27,6 +27,11 @@ func interact(player) -> void:
 		equipment.socket_rotations[equipment_slot] = equipped_rotation
 		equipment.socket_scales[equipment_slot] = equipped_scale
 		if equipment.has_method("equip_item") and equipment.equip_item(self):
+			# Registrar la mochila en equipped_backpack: sin esto no daba
+			# capacidad, no se guardaba y sync_player_state la mandaba vacia —
+			# los demas jugadores nunca la veian.
+			if equipment_slot == "backpack" and player.has_method("equip_backpack"):
+				player.equip_backpack(item_name)
 			if player.has_signal("notice"):
 				player.notice.emit("%s equipada en slot %s" % [item_name, equipment_slot])
 			queue_free()

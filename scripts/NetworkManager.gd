@@ -210,6 +210,7 @@ func _accepts_client_request(sender: int) -> bool:
 		return true
 	if not (sender > 1 and players.has(sender) and not bool(players[sender].get("offline", false))):
 		return false
+	players[sender]["last_seen"] = Time.get_ticks_msec()
 	# Un personaje muerto ya no puede actuar — el proxy del servidor decide.
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_server_proxy_for_sender"):
@@ -495,7 +496,8 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 		"name": player_name,
 		"pos": SPAWN_POS,
 		"rot": 0.0,
-		"ready": true
+		"ready": true,
+		"last_seen": Time.get_ticks_msec()
 	}
 	# Store client_id for proxy matching
 	if not cid.is_empty():
@@ -607,7 +609,12 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 			# registrar (ni contraseña) se inyectaba en players y se
 			# replicaba a todos los clientes como jugador real.
 			return
-		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true}
+		players[id] = {"name": "Jugador_%d" % id, "pos": pos, "rot": rot, "ready": true, "last_seen": Time.get_ticks_msec()}
+	if is_host:
+		# Heartbeat de actividad: el bote (Rowboat._peer_alive) y cualquier
+		# otro recurso exclusivo liberan al ocupante cuando este valor envejece,
+		# aunque el transporte tarde o nunca declare la desconexión.
+		players[id]["last_seen"] = Time.get_ticks_msec()
 	var boat_scene := get_tree().current_scene
 	if is_host and boat_scene != null and is_instance_valid(boat_scene.get("lake_rowboat")):
 		var boat = boat_scene.lake_rowboat

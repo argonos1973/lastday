@@ -7,6 +7,8 @@ const HULL_MARGIN := 3.0
 const BOARD_REACH := 4.6
 const WATER_Y := 0.24
 const STAND_Y := 0.5
+# El sync_player_state llega a ~20 Hz; 8 s sin actividad = transporte muerto.
+const PEER_TIMEOUT_MS := 8000
 const OAR_SPLASH_PATH := "res://objetocaeagua.mp3"
 const WAKE_LOOP_PATH := "res://andarporagua.mp3"
 
@@ -153,6 +155,12 @@ func _peer_alive(peer_id: int) -> bool:
 		return false
 	var data: Dictionary = world.net.players[peer_id]
 	if data.get("offline", false) or str(data.get("anim", "")).contains("dead"):
+		return false
+	# Heartbeat: si el ocupante deja de emitir su estado (crash, cierre a la
+	# fuerza o un socket medio abierto que el transporte aun no declara muerto
+	# — p.ej. WebSocket tras el proxy), el asiento se libera al vencer el
+	# timeout en vez de quedar ocupado para siempre.
+	if peer_id != local_peer() and data.has("last_seen") and Time.get_ticks_msec() - int(data["last_seen"]) > PEER_TIMEOUT_MS:
 		return false
 	var actor := _actor_for(peer_id)
 	if actor != null and actor.get("is_dead") == true:

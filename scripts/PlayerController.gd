@@ -966,8 +966,11 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 	if held_item != _puppet_held:
 		_puppet_held = held_item
 		_update_puppet_held_item(held_item)
-	# Update backpack
-	if backpack != _puppet_backpack:
+	# Update backpack. Si el visual se perdio por cualquier rebuild (los
+	# puppets no tienen inventory/equipment y no pueden regenerarlo ahi),
+	# se reconstruye aqui aunque el nombre no haya cambiado.
+	var bp_visual_missing := not backpack.is_empty() and third_person_back_item_root != null and third_person_back_item_root.get_node_or_null("BackpackAsset") == null
+	if backpack != _puppet_backpack or bp_visual_missing:
 		_puppet_backpack = backpack
 		if third_person_back_item_root != null:
 			for child in third_person_back_item_root.get_children():
@@ -5775,13 +5778,13 @@ func _store_held_item() -> void:
 			child.free()
 	# Rebuild backpack if equipped
 	var equip_has_bp: bool = equipment != null and equipment.has_equipped("backpack")
-	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
+	var eq_bp_set: bool = not equipped_backpack.is_empty()
 	if third_person_back_item_root != null:
 		if not equip_has_bp:
 			for child in third_person_back_item_root.get_children():
 				third_person_back_item_root.remove_child(child)
 				child.free()
-		if inventory != null and not equip_has_bp and eq_bp_set:
+		if (inventory != null or is_puppet) and not equip_has_bp and eq_bp_set:
 			_build_third_person_backpack()
 	notice.emit("Guardas %s en el inventario." % item.item_name)
 	_rifle_in_hands = false
@@ -6381,8 +6384,10 @@ func _sync_third_person_equipment(held_item) -> void:
 				continue
 			third_person_back_item_root.remove_child(child)
 			child.free()
-	var eq_bp_set: bool = equipped_backpack == "Mochila pequena"
-	if inventory != null and not equip_has_bp and eq_bp_set:
+	var eq_bp_set: bool = not equipped_backpack.is_empty()
+	# Los puppets no tienen inventory: sin la excepcion el BackpackAsset
+	# borrado arriba nunca se reconstruia y la mochila remota desaparecia.
+	if (inventory != null or is_puppet) and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
 	# Rifle on back: check if rifle is in inventory but not held in hands
 	var _has_rifle_in_inventory := false

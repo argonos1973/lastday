@@ -294,6 +294,26 @@ func run() -> void:
 	boat.apply_network_state({"seq": 3, "pos": original, "yaw": 0.3, "occupant": 0, "time": 0.5, "rowing": false, "exit": Vector3(260, 0.2, -267), "can_exit": true})
 	check(actor.rowing_boat == null and actor.position.z == -267, "Client applies safe exit")
 	net.is_host = true
+	# Seat heartbeat: un ocupante cuyo transporte murio sin peer_disconnected
+	# (crash, socket medio abierto) libera el asiento al vencer el timeout.
+	net.players[2]["pos"] = boat.global_position + Vector3(0, 0.2, BoatScript.BOARD_REACH - 1.0)
+	net.players[2]["anim"] = "idle"
+	net.players[2]["last_seen"] = Time.get_ticks_msec()
+	boat._request_times.clear()
+	boat.request_action(2, "enter")
+	check(boat.occupant == 2, "Remote passenger boards with fresh heartbeat")
+	net.players[2]["last_seen"] = Time.get_ticks_msec() - BoatScript.PEER_TIMEOUT_MS - 50
+	boat._physics_process(0.016)
+	check(boat.occupant == 0, "Stale heartbeat frees the seat")
+	boat._request_times.clear()
+	boat.request_action(2, "enter")
+	check(boat.occupant == 0, "Stale peer cannot board")
+	net.players[2].erase("last_seen")
+	net.players[2]["pos"] = boat.global_position + Vector3(0, 0.2, BoatScript.BOARD_REACH - 1.0)
+	boat._request_times.clear()
+	boat.request_action(2, "enter")
+	check(boat.occupant == 2, "Peer without heartbeat data still boards")
+	boat._release_passenger()
 	check(boat.get_node_or_null("WakeFx") != null, "Wake particles created")
 	check(boat.get_node_or_null("OarSplashL") != null and boat.get_node_or_null("OarSplashR") != null, "Oar splash emitters created")
 	var wake: GPUParticles3D = boat.get_node_or_null("WakeFx")
