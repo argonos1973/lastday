@@ -560,7 +560,7 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			if players[pid].get("offline", false):
 				continue
 			var pdata: Dictionary = players[pid]
-			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false))
+			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false), pdata.get("clothing_colors", []))
 			# Send character appearance if available
 			if pdata.has("top_color"):
 				sync_character_appearance_remote.rpc_id(id, pid, pdata.get("char_name", ""), pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
@@ -603,7 +603,7 @@ func _check_all_ready() -> void:
 # Position sync — called by each client for their own player
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
-func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false) -> void:
+func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false, clothing_colors: Array = []) -> void:
 	if not accepts_player_state(is_host, multiplayer.get_remote_sender_id(), id):
 		return
 	# A NaN/inf position would poison proxies, broadcasts and the saved record.
@@ -662,10 +662,12 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				equipped_clothing = ""
 				held_item = ""
 				equipped_backpack = ""
+				clothing_colors = []
 	players[id]["pos"] = pos
 	players[id]["rot"] = rot
 	players[id]["anim"] = anim
 	players[id]["equipped_clothing"] = equipped_clothing
+	players[id]["clothing_colors"] = clothing_colors
 	players[id]["held_item"] = held_item
 	players[id]["equipped_backpack"] = equipped_backpack
 	players[id]["is_aiming"] = is_aiming
@@ -686,7 +688,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				# Skip peers that are not actually connected
 				if not peer_alive(pid):
 					continue
-				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on)
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on, clothing_colors)
 
 # Server->client payloads buffered when they arrive while the client is still
 # in Inicio.tscn (before Main.tscn and its player exist). Main consumes them.

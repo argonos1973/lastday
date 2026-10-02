@@ -825,6 +825,7 @@ func _create_puppet_hitboxes() -> void:
 		add_child(head_area)
 
 var _puppet_clothing := ""
+var _puppet_clothing_colors: Array = []
 var _puppet_held := ""
 var _puppet_backpack := ""
 var _applied_appearance := false
@@ -924,7 +925,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			elif target == third_person_punch_animation or target == third_person_attack_animation:
 				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
 
-func puppet_apply_visuals(clothing: String, held_item: String, backpack: String) -> void:
+func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
 	if not is_puppet:
 		return
 	# If dead and naked swap not yet done, ensure pending is active
@@ -932,36 +933,43 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String)
 		if third_person_model != null and third_person_model.name != "NakedCorpse":
 			_puppet_naked_pending = true
 			_puppet_naked_timer = 0.0
-	# Update clothing
-	if clothing != _puppet_clothing:
+	# Update clothing — also re-applies when only a loot color changed
+	if clothing != _puppet_clothing or clothing_colors != _puppet_clothing_colors:
 		var old_items: Array = []
 		for item_name in _puppet_clothing.split(","):
 			var name := item_name.strip_edges()
 			if not name.is_empty():
 				old_items.append(name)
 		_puppet_clothing = clothing
+		_puppet_clothing_colors = clothing_colors.duplicate()
 		var new_items: Array = []
+		var new_colors: Array = []
 		if clothing.is_empty():
 			if is_dead:
 				# Dead body: delay naked swap until death animation finishes
 				_puppet_naked_pending = true
 				_puppet_naked_timer = 0.0
 				new_items = []
+				new_colors = []
 			else:
 				# Living puppet with no clothing: show naked body
 				new_items = []
+				new_colors = []
 		else:
-			for item_name in clothing.split(","):
-				var name := item_name.strip_edges()
+			var raw_names := clothing.split(",")
+			for ri in range(raw_names.size()):
+				var name := raw_names[ri].strip_edges()
 				if not name.is_empty():
 					new_items.append(name)
+					var c: Variant = clothing_colors[ri] if ri < clothing_colors.size() else null
+					new_colors.append(c if c is Color else Color(0, 0, 0, 0))
 		# Unequip items that were worn before but are no longer in the list
 		for name in old_items:
 			if not new_items.has(name):
 				unequip_clothing(name)
 		# Equip items in the new list
-		for name in new_items:
-			equip_clothing(name)
+		for ni in range(new_items.size()):
+			equip_clothing(new_items[ni], new_colors[ni])
 	# Update held item
 	if held_item != _puppet_held:
 		_puppet_held = held_item
@@ -1758,8 +1766,16 @@ func _on_inventory_changed() -> void:
 
 
 #region ROPA Y APARIENCIA (PlayerAppearance)
-func get_current_clothing_color(item_name: String) -> Color:
+func get_current_clothing_color(item_name: String, slot := "") -> Color:
 	if inventory != null:
+		# Prefer the item bound to the slot (equipped_slot meta) — a same-named
+		# packed copy could carry a different loot color.
+		if not slot.is_empty():
+			for it in inventory.items:
+				if it != null and str(it.get_meta("equipped_slot", "")) == slot and str(it.item_name) == item_name and it.has_meta("clothing_color"):
+					var sc: Color = it.get_meta("clothing_color")
+					if sc.a > 0.0:
+						return sc
 		for i in range(inventory.items.size()):
 			if str(inventory.items[i].item_name) == item_name and inventory.items[i].has_meta("clothing_color"):
 				var c: Color = inventory.items[i].get_meta("clothing_color")

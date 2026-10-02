@@ -126,6 +126,7 @@ var _tree_deactivation_radius := 12.0
 var _tree_check_interval := 2.0
 var _tree_check_timer := 0.0
 var _tree_grid: Dictionary = {} # cell_key -> Array[entry refs]
+var _tree_entries_by_id: Dictionary = {} # tree_id -> entry (remote depletion lookup)
 var _tree_grid_cell_size := 20.0
 var _active_tree_entries: Array = [] # tracks all activated trees for reliable deactivation
 var _bush_id_counter := 0
@@ -2735,6 +2736,9 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 	proxy.set_meta("saved_hunger", clampf(hunger, 0.0, 100.0))
 	proxy.set_meta("saved_thirst", clampf(thirst, 0.0, 100.0))
 	proxy.set_meta("saved_clothing", equipped_clothing)
+	# Per-item loot colors for offline proxy display — the clothing string
+	# alone only carries names.
+	proxy.set_meta("saved_clothing_colors", _clothing_colors_from_items(equipped_clothing, items_data))
 	proxy.set_meta("saved_backpack", equipped_backpack)
 	proxy.set_meta("saved_held_item", held_item)
 	proxy.set_meta("saved_held_idx", held_idx)
@@ -2751,6 +2755,23 @@ func _store_player_inventory(peer_id: int, items_data: Array, health: float, hun
 		if saved_extra.has("tamed_wolf"):
 			updated_extra["tamed_wolf"] = saved_extra["tamed_wolf"]
 		proxy.set_meta("saved_extra", updated_extra)
+
+# Per-name loot colors for the equipped-clothing list — Item.to_dict embeds
+# clothing_color arrays, so an inventory snapshot can tint offline puppets.
+func _clothing_colors_from_items(equipped_clothing: String, items_data: Array) -> Array:
+	var colors: Array = []
+	for cname in equipped_clothing.split(",", false):
+		var name := cname.strip_edges()
+		var col := Color(0, 0, 0, 0)
+		for entry in items_data:
+			if entry is Dictionary and str(entry.get("name", "")) == name:
+				var a: Variant = entry.get("clothing_color")
+				if a is Array and (a as Array).size() >= 3:
+					var arr: Array = a
+					col = Color(float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3]) if arr.size() > 3 else 1.0)
+				break
+		colors.append(col)
+	return colors
 
 # Client-supplied item arrays are structurally sanitized before they reach the
 # authoritative record: malformed entries are dropped and numeric fields
@@ -3882,6 +3903,7 @@ func _update_server_proxies(delta: float) -> void:
 		var off_clothing: String = offline_proxy.get_meta("saved_clothing", net.players[pid].get("equipped_clothing", ""))
 		var off_backpack: String = offline_proxy.get_meta("saved_backpack", net.players[pid].get("equipped_backpack", ""))
 		var off_held: String = offline_proxy.get_meta("saved_held_item", net.players[pid].get("held_item", ""))
+		var off_colors: Array = offline_proxy.get_meta("saved_clothing_colors", net.players[pid].get("clothing_colors", []))
 		for connected_pid in net.players.keys():
 			if connected_pid == net.get_my_id() or connected_pid == pid:
 				continue
@@ -3890,7 +3912,7 @@ func _update_server_proxies(delta: float) -> void:
 			# Check if peer is actually still connected before sending RPC
 			if net.peer != null and not net.peer_alive(connected_pid):
 				continue
-			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false)
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false, off_colors)
 	# Disconnected proxies keep the body in the world (wolves can still attack
 	# it), but their survival stats freeze while offline — logging out must not
 	# starve the character and dump its inventory on the ground.
@@ -3992,12 +4014,14 @@ func _sync_local_player_state() -> void:
 	if player.has_method("_get_current_anim"):
 		anim = player._get_current_anim()
 	var clothing: String = ""
+	var clothing_colors: Array = []
 	if player._equipped_slots != null and not player._equipped_slots.is_empty():
 		var clothing_items: Array = []
 		for slot in player._equipped_slots.keys():
 			var item_name: String = str(player._equipped_slots[slot])
 			if not item_name.is_empty():
 				clothing_items.append(item_name)
+				clothing_colors.append(player.get_current_clothing_color(item_name, str(slot)))
 		clothing = ",".join(clothing_items)
 	var held: String = ""
 	var actual_held = player.get_held_item()
@@ -4016,7 +4040,7 @@ func _sync_local_player_state() -> void:
 	var flashlight_on_flag := false
 	if player.flashlight != null:
 		flashlight_on_flag = player.flashlight.visible
-	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag, torch_lit_flag, flashlight_on_flag)
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag, torch_lit_flag, flashlight_on_flag, clothing_colors)
 
 func _sync_local_player_inventory() -> void:
 	if net == null or player == null or not net.is_connected:
@@ -4108,6 +4132,7 @@ func _update_remote_players() -> void:
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
 		var clothing: String = data.get("equipped_clothing", "")
+		var clothing_colors: Array = data.get("clothing_colors", [])
 		var held: String = data.get("held_item", "")
 		var backpack: String = data.get("equipped_backpack", "")
 		var is_offline: bool = data.get("offline", false)
@@ -4143,7 +4168,7 @@ func _update_remote_players() -> void:
 					rp.rotation.y = target_rot
 			elif rp.has_method("puppet_apply"):
 				rp.puppet_apply(target_pos, target_rot, anim)
-				rp.puppet_apply_visuals(clothing, held, backpack)
+				rp.puppet_apply_visuals(clothing, held, backpack, clothing_colors)
 			else:
 				rp.global_position = target_pos
 				rp.rotation.y = target_rot
@@ -4161,7 +4186,7 @@ func _update_remote_players() -> void:
 				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(smooth_pos, smooth_rot, anim)
-					rp.puppet_apply_visuals(clothing, held, backpack)
+					rp.puppet_apply_visuals(clothing, held, backpack, clothing_colors)
 				else:
 					rp.global_position = smooth_pos
 					rp.rotation.y = smooth_rot
@@ -8188,6 +8213,14 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
+	elif not action_id.is_empty():
+		# The action was never spawned here — e.g. a MultiMesh tree outside the
+		# activation radius. Record the depletion (so a later approach shows the
+		# stump instead of a fresh choppable tree) and hide the batched instance.
+		if not _depleted_action_ids.has(action_id):
+			_depleted_action_ids.append(action_id)
+		if action_id.begins_with("fell_tree_"):
+			_hide_remote_felled_tree(action_id)
 	# Spawn any items that resulted from the action (skip if already spawned
 	# locally). On the dedicated server the drops were already persisted into
 	# _dropped_items above — spawning visuals would double-append them.
@@ -8284,6 +8317,25 @@ func _hide_action_visual(action) -> void:
 					(child as Node3D).visible = false
 				child.queue_free()
 				freed_any = true
+
+# Remote depletion for a tree whose WorldAction was never activated here —
+# hides the batched MultiMesh instance and any stray individual visual so the
+# tree disappears instead of staying upright (and re-choppable) for observers.
+func _hide_remote_felled_tree(action_id: String) -> void:
+	var entry: Dictionary = _tree_entries_by_id.get(int(action_id.trim_prefix("fell_tree_")), {})
+	if entry.is_empty():
+		return
+	_hide_multimesh_tree_at(entry.pos)
+	var visual_name := str(entry.get("visual_name", ""))
+	if visual_name.is_empty():
+		return
+	var tree_node := get_node_or_null(visual_name)
+	if tree_node != null and is_instance_valid(tree_node):
+		tree_node.visible = false
+		tree_node.queue_free()
+	var col_node := get_node_or_null(visual_name + "_Collision")
+	if col_node != null and is_instance_valid(col_node):
+		col_node.queue_free()
 
 func handle_world_action(action, actor) -> void:
 	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
@@ -12852,6 +12904,8 @@ func _register_tree_in_grid(entry: Dictionary) -> void:
 	if not _tree_grid.has(key):
 		_tree_grid[key] = []
 	_tree_grid[key].append(entry)
+	if entry.has("id"):
+		_tree_entries_by_id[int(entry.id)] = entry
 
 func _update_tree_interactions() -> void:
 	if player == null or not is_instance_valid(player):
