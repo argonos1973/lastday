@@ -95,6 +95,23 @@ func run() -> void:
 	check(main._depleted_action_ids.has("fell_tree_42"), "depletion recorded for never-activated tree")
 	check(main._hidden_tree_transforms.has(Vector3.ZERO), "batched MultiMesh tree hide recorded remotely")
 
+	# World-state replay (join/rejoin after death): same tree treatment through
+	# _net_item_picked_up — depletion recorded AND batched instance hidden.
+	var main2 = MainScript.new()
+	world.add_child(main2)
+	main2._tree_entries_by_id[77] = {"pos": Vector3.ZERO, "id": 77, "visual_name": "Tree_77", "active": false, "multimesh": true}
+	var mm2 := MultiMesh.new()
+	mm2.transform_format = MultiMesh.TRANSFORM_3D
+	mm2.mesh = BoxMesh.new()
+	mm2.instance_count = 1
+	var mmi2 := MultiMeshInstance3D.new()
+	mmi2.multimesh = mm2
+	world.add_child(mmi2)
+	main2._forest_multimesh_nodes.append(mmi2)
+	check(main2._net_item_picked_up("fell_tree_77"), "world-state replay pickup accepted")
+	check(main2._depleted_action_ids.has("fell_tree_77"), "replayed tree depletion recorded")
+	check(main2._hidden_tree_transforms.has(Vector3.ZERO), "replayed tree hide hits MultiMesh instance")
+
 	# Offline proxy colors: aligned colors rebuilt from inventory dicts.
 	var items_data: Array = [
 		{"name": "Camiseta", "type": "clothing", "clothing_color": [0.9, 0.1, 0.1, 1.0]},

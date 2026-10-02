@@ -3204,6 +3204,11 @@ func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
+	elif action_id.begins_with("fell_tree_"):
+		# World-state replays run after forest generation — a felled tree that
+		# was never activated here is still standing as a batched MultiMesh
+		# instance; hide it like a live world_action_completed relay would.
+		_hide_remote_felled_tree(action_id)
 	if changed and net != null and net.is_host:
 		_save_world_change_silent()
 	return true
@@ -8326,6 +8331,9 @@ func _hide_remote_felled_tree(action_id: String) -> void:
 	if entry.is_empty():
 		return
 	_hide_multimesh_tree_at(entry.pos)
+	# Stump/logs visible at distance like the gen-time pass does for SP saves
+	# (deduped by position — the live relay already spawned them if activated).
+	_create_cut_tree_remains(entry.pos)
 	var visual_name := str(entry.get("visual_name", ""))
 	if visual_name.is_empty():
 		return
