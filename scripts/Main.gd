@@ -7461,7 +7461,16 @@ func _create_house_loot() -> void:
 		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5, "label": "Casa abandonada 10"},
 	]
 	var loot_idx := 0
-	for hd in house_loot_data:
+	# El sombrero es loot icónico pero raro (~3% por hueco): con WORLD_SEED fijo
+	# podía no generarse nunca. Una casa al azar siempre lo lleva.
+	var hat_template_idx := -1
+	for _ti in range(house_loot_pool.size()):
+		if str(house_loot_pool[_ti].get("name", "")) == "Sombrero de pescador":
+			hat_template_idx = _ti
+			break
+	var hat_house_idx := _world_rng.randi() % house_loot_data.size()
+	for hd_i in range(house_loot_data.size()):
+		var hd: Dictionary = house_loot_data[hd_i]
 		var origin: Vector3 = hd["origin"]
 		var half_w: float = hd["w"] * 0.5
 		var half_d: float = hd["d"] * 0.5
@@ -7469,9 +7478,13 @@ func _create_house_loot() -> void:
 		var furniture_aabbs: Array = _collect_house_furniture_aabbs(house_label)
 		var num_items := 3 + _world_rng.randi() % 4
 		for _j in range(num_items):
-			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
-			if template.get("rare", false) and _world_rng.randf() > 0.50:
+			var template: Dictionary
+			if hd_i == hat_house_idx and _j == 0 and hat_template_idx >= 0:
+				template = house_loot_pool[hat_template_idx]
+			else:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
+				if template.get("rare", false) and _world_rng.randf() > 0.50:
+					template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
 			loot_data["pos"] = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs)
 			loot_data["id"] = "house_loot_%d" % loot_idx
