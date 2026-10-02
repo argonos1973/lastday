@@ -4190,14 +4190,45 @@ func _update_remote_players() -> void:
 					rp.global_position = target_pos
 					rp.rotation.y = target_rot
 			else:
-				var smooth_pos: Vector3 = rp.global_position.lerp(target_pos, 0.15)
-				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.15)
+				var dist: float = rp.global_position.distance_to(target_pos)
+				var smooth_pos: Vector3
+				if dist > 8.0 or dist < 0.04:
+					# Teleport/desync grande o cola residual: asentar directo.
+					smooth_pos = target_pos
+				else:
+					smooth_pos = rp.global_position.lerp(target_pos, 0.25)
+				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.25)
+				# La locomoción obedece al desplazamiento real del puppet: el
+				# sender frena en seco y ya manda "idle" mientras el puppet aun
+				# recorre el arrastre del lerp — sin corregirlo el personaje se
+				# ve deslizarse por el suelo en pose idle.
+				var tick_speed: float = rp.global_position.distance_to(smooth_pos) / 0.05
+				var eff_anim := _puppet_effective_anim(rp, anim, tick_speed)
 				if rp.has_method("puppet_apply"):
-					rp.puppet_apply(smooth_pos, smooth_rot, anim)
+					rp.puppet_apply(smooth_pos, smooth_rot, eff_anim)
 					rp.puppet_apply_visuals(clothing, held, backpack, clothing_colors)
 				else:
 					rp.global_position = smooth_pos
 					rp.rotation.y = smooth_rot
+
+# El anim de locomoción del puppet refleja su movimiento real, no solo lo que
+# manda el sender: si el puppet aun se desplaza pero el sync ya dice idle, se
+# conserva el clip walk/run en curso hasta que la posicion se asienta.
+# Acciones, posturas y remar se respetan siempre.
+func _puppet_effective_anim(rp: Node3D, anim: String, speed: float) -> String:
+	var lower := anim.to_lower()
+	if lower.contains("run") or lower.contains("walk"):
+		return anim
+	if speed <= 0.6:
+		return anim
+	var stationary := lower.is_empty() or lower.contains("idle") or lower.contains("turn") or lower.contains("aim") or lower.contains("sneak")
+	if not stationary:
+		return anim
+	var cur := str(rp.get("_puppet_current_anim")) if "_puppet_current_anim" in rp else ""
+	var cur_lower := cur.to_lower()
+	if cur_lower.contains("run") or cur_lower.contains("walk"):
+		return cur
+	return "run" if speed > 4.5 else "walk"
 
 # Server: collect all wildlife states and broadcast to clients
 func _broadcast_animals() -> void:
