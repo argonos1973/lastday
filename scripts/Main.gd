@@ -76,6 +76,9 @@ var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
 var _legit_cut_trees: Array = []
 var _dropped_items: Array = []
+# Contador monotónico para ids de drops: Time.get_ticks_msec() tiene
+# resolución de milisegundos y dos eventos en el mismo tick colisionaban.
+var _drop_seq := 0
 var _loot_wear_timer := 0.0
 var _stat_warning_timer := 0.0
 var _stat_warning_cooldowns := {}
@@ -3384,7 +3387,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 			var mpos := base_pos + offset
 			mpos.y = _get_exact_ground_y(mpos.x, mpos.z, base_pos.y + 0.5) + 0.06
-			var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+			_drop_seq += 1
+			var mid := "gut_meat_%d_%d_%d" % [Time.get_ticks_msec(), _drop_seq, i]
 			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, meat_action_type)
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": meat_action_type})
 	# Remove the animal from server
@@ -4773,7 +4777,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			model_path = "res://assets/external/fox/FoxAnimated.glb"
 		var p := pos
 		p.y = pos.y + 0.1
-		var drop_id := "animal_drop_%d" % Time.get_ticks_msec()
+		_drop_seq += 1
+		var drop_id := "animal_drop_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 		var visual_name := "Pickup_" + drop_id
 		_try_instance_external_scene([model_path], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, p.y)
 		_mark_world_action_visual(visual_name)
@@ -8286,7 +8291,8 @@ func _execute_world_action(action, actor) -> void:
 				var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 				var mpos := animal_pos + offset
 				mpos.y = _get_exact_ground_y(mpos.x, mpos.z, animal_pos.y + 0.5) + 0.06
-				var mid := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
+				_drop_seq += 1
+				var mid := "gut_meat_%d_%d_%d" % [Time.get_ticks_msec(), _drop_seq, i]
 				var mvis := "Pickup_" + mid
 				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, mpos.y)
 				_mark_world_action_visual(mvis)
@@ -10267,10 +10273,15 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 	_save_world_change_silent()
 	return true
 
-func _apply_ground_craft_state(action_id: String, quantity: int, durability: float) -> bool:
+func _apply_ground_craft_state(action_id: String, quantity: int, durability: float, sender_id: int = 0) -> bool:
 	var action = world_actions_by_id.get(action_id)
 	if not is_instance_valid(action) or action.depleted:
 		return false
+	# Un cliente solo puede alterar la pila que tiene al lado — sin el chequeo
+	# cualquiera podía agotar o modificar crafteos ajenos desde cualquier sitio.
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, (action as Node3D).global_position, 15.0):
+			return false
 	if quantity < 0 or quantity > int(action.get_meta("item_quantity", 1)) or not is_finite(durability) or durability < 0.0 or durability > float(action.get_meta("item_durability", 100.0)):
 		return false
 	action.set_meta("item_quantity", quantity)

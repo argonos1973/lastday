@@ -432,6 +432,7 @@ func submit_player_name(new_name: String) -> void:
 		return
 	players[sender].erase("needs_name")
 	players[sender]["name"] = new_name
+	players[sender]["char_name"] = new_name
 	_broadcast_player_list()
 
 @rpc("authority", "reliable")
@@ -517,6 +518,14 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 					var saved_app: Array = scene.call("_saved_appearance_args", cid)
 					if not saved_app.is_empty() and not str(saved_app[0]).is_empty():
 						players[id]["name"] = str(saved_app[0])
+				# Reclaim de un personaje que nunca respondió el prompt (se fue
+				# antes de escribir el nombre): su placeholder no es un nombre
+				# real — hay que seguir pidiéndolo o queda "Jugador_N" para
+				# siempre.
+				var known_name := str(players[id].get("name", ""))
+				if known_name.is_empty() or known_name.begins_with("Jugador_"):
+					players[id]["needs_name"] = true
+					request_player_name.rpc_id(id)
 			else:
 				# Personaje nuevo o respawn tras muerte: el servidor pide el
 				# nombre. Va antes del broadcast de la lista para que llegue a
@@ -988,7 +997,7 @@ func ground_craft_state_changed(action_id: String, quantity: int, durability: fl
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("_apply_ground_craft_state"):
 		return
-	if not scene._apply_ground_craft_state(action_id, quantity, durability):
+	if not scene._apply_ground_craft_state(action_id, quantity, durability, sender):
 		return
 	if is_host and peer != null:
 		for pid in players.keys():
@@ -1226,6 +1235,12 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 		return
 	if not players.has(sender):
 		return
+	# El nombre lo fija el registro/submit_player_name y dura hasta la muerte:
+	# la apariencia periódica no puede renombrar un personaje vivo — se clampa
+	# al nombre que el servidor ya conoce.
+	var fixed_name := str(players[sender].get("name", ""))
+	if sender != multiplayer.get_unique_id() and not players[sender].get("needs_name", false) and not fixed_name.is_empty() and not fixed_name.begins_with("Jugador_"):
+		char_name = fixed_name
 	players[sender]["char_name"] = char_name
 	players[sender]["top_color"] = top_color
 	players[sender]["bottom_color"] = bottom_color
