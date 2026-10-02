@@ -10,7 +10,7 @@ if [ "$(uname)" = "Darwin" ]; then
 else
 	FLAG="$HOME/.local/share/godot/app_userdata/Un dia mas/stop_server.flag"
 fi
-PIDS="$(pgrep -fi 'LastDayServerCore|LastDayServer\.x86_64|LastDayServer\.exe|godot.*--server|Un dia mas.*--headless' 2>/dev/null | tr '\n' ' ')"
+PIDS="$(pgrep -fi 'LastDayServerCore|LastDayServer\.x86_64|LastDayServer\.exe|godot.*--server|Un dia mas.*--headless|Last Day.*--headless' 2>/dev/null | tr '\n' ' ')"
 if [ -z "${PIDS// /}" ]; then
 	echo "No hay servidor en ejecución."
 	rm -f "$FLAG"

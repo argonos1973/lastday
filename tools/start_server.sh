@@ -17,7 +17,7 @@ fi
 # no puede bindear el puerto y el cliente sigue hablando con el mundo viejo.
 # NUNCA se fuerza el cierre: un pkill interrumpiría el borrado del mundo de la
 # sesión a mitad de camino. Si los PID marcados no responden al flag, abortamos.
-PATTERN='LastDayServer|godot.*--server|Un dia mas.*--headless'
+PATTERN='LastDayServer|godot.*--server|Un dia mas.*--headless|Last Day.*--headless'
 PIDS="$(pgrep -fi "$PATTERN" 2>/dev/null | tr '\n' ' ')"
 if [ -n "${PIDS// /}" ]; then
 	mkdir -p "$USER_DIR"
@@ -55,8 +55,10 @@ if [ -f "$SERVER_APP/Contents/MacOS/applet" ]; then
 	# Launcher applet (tools/make_server_launcher.sh): añade icono en el Dock
 	# y soporta Salir — guarda el mundo y termina el proceso.
 	open "$SERVER_APP"
-elif [ -x "$SERVER_APP/Contents/MacOS/Un dia mas" ]; then
+elif [ -x "$SERVER_APP/Contents/MacOS/Last Day" ]; then
 	# Export "macOS Server" sin envolver: arranca el servidor sola
+	exec "$SERVER_APP/Contents/MacOS/Last Day" 2>&1
+elif [ -x "$SERVER_APP/Contents/MacOS/Un dia mas" ]; then
 	exec "$SERVER_APP/Contents/MacOS/Un dia mas" 2>&1
 else
 	GODOT_BIN="${GODOT_BIN:-$PROJECT_PATH/work/godot4.7/Godot.app/Contents/MacOS/Godot}"

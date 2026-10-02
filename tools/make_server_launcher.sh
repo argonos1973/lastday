@@ -19,7 +19,7 @@ ICON="$ROOT/tools/icons/LastDayServer.icns"
 rm -rf "$CORE_TMP"
 if [ -d "$TARGET/Contents/Resources/LastDayServerCore.app" ]; then
 	mv "$TARGET/Contents/Resources/LastDayServerCore.app" "$CORE_TMP"
-elif [ -f "$TARGET/Contents/MacOS/Un dia mas" ]; then
+elif [ -f "$TARGET/Contents/MacOS/Last Day" ] || [ -f "$TARGET/Contents/MacOS/Un dia mas" ]; then
 	mv "$TARGET" "$CORE_TMP"
 else
 	echo "No se encontró el servidor exportado — exporta primero el preset \"macOS Server\"." >&2
