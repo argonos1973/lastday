@@ -2359,7 +2359,8 @@ func _animate_legs(delta: float) -> void:
 
 func _build_animal() -> void:
 	# Dedicated server: skip visual model loading — only AI logic and position matter
-	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	var scene := get_tree().current_scene
+	var net_node := scene.get_node_or_null("/root/NetworkManager") if scene != null else null
 	if net_node != null and net_node.is_dedicated_server:
 		return
 	if _try_build_external_animal():

@@ -5480,12 +5480,17 @@ func _create_map() -> void:
 		if _loading_label != null:
 			_set_loading_phase("Generando terreno...")
 		await get_tree().process_frame
+	# Backdrop + foothills run on the dedicated server too: they only feed the
+	# analytic _generated_hills table there (mesh/collision are skipped inside
+	# _create_mountain_peak), which _get_exact_ground_y needs so wildlife and
+	# drops sit at real terrain height instead of the flat ground plane.
+	_create_mountain_backdrop()
 	if not is_server:
-		_create_mountain_backdrop()
 		# Esperamos frames de física para asegurar que las colisiones del terreno se registren en el servidor de físicas
 		await get_tree().physics_frame
 		await get_tree().physics_frame
-		await _create_rocky_foothills()
+	await _create_rocky_foothills()
+	if not is_server:
 		await get_tree().physics_frame
 		await get_tree().physics_frame
 		_tm = Time.get_ticks_msec()
@@ -9881,6 +9886,9 @@ func _create_rocky_foothills() -> void:
 		# Color de tierra verdosa para las colinas
 		var hill_color := Color(0.25, 0.35, 0.16).lerp(Color(0.20, 0.28, 0.14), _terrain_rng.randf())
 		_create_mountain_peak("RollingHill", pos, radius_x, radius_z, height, _terrain_rng.randf_range(0, 360), hill_color)
+		var is_server: bool = net != null and net.is_dedicated_server
+		if is_server:
+			continue
 		# Esperar a que la colisión de esta montaña se registre en el motor de física
 		if is_large_mountain:
 			await get_tree().physics_frame
@@ -11326,6 +11334,10 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			"height": height,
 			"yaw_rad": deg_to_rad(yaw)
 		})
+	# Dedicated server only needs the analytic record above — no mesh or
+	# collision body is built there.
+	if net != null and net.is_dedicated_server:
+		return
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var segments := 18
@@ -12490,6 +12502,12 @@ func _add_collision_to_prop_group(root: Node) -> void:
 		_add_collision_to_prop_group(child)
 
 func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
+	# Hills from _generated_hills are the analytic terrain height. The physics
+	# raycast finds prop surfaces and hill collision meshes — but on the
+	# dedicated server there are no hill meshes, only the flat GroundCollision
+	# plane, so the ray alone would pin wildlife/drops at y≈0 (under the
+	# client's rendered terrain). Take whichever is higher.
+	var analytic_y := _get_ground_height(Vector3(x, 0.0, z))
 	var space_state := get_world_3d().direct_space_state
 	if space_state != null:
 		var query := PhysicsRayQueryParameters3D.create(Vector3(x, from_y, z), Vector3(x, -50.0, z))
@@ -12502,8 +12520,8 @@ func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 			query.exclude = exclude_rids
 		var result := space_state.intersect_ray(query)
 		if not result.is_empty() and result.has("position"):
-			return (result["position"] as Vector3).y
-	return _get_ground_height(Vector3(x, 0, z))
+			return maxf((result["position"] as Vector3).y, analytic_y)
+	return analytic_y
 
 func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0
