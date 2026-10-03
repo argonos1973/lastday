@@ -490,6 +490,7 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	var item_center := item_aabb.position + item_aabb.size * 0.5
 	item_center.y = item_aabb.position.y
 	hat.position = anchor - item_center
+	preload("res://scripts/HeadwearFit.gd").fit(model, hat)
 
 static func _add_preview_knife(model: Node3D) -> void:
 	var packed := load(_KNIFE_MODEL)

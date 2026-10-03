@@ -2635,6 +2635,8 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 		item_center.y = item.position.y
 	node.position += anchor - item_center
 	node.position += cfg.get("offset", Vector3.ZERO)
+	if item_name == "Sombrero de pescador":
+		preload("res://scripts/HeadwearFit.gd").fit(parent, node)
 	if loot_color.a > 0.0:
 		var meshes2: Array = []
 		_collect_mesh_instances(node, meshes2)
