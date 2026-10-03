@@ -409,6 +409,18 @@ func update_portrait() -> void:
 	portrait._model_root.add_child(model)
 	model.rotation = Vector3.ZERO
 	model.visible = true
+	# El duplicado congela la pose que el personaje tenia al abrir el panel
+	# (mitad de zancada, agachado, apuntando...). Reproduce un frame del idle
+	# para que el retrato siempre salga de pie, como pide el diseño.
+	var portrait_ap: AnimationPlayer = null
+	for node in model.find_children("*", "AnimationPlayer", true, false):
+		portrait_ap = node as AnimationPlayer
+		break
+	if portrait_ap != null:
+		var idle_name := str(player.third_person_idle_animation)
+		if not idle_name.is_empty() and portrait_ap.has_animation(idle_name):
+			portrait_ap.play(idle_name)
+			portrait_ap.seek(0.4, true)
 	for mesh in model.find_children("*", "MeshInstance3D", true, false):
 		mesh.layers = 1
 	# Los meshes del personaje son skinned: su AABB estatico esta en escala
