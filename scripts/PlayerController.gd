@@ -768,7 +768,7 @@ func setup_as_puppet() -> void:
 			_head_skeleton = _spine_skeleton
 			_head_bone_idx = -1
 			if _head_skeleton != null:
-				for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head"]:
+				for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head", "head", "Cabeza"]:
 					_head_bone_idx = _head_skeleton.find_bone(bone_name)
 					if _head_bone_idx != -1:
 						break
@@ -3119,6 +3119,11 @@ func _physics_process(delta: float) -> void:
 			velocity.y = 0.0
 		move_and_slide()
 		_update_death_pose(delta)
+		_update_backpack_socket()
+		_update_hand_socket()
+		_update_torch_hand_socket()
+		_update_drink_hand_socket()
+		_update_head_worn_items()
 		return
 	if is_instance_valid(rowing_boat):
 		velocity = Vector3.ZERO
@@ -3144,6 +3149,11 @@ func _physics_process(delta: float) -> void:
 		_update_interaction_prompt()
 		_update_flashlight(delta)
 		_update_torch(delta)
+		_update_backpack_socket()
+		_update_hand_socket()
+		_update_torch_hand_socket()
+		_update_drink_hand_socket()
+		_update_head_worn_items()
 		return
 	if is_sleeping:
 		velocity.x = 0.0
@@ -3196,6 +3206,11 @@ func _physics_process(delta: float) -> void:
 		else:
 			velocity.y = 0.0
 		move_and_slide()
+		_update_backpack_socket()
+		_update_hand_socket()
+		_update_torch_hand_socket()
+		_update_drink_hand_socket()
+		_update_head_worn_items()
 		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
@@ -3528,6 +3543,48 @@ func _update_head_worn_items() -> void:
 		node.transform = bone_local * rel
 	for worn_name in stale:
 		_head_worn_rel.erase(worn_name)
+
+# Re-aplica los transforms de los accesorios sobre un modelo y esqueleto
+# ajenos — el duplicado del retrato de inventario congela la pose de origen
+# (sentado, agachado...) y no ejecuta los updaters de _physics_process. Se
+# llama una vez tras forzar la pose del retrato (idle).
+func _sync_posed_attachments(model: Node3D, skel: Skeleton3D) -> void:
+	if model == null or skel == null or not is_instance_valid(skel):
+		return
+	var local_to_model := model.global_transform.affine_inverse()
+	if _head_bone_idx >= 0:
+		var head_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_head_bone_idx)
+		for worn_name in _head_worn_rel.keys():
+			var worn := model.get_node_or_null(String(worn_name)) as Node3D
+			if worn != null:
+				worn.transform = head_local * (_head_worn_rel[worn_name] as Transform3D)
+	if _spine_bone_idx >= 0 and third_person_back_item_root != null:
+		var back := model.get_node_or_null(String(third_person_back_item_root.name)) as Node3D
+		if back != null:
+			var spine_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_spine_bone_idx)
+			var orientation := spine_local.basis.orthonormalized() * _backpack_rest_basis_inverse
+			back.transform = Transform3D(orientation, spine_local.origin + orientation * _backpack_rest_pos)
+	if _hand_bone_idx >= 0 and third_person_hand_item_root != null:
+		var hand := model.get_node_or_null(String(third_person_hand_item_root.name)) as Node3D
+		if hand != null:
+			var hand_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_hand_bone_idx)
+			hand.position = hand_local.origin + _hand_socket_offset
+			var hand_euler := hand_local.basis.orthonormalized().get_euler()
+			hand.rotation_degrees = Vector3(rad_to_deg(hand_euler.x), rad_to_deg(hand_euler.y), rad_to_deg(hand_euler.z))
+	if _left_hand_bone_idx >= 0 and _torch_hand_root != null:
+		var torch := model.get_node_or_null(String(_torch_hand_root.name)) as Node3D
+		if torch != null:
+			var lhand_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_left_hand_bone_idx)
+			torch.position = lhand_local.origin + Vector3(-0.15, 0.0, 0.20)
+			var torch_euler := lhand_local.basis.get_euler()
+			torch.rotation_degrees = Vector3(rad_to_deg(torch_euler.x), rad_to_deg(torch_euler.y), rad_to_deg(torch_euler.z))
+	if _drink_bone_idx >= 0 and _drink_hand_root != null:
+		var drink := model.get_node_or_null(String(_drink_hand_root.name)) as Node3D
+		if drink != null:
+			var drink_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_drink_bone_idx)
+			drink.position = drink_local.origin + Vector3(0.0, 0.0, -0.10)
+			var drink_euler := drink_local.basis.get_euler()
+			drink.rotation_degrees = Vector3(rad_to_deg(drink_euler.x), rad_to_deg(drink_euler.y), rad_to_deg(drink_euler.z))
 
 #endregion
 
@@ -4007,7 +4064,7 @@ func _create_third_person_item_slots() -> void:
 	_head_skeleton = _spine_skeleton
 	_head_bone_idx = -1
 	if _head_skeleton != null:
-		for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head"]:
+		for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head", "head", "Cabeza"]:
 			_head_bone_idx = _head_skeleton.find_bone(bone_name)
 			if _head_bone_idx != -1:
 				break

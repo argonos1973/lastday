@@ -412,6 +412,17 @@ func update_portrait() -> void:
 	# El duplicado congela la pose que el personaje tenia al abrir el panel
 	# (mitad de zancada, agachado, apuntando...). Reproduce un frame del idle
 	# para que el retrato siempre salga de pie, como pide el diseño.
+	var portrait_skel: Skeleton3D = player._find_skeleton(model)
+	if portrait_skel != null:
+		# Reset al rest pose primero: los huesos que la anim de idle no cubra
+		# (dedos, cadera, overrides de IK/aiming) quedan de pie, no en la pose
+		# vieja que traia el duplicado.
+		portrait_skel.clear_bones_global_pose_override()
+		for i in range(portrait_skel.get_bone_count()):
+			var rest := portrait_skel.get_bone_rest(i)
+			portrait_skel.set_bone_pose_position(i, rest.origin)
+			portrait_skel.set_bone_pose_rotation(i, rest.basis.get_rotation_quaternion())
+			portrait_skel.set_bone_pose_scale(i, rest.basis.get_scale())
 	var portrait_ap: AnimationPlayer = null
 	for node in model.find_children("*", "AnimationPlayer", true, false):
 		portrait_ap = node as AnimationPlayer
@@ -421,6 +432,13 @@ func update_portrait() -> void:
 		if not idle_name.is_empty() and portrait_ap.has_animation(idle_name):
 			portrait_ap.play(idle_name)
 			portrait_ap.seek(0.4, true)
+	# Los accesorios (sombrero, mochila, sockets de manos) duplican el
+	# transform que tenian al abrir el panel — con el personaje sentado
+	# salen desplazados del cuerpo idle. Recolocarlos sobre el esqueleto
+	# del duplicado ya posado.
+	if portrait_skel != null:
+		portrait_skel.force_update_all_bone_transforms()
+		player._sync_posed_attachments(model, portrait_skel)
 	for mesh in model.find_children("*", "MeshInstance3D", true, false):
 		mesh.layers = 1
 	# Los meshes del personaje son skinned: su AABB estatico esta en escala
