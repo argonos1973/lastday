@@ -424,6 +424,7 @@ static func _add_preview_backpack(model: Node3D) -> void:
 		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
 	)
 	bp.position = center_offset + Vector3(0.0, 2.6, -0.15)
+	_bind_preview_bone(model, bp, ["mixamorig:Spine2", "mixamorig:Spine1", "mixamorig:Spine", "mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"])
 
 const _MILITARY_TINTS := {
 	"Pantalones militares azules": Color(0.02, 0.04, 0.08),
@@ -491,6 +492,7 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	item_center.y = item_aabb.position.y
 	hat.position = anchor - item_center
 	preload("res://scripts/HeadwearFit.gd").fit(model, hat)
+	_bind_preview_bone(model, hat, ["mixamorig:Head", "mixamorig_Head", "Head"])
 
 static func _add_preview_knife(model: Node3D) -> void:
 	var packed := load(_KNIFE_MODEL)
@@ -517,6 +519,7 @@ static func _add_preview_knife(model: Node3D) -> void:
 	knife.transform = bone_pose
 	knife.scale = Vector3.ONE * 0.55
 	knife.position += Vector3(0.10, 0.0, -0.10)
+	_bind_preview_bone(model, knife, ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"])
 
 const _PWC_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
 
@@ -568,6 +571,48 @@ static func _find_skeleton(root: Node) -> Skeleton3D:
 		if s != null:
 			return s
 	return null
+
+# Los accesorios del preview (sombrero, mochila, cuchillo) se colocan en bind
+# pose: sin este enlace quedan flotando mientras el cuerpo reproduce el Idle.
+# Replica el socket in-game (_update_head_worn_items/_update_backpack_socket):
+# se guarda el transform del item relativo al rest del hueso y se recompone
+# con la pose animada en cada skeleton_updated.
+static func _bind_preview_bone(model: Node3D, node: Node3D, bone_names: Array) -> void:
+	var skel := _find_skeleton(model)
+	if skel == null or node == null:
+		return
+	var bone_idx := -1
+	for bn in bone_names:
+		bone_idx = skel.find_bone(bn)
+		if bone_idx != -1:
+			break
+	if bone_idx == -1:
+		return
+	var parent: Node3D = node.get_parent() as Node3D
+	if parent == null or not node.is_inside_tree() or not skel.is_inside_tree():
+		return
+	var parent_inv := parent.global_transform.affine_inverse()
+	var rest_in_parent := parent_inv * skel.global_transform * skel.get_bone_global_rest(bone_idx)
+	var follows: Array = model.get_meta("preview_bone_follows", [])
+	follows.append({"node": node, "bone": bone_idx, "rel": rest_in_parent.affine_inverse() * node.transform})
+	model.set_meta("preview_bone_follows", follows)
+	if not skel.skeleton_updated.is_connected(_update_preview_bones):
+		skel.skeleton_updated.connect(_update_preview_bones.bind(model, skel))
+	_update_preview_bones(model, skel)
+
+static func _update_preview_bones(model: Node3D, skel: Skeleton3D) -> void:
+	if not is_instance_valid(model):
+		return
+	var follows: Array = model.get_meta("preview_bone_follows", [])
+	for f in follows:
+		var node = f.get("node")
+		if node == null or not is_instance_valid(node):
+			continue
+		var parent: Node3D = (node as Node3D).get_parent() as Node3D
+		if parent == null or not (node as Node3D).is_inside_tree():
+			continue
+		var bone_in_parent := parent.global_transform.affine_inverse() * skel.global_transform * skel.get_bone_global_pose(int(f["bone"]))
+		(node as Node3D).transform = bone_in_parent * (f["rel"] as Transform3D)
 
 static func _find_anim_player(root: Node) -> AnimationPlayer:
 	if root is AnimationPlayer:
