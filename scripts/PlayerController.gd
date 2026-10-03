@@ -3650,7 +3650,10 @@ func _update_water_state(delta: float) -> void:
 			stats.wetness = _effective_wetness()
 			return
 		var ambient: float = _ambient_temperature()
-		var dry_rate: float = 0.035 + max(0.0, (ambient - 10.0)) * 0.008
+		# Secado ambiental lento: ropa al aire tarda minutos (empapada→seca
+		# ~2-5 min segun temperatura); junto al fuego sigue siendo rapido
+		# via apply_warmth_drying.
+		var dry_rate: float = 0.0035 + max(0.0, (ambient - 10.0)) * 0.0007
 		wetness = max(0.0, wetness - delta * dry_rate)
 		_dry_each_equipped(delta * dry_rate)
 		stats.wetness = _effective_wetness()

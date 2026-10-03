@@ -181,6 +181,16 @@ func get_interaction_text(_player = null) -> String:
 			spoil_tag = " (PODRIDO)"
 		elif spoil >= 50.0:
 			spoil_tag = " (CADUCADO)"
+	# Indicador de humedad para ropa/items mojados en el suelo
+	var wet_tag := ""
+	if has_meta("item_wetness"):
+		var w: float = float(get_meta("item_wetness", 0.0))
+		if w >= 0.8:
+			wet_tag = " (EMPAPADA)"
+		elif w >= 0.45:
+			wet_tag = " (MOJADA)"
+		elif w > 0.02:
+			wet_tag = " (HUMEDA)"
 	if action_type == "farm_plot":
 		match action_state:
 			"planted":
@@ -216,14 +226,14 @@ func get_interaction_text(_player = null) -> String:
 			if action_type == "backpack_pickup" or str(get_meta("item_type", "")) == "backpack":
 				var n_contents: int = (get_meta("contents", []) as Array).size()
 				var count_tag := " (%d)" % n_contents if n_contents > 0 else ""
-				return "%s%s%s - [C] Coger | [K] Abrir" % [display_name, spoil_tag, count_tag]
+				return "%s%s%s%s - [C] Coger | [K] Abrir" % [display_name, spoil_tag, wet_tag, count_tag]
 			if _is_clothing():
 				if _player_has_knife(_player) and not _is_footwear():
-					return "%s%s - [F] Cortar para trapos | [C] Coger" % [display_name, spoil_tag]
-				return "%s%s - [F] Equipar | [C] Coger" % [display_name, spoil_tag]
-			return "%s%s - [C] Coger" % [display_name, spoil_tag]
+					return "%s%s%s - [F] Cortar para trapos | [C] Coger" % [display_name, spoil_tag, wet_tag]
+				return "%s%s%s - [F] Equipar | [C] Coger" % [display_name, spoil_tag, wet_tag]
+			return "%s%s%s - [C] Coger" % [display_name, spoil_tag, wet_tag]
 		"eat_food":
-			return "%s%s - [M] Comer | [C] Coger" % [display_name, spoil_tag]
+			return "%s%s%s - [M] Comer | [C] Coger" % [display_name, spoil_tag, wet_tag]
 		"wood", "stone":
 			return "%s - [C] Coger" % display_name
 		"forage":

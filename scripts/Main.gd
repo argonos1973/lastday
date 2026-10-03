@@ -3121,6 +3121,11 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 					dpos = Vector3(float(dpos_raw[0]), float(dpos_raw[1]), float(dpos_raw[2]))
 				else:
 					dpos = dpos_raw
+				if str(drop.get("type", "")) == "tool_torch":
+					# Las antorchas llevan lit/durability en el drop: recrear el
+					# visual colocado + fuego como hace el drop local.
+					_spawn_placed_torch(str(drop["id"]), dpos, float(drop.get("durability", 600.0)), bool(drop.get("lit", false)), int(drop.get("qty", 1)))
+					continue
 				var drop_color := Color(0, 0, 0, 0)
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
@@ -11820,7 +11825,16 @@ func _spawn_placed_torch(torch_id: String, pos: Vector3, durability: float, lit:
 		stick_mi.add_to_group("world_action_visual")
 	_mark_world_action_visual(visual_name)
 	if lit and durability > 0.0:
-		_create_torch_fire(torch_id, pos + Vector3(0, 0.7, 0), durability)
+		var fire_pos := pos + Vector3(0, 0.7, 0)
+		var torch_node := get_node_or_null(visual_name) as Node3D
+		if torch_node != null:
+			# La antorcha cae tumbada (90° en Z): la punta que arde es el
+			# extremo +Y local del modelo, no un offset vertical fijo.
+			var local_aabb: AABB = torch_node.global_transform.affine_inverse() * NodeUtils.compute_node_world_aabb(torch_node)
+			if local_aabb.size.y > 0.001:
+				var tip_local := Vector3(local_aabb.get_center().x, local_aabb.end.y + 0.03, local_aabb.get_center().z)
+				fire_pos = torch_node.to_global(tip_local)
+		_create_torch_fire(torch_id, fire_pos, durability)
 	var action = _create_world_action(torch_id, "pickup_torch", "Antorcha", pos, Vector3(0.3, 0.8, 0.3), Color(0.2, 0.14, 0.06), false, false)
 	if action != null:
 		action.set_meta("visual_name", visual_name)
