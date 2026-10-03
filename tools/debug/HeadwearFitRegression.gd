@@ -23,7 +23,10 @@ func run() -> void:
 	actor.add_child(actor.inventory)
 	actor.setup_as_puppet()
 	actor.equip_clothing("Camiseta")
+	var hair := actor.third_person_model.find_child("Hair", true, false) as MeshInstance3D
+	var original_hair := hair.mesh
 	actor.equip_clothing("Sombrero de pescador")
+	check(hair.mesh != original_hair, "Hair is tucked using an instance-local mesh")
 	var model := actor.third_person_model
 	var hat := model.get_node("Worn_Sombrero de pescador") as Node3D
 	var rest := hat.transform
@@ -72,6 +75,9 @@ func run() -> void:
 	var preview := model.get_node("PreviewHat") as Node3D
 	check(preview.transform.is_equal_approx(rest), "Character-selection preview uses the gameplay fit")
 	preview.free()
+	actor.unequip_clothing("Sombrero de pescador")
+	check(hair.mesh == original_hair, "Removing the hat restores the original hairstyle")
+	actor.equip_clothing("Sombrero de pescador")
 	if "--preview" in OS.get_cmdline_user_args():
 		var light := DirectionalLight3D.new()
 		light.rotation_degrees = Vector3(-35, -20, 0)
@@ -96,6 +102,8 @@ func run() -> void:
 			await create_timer(0.2).timeout
 			await RenderingServer.frame_post_draw
 			root.get_texture().get_image().save_png("/tmp/hat_fit_%s.png" % view)
+	actor._puppet_swap_to_naked()
+	check(hair.mesh == original_hair, "Remote equipment reset restores the hairstyle too")
 	actor.stats.free()
 	actor.queue_free()
 	await process_frame

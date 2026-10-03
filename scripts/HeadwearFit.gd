@@ -53,7 +53,35 @@ static func fit(model: Node3D, hat: Node3D) -> bool:
 	# — anclar via head.global_transform dejaba el sombrero ~100x desplazado
 	# o girado 90° respecto a la cabeza renderizada.
 	hat.transform = _head_frame(model, head, parent) * in_head
+	_tuck_hair(model, origin_in_head.y + raw.position.y * hat_scale.y + head_bounds.size.y * 0.02)
 	return true
+
+static func restore_hair(model: Node3D) -> void:
+	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
+		if hair.has_meta("headwear_original_mesh"):
+			hair.mesh = hair.get_meta("headwear_original_mesh")
+			hair.remove_meta("headwear_original_mesh")
+
+static func _tuck_hair(model: Node3D, brim_height: float) -> void:
+	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
+		if hair.mesh == null:
+			continue
+		# Preserve skinning, materials and the original shared asset. Only this
+		# character's upper hair is compressed under the brim while wearing it.
+		if not hair.has_meta("headwear_original_mesh"):
+			hair.set_meta("headwear_original_mesh", hair.mesh)
+		var original: Mesh = hair.get_meta("headwear_original_mesh")
+		var tucked := ArrayMesh.new()
+		for surface in range(original.get_surface_count()):
+			var arrays := original.surface_get_arrays(surface)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX].duplicate()
+			for index in range(vertices.size()):
+				if vertices[index].y > brim_height:
+					vertices[index].y = brim_height + (vertices[index].y - brim_height) * 0.02
+			arrays[Mesh.ARRAY_VERTEX] = vertices
+			tucked.add_surface_from_arrays(original.surface_get_primitive_type(surface), arrays)
+			tucked.surface_set_material(surface, original.surface_get_material(surface))
+		hair.mesh = tucked
 
 static func _head_frame(model: Node3D, head_mi: MeshInstance3D, parent: Node3D) -> Transform3D:
 	var fallback: Transform3D = parent.global_transform.affine_inverse() * head_mi.global_transform

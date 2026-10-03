@@ -1137,6 +1137,7 @@ func _puppet_swap_to_naked() -> void:
 	if _head_mesh != null:
 		_head_mesh.visible = true
 	# Remove any worn visual garments
+	preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
 	for child in third_person_model.get_children():
 		if child.name.begins_with("Worn_"):
 			child.free()
@@ -1984,6 +1985,8 @@ func unequip_clothing(item_name: String) -> void:
 		if worn != null:
 			worn.free()
 		_head_worn_rel.erase("Worn_" + item_name)
+		if item_name == "Sombrero de pescador":
+			preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
