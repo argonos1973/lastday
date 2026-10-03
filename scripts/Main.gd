@@ -3496,11 +3496,14 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 	var meat_drops_ref: Array = meat_drops
 	var t := get_tree().create_timer(5.0)
 	t.timeout.connect(func():
-		# Remove the puppet animal
-		if puppet_animals.has(puppet_key):
-			var puppet: Node3D = puppet_animals[puppet_key]
-			if is_instance_valid(puppet):
-				puppet.queue_free()
+		# Remove the puppet animal. The entry can hold an already-freed
+		# instance (corpse cleared by its own rot timer while the server still
+		# broadcasted it): assigning it to a typed Node3D aborts this lambda
+		# before the net.animals erase and the meat spawn below.
+		var dead_puppet = puppet_animals.get(puppet_key)
+		if dead_puppet != null:
+			if is_instance_valid(dead_puppet):
+				dead_puppet.queue_free()
 			puppet_animals.erase(puppet_key)
 		# Also remove from net.animals so it doesn't respawn
 		if net != null and net.animals.has(puppet_key):

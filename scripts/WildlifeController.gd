@@ -42,6 +42,10 @@ var _wolf_hunger_threshold := 70.0
 var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
+# Segundos de huida continua: al agotarse, la presa pierde el sprint y el lobo
+# (más resistente) la alcanza — sin esto, dos velocidades parecidas hacían la
+# persecución eterna.
+var _flee_stamina := 0.0
 var _seek_corpse_timer := 0.0
 var _rot_timer := 0.0
 var _flies_attached := false
@@ -395,6 +399,7 @@ func _process(delta: float) -> void:
 				_wolf_eating_target = null
 			return
 	_prey_flee_timer = max(0.0, _prey_flee_timer - delta)
+	_flee_stamina = _flee_stamina + delta if _prey_flee_timer > 0.0 else 0.0
 	_seek_corpse_timer = max(0.0, _seek_corpse_timer - delta)
 	_idle_cooldown = max(0.0, _idle_cooldown - delta)
 	# Pausa natural: el animal se detiene brevemente (pastar / vigilar)
@@ -432,9 +437,15 @@ func _process(delta: float) -> void:
 		target += _wander_offset
 	target.x = clamp(target.x, -WORLD_LIMIT, WORLD_LIMIT)
 	target.z = clamp(target.z, -WORLD_LIMIT, WORLD_LIMIT)
+	# Active chase: the cached path is recomputed every ~1.2s, so waypoints
+	# always trail a moving target by several meters. Inside the closing
+	# distance steer straight at the live target — and never let the
+	# "waypoint reached" early-return below freeze the pursuit inside attack
+	# range (prey attack needs <1.5m, unreachable while this cutoff sat at 1.6).
+	var chase_live: Node3D = _chase_target if (_chase_target != null and is_instance_valid(_chase_target) and (_state == "chase_prey" or _state == "chase_player")) else null
 	var to_target := target - global_position
 	to_target.y = 0.0
-	if to_target.length() < 1.6:
+	if to_target.length() < 1.6 and chase_live == null:
 		target_index = (target_index + 1) % patrol_points.size()
 		_current_path.clear()
 		_path_index = 0
@@ -451,7 +462,9 @@ func _process(delta: float) -> void:
 		_path_index = 0
 		_path_recalc_timer = 1.2
 	var move_target: Vector3 = global_position
-	if _current_path.size() > 0 and _path_index < _current_path.size():
+	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0:
+		move_target = chase_live.global_position
+	elif _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
 		var to_waypoint: Vector3 = waypoint - global_position
 		to_waypoint.y = 0.0
@@ -905,7 +918,10 @@ func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
 	var flee_dist := _flee_distance()
-	var flee_speed := move_speed * (2.4 if animal_type == "fox" else 2.6)
+	# Sprint completo solo los primeros ~10s de huida; luego la presa se agota
+	# y el lobo puede alcanzarla (caza realista: la presa es más rápida al
+	# arrancar, el depredador más resistente en distancia).
+	var flee_speed := move_speed * (2.4 if animal_type == "fox" else 2.6) * lerpf(1.0, 0.55, clampf((_flee_stamina - 10.0) / 6.0, 0.0, 1.0))
 	# Flee from wolves (larger distance if already fleeing)
 	var nearest_wolf := _find_nearest_animal("wolf")
 	if nearest_wolf != null and is_instance_valid(nearest_wolf):
