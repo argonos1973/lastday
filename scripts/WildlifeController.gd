@@ -127,14 +127,20 @@ func setup_puppet(kind: String) -> void:
 			max_health = 100.0
 	_build_animal()
 
-func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool) -> void:
+func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool, rot_left: float = -1.0) -> void:
 	if dead and not _is_dead:
 		_is_dead = true
 		_gutted = gutted
+		# Without a corpse lifetime the next _process would free the body the
+		# same frame it arrived — mirror the server's 300s rot window, then keep
+		# tracking whatever the server reports so both sides drop it together.
+		_rot_timer = rot_left if rot_left > 0.0 else 300.0
 		if _animation_player != null:
 			_animation_player.stop()
 		_lie_corpse_flat()
 	if _is_dead:
+		if rot_left > 0.0:
+			_rot_timer = rot_left
 		return
 	global_position = global_position.lerp(pos, 0.2)
 	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
@@ -175,12 +181,13 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 	if health <= 0.0:
 		_is_dead = true
 		_hit_flash_timer = 2.0
+		_rot_timer = 300.0
 		if _animation_player != null:
 			_animation_player.stop()
 		_lie_corpse_flat()
 	# Also notify the server
 	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-	if net_node != null:
+	if net_node != null and net_node.peer != null:
 		net_node.damage_animal.rpc_id(1, name, amount, from_knife)
 
 func setup(kind: String, points: Array) -> void:
@@ -2250,8 +2257,11 @@ func _resolve_player() -> void:
 			var feeder_pid := int(p.get_meta("peer_id", 0))
 			if feeder_pid != 0 and _tame_progress.has(str(feeder_pid)):
 				continue
-			# Skip proxies with active spawn protection
-			if p.get_meta("protection_timer", 0.0) > 0.0:
+			# Skip proxies with active spawn protection — wolves only. The
+			# shield exists so a client still loading can't be mauled; prey
+			# must still flee it, or deer/fox ignore a live player for the
+			# whole 30s grace window.
+			if animal_type == "wolf" and p.get_meta("protection_timer", 0.0) > 0.0:
 				continue
 			# Skip proxies that haven't received real position from client
 			if not p.get_meta("has_real_pos", false):

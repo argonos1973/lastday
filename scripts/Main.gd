@@ -4249,6 +4249,7 @@ func _broadcast_animals() -> void:
 		var pos := animal.global_position
 		var hunger_val = animal.get("_wolf_hunger")
 		var threshold_val = animal.get("_wolf_hunger_threshold")
+		var rot_val = animal.get("_rot_timer")
 		data[aid] = {
 			"t": str(animal.get("animal_type")),
 			"x": round(pos.x * 100.0) / 100.0,
@@ -4258,6 +4259,9 @@ func _broadcast_animals() -> void:
 			"a": str(animal.get("current_anim_keyword")),
 			"d": bool(animal.get("_is_dead")),
 			"g": bool(animal.get("_gutted")),
+			# Remaining corpse rot seconds — lets client puppets drop the body
+			# on the same tick the server removes it.
+			"rt": round(float(rot_val) * 10.0) / 10.0 if rot_val != null else 0.0,
 			"h": round(float(hunger_val) * 10.0) / 10.0 if hunger_val != null else 0.0,
 			"landed": animal._landed if animal is BirdController else false,
 			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0,
@@ -4296,6 +4300,10 @@ func _update_puppet_animals() -> void:
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
 		var kind := str(d.get("t", "deer"))
+		# A freed entry (e.g. a corpse whose rot timer hit 0 while the server
+		# still broadcasts it) must not block recreation — drop the stale ref.
+		if puppet_animals.has(aid) and not is_instance_valid(puppet_animals[aid]):
+			puppet_animals.erase(aid)
 		if not puppet_animals.has(aid):
 			if kind == "bird":
 				var bird_puppet = BirdControllerScript.new()
@@ -4316,7 +4324,7 @@ func _update_puppet_animals() -> void:
 			if kind == "bird":
 				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), float(d.get("r", 0.0)), bool(d.get("d", false)), bool(d.get("g", false)), bool(d.get("landed", false)))
 			else:
-				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)))
+				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)), float(d.get("rt", -1.0)))
 				if p.animal_type == "wolf":
 					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
