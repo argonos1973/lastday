@@ -249,6 +249,26 @@ func _run() -> void:
 					wolf2._wolf_eating_timer = 0.4
 			check(not is_instance_valid(meat_node2) or not m.world_actions_by_id.has(meat_ids[-1]), "a second hungry wolf can eat the leftover meat pickup")
 
+	# --- Inanición: un lobo sin comer muere y deja cadáver (no desaparece) ---
+	m._create_wildlife_animal("wolf", [Vector3(100, 0, 100), Vector3(105, 0, 100)])
+	var starved = null
+	for c in m.get_children():
+		if c is WC and c.animal_type == "wolf" and c != wolf:
+			starved = c
+	check(starved != null, "starvation wolf spawned")
+	if starved != null:
+		starved._wolf_hunger = 0.01
+		starved._wolf_hunger_threshold = 60.0
+		starved.health = 8.0
+		var t3 := 0.0
+		while t3 < 6.0 and is_instance_valid(starved) and not starved._is_dead:
+			await create_timer(0.5).timeout
+			t3 += 0.5
+		check(is_instance_valid(starved) and starved._is_dead, "wolf starves to death at zero hunger")
+		check(is_instance_valid(starved) and starved._rot_timer > 0.0, "starved wolf keeps a corpse (was removed next frame before)")
+		await create_timer(1.0).timeout
+		check(is_instance_valid(starved) and not starved.is_queued_for_deletion(), "starved corpse survives subsequent frames")
+
 	if probe.is_connected:
 		probe.close_connection()
 	_finish()

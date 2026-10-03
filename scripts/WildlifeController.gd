@@ -377,6 +377,9 @@ func _process(delta: float) -> void:
 			if health <= 0.0 and not _is_dead:
 				_is_dead = true
 				_hit_flash_timer = 2.0
+				# Igual que una muerte por daño: sin _rot_timer el cadáver
+				# desaparece al frame siguiente en vez de pudrirse 300 s.
+				_rot_timer = 300.0
 				if _animation_player != null:
 					_animation_player.stop()
 				_release_owner_record()
