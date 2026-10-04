@@ -367,6 +367,9 @@ func _process(delta: float) -> void:
 			_ai_lod_timer = 0.0
 		else:
 			_ai_lod_timer = 0.0
+	if _near_network_observer:
+		_ai_lod_timer = 0.0
+		_ai_lod_clock = 0.0
 	# -------------------------------------------
 	if _escape_if_trapped(delta):
 		return
