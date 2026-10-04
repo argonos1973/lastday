@@ -43,6 +43,7 @@ var _gutted := false
 var _butchering := false
 var _landed := false
 var is_puppet := false
+var _network_motion = preload("res://scripts/AnimalNetworkMotion.gd").new()
 var health := 25.0
 var current_anim_keyword := "fly"
 var _flee_timer := 0.0
@@ -227,6 +228,7 @@ func set_flock_id(id: int) -> void:
 
 func _process(delta: float) -> void:
 	if is_puppet:
+		_network_motion.advance(self, delta)
 		if not _is_dead:
 			_wing_phase += delta * _wing_speed
 			_animate_wings()
@@ -986,8 +988,7 @@ func interact(player: Node) -> void:
 	queue_free()
 
 func puppet_apply(pos: Vector3, yaw: float, dead: bool, gutted: bool, landed: bool) -> void:
-	global_position = pos
-	rotation.y = yaw
+	_network_motion.push(self, pos, yaw, landed and not _landed)
 	_is_dead = dead
 	_gutted = gutted
 	if dead and _animation_player != null:

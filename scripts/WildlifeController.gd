@@ -55,6 +55,9 @@ var health := 240.0
 var max_health := 240.0
 var _is_dead := false
 var is_puppet := false
+var _network_motion = preload("res://scripts/AnimalNetworkMotion.gd").new()
+var _observer_check_timer := 0.0
+var _near_network_observer := false
 var current_anim_keyword := "walk"
 var _hit_flash_timer := 0.0
 var _gutted := false
@@ -133,6 +136,7 @@ func setup_puppet(kind: String) -> void:
 
 func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool, rot_left: float = -1.0) -> void:
 	if dead and not _is_dead:
+		_network_motion.push(self, pos, rot_y, true)
 		_is_dead = true
 		_gutted = gutted
 		# Without a corpse lifetime the next _process would free the body the
@@ -146,8 +150,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		if rot_left > 0.0:
 			_rot_timer = rot_left
 		return
-	global_position = global_position.lerp(pos, 0.2)
-	rotation.y = lerp_angle(rotation.y, rot_y, 0.2)
+	_network_motion.push(self, pos, rot_y)
 	if not dead:
 		_play_animation_by_name(anim)
 
@@ -301,6 +304,8 @@ func _process(delta: float) -> void:
 		_wildlife_cache_timer = 0.0
 		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	if is_puppet:
+		if not _is_dead:
+			_network_motion.advance(self, delta)
 		if animal_type == "wolf" and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
@@ -324,9 +329,20 @@ func _process(delta: float) -> void:
 		if _resolve_player_timer >= 0.5:
 			_resolve_player_timer = 0.0
 			_resolve_player()
+	# A sheltered/non-targeted client still observes wildlife. Keep motion at
+	# full rate near ANY connected observer, not just the AI's chosen target.
+	_observer_check_timer -= delta
+	if _observer_check_timer <= 0.0:
+		_observer_check_timer = 0.5
+		_near_network_observer = false
+		for observer in get_tree().get_nodes_in_group("net_player_proxy"):
+			if observer is Node3D and observer.get_meta("has_real_pos", false) and not observer.get_meta("disconnected", false):
+				if global_position.distance_to(observer.global_position) <= AI_LOD_FAR + 10.0:
+					_near_network_observer = true
+					break
 	# ---- LOD de IA por distancia al jugador ----
 	var dist_to_player := 0.0
-	if _player != null and is_instance_valid(_player):
+	if _player != null and is_instance_valid(_player) and not _near_network_observer:
 		dist_to_player = global_position.distance_to(_player.global_position)
 		# Animales fuera de rango de cull: solo cuenta rot_timer de cadáver (ya retorna antes si _is_dead)
 		if dist_to_player > AI_LOD_CULL and animal_type != "wolf":
@@ -651,7 +667,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		var dist_to_player := global_position.distance_to(_player.global_position)
 		var height_diff := absf(_player.global_position.y - global_position.y)
 		var flat_dist := Vector2(global_position.x - _player.global_position.x, global_position.z - _player.global_position.z).length()
-		# Skip if player is near a lit campfire or under a roof (closed house,
+		# Skip if player is near a lit campfire or under a roof (house,
 		# barn, tent, shelter). The roof check also stops damage through walls,
 		# since the attack range test ignores obstacles.
 		var scene := get_tree().current_scene
@@ -2291,9 +2307,8 @@ func _resolve_player() -> void:
 			# Skip proxies inside a built shelter (protected from animals)
 			if p.get_meta("in_built_shelter", false):
 				continue
-			# Skip proxies under a roof: closed house, barn, tent, shelter —
-			# evaluated live so a door opened later re-exposes the body.
-			if scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected((p as Node3D).global_position):
+			# Wolves cannot target roofed players, regardless of door state.
+			if animal_type == "wolf" and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected((p as Node3D).global_position):
 				continue
 			var d: float = global_position.distance_to((p as Node3D).global_position)
 			if d < nearest_dist:

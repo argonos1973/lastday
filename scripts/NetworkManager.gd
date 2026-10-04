@@ -809,6 +809,7 @@ func sync_animals(data: Dictionary) -> void:
 		# Legacy chunk without batch info: plain merge.
 		for key in data.keys():
 			animals[key] = data[key]
+			animals[key]["_sample"] = Time.get_ticks_usec()
 		return
 	if gen != _animals_gen:
 		_animals_gen = gen
@@ -817,6 +818,7 @@ func sync_animals(data: Dictionary) -> void:
 		if key == "_gen" or key == "_total":
 			continue
 		animals[key] = data[key]
+		animals[key]["_sample"] = Time.get_ticks_usec()
 		_animals_seen[key] = true
 	if total >= 0 and _animals_seen.size() >= total:
 		# Batch complete: drop animals the server stopped sending.

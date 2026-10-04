@@ -4329,6 +4329,12 @@ func _update_puppet_animals() -> void:
 				puppet_animals[aid] = puppet
 		var p = puppet_animals[aid]
 		if is_instance_valid(p):
+			# Consume each received snapshot once; interpolation runs on the puppet.
+			if d.has("_sample"):
+				var sample_id := int(d["_sample"])
+				if int(p.get_meta("animal_sample", -1)) == sample_id:
+					continue
+				p.set_meta("animal_sample", sample_id)
 			if kind == "bird":
 				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), float(d.get("r", 0.0)), bool(d.get("d", false)), bool(d.get("g", false)), bool(d.get("landed", false)))
 			else:
@@ -5590,6 +5596,9 @@ func _create_map() -> void:
 	_create_river_drink_zones()
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
+		# Match client roof locations even though the server skips visual props.
+		_military_tent_pos = _find_flat_area_for_tent()
+		_remote_tent_pos = _find_flat_area_for_remote_tent()
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
@@ -10340,13 +10349,14 @@ func _is_player_in_house(pos: Vector3) -> bool:
 	var remote_barn_origin := Vector3(-340, 0, 280)
 	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
-	# Tent
-	var tent_origin := Vector3(48, 0, -48)
-	if abs(pos.x - tent_origin.x) < 4.0 and abs(pos.z - tent_origin.z) < 4.0:
-		return true
-	# Remote tent
-	if _remote_tent_pos != Vector3.ZERO and abs(pos.x - _remote_tent_pos.x) < 4.0 and abs(pos.z - _remote_tent_pos.z) < 5.5:
-		return true
+	# Use the actual generated tent locations and their model rotations.
+	for tent in [{"pos": _military_tent_pos, "yaw": 35.0}, {"pos": _remote_tent_pos, "yaw": 120.0}]:
+		var origin: Vector3 = tent["pos"]
+		if origin == Vector3.ZERO:
+			continue
+		var local_pos := (pos - origin).rotated(Vector3.UP, -deg_to_rad(float(tent["yaw"])))
+		if absf(local_pos.x) < 4.0 and absf(local_pos.z) < 5.5:
+			return true
 	# Hiking hut near lake
 	var hut_origin := Vector3(250, 0, -258)
 	if abs(pos.x - hut_origin.x) < 6.0 and abs(pos.z - hut_origin.z) < 6.0:
@@ -10586,27 +10596,10 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 			return true
 	return false
 
-# Wolf safety: anything under a roof is out of reach. Houses only count while
-# their door is closed — an open door lets a wolf walk in. Barns, the tent and
-# built shelters have no lockable door, so the roof alone protects. Evaluated
-# live (not cached) so a door opened later or a fire going out changes the
-# answer immediately.
+# Roof protection is independent of doors and visual/collision nodes, so the
+# dedicated server applies the same rule before damaging connected/offline bodies.
 func _is_pos_wolf_protected(pos: Vector3) -> bool:
-	if _is_near_built_shelter(pos):
-		return true
-	for i in range(HOUSE_DATA.size()):
-		var hd: Dictionary = HOUSE_DATA[i]
-		var house_pos: Vector3 = hd["pos"]
-		if absf(pos.x - house_pos.x) < hd["w"] * 0.5 and absf(pos.z - house_pos.z) < hd["d"] * 0.5:
-			if hd.get("barn", false):
-				return true
-			return not _is_named_door_open("Casa abandonada %d Door" % (i + 1))
-	# Remote barn and military tent: roofed, no door.
-	if absf(pos.x - (-340.0)) < 4.0 and absf(pos.z - 280.0) < 9.0:
-		return true
-	if absf(pos.x - 48.0) < 4.0 and absf(pos.z - (-48.0)) < 4.0:
-		return true
-	return false
+	return _is_player_in_house(pos) or _is_near_built_shelter(pos)
 
 func _is_named_door_open(door_name: String) -> bool:
 	# Live node state first (clients, single player, host); the server-side
