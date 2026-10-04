@@ -347,32 +347,9 @@ static func _mat(m: MeshInstance3D, c: Color) -> void:
 	mat.grow_amount = -0.8
 	m.material_override = mat
 
-static var _camo_texture_cache: Dictionary = {}
 
-static func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> ImageTexture:
-	var cache_key := str(base_color)
-	if _camo_texture_cache.has(cache_key):
-		return _camo_texture_cache[cache_key]
-	var size := 128
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
-	img.fill(camo_colors[0])
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for blob in range(40):
-		var cx := rng.randi_range(0, size - 1)
-		var cy := rng.randi_range(0, size - 1)
-		var radius := rng.randi_range(8, 25)
-		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
-		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
-			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
-				var dx := x - cx
-				var dy := y - cy
-				if dx * dx + dy * dy <= radius * radius:
-					img.set_pixel(x, y, color)
-	var tex := ImageTexture.create_from_image(img)
-	_camo_texture_cache[cache_key] = tex
-	return tex
+static func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> Texture2D:
+	return MaterialFactory.make_camo_texture(base_color)
 
 static func _mat_camo(m: MeshInstance3D) -> void:
 	var mat := StandardMaterial3D.new()

@@ -72,9 +72,9 @@
       "uri": "textures/fishermans_hat_nor_gl_1k.jpg"
     },
     {
-      "mimeType": "image/jpeg",
+      "mimeType": "image/png",
       "name": "fishermans_hat_diff",
-      "uri": "textures/fishermans_hat_diff_1k.jpg"
+      "uri": "textures/fishermans_hat_camo_1k.png"
     },
     {
       "mimeType": "image/jpeg",

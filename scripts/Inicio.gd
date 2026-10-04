@@ -1272,22 +1272,5 @@ func _camo_material(camo_tex: Texture2D, kind: String, unit_scale: float = 1.0) 
 	MaterialFactory.cloth_detail(mat, kind if not kind.is_empty() else "denim", unit_scale)
 	return mat
 
-func _make_camo_texture() -> ImageTexture:
-	var size := 256
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var camo_colors := [Color(0.25, 0.3, 0.15), Color(0.15, 0.18, 0.1), Color(0.35, 0.32, 0.18), Color(0.1, 0.12, 0.08)]
-	img.fill(camo_colors[0])
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for blob in range(80):
-		var cx := rng.randi_range(0, size - 1)
-		var cy := rng.randi_range(0, size - 1)
-		var radius := rng.randi_range(10, 35)
-		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
-		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
-			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
-				var dx := x - cx
-				var dy := y - cy
-				if dx * dx + dy * dy <= radius * radius:
-					img.set_pixel(x, y, color)
-	return ImageTexture.create_from_image(img)
+func _make_camo_texture() -> Texture2D:
+	return MaterialFactory.make_camo_texture()

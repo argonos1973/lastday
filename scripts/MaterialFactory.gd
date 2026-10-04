@@ -3,7 +3,8 @@ extends RefCounted
 
 static var _mat_cache: Dictionary = {}
 static var _tex_cache: Dictionary = {}
-static var _camo_cache: Dictionary = {}
+const CAMO_WOODLAND: Texture2D = preload("res://assets/textures/clothing/camouflage_woodland.png")
+const CAMO_DESERT: Texture2D = preload("res://assets/textures/clothing/camouflage_desert.png")
 
 const POLY_GRASS_DRY_DIFF := "res://assets/external/polyhaven/grass_medium_01/textures/grass_medium_01_dry_diff_4k.png"
 const POLY_ROCKY_TERRAIN_DIFF := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_diff_4k.jpg"
@@ -361,30 +362,10 @@ static func make_overgrowth_material(key: String, tp: String, scissor: float = 0
 	_mat_cache[ck] = m
 	return m
 
-static func make_camo_texture(bc: Color = Color(0.2, 0.25, 0.15)) -> ImageTexture:
-	var ck := str(bc)
-	if _camo_cache.has(ck):
-		return _camo_cache[ck]
-	var sz := 128
-	var img := Image.create(sz, sz, false, Image.FORMAT_RGBA8)
-	var cc := [bc, bc.darkened(0.3), bc.lightened(0.2), bc.darkened(0.5)]
-	img.fill(cc[0])
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for _b in range(40):
-		var cx := rng.randi_range(0, sz - 1)
-		var cy := rng.randi_range(0, sz - 1)
-		var rad := rng.randi_range(8, 25)
-		var col: Color = cc[rng.randi() % cc.size()]
-		for x in range(maxi(0, cx - rad), mini(sz, cx + rad)):
-			for y in range(maxi(0, cy - rad), mini(sz, cy + rad)):
-				var dx := x - cx
-				var dy := y - cy
-				if dx * dx + dy * dy <= rad * rad:
-					img.set_pixel(x, y, col)
-	var tex := ImageTexture.create_from_image(img)
-	_camo_cache[ck] = tex
-	return tex
+static func make_camo_texture(bc: Color = Color(0.2, 0.25, 0.15)) -> Texture2D:
+	# The Blender-baked woodland and desert prints share the same stitched
+	# fabric scale across the character, preview, and inventory thumbnail.
+	return CAMO_DESERT if bc.r > 0.27 and bc.g > 0.25 else CAMO_WOODLAND
 
 static func make_fire_ramp() -> GradientTexture1D:
 	var g := Gradient.new()

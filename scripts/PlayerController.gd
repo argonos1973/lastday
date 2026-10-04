@@ -724,7 +724,6 @@ var is_custom_character: bool = false
 var is_clothing_model: bool = false
 var _custom_body_mesh_name: String = ""
 var _custom_clothing_mesh_names: Dictionary = {}
-var _camo_texture_cache: Dictionary = {}
 var puppet_model_path: String = ""
 
 func setup_as_puppet() -> void:
@@ -2240,33 +2239,9 @@ var _char_shoes_color: Color = Color(0.15, 0.15, 0.15)
 var _char_hair_color: Color = Color(0.2, 0.15, 0.1)
 var _char_skin_color: Color = Color(0.8, 0.7, 0.6)
 
-func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> ImageTexture:
-	var cache_key := str(base_color)
-	if _camo_texture_cache.has(cache_key):
-		return _camo_texture_cache[cache_key]
-	var size := 128
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var camo_colors := [base_color, base_color.darkened(0.3), base_color.lightened(0.2), base_color.darkened(0.5)]
-	img.fill(camo_colors[0])
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for blob in range(40):
-		var cx := rng.randi_range(0, size - 1)
-		var cy := rng.randi_range(0, size - 1)
-		var radius := rng.randi_range(8, 25)
-		var color: Color = camo_colors[rng.randi() % camo_colors.size()]
-		for x in range(maxi(0, cx - radius), mini(size, cx + radius)):
-			for y in range(maxi(0, cy - radius), mini(size, cy + radius)):
-				var dx := x - cx
-				var dy := y - cy
-				if dx * dx + dy * dy <= radius * radius:
-					img.set_pixel(x, y, color)
-	var tex := ImageTexture.create_from_image(img)
-	_camo_texture_cache[cache_key] = tex
-	return tex
+func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> Texture2D:
+	return MaterialFactory.make_camo_texture(base_color)
 
-# Shows/hides a survival garment mesh and toggles the Mixamo default meshes it
-# replaces (e.g. wearing the jacket hides the default Tops to avoid clipping).
 func _skeleton_height(skel: Skeleton3D) -> float:
 	if skel == null:
 		return 0.0
