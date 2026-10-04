@@ -57,7 +57,7 @@ func run() -> void:
 	var world := TestWorld.new()
 	root.add_child(world)
 	world.net = TestNetwork.new()
-	var hud_stub := CanvasLayer.new()
+	var hud_stub = load("res://scripts/HUD.gd").new()
 	world.add_child(hud_stub)
 	world.hud = hud_stub
 	var player := TestPlayer.new()
@@ -185,7 +185,38 @@ func run() -> void:
 		check((sh_action.get_meta("contents", []) as Array).is_empty(), "Coger empties the shelter stash")
 		check(world._net_shelter_dismantled(sh_id, 0) == true, "Empty shelter dismantles normally")
 		check(not world.world_actions_by_id.has(sh_id), "Dismantled shelter leaves the world")
-		world._backpack_action = null
+
+	# Panel del alijo: cada fila lleva thumbnail 3D + linea de estado, y
+	# cualquier tecla (Tab, Esc, K...) cierra el panel.
+	var stash_action = world._create_world_action("stash_ui", "shelter", "Refugio", Vector3.ZERO, Vector3.ONE, Color.WHITE, false, false)
+	stash_action.set_meta("contents", [
+		ItemScript.create("Palo", "resource", 0.3, 2, 0.0).to_dict(),
+		ItemScript.create("Higo", "food", 0.1, 1, 0.0).to_dict()
+	])
+	world._backpack_action = stash_action
+	world._refresh_backpack_ui()
+	check(world._backpack_panel != null, "Stash panel builds for a shelter action")
+	var n_thumbs := 0
+	var n_state_labels := 0
+	for cont in world._backpack_panel.find_children("*", "ItemThumbnail3D", true, false):
+		n_thumbs += 1
+	for lbl in world._backpack_panel.find_children("*", "Label", true, false):
+		if str((lbl as Label).text).contains("Estado"):
+			n_state_labels += 1
+	check(n_thumbs >= 2, "Each stash row renders a 3D thumbnail (got %d)" % n_thumbs)
+	check(n_state_labels >= 2, "Each stash row shows an Estado line (got %d)" % n_state_labels)
+	var ev := InputEventKey.new()
+	ev.keycode = KEY_TAB
+	ev.pressed = true
+	world._input(ev)
+	check(world._backpack_panel == null, "Tab closes the stash panel")
+	world._refresh_backpack_ui()
+	var ev2 := InputEventKey.new()
+	ev2.keycode = KEY_ESCAPE
+	ev2.pressed = true
+	world._input(ev2)
+	check(world._backpack_panel == null, "Escape closes the stash panel")
+	world._backpack_action = null
 
 	world.free()
 	player.free()

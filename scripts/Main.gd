@@ -11,6 +11,7 @@ const NPCControllerScript = preload("res://scripts/NPCController.gd")
 const LootContainerScript = preload("res://scripts/LootContainer.gd")
 const DoorScript = preload("res://scripts/Door.gd")
 const ItemScript = preload("res://scripts/Item.gd")
+const ItemThumbnail3DScript = preload("res://scripts/ItemThumbnail3D.gd")
 const AudioSystemScript = preload("res://scripts/AudioSystem.gd")
 const WorldActionScript = preload("res://scripts/WorldAction.gd")
 const RiverWaterScript = preload("res://scripts/RiverWater.gd")
@@ -861,13 +862,14 @@ func _input(event: InputEvent) -> void:
 	if game_over:
 		return
 	if hud != null and player != null and not player.is_dead and event is InputEventKey and event.pressed and not event.echo:
+		# Con el panel de alijo abierto cualquier tecla (Tab, Esc, K...) lo cierra.
+		if _backpack_panel != null:
+			_close_backpack_ui()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_K and not player.is_sleeping:
 			if _loot_panel != null:
 				_close_loot_ui()
-			if _backpack_panel != null:
-				_close_backpack_ui()
-				get_viewport().set_input_as_handled()
-				return
 			var k_target = player._get_interaction_target() if player.has_method("_get_interaction_target") else null
 			var k_is_shelter: bool = k_target != null and str(k_target.get("action_type", "")) == "shelter"
 			if _is_backpack_container(k_target) or k_is_shelter:
@@ -4554,7 +4556,7 @@ func _refresh_backpack_ui() -> void:
 	if _backpack_panel != null:
 		_backpack_panel.queue_free()
 	_backpack_panel = PanelContainer.new()
-	_backpack_panel.custom_minimum_size = Vector2(400, 0)
+	_backpack_panel.custom_minimum_size = Vector2(470, 0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.04, 0.05, 0.04, 0.96)
 	style.border_color = Color(0.72, 0.74, 0.40, 0.95)
@@ -4569,7 +4571,7 @@ func _refresh_backpack_ui() -> void:
 	vbox.add_theme_constant_override("separation", 6)
 	_backpack_panel.add_child(vbox)
 	var title := Label.new()
-	title.text = "%s - [K] para cerrar" % str(_backpack_action.display_name)
+	title.text = "%s — cualquier tecla para cerrar" % str(_backpack_action.display_name)
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
 	vbox.add_child(title)
@@ -4578,22 +4580,50 @@ func _refresh_backpack_ui() -> void:
 	head.text = "Dentro:"
 	head.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
 	vbox.add_child(head)
+	var cscroll := ScrollContainer.new()
+	cscroll.custom_minimum_size = Vector2(430, clampi(maxi(contents.size(), 1), 1, 4) * 62 + 8)
+	cscroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var cbox := VBoxContainer.new()
+	cbox.add_theme_constant_override("separation", 4)
+	cbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cscroll.add_child(cbox)
+	vbox.add_child(cscroll)
 	if contents.is_empty():
 		var empty := Label.new()
 		empty.text = "Vacia."
 		empty.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
-		vbox.add_child(empty)
+		cbox.add_child(empty)
 	else:
 		for i in range(contents.size()):
 			var cd: Dictionary = contents[i]
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
-			vbox.add_child(row)
-			var name_label := Label.new()
-			name_label.text = "%s x%d" % [str(cd.get("name", "???")), int(cd.get("quantity", 1))]
-			name_label.custom_minimum_size = Vector2(230, 24)
-			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
-			row.add_child(name_label)
+			cbox.add_child(row)
+			var citem = ItemScript.from_dict(cd) if cd is Dictionary else null
+			if citem != null:
+				_add_stash_thumbnail(row, citem)
+				var ctext := VBoxContainer.new()
+				ctext.custom_minimum_size = Vector2(230, 0)
+				ctext.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				row.add_child(ctext)
+				var name_label := Label.new()
+				name_label.text = "%s x%d" % [citem.item_name, citem.quantity]
+				name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+				ctext.add_child(name_label)
+				var state: Array = _stash_item_state(citem)
+				if not str(state[0]).is_empty():
+					var state_label := Label.new()
+					state_label.text = str(state[0])
+					state_label.add_theme_font_size_override("font_size", 11)
+					state_label.add_theme_color_override("font_color", state[1])
+					ctext.add_child(state_label)
+			else:
+				var name_label2 := Label.new()
+				name_label2.text = "%s x%d" % [str(cd.get("name", "???")), int(cd.get("quantity", 1))]
+				name_label2.custom_minimum_size = Vector2(230, 24)
+				name_label2.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+				row.add_child(name_label2)
 			var take_btn := Button.new()
 			take_btn.text = "Coger"
 			take_btn.custom_minimum_size = Vector2(80, 28)
@@ -4614,7 +4644,7 @@ func _refresh_backpack_ui() -> void:
 			equipped_names[str(sv)] = true
 		var any := false
 		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(390, 160)
+		scroll.custom_minimum_size = Vector2(430, 160)
 		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		var sbox := VBoxContainer.new()
@@ -4630,11 +4660,22 @@ func _refresh_backpack_ui() -> void:
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
 			sbox.add_child(row)
+			_add_stash_thumbnail(row, it)
+			var itext := VBoxContainer.new()
+			itext.custom_minimum_size = Vector2(230, 0)
+			itext.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(itext)
 			var name_label := Label.new()
 			name_label.text = "%s x%d" % [str(it.item_name), int(it.quantity)]
-			name_label.custom_minimum_size = Vector2(230, 24)
 			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
-			row.add_child(name_label)
+			itext.add_child(name_label)
+			var istate: Array = _stash_item_state(it)
+			if not str(istate[0]).is_empty():
+				var state_label := Label.new()
+				state_label.text = str(istate[0])
+				state_label.add_theme_font_size_override("font_size", 11)
+				state_label.add_theme_color_override("font_color", istate[1])
+				itext.add_child(state_label)
 			var store_btn := Button.new()
 			store_btn.text = "Meter"
 			store_btn.custom_minimum_size = Vector2(80, 28)
@@ -4648,6 +4689,40 @@ func _refresh_backpack_ui() -> void:
 			sbox.add_child(empty2)
 	hud.add_child(_backpack_panel)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
+	var thumb := ItemThumbnail3DScript.new()
+	thumb.custom_minimum_size = Vector2(52, 52)
+	thumb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	thumb.ready.connect(func():
+		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type)
+		var scale_value: float = _get_drop_scale(item.item_name, item.item_type)
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT}
+		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
+		if not only_mesh.is_empty():
+			colors.tint = Color(0.05, 0.05, 0.05)
+		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo)
+		thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	, CONNECT_ONE_SHOT)
+	row.add_child(thumb)
+
+func _stash_item_state(item) -> Array:
+	var parts: Array = []
+	var color := Color(0.55, 0.62, 0.50)
+	var pct := int(round(item.durability_pct() * 100.0))
+	if item.max_durability > 0.0:
+		parts.append("Estado %d%%" % pct)
+		if pct <= 30:
+			color = Color(0.9, 0.55, 0.25)
+	if item.is_perishable():
+		parts.append(item.spoil_state_label())
+		if item.spoil_state() >= 1:
+			color = item.spoil_state_color()
+	if item.is_wet():
+		parts.append(item.wet_state_label())
+		if color == Color(0.55, 0.62, 0.50) or (item.is_perishable() and item.spoil_state() == 0):
+			color = item.wet_state_color()
+	return [" · ".join(parts), color]
 
 func _set_backpack_entry_contents(drop_id: String, contents: Array) -> void:
 	for e in _dropped_items:
