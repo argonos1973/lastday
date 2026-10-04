@@ -7,7 +7,7 @@ CLOTH_DIR = os.path.join(ROOT, "assets/textures/clothing")
 OUT_DIR = os.path.join(ROOT, "outputs")
 os.makedirs(CLOTH_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
-SIZE, CELLS, WARP_SIZE = 1024, 22, 24
+SIZE, CELLS, WARP_SIZE = 2048, 22, 24
 
 # Periodic low-frequency distortion bends the patches into irregular printed shapes.
 wr = random.Random(4212)
@@ -90,6 +90,10 @@ for obj in scene.objects:
                 factor = 1.0 - 0.45 * weight
                 point.x /= factor
                 point.y /= factor
+                # Tuck the waistband slightly under the jacket around the back
+                # and sides as well; only the upper band moves, not the crotch.
+                band = max(0.0, min(1.0, (point.z - 1.95) / 0.28))
+                point.z += 0.12 * band * band * (3.0 - 2.0 * band)
                 vertex.co = inverse @ point
     if name in ("soldier_torso", "soldier_legs"):
         mat = bpy.data.materials.new("Woodland camouflage fabric")

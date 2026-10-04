@@ -35,6 +35,7 @@ const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
+const MILITARY_HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
 # Wearable visuals placed on the body relative to its measured bounding box, so
 # they fit regardless of the character model's scale/proportions.
 #   frac_y: anchor height as a fraction of body height (0 = feet, 1 = head top)
@@ -43,6 +44,7 @@ const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
 	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
+	"Casco militar": {"path": MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
 	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
@@ -150,6 +152,7 @@ const CLOTHING_COVERED_ZONES := {
 	"Botas militares": ["pies"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
+	"Casco militar": ["cabeza"],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
@@ -176,6 +179,7 @@ const CLOTHING_SLOTS := {
 	"Chaqueta camuflaje desert": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
+	"Casco militar": "head",
 }
 
 # Warmth value per clothing item. Higher = warmer.
@@ -203,12 +207,14 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.10,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
+	"Casco militar": 0.05,
 }
 
 # Heat protection: reduces body temperature gain in hot environments.
 # Hats and headwear shield from the sun; other clothing has no heat protection.
 const CLOTHING_HEAT_PROTECTION := {
 	"Sombrero de pescador": 0.35,
+	"Casco militar": 0.30,
 }
 
 # Heat retention: how much body heat is retained in hot environments.
@@ -237,6 +243,7 @@ const CLOTHING_HEAT_RETENTION := {
 	"Guantes militares": 0.08,
 	"Guantes de trabajo": 0.05,
 	"Sombrero de pescador": 0.0,
+	"Casco militar": 0.06,
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
@@ -2004,7 +2011,7 @@ func unequip_clothing(item_name: String) -> void:
 		if worn != null:
 			worn.free()
 		_head_worn_rel.erase("Worn_" + item_name)
-		if item_name == "Sombrero de pescador":
+		if CLOTHING_SLOTS.get(item_name, "") == "head":
 			preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
@@ -2635,8 +2642,8 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 		item_center.y = item.position.y
 	node.position += anchor - item_center
 	node.position += cfg.get("offset", Vector3.ZERO)
-	if item_name == "Sombrero de pescador":
-		preload("res://scripts/HeadwearFit.gd").fit(parent, node)
+	if CLOTHING_SLOTS.get(item_name, "") == "head":
+		preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
 	if loot_color.a > 0.0:
 		var meshes2: Array = []
 		_collect_mesh_instances(node, meshes2)
@@ -6690,6 +6697,7 @@ func _build_held_clothing(item_name: String) -> void:
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
 		"Sombrero de pescador": path = POLY_FISHERMANS_HAT_MODEL
+		"Casco militar": path = MILITARY_HELMET_MODEL
 		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = POLY_GARDEN_GLOVES_MODEL
 		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		_:

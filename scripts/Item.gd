@@ -62,6 +62,7 @@ const CLOTHING_STORAGE := {
 	"Chaqueta camuflaje desert": 5,
 	"Guantes de trabajo": 1,
 	"Sombrero de pescador": 1,
+	"Casco militar": 2,
 }
 
 static func create(new_name: String, new_type: String, new_weight: float, new_quantity := 1, new_use_value := 0.0):

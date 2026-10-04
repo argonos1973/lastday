@@ -19,7 +19,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument("--size", type=int, default=2048)
+parser.add_argument("--only", type=str, default="",
+                    help="Comma-separated albedo basenames to composite; empty = all")
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
+ONLY = {s.strip() for s in args.only.split(",") if s.strip()}
 OUT = ROOT / "assets/textures/clothing"
 SIZE = args.size
 
@@ -199,27 +202,34 @@ def composite(name, strength):
     print("composited", name, "strength", strength)
 
 # Soldier uniform: strongest weave (it carries every tinted variant).
-composite("garment_soldier_albedo.png", 1.0)
+if not ONLY or "garment_soldier_albedo.png" in ONLY:
+    composite("garment_soldier_albedo.png", 1.0)
 # Camo maps share the soldier mesh — same weave keeps the sets consistent.
-composite("camouflage_woodland.png", 0.9)
-composite("camouflage_desert.png", 0.9)
+if not ONLY or "camouflage_woodland.png" in ONLY:
+    composite("camouflage_woodland.png", 0.9)
+if not ONLY or "camouflage_desert.png" in ONLY:
+    composite("camouflage_desert.png", 0.9)
 # Gloves get a lighter pass; their leather grain already reads.
-composite("garment_gloves_albedo.png", 0.5)
+if not ONLY or "garment_gloves_albedo.png" in ONLY:
+    composite("garment_gloves_albedo.png", 0.5)
 # Micro height: add the weave into the soldier height map for parallax relief.
-height_path = OUT / "garment_soldier_height.png"
-himg = bpy.data.images.load(str(height_path), check_existing=False)
-himg.colorspace_settings.name = "Non-Color"
-hpx = np.empty(SIZE * SIZE * 4, dtype=np.float32)
-himg.pixels.foreach_get(hpx)
-harr = hpx.reshape(SIZE, SIZE, 4)
-harr[..., :3] = np.clip(harr[..., :3] + (lum[..., None] - 1.0) * 0.35, 0.0, 1.0)
-hout = bpy.data.images.new("garment_soldier_height", width=SIZE, height=SIZE, alpha=True)
-hout.colorspace_settings.name = "Non-Color"
-hout.pixels.foreach_set(harr.astype(np.float32).ravel())
-hout.filepath_raw = str(height_path)
-hout.file_format = "PNG"
-hout.save()
-print("composited garment_soldier_height.png micro-bump")
+if ONLY and "garment_soldier_height.png" not in ONLY:
+    pass
+else:
+    height_path = OUT / "garment_soldier_height.png"
+    himg = bpy.data.images.load(str(height_path), check_existing=False)
+    himg.colorspace_settings.name = "Non-Color"
+    hpx = np.empty(SIZE * SIZE * 4, dtype=np.float32)
+    himg.pixels.foreach_get(hpx)
+    harr = hpx.reshape(SIZE, SIZE, 4)
+    harr[..., :3] = np.clip(harr[..., :3] + (lum[..., None] - 1.0) * 0.35, 0.0, 1.0)
+    hout = bpy.data.images.new("garment_soldier_height", width=SIZE, height=SIZE, alpha=True)
+    hout.colorspace_settings.name = "Non-Color"
+    hout.pixels.foreach_set(harr.astype(np.float32).ravel())
+    hout.filepath_raw = str(height_path)
+    hout.file_format = "PNG"
+    hout.save()
+    print("composited garment_soldier_height.png micro-bump")
 
 # Preview swatch for eyeballing the detail map.
 swatch = bpy.data.images.new("military_detail_preview", width=SIZE, height=SIZE, alpha=True)

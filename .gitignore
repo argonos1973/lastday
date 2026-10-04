@@ -41,3 +41,6 @@ lastday2.app/
 # Local video captures
 *.mkv
 *.mp4
+
+# Python bytecode from running the Blender tool scripts
+__pycache__/

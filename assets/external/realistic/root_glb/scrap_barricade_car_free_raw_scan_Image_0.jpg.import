@@ -2,12 +2,10 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://7owyorgjmpqd"
-path.s3tc="res://.godot/imported/scrap_barricade_car_free_raw_scan_0.jpg-ce56214487b53b2d15d7fb93fc967393.s3tc.ctex"
-path.etc2="res://.godot/imported/scrap_barricade_car_free_raw_scan_0.jpg-ce56214487b53b2d15d7fb93fc967393.etc2.ctex"
+uid="uid://yh51fux7mcv4"
+path="res://.godot/imported/scrap_barricade_car_free_raw_scan_Image_0.jpg-266bd2aace29548a45f6eba1f6d37ede.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc", "etc2_astc"],
-"vram_texture": true
+"vram_texture": false
 }
 generator_parameters={
 "md5": "75f3ce812e8ae2dc9582fa71ea33dcb1"
@@ -15,12 +13,12 @@ generator_parameters={
 
 [deps]
 
-source_file="res://assets/external/realistic/root_glb/scrap_barricade_car_free_raw_scan_0.jpg"
-dest_files=["res://.godot/imported/scrap_barricade_car_free_raw_scan_0.jpg-ce56214487b53b2d15d7fb93fc967393.s3tc.ctex", "res://.godot/imported/scrap_barricade_car_free_raw_scan_0.jpg-ce56214487b53b2d15d7fb93fc967393.etc2.ctex"]
+source_file="res://assets/external/realistic/root_glb/scrap_barricade_car_free_raw_scan_Image_0.jpg"
+dest_files=["res://.godot/imported/scrap_barricade_car_free_raw_scan_Image_0.jpg-266bd2aace29548a45f6eba1f6d37ede.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -42,4 +40,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=0
+detect_3d/compress_to=1

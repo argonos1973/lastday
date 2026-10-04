@@ -263,6 +263,7 @@ const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabin
 const POLY_EQUIPMENT_DIR := "res://assets/external/polyhaven/"
 const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
+const MILITARY_HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
 const ROOT_GLB_DIR := "res://assets/external/realistic/root_glb/"
 const TEX_DIR := "res://assets/external/textures/"
 const TEX_PLASTER_DIFF := TEX_DIR + "plaster_brick_01/plaster_brick_01_diff_4k.jpg"
@@ -5242,6 +5243,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
 					return [POLY_FISHERMANS_HAT_MODEL]
+				"Casco militar":
+					return [MILITARY_HELMET_MODEL]
 				"Guantes survival":
 					return [POLY_GARDEN_GLOVES_MODEL]
 				"Botas survival":
@@ -5348,6 +5351,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 1.2
 				"Botas militares":
 					return 1.1
+				"Casco militar":
+					return 1.0
 				_:
 					return 0.7
 		"seed":
@@ -7695,6 +7700,7 @@ func _create_house_loot() -> void:
 		# --- Gloves ---
 		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
 		{"name": "Botas militares", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_military_boots.glb"], "scale": 1.1, "rot": Vector3(0, 40, 0), "flat": true, "color": Color(0.10, 0.10, 0.075), "tint": Color(0.10, 0.10, 0.075), "rare": true},
+		{"name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 30, 0), "flat": false, "color": Color(0, 0, 0, 0), "rare": true},
 		# --- Supplies ---
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
@@ -7730,7 +7736,7 @@ func _create_house_loot() -> void:
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
 	var pants_indices := [3, 4, 5, 6]
-	var other_indices := [0, 1, 2, 7, 8, 9, 10, 11, 12, 13]
+	var other_indices := [0, 1, 2, 7, 8, 9, 10, 11, 12, 13, 14]
 	var guaranteed_clothing: Array = []
 	guaranteed_clothing.append(pants_indices[_world_rng.randi() % pants_indices.size()])
 	guaranteed_clothing.append(other_indices[_world_rng.randi() % other_indices.size()])
@@ -7771,9 +7777,10 @@ func _create_house_loot() -> void:
 		tent_loot_pool[5], # black pants
 		tent_loot_pool[6], # camo pants
 		tent_loot_pool[12], # gloves
-		tent_loot_pool[14], # canned stew
-		tent_loot_pool[15], # canned tuna
-		tent_loot_pool[16], # plastic bottle
+		tent_loot_pool[14], # helmet
+		tent_loot_pool[15], # canned stew
+		tent_loot_pool[16], # canned tuna
+		tent_loot_pool[17], # plastic bottle
 	]
 	# Guarantee the camo boonie hat here too — fixed ID like the rifle
 	if not _depleted_action_ids.has("remote_tent_loot_hat"):
@@ -7784,9 +7791,9 @@ func _create_house_loot() -> void:
 		_create_pickup_item(rt_hat)
 	else:
 		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
-	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves)
+	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)
 	var rt_pants_indices := [0, 1, 2, 3]
-	var rt_other_indices := [4]
+	var rt_other_indices := [4, 5]
 	var rt_guaranteed: Array = []
 	rt_guaranteed.append(rt_pants_indices[_world_rng.randi() % rt_pants_indices.size()])
 	rt_guaranteed.append(rt_other_indices[_world_rng.randi() % rt_other_indices.size()])
@@ -7800,7 +7807,7 @@ func _create_house_loot() -> void:
 		_create_pickup_item(g_data)
 	# Guaranteed food items
 	for _fi in range(2):
-		var food_data: Dictionary = remote_tent_loot[5 + _world_rng.randi() % 3].duplicate()
+		var food_data: Dictionary = remote_tent_loot[6 + _world_rng.randi() % 3].duplicate()
 		food_data["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 		food_data["pos"].y = remote_tent_ground_y + 0.06
 		food_data["id"] = "remote_tent_loot_food_%d" % _fi

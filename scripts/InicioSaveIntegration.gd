@@ -159,7 +159,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			feet_item = n
 		elif n.find("Guantes") >= 0:
 			hands_item = n
-		elif n.find("Sombrero") >= 0:
+		elif n.find("Sombrero") >= 0 or n.find("Casco") >= 0:
 			head_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
@@ -417,6 +417,7 @@ const _MILITARY_TINTS := {
 }
 
 const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
+const _HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
 const _KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 
 static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
@@ -428,9 +429,12 @@ static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 	return false
 
 static func _add_preview_hat(model: Node3D, item_name: String) -> void:
-	if item_name != "Sombrero de pescador":
-		return
-	var packed := load(_HAT_MODEL)
+	var hat_model := ""
+	match item_name:
+		"Sombrero de pescador": hat_model = _HAT_MODEL
+		"Casco militar": hat_model = _HELMET_MODEL
+		_: return
+	var packed := load(hat_model)
 	if packed == null or not packed is PackedScene:
 		return
 	var hat := (packed as PackedScene).instantiate() as Node3D
@@ -474,7 +478,7 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	var item_center := item_aabb.position + item_aabb.size * 0.5
 	item_center.y = item_aabb.position.y
 	hat.position = anchor - item_center
-	preload("res://scripts/HeadwearFit.gd").fit(model, hat)
+	preload("res://scripts/HeadwearFit.gd").fit(model, hat, item_name)
 	_bind_preview_bone(model, hat, ["mixamorig:Head", "mixamorig_Head", "Head"])
 
 static func _add_preview_knife(model: Node3D) -> void:

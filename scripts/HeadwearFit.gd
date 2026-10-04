@@ -1,14 +1,35 @@
 extends RefCounted
 
+# Meshes hidden while the item is worn (name prefixes). The helmet is modelled
+# with its harness and chin strap hanging open for display on the ground, but
+# worn they would clip through the jaw — they are excluded from fit bounds and
+# made invisible. Dropped/pickup copies keep the full detail.
+const WORN_HIDE := {
+	"Casco militar": ["Front harness", "Rear harness", "Chin support strap", "Chin comfort pad",
+		"Strap adjuster", "Adjuster opening", "Removable suspension pad", "Crown comfort pad"],
+}
+# Hair tuck depth per item, as a fraction of head height applied to the brim
+# line (positive raises the tuck, negative lowers it inside the skull volume).
+# The helmet swallows the whole scalp, so hair collapses down into the head
+# instead of just under the rim — no tufts can poke through the shell.
+const TUCK_DROP := {"Casco militar": -0.15}
+# Items that bury the scalp also pull the collapsed hair verts inward, so the
+# squashed layer stays inside the skull instead of ringing the face.
+const TUCK_SHRINK := {"Casco militar": 0.55}
+
 # These character meshes contain baked bind-pose coordinates. Use only the
 # scalp, never whole-body bounds (arms, footwear and export helpers vary).
-static func fit(model: Node3D, hat: Node3D) -> bool:
+static func fit(model: Node3D, hat: Node3D, item_name: String = "") -> bool:
 	var head := model.find_child("HeadMesh", true, false) as MeshInstance3D
 	if head == null or head.mesh == null:
 		return false
 	var parent := hat.get_parent() as Node3D
 	if parent == null:
 		return false
+	for mesh in hat.find_children("*", "MeshInstance3D", true, false):
+		for prefix in WORN_HIDE.get(item_name, []):
+			if String(mesh.name).begins_with(prefix):
+				mesh.visible = false
 	var head_bounds := head.get_aabb()
 	var scalp := upper_bounds(head, Transform3D.IDENTITY, head_bounds.end.y - head_bounds.size.y * 0.34)
 	if scalp.size.x <= 0.001 or scalp.size.z <= 0.001:
@@ -17,6 +38,8 @@ static func fit(model: Node3D, hat: Node3D) -> bool:
 	var raw := AABB()
 	var first := true
 	for mesh in hat.find_children("*", "MeshInstance3D", true, false):
+		if not mesh.visible:
+			continue
 		var frame: Transform3D = hat.global_transform.affine_inverse() * mesh.global_transform
 		var bounds: AABB = frame * mesh.get_aabb()
 		raw = bounds if first else raw.merge(bounds)
@@ -27,6 +50,8 @@ static func fit(model: Node3D, hat: Node3D) -> bool:
 	var crown := AABB()
 	first = true
 	for mesh in hat.find_children("*", "MeshInstance3D", true, false):
+		if not mesh.visible:
+			continue
 		var frame: Transform3D = hat.global_transform.affine_inverse() * mesh.global_transform
 		var bounds := upper_bounds(mesh, frame, raw.position.y + raw.size.y * 0.45)
 		if bounds.size.length_squared() == 0.0:
@@ -53,7 +78,9 @@ static func fit(model: Node3D, hat: Node3D) -> bool:
 	# — anclar via head.global_transform dejaba el sombrero ~100x desplazado
 	# o girado 90° respecto a la cabeza renderizada.
 	hat.transform = _head_frame(model, head, parent) * in_head
-	_tuck_hair(model, origin_in_head.y + raw.position.y * hat_scale.y + head_bounds.size.y * 0.02)
+	var tuck := float(TUCK_DROP.get(item_name, 0.02))
+	var shrink := float(TUCK_SHRINK.get(item_name, 0.0))
+	_tuck_hair(model, origin_in_head.y + raw.position.y * hat_scale.y + head_bounds.size.y * tuck, shrink)
 	return true
 
 static func restore_hair(model: Node3D) -> void:
@@ -62,7 +89,7 @@ static func restore_hair(model: Node3D) -> void:
 			hair.mesh = hair.get_meta("headwear_original_mesh")
 			hair.remove_meta("headwear_original_mesh")
 
-static func _tuck_hair(model: Node3D, brim_height: float) -> void:
+static func _tuck_hair(model: Node3D, brim_height: float, shrink: float = 0.0) -> void:
 	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
 		if hair.mesh == null:
 			continue
@@ -75,9 +102,19 @@ static func _tuck_hair(model: Node3D, brim_height: float) -> void:
 		for surface in range(original.get_surface_count()):
 			var arrays := original.surface_get_arrays(surface)
 			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX].duplicate()
+			var center := Vector2.ZERO
+			if shrink > 0.0 and not vertices.is_empty():
+				for vertex in vertices:
+					center += Vector2(vertex.x, vertex.z)
+				center /= vertices.size()
 			for index in range(vertices.size()):
 				if vertices[index].y > brim_height:
 					vertices[index].y = brim_height + (vertices[index].y - brim_height) * 0.02
+				elif shrink <= 0.0:
+					continue
+				if shrink > 0.0:
+					vertices[index].x = center.x + (vertices[index].x - center.x) * (1.0 - shrink)
+					vertices[index].z = center.y + (vertices[index].z - center.y) * (1.0 - shrink)
 			arrays[Mesh.ARRAY_VERTEX] = vertices
 			tucked.add_surface_from_arrays(original.surface_get_primitive_type(surface), arrays)
 			tucked.surface_set_material(surface, original.surface_get_material(surface))

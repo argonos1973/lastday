@@ -104,6 +104,35 @@ func run() -> void:
 			root.get_texture().get_image().save_png("/tmp/hat_fit_%s.png" % view)
 	actor._puppet_swap_to_naked()
 	check(hair.mesh == original_hair, "Remote equipment reset restores the hairstyle too")
+	# Casco militar: same bone-anchored fit but the open harness/strap meshes are
+	# display-only — worn they must be hidden and excluded from fit bounds.
+	actor.equip_clothing("Casco militar")
+	var helmet := model.get_node("Worn_Casco militar") as Node3D
+	check(helmet != null, "Helmet wears through the head-slot visuals path")
+	var straps_visible := 0
+	for mi in helmet.find_children("*", "MeshInstance3D", true, false):
+		if mi.visible and (mi.name.begins_with("Chin") or mi.name.begins_with("Front harness") or mi.name.begins_with("Rear harness") or mi.name.find("Strap adjuster") >= 0):
+			straps_visible += 1
+	check(straps_visible == 0, "Helmet harness and chin strap are hidden while worn")
+	var helmet_fit: Transform3D = actor._head_worn_rel[helmet.name]
+	var helmet_bounds := mesh_to_model.affine_inverse() * actor._local_aabb_in(model, helmet, false)
+	check(helmet_bounds.end.y > head.end.y and helmet_bounds.end.y < head.end.y + head.size.y * 0.30, "Helmet dome clears the skull without floating")
+	skeleton.set_bone_pose_rotation(bone, original * Quaternion(Vector3.RIGHT, 0.5))
+	skeleton.force_update_all_bone_transforms()
+	actor._update_head_worn_items()
+	var helmet_local: Transform3D = model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
+	check((helmet_local.affine_inverse() * helmet.transform).is_equal_approx(helmet_fit), "Helmet remains anchored when the head tilts")
+	skeleton.set_bone_pose_rotation(bone, original)
+	skeleton.force_update_all_bone_transforms()
+	actor._update_head_worn_items()
+	preload("res://scripts/InicioSaveIntegration.gd")._add_preview_hat(model, "Casco militar")
+	var preview_helmet := model.get_node_or_null("PreviewHat") as Node3D
+	check(preview_helmet != null, "Preview accepts the military helmet too")
+	if preview_helmet != null:
+		check(preview_helmet.transform.is_equal_approx(helmet.transform), "Helmet preview uses the gameplay fit")
+		preview_helmet.free()
+	actor.unequip_clothing("Casco militar")
+	check(hair.mesh == original_hair, "Removing the helmet restores the original hairstyle")
 	actor.stats.free()
 	actor.queue_free()
 	await process_frame
