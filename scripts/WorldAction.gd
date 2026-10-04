@@ -419,4 +419,4 @@ func _is_footwear() -> bool:
 	if not has_meta("item_name"):
 		return false
 	var n := str(get_meta("item_name"))
-	return n == "Zapatillas" or n == "Botas survival"
+	return n == "Zapatillas" or n.begins_with("Botas")

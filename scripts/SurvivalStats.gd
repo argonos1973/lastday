@@ -107,7 +107,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		target_temperature += (ambient_temperature - 28.0) * 0.18 * heat_retention * heat_reduction
 	# Gameplay cooling curve: wet clothing loses more heat in cooler air.
 	if wetness > 0.05:
-		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.17, 0.0, 5.0)
+		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.09, 0.0, 3.5)
 		target_temperature -= wetness * wet_cooling * (1.0 - protection * 0.3)
 	# Wind increases heat loss in cool air, especially with wet clothing.
 	if not sheltered and ambient_temperature < 18.0:
@@ -143,8 +143,9 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
 	# React in seconds rather than taking several minutes to acknowledge a
-	# change in ambient conditions.
-	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.08))
+	# change in ambient conditions. The exchange rate stays slow enough that a
+	# cold snap gives the player minutes to find shelter instead of ~40 s.
+	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.05))
 
 	if hunger <= 0.0:
 		health = max(0.0, health - 2.0 * delta)
@@ -159,11 +160,13 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		var t := smoothstep(0.0, 50.0, sleep)
 		var sleep_damage: float = lerp(8.0, 0.0, t)
 		health = max(0.0, health - sleep_damage * delta)
-	# Health damage starts when temp color changes from white (deviation >= 1.2°C)
+	# Health damage starts when temp color changes from white (deviation >= 1.2°C).
+	# Mild hypothermia drains slowly; deep cold escalates but still leaves a
+	# minute-scale window to reach warmth.
 	if body_temperature < 35.4:
-		health = max(0.0, health - 1.0 * delta)
+		health = max(0.0, health - 0.45 * delta)
 	if body_temperature < 34.5:
-		health = max(0.0, health - 2.5 * delta)
+		health = max(0.0, health - 1.05 * delta)
 	if body_temperature > 37.8:
 		health = max(0.0, health - 1.0 * delta)
 	if body_temperature > 39.0:

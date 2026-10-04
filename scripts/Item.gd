@@ -48,6 +48,7 @@ const CLOTHING_STORAGE := {
 	"Zapatillas": 0,
 	"Guantes survival": 1,
 	"Botas survival": 0,
+	"Botas militares": 0,
 	"Pantalones militares": 4,
 	"Guantes militares": 1,
 	"Pantalones militares azules": 4,

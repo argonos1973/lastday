@@ -182,7 +182,7 @@ static func make_forest_foliage_material(source: StandardMaterial3D) -> ShaderMa
 	return material
 
 static func _cloth_prefix(kind: String) -> String:
-	if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"]:
+	if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots", "mboots"]:
 		return "garment_" + kind
 	return "cloth_" + kind
 
@@ -191,14 +191,14 @@ static func cloth_detail(m: StandardMaterial3D, kind: String, unit_scale: float 
 	m.normal_enabled = true
 	m.normal_texture = load_texture(CLOTH_DIR + prefix + "_normal.png")
 	# Leather has broader grain; woven fabric needs subtler relief at game distance.
-	m.normal_scale = 0.4 if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"] else 0.25
+	m.normal_scale = 0.4 if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots", "mboots"] else 0.25
 	m.roughness_texture = load_texture(CLOTH_DIR + prefix + "_roughness.png")
 	m.roughness = 1.0
 	m.metallic = 0.0
-	m.metallic_specular = 0.35 if kind in ["shoes", "boots", "gloves", "leather"] else 0.2
+	m.metallic_specular = 0.35 if kind in ["shoes", "boots", "mboots", "gloves", "leather"] else 0.2
 	# Baked AO darkens pockets, seams and folds; a touch of parallax lets the
 	# garment relief shift with the view angle.
-	var baked := kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots"]
+	var baked := kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots", "mboots"]
 	if baked:
 		m.ao_enabled = true
 		m.ao_texture = load_texture(CLOTH_DIR + prefix + "_ao.png")
@@ -213,7 +213,7 @@ static func cloth_detail(m: StandardMaterial3D, kind: String, unit_scale: float 
 		# meter-space models (Remy.glb previews, loose pickups) must pass
 		# unit_scale=0.01 or the garment explodes metres off the body.
 		m.grow = true
-		m.grow_amount = {"top": 3.0, "bottom": 1.0, "soldier": 0.0, "shoes": 2.5, "boots": 1.0, "gloves": 0.6}.get(kind, 0.5) * unit_scale
+		m.grow_amount = {"top": 3.0, "bottom": 1.0, "soldier": 0.0, "shoes": 2.5, "boots": 1.0, "mboots": 0.6, "gloves": 0.6}.get(kind, 0.5) * unit_scale
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 
 static func make_clothing_material(kind: String, color: Color, grow_override: float = -999.0, unit_scale: float = 1.0) -> StandardMaterial3D:
@@ -239,6 +239,8 @@ static func clothing_kind_for_mesh(mesh_name: String) -> String:
 		return "gloves"
 	if mesh_id == "cloth_feet":
 		return "boots"
+	if mesh_id == "military_boots":
+		return "mboots"
 	if "shoes" in mesh_id:
 		return "shoes"
 	if "bottoms" in mesh_id:

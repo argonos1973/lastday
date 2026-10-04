@@ -60,6 +60,7 @@ const SURVIVAL_CLOTHING := {
 	"Chaqueta de campaña arena": {"mesh": "field_jacket_sand", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
+	"Botas militares": {"mesh": "military_boots", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.10, 0.10, 0.075)},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Pantalones militares azules": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.02, 0.04, 0.08)},
@@ -107,6 +108,7 @@ const DEFAULT_SKIN_HIDES := {
 	"Guantes survival": ["Desnudo_hands"],
 	"Guantes militares": ["Desnudo_hands"],
 	"Botas survival": ["Desnudo_feet"],
+	"Botas militares": ["Desnudo_feet"],
 	"Chaqueta militar": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar azul": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta militar negra II": ["Desnudo_torso", "Desnudo_arms"],
@@ -145,6 +147,7 @@ const CLOTHING_COVERED_ZONES := {
 	"Guantes survival": ["manos"],
 	"Guantes militares": ["manos"],
 	"Botas survival": ["pies"],
+	"Botas militares": ["pies"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
 }
@@ -159,6 +162,7 @@ const CLOTHING_SLOTS := {
 	"Zapatillas": "feet",
 	"Guantes survival": "hands",
 	"Botas survival": "feet",
+	"Botas militares": "feet",
 	"Pantalones militares": "legs",
 	"Guantes militares": "hands",
 	"Pantalones militares azules": "legs",
@@ -185,6 +189,7 @@ const CLOTHING_WARMTH := {
 	"Zapatillas": 0.05,
 	"Guantes survival": 0.08,
 	"Botas survival": 0.18,
+	"Botas militares": 0.20,
 	"Pantalones militares": 0.20,
 	"Pantalones militares azules": 0.20,
 	"Pantalones militares negros II": 0.20,
@@ -218,6 +223,7 @@ const CLOTHING_HEAT_RETENTION := {
 	"Zapatillas": 0.0,
 	"Guantes survival": 0.05,
 	"Botas survival": 0.10,
+	"Botas militares": 0.12,
 	"Pantalones militares": 0.25,
 	"Pantalones militares azules": 0.25,
 	"Pantalones militares negros II": 0.25,
@@ -257,6 +263,13 @@ const THIRD_PERSON_EXTERNAL_PLANT_ANIMATION := "PlantExternal"
 const THIRD_PERSON_EXTERNAL_GATHER_ANIMATION := "GatherExternal"
 const THIRD_PERSON_EXTERNAL_FISH_ANIMATION := "FishExternal"
 const THIRD_PERSON_EXTERNAL_INTERACT_ANIMATION := "InteractExternal"
+# GatherExternal's kneel-and-grab lands at ~5.1s of a 7.1s clip — actions start
+# here so the gesture reads inside a short action window. The offset is a
+# property of the clip, so local playback and remote puppets stay consistent.
+const THIRD_PERSON_GATHER_ANIM_OFFSET := 4.2
+# InteractExternal (talking gesture) is only a fallback clip — its forward
+# bend sits at ~2.6s of a 4.7s clip.
+const THIRD_PERSON_INTERACT_ANIM_OFFSET := 1.55
 const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
 const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
 const THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION := "MeleeDeathExternal"
@@ -448,6 +461,7 @@ var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
+var third_person_action_start_offset := 0.0
 var _attack_cooldown := 0.0
 var _is_aiming := false
 var _scope_overlay: Control = null
@@ -916,6 +930,11 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_low_health_animation
 		if not target.is_empty() and third_person_animation_player.has_animation(target):
 			third_person_animation_player.play(target, 0.15)
+			# Gesture clips (kneel/talk) keep a canonical start offset so remote
+			# players see the same readable part of the clip as the sender.
+			var clip_offset := _third_person_clip_start_offset(target)
+			if clip_offset > 0.0:
+				third_person_animation_player.seek(clip_offset, true)
 			_puppet_current_anim = anim
 			# Melee combat audio follows the synced clip: the victim's flinch
 			# carries the impact thud, a thrown swing carries the whoosh.
@@ -1506,6 +1525,7 @@ func _input(event: InputEvent) -> void:
 		_is_fishing_idle = false
 		third_person_action_animation = ""
 		third_person_action_timer = 0.0
+		third_person_action_start_offset = 0.0
 		_deactivate_rod_visual_overlay()
 		# Hide countdown and clear notice
 		var main := get_tree().current_scene
@@ -2143,6 +2163,8 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 			kind = "gloves"
 		"cloth_feet":
 			kind = "boots"
+		"military_boots":
+			kind = "mboots"
 		"Ch42_Shirt":
 			kind = "jersey"
 		"Ch42_Sneakers":
@@ -2392,7 +2414,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 		clone.skeleton = dst_skel.get_path()
 
 	# --- Clone survival clothing meshes (cloth_*) from player_with_clothes.glb ---
-	var survival_mesh_names := ["cloth_hands", "cloth_feet"]
+	var survival_mesh_names := ["cloth_hands", "cloth_feet", "military_boots"]
 	var src_survival_meshes: Dictionary = {}
 	var sstack: Array = [src_scene]
 	while not sstack.is_empty():
@@ -3605,7 +3627,7 @@ func _update_water_state(delta: float) -> void:
 		_soaked_each_equipped(delta * (0.38 + _water_depth * 0.55))
 		stats.wetness = _effective_wetness()
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
-		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.020 * (0.5 + wetness + _water_depth))
+		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.013 * (0.5 + wetness + _water_depth))
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
@@ -3633,7 +3655,7 @@ func _update_water_state(delta: float) -> void:
 		_dry_each_equipped(delta * dry_rate)
 		stats.wetness = _effective_wetness()
 		if wetness > 0.05:
-			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.008 * wetness)
+			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.005 * wetness)
 			_stats_emit_timer += delta
 			if _stats_emit_timer >= 0.25:
 				_stats_emit_timer = 0.0
@@ -3771,7 +3793,7 @@ func _update_barefoot(delta: float) -> void:
 	if feet_chill > 0.0 and _is_on_walkable_ground() and not is_in_water:
 		var ambient := _ambient_temperature()
 		if ambient < FEET_COLD_AMBIENT:
-			stats.body_temperature = maxf(31.0, stats.body_temperature - (FEET_COLD_AMBIENT - ambient) * 0.004 * feet_chill * delta)
+			stats.body_temperature = maxf(31.0, stats.body_temperature - (FEET_COLD_AMBIENT - ambient) * 0.0025 * feet_chill * delta)
 			if _feet_cold_notice_timer <= 0.0:
 				_feet_cold_notice_timer = 40.0
 				notice.emit("El frío cala en tus pies descalzos." if barefoot else "El calzado mojado te hiela los pies.")
@@ -5054,6 +5076,7 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
 	var target_animation := ""
+	var anim_start_offset := 0.0
 	match action_name:
 		"plant":
 			target_animation = third_person_plant_animation
@@ -5086,7 +5109,14 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"pickup", "collect":
-			target_animation = third_person_interact_animation
+			# GatherExternal is the real kneel-and-reach gesture; InteractExternal
+			# is a talking motion that read as "no animation" in short windows.
+			target_animation = third_person_gather_animation
+			if target_animation.is_empty():
+				target_animation = third_person_interact_animation
+			if target_animation.is_empty():
+				target_animation = third_person_plant_animation
+			duration = maxf(duration, 1.6)
 		"cook":
 			target_animation = third_person_sit_animation
 			if target_animation.is_empty():
@@ -5105,14 +5135,18 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 					chop_anim.loop_mode = Animation.LOOP_LINEAR
 	if target_animation.is_empty():
 		return
+	anim_start_offset = _third_person_clip_start_offset(target_animation)
 	third_person_action_animation = target_animation
 	third_person_action_timer = duration
+	third_person_action_start_offset = anim_start_offset
 	_rod_action_speed_scale = 1.0
 	if duration > 0.0 and (target_animation == _rod_fish_start_animation or target_animation == _rod_fish_end_animation or target_animation == _rod_cast_animation):
 		var rod_action := third_person_animation_player.get_animation(target_animation)
 		if rod_action != null and rod_action.length > 0.0:
 			_rod_action_speed_scale = rod_action.length / duration
 	third_person_animation_player.play(target_animation, 0.08)
+	if anim_start_offset > 0.0:
+		third_person_animation_player.seek(anim_start_offset, true)
 	third_person_animation_player.speed_scale = _rod_action_speed_scale
 	if target_animation == _rod_fish_start_animation:
 		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION)
@@ -5122,6 +5156,16 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 		_activate_rod_visual_overlay(THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION)
 	else:
 		_deactivate_rod_visual_overlay()
+
+func _third_person_clip_start_offset(anim: String) -> float:
+	# Gesture clips with a long wind-up start partway in so short action windows
+	# show the readable part of the motion. The offset is a property of the clip
+	# — local playback and remote puppets resolve it identically.
+	if anim == third_person_gather_animation:
+		return THIRD_PERSON_GATHER_ANIM_OFFSET
+	if anim == third_person_interact_animation:
+		return THIRD_PERSON_INTERACT_ANIM_OFFSET
+	return 0.0
 
 func die(cause: String = "") -> void:
 	if is_dead:
@@ -5506,6 +5550,7 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 		_is_fishing_idle = false
 		third_person_action_animation = ""
 		third_person_action_timer = 0.0
+		third_person_action_start_offset = 0.0
 		_deactivate_rod_visual_overlay()
 	# Store everything held in hands back to inventory
 	if hands != null and hands.has_item_in_hands():
@@ -6646,6 +6691,7 @@ func _build_held_clothing(item_name: String) -> void:
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
 		"Sombrero de pescador": path = POLY_FISHERMANS_HAT_MODEL
 		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = POLY_GARDEN_GLOVES_MODEL
+		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		_:
 			if item_name.begins_with("Pantalones"):
 				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
@@ -8712,6 +8758,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			third_person_animation_player.speed_scale = 1.0
 			_rod_action_speed_scale = 1.0
 			third_person_action_animation = ""
+			third_person_action_start_offset = 0.0
 			_rod_socket_active = false
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
@@ -8782,6 +8829,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			third_person_action_timer = max(0.0, third_person_action_timer - delta)
 			if third_person_animation_player.current_animation != third_person_action_animation:
 				third_person_animation_player.play(third_person_action_animation, 0.08)
+				if third_person_action_start_offset > 0.0:
+					third_person_animation_player.seek(third_person_action_start_offset, true)
 			if third_person_action_animation == _rod_fish_start_animation or third_person_action_animation == _rod_fish_end_animation or third_person_action_animation == _rod_cast_animation:
 				third_person_animation_player.speed_scale = _rod_action_speed_scale
 			elif _throw_charging:
@@ -8799,6 +8848,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			_rod_socket_active = false
 			_rod_action_speed_scale = 1.0
 			third_person_action_animation = ""
+			third_person_action_start_offset = 0.0
 			_is_firing = false
 		if is_prone and third_person_action_timer <= 0.0:
 			var prone_anim := _rifle_prone_animation

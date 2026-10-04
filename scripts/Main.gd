@@ -4994,7 +4994,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Botas survival"] or MilitaryJackets.VARIANTS.has(item_name)
+	var lay_flat := item_name in ["Botas survival", "Botas militares"] or MilitaryJackets.VARIANTS.has(item_name)
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var is_rifle := item_type == "weapon_rifle"
@@ -5057,24 +5057,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 						drop_color = gsess.selected_shoes_color
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
-	var military_black_names := ["Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar azul", "Chaqueta militar negra II"]
-	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
-	if item_name in military_black_names:
-		var mil_node := get_node_or_null(NodePath(visual_name))
-		if mil_node is Node3D:
-			if item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
-				_apply_color_material_recursive(mil_node as Node3D, Color(0.03, 0.05, 0.10))
-			elif item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
-				_apply_color_material_recursive(mil_node as Node3D, Color(0.04, 0.04, 0.04))
-			else:
-				_apply_color_material_recursive(mil_node as Node3D, Color(0.10, 0.12, 0.08))
-	elif item_name in military_camo_names:
-		var camo_node := get_node_or_null(NodePath(visual_name))
-		if camo_node is Node3D:
-			if item_name.findn("desert") >= 0:
-				_apply_camo_material_recursive(camo_node as Node3D, Color(0.35, 0.30, 0.18))
-			else:
-				_apply_camo_material_recursive(camo_node as Node3D, Color(0.20, 0.25, 0.15))
+	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
 	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
 	var action_label := item_name
 	if broken:
@@ -5269,6 +5252,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
 				"Guantes militares":
 					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
+				"Botas militares":
+					return ["res://assets/characters/adapted/pickup_military_boots.glb"]
 				_:
 					return [K_SURVIVAL + "box-large.glb", K_SURVIVAL + "box.glb"]
 		"seed":
@@ -5361,6 +5346,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 0.8
 				"Guantes militares":
 					return 1.2
+				"Botas militares":
+					return 1.1
 				_:
 					return 0.7
 		"seed":
@@ -7707,11 +7694,13 @@ func _create_house_loot() -> void:
 		{"name": "Chaqueta camuflaje desert", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Gloves ---
 		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
+		{"name": "Botas militares", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_military_boots.glb"], "scale": 1.1, "rot": Vector3(0, 40, 0), "flat": true, "color": Color(0.10, 0.10, 0.075), "tint": Color(0.10, 0.10, 0.075), "rare": true},
 		# --- Supplies ---
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
+	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
@@ -7728,11 +7717,20 @@ func _create_house_loot() -> void:
 		# Consume the same RNG that _find_pos_inside_house would have consumed
 		# to keep the RNG state in sync for subsequent loot generation
 		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+	# Guarantee the camo boonie hat in each military tent — fixed ID like the rifle
+	if not _depleted_action_ids.has("tent_loot_hat"):
+		var hat_data: Dictionary = hat_template.duplicate()
+		hat_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		hat_data["pos"].y = tent_ground_y + 0.06
+		hat_data["id"] = "tent_loot_hat"
+		_create_pickup_item(hat_data)
+	else:
+		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
-	# Limit to 1 pants max: pick 1 from pants pool (indices 0-3) and 1 from non-pants (4-7)
-	var pants_indices := [0, 1, 2, 3]
-	var other_indices := [4, 5, 6, 7]
+	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
+	var pants_indices := [3, 4, 5, 6]
+	var other_indices := [0, 1, 2, 7, 8, 9, 10, 11, 12, 13]
 	var guaranteed_clothing: Array = []
 	guaranteed_clothing.append(pants_indices[_world_rng.randi() % pants_indices.size()])
 	guaranteed_clothing.append(other_indices[_world_rng.randi() % other_indices.size()])
@@ -7768,15 +7766,24 @@ func _create_house_loot() -> void:
 		# Keep the draw count identical whether or not the id is depleted.
 		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 	var remote_tent_loot := [
-		tent_loot_pool[0], # green pants
-		tent_loot_pool[1], # blue pants
-		tent_loot_pool[2], # black pants
-		tent_loot_pool[3], # camo pants
-		tent_loot_pool[4], # gloves
-		tent_loot_pool[5], # canned stew
-		tent_loot_pool[6], # canned tuna
-		tent_loot_pool[7], # plastic bottle
+		tent_loot_pool[3], # green pants
+		tent_loot_pool[4], # blue pants
+		tent_loot_pool[5], # black pants
+		tent_loot_pool[6], # camo pants
+		tent_loot_pool[12], # gloves
+		tent_loot_pool[14], # canned stew
+		tent_loot_pool[15], # canned tuna
+		tent_loot_pool[16], # plastic bottle
 	]
+	# Guarantee the camo boonie hat here too — fixed ID like the rifle
+	if not _depleted_action_ids.has("remote_tent_loot_hat"):
+		var rt_hat: Dictionary = hat_template.duplicate()
+		rt_hat["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		rt_hat["pos"].y = remote_tent_ground_y + 0.06
+		rt_hat["id"] = "remote_tent_loot_hat"
+		_create_pickup_item(rt_hat)
+	else:
+		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves)
 	var rt_pants_indices := [0, 1, 2, 3]
 	var rt_other_indices := [4]
@@ -7948,6 +7955,26 @@ func _collect_meshes_recursive(node: Node3D, result: Array) -> void:
 			result.append(n)
 		for c in n.get_children():
 			stack.append(c)
+
+# Military clothing dropped on the ground keeps its variant look (black/blue
+# tints, woodland/desert camo) instead of the pickup GLB's default green.
+func _apply_military_drop_material(item_name: String, node: Node) -> void:
+	if not (node is Node3D):
+		return
+	var military_black_names := ["Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar azul", "Chaqueta militar negra II"]
+	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
+	if item_name in military_black_names:
+		if item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
+			_apply_color_material_recursive(node as Node3D, Color(0.03, 0.05, 0.10))
+		elif item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
+			_apply_color_material_recursive(node as Node3D, Color(0.04, 0.04, 0.04))
+		else:
+			_apply_color_material_recursive(node as Node3D, Color(0.10, 0.12, 0.08))
+	elif item_name in military_camo_names:
+		if item_name.findn("desert") >= 0:
+			_apply_camo_material_recursive(node as Node3D, Color(0.35, 0.30, 0.18))
+		else:
+			_apply_camo_material_recursive(node as Node3D, Color(0.20, 0.25, 0.15))
 
 func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 	var mat := StandardMaterial3D.new()
@@ -8214,6 +8241,9 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 				elif item_name == "Zapatillas":
 					drop_color = gsess.selected_shoes_color
 		_apply_color_material_recursive(ground_node, drop_color)
+	# Military garments (corpse loot and scripted ground pickups) need the same
+	# tint/camo treatment manual drops get in _spawn_dropped_item_visual.
+	_apply_military_drop_material(item_name, ground_node)
 	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -8544,7 +8574,7 @@ func _execute_world_action(action, actor) -> void:
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
-			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and item.item_name != "Botas survival":
+			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and not str(item.item_name).begins_with("Botas"):
 				var _has_cut_tool := false
 				var _held = actor.get_held_item() if actor.has_method("get_held_item") else null
 				if _held != null and (str(_held.item_name) == "Cuchillo" or str(_held.item_name) == "Hacha"):

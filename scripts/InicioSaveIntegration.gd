@@ -178,6 +178,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		shoes_color = inv_colors[feet_item]
 	# Survival/military approximations on base meshes
 	var is_survival_feet := feet_item == "Botas survival"
+	var is_military_feet := feet_item == "Botas militares"
 	var is_military_legs := legs_item.find("Pantalones m") >= 0
 	var is_military_torso := torso_item.find("Chaqueta") >= 0
 	# Field jackets are a separate skinned GLB hung on the skeleton (same as
@@ -188,6 +189,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
 	var show_cloth_feet := has_feet and is_survival_feet
+	var show_military_feet := has_feet and is_military_feet
 	var show_soldier_legs := has_legs and is_military_legs
 	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso
 	var meshes: Array = []
@@ -217,6 +219,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			m.visible = show_cloth_feet
 			if m.visible:
 				_mat(m, Color(0.05, 0.05, 0.05))
+		elif nl == "military_boots":
+			m.visible = show_military_feet
+			if m.visible:
+				_mat(m, Color(0.10, 0.10, 0.075))
 		elif nl == "cloth_hands":
 			m.visible = false
 		elif nl == "body_hands":
@@ -251,7 +257,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_feet":
-			m.visible = not (has_feet and (is_survival_feet or feet_item == "Zapatillas"))
+			m.visible = not (has_feet and (is_survival_feet or is_military_feet or feet_item == "Zapatillas"))
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_hands":
@@ -301,10 +307,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
-const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"]}
-const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Pantalones militares":["Body_legs"]}
+const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"]}
+const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Pantalones militares":["Body_legs"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
-const _SURV_CLOTH := {"Botas survival":"cloth_feet","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
+const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
 
 static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 	var hide: Array = []
@@ -316,7 +322,7 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 		if _BODY_HIDES.has(n):
 			for b in _BODY_HIDES[n]:
 				if not hide.has(b): hide.append(b)
-		if n == "Botas survival" and not hide.has("Shoes"):
+		if n.begins_with("Botas") and not hide.has("Shoes"):
 			hide.append("Shoes")
 		elif n.find("Pantalones m") >= 0 and not hide.has("Bottoms"):
 			hide.append("Bottoms")
