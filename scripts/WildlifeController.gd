@@ -2141,6 +2141,9 @@ func _snap_to_terrain() -> void:
 # igual para el host y para los puppets de otros clientes, que se mueven por
 # _network_motion.advance en el frame anterior).
 func _update_tracks() -> void:
+	# tracks_enabled() ya descarta el dedicado (OS.has_feature).
+	if not TrackPrintScript.tracks_enabled():
+		return
 	if _is_dead:
 		return
 	var spec: Dictionary = TRACK_SPECS.get(animal_type, {})
@@ -2166,12 +2169,9 @@ func _update_tracks() -> void:
 	if dist > 8.0:
 		_track_acc = 0.0
 		return
-	# Agua: los reales usan _water_depth; los puppets consultan el rio aqui
-	# (su _water_depth no se actualiza — _update_water_depth es rama de IA).
-	var depth := _water_depth
-	if is_puppet and scene.has_method("get_river_depth_at"):
-		depth = float(scene.call("get_river_depth_at", pos))
-	if depth > 0.02:
+	# Query each footprint, including lateral offsets and intermediate LOD steps.
+	# The AI's cached depth is only a fallback for scenes without water geometry.
+	if not scene.has_method("get_river_depth_at") and _water_depth > 0.02:
 		_track_acc = 0.0
 		return
 	var stride := float(spec["stride"])
@@ -2183,9 +2183,24 @@ func _update_tracks() -> void:
 	while s <= dist:
 		_track_side = -_track_side
 		var pp: Vector3 = from + dir * s + lat_dir * _track_side * float(spec["lat"])
-		pp.y = lerpf(from.y, pos.y, s / dist) + 0.02
-		TrackPrintScript.spawn(scene, pp, yaw, String(spec["kind"]), float(spec["size"]))
+		pp.y = lerpf(from.y, pos.y, s / dist)
 		s += stride
+		if scene.has_method("get_river_depth_at") and float(scene.call("get_river_depth_at", pp)) > 0.02:
+			continue
+		var normal := Vector3.UP
+		if scene.has_method("_get_exact_ground_y"):
+			pp.y = float(scene.call("_get_exact_ground_y", pp.x, pp.z))
+			var sample_radius := float(spec["size"]) * 0.5
+			var hx0 := float(scene.call("_get_exact_ground_y", pp.x - sample_radius, pp.z))
+			var hx1 := float(scene.call("_get_exact_ground_y", pp.x + sample_radius, pp.z))
+			var hz0 := float(scene.call("_get_exact_ground_y", pp.x, pp.z - sample_radius))
+			var hz1 := float(scene.call("_get_exact_ground_y", pp.x, pp.z + sample_radius))
+			normal = Vector3(hx0 - hx1, 2.0 * sample_radius, hz0 - hz1).normalized()
+			# A footprint must not bridge a vertical ledge or wall.
+			if normal.y < 0.55:
+				continue
+		pp += normal * 0.008
+		TrackPrintScript.spawn(scene, pp, yaw, String(spec["kind"]), float(spec["size"]), normal)
 	_track_acc = dist - (s - stride)
 
 func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: float) -> bool:

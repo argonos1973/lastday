@@ -2,8 +2,8 @@ extends MeshInstance3D
 class_name TrackPrint
 
 # Huella de animal sobre el terreno. Cosmetico por cliente: cada cliente ve al
-# mismo animal caminar y dibuja las mismas huellas — nada viaja por la red y el
-# servidor dedicado las salta por completo.
+# animal interpolado y dibuja su rastro local; no se sincroniza el historial
+# de pisadas ni se reconstruye para jugadores que llegan después.
 
 const MAX_TRACKS := 400
 const LIFETIME := 180.0
@@ -18,7 +18,7 @@ var _base_alpha := 1.0
 static func tracks_enabled() -> bool:
 	return not OS.has_feature("dedicated_server")
 
-static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: float) -> void:
+static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: float, normal: Vector3 = Vector3.UP) -> void:
 	if parent == null or not tracks_enabled():
 		return
 	var t: MeshInstance3D = (load("res://scripts/TrackPrint.gd") as GDScript).new()
@@ -34,17 +34,25 @@ static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: fl
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	quad.material = m
 	t.mesh = quad
+	t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	t.set("_base_alpha", m.albedo_color.a)
 	parent.add_child(t)
 	t.global_position = pos
 	# yaw apunta al sentido de la marcha; la textura dibuja los dedos hacia
 	# arriba, que tras tumbar el quad queda mirando a yaw+PI.
-	t.rotation = Vector3(-PI * 0.5, yaw + PI, 0.0)
+	var up := normal.normalized()
+	var forward := Vector3(sin(yaw), 0, cos(yaw))
+	forward = (forward - up * forward.dot(up)).normalized()
+	var right := forward.cross(up).normalized()
+	t.global_basis = Basis(right, forward, up)
 	_tracks.append(t)
 	while _tracks.size() > MAX_TRACKS:
 		var old = _tracks.pop_front()
 		if is_instance_valid(old):
 			old.queue_free()
+
+func _exit_tree() -> void:
+	_tracks.erase(self)
 
 func _process(delta: float) -> void:
 	_age += delta
@@ -105,6 +113,5 @@ static func _stamp(img: Image, size: int, cx: float, cy: float, rx: float, ry: f
 			var a := clampf(1.0 - e, 0.0, 1.0)
 			a = smoothstep(0.0, 0.45, a)
 			if a > 0.001:
-				var p := img.get_pixel(x, y)
-				p.a = maxf(p.a, a)
+				var p := Color(1, 1, 1, maxf(img.get_pixel(x, y).a, a))
 				img.set_pixel(x, y, p)
