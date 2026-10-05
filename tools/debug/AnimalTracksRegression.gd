@@ -7,6 +7,7 @@ extends SceneTree
 
 const WildlifeScript = preload("res://scripts/WildlifeController.gd")
 const TrackPrintScript = preload("res://scripts/TrackPrint.gd")
+const TrackRiverStub = preload("res://tools/debug/TrackRiverStub.gd")
 
 var failures := 0
 
@@ -90,6 +91,63 @@ func run() -> void:
 	var deer_prints := _n_tracks() - before_deer
 	# 30 * 0.1 = 3.0 m / 0.62 stride → ~4-5 huellas
 	check(deer_prints >= 4 and deer_prints <= 6, "Deer drops ~5 prints over 3 m (got %d)" % deer_prints)
+
+	# Segmento grande de LOD: 3.0 m en un solo paso -> huellas repartidas por el
+	# segmento (antes soltaba una sola por frame y el rastro quedaba hueco).
+	var lod = WildlifeScript.new()
+	lod.animal_type = "wolf"
+	scene.add_child(lod)
+	lod.global_position = Vector3(50, 0, 0)
+	lod._update_tracks()  # ancla
+	var before_lod := _n_tracks()
+	lod.global_position += Vector3(0, 0, 3.0)
+	lod._update_tracks()
+	var lod_prints := _n_tracks() - before_lod
+	check(lod_prints >= 5 and lod_prints <= 8, "One 3 m LOD step drops ~6 spaced prints (got %d)" % lod_prints)
+	# Espaciado ~stride a lo largo del segmento.
+	var lod_z: Array = []
+	for t in get_nodes_in_group("track_prints"):
+		var p := (t as Node3D).global_position
+		if absf(p.x - 50.0) < 0.5:
+			lod_z.append(p.z)
+	lod_z.sort()
+	for i in range(1, lod_z.size()):
+		var gap: float = lod_z[i] - lod_z[i - 1]
+		check(gap > 0.3 and gap < 0.7, "LOD prints stay stride-spaced (gap=%.2f)" % gap)
+
+	# Teleport (>8 m): correccion de red/escape — sin huella espuria, y el rastro
+	# retoma limpio despues.
+	var before_tp := _n_tracks()
+	lod.global_position += Vector3(100, 0, 0)
+	lod._update_tracks()
+	check(_n_tracks() == before_tp, "Teleport snap drops no print")
+	for i in range(30):
+		lod.global_position += Vector3(0, 0, step)
+		lod._update_tracks()
+	check(_n_tracks() - before_tp >= 5, "Tracks resume cleanly after teleport")
+
+	# Puppet vadando: su _water_depth no se actualiza — debe consultar el rio de
+	# la escena. Con depth>0 no deja rastro; en seco, si.
+	var river_scene = TrackRiverStub.new()
+	river_scene.depth = 1.0
+	root.add_child(river_scene)
+	current_scene = river_scene
+	var pup = WildlifeScript.new()
+	pup.animal_type = "wolf"
+	pup.is_puppet = true
+	river_scene.add_child(pup)
+	pup._update_tracks()
+	var before_pup := _n_tracks()
+	for i in range(30):
+		pup.global_position += Vector3(0, 0, step)
+		pup._update_tracks()
+	check(_n_tracks() == before_pup, "Puppet wading (river query) drops no prints")
+	river_scene.depth = 0.0
+	for i in range(30):
+		pup.global_position += Vector3(0, 0, step)
+		pup._update_tracks()
+	check(_n_tracks() - before_pup >= 5, "Puppet on dry ground drops prints")
+	current_scene = scene
 
 	# TrackPrint envejece y se libera sola (fade al final de la vida).
 	tp._age = TrackPrintScript.LIFETIME - 10.0

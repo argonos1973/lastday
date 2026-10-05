@@ -2156,19 +2156,37 @@ func _update_tracks() -> void:
 	var dist := d.length()
 	if dist < 0.002:
 		return
+	var from := _track_anchor
 	_track_anchor = pos
-	_track_acc += dist
-	if _track_acc < float(spec["stride"]):
-		return
-	_track_acc = 0.0
-	_track_side = -_track_side
 	var dir := d / dist
-	# Pisadas alternas a izquierda y derecha de la línea de marcha.
-	var lat := Vector3(-dir.z, 0.0, dir.x) * _track_side * float(spec["lat"])
 	var scene := get_tree().current_scene
-	if scene == null or _water_depth > 0.02:
+	if scene == null:
 		return
-	TrackPrintScript.spawn(scene, Vector3(pos.x + lat.x, pos.y + 0.02, pos.z + lat.z), atan2(dir.x, dir.z), String(spec["kind"]), float(spec["size"]))
+	# Teleport/snap (corrección de red, escape de atasco): retomar sin huella.
+	if dist > 8.0:
+		_track_acc = 0.0
+		return
+	# Agua: los reales usan _water_depth; los puppets consultan el rio aqui
+	# (su _water_depth no se actualiza — _update_water_depth es rama de IA).
+	var depth := _water_depth
+	if is_puppet and scene.has_method("get_river_depth_at"):
+		depth = float(scene.call("get_river_depth_at", pos))
+	if depth > 0.02:
+		_track_acc = 0.0
+		return
+	var stride := float(spec["stride"])
+	var lat_dir := Vector3(-dir.z, 0.0, dir.x)
+	var yaw := atan2(dir.x, dir.z)
+	# Primera huella a `stride - acc_prev` desde `from`; luego cada stride —
+	# los saltos grandes del LOD se reparten por el segmento, no se pierden.
+	var s := stride - (_track_acc)
+	while s <= dist:
+		_track_side = -_track_side
+		var pp: Vector3 = from + dir * s + lat_dir * _track_side * float(spec["lat"])
+		pp.y = lerpf(from.y, pos.y, s / dist) + 0.02
+		TrackPrintScript.spawn(scene, pp, yaw, String(spec["kind"]), float(spec["size"]))
+		s += stride
+	_track_acc = dist - (s - stride)
 
 func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: float) -> bool:
 	dir.y = 0.0

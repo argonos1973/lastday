@@ -1486,6 +1486,8 @@ func _ready() -> void:
 	_recalculate_carry_capacity()
 
 func _input(event: InputEvent) -> void:
+	if get_parent().has_node("ShelterPlacement") and not event is InputEventMouseMotion:
+		return
 	if is_puppet or is_dead:
 		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -5182,6 +5184,11 @@ func die(cause: String = "") -> void:
 			_apply_melee_death_visual()
 		return
 	is_dead = true
+	# Si moría con el alijo abierto, ninguna tecla podía cerrarlo (todo el
+	# gate de _input exige !is_dead) — ciérralo aquí.
+	var death_scene := get_tree().current_scene
+	if death_scene != null and death_scene.has_method("_close_backpack_ui") and death_scene.get("_backpack_panel") != null:
+		death_scene._close_backpack_ui()
 	_is_aiming = false
 	_remove_scope_overlay()
 	mouse_sensitivity = 0.0025
@@ -5634,24 +5641,7 @@ func _craft_campfire() -> void:
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
 func _craft_shelter() -> void:
-	if inventory == null:
-		return
-	if not inventory.has_item_name("Palo", 11):
-		notice.emit("Necesitas 11 palos para construir un refugio.")
-		return
-	inventory.consume_item_name("Palo", 11)
-	play_action_animation("plant", 3.0)
-	notice.emit("Construyendo refugio...")
-	var parent_node := get_parent()
-	if parent_node != null and parent_node.has_node("HUD"):
-		var hud_node := parent_node.get_node("HUD")
-		if hud_node != null and hud_node.has_method("show_countdown"):
-			hud_node.show_countdown("Construyendo refugio", 3.0)
-	await get_tree().create_timer(3.0).timeout
-	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 2.0)
-	pos.y = 0.0
-	item_dropped.emit("shelter", "shelter", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
-	notice.emit("Has construido un refugio.")
+	get_parent().begin_shelter_placement(self, {}, false)
 
 func get_ground_crafting_tools() -> Array:
 	var held = get_held_item()
@@ -5663,6 +5653,9 @@ func craft_recipe(recipe: Dictionary, from_ground: bool = false) -> void:
 	if inventory == null or not CraftingSystemScript.RECIPES.has(recipe):
 		return
 	var out: Dictionary = recipe["output"]
+	if out["type"] == "shelter":
+		get_parent().begin_shelter_placement(self, recipe, from_ground)
+		return
 	if from_ground:
 		var main := get_parent()
 		if main == null or not main.has_method("craft_ground_recipe"):

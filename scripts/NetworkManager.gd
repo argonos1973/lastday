@@ -1071,22 +1071,22 @@ func campfire_built(cf_id: String, pos: Vector3) -> void:
 
 # Client tells server it built a shelter (server relays to all other clients)
 @rpc("any_peer", "reliable")
-func shelter_built(sh_id: String, pos: Vector3) -> void:
+func shelter_built(sh_id: String, pos: Vector3, yaw: float = 0.0) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_world_sender(sender):
 		return
 	var scene := get_tree().current_scene
 	if is_host:
-		if scene != null and scene.has_method("_net_shelter_built") and not scene._net_shelter_built(sh_id, pos, sender):
+		if scene != null and scene.has_method("_net_shelter_built") and not scene._net_shelter_built(sh_id, pos, sender, yaw):
 			return
 		if peer != null:
 			for pid in players.keys():
 				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
 					if peer_alive(pid):
-						shelter_built.rpc_id(pid, sh_id, pos)
+						shelter_built.rpc_id(pid, sh_id, pos, yaw)
 		return
 	if scene != null and scene.has_method("_net_shelter_built"):
-		scene._net_shelter_built(sh_id, pos)
+		scene._net_shelter_built(sh_id, pos, 0, yaw)
 
 # Client tells server it dismantled a shelter (server relays to all other clients)
 @rpc("any_peer", "reliable")

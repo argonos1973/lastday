@@ -859,6 +859,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 func _input(event: InputEvent) -> void:
+	if has_node("ShelterPlacement") and not event is InputEventMouseMotion:
+		get_node("ShelterPlacement").handle_input(event)
+		get_viewport().set_input_as_handled()
+		return
 	if game_over:
 		return
 	if hud != null and player != null and not player.is_dead and event is InputEventKey and event.pressed and not event.echo:
@@ -3153,10 +3157,11 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 	# Spawn shelters built by other players
 	for sh in shelters:
 		if not world_actions_by_id.has(str(sh["id"])):
-			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"])
+			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
 		var sh_action = world_actions_by_id.get(str(sh["id"]))
 		if sh_action != null and is_instance_valid(sh_action):
 			sh_action.set_meta("contents", sh.get("contents", []))
+		_set_backpack_entry_contents(str(sh["id"]), sh.get("contents", []))
 
 func _apply_pending_doors() -> void:
 	if _pending_open_doors.is_empty():
@@ -4577,7 +4582,7 @@ func _refresh_backpack_ui() -> void:
 	vbox.add_child(title)
 	var contents: Array = _backpack_action.get_meta("contents", [])
 	var head := Label.new()
-	head.text = "Dentro:"
+	head.text = "Objetos guardados: %d" % contents.size()
 	head.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
 	vbox.add_child(head)
 	var cscroll := ScrollContainer.new()
@@ -4596,7 +4601,7 @@ func _refresh_backpack_ui() -> void:
 		cbox.add_child(empty)
 	else:
 		for i in range(contents.size()):
-			var cd: Dictionary = contents[i]
+			var cd = contents[i]
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
 			cbox.add_child(row)
@@ -4760,6 +4765,9 @@ func _broadcast_backpack_contents(drop_id: String, contents: Array) -> void:
 
 # Coger un objeto de la mochila tirada → inventario.
 func _backpack_take(item_index: int) -> void:
+	if is_instance_valid(_backpack_action) and is_instance_valid(player) and player.global_position.distance_to(_backpack_action.global_position) > 8.0:
+		_close_backpack_ui()
+		return
 	var action = _backpack_action
 	if action == null or not is_instance_valid(action):
 		_close_backpack_ui()
@@ -4792,6 +4800,9 @@ func _backpack_take(item_index: int) -> void:
 
 # Meter un objeto del inventario dentro de la mochila tirada.
 func _backpack_store(inv_index: int) -> void:
+	if is_instance_valid(_backpack_action) and is_instance_valid(player) and player.global_position.distance_to(_backpack_action.global_position) > 8.0:
+		_close_backpack_ui()
+		return
 	var action = _backpack_action
 	if action == null or not is_instance_valid(action):
 		_close_backpack_ui()
@@ -4875,7 +4886,7 @@ func _net_backpack_give(item_dict: Dictionary) -> void:
 	if item == null:
 		return
 	if player.inventory != null and player.inventory.add_item(item):
-		player.notice.emit("Sacas %s de la mochila." % item.item_name)
+		player.notice.emit("Recibes %s del alijo." % item.item_name)
 	else:
 		var dpos: Vector3 = player.global_position + (player.global_transform.basis * Vector3.FORWARD * 0.8)
 		player.set_meta("last_dropped_wetness", float(item.wetness))
@@ -4884,6 +4895,7 @@ func _net_backpack_give(item_dict: Dictionary) -> void:
 
 # Cliente: el host publica el contenido actualizado de la mochila.
 func _net_backpack_contents_synced(drop_id: String, contents: Array) -> void:
+	_set_backpack_entry_contents(drop_id, contents)
 	if world_actions_by_id.has(drop_id):
 		var a = world_actions_by_id[drop_id]
 		if a != null and is_instance_valid(a):
@@ -4951,11 +4963,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		return
 	if item_name == "shelter":
 		var sh_id := "player_shelter_%d" % randi()
-		_spawn_player_shelter_with_id(sh_id, pos)
+		var yaw: float = float(player.get_meta("shelter_placement_yaw", 0.0)) if player != null else 0.0
+		_spawn_player_shelter_with_id(sh_id, pos, yaw)
 		if net != null and net.is_connected and not net.is_host:
-			net.shelter_built.rpc_id(1, sh_id, pos)
-		else:
-			_built_shelters.append({"id": sh_id, "pos": pos})
+			net.shelter_built.rpc_id(1, sh_id, pos, yaw)
+		elif net != null and net.is_connected and net.is_host and net.peer != null:
+			net.shelter_built.rpc(sh_id, pos, yaw)
 		return
 	# A normal drop made over the lake or river is lost below the surface too;
 	# it must not become a recoverable pickup floating at ground height.
@@ -9745,14 +9758,17 @@ func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> boo
 	_spawn_player_campfire_with_id(cf_id, pos)
 	return true
 
-func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3) -> void:
+func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0) -> void:
 	if world_actions_by_id.has(sh_id):
 		return
 	# One model keeps the frame, covering and bedding together on load/sync/removal.
-	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE, Vector3.ZERO, false, 0.0)
+	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE, Vector3(0, rad_to_deg(yaw), 0), false, 0.0)
 	# Register as world action so it syncs
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
+	shelter_action.rotation.y = yaw
+	if not _tracked_has_id(_built_shelters, sh_id):
+		_built_shelters.append({"id": sh_id, "pos": pos, "yaw": yaw, "contents": []})
 
 func _fit_shelter_net(sh_id: String) -> void:
 	var net_node := get_node_or_null("PlayerShelter_%s_Net" % sh_id) as Node3D
@@ -9827,15 +9843,15 @@ func _apply_shelter_camouflage(sh_id: String) -> void:
 		for mi in meshes:
 			(mi as MeshInstance3D).material_override = camo_mat
 
-func _net_shelter_built(sh_id: String, pos: Vector3, sender_id: int = 0) -> bool:
+func _net_shelter_built(sh_id: String, pos: Vector3, sender_id: int = 0, yaw: float = 0.0) -> bool:
+	if not pos.is_finite() or not is_finite(yaw):
+		return false
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
-	if net != null and net.is_dedicated_server and not _tracked_has_id(_built_shelters, sh_id):
-		_built_shelters.append({"id": sh_id, "pos": pos})
 	if world_actions_by_id.has(sh_id):
 		return true
-	_spawn_player_shelter_with_id(sh_id, pos)
+	_spawn_player_shelter_with_id(sh_id, pos, yaw)
 	return true
 
 func _net_shelter_dismantled(sh_id: String, sender_id: int = 0) -> bool:
@@ -9857,10 +9873,9 @@ func _net_shelter_dismantled(sh_id: String, sender_id: int = 0) -> bool:
 				break
 		if sh_pos.is_finite() and not _sender_within(sender_id, sh_pos, 10.0):
 			return false
-	if net != null and net.is_dedicated_server:
-		for i in range(_built_shelters.size() - 1, -1, -1):
-			if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
-				_built_shelters.remove_at(i)
+	for i in range(_built_shelters.size() - 1, -1, -1):
+		if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
+			_built_shelters.remove_at(i)
 	# Remove stick visuals
 	var stick_names := [
 		"PlayerShelter_%s_SupportA" % sh_id,
@@ -10526,6 +10541,8 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 	var output = plan.output
 	var pos: Vector3 = actor.global_position - actor.global_basis.z * 0.8
 	pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.06
+	if output.item_type == "shelter":
+		pos = actor.get_meta("shelter_placement_position", pos)
 	var drop_positions: Array[Vector3] = []
 	for index in range(output.quantity):
 		var drop_pos: Vector3 = pos + actor.global_basis.x * (float(index) - float(output.quantity - 1) * 0.5) * 0.45
@@ -15366,3 +15383,50 @@ func _process_cinematic(delta: float) -> void:
 			_record_frame += 1
 
 #endregion
+
+func begin_shelter_placement(actor, recipe: Dictionary, from_ground: bool) -> void:
+	if has_node("ShelterPlacement"):
+		return
+	if hud != null:
+		if hud.inventory_visible:
+			hud.toggle_inventory()
+		if hud.craft_panel_visible:
+			hud.craft_panel_visible = false
+			hud.craft_panel.hide()
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var preview = preload("res://scripts/ShelterPlacement.gd").new()
+	preview.name = "ShelterPlacement"
+	preview.actor = actor
+	preview.world = self
+	preview.recipe = recipe
+	preview.from_ground = from_ground
+	add_child(preview)
+
+func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
+	if not pos.is_finite() or not is_finite(yaw):
+		return "Posición no válida"
+	if pos.distance_to(actor.global_position) > 8.0:
+		return "Demasiado lejos"
+	for x in [-1.4, 0.0, 1.4]:
+		for z in [-1.7, 0.0, 1.7]:
+			var sample := pos + Vector3(x, 0, z).rotated(Vector3.UP, yaw)
+			if get_river_depth_at(sample) > 0.02:
+				return "No se puede construir en el agua"
+			var height := _get_exact_ground_y(sample.x, sample.z, pos.y + 3.0)
+			if absf(height - pos.y) > 0.35:
+				return "El terreno tiene demasiado desnivel"
+	for sh in _built_shelters:
+		var other = sh.get("pos")
+		if other is Array:
+			other = Vector3(other[0], other[1], other[2])
+		if other is Vector3 and pos.distance_to(other) < 4.0:
+			return "Hay otro refugio demasiado cerca"
+	var box := BoxShape3D.new()
+	box.size = Vector3(2.8, 1.6, 3.4)
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = box
+	query.transform = Transform3D(Basis(Vector3.UP, yaw), pos + Vector3.UP * 1.25)
+	query.exclude = [actor.get_rid()]
+	if not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty():
+		return "Hay un obstáculo en el área del refugio"
+	return ""

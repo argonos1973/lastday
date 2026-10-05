@@ -648,11 +648,11 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		else:
 			sh_pos = sh_pos_raw
 		if main.has_method("_spawn_player_shelter_with_id"):
-			main._spawn_player_shelter_with_id(sh_id, sh_pos)
+			main._spawn_player_shelter_with_id(sh_id, sh_pos, float(sh.get("yaw", 0.0)))
 		# El alijo del refugio viaja en la entrada de _built_shelters.
 		if main.world_actions_by_id.has(sh_id):
 			main.world_actions_by_id[sh_id].set_meta("contents", sh.get("contents", []))
-		main._built_shelters.append(sh)
+		main._set_backpack_entry_contents(sh_id, sh.get("contents", []))
 	# Open doors
 	var open_doors = data.get("open_doors", [])
 	main._pending_open_doors = open_doors.duplicate()

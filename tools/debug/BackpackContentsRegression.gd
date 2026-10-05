@@ -165,7 +165,8 @@ func run() -> void:
 	world._spawn_player_shelter_with_id(sh_id, Vector3(20, 0, 20))
 	var sh_action = world.world_actions_by_id.get(sh_id)
 	check(sh_action != null, "Built shelter registers a world action")
-	world._built_shelters.append({"id": sh_id, "pos": Vector3(20, 0, 20)})
+	check(world._built_shelters.size() == 1, "Spawn registers exactly one persistent shelter")
+	player.global_position = Vector3(20, 0, 21)
 	if sh_action != null:
 		check(str(sh_action.action_type) == "shelter", "Shelter world action type")
 		check(str(sh_action.get_interaction_text(player)).contains("[K]"), "Shelter prompt offers [K] for the stash")
@@ -186,6 +187,7 @@ func run() -> void:
 		check(world._net_shelter_dismantled(sh_id, 0) == true, "Empty shelter dismantles normally")
 		check(not world.world_actions_by_id.has(sh_id), "Dismantled shelter leaves the world")
 
+	player.global_position = Vector3.ZERO
 	# Panel del alijo: cada fila lleva thumbnail 3D + linea de estado, y
 	# cualquier tecla (Tab, Esc, K...) cierra el panel.
 	var stash_action = world._create_world_action("stash_ui", "shelter", "Refugio", Vector3.ZERO, Vector3.ONE, Color.WHITE, false, false)
