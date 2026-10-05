@@ -80,6 +80,20 @@ var _water_depth := 0.0
 var _water_sink := 0.0
 var _water_query_timer := 0.0
 
+# Huellas: contador de distancia recorrida y lado alterno de la pisada.
+# Cosmetico por cliente — cada cliente dibuja sus propias huellas al ver al
+# animal moverse, así que no viaja nada por la red.
+const TrackPrintScript = preload("res://scripts/TrackPrint.gd")
+const TRACK_SPECS := {
+	"wolf": {"kind": "paw", "size": 0.15, "stride": 0.48, "lat": 0.11},
+	"deer": {"kind": "hoof", "size": 0.13, "stride": 0.62, "lat": 0.09},
+	"fox": {"kind": "paw", "size": 0.10, "stride": 0.38, "lat": 0.075},
+}
+var _track_started := false
+var _track_anchor := Vector3.ZERO
+var _track_acc := 0.0
+var _track_side := 1.0
+
 static var _scene_cache := {}
 static var _shared_sphere: SphereMesh = null
 static var _shared_cylinder: CylinderMesh = null
@@ -299,6 +313,7 @@ func _exit_tree() -> void:
 	_shared_cylinder = null
 
 func _process(delta: float) -> void:
+	_update_tracks()
 	_wildlife_cache_timer += delta
 	if _wildlife_cache_timer >= 1.0:
 		_wildlife_cache_timer = 0.0
@@ -2121,6 +2136,39 @@ func _snap_to_terrain() -> void:
 		global_position.y = float(scene.call("_get_exact_ground_y", global_position.x, global_position.z))
 	elif scene != null and scene.has_method("_get_ground_height"):
 		global_position.y = float(scene.call("_get_ground_height", global_position))
+
+# Deja una huella cada `stride` metros recorridos (distancia real, así sirve
+# igual para el host y para los puppets de otros clientes, que se mueven por
+# _network_motion.advance en el frame anterior).
+func _update_tracks() -> void:
+	if _is_dead:
+		return
+	var spec: Dictionary = TRACK_SPECS.get(animal_type, {})
+	if spec.is_empty():
+		return
+	var pos := global_position
+	if not _track_started:
+		_track_started = true
+		_track_anchor = pos
+		return
+	var d := pos - _track_anchor
+	d.y = 0.0
+	var dist := d.length()
+	if dist < 0.002:
+		return
+	_track_anchor = pos
+	_track_acc += dist
+	if _track_acc < float(spec["stride"]):
+		return
+	_track_acc = 0.0
+	_track_side = -_track_side
+	var dir := d / dist
+	# Pisadas alternas a izquierda y derecha de la línea de marcha.
+	var lat := Vector3(-dir.z, 0.0, dir.x) * _track_side * float(spec["lat"])
+	var scene := get_tree().current_scene
+	if scene == null or _water_depth > 0.02:
+		return
+	TrackPrintScript.spawn(scene, Vector3(pos.x + lat.x, pos.y + 0.02, pos.z + lat.z), atan2(dir.x, dir.z), String(spec["kind"]), float(spec["size"]))
 
 func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: float) -> bool:
 	dir.y = 0.0
