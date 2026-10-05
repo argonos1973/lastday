@@ -7020,6 +7020,7 @@ func _create_world_details() -> void:
 		body.add_child(front_right)
 		_add_collision_to_prop_group(body)
 		_create_invisible_collision_box_rotated("MilitaryTentRoofCollision", tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), 35.0, 2)
+		_add_tent_interior_light(tent_node, "MilitaryTentLight")
 	# Fruit trees — near tent, near barn, and scattered in forest
 	_create_fruit_trees()
 	# Second military tent — far from village, flat area, loot zone
@@ -7074,7 +7075,20 @@ func _create_world_details() -> void:
 		rbody.add_child(rfront_right)
 		_add_collision_to_prop_group(rbody)
 		_create_invisible_collision_box_rotated("MilitaryTentRemoteRoofCollision", remote_tent_node.global_position + Vector3(0, rth * 2.0, 0), Vector3(rtw * 2.0, 0.7, rtd * 2.0), 120.0, 2)
+		_add_tent_interior_light(remote_tent_node, "MilitaryTentRemoteLight")
 	_remote_tent_pos = remote_tent_pos
+
+# Warm fill light so floor loot inside the shaded canvas is actually visible.
+func _add_tent_interior_light(tent_node: Node3D, light_name: String) -> void:
+	var light := OmniLight3D.new()
+	light.name = light_name
+	light.light_color = Color(1.0, 0.92, 0.75)
+	light.light_energy = 1.25
+	light.omni_range = 9.0
+	light.omni_attenuation = 1.2
+	light.shadow_enabled = false
+	tent_node.add_child(light)
+	light.position = Vector3(0, 2.1, 0)
 
 func _create_fruit_trees() -> void:
 	# Clear stale pending types from previous saves — fruit type is now deterministic
@@ -7808,11 +7822,13 @@ func _create_house_loot() -> void:
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
 	var tent_ground_y := _get_exact_ground_y(tent_origin.x, tent_origin.z)
+	var tent_floor_y := tent_ground_y + 0.10
 	# Guarantee a rifle in each military tent — fixed IDs so they don't respawn
 	if not _depleted_action_ids.has("tent_loot_rifle"):
 		var rifle_data: Dictionary = rifle_template.duplicate()
 		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-		rifle_data["pos"].y = tent_ground_y + 0.06
+		rifle_data["pos"].y = tent_floor_y
+		rifle_data["floor_y"] = tent_floor_y
 		rifle_data["id"] = "tent_loot_rifle"
 		_create_pickup_item(rifle_data)
 	else:
@@ -7822,14 +7838,15 @@ func _create_house_loot() -> void:
 	# Guarantee the camo boonie hat in each military tent — fixed ID like the rifle
 	if not _depleted_action_ids.has("tent_loot_hat"):
 		var hat_data: Dictionary = hat_template.duplicate()
-		hat_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 		hat_data["pos"] = tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(35.0))
-		hat_data["pos"].y = tent_ground_y + 0.06
+		hat_data["pos"].y = tent_floor_y
+		hat_data["floor_y"] = tent_floor_y
+		hat_data["scale"] = 1.4
 		hat_data["id"] = "tent_loot_hat"
 		_create_pickup_item(hat_data)
 	else:
 		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
-	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "pos": tent_origin + Vector3(-1.8, 0.1, 2.0).rotated(Vector3.UP, deg_to_rad(35.0))}
+	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "floor_y": tent_floor_y, "pos": tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)}
 	_create_pickup_item(tent_helmet)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
@@ -7861,10 +7878,12 @@ func _create_house_loot() -> void:
 	var remote_tent_half_w := 4.0
 	var remote_tent_half_d := 5.5
 	var remote_tent_ground_y := _get_exact_ground_y(remote_tent_origin.x, remote_tent_origin.z)
+	var remote_tent_floor_y := remote_tent_ground_y + 0.10
 	if not _depleted_action_ids.has("remote_tent_loot_rifle"):
 		var rt_rifle: Dictionary = rifle_template.duplicate()
 		rt_rifle["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
-		rt_rifle["pos"].y = remote_tent_ground_y + 0.06
+		rt_rifle["pos"].y = remote_tent_floor_y
+		rt_rifle["floor_y"] = remote_tent_floor_y
 		rt_rifle["id"] = "remote_tent_loot_rifle"
 		_create_pickup_item(rt_rifle)
 	else:
@@ -7884,14 +7903,15 @@ func _create_house_loot() -> void:
 	# Guarantee the camo boonie hat here too — fixed ID like the rifle
 	if not _depleted_action_ids.has("remote_tent_loot_hat"):
 		var rt_hat: Dictionary = hat_template.duplicate()
-		rt_hat["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 		rt_hat["pos"] = remote_tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(120.0))
-		rt_hat["pos"].y = remote_tent_ground_y + 0.06
+		rt_hat["pos"].y = remote_tent_floor_y
+		rt_hat["floor_y"] = remote_tent_floor_y
+		rt_hat["scale"] = 1.4
 		rt_hat["id"] = "remote_tent_loot_hat"
 		_create_pickup_item(rt_hat)
 	else:
 		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
-	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "pos": remote_tent_origin + Vector3(-1.8, 0.1, 2.0).rotated(Vector3.UP, deg_to_rad(120.0))}
+	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "floor_y": remote_tent_floor_y, "pos": remote_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)}
 	_create_pickup_item(remote_tent_helmet)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)
 	var rt_pants_indices := [0, 1, 2, 3]
@@ -8132,6 +8152,8 @@ func _create_pickup_item(data: Dictionary) -> void:
 	# dentro de una casa golpea la colisión del tejado y el objeto acaba en el
 	# tejado en lugar de en el suelo interior.
 	var real_ground_y := NodeUtils.raycast_ground_y(space_state, pos, pos.y + 2.0)
+	if data.has("floor_y"):
+		real_ground_y = maxf(real_ground_y, float(data["floor_y"]))
 	var spawned := false
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
@@ -8770,7 +8792,6 @@ func _execute_world_action(action, actor) -> void:
 					_save_world_change_silent()
 					_net_notify_pickup(action)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
-				_play_actor_action(actor, "pickup", 0.3)
 				# Equip first so carry capacity expands before the weight check in
 				# add_item runs — otherwise a previous drop (which shrinks capacity
 				# without removing carried items) can make the weight check fail
@@ -9059,7 +9080,6 @@ func _execute_world_action(action, actor) -> void:
 		"pickaxe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Pico", "tool_pickaxe", 1.35, 1, 0.0), "Recoges un pico.")
 		"backpack_pickup":
-			_play_actor_action(actor, "pickup", 0.3)
 			var _prev_bp := str(actor.equipped_backpack) if "equipped_backpack" in actor else ""
 			if actor.has_method("equip_backpack"):
 				actor.equip_backpack("Mochila pequena")
@@ -9524,7 +9544,8 @@ func handle_world_action_collect(action, actor) -> void:
 						var ci = ItemScript.from_dict(cd)
 						if ci != null:
 							item.contents.append(ci)
-			_play_actor_action(actor, "pickup", 0.8)
+			if str(item.item_type) != "backpack":
+				_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				var _prev_bp := str(actor.equipped_backpack)
 				actor.equip_backpack(item.item_name)
