@@ -156,6 +156,8 @@ func to_dict() -> Dictionary:
 		d["wetness"] = wetness
 	if is_perishable():
 		d["spoilage"] = spoilage
+	if has_meta("clothing_camo"):
+		d["clothing_camo"] = bool(get_meta("clothing_camo"))
 	if has_meta("clothing_color"):
 		var c: Color = get_meta("clothing_color")
 		d["clothing_color"] = [c.r, c.g, c.b, c.a]
@@ -194,6 +196,8 @@ static func from_dict(data: Dictionary):
 		item.durability = float(data.get("durability", old_quantity if old_quantity > 1 else 10))
 	if item.item_type == "clothing" and item.storage_capacity == 0 and CLOTHING_STORAGE.has(item.item_name):
 		item.storage_capacity = CLOTHING_STORAGE[item.item_name]
+	if data.has("clothing_camo") and item.item_type == "clothing":
+		item.set_meta("clothing_camo", bool(data["clothing_camo"]))
 	if data.has("clothing_color") and item.item_type == "clothing":
 		var c_arr = data["clothing_color"]
 		if c_arr is Array and c_arr.size() >= 3:

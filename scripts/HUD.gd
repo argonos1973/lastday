@@ -1680,6 +1680,9 @@ func _item_thumbnail_color(item) -> Color:
 func _clothing_thumbnail_colors(item) -> Dictionary:
 	var result := {"tint": Color(0, 0, 0, 0), "camo": Color(0, 0, 0, 0)}
 	var iname := str(item.item_name)
+	if bool(item.get_meta("clothing_camo", false)) or PlayerController.SURVIVAL_CLOTHING.get(iname, {}).has("camo"):
+		result["camo"] = PlayerController.SURVIVAL_CLOTHING.get(iname, {}).get("camo", Color(0.20, 0.25, 0.15))
+		return result
 	# Field jackets keep their authored materials on the character too.
 	if MilitaryJacketsScript.VARIANTS.has(iname):
 		return result
@@ -2231,7 +2234,7 @@ func _on_use_pressed() -> void:
 	# Clothing and backpacks equip directly in one step; other items go to hand first.
 	if itype == "clothing":
 		var _inv_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
-		player.equip_clothing(str(item.item_name), _inv_color)
+		player.equip_clothing(str(item.item_name), _inv_color, item)
 	elif itype == "backpack":
 		player.equip_backpack(str(item.item_name))
 		player.notice.emit("Te equipas %s. Puedes cargar mas." % item.item_name)

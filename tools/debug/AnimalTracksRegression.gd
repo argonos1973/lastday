@@ -147,6 +147,22 @@ func run() -> void:
 		pup.global_position += Vector3(0, 0, step)
 		pup._update_tracks()
 	check(_n_tracks() - before_pup >= 5, "Puppet on dry ground drops prints")
+	river_scene.strip_water = true
+	river_scene.slope = 0.2
+	pup._track_started = false
+	pup.position = Vector3(10, 0, 0)
+	pup._update_tracks()
+	pup.position.z = 3.0
+	pup._update_tracks()
+	for print_node in get_nodes_in_group("track_prints"):
+		var p: Vector3 = print_node.global_position
+		if p.x < 9.0 or p.x > 11.0:
+			continue
+		check(not (p.z > 1.0 and p.z < 2.0), "Intermediate water crossing leaves no prints")
+		check(absf(p.y - 0.2 * (p.x + p.z)) < 0.02, "Each print follows actual terrain height")
+		check(print_node.global_basis.z.dot(Vector3(-0.2, 1, -0.2).normalized()) > 0.999, "Print lies against the slope")
+	var pixel := TrackPrintScript._texture("paw").get_image().get_pixel(64, 84)
+	check(pixel.r > 0.99 and pixel.a > 0.9, "Texture retains white RGB for material tint")
 	current_scene = scene
 
 	# TrackPrint envejece y se libera sola (fade al final de la vida).
@@ -165,6 +181,8 @@ func run() -> void:
 	check(live <= TrackPrintScript.MAX_TRACKS + 5, "Track cap holds near MAX_TRACKS (live=%d)" % live)
 
 	scene.free()
+	river_scene.free()
+	check(TrackPrintScript._tracks.is_empty(), "Scene cleanup empties static track registry")
 	if failures == 0:
 		print("AnimalTracksRegression: ALL CHECKS PASSED")
 	else:

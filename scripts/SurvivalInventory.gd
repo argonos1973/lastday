@@ -302,6 +302,7 @@ func make_card(title: String, payload: Dictionary, destination: String):
 		item = preload("res://scripts/Item.gd").create(name, type, float(action.get_meta("item_weight", 0.0)), int(action.get_meta("item_quantity", 1)))
 		if action.has_meta("item_color"):
 			item.set_meta("clothing_color", action.get_meta("item_color"))
+		item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
 		item.wetness = float(action.get_meta("item_wetness", 0.0))
 	if item != null:
 		card.custom_minimum_size.x = 96

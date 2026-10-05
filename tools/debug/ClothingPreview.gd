@@ -66,6 +66,9 @@ func run() -> void:
 		player.equip_clothing("Camiseta", Color(0.3, 0.4, 0.6))
 		player.equip_clothing("Pantalones", Color(0.15, 0.12, 0.1))
 		player.equip_clothing("Zapatillas", Color(0.6, 0.5, 0.2))
+		for argument in OS.get_cmdline_user_args():
+			if argument.begins_with("--jacket="):
+				player.equip_clothing(argument.trim_prefix("--jacket="))
 		player._setup_third_person_animation(model)
 		var animation := player.third_person_walk_animation if "--walk" in OS.get_cmdline_user_args() else player.third_person_idle_animation
 		player.third_person_animation_player.play(animation)

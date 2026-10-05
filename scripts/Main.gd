@@ -2881,6 +2881,7 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 				item_dict["spoilage"] = float(entry.get("spoilage", 0.0))
 			if entry.has("color"):
 				item_dict["clothing_color"] = entry["color"]
+			item_dict["clothing_camo"] = bool(entry.get("camo", false))
 			if entry.has("wetness"):
 				item_dict["wetness"] = float(entry.get("wetness", 0.0))
 			break
@@ -3137,7 +3138,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []), float(drop.get("wetness", 0.0)))
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []), float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)))
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -3771,7 +3772,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			for drop in drops:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
-				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)))
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)))
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 	proxy.set_meta("saved_backpack", "")
@@ -4937,6 +4938,10 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		player.remove_meta("pending_backpack_contents")
 	# Humedad de la prenda soltada: viaja por meta del jugador (mismo patrón
 	# que last_dropped_durability) para no cambiar la firma de la señal.
+	var drop_camo := false
+	if player != null:
+		drop_camo = bool(player.get_meta("last_dropped_camo", false))
+		player.remove_meta("last_dropped_camo")
 	var drop_wetness := 0.0
 	if player != null:
 		drop_wetness = float(player.get_meta("last_dropped_wetness", 0.0))
@@ -5020,9 +5025,9 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		action.set_meta("gutted", false)
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness, drop_camo)
 	_tag_meat_drop(drop_id, item_name, "local")
-	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
+	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos, "camo": drop_camo}
 	if spoilage > 0.0:
 		drop_entry["spoilage"] = spoilage
 	if color.a > 0.0:
@@ -5049,7 +5054,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		drop_entry["wetness"] = drop_wetness
 	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
-		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents, drop_wetness)
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents, drop_wetness, drop_camo)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
 	if _is_water_drop_position(pos):
@@ -5070,7 +5075,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = [], wetness: float = 0.0) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = [], wetness: float = 0.0, camo: bool = false) -> void:
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
@@ -5147,6 +5152,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
 	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
+	if camo and item_name in ["Camiseta", "Pantalones"]:
+		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
 	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
 	var action_label := item_name
 	if broken:
@@ -5154,6 +5161,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var action = _create_world_action(drop_id, action_kind, action_label, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
+	action.set_meta("item_camo", camo)
 	action.set_meta("item_type", item_type)
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
@@ -5176,7 +5184,7 @@ func _track_dropped_item(entry: Dictionary) -> void:
 		return
 	_dropped_items.append(entry)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0) -> bool:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false) -> bool:
 	# Host: a client can only drop near itself and with a sane payload —
 	# otherwise arbitrary items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
@@ -5201,7 +5209,7 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	item_use_value = clampf(item_use_value, -100.0, 100.0)
 	contents = contents.slice(0, 64)
 	if net != null and net.is_host:
-		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos}
+		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos, "camo": camo}
 		if color.a > 0.0:
 			drop_entry["color"] = [color.r, color.g, color.b, color.a]
 		if not contents.is_empty():
@@ -5211,7 +5219,7 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
 		return true
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness, camo)
 	# El servidor necesita saber quién la tiró para la domesticación de lobos;
 	# el drop del propio host llega ya etiquetado por _on_item_dropped.
 	var dropper := "local"
@@ -7815,11 +7823,14 @@ func _create_house_loot() -> void:
 	if not _depleted_action_ids.has("tent_loot_hat"):
 		var hat_data: Dictionary = hat_template.duplicate()
 		hat_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		hat_data["pos"] = tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(35.0))
 		hat_data["pos"].y = tent_ground_y + 0.06
 		hat_data["id"] = "tent_loot_hat"
 		_create_pickup_item(hat_data)
 	else:
 		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "pos": tent_origin + Vector3(-1.8, 0.1, 2.0).rotated(Vector3.UP, deg_to_rad(35.0))}
+	_create_pickup_item(tent_helmet)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
@@ -7874,11 +7885,14 @@ func _create_house_loot() -> void:
 	if not _depleted_action_ids.has("remote_tent_loot_hat"):
 		var rt_hat: Dictionary = hat_template.duplicate()
 		rt_hat["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		rt_hat["pos"] = remote_tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(120.0))
 		rt_hat["pos"].y = remote_tent_ground_y + 0.06
 		rt_hat["id"] = "remote_tent_loot_hat"
 		_create_pickup_item(rt_hat)
 	else:
 		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "pos": remote_tent_origin + Vector3(-1.8, 0.1, 2.0).rotated(Vector3.UP, deg_to_rad(120.0))}
+	_create_pickup_item(remote_tent_helmet)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)
 	var rt_pants_indices := [0, 1, 2, 3]
 	var rt_other_indices := [4, 5]
@@ -8666,6 +8680,8 @@ func _execute_world_action(action, actor) -> void:
 			)
 			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
+			if item.item_type == "clothing":
+				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
@@ -8714,7 +8730,6 @@ func _execute_world_action(action, actor) -> void:
 						net.world_action_completed.rpc_id(1, action.action_id, rag_spawns, "", Vector3.ZERO)
 					return
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				_play_actor_action(actor, "pickup", 0.8)
 				# If the same clothing item is already equipped, swap: drop the old
 				# one on the ground instead of adding a duplicate to the inventory.
 				var slot_key := ""
@@ -8726,6 +8741,7 @@ func _execute_world_action(action, actor) -> void:
 				if not slot_key.is_empty():
 					# Already wearing the same item: drop the old one and equip the new
 					var _old_color: Color = actor.get_current_clothing_color(item.item_name)
+					actor.set_meta("last_dropped_camo", actor.clothing_has_camo(item.item_name))
 					actor.unequip_clothing(item.item_name)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
@@ -8737,7 +8753,7 @@ func _execute_world_action(action, actor) -> void:
 					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color, false, 0.0)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.inventory.add_item(item)
-					actor.equip_clothing(item.item_name, _eq_color)
+					actor.equip_clothing(item.item_name, _eq_color, item)
 					actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
@@ -8747,7 +8763,7 @@ func _execute_world_action(action, actor) -> void:
 					return
 				else:
 					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					actor.equip_clothing(item.item_name, _eq_color2)
+					actor.equip_clothing(item.item_name, _eq_color2, item)
 					actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
@@ -9468,6 +9484,8 @@ func handle_world_action_collect(action, actor) -> void:
 			)
 			if str(eat_item.item_type) == "clothing" and action.has_meta("item_color"):
 				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
+			if eat_item.item_type == "clothing":
+				eat_item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
 			if action.has_meta("item_spoilage"):
 				eat_item.spoilage = float(action.get_meta("item_spoilage"))
 			if action.has_meta("item_max_durability"):
@@ -9488,6 +9506,8 @@ func handle_world_action_collect(action, actor) -> void:
 			)
 			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
+			if item.item_type == "clothing":
+				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			if action.has_meta("item_wetness"):

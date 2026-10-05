@@ -71,11 +71,11 @@ const SURVIVAL_CLOTHING := {
 	"Pantalones camuflaje desert": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.32, 0.28, 0.16)},
 	# Military jackets reuse the soldier_torso mesh (long sleeves cover the arms);
 	# body_shows keeps Body_torso visible so the neck doesn't leave a hole.
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"]},
-	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.04, 0.08)},
-	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.02, 0.03)},
-	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
-	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": [], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"]},
+	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.04, 0.08)},
+	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.02, 0.03)},
+	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
+	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
 }
 
 # Maps clothing slot to possible mesh names in custom character models.
@@ -1769,7 +1769,10 @@ func _use_inventory_index(index: int) -> void:
 		return
 	# Medicinas y ropa también pasan primero por la mano: evita que el botón
 	# "Usar" aplique el efecto desde el inventario sin feedback visual.
-	if item_type == "medical" or item_type == "clothing":
+	if item_type == "clothing":
+		equip_clothing(item_name, item.get_meta("clothing_color", Color.TRANSPARENT), item)
+		return
+	if item_type == "medical":
 		if held_index != index or hands == null or not hands.has_item_in_hands():
 			_select_held_item(index)
 			notice.emit("Tienes %s en la mano. Pulsa usar de nuevo para usarlo." % item_name)
@@ -1832,6 +1835,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 		var prev_name := str(_equipped_slots.get(slot, ""))
 		if not prev_name.is_empty() and prev_name != item_name:
 			var prev_color := get_current_clothing_color(prev_name)
+			set_meta("last_dropped_camo", clothing_has_camo(prev_name))
 			unequip_clothing(prev_name)
 			# Remove old clothing from inventory and drop it on the ground
 			if inventory != null:
@@ -1978,6 +1982,15 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 				var skin_mi: MeshInstance3D = _find_mesh_in_third_person(skin_name)
 				if skin_mi != null:
 					skin_mi.visible = false
+	if DEFAULT_CLOTHING.has(item_name):
+		var cloth_node: MeshInstance3D = _survival_body_nodes.get(DEFAULT_CLOTHING[item_name])
+		var camo := clothing_has_camo(item_name, source_item)
+		if cloth_node != null and camo:
+			var material := _clothing_material_for(str(cloth_node.name), Color.WHITE)
+			material.albedo_texture = _make_camo_texture()
+			cloth_node.material_override = material
+		if source_item != null:
+			source_item.set_meta("clothing_camo", camo)
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_recalculate_heat_protection()
@@ -2182,7 +2195,7 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 	# so their belt/holster geometry doesn't poke through the garment above.
 	var grow := -999.0
 	if mesh_name == "soldier_torso":
-		grow = 2.5
+		grow = 0.3
 	elif mesh_name == "soldier_legs":
 		grow = -0.5
 	return MaterialFactory.make_clothing_material(kind, color, grow)
@@ -2542,7 +2555,7 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 		if MilitaryJackets.VARIANTS.has(item_name):
 			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
 			mi.material_override = null
-		elif worn and loot_color.a > 0.0:
+		elif worn and loot_color.a > 0.0 and not cfg.has("camo"):
 			mi.material_override = _clothing_material_for(mesh_name, loot_color)
 		elif worn and cfg.has("camo"):
 			var mat := StandardMaterial3D.new()
@@ -2551,7 +2564,7 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 			MaterialFactory.cloth_detail(mat, "soldier")
 			if mesh_name == "soldier_torso":
 				mat.grow = true
-				mat.grow_amount = 2.5
+				mat.grow_amount = 0.3
 			mi.material_override = mat
 		elif worn and cfg.has("tint"):
 			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
@@ -3938,7 +3951,8 @@ func _create_third_person_model() -> void:
 				for item in inventory.items:
 					if DEFAULT_CLOTHING.has(str(item.item_name)):
 						var _def_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
-						equip_clothing(str(item.item_name), _def_color)
+						item.set_meta("clothing_camo", clothing_has_camo(str(item.item_name), item))
+						equip_clothing(str(item.item_name), _def_color, item)
 			else:
 				if is_clothing_model:
 					# Puppet: equip default clothing directly without inventory
@@ -5910,6 +5924,7 @@ func drop_inventory_item(index: int) -> void:
 	var item = inventory.items[index]
 	var item_name := str(item.item_name)
 	var item_type := str(item.item_type)
+	set_meta("last_dropped_camo", clothing_has_camo(item_name, item))
 	if CLOTHING_SLOTS.has(item_name):
 		unequip_clothing(item_name)
 	if item_type == "tool_torch":
@@ -7822,9 +7837,11 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# Build the world transform for WeaponOffset
 	var weapon_basis := r.scaled(Vector3.ONE * s)
 	_rifle_root.position = Vector3.ZERO
-	# Apply -15° pitch when aiming (local rotation around the right grip pivot).
-	if _is_aiming:
-		weapon_basis = weapon_basis * Basis(Vector3(1.0, 0.0, 0.0), deg_to_rad(-15.0))
+	if _is_aiming and not is_puppet and is_instance_valid(camera) and is_instance_valid(_rifle_muzzle):
+		var barrel_local := (_rifle_muzzle.position - stock_local).normalized()
+		var barrel_world := (weapon_basis * barrel_local).normalized()
+		var sight_direction := -camera.global_basis.z.normalized()
+		weapon_basis = Basis(Quaternion(barrel_world, sight_direction)) * weapon_basis
 	_rifle_weapon_offset.global_basis = weapon_basis
 	_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
 	_rifle_weapon_offset.force_update_transform()
@@ -11611,3 +11628,17 @@ func _light_action() -> void:
 		target.interact(self)
 
 #endregion
+
+func clothing_has_camo(item_name: String, item = null) -> bool:
+	if SURVIVAL_CLOTHING.get(item_name, {}).has("camo"):
+		return true
+	if item != null and item.has_meta("clothing_camo"):
+		return bool(item.get_meta("clothing_camo"))
+	if inventory != null:
+		for candidate in inventory.items:
+			if candidate.item_name == item_name and candidate.has_meta("clothing_camo"):
+				return bool(candidate.get_meta("clothing_camo"))
+	var session := get_node_or_null("/root/GameSession")
+	if session != null and item_name in ["Camiseta", "Pantalones"]:
+		return bool(session.get_meta("top_camo" if item_name == "Camiseta" else "bottom_camo", false))
+	return false

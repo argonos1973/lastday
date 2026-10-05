@@ -340,7 +340,7 @@ static func _mat(m: MeshInstance3D, c: Color) -> void:
 	if not kind.is_empty():
 		var grow := -999.0
 		if str(m.name) == "soldier_torso":
-			grow = 2.5
+			grow = 0.3
 		elif str(m.name) == "soldier_legs":
 			grow = -0.5
 		m.material_override = MaterialFactory.make_clothing_material(kind, c, grow)
@@ -366,7 +366,7 @@ static func _mat_camo(m: MeshInstance3D) -> void:
 	MaterialFactory.cloth_detail(mat, kind if not kind.is_empty() else "denim")
 	if str(m.name) == "soldier_torso":
 		mat.grow = true
-		mat.grow_amount = 2.5
+		mat.grow_amount = 0.3
 	m.material_override = mat
 
 static func _c(s: String) -> Color:
