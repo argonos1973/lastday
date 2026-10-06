@@ -622,19 +622,18 @@ const RIFLE_AIM_EYE := Vector3(0.0, 2.15, 3.3)
 # x≈0.26, front edge z≈3.3, back z≈4.0, y -0.2..-1.85, raked ~15° back;
 # forend underside y≈0.25, sides x≈±0.4, z -6.4..-2.2.
 # Knuckle = middle-finger MCP joint (MiddleFinger1 bone) target on the rifle.
-const RIFLE_AIM_RIGHT_KNUCKLE := Vector3(0.3, -0.95, 1.15)
-const RIFLE_AIM_LEFT_KNUCKLE := Vector3(0.78, 0.26, -2.9)
+const RIFLE_AIM_RIGHT_KNUCKLE := Vector3(0.28, -0.85, 3.3)
+const RIFLE_AIM_LEFT_KNUCKLE := Vector3(0.55, 0.1, -2.9)
 # Hand anatomy in rifle-local space (-Z barrel, +Y up, +X right):
 # fingers = wrist→knuckles direction, palm = direction the palm faces.
-# Right hand: palm on the grip's right face, metacarpals perpendicular to the
-# raked grip. Left hand: palm cupped under the forend, fingers up its right side.
-# Chosen by sweeping against the solved forearm: left wrist ~3° twist/swing,
-# right ~25° deviation (reach-limited) — values far from these wring the
-# separate hand/arm meshes open at the wrist.
-const RIFLE_AIM_RIGHT_FINGERS := Vector3(-0.35, -0.38, -0.86)
-const RIFLE_AIM_RIGHT_PALM := Vector3(-1.0, 0.0, 0.4)
-const RIFLE_AIM_LEFT_FINGERS := Vector3(0.7, 0.15, -0.7)
-const RIFLE_AIM_LEFT_PALM := Vector3(0.5, 1.0, 0.0)
+# Right hand: knuckles stack down the grip's front-right edge, so fingers
+# point down-forward-left across the grip's right face and curl around its
+# front; palm presses the grip's right-back corner (faces left, down, back).
+# Left hand: palm cupped under the forend, fingers up its right side.
+const RIFLE_AIM_RIGHT_FINGERS := Vector3(-0.15, -0.72, -0.6)
+const RIFLE_AIM_RIGHT_PALM := Vector3(-0.85, -0.2, 0.35)
+const RIFLE_AIM_LEFT_FINGERS := Vector3(0.45, 0.1, -0.85)
+const RIFLE_AIM_LEFT_PALM := Vector3(0.3, 0.9, 0.25)
 # Finger flexion in degrees per joint [1, 2, 3], replacing the animated finger
 # pose. Kept ≤65° — sharper bends collapse the low-poly knuckle skinning.
 const RIFLE_AIM_RIGHT_CURL := {
@@ -644,8 +643,8 @@ const RIFLE_AIM_RIGHT_CURL := {
 # Support hand: bend at the knuckle so the fingers lie flat up the forend's
 # right side; distal joints stay nearly straight or the tips sink into it.
 const RIFLE_AIM_LEFT_CURL := {
-	"Thumb": [28.0, 20.0, 15.0], "Index": [40.0, 40.0, 30.0],
-	"Middle": [45.0, 40.0, 30.0], "Ring": [47.0, 40.0, 30.0], "Pinky": [47.0, 40.0, 30.0],
+	"Thumb": [25.0, 18.0, 12.0], "Index": [32.0, 15.0, 8.0],
+	"Middle": [32.0, 15.0, 8.0], "Ring": [32.0, 15.0, 8.0], "Pinky": [32.0, 15.0, 8.0],
 }
 # Share of the hand twist absorbed by forearm roll, and how strongly the elbow
 # is steered to line the forearm up with the hand.
