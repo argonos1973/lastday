@@ -2663,7 +2663,16 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	node.position += cfg.get("offset", Vector3.ZERO)
 	if CLOTHING_SLOTS.get(item_name, "") == "head":
 		preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
-	if loot_color.a > 0.0:
+	if clothing_has_camo(item_name):
+		var camo_meshes: Array = []
+		_collect_mesh_instances(node, camo_meshes)
+		for mi in camo_meshes:
+			var cmat := StandardMaterial3D.new()
+			cmat.albedo_texture = _make_camo_texture()
+			cmat.albedo_color = Color.WHITE
+			cmat.roughness = 0.9
+			mi.material_override = cmat
+	elif loot_color.a > 0.0:
 		var meshes2: Array = []
 		_collect_mesh_instances(node, meshes2)
 		for mi in meshes2:

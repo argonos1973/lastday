@@ -41,6 +41,16 @@ const RECIPES := [
 		"label": "Ensartar carne en palo"
 	},
 	{
+		"inputs": { "Palo afilado": 1, "Carne cruda de ciervo": 1 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 20.0 },
+		"label": "Ensartar carne de ciervo en palo"
+	},
+	{
+		"inputs": { "Palo afilado": 1, "Carne cruda de zorro": 1 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0 },
+		"label": "Ensartar carne de zorro en palo"
+	},
+	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de ave": 1 },
 		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.35, "use_value": 16.0 },
 		"label": "Ensartar carne de ave en palo"

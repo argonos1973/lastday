@@ -7829,7 +7829,7 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
-	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true}
+	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
@@ -8242,12 +8242,15 @@ func _create_pickup_item(data: Dictionary) -> void:
 	action.set_meta("item_color", color)
 	if action_kind == "eat_food":
 		action.set_meta("item_spoilage", 0.0)
+	var item_camo := bool(data.get("camo", false))
+	if item_camo:
+		action.set_meta("item_camo", true)
 	# Register in _dropped_items so loot wear system can track it
 	_dropped_items.append({
 		"id": id, "name": item_name, "type": item_type,
 		"weight": float(data.get("weight", 0.1)), "qty": int(data.get("qty", 1)),
 		"use": float(data.get("use", 0.0)), "pos": [pos.x, pos.y, pos.z],
-		"wear": 0.0, "spoilage": 0.0
+		"wear": 0.0, "spoilage": 0.0, "camo": item_camo
 	})
 
 func _mark_world_action_visual(node_name: String) -> void:
