@@ -53,7 +53,11 @@ func run() -> void:
 		skeleton.force_update_all_bone_transforms()
 		actor._update_head_worn_items()
 		var bone_local: Transform3D = model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
-		check((bone_local.affine_inverse() * hat.transform).is_equal_approx(fit), "Hat remains anchored when the head tilts")
+		var got: Transform3D = bone_local.affine_inverse() * hat.transform
+		# Explicit epsilon: re-equips inside the loop recapture the stored rel
+		# through several compose/inverse chains, drifting ~5e-5 at ~27 units —
+		# is_equal_approx's default epsilon is too tight for that magnitude.
+		check(got.origin.distance_to(fit.origin) < 0.005 and got.basis.is_equal_approx(fit.basis), "Hat remains anchored when the head tilts")
 		var before := hat.transform
 		actor._wear_clothing_visual("Sombrero de pescador")
 		hat = model.get_node("Worn_Sombrero de pescador")
@@ -131,6 +135,16 @@ func run() -> void:
 	if preview_helmet != null:
 		check(preview_helmet.transform.is_equal_approx(helmet.transform), "Helmet preview uses the gameplay fit")
 		preview_helmet.free()
+	if "--preview" in OS.get_cmdline_user_args():
+		var camera := root.get_viewport().get_camera_3d()
+		var center := model.to_global(Vector3(0, head.end.y - 0.2, 0))
+		for view in {"front": Vector3(0.7, 0.18, -1.7), "side": Vector3(1.7, 0.12, 0), "back": Vector3(0.4, 0.25, 1.7)}:
+			var offset: Vector3 = {"front": Vector3(0.7, 0.18, -1.7), "side": Vector3(1.7, 0.12, 0), "back": Vector3(0.4, 0.25, 1.7)}[view]
+			camera.position = center + offset
+			camera.look_at(center)
+			await create_timer(0.2).timeout
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("/tmp/tactical_helmet_%s.png" % view)
 	actor.unequip_clothing("Casco militar")
 	check(hair.mesh == original_hair, "Removing the helmet restores the original hairstyle")
 	actor.stats.free()

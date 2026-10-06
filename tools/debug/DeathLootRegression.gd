@@ -33,11 +33,11 @@ func check(ok: bool, label: String) -> void:
 func _make_proxy(world: Node, peer_id: int, cid: String, pos: Vector3) -> Node3D:
 	var proxy := Node3D.new()
 	proxy.name = "Proxy_%d" % peer_id
-	proxy.global_position = pos
 	proxy.set_meta("peer_id", peer_id)
 	proxy.set_meta("client_id", cid)
 	proxy.set_meta("proxy_health", 100.0)
 	world.add_child(proxy)
+	proxy.global_position = pos
 	world.server_proxies[peer_id] = proxy
 	return proxy
 
@@ -55,7 +55,7 @@ func _initialize() -> void:
 	var snet := ServerNet.new()
 	server.add_child(snet)
 	server.net = snet
-	snet.players[77] = {"name": "dead", "pos": Vector3(10, 0, 10), "client_id": "char_A", "top_color": Color(0.8, 0.2, 0.1), "bottom_color": Color(0.1, 0.3, 0.7)}
+	snet.players[77] = {"name": "dead", "pos": Vector3(10, 0, 10), "client_id": "char_A", "top_camo": true, "top_color": Color(0.8, 0.2, 0.1), "bottom_color": Color(0.1, 0.3, 0.7)}
 
 	# A connected character carrying loot, a backpack, shoulder gear and clothes.
 	var inv: Array = [
@@ -96,6 +96,9 @@ func _initialize() -> void:
 			shirt_col = Color(float(carr[0]), float(carr[1]), float(carr[2]))
 		elif str(e.get("name", "")) == "Pantalones":
 			pants_col = Color(float(carr[0]), float(carr[1]), float(carr[2]))
+	for entry in server._dropped_items:
+		if str(entry.get("name", "")) == "Camiseta":
+			check(bool(entry.get("camo", false)), "Corpse shirt preserves camouflage in saved and broadcast loot")
 	check(shirt_col.is_equal_approx(Color(0.8, 0.2, 0.1)), "Shirt drops with the victim's top color")
 	check(pants_col.is_equal_approx(Color(0.1, 0.3, 0.7)), "Pants drop with the victim's bottom color")
 	check(names.has("Caña de pescar"), "Back-stored gear drops")

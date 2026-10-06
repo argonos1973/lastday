@@ -264,7 +264,7 @@ const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabin
 const POLY_EQUIPMENT_DIR := "res://assets/external/polyhaven/"
 const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
 const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
-const MILITARY_HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
+const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 const ROOT_GLB_DIR := "res://assets/external/realistic/root_glb/"
 const TEX_DIR := "res://assets/external/textures/"
 const TEX_PLASTER_DIFF := TEX_DIR + "plaster_brick_01/plaster_brick_01_diff_4k.jpg"
@@ -3757,9 +3757,22 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var did := "death_loot_%d_%d_%d" % [peer_id, Time.get_ticks_msec(), i]
 		var iwet: float = float(d.get("wetness", 0.0))
 		var dcol := _clothing_drop_color(iname, victim_pdata, d)
+		var appearance_key := "top_camo" if iname == "Camiseta" else "bottom_camo"
+		var camo := bool(d.get("clothing_camo", victim_pdata.get(appearance_key, false) if iname in ["Camiseta", "Pantalones"] else false))
 		# _spawn_ground_pickup already persists the drop into _dropped_items
 		_spawn_ground_pickup(iname, itype, dpos, iweight, iqty, iuse, did, "", iwet, dcol)
-		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol})
+		for entry in _dropped_items:
+			if str(entry.get("id", "")) == did:
+				entry["camo"] = camo
+				break
+		var dropped_action = world_actions_by_id.get(did)
+		if is_instance_valid(dropped_action):
+			dropped_action.set_meta("item_camo", camo)
+		if camo and iname in ["Camiseta", "Pantalones"]:
+			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
+			if dropped_visual != null:
+				_apply_camo_material_recursive(dropped_visual, Color(0.20, 0.25, 0.15))
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol, "camo": camo})
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -7836,6 +7849,8 @@ func _create_house_loot() -> void:
 		# to keep the RNG state in sync for subsequent loot generation
 		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	# Guarantee the camo boonie hat in each military tent — fixed ID like the rifle
+	# Consume the same random samples whether the fixed pickup was collected or not.
+	_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	if not _depleted_action_ids.has("tent_loot_hat"):
 		var hat_data: Dictionary = hat_template.duplicate()
 		hat_data["pos"] = tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(35.0))
@@ -7844,8 +7859,6 @@ func _create_house_loot() -> void:
 		hat_data["scale"] = 1.4
 		hat_data["id"] = "tent_loot_hat"
 		_create_pickup_item(hat_data)
-	else:
-		_find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
 	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "floor_y": tent_floor_y, "pos": tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)}
 	_create_pickup_item(tent_helmet)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
@@ -7901,6 +7914,8 @@ func _create_house_loot() -> void:
 		tent_loot_pool[17], # plastic bottle
 	]
 	# Guarantee the camo boonie hat here too — fixed ID like the rifle
+	# Consume the same random samples whether the fixed pickup was collected or not.
+	_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 	if not _depleted_action_ids.has("remote_tent_loot_hat"):
 		var rt_hat: Dictionary = hat_template.duplicate()
 		rt_hat["pos"] = remote_tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(120.0))
@@ -7909,8 +7924,6 @@ func _create_house_loot() -> void:
 		rt_hat["scale"] = 1.4
 		rt_hat["id"] = "remote_tent_loot_hat"
 		_create_pickup_item(rt_hat)
-	else:
-		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
 	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "floor_y": remote_tent_floor_y, "pos": remote_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)}
 	_create_pickup_item(remote_tent_helmet)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)

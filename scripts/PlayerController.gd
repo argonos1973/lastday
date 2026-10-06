@@ -35,7 +35,7 @@ const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
-const MILITARY_HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
+const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 # Wearable visuals placed on the body relative to its measured bounding box, so
 # they fit regardless of the character model's scale/proportions.
 #   frac_y: anchor height as a fraction of body height (0 = feet, 1 = head top)
@@ -2131,6 +2131,10 @@ func _init_survival_clothing(root: Node) -> void:
 		var node: Node = stack.pop_back()
 		if node is MeshInstance3D:
 			var mi := node as MeshInstance3D
+			if mi.name == "soldier_torso":
+				MilitaryJackets.fit_legacy_hem(mi)
+			if str(mi.name).begins_with("military_boots_"):
+				mi.hide()
 			if wanted.has(mi.name):
 				_survival_cloth_nodes[mi.name] = mi
 				mi.visible = false
@@ -2195,7 +2199,7 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 	# so their belt/holster geometry doesn't poke through the garment above.
 	var grow := -999.0
 	if mesh_name == "soldier_torso":
-		grow = 0.3
+		grow = 0.015
 	elif mesh_name == "soldier_legs":
 		grow = -0.5
 	return MaterialFactory.make_clothing_material(kind, color, grow)
@@ -2564,7 +2568,7 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 			MaterialFactory.cloth_detail(mat, "soldier")
 			if mesh_name == "soldier_torso":
 				mat.grow = true
-				mat.grow_amount = 0.3
+				mat.grow_amount = 0.015
 			mi.material_override = mat
 		elif worn and cfg.has("tint"):
 			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])

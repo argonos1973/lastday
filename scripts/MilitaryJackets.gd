@@ -62,3 +62,23 @@ static func attach(character: Node3D, item_name: String) -> MeshInstance3D:
 	jacket.skeleton = jacket.get_path_to(destination)
 	source.free()
 	return jacket
+
+static func fit_legacy_hem(mesh: MeshInstance3D) -> void:
+	if mesh == null or mesh.mesh == null or mesh.has_meta("hem_fitted"):
+		return
+	# Source torso ends above the default trousers; extend only the lower
+	# 40 cm of its bind-space hem, retaining all skin weights and UVs.
+	var source := mesh.mesh
+	var bottom := source.get_aabb().position.y
+	var fitted := ArrayMesh.new()
+	for surface in range(source.get_surface_count()):
+		var arrays := source.surface_get_arrays(surface)
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX].duplicate()
+		for index in range(vertices.size()):
+			var blend := 1.0 - smoothstep(bottom, bottom + 0.4, vertices[index].y)
+			vertices[index].y -= 0.20 * blend
+		arrays[Mesh.ARRAY_VERTEX] = vertices
+		fitted.add_surface_from_arrays(source.surface_get_primitive_type(surface), arrays, [], {}, source.surface_get_format(surface))
+		fitted.surface_set_material(surface, source.surface_get_material(surface))
+	mesh.mesh = fitted
+	mesh.set_meta("hem_fitted", true)

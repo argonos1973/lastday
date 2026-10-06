@@ -336,11 +336,13 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 			m.visible = false
 
 static func _mat(m: MeshInstance3D, c: Color) -> void:
+	if m.name == "soldier_torso":
+		preload("res://scripts/MilitaryJackets.gd").fit_legacy_hem(m)
 	var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
 	if not kind.is_empty():
 		var grow := -999.0
 		if str(m.name) == "soldier_torso":
-			grow = 0.3
+			grow = 0.015
 		elif str(m.name) == "soldier_legs":
 			grow = -0.5
 		m.material_override = MaterialFactory.make_clothing_material(kind, c, grow)
@@ -358,6 +360,8 @@ static func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> Te
 	return MaterialFactory.make_camo_texture(base_color)
 
 static func _mat_camo(m: MeshInstance3D) -> void:
+	if m.name == "soldier_torso":
+		preload("res://scripts/MilitaryJackets.gd").fit_legacy_hem(m)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = _make_camo_texture()
 	mat.albedo_color = Color.WHITE
@@ -366,7 +370,7 @@ static func _mat_camo(m: MeshInstance3D) -> void:
 	MaterialFactory.cloth_detail(mat, kind if not kind.is_empty() else "denim")
 	if str(m.name) == "soldier_torso":
 		mat.grow = true
-		mat.grow_amount = 0.3
+		mat.grow_amount = 0.015
 	m.material_override = mat
 
 static func _c(s: String) -> Color:
@@ -417,7 +421,7 @@ const _MILITARY_TINTS := {
 }
 
 const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
-const _HELMET_MODEL := "res://assets/models/equipment/military_helmet.glb"
+const _HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 const _KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 
 static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
