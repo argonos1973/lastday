@@ -19,7 +19,6 @@ const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const RifleStrapScript = preload("res://scripts/RifleStrap.gd")
-const REAL_KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
@@ -33,9 +32,7 @@ const REAL_BACKPACK_MODEL := "res://assets/characters/adapted/backpack_detailed.
 const REAL_MEAT_ON_STICK_MODEL := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 const REAL_WOOD_STICK_MODEL := "res://assets/models/props/wood_stick.glb"
 const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
-const POLY_FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
-const POLY_GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
-const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
+
 # Wearable visuals placed on the body relative to its measured bounding box, so
 # they fit regardless of the character model's scale/proportions.
 #   frac_y: anchor height as a fraction of body height (0 = feet, 1 = head top)
@@ -43,18 +40,14 @@ const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.gl
 #   forward: shift toward the front of the body (fraction of depth)
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
-	"Sombrero de pescador": {"path": POLY_FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
-	"Casco militar": {"path": MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
-	"Guantes de trabajo": {"path": POLY_GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
+	"Sombrero de pescador": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
+	"Casco militar": {"path": GameConst.MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
+	"Guantes de trabajo": {"path": GameConst.GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
-# Adapted character (Mixamo body + survival clothing skinned to the same rig).
-# Loaded first so the deformable survival garments are available to wear.
-const ADAPTED_PLAYER_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
-
 const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
 const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
 
-# Survival garments that are skinned to the Mixamo rig inside ADAPTED_PLAYER_MODEL.
+# Survival garments that are skinned to the Mixamo rig inside GameConst.PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
 	"Chaqueta de campaña verde": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
@@ -247,10 +240,10 @@ const CLOTHING_HEAT_RETENTION := {
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
-	"res://assets/characters/adapted/player_with_clothes.glb",
+	GameConst.PLAYER_MODEL,
 	"res://assets/animations/inicio.glb",
 	"res://assets/animations/walking.glb",
-	"res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon.gltf"
+	GameConst.NPC_HOSTILE_MODEL
 ]
 const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
@@ -2410,7 +2403,7 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 	if body_mi != null:
 		_full_body_mesh = body_mi
 		_full_body_mesh.visible = true
-	var src_path := "res://assets/characters/adapted/player_with_clothes.glb"
+	var src_path := GameConst.PLAYER_MODEL
 	var src_scene: Node = load(src_path).instantiate()
 	if src_scene == null:
 		return
@@ -3955,7 +3948,7 @@ func _add_starting_items() -> void:
 func _create_third_person_model() -> void:
 	var character: Node3D = null
 	# Always use player_with_clothes.glb for the in-game model
-	var model_path := ADAPTED_PLAYER_MODEL
+	var model_path := GameConst.PLAYER_MODEL
 	# Puppet: use puppet_model_path if set
 	if is_puppet and not puppet_model_path.is_empty():
 		model_path = puppet_model_path
@@ -4614,7 +4607,7 @@ func _get_source_skeleton_rest_pos(bone_name: String) -> Vector3:
 func _load_source_skeleton_cache() -> void:
 	if not _source_skeleton_rest_cache.is_empty():
 		return
-	var src_model: Node3D = load(ADAPTED_PLAYER_MODEL).instantiate()
+	var src_model: Node3D = load(GameConst.PLAYER_MODEL).instantiate()
 	if src_model == null:
 		return
 	add_child(src_model)
@@ -6268,7 +6261,7 @@ func _try_spawn_item_visual(parent: Node3D, item, item_name: String) -> bool:
 		"Carne ensartada", "Pez ensartado", "Carne asada en palo":
 			model_path = REAL_MEAT_ON_STICK_MODEL
 		"Cuchillo":
-			model_path = REAL_KNIFE_MODEL
+			model_path = GameConst.KNIFE_MODEL
 		"Palo", "Palo afilado":
 			model_path = REAL_WOOD_MODEL
 		"Piedra":
@@ -6769,9 +6762,9 @@ func _build_held_clothing(item_name: String) -> void:
 		"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
-		"Sombrero de pescador": path = POLY_FISHERMANS_HAT_MODEL
-		"Casco militar": path = MILITARY_HELMET_MODEL
-		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = POLY_GARDEN_GLOVES_MODEL
+		"Sombrero de pescador": path = GameConst.FISHERMANS_HAT_MODEL
+		"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
+		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
 		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		_:
 			if item_name.begins_with("Pantalones"):
@@ -6800,7 +6793,7 @@ func _build_third_person_backpack() -> void:
 	third_person_back_item_root.add_child(bp_node)
 
 func _build_third_person_knife() -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, REAL_KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
+	_try_add_model_to_parent(third_person_hand_item_root, GameConst.KNIFE_MODEL, "ThirdPersonKnife", Vector3(0.0, 0.09, 0.02), Vector3(0, 90, 0), Vector3.ONE * 0.8)
 
 func _traverse_mesh_aabb(node: Node, accumulated: Transform3D, state: Dictionary) -> void:
 	if node is MeshInstance3D:

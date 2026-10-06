@@ -37,7 +37,7 @@ func run() -> void:
 	var world := TestWorld.new()
 	root.add_child(world)
 	current_scene = world
-	world._world_rng.seed = world.WORLD_SEED
+	world._world_rng.seed = GameConst.WORLD_SEED
 	var grass_before := 0
 	for t in world.grass_batch_transforms:
 		grass_before += (t as Array).size()

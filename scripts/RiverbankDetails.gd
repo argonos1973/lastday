@@ -1,6 +1,5 @@
 extends RefCounted
 ## Blender-authored gravel/grass modules. Local +Z points away from water.
-const DIRECTORY := "res://assets/models/props/shore/"
 static var _meshes: Array = []
 static var _meshes_loaded := false
 
@@ -10,7 +9,7 @@ static func _load_meshes() -> void:
 	_meshes_loaded = true
 	_meshes.resize(3)
 	for variant in range(3):
-		var scene: PackedScene = load(DIRECTORY + "riverbank_reference_%d.glb" % variant)
+		var scene: PackedScene = load(GameConst.RIVERBANK_DIR + "riverbank_reference_%d.glb" % variant)
 		if scene == null:
 			continue
 		var source := scene.instantiate()

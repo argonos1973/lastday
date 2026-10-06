@@ -21,11 +21,10 @@ var moon_illumination := 1.0
 
 var _real_time_initialized := false
 var _lighting_update_accum := 999.0
-const LIGHTING_UPDATE_INTERVAL := 0.20
 
 func _process(delta: float) -> void:
 	_lighting_update_accum += delta
-	if _lighting_update_accum < LIGHTING_UPDATE_INTERVAL:
+	if _lighting_update_accum < GameConst.LIGHTING_UPDATE_INTERVAL:
 		return
 	_lighting_update_accum = 0.0
 	if not _real_time_initialized:

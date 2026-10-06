@@ -26,7 +26,7 @@ class TestPlayer extends PlayerScript:
 		add_child(inventory)
 		stats = preload("res://scripts/SurvivalStats.gd").new()
 		add_child(stats)
-		third_person_model = load(ADAPTED_PLAYER_MODEL).instantiate()
+		third_person_model = load(GameConst.PLAYER_MODEL).instantiate()
 		third_person_model.scale = Vector3.ONE * MIXAMO_CHARACTER_SCALE
 		third_person_model.rotation.y = PI
 		add_child(third_person_model)

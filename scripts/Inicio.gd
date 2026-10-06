@@ -2,7 +2,6 @@ extends Control
 
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
 const SaveIntegration = preload("res://scripts/InicioSaveIntegration.gd")
-const DISCOVERY_PORT := 5006
 
 var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
@@ -45,7 +44,6 @@ var _prejoin_card_id := ""
 static var _auto_launch_consumed := false
 
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
-const SAVED_PREVIEW_SCENE := "res://assets/characters/adapted/player_with_clothes.glb"
 var CHAR_CONFIGS := [
 	{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
 	{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
@@ -102,11 +100,11 @@ func _ready() -> void:
 
 	# Start UDP discovery listener to auto-find server on local network
 	_discovery = PacketPeerUDP.new()
-	var bind_err := _discovery.bind(DISCOVERY_PORT)
+	var bind_err := _discovery.bind(GameConst.DISCOVERY_PORT)
 	if bind_err == OK:
-		pass # print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % DISCOVERY_PORT)
+		pass # print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % GameConst.DISCOVERY_PORT)
 	else:
-		pass # print("[DISCOVERY] No se pudo bind puerto %d: %d" % [DISCOVERY_PORT, bind_err])
+		pass # print("[DISCOVERY] No se pudo bind puerto %d: %d" % [GameConst.DISCOVERY_PORT, bind_err])
 		_discovery = null
 
 	var screen_w := get_viewport().get_visible_rect().size.x
@@ -464,7 +462,7 @@ func _process_scan(_delta: float) -> void:
 				pass # print("[DISCOVERY] Scan completado, servidor no encontrado")
 			return
 		var ip := "%s.%d" % [_scan_subnet, _scan_index]
-		_scan_probe.set_dest_address(ip, DISCOVERY_PORT)
+		_scan_probe.set_dest_address(ip, GameConst.DISCOVERY_PORT)
 		_scan_probe.put_packet("LASTDAY_PROBE".to_utf8_buffer())
 		_scan_index += 1
 	# Check for responses
@@ -516,7 +514,7 @@ func _on_host() -> void:
 	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	if _net.host_game():
-		_status_label.text = "Servidor iniciado en puerto %d" % NetworkManagerScript.PORT
+		_status_label.text = "Servidor iniciado en puerto %d" % GameConst.GAME_PORT
 		_mode = "host"
 		# Give a moment for the server to be ready
 		get_tree().create_timer(0.5).timeout.connect(_start_game)
@@ -964,7 +962,7 @@ func _update_char_view() -> void:
 		child.queue_free()
 	var model_path := REMY_PREVIEW_SCENE
 	if cfg.get("is_saved", false):
-		model_path = SAVED_PREVIEW_SCENE
+		model_path = GameConst.PLAYER_MODEL
 	var packed := load(model_path)
 	if packed is PackedScene:
 		var instance := (packed as PackedScene).instantiate()

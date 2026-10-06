@@ -19,7 +19,6 @@ var _mesh_instance: MeshInstance3D
 var _collision: CollisionShape3D
 var _visual_children: Array[Node] = []
 
-const INTERACTION_CELL_SIZE := 4.0
 static var _interaction_cells: Dictionary = {}
 static var _wide_interactions: Dictionary = {}
 var _interaction_cell := Vector2i.ZERO
@@ -46,7 +45,7 @@ func _update_interaction_index() -> void:
 		remove_from_group("wolf_meat_pickups")
 	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]
 	var pos := global_position
-	var cell := Vector2i(floori(pos.x / INTERACTION_CELL_SIZE), floori(pos.z / INTERACTION_CELL_SIZE))
+	var cell := Vector2i(floori(pos.x / GameConst.INTERACTION_CELL_SIZE), floori(pos.z / GameConst.INTERACTION_CELL_SIZE))
 	if _interaction_indexed and _interaction_spatial == spatial and (not spatial or cell == _interaction_cell):
 		return
 	_remove_interaction_index()
@@ -76,8 +75,8 @@ func _remove_interaction_index() -> void:
 
 static func get_nearby_interactables(pos: Vector3, pad: float = 2.0) -> Array:
 	var candidates: Array = _wide_interactions.values()
-	var min_cell := Vector2i(floori((pos.x - pad) / INTERACTION_CELL_SIZE), floori((pos.z - pad) / INTERACTION_CELL_SIZE))
-	var max_cell := Vector2i(floori((pos.x + pad) / INTERACTION_CELL_SIZE), floori((pos.z + pad) / INTERACTION_CELL_SIZE))
+	var min_cell := Vector2i(floori((pos.x - pad) / GameConst.INTERACTION_CELL_SIZE), floori((pos.z - pad) / GameConst.INTERACTION_CELL_SIZE))
+	var max_cell := Vector2i(floori((pos.x + pad) / GameConst.INTERACTION_CELL_SIZE), floori((pos.z + pad) / GameConst.INTERACTION_CELL_SIZE))
 	for x in range(min_cell.x, max_cell.x + 1):
 		for z in range(min_cell.y, max_cell.y + 1):
 			var entries: Dictionary = _interaction_cells.get(Vector2i(x, z), {})

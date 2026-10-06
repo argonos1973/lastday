@@ -3,8 +3,6 @@ class_name NPCController
 
 signal npc_notice(text: String)
 
-const HOSTILE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Characters/glTF/Characters_Matt_SingleWeapon.gltf"
-
 @export var patrol_speed := 2.0
 @export var chase_speed := 4.2
 @export var detection_range := 14.0
@@ -158,9 +156,9 @@ func _create_body() -> void:
 	add_child(mesh)
 
 func _try_create_external_model() -> bool:
-	if not ResourceLoader.exists(HOSTILE_MODEL):
+	if not ResourceLoader.exists(GameConst.NPC_HOSTILE_MODEL):
 		return false
-	var packed := load(HOSTILE_MODEL)
+	var packed := load(GameConst.NPC_HOSTILE_MODEL)
 	if not (packed is PackedScene):
 		return false
 	var scene := packed as PackedScene

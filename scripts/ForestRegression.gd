@@ -24,7 +24,7 @@ func run() -> void:
 	var world := TestWorld.new()
 	root.add_child(world)
 	current_scene = world
-	world._world_rng.seed = world.WORLD_SEED
+	world._world_rng.seed = GameConst.WORLD_SEED
 	world._create_leafy_floor_ground()
 	var ground := world.get_node("TerrainSurface") as MeshInstance3D
 	check(ground.material_override is ShaderMaterial, "Ground uses blended forest material")
@@ -73,7 +73,7 @@ func run() -> void:
 	check(max_radius < 35.0, "Grass batches are spatially bounded")
 	for i in range(12):
 		var pos := Vector3(rng.randf_range(163, 210), 0.3, rng.randf_range(163, 203))
-		world._create_textured_visual_sphere("ForestTestRock%d" % i, pos, Vector3(0.8, 0.55, 0.7) * rng.randf_range(0.5, 1.8), world.POLY_ROCK_07_DIFF, Color(0.3, 0.28, 0.24))
+		world._create_textured_visual_sphere("ForestTestRock%d" % i, pos, Vector3(0.8, 0.55, 0.7) * rng.randf_range(0.5, 1.8), MaterialFactory.POLY_ROCK_07_DIFF, Color(0.3, 0.28, 0.24))
 	var rock := world.get_node("ForestTestRock0") as MeshInstance3D
 	check(rock.mesh is ArrayMesh, "Rocks use irregular shared geometry")
 	var rock2 := world.get_node("ForestTestRock1") as MeshInstance3D

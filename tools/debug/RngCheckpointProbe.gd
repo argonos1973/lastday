@@ -27,8 +27,8 @@ class TestWorld extends MainScript:
 		_ck.flush()
 	func _ready() -> void:
 		net = get_node("/root/NetworkManager")
-		seed(WORLD_SEED)
-		_world_rng.seed = WORLD_SEED
+		seed(GameConst.WORLD_SEED)
+		_world_rng.seed = GameConst.WORLD_SEED
 		_terrain_rng.seed = TERRAIN_SEED
 		nav = NavPathfindingScript.new()
 		world_streaming_mgr = WorldStreamingManager.new()

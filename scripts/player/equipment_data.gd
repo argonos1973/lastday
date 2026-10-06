@@ -14,7 +14,7 @@ class_name ClothingEquipmentData
 ##    bone with a BoneAttachment3D. These do NOT deform.
 
 ## res:// path of the adapted character (Mixamo rig + adapted clothing).
-const PLAYER_MODEL_PATH := "res://assets/characters/adapted/player_with_clothes.glb"
+const PLAYER_MODEL_PATH := GameConst.PLAYER_MODEL
 
 ## Folder that holds the rigid gear glb files + the manifest.
 const ADAPTED_DIR := "res://assets/characters/adapted"

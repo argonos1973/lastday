@@ -14,8 +14,6 @@ signal player_name_required()
 # to that character (payload: name, colors, current equipment).
 signal server_character_locked(payload: Dictionary)
 
-const PORT := 5005
-const DISCOVERY_PORT := 5006
 const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
 # lo hace (scan, peer fantasma) se expulsa — si no aguantaba para siempre,
@@ -104,7 +102,7 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 		close_connection()
 		is_dedicated_server = true
 	var err := OK
-	var bind_port := PORT
+	var bind_port := GameConst.GAME_PORT
 	if _public_server:
 		# Solo cloudflared (mismo host) alcanza este socket — sin UDP ni LAN.
 		var ws := WebSocketMultiplayerPeer.new()
@@ -114,7 +112,7 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 			peer = ws
 	else:
 		var enet := ENetMultiplayerPeer.new()
-		err = enet.create_server(PORT, MAX_PLAYERS)
+		err = enet.create_server(GameConst.GAME_PORT, MAX_PLAYERS)
 		if err == OK:
 			peer = enet
 	if err != OK:
@@ -140,7 +138,7 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 func host_game() -> bool:
 	close_connection()
 	var enet := ENetMultiplayerPeer.new()
-	var err := enet.create_server(PORT, MAX_PLAYERS)
+	var err := enet.create_server(GameConst.GAME_PORT, MAX_PLAYERS)
 	peer = enet
 	if err != OK:
 		push_error("No se pudo crear el servidor: %d" % err)
@@ -163,10 +161,10 @@ func _start_broadcast() -> void:
 	_broadcast_server = PacketPeerUDP.new()
 	_broadcast_server.set_broadcast_enabled(true)
 	_broadcast_server.bind(0)
-	_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
-	# Listener socket on DISCOVERY_PORT for responding to probes
+	_broadcast_server.set_dest_address("255.255.255.255", GameConst.DISCOVERY_PORT)
+	# Listener socket on GameConst.DISCOVERY_PORT for responding to probes
 	_probe_listener = PacketPeerUDP.new()
-	_probe_listener.bind(DISCOVERY_PORT)
+	_probe_listener.bind(GameConst.DISCOVERY_PORT)
 
 func _get_local_ip() -> String:
 	var ips := IP.get_local_addresses()
@@ -245,9 +243,9 @@ func _process(_delta: float) -> void:
 			_dedicated_bind_wait = 0.0
 			_dedicated_bind_retries -= 1
 			if start_dedicated_server(true):
-				print("[SERVER] Puerto %d libre tras reintento — servidor activo" % PORT)
+				print("[SERVER] Puerto %d libre tras reintento — servidor activo" % GameConst.GAME_PORT)
 			elif _dedicated_bind_retries <= 0:
-				push_error("[SERVER] El puerto %d sigue ocupado — cerrando esta instancia" % PORT)
+				push_error("[SERVER] El puerto %d sigue ocupado — cerrando esta instancia" % GameConst.GAME_PORT)
 				get_tree().quit()
 				return
 	if is_host:
@@ -265,7 +263,7 @@ func _process(_delta: float) -> void:
 					_broadcast_server.set_dest_address(sender_ip, sender_port)
 					_broadcast_server.put_packet(response.to_utf8_buffer())
 					# Reset back to broadcast mode
-					_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+					_broadcast_server.set_dest_address("255.255.255.255", GameConst.DISCOVERY_PORT)
 				count -= 1
 		# Periodic broadcast
 		if _broadcast_server != null:
@@ -274,7 +272,7 @@ func _process(_delta: float) -> void:
 				_broadcast_timer = 0.0
 				var all_ips := _get_all_local_ips()
 				var msg := "LASTDAY_SERVER:" + ",".join(all_ips)
-				_broadcast_server.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+				_broadcast_server.set_dest_address("255.255.255.255", GameConst.DISCOVERY_PORT)
 				_broadcast_server.put_packet(msg.to_utf8_buffer())
 
 func _exit_tree() -> void:
@@ -309,7 +307,7 @@ func join_game(ip: String, password: String = "") -> bool:
 			peer = ws
 	else:
 		var enet := ENetMultiplayerPeer.new()
-		err = enet.create_client(target, PORT)
+		err = enet.create_client(target, GameConst.GAME_PORT)
 		if err == OK:
 			peer = enet
 	if err != OK:

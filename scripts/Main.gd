@@ -259,12 +259,7 @@ const POLY_ROCKY_TERRAIN_DISP := "res://assets/external/polyhaven/rocky_terrain_
 const POLY_ROCKY_TERRAIN_SPEC := "res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_spec_4k.png"
 const POLY_RIVER_PEBBLES_DISP := "res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_disp_4k.png"
 const POLY_BOULDER_DIFF := "res://assets/external/polyhaven/namaqualand_boulder_02/textures/namaqualand_boulder_02_diff_4k.jpg"
-const POLY_ROCK_07_DIFF := "res://assets/external/polyhaven/rock_07/textures/rock_07_diff_4k.jpg"
 const POLY_CABINET_DIFF := "res://assets/external/polyhaven/painted_wooden_cabinet/textures/painted_wooden_cabinet_diff_4k.jpg"
-const POLY_EQUIPMENT_DIR := "res://assets/external/polyhaven/"
-const POLY_GARDEN_GLOVES_MODEL := POLY_EQUIPMENT_DIR + "garden_gloves_01/garden_gloves_01_1k.gltf"
-const POLY_FISHERMANS_HAT_MODEL := POLY_EQUIPMENT_DIR + "fishermans_hat/fishermans_hat_1k.gltf"
-const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 const ROOT_GLB_DIR := "res://assets/external/realistic/root_glb/"
 const TEX_DIR := "res://assets/external/textures/"
 const TEX_PLASTER_DIFF := TEX_DIR + "plaster_brick_01/plaster_brick_01_diff_4k.jpg"
@@ -452,7 +447,6 @@ const NO_GRASS_AREAS := [
 	{"center": Vector3(58, 0, -52), "half": Vector2(1.5, 2.0)}
 ]
 
-const WORLD_SEED := 1337
 const TERRAIN_SEED := 97531
 # Punto temporal de entrada para revisar el poblado. Está junto a la primera
 # casa, sobre terreno libre y orientado hacia el núcleo de edificios.
@@ -597,8 +591,8 @@ func _ready() -> void:
 	# Get NetworkManager first to decide if we need visuals
 	net = get_node("/root/NetworkManager")
 	if net != null and net.is_dedicated_server:
-		seed(WORLD_SEED)
-		_world_rng.seed = WORLD_SEED
+		seed(GameConst.WORLD_SEED)
+		_world_rng.seed = GameConst.WORLD_SEED
 		_terrain_rng.seed = TERRAIN_SEED
 		nav = NavPathfindingScript.new()
 		world_streaming_mgr = WorldStreamingManager.new()
@@ -637,8 +631,8 @@ func _ready() -> void:
 	# Give the renderer time to display the overlay before heavy work
 	await get_tree().create_timer(0.1).timeout
 	if _scene_quitting: return
-	seed(WORLD_SEED)
-	_world_rng.seed = WORLD_SEED
+	seed(GameConst.WORLD_SEED)
+	_world_rng.seed = GameConst.WORLD_SEED
 	_terrain_rng.seed = TERRAIN_SEED
 	nav = NavPathfindingScript.new()
 	world_streaming_mgr = WorldStreamingManager.new()
@@ -5281,7 +5275,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return []
 			return [SURVIVAL_TOOL_MODELS["planks"], SURVIVAL_TOOL_MODELS["wood"]]
 		"weapon":
-			return ["res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"]
+			return [GameConst.KNIFE_MODEL]
 		"weapon_rifle":
 			return ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"]
 		"tool_matches":
@@ -5349,13 +5343,13 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				"Zapatillas":
 					return ["res://assets/characters/adapted/pickup_default_shoes.glb"]
 				"Guantes de trabajo":
-					return [POLY_GARDEN_GLOVES_MODEL]
+					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
-					return [POLY_FISHERMANS_HAT_MODEL]
+					return [GameConst.FISHERMANS_HAT_MODEL]
 				"Casco militar":
-					return [MILITARY_HELMET_MODEL]
+					return [GameConst.MILITARY_HELMET_MODEL]
 				"Guantes survival":
-					return [POLY_GARDEN_GLOVES_MODEL]
+					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Botas survival":
 					return ["res://assets/characters/Remy.glb"]
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
@@ -7259,7 +7253,7 @@ func _create_survival_objectives() -> void:
 	# consume a variable number of draws depending on frame timing and asset
 	# fallbacks, so pin the stream here to keep every loot id identical across
 	# clients and reconnects — depleted ids are the server sync contract.
-	_world_rng.seed = WORLD_SEED + 424242
+	_world_rng.seed = GameConst.WORLD_SEED + 424242
 	#_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
 	for i in range(5):
 		var wood_pos := Vector3(_world_rng.randf_range(-62, -28), 0.04, _world_rng.randf_range(12, 62))
@@ -7676,7 +7670,7 @@ func _create_loose_survival_pickups() -> void:
 		{"id": "loose_knife_0", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_1", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, -20, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"id": "loose_knife_2", "name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 15, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"id": "surv_gloves", "name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		{"id": "surv_boots", "name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07)},
 		{"id": "loose_bottle_0", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"id": "loose_bottle_1", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
@@ -7696,13 +7690,13 @@ func _create_house_loot() -> void:
 	var house_loot_pool := [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Hacha", "type": "tool_axe", "weight": 1.2, "qty": 1, "use": 0.0, "paths": ["res://assets/models/props/simple_axe.glb"], "scale": 1.2, "rot": Vector3(0, 45, 0), "color": Color(0.10, 0.095, 0.07), "rare": true},
-		{"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true},
+		{"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [GameConst.FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 70, 0), "color": Color(0.35, 0.25, 0.10)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
-		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08), "rare": true},
+		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08), "rare": true},
 		{"name": "Botas survival", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.18, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": true, "color": Color(0.10, 0.09, 0.07), "rare": true},
 		# --- Remy clothing (only one character set to avoid clothing overload) ---
 		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.05, "paths": ["res://assets/characters/Remy.glb"], "scale": 0.8, "rot": Vector3(0, 30, 0), "flat": true, "color": Color(0.3, 0.4, 0.6), "remy_mesh": "tops"},
@@ -7727,7 +7721,7 @@ func _create_house_loot() -> void:
 		{"origin": Vector3(-20, 0, 30), "w": 7.5, "d": 6.5, "label": "Casa abandonada 10"},
 	]
 	var loot_idx := 0
-	# El sombrero es loot icónico pero raro (~3% por hueco): con WORLD_SEED fijo
+	# El sombrero es loot icónico pero raro (~3% por hueco): con GameConst.WORLD_SEED fijo
 	# podía no generarse nunca. Una casa al azar siempre lo lleva.
 	var hat_template_idx := -1
 	for _ti in range(house_loot_pool.size()):
@@ -7765,7 +7759,7 @@ func _create_house_loot() -> void:
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
-		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [POLY_GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 	]
 	var barn_origin := Vector3(45, 0, 120)
 	var barn_half_w := 4.0
@@ -7823,13 +7817,13 @@ func _create_house_loot() -> void:
 		# --- Gloves ---
 		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
 		{"name": "Botas militares", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_military_boots.glb"], "scale": 1.1, "rot": Vector3(0, 40, 0), "flat": true, "color": Color(0.10, 0.10, 0.075), "tint": Color(0.10, 0.10, 0.075), "rare": true},
-		{"name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 30, 0), "flat": false, "color": Color(0, 0, 0, 0), "rare": true},
+		{"name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 30, 0), "flat": false, "color": Color(0, 0, 0, 0), "rare": true},
 		# --- Supplies ---
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 	]
-	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [POLY_FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
+	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [GameConst.FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
@@ -7859,7 +7853,7 @@ func _create_house_loot() -> void:
 		hat_data["scale"] = 1.4
 		hat_data["id"] = "tent_loot_hat"
 		_create_pickup_item(hat_data)
-	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "floor_y": tent_floor_y, "pos": tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)}
+	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "floor_y": tent_floor_y, "pos": tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)}
 	_create_pickup_item(tent_helmet)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
@@ -7924,7 +7918,7 @@ func _create_house_loot() -> void:
 		rt_hat["scale"] = 1.4
 		rt_hat["id"] = "remote_tent_loot_hat"
 		_create_pickup_item(rt_hat)
-	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "floor_y": remote_tent_floor_y, "pos": remote_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)}
+	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "floor_y": remote_tent_floor_y, "pos": remote_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)}
 	_create_pickup_item(remote_tent_helmet)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)
 	var rt_pants_indices := [0, 1, 2, 3]
@@ -10159,7 +10153,7 @@ func _create_rocky_foothills() -> void:
 
 func _create_giant_mountain_boulder(pos: Vector3, scale_value: Vector3, is_cave: bool) -> void:
 	var base_color := Color(0.28, 0.26, 0.22)
-	var rock_texture := POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
+	var rock_texture := MaterialFactory.POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
 	var boulder_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
 	if boulder_id < 0:
 		boulder_id = -boulder_id
@@ -10252,7 +10246,7 @@ func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	if abs(pos.x - 8.0) < 5.4 or _is_in_no_grass_area(pos, 1.4):
 		return
 	var base_color := Color(0.26, 0.24, 0.20)
-	var rock_texture := POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
+	var rock_texture := MaterialFactory.POLY_ROCK_07_DIFF if _world_rng.randf() < 0.55 else POLY_BOULDER_DIFF
 	_create_textured_visual_sphere("PolyhavenBoulder", pos + Vector3(0, scale_value.y * 0.55, 0), scale_value, rock_texture, base_color)
 	if _world_rng.randf() < 0.45:
 		_create_textured_visual_sphere("PolyhavenBoulderLobe", pos + Vector3(scale_value.x * _world_rng.randf_range(-0.35, 0.35), scale_value.y * 0.42, scale_value.z * _world_rng.randf_range(-0.35, 0.35)), scale_value * Vector3(_world_rng.randf_range(0.45, 0.72), _world_rng.randf_range(0.45, 0.72), _world_rng.randf_range(0.45, 0.72)), rock_texture, base_color.darkened(0.05))
@@ -11041,17 +11035,16 @@ func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3,
 		var pebble_pos: Vector3 = pos + along * _world_rng.randf_range(-0.65, 0.65) + across * side * _world_rng.randf_range(-0.22, 0.56)
 		pebble_pos.y = 0.055
 		var pebble_scale: Vector3 = Vector3(_world_rng.randf_range(0.05, 0.15), _world_rng.randf_range(0.02, 0.05), _world_rng.randf_range(0.05, 0.13))
-		var texture_path: String = MaterialFactory.POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else POLY_ROCK_07_DIFF
+		var texture_path: String = MaterialFactory.POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else MaterialFactory.POLY_ROCK_07_DIFF
 		_create_textured_visual_sphere("RiverPebbleClusterStone", pebble_pos, pebble_scale, texture_path, Color(0.30, 0.29, 0.25))
 		_apply_rock_material(get_child(get_child_count() - 1))
 
 # --- Orillas reales: banda texturizada de arena/barro + props de Blender ---
 
 const SHORE_TEX_DIR := "res://assets/textures/shore/"
-const SHORE_PROP_DIR := "res://assets/models/props/shore/"
-const SHORE_DRIFTWOOD := [SHORE_PROP_DIR + "shore_driftwood_a.glb", SHORE_PROP_DIR + "shore_driftwood_b.glb"]
-const SHORE_FLATSTONES := [SHORE_PROP_DIR + "shore_flatstone_a.glb", SHORE_PROP_DIR + "shore_flatstone_b.glb", SHORE_PROP_DIR + "shore_flatstone_c.glb"]
-const SHORE_PEBBLES := [SHORE_PROP_DIR + "shore_pebbles_a.glb"]
+const SHORE_DRIFTWOOD := [GameConst.RIVERBANK_DIR + "shore_driftwood_a.glb", GameConst.RIVERBANK_DIR + "shore_driftwood_b.glb"]
+const SHORE_FLATSTONES := [GameConst.RIVERBANK_DIR + "shore_flatstone_a.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_b.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_c.glb"]
+const SHORE_PEBBLES := [GameConst.RIVERBANK_DIR + "shore_pebbles_a.glb"]
 static var _shore_band_material: StandardMaterial3D = null
 
 func _get_shore_band_material() -> StandardMaterial3D:
@@ -12913,7 +12906,7 @@ func _create_forest() -> void:
 	# estables aunque se añadan casas, rios u otros objetos que consuman RNG
 	# durante la creación del mapa.
 	var forest_rng := RandomNumberGenerator.new()
-	forest_rng.seed = WORLD_SEED * 104729 + 17
+	forest_rng.seed = GameConst.WORLD_SEED * 104729 + 17
 	var total_trees := int(MAP_EXTENT * MAP_EXTENT * 0.035)
 	var inner_clear_radius := 65.0 # Mantener centro despejado para casas y pueblo
 	var base_color := Color(0.20, 0.34, 0.12)
@@ -13658,7 +13651,7 @@ func _create_living_tree_fallback(pos: Vector3, visual_name: String) -> bool:
 func _stable_loot_seed(id: String) -> int:
 	# Per-id seed so an item's visual randomness never depends on the shared
 	# stream position or on which other ids happen to be depleted.
-	return int(hash("%d|%s" % [WORLD_SEED, id]))
+	return int(hash("%d|%s" % [GameConst.WORLD_SEED, id]))
 
 func _create_grass_clump(pos: Vector3, height: float, color: Color, rng: RandomNumberGenerator = null) -> void:
 	if not _can_place_ground_vegetation(pos):
@@ -14476,7 +14469,7 @@ func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = Vector3(_world_rng.randf_range(-4.0, 4.0), _world_rng.randf_range(0.0, 360.0), _world_rng.randf_range(-4.0, 4.0))
 	mesh_instance.scale = scale_value
-	var is_rock := texture_path in [POLY_ROCK_07_DIFF, POLY_BOULDER_DIFF, MaterialFactory.POLY_RIVER_PEBBLES_DIFF]
+	var is_rock := texture_path in [MaterialFactory.POLY_ROCK_07_DIFF, POLY_BOULDER_DIFF, MaterialFactory.POLY_RIVER_PEBBLES_DIFF]
 	if is_rock:
 		mesh_instance.mesh = _get_forest_rock_mesh(pos)
 		mesh_instance.material_override = MaterialFactory.make_forest_rock_material()

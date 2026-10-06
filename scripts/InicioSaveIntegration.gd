@@ -420,10 +420,6 @@ const _MILITARY_TINTS := {
 	"Chaqueta militar negra II": Color(0.02, 0.02, 0.03),
 }
 
-const _HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
-const _HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
-const _KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
-
 static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 	var p := mi.get_parent()
 	while p != null:
@@ -435,8 +431,8 @@ static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	var hat_model := ""
 	match item_name:
-		"Sombrero de pescador": hat_model = _HAT_MODEL
-		"Casco militar": hat_model = _HELMET_MODEL
+		"Sombrero de pescador": hat_model = GameConst.FISHERMANS_HAT_MODEL
+		"Casco militar": hat_model = GameConst.MILITARY_HELMET_MODEL
 		_: return
 	var packed := load(hat_model)
 	if packed == null or not packed is PackedScene:
@@ -486,7 +482,7 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	_bind_preview_bone(model, hat, ["mixamorig:Head", "mixamorig_Head", "Head"])
 
 static func _add_preview_knife(model: Node3D) -> void:
-	var packed := load(_KNIFE_MODEL)
+	var packed := load(GameConst.KNIFE_MODEL)
 	if packed == null or not packed is PackedScene:
 		return
 	var knife := (packed as PackedScene).instantiate() as Node3D
@@ -512,11 +508,9 @@ static func _add_preview_knife(model: Node3D) -> void:
 	knife.position += Vector3(0.10, 0.0, -0.10)
 	_bind_preview_bone(model, knife, ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"])
 
-const _PWC_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"
-
 static func _add_preview_gloves(model: Node3D, item_name: String) -> void:
 	# Load player_with_clothes.glb to extract cloth_hands mesh
-	var pwc_packed := load(_PWC_MODEL)
+	var pwc_packed := load(GameConst.PLAYER_MODEL)
 	if pwc_packed == null or not pwc_packed is PackedScene:
 		return
 	var pwc := (pwc_packed as PackedScene).instantiate() as Node3D

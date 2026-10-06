@@ -1,7 +1,7 @@
 extends Node
 
 const DEFAULT_CHARACTERS := [
-	{"name": "Remy", "model": "res://assets/characters/adapted/player_with_clothes.glb", "type": "default"},
+	{"name": "Remy", "model": GameConst.PLAYER_MODEL, "type": "default"},
 ]
 
 var characters: Array = []

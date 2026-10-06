@@ -47,7 +47,7 @@ func run() -> void:
 		player.stats = preload("res://scripts/SurvivalStats.gd").new()
 		player.inventory = preload("res://scripts/Inventory.gd").new()
 		player.add_child(player.inventory)
-		player.puppet_model_path = player.ADAPTED_PLAYER_MODEL
+		player.puppet_model_path = GameConst.PLAYER_MODEL
 		player.setup_as_puppet()
 		player.equip_clothing("Pantalones")
 		player.equip_clothing("Zapatillas")

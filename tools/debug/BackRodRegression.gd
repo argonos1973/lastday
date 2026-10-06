@@ -110,7 +110,7 @@ func check_animated_backpack(player: TestPlayer) -> bool:
 	player.third_person_back_item_root.free()
 	player._stored_back_visuals = [null, null]
 	player._stored_back_items = [{"name": "Caña de pescar", "type": "tool_fishing"}, null]
-	player.puppet_model_path = player.ADAPTED_PLAYER_MODEL
+	player.puppet_model_path = GameConst.PLAYER_MODEL
 	player.load_animations = true
 	player.setup_as_puppet()
 	player.puppet_apply_visuals("Camiseta,Pantalones,Zapatillas", "", "Mochila pequena")

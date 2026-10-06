@@ -1,7 +1,6 @@
 extends Node3D
 class_name BirdController
 
-const WORLD_LIMIT := 480.0
 const FLIGHT_HEIGHT_MIN := 40.0
 const FLIGHT_HEIGHT_MAX := 70.0
 const AI_LOD_CULL := 500.0
@@ -633,14 +632,14 @@ func _compute_path_force() -> Vector3:
 func _compute_boundary_force() -> Vector3:
 	var margin := 40.0
 	var steer := Vector3.ZERO
-	if global_position.x > WORLD_LIMIT - margin:
-		steer.x = -(global_position.x - (WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
-	elif global_position.x < -WORLD_LIMIT + margin:
-		steer.x = (-WORLD_LIMIT + margin - global_position.x) / margin * BOIDS_MAX_FORCE
-	if global_position.z > WORLD_LIMIT - margin:
-		steer.z = -(global_position.z - (WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
-	elif global_position.z < -WORLD_LIMIT + margin:
-		steer.z = (-WORLD_LIMIT + margin - global_position.z) / margin * BOIDS_MAX_FORCE
+	if global_position.x > GameConst.WORLD_LIMIT - margin:
+		steer.x = -(global_position.x - (GameConst.WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
+	elif global_position.x < -GameConst.WORLD_LIMIT + margin:
+		steer.x = (-GameConst.WORLD_LIMIT + margin - global_position.x) / margin * BOIDS_MAX_FORCE
+	if global_position.z > GameConst.WORLD_LIMIT - margin:
+		steer.z = -(global_position.z - (GameConst.WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
+	elif global_position.z < -GameConst.WORLD_LIMIT + margin:
+		steer.z = (-GameConst.WORLD_LIMIT + margin - global_position.z) / margin * BOIDS_MAX_FORCE
 	return steer
 
 func _animate_wings() -> void:
