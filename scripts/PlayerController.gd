@@ -612,6 +612,59 @@ var _ik_lh_idx: int = -1
 var _ik_skeleton_connected: bool = false
 var _ik_upper_arm_idx: int = -1
 var _ik_forearm_idx: int = -1
+# Standing/crouched aim: the rifle is placed from the body (butt in the right
+# shoulder pocket, scope line at the eye, barrel along the aim direction) and
+# both arms are IK'd onto it. Points in RifleRoot/model-local units (barrel
+# -Z, up +Y, right +X) measured from modern_sniper_rifle__free_lowpoly.glb.
+const RIFLE_AIM_BUTT := Vector3(0.0, 0.4, 8.45)
+const RIFLE_AIM_EYE := Vector3(0.0, 2.15, 3.3)
+# Grip geometry (raycast against the rifle mesh): pistol grip right face at
+# x≈0.26, front edge z≈3.3, back z≈4.0, y -0.2..-1.85, raked ~15° back;
+# forend underside y≈0.25, sides x≈±0.4, z -6.4..-2.2.
+# Knuckle = middle-finger MCP joint (MiddleFinger1 bone) target on the rifle.
+const RIFLE_AIM_RIGHT_KNUCKLE := Vector3(0.3, -0.95, 1.15)
+const RIFLE_AIM_LEFT_KNUCKLE := Vector3(0.78, 0.26, -2.9)
+# Hand anatomy in rifle-local space (-Z barrel, +Y up, +X right):
+# fingers = wrist→knuckles direction, palm = direction the palm faces.
+# Right hand: palm on the grip's right face, metacarpals perpendicular to the
+# raked grip. Left hand: palm cupped under the forend, fingers up its right side.
+# Chosen by sweeping against the solved forearm: left wrist ~3° twist/swing,
+# right ~25° deviation (reach-limited) — values far from these wring the
+# separate hand/arm meshes open at the wrist.
+const RIFLE_AIM_RIGHT_FINGERS := Vector3(-0.35, -0.38, -0.86)
+const RIFLE_AIM_RIGHT_PALM := Vector3(-1.0, 0.0, 0.4)
+const RIFLE_AIM_LEFT_FINGERS := Vector3(0.7, 0.15, -0.7)
+const RIFLE_AIM_LEFT_PALM := Vector3(0.5, 1.0, 0.0)
+# Finger flexion in degrees per joint [1, 2, 3], replacing the animated finger
+# pose. Kept ≤65° — sharper bends collapse the low-poly knuckle skinning.
+const RIFLE_AIM_RIGHT_CURL := {
+	"Thumb": [15.0, 25.0, 20.0], "Index": [30.0, 45.0, 25.0],
+	"Middle": [60.0, 65.0, 35.0], "Ring": [62.0, 65.0, 35.0], "Pinky": [62.0, 60.0, 30.0],
+}
+# Support hand: bend at the knuckle so the fingers lie flat up the forend's
+# right side; distal joints stay nearly straight or the tips sink into it.
+const RIFLE_AIM_LEFT_CURL := {
+	"Thumb": [28.0, 20.0, 15.0], "Index": [40.0, 40.0, 30.0],
+	"Middle": [45.0, 40.0, 30.0], "Ring": [47.0, 40.0, 30.0], "Pinky": [47.0, 40.0, 30.0],
+}
+# Share of the hand twist absorbed by forearm roll, and how strongly the elbow
+# is steered to line the forearm up with the hand.
+const RIFLE_AIM_FOREARM_TWIST := 1.0
+const RIFLE_AIM_FINGER_CLOSE := {"Index": 7.0, "Ring": 7.0, "Pinky": 14.0}
+const RIFLE_AIM_ELBOW_STEER := 0.8
+# Elbow pole directions in rifle-local space (out + down + slightly back), so
+# the firing elbow doesn't flare above the shoulder in the front view.
+const RIFLE_AIM_RIGHT_ELBOW := Vector3(0.8, -0.35, 0.35)
+const RIFLE_AIM_LEFT_ELBOW := Vector3(-0.6, -0.65, 0.1)
+const RIFLE_AIM_ELBOW_POLE := 0.55
+var _rifle_aim_pose_active := false
+var _ik_right_upper_arm_idx: int = -1
+var _ik_right_forearm_idx: int = -1
+var _ik_rh_idx: int = -1
+# hand bone -> {"frame": rest anatomical frame (hand-local), "knuckle": MCP
+# offset (hand-local), "fingers": [[bone, axis_local, rest_basis, deg], ...]}
+var _grip_rig: Dictionary = {}
+var _grip_rig_skel: Skeleton3D = null
 var _rifle_has_cache: bool = false
 var _rifle_current_ik_weight := 1.0
 var _rifle_target_ik_weight := 1.0
@@ -7149,6 +7202,8 @@ func _build_rifle_on_back() -> void:
 	_strap_stock_marker.position = stock_local
 	_rifle_on_back.add_child(_strap_stock_marker)
 	_rifle_on_back.force_update_transform()
+	RifleStrapScript.snap_to_mesh(_strap_barrel_marker, model)
+	RifleStrapScript.snap_to_mesh(_strap_stock_marker, model)
 	_strap_barrel_marker.force_update_transform()
 	_strap_stock_marker.force_update_transform()
 	# Create BoneAttachment3D guide points on torso for natural chest curve
@@ -7792,6 +7847,20 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var char_basis := global_basis.orthonormalized()
 	var raw_shoulder := shoulder_pos + char_basis.x * 0.06 + char_basis.z * 0.02 - char_basis.y * 0.08
 
+	# Standing/crouched aim: the rifle is placed directly on the body — scope
+	# line through the eye, butt into the right-shoulder pocket, barrel along
+	# the aim direction — and both arms are IK'd onto it. WeaponOffset goes
+	# top-level so the IK'd hands cannot drag it back out of place.
+	_rifle_aim_pose_active = false
+	var want_direct_aim := _is_aiming and not is_sitting and not is_prone
+	if want_direct_aim and _try_place_rifle_aiming(skel, s, raw_shoulder):
+		_rifle_aim_pose_active = true
+		_register_rifle_ik(skel, lh_idx)
+		return
+	if _rifle_weapon_offset.top_level:
+		_rifle_weapon_offset.set_as_top_level(false)
+		_rifle_weapon_offset.transform = Transform3D.IDENTITY
+
 	var rg_local := _rifle_right_grip.position
 	var lg_local := _rifle_left_hand_grip.position
 	var stock_local := _rifle_stock_ref.position
@@ -7882,6 +7951,9 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 			_rifle_left_arm_ik.active = false
 			_rifle_left_arm_ik.influence = 0.0
 
+	_register_rifle_ik(skel, lh_idx)
+
+func _register_rifle_ik(skel: Skeleton3D, lh_idx: int) -> void:
 	# Store references for the skeleton_updated callback
 	_ik_skel = skel
 	_ik_lh_idx = lh_idx
@@ -7891,14 +7963,246 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 		_ik_upper_arm_idx = _find_bone_cached("ua_idx", ua_bone_name, skel)
 	if not fa_bone_name.is_empty():
 		_ik_forearm_idx = _find_bone_cached("fa_idx", fa_bone_name, skel)
+	var rua_bone_name := _resolve_bone_name_cached("rua", "mixamorig:RightArm", skel)
+	var rfa_bone_name := _resolve_bone_name_cached("rfa", "mixamorig:RightForeArm", skel)
+	var rh_bone_name := _resolve_bone_name_cached("rh", right_hand_bone_name, skel)
+	_ik_right_upper_arm_idx = -1 if rua_bone_name.is_empty() else _find_bone_cached("rua_idx", rua_bone_name, skel)
+	_ik_right_forearm_idx = -1 if rfa_bone_name.is_empty() else _find_bone_cached("rfa_idx", rfa_bone_name, skel)
+	_ik_rh_idx = -1 if rh_bone_name.is_empty() else _find_bone_cached("rh_idx", rh_bone_name, skel)
 	if not _ik_skeleton_connected and skel != null:
 		skel.skeleton_updated.connect(_on_skeleton_updated)
 		_ik_skeleton_connected = true
+
+func _try_place_rifle_aiming(skel: Skeleton3D, s: float, pocket: Vector3) -> bool:
+	# Resolve the eye: the local camera sits at the aiming eye position, so the
+	# sight line goes through it; puppets have no camera — anchor to the head
+	# bone and aim along the character's facing (remote pitch is not synced).
+	var sight_dir: Vector3
+	var eye: Vector3
+	if not is_puppet and is_instance_valid(camera):
+		sight_dir = -camera.global_basis.z.normalized()
+		# The camera IS the eye. Keep the ocular ahead of the lens — at ~10 cm
+		# the stock cheek riser would swallow the camera.
+		eye = camera.global_position + sight_dir * 0.22
+	else:
+		var head_bone := ""
+		for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head", "head", "Cabeza"]:
+			head_bone = _resolve_bone_name_safe(bone_name, skel)
+			if not head_bone.is_empty():
+				break
+		if head_bone.is_empty():
+			return false
+		var head_idx := skel.find_bone(head_bone)
+		if head_idx < 0:
+			return false
+		var head_pos := (skel.global_transform * skel.get_bone_global_pose(head_idx)).origin
+		sight_dir = -global_basis.z.normalized()
+		eye = head_pos + global_basis.y.normalized() * 0.11 + sight_dir * 0.15
+	if sight_dir.length_squared() < 0.5:
+		return false
+	# Rifle basis: model -Z is the barrel, +Y is up, +X is its right side
+	var bx := sight_dir.cross(global_basis.y.normalized())
+	if bx.length_squared() < 0.01:
+		bx = global_basis.x
+	bx = bx.normalized()
+	var bz := -sight_dir
+	var by := bz.cross(bx).normalized()
+	var b := Basis(bx, by, bz).scaled(Vector3.ONE * s)
+	var o := eye - b * RIFLE_AIM_EYE
+	# Bring the butt toward the shoulder pocket: full correction along the aim
+	# axis (capped so the scope stays off the face), partial laterally so the
+	# scope keeps roughly under the eye — like a real shouldered cheek weld.
+	var butt_w := o + b * RIFLE_AIM_BUTT
+	var err := pocket - butt_w
+	# A butt slightly behind the pocket plane is hidden inside the chest — keep
+	# it (reads as a planted stock) and only pull a floating butt back. Limit
+	# the forward shift so the scope stays near the eye.
+	o += sight_dir * clampf(err.dot(sight_dir), -0.10, 0.05)
+	o += (err - sight_dir * err.dot(sight_dir)) * 0.45
+	if not _rifle_weapon_offset.top_level:
+		_rifle_weapon_offset.set_as_top_level(true)
+	_rifle_weapon_offset.global_transform = Transform3D(b, o)
+	_rifle_root.transform = Transform3D.IDENTITY
+	_rifle_weapon_offset.force_update_transform()
+	_rifle_root.force_update_transform()
+	# The legacy TwoBoneIK3D modifier targets the handguard marker, which the
+	# hand-solve no longer maintains — keep it off while this solver owns the pose.
+	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
+		_rifle_left_arm_ik.active = false
+		_rifle_left_arm_ik.influence = 0.0
+	return true
+
+func _solve_aim_arms() -> void:
+	# Pull both hands onto the rifle: right wrist to the pistol grip, left wrist
+	# under the handguard. Runs inside skeleton_updated, after the animation.
+	var skel := _ik_skel
+	if _rifle_weapon_offset == null or not is_instance_valid(_rifle_weapon_offset):
+		return
+	var wo_xf := _rifle_weapon_offset.global_transform
+	var skel_inv := skel.global_transform.affine_inverse()
+	# rifle-local space -> skeleton space, for the grip orientation targets
+	var w2s := skel_inv.basis * wo_xf.basis
+	if _ik_lh_idx >= 0 and _ik_upper_arm_idx >= 0 and _ik_forearm_idx >= 0:
+		_grip_hand(skel, _ik_upper_arm_idx, _ik_forearm_idx, _ik_lh_idx, true,
+			skel_inv * (wo_xf * RIFLE_AIM_LEFT_KNUCKLE), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, w2s * RIFLE_AIM_LEFT_ELBOW)
+	if _ik_rh_idx >= 0 and _ik_right_upper_arm_idx >= 0 and _ik_right_forearm_idx >= 0:
+		_grip_hand(skel, _ik_right_upper_arm_idx, _ik_right_forearm_idx, _ik_rh_idx, false,
+			skel_inv * (wo_xf * RIFLE_AIM_RIGHT_KNUCKLE), w2s * RIFLE_AIM_RIGHT_FINGERS, w2s * RIFLE_AIM_RIGHT_PALM, w2s * RIFLE_AIM_RIGHT_ELBOW)
+
+static func _anatomical_frame(fingers: Vector3, palm: Vector3) -> Basis:
+	var f := fingers.normalized()
+	var p := (palm - f * palm.dot(f)).normalized()
+	return Basis(f, p, f.cross(p))
+
+func _grip_rig_for(skel: Skeleton3D, hand_idx: int, is_left: bool) -> Dictionary:
+	# Rest-pose analysis, cached per hand: the hand's anatomical frame and each
+	# finger joint's flexion axis (bone direction × palm normal, so a positive
+	# angle always bends toward the palm — no per-rig sign guessing).
+	if _grip_rig_skel != skel:
+		_grip_rig.clear()
+		_grip_rig_skel = skel
+	if _grip_rig.has(hand_idx):
+		return _grip_rig[hand_idx]
+	var rig := {}
+	_grip_rig[hand_idx] = rig
+	var middle1 := -1
+	var thumb1 := -1
+	for c in skel.get_bone_children(hand_idx):
+		var nm := skel.get_bone_name(c)
+		if nm.contains("Middle"):
+			middle1 = c
+		elif nm.contains("Thumb"):
+			thumb1 = c
+	if middle1 < 0 or thumb1 < 0:
+		return rig
+	var f_l := skel.get_bone_rest(middle1).origin
+	var t_l := skel.get_bone_rest(thumb1).origin
+	var p_l := f_l.cross(t_l) if is_left else t_l.cross(f_l)
+	rig["frame"] = _anatomical_frame(f_l, p_l)
+	rig["knuckle"] = f_l
+	var hand_rest := skel.get_bone_global_rest(hand_idx)
+	var palm_rest := (hand_rest.basis * p_l).normalized()
+	var curl_table: Dictionary = RIFLE_AIM_LEFT_CURL if is_left else RIFLE_AIM_RIGHT_CURL
+	var fingers: Array = []
+	for root_bone in skel.get_bone_children(hand_idx):
+		var key := ""
+		for k in curl_table:
+			if skel.get_bone_name(root_bone).contains(k):
+				key = k
+		if key.is_empty():
+			continue
+		var b := root_bone
+		for depth in 3:
+			var kids := skel.get_bone_children(b)
+			if kids.is_empty():
+				break
+			var g := skel.get_bone_global_rest(b)
+			var dir := skel.get_bone_global_rest(kids[0]).origin - g.origin
+			var axis := dir.cross(palm_rest)
+			# Thumb base adducts toward the fingers instead of flexing: it lies
+			# along the stock rather than sticking up off the palm.
+			if key == "Thumb" and depth == 0:
+				axis = dir.cross(skel.get_bone_global_rest(middle1).origin - hand_rest.origin)
+			if axis.length_squared() > 1e-10:
+				var rest_basis := skel.get_bone_rest(b).basis
+				# Close the T-pose finger splay toward the middle finger so the
+				# fingers lie together on the grip instead of fanning out.
+				if depth == 0 and RIFLE_AIM_FINGER_CLOSE.has(key):
+					var toward_mid := skel.get_bone_global_rest(middle1).origin - g.origin
+					var close := deg_to_rad(RIFLE_AIM_FINGER_CLOSE[key]) * signf(dir.cross(toward_mid).dot(palm_rest))
+					rest_basis = rest_basis * Basis((g.basis.inverse() * palm_rest).normalized(), close)
+				fingers.append([b, (g.basis.inverse() * axis).normalized(),
+					rest_basis, deg_to_rad(curl_table[key][depth])])
+			b = kids[0]
+	rig["fingers"] = fingers
+	return rig
+
+func _grip_hand(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int, is_left: bool, knuckle_s: Vector3, fingers_s: Vector3, palm_s: Vector3, elbow_s: Vector3 = Vector3.ZERO) -> void:
+	# Orient the hand from its anatomical frame onto the grip frame, derive the
+	# wrist from the knuckle target, IK the arm there, then pose the fingers.
+	var rig := _grip_rig_for(skel, hand_idx, is_left)
+	if not rig.has("frame"):
+		_solve_arm_chain(skel, ua_idx, fa_idx, hand_idx, knuckle_s)
+		return
+	var scale := skel.get_bone_global_pose(hand_idx).basis.get_scale()
+	var hand_basis: Basis = (_anatomical_frame(fingers_s, palm_s) * (rig["frame"] as Basis).inverse()).scaled_local(scale)
+	_solve_arm_chain(skel, ua_idx, fa_idx, hand_idx, knuckle_s - hand_basis * (rig["knuckle"] as Vector3), fingers_s, elbow_s)
+	# Pronation/supination: roll the forearm about its own axis to take most of
+	# the hand's twist, so the wrist skin never wrings like a candy wrapper.
+	var fa := skel.get_bone_global_pose(fa_idx)
+	var hand_rest := skel.get_bone_rest(hand_idx)
+	var axis_l := hand_rest.origin.normalized()
+	var q := Quaternion((fa.basis.orthonormalized().inverse() * hand_basis.orthonormalized()) * hand_rest.basis.orthonormalized().inverse())
+	var twist := wrapf(2.0 * atan2(Vector3(q.x, q.y, q.z).dot(axis_l), q.w), -PI, PI)
+	var axis_s := (fa.basis * axis_l).normalized()
+	skel.set_bone_global_pose(fa_idx, Transform3D(Basis(axis_s, twist * RIFLE_AIM_FOREARM_TWIST) * fa.basis, fa.origin))
+	skel.set_bone_global_pose(hand_idx, Transform3D(hand_basis, skel.get_bone_global_pose(hand_idx).origin))
+	# Absolute flexion from rest: the animated finger pose is replaced, so the
+	# result never stacks on an already-clenched animation fist.
+	for entry in rig["fingers"]:
+		var pose := skel.get_bone_pose(entry[0])
+		pose.basis = (entry[2] as Basis) * Basis(entry[1] as Vector3, entry[3] as float)
+		skel.set_bone_pose(entry[0], pose)
+
+func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int, target_skel: Vector3, forearm_hint: Vector3 = Vector3.ZERO, elbow_hint: Vector3 = Vector3.ZERO) -> void:
+	# Two-bone IK in skeleton space: rotate upper arm + forearm so the hand bone
+	# reaches target_skel; the hand keeps its animated grip orientation.
+	var ua_pose := skel.get_bone_global_pose(ua_idx)
+	var fa_pose := skel.get_bone_global_pose(fa_idx)
+	var h_pose := skel.get_bone_global_pose(hand_idx)
+	var root_pos := ua_pose.origin
+	var mid_pos := fa_pose.origin
+	var end_pos := h_pose.origin
+	var len1 := root_pos.distance_to(mid_pos)
+	var len2 := mid_pos.distance_to(end_pos)
+	if len1 < 0.001 or len2 < 0.001:
+		return
+	var root_to_target := target_skel - root_pos
+	var dist := root_to_target.length()
+	var max_reach := (len1 + len2) * 0.999
+	var min_reach := absf(len1 - len2) * 1.05
+	if dist > max_reach:
+		dist = max_reach
+	if dist < min_reach:
+		dist = min_reach
+	var target_clamped := root_pos + root_to_target.normalized() * dist
+	var a := (dist * dist - len2 * len2 + len1 * len1) / (2.0 * dist)
+	var h := sqrt(maxf(len1 * len1 - a * a, 0.0))
+	var dir_to_target := (target_clamped - root_pos) / dist
+	# Elbow pole: keep the elbow on its current side of the root→target line
+	var current_mid_offset := mid_pos - root_pos
+	var perp := current_mid_offset - dir_to_target * current_mid_offset.dot(dir_to_target)
+	if perp.length_squared() < 0.0001:
+		perp = Vector3(0.0, -1.0, 0.0).slide(dir_to_target)
+		if perp.length_squared() < 0.0001:
+			perp = Vector3(1.0, 0.0, 0.0).slide(dir_to_target)
+	perp = perp.normalized()
+	# Steer the elbow so the forearm runs along forearm_hint: a forearm aimed
+	# where the hand points keeps wrist flexion small (no rig twist bones).
+	if forearm_hint.length_squared() > 0.0001:
+		var ideal := (target_clamped - forearm_hint.normalized() * len2 - root_pos).slide(dir_to_target)
+		if ideal.length_squared() > 0.000001:
+			perp = perp.lerp(ideal.normalized(), RIFLE_AIM_ELBOW_STEER).normalized()
+	# Pole bias: pull the elbow toward an explicit out/down direction so the
+	# firing arm doesn't flare its elbow above the shoulder line.
+	if elbow_hint.length_squared() > 0.0001:
+		var pole := elbow_hint.slide(dir_to_target)
+		if pole.length_squared() > 0.000001:
+			perp = perp.lerp(pole.normalized(), RIFLE_AIM_ELBOW_POLE).normalized()
+	var new_mid := root_pos + dir_to_target * a + perp * h
+	var ua_new_basis := Basis(Quaternion((mid_pos - root_pos).normalized(), (new_mid - root_pos).normalized())) * ua_pose.basis
+	skel.set_bone_global_pose(ua_idx, Transform3D(ua_new_basis, root_pos))
+	var fa_new_basis := Basis(Quaternion((end_pos - mid_pos).normalized(), (target_clamped - new_mid).normalized())) * fa_pose.basis
+	skel.set_bone_global_pose(fa_idx, Transform3D(fa_new_basis, new_mid))
+	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis, target_clamped))
 
 func _on_skeleton_updated() -> void:
 	if not _is_aiming:
 		return
 	if _ik_skel == null or not is_instance_valid(_ik_skel):
+		return
+	if _rifle_aim_pose_active:
+		_solve_aim_arms()
 		return
 	if _ik_lh_idx < 0 or _ik_upper_arm_idx < 0 or _ik_forearm_idx < 0:
 		return
@@ -8167,7 +8471,10 @@ func _clear_rifle_attachment() -> void:
 	_rifle_muzzle = null
 	_rifle_model = null
 	_rifle_root = null
+	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset):
+		_rifle_weapon_offset.queue_free()
 	_rifle_weapon_offset = null
+	_rifle_aim_pose_active = false
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		_rifle_bone_attachment.queue_free()
 	_rifle_bone_attachment = null
