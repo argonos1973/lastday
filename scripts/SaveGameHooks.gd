@@ -246,6 +246,19 @@ static func collect_world_data(main: Node) -> Dictionary:
 			shcopy["pos"] = [shcopy["pos"].x, shcopy["pos"].y, shcopy["pos"].z]
 		shelters.append(shcopy)
 	data["built_shelters"] = shelters
+	# Planted crops (position + real-time planting timestamp drive growth)
+	var crops := []
+	for c in main.get("_planted_crops"):
+		var ccopy: Dictionary = c.duplicate()
+		var wa = main.world_actions_by_id.get(str(c.get("id", "")))
+		if wa != null and is_instance_valid(wa):
+			ccopy["crop_state"] = wa.action_state
+			ccopy["growth"] = wa.growth
+		ccopy["saved_unix"] = Time.get_unix_time_from_system()
+		if ccopy.has("pos") and ccopy["pos"] is Vector3:
+			ccopy["pos"] = [ccopy["pos"].x, ccopy["pos"].y, ccopy["pos"].z]
+		crops.append(ccopy)
+	data["planted_crops"] = crops
 	# Open doors — in single player, check door nodes directly
 	var open_doors: Array = []
 	var net_node = main.get_node_or_null("/root/NetworkManager")
@@ -601,6 +614,25 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		if main.has_method("_spawn_player_campfire_with_id"):
 			main._spawn_player_campfire_with_id(cf_id, cf_pos)
 		main._built_campfires.append(cf)
+	# Planted crops — growth derives from the stored unix timestamp, so crops
+	# planted before the save resume at the correct stage (offline growth).
+	var saved_crops = data.get("planted_crops", [])
+	for c in saved_crops:
+		var c_id := str(c.get("id", ""))
+		if c_id.is_empty() or main._depleted_action_ids.has(c_id):
+			continue
+		var cpos_raw = c.get("pos", [0.0, 0.0, 0.0])
+		var cpos: Vector3
+		if cpos_raw is Array:
+			cpos = Vector3(float(cpos_raw[0]), float(cpos_raw[1]), float(cpos_raw[2]))
+		else:
+			cpos = cpos_raw
+		# Offline growth: crops keep maturing while the player was away.
+		var saved_growth := float(c.get("growth", 0.0))
+		if str(c.get("crop_state", "")) == "planted":
+			saved_growth += maxf(0.0, Time.get_unix_time_from_system() - float(c.get("saved_unix", Time.get_unix_time_from_system())))
+		if main.has_method("_plant_crop"):
+			main._plant_crop(cpos, str(c.get("crop_state", "planted")), saved_growth, c_id)
 	# Lit campfires
 	var lit = data.get("lit_campfires", [])
 	for lc in lit:

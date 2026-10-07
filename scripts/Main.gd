@@ -86,6 +86,7 @@ var _stat_warning_cooldowns := {}
 var _pending_fruit_cooldowns: Dictionary = {}
 var _pending_fruit_types: Dictionary = {}
 var _built_campfires: Array = []
+var _planted_crops: Array = []
 var _built_shelters: Array = []
 var _lit_campfires: Array = []
 var _server_door_states: Dictionary = {}
@@ -337,15 +338,17 @@ const UPRIGHT_GRASS_ASSET_MODELS := [
 ]
 const SURVIVAL_TOOL_MODELS := {
 	"axe": K_SURVIVAL + "tool-axe.glb",
-	"hoe": K_SURVIVAL + "tool-hoe.glb",
-	"shovel": K_SURVIVAL + "tool-shovel.glb",
+	"hoe": TOOLS_DIR + "tool_hoe.glb",
+	"shovel": TOOLS_DIR + "tool_shovel.glb",
 	"hammer": K_SURVIVAL + "tool-hammer.glb",
-	"pickaxe": K_SURVIVAL + "tool-pickaxe.glb",
+	"pickaxe": TOOLS_DIR + "tool_pickaxe.glb",
 	"wood": K_SURVIVAL + "resource-wood.glb",
 	"planks": K_SURVIVAL + "resource-planks.glb",
 	"stone": GameConst.LAKE_DIR + "lake_boulder_0.glb",
 	"backpack": K_SURVIVAL + "bedroll-packed.glb"
 }
+const FARMING_DIR := "res://assets/models/props/farming/"
+const TOOLS_DIR := "res://assets/models/props/tools/"
 const REAL_ROCK_MODELS := [
 	GameConst.LAKE_DIR + "lake_boulder_0.glb",
 	GameConst.LAKE_DIR + "lake_boulder_1.glb",
@@ -1809,6 +1812,7 @@ func _load_server_world_state() -> void:
 			seen_drop_ids[did] = true
 	_built_campfires = (world_data.get("built_campfires", []) as Array).duplicate(true)
 	_lit_campfires = (world_data.get("lit_campfires", []) as Array).duplicate(true)
+	_planted_crops = (world_data.get("planted_crops", []) as Array).duplicate(true)
 	_built_shelters = (world_data.get("built_shelters", []) as Array).duplicate(true)
 	for door_name in world_data.get("open_doors", []):
 		_server_door_states[str(door_name)] = true
@@ -2898,7 +2902,7 @@ func _apply_pending_restore() -> void:
 			var wb: Array = net._buffered_world_state
 			net._has_buffered_world_state = false
 			net._buffered_world_state = []
-			_net_sync_world_state(wb[0], wb[1], wb[2], wb[3], wb[4], wb[5])
+			_net_sync_world_state(wb[0], wb[1], wb[2], wb[3], wb[4], wb[5], wb[6] if wb.size() > 6 else [])
 		if net._has_buffered_appearance:
 			var ab: Array = net._buffered_appearance
 			net._has_buffered_appearance = false
@@ -3087,9 +3091,9 @@ func _send_world_state_to_client(peer_id: int) -> void:
 		for door in get_tree().get_nodes_in_group("doors"):
 			if door is Door and door.is_open:
 				open_doors.append(door.name)
-	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters)
+	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters, _planted_crops)
 
-func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = []) -> void:
+func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = [], planted_crops: Array = []) -> void:
 	for action_id in depleted_ids:
 		_net_item_picked_up(str(action_id))
 	for drop in dropped_items:
@@ -3142,6 +3146,17 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 		if sh_action != null and is_instance_valid(sh_action):
 			sh_action.set_meta("contents", sh.get("contents", []))
 		_set_backpack_entry_contents(str(sh["id"]), sh.get("contents", []))
+	for crop in planted_crops:
+		var cpos_raw = crop.get("pos", [0.0, 0.0, 0.0])
+		var cpos: Vector3
+		if cpos_raw is Array:
+			cpos = Vector3(float(cpos_raw[0]), float(cpos_raw[1]), float(cpos_raw[2]))
+		else:
+			cpos = cpos_raw
+		var crop_growth := float(crop.get("growth", 0.0))
+		if str(crop.get("crop_state", "")) == "planted":
+			crop_growth += maxf(0.0, Time.get_unix_time_from_system() - float(crop.get("updated_unix", crop.get("saved_unix", Time.get_unix_time_from_system()))))
+		_plant_crop(cpos, str(crop.get("crop_state", "planted")), crop_growth, str(crop.get("id", "")))
 
 func _apply_pending_doors() -> void:
 	if _pending_open_doors.is_empty():
@@ -5146,7 +5161,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
 	if camo and item_name in ["Camiseta", "Pantalones"]:
 		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
-	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
+	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
 	var action_label := item_name
 	if broken:
 		action_label = item_name + " (rota)"
@@ -5244,6 +5259,9 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	# tools first so the inventory thumbnail never falls back to a box model.
 	if item_name == "Hacha":
 		return ["res://assets/models/props/simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
+	# Harvested and bush-dropped seeds share the pouch model across item types.
+	if item_name == "Semillas":
+		return [FARMING_DIR + "farm_seed_pouch.glb"]
 	match item_type:
 		"water":
 			if item_name == "Botella de agua" or item_name == "Botella de agua llena":
@@ -5274,6 +5292,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return ["res://assets/models/props/skewer_fish.tscn", "res://assets/models/props/fish.glb"]
 			if item_name == "Pez crudo":
 				return ["res://assets/models/props/fish.glb"]
+			if item_name == "Bayas":
+				return [FARMING_DIR + "farm_berries.glb"]
 			if item_name == "Naranja":
 				return ["res://assets/models/props/fruit/apple.glb"]
 			if item_name == "Higo":
@@ -7651,6 +7671,42 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	action.set_meta("item_quantity", 1)
 	action.set_meta("item_use_value", 12.0)
 
+#region CULTIVO
+func _crop_id_for_pos(pos: Vector3) -> String:
+	return "crop_%d" % (int(round(pos.x * 4.0)) * 73856093 ^ int(round(pos.z * 4.0)) * 19349663 ^ int(round(pos.y * 10.0)))
+
+func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "") -> String:
+	var id := crop_id if not crop_id.is_empty() else _crop_id_for_pos(pos)
+	if _depleted_action_ids.has(id):
+		return ""
+	for c in _planted_crops:
+		if str(c.get("id", "")) == id:
+			return id
+	_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system()})
+	if net != null and net.is_dedicated_server:
+		return id
+	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+	_planted_crops.back()["pos"] = pos
+	var action = _create_world_action(id, "farm_plot", "Huerto", pos, Vector3(1.1, 0.16, 1.1), Color(0.20, 0.12, 0.055), true, false)
+	action.set_meta("crop_id", id)
+	action.grow_time = 450.0
+	action.set_crop_state(crop_state, growth)
+	return id
+
+func _remove_crop(crop_id: String) -> void:
+	for i in range(_planted_crops.size() - 1, -1, -1):
+		if str(_planted_crops[i].get("id", "")) == crop_id:
+			_planted_crops.remove_at(i)
+	var action = world_actions_by_id.get(crop_id)
+	if action != null and is_instance_valid(action):
+		action.queue_free()
+		world_actions_by_id.erase(crop_id)
+
+func _net_notify_crop_state(action, tag: String) -> void:
+	if net != null and net.is_connected and not net.is_host:
+		net.world_action_completed.rpc_id(1, "", [], tag, action.position)
+#endregion
+
 func _create_loose_survival_pickups() -> void:
 	var Q_WEAPONS := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/"
 	var pickups := [
@@ -7694,6 +7750,10 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 200, 0), "color": Color(0.36, 0.25, 0.10)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 280, 0), "color": Color(0.32, 0.24, 0.12)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 320, 0), "color": Color(0.38, 0.26, 0.10)},
+		# --- Hand tools (rare in houses; barns carry them often) ---
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
+		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 310, 0), "color": Color(0.24, 0.16, 0.08), "rare": true},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
@@ -7747,6 +7807,10 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
+		# --- Herramientas de labranza: el granero es su sitio natural ---
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
+		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 285, 0), "color": Color(0.24, 0.16, 0.08)},
 	]
 	var barn_origin := Vector3(45, 0, 120)
 	var barn_half_w := 4.0
@@ -7771,6 +7835,8 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 75, 0), "color": Color(0.28, 0.18, 0.08)},
+		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 215, 0), "color": Color(0.24, 0.16, 0.08)},
 	]
 	var remote_barn_num_items := 8 + _world_rng.randi() % 5
 	for _j in range(remote_barn_num_items):
@@ -8211,7 +8277,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 			(_fb_node as Node3D).queue_free()
 			push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
 			return
-	var action_kind := "eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item"
+	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
 	action.set_meta("visual_name", stored_visual_name)
@@ -8372,7 +8438,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	# Military garments (corpse loot and scripted ground pickups) need the same
 	# tint/camo treatment manual drops get in _spawn_dropped_item_visual.
 	_apply_military_drop_material(item_name, ground_node)
-	var actual_action_type := action_type_override if not action_type_override.is_empty() else "pickup_item"
+	var actual_action_type := action_type_override if not action_type_override.is_empty() else ("plant_seeds" if item_name == "Semillas" else "pickup_item")
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
@@ -8434,6 +8500,32 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			if check_sender and not _sender_within(sender_id, s["pos"], 15.0):
 				continue
 			_track_dropped_item(s)
+		if extra_visual == "planted_crop" and extra_pos != Vector3.ZERO:
+			var crop_id_srv := _crop_id_for_pos(extra_pos)
+			var crop_found := false
+			for c in _planted_crops:
+				if str(c.get("id", "")) == crop_id_srv:
+					crop_found = true
+			if not crop_found:
+				_planted_crops.append({"id": crop_id_srv, "pos": [extra_pos.x, extra_pos.y, extra_pos.z], "crop_state": "planted", "growth": 0.0, "updated_unix": Time.get_unix_time_from_system()})
+		if action_id.begins_with("crop_"):
+			_remove_crop(action_id)
+	# Crop plot state changes ride world_action_completed with an empty
+	# action_id so nothing gets depleted; they just update the tracked entry
+	# and the local farm_plot action (server + relayed clients).
+	if extra_visual == "planted_crop" and extra_pos != Vector3.ZERO and (net == null or not net.is_dedicated_server):
+		_plant_crop(extra_pos)
+	if (extra_visual == "crop_harvested" or extra_visual == "crop_replanted") and extra_pos != Vector3.ZERO:
+		var cs_id := _crop_id_for_pos(extra_pos)
+		var cs_state := "empty" if extra_visual == "crop_harvested" else "planted"
+		for c in _planted_crops:
+			if str(c.get("id", "")) == cs_id:
+				c["crop_state"] = cs_state
+				c["growth"] = 0.0
+				c["updated_unix"] = Time.get_unix_time_from_system()
+		var cs_action = world_actions_by_id.get(cs_id)
+		if cs_action != null and is_instance_valid(cs_action):
+			cs_action.set_crop_state(cs_state, 0.0)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -8448,6 +8540,8 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			_depleted_action_ids.append(action_id)
 		if action_id.begins_with("fell_tree_"):
 			_hide_remote_felled_tree(action_id)
+	if action_id.begins_with("crop_"):
+		_remove_crop(action_id)
 	# Spawn any items that resulted from the action (skip if already spawned
 	# locally). On the dedicated server the drops were already persisted into
 	# _dropped_items above — spawning visuals would double-append them.
@@ -8469,6 +8563,8 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_create_cut_tree_remains(extra_pos)
 	elif extra_visual == "cabin":
 		_build_player_cabin(extra_pos)
+	elif extra_visual == "planted_crop":
+		_plant_crop(extra_pos)
 	return true
 
 # Normalize a client-supplied spawn dict into a safe dropped-item entry;
@@ -9226,10 +9322,12 @@ func _execute_world_action(action, actor) -> void:
 			var stick1_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
 			var stick2_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
 			var stick3_id := "pickup_Palo_%d" % (Time.get_ticks_msec() + randi() % 1000)
+			var seeds_id := "pickup_Semillas_%d" % (Time.get_ticks_msec() + randi() % 1000)
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.3, 0.06, 0.0), 0.3, 1, 0.0, stick1_id)
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(-0.3, 0.06, 0.2), 0.3, 1, 0.0, stick2_id)
 			_spawn_ground_pickup("Palo", "resource", bush_pos + Vector3(0.1, 0.06, -0.3), 0.3, 1, 0.0, stick3_id)
-			actor.notice.emit("Cortas el arbusto. Recoge los palos del suelo.")
+			_spawn_ground_pickup("Semillas", "resource", bush_pos + Vector3(-0.15, 0.05, -0.25), 0.05, 1, 0.0, seeds_id)
+			actor.notice.emit("Cortas el arbusto. Recoge los palos y las semillas del suelo.")
 			if held_b != null and held_b.has_method("reduce_durability"):
 				held_b.reduce_durability(5.0)
 				if held_b.is_broken():
@@ -9242,9 +9340,47 @@ func _execute_world_action(action, actor) -> void:
 				{"id": stick1_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(0.3, 0.06, 0.0), "weight": 0.3, "qty": 1, "use": 0.0},
 				{"id": stick2_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(-0.3, 0.06, 0.2), "weight": 0.3, "qty": 1, "use": 0.0},
 				{"id": stick3_id, "name": "Palo", "type": "resource", "pos": bush_pos + Vector3(0.1, 0.06, -0.3), "weight": 0.3, "qty": 1, "use": 0.0},
+				{"id": seeds_id, "name": "Semillas", "type": "resource", "pos": bush_pos + Vector3(-0.15, 0.05, -0.25), "weight": 0.05, "qty": 1, "use": 0.0},
 			]
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, bush_spawns, "", Vector3.ZERO)
+		"plant_seeds":
+			var held_s = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_s == null or not (str(held_s.get("item_type")) in ["tool_hoe", "tool_shovel"]):
+				# Sin azada o pala las semillas se recogen como un objeto normal.
+				var seeds_item = ItemScript.create("Semillas", "resource", 0.05, int(action.get_meta("item_quantity", 1)), 0.0)
+				_finish_pickup_action(action, actor, seeds_item, "Coges las semillas.")
+				return
+			if held_s.has_method("is_broken") and held_s.is_broken():
+				actor.notice.emit("Tu %s esta rota y no se puede usar." % str(held_s.item_name))
+				return
+			if get_river_depth_at(action.position) > 0.0 or not _can_place_ground_vegetation(action.position, -1.0):
+				actor.notice.emit("Este terreno no sirve para plantar.")
+				return
+			_play_actor_action(actor, "plant", 4.0)
+			actor.notice.emit("Plantando semillas... (4s)")
+			if hud != null:
+				hud.show_countdown("Plantando semillas", 4.0)
+			await get_tree().create_timer(4.0).timeout
+			if _scene_quitting: return
+			var planted_pos: Vector3 = action.position
+			_hide_action_visual(action)
+			action.mark_depleted()
+			if not _depleted_action_ids.has(action.action_id):
+				_depleted_action_ids.append(action.action_id)
+			# La semilla plantada deja de ser un drop rastreado.
+			var planted_pickup_id: String = action.action_id
+			for i in range(_dropped_items.size() - 1, -1, -1):
+				if str(_dropped_items[i].get("id", "")) == planted_pickup_id:
+					_dropped_items.remove_at(i)
+			_plant_crop(planted_pos)
+			held_s.reduce_durability(4.0) if held_s.has_method("reduce_durability") else null
+			if held_s.has_method("is_broken") and held_s.is_broken():
+				actor.notice.emit("Tu %s se ha roto!" % str(held_s.item_name))
+			actor.notice.emit("Plantas las semillas. La cosecha estara lista en unos minutos.")
+			_save_world_change_silent()
+			if net != null and net.is_connected and not net.is_host:
+				net.world_action_completed.rpc_id(1, action.action_id, [], "planted_crop", planted_pos)
 		"cut_log":
 			var held_l = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_l == null or (actor.has_method("has_axe_in_hand") and not actor.has_axe_in_hand()) or (not actor.has_method("has_axe_in_hand") and held_l.item_name != "Hacha"):
@@ -9510,7 +9646,7 @@ func handle_world_action_collect(action, actor) -> void:
 				if action.has_meta("item_durability"):
 					eat_item.durability = float(action.get_meta("item_durability"))
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
-		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool":
+		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds":
 			if not action.has_meta("item_name"):
 				handle_world_action(action, actor)
 				return
@@ -9728,6 +9864,7 @@ func _handle_farm_plot(action, actor) -> void:
 			action.set_crop_state("empty", 0.0)
 			actor.notice.emit("Cosechas verduras y recuperas algunas semillas.")
 			_save_world_change_silent()
+			_net_notify_crop_state(action, "crop_harvested")
 		_:
 			if not actor.inventory.has_item_name("Azada") and not actor.inventory.has_item_name("Pala"):
 				actor.notice.emit("Necesitas una azada o una pala para preparar la tierra.")
@@ -9751,6 +9888,7 @@ func _handle_farm_plot(action, actor) -> void:
 			action.set_crop_state("planted", 0.0)
 			actor.notice.emit("Plantas semillas. Vuelve cuando hayan crecido.")
 			_save_world_change_silent()
+			_net_notify_crop_state(action, "crop_replanted")
 
 func _build_player_cabin(origin: Vector3) -> void:
 	_create_static_box("PlayerCabinFloor", origin + Vector3(0, 0.02, 0), Vector3(4.4, 0.22, 3.4), Color(0.16, 0.10, 0.045))
@@ -10550,7 +10688,7 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
 		if action.depleted and not action.repeatable:
 			continue
 		var atype: String = str(action.action_type)
-		if atype not in ["pickup_item", "eat_food", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]:
+		if atype not in ["pickup_item", "eat_food", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds"]:
 			continue
 		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
 			continue

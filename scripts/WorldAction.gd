@@ -43,7 +43,7 @@ func _update_interaction_index() -> void:
 		add_to_group("wolf_meat_pickups")
 	elif is_in_group("wolf_meat_pickups"):
 		remove_from_group("wolf_meat_pickups")
-	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool"]
+	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "farm_plot"]
 	var pos := global_position
 	var cell := Vector2i(floori(pos.x / GameConst.INTERACTION_CELL_SIZE), floori(pos.z / GameConst.INTERACTION_CELL_SIZE))
 	if _interaction_indexed and _interaction_spatial == spatial and (not spatial or cell == _interaction_cell):
@@ -155,9 +155,12 @@ func set_crop_state(state: String, new_growth := 0.0) -> void:
 
 func tick_growth(delta: float) -> void:
 	if action_type == "farm_plot" and action_state == "planted":
+		var prev_stage := clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2)
 		growth += delta
 		if growth >= grow_time:
 			action_state = "ready"
+			_update_crop_visual()
+		elif clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2) != prev_stage:
 			_update_crop_visual()
 	if action_type == "wolf_meat_raw" or action_type == "deer_meat_raw" or action_type == "fox_meat_raw" or action_type == "bird_meat_raw":
 		if _rot_timer <= 0.0:
@@ -233,6 +236,8 @@ func get_interaction_text(_player = null) -> String:
 			return "%s%s%s - [C] Coger" % [display_name, spoil_tag, wet_tag]
 		"eat_food":
 			return "%s%s%s - [M] Comer | [C] Coger" % [display_name, spoil_tag, wet_tag]
+		"plant_seeds":
+			return "%s - [F] Plantar (azada/pala) | [C] Coger" % display_name
 		"wood", "stone":
 			return "%s - [C] Coger" % display_name
 		"forage":
@@ -341,29 +346,29 @@ func _update_crop_visual() -> void:
 	material.roughness = 1.0
 	match action_state:
 		"planted":
-			material.albedo_color = Color(0.14, 0.24, 0.08)
-			_add_crop_blades(0.28, material)
+			# Tilled soil stays brown; the Blender stage model shows the growth.
+			material.albedo_color = Color(0.18, 0.12, 0.06)
+			var stage := clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2)
+			_add_crop_plant(stage)
 		"ready":
-			material.albedo_color = Color(0.26, 0.36, 0.09)
-			_add_crop_blades(0.58, material)
+			material.albedo_color = Color(0.20, 0.14, 0.07)
+			_add_crop_plant(3)
 		_:
 			material.albedo_color = Color(0.20, 0.12, 0.055)
 	if _mesh_instance != null:
 		_mesh_instance.material_override = material
 
-func _add_crop_blades(height: float, material: StandardMaterial3D) -> void:
-	for x in [-0.55, 0.0, 0.55]:
-		for z in [-0.45, 0.15, 0.55]:
-			var blade := MeshInstance3D.new()
-			blade.name = "CropShoot"
-			blade.position = Vector3(x, height * 0.5 + 0.06, z)
-			blade.rotation_degrees = Vector3(randf_range(-7, 7), randf_range(0, 180), randf_range(-6, 6))
-			var mesh := BoxMesh.new()
-			mesh.size = Vector3(0.08, height, 0.08)
-			blade.mesh = mesh
-			blade.material_override = material
-			add_child(blade)
-			_visual_children.append(blade)
+func _add_crop_plant(stage: int) -> void:
+	var path := "res://assets/models/props/farming/crop_stage_%d.glb" % stage
+	if not ResourceLoader.exists(path):
+		return
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return
+	var plant := scene.instantiate()
+	plant.name = "CropPlant"
+	add_child(plant)
+	_visual_children.append(plant)
 
 func _clear_visual_children() -> void:
 	for child in _visual_children:

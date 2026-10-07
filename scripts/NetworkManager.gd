@@ -1126,12 +1126,12 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 
 # Server sends world state to a newly connected client
 @rpc("authority", "reliable")
-func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array) -> void:
+func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array, planted_crops: Array = []) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_sync_world_state"):
-		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters)
+		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters, planted_crops)
 	elif not is_host:
-		_buffered_world_state = [depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters]
+		_buffered_world_state = [depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters, planted_crops]
 		_has_buffered_world_state = true
 
 # Client tells server a door was toggled (server relays to all other clients)

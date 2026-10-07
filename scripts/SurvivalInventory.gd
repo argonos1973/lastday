@@ -26,7 +26,7 @@ var portrait_signature := ""
 var portrait_focus := Vector3.ZERO
 var portrait_yaw := 0.5
 var portrait_dragging := false
-const PICKUPS := ["pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat", "eat_food", "wood", "stone", "wolf_meat_raw", "bird_meat_raw", "pickup_torch"]
+const PICKUPS := ["pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat", "eat_food", "wood", "stone", "wolf_meat_raw", "bird_meat_raw", "pickup_torch", "plant_seeds"]
 
 func setup(owner_hud) -> void:
 	hud = owner_hud
