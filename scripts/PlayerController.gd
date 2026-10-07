@@ -22,7 +22,7 @@ const RifleStrapScript = preload("res://scripts/RifleStrap.gd")
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
-const REAL_STONE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-stone.glb"
+const REAL_STONE_MODEL := "res://assets/models/props/lake/lake_boulder_0.glb"
 const REAL_AXE_MODEL := "res://assets/models/props/simple_axe.glb"
 const REAL_HOE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-hoe.glb"
 const REAL_SHOVEL_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/tool-shovel.glb"
@@ -8766,7 +8766,7 @@ func _build_third_person_resource(item_name: String) -> void:
 	elif item_name == "Madera" or item_name == "Ramas":
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_WOOD_MODEL, "ThirdPersonWood", Vector3(0, 0, -0.18), Vector3(82, 0, 8), Vector3.ONE * 0.5)
 	elif item_name == "Piedra":
-		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.5)
+		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.11)
 	elif item_name == "Tronco":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/tree-log.glb", "HeldLog")
 	elif item_name == "Trapos":

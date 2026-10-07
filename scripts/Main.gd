@@ -343,28 +343,13 @@ const SURVIVAL_TOOL_MODELS := {
 	"pickaxe": K_SURVIVAL + "tool-pickaxe.glb",
 	"wood": K_SURVIVAL + "resource-wood.glb",
 	"planks": K_SURVIVAL + "resource-planks.glb",
-	"stone": K_SURVIVAL + "resource-stone.glb",
+	"stone": GameConst.LAKE_DIR + "lake_boulder_0.glb",
 	"backpack": K_SURVIVAL + "bedroll-packed.glb"
 }
 const REAL_ROCK_MODELS := [
-	POLY_MODEL_DIR + "boulder_01/boulder_01_1k.gltf",
-	POLY_MODEL_DIR + "rock_07/rock_07_1k.gltf",
-	POLY_MODEL_DIR + "rock_09/rock_09_1k.gltf",
-	POLY_MODEL_DIR + "rock_face_01/rock_face_01_1k.gltf",
-	POLY_MODEL_DIR + "rock_face_02/rock_face_02_1k.gltf",
-
-	POLY_MODEL_DIR + "namaqualand_boulder_03/namaqualand_boulder_03_1k.gltf",
-	POLY_MODEL_DIR + "namaqualand_boulder_05/namaqualand_boulder_05_1k.gltf",
-	POLY_MODEL_DIR + "namaqualand_boulder_06/namaqualand_boulder_06_1k.gltf",
-	Q_NATURE + "Rock_Medium_1.gltf",
-	Q_NATURE + "Rock_Medium_2.gltf",
-	Q_NATURE + "Rock_Medium_3.gltf",
-	Q_NATURE + "RockPath_Round_Wide.gltf",
-	Q_NATURE + "RockPath_Round_Thin.gltf",
-	Q_NATURE + "RockPath_Square_Wide.gltf",
-	"res://assets/external/kenney_survival_kit/Models/GLB format/rock-a.glb",
-	"res://assets/external/kenney_survival_kit/Models/GLB format/rock-b.glb",
-	"res://assets/external/kenney_survival_kit/Models/GLB format/rock-c.glb"
+	GameConst.LAKE_DIR + "lake_boulder_0.glb",
+	GameConst.LAKE_DIR + "lake_boulder_1.glb",
+	GameConst.LAKE_DIR + "lake_boulder_2.glb",
 ]
 const REAL_BUSH_MODELS := [
 	POLY_MODEL_DIR + "fern_02/fern_02_1k.gltf",
@@ -5386,6 +5371,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				return 0.5
 			if item_name == "Palo":
 				return 0.2
+			if item_name == "Piedra":
+				return 0.11
 			return 1.0
 		"weapon":
 			return 0.8
@@ -7287,7 +7274,7 @@ func _create_survival_objectives() -> void:
 		# Place on the land side that is closer to the map centre (playable interior).
 		var stone_pos: Vector3 = pos_in if Vector2(pos_in.x, pos_in.z).length() < Vector2(pos_out.x, pos_out.z).length() else pos_out
 		stone_pos.y = 0.04
-		var stone_scale := _world_rng.randf_range(0.65, 0.92)
+		var stone_scale := _world_rng.randf_range(0.11, 0.16)
 		var stone_rot := _world_rng.randf_range(0, 180)
 		# Draw the grass tuft params up front so a depleted id skips creation
 		# without shifting the RNG stream for the loot generated afterwards.
@@ -9785,7 +9772,11 @@ func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 		for i in range(8):
 			var angle := i * 45.0
 			var stone_pos := pos + Vector3(cos(deg_to_rad(angle)) * 0.45, 0.05, sin(deg_to_rad(angle)) * 0.45)
-			_create_static_box("PlayerCampfireStone_%s_%d" % [cf_id, i], stone_pos, Vector3(0.18, 0.12, 0.15), Color(0.25, 0.23, 0.22))
+			var stone_box := _create_static_box("PlayerCampfireStone_%s_%d" % [cf_id, i], stone_pos, Vector3(0.18, 0.12, 0.15), Color(0.25, 0.23, 0.22))
+			var stone_mesh := stone_box.get_child(0) as MeshInstance3D
+			if stone_mesh != null:
+				stone_mesh.mesh = _get_forest_rock_mesh(stone_pos)
+				stone_mesh.material_override = MaterialFactory.make_forest_rock_material()
 	var campfire_action = _create_world_action(cf_id, "light_campfire", "Fogata apagada", pos, Vector3(1.2, 0.8, 1.2), Color(0.12, 0.08, 0.04), false, false)
 	campfire_action.set_meta("visual_name", "PlayerCampfire_" + cf_id)
 
@@ -10801,14 +10792,13 @@ func _create_river_segment(center: Vector3, size: Vector2, yaw: float) -> void:
 	var bottom_plane := PlaneMesh.new()
 	if is_lake:
 		# Cubre el anillo recortado por la máscara de cauce (borde del mesh ~.50).
-		bottom_plane.size = Vector2(size.x * 1.10, size.y * 1.10)
-		bottom_mesh.position.y = center.y - 4.0
+		bottom_mesh.mesh = _make_lake_bed_mesh(size)
 		var lake_bottom_mat := StandardMaterial3D.new()
-		lake_bottom_mat.albedo_color = Color(0.04, 0.07, 0.10)
+		lake_bottom_mat.albedo_texture = load("res://assets/external/polyhaven/ganges_river_pebbles/textures/ganges_river_pebbles_diff_4k.jpg")
+		lake_bottom_mat.vertex_color_use_as_albedo = true
 		lake_bottom_mat.roughness = 1.0
 		lake_bottom_mat.metallic = 0.0
 		lake_bottom_mat.no_depth_test = false
-		bottom_mesh.mesh = bottom_plane
 		bottom_mesh.material_override = lake_bottom_mat
 	else:
 		# La máscara recorta terreno hasta medio_paso+1.1 m del cauce; el lecho
@@ -10846,8 +10836,8 @@ func _make_lake_mesh(size: Vector2) -> ArrayMesh:
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
-	var radial_steps := 64
-	var ring_steps := 12
+	var radial_steps := 128
+	var ring_steps := 24
 	var half_length: float = size.x * 0.5
 	var half_width: float = size.y * 0.5
 	# Center vertex
@@ -10888,6 +10878,30 @@ func _make_lake_mesh(size: Vector2) -> ArrayMesh:
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+func _make_lake_bed_mesh(size: Vector2) -> ArrayMesh:
+	var arrays := _make_lake_mesh(size * 1.08).surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	var colors := PackedColorArray()
+	var radii := size * .425
+	for i in range(vertices.size()):
+		var p := vertices[i]
+		var radius := Vector2(p.x / radii.x, p.z / radii.y).length()
+		var depth := clampf((1.0 - radius) * 5.5, .18, 4.0)
+		vertices[i].y = -depth - .025
+		if depth > .18 and depth < 4.0:
+			normals[i] = Vector3(-5.5 * p.x / (radii.x * radii.x * radius), 1.0, -5.5 * p.z / (radii.y * radii.y * radius)).normalized()
+		uvs[i] = Vector2(p.x, p.z) / 3.0
+		colors.append(Color(.62, .58, .46).lerp(Color(.065, .095, .10), smoothstep(.18, 3.5, depth)))
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = colors
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
@@ -11044,7 +11058,7 @@ func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3,
 
 const SHORE_TEX_DIR := "res://assets/textures/shore/"
 const SHORE_DRIFTWOOD := [GameConst.RIVERBANK_DIR + "shore_driftwood_a.glb", GameConst.RIVERBANK_DIR + "shore_driftwood_b.glb"]
-const SHORE_FLATSTONES := [GameConst.RIVERBANK_DIR + "shore_flatstone_a.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_b.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_c.glb"]
+const SHORE_FLATSTONES := [GameConst.LAKE_DIR + "lake_slab_0.glb", GameConst.LAKE_DIR + "lake_slab_1.glb", GameConst.LAKE_DIR + "lake_boulder_0.glb"]
 const SHORE_PEBBLES := [GameConst.RIVERBANK_DIR + "shore_pebbles_a.glb"]
 const LAKE_GRANITE_SLABS := [GameConst.LAKE_DIR + "lake_slab_0.glb", GameConst.LAKE_DIR + "lake_slab_1.glb", GameConst.LAKE_DIR + "lake_slab_2.glb"]
 const LAKE_GRANITE_BOULDERS := [GameConst.LAKE_DIR + "lake_boulder_0.glb", GameConst.LAKE_DIR + "lake_boulder_1.glb", GameConst.LAKE_DIR + "lake_boulder_2.glb"]
@@ -11104,7 +11118,7 @@ func _create_shore_band(center: Vector3, size: Vector2, yaw: float) -> void:
 		var rz: float = half_w * 0.85
 		var band_in: float = -1.8
 		var band_out: float = 0.9
-		var steps := 96
+		var steps := 128
 		var wobble_phase := _world_rng.randf_range(0.0, TAU)
 		var mean_r: float = (rx + rz) * 0.5
 		for i in range(steps + 1):
@@ -11261,7 +11275,7 @@ func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
 # Flat water-worn stone for river/lake edges — falls back to the textured
 # boulder if the Blender props are unavailable.
 func _create_shore_stone(pos: Vector3, fallback_scale: Vector3) -> void:
-	var sc := _world_rng.randf_range(0.4, 0.95)
+	var sc := _world_rng.randf_range(0.09, 0.22)
 	if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_FLATSTONES, _world_rng), "ShoreFlatStone", pos, Vector3(sc, sc * 0.6, sc), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
 		_apply_rock_material(get_child(get_child_count() - 1))
 		return
@@ -11481,6 +11495,10 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 # The GLBs keep their baked wet/dry granite materials — no rock override.
 # Convention: local -Z dips underwater, +Z faces land, origin at waterline.
 func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> void:
+	var first_rock := get_child_count()
+	var saved_rng := _world_rng
+	_world_rng = RandomNumberGenerator.new()
+	_world_rng.seed = hash(Vector3(center.x, yaw, center.z)) ^ GameConst.WORLD_SEED ^ 0x1A6E
 	var angle := deg_to_rad(yaw)
 	var along := Vector3(cos(angle), 0, -sin(angle))
 	var across := Vector3(sin(angle), 0, cos(angle))
@@ -11488,11 +11506,12 @@ func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> v
 	var rz: float = size.y * 0.5 * 0.85
 	var water_y := center.y
 
-	var slab_count := int(round(PI * (rx + rz) / 7.0))
+	var slab_count := int(round(PI * (rx + rz) / 8.5))
 	for i in range(slab_count):
-		if _world_rng.randf() < 0.15:
+		var theta := float(i) / float(slab_count) * TAU + _world_rng.randf_range(-0.06, 0.06)
+		var exposure := sin(theta * 3.0 + .8) + .45 * cos(theta * 7.0)
+		if exposure < -.55 or _world_rng.randf() < .08:
 			continue
-		var theta := float(i) / float(slab_count) * TAU + _world_rng.randf_range(-0.04, 0.04)
 		var ex: float = cos(theta) * rx
 		var ez: float = sin(theta) * rz
 		var nx: float = cos(theta) / rx
@@ -11501,17 +11520,17 @@ func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> v
 		nx /= max(0.01, n_len)
 		nz /= max(0.01, n_len)
 		var nworld := (along * nx + across * nz).normalized()
-		var off := _world_rng.randf_range(-0.2, 0.5)
+		var off := _world_rng.randf_range(-0.8, 1.8)
 		var pos := center + along * (ex + nx * off) + across * (ez + nz * off)
 		# Slab origin sits at the waterline: any deeper and undulation valleys
 		# on the plate fill with water and read as dark enclosed pools. A
 		# little per-plate height jitter leaves visible seams between slabs.
-		pos.y = water_y + _world_rng.randf_range(-0.05, 0.10)
-		var yaw_deg := rad_to_deg(atan2(nworld.x, nworld.z)) + _world_rng.randf_range(-7.0, 7.0)
-		var sc := _world_rng.randf_range(0.9, 1.15)
-		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_SLABS, _world_rng), "LakeGraniteSlab%d" % i, pos, Vector3(sc, sc * _world_rng.randf_range(0.85, 1.1), sc), Vector3(0, yaw_deg, 0), false, 0.0)
+		pos.y = water_y + _world_rng.randf_range(0.02, 0.14)
+		var yaw_deg := rad_to_deg(atan2(nworld.x, nworld.z)) + _world_rng.randf_range(-18.0, 18.0)
+		var sc := _world_rng.randf_range(0.75, 1.35)
+		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_SLABS, _world_rng), "LakeGraniteSlab%d" % i, pos, Vector3(sc, sc * _world_rng.randf_range(0.65, 1.15), sc), Vector3(0, yaw_deg, 0), false, 0.0)
 
-	for i in range(42):
+	for i in range(28):
 		var theta := _world_rng.randf() * TAU
 		var ex: float = cos(theta) * rx
 		var ez: float = sin(theta) * rz
@@ -11531,7 +11550,7 @@ func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> v
 		var sc := _world_rng.randf_range(0.5, 1.35)
 		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_BOULDERS, _world_rng), "LakeGraniteBoulder%d" % i, pos, Vector3.ONE * sc, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
 
-	var outcrop_theta := _world_rng.randf() * TAU
+	var outcrop_theta := -.65 + _world_rng.randf_range(-.15, .15)
 	for j in range(2):
 		var theta := outcrop_theta + float(j) * _world_rng.randf_range(0.06, 0.14)
 		var ex: float = cos(theta) * rx
@@ -11546,8 +11565,93 @@ func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> v
 		var pos := center + along * (ex + nx * off) + across * (ez + nz * off)
 		pos.y = water_y - _world_rng.randf_range(0.10, 0.25)
 		var yaw_deg := rad_to_deg(atan2(nworld.x, nworld.z)) + _world_rng.randf_range(-22.0, 22.0)
-		var sc := _world_rng.randf_range(0.8, 1.1)
+		var sc := _world_rng.randf_range(1.25, 1.6)
 		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_OUTCROPS, _world_rng), "LakeGraniteOutcrop%d" % j, pos, Vector3.ONE * sc, Vector3(0, yaw_deg, 0), false, 0.0)
+	_world_rng = saved_rng
+	var shapes := {}
+	for i in range(first_rock, get_child_count()):
+		var rock := get_child(i)
+		rock.add_to_group("lake_granite")
+		var meshes: Array = []
+		NodeUtils.collect_mesh_instances(rock, meshes)
+		for mi: MeshInstance3D in meshes:
+			if mi.mesh == null:
+				continue
+			var source := mi.get_active_material(0) as StandardMaterial3D
+			if source != null:
+				mi.material_override = MaterialFactory.make_lake_rock_material(source, _get_ground_height(rock.position), center, size, yaw)
+			if not shapes.has(mi.mesh):
+				shapes[mi.mesh] = mi.mesh.create_trimesh_shape()
+			var body := StaticBody3D.new()
+			var collision := CollisionShape3D.new()
+			collision.shape = shapes[mi.mesh]
+			body.add_child(collision)
+			mi.add_child(body)
+
+const LAKE_ROCK_GRID := .3
+
+func _lake_granite_surface_grid() -> Dictionary:
+	var surface := {}
+	var face_cache := {}
+	var to_local := global_transform.affine_inverse()
+	for rock in get_children():
+		if not rock.is_in_group("lake_granite"):
+			continue
+		var meshes: Array = []
+		NodeUtils.collect_mesh_instances(rock, meshes)
+		for mi: MeshInstance3D in meshes:
+			if mi.mesh == null:
+				continue
+			if not face_cache.has(mi.mesh):
+				face_cache[mi.mesh] = mi.mesh.get_faces()
+			var faces: PackedVector3Array = face_cache[mi.mesh]
+			var transform := to_local * mi.global_transform
+			for i in range(0, faces.size(), 3):
+				var a: Vector3 = transform * faces[i]
+				var b: Vector3 = transform * faces[i + 1]
+				var c: Vector3 = transform * faces[i + 2]
+				var origin := Vector2(a.x, a.z) / LAKE_ROCK_GRID
+				var ab := Vector2(b.x - a.x, b.z - a.z) / LAKE_ROCK_GRID
+				var ac := Vector2(c.x - a.x, c.z - a.z) / LAKE_ROCK_GRID
+				var determinant := ab.cross(ac)
+				if absf(determinant) < .00001:
+					continue
+				var lo := Vector2i((Vector2(minf(a.x, minf(b.x, c.x)), minf(a.z, minf(b.z, c.z))) / LAKE_ROCK_GRID).floor())
+				var hi := Vector2i((Vector2(maxf(a.x, maxf(b.x, c.x)), maxf(a.z, maxf(b.z, c.z))) / LAKE_ROCK_GRID).floor())
+				for z in range(lo.y, hi.y + 1):
+					for x in range(lo.x, hi.x + 1):
+						var q := Vector2(x + .5, z + .5) - origin
+						var u := q.cross(ac) / determinant
+						var v := ab.cross(q) / determinant
+						if u < -.001 or v < -.001 or u + v > 1.001:
+							continue
+						var cell := Vector2i(x, z)
+						var height := a.y + u * (b.y - a.y) + v * (c.y - a.y)
+						surface[cell] = maxf(surface.get(cell, -INF), height)
+	return surface
+
+func _clear_lake_granite_grass() -> void:
+	var surface := _lake_granite_surface_grid()
+	if surface.is_empty():
+		return
+	for pair in [[grass_batch_transforms, grass_batch_colors], [_tall_grass_transforms, _tall_grass_colors]]:
+		for variant in range(pair[0].size()):
+			var transforms: Array = pair[0][variant]
+			var colors: Array = pair[1][variant]
+			var kept := 0
+			for i in range(transforms.size()):
+				var transform: Transform3D = transforms[i]
+				var pos := transform.origin
+				var cell := Vector2i((Vector2(pos.x, pos.z) / LAKE_ROCK_GRID).floor())
+				var height: float = surface.get(cell, -INF)
+				if height > pos.y + .14:
+					continue
+				transform.origin.y = maxf(pos.y, height + .012)
+				transforms[kept] = transform
+				colors[kept] = colors[i]
+				kept += 1
+			transforms.resize(kept)
+			colors.resize(kept)
 
 var _rowboat_spawned := false
 var lake_rowboat: StaticBody3D
@@ -13054,12 +13158,64 @@ func _create_forest() -> void:
 			await get_tree().process_frame
 			forest_rng.state = _saved_rng_state
 	
+	_append_lake_forest(batch_transforms, all_tree_positions)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
 	_hide_depleted_forest_trees()
+
+func _lake_forest_specs(center: Vector3, size: Vector2, yaw: float) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3(center.x, yaw, center.z)) ^ GameConst.WORLD_SEED ^ 0xF04E57
+	var along := Vector3.RIGHT.rotated(Vector3.UP, deg_to_rad(yaw))
+	var across := Vector3.BACK.rotated(Vector3.UP, deg_to_rad(yaw))
+	var specs: Array = []
+	for band in range(3):
+		var count := 72 + band * 12
+		for i in range(count):
+			var theta := TAU * (float(i) + rng.randf_range(-.35, .35)) / float(count)
+			var setback := 5.0 + band * 7.0 + rng.randf_range(0.0, 4.0)
+			var pos := center + along * cos(theta) * (size.x * .425 + setback) + across * sin(theta) * (size.y * .425 + setback)
+			pos.y = _get_ground_height(pos)
+			if not _can_place_ground_vegetation(pos, 2.8) or _is_near_house(pos, 8.0):
+				continue
+			var crowded := false
+			for spec in specs:
+				if pos.distance_squared_to(spec.position) < 2.8 * 2.8:
+					crowded = true
+					break
+			if crowded:
+				continue
+			specs.append({"position": pos, "scale": rng.randf_range(1.1, 2.2), "yaw": rng.randf_range(0.0, TAU)})
+	return specs
+
+func _append_lake_forest(batch_transforms: Array, positions: Array) -> void:
+	if _forest_tree_meshes.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0xBA4C
+	for segment in river_segments_data:
+		if segment.size.x < 60.0:
+			continue
+		for spec in _lake_forest_specs(segment.center, segment.size, segment.yaw):
+			var pos: Vector3 = spec.position
+			var crowded := false
+			for existing: Vector3 in positions:
+				if pos.distance_squared_to(existing) < 2.8 * 2.8:
+					crowded = true
+					break
+			if crowded:
+				continue
+			var variant := _pick_forest_tree_variant(rng)
+			var entry: Dictionary = _forest_tree_meshes[variant]
+			var basis := Basis.from_euler(Vector3(deg_to_rad(entry.get("up_fix_deg", -90.0)), 0, spec.yaw)).scaled(Vector3.ONE * spec.scale)
+			var transform := Transform3D(basis, pos)
+			batch_transforms[variant].append(transform)
+			positions.append(pos)
+			var tree_id := absi(int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663)
+			_register_tree_in_grid({"pos": pos, "id": tree_id, "visual_name": "Tree_%d" % tree_id, "active": false, "multimesh": true, "variant_idx": variant, "mm_transform": transform})
 
 func _scatter_forest_grass(pos: Vector3) -> void:
 	var rng := RandomNumberGenerator.new()
@@ -13938,6 +14094,7 @@ func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) ->
 # Collapses every queued grass tuft into a handful of MultiMeshInstance3D nodes
 # (one per variant) instead of thousands of individual MeshInstance3D draw calls.
 func _flush_grass_batches() -> void:
+	_clear_lake_granite_grass()
 	if grass_batch_meshes.is_empty():
 		return
 	const GRASS_BATCH_SIZE := 800
@@ -14559,33 +14716,36 @@ func _create_textured_visual_sphere(node_name: String, pos: Vector3, scale_value
 
 func _get_forest_rock_mesh(pos: Vector3) -> ArrayMesh:
 	if _forest_rock_meshes.is_empty():
-		for variant in range(5):
-			var sphere := SphereMesh.new()
-			sphere.radius = 1.0
-			sphere.height = 2.0
-			sphere.radial_segments = 16
-			sphere.rings = 10
-			var arrays := sphere.get_mesh_arrays()
-			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var noise := FastNoiseLite.new()
-			noise.seed = 841 + variant * 97
-			noise.frequency = 1.9
-			noise.fractal_octaves = 2
-			for i in range(vertices.size()):
-				var v := vertices[i]
-				v *= 0.86 + noise.get_noise_3dv(v) * 0.27
-				v.y = clampf(v.y, -0.68, 0.73 + variant * 0.025)
-				v.x += v.y * (0.06 + variant * 0.025)
-				vertices[i] = v
-			arrays[Mesh.ARRAY_VERTEX] = vertices
-			arrays[Mesh.ARRAY_NORMAL] = null
-			arrays[Mesh.ARRAY_TANGENT] = null
-			var mesh := ArrayMesh.new()
-			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-			var surface := SurfaceTool.new()
-			surface.create_from(mesh, 0)
-			surface.generate_normals()
-			_forest_rock_meshes.append(surface.commit())
+		for path in LAKE_GRANITE_BOULDERS:
+			var scene := load(path) as PackedScene
+			if scene == null:
+				continue
+			var inst := scene.instantiate()
+			var meshes: Array = []
+			NodeUtils.collect_mesh_instances(inst, meshes)
+			for mi in meshes:
+				var m := (mi as MeshInstance3D).mesh as ArrayMesh
+				if m == null:
+					continue
+				# Center and normalize to the old unit-sphere bounds so the
+				# existing placement/scale math still seats rocks correctly.
+				var arrays: Array = m.surface_get_arrays(0)
+				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				var aabb := m.get_aabb()
+				var center_off := aabb.get_center()
+				var norm := 2.0 / maxf(aabb.get_longest_axis_size(), 0.001)
+				for i in range(verts.size()):
+					verts[i] = (verts[i] - center_off) * norm
+				arrays[Mesh.ARRAY_VERTEX] = verts
+				var normalized := ArrayMesh.new()
+				normalized.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				normalized.set_meta("granite_source", path)
+				_forest_rock_meshes.append(normalized)
+			inst.free()
+	if _forest_rock_meshes.is_empty():
+		var st := SurfaceTool.new()
+		st.create_from(_get_shared_sphere_mesh(), 0)
+		_forest_rock_meshes.append(st.commit() as ArrayMesh)
 	return _forest_rock_meshes[posmod(hash(pos), _forest_rock_meshes.size())]
 
 func _get_shared_sphere_mesh() -> SphereMesh:

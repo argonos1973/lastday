@@ -49,19 +49,19 @@ func _ready() -> void:
 		_captured_cloud_darkness = _cloud_darkness
 		if _material is ShaderMaterial:
 			_material.set_shader_parameter("use_foam", false)
-			_material.set_shader_parameter("normal_scale", 0.34)
-			_material.set_shader_parameter("roughness_scale", 0.16)
-			_material.set_shader_parameter("water_color", Color(0.045, 0.12, 0.14))
+			_material.set_shader_parameter("normal_scale", 0.045)
+			_material.set_shader_parameter("roughness_scale", 0.045)
+			_material.set_shader_parameter("water_color", Color(0.018, 0.055, 0.065))
 	if _material is ShaderMaterial:
 		var direction := global_basis.x.normalized()
 		_material.set_shader_parameter("current_direction", Vector2(direction.x, direction.z))
 		_material.set_shader_parameter("use_river_flow", not _is_lake)
-		_material.set_shader_parameter("wave_height", .024 if _is_lake else .052)
-		_material.set_shader_parameter("beers_law", .65 if _is_lake else .9)
+		_material.set_shader_parameter("wave_height", .008 if _is_lake else .045)
+		_material.set_shader_parameter("beers_law", 1.1 if _is_lake else 1.0)
 		if not _is_lake:
-			_material.set_shader_parameter("normal_scale", 0.52)
-			_material.set_shader_parameter("roughness_scale", 0.20)
-			_material.set_shader_parameter("water_color", Color(0.055, 0.105, 0.085))
+			_material.set_shader_parameter("normal_scale", 0.34)
+			_material.set_shader_parameter("roughness_scale", 0.16)
+			_material.set_shader_parameter("water_color", Color(0.042, 0.088, 0.078))
 			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)
 	_update_mirror()
@@ -112,4 +112,4 @@ func _update_mirror() -> void:
 	var day_amount: float = 1.0 - _night_amount
 	var mirror_col: Color = Color(0.02, 0.03, 0.05).lerp(Color(0.62, 0.78, 0.97), day_amount)
 	mat.set_shader_parameter("mirror_color", mirror_col)
-	mat.set_shader_parameter("mirror_strength", 0.5 if _is_lake else 0.35)
+	mat.set_shader_parameter("mirror_strength", 0.85 if _is_lake else 0.35)

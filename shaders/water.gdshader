@@ -38,10 +38,17 @@ void fragment() {
     vec2 flow = current_direction * flow_speed * flow_direction_multiplier;
     if (!use_river_flow) { flow = vec2(.10,.07); }
     vec2 p = world_pos.xz;
-    // Independent rotated noise layers: no periodic cosine bands.
-    vec3 n1 = texture(water_noise_1,p*.48 - flow*TIME*.46).rgb*2.0-1.0;
+    // River samples are stretched along the current so ripples read as
+    // elongated flow streaks instead of isotropic boiling noise.
+    vec2 fdir = normalize(current_direction + vec2(1e-4));
+    vec2 fperp = vec2(-fdir.y, fdir.x);
+    vec2 fp = vec2(dot(p,fdir), dot(p,fperp));
+    vec2 adv = use_river_flow ? vec2(flow_speed*flow_direction_multiplier*TIME, 0.0) : flow*TIME;
+    vec2 n1p = use_river_flow ? vec2(fp.x*.21, fp.y*.60) : p*.48;
+    vec3 n1 = texture(water_noise_1,n1p - adv*.46).rgb*2.0-1.0;
     mat2 turn = mat2(vec2(.6,.8),vec2(-.8,.6));
-    vec3 n2 = texture(water_noise_2,turn*(p*.79-flow*TIME*.29)+vec2(.37,.19)).rgb*2.0-1.0;
+    vec2 n2p = use_river_flow ? vec2(fp.x*.33, fp.y*.95) : turn*(p*.79);
+    vec3 n2 = texture(water_noise_2,n2p - adv*.29+vec2(.37,.19)).rgb*2.0-1.0;
     vec3 broad = texture(water_noise_1,p*.17+vec2(-TIME*.027,TIME*.035)).rgb*2.0-1.0;
     float distant = smoothstep(12.0,90.0,length(VERTEX));
     vec2 slopes = (n1.xy+transpose(turn)*n2.xy*.55)*(1.0-distant*.85)+broad.xy*.4;
@@ -60,19 +67,21 @@ void fragment() {
     float absorption = 1.0-exp(-edge_dist*beers_law*4.5);
     float fresnel = pow(1.0-clamp(dot(normalize(NORMAL),normalize(VIEW)),0.0,1.0),mirror_fresnel_power);
     vec3 tint = mix(water_color,night_water_color,night_amount);
-    ALBEDO = mix(tint,mirror_color,fresnel*mirror_strength*.65);
+    ALBEDO = use_river_flow ? mix(tint,mirror_color,fresnel*mirror_strength*.65) : tint;
     // Sparse advected highlights make the current readable even in diffuse
     // lighting, where moving reflection normals alone are nearly invisible.
     vec2 drift = use_river_flow ? current_direction*flow_direction_multiplier*TIME*.48 : vec2(TIME*.11,TIME*.07);
-    float patch = texture(foam_texture,(p-drift)*.42).r;
+    // Stretched along the current so the highlights become flow lanes.
+    vec2 dp = use_river_flow ? vec2(fp.x*.16, fp.y*.55) - vec2(flow_speed*flow_direction_multiplier*TIME*.48,0.0) : (p-drift)*.42;
+    float patch = texture(foam_texture,dp).r;
     float broken = texture(foam_texture,(p-drift*.73)*1.37+vec2(.21,.61)).r;
-    float crests = smoothstep(.50,.66,patch)*smoothstep(.44,.62,broken);
-    ALBEDO = mix(ALBEDO,foam_color,crests*(use_river_flow ? .30 : .17));
+    float crests = smoothstep(.60,.82,patch)*smoothstep(.56,.78,broken);
+    ALBEDO = mix(ALBEDO,foam_color,crests*(use_river_flow ? .11 : 0.0));
     // Distant tiny ripples blend together instead of producing glittering aliasing.
-    ROUGHNESS = roughness_scale + smoothstep(18.0,85.0,length(VERTEX))*.12;
+    ROUGHNESS = roughness_scale + smoothstep(18.0,85.0,length(VERTEX))*(use_river_flow ? .12 : .025);
     METALLIC = 0.0;
-    SPECULAR = .35;
-    ALPHA = clamp(.10+absorption*.57,.10,.78);
+    SPECULAR = use_river_flow ? .35 : .5;
+    ALPHA = clamp(.10+absorption*(use_river_flow ? .57 : .78),.10,.90);
     ALPHA = mix(ALPHA, 1.0, fresnel*mirror_strength);
     if (use_foam) {
         float contact = (1.0-smoothstep(.02,.16,edge_dist))*smoothstep(.001,.03,edge_dist);

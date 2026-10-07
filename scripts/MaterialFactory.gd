@@ -160,10 +160,31 @@ static func make_forest_rock_material(tint := Vector3(1.0, 1.0, 1.0)) -> ShaderM
 		return _mat_cache[key]
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://shaders/forest_rock.gdshader")
-	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCK_07_DIFF))
+	material.set_shader_parameter("rock_albedo", load_texture("res://assets/models/props/lake/lake_boulder_0_lake_granite.jpg"))
 	material.set_shader_parameter("rock_height", load_texture("res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"))
 	material.set_shader_parameter("variation", forest_variation_texture())
 	material.set_shader_parameter("tint", tint)
+	_mat_cache[key] = material
+	return material
+
+static func make_lake_rock_material(source: StandardMaterial3D, ground_y: float, center: Vector3, size: Vector2, yaw: float) -> ShaderMaterial:
+	var key := "lake_rock_%d_%s_%s_%s_%s" % [source.get_instance_id(), ground_y, center, size, yaw]
+	if _mat_cache.has(key):
+		return _mat_cache[key]
+	var material := make_forest_rock_material().duplicate() as ShaderMaterial
+	var ground := make_forest_ground_material()
+	material.set_shader_parameter("shore_blend", true)
+	material.set_shader_parameter("rock_albedo", source.albedo_texture)
+	material.set_shader_parameter("shore_normal", source.normal_texture)
+	material.set_shader_parameter("shore_roughness", source.roughness_texture)
+	material.set_shader_parameter("shore_roughness_channel", source.roughness_texture_channel)
+	material.set_shader_parameter("leaf_albedo", ground.get_shader_parameter("leaf_albedo"))
+	material.set_shader_parameter("soil_albedo", ground.get_shader_parameter("soil_albedo"))
+	material.set_shader_parameter("shore_ground_y", ground_y)
+	material.set_shader_parameter("shore_water_y", center.y)
+	material.set_shader_parameter("shore_center", Vector2(center.x, center.z))
+	material.set_shader_parameter("shore_radii", size * .425)
+	material.set_shader_parameter("shore_yaw", deg_to_rad(yaw))
 	_mat_cache[key] = material
 	return material
 
