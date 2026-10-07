@@ -89,6 +89,9 @@ func run() -> void:
 	await main._create_river_segment(seg.center, seg.size, seg.yaw)
 	main._create_fish_school(seg.center, seg.size, seg.yaw)
 	if lake_preview:
+		await main._create_lake_bank_tall_grass(seg.center,seg.size,seg.yaw)
+		await main._create_lake_shore_rocks(seg.center,seg.size,seg.yaw)
+		main._create_lake_granite_shore(seg.center,seg.size,seg.yaw)
 		main._create_lake_rowboat(seg.center,seg.size,seg.yaw)
 	main._create_leafy_floor_ground()
 	if "--diffuse" in OS.get_cmdline_user_args():
@@ -111,18 +114,45 @@ func run() -> void:
 			if n.contains(key):
 				prop_counts[key] += 1
 	print("PROP_COUNTS: ", prop_counts)
+	if lake_preview:
+		# Identify each prop by its GLB mesh source: Godot renames duplicate
+		# node names to @Node3D@N, so names alone cannot tell instances apart.
+		var source_counts := {}
+		for c in main.get_children():
+			var src := _mesh_source_path(c)
+			var key := src.get_file() if not src.is_empty() else str(c.name)
+			source_counts[key] = source_counts.get(key, 0) + 1
+		print("SOURCE_COUNTS: ", source_counts)
 
-	# Debug: hide GLB prop instances to identify remaining visuals
-	var hide_props := OS.get_cmdline_user_args().has("--hide-props")
-	var hide_cluster := OS.get_cmdline_user_args().has("--hide-cluster")
+	# Debug isolation: hide prop classes by mesh source path.
+	#   --no-slabs --no-boulders --no-outcrops --no-granite
+	#   --no-flatstones --no-pebbles --hide-source <substr>
+	var uargs := OS.get_cmdline_user_args()
+	var hide_terms: Array = []
+	for pair in [["--no-slabs", "lake_slab"], ["--no-boulders", "lake_boulder"], ["--no-outcrops", "lake_outcrop"], ["--no-granite", "/lake/"], ["--no-flatstones", "flatstone"], ["--no-pebbles", "pebble"]]:
+		if pair[0] in uargs:
+			hide_terms.append(pair[1])
+	var hi := uargs.find("--hide-source")
+	if hi >= 0 and hi + 1 < uargs.size():
+		hide_terms.append(uargs[hi + 1])
+	var name_hide := ""
+	var nh := uargs.find("--hide")
+	if nh >= 0 and nh + 1 < uargs.size():
+		name_hide = uargs[nh + 1]
 	for c in main.get_children():
 		var n := str(c.name)
-		if "--water-only" in OS.get_cmdline_user_args() and c is Node3D:
+		if "--water-only" in uargs and c is Node3D:
 			c.visible = n.begins_with("MountainRiverWater") or n.begins_with("RiverBottom")
-		if hide_props and (n.begins_with("@Node3D") or n.contains("Shore") and not n.contains("Band")):
+			continue
+		if not name_hide.is_empty() and n.contains(name_hide):
 			c.visible = false
-		if hide_cluster and (n.contains("PebbleCluster") or n.begins_with("@MeshInstance3D")):
-			c.visible = false
+			continue
+		if not hide_terms.is_empty():
+			var src := _mesh_source_path(c)
+			for term in hide_terms:
+				if src.contains(term):
+					c.visible = false
+					break
 
 	var camera := Camera3D.new()
 	world.add_child(camera)
@@ -149,3 +179,14 @@ func run() -> void:
 			var prefix := "/tmp/lake_motion_" if lake_preview else "/tmp/river_motion_"
 			root.get_texture().get_image().save_png(prefix + "%03d.png" % frame)
 	quit(0 if ok == OK else 1)
+
+func _mesh_source_path(node: Node) -> String:
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+			var path := (n as MeshInstance3D).mesh.resource_path
+			if not path.is_empty():
+				return path
+		stack.append_array(n.get_children())
+	return ""

@@ -10273,6 +10273,7 @@ func _create_mountain_river() -> void:
 		if size.x >= 60.0:
 			await _create_lake_bank_tall_grass(center, size, yaw)
 			await _create_lake_shore_rocks(center, size, yaw)
+			_create_lake_granite_shore(center, size, yaw)
 			_create_lake_rowboat(center, size, yaw)
 
 func _catmull_rom(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
@@ -11045,6 +11046,9 @@ const SHORE_TEX_DIR := "res://assets/textures/shore/"
 const SHORE_DRIFTWOOD := [GameConst.RIVERBANK_DIR + "shore_driftwood_a.glb", GameConst.RIVERBANK_DIR + "shore_driftwood_b.glb"]
 const SHORE_FLATSTONES := [GameConst.RIVERBANK_DIR + "shore_flatstone_a.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_b.glb", GameConst.RIVERBANK_DIR + "shore_flatstone_c.glb"]
 const SHORE_PEBBLES := [GameConst.RIVERBANK_DIR + "shore_pebbles_a.glb"]
+const LAKE_GRANITE_SLABS := [GameConst.LAKE_DIR + "lake_slab_0.glb", GameConst.LAKE_DIR + "lake_slab_1.glb", GameConst.LAKE_DIR + "lake_slab_2.glb"]
+const LAKE_GRANITE_BOULDERS := [GameConst.LAKE_DIR + "lake_boulder_0.glb", GameConst.LAKE_DIR + "lake_boulder_1.glb", GameConst.LAKE_DIR + "lake_boulder_2.glb"]
+const LAKE_GRANITE_OUTCROPS := [GameConst.LAKE_DIR + "lake_outcrop_0.glb", GameConst.LAKE_DIR + "lake_outcrop_1.glb", GameConst.LAKE_DIR + "lake_outcrop_2.glb"]
 static var _shore_band_material: StandardMaterial3D = null
 
 func _get_shore_band_material() -> StandardMaterial3D:
@@ -11471,6 +11475,79 @@ func _create_lake_shore_rocks(center: Vector3, size: Vector2, yaw: float) -> voi
 			var _saved_rng_state := _world_rng.state
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
+
+# Glaciated granite shoreline: smooth slabs that dip into the water, rounded
+# erratic boulders and a craggy outcrop point (reference photo direction).
+# The GLBs keep their baked wet/dry granite materials — no rock override.
+# Convention: local -Z dips underwater, +Z faces land, origin at waterline.
+func _create_lake_granite_shore(center: Vector3, size: Vector2, yaw: float) -> void:
+	var angle := deg_to_rad(yaw)
+	var along := Vector3(cos(angle), 0, -sin(angle))
+	var across := Vector3(sin(angle), 0, cos(angle))
+	var rx: float = size.x * 0.5 * 0.85
+	var rz: float = size.y * 0.5 * 0.85
+	var water_y := center.y
+
+	var slab_count := int(round(PI * (rx + rz) / 7.0))
+	for i in range(slab_count):
+		if _world_rng.randf() < 0.15:
+			continue
+		var theta := float(i) / float(slab_count) * TAU + _world_rng.randf_range(-0.04, 0.04)
+		var ex: float = cos(theta) * rx
+		var ez: float = sin(theta) * rz
+		var nx: float = cos(theta) / rx
+		var nz: float = sin(theta) / rz
+		var n_len := sqrt(nx * nx + nz * nz)
+		nx /= max(0.01, n_len)
+		nz /= max(0.01, n_len)
+		var nworld := (along * nx + across * nz).normalized()
+		var off := _world_rng.randf_range(-0.2, 0.5)
+		var pos := center + along * (ex + nx * off) + across * (ez + nz * off)
+		# Slab origin sits at the waterline: any deeper and undulation valleys
+		# on the plate fill with water and read as dark enclosed pools. A
+		# little per-plate height jitter leaves visible seams between slabs.
+		pos.y = water_y + _world_rng.randf_range(-0.05, 0.10)
+		var yaw_deg := rad_to_deg(atan2(nworld.x, nworld.z)) + _world_rng.randf_range(-7.0, 7.0)
+		var sc := _world_rng.randf_range(0.9, 1.15)
+		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_SLABS, _world_rng), "LakeGraniteSlab%d" % i, pos, Vector3(sc, sc * _world_rng.randf_range(0.85, 1.1), sc), Vector3(0, yaw_deg, 0), false, 0.0)
+
+	for i in range(42):
+		var theta := _world_rng.randf() * TAU
+		var ex: float = cos(theta) * rx
+		var ez: float = sin(theta) * rz
+		var nx: float = cos(theta) / rx
+		var nz: float = sin(theta) / rz
+		var n_len := sqrt(nx * nx + nz * nz)
+		nx /= max(0.01, n_len)
+		nz /= max(0.01, n_len)
+		var off := _world_rng.randf_range(-1.3, 1.7)
+		var pos := center + along * (ex + nx * off) + across * (ez + nz * off)
+		if off > 0.4:
+			pos.y = _get_ground_height(pos) + 0.02
+		else:
+			# Waterline boulders sit mostly above the surface — a sunk one
+			# renders as a dark wet ring and reads as a hole, not a rock.
+			pos.y = water_y + _world_rng.randf_range(-0.02, 0.08)
+		var sc := _world_rng.randf_range(0.5, 1.35)
+		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_BOULDERS, _world_rng), "LakeGraniteBoulder%d" % i, pos, Vector3.ONE * sc, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0)
+
+	var outcrop_theta := _world_rng.randf() * TAU
+	for j in range(2):
+		var theta := outcrop_theta + float(j) * _world_rng.randf_range(0.06, 0.14)
+		var ex: float = cos(theta) * rx
+		var ez: float = sin(theta) * rz
+		var nx: float = cos(theta) / rx
+		var nz: float = sin(theta) / rz
+		var n_len := sqrt(nx * nx + nz * nz)
+		nx /= max(0.01, n_len)
+		nz /= max(0.01, n_len)
+		var nworld := (along * nx + across * nz).normalized()
+		var off := _world_rng.randf_range(-0.7, 0.1)
+		var pos := center + along * (ex + nx * off) + across * (ez + nz * off)
+		pos.y = water_y - _world_rng.randf_range(0.10, 0.25)
+		var yaw_deg := rad_to_deg(atan2(nworld.x, nworld.z)) + _world_rng.randf_range(-22.0, 22.0)
+		var sc := _world_rng.randf_range(0.8, 1.1)
+		_try_instance_external_scene(NodeUtils.shuffled_paths(LAKE_GRANITE_OUTCROPS, _world_rng), "LakeGraniteOutcrop%d" % j, pos, Vector3.ONE * sc, Vector3(0, yaw_deg, 0), false, 0.0)
 
 var _rowboat_spawned := false
 var lake_rowboat: StaticBody3D

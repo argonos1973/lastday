@@ -26,3 +26,4 @@ const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.gl
 const FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
 const RIVERBANK_DIR := "res://assets/models/props/shore/"
+const LAKE_DIR := "res://assets/models/props/lake/"
