@@ -374,12 +374,18 @@ func _add_crop_rows(stage: int) -> void:
 	var scene := load(path) as PackedScene
 	if scene == null:
 		return
-	# Plants grow on the bed's three furrow ridges.
+	# Repeatable per-plot variation: clients and growth stages keep the same
+	# planting positions without consuming the gameplay RNG.
+	var visual_rng := RandomNumberGenerator.new()
+	visual_rng.seed = hash(action_id)
+	# Roots sit inside the continuous Blender ridge (crest about 8 cm).
 	for rx in [-0.34, 0.0, 0.34]:
 		for rz in [-0.30, 0.0, 0.30]:
 			var plant := scene.instantiate()
 			plant.name = "CropPlant"
-			plant.position = Vector3(rx, 0.13, rz)
+			plant.position = Vector3(rx + visual_rng.randf_range(-0.014, 0.014), 0.073, rz + visual_rng.randf_range(-0.020, 0.020))
+			plant.rotation.y = visual_rng.randf_range(-PI, PI)
+			plant.scale = Vector3.ONE * visual_rng.randf_range(0.87, 1.05)
 			add_child(plant)
 			_visual_children.append(plant)
 

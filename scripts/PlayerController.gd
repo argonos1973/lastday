@@ -615,8 +615,8 @@ const RIFLE_AIM_EYE := Vector3(0.0, 2.15, 3.3)
 # x≈0.26, front edge z≈3.3, back z≈4.0, y -0.2..-1.85, raked ~15° back;
 # forend underside y≈0.25, sides x≈±0.4, z -6.4..-2.2.
 # Knuckle = middle-finger MCP joint (MiddleFinger1 bone) target on the rifle.
-const RIFLE_AIM_RIGHT_KNUCKLE := Vector3(0.28, -0.85, 3.3)
-const RIFLE_AIM_LEFT_KNUCKLE := Vector3(0.55, 0.1, -2.9)
+const RIFLE_AIM_RIGHT_KNUCKLE := Vector3(0.40, -1.15, 3.5)
+const RIFLE_AIM_LEFT_KNUCKLE := Vector3(0.80, -0.05, -2.9)
 # Hand anatomy in rifle-local space (-Z barrel, +Y up, +X right):
 # fingers = wrist→knuckles direction, palm = direction the palm faces.
 # Right hand: knuckles stack down the grip's front-right edge, so fingers
@@ -1247,9 +1247,9 @@ func _update_puppet_held_item(item_name: String) -> void:
 		"Hacha":
 			_build_third_person_axe()
 		"Pala":
-			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2), 0.85)
+			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2), 0.8)
 		"Azada":
-			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 0.85)
+			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 1.0)
 		"Martillo":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
 		"Pico":
@@ -5192,14 +5192,8 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"pickup", "collect":
-			# GatherExternal is the real kneel-and-reach gesture; InteractExternal
-			# is a talking motion that read as "no animation" in short windows.
-			target_animation = third_person_gather_animation
-			if target_animation.is_empty():
-				target_animation = third_person_interact_animation
-			if target_animation.is_empty():
-				target_animation = third_person_plant_animation
-			duration = maxf(duration, 1.6)
+			# Recoger es instantáneo: sin gesto de agacharse.
+			return
 		"cook":
 			target_animation = third_person_sit_animation
 			if target_animation.is_empty():
@@ -6631,7 +6625,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			_initialize_rifle_ammo()
 		"tool":
 			if held_name == "Pala":
-				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.85)
+				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.8)
 			elif held_name == "Martillo":
 				_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
 			elif held_name == "Pico":
@@ -6686,10 +6680,10 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_axe()
 			_clear_rifle_attachment()
 		"tool_hoe":
-			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 0.85)
+			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 1.0)
 			_clear_rifle_attachment()
 		"tool_shovel":
-			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.85)
+			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.8)
 			_clear_rifle_attachment()
 		"tool_hammer":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
@@ -8154,7 +8148,11 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 	var root_to_target := target_skel - root_pos
 	var dist := root_to_target.length()
 	var max_reach := (len1 + len2) * 0.999
-	var min_reach := absf(len1 - len2) * 1.05
+	var min_reach := maxf(absf(len1 - len2) + 0.001, 0.001)
+	if dist < 0.000001:
+		root_to_target = (end_pos - root_pos).normalized()
+		if root_to_target.length_squared() < 0.5:
+			root_to_target = Vector3.DOWN
 	if dist > max_reach:
 		dist = max_reach
 	if dist < min_reach:
@@ -8262,8 +8260,9 @@ func _on_skeleton_updated() -> void:
 	var fa_q := Quaternion(fa_orig_dir, fa_new_dir)
 	var fa_new_basis := Basis(fa_q) * fa_pose.basis
 	skel.set_bone_global_pose(_ik_forearm_idx, Transform3D(fa_new_basis, new_mid))
-	# Set hand at target with grip marker rotation
-	skel.set_bone_global_pose(_ik_lh_idx, grip_in_skel)
+	# Preserve the reachable wrist position; using the original grip origin
+	# here stretched the forearm whenever the marker was out of reach.
+	skel.set_bone_global_pose(_ik_lh_idx, Transform3D(grip_in_skel.basis, target_clamped))
 
 func _measure_right_hand_to_grip(skel: Skeleton3D, delta: float) -> void:
 	# Phase 1 only: measure dist between right hand bone and RightGrip after 2s stable RifleIdle.
@@ -8771,14 +8770,16 @@ func _build_third_person_resource(item_name: String) -> void:
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.11)
 	elif item_name == "Tronco":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/tree-log.glb", "HeldLog")
+	elif item_name == "Semillas":
+		_build_third_person_seed_bag()
 	elif item_name == "Trapos":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/bedroll.glb", "HeldRags")
 	else:
 		_build_third_person_pack()
 
-# Semillas: sin modelo 3P diferenciado, usa pack genérico
+# Same linen pouch in the hand and as ground loot.
 func _build_third_person_seed_bag() -> void:
-	_build_third_person_pack()
+	_try_add_model_to_parent(third_person_hand_item_root, "res://assets/models/props/farming/farm_seed_pouch.glb", "HeldSeeds", Vector3(0, -0.07, -0.03), Vector3.ZERO, Vector3.ONE)
 
 # Bundle de ropa: sin modelo 3P diferenciado, usa pack genérico
 func _build_third_person_clothing_bundle() -> void:

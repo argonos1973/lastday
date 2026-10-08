@@ -7810,7 +7810,6 @@ func _create_house_loot() -> void:
 		# --- Hand tools (rare in houses; barns carry them often) ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
 		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
-		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 310, 0), "color": Color(0.24, 0.16, 0.08), "rare": true},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
@@ -7867,7 +7866,6 @@ func _create_house_loot() -> void:
 		# --- Herramientas de labranza: el granero es su sitio natural ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
 		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
-		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 285, 0), "color": Color(0.24, 0.16, 0.08)},
 	]
 	var barn_origin := Vector3(45, 0, 120)
 	var barn_half_w := 4.0
@@ -7893,7 +7891,6 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 75, 0), "color": Color(0.28, 0.18, 0.08)},
-		{"name": "Pico", "type": "tool_pickaxe", "weight": 1.35, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["pickaxe"]], "scale": 1.0, "rot": Vector3(0, 215, 0), "color": Color(0.24, 0.16, 0.08)},
 	]
 	var remote_barn_num_items := 8 + _world_rng.randi() % 5
 	for _j in range(remote_barn_num_items):

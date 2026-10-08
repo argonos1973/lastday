@@ -2,6 +2,11 @@ extends SceneTree
 const Main = preload("res://scripts/Main.gd")
 const WorldAction = preload("res://scripts/WorldAction.gd")
 const SaveHooks = preload("res://scripts/SaveGameHooks.gd")
+class IsolatedWorld extends "res://scripts/Main.gd":
+	func _ready(): set_process(false)
+	func _exit_tree(): pass
+	func _save_world_change_silent(): pass
+	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return 0.0
 var failures := 0
 func _initialize() -> void:
 	call_deferred("run")
@@ -9,7 +14,7 @@ func check(value: bool, label: String) -> void:
 	print("PASS " if value else "FAIL ", label)
 	if not value: failures += 1
 func run() -> void:
-	var world := Main.new()
+	var world := IsolatedWorld.new()
 	root.add_child(world)
 	var pos := Vector3(37.0, 0.0, -41.0)
 
@@ -45,11 +50,18 @@ func run() -> void:
 	check(action._mesh_instance != null and not action._mesh_instance.visible, "procedural marker box stays hidden")
 	var early_plants: Array = live_plants.call()
 	check(early_plants.size() == 9 and String(early_plants[0].scene_file_path).ends_with("crop_stage_0.glb"), "early growth shows a sprout row on each ridge")
+	var planting_transforms: Array[Transform3D] = []
+	for plant in early_plants:
+		planting_transforms.append(plant.transform)
+		check(plant.position.y < 0.08, "roots sit in soil instead of floating above it")
+	check(not early_plants[0].scale.is_equal_approx(early_plants[1].scale), "plants vary in size")
 	action.tick_growth(200.0)
 	check(action.action_state == "planted" and action.growth > 0.0, "crop keeps growing over time")
 	action._update_crop_visual()
 	var mid_plants: Array = live_plants.call()
 	check(mid_plants.size() == 9 and mid_plants[0] != early_plants[0] and String(mid_plants[0].scene_file_path).ends_with("crop_stage_1.glb"), "growth stage swaps the visual model")
+	for i in mid_plants.size():
+		check(mid_plants[i].transform.is_equal_approx(planting_transforms[i]), "plant placement persists across growth stages")
 	action.tick_growth(500.0)
 	check(action.action_state == "ready", "crop matures to ready after grow_time")
 	var ready_plants: Array = live_plants.call()
@@ -77,7 +89,7 @@ func run() -> void:
 	check(str(world._get_drop_model_paths("Bayas", "food")[0]).ends_with("farm_berries.glb"), "harvest berries use the berry model")
 
 	# Hand tools come from the Blender set and spawn through the loot pipeline.
-	for t in [["Azada", "tool_hoe", "tool_hoe.glb"], ["Pala", "tool_shovel", "tool_shovel.glb"], ["Pico", "tool_pickaxe", "tool_pickaxe.glb"]]:
+	for t in [["Azada", "tool_hoe", "tool_hoe.glb"], ["Pala", "tool_shovel", "tool_shovel.glb"]]:
 		check(ResourceLoader.exists("res://assets/models/props/tools/" + t[2]), t[2] + " exists")
 		check(str(world._get_drop_model_paths(t[0], t[1])[0]).ends_with(t[2]), t[0] + " drops as the Blender tool")
 	world._create_pickup_item({
@@ -91,7 +103,8 @@ func run() -> void:
 	check(hoe_action != null and str(hoe_action.get_meta("item_type", "")) == "tool_hoe", "tool loot registers a hoe pickup")
 	check(world.get_node_or_null("Pickup_test_hoe_loot") != null, "tool loot spawns its model")
 	var src := FileAccess.get_file_as_string("res://scripts/Main.gd")
-	check(src.count('"name": "Azada", "type": "tool_hoe"') >= 3 and src.count('"name": "Pico", "type": "tool_pickaxe"') >= 3, "tools appear in barn and house loot pools")
+	check(src.count('"name": "Azada", "type": "tool_hoe"') >= 3 and src.count('"name": "Pala", "type": "tool_shovel"') >= 2, "hoe and shovel appear in barn and house loot pools")
+	check(not '"type": "tool_pickaxe"' in src, "pickaxe removed from loot pools")
 
 	# A seed dropped on the ground becomes a plant-or-pickup action, not food.
 	var seed_action := WorldAction.new()
