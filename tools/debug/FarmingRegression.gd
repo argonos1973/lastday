@@ -7,6 +7,13 @@ class IsolatedWorld extends "res://scripts/Main.gd":
 	func _exit_tree(): pass
 	func _save_world_change_silent(): pass
 	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return 0.0
+class FakeActor extends Node:
+	signal notice(_msg)
+	var inventory = preload("res://scripts/Inventory.gd").new()
+	var held = null
+	func get_held_item(): return held
+	func play_action_animation(_a, _d): pass
+	func _sync_held_item(): pass
 var failures := 0
 func _initialize() -> void:
 	call_deferred("run")
@@ -53,7 +60,7 @@ func run() -> void:
 	var planting_transforms: Array[Transform3D] = []
 	for plant in early_plants:
 		planting_transforms.append(plant.transform)
-		check(plant.position.y < 0.08, "roots sit in soil instead of floating above it")
+		check(plant.position.y < 0.12, "roots sit in soil instead of floating above it")
 	check(not early_plants[0].scale.is_equal_approx(early_plants[1].scale), "plants vary in size")
 	action.tick_growth(200.0)
 	check(action.action_state == "planted" and action.growth > 0.0, "crop keeps growing over time")
@@ -92,9 +99,20 @@ func run() -> void:
 	action.set_crop_state("planted", 10.0)
 	check(action.get_interaction_text().findn("creciendo") >= 0 or action.get_interaction_text().findn("Cultivo") >= 0, "planted plot reports growth")
 	action.set_crop_state("ready", 0.0)
-	check(action.get_interaction_text().findn("Cosechar") >= 0, "ready plot offers harvest")
+	check(action.get_interaction_text().findn("Recolectar") >= 0, "ready plot offers harvest")
+
+	# A ripe bed left too long rots; the timestamp meta drives the window.
+	check(action.has_meta("ready_unix"), "ready transition stamps ready_unix")
+	action.set_meta("ready_unix", Time.get_unix_time_from_system() - GameConst.CROP_ROT_SECONDS - 1.0)
+	action.tick_growth(0.1)
+	check(action.action_state == "rotten", "ripe crop rots after the rot window")
+	check(action.get_interaction_text().findn("podrido") >= 0, "rotten plot offers cleaning")
+	var rotten_plants: Array = live_plants.call()
+	check(rotten_plants.size() == 9, "rotten crop keeps withered plants")
 
 	# World serialization keeps state/growth and restores offline growth.
+	action.remove_meta("ready_unix")
+	action.set_crop_state("ready", 0.0)
 	var data: Dictionary = SaveHooks.collect_world_data(world)
 	var saved_crops: Array = data.get("planted_crops", [])
 	check(saved_crops.size() == 1, "crops serialized into world data")
@@ -149,6 +167,47 @@ func run() -> void:
 	seed_action.setup("seed_test", "plant_seeds", "Semillas", Vector3.ONE, Color.BLACK, false, false)
 	check(seed_action.get_interaction_text().findn("Plantar") >= 0, "dropped seeds offer planting")
 	seed_action.free()
+
+	# Interaction guards: one in-flight job per bed, seeds only consumed on
+	# completion, watering charges a single bottle from a shared stack.
+	var actor := FakeActor.new()
+	root.add_child(actor)
+	actor.inventory.max_slots = 40
+	actor.inventory.max_weight = 500.0
+	actor.add_child(actor.inventory)
+	var ItemScript := load("res://scripts/Item.gd")
+
+	# Double F presses cannot double a harvest.
+	action.set_crop_state("ready", 0.0)
+	world._handle_farm_plot(action, actor)
+	world._handle_farm_plot(action, actor)
+	check(action.has_meta("farm_busy"), "harvest marks the bed busy")
+	await create_timer(1.5).timeout
+	var veg_qty := 0
+	for it in actor.inventory.items:
+		if it.item_name == "Verduras": veg_qty += it.quantity
+	check(veg_qty == 3, "one harvest grants one portion, not two")
+
+	# Seeds survive an aborted attempt and are only consumed on completion.
+	action.set_crop_state("empty", 0.0)
+	actor.inventory.add_item(ItemScript.create("Azada", "tool_hoe", 0.9, 1, 0.0))
+	actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 2, 0.0))
+	world._handle_farm_plot(action, actor)
+	check(actor.inventory.has_item_name("Semillas", 2), "seeds are not consumed before the work finishes")
+	await create_timer(1.6).timeout
+	check(action.action_state == "planted" and actor.inventory.has_item_name("Semillas", 1), "planting consumes one seed on completion")
+
+	# Watering drains one bottle's worth from the shared stack durability.
+	action.set_crop_state("planted", 10.0)
+	var bottles = ItemScript.create("Botella de agua", "water", 0.5, 3, 0.0)
+	bottles.durability = 100.0
+	bottles.max_durability = 100.0
+	actor.held = bottles
+	world._handle_farm_plot(action, actor)
+	await create_timer(2.2).timeout
+	var expected := 100.0 - GameConst.CROP_WATER_USE / 3.0
+	check(absf(float(bottles.durability) - expected) < 0.5, "watering drains one bottle, not the whole stack")
+	actor.free()
 
 	world.queue_free()
 	print("failures=%d" % failures)

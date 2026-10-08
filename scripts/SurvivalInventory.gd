@@ -213,7 +213,7 @@ func refresh() -> void:
 	if portrait != null:
 		equipment.add_child(portrait)
 	equipment.add_child(text_label("MANOS", 16))
-	equipment.add_child(make_card("Manos libres" if held == null else item_text(held), {} if held == null else {"item": held, "label": held.item_name}, "hands"))
+	equipment.add_child(make_card("Manos libres" if held == null else item_text(held), {} if held == null else {"item": held, "label": held.item_name, "qty": 1}, "hands"))
 	if held != null:
 		button(equipment, "Guardar", func(): player._store_held_item(); request_refresh(true))
 	equipment.add_child(text_label("EQUIPAMIENTO", 16))
@@ -250,10 +250,14 @@ func refresh() -> void:
 		cargo.add_child(grid)
 		var held_item = player.get_held_item()
 		for item in items:
-			if item == held_item:
+			if item == held_item and item.quantity <= 1:
 				continue
 			if matches_filter(item):
-				grid.add_child(make_card(item_text(item), {"item": item, "label": item.item_name}, container.id))
+				var grid_payload := {"item": item, "label": item.item_name}
+				if item == held_item:
+					grid_payload["qty"] = item.quantity - 1
+					grid_payload["held_remainder"] = true
+				grid.add_child(make_card(item_text(item), grid_payload, container.id))
 		if items.size() < container.capacity:
 			var free_slot = make_card("+", {}, container.id)
 			free_slot.tooltip_text = "Espacio libre: arrastra un objeto aquí."
@@ -314,12 +318,13 @@ func make_card(title: String, payload: Dictionary, destination: String):
 		image.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		details.add_child(image)
 		add_item_thumbnail(image, item)
-		if item.quantity > 1:
-			var quantity := text_label("×%d" % item.quantity, 13)
+		var shown_qty := int(payload.get("qty", item.quantity))
+		if shown_qty > 1:
+			var quantity := text_label("×%d" % shown_qty, 13)
 			quantity.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 			quantity.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 			image.add_child(quantity)
-		if payload.has("item") and (player.get_held_item() == item or player._equipped_slots.values().has(item.item_name) or player.equipped_backpack == item.item_name):
+		if payload.has("item") and not bool(payload.get("held_remainder", false)) and (player.get_held_item() == item or player._equipped_slots.values().has(item.item_name) or player.equipped_backpack == item.item_name):
 			panel.border_color = Color(0.65, 0.74, 0.43)
 	var label := text_label(str(item.item_name) if item != null else title, 12 if item != null else 13)
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS

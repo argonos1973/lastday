@@ -30,6 +30,8 @@ func run() -> void:
 	actor._is_aiming = aiming
 	var player: AnimationPlayer = actor.third_person_animation_player
 	var anim: String = actor._rifle_aim_idle_animation if aiming else actor._rifle_idle_animation
+	if "--walk" in OS.get_cmdline_user_args():
+		anim = actor._rifle_walk_animation
 	print("ANIM=", anim, " has=", player != null and player.has_animation(anim))
 	if player != null and player.has_animation(anim):
 		player.play(anim, 0.0)
@@ -92,8 +94,10 @@ func run() -> void:
 	var wo_xf := actor._rifle_weapon_offset.global_transform
 	var rh_idx2 := skel.find_bone("mixamorig_RightHandMiddle1")
 	var lh_idx2 := skel.find_bone("mixamorig_LeftHandMiddle1")
-	var rh_w := (skel.global_transform * skel.get_bone_global_pose(rh_idx2)).origin
-	var lh_w := (skel.global_transform * skel.get_bone_global_pose(lh_idx2)).origin
+	var right_rig := actor._grip_rig_for(skel, skel.get_bone_parent(rh_idx2), false)
+	var left_rig := actor._grip_rig_for(skel, skel.get_bone_parent(lh_idx2), true)
+	var rh_w: Vector3 = skel.global_transform * skel.get_bone_global_pose(rh_idx2) * right_rig["middle_pivot"]
+	var lh_w: Vector3 = skel.global_transform * skel.get_bone_global_pose(lh_idx2) * left_rig["middle_pivot"]
 	print("right_knuckle_err=%.3f left_knuckle_err=%.3f" % [
 		rh_w.distance_to(wo_xf * actor.RIFLE_AIM_RIGHT_KNUCKLE),
 		lh_w.distance_to(wo_xf * actor.RIFLE_AIM_LEFT_KNUCKLE)])
@@ -101,8 +105,8 @@ func run() -> void:
 	if aiming:
 		for i in 3:
 			actor._solve_aim_arms()
-		var rh_w2 := (skel.global_transform * skel.get_bone_global_pose(rh_idx2)).origin
-		var lh_w2 := (skel.global_transform * skel.get_bone_global_pose(lh_idx2)).origin
+		var rh_w2: Vector3 = skel.global_transform * skel.get_bone_global_pose(rh_idx2) * right_rig["middle_pivot"]
+		var lh_w2: Vector3 = skel.global_transform * skel.get_bone_global_pose(lh_idx2) * left_rig["middle_pivot"]
 		print("after_manual: right_err=%.3f left_err=%.3f" % [
 			rh_w2.distance_to(wo_xf * actor.RIFLE_AIM_RIGHT_KNUCKLE),
 			lh_w2.distance_to(wo_xf * actor.RIFLE_AIM_LEFT_KNUCKLE)])
@@ -166,4 +170,6 @@ func run() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("/tmp/rifle_aim_rightclose%s.png" % ("" if aiming else "_idle"))
 	print("RIFLE_AIM_PREVIEW_DONE")
+	actor.stats.free()
+	actor.free()
 	quit(0)

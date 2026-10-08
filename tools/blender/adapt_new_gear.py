@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from mathutils.kdtree import KDTree
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,12 +130,42 @@ print('TOPS bounds', tuple(round(v, 2) for v in t_lo), tuple(round(v, 2) for v i
 CHEST_Z = t_hi.z - t_size.z * 0.30  # upper torso centre
 
 
+def constrain_garment_weights(garment, sleeves):
+    # Torso panels never inherit an arm bone merely because it is nearby.
+    names={b.name.split(':')[-1]:b.name for b in arm.data.bones}
+    for v in garment.data.vertices:
+        sampled={garment.vertex_groups[g.group].name:g.weight for g in v.groups}
+        for group in garment.vertex_groups: group.remove([v.index])
+        if sleeves and abs(v.co.x)>.44 and v.co.z>2.70:
+            side='Left' if v.co.x>0 else 'Right'
+            blend=max(0,min(1,(abs(v.co.x)-.82)/.24))
+            shoulder=max(0,min(1,(abs(v.co.x)-.44)/.18))
+            shoulder=shoulder*shoulder*(3-2*shoulder)
+            pairs=[('Spine2',1-shoulder),(side+'Arm',(1-blend)*shoulder),(side+'ForeArm',blend*shoulder)]
+        else:
+            blend=max(0,min(1,(v.co.z-2.48)/.32))
+            pairs=[('Spine1',1-blend),('Spine2',blend)]
+        weights={names[name]:weight for name,weight in pairs if weight>0}
+        if not sleeves:
+            # Shoulder webbing follows the shirt/shoulder rather than only
+            # Spine2, preventing it sinking through when arms swing.
+            blend=max(0,min(1,(v.co.z-2.90)/.18))
+            weights={name:weight*(1-blend) for name,weight in weights.items()}
+            for name,weight in sampled.items(): weights[name]=weights.get(name,0)+weight*blend
+        strongest=sorted(weights.items(),key=lambda item:item[1],reverse=True)[:4]
+        total=sum(weight for _,weight in strongest)
+        for name,weight in strongest:
+            if weight>0: garment.vertex_groups[name].add([v.index],weight/total,'REPLACE')
+
+
 def fit_vest():
     vest = merge_meshes(import_glb(str(SRC / 'tactical_plate_carrier_vest_-_game_ready.glb')), 'plate_carrier')
+    # Source front is +X, whereas the character faces -Y.
     apply_transform(vest)
+    vest.data.transform(Matrix.Rotation(-math.pi * .5, 4, 'Z'))
     v_lo, v_hi = bounds_of(vest)
     v_size = v_hi - v_lo
-    # Vest stays upright, front faces -Y (same facing as the character).
+    # Vest is now upright with the plate facing -Y.
     # Scale so its height covers ~55% of the shirt torso.
     scale = (t_size.z * 0.55) / v_size.z
     vest.scale = Vector((scale, scale, scale))
@@ -146,7 +176,31 @@ def fit_vest():
     vest.location += Vector((t_center.x - v_center.x, (t_lo.y + t_hi.y) * 0.5 - v_center.y + t_size.y * 0.02,
                              CHEST_Z - v_center.z))
     apply_transform(vest)
-    transfer_weights(vest, ['Tops', 'Body_arms', 'Desnudo_arms', 'Body_torso', 'Desnudo_torso'])
+    # The carrier must surround the shirt, not the bare chest. Its original
+    # uniform height fit put both plates underneath Tops.
+    for v in vest.data.vertices:
+        v.co.x = t_center.x + (v.co.x-t_center.x)*1.38
+        v.co.y = t_center.y + (v.co.y-t_center.y)*1.38
+        # Longer plate over the ribs; straps meet the shoulders rather
+        # than the collar. Preserve width/depth independently of height.
+        upper=max(0,min(1,(v.co.z-2.85)/.32))
+        upper=upper*upper*(3-2*upper)
+        v.co.z = CHEST_Z + (v.co.z-CHEST_Z)*1.14 - .15 + .14*upper
+    # Wrap the straps around the shirt's actual outer shell. Merely lowering
+    # the complete carrier buries its shoulder webbing in the clothed torso.
+    from mathutils.bvhtree import BVHTree
+    shirt_points=[tops.matrix_world@v.co for v in tops.data.vertices]
+    shell=BVHTree.FromPolygons(shirt_points,[list(p.vertices) for p in tops.data.polygons])
+    for v in vest.data.vertices:
+        if v.co.z<2.84: continue
+        center=Vector((t_center.x,t_center.y,v.co.z))
+        radial=v.co-center
+        if radial.length<.001: continue
+        hit,normal,_,distance=shell.ray_cast(center,radial.normalized(),2.0)
+        if hit is not None and distance+.045>radial.length:
+            v.co=center+radial.normalized()*(distance+.045)
+    transfer_weights(vest, ['Tops', 'Body_torso', 'Desnudo_torso'])
+    constrain_garment_weights(vest, False)
     export_skinned(vest, 'plate_carrier')
 
 
@@ -210,7 +264,31 @@ def fit_jacket():
             side = 1.0 if v.co.x > 0 else -1.0
             v.co.x = side * (cap_x + (abs(v.co.x) - cap_x) * (1.0 - 0.75 * f))
             n_mod += 1
-    transfer_weights(jacket, ['Tops', 'Body_arms', 'Desnudo_arms', 'Body_torso', 'Desnudo_torso'])
+    # Separate the skirt from the sleeves before weight transfer. The old
+    # wide hem sampled nearby arm weights and flared when the arms swung.
+    sleeve = [v for v in jacket.data.vertices if abs(v.co.x) > .43 and v.co.z > 2.70]
+    sleeve_ids = {v.index for v in sleeve}
+    bins = {}
+    for v in sleeve:
+        key = (1 if v.co.x>0 else -1, int(abs(v.co.x)*25))
+        bins.setdefault(key, []).append(v.co.copy())
+    for v in jacket.data.vertices:
+        if v.index in sleeve_ids:
+            side=1 if v.co.x>0 else -1
+            pts=bins[(side,int(abs(v.co.x)*25))]
+            cy=(min(p.y for p in pts)+max(p.y for p in pts))*.5
+            cz=(min(p.z for p in pts)+max(p.z for p in pts))*.5
+            extent=max(max(abs(p.y-cy),abs(p.z-cz)) for p in pts)
+            radial=min(1.0,.125/max(extent,.001))
+            blend=max(0,min(1,(abs(v.co.x)-.43)/.18))
+            blend=blend*blend*(3-2*blend)
+            v.co.y += (.11+(v.co.y-cy)*radial-v.co.y)*blend
+            v.co.z += (3.0+(v.co.z-cz)*radial-v.co.z)*blend
+            v.co.x += (side*(.43+(abs(v.co.x)-.43)*1.40)-v.co.x)*blend
+        elif v.co.z<2.80:
+            v.co.x=.39*math.tanh(v.co.x/.39)
+    transfer_weights(jacket, ['Body_arms', 'Body_torso', 'Desnudo_torso'])
+    constrain_garment_weights(jacket, True)
     export_skinned(jacket, 'plaid')
 
 
@@ -282,8 +360,10 @@ def fit_backpack():
 
 
 fit_vest()
-fit_jacket()
-fit_backpack()
+if '--vest-only' not in sys.argv:
+    fit_jacket()
+if '--garments-only' not in sys.argv and '--vest-only' not in sys.argv:
+    fit_backpack()
 
 if RENDER_ONLY or True:
     scene = bpy.context.scene

@@ -22,6 +22,7 @@ const CROP_MOIST_GROWTH := 2.5    # moist soil (rain or watering) multiplies gro
 const CROP_WATER_SECONDS := 300.0 # a watering keeps the bed moist this many seconds
 const CROP_RAIN_MIN := 0.1        # mm of rain that counts as moist soil
 const CROP_WATER_USE := 40.0      # bottle durability drained per watering
+const CROP_ROT_SECONDS := 600.0   # a ripe crop rots this many seconds after ready
 
 # -- Shared asset paths ----------------------------------------------------
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).

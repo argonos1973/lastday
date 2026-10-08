@@ -1250,6 +1250,15 @@ func _tick_world_actions(delta: float) -> void:
 		if action != null and action.has_method("tick_growth"):
 			if action.action_type == "farm_plot":
 				action.tick_growth(delta, rain_rate)
+				# Ripe/rotten transitions carry the ready timestamp so saves and
+				# late-join syncs reproduce the same spoilage window.
+				if action.action_state in ["ready", "rotten"]:
+					for c in _planted_crops:
+						if str(c.get("id", "")) == action.action_id:
+							c["crop_state"] = action.action_state
+							c["growth"] = action.growth
+							c["ready_unix"] = float(action.get_meta("ready_unix", 0.0))
+							break
 			else:
 				action.tick_growth(delta)
 
@@ -3200,11 +3209,18 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 			cpos = cpos_raw
 		var crop_growth := float(crop.get("growth", 0.0))
 		var crop_watered := float(crop.get("watered_until", 0.0))
-		if str(crop.get("crop_state", "")) == "planted":
+		var crop_state := str(crop.get("crop_state", "planted"))
+		var crop_ready := float(crop.get("ready_unix", 0.0))
+		if crop_state == "planted":
 			var elapsed := maxf(0.0, Time.get_unix_time_from_system() - float(crop.get("updated_unix", crop.get("saved_unix", Time.get_unix_time_from_system()))))
 			var moist_secs := clampf(crop_watered - float(crop.get("updated_unix", crop.get("saved_unix", 0.0))), 0.0, elapsed)
 			crop_growth += moist_secs * GameConst.CROP_MOIST_GROWTH + (elapsed - moist_secs)
-		_plant_crop(cpos, str(crop.get("crop_state", "planted")), crop_growth, str(crop.get("id", "")), crop_watered)
+			if crop_growth >= 450.0:
+				crop_state = "ready"
+				crop_ready = Time.get_unix_time_from_system() - maxf(0.0, crop_growth - 450.0)
+		if crop_state == "ready" and crop_ready > 0.0 and Time.get_unix_time_from_system() - crop_ready >= GameConst.CROP_ROT_SECONDS:
+			crop_state = "rotten"
+		_plant_crop(cpos, crop_state, crop_growth, str(crop.get("id", "")), crop_watered, crop_ready)
 
 func _apply_pending_doors() -> void:
 	if _pending_open_doors.is_empty():
@@ -5490,7 +5506,11 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 1.0
 		"backpack":
 			return 1.2
-		"tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe":
+		"tool_hoe":
+			return 1.5
+		"tool_shovel":
+			return 1.15
+		"tool_axe", "tool_hammer", "tool_pickaxe":
 			return 1.0
 		"tool_spear":
 			return 1.0
@@ -7746,23 +7766,25 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 func _crop_id_for_pos(pos: Vector3) -> String:
 	return "crop_%d" % (int(round(pos.x * 4.0)) * 73856093 ^ int(round(pos.z * 4.0)) * 19349663 ^ int(round(pos.y * 10.0)))
 
-func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "", watered_until := 0.0) -> String:
+func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "", watered_until := 0.0, ready_unix := 0.0) -> String:
 	var id := crop_id if not crop_id.is_empty() else _crop_id_for_pos(pos)
 	if _depleted_action_ids.has(id):
 		return ""
 	for c in _planted_crops:
 		if str(c.get("id", "")) == id:
 			return id
-	_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system(), "watered_until": watered_until})
+	_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system(), "watered_until": watered_until, "ready_unix": ready_unix})
 	if net != null and net.is_dedicated_server:
 		return id
 	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	_planted_crops.back()["pos"] = pos
-	var action = _create_world_action(id, "farm_plot", "Huerto", pos, Vector3(1.1, 0.16, 1.1), Color(0.20, 0.12, 0.055), true, false)
+	var action = _create_world_action(id, "farm_plot", "Huerto", pos, Vector3(1.9, 0.16, 1.9), Color(0.20, 0.12, 0.055), true, false)
 	action.set_meta("crop_id", id)
 	action.grow_time = 450.0
 	if watered_until > 0.0:
 		action.set_meta("watered_until", watered_until)
+	if ready_unix > 0.0:
+		action.set_meta("ready_unix", ready_unix)
 	action.set_crop_state(crop_state, growth)
 	return id
 
@@ -7824,8 +7846,8 @@ func _create_house_loot() -> void:
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 280, 0), "color": Color(0.32, 0.24, 0.12)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 320, 0), "color": Color(0.38, 0.26, 0.10)},
 		# --- Hand tools (rare in houses; barns carry them often) ---
-		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
-		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.15, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
 	]
 	var house_loot_data := [
@@ -7881,8 +7903,8 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, -50, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		# --- Herramientas de labranza: el granero es su sitio natural ---
-		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
-		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.15, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 305, 0), "color": Color.WHITE},
 	]
 	var barn_origin := Vector3(45, 0, 120)
@@ -7908,7 +7930,7 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 110, 0), "color": Color(0.40, 0.28, 0.14)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
-		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 75, 0), "color": Color(0.28, 0.18, 0.08)},
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 75, 0), "color": Color(0.28, 0.18, 0.08)},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 140, 0), "color": Color.WHITE},
 	]
 	var remote_barn_num_items := 8 + _world_rng.randi() % 5
@@ -8605,7 +8627,7 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 				if str(c.get("id", "")) == crop_id_srv:
 					crop_found = true
 			if not crop_found:
-				_planted_crops.append({"id": crop_id_srv, "pos": [extra_pos.x, extra_pos.y, extra_pos.z], "crop_state": "planted", "growth": 0.0, "updated_unix": Time.get_unix_time_from_system()})
+				_planted_crops.append({"id": crop_id_srv, "pos": [extra_pos.x, extra_pos.y, extra_pos.z], "crop_state": "planted", "growth": 0.0, "updated_unix": Time.get_unix_time_from_system(), "ready_unix": 0.0})
 		if action_id.begins_with("crop_"):
 			_remove_crop(action_id)
 	# Crop plot state changes ride world_action_completed with an empty
@@ -8631,9 +8653,11 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 				c["growth"] = 0.0
 				c["updated_unix"] = Time.get_unix_time_from_system()
 				c["watered_until"] = 0.0
+				c["ready_unix"] = 0.0
 		var cs_action = world_actions_by_id.get(cs_id)
 		if cs_action != null and is_instance_valid(cs_action):
 			cs_action.remove_meta("watered_until")
+			cs_action.remove_meta("ready_unix")
 			cs_action.set_crop_state(cs_state, 0.0)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
@@ -9957,18 +9981,29 @@ func _execute_world_action_eat(action, actor) -> void:
 			_net_notify_pickup(action)
 
 func _handle_farm_plot(action, actor) -> void:
+	# A ripe bed left too long rots on interaction, not only on the tick path.
+	if action.action_state == "ready" and action.has_meta("ready_unix"):
+		if Time.get_unix_time_from_system() - float(action.get_meta("ready_unix")) >= GameConst.CROP_ROT_SECONDS:
+			action.set_crop_state("rotten")
+	# One in-flight interaction per bed: a second F press (or a second player)
+	# must not double-grant water, harvest or planting results.
+	if action.has_meta("farm_busy"):
+		return
 	match action.action_state:
 		"planted":
 			var held_water = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_water != null and str(held_water.item_type) == "water" and not (held_water.has_method("is_broken") and held_water.is_broken()):
+				action.set_meta("farm_busy", true)
 				_play_actor_action(actor, "plant", 2.0)
 				if hud != null:
 					hud.show_countdown("Regando", 2.0)
 				await get_tree().create_timer(2.0).timeout
+				action.remove_meta("farm_busy")
 				if _scene_quitting: return
 				if not is_instance_valid(action) or action.action_state != "planted":
 					return
-				held_water.durability = maxf(0.0, float(held_water.durability) - GameConst.CROP_WATER_USE)
+				# Durability is shared across the stack — charge one bottle.
+				held_water.durability = maxf(0.0, float(held_water.durability) - GameConst.CROP_WATER_USE / maxf(1.0, float(held_water.quantity)))
 				actor.inventory.changed.emit()
 				if actor.has_method("_sync_held_item"):
 					actor._sync_held_item()
@@ -9982,17 +10017,37 @@ func _handle_farm_plot(action, actor) -> void:
 				return
 			actor.notice.emit("El cultivo aun esta creciendo.")
 		"ready":
+			action.set_meta("farm_busy", true)
 			_play_actor_action(actor, "plant", 1.25)
 			if hud != null:
-				hud.show_countdown("Cosechando", 1.25)
+				hud.show_countdown("Recolectando", 1.25)
 			await get_tree().create_timer(1.25).timeout
+			action.remove_meta("farm_busy")
 			if _scene_quitting: return
+			if not is_instance_valid(action) or action.action_state != "ready":
+				return
 			if not actor.inventory.add_item(ItemScript.create("Verduras", "food", 0.22, 3, 16.0)):
 				return
 			if randf() < 0.55:
 				actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 1, 0.0))
 			action.set_crop_state("empty", 0.0)
-			actor.notice.emit("Cosechas verduras y recuperas algunas semillas.")
+			actor.notice.emit("Recolectas verduras y recuperas algunas semillas.")
+			_save_world_change_silent()
+			_net_notify_crop_state(action, "crop_harvested")
+		"rotten":
+			action.set_meta("farm_busy", true)
+			_play_actor_action(actor, "plant", 1.25)
+			if hud != null:
+				hud.show_countdown("Limpiando bancal", 1.25)
+			await get_tree().create_timer(1.25).timeout
+			action.remove_meta("farm_busy")
+			if _scene_quitting: return
+			if not is_instance_valid(action) or action.action_state != "rotten":
+				return
+			if randf() < 0.3:
+				actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 1, 0.0))
+			action.set_crop_state("empty", 0.0)
+			actor.notice.emit("El cultivo se habia podrido. Limpias el bancal.")
 			_save_world_change_silent()
 			_net_notify_crop_state(action, "crop_harvested")
 		_:
@@ -10003,14 +10058,23 @@ func _handle_farm_plot(action, actor) -> void:
 			if _farm_held != null and _farm_held.has_method("is_broken") and _farm_held.is_broken():
 				actor.notice.emit("Tu %s esta roto y no se puede usar." % str(_farm_held.item_name))
 				return
-			if not actor.inventory.consume_item_name("Semillas", 1):
+			if not actor.inventory.has_item_name("Semillas"):
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
 				return
+			action.set_meta("farm_busy", true)
 			_play_actor_action(actor, "plant", 1.35)
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 1.35)
 			await get_tree().create_timer(1.35).timeout
+			action.remove_meta("farm_busy")
 			if _scene_quitting: return
+			# Seeds are consumed only when the work actually completes — never
+			# on an interrupted or already-planted attempt.
+			if not is_instance_valid(action) or action.action_state != "empty":
+				return
+			if not actor.inventory.consume_item_name("Semillas", 1):
+				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
+				return
 			if _farm_held != null and _farm_held.has_method("reduce_durability"):
 				_farm_held.reduce_durability(5.0)
 				if _farm_held.is_broken():

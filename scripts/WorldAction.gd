@@ -151,6 +151,8 @@ func mark_depleted() -> void:
 func set_crop_state(state: String, new_growth := 0.0) -> void:
 	action_state = state
 	growth = new_growth
+	if state == "ready" and not has_meta("ready_unix"):
+		set_meta("ready_unix", Time.get_unix_time_from_system())
 	_update_crop_visual()
 
 func is_crop_watered() -> bool:
@@ -171,6 +173,10 @@ func tick_growth(delta: float, moist_rate := 1.0) -> void:
 			_update_crop_visual()
 		elif clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2) != prev_stage:
 			_update_crop_visual()
+	if action_type == "farm_plot" and action_state == "ready":
+		var ready_at := float(get_meta("ready_unix", Time.get_unix_time_from_system()))
+		if Time.get_unix_time_from_system() - ready_at >= GameConst.CROP_ROT_SECONDS:
+			set_crop_state("rotten")
 	if action_type == "wolf_meat_raw" or action_type == "deer_meat_raw" or action_type == "fox_meat_raw" or action_type == "bird_meat_raw":
 		if _rot_timer <= 0.0:
 			_rot_timer = 600.0
@@ -212,7 +218,9 @@ func get_interaction_text(_player = null) -> String:
 						return "%s creciendo%s - [F] Regar" % [display_name, moist_tag]
 				return "%s creciendo%s" % [display_name, moist_tag]
 			"ready":
-				return "%s - [F] Cosechar" % display_name
+				return "%s - [F] Recolectar" % display_name
+			"rotten":
+				return "%s podrido - [F] Limpiar" % display_name
 			_:
 				return "%s - [F] Plantar semillas" % display_name
 	match action_type:
@@ -367,6 +375,9 @@ func _update_crop_visual() -> void:
 			_add_crop_rows(stage)
 		"ready":
 			_add_crop_rows(3)
+		"rotten":
+			_add_crop_rows(3)
+			_wither_crop_rows()
 
 func _add_farm_bed() -> void:
 	if not ResourceLoader.exists(FARM_BED_MODEL):
@@ -378,6 +389,7 @@ func _add_farm_bed() -> void:
 		return
 	var bed := scene.instantiate()
 	bed.name = "FarmBed"
+	bed.scale = Vector3.ONE * 1.55
 	add_child(bed)
 	_visual_children.append(bed)
 
@@ -392,16 +404,37 @@ func _add_crop_rows(stage: int) -> void:
 	# planting positions without consuming the gameplay RNG.
 	var visual_rng := RandomNumberGenerator.new()
 	visual_rng.seed = hash(action_id)
-	# Roots sit inside the continuous Blender ridge (crest about 8 cm).
-	for rx in [-0.34, 0.0, 0.34]:
-		for rz in [-0.30, 0.0, 0.30]:
+	# Roots sit inside the continuous Blender ridge (crest about 8 cm,
+	# scaled up with the bed). Three furrows hold a 3x3 planting grid.
+	var plant_idx := 0
+	for rx in [-0.56, 0.0, 0.56]:
+		for rz in [-0.52, 0.0, 0.52]:
 			var plant := scene.instantiate()
-			plant.name = "CropPlant"
-			plant.position = Vector3(rx + visual_rng.randf_range(-0.014, 0.014), 0.073, rz + visual_rng.randf_range(-0.020, 0.020))
+			plant.name = "CropPlant_%d" % plant_idx
+			plant_idx += 1
+			plant.position = Vector3(rx + visual_rng.randf_range(-0.022, 0.022), 0.113, rz + visual_rng.randf_range(-0.030, 0.030))
 			plant.rotation.y = visual_rng.randf_range(-PI, PI)
-			plant.scale = Vector3.ONE * visual_rng.randf_range(0.87, 1.05)
+			plant.scale = Vector3.ONE * visual_rng.randf_range(1.45, 1.80)
 			add_child(plant)
 			_visual_children.append(plant)
+
+func _wither_crop_rows() -> void:
+	# Rotten crop: same mature plants, dried out brown.
+	var dead := StandardMaterial3D.new()
+	dead.albedo_color = Color(0.13, 0.085, 0.03)
+	dead.roughness = 1.0
+	var stack: Array = []
+	for child in _visual_children:
+		if is_instance_valid(child) and child.name.begins_with("CropPlant"):
+			stack.append(child)
+	while not stack.is_empty():
+		var node = stack.pop_back()
+		if node is MeshInstance3D:
+			node.material_override = dead
+			for si in range(node.mesh.get_surface_count() if node.mesh != null else 0):
+				node.set_surface_override_material(si, dead)
+		for child in node.get_children():
+			stack.append(child)
 
 func _clear_visual_children() -> void:
 	for child in _visual_children:

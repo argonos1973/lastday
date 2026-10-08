@@ -254,6 +254,7 @@ static func collect_world_data(main: Node) -> Dictionary:
 		if wa != null and is_instance_valid(wa):
 			ccopy["crop_state"] = wa.action_state
 			ccopy["growth"] = wa.growth
+			ccopy["ready_unix"] = float(wa.get_meta("ready_unix", ccopy.get("ready_unix", 0.0)))
 		ccopy["saved_unix"] = Time.get_unix_time_from_system()
 		if ccopy.has("pos") and ccopy["pos"] is Vector3:
 			ccopy["pos"] = [ccopy["pos"].x, ccopy["pos"].y, ccopy["pos"].z]
@@ -630,13 +631,20 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 		# Offline growth: crops keep maturing while the player was away.
 		var saved_growth := float(c.get("growth", 0.0))
 		var c_watered := float(c.get("watered_until", 0.0))
-		if str(c.get("crop_state", "")) == "planted":
+		var c_state := str(c.get("crop_state", "planted"))
+		var c_ready := float(c.get("ready_unix", 0.0))
+		if c_state == "planted":
 			var c_saved := float(c.get("saved_unix", Time.get_unix_time_from_system()))
 			var c_elapsed := maxf(0.0, Time.get_unix_time_from_system() - c_saved)
 			var c_moist := clampf(c_watered - c_saved, 0.0, c_elapsed)
 			saved_growth += c_moist * GameConst.CROP_MOIST_GROWTH + (c_elapsed - c_moist)
+			if saved_growth >= 450.0:
+				c_state = "ready"
+				c_ready = Time.get_unix_time_from_system() - maxf(0.0, saved_growth - 450.0)
+		if c_state == "ready" and c_ready > 0.0 and Time.get_unix_time_from_system() - c_ready >= GameConst.CROP_ROT_SECONDS:
+			c_state = "rotten"
 		if main.has_method("_plant_crop"):
-			main._plant_crop(cpos, str(c.get("crop_state", "planted")), saved_growth, c_id, c_watered)
+			main._plant_crop(cpos, c_state, saved_growth, c_id, c_watered, c_ready)
 	# Lit campfires
 	var lit = data.get("lit_campfires", [])
 	for lc in lit:
