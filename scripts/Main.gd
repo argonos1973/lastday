@@ -349,6 +349,12 @@ const SURVIVAL_TOOL_MODELS := {
 }
 const FARMING_DIR := "res://assets/models/props/farming/"
 const TOOLS_DIR := "res://assets/models/props/tools/"
+# Offline bodies keep a slowed metabolism (~25x slower than connected rates):
+# logging out pauses survival pressure without being a free pause.
+const OFFLINE_HUNGER_DECAY := 0.005
+const OFFLINE_THIRST_DECAY := 0.004
+const OFFLINE_SLEEP_DECAY := 0.003
+const OFFLINE_ENERGY_DECAY := 0.0025
 const REAL_ROCK_MODELS := [
 	GameConst.LAKE_DIR + "lake_boulder_0.glb",
 	GameConst.LAKE_DIR + "lake_boulder_1.glb",
@@ -2096,6 +2102,11 @@ func _on_remote_player_disconnected(id: int) -> void:
 		sp.set_meta("disconnected", true)
 		sp.set_meta("peer_id", id)
 		sp.set_meta("protection_timer", 300.0)
+		# The parked body stays in the world while stats freeze; stamp when it
+		# went offline so that time still counts toward survival_seconds.
+		var off_extra: Dictionary = sp.get_meta("saved_extra", {}).duplicate(true)
+		off_extra["offline_since_unix"] = Time.get_unix_time_from_system()
+		sp.set_meta("saved_extra", off_extra)
 		# Keep in net_player_proxy group so wolves can still attack
 		if not sp.is_in_group("net_player_proxy"):
 			sp.add_to_group("net_player_proxy")
@@ -2136,6 +2147,19 @@ func _delayed_send_world_state(peer_id: int) -> void:
 	await get_tree().create_timer(2.0).timeout
 	if _scene_quitting or not _peer_can_receive(peer_id): return
 	_send_world_state_to_client(peer_id)
+
+# The parked character remains in the world while disconnected: its survival
+# clock keeps running even though hunger/thirst/etc. freeze. Inject the
+# offline gap into stats_extra before a restore sends it to the client.
+func _apply_offline_survival_time(extra: Dictionary) -> Dictionary:
+	var since := float(extra.get("offline_since_unix", 0.0))
+	if since <= 0.0:
+		return extra
+	var merged := extra.duplicate(true)
+	var se: Dictionary = merged.get("stats_extra", {}).duplicate(true)
+	se["survival_seconds"] = float(se.get("survival_seconds", 0.0)) + maxf(0.0, Time.get_unix_time_from_system() - since)
+	merged["stats_extra"] = se
+	return merged
 
 func _delayed_send_reconnect_state(peer_id: int, pos: Vector3, inv: Array, hp: float, hunger: float, thirst: float, clothing: String, backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
 	await get_tree().create_timer(2.0).timeout
@@ -2388,6 +2412,9 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 		inventory = proxy.get_meta("saved_inventory", [])
 		var ex: Dictionary = proxy.get_meta("saved_extra", {})
 		survival_seconds = float(ex.get("stats_extra", {}).get("survival_seconds", 0.0))
+		var off_since := float(ex.get("offline_since_unix", 0.0))
+		if off_since > 0.0:
+			survival_seconds += maxf(0.0, Time.get_unix_time_from_system() - off_since)
 	var saved: Dictionary = _server_saved_players.get(cid, {})
 	if clothing.is_empty():
 		clothing = str(saved.get("clothing", ""))
@@ -2398,7 +2425,11 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 	if inventory.is_empty():
 		inventory = saved.get("inventory", [])
 	if survival_seconds <= 0.0:
-		survival_seconds = float(saved.get("extra", {}).get("stats_extra", {}).get("survival_seconds", 0.0))
+		var saved_ex: Dictionary = saved.get("extra", {})
+		survival_seconds = float(saved_ex.get("stats_extra", {}).get("survival_seconds", 0.0))
+		var saved_off := float(saved_ex.get("offline_since_unix", 0.0))
+		if saved_off > 0.0:
+			survival_seconds += maxf(0.0, Time.get_unix_time_from_system() - saved_off)
 	payload["equipped_clothing"] = clothing
 	payload["equipped_backpack"] = backpack
 	payload["held_item"] = held
@@ -2519,10 +2550,13 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 			var saved_prone: bool = existing.get_meta("saved_prone", false)
 			var saved_crouching: bool = existing.get_meta("saved_crouching", false)
 			var saved_rot: float = existing.get_meta("saved_rot", 0.0)
-			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching, existing.get_meta("saved_extra", {}))
+			var reclaim_extra: Dictionary = _apply_offline_survival_time(existing.get_meta("saved_extra", {}))
+			var cleared_extra := reclaim_extra.duplicate(true)
+			cleared_extra.erase("offline_since_unix")
+			existing.set_meta("saved_extra", cleared_extra)
+			call_deferred("_delayed_send_reconnect_state", peer_id, saved_pos, saved_inv, saved_hp, saved_hunger, saved_thirst, saved_clothing, saved_backpack, saved_held, saved_held_idx, saved_sleeping, saved_sitting, saved_rot, saved_prone, saved_crouching, reclaim_extra)
 			# El lobo domesticado sobrevive a la desconexión dentro de la sesión
-			var ex_extra: Dictionary = existing.get_meta("saved_extra", {})
-			call_deferred("_restore_tamed_wolf", peer_id, str(ex_extra.get("tamed_wolf", "")))
+			call_deferred("_restore_tamed_wolf", peer_id, str(cleared_extra.get("tamed_wolf", "")))
 			return true
 	else:
 		# No persisted proxy — ensure the live proxy exists before deciding
@@ -2571,7 +2605,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 			var saved_held: String = str(saved.get("held_item", ""))
 			var saved_held_idx: int = int(saved.get("held_idx", 0))
 			var saved_rot: float = float(saved.get("rot", 0.0))
-			var saved_extra: Dictionary = saved.get("extra", {})
+			var saved_extra: Dictionary = _apply_offline_survival_time(saved.get("extra", {}))
+			saved_extra = saved_extra.duplicate(true)
+			saved_extra.erase("offline_since_unix")
+			var rec_extra: Dictionary = saved.get("extra", {})
+			rec_extra.erase("offline_since_unix")
 			# A bare record (appearance/position only, e.g. from an old corrupted
 			# save or a proxy that never synced) carries no state to restore —
 			# sending an empty restore would wipe the client's starting gear.
@@ -3946,12 +3984,14 @@ func _update_server_proxies(delta: float) -> void:
 				continue
 			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false, off_colors)
 	# Disconnected proxies keep the body in the world (wolves can still attack
-	# it), but their survival stats freeze while offline — logging out must not
-	# starve the character and dump its inventory on the ground.
+	# it) and their survival stats decay very slowly offline — logging out
+	# slows survival pressure ~25x rather than freezing it, and must never
+	# kill the character outright.
 	for cid in proxy_by_client_id.keys():
 		var dp: Node3D = proxy_by_client_id[cid]
 		if dp.get_meta("proxy_dead", false):
 			continue
+		_apply_offline_stat_decay(dp, delta)
 		# Spawn protection must keep expiring while parked — a frozen timer
 		# would make a player who disconnected inside the window permanently
 		# immune to wolves.
@@ -3970,6 +4010,23 @@ func _update_server_proxies(delta: float) -> void:
 				if fdx * fdx + fdz * fdz < 0.36:
 					_damage_offline_proxy(dp, 5.0 * delta)
 					break
+
+# Needs decay for a parked body: ~10x slower than SurvivalStats.tick rates,
+# floored at 0 so the character is weakened — never killed — while offline.
+func _apply_offline_stat_decay(proxy: Node3D, delta: float) -> void:
+	proxy.set_meta("saved_hunger", maxf(0.0, float(proxy.get_meta("saved_hunger", 100.0)) - OFFLINE_HUNGER_DECAY * delta))
+	proxy.set_meta("saved_thirst", maxf(0.0, float(proxy.get_meta("saved_thirst", 100.0)) - OFFLINE_THIRST_DECAY * delta))
+	var sx: Dictionary = proxy.get_meta("saved_extra", {})
+	if not sx.has("stats_extra"):
+		return
+	var merged := sx.duplicate(true)
+	var se: Dictionary = merged["stats_extra"].duplicate(true)
+	if se.has("sleep"):
+		se["sleep"] = maxf(0.0, float(se["sleep"]) - OFFLINE_SLEEP_DECAY * delta)
+	if se.has("energy"):
+		se["energy"] = maxf(0.0, float(se["energy"]) - OFFLINE_ENERGY_DECAY * delta)
+	merged["stats_extra"] = se
+	proxy.set_meta("saved_extra", merged)
 
 # Fire (or any server-side hazard) damage for a parked offline body — mirrors
 # the wolf kill path: proxy_health and saved_health drop, then loot + death
