@@ -161,12 +161,12 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		var sleep_damage: float = lerp(8.0, 0.0, t)
 		health = max(0.0, health - sleep_damage * delta)
 	# Health damage starts when temp color changes from white (deviation >= 1.2°C).
-	# Mild hypothermia drains slowly; deep cold escalates but still leaves a
-	# minute-scale window to reach warmth.
+	# Cold drains at the same tiers as heat: mild thermal stress is survivable
+	# for minutes, deep hypothermia kills as fast as heat stroke.
 	if body_temperature < 35.4:
-		health = max(0.0, health - 0.45 * delta)
+		health = max(0.0, health - 1.0 * delta)
 	if body_temperature < 34.5:
-		health = max(0.0, health - 1.05 * delta)
+		health = max(0.0, health - 3.0 * delta)
 	if body_temperature > 37.8:
 		health = max(0.0, health - 1.0 * delta)
 	if body_temperature > 39.0:
