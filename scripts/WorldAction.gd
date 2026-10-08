@@ -336,39 +336,52 @@ func _make_box(size: Vector3, color: Color) -> void:
 	_collision.position.y = size.y * 0.5
 	add_child(_collision)
 
+const FARM_BED_MODEL := "res://assets/models/props/farming/farm_plot.glb"
+
 func _update_crop_visual() -> void:
 	if action_type != "farm_plot":
 		return
 	_clear_visual_children()
+	# The procedural box stays hidden — it only carries the interaction
+	# collision. The tilled soil bed comes from the Blender model.
 	if _mesh_instance != null:
-		_mesh_instance.visible = true
-	var material := StandardMaterial3D.new()
-	material.roughness = 1.0
+		_mesh_instance.visible = false
+	_add_farm_bed()
 	match action_state:
 		"planted":
-			# Tilled soil stays brown; the Blender stage model shows the growth.
-			material.albedo_color = Color(0.18, 0.12, 0.06)
 			var stage := clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2)
-			_add_crop_plant(stage)
+			_add_crop_rows(stage)
 		"ready":
-			material.albedo_color = Color(0.20, 0.14, 0.07)
-			_add_crop_plant(3)
-		_:
-			material.albedo_color = Color(0.20, 0.12, 0.055)
-	if _mesh_instance != null:
-		_mesh_instance.material_override = material
+			_add_crop_rows(3)
 
-func _add_crop_plant(stage: int) -> void:
+func _add_farm_bed() -> void:
+	if not ResourceLoader.exists(FARM_BED_MODEL):
+		if _mesh_instance != null:
+			_mesh_instance.visible = true
+		return
+	var scene := load(FARM_BED_MODEL) as PackedScene
+	if scene == null:
+		return
+	var bed := scene.instantiate()
+	bed.name = "FarmBed"
+	add_child(bed)
+	_visual_children.append(bed)
+
+func _add_crop_rows(stage: int) -> void:
 	var path := "res://assets/models/props/farming/crop_stage_%d.glb" % stage
 	if not ResourceLoader.exists(path):
 		return
 	var scene := load(path) as PackedScene
 	if scene == null:
 		return
-	var plant := scene.instantiate()
-	plant.name = "CropPlant"
-	add_child(plant)
-	_visual_children.append(plant)
+	# Plants grow on the bed's three furrow ridges.
+	for rx in [-0.34, 0.0, 0.34]:
+		for rz in [-0.30, 0.0, 0.30]:
+			var plant := scene.instantiate()
+			plant.name = "CropPlant"
+			plant.position = Vector3(rx, 0.13, rz)
+			add_child(plant)
+			_visual_children.append(plant)
 
 func _clear_visual_children() -> void:
 	for child in _visual_children:

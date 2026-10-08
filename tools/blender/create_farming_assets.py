@@ -168,4 +168,65 @@ for i in range(14):
     clod.data.materials.append(SOIL_MAT)
 finish('crop_soil_mound')
 
+# --- Tilled garden bed: raised soil slab with 3 furrow ridges -----------
+# ~1.15 m square footprint, irregular edges, clods and pebbles scattered.
+import bmesh
+
+SOIL_MAT2 = material('crop_soil_light', (.21, .145, .085), .95)
+PEBBLE = material('crop_pebble', (.30, .28, .25), .9)
+
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, .045))
+bed = bpy.context.active_object
+bed.scale = (.58, .58, .045)
+bpy.ops.object.transform_apply(scale=True)
+bm = bmesh.new()
+bm.from_mesh(bed.data)
+bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=4, use_grid_fill=True)
+bm.to_mesh(bed.data)
+bm.free()
+for v in bed.data.vertices:
+    ex, ey = abs(v.co.x), abs(v.co.y)
+    if ex > .50 or ey > .50:  # ragged perimeter
+        v.co.x += rng.uniform(-.035, .035)
+        v.co.y += rng.uniform(-.035, .035)
+    if v.co.z > .02:  # gently domed top
+        v.co.z += .030 * (1.0 - max(ex, ey) / .58) + rng.uniform(-.008, .010)
+bed.data.materials.append(SOIL_MAT)
+
+
+def ridge(x):
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0,
+                                        location=(x, 0, .085))
+    ob = bpy.context.active_object
+    ob.scale = (.155, .52, .075)
+    bpy.ops.object.transform_apply(scale=True)
+    for v in ob.data.vertices:
+        v.co.x += rng.uniform(-.012, .012)
+        v.co.y += rng.uniform(-.020, .020)
+        v.co.z += rng.uniform(-.008, .008)
+    ob.data.materials.append(SOIL_MAT)
+
+
+for rx in (-.34, .0, .34):
+    ridge(rx)
+
+for i in range(20):
+    bpy.ops.mesh.primitive_ico_sphere_add(
+        subdivisions=1, radius=rng.uniform(.018, .040),
+        location=(rng.uniform(-.52, .52), rng.uniform(-.52, .52),
+                  rng.uniform(.05, .13)))
+    ob = bpy.context.active_object
+    ob.scale.z *= rng.uniform(.5, .8)
+    ob.data.materials.append(SOIL_MAT2 if i % 3 else SOIL_MAT)
+
+for i in range(6):
+    bpy.ops.mesh.primitive_ico_sphere_add(
+        subdivisions=1, radius=rng.uniform(.012, .025),
+        location=(rng.uniform(-.5, .5), rng.uniform(-.5, .5),
+                  rng.uniform(.05, .10)))
+    ob = bpy.context.active_object
+    ob.scale.z *= .55
+    ob.data.materials.append(PEBBLE)
+finish('farm_plot')
+
 print('FARMING_ASSETS_DONE', sorted(p.name for p in OUT.glob('*.glb')))

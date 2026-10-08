@@ -1247,11 +1247,13 @@ func _update_puppet_held_item(item_name: String) -> void:
 		"Hacha":
 			_build_third_person_axe()
 		"Pala":
-			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2))
+			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2), 0.85)
+		"Azada":
+			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 0.85)
 		"Martillo":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
 		"Pico":
-			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4))
+			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4), 0.9)
 		"Linterna":
 			_build_third_person_flashlight()
 		"Caña de pescar":
@@ -6629,11 +6631,11 @@ func _sync_third_person_equipment(held_item) -> void:
 			_initialize_rifle_ammo()
 		"tool":
 			if held_name == "Pala":
-				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12))
+				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.85)
 			elif held_name == "Martillo":
 				_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
 			elif held_name == "Pico":
-				_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10))
+				_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10), 0.9)
 			else:
 				_build_third_person_flashlight()
 			_clear_rifle_attachment()
@@ -6684,16 +6686,16 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_axe()
 			_clear_rifle_attachment()
 		"tool_hoe":
-			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08))
+			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 0.85)
 			_clear_rifle_attachment()
 		"tool_shovel":
-			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12))
+			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.85)
 			_clear_rifle_attachment()
 		"tool_hammer":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
 			_clear_rifle_attachment()
 		"tool_pickaxe":
-			_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10))
+			_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10), 0.9)
 			_clear_rifle_attachment()
 		_:
 			_build_third_person_pack()
@@ -8782,8 +8784,8 @@ func _build_third_person_seed_bag() -> void:
 func _build_third_person_clothing_bundle() -> void:
 	_build_third_person_pack()
 
-func _build_third_person_tool(path: String, node_name: String, _fallback_color: Color) -> void:
-	_try_add_model_to_parent(third_person_hand_item_root, path, node_name, Vector3(0.0, -0.02, -0.11), Vector3(82, 0, 18), Vector3.ONE * 0.44)
+func _build_third_person_tool(path: String, node_name: String, _fallback_color: Color, hand_scale := 0.44) -> void:
+	_try_add_model_to_parent(third_person_hand_item_root, path, node_name, Vector3(0.0, -0.02, -0.11), Vector3(82, 0, 18), Vector3.ONE * hand_scale)
 
 func _build_third_person_axe() -> void:
 	var node := _load_external_node3d(REAL_AXE_MODEL)

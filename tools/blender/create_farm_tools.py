@@ -77,47 +77,50 @@ def plate(r1, r2, depth, thin, loc, mat, rot=(0, 0, 0)):
 
 
 # ---------------------------------------------------------------- hoe ----
-# Handle along Z, standing on its butt. Collar + neck bend the blade forward.
-cyl(.0155, .0130, .40, (0, 0, .20), WOOD)
-cyl(.0190, .0190, .05, (0, 0, .415), STEEL)                      # eye collar
+# Real-size hoe (~1.25 m): handle along Z, standing on its butt. Collar +
+# neck bend the blade forward at the top.
+cyl(.0160, .0138, 1.16, (0, 0, .58), WOOD)
+cyl(.0300, .0300, .075, (0, 0, 1.185), STEEL)                   # eye collar
 # Neck: short box angled forward from the collar.
-box(.014, .014, .055, (0, .022, .435), STEEL, rot=(math.radians(35), 0, 0))
+box(.022, .022, .095, (0, .042, 1.225), STEEL, rot=(math.radians(35), 0, 0))
 # Blade: flat trapezoid hanging below the neck, edge down, leaning forward.
-plate(.052, .038, .085, .30, (0, .050, .365), STEEL,
+plate(.085, .060, .19, .30, (0, .080, 1.10), STEEL,
       rot=(math.radians(-14), 0, math.radians(45)))
 finish('tool_hoe')
 
 # ------------------------------------------------------------- shovel ----
-# Blade point down at z=0 so it stands "stuck"; T-grip on top.
-# Blade: flattened 4-vert cone, point down.
-blade = plate(.085, .052, .13, .30, (0, 0, .065), STEEL,
+# Real-size shovel (~1.44 m): blade point down at z=0 so it stands "stuck";
+# T-grip on top.
+# Blade: flattened 4-vert cone, point down, ~0.30 m long / 0.21 m wide.
+blade = plate(.105, .070, .30, .30, (0, 0, .15), STEEL,
               rot=(math.radians(180), 0, math.radians(45)))
-# Socket and slight shoulder.
-cyl(.0170, .0150, .075, (0, 0, .155), STEEL)
-box(.050, .018, .010, (0, 0, .195), STEEL_EDGE)
+# Socket and slight shoulder where the handle meets the blade.
+cyl(.0240, .0210, .115, (0, 0, .345), STEEL)
+box(.095, .030, .018, (0, 0, .40), STEEL_EDGE)
 # Handle.
-cyl(.0155, .0135, .31, (0, 0, .35), WOOD)
+cyl(.0200, .0175, .95, (0, 0, .875), WOOD)
 # T-grip: crossbar + end knobs.
-box(.13, .018, .018, (0, 0, .515), WOOD_DARK)
-cyl(.0190, .0190, .026, (-.068, 0, .515), WOOD_DARK, rot=(0, math.radians(90), 0))
-cyl(.0190, .0190, .026, (.068, 0, .515), WOOD_DARK, rot=(0, math.radians(90), 0))
-cyl(.0165, .0165, .028, (0, 0, .50), WOOD_DARK)
+box(.24, .032, .032, (0, 0, 1.41), WOOD_DARK)
+cyl(.0240, .0240, .045, (-.125, 0, 1.41), WOOD_DARK, rot=(0, math.radians(90), 0))
+cyl(.0240, .0240, .045, (.125, 0, 1.41), WOOD_DARK, rot=(0, math.radians(90), 0))
+cyl(.0210, .0210, .055, (0, 0, 1.375), WOOD_DARK)
 finish('tool_shovel')
 
 # ------------------------------------------------------------ pickaxe ----
-# Slightly tapered handle, eye block at the top, two down-curving picks.
-cyl(.0170, .0140, .40, (0, 0, .20), WOOD)
-box(.052, .030, .034, (0, 0, .415), STEEL)                      # eye
+# Real-size pickaxe (~0.93 m): tapered handle, eye block at the top, two
+# down-curving picks.
+cyl(.0220, .0178, .86, (0, 0, .43), WOOD)
+box(.10, .056, .060, (0, 0, .885), STEEL)                       # eye
 # Picks: tapered cones whose tips point outward and down.
-cyl(.0, .030, .155, (-.085, 0, .385), STEEL,
-   rot=(0, math.radians(62), 0), verts=9)
-cyl(.0, .030, .155, (.085, 0, .385), STEEL,
-   rot=(0, math.radians(-62), 0), verts=9)
+cyl(.0, .042, .30, (-.135, 0, .845), STEEL,
+   rot=(0, math.radians(58), 0), verts=9)
+cyl(.0, .042, .30, (.135, 0, .845), STEEL,
+   rot=(0, math.radians(-58), 0), verts=9)
 # Slightly wider steel sleeves at the pick tips.
-cyl(.0, .038, .045, (-.148, 0, .350), STEEL_EDGE,
-   rot=(0, math.radians(62), 0), verts=9)
-cyl(.0, .038, .045, (.148, 0, .350), STEEL_EDGE,
-   rot=(0, math.radians(-62), 0), verts=9)
+cyl(.0, .050, .09, (-.255, 0, .780), STEEL_EDGE,
+   rot=(0, math.radians(58), 0), verts=9)
+cyl(.0, .050, .09, (.255, 0, .780), STEEL_EDGE,
+   rot=(0, math.radians(-58), 0), verts=9)
 finish('tool_pickaxe')
 
 print('FARM_TOOLS_DONE', sorted(p.name for p in OUT.glob('*.glb')))

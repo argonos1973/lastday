@@ -27,25 +27,33 @@ func run() -> void:
 	var same_id := world._plant_crop(pos)
 	check(same_id == crop_id and world._planted_crops.size() == 1, "replanting same spot is idempotent")
 
-	# Growth stages follow the Blender models and mature into a harvestable plot.
-	var live_plant := func() -> Node:
+	# The plot is a Blender tilled bed, not the procedural marker box.
+	var live_bed := func() -> Node:
 		for c in action.get_children():
-			if String(c.scene_file_path).begins_with("res://assets/models/props/farming/crop_stage_") and not c.is_queued_for_deletion():
+			if String(c.scene_file_path).ends_with("farm_plot.glb") and not c.is_queued_for_deletion():
 				return c
 		return null
+	var live_plants := func() -> Array:
+		var found: Array = []
+		for c in action.get_children():
+			if String(c.scene_file_path).begins_with("res://assets/models/props/farming/crop_stage_") and not c.is_queued_for_deletion():
+				found.append(c)
+		return found
 	action.growth = 0.0
 	action._update_crop_visual()
-	var early_plant: Node = live_plant.call()
-	check(early_plant != null and String(early_plant.scene_file_path).ends_with("crop_stage_0.glb"), "early growth shows a sprout model")
+	check(live_bed.call() != null, "plot shows the Blender tilled bed")
+	check(action._mesh_instance != null and not action._mesh_instance.visible, "procedural marker box stays hidden")
+	var early_plants: Array = live_plants.call()
+	check(early_plants.size() == 9 and String(early_plants[0].scene_file_path).ends_with("crop_stage_0.glb"), "early growth shows a sprout row on each ridge")
 	action.tick_growth(200.0)
 	check(action.action_state == "planted" and action.growth > 0.0, "crop keeps growing over time")
 	action._update_crop_visual()
-	var mid_plant: Node = live_plant.call()
-	check(mid_plant != null and mid_plant != early_plant and String(mid_plant.scene_file_path).ends_with("crop_stage_1.glb"), "growth stage swaps the visual model")
+	var mid_plants: Array = live_plants.call()
+	check(mid_plants.size() == 9 and mid_plants[0] != early_plants[0] and String(mid_plants[0].scene_file_path).ends_with("crop_stage_1.glb"), "growth stage swaps the visual model")
 	action.tick_growth(500.0)
 	check(action.action_state == "ready", "crop matures to ready after grow_time")
-	var ready_plant: Node = live_plant.call()
-	check(ready_plant != null and String(ready_plant.scene_file_path).ends_with("crop_stage_3.glb"), "ready crop shows the mature model")
+	var ready_plants: Array = live_plants.call()
+	check(ready_plants.size() == 9 and String(ready_plants[0].scene_file_path).ends_with("crop_stage_3.glb"), "ready crop shows the mature model")
 
 	# Interaction prompts cover each state.
 	action.set_crop_state("empty", 0.0)
