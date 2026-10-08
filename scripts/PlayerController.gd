@@ -69,6 +69,10 @@ const SURVIVAL_CLOTHING := {
 	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.02, 0.03)},
 	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
 	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
+	# Skinned Sketchfab garments adapted in Blender (adapt_new_gear.py).
+	"Chaqueta de cuadros": {"mesh": "field_jacket_plaid", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"]},
+	# Plate carrier is worn over the clothes: it hides nothing, only overlays.
+	"Chaleco táctico": {"mesh": "field_jacket_plate_carrier", "hides": [], "skin_hides": [], "body_hides": []},
 }
 
 # Maps clothing slot to possible mesh names in custom character models.
@@ -109,12 +113,15 @@ const DEFAULT_SKIN_HIDES := {
 	"Chaqueta militar negra II": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta camuflaje": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta camuflaje desert": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta de cuadros": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaleco táctico": [],
 }
 
 const DEFAULT_BODY_HIDES := {
 	"Chaqueta de campaña verde": ["Body_arms"],
 	"Chaqueta de campaña azul": ["Body_arms"],
 	"Chaqueta de campaña arena": ["Body_arms"],
+	"Chaqueta de cuadros": ["Body_arms"],
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
@@ -146,6 +153,8 @@ const CLOTHING_COVERED_ZONES := {
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
 	"Casco militar": ["cabeza"],
+	"Chaqueta de cuadros": ["torso", "brazos"],
+	"Chaleco táctico": ["torso"],
 }
 
 # Maps each clothing item to a body slot for exchange logic.
@@ -173,6 +182,9 @@ const CLOTHING_SLOTS := {
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
 	"Casco militar": "head",
+	"Chaqueta de cuadros": "torso",
+	# The plate carrier rides over the clothing in its own vest slot.
+	"Chaleco táctico": "chaleco",
 }
 
 # Warmth value per clothing item. Higher = warmer.
@@ -201,6 +213,8 @@ const CLOTHING_WARMTH := {
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
 	"Casco militar": 0.05,
+	"Chaqueta de cuadros": 0.28,
+	"Chaleco táctico": 0.10,
 }
 
 # Heat protection: reduces body temperature gain in hot environments.
@@ -237,6 +251,8 @@ const CLOTHING_HEAT_RETENTION := {
 	"Guantes de trabajo": 0.05,
 	"Sombrero de pescador": 0.0,
 	"Casco militar": 0.06,
+	"Chaqueta de cuadros": 0.25,
+	"Chaleco táctico": 0.15,
 }
 
 const THIRD_PERSON_MODEL_CANDIDATES := [
@@ -354,6 +370,12 @@ const HEAD_CARRY_SLOTS := 1
 const HEAD_CARRY_WEIGHT := 0.5
 const SMALL_BACKPACK_SLOTS := 8
 const SMALL_BACKPACK_WEIGHT := 10.0
+# Plate carriers add magazine/utility pouches on top of the clothes below.
+const VEST_CARRY_SLOTS := 4
+const VEST_CARRY_WEIGHT := 4.0
+# The military rucksack is bigger than the civilian small backpack.
+const MILITARY_BACKPACK_SLOTS := 14
+const MILITARY_BACKPACK_WEIGHT := 18.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
@@ -1249,7 +1271,7 @@ func _update_puppet_held_item(item_name: String) -> void:
 		"Pala":
 			_build_third_person_tool(REAL_SHOVEL_MODEL, "PuppetShovel", Color(0.6, 0.4, 0.2), 0.8)
 		"Azada":
-			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 1.0)
+			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 1.3)
 		"Martillo":
 			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
 		"Pico":
@@ -2956,11 +2978,20 @@ func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 			"head":
 				slots += HEAD_CARRY_SLOTS
 				weight += HEAD_CARRY_WEIGHT
+			"chaleco":
+				slots += VEST_CARRY_SLOTS
+				weight += VEST_CARRY_WEIGHT
 	# Backpack bonus only if actually equipped (not just in inventory)
 	if with_backpack and not equipped_backpack.is_empty():
-		slots += SMALL_BACKPACK_SLOTS
-		weight += SMALL_BACKPACK_WEIGHT
+		var bpc := backpack_capacity()
+		slots += int(bpc["slots"])
+		weight += float(bpc["weight"])
 	return {"slots": slots, "weight": weight}
+
+func backpack_capacity() -> Dictionary:
+	if equipped_backpack == "Mochila militar":
+		return {"slots": MILITARY_BACKPACK_SLOTS, "weight": MILITARY_BACKPACK_WEIGHT}
+	return {"slots": SMALL_BACKPACK_SLOTS, "weight": SMALL_BACKPACK_WEIGHT}
 
 # Suelta la última mochila: los objetos que ya no caben sin su bonus se meten
 # dentro del propio drop (meta "pending_backpack_contents" → WorldAction "contents")
@@ -6613,7 +6644,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		return
 	match held_item.item_type:
 		"backpack":
-			_build_third_person_tool(REAL_BACKPACK_MODEL, "ThirdPersonBackpack", Color(0.2, 0.25, 0.12))
+			_build_third_person_tool(_backpack_model_path(str(held_item.item_name)), "ThirdPersonBackpack", Color(0.2, 0.25, 0.12))
 		"weapon":
 			if str(held_item.item_name) == "Lanza":
 				_build_third_person_resource("Palo afilado")
@@ -6680,7 +6711,7 @@ func _sync_third_person_equipment(held_item) -> void:
 			_build_third_person_axe()
 			_clear_rifle_attachment()
 		"tool_hoe":
-			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 1.0)
+			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 1.3)
 			_clear_rifle_attachment()
 		"tool_shovel":
 			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 0.8)
@@ -6768,8 +6799,13 @@ func _build_held_clothing(item_name: String) -> void:
 	if path.is_empty() or not _add_named_held_model(path, "HeldClothing"):
 		_build_third_person_clothing_bundle()
 
+func _backpack_model_path(bp_name: String = "") -> String:
+	if bp_name.is_empty():
+		bp_name = equipped_backpack
+	return GameConst.MILITARY_BACKPACK_MODEL if bp_name == "Mochila militar" else REAL_BACKPACK_MODEL
+
 func _build_third_person_backpack() -> void:
-	var bp_node := _load_external_node3d(REAL_BACKPACK_MODEL)
+	var bp_node := _load_external_node3d(_backpack_model_path())
 	if bp_node == null:
 		return
 	var raw_aabb := _hierarchy_local_aabb(bp_node)

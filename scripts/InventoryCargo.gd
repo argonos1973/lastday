@@ -5,7 +5,7 @@ extends RefCounted
 static func compartments(player) -> Array:
 	var result: Array = [{"id": "pockets", "name": "BOLSILLOS", "capacity": player.BASE_CARRY_SLOTS}]
 	var bonuses := {"torso": player.TORSO_CARRY_SLOTS, "legs": player.LEGS_CARRY_SLOTS,
-		"head": player.HEAD_CARRY_SLOTS}
+		"head": player.HEAD_CARRY_SLOTS, "chaleco": player.VEST_CARRY_SLOTS}
 	for slot in bonuses:
 		var garment: String = str(player._equipped_slots.get(slot, ""))
 		if garment.is_empty():
@@ -15,7 +15,7 @@ static func compartments(player) -> Array:
 			capacity += int({"torso": 3, "legs": 2}.get(slot, 0))
 		result.append({"id": slot, "name": garment.to_upper(), "capacity": capacity})
 	if not player.equipped_backpack.is_empty():
-		result.append({"id": "backpack", "name": player.equipped_backpack.to_upper(), "capacity": player.SMALL_BACKPACK_SLOTS})
+		result.append({"id": "backpack", "name": player.equipped_backpack.to_upper(), "capacity": int(player.backpack_capacity()["slots"])})
 	return result
 
 static func arrange(items: Array, containers: Array) -> Dictionary:

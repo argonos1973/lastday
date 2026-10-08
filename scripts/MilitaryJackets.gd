@@ -5,6 +5,8 @@ const VARIANTS := {
 	"Chaqueta de campaña verde": "olive",
 	"Chaqueta de campaña azul": "navy",
 	"Chaqueta de campaña arena": "sand",
+	"Chaqueta de cuadros": "plaid",
+	"Chaleco táctico": "plate_carrier",
 }
 
 static func pickup_path(item_name: String) -> String:
@@ -36,8 +38,14 @@ static func attach(character: Node3D, item_name: String) -> MeshInstance3D:
 	if source_skeleton == null or meshes.is_empty():
 		source.free()
 		return null
-	var source_mesh := meshes[0] as MeshInstance3D
-	if source_mesh.skin == null:
+	# The exported GLBs carry helper meshes (e.g. the character's icosphere
+	# bounds marker) that have no skin — only a skinned mesh can be attached.
+	var source_mesh: MeshInstance3D = null
+	for candidate in meshes:
+		if (candidate as MeshInstance3D).skin != null:
+			source_mesh = candidate
+			break
+	if source_mesh == null:
 		source.free()
 		return null
 	var skin := source_mesh.skin.duplicate() as Skin

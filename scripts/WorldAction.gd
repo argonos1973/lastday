@@ -153,10 +153,19 @@ func set_crop_state(state: String, new_growth := 0.0) -> void:
 	growth = new_growth
 	_update_crop_visual()
 
-func tick_growth(delta: float) -> void:
+func is_crop_watered() -> bool:
+	return action_type == "farm_plot" and Time.get_unix_time_from_system() < float(get_meta("watered_until", 0.0))
+
+func water_crop() -> void:
+	set_meta("watered_until", Time.get_unix_time_from_system() + GameConst.CROP_WATER_SECONDS)
+
+func tick_growth(delta: float, moist_rate := 1.0) -> void:
 	if action_type == "farm_plot" and action_state == "planted":
+		# Soil moisture: rain supplies moist_rate from Main; manual watering
+		# keeps its own window via the watered_until meta. They do not stack.
+		var rate := maxf(moist_rate, GameConst.CROP_MOIST_GROWTH if is_crop_watered() else 1.0)
 		var prev_stage := clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2)
-		growth += delta
+		growth += delta * rate
 		if growth >= grow_time:
 			action_state = "ready"
 			_update_crop_visual()
@@ -194,9 +203,14 @@ func get_interaction_text(_player = null) -> String:
 		elif w > 0.02:
 			wet_tag = " (HUMEDA)"
 	if action_type == "farm_plot":
+		var moist_tag := " (tierra humeda)" if is_crop_watered() else ""
 		match action_state:
 			"planted":
-				return "%s creciendo" % display_name
+				if _player != null and _player.has_method("get_held_item"):
+					var held_w = _player.get_held_item()
+					if held_w != null and str(held_w.item_type) == "water" and not (held_w.has_method("is_broken") and held_w.is_broken()):
+						return "%s creciendo%s - [F] Regar" % [display_name, moist_tag]
+				return "%s creciendo%s" % [display_name, moist_tag]
 			"ready":
 				return "%s - [F] Cosechar" % display_name
 			_:

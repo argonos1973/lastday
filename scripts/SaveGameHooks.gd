@@ -629,10 +629,14 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			cpos = cpos_raw
 		# Offline growth: crops keep maturing while the player was away.
 		var saved_growth := float(c.get("growth", 0.0))
+		var c_watered := float(c.get("watered_until", 0.0))
 		if str(c.get("crop_state", "")) == "planted":
-			saved_growth += maxf(0.0, Time.get_unix_time_from_system() - float(c.get("saved_unix", Time.get_unix_time_from_system())))
+			var c_saved := float(c.get("saved_unix", Time.get_unix_time_from_system()))
+			var c_elapsed := maxf(0.0, Time.get_unix_time_from_system() - c_saved)
+			var c_moist := clampf(c_watered - c_saved, 0.0, c_elapsed)
+			saved_growth += c_moist * GameConst.CROP_MOIST_GROWTH + (c_elapsed - c_moist)
 		if main.has_method("_plant_crop"):
-			main._plant_crop(cpos, str(c.get("crop_state", "planted")), saved_growth, c_id)
+			main._plant_crop(cpos, str(c.get("crop_state", "planted")), saved_growth, c_id, c_watered)
 	# Lit campfires
 	var lit = data.get("lit_campfires", [])
 	for lc in lit:

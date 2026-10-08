@@ -67,6 +67,25 @@ func run() -> void:
 	var ready_plants: Array = live_plants.call()
 	check(ready_plants.size() == 9 and String(ready_plants[0].scene_file_path).ends_with("crop_stage_3.glb"), "ready crop shows the mature model")
 
+	# Moist soil — rain or manual watering — speeds growth, without stacking.
+	action.set_crop_state("planted", 0.0)
+	action.tick_growth(10.0)
+	check(is_equal_approx(action.growth, 10.0), "dry crop grows at base rate")
+	action.water_crop()
+	check(action.is_crop_watered(), "watering marks the soil moist")
+	action.tick_growth(10.0)
+	check(action.growth > 30.0, "watered crop grows faster")
+	check(action.get_interaction_text().findn("humeda") >= 0, "prompt shows the moist tag")
+	action.remove_meta("watered_until")
+	action.tick_growth(10.0, GameConst.CROP_MOIST_GROWTH)
+	check(action.growth > 55.0, "rain moistens the soil too")
+	action.water_crop()
+	var growth_before: float = action.growth
+	action.tick_growth(10.0, GameConst.CROP_MOIST_GROWTH)
+	check(action.growth - growth_before <= GameConst.CROP_MOIST_GROWTH * 10.0 + 0.01, "rain and watering do not stack")
+	action.remove_meta("watered_until")
+	action.set_crop_state("planted", 0.0)
+
 	# Interaction prompts cover each state.
 	action.set_crop_state("empty", 0.0)
 	check(action.get_interaction_text().findn("Plantar") >= 0, "empty plot offers planting")
@@ -87,6 +106,7 @@ func run() -> void:
 	check(str(world._get_drop_model_paths("Semillas", "resource")[0]).ends_with("farm_seed_pouch.glb"), "resource seeds drop as a seed pouch")
 	check(str(world._get_drop_model_paths("Semillas", "seed")[0]).ends_with("farm_seed_pouch.glb"), "harvested seeds drop as a seed pouch")
 	check(str(world._get_drop_model_paths("Bayas", "food")[0]).ends_with("farm_berries.glb"), "harvest berries use the berry model")
+	check(str(world._get_drop_model_paths("Verduras", "food")[0]).ends_with("farm_berries.glb"), "harvested vegetables drop as produce, not a giant can")
 
 	# Hand tools come from the Blender set and spawn through the loot pipeline.
 	for t in [["Azada", "tool_hoe", "tool_hoe.glb"], ["Pala", "tool_shovel", "tool_shovel.glb"]]:
@@ -105,6 +125,24 @@ func run() -> void:
 	var src := FileAccess.get_file_as_string("res://scripts/Main.gd")
 	check(src.count('"name": "Azada", "type": "tool_hoe"') >= 3 and src.count('"name": "Pala", "type": "tool_shovel"') >= 2, "hoe and shovel appear in barn and house loot pools")
 	check(not '"type": "tool_pickaxe"' in src, "pickaxe removed from loot pools")
+
+	# Blender-adapted military/civilian gear: skinned worn GLBs, flat pickups,
+	# item wiring and loot pools.
+	var MJ := load("res://scripts/MilitaryJackets.gd")
+	check(str(MJ.VARIANTS.get("Chaqueta de cuadros", "")) == "plaid", "plaid jacket is a military-jacket variant")
+	check(str(MJ.VARIANTS.get("Chaleco táctico", "")) == "plate_carrier", "plate carrier is a military-jacket variant")
+	check(str(MJ.pickup_path("Chaqueta de cuadros")).ends_with("pickup_jacket_plaid.glb"), "plaid pickup path resolves")
+	for p in ["military_jacket_plaid.glb", "military_jacket_plate_carrier.glb",
+			"pickup_jacket_plaid.glb", "pickup_jacket_plate_carrier.glb"]:
+		check(ResourceLoader.exists("res://assets/characters/adapted/jackets/" + p), p + " exists")
+	check(ResourceLoader.exists(GameConst.MILITARY_BACKPACK_MODEL), "military backpack GLB exists")
+	check(str(world._get_drop_model_paths("Mochila militar", "backpack")[0]).ends_with("military_backpack.glb"), "military backpack drops as its own model")
+	var pc := load("res://scripts/PlayerController.gd")
+	check(str(pc.CLOTHING_SLOTS.get("Chaqueta de cuadros", "")) == "torso", "plaid jacket equips on torso")
+	check(str(pc.CLOTHING_SLOTS.get("Chaleco táctico", "")) == "chaleco", "plate carrier gets the vest slot")
+	check(pc.SURVIVAL_CLOTHING.has("Chaqueta de cuadros") and pc.SURVIVAL_CLOTHING.has("Chaleco táctico"), "new gear registered as survival clothing")
+	check(src.count('"name": "Chaleco táctico"') >= 1 and src.count('"name": "Mochila militar"') >= 1, "military gear sits in the tent loot pool")
+	check(src.count('"name": "Chaqueta de cuadros"') >= 3, "plaid jacket sits in house and barn pools")
 
 	# A seed dropped on the ground becomes a plant-or-pickup action, not food.
 	var seed_action := WorldAction.new()

@@ -1242,9 +1242,16 @@ func _tick_drink_hold(delta: float) -> void:
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
 
 func _tick_world_actions(delta: float) -> void:
+	# Rain moistens the soil: planted crops grow faster while it rains. The
+	# dedicated server has no weather feed (hud == null) and stays at 1.0 —
+	# crop growth is client-driven anyway (harvest is initiated locally).
+	var rain_rate := GameConst.CROP_MOIST_GROWTH if float(_weather_target.get("rain", 0.0)) > GameConst.CROP_RAIN_MIN else 1.0
 	for action in world_actions_by_id.values():
 		if action != null and action.has_method("tick_growth"):
-			action.tick_growth(delta)
+			if action.action_type == "farm_plot":
+				action.tick_growth(delta, rain_rate)
+			else:
+				action.tick_growth(delta)
 
 # Sistema celestial (sol/luna) sigue al jugador; actualmente deshabilitado
 func _update_celestial_follow() -> void:
@@ -3192,9 +3199,12 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 		else:
 			cpos = cpos_raw
 		var crop_growth := float(crop.get("growth", 0.0))
+		var crop_watered := float(crop.get("watered_until", 0.0))
 		if str(crop.get("crop_state", "")) == "planted":
-			crop_growth += maxf(0.0, Time.get_unix_time_from_system() - float(crop.get("updated_unix", crop.get("saved_unix", Time.get_unix_time_from_system()))))
-		_plant_crop(cpos, str(crop.get("crop_state", "planted")), crop_growth, str(crop.get("id", "")))
+			var elapsed := maxf(0.0, Time.get_unix_time_from_system() - float(crop.get("updated_unix", crop.get("saved_unix", Time.get_unix_time_from_system()))))
+			var moist_secs := clampf(crop_watered - float(crop.get("updated_unix", crop.get("saved_unix", 0.0))), 0.0, elapsed)
+			crop_growth += moist_secs * GameConst.CROP_MOIST_GROWTH + (elapsed - moist_secs)
+		_plant_crop(cpos, str(crop.get("crop_state", "planted")), crop_growth, str(crop.get("id", "")), crop_watered)
 
 func _apply_pending_doors() -> void:
 	if _pending_open_doors.is_empty():
@@ -5349,7 +5359,7 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return ["res://assets/models/props/skewer_fish.tscn", "res://assets/models/props/fish.glb"]
 			if item_name == "Pez crudo":
 				return ["res://assets/models/props/fish.glb"]
-			if item_name == "Bayas":
+			if item_name == "Bayas" or item_name == "Verduras":
 				return [FARMING_DIR + "farm_berries.glb"]
 			if item_name == "Naranja":
 				return ["res://assets/models/props/fruit/apple.glb"]
@@ -5363,6 +5373,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return [FOOD_CAN_415G_MODEL]
 			return [CANNED_FOOD_LOW_MODEL, FOOD_CAN_415G_MODEL]
 		"backpack":
+			if item_name == "Mochila militar":
+				return [GameConst.MILITARY_BACKPACK_MODEL]
 			return [ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]]
 		"tool_axe":
 			return ["res://assets/models/props/simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
@@ -5460,6 +5472,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				return 1.0
 			if item_name == "Pez crudo":
 				return 0.3
+			if item_name == "Verduras":
+				return 1.2
 			if item_name == "Naranja":
 				return 0.005
 			if item_name == "Higo":
@@ -7732,14 +7746,14 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 func _crop_id_for_pos(pos: Vector3) -> String:
 	return "crop_%d" % (int(round(pos.x * 4.0)) * 73856093 ^ int(round(pos.z * 4.0)) * 19349663 ^ int(round(pos.y * 10.0)))
 
-func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "") -> String:
+func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "", watered_until := 0.0) -> String:
 	var id := crop_id if not crop_id.is_empty() else _crop_id_for_pos(pos)
 	if _depleted_action_ids.has(id):
 		return ""
 	for c in _planted_crops:
 		if str(c.get("id", "")) == id:
 			return id
-	_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system()})
+	_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system(), "watered_until": watered_until})
 	if net != null and net.is_dedicated_server:
 		return id
 	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
@@ -7747,6 +7761,8 @@ func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id :
 	var action = _create_world_action(id, "farm_plot", "Huerto", pos, Vector3(1.1, 0.16, 1.1), Color(0.20, 0.12, 0.055), true, false)
 	action.set_meta("crop_id", id)
 	action.grow_time = 450.0
+	if watered_until > 0.0:
+		action.set_meta("watered_until", watered_until)
 	action.set_crop_state(crop_state, growth)
 	return id
 
@@ -7810,6 +7826,7 @@ func _create_house_loot() -> void:
 		# --- Hand tools (rare in houses; barns carry them often) ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
 		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
+		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
@@ -7866,6 +7883,7 @@ func _create_house_loot() -> void:
 		# --- Herramientas de labranza: el granero es su sitio natural ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
 		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.0, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
+		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 305, 0), "color": Color.WHITE},
 	]
 	var barn_origin := Vector3(45, 0, 120)
 	var barn_half_w := 4.0
@@ -7891,6 +7909,7 @@ func _create_house_loot() -> void:
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "use": 0.0, "paths": [Q_WEAPONS + "Knife.gltf"], "scale": 0.55, "rot": Vector3(0, 38, 82), "color": Color(0.20, 0.20, 0.18)},
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.0, "rot": Vector3(0, 75, 0), "color": Color(0.28, 0.18, 0.08)},
+		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 140, 0), "color": Color.WHITE},
 	]
 	var remote_barn_num_items := 8 + _world_rng.randi() % 5
 	for _j in range(remote_barn_num_items):
@@ -7929,6 +7948,10 @@ func _create_house_loot() -> void:
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, -45, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)},
+		# New Blender-adapted gear (indices 18-19 — keep appended at the end:
+		# remote_tent_loot and guaranteed draws reference this pool by index).
+		{"name": "Chaleco táctico", "type": "clothing", "weight": 4.0, "qty": 1, "use": 0.4, "paths": [MilitaryJackets.pickup_path("Chaleco táctico")], "scale": 0.8, "rot": Vector3(90, 60, 0), "color": Color.WHITE},
+		{"name": "Mochila militar", "type": "backpack", "weight": 1.8, "qty": 1, "use": 0.0, "paths": [GameConst.MILITARY_BACKPACK_MODEL], "scale": 1.0, "rot": Vector3(0, 150, 0), "color": Color(0.10, 0.12, 0.08)},
 	]
 	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [GameConst.FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
@@ -7962,6 +7985,17 @@ func _create_house_loot() -> void:
 		_create_pickup_item(hat_data)
 	var tent_helmet := {"id": "tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 35, 0), "color": Color.TRANSPARENT, "floor_y": tent_floor_y, "pos": tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)}
 	_create_pickup_item(tent_helmet)
+	# Guarantee the tactical vest and the military rucksack — fixed IDs like the rifle
+	var tent_vest: Dictionary = tent_loot_pool[18].duplicate()
+	tent_vest["id"] = "tent_loot_vest"
+	tent_vest["pos"] = tent_origin + Vector3(1.6, 0.0, -1.4).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
+	tent_vest["floor_y"] = tent_floor_y
+	_create_pickup_item(tent_vest)
+	var tent_pack: Dictionary = tent_loot_pool[19].duplicate()
+	tent_pack["id"] = "tent_loot_milbackpack"
+	tent_pack["pos"] = tent_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
+	tent_pack["floor_y"] = tent_floor_y
+	_create_pickup_item(tent_pack)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
@@ -8027,6 +8061,16 @@ func _create_house_loot() -> void:
 		_create_pickup_item(rt_hat)
 	var remote_tent_helmet := {"id": "remote_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, 120, 0), "color": Color.TRANSPARENT, "floor_y": remote_tent_floor_y, "pos": remote_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)}
 	_create_pickup_item(remote_tent_helmet)
+	var remote_tent_vest: Dictionary = tent_loot_pool[18].duplicate()
+	remote_tent_vest["id"] = "remote_tent_loot_vest"
+	remote_tent_vest["pos"] = remote_tent_origin + Vector3(1.6, 0.0, -1.4).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)
+	remote_tent_vest["floor_y"] = remote_tent_floor_y
+	_create_pickup_item(remote_tent_vest)
+	var remote_tent_pack: Dictionary = tent_loot_pool[19].duplicate()
+	remote_tent_pack["id"] = "remote_tent_loot_milbackpack"
+	remote_tent_pack["pos"] = remote_tent_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)
+	remote_tent_pack["floor_y"] = remote_tent_floor_y
+	_create_pickup_item(remote_tent_pack)
 	# Guarantee 2 clothing items: max 1 pants + 1 other (gloves/helmet)
 	var rt_pants_indices := [0, 1, 2, 3]
 	var rt_other_indices := [4, 5]
@@ -8569,6 +8613,15 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 	# and the local farm_plot action (server + relayed clients).
 	if extra_visual == "planted_crop" and extra_pos != Vector3.ZERO and (net == null or not net.is_dedicated_server):
 		_plant_crop(extra_pos)
+	if extra_visual == "crop_watered" and extra_pos != Vector3.ZERO:
+		var wc_id := _crop_id_for_pos(extra_pos)
+		var wc_until: float = Time.get_unix_time_from_system() + GameConst.CROP_WATER_SECONDS
+		for c in _planted_crops:
+			if str(c.get("id", "")) == wc_id:
+				c["watered_until"] = wc_until
+		var wc_action = world_actions_by_id.get(wc_id)
+		if wc_action != null and is_instance_valid(wc_action):
+			wc_action.set_meta("watered_until", wc_until)
 	if (extra_visual == "crop_harvested" or extra_visual == "crop_replanted") and extra_pos != Vector3.ZERO:
 		var cs_id := _crop_id_for_pos(extra_pos)
 		var cs_state := "empty" if extra_visual == "crop_harvested" else "planted"
@@ -8577,8 +8630,10 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 				c["crop_state"] = cs_state
 				c["growth"] = 0.0
 				c["updated_unix"] = Time.get_unix_time_from_system()
+				c["watered_until"] = 0.0
 		var cs_action = world_actions_by_id.get(cs_id)
 		if cs_action != null and is_instance_valid(cs_action):
+			cs_action.remove_meta("watered_until")
 			cs_action.set_crop_state(cs_state, 0.0)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
@@ -9904,6 +9959,27 @@ func _execute_world_action_eat(action, actor) -> void:
 func _handle_farm_plot(action, actor) -> void:
 	match action.action_state:
 		"planted":
+			var held_water = actor.get_held_item() if actor.has_method("get_held_item") else null
+			if held_water != null and str(held_water.item_type) == "water" and not (held_water.has_method("is_broken") and held_water.is_broken()):
+				_play_actor_action(actor, "plant", 2.0)
+				if hud != null:
+					hud.show_countdown("Regando", 2.0)
+				await get_tree().create_timer(2.0).timeout
+				if _scene_quitting: return
+				if not is_instance_valid(action) or action.action_state != "planted":
+					return
+				held_water.durability = maxf(0.0, float(held_water.durability) - GameConst.CROP_WATER_USE)
+				actor.inventory.changed.emit()
+				if actor.has_method("_sync_held_item"):
+					actor._sync_held_item()
+				action.water_crop()
+				for c in _planted_crops:
+					if str(c.get("id", "")) == action.action_id:
+						c["watered_until"] = float(action.get_meta("watered_until", 0.0))
+				actor.notice.emit("Riegas el cultivo. La tierra humeda acelera el crecimiento.")
+				_save_world_change_silent()
+				_net_notify_crop_state(action, "crop_watered")
+				return
 			actor.notice.emit("El cultivo aun esta creciendo.")
 		"ready":
 			_play_actor_action(actor, "plant", 1.25)
