@@ -621,10 +621,21 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 			if item.item_type in ["food", "water", "medical"]:
 				add_action("Comer" if item.item_type == "food" else ("Beber" if item.item_type == "water" else "Aplicar"), func():
 					var index: int = player.inventory.items.find(item)
-					if index >= 0:
-						player._select_held_item(index)
-						hud.toggle_inventory()
-						player._use_inventory_index(index))
+					if index < 0:
+						return
+					player._select_held_item(index)
+					hud.toggle_inventory()
+					# One click actually consumes: route straight to the held
+					# eat/drink path once the item is in the hands.
+					if player.get_held_item() == item and player.hands != null and player.hands.has_item_in_hands():
+						if item.item_type == "food":
+							player._eat_held_item()
+						elif item.item_type == "water":
+							player._drink_held_item()
+						else:
+							player._use_inventory_index(player.inventory.items.find(item))
+					else:
+						player._use_inventory_index(player.inventory.items.find(item)))
 			for recipe in Crafting.get_recipes_for_item(item.item_name, item.item_type):
 				if Crafting._can_craft(recipe, player.inventory.items):
 					add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe))

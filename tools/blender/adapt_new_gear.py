@@ -295,7 +295,10 @@ def fit_jacket():
         return None
 
     def is_sleeve_vert(v):
-        return abs(v.co.x) > shoulder_x and v.co.z > t_lo.z + t_size.z * 0.55
+        # Only verts past the shoulder seam belong to the sleeve tube —
+        # collar and shoulder-cap verts nearer the neck must stay on the body
+        # shell or they spike when recentered onto the arm profile.
+        return abs(v.co.x) > 0.60 and v.co.z > t_lo.z + t_size.z * 0.55
 
     # A drooped sleeve sits below the arm axis: pushing each vertex radially
     # from that axis collapses the tube into a crescent hanging under the arm.
@@ -324,7 +327,9 @@ def fit_jacket():
                 vz = v.co.z + (cz - sz)
                 dy, dz = vy - cy, vz - cz
                 length = math.hypot(dy, dz)
-                target = radius + 0.07
+                # Cap the tube radius: shoulder bins mix in chest verts and
+                # inflate the profile into giant shoulder spikes.
+                target = min(radius + 0.06, 0.13)
                 if length > 0.001:
                     v.co.y = cy + dy / length * target
                     v.co.z = cz + dz / length * target

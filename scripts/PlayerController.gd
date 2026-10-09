@@ -374,8 +374,8 @@ const SMALL_BACKPACK_WEIGHT := 10.0
 const VEST_CARRY_SLOTS := 4
 const VEST_CARRY_WEIGHT := 4.0
 # The military rucksack is bigger than the civilian small backpack.
-const MILITARY_BACKPACK_SLOTS := 14
-const MILITARY_BACKPACK_WEIGHT := 18.0
+const MILITARY_BACKPACK_SLOTS := 20
+const MILITARY_BACKPACK_WEIGHT := 25.0
 
 signal prompt_changed(text: String)
 signal notice(text: String)
@@ -3004,8 +3004,10 @@ func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 					slots += 2
 					weight += 2.0
 			"head":
-				slots += HEAD_CARRY_SLOTS
-				weight += HEAD_CARRY_WEIGHT
+				# A rigid helmet is not a container.
+				if equipped_item_name != "Casco militar":
+					slots += HEAD_CARRY_SLOTS
+					weight += HEAD_CARRY_WEIGHT
 			"chaleco":
 				slots += VEST_CARRY_SLOTS
 				weight += VEST_CARRY_WEIGHT
@@ -3541,6 +3543,13 @@ func _fit_held_prop_to_palm(item) -> void:
 		# la escala generica de armas, queda demasiado pequeno en la mano.
 		if str(item.item_name) == "Cuchillo":
 			length = 0.38
+		# Long-handled tools keep their real-world reach instead of the
+		# generic 0.65 m grip (final size is length × 1.30).
+		match str(item.item_name):
+			"Azada":
+				length = 0.95
+			"Pala":
+				length = 1.08
 	elif item_type in ["clothing", "backpack"]:
 		length = 0.28
 	elif item_type == "resource":

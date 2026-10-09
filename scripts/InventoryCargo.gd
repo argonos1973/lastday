@@ -10,6 +10,9 @@ static func compartments(player) -> Array:
 		var garment: String = str(player._equipped_slots.get(slot, ""))
 		if garment.is_empty():
 			continue
+		# A rigid helmet is not a container — no items can go inside it.
+		if slot == "head" and garment == "Casco militar":
+			continue
 		var capacity: int = bonuses[slot]
 		if "militar" in garment or "camuflaje" in garment:
 			capacity += int({"torso": 3, "legs": 2}.get(slot, 0))

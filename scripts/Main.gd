@@ -5512,7 +5512,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"tool_hoe":
 			return 1.5
 		"tool_shovel":
-			return 1.15
+			return 0.85
 		"tool_axe", "tool_hammer", "tool_pickaxe":
 			return 1.0
 		"tool_spear":
@@ -7850,7 +7850,7 @@ func _create_house_loot() -> void:
 		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 320, 0), "color": Color(0.38, 0.26, 0.10)},
 		# --- Hand tools (rare in houses; barns carry them often) ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
-		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.15, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 0.85, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
 	]
 	var house_loot_data := [
@@ -7907,7 +7907,7 @@ func _create_house_loot() -> void:
 		{"name": "Guantes survival", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": [GameConst.GARDEN_GLOVES_MODEL], "scale": 1.5, "rot": Vector3(0, 60, 0), "color": Color(0.16, 0.12, 0.08)},
 		# --- Herramientas de labranza: el granero es su sitio natural ---
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 45, 0), "color": Color(0.28, 0.18, 0.08)},
-		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 1.15, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
+		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 0.85, "rot": Vector3(0, 165, 0), "color": Color(0.26, 0.17, 0.08)},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 305, 0), "color": Color.WHITE},
 	]
 	var barn_origin := Vector3(45, 0, 120)
@@ -8936,7 +8936,7 @@ func _execute_world_action(action, actor) -> void:
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
-			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and not str(item.item_name).begins_with("Botas"):
+			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and not str(item.item_name).begins_with("Botas") and not str(item.item_name).contains("Casco"):
 				var _has_cut_tool := false
 				var _held = actor.get_held_item() if actor.has_method("get_held_item") else null
 				if _held != null and (str(_held.item_name) == "Cuchillo" or str(_held.item_name) == "Hacha"):

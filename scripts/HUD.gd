@@ -1992,8 +1992,15 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 				light_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				vbox.add_child(light_btn)
 				_context_menu_has_light = true
-	# Add Cortar en trapos button for clothing when holding knife/axe
-	if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and not str(item.item_name).begins_with("Botas"):
+	# Add Cortar en trapos button only when a rag recipe actually exists for
+	# this garment — otherwise the option shows but silently does nothing.
+	var has_rag_recipe := false
+	if str(item.item_type) == "clothing":
+		for recipe in CraftingSystemScript.get_recipes_for_item(str(item.item_name), "clothing"):
+			if recipe["inputs"].has(str(item.item_name)) and recipe["output"]["name"] == "Trapos":
+				has_rag_recipe = true
+				break
+	if has_rag_recipe:
 		var has_knife := false
 		for _inv_i in player.inventory.items:
 			if _inv_i.item_name == "Cuchillo" or _inv_i.item_name == "Hacha":
