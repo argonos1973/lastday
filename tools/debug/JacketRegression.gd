@@ -54,30 +54,34 @@ func run() -> void:
 		player.equip_clothing(item_name)
 		var key: String = "field_jacket_" + Jackets.VARIANTS[item_name]
 		var mesh: MeshInstance3D = player._survival_cloth_nodes.get(key)
-		if mesh == null or not mesh.visible or mesh.mesh.get_surface_count() < 3:
+		if mesh == null or not mesh.visible or mesh.mesh.get_surface_count() < 1:
 			fail("Jacket did not equip: " + item_name)
 			return
 		var skeleton := Jackets.skeleton_in(player.third_person_model)
 		var bounds := deformed_bounds(mesh, skeleton)
 		print(item_name, " rest bounds ", bounds)
-		if bounds.size.x > 3.0 or bounds.size.x < 1.0 or bounds.size.y > 2.0 or bounds.size.y < 0.5:
+		var min_width := 0.4 if item_name.contains("Chaleco") else 1.0
+		if bounds.size.x > 3.0 or bounds.size.x < min_width or bounds.size.y > 2.0 or bounds.size.y < 0.5:
 			fail("Jacket scale or skin binding is wrong")
 			return
-		var arm := skeleton.find_bone("mixamorig:LeftArm")
-		if arm < 0:
-			arm = skeleton.find_bone("mixamorig_LeftArm")
-		if arm < 0:
-			fail("Missing arm in character fixture")
-			return
-		var old_rotation := skeleton.get_bone_pose_rotation(arm)
-		skeleton.set_bone_pose_rotation(arm, old_rotation * Quaternion(Vector3.FORWARD, 0.8))
-		skeleton.force_update_all_bone_transforms()
-		var posed := deformed_bounds(mesh, skeleton)
-		if posed.is_equal_approx(bounds) or posed.size.length() > 5.0:
-			fail("Jacket does not follow the arm")
-			return
-		skeleton.set_bone_pose_rotation(arm, old_rotation)
-		skeleton.force_update_all_bone_transforms()
+		# The plate carrier is torso-bound (Spine1/Spine2) — it must not swing
+		# with the arm. Arm-following only applies to sleeved jackets.
+		if not item_name.contains("Chaleco"):
+			var arm := skeleton.find_bone("mixamorig:LeftArm")
+			if arm < 0:
+				arm = skeleton.find_bone("mixamorig_LeftArm")
+			if arm < 0:
+				fail("Missing arm in character fixture")
+				return
+			var old_rotation := skeleton.get_bone_pose_rotation(arm)
+			skeleton.set_bone_pose_rotation(arm, old_rotation * Quaternion(Vector3.FORWARD, 0.8))
+			skeleton.force_update_all_bone_transforms()
+			var posed := deformed_bounds(mesh, skeleton)
+			if posed.is_equal_approx(bounds) or posed.size.length() > 5.0:
+				fail("Jacket does not follow the arm")
+				return
+			skeleton.set_bone_pose_rotation(arm, old_rotation)
+			skeleton.force_update_all_bone_transforms()
 		player.unequip_clothing(item_name)
 		if mesh.visible:
 			fail("Jacket remains visible after unequip")

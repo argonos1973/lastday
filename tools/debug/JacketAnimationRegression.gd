@@ -1,15 +1,31 @@
 extends "res://tools/debug/RecentGearRegression.gd"
+func posed_bounds(garment: MeshInstance3D, skeleton: Skeleton3D) -> AABB:
+	# Original character skins use named binds; imported jackets use indices.
+	var original := garment.skin
+	var indexed := original.duplicate() as Skin
+	for bind in indexed.get_bind_count():
+		if indexed.get_bind_bone(bind) < 0:
+			indexed.set_bind_bone(bind, skeleton.find_bone(indexed.get_bind_name(bind)))
+	garment.skin = indexed
+	var result := super.posed_bounds(garment, skeleton)
+	garment.skin = original
+	return result
+
 # Real skeletal poses at several phases, plus front/side visual evidence.
 func run():
+	var item_name := "Chaqueta de cuadros"
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--item="): item_name=arg.trim_prefix("--item=")
+	var output_dir := "res://outputs/revision_chaqueta/" + item_name.to_snake_case().replace(" ", "_")
 	var actor := Actor.new()
 	root.add_child(actor)
 	actor.stats = preload("res://scripts/SurvivalStats.gd").new()
 	actor.inventory = preload("res://scripts/Inventory.gd").new()
 	actor.add_child(actor.inventory)
 	actor.setup_as_puppet()
-	for clothing in ["Camiseta","Pantalones","Zapatillas","Chaqueta de cuadros"]: actor.equip_clothing(clothing)
+	for clothing in ["Camiseta","Pantalones","Zapatillas",item_name]: actor.equip_clothing(clothing)
 	var skel: Skeleton3D = actor._find_skeleton(actor.third_person_model)
-	var garment: MeshInstance3D = actor._survival_cloth_nodes["field_jacket_plaid"]
+	var garment: MeshInstance3D = actor._survival_cloth_nodes[actor.SURVIVAL_CLOTHING[item_name]["mesh"]]
 	var player: AnimationPlayer = actor.third_person_animation_player
 	var preview := "--preview" in OS.get_cmdline_user_args()
 	var cam := Camera3D.new()
@@ -24,7 +40,7 @@ func run():
 		root.add_child(env)
 		var sun := DirectionalLight3D.new();sun.rotation_degrees=Vector3(-40,-35,0);root.add_child(sun)
 	var poses := {"reposo":actor.third_person_idle_animation,"caminar":actor.third_person_walk_animation,"correr":actor.third_person_run_animation,"agachado":actor.third_person_sneak_animation,"sentado":actor.third_person_sit_animation,"apuntar":actor._rifle_aim_idle_animation}
-	DirAccess.make_dir_recursive_absolute("res://outputs/revision_chaqueta")
+	DirAccess.make_dir_recursive_absolute(output_dir)
 	for pose in poses:
 		var animation: String=poses[pose]
 		check(player.has_animation(animation),pose+" animation available")
@@ -55,7 +71,7 @@ func run():
 				cam.look_at(center)
 				await create_timer(.15).timeout
 				await RenderingServer.frame_post_draw
-				root.get_texture().get_image().save_png("res://outputs/revision_chaqueta/"+pose+"_"+view+".png")
+				root.get_texture().get_image().save_png(output_dir+"/"+pose+"_"+view+".png")
 	actor.stats.free()
 	actor.free()
 	print("JACKET_ANIMATION_ERRORS=",errors)

@@ -232,7 +232,7 @@ def fit_jacket():
         cuff_x = sum(abs(v.co.x) for v in cuff_verts) / len(cuff_verts)
         root_z = sum(v.co.z for v in root_verts) / len(root_verts)
         arm_z = t_hi.z - t_size.z * 0.16  # T-pose arm line
-        droop = min(math.atan2(arm_z - cuff_z, cuff_x - shoulder_x), math.radians(50))
+        droop = min(math.atan2(arm_z - cuff_z, cuff_x - shoulder_x), math.radians(85))
         print('SLEEVE droop deg', round(math.degrees(droop), 1), flush=True)
         ca, sa = math.cos(droop), math.sin(droop)
         for v in jacket.data.vertices:
@@ -261,12 +261,15 @@ def fit_jacket():
             faces += [[base + i for i in p.vertices] for p in source.data.polygons]
         return BVHTree.FromPolygons(verts, faces)
 
-    body_bvh = bvh_of(('Tops', 'Bottoms'))
-    arms_bvh = bvh_of(('Body_arms', 'Desnudo_arms'))
+    # Body_torso is what actually draws the bare arms in-game (it stays
+    # visible under this coat), so sleeves must wrap over it too — wrapping
+    # only the hidden Desnudo/Body_arms leaves the skin poking through.
+    body_bvh = bvh_of(('Tops', 'Bottoms', 'Body_torso'))
+    arms_bvh = bvh_of(('Body_arms', 'Desnudo_arms', 'Body_torso'))
     # Arm profile per x-slice: axis centre and outer radius, so each sleeve
     # vertex can be wrapped cylindrically around the arm it covers.
     arm_pts = []
-    for name in ('Body_arms', 'Desnudo_arms'):
+    for name in ('Body_arms', 'Desnudo_arms', 'Body_torso'):
         source = bpy.data.objects.get(name)
         if source is not None:
             arm_pts += [source.matrix_world @ v.co for v in source.data.vertices]
@@ -279,7 +282,8 @@ def fit_jacket():
     for key, pts in arm_bins.items():
         cy = sum(p.y for p in pts) / len(pts)
         cz = sum(p.z for p in pts) / len(pts)
-        radius = max(math.hypot(p.y - cy, p.z - cz) for p in pts)
+        dists = sorted(math.hypot(p.y - cy, p.z - cz) for p in pts)
+        radius = dists[int(len(dists) * 0.8)]
         arm_prof[key] = (cy, cz, radius)
 
     def arm_wrap(x):
@@ -290,23 +294,58 @@ def fit_jacket():
                     return arm_prof[(side, step)]
         return None
 
+    def is_sleeve_vert(v):
+        return abs(v.co.x) > shoulder_x and v.co.z > t_lo.z + t_size.z * 0.55
+
+    # A drooped sleeve sits below the arm axis: pushing each vertex radially
+    # from that axis collapses the tube into a crescent hanging under the arm.
+    # First recentre each x-slice of the sleeve onto the measured axis, then
+    # push out to the arm surface radius plus a wearing margin.
+    sleeve_bins = {}
+    for v in jacket.data.vertices:
+        if is_sleeve_vert(v):
+            key = (1 if v.co.x > 0 else -1, int(abs(v.co.x) / 0.08))
+            sleeve_bins.setdefault(key, []).append(v)
+    sleeve_centers = {}
+    for key, vs in sleeve_bins.items():
+        sleeve_centers[key] = (sum(v.co.y for v in vs) / len(vs),
+                               sum(v.co.z for v in vs) / len(vs))
+
     for v in jacket.data.vertices:
         x = abs(v.co.x)
-        is_sleeve = x > shoulder_x and v.co.z > t_lo.z + t_size.z * 0.55
-        if is_sleeve:
-            prof = arm_wrap(v.co.x)
-            if prof is not None:
+        if is_sleeve_vert(v):
+            prof = arm_wrap(x)
+            key = (1 if v.co.x > 0 else -1, int(x / 0.08))
+            sc = sleeve_centers.get(key)
+            if prof is not None and sc is not None:
                 cy, cz, radius = prof
-                dy, dz = v.co.y - cy, v.co.z - cz
+                sy, sz = sc
+                vy = v.co.y + (cy - sy)
+                vz = v.co.z + (cz - sz)
+                dy, dz = vy - cy, vz - cz
                 length = math.hypot(dy, dz)
-                target = radius + 0.05
+                target = radius + 0.07
                 if length > 0.001:
                     v.co.y = cy + dy / length * target
                     v.co.z = cz + dz / length * target
+                else:
+                    v.co.y, v.co.z = vy, vz
                 continue
         body_hit = body_bvh.find_nearest(v.co)
         if body_hit[0] is not None and body_hit[3] > 0.001:
-            v.co = body_hit[0] + body_hit[1] * 0.05
+            v.co = body_hit[0] + body_hit[1] * 0.07
+    # The source coat is elbow-length: stretch the sleeve tips along the arm
+    # axis so the cuff reaches the wrist and the forearm stays covered.
+    arm_end = 0.85
+    cuff_target = 1.32
+    max_sleeve = max(abs(v.co.x) for v in jacket.data.vertices
+                     if v.co.z > t_lo.z + t_size.z * 0.55)
+    if max_sleeve > arm_end + 0.05:
+        stretch = (cuff_target - arm_end) / (max_sleeve - arm_end)
+        for v in jacket.data.vertices:
+            x = abs(v.co.x)
+            if x > arm_end and v.co.z > t_lo.z + t_size.z * 0.55:
+                v.co.x = (1.0 if v.co.x > 0 else -1.0) * (arm_end + (x - arm_end) * stretch)
     transfer_weights(jacket, ['Body_arms', 'Body_torso', 'Desnudo_torso'])
     constrain_garment_weights(jacket, True)
     export_skinned(jacket, 'plaid')

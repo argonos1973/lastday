@@ -70,7 +70,7 @@ const SURVIVAL_CLOTHING := {
 	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
 	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
 	# Skinned Sketchfab garments adapted in Blender (adapt_new_gear.py).
-	"Chaqueta de cuadros": {"mesh": "field_jacket_plaid", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"]},
+	"Chaqueta de cuadros": {"mesh": "field_jacket_plaid", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms", "Body_torso"]},
 	# Plate carrier is worn over the clothes: it hides nothing, only overlays.
 	"Chaleco táctico": {"mesh": "field_jacket_plate_carrier", "hides": [], "skin_hides": [], "body_hides": []},
 }
