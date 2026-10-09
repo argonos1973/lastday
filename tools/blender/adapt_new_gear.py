@@ -206,31 +206,23 @@ def fit_vest():
 
 def fit_jacket():
     jacket = merge_meshes(import_glb(str(SRC / 'plaid_jacket.glb')), 'plaid_jacket')
-    # Source lies flat: front up (+Z), collar toward +Y, sleeves along X.
-    # +90degX stands it up: front faces -Y (character facing), collar goes +Z.
-    jacket.rotation_euler = (math.radians(90), 0, 0)
+    # Source is already upright in world space (front -Y, collar up, sleeves
+    # along X in an A-pose) — no initial rotation needed.
     apply_transform(jacket)
     j_lo, j_hi = bounds_of(jacket)
     j_size = j_hi - j_lo
-    # Scale so the hem covers most of the shirt torso; sleeves then reach
-    # mid-forearm which is right for a work jacket. Slightly larger so it
-    # envelopes the puffy shirt instead of burying inside it.
-    scale = max(t_size.x / j_size.x, t_size.z * 0.92 / j_size.z) * 1.06
+    # Rough pre-fit: cover the shirt torso and sit the collar at the neck.
+    # Exact wrapping is left to the shrinkwrap passes below.
+    scale = (t_size.z * 0.95) / j_size.z
     jacket.scale = Vector((scale, scale, scale))
-    apply_transform(jacket)
-    # The open coat is shallower than the shirt: grow depth so the front
-    # panels wrap the chest instead of sitting inside the skin.
-    j_lo, j_hi = bounds_of(jacket)
-    jacket.scale.y *= (t_size.y * 1.15) / (j_hi.y - j_lo.y)
     apply_transform(jacket)
     j_lo, j_hi = bounds_of(jacket)
     jacket.location += Vector((t_center.x - (j_lo.x + j_hi.x) * 0.5,
                                t_center.y - (j_lo.y + j_hi.y) * 0.5,
                                t_hi.z - j_hi.z + t_size.z * 0.02))
     apply_transform(jacket)
-    # Straighten the drooping sleeves toward the T-pose arms: estimate the
-    # sleeve slope far from the torso and rigidly rotate each sleeve up
-    # around the shoulder line.
+    # Raise the drooping A-pose sleeves onto the T-pose arm line first —
+    # without this the wrap below glues them to the torso in a bat wing.
     shoulder_x = t_size.x * 0.20
     max_x = max(abs(v.co.x) for v in jacket.data.vertices)
     cuff_verts = [v for v in jacket.data.vertices if abs(v.co.x) > max_x * 0.8]
@@ -249,44 +241,72 @@ def fit_jacket():
                 continue
             dx = abs(v.co.x) - shoulder_x
             dz = v.co.z - root_z
-            # Rotate around the shoulder pivot so the cuff lands on the arm.
             v.co.x = side * (shoulder_x + dx * ca - dz * sa)
             v.co.z = root_z + dx * sa + dz * ca
-    # The open coat hem flares straight out sideways; taper the skirt toward
-    # the hips so it drapes instead of winging out.
-    hem_top = t_lo.z + t_size.z * 0.62  # just under the armpit
-    hip_x = t_size.x * 0.16
-    cap_x = t_size.x * 0.34             # max half-width allowed below the chest
-    n_mod = 0
+    # Wrap the coat around the character's own clothes by projecting each
+    # vertex onto the nearest surface point of the right shell — sleeves onto
+    # the arms, the rest onto the shirt/trousers — plus a wearing margin.
+    # Manual BVH projection is deterministic where a Shrinkwrap modifier's
+    # vertex_group is unreliable in background mode.
+    from mathutils.bvhtree import BVHTree
+
+    def bvh_of(names):
+        verts, faces = [], []
+        for name in names:
+            source = bpy.data.objects.get(name)
+            if source is None:
+                continue
+            base = len(verts)
+            verts += [source.matrix_world @ v.co for v in source.data.vertices]
+            faces += [[base + i for i in p.vertices] for p in source.data.polygons]
+        return BVHTree.FromPolygons(verts, faces)
+
+    body_bvh = bvh_of(('Tops', 'Bottoms'))
+    arms_bvh = bvh_of(('Body_arms', 'Desnudo_arms'))
+    # Arm profile per x-slice: axis centre and outer radius, so each sleeve
+    # vertex can be wrapped cylindrically around the arm it covers.
+    arm_pts = []
+    for name in ('Body_arms', 'Desnudo_arms'):
+        source = bpy.data.objects.get(name)
+        if source is not None:
+            arm_pts += [source.matrix_world @ v.co for v in source.data.vertices]
+    arm_bins = {}
+    for p in arm_pts:
+        if abs(p.x) > shoulder_x and p.z > t_lo.z + t_size.z * 0.55:
+            key = (1 if p.x > 0 else -1, int(abs(p.x) / 0.08))
+            arm_bins.setdefault(key, []).append(p)
+    arm_prof = {}
+    for key, pts in arm_bins.items():
+        cy = sum(p.y for p in pts) / len(pts)
+        cz = sum(p.z for p in pts) / len(pts)
+        radius = max(math.hypot(p.y - cy, p.z - cz) for p in pts)
+        arm_prof[key] = (cy, cz, radius)
+
+    def arm_wrap(x):
+        side = 1 if x > 0 else -1
+        for d in range(0, 5):
+            for step in (int(abs(x) / 0.08) + d, int(abs(x) / 0.08) - d):
+                if step >= 0 and (side, step) in arm_prof:
+                    return arm_prof[(side, step)]
+        return None
+
     for v in jacket.data.vertices:
-        if v.co.z < hem_top and abs(v.co.x) > cap_x:
-            f = min(1.0, (hem_top - v.co.z) / (t_size.z * 0.55))
-            side = 1.0 if v.co.x > 0 else -1.0
-            v.co.x = side * (cap_x + (abs(v.co.x) - cap_x) * (1.0 - 0.75 * f))
-            n_mod += 1
-    # Separate the skirt from the sleeves before weight transfer. The old
-    # wide hem sampled nearby arm weights and flared when the arms swung.
-    sleeve = [v for v in jacket.data.vertices if abs(v.co.x) > .43 and v.co.z > 2.70]
-    sleeve_ids = {v.index for v in sleeve}
-    bins = {}
-    for v in sleeve:
-        key = (1 if v.co.x>0 else -1, int(abs(v.co.x)*25))
-        bins.setdefault(key, []).append(v.co.copy())
-    for v in jacket.data.vertices:
-        if v.index in sleeve_ids:
-            side=1 if v.co.x>0 else -1
-            pts=bins[(side,int(abs(v.co.x)*25))]
-            cy=(min(p.y for p in pts)+max(p.y for p in pts))*.5
-            cz=(min(p.z for p in pts)+max(p.z for p in pts))*.5
-            extent=max(max(abs(p.y-cy),abs(p.z-cz)) for p in pts)
-            radial=min(1.0,.125/max(extent,.001))
-            blend=max(0,min(1,(abs(v.co.x)-.43)/.18))
-            blend=blend*blend*(3-2*blend)
-            v.co.y += (.11+(v.co.y-cy)*radial-v.co.y)*blend
-            v.co.z += (3.0+(v.co.z-cz)*radial-v.co.z)*blend
-            v.co.x += (side*(.43+(abs(v.co.x)-.43)*1.40)-v.co.x)*blend
-        elif v.co.z<2.80:
-            v.co.x=.39*math.tanh(v.co.x/.39)
+        x = abs(v.co.x)
+        is_sleeve = x > shoulder_x and v.co.z > t_lo.z + t_size.z * 0.55
+        if is_sleeve:
+            prof = arm_wrap(v.co.x)
+            if prof is not None:
+                cy, cz, radius = prof
+                dy, dz = v.co.y - cy, v.co.z - cz
+                length = math.hypot(dy, dz)
+                target = radius + 0.05
+                if length > 0.001:
+                    v.co.y = cy + dy / length * target
+                    v.co.z = cz + dz / length * target
+                continue
+        body_hit = body_bvh.find_nearest(v.co)
+        if body_hit[0] is not None and body_hit[3] > 0.001:
+            v.co = body_hit[0] + body_hit[1] * 0.05
     transfer_weights(jacket, ['Body_arms', 'Body_torso', 'Desnudo_torso'])
     constrain_garment_weights(jacket, True)
     export_skinned(jacket, 'plaid')
@@ -359,10 +379,11 @@ def fit_backpack():
     print('BACKPACK_EXPORTED', flush=True)
 
 
-fit_vest()
+if '--plaid-only' not in sys.argv:
+    fit_vest()
 if '--vest-only' not in sys.argv:
     fit_jacket()
-if '--garments-only' not in sys.argv and '--vest-only' not in sys.argv:
+if '--garments-only' not in sys.argv and '--vest-only' not in sys.argv and '--plaid-only' not in sys.argv:
     fit_backpack()
 
 if RENDER_ONLY or True:
