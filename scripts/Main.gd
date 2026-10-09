@@ -1027,7 +1027,10 @@ func _process(delta: float) -> void:
 		player.set_meta("in_house", in_house)
 	if player.get_meta("in_built_shelter", false) != near_built_shelter:
 		player.set_meta("in_built_shelter", near_built_shelter)
-	var is_sheltered: bool = player.in_shelter or in_house
+	# A house only seals out wind and cold while its door is shut — an open
+	# doorway lets the weather in. Barns, tents and the hut have no real door
+	# and shelter as before.
+	var is_sheltered: bool = player.in_shelter or (in_house and not _is_in_open_house(player.global_position))
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Use real weather temperature when available
 	if hud != null and hud._real_temp_parsed != -999.0:
@@ -10867,6 +10870,20 @@ func _is_player_in_house(pos: Vector3) -> bool:
 
 func _is_loot_sheltered(pos: Vector3) -> bool:
 	return _is_player_in_house(pos) or _is_near_built_shelter(pos)
+
+# Inside a house with its door open: the wind gets in, so it does not count
+# as sheltered for temperature purposes. HOUSE_DATA order matches the
+# "Casa abandonada N" labels, so index+1 names the door node.
+func _is_in_open_house(pos: Vector3) -> bool:
+	var index := 0
+	for hd in HOUSE_DATA:
+		index += 1
+		if hd.get("barn", false):
+			continue
+		var house_pos: Vector3 = hd["pos"]
+		if abs(pos.x - house_pos.x) < hd["w"] * 0.5 and abs(pos.z - house_pos.z) < hd["d"] * 0.5:
+			return _is_named_door_open("Casa abandonada %d Door" % index)
+	return false
 
 # Returns nearby dropped items (pickup_item / eat_food WorldActions) within
 # `radius` meters of `player_pos`. Each entry is a Dictionary with:
