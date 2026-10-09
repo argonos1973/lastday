@@ -405,8 +405,10 @@ func _farm_ground_offset(x: float, z: float) -> float:
 			for i in 5:
 				var point := to_global(Vector3(-1.0+i*.5, 0, -1.0+j*.5))
 				var height := global_position.y
-				if world != null and world.has_method("_get_exact_ground_y"):
-					height = world._get_exact_ground_y(point.x, point.z, global_position.y+2.0)
+				# Analytic terrain height only — a raycast would pull verts up
+				# onto roofs/props standing over the plot and stretch the bed.
+				if world != null and world.has_method("_get_ground_height"):
+					height = world._get_ground_height(point)
 				_farm_ground_grid.append(height-global_position.y)
 	var gx := clampf((x+1.0)*2.0, 0.0, 3.999)
 	var gz := clampf((z+1.0)*2.0, 0.0, 3.999)

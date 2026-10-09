@@ -1894,7 +1894,14 @@ func handle_slot_click(mouse_pos: Vector2, button_index: int) -> void:
 						var src_real := _get_real_inv_index(_drag_source_index)
 						var dst_real := _get_real_inv_index(i)
 						if src_real >= 0 and dst_real >= 0:
-							player.inventory.swap_items(src_real, dst_real)
+							var src_item = player.inventory.items[src_real]
+							var dst_item = player.inventory.items[dst_real]
+							# Same stackable: drop onto it grows the stack instead
+							# of swapping the two slots.
+							if src_item != dst_item and dst_item != null and src_item != null and dst_item.can_stack_with(src_item, true):
+								player.inventory.combine_stack(src_item, dst_item)
+							else:
+								player.inventory.swap_items(src_real, dst_real)
 						elif src_real >= 0 and i >= display_items.size():
 							# Move to empty slot (no-op since filtered view doesn't have empty slots)
 							pass

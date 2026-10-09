@@ -8,6 +8,7 @@ class IsolatedWorld extends "res://scripts/Main.gd":
 	func _save_world_change_silent(): pass
 	var slope := 0.0
 	func _get_exact_ground_y(x: float, _z: float, _from_y: float = 500.0) -> float: return x*slope
+	func _get_ground_height(pos: Vector3) -> float: return pos.x*slope
 class FakeActor extends Node:
 	signal notice(_msg)
 	var inventory = preload("res://scripts/Inventory.gd").new()
