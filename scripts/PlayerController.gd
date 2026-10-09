@@ -668,8 +668,8 @@ const RIFLE_AIM_FINGER_CLOSE := {"Index": 7.0, "Ring": 7.0, "Pinky": 14.0}
 const RIFLE_AIM_ELBOW_STEER := 0.0
 # Elbow pole directions in rifle-local space (out + down + slightly back), so
 # the firing elbow doesn't flare above the shoulder in the front view.
-const RIFLE_AIM_RIGHT_ELBOW := Vector3(0.8, -0.55, 0.20)
-const RIFLE_AIM_LEFT_ELBOW := Vector3(-0.6, -0.65, 0.1)
+const RIFLE_AIM_RIGHT_ELBOW := Vector3(0.55, -0.85, 0.20)
+const RIFLE_AIM_LEFT_ELBOW := Vector3(-0.20, -1.0, 0.15)
 const RIFLE_AIM_ELBOW_POLE := 1.0
 var _rifle_aim_pose_active := false
 var _ik_right_upper_arm_idx: int = -1

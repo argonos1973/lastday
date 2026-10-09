@@ -391,6 +391,58 @@ func _add_farm_bed() -> void:
 	bed.scale = Vector3.ONE * 1.55
 	add_child(bed)
 	_visual_children.append(bed)
+	_fit_farm_bed_to_ground(bed)
+
+# Sample terrain once per plot; growth updates reuse the same ground profile.
+# Individual mesh instances are deformed, never the shared imported resource.
+var _farm_ground_grid: PackedFloat32Array = PackedFloat32Array()
+
+func _farm_ground_offset(x: float, z: float) -> float:
+	if _farm_ground_grid.is_empty():
+		var tree := get_tree()
+		var world: Node = tree.current_scene if tree != null else null
+		for j in 5:
+			for i in 5:
+				var point := to_global(Vector3(-1.0+i*.5, 0, -1.0+j*.5))
+				var height := global_position.y
+				if world != null and world.has_method("_get_exact_ground_y"):
+					height = world._get_exact_ground_y(point.x, point.z, global_position.y+2.0)
+				_farm_ground_grid.append(height-global_position.y)
+	var gx := clampf((x+1.0)*2.0, 0.0, 3.999)
+	var gz := clampf((z+1.0)*2.0, 0.0, 3.999)
+	var ix := int(gx)
+	var iz := int(gz)
+	return lerpf(lerpf(_farm_ground_grid[iz*5+ix],_farm_ground_grid[iz*5+ix+1],gx-ix), lerpf(_farm_ground_grid[(iz+1)*5+ix],_farm_ground_grid[(iz+1)*5+ix+1],gx-ix),gz-iz)
+
+func _fit_farm_bed_to_ground(bed: Node3D) -> void:
+	for node in bed.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		if mi.mesh == null: continue
+		var fitted := ArrayMesh.new()
+		var frame := global_transform.affine_inverse() * mi.global_transform
+		var inverse := frame.affine_inverse()
+		for surface in mi.mesh.get_surface_count():
+			var arrays := mi.mesh.surface_get_arrays(surface)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX].duplicate()
+			for i in vertices.size():
+				var p := frame * vertices[i]
+				p.y += _farm_ground_offset(p.x,p.z)
+				vertices[i] = inverse * p
+			arrays[Mesh.ARRAY_VERTEX] = vertices
+			var material := mi.mesh.surface_get_material(surface)
+			if material is StandardMaterial3D and material.resource_name == "Cultivated_earth":
+				material = material.duplicate()
+				material.vertex_color_use_as_albedo = true
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				var colors := PackedColorArray()
+				for vertex in vertices:
+					var p := frame * vertex
+					var edge := .91-maxf(absf(p.x),absf(p.z))+.025*sin(p.x*33+p.z*21)
+					colors.append(Color(1,1,1,clampf(edge/.17,0,1)))
+				arrays[Mesh.ARRAY_COLOR] = colors
+			fitted.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
+			fitted.surface_set_material(surface,material)
+		mi.mesh = fitted
 
 func _add_crop_rows(stage: int) -> void:
 	var path := "res://assets/models/props/farming/crop_stage_%d.glb" % stage
@@ -406,12 +458,13 @@ func _add_crop_rows(stage: int) -> void:
 	# Roots sit inside the continuous Blender ridge (crest about 8 cm,
 	# scaled up with the bed). Three furrows hold a 3x3 planting grid.
 	var plant_idx := 0
-	for rx in [-0.56, 0.0, 0.56]:
+	for rx in [-0.527, 0.0, 0.527]:
 		for rz in [-0.52, 0.0, 0.52]:
 			var plant := scene.instantiate()
 			plant.name = "CropPlant_%d" % plant_idx
 			plant_idx += 1
-			plant.position = Vector3(rx + visual_rng.randf_range(-0.022, 0.022), 0.113, rz + visual_rng.randf_range(-0.030, 0.030))
+			plant.position = Vector3(rx + visual_rng.randf_range(-0.022, 0.022), 0.030, rz + visual_rng.randf_range(-0.030, 0.030))
+			plant.position.y += _farm_ground_offset(plant.position.x,plant.position.z)
 			plant.rotation.y = visual_rng.randf_range(-PI, PI)
 			plant.scale = Vector3.ONE * visual_rng.randf_range(1.45, 1.80)
 			add_child(plant)

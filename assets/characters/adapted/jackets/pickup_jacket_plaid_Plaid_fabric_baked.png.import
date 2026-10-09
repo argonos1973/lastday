@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b2s88qeiam5gh"
-path="res://.godot/imported/farm_plot_Ground038_1K-JPG_Color.jpg-0a64e2e0bb8c47685268935655c2ca2e.ctex"
+uid="uid://bxsprugpn2p1n"
+path="res://.godot/imported/pickup_jacket_plaid_Plaid_fabric_baked.png-ecc3a20f468e3190c7ee1bd89cc551bf.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "94051b5bfa1b40a5905f68b01273cddf"
+"md5": "cc60675b2f467da96e6784113a1f53c1"
 }
 
 [deps]
 
-source_file="res://assets/models/props/farming/farm_plot_Ground038_1K-JPG_Color.jpg"
-dest_files=["res://.godot/imported/farm_plot_Ground038_1K-JPG_Color.jpg-0a64e2e0bb8c47685268935655c2ca2e.ctex"]
+source_file="res://assets/characters/adapted/jackets/pickup_jacket_plaid_Plaid_fabric_baked.png"
+dest_files=["res://.godot/imported/pickup_jacket_plaid_Plaid_fabric_baked.png-ecc3a20f468e3190c7ee1bd89cc551bf.ctex"]
 
 [params]
 

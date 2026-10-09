@@ -6,7 +6,8 @@ class IsolatedWorld extends "res://scripts/Main.gd":
 	func _ready(): set_process(false)
 	func _exit_tree(): pass
 	func _save_world_change_silent(): pass
-	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return 0.0
+	var slope := 0.0
+	func _get_exact_ground_y(x: float, _z: float, _from_y: float = 500.0) -> float: return x*slope
 class FakeActor extends Node:
 	signal notice(_msg)
 	var inventory = preload("res://scripts/Inventory.gd").new()
@@ -23,6 +24,7 @@ func check(value: bool, label: String) -> void:
 func run() -> void:
 	var world := IsolatedWorld.new()
 	root.add_child(world)
+	current_scene = world
 	var pos := Vector3(37.0, 0.0, -41.0)
 
 	# Planting a dropped seed creates a farm_plot world action in "planted" state.
@@ -34,6 +36,19 @@ func run() -> void:
 	check(action != null and action.action_state == "planted", "fresh crop starts planted")
 	check(action != null and action.grow_time >= 300.0, "growth takes several minutes like DayZ")
 	check(action != null and action.get_meta("crop_id", "") == crop_id, "action carries its crop id")
+
+	# The same bed follows a hillside and keeps plants rooted through growth.
+	world.slope = .16
+	var sloped := WorldAction.new()
+	world.add_child(sloped)
+	sloped.setup("slope_probe", "farm_plot", "Huerto", Vector3(1.9,.16,1.9), Color.BROWN, true, false)
+	sloped.set_crop_state("planted", 0)
+	check(absf(sloped._farm_ground_offset(.8, 0)-.128)<.001, "soil follows sampled terrain slope")
+	for child in sloped.get_children():
+		if str(child.name).begins_with("CropPlant"):
+			check(absf(child.position.y-(.030+child.position.x*.16))<.001, "plant root follows the same soil slope")
+	sloped.free()
+	world.slope = 0.0
 
 	# Duplicate planting at the same spot does not create a second plot.
 	var same_id := world._plant_crop(pos)
@@ -207,6 +222,7 @@ func run() -> void:
 	await create_timer(2.2).timeout
 	var expected := 100.0 - GameConst.CROP_WATER_USE / 3.0
 	check(absf(float(bottles.durability) - expected) < 0.5, "watering drains one bottle, not the whole stack")
+	actor.inventory.free()
 	actor.free()
 
 	# The world tick pings the local player once when a bed turns harvestable.
@@ -225,9 +241,10 @@ func run() -> void:
 	action.set_meta("ready_unix", Time.get_unix_time_from_system() - GameConst.CROP_ROT_SECONDS - 1.0)
 	world._tick_world_actions(1.0)
 	check(action.action_state == "rotten" and notice_count["rotten"] == 1, "rotting also warns the player")
+	listener.inventory.free()
 	listener.free()
 	world.player = null
 
-	world.queue_free()
+	world.free()
 	print("failures=%d" % failures)
 	quit(1 if failures > 0 else 0)

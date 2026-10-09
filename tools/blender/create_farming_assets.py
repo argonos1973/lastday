@@ -2,7 +2,7 @@
 Run: Blender --background --factory-startup --python tools/blender/create_farming_assets.py
 """
 from pathlib import Path
-import math, random
+import math, random, sys
 import bpy
 import numpy as np
 from mathutils import Vector
@@ -41,7 +41,7 @@ for suffix,socket in [('Color','Base Color'),('Roughness','Roughness')]:
     path=ROOT/f'assets/textures/dirt_road/Ground038_1K-JPG_{suffix}.jpg'
     im=bpy.data.images.load(str(path))
     if suffix=='Color':
-        pixels=np.array(im.pixels[:],dtype=np.float32).reshape(-1,4);pixels[:,:3]*=np.array([.38,.27,.17]);im.pixels.foreach_set(pixels.ravel());im.update()
+        pixels=np.array(im.pixels[:],dtype=np.float32).reshape(-1,4);pixels[:,:3]*=np.array([.68,.56,.42]);im.pixels.foreach_set(pixels.ravel());im.update()
     im.pack();tex=SOIL.node_tree.nodes.new('ShaderNodeTexImage');tex.image=im
     if suffix=='Roughness': im.colorspace_settings.name='Non-Color'
     SOIL.node_tree.links.new(tex.outputs['Color'],SOIL.node_tree.nodes.get('Principled BSDF').inputs[socket])
@@ -92,7 +92,8 @@ def finish(name):
     for o in obs:o.select_set(True)
     bpy.context.view_layer.objects.active=obs[0];bpy.ops.object.join();o=bpy.context.object;o.name=name
     bpy.ops.object.transform_apply(location=True,rotation=True,scale=True)
-    bpy.ops.export_scene.gltf(filepath=str(OUT/(name+'.glb')),export_format='GLB',use_selection=True,export_yup=True)
+    if '--soil-only' not in sys.argv or name == 'farm_plot':
+        bpy.ops.export_scene.gltf(filepath=str(OUT/(name+'.glb')),export_format='GLB',use_selection=True,export_yup=True)
     for c in list(o.users_collection):c.objects.unlink(o)
     stash.objects.link(o);o.hide_render=True;o.hide_set(True);assets[name]=o
 
@@ -122,7 +123,7 @@ for stage,h in enumerate([.085,.20,.34,.46]):
 def soil_z(x,y):
     edge=max(0,min(1,(.60-max(abs(x),abs(y)))/.10))
     ridge=sum(math.exp(-((x-c)/.095)**2) for c in [-.34,0,.34])
-    return -.009+edge*(.032+.060*ridge)+.004*math.sin(x*38+y*17)*edge
+    return -.012+edge*(.010+.024*ridge)+.0025*math.sin(x*38+y*17)*edge
 vs=[];fs=[];N=49
 for j in range(N):
     for i in range(N):
@@ -132,7 +133,19 @@ for j in range(N):
         vs.append((x,y,soil_z(x,y)))
 for j in range(N-1):
     for i in range(N-1):a=j*N+i;fs.append((a,a+1,a+N+1,a+N))
-mesh('Worked_soil',vs,fs,SOIL)
+soil = mesh('Worked_soil',vs,fs,SOIL)
+# A porous, irregular edge blends into the ground instead of a square slab.
+colors=soil.data.color_attributes.new(name='Soil_edge',type='FLOAT_COLOR',domain='CORNER')
+for poly in soil.data.polygons:
+    for li in poly.loop_indices:
+        x,y,z=vs[soil.data.loops[li].vertex_index]
+        edge=.59-max(abs(x),abs(y))+.012*math.sin(x*51+y*29)
+        alpha=max(0,min(1,edge/.11))
+        colors.data[li].color=(1,1,1,alpha)
+SOIL.surface_render_method='DITHERED'
+color=SOIL.node_tree.nodes.new('ShaderNodeVertexColor');color.layer_name='Soil_edge'
+SOIL.node_tree.links.new(color.outputs['Alpha'],soil_bsdf.inputs['Alpha'])
+
 for i in range(110):
     x,y=rng.uniform(-.55,.55),rng.uniform(-.55,.55);rad=rng.uniform(.005,.018)
     ball('Earth_clod',(x,y,soil_z(x,y)+rad*.3),(rad,rad*rng.uniform(.6,1.4),rad*.6),SOIL if i%9 else STONE)
