@@ -169,8 +169,7 @@ func tick_growth(delta: float, moist_rate := 1.0) -> void:
 		var prev_stage := clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2)
 		growth += delta * rate
 		if growth >= grow_time:
-			action_state = "ready"
-			_update_crop_visual()
+			set_crop_state("ready", growth)
 		elif clampi(int(growth / maxf(grow_time, 1.0) * 3.0), 0, 2) != prev_stage:
 			_update_crop_visual()
 	if action_type == "farm_plot" and action_state == "ready":

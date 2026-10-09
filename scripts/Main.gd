@@ -1252,7 +1252,15 @@ func _tick_world_actions(delta: float) -> void:
 	for action in world_actions_by_id.values():
 		if action != null and action.has_method("tick_growth"):
 			if action.action_type == "farm_plot":
+				var _crop_prev_state: String = action.action_state
 				action.tick_growth(delta, rain_rate)
+				# Tell the local player the moment a bed turns harvestable —
+				# each client grows crops locally so every farmer gets the ping.
+				if action.action_state != _crop_prev_state:
+					if action.action_state == "ready" and player != null and is_instance_valid(player):
+						player.notice.emit("Un cultivo del huerto esta listo para recolectar.")
+					elif action.action_state == "rotten" and player != null and is_instance_valid(player):
+						player.notice.emit("Un cultivo del huerto se ha podrido.")
 				# Ripe/rotten transitions carry the ready timestamp so saves and
 				# late-join syncs reproduce the same spoilage window.
 				if action.action_state in ["ready", "rotten"]:

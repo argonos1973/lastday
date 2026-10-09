@@ -209,6 +209,25 @@ func run() -> void:
 	check(absf(float(bottles.durability) - expected) < 0.5, "watering drains one bottle, not the whole stack")
 	actor.free()
 
+	# The world tick pings the local player once when a bed turns harvestable.
+	var notice_count := {"ready": 0, "rotten": 0}
+	var listener := FakeActor.new()
+	listener.notice.connect(func(msg):
+		if str(msg).findn("recolectar") >= 0: notice_count["ready"] += 1
+		if str(msg).findn("podrido") >= 0: notice_count["rotten"] += 1)
+	world.player = listener
+	action.set_crop_state("planted", 0.0)
+	world._tick_world_actions(float(action.grow_time) + 1.0)
+	check(action.action_state == "ready", "world tick ripens a full-grown crop")
+	check(notice_count["ready"] == 1, "ready transition notifies the player once")
+	world._tick_world_actions(1.0)
+	check(notice_count["ready"] == 1, "later ticks do not repeat the ready notice")
+	action.set_meta("ready_unix", Time.get_unix_time_from_system() - GameConst.CROP_ROT_SECONDS - 1.0)
+	world._tick_world_actions(1.0)
+	check(action.action_state == "rotten" and notice_count["rotten"] == 1, "rotting also warns the player")
+	listener.free()
+	world.player = null
+
 	world.queue_free()
 	print("failures=%d" % failures)
 	quit(1 if failures > 0 else 0)
