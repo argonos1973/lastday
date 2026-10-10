@@ -32,6 +32,10 @@ func run() -> void:
 	var anim: String = actor._rifle_aim_idle_animation if aiming else actor._rifle_idle_animation
 	if "--walk" in OS.get_cmdline_user_args():
 		anim = actor._rifle_walk_animation
+	if "--turn-left" in OS.get_cmdline_user_args():
+		anim = actor._rifle_left_turn_animation
+	if "--turn-right" in OS.get_cmdline_user_args():
+		anim = actor._rifle_right_turn_animation
 	print("ANIM=", anim, " has=", player != null and player.has_animation(anim))
 	if player != null and player.has_animation(anim):
 		player.play(anim, 0.0)

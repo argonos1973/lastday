@@ -7923,9 +7923,10 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 		_rifle_aim_pose_active = true
 		_register_rifle_ik(skel, lh_idx)
 		return
-	if _rifle_weapon_offset.top_level:
-		_rifle_weapon_offset.set_as_top_level(false)
-		_rifle_weapon_offset.transform = Transform3D.IDENTITY
+	# This is a world-space solve. A later BoneAttachment update must not
+	# apply the hand rotation a second time after the rifle was aligned.
+	if not _rifle_weapon_offset.top_level:
+		_rifle_weapon_offset.set_as_top_level(true)
 
 	var rg_local := _rifle_right_grip.position
 	var lg_local := _rifle_left_hand_grip.position
@@ -7994,16 +7995,6 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
 	_rifle_weapon_offset.force_update_transform()
 
-	# Shift the whole rifle along the real barrel line (from muzzle toward stock)
-	# without changing rotation or scale. Direction is taken from the actual
-	# muzzle and stock markers.
-	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
-		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
-		_rifle_root.global_position += barrel_dir * 0.40
-
-	# While aiming the right-hand grip pivot above is authoritative. A later
-	# root translation would visibly detach the rifle from the palm.
-
 	# Force update so the grip marker's global transform is current
 	_rifle_root.force_update_transform()
 	_rifle_left_hand_grip.force_update_transform()
@@ -8040,32 +8031,27 @@ func _register_rifle_ik(skel: Skeleton3D, lh_idx: int) -> void:
 		_ik_skeleton_connected = true
 
 func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
-	# Resolve the eye: the local camera sits at the aiming eye position, so the
-	# sight line goes through it; puppets have no camera — anchor to the head
-	# bone and aim along the character's facing (remote pitch is not synced).
-	var sight_dir: Vector3
-	var eye: Vector3
+	# The camera travels from third person to ADS. Its position must never
+	# drag the physical rifle away from the character during that transition.
+	var sight_dir := -global_basis.z.normalized()
 	if not is_puppet and is_instance_valid(camera):
 		sight_dir = -camera.global_basis.z.normalized()
-		# Keep the rear of the ocular 10 cm ahead of the camera eye.
-		eye = camera.global_position + sight_dir * 0.10
+	var head_name := _resolve_bone_name_safe("mixamorig:Head", skel)
+	if head_name.is_empty():
+		for fallback in ["Head", "head", "Cabeza"]:
+			head_name = _resolve_bone_name_safe(fallback, skel)
+			if not head_name.is_empty(): break
+	var eye_name := _resolve_bone_name_safe("mixamorig:RightEye", skel)
+	var head_idx := skel.find_bone(head_name) if not head_name.is_empty() else -1
+	var eye_idx := skel.find_bone(eye_name) if not eye_name.is_empty() else -1
+	if eye_idx < 0 and head_idx < 0:
+		return false
+	var eye_position: Vector3
+	if eye_idx >= 0:
+		eye_position = (skel.global_transform * skel.get_bone_global_pose(eye_idx)).origin
 	else:
-		var head_bone := ""
-		for bone_name in ["mixamorig:Head", "mixamorig_Head", "Head", "head", "Cabeza"]:
-			head_bone = _resolve_bone_name_safe(bone_name, skel)
-			if not head_bone.is_empty():
-				break
-		if head_bone.is_empty():
-			return false
-		var head_idx := skel.find_bone(head_bone)
-		if head_idx < 0:
-			return false
-		var head_pos := (skel.global_transform * skel.get_bone_global_pose(head_idx)).origin
-		sight_dir = -global_basis.z.normalized()
-		var eye_name := _resolve_bone_name_safe("mixamorig:RightEye", skel)
-		var eye_idx := skel.find_bone(eye_name) if not eye_name.is_empty() else -1
-		var eye_position := (skel.global_transform * skel.get_bone_global_pose(eye_idx)).origin if eye_idx >= 0 else head_pos + global_basis.y.normalized() * 0.055 + global_basis.x.normalized() * 0.035
-		eye = eye_position + sight_dir * 0.10
+		eye_position = (skel.global_transform * skel.get_bone_global_pose(head_idx)).origin + global_basis.y.normalized() * .055 + global_basis.x.normalized() * .035
+	var eye := eye_position + sight_dir * .10
 	if sight_dir.length_squared() < 0.5:
 		return false
 	# Rifle basis: model -Z is the barrel, +Y is up, +X is its right side
@@ -8353,9 +8339,11 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis, target_clamped))
 
 func _on_skeleton_updated() -> void:
-	if not _is_aiming:
-		return
 	if _ik_skel == null or not is_instance_valid(_ik_skel):
+		return
+	if not _is_aiming:
+		# Turn clips update the hands after _process. Refit to that final pose.
+		_update_rifle_ik(_ik_skel, 0.0)
 		return
 	if _rifle_aim_pose_active:
 		_solve_aim_arms()

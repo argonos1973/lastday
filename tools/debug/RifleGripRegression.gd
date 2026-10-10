@@ -4,6 +4,8 @@ class Actor extends "res://scripts/PlayerController.gd":
 	func _ready(): pass
 	func _process(_delta): pass
 	func _physics_process(_delta): pass
+	func _create_scope_overlay(): pass
+	func _has_rifle_equipped() -> bool: return true
 var errors := 0
 func check(ok: bool, label: String):
 	if not ok:
@@ -66,6 +68,33 @@ func run():
 		actor._on_skeleton_updated()
 		var barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
 		check(barrel.dot(-actor.camera.global_basis.z) > 0.999, "Local barrel follows sight elevation")
+	actor._is_aiming = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var rmb := InputEventMouseButton.new()
+	rmb.button_index = MOUSE_BUTTON_RIGHT
+	rmb.pressed = true
+	if DisplayServer.get_name() == "headless":
+		actor._toggle_aim() # Headless display cannot capture a mouse.
+	else:
+		actor._input(rmb)
+	check(actor._is_aiming and is_equal_approx(actor.camera.fov,25.0), "Right button enters ADS through real input path")
+	# RMB starts with the camera 6.5 m behind the player; its interpolation
+	# must not pull the physical weapon out of the hands.
+	for camera_pos in [actor.THIRD_PERSON_CAMERA_POS, Vector3(.1,2.0,3), Vector3(.12,1.65,.15)]:
+		actor.camera.position = camera_pos
+		actor._update_rifle_ik(skel,.016)
+		actor._on_skeleton_updated()
+		var eye_idx := skel.find_bone("mixamorig_RightEye")
+		var eye := (skel.global_transform * skel.get_bone_global_pose(eye_idx)).origin
+		var ocular: Vector3 = actor._rifle_weapon_offset.global_transform * actor.RIFLE_AIM_EYE
+		check(ocular.distance_to(eye-actor.camera.global_basis.z.normalized()*.10)<.002, "ADS camera travel cannot displace rifle from eye")
+	rmb.pressed = false
+	if DisplayServer.get_name() == "headless":
+		actor._toggle_aim()
+	else:
+		actor._input(rmb)
+	check(not actor._is_aiming and actor.third_person_model.visible, "Releasing right button restores third person")
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	# No animation advance is needed to undo corrected finger pivots.
 	actor._is_aiming = false
 	actor._update_rifle_ik(skel, 0.016)
@@ -75,6 +104,21 @@ func run():
 	actor._is_aiming = true
 	actor._update_rifle_ik(skel, 0.016)
 	actor._on_skeleton_updated()
+	# Third-person turning must retain BOTH grip contacts after animation and
+	# yaw updates, including the frame after the ADS top-level transform exits.
+	actor._is_aiming = false
+	for clip in [actor._rifle_idle_animation,actor._rifle_left_turn_animation,actor._rifle_right_turn_animation,actor._rifle_walk_animation]:
+		check(not clip.is_empty() and actor.third_person_animation_player.has_animation(clip), "Rifle turn fixture exists")
+		actor.third_person_animation_player.play(clip,0.0)
+		for frame in 24:
+			actor.rotation.y = frame*.08
+			actor.third_person_animation_player.advance(.016)
+			skel.force_update_all_bone_transforms()
+			actor._on_skeleton_updated()
+			for pair in [[actor._rifle_right_grip,"mixamorig_RightHand"],[actor._rifle_left_hand_grip,"mixamorig_LeftHand"]]:
+				var palm: Vector3 = (skel.global_transform*skel.get_bone_global_pose(skel.find_bone(pair[1]))).origin
+				check(pair[0].global_position.distance_to(palm)<.002,"Third-person turn retains grip: "+clip+"/"+pair[1])
+	actor._is_aiming = true
 	# Sitting/prone use the fallback solver: an unreachable grip must not
 	# teleport the wrist beyond the physical length of the forearm.
 	actor._rifle_aim_pose_active = false
@@ -101,12 +145,12 @@ func run():
 		check(dummy.get_bone_global_pose(idx).is_finite(), "Finite coincident-target IK")
 	check(absf(dummy.get_bone_global_pose(2).origin.distance_to(dummy.get_bone_global_pose(1).origin) - 1.0) < 0.001, "IK preserves forearm length")
 	dummy.free()
-	# Leaving aim returns the weapon to its hand attachment.
+	# Leaving aim resumes the world-space hand alignment.
 	actor._is_aiming = false
 	player.play(actor._rifle_idle_animation, 0.0)
 	player.advance(0.1)
 	actor._update_rifle_ik(skel, 0.016)
-	check(not actor._rifle_weapon_offset.top_level, "Un-aim restores hand parenting")
+	check(actor._rifle_right_grip.global_position.distance_to((skel.global_transform * skel.get_bone_global_pose(actor._ik_rh_idx)).origin)<.002, "Un-aim restores right-hand contact")
 	check(not actor._rifle_aim_pose_active, "Un-aim disables aim solver")
 	for rig in actor._grip_rig.values():
 		for entry in rig["fingers"]:
