@@ -57,6 +57,7 @@ func _ready() -> void:
 	# Dedicated server: skip UI entirely, load the world immediately
 	var net_check = get_node_or_null("/root/NetworkManager")
 	if net_check != null and net_check.is_dedicated_server:
+		print("[SERVER] Build ", _build_version())
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
 	SaveIntegration.maybe_insert_saved_character(self)
@@ -144,6 +145,22 @@ func _ready() -> void:
 	tex_rect.anchor_right = 1.0
 	tex_rect.anchor_bottom = 1.0
 	add_child(tex_rect)
+
+	# --- Version stamp: commit hash de la build (abajo a la derecha) ---
+	var ver := Label.new()
+	ver.text = "v" + _build_version()
+	ver.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.45))
+	ver.add_theme_font_size_override("font_size", 13)
+	ver.anchors_preset = Control.PRESET_BOTTOM_RIGHT
+	ver.anchor_left = 1.0
+	ver.anchor_top = 1.0
+	ver.offset_left = -140.0
+	ver.offset_top = -32.0
+	ver.offset_right = -14.0
+	ver.offset_bottom = -10.0
+	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(ver)
 
 	# --- Left panel: Main menu ---
 	var left_panel := PanelContainer.new()
@@ -717,6 +734,42 @@ func _on_net_connected() -> void:
 	# un rechazo puede tardar ~0.5 s y el guard de _start_game debe fallar.
 	if _mode != "join":
 		get_tree().create_timer(0.3).timeout.connect(_start_game)
+
+# Version de la build mostrada en el inicio: en exportaciones es el commit
+# escrito por tools/stamp_version.sh en version.txt (empaquetado en el pck);
+# en editor/headless lee .git/HEAD directamente, sin binario git.
+func _build_version() -> String:
+	if FileAccess.file_exists("res://version.txt"):
+		var f := FileAccess.open("res://version.txt", FileAccess.READ)
+		if f != null:
+			var v := f.get_as_text().strip_edges()
+			if not v.is_empty():
+				return v
+	var git_dir := ProjectSettings.globalize_path("res://") + ".git/"
+	var head := FileAccess.open(git_dir + "HEAD", FileAccess.READ)
+	if head == null:
+		return "dev"
+	var head_text := head.get_as_text().strip_edges()
+	if head_text.begins_with("ref:"):
+		var ref_name := head_text.substr(4).strip_edges()
+		var ref_path := git_dir + ref_name
+		var rf := FileAccess.open(ref_path, FileAccess.READ)
+		if rf != null:
+			return rf.get_as_text().strip_edges().substr(0, 7)
+		# Ref empaquetada (clones/fetch recientes): buscarla en packed-refs
+		var pf := FileAccess.open(git_dir + "packed-refs", FileAccess.READ)
+		if pf != null:
+			while not pf.eof_reached():
+				var line := pf.get_line().strip_edges()
+				if line.is_empty() or line.begins_with("#") or line.begins_with("^"):
+					continue
+				var sp := line.split(" ", false, 1)
+				if sp.size() == 2 and sp[1].strip_edges() == ref_name:
+					return sp[0].substr(0, 7)
+	elif head_text.length() >= 7:
+		# HEAD detached: el propio archivo contiene el hash
+		return head_text.substr(0, 7)
+	return "dev"
 
 func _on_net_ready() -> void:
 	if _mode != "join" or _started:

@@ -44,3 +44,4 @@ lastday2.app/
 
 # Python bytecode from running the Blender tool scripts
 __pycache__/
+version.txt
