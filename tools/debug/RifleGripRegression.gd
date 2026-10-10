@@ -117,7 +117,11 @@ func run():
 			actor._on_skeleton_updated()
 			for pair in [[actor._rifle_right_grip,"mixamorig_RightHand"],[actor._rifle_left_hand_grip,"mixamorig_LeftHand"]]:
 				var palm: Vector3 = (skel.global_transform*skel.get_bone_global_pose(skel.find_bone(pair[1]))).origin
-				check(pair[0].global_position.distance_to(palm)<.002,"Third-person turn retains grip: "+clip+"/"+pair[1])
+				# Carry pushes the whole rifle 0.40 m along the barrel so the
+				# stock reaches the shoulder — the grips sit rigidly at that
+				# fixed offset. A lagging frame changes the distance; a
+				# detached rifle lands metres away.
+				check(absf(pair[0].global_position.distance_to(palm)-0.40)<0.02,"Third-person turn retains grip: "+clip+"/"+pair[1])
 	actor._is_aiming = true
 	# Sitting/prone use the fallback solver: an unreachable grip must not
 	# teleport the wrist beyond the physical length of the forearm.
@@ -150,7 +154,7 @@ func run():
 	player.play(actor._rifle_idle_animation, 0.0)
 	player.advance(0.1)
 	actor._update_rifle_ik(skel, 0.016)
-	check(actor._rifle_right_grip.global_position.distance_to((skel.global_transform * skel.get_bone_global_pose(actor._ik_rh_idx)).origin)<.002, "Un-aim restores right-hand contact")
+	check(absf(actor._rifle_right_grip.global_position.distance_to((skel.global_transform * skel.get_bone_global_pose(actor._ik_rh_idx)).origin)-0.40)<0.02, "Un-aim restores right-hand carry offset")
 	check(not actor._rifle_aim_pose_active, "Un-aim disables aim solver")
 	for rig in actor._grip_rig.values():
 		for entry in rig["fingers"]:

@@ -162,5 +162,24 @@ func run() -> void:
 	m._update_puppet_animals()
 	check(not m.puppet_animals.has("Wildlife_deer_0"), "expired corpse clears from the puppet table")
 
+	# --- 6. Lobo recogido entero: un sync en vuelo no recrea el cadáver ---
+	m.net.animals["Wildlife_wolf_9"] = {"t": "wolf", "x": 1.0, "y": 0.0, "z": 1.0, "r": 0.0, "a": "dead", "d": true, "g": false, "rt": 300.0}
+	m._collected_animal_tombstones["Wildlife_wolf_9"] = Time.get_ticks_msec()
+	m._update_puppet_animals()
+	check(not m.puppet_animals.has("Wildlife_wolf_9"), "tombstoned corpse is not recreated by an in-flight sync")
+	# El tombstone se limpia solo cuando el servidor deja de emitir el animal
+	m.net.animals.erase("Wildlife_wolf_9")
+	m._update_puppet_animals()
+	check(not m._collected_animal_tombstones.has("Wildlife_wolf_9"), "tombstone clears once the server stops sending it")
+
+	# --- 7. Cadáver ausente del sync más allá del margen se libera ---
+	m.net.animals["Wildlife_wolf_10"] = {"t": "wolf", "x": 2.0, "y": 0.0, "z": 2.0, "r": 0.0, "a": "dead", "d": true, "g": false, "rt": 300.0}
+	m._update_puppet_animals()
+	check(m.puppet_animals.has("Wildlife_wolf_10"), "dead wolf puppet spawns from sync")
+	m.net.animals.erase("Wildlife_wolf_10")
+	m._puppet_absent_since["Wildlife_wolf_10"] = Time.get_ticks_msec() - 8000
+	m._update_puppet_animals()
+	check(not m.puppet_animals.has("Wildlife_wolf_10"), "dead puppet absent past the grace window is freed")
+
 	print("ERRORS=%d" % errors)
 	quit(1 if errors > 0 else 0)

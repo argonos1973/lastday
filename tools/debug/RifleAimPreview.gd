@@ -56,6 +56,11 @@ func run() -> void:
 		if aiming:
 			actor._solve_aim_arms()
 		skel.force_update_all_bone_transforms()
+	# Settle the sling too — with the rifle held it drapes from the gun back to
+	# the body guides and must be updated to render its true shape.
+	for i in 8:
+		actor._update_rifle_strap(1.0 / 30.0)
+		await process_frame
 	await process_frame
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-35, -20, 0)

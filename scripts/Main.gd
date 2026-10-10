@@ -73,6 +73,8 @@ var _campfire_emit_timer := 0.0
 var _animal_debug_timer := 0
 var _client_animal_debug_timer := 0
 var puppet_animals: Dictionary = {}  # animal_id -> WildlifeController (puppet)
+var _collected_animal_tombstones: Dictionary = {}  # aid -> msec; skip re-creating these corpses
+var _puppet_absent_since: Dictionary = {}  # aid -> msec first missing from net.animals
 var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
 var _legit_cut_trees: Array = []
@@ -602,8 +604,15 @@ func _ready() -> void:
 		# before the world-state preload so clean quits and crashes alike
 		# restart clean. Reconnects within the session still use the
 		# in-memory _server_saved_players baseline.
+		# keep_world.flag carries the world over a restart (deploys); it is
+		# consumed here so it only shields a single boot.
+		var keep_flag := "user://keep_world.flag"
+		var keep_world := FileAccess.file_exists(keep_flag)
+		if keep_world:
+			DirAccess.remove_absolute(keep_flag)
+			print("[SERVER] keep_world.flag presente: conservando la partida anterior")
 		var sgm_boot = get_node_or_null("/root/SaveGameManager")
-		if sgm_boot != null and sgm_boot.has_method("delete_server_save"):
+		if not keep_world and sgm_boot != null and sgm_boot.has_method("delete_server_save"):
 			sgm_boot.delete_server_save()
 		SaveGameHooks.preload_saved_world_state(self)
 		await _create_map()
@@ -2306,13 +2315,18 @@ func _request_server_shutdown() -> void:
 	if _server_shutdown_started:
 		return
 	_server_shutdown_started = true
-	print("[SERVER] Cerrando: eliminando mundo de la sesión...")
 	# The server world is per-session: on shutdown the save is deleted so no
 	# doors/drops/loot/player records ever reach the next boot. Mid-session
 	# autosaves still run (60 s timer + 'save' command) for in-session state.
-	var sgm := get_node_or_null("/root/SaveGameManager")
-	if sgm != null and sgm.has_method("delete_server_save"):
-		sgm.delete_server_save()
+	# keep_world.flag skips the wipe — it is NOT consumed here: the next boot
+	# must still see it to skip its own delete, and consumes it there.
+	if FileAccess.file_exists("user://keep_world.flag"):
+		print("[SERVER] keep_world.flag presente: conservando la partida al cerrar")
+	else:
+		print("[SERVER] Cerrando: eliminando mundo de la sesión...")
+		var sgm := get_node_or_null("/root/SaveGameManager")
+		if sgm != null and sgm.has_method("delete_server_save"):
+			sgm.delete_server_save()
 	get_tree().quit()
 
 func _notification(what: int) -> void:
@@ -3575,6 +3589,9 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 	# Fix key: animal_name may be "Puppet_X" but puppet_animals is keyed by "X"
 	var puppet_key := animal_name.replacen("Puppet_", "")
+	# Tombstone now: a sync chunk in flight can still carry this animal and
+	# would otherwise recreate the corpse before the 5 s cleanup below runs.
+	_collected_animal_tombstones[puppet_key] = Time.get_ticks_msec()
 	# Delay removal and meat spawning by 5s to match the gutting animation
 	var meat_drops_ref: Array = meat_drops
 	var t := get_tree().create_timer(5.0)
@@ -4415,6 +4432,12 @@ func _update_puppet_animals() -> void:
 		return
 	if net.animals.is_empty():
 		return
+	# Tombstones stop a just-collected/gutted corpse from being recreated by a
+	# sync packet that was in flight before the server processed the removal.
+	# Once the entry is gone from net.animals the tombstone is useless — drop it.
+	for aid in _collected_animal_tombstones.keys():
+		if not net.animals.has(aid):
+			_collected_animal_tombstones.erase(aid)
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
 		var kind := str(d.get("t", "deer"))
@@ -4422,6 +4445,8 @@ func _update_puppet_animals() -> void:
 		# still broadcasts it) must not block recreation — drop the stale ref.
 		if puppet_animals.has(aid) and not is_instance_valid(puppet_animals[aid]):
 			puppet_animals.erase(aid)
+		if _collected_animal_tombstones.has(aid):
+			continue
 		if not puppet_animals.has(aid):
 			if kind == "bird":
 				var bird_puppet = BirdControllerScript.new()
@@ -4454,15 +4479,26 @@ func _update_puppet_animals() -> void:
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
 					p.tamed_to = str(d.get("tamed", ""))
 					p._follow_mode = str(d.get("fm", "follow"))
-	# Remove puppets that no longer exist on the server (unless dead/gutted - those are removed by _net_animal_gutted after animation)
+	# Remove puppets that no longer exist on the server. Dead/gutted corpses get
+	# a grace window: the gutted broadcast's cleanup arrives ~5 s after the
+	# server stopped sending the entry. Past that window an absent corpse is a
+	# ghost — e.g. recreated by an in-flight sync right after a whole pickup —
+	# and must be freed or it lingers forever next to the real dropped corpse.
 	var stale := []
 	for aid in puppet_animals.keys():
-		if not net.animals.has(aid):
-			var puppet_node = puppet_animals[aid]
-			if is_instance_valid(puppet_node) and (puppet_node.get("_is_dead") or puppet_node.get("_gutted")):
-				continue
-			stale.append(aid)
+		if net.animals.has(aid):
+			_puppet_absent_since.erase(aid)
+			continue
+		var puppet_node = puppet_animals[aid]
+		var absent_from := int(_puppet_absent_since.get(aid, 0))
+		if absent_from == 0:
+			absent_from = Time.get_ticks_msec()
+			_puppet_absent_since[aid] = absent_from
+		if is_instance_valid(puppet_node) and (puppet_node.get("_is_dead") or puppet_node.get("_gutted")) and Time.get_ticks_msec() - absent_from < 7000:
+			continue
+		stale.append(aid)
 	for aid in stale:
+		_puppet_absent_since.erase(aid)
 		if is_instance_valid(puppet_animals[aid]):
 			puppet_animals[aid].queue_free()
 		puppet_animals.erase(aid)
@@ -5356,6 +5392,15 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	# Harvested and bush-dropped seeds share the pouch model across item types.
 	if item_name == "Semillas":
 		return [FARMING_DIR + "farm_seed_pouch.glb"]
+	# Whole dead animals keep their species model so the inventory shows the
+	# actual corpse instead of a generic material icon.
+	match item_name:
+		"Ciervo muerto":
+			return ["res://assets/external/deer/DeerAnimated.glb"]
+		"Zorro muerto":
+			return ["res://assets/external/fox/FoxAnimated.glb"]
+		"Lobo muerto", "Animal muerto":
+			return ["res://assets/external/wolf/WolfAnimated.glb"]
 	match item_type:
 		"water":
 			if item_name == "Botella de agua" or item_name == "Botella de agua llena":

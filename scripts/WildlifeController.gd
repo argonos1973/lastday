@@ -1179,8 +1179,13 @@ func collect(player: Node) -> void:
 	if added:
 		if player != null and player.has_signal("notice"):
 			player.notice.emit("Coges el %s entero." % an)
-		# For puppets, notify server to remove the animal
+		# For puppets, notify server to remove the animal. Tombstone the id
+		# locally too — a sync packet already in flight would otherwise
+		# recreate the dead puppet while the server still lists it.
 		if is_puppet:
+			var scene := get_tree().current_scene
+			if scene != null and "_collected_animal_tombstones" in scene:
+				scene._collected_animal_tombstones[name.replacen("Puppet_", "")] = Time.get_ticks_msec()
 			var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 			if net_node != null:
 				net_node.gut_animal.rpc_id(1, name, true)

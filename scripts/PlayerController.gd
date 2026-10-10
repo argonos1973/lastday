@@ -349,7 +349,7 @@ const THIRD_PERSON_EXTERNAL_ROD_CAST_ANIMATION := "RodCastExternal"
 const THIRD_PERSON_EXTERNAL_ROD_IDLE_ANIMATION := "RodIdleExternal"
 const THIRD_PERSON_EXTERNAL_ROD_FISH_START_ANIMATION := "RodFishStartExternal"
 const THIRD_PERSON_EXTERNAL_ROD_FISH_END_ANIMATION := "RodFishEndExternal"
-const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.8, 6.5)
+const THIRD_PERSON_CAMERA_POS := Vector3(0.0, 2.4, 4.2)
 const THIRD_PERSON_DEFAULT_SCALE := 1.55
 const MIXAMO_CHARACTER_SCALE := 0.72
 const MIXAMO_GROUND_CORRECTION := 0.38
@@ -7994,6 +7994,16 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	_rifle_weapon_offset.global_basis = weapon_basis
 	_rifle_weapon_offset.global_position = rh_pos - weapon_basis * rg_local
 	_rifle_weapon_offset.force_update_transform()
+
+	# Shift the whole rifle along the real barrel line (from muzzle toward stock)
+	# without changing rotation or scale. Direction is taken from the actual
+	# muzzle and stock markers.
+	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
+		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
+		_rifle_root.global_position += barrel_dir * 0.40
+
+	# While aiming the right-hand grip pivot above is authoritative. A later
+	# root translation would visibly detach the rifle from the palm.
 
 	# Force update so the grip marker's global transform is current
 	_rifle_root.force_update_transform()
