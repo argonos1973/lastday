@@ -83,9 +83,9 @@ var _water_query_timer := 0.0
 # animal moverse, así que no viaja nada por la red.
 const TrackPrintScript = preload("res://scripts/TrackPrint.gd")
 const TRACK_SPECS := {
-	"wolf": {"kind": "paw", "size": 0.15, "stride": 0.48, "lat": 0.11},
-	"deer": {"kind": "hoof", "size": 0.13, "stride": 0.62, "lat": 0.09},
-	"fox": {"kind": "paw", "size": 0.10, "stride": 0.38, "lat": 0.075},
+	"wolf": {"kind": "paw", "size": 0.34, "stride": 0.48, "lat": 0.14},
+	"deer": {"kind": "hoof", "size": 0.30, "stride": 0.62, "lat": 0.12},
+	"fox": {"kind": "paw", "size": 0.24, "stride": 0.38, "lat": 0.11},
 }
 var _track_started := false
 var _track_anchor := Vector3.ZERO
@@ -589,6 +589,36 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_chase_cooldown = 10.0
 			_play_animation_by_name("run")
 			return {"target": target, "speed": speed}
+	# Cebo en la mano: un jugador que lleva carne/pescado equipado no es
+	# presa — el lobo huele el cebo, lo ronda a distancia y espera a que lo
+	# tire al suelo. Si YA hay carne suya tirada, este bloque no interviene:
+	# el bloque de alimentación lo manda a comerla directamente.
+	if animal_type == "wolf" and tamed_to.is_empty() and _player != null and is_instance_valid(_player) and _player_holds_meat(_player):
+		var holder_id := _feeder_key(_player)
+		var ground_offering := _find_nearest_meat_pickup(holder_id) if (not holder_id.is_empty() and is_hungry) else null
+		if ground_offering == null:
+			if _state == "chase_player" or _chase_target == _player:
+				_chase_target = null
+				_chase_stuck_time = 0.0
+				_state = "patrol"
+				_current_path.clear()
+				_path_index = 0
+				_chase_cooldown = 3.0
+			var bait_dist := global_position.distance_to(_player.global_position)
+			if bait_dist > 14.0:
+				_play_animation_by_name("walk")
+				return {"target": _player.global_position, "speed": move_speed * 1.4}
+			var to_holder := _player.global_position - global_position
+			to_holder.y = 0.0
+			if to_holder.length() > 0.01:
+				rotation.y = lerp_angle(rotation.y, atan2(to_holder.x, to_holder.z), delta * 4.0)
+			if bait_dist < 5.0:
+				_play_animation_by_name("walk")
+				return {"target": global_position - to_holder.normalized() * 2.5, "speed": move_speed * 0.9}
+			if randf() < delta * 0.2:
+				_play_wolf_sound("growl")
+			_play_animation_by_name("idle")
+			return {"target": global_position, "speed": 0.0}
 	if _state == "retreat":
 		if _chase_cooldown > 0.0:
 			if global_position.distance_to(_retreat_target) < 1.6:
@@ -1457,6 +1487,29 @@ func _resolve_owner() -> Node3D:
 func _can_feed_from(feeder: Node3D) -> bool:
 	return is_instance_valid(feeder) and not feeder.is_queued_for_deletion() and not feeder.get_meta("proxy_dead", false) and not feeder.get_meta("disconnected", false) and feeder.get("is_dead") != true
 
+# Carne o pescado equipado en la mano: localmente se lee get_held_item();
+# en el servidor el proxy de red solo tiene el nombre sincronizado
+# (_puppet_held vía puppet_apply_visuals desde sync_player_state).
+func _player_holds_meat(p: Node) -> bool:
+	if p == null or not is_instance_valid(p):
+		return false
+	if p.get_meta("proxy_dead", false) or p.get_meta("disconnected", false) or p.get("is_dead") == true:
+		return false
+	var held_name := ""
+	if p.is_in_group("net_player_proxy"):
+		held_name = str(p.get("_puppet_held"))
+	elif p.has_method("get_held_item"):
+		var it = p.get_held_item()
+		if it != null:
+			held_name = str(it.get("item_name"))
+	return _is_meat_name(held_name)
+
+func _is_meat_name(n: String) -> bool:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_is_meat_item_name"):
+		return scene._is_meat_item_name(n)
+	return n.begins_with("Carne") or n.begins_with("Pez")
+
 func _register_feeding(feeder_id: String) -> void:
 	if feeder_id.is_empty() or tamed_to != "" or _is_dead:
 		return
@@ -2202,7 +2255,7 @@ func _update_tracks() -> void:
 			# A footprint must not bridge a vertical ledge or wall.
 			if normal.y < 0.55:
 				continue
-		pp += normal * 0.008
+		pp += normal * 0.015
 		TrackPrintScript.spawn(scene, pp, yaw, String(spec["kind"]), float(spec["size"]), normal)
 	_track_acc = dist - (s - stride)
 
@@ -2575,19 +2628,19 @@ func _collect_mesh_instances(root: Node, result: Array) -> void:
 func _animal_asset_candidates() -> Array:
 	if animal_type == "deer":
 		return [
-			"res://assets/external/quaternius_animals/glTF/Deer.gltf",
+			GameConst.DEER_MODEL,
 			"res://assets/external/quaternius_animals/glTF/Stag.gltf"
 		]
 	if animal_type == "fox":
 		return [
-			"res://assets/external/quaternius_animals/glTF/Fox.gltf"
+			GameConst.FOX_MODEL
 		]
 	if animal_type == "wolf":
 		return [
-			"res://assets/external/wolf/WolfAnimated.glb"
+			GameConst.WOLF_MODEL
 		]
 	return [
-		"res://assets/external/quaternius_animals/glTF/Fox.gltf"
+		GameConst.FOX_MODEL
 	]
 
 func _find_animation_player(root: Node) -> AnimationPlayer:

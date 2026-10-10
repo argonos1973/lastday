@@ -49,8 +49,14 @@ class TestPlayer extends Node3D:
 	signal notice(text)
 	var is_dead := false
 	var notices: Array = []
+	var held = null
 	func _init() -> void:
 		notice.connect(func(t): notices.append(t))
+	func get_held_item():
+		return held
+
+class TestProxy extends Node3D:
+	var _puppet_held := ""
 
 class TestWolf extends WildlifeController:
 	func _play_wolf_sound(_kind: String) -> void:
@@ -100,7 +106,7 @@ func spawn_meat(world: Node, pos: Vector3, feeder_id: String) -> WorldAction:
 	return a
 
 func make_proxy(world: Node, pid: int, pos: Vector3) -> Node3D:
-	var p := Node3D.new()
+	var p := TestProxy.new()
 	p.name = "ServerProxy_%d" % pid
 	p.add_to_group("net_player_proxy")
 	p.set_meta("peer_id", pid)
@@ -278,6 +284,7 @@ func run() -> void:
 
 	world.free()
 	await test_feeding_priority()
+	await test_meat_in_hand()
 	await test_server_persistence()
 	if failures == 0:
 		print("WolfTameRegression: ALL PASS")
@@ -347,6 +354,82 @@ func test_feeding_priority() -> void:
 	proxy.set_meta("disconnected", true)
 	wolf._process(8.0)
 	check(not wolf._tame_progress.has("7"), "Disconnecting before the meal ends grants no trust")
+	world.free()
+
+# Carne en la mano: un jugador con carne/pescado equipado no provoca ataque —
+# el lobo acecha a distancia esperando a que lo tire. Cuando lo suelta al
+# suelo (dropped_by), el lobo va a comerlo como siempre.
+func test_meat_in_hand() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player := TestPlayer.new()
+	player.name = "Player"
+	player.position = Vector3(30, 0, 0)
+	world.add_child(player)
+	var wolf := make_wolf(world, Vector3.ZERO)
+	wolf._wolf_hunger = 20.0
+
+	# Sin carne en la mano: el lobo persigue como siempre.
+	wolf._resolve_player()
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "Wolf chases a player holding no meat")
+
+	# Jugador local con carne equipada: el lobo se pacifica y acecha a distancia.
+	var meat_item = load("res://scripts/Item.gd").create("Carne cruda de lobo", "food", 0.5, 1, 15.0)
+	player.held = meat_item
+	wolf._wolf_ai(0.05)
+	check(wolf._state != "chase_player" and wolf._chase_target == null, "Meat in hand stops the chase")
+	var hold := wolf._wolf_ai(0.05)
+	check(hold["speed"] > 0.0, "Wolf approaches a far meat-holder")
+	check(hold["target"] == player.global_position, "Pacified wolf shadows the meat-holder")
+	# Cerca: mantiene distancia y no ataca.
+	wolf.global_position = player.global_position - Vector3(8, 0, 0)
+	var close := wolf._wolf_ai(0.05)
+	check(close["speed"] == 0.0, "Wolf holds ground near the bait, no attack")
+	wolf.global_position = player.global_position - Vector3(3, 0, 0)
+	var too_close := wolf._wolf_ai(0.05)
+	check(too_close["speed"] > 0.0, "Wolf backs off when the holder gets too close")
+	check(not wolf._tame_progress.has("local"), "Carrying meat grants no trust until it is dropped")
+
+	# Proxy de red (servidor): se lee _puppet_held sincronizado.
+	player.held = null
+	var proxy := make_proxy(world, 7, Vector3(30, 0, 20))
+	proxy._puppet_held = "Carne cruda de ciervo"
+	wolf._player = null
+	wolf._resolve_player()
+	var baited := wolf._wolf_ai(0.05)
+	check(wolf._state != "chase_player" and baited["target"].distance_to(proxy.global_position) < 40.0, "Remote player holding meat is also pacified")
+	proxy._puppet_held = ""
+	wolf._chase_cooldown = 0.0  # salta la gracia de 3 s tras soltar el cebo
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "chase_player", "Stowing the meat resumes the attack")
+
+	# Suelta la carne: con el cebo en el suelo el lobo va a comerla.
+	proxy._puppet_held = "Carne cruda de ciervo"
+	var ground_meat := spawn_meat(world, proxy.global_position + Vector3(2, 0, 0), "7")
+	wolf._chase_cooldown = 0.0
+	wolf._state = "patrol"
+	wolf.global_position = proxy.global_position - Vector3(3, 0, 0)
+	var seek := wolf._wolf_ai(0.05)
+	check(wolf._wolf_eating_target == ground_meat or seek["target"] == ground_meat.global_position, "Dropped meat draws the wolf to eat")
+
+	# Un lobo domesticado ignora el cebo: sigue a su dueño.
+	var tamed := make_wolf(world, Vector3(0, 0, 50))
+	tamed.tamed_to = "local"
+	player.held = meat_item
+	player.global_position = tamed.global_position + Vector3(4, 0, 0)
+	tamed._player = player
+	var tamed_res := tamed._wolf_ai(0.05)
+	check(bool(tamed_res.get("handled", false)) or tamed_res["target"].distance_to(player.global_position) < 8.0, "Tamed wolf ignores the bait and follows its owner")
+
+	# Objetos que no son carne no pacifican.
+	var wolf2 := make_wolf(world, Vector3(0, 0, 80))
+	var proxy2 := make_proxy(world, 8, wolf2.global_position + Vector3(10, 0, 0))
+	proxy2._puppet_held = "Hacha"
+	wolf2._player = proxy2
+	wolf2._wolf_ai(0.05)
+	check(wolf2._state == "chase_player", "A non-meat held item does not pacify the wolf")
 	world.free()
 
 func sync_inventory(world: ServerWorld, pid: int, extra: Dictionary) -> void:

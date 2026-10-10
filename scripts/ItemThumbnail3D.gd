@@ -57,6 +57,11 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	if inst == null:
 		return
 	_model_root.add_child(inst)
+	# Animated models (dead animals, gear pickups) keep their mesh bound to a
+	# skeleton: the skinned instance renders at the bone pose while its
+	# node-space AABB sits elsewhere, so the viewport culls it to a blank
+	# icon. Flatten them to static copies that render the bind pose.
+	_flatten_skinned_meshes(inst)
 	if not only_mesh_name.is_empty():
 		var all_meshes: Array = []
 		_collect_meshes(inst, all_meshes)
@@ -146,3 +151,24 @@ func _collect_meshes(node: Node, out: Array) -> void:
 		out.append(node)
 	for child in node.get_children():
 		_collect_meshes(child, out)
+
+# Replaces skinned meshes with static copies showing the bind pose so the
+# thumbnail never depends on a skeleton being posed. The flat copy takes the
+# original name so only_mesh_name filtering still matches it.
+func _flatten_skinned_meshes(inst: Node3D) -> void:
+	var skinned: Array = []
+	_collect_skinned(inst, skinned)
+	for sm in skinned:
+		var orig_name := String(sm.name)
+		sm.name = orig_name + "_skinned"
+		sm.visible = false
+		var flat := MeshInstance3D.new()
+		flat.mesh = sm.mesh
+		flat.name = orig_name
+		inst.add_child(flat)
+
+func _collect_skinned(node: Node, out: Array) -> void:
+	if node is MeshInstance3D and node.skin != null:
+		out.append(node)
+	for child in node.get_children():
+		_collect_skinned(child, out)

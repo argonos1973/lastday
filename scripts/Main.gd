@@ -5139,11 +5139,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			animal_kind = "deer"
 		elif item_name == "Zorro muerto":
 			animal_kind = "fox"
-		var model_path := "res://assets/external/wolf/WolfAnimated.glb"
+		var model_path := GameConst.WOLF_MODEL
 		if animal_kind == "deer":
-			model_path = "res://assets/external/deer/DeerAnimated.glb"
+			model_path = GameConst.DEER_MODEL
 		elif animal_kind == "fox":
-			model_path = "res://assets/external/fox/FoxAnimated.glb"
+			model_path = GameConst.FOX_MODEL
 		var p := pos
 		p.y = pos.y + 0.1
 		_drop_seq += 1
@@ -5396,11 +5396,11 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	# actual corpse instead of a generic material icon.
 	match item_name:
 		"Ciervo muerto":
-			return ["res://assets/external/deer/DeerAnimated.glb"]
+			return [GameConst.DEER_MODEL]
 		"Zorro muerto":
-			return ["res://assets/external/fox/FoxAnimated.glb"]
+			return [GameConst.FOX_MODEL]
 		"Lobo muerto", "Animal muerto":
-			return ["res://assets/external/wolf/WolfAnimated.glb"]
+			return [GameConst.WOLF_MODEL]
 	match item_type:
 		"water":
 			if item_name == "Botella de agua" or item_name == "Botella de agua llena":

@@ -28,7 +28,7 @@ static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: fl
 	quad.size = Vector2(size, size)
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = _texture(kind)
-	m.albedo_color = Color(0.11, 0.09, 0.06, 0.55)
+	m.albedo_color = Color(0.075, 0.06, 0.04, 0.9)
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
