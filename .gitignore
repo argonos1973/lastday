@@ -45,3 +45,6 @@ lastday2.app/
 # Python bytecode from running the Blender tool scripts
 __pycache__/
 version.txt
+
+# Unused generated asset (tools/blender/create_broken_city_road.py); regenerable, not referenced yet.
+assets/models/environment/city/broken_road*

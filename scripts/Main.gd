@@ -26,7 +26,8 @@ const WildlifeRoutes = preload("res://scripts/WildlifeRoutes.gd")
 const BirdControllerScript = preload("res://scripts/BirdController.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 
-const MAP_EXTENT := 500.0
+const MAP_EXTENT := 500.0 # Legacy generation area: preserve existing density and spawn positions.
+const CityExpansion = preload("res://scripts/CityExpansion.gd")
 
 var player
 var hud
@@ -5731,8 +5732,9 @@ func _create_npc() -> void:
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	_generated_hills.clear()
+	_road_segments = _generate_road_segments() # Reserve the real route before generating relief.
 	river_segments_data = _default_river_segments()
-	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, 0), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT * 2.0))
+	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, (CityExpansion.SOUTH_LIMIT-MAP_EXTENT)*.5), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT+CityExpansion.SOUTH_LIMIT))
 	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
 	var is_server: bool = net != null and net.is_dedicated_server
 	if not is_server:
@@ -5842,6 +5844,7 @@ func _create_map() -> void:
 	if not is_server:
 		_create_survival_objectives()
 		await get_tree().process_frame
+	CityExpansion.create(self, is_server)
 	_create_river_drink_zones()
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
@@ -5939,7 +5942,14 @@ func _generate_road_segments() -> Array:
 			last_idx = i
 	return segments
 
+func _south_road_end() -> float:
+	if _road_segments.is_empty():
+		return 500.0
+	var last: Dictionary = _road_segments.back()
+	return float(last["center"].z) + float(last["size"].x) * 0.5
+
 func _is_on_road(pos: Vector3) -> bool:
+	if CityExpansion.on_road(pos, 0.0, _south_road_end()): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -5957,6 +5967,7 @@ func _is_on_road(pos: Vector3) -> bool:
 	return false
 
 func _is_near_road(pos: Vector3, margin: float) -> bool:
+	if CityExpansion.on_road(pos, margin, _south_road_end()): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -10791,6 +10802,7 @@ func get_hud():
 
 #region API PÚBLICA DEL MUNDO
 func get_river_depth_at(world_pos: Vector3) -> float:
+	if CityExpansion.above_bridge(world_pos): return 0.0
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
@@ -10897,6 +10909,7 @@ const HOUSE_DATA := [
 ]
 
 func _is_player_in_house(pos: Vector3) -> bool:
+	if CityExpansion.inside_building(pos): return true
 	for hd in HOUSE_DATA:
 		var house_pos: Vector3 = hd["pos"]
 		var half_w: float = hd["w"] * 0.5
@@ -12086,6 +12099,8 @@ func _apply_material_recursive(node: Node, mat: Material) -> void:
 		_apply_material_recursive(child, mat)
 
 func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, radius_z: float, height: float, yaw: float, color: Color) -> void:
+	if CityExpansion.reserves_terrain(pos, maxf(radius_x, radius_z)): return
+	if _is_near_road(pos, maxf(radius_x, radius_z)+5.0): return
 	if not node_name.contains("SnowCap"):
 		_generated_hills.append({
 			"pos": pos,
@@ -14888,6 +14903,7 @@ func _create_textured_visual_box(node_name: String, pos: Vector3, size: Vector3,
 func _create_leafy_floor_ground() -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "TerrainSurface"
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mesh_instance.position = Vector3(0, 0.003, 0)
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(MAP_EXTENT * 2.0, MAP_EXTENT * 2.0)
@@ -14898,6 +14914,17 @@ func _create_leafy_floor_ground() -> void:
 	_cached_leafy_material.set_shader_parameter("water_channel_mask", _make_water_channel_mask())
 	mesh_instance.material_override = _cached_leafy_material
 	add_child(mesh_instance)
+	# New southern terrain shares the forest material, without shifting the old water mask.
+	var extension := MeshInstance3D.new()
+	extension.name = "SouthernTerrain"
+	var extension_mesh := PlaneMesh.new()
+	extension_mesh.size = Vector2(MAP_EXTENT*2.0, CityExpansion.SOUTH_LIMIT-MAP_EXTENT)
+	extension.mesh = extension_mesh
+	extension.position = Vector3(0,0.003,(MAP_EXTENT+CityExpansion.SOUTH_LIMIT)*.5)
+	extension.material_override = MaterialFactory.make_forest_ground_material().duplicate()
+	(extension.material_override as ShaderMaterial).set_shader_parameter("cut_water_channels", false)
+	extension.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(extension)
 
 func _make_water_channel_mask() -> ImageTexture:
 	# Rasterize once; one texture lookup avoids looping over every river per pixel.

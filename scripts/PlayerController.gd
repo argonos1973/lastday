@@ -429,6 +429,10 @@ var third_person_right_leg: Node3D
 var third_person_animation_player: AnimationPlayer
 var third_person_idle_animation := ""
 var third_person_walk_animation := ""
+var third_person_stairs_animation := ""
+var _stairs_last_position := Vector3.ZERO
+var _stairs_position_valid := false
+var _stairs_grace := 0.0
 var third_person_run_animation := ""
 var third_person_sneak_animation := ""
 var third_person_sneak_walk_animation := ""
@@ -4301,6 +4305,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		lib.add_animation(anim_name, copied)
 	third_person_animation_player.add_animation_library("external", lib)
 	# Load torch-specific animations from FBX files
+	third_person_stairs_animation = preload("res://scripts/StairAnimation.gd").install(self)
 	_load_torch_animations()
 	# Pre-cache the fishing rod pose and animations at startup so fishing starts instantly.
 	if not is_puppet:
@@ -9238,6 +9243,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 
 #region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
 func _update_third_person_animation(moving: bool, delta: float) -> void:
+	var climbing_stairs := _update_stair_motion(moving, delta)
 	if is_instance_valid(rowing_boat) and not _boat_standing:
 		return
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
@@ -9511,6 +9517,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.seek(0.0, true)
 					third_person_animation_player.stop()
 			return
+		if climbing_stairs and not third_person_stairs_animation.is_empty() and not _has_rifle and not _torch_in_hands and not _has_fishing_rod:
+			target_animation = third_person_stairs_animation
 		if _has_rifle and target_animation != _last_rifle_animation_debug:
 			_last_rifle_animation_debug = target_animation
 		if not target_animation.is_empty() and third_person_animation_player.current_animation != target_animation:
@@ -12120,3 +12128,22 @@ func clothing_has_camo(item_name: String, item = null) -> bool:
 	if session != null and item_name in ["Camiseta", "Pantalones"]:
 		return bool(session.get_meta("top_camo" if item_name == "Camiseta" else "bottom_camo", false))
 	return false
+
+func _update_stair_motion(moving: bool, delta: float) -> bool:
+	var travelled := global_position - _stairs_last_position
+	_stairs_last_position = global_position
+	if not _stairs_position_valid:
+		_stairs_position_valid = true
+		return false
+	_stairs_grace = maxf(0.0, _stairs_grace-delta)
+	if not moving or is_crouching or is_sitting or is_prone or is_jumping or travelled.length()>1.5:
+		_stairs_grace = 0.0
+		return false
+	if travelled.y>delta*.04 and Vector2(travelled.x,travelled.z).length()>delta*.1:
+		var ray := PhysicsRayQueryParameters3D.create(global_position+Vector3.UP*.4,global_position-Vector3.UP*.7)
+		ray.collision_mask=1
+		ray.exclude=[get_rid()]
+		var hit := get_world_3d().direct_space_state.intersect_ray(ray)
+		if not hit.is_empty() and hit.collider.is_in_group("stair_surface"):
+			_stairs_grace=.16
+	return _stairs_grace>0.0
