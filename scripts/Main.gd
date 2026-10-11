@@ -46,6 +46,7 @@ var net = null
 var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
 var nav = null
+var wolf_nav = null
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
 var _server_saved_players: Dictionary = {}  # client_id -> saved player data (server save)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
@@ -1054,6 +1055,8 @@ func _process(delta: float) -> void:
 	if _door_cache_timer >= 1.0:
 		_door_cache_timer = 0.0
 		nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+		if wolf_nav != null:
+			wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 	if not _pending_open_doors.is_empty():
 		_apply_pending_doors()
 	_water_night_timer += delta
@@ -5133,35 +5136,6 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_dropped_items.append({"id": torch_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": [pos.x, pos.y, pos.z], "durability": torch_durability, "lit": torch_lit})
 		_save_world_change_silent()
 		return
-	# Dropping a whole animal corpse spawns the model lying on the ground
-	if item_name in ["Lobo muerto", "Ciervo muerto", "Zorro muerto", "Animal muerto"]:
-		var animal_kind := "wolf"
-		if item_name == "Ciervo muerto":
-			animal_kind = "deer"
-		elif item_name == "Zorro muerto":
-			animal_kind = "fox"
-		var model_path := GameConst.WOLF_MODEL
-		if animal_kind == "deer":
-			model_path = GameConst.DEER_MODEL
-		elif animal_kind == "fox":
-			model_path = GameConst.FOX_MODEL
-		var p := pos
-		p.y = pos.y + 0.1
-		_drop_seq += 1
-		var drop_id := "animal_drop_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
-		var visual_name := "Pickup_" + drop_id
-		_try_instance_external_scene([model_path], visual_name, p, Vector3.ONE * 0.9, Vector3(0, randf_range(0, 360), -90), true, p.y)
-		_mark_world_action_visual(visual_name)
-		var action = _create_world_action(drop_id, "gut_wolf", item_name, p, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
-		action.set_meta("visual_name", visual_name)
-		action.set_meta("item_name", item_name)
-		action.set_meta("animal_type", animal_kind)
-		action.set_meta("item_type", "material")
-		action.set_meta("item_weight", 8.0)
-		action.set_meta("item_quantity", 1)
-		action.set_meta("item_use_value", 0.0)
-		action.set_meta("gutted", false)
-		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness, drop_camo)
 	_tag_meat_drop(drop_id, item_name, "local")
@@ -5229,13 +5203,16 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var lay_flat := item_name in ["Botas survival", "Botas militares"] or MilitaryJackets.VARIANTS.has(item_name)
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
+	var corpse_kind := WildlifeController.corpse_species(item_name)
 	var is_rifle := item_type == "weapon_rifle"
-	if is_rifle:
+	if not corpse_kind.is_empty():
+		rot.z = -90.0
+	elif is_rifle:
 		rot.z += 90.0
 	elif lay_flat:
 		rot.x += 90.0
 	if not paths.is_empty():
-		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, pos.y)
+		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, pos.y, WildlifeController.species_height(corpse_kind) if not corpse_kind.is_empty() else 0.0)
 		if not _spawned_ok:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		else:
@@ -5293,12 +5270,17 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	if camo and item_name in ["Camiseta", "Pantalones"]:
 		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
 	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
+	if not corpse_kind.is_empty():
+		action_kind = "gut_wolf"
 	var action_label := item_name
 	if broken:
 		action_label = item_name + " (rota)"
 	var action = _create_world_action(drop_id, action_kind, action_label, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
+	if not corpse_kind.is_empty():
+		action.set_meta("animal_type", corpse_kind)
+		action.set_meta("gutted", false)
 	action.set_meta("item_camo", camo)
 	action.set_meta("item_type", item_type)
 	action.set_meta("item_weight", item_weight)
@@ -5854,7 +5836,9 @@ func _create_map() -> void:
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
-		nav.build(wildlife_blockers, river_segments_data)
+		nav.build(wildlife_blockers, _wildlife_water_obstacles())
+		wolf_nav = NavPathfinding.new()
+		wolf_nav.build(wildlife_blockers, river_segments_data)
 		await get_tree().process_frame
 		if _loading_label != null:
 			_set_loading_phase("Generando fauna...")
@@ -12974,14 +12958,19 @@ func _is_in_no_grass_area(pos: Vector3, extra_margin := 0.0) -> bool:
 			return true
 	return false
 
+func is_wolf_allowed_at(pos: Vector3) -> bool:
+	return not _is_near_wildlife_blocker(pos, 0.0) and not _is_inside_river_band(pos, 1.2)
+
 func is_wildlife_allowed_at(pos: Vector3) -> bool:
 	if _is_near_wildlife_blocker(pos, 0.0):
 		return false
-	# Deer, foxes and wolves are land animals. Block every water segment here,
-	# including rivers and the lake; birds use their own unrestricted routes.
-	if _is_inside_river_band(pos, 1.2):
+	# Rivers can be crossed; keep the lake and solid obstacles out of routes.
+	if _is_near_lake(pos, 1.2):
 		return false
 	return true
+
+func _wildlife_water_obstacles() -> Array:
+	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)
 
 var HOUSE_FOOTPRINTS := [
 	{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4},
@@ -15317,7 +15306,7 @@ func _create_loot_container(id: String, label: String, pos: Vector3, size: Vecto
 	containers_by_id[id] = container
 	return container
 
-func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3, scale_value: Vector3, rot: Vector3, snap_to_ground := false, ground_y := 0.0) -> bool:
+func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3, scale_value: Vector3, rot: Vector3, snap_to_ground := false, ground_y := 0.0, animal_height := 0.0) -> bool:
 	for path in paths:
 		if not MaterialFactory.resource_path_exists(path):
 			continue
@@ -15338,6 +15327,9 @@ func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3,
 			node.add_to_group("world_action_visual")
 			node.position = pos
 			node.scale = scale_value
+			if animal_height > 0.0:
+				WildlifeController._normalize_model_height(node, animal_height)
+				node.position = pos
 			node.rotation_degrees = rot
 			add_child(node)
 			if snap_to_ground:
@@ -15692,6 +15684,11 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 				continue
 		migrated_inventory.append(raw_item)
 	player_data["inventory"] = migrated_inventory
+
+func find_path_wolf(start: Vector3, goal: Vector3) -> Array:
+	if wolf_nav == null:
+		return find_path_wildlife(start, goal)
+	return wolf_nav.find_path(start, goal)
 
 func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
 	if nav == null:

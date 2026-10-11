@@ -319,6 +319,7 @@ func _process(delta: float) -> void:
 	if is_puppet:
 		if not _is_dead:
 			_network_motion.advance(self, delta)
+			_update_water_depth(delta)
 		if animal_type == "wolf" and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
@@ -497,7 +498,7 @@ func _process(delta: float) -> void:
 		_path_index = 0
 		_path_recalc_timer = 1.2
 	var move_target: Vector3 = global_position
-	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0:
+	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0 and _direct_route_allowed(chase_live.global_position):
 		move_target = chase_live.global_position
 	elif _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
@@ -2319,8 +2320,17 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 func _is_path_clear(_next_pos: Vector3, _candidate: Vector3) -> bool:
 	return true
 
+func _direct_route_allowed(goal: Vector3) -> bool:
+	var steps := maxi(1, int(ceil(global_position.distance_to(goal) / 0.5)))
+	for i in range(1, steps + 1):
+		if not _is_position_allowed(global_position.lerp(goal, float(i) / steps)):
+			return false
+	return true
+
 func _is_position_allowed(pos: Vector3) -> bool:
 	var scene := get_tree().current_scene
+	if animal_type == "wolf" and scene != null and scene.has_method("is_wolf_allowed_at"):
+		return bool(scene.call("is_wolf_allowed_at", pos))
 	if scene != null and scene.has_method("is_wildlife_allowed_at"):
 		return bool(scene.call("is_wildlife_allowed_at", pos))
 	if scene != null and scene.has_method("_is_near_wildlife_blocker"):
@@ -2469,6 +2479,8 @@ func _resolve_player() -> void:
 
 func _request_path(start: Vector3, goal: Vector3) -> Array:
 	var scene := get_tree().current_scene
+	if animal_type == "wolf" and scene != null and scene.has_method("find_path_wolf"):
+		return scene.call("find_path_wolf", start, goal) as Array
 	if scene != null and scene.has_method("find_path_wildlife"):
 		return scene.call("find_path_wildlife", start, goal) as Array
 	return [goal]
@@ -2482,7 +2494,7 @@ func _can_reach_player() -> bool:
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):
 		return true
-	var path: Array = scene.call("find_path_wildlife", global_position, _player.global_position)
+	var path: Array = _request_path(global_position, _player.global_position)
 	if path.is_empty():
 		return false
 	var last_point: Vector3 = path[path.size() - 1]
@@ -2505,7 +2517,7 @@ func _compute_wolf_separation(radius: float) -> Vector3:
 
 func _animate_legs(delta: float) -> void:
 	if _visual_root != null:
-		_visual_root.position.y = sin(_walk_time * 2.0) * 0.035
+		_visual_root.position.y = _water_sink + sin(_walk_time * 2.0) * 0.035
 		_visual_root.rotation_degrees.z = sin(_walk_time) * 2.0
 	for i in range(_legs.size()):
 		var leg := _legs[i]
@@ -2584,7 +2596,7 @@ func _try_build_external_animal() -> bool:
 		add_child(node)
 		# Normalize by bounding box so models authored in different units end up
 		# at a believable real-world height (deer ~1.5 m, fox ~0.55 m).
-		var target_height := 1.5 if animal_type == "deer" else (1.2 if animal_type == "wolf" else 0.55)
+		var target_height := species_height(animal_type)
 		_normalize_model_height(node, target_height)
 		node.visible = true
 		_visual_root = node
@@ -2593,7 +2605,13 @@ func _try_build_external_animal() -> bool:
 		return true
 	return false
 
-func _normalize_model_height(node: Node3D, target_height: float) -> void:
+static func corpse_species(item_name: String) -> String:
+	return {"Ciervo muerto": "deer", "Lobo muerto": "wolf", "Zorro muerto": "fox", "Animal muerto": "wolf"}.get(item_name, "")
+
+static func species_height(kind: String) -> float:
+	return 1.5 if kind == "deer" else (1.2 if kind == "wolf" else 0.55)
+
+static func _normalize_model_height(node: Node3D, target_height: float) -> void:
 	var aabb := _baked_aabb_local(node)
 	if aabb.size.y <= 0.001:
 		return
@@ -2602,7 +2620,7 @@ func _normalize_model_height(node: Node3D, target_height: float) -> void:
 	node.scale = Vector3.ONE * factor
 	node.position.y -= bottom_rel * factor
 
-func _baked_aabb_local(root: Node) -> AABB:
+static func _baked_aabb_local(root: Node) -> AABB:
 	var meshes: Array = []
 	_collect_mesh_instances(root, meshes)
 	var combined := AABB()
@@ -2619,7 +2637,7 @@ func _baked_aabb_local(root: Node) -> AABB:
 			combined = combined.merge(raw)
 	return combined
 
-func _collect_mesh_instances(root: Node, result: Array) -> void:
+static func _collect_mesh_instances(root: Node, result: Array) -> void:
 	if root is MeshInstance3D:
 		result.append(root)
 	for child in root.get_children():
