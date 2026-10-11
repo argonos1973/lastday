@@ -20,10 +20,22 @@ func run():
  print("ROAD_END ",world._road_segments.back().center)
  var light:=DirectionalLight3D.new();light.rotation_degrees=Vector3(-55,-30,0);light.shadow_enabled=true;world.add_child(light)
  var env:=WorldEnvironment.new();env.environment=Environment.new();env.environment.background_mode=Environment.BG_COLOR;env.environment.background_color=Color(.36,.43,.48);env.environment.ambient_light_source=Environment.AMBIENT_SOURCE_COLOR;env.environment.ambient_light_energy=.6;world.add_child(env)
+ world._load_forest_tree_pack()
+ await world._create_forest()
  var camera:=Camera3D.new();world.add_child(camera);camera.position=Vector3(145,160,800);camera.far=1500;camera.near=.5;camera.look_at(Vector3(9,0,530))
  for i in range(15):await process_frame
  await RenderingServer.frame_post_draw
  root.get_texture().get_image().save_png("res://outputs/city_connected.png")
+ # Bridge close-up: deck, parapet, piers from the east bank.
+ camera.position=Vector3(34,5.5,378);camera.look_at(Vector3(9,0.8,382))
+ for i in range(6):await process_frame
+ await RenderingServer.frame_post_draw
+ root.get_texture().get_image().save_png("res://outputs/city_bridge_detail.png")
+ # Southern approach: woods closing in on the connector road before the city.
+ camera.position=Vector3(9,2.0,540);camera.look_at(Vector3(9,1.6,640))
+ for i in range(6):await process_frame
+ await RenderingServer.frame_post_draw
+ root.get_texture().get_image().save_png("res://outputs/city_south_woods.png")
  world.queue_free()
  for i in range(10):await process_frame
  quit()

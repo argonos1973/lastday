@@ -11,13 +11,23 @@ def mat(name,color):
  p=m.node_tree.nodes.get('Principled BSDF'); p.inputs['Base Color'].default_value=(*color,1); p.inputs['Roughness'].default_value=.85
  return m
 
-def textured(m, relative, name):
+def textured(m, relative, name, tint=None):
  im=bpy.data.images.load(str(ROOT/relative),check_existing=True)
  im=im.copy(); im.name=name; im.scale(1024,1024); im.pack()
  tex=m.node_tree.nodes.new('ShaderNodeTexImage'); tex.image=im
- m.node_tree.links.new(tex.outputs['Color'],m.node_tree.nodes.get('Principled BSDF').inputs['Base Color'])
+ bsdf=m.node_tree.nodes.get('Principled BSDF')
+ if tint is None:
+  m.node_tree.links.new(tex.outputs['Color'],bsdf.inputs['Base Color'])
+ else:
+  # Grey source textures get their own hue per material (furniture, floor,
+  # stairs) instead of every wooden surface sharing one flat grey.
+  mix=m.node_tree.nodes.new('ShaderNodeMix'); mix.data_type='RGBA'; mix.blend_type='MULTIPLY'
+  mix.inputs['Factor'].default_value=1.0; mix.inputs[7].default_value=(*tint,1)
+  m.node_tree.links.new(tex.outputs['Color'],mix.inputs[6])
+  m.node_tree.links.new(mix.outputs[2],bsdf.inputs['Base Color'])
  return m
 
+UV_METRES={'GroundFloor':2.4,'UpperFloorMain':2.4,'UpperLanding':2.4,'UpperFrontFloor':2.4,'LandingBridge':2.4,'Wallpaper':3.2,'Ceiling':3.0}
 def box(name,p,s,m,collision=True,rot=None):
  bpy.ops.mesh.primitive_cube_add(size=1,location=(p[0],-p[2],p[1])); o=bpy.context.object; o.name=('Solid_' if collision else 'Detail_')+name
  o.scale=(s[0],s[2],s[1]); bpy.ops.object.transform_apply(location=False,rotation=False,scale=True); o.data.materials.append(m)
@@ -30,7 +40,8 @@ def box(name,p,s,m,collision=True,rot=None):
   axis=max(range(3),key=lambda a:abs(poly.normal[a])); axes=[a for a in range(3) if a!=axis]
   for loop in poly.loop_indices:
    co=o.data.vertices[o.data.loops[loop].vertex_index].co+o.location
-   o.data.uv_layers.active.data[loop].uv=(co[axes[0]]/2.8,co[axes[1]]/2.8)
+   uvm=UV_METRES.get(name,2.8)
+   o.data.uv_layers.active.data[loop].uv=(co[axes[0]]/uvm,co[axes[1]]/uvm)
  return o
 
 def wall(z,front,fmat=None):
@@ -66,11 +77,10 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
  bpy.ops.object.select_all(action='SELECT'); bpy.ops.object.delete(use_global=False)
  rng=random.Random(idx*31+7)
  plaster=mat('Weathered_plaster',color); stone=mat('Foundation',(.23,.24,.23)); wood=mat('Dark_wood',(.17,.105,.065)); floor=mat('Floor_boards',(.30,.23,.16)); metal=mat('Iron',(.075,.085,.08)); fabric=mat('Faded_fabric',(.22,.28,.22))
- grime=mat('Grime',(.10,.115,.09)); soot=mat('Soot',(.045,.05,.045)); moss=mat('Moss',(.15,.23,.11)); brick=mat('Bare_brick',(.33,.18,.13)); glass=mat('Glass_shard',(.5,.68,.72)); char=mat('Charred_wood',(.05,.045,.04))
- textured(plaster,'assets/textures/overgrowth/village_lime_albedo.png' if idx%2==0 else 'assets/external/textures/red_brick_03/red_brick_03_diff_4k.jpg','Ruined_facade_%d'%idx)
+ grime=mat('Grime',(.10,.115,.09)); soot=mat('Soot',(.045,.05,.045)); moss=mat('Moss',(.06,.13,.05)); brick=mat('Bare_brick',(.33,.18,.13)); glass=mat('Glass_shard',(.5,.68,.72)); char=mat('Charred_wood',(.05,.045,.04))
+ textured(plaster,'assets/textures/city_interior/facade_lime_%d.png'%(idx//2) if idx%2==0 else 'assets/external/textures/red_brick_03/red_brick_03_diff_4k.jpg','Ruined_facade_%d'%idx)
  textured(stone,'assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg','Old_concrete_%d'%idx)
- textured(wood,'assets/textures/overgrowth/village_wood_albedo.png','Old_wood_%d'%idx)
- textured(floor,'assets/textures/overgrowth/village_wood_albedo.png','Floor_wood_%d'%idx)
+ textured(wood,'assets/textures/overgrowth/village_wood_albedo.png','Old_wood_%d'%idx,tint=(.62,.36,.20))
  box('GroundFloor',(0,.02,0),(12,.2,12),floor)
  wall(6,True,char if idx==1 else None); wall(-6,False)
  for x in [-6,6]:
@@ -93,12 +103,12 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
   # Two usable rooms on the left, door gap 1.4 m wide.
   for a,b in [(-6,-3.5),(-2.1,2.9)]: box('RoomPartition',((a+b)/2,level*3.2+1.55,-1),(b-a,3.1,.16),plaster)
   box('RoomDoorLintel',(-2.8,level*3.2+2.8,-1),(1.4,.6,.16),plaster)
-  for k in range(18): box('FloorJoint',(-5.85+k*.49,level*3.2+.126,0),(.009,.006,11.8),wood,False)
  # Stair treads and a smooth, matching collision ramp for CharacterBody3D.
  n=20
  for k in range(n):
   h=(k+1)*3.1/n
   box('Step',(4.5,.12+h/2,4.5-(k+.5)*6.4/n),(1.85,h,6.4/n),wood,False)
+
  verts=[(x,-z,y) for x,y,z in [(3.57,.12,4.5),(5.43,.12,4.5),(3.57,3.22,-1.9),(5.43,3.22,-1.9),(3.57,.0,-1.9),(5.43,.0,-1.9)]]
  me=bpy.data.meshes.new('Ramp'); me.from_pydata(verts,[],[(0,1,3,2),(2,3,5,4),(0,2,4),(1,5,3),(0,4,5,1)]); me.update(); ob=bpy.data.objects.new('Collision_StairRamp',me); bpy.context.collection.objects.link(ob)
  # Short landing bridges final stair height to back-room floor.
@@ -128,26 +138,51 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
    half=rng.uniform(3.5,4.5); gap=12.3-2*half
    for s in [-1,1]: box('Parapet',(s*(gap/2+half/2),6.8,z),(half,.5,.18),plaster)
   else: box('Parapet',(0,6.8,z),(12.3,.5,.18),plaster)
+ # Interior shell only: furniture/clutter are real models placed by CityBlock.gd
+ # (interior kit). Ruined wallpaper, dirty boards and a stained ceiling are
+ # textures baked by tools/blender/create_city_interior_kit.py.
+ TEXI='assets/textures/city_interior/'
+ textured(floor,TEXI+'floor_ruin.png','Floor_ruin_%d'%idx)
+ ceiling=textured(mat('Ceiling_%d'%idx,(.62,.60,.54)),TEXI+'ceiling_ruin.png','Ceiling_ruin_%d'%idx)
  for level in range(2):
   y=.12+level*3.2
-  looted = idx>=1 and (level==0 or idx==3)
-  if looted:
-   # Mesa volcada + patas sueltas; el sitio fue saqueado.
-   box('Table',(-2.5,y+.5,1.7),(1.6,.09,.8),wood,True,rot=(math.radians(78),0,math.radians(14)))
-   for x,z in [(-3.4,1.2),(-1.7,2.0)]: box('TableLeg',(x,y+.12,z),(.08,.24,.08),wood,False,rot=(0,0,rng.uniform(0,3)))
-   box('Mattress',(-3.2,y+.1,-2.6),(1.45,.2,2.2),fabric,True,rot=(0,0,math.radians(24)))
-   box('BedFrame',(-4.3,y+.3,-3.8),(1.5,.4,2.3),wood)
-   for k in range(rng.randint(6,9)):
-    box('Debris',(rng.uniform(-5,2.6),y+rng.uniform(.04,.14),rng.uniform(-5.2,5.2)),(rng.uniform(.15,.55),rng.uniform(.05,.22),rng.uniform(.15,.45)),rng.choice([wood,brick,fabric,stone]),False,rot=(0,0,rng.uniform(0,3)))
-  else:
-   box('Table',(-3,y+.76,2.7),(1.6,.09,.8),wood)
-   for x in [-3.65,-2.35]:
-    for z in [2.4,3.0]: box('TableLeg',(x,y+.37,z),(.08,.74,.08),wood)
-   box('BedFrame',(-4.3,y+.3,-3.8),(1.5,.4,2.3),wood)
-   box('Mattress',(-4.3,y+.59,-3.8),(1.45,.2,2.2),fabric)
-   box('Pillow',(-4.3,y+.73,-4.55),(1.05,.12,.45),fabric,False)
-  for sy in [.25,.85,1.45,2.05]: box('Shelf',(1.6,y+sy,-5.65),(2,.07,.45),wood)
-  for sx in [.6,2.6]: box('ShelfSide',(sx,y+1.12,-5.65),(.08,2.1,.45),wood)
+  paper=textured(mat('Wallpaper_%d_%d'%(idx,level),(.5,.5,.5)),TEXI+'wallpaper_ruin_%d.png'%((idx+level*2)%4),'Paper_%d_%d'%(idx,level))
+  if level==0: paper0=paper
+  # Partitions are papered on both faces (bare facade plaster inside looked
+  # like the outside wall).
+  for a,b in [(-6,-3.5),(-2.1,2.9)]:
+   for pz in [-1.09,-.91]:
+    cx=(a+b)/2+(.14 if a<-5 else 0); w=b-a-(.28 if a<-5 else 0)
+    box('Wallpaper',(cx,y+1.5,pz),(w,2.9,.02),paper,False)
+  # Side walls: solid to y~4.1; above that the jagged breach must stay open.
+  for s in [-1,1]:
+   box('Wallpaper',(s*5.83,y+(1.5 if level==0 else .45),0),(.05,2.9 if level==0 else .72,11.5),paper,False)
+   box('Baseboard',(s*5.80,y+.10,0),(.04,.14,11.5),wood,False)
+  # Front/back walls keep the real openings: wallpaper only in the solid bands.
+  for sz in [5.82,-5.82]:
+   front_door = sz > 0 and level == 0
+   low = [(-5.75,-.95),(.95,5.75)] if front_door else [(-5.75,5.75)]
+   mid = [(-5.75,-4.3),(-2.7,-.95),(.95,2.7),(4.3,5.75)] if front_door else [(-5.75,-4.3),(-2.7,2.7),(4.3,5.75)]
+   for a,b in low: box('Wallpaper',((a+b)/2,y+.5,sz),(b-a,.9,.05),paper,False)
+   for a,b in mid: box('Wallpaper',((a+b)/2,y+1.75,sz),(b-a,1.6,.05),paper,False)
+   box('Wallpaper',(0,y+2.8,sz),(11.5,.55,.05),paper,False)
+   for a,b in low: box('Baseboard',((a+b)/2,y+.10,sz),(b-a,.14,.04),wood,False)
+  if level==0:
+   # Stained ceiling under the upper floor; the stairwell stays open.
+   box('Ceiling',(-1.45,3.005,0),(9.1,.02,11.9),ceiling,False)
+  # Rusty radiators under the front windows, hanging bare bulb cords.
+  for wx in [-3.5,3.5]:
+   for k in range(5): box('Radiator',(wx-.4+k*.2,y+.45,5.62),(.08,.75,.12),metal,False)
+  for lx in [-3.4,.4]: box('LampCord',(lx,y+2.62,1.2),(.02,.5,.02),char,False)
+  # Half-open door leaf on the partition gap. Blender Z is up: yaw about Z.
+  # Hinge on the west jamb (x=-3.45), leaf swung ~58 deg into the front room.
+  ang=math.radians(58)
+  box('RoomDoor',(-3.45+.55*math.cos(ang),y+1.15,-1.0+.55*math.sin(ang)),(1.1,2.1,.05),wood,True,rot=(0,0,-ang))
+ # Paper the stair side facing the room so it reads as a finished wall, not a
+ # stretched wood panel.
+ for k in range(n):
+  h=(k+1)*3.1/n
+  box('StairSide',(3.556,.12+h/2,4.5-(k+.5)*6.4/n),(.02,h,6.4/n),paper0,False)
  # Plinth, entrance frame and shallow threshold ramp.
  for x in [-5.95,5.95]: box('CornerStone',(x,3.2,6.18),(.28,6.4,.1),stone,False)
  for x in [-.96,.96]: box('DoorFrame',(x,1.33,6.15),(.1,2.48,.15),char if idx==1 else wood)
@@ -156,12 +191,8 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
  # Broken masonry, rusty pipework and damaged parapet vary each building.
  rust=mat('Rust',(.19,.085,.035))
  for x in [-5.5,5.5]: box('Drainpipe',(x,3.3,6.32),(.09,6.3,.09),rust,False)
- for k in range(32):
-  x=random.uniform(-5.7,5.7)
-  if abs(x)<1.8: continue # keep entrance free
-  z=random.uniform(6.4,7.9)
-  ob=box('Rubble',(x,.13,z),(random.uniform(.14,.55),random.uniform(.08,.25),random.uniform(.1,.45)),stone,False)
-  ob.rotation_euler.z=random.random()*3
+ # Facade overgrowth (moss decals, ivy sheets) is dressed in Godot by
+ # CityBlock._dress_facade using the village textures — not baked here.
  for k in range(7):
   x=random.uniform(-5.5,5.5)
   box('BrokenParapet',(x,7.02,-6),(random.uniform(.25,.65),random.uniform(.15,.5),.23),plaster,False)

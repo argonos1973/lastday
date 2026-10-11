@@ -92,8 +92,14 @@ func _capture(preset: String) -> void:
    walker.position = Vector3(-16.8,0,-9.4)
    camera.look_at(Vector3(-16.9,1.3,-10.9))
   "interior":
-   walker.position = Vector3(-16,0,-14)
-   camera.look_at(Vector3(-11.5,1.3,-14.5))
+   walker.position = Vector3(-16.6,0,-11.6)
+   camera.look_at(Vector3(-18.5,0.6,-22.5))
+  "kitchen":
+   walker.position = Vector3(-17.2,0,-18.4)
+   camera.look_at(Vector3(-11,0.9,-21.8))
+  "bedroom":
+   walker.position = Vector3(-15.6,3.22,-18.6)
+   camera.look_at(Vector3(-20.4,3.7,-22.4))
   "stairs":
    walker.position = Vector3(-11.2,0,-12.6)
    camera.look_at(Vector3(-11.5,3.0,-19))

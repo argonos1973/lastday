@@ -13565,12 +13565,75 @@ func _create_forest() -> void:
 			forest_rng.state = _saved_rng_state
 	
 	_append_lake_forest(batch_transforms, all_tree_positions)
+	await _append_southern_growth(batch_transforms, all_tree_positions, forest_rng)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
 	_hide_depleted_forest_trees()
+
+func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator) -> void:
+	# Scattered woodland south of the old map edge, thinning out near the city.
+	# Same deterministic stream + batching as the core forest, so chopping,
+	# collisions and MultiMesh batching behave identically.
+	if _forest_tree_meshes.is_empty():
+		return
+	var south_z0 := MAP_EXTENT + 6.0
+	var south_z1 := CityExpansion.SOUTH_LIMIT - 8.0
+	var candidates := int(MAP_EXTENT * 2.0 * (south_z1 - south_z0) * 0.012)
+	for i in range(candidates):
+		var x := forest_rng.randf_range(-MAP_EXTENT * 0.98, MAP_EXTENT * 0.98)
+		var z := forest_rng.randf_range(south_z0, south_z1)
+		var city_dist := Vector2(x - CityExpansion.CENTER.x, z - CityExpansion.CENTER.z).length()
+		# The district core and its immediate surroundings stay clear.
+		if city_dist < 55.0 or (city_dist < 100.0 and forest_rng.randf() < 0.8):
+			continue
+		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
+		if get_river_depth_at(pos) > 0.0 or _is_inside_river_band(pos, 2.0):
+			continue
+		# The connector road, the bridge approach and the city streets stay clear.
+		if absf(x - 9.0) < 9.0 and z > 330.0:
+			continue
+		if CityExpansion.on_road(pos, 4.0, _south_road_end()) or CityExpansion.inside_building(pos):
+			continue
+		if _is_near_house(pos, 8.0):
+			continue
+		var variant_idx := _pick_forest_tree_variant(forest_rng)
+		var entry: Dictionary = _forest_tree_meshes[variant_idx]
+		var tree_scale := forest_rng.randf_range(0.8, 1.4)
+		var base_height: float = entry.get("height", 5.0)
+		if base_height * tree_scale < 1.0:
+			tree_scale = 1.0 / max(0.01, base_height)
+		var basis := Basis.from_euler(Vector3(deg_to_rad(float(entry.get("up_fix_deg", -90.0))), 0, deg_to_rad(forest_rng.randf_range(0, 360)))).scaled(Vector3.ONE * tree_scale)
+		var world_xform := Transform3D(basis, pos)
+		(batch_transforms[variant_idx] as Array).append(world_xform)
+		all_tree_positions.append(pos)
+		var tree_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+		if tree_id < 0:
+			tree_id = -tree_id
+		_register_tree_in_grid({"pos": pos, "id": tree_id, "visual_name": "Tree_%d" % tree_id, "active": false, "multimesh": true, "variant_idx": variant_idx, "mm_transform": world_xform})
+		for _g in range(3):
+			var gpos := pos + Vector3(forest_rng.randf_range(-2.2, 2.2), 0.0, forest_rng.randf_range(-2.2, 2.2))
+			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
+			_queue_grass_instance(gpos, forest_rng.randf_range(0.25, 0.55), forest_rng.randf_range(0.35, 0.65), Color(0.20, 0.34, 0.12).lerp(Color(0.34, 0.46, 0.16), forest_rng.randf()))
+		# Sparse granite boulders between the trees.
+		if forest_rng.randf() < 0.03:
+			var rpos := pos + Vector3(forest_rng.randf_range(-6, 6), 0.0, forest_rng.randf_range(-6, 6))
+			rpos.y = _get_exact_ground_y(rpos.x, rpos.z)
+			if get_river_depth_at(rpos) <= 0.0 and not CityExpansion.on_road(rpos, 4.0, _south_road_end()):
+				var rock := MeshInstance3D.new()
+				rock.mesh = _get_forest_rock_mesh(rpos)
+				rock.material_override = MaterialFactory.make_forest_rock_material()
+				var rs := forest_rng.randf_range(0.5, 1.6)
+				rock.scale = Vector3.ONE * rs
+				rock.rotation_degrees.y = forest_rng.randf_range(0, 360)
+				rock.position = rpos + Vector3(0, 0.15 * rs, 0)
+				add_child(rock)
+		if i % 300 == 0:
+			var _saved := forest_rng.state
+			await get_tree().process_frame
+			forest_rng.state = _saved
 
 func _lake_forest_specs(center: Vector3, size: Vector2, yaw: float) -> Array:
 	var rng := RandomNumberGenerator.new()

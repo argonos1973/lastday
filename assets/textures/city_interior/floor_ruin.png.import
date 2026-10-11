@@ -2,19 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://xt6kbbfb0jwe"
-path="res://.godot/imported/building_3_village_lime_albedo.png-237d6963f49513418bbbe5ea554b4ce6.ctex"
+uid="uid://pf4rx8jbivmc"
+path="res://.godot/imported/floor_ruin.png-fe7c339551570c6a6bb7e15c50b0afd2.ctex"
 metadata={
 "vram_texture": false
-}
-generator_parameters={
-"md5": "2c5d079f14332ec78b6e7f0981186e14"
 }
 
 [deps]
 
-source_file="res://assets/models/environment/city/building_3_village_lime_albedo.png"
-dest_files=["res://.godot/imported/building_3_village_lime_albedo.png-237d6963f49513418bbbe5ea554b4ce6.ctex"]
+source_file="res://assets/textures/city_interior/floor_ruin.png"
+dest_files=["res://.godot/imported/floor_ruin.png-fe7c339551570c6a6bb7e15c50b0afd2.ctex"]
 
 [params]
 
@@ -26,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

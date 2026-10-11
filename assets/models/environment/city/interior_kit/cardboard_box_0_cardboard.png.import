@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ciafky132lvxt"
-path="res://.godot/imported/building_1_village_lime_albedo.png-2105a96bd7dd014984c8aef3ae0fd30d.ctex"
+uid="uid://qgfbq6uw584s"
+path="res://.godot/imported/cardboard_box_0_cardboard.png-8f19bd0c0b1b05cdc407f392717784eb.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "2c5d079f14332ec78b6e7f0981186e14"
+"md5": "a3839c3e60f78e72c203773f6a56436b"
 }
 
 [deps]
 
-source_file="res://assets/models/environment/city/building_1_village_lime_albedo.png"
-dest_files=["res://.godot/imported/building_1_village_lime_albedo.png-2105a96bd7dd014984c8aef3ae0fd30d.ctex"]
+source_file="res://assets/models/environment/city/interior_kit/cardboard_box_0_cardboard.png"
+dest_files=["res://.godot/imported/cardboard_box_0_cardboard.png-8f19bd0c0b1b05cdc407f392717784eb.ctex"]
 
 [params]
 
