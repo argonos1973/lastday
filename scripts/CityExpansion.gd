@@ -52,7 +52,33 @@ static func create(world: Node3D, server: bool) -> Node3D:
   world.add_child(decay)
   _ford(world)
   _road_grass(world)
+  _cars(world)
  return district
+
+# Abandoned cars on the new road and the cross street, same client-only
+# pattern as _create_new_world_props (visual + local collision box).
+static func _cars(world: Node3D) -> void:
+ var space_state: PhysicsDirectSpaceState3D = world.get_world_3d().direct_space_state
+ var specs := [
+  {"name":"CityJunkCar0","pos":Vector3(10.5,0.0,555.0),"scale":Vector3.ONE*2.0,"rot":Vector3(0,35,0),"coll":Vector3(2.0,2.0,4.0),"paths":[world.ABANDONED_JUNK_CAR_MODEL],"fix":0.0},
+  {"name":"CityJunkCar1","pos":Vector3(7.2,0.0,646.0),"scale":Vector3.ONE*2.0,"rot":Vector3(0,-58,0),"coll":Vector3(2.0,2.0,4.0),"paths":[world.ABANDONED_JUNK_CAR_MODEL],"fix":0.0},
+  {"name":"CityScrapCar","pos":Vector3(24.0,0.0,681.5),"scale":Vector3.ONE*0.5,"rot":Vector3(0,82,0),"coll":Vector3(2.0,2.5,4.0),"paths":[world.SCRAP_BARRICADE_CAR_MODEL],"fix":world.SCRAP_CAR_Y_CORRECTION},
+ ]
+ for spec in specs:
+  var pos: Vector3 = spec["pos"]
+  var ground_y: float = NodeUtils.raycast_ground_y(space_state,pos)
+  if not world._try_instance_external_scene(spec["paths"],spec["name"],pos,spec["scale"],spec["rot"],true,ground_y):
+   continue
+  var node := world.get_node_or_null(spec["name"])
+  var coll_pos := pos
+  if node is Node3D:
+   (node as Node3D).force_update_transform()
+   (node as Node3D).position.y += float(spec["fix"])
+   coll_pos = Vector3(pos.x,(node as Node3D).position.y,pos.z)
+   world._disable_emission_recursive(node)
+  world._create_invisible_collision_box_rotated(str(spec["name"])+"Collision",coll_pos,spec["coll"],float(spec["rot"].y))
+  var coll := world.get_node_or_null(str(spec["name"])+"Collision")
+  if coll != null: coll.add_to_group("prop_collision")
 
 # The road crosses the river where the old bridge used to be: the carriageway
 # dips under the waterline as a flooded ford. A worn gravel apron fades over

@@ -6049,6 +6049,12 @@ func _create_road() -> void:
 				st.add_vertex(Vector3(world_pos.x, gy, world_pos.z))
 		for iz in range(grid_l):
 			for ix in range(grid_w):
+				# The carriageway never renders underwater: quads inside the river
+				# footprint are skipped so crossings read as flooded, not paved.
+				var t_q := (float(iz) + 0.5) / float(grid_l)
+				var qc := start_center.lerp(end_center, t_q) + start_across.lerp(end_across, t_q) * (-half_w + (float(ix) + 0.5) / float(grid_w) * seg_width)
+				if get_river_depth_at(qc) > 0.0:
+					continue
 				var i00: int = iz * (grid_w + 1) + ix
 				var i10: int = iz * (grid_w + 1) + ix + 1
 				var i01: int = (iz + 1) * (grid_w + 1) + ix

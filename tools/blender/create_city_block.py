@@ -57,7 +57,7 @@ def wall(z,front,fmat=None):
  fmat=fmat or wood
  face=z+(.16 if z>0 else -.16)
  openings=[(-4.25,-2.75,.95,2.55),(2.75,4.25,.95,2.55)]
- if front: openings.append((-.9,.9,.12,2.55))
+ if front: openings.append((-.9,.9,.12,2.95))
  for level in range(2):
   holes=sorted(openings if level==0 else [(-4.25,-2.75,.95,2.55),(2.75,4.25,.95,2.55)])
   at=-6
@@ -227,8 +227,8 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
   for x in [-3.54,-2.06]: box('InteriorDoorTrim',(x,y+1.2,-.89),(.075,2.4,.06),wood,False)
  # Plinth, entrance frame and shallow threshold ramp.
  for x in [-5.95,5.95]: box('CornerStone',(x,3.9,6.18),(.28,7.8,.1),stone,False)
- for x in [-.96,.96]: box('DoorFrame',(x,1.33,6.15),(.1,2.48,.15),char if idx==1 else wood)
- box('DoorFrameTop',(0,2.6,6.15),(2.02,.1,.15),char if idx==1 else wood)
+ for x in [-.96,.96]: box('DoorFrame',(x,1.57,6.15),(.1,2.9,.15),char if idx==1 else wood)
+ box('DoorFrameTop',(0,3.0,6.15),(2.02,.1,.15),char if idx==1 else wood)
  # A continuous threshold wedge, instead of a vertical 10 cm step.
  verts=[(-1.1,-6.85,0),(1.1,-6.85,0),(-1.1,-5.9,.12),(1.1,-5.9,.12)]
  me=bpy.data.meshes.new('Threshold');me.from_pydata(verts,[],[(0,1,3,2)]);me.materials.append(stone)

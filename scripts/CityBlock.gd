@@ -17,6 +17,19 @@ const TEX_IVY_SHEET := TEX_OVERGROWTH_DIR + "ivy_sheet.png"
 const TEX_IVY_DRAPE := TEX_OVERGROWTH_DIR + "ivy_drape.png"
 const TEX_BASE_MOSS := TEX_OVERGROWTH_DIR + "village_base_moss_albedo.png"
 const FLOOR_Y := [.12, 3.92]
+## Furniture scale vs a 1.75 m character — the kit pieces model ~70% of real
+## furniture size. Scaled pieces can sink a few cm into walls (backs are never
+## visible); fronts gain presence instead. Colliders inherit node.scale.
+const MODEL_SCALES := {
+ "bed": 1.15, "fridge": 1.2, "gas_stove": 1.15, "stove": 1.15,
+ "sink_cabinet": 1.2, "toilet": 1.15, "bath_sink": 1.2,
+ "armchair": 1.25, "chair_a": 1.25, "chair_b": 1.25,
+ "bookshelf": 1.3, "cabinet": 1.25, "tall_dresser": 1.35,
+ "dresser_hutch": 1.15, "tv_stand": 1.2, "desk_table": 1.15,
+ "side_table": 1.15, "floor_lamp": 1.1, "picture": 1.15,
+ "cardboard_box_0": 1.15, "cardboard_box_1": 1.15,
+ "garbage_bag_0": 1.1, "garbage_bag_1": 1.1, "rug": 1.1,
+}
 ## [model, x, z, level, yaw_deg, collide, y_offset] in building-local metres.
 ## Clear zones: entrance (|x|<1.1, z>3.5), stair run (x>3.4, z>-2.0 on the
 ## ground floor) and the upper landing (x>3.1, z<-1.9).
@@ -113,7 +126,7 @@ func load_building(i: int) -> Node3D:
  door.name = str(BUILDINGS[i].id)+"_door"
  door.position = Vector3(-.85,.12,6.08)
  building.add_child(door)
- door.setup("Puerta de vivienda",Vector3(1.7,2.4,.12),Color.SADDLE_BROWN,-100)
+ door.setup("Puerta de vivienda",Vector3(1.7,2.8,.12),Color.SADDLE_BROWN,-100)
  door.is_open = bool(door_states.get(str(door.name), false))
  door.rotation_degrees.y = door.open_yaw if door.is_open else door.closed_yaw
  _furnish(building, i)
@@ -161,11 +174,14 @@ func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: V
  if packed == null: return
  var node: Node3D = packed.instantiate()
  node.name = model
+ var scale: float = MODEL_SCALES.get(model, 1.0)
+ node.scale = Vector3.ONE * scale
  var basis := Basis.from_euler(Vector3(0, deg_to_rad(yaw_deg), 0)) * Basis.from_euler(tilt)
  var aabb := _local_aabb(node)
  if grounded:
   # Knocked-over pieces pivot on their base: lift them back onto the floor.
-  pos.y -= (Transform3D(basis) * aabb).position.y
+  var saabb := AABB(aabb.position * scale, aabb.size * scale)
+  pos.y -= (Transform3D(basis) * saabb).position.y
  node.transform = Transform3D(basis, pos)
  parent.add_child(node)
  if collide:
