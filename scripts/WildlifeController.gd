@@ -265,7 +265,7 @@ func _nearest_allowed_point(origin: Vector3):
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 			candidate.x = clamp(candidate.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 			if _is_position_allowed(candidate):
 				return candidate
 	return null
@@ -295,7 +295,7 @@ func _escape_if_trapped(delta: float) -> bool:
 	var step := minf(move_speed * 2.2 * delta, global_position.distance_to(safe))
 	var next_pos := global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-	next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+	next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 	global_position = next_pos
 	_snap_to_terrain()
 	_current_path.clear()
@@ -472,7 +472,7 @@ func _process(delta: float) -> void:
 			_wander_offset = Vector3(cos(wander_angle) * wander_radius, 0.0, sin(wander_angle) * wander_radius)
 		target += _wander_offset
 	target.x = clamp(target.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-	target.z = clamp(target.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+	target.z = clamp(target.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 	# Active chase: the cached path is recomputed every ~1.2s, so waypoints
 	# always trail a moving target by several meters. Inside the closing
 	# distance steer straight at the live target — and never let the
@@ -961,8 +961,9 @@ func _find_nearest_prey() -> Node3D:
 # dirección de huida hacia el interior manteniendo la distancia.
 func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
 	var limit := GameConst.WORLD_LIMIT - 4.0
+	var limit_z := GameConst.WORLD_LIMIT_Z - 4.0
 	var goal := from + away.normalized() * dist
-	if abs(goal.x) <= limit and abs(goal.z) <= limit:
+	if abs(goal.x) <= limit and goal.z > -limit and goal.z < limit_z:
 		return goal
 	var inward := (Vector3(0.0, 0.0, 0.0) - from)
 	inward.y = 0.0
@@ -976,9 +977,9 @@ func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
 	for blend in [0.35, 0.6, 0.85, 1.0]:
 		var dir: Vector3 = (tangent * (1.0 - blend) + inward * blend).normalized()
 		var candidate := from + dir * dist
-		if abs(candidate.x) <= limit and abs(candidate.z) <= limit:
+		if abs(candidate.x) <= limit and candidate.z > -limit and candidate.z < limit_z:
 			return candidate
-	return Vector3(clamp(goal.x, -limit, limit), goal.y, clamp(goal.z, -limit, limit))
+	return Vector3(clamp(goal.x, -limit, limit), goal.y, clamp(goal.z, -limit, limit_z))
 
 func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
@@ -2090,7 +2091,7 @@ func _begin_unstuck_burst() -> void:
 		for step in range(1, 7):
 			var probe := global_position + dir * float(step) * 1.2
 			probe.x = clamp(probe.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-			probe.z = clamp(probe.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			probe.z = clamp(probe.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 			if not _is_position_allowed(probe):
 				break
 			clearance = float(step) * 1.2
@@ -2178,7 +2179,7 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	var step := minf(speed * delta, global_position.distance_to(target_pos))
 	var next_pos: Vector3 = global_position + dir * step
 	next_pos.x = clamp(next_pos.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-	next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+	next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 	if not _is_position_allowed(next_pos):
 		if not _move_with_avoidance(dir, speed, delta, turn_speed):
 			return
@@ -2292,13 +2293,13 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 		var step_dist := speed * delta
 		var next_pos: Vector3 = global_position + candidate * step_dist
 		next_pos.x = clamp(next_pos.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-		next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+		next_pos.z = clamp(next_pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 		if not _is_position_allowed(next_pos):
 			continue
 		# Anticipación a distancia fija: permite esquivar antes de chocar
 		var lookahead: Vector3 = global_position + candidate * 1.2
 		lookahead.x = clamp(lookahead.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-		lookahead.z = clamp(lookahead.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+		lookahead.z = clamp(lookahead.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 		if not _is_position_allowed(lookahead):
 			if fallback_dir.length() < 0.01:
 				fallback_dir = candidate
@@ -2382,7 +2383,7 @@ func _find_safe_patrol_points(source_points: Array) -> Array:
 			var radius := 6.0 + float(i % 4) * 4.0
 			var candidate := center_pos + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 			candidate.x = clamp(candidate.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 			if _is_position_allowed(candidate):
 				safe_points.append(candidate)
 				break

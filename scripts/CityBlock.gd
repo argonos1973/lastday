@@ -16,7 +16,7 @@ const TEX_OVERGROWTH_DIR := "res://assets/textures/overgrowth/"
 const TEX_IVY_SHEET := TEX_OVERGROWTH_DIR + "ivy_sheet.png"
 const TEX_IVY_DRAPE := TEX_OVERGROWTH_DIR + "ivy_drape.png"
 const TEX_BASE_MOSS := TEX_OVERGROWTH_DIR + "village_base_moss_albedo.png"
-const FLOOR_Y := [.12, 3.22]
+const FLOOR_Y := [.12, 3.92]
 ## [model, x, z, level, yaw_deg, collide, y_offset] in building-local metres.
 ## Clear zones: entrance (|x|<1.1, z>3.5), stair run (x>3.4, z>-2.0 on the
 ## ground floor) and the upper landing (x>3.1, z<-1.9).
@@ -143,7 +143,7 @@ func _furnish(building: Node3D, i: int) -> void:
    for wx in [-3.5, 3.5]:
     if rng.randf() < .35: continue
     for side in ([-1, 1] if rng.randf() < .6 else [[-1, 1][rng.randi() % 2]]):
-     _place(root, "curtain", Vector3(wx + side * .5, level * 3.2 + 2.62, wz), 180.0 if wz > 0 else 0.0, Vector3.ZERO, false, false)
+     _place(root, "curtain", Vector3(wx + side * .5, level * 3.9 + 2.62, wz), 180.0 if wz > 0 else 0.0, Vector3.ZERO, false, false)
   # Litter: papers, plaster flakes, leaves and grime over the boards.
   for k in range(5):
    var patch := MeshInstance3D.new()
@@ -199,7 +199,7 @@ func _dress_facade(building: Node3D, i: int) -> void:
  var grime_mat := MaterialFactory.make_overgrowth_material("base_damp", TEX_BASE_MOSS, 0.0, true)
  grime_mat.albedo_color = Color(0.55, 0.48, 0.35, 0.65)
  var moss_mat := MaterialFactory.make_overgrowth_material("base_moss", TEX_BASE_MOSS, 0.0, true)
- var height := 6.4
+ var height := 7.8
  var extent := 6.0 # half the 12 m facade
  var face_off := 6.0 + .28 * .5 + .03
  var base_height := minf(preload("res://scripts/VillageArchitecture.gd").MOSS_MAX_HEIGHT, height * 0.24)
@@ -220,11 +220,11 @@ func _dress_facade(building: Node3D, i: int) -> void:
    var clearance := 0.58 if is_front else 0.2
    for level in range(2):
     for wu in [-3.5, 3.5]:
-     openings.append(Rect2(wu - 0.75 - clearance, level * 3.2 + .75, 1.5 + clearance * 2.0, 2.0))
+     openings.append(Rect2(wu - 0.75 - clearance, level * 3.9 + .75, 1.5 + clearance * 2.0, 2.0))
    if is_front:
     openings.append(Rect2(-1.9, -.05, 3.8, 2.9)) # doorway + swing clearance
   else:
-   openings.append(Rect2(-2.15, 3.95, 3.6, 2.6)) # upper side breach
+   openings.append(Rect2(-2.15, 4.75, 3.6, 3.0)) # upper side breach
   # Damp grime rising from the ground; split on the front so the doorway stays clear.
   if is_front:
    for edge in [-1.0, 1.0]:

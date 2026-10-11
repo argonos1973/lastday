@@ -636,8 +636,8 @@ func _compute_boundary_force() -> Vector3:
 		steer.x = -(global_position.x - (GameConst.WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
 	elif global_position.x < -GameConst.WORLD_LIMIT + margin:
 		steer.x = (-GameConst.WORLD_LIMIT + margin - global_position.x) / margin * BOIDS_MAX_FORCE
-	if global_position.z > GameConst.WORLD_LIMIT - margin:
-		steer.z = -(global_position.z - (GameConst.WORLD_LIMIT - margin)) / margin * BOIDS_MAX_FORCE
+	if global_position.z > GameConst.WORLD_LIMIT_Z - margin:
+		steer.z = -(global_position.z - (GameConst.WORLD_LIMIT_Z - margin)) / margin * BOIDS_MAX_FORCE
 	elif global_position.z < -GameConst.WORLD_LIMIT + margin:
 		steer.z = (-GameConst.WORLD_LIMIT + margin - global_position.z) / margin * BOIDS_MAX_FORCE
 	return steer

@@ -2,7 +2,9 @@ class_name NavPathfinding
 extends RefCounted
 
 var _grid: Dictionary = {}
-var _grid_size := 484 # Covers the wildlife world limits (-480 to +480 m).
+var _grid_size := 484 # X span: the wildlife world limits (-480 to +480 m).
+var _grid_size_z := 700 # Z span: -500..+900 m — includes the southern extension.
+var _z_offset := 250 # world z = -500 maps to grid row 0.
 var _cell_size := 2.0
 var _built := false
 var _door_open_cache: Dictionary = {}
@@ -13,10 +15,10 @@ var _region_groups := PackedInt32Array()
 var _door_regions: Dictionary = {}
 
 func world_to_grid(pos: Vector3) -> Vector2i:
-	return Vector2i(int(round(pos.x / _cell_size)) + _grid_size / 2, int(round(pos.z / _cell_size)) + _grid_size / 2)
+	return Vector2i(int(round(pos.x / _cell_size)) + _grid_size / 2, int(round(pos.z / _cell_size)) + _z_offset)
 
 func grid_to_world(cell: Vector2i) -> Vector3:
-	return Vector3(float(cell.x - _grid_size / 2) * _cell_size, 0.0, float(cell.y - _grid_size / 2) * _cell_size)
+	return Vector3(float(cell.x - _grid_size / 2) * _cell_size, 0.0, float(cell.y - _z_offset) * _cell_size)
 
 func build(blockers: Array, river_segments: Array) -> void:
 	_grid.clear()
@@ -31,7 +33,7 @@ func build(blockers: Array, river_segments: Array) -> void:
 			var max_cell := world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
 			for gx in range(min_cell.x, max_cell.x + 1):
 				for gy in range(min_cell.y, max_cell.y + 1):
-					if gx >= 0 and gx < _grid_size and gy >= 0 and gy < _grid_size:
+					if gx >= 0 and gx < _grid_size and gy >= 0 and gy < _grid_size_z:
 						_grid[Vector2i(gx, gy)] = true
 			continue
 		var center_cell := world_to_grid(blocker_pos)
@@ -39,20 +41,20 @@ func build(blockers: Array, river_segments: Array) -> void:
 		for dx in range(-cell_radius, cell_radius + 1):
 			for dy in range(-cell_radius, cell_radius + 1):
 				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
-				if cell.x < 0 or cell.x >= _grid_size or cell.y < 0 or cell.y >= _grid_size:
+				if cell.x < 0 or cell.x >= _grid_size or cell.y < 0 or cell.y >= _grid_size_z:
 					continue
 				var world_pos := grid_to_world(cell)
 				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
 					_grid[cell] = true
 	_block_river_cells(river_segments)
-	_search.region = Rect2i(0, 0, _grid_size, _grid_size)
+	_search.region = Rect2i(0, 0, _grid_size, _grid_size_z)
 	_search.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 
 	_search.update()
-	_regions.resize(_grid_size * _grid_size)
+	_regions.resize(_grid_size * _grid_size_z)
 	_regions.fill(0)
 	for x in range(_grid_size):
-		for z in range(_grid_size):
+		for z in range(_grid_size_z):
 			var cell := Vector2i(x, z)
 			var blocked := is_cell_blocked(cell)
 			_search.set_point_solid(cell, blocked)
@@ -109,7 +111,7 @@ func _update_region_groups() -> void:
 			head += 1
 			for direction in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
 				var neighbor: Vector2i = cell + direction
-				if neighbor.x < 1 or neighbor.y < 1 or neighbor.x >= _grid_size - 1 or neighbor.y >= _grid_size - 1:
+				if neighbor.x < 1 or neighbor.y < 1 or neighbor.x >= _grid_size - 1 or neighbor.y >= _grid_size_z - 1:
 					continue
 				if _door_open_cache.has(neighbor):
 					if not _door_regions.has(neighbor):
@@ -174,11 +176,11 @@ func _block_river_cells(river_segments: Array) -> void:
 					continue
 				var world_pos: Vector3 = center + along * local_along + across * local_across
 				var cell := world_to_grid(world_pos)
-				if cell.x >= 0 and cell.x < _grid_size and cell.y >= 0 and cell.y < _grid_size:
+				if cell.x >= 0 and cell.x < _grid_size and cell.y >= 0 and cell.y < _grid_size_z:
 					_grid[cell] = true
 
 func is_cell_blocked(cell: Vector2i) -> bool:
-	if cell.x < 1 or cell.x >= _grid_size - 1 or cell.y < 1 or cell.y >= _grid_size - 1:
+	if cell.x < 1 or cell.x >= _grid_size - 1 or cell.y < 1 or cell.y >= _grid_size_z - 1:
 		return true
 	if not _grid.has(cell):
 		return false
@@ -312,7 +314,7 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 			var max_cell := world_to_grid(Vector3(expanded.position.x + expanded.size.x, 0.0, expanded.position.y + expanded.size.y))
 			for gx in range(min_cell.x, max_cell.x + 1):
 				for gy in range(min_cell.y, max_cell.y + 1):
-					if gx < 0 or gx >= _grid_size or gy < 0 or gy >= _grid_size:
+					if gx < 0 or gx >= _grid_size or gy < 0 or gy >= _grid_size_z:
 						continue
 					var cell := Vector2i(gx, gy)
 					if not _grid.has(cell):
@@ -330,7 +332,7 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 		for dx in range(-cell_radius, cell_radius + 1):
 			for dy in range(-cell_radius, cell_radius + 1):
 				var cell := Vector2i(center_cell.x + dx, center_cell.y + dy)
-				if cell.x < 0 or cell.x >= _grid_size or cell.y < 0 or cell.y >= _grid_size:
+				if cell.x < 0 or cell.x >= _grid_size or cell.y < 0 or cell.y >= _grid_size_z:
 					continue
 				if not _grid.has(cell):
 					continue

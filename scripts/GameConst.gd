@@ -5,6 +5,8 @@ class_name GameConst
 
 # -- World ---------------------------------------------------------------
 const WORLD_LIMIT := 480.0
+# Fauna puede adentrarse en la expansión sur; el límite en X sigue WORLD_LIMIT.
+const WORLD_LIMIT_Z := 892.0
 const WORLD_SEED := 1337
 
 # -- Network -------------------------------------------------------------

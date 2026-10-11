@@ -17,6 +17,7 @@ func run():
  await physics_frame
  world._create_road()
  preload("res://scripts/CityExpansion.gd").create(world,false)
+ await world._flush_grass_batches()
  print("ROAD_END ",world._road_segments.back().center)
  var light:=DirectionalLight3D.new();light.rotation_degrees=Vector3(-55,-30,0);light.shadow_enabled=true;world.add_child(light)
  var env:=WorldEnvironment.new();env.environment=Environment.new();env.environment.background_mode=Environment.BG_COLOR;env.environment.background_color=Color(.36,.43,.48);env.environment.ambient_light_source=Environment.AMBIENT_SOURCE_COLOR;env.environment.ambient_light_energy=.6;world.add_child(env)
@@ -26,8 +27,8 @@ func run():
  for i in range(15):await process_frame
  await RenderingServer.frame_post_draw
  root.get_texture().get_image().save_png("res://outputs/city_connected.png")
- # Bridge close-up: deck, parapet, piers from the east bank.
- camera.position=Vector3(34,5.5,378);camera.look_at(Vector3(9,0.8,382))
+ # Ford close-up: the road dips into the river where the bridge used to be.
+ camera.position=Vector3(34,5.5,378);camera.look_at(Vector3(9,0.2,382))
  for i in range(6):await process_frame
  await RenderingServer.frame_post_draw
  root.get_texture().get_image().save_png("res://outputs/city_bridge_detail.png")

@@ -98,14 +98,14 @@ func _capture(preset: String) -> void:
    walker.position = Vector3(-17.2,0,-18.4)
    camera.look_at(Vector3(-11,0.9,-21.8))
   "bedroom":
-   walker.position = Vector3(-15.6,3.22,-18.6)
-   camera.look_at(Vector3(-20.4,3.7,-22.4))
+   walker.position = Vector3(-15.6,3.92,-18.6)
+   camera.look_at(Vector3(-20.4,4.4,-22.4))
   "stairs":
    walker.position = Vector3(-11.2,0,-12.6)
-   camera.look_at(Vector3(-11.5,3.0,-19))
+   camera.look_at(Vector3(-11.5,3.7,-19))
   "upper":
-   walker.position = Vector3(-20,3.15,-20.5)
-   camera.look_at(Vector3(-15,4.4,-15))
+   walker.position = Vector3(-20,3.85,-20.5)
+   camera.look_at(Vector3(-15,5.1,-15))
   _: walker.position = Vector3(30,18,42)
 
 func _box(label: String, pos: Vector3, size: Vector3, color: Color, solid: bool = true) -> void:

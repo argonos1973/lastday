@@ -7310,6 +7310,21 @@ func _create_fruit_trees() -> void:
 		_create_fruit_tree(pos, tree_counter % 2)
 		tree_counter += 1
 		placed += 1
+	# Southern extension: ~25 fruit trees scattered through the pass and around
+	# the city block, kept off the road and out of the buildings.
+	var south_scattered := 25
+	var south_attempts := 0
+	var south_placed := 0
+	while south_placed < south_scattered and south_attempts < 240:
+		south_attempts += 1
+		var spos := Vector3(_fruit_rng.randf_range(-45.0, 65.0), 0, _fruit_rng.randf_range(460.0, 880.0))
+		if _is_on_road(spos) or CityExpansion.on_road(spos, 4.0, _south_road_end()):
+			continue
+		if CityExpansion.inside_building(spos):
+			continue
+		_create_fruit_tree(spos, tree_counter % 2)
+		tree_counter += 1
+		south_placed += 1
 
 func _create_fruit_tree(pos: Vector3, fruit_type_index: int = 0) -> void:
 	pos.y = _get_exact_ground_y(pos.x, pos.z)
@@ -7525,7 +7540,15 @@ func _create_wildlife() -> void:
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
-	
+	# Deer roaming the southern extension woods and open pass.
+	for i in range(2):
+		var sc := Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(500.0, 860.0))
+		for _retry in range(30):
+			if is_wildlife_allowed_at(sc):
+				break
+			sc = Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(500.0, 860.0))
+		_create_deer_pair(WildlifeRoutes.build_roaming_route(_world_rng, sc, 22, 70.0, 140.0, is_wildlife_allowed_at))
+
 	# Foxes: 10 animals starting in distinct zones, each roaming the whole map
 	var fox_zones := [
 		[Vector3(-150, 0, -100), Vector3(-80, 0, -40)],
@@ -7538,6 +7561,9 @@ func _create_wildlife() -> void:
 		[Vector3(220, 0, -200), Vector3(300, 0, -120)],
 		[Vector3(-240, 0, 240), Vector3(-150, 0, 300)],
 		[Vector3(160, 0, 240), Vector3(240, 0, 300)],
+		# Southern extension: two zones inside the new woods/pass.
+		[Vector3(-25, 0, 520), Vector3(35, 0, 580)],
+		[Vector3(45, 0, 750), Vector3(-15, 0, 840)],
 	]
 	for fz in fox_zones:
 		# Ruta larga que recorre el mapa partiendo de la zona de origen
@@ -7553,6 +7579,9 @@ func _create_wildlife() -> void:
 		Vector3(100, 0, -100), Vector3(-100, 0, 100), Vector3(100, 0, 100),
 		Vector3(-300, 0, -100), Vector3(300, 0, 100), Vector3(-100, 0, 300),
 		Vector3(100, 0, -300), Vector3(-300, 0, 200), Vector3(300, 0, -200),
+		# Southern extension anchors.
+		Vector3(-30, 0, 560), Vector3(40, 0, 620), Vector3(9, 0, 780),
+		Vector3(-20, 0, 840), Vector3(50, 0, 860),
 	]
 	for i in range(wolf_quadrants.size()):
 		var center: Vector3 = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
@@ -7573,6 +7602,7 @@ func _create_wildlife() -> void:
 		Vector3(-400, 0, 400), Vector3(400, 0, -400),
 		Vector3(0, 0, -420), Vector3(0, 0, 420),
 		Vector3(-420, 0, 0), Vector3(420, 0, 0),
+		Vector3(-30, 0, 600), Vector3(40, 0, 820),
 	]
 	for bs in bird_start_zones:
 		_bird_flock_counter += 1
@@ -7580,7 +7610,7 @@ func _create_wildlife() -> void:
 		# Primer destino en el lado opuesto del mapa: la bandada cruza el centro en su primer vuelo
 		var far := Vector3(-bs.x, 0.0, -bs.z) + Vector3(_world_rng.randf_range(-60.0, 60.0), 0.0, _world_rng.randf_range(-60.0, 60.0))
 		far.x = clampf(far.x, -440.0, 440.0)
-		far.z = clampf(far.z, -440.0, 440.0)
+		far.z = clampf(far.z, -440.0, 880.0)
 		bird_route.push_front(far)
 		var flock_size := 2
 		for i in range(flock_size):
@@ -7625,30 +7655,34 @@ func _check_wildlife_respawn() -> void:
 	var total_deer := alive_deer
 	var total_fox := alive_fox
 	if total_wolf < 18 and total_wolf <= total_fox and total_wolf <= total_deer:
-		var center := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+		var center := _wildlife_spawn_pos()
 		for _retry in range(30):
 			if is_wildlife_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+			center = _wildlife_spawn_pos()
 		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("wolf", route)
 	elif total_deer < 14 and total_deer <= total_fox:
-		var deer_route := WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
+		var deer_route: Array
+		if randf() < 0.3:
+			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, _wildlife_spawn_pos(), 22, 70.0, 140.0, is_wildlife_allowed_at)
+		else:
+			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
 	elif total_fox < 10:
-		var fox_zone := Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+		var fox_zone := _wildlife_spawn_pos()
 		for _retry in range(30):
 			if is_wildlife_allowed_at(fox_zone):
 				break
-			fox_zone = Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
+			fox_zone = _wildlife_spawn_pos()
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
 	# Respawn birds if population drops below threshold
 	if alive_bird < 3:
 		var bird_always_allowed := func(_pos: Vector3) -> bool: return true
-		var bird_start := Vector3(randf_range(-350, 350), 0.0, randf_range(-350, 350))
+		var bird_start := Vector3(randf_range(-350, 350), 0.0, randf_range(-350.0, 850.0))
 		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bird_start, 30, 100.0, 200.0, bird_always_allowed)
-		var far := Vector3(randf_range(-440.0, 440.0), 0.0, randf_range(-440.0, 440.0))
+		var far := Vector3(randf_range(-440.0, 440.0), 0.0, randf_range(-440.0, 880.0))
 		bird_route.push_front(far)
 		var flock_size := 1
 		_bird_flock_counter += 1
@@ -7658,6 +7692,13 @@ func _check_wildlife_respawn() -> void:
 			for point in bird_route:
 				shifted.append((point as Vector3) + offset)
 			_create_bird(shifted, _bird_flock_counter)
+
+func _wildlife_spawn_pos() -> Vector3:
+	# ~35% of respawn anchors land in the southern extension (open pass + city
+	# woods); the route builders still validate every waypoint.
+	if randf() < 0.35:
+		return Vector3(randf_range(-45.0, 65.0), 0.0, randf_range(445.0, 880.0))
+	return Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 
 func _create_deer_pair(route: Array) -> void:
 	var offsets := [Vector3(-2.4, 0.0, -1.6), Vector3(2.4, 0.0, 1.6)]
@@ -7783,6 +7824,27 @@ func _create_mushrooms() -> void:
 			continue
 		var py := _get_exact_ground_y(pos.x, pos.z)
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, py + 0.02, pos.z))
+		mushroom_idx += 1
+		placed_positions.append(pos)
+	# Southern extension: same density inside the new pass/woods strip.
+	var south_count := int(mushroom_count * 0.22)
+	for _i in range(south_count):
+		var pos := Vector3(_world_rng.randf_range(-45.0, 65.0), 0.06, _world_rng.randf_range(445.0, 880.0))
+		if _is_near_river(pos, 5.0):
+			continue
+		if _is_on_road(pos) or CityExpansion.on_road(pos, 2.0, _south_road_end()):
+			continue
+		if CityExpansion.inside_building(pos):
+			continue
+		var south_too_close := false
+		for prev_pos in placed_positions:
+			if pos.distance_to(prev_pos) < 8.0:
+				south_too_close = true
+				break
+		if south_too_close:
+			continue
+		var spy := _get_exact_ground_y(pos.x, pos.z)
+		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, spy + 0.02, pos.z))
 		mushroom_idx += 1
 		placed_positions.append(pos)
 
@@ -7941,6 +8003,30 @@ func _create_house_loot() -> void:
 			var loot_data: Dictionary = template.duplicate()
 			loot_data["pos"] = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs)
 			loot_data["id"] = "house_loot_%d" % loot_idx
+			loot_idx += 1
+			_create_pickup_item(loot_data)
+	# City block houses: same pool, spread over both floors of each building.
+	var city_center := Vector3(9, 0, 680)
+	var city_offsets := [
+		{"p": Vector3(-16, 0, -17), "yaw": 0.0},
+		{"p": Vector3(16, 0, -17), "yaw": 0.0},
+		{"p": Vector3(-16, 0, 17), "yaw": PI},
+		{"p": Vector3(16, 0, 17), "yaw": PI},
+	]
+	for b_i in range(city_offsets.size()):
+		var b_pos: Vector3 = city_center + city_offsets[b_i]["p"]
+		var b_yaw: float = float(city_offsets[b_i]["yaw"])
+		var city_items := 3 + _world_rng.randi() % 3
+		for _j in range(city_items):
+			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
+			if template.get("rare", false) and _world_rng.randf() > 0.50:
+				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
+			var floor_y := 0.06 if _world_rng.randf() < 0.6 else 4.22
+			var loot_data: Dictionary = template.duplicate()
+			loot_data["pos"] = _find_pos_inside_city_building(b_pos, b_yaw, floor_y)
+			if floor_y > 1.0:
+				loot_data["floor_y"] = floor_y
+			loot_data["id"] = "city_loot_%d" % loot_idx
 			loot_idx += 1
 			_create_pickup_item(loot_data)
 	# Barn loot — more items, barn-specific pool
@@ -8202,6 +8288,23 @@ func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: flo
 		if not blocked:
 			return pos
 	return _find_pos_inside_house(origin, half_w, half_d)
+
+func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float) -> Vector3:
+	# Building-local frame: the stairwell opening (local x>2.4) is off-limits
+	# upstairs, and downstairs keeps clear of the stair run and the door swing.
+	for _attempt in range(25):
+		var lx := _world_rng.randf_range(-5.0, 5.0)
+		var lz := _world_rng.randf_range(-5.0, 5.0)
+		if floor_y > 1.0:
+			if lx > 2.4:
+				continue
+		else:
+			if lx > 3.2 and lz > -2.1 and lz < 4.6:
+				continue
+			if absf(lx) < 1.3 and lz > 4.9:
+				continue
+		return origin + Vector3(lx, floor_y, lz).rotated(Vector3.UP, yaw)
+	return origin + Vector3(0.0, floor_y, 0.0)
 
 func _find_safe_loot_pos() -> Vector3:
 	for _attempt in range(60):
@@ -10786,7 +10889,6 @@ func get_hud():
 
 #region API PÚBLICA DEL MUNDO
 func get_river_depth_at(world_pos: Vector3) -> float:
-	if CityExpansion.above_bridge(world_pos): return 0.0
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
@@ -12907,7 +13009,7 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 	return false
 
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
-	if abs(pos.x) > MAP_EXTENT * 0.98 or abs(pos.z) > MAP_EXTENT * 0.98:
+	if abs(pos.x) > MAP_EXTENT * 0.98 or (abs(pos.z) > MAP_EXTENT * 0.98 and not _is_in_southern_band(pos)):
 		return false
 	if _is_near_house(pos, 1.0):
 		return false
@@ -12927,6 +13029,10 @@ func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
 
 
 #region CONSULTAS GEOGRÁFICAS
+func _is_in_southern_band(pos: Vector3) -> bool:
+	# The CityExpansion strip: open pass + district footprint + its woods.
+	return pos.z > 440.0 and pos.z < CityExpansion.SOUTH_LIMIT - 8.0 and absf(pos.x - CityExpansion.CENTER.x) < 55.0
+
 func _is_inside_river_band(pos: Vector3, margin: float) -> bool:
 	for segment in river_segments_data:
 		var center: Vector3 = segment["center"]

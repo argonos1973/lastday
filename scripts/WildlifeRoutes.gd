@@ -8,7 +8,7 @@ static func build_circular_route(rng: RandomNumberGenerator, radius: float, angl
 		var r := radius + rng.randf_range(-jitter, jitter)
 		var pos := Vector3(cos(angle) * r, 0.0, sin(angle) * r)
 		pos.x = clamp(pos.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-		pos.z = clamp(pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+		pos.z = clamp(pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 		if not is_allowed.call(pos):
 			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
@@ -19,15 +19,16 @@ static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_
 	var cursor := start
 	var heading := rng.randf_range(0.0, TAU)
 	var limit := GameConst.WORLD_LIMIT
+	var limit_z := GameConst.WORLD_LIMIT_Z
 	for _i in range(num_points):
 		heading += rng.randf_range(-0.9, 0.9)
 		var step := rng.randf_range(step_min, step_max)
 		var candidate := cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
-		if abs(candidate.x) > limit or abs(candidate.z) > limit:
+		if abs(candidate.x) > limit or candidate.z < -limit or candidate.z > limit_z:
 			heading = atan2(-cursor.z, -cursor.x) + rng.randf_range(-0.6, 0.6)
 			candidate = cursor + Vector3(cos(heading) * step, 0.0, sin(heading) * step)
 		candidate.x = clamp(candidate.x, -limit, limit)
-		candidate.z = clamp(candidate.z, -limit, limit)
+		candidate.z = clamp(candidate.z, -limit, limit_z)
 		if not is_allowed.call(candidate):
 			candidate = find_allowed_near(candidate, 26.0, is_allowed)
 		route.append(candidate)
@@ -43,7 +44,7 @@ static func build_zigzag_route(rng: RandomNumberGenerator, corner_a: Vector3, co
 		var offset := perp * rng.randf_range(-jitter, jitter)
 		var pos := base + offset
 		pos.x = clamp(pos.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-		pos.z = clamp(pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+		pos.z = clamp(pos.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 		if not is_allowed.call(pos):
 			pos = find_allowed_near(pos, 26.0, is_allowed)
 		route.append(pos)
@@ -57,7 +58,7 @@ static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Ca
 			var angle := TAU * float(i) / 16.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 			candidate.x = clamp(candidate.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 			if is_allowed.call(candidate):
 				return candidate
 	# Some water bodies (the lake is ~130 m across) are wider than max_radius.
@@ -67,7 +68,7 @@ static func find_allowed_near(origin: Vector3, max_radius: float, is_allowed: Ca
 			var angle := TAU * float(i) / 24.0
 			var candidate := origin + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 			candidate.x = clamp(candidate.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
-			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
 			if is_allowed.call(candidate):
 				return candidate
 	return origin

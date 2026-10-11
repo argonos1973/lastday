@@ -28,8 +28,7 @@ func run():
  for z in range(0,501,10):
   check(world._get_ground_height(Vector3(9,0,z))<3.0,"road slope filter reaches old map edge z=%d"%z)
  var district:Node3D=expansion.create(world,true)
- check(world.get_river_depth_at(Vector3(9,.65,385))==0.0,"bridge pedestrians stay dry")
- check(not expansion.above_bridge(Vector3(9,-.5,385)),"water remains beneath bridge")
+ check(world.get_river_depth_at(Vector3(9,0.0,385))>0.0,"road crosses the river as a wading ford")
  check(district.position==Vector3(9,0,680),"city positioned beyond old southern boundary")
  check(district.buildings.size()==4,"four buildings loaded on dedicated server")
  check(not district.is_processing(),"main-world doors/collisions stay resident")
