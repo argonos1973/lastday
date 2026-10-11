@@ -46,6 +46,12 @@ def box(name,p,s,m,collision=True,rot=None):
    o.data.uv_layers.active.data[loop].uv=(co[axes[0]]/uvm,co[axes[1]]/uvm)
  return o
 
+def cbox(name,p,s):
+ # Collision-only box: stays outside the Solid_/Detail_ visual joins, gets
+ # trimesh collision + hidden by CityBlock._collisions.
+ bpy.ops.mesh.primitive_cube_add(size=1,location=(p[0],-p[2],p[1]));o=bpy.context.object;o.name='Collision_'+name;o.scale=(s[0],s[2],s[1]);bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
+ return o
+
 def wall(z,front,fmat=None):
  # Real openings: no invisible full-wall collider behind windows/entrance.
  fmat=fmat or wood
@@ -117,6 +123,31 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
  box('LandingBridge',(4.5,FH-.08,-2.35),(1.85,.2,.9),floor)
  for z in [-1.8,-.6,.6,1.8,3,4.3]: box('RailPost',(3.35,FH+.52,z),(.055,1.0,.055),metal)
  box('StairwellRail',(3.35,FH+1.02,1.25),(.07,.07,6.25),metal)
+ # Exterior masonry stair up the back wall to the roof (escalera de obra):
+ # stepped stone columns hugging the rear facade, a stepped balustrade on the
+ # outer edge and a landing at parapet level. Same on every building — flat
+ # roofs are walked directly, pitched roofs get a walkable slate strip below.
+ RN=20; RX0=-5.3; RX1=4.5; RTOP=8.12
+ for k in range(RN):
+  h=(k+1)*RTOP/RN
+  xk=RX0+(k+.5)*(RX1-RX0)/RN
+  box('RoofStep',(xk,h/2,-6.72),((RX1-RX0)/RN,h,.98),stone,False)
+  box('RoofBaluster',(xk,(h+.72)/2,-7.26),((RX1-RX0)/RN,h+.72,.13),stone,False)
+ verts=[(x,-z,y) for x,y,z in [(RX0-.6,.02,-7.2),(RX0-.6,.02,-6.32),(RX1-.1,RTOP+.04,-7.2),(RX1-.1,RTOP+.04,-6.32),(RX1-.1,.02,-7.2),(RX1-.1,.02,-6.32)]]
+ me=bpy.data.meshes.new('RampRoof'); me.from_pydata(verts,[],[(0,1,3,2),(2,3,5,4),(0,2,4),(1,5,3),(0,4,5,1)]); me.update(); ob=bpy.data.objects.new('Collision_StairRampRoof',me); bpy.context.collection.objects.link(ob)
+ box('RoofLanding',(5.2,RTOP/2,-6.85),(1.5,RTOP,1.15),stone)
+ box('LandingBaluster',(5.2,RTOP+.42,-7.38),(1.55,.85,.14),stone,False)
+ box('LandingBaluster',(5.93,RTOP+.42,-6.85),(.14,.85,1.2),stone,False)
+ if idx in [0,3]:
+  # Pitched roofs: a thin collision strip on the lower slate course lets the
+  # player step off the landing onto the slope near the eave.
+  sverts=[(x,-z,y) for x,y,z in [(-5.5,8.23,-6.05),(5.5,8.23,-6.05),(-5.5,8.93,-4.2),(5.5,8.93,-4.2),(-5.5,8.13,-6.05),(5.5,8.13,-6.05),(-5.5,8.83,-4.2),(5.5,8.83,-4.2)]]
+  sme=bpy.data.meshes.new('SlateWalk'); sme.from_pydata(sverts,[],[(0,1,3,2),(2,3,7,6),(0,2,6,4),(1,5,7,3),(0,4,5,1),(4,6,7,5)]); sme.update(); sob=bpy.data.objects.new('Collision_SlateWalk',sme); bpy.context.collection.objects.link(sob)
+  # Invisible stops keep the player on the walkable eave band: stepping past
+  # them would drop through the (collision-free) slate into the attic gap.
+  cbox('SlateStopTop',(0,9.6,-4.1),(11.0,2.8,.1))
+  cbox('SlateStopW',(-5.55,9.35,-5.1),(.1,2.4,2.0))
+  cbox('SlateStopE',(5.55,9.35,-5.1),(.1,2.4,2.0))
  # Roof and parapet; roof supported by perimeter, interiors unobstructed.
  if idx==2:
   # Tejado hundido: agujero de ~2.3x2.3 m con borde carbonizado y escombro abajo.
@@ -136,7 +167,12 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
    for s in [-1,1]: box('Parapet',(x,TH+.4,s*(gap/2+half/2)),(.18,.5,half),plaster)
   else: box('Parapet',(x,TH+.4,0),(.18,.5,12.3),plaster)
  for z in [-6.05,6.05]:
-  if rng.random()<.4:
+  if z<0:
+   # Back parapet keeps a gap over the roof-stair landing (x 4.3..6.15).
+   if rng.random()<.4:
+    for a,b in [(-6.15,-1.4),(-.6,4.3)]: box('Parapet',((a+b)/2,TH+.4,z),(b-a,.5,.18),plaster)
+   else: box('Parapet',(-.925,TH+.4,z),(10.45,.5,.18),plaster)
+  elif rng.random()<.4:
    half=rng.uniform(3.5,4.5); gap=12.3-2*half
    for s in [-1,1]: box('Parapet',(s*(gap/2+half/2),TH+.4,z),(half,.5,.18),plaster)
   else: box('Parapet',(0,TH+.4,z),(12.3,.5,.18),plaster)

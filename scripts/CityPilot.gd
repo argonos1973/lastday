@@ -106,6 +106,12 @@ func _capture(preset: String) -> void:
   "upper":
    walker.position = Vector3(-20,3.85,-20.5)
    camera.look_at(Vector3(-15,5.1,-15))
+  "roofstair":
+   walker.position = Vector3(-19,0,-30.5)
+   camera.look_at(Vector3(-16.5,5.2,-23.2))
+  "roofview":
+   walker.position = Vector3(-14.5,8.02,-20.2)
+   camera.look_at(Vector3(-10.8,7.9,-23.5))
   _: walker.position = Vector3(30,18,42)
 
 func _box(label: String, pos: Vector3, size: Vector3, color: Color, solid: bool = true) -> void:

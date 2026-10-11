@@ -49,7 +49,7 @@ func run() -> void:
 	measure(nav, Vector3(250, 0, -250), Vector3(258, 0, -264), "world rivers to saved lake position")
 	measure(nav, Vector3(98, 0, -2), Vector3(96, 0, 36), "long east tributary detour")
 	measure(nav, Vector3(-22, 0, 126), Vector3(54, 0, 136), "long south tributary detour")
-	var walls := [{"pos": Vector3.ZERO, "house_bounds": Rect2(-2, -484, 4, 968), "barn_door_always_open": true}]
+	var walls := [{"pos": Vector3.ZERO, "house_bounds": Rect2(-2, -500, 4, 1400), "barn_door_always_open": true}]
 	nav.build(walls, [])
 	var left := Vector3(-20, 0, 0)
 	var right := Vector3(20, 0, 0)
@@ -69,6 +69,8 @@ func run() -> void:
 	check(not closed.is_empty() and closed.back().x < 0.0, "Rebuilding navigation clears stale open doors")
 	var small := NavPathfinding.new()
 	small._grid_size = 64
+	small._grid_size_z = 64
+	small._z_offset = 32
 	var partitions := [
 		{"pos": Vector3(-14, 0, 0), "house_bounds": Rect2(-16, -64, 4, 128), "barn_door_always_open": true},
 		{"pos": Vector3(14, 0, 0), "house_bounds": Rect2(12, -64, 4, 128), "barn_door_always_open": true},
@@ -81,6 +83,8 @@ func run() -> void:
 	across = small.find_path(Vector3(-40, 0, 0), Vector3(40, 0, 0))
 	check(not across.is_empty() and across.back().x < 12.0, "Closing one door removes only that connection")
 	small._grid_size = 8
+	small._grid_size_z = 8
+	small._z_offset = 4
 	small.build([
 		{"pos": Vector3(-4, 0, -6), "radius": 0.1},
 		{"pos": Vector3(-6, 0, -4), "radius": 0.1},

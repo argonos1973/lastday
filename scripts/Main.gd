@@ -10915,8 +10915,17 @@ func get_river_depth_at(world_pos: Vector3) -> float:
 			if absf(local_forward) <= half_length and absf(local_side) <= half_width:
 				var side_depth: float = 1.0 - absf(local_side) / max(0.01, half_width)
 				var length_depth: float = 1.0 - absf(local_forward) / max(0.01, half_length)
-				return clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5)
+				return _ford_depth_cap(world_pos, clamp(min(side_depth, length_depth) * 3.0, 0.18, 2.5))
 	return 0.0
+
+## Roads always meet the river at wading fords: the carriageway sits almost at
+## water level, so the crossing reads (and plays) as a shallow flooded road
+## instead of a swim — consistent across every road/river junction.
+const FORD_DEPTH := 0.45
+func _ford_depth_cap(pos: Vector3, depth: float) -> float:
+	if depth > FORD_DEPTH and _is_on_road(pos):
+		return FORD_DEPTH
+	return depth
 
 func get_river_surface_y_at(world_pos: Vector3) -> float:
 	# El agua se construye en la altura Y del segmento; exponerla evita que los
@@ -13842,7 +13851,7 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 		var entry: Dictionary = _forest_tree_meshes[variant_idx]
 		var src_mesh: ArrayMesh = entry.mesh
 		# Create sub-batches for visibility culling
-		var spatial_batches := _spatial_instance_batches(transforms, 32.0, BATCH_SIZE)
+		var spatial_batches := _spatial_instance_batches(transforms, 64.0, BATCH_SIZE)
 		for b in range(spatial_batches.size()):
 			var indices: Array = spatial_batches[b]
 			var count := indices.size()
@@ -14673,7 +14682,7 @@ func _flush_grass_batches() -> void:
 	if grass_batch_meshes.is_empty():
 		return
 	const GRASS_BATCH_SIZE := 800
-	const GRID_CELL := 25.0
+	const GRID_CELL := 50.0
 	for variant in range(grass_batch_meshes.size()):
 		var transforms: Array = grass_batch_transforms[variant]
 		var colors: Array = grass_batch_colors[variant]

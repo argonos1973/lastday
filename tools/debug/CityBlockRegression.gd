@@ -50,6 +50,29 @@ func run() -> void:
   body.move_and_slide()
  var local := building.to_local(body.global_position)
  check(local.y>3.1 and local.z< -2.0,"capsule walks up staircase to upper landing: %s"%local)
+ # Exterior roof stair: ramp along the back wall (local z -6.3..-7.2) rises
+ # x -5.3 -> 4.5 to a landing at ~8.1, then the capsule steps through the
+ # parapet gap onto the roof (slab for flat roofs, slate strip for pitched).
+ body.global_position=building.to_global(Vector3(-5.05,.55,-6.75))
+ local = building.to_local(body.global_position)
+ for frame in range(700):
+  await physics_frame
+  local = building.to_local(body.global_position)
+  body.velocity=Vector3(1.2 if local.x<5.0 else 0.0,-2,2.5) if (local.x>4.3 and local.y>7.8) else Vector3(3.5,-2,0)
+  body.move_and_slide()
+ check(local.y>7.8 and local.x>4.0,"capsule climbs exterior stair to roof landing: %s"%local)
+ check(local.y>7.7 and local.z>-6.4,"capsule stands on pitched roof edge: %s"%local)
+ # Flat-roof building: same stair, lands on the concrete slab.
+ var flat: Node3D = district.buildings[1]
+ body.global_position=flat.to_global(Vector3(-5.05,.55,-6.75))
+ local = flat.to_local(body.global_position)
+ for frame in range(700):
+  await physics_frame
+  local = flat.to_local(body.global_position)
+  body.velocity=Vector3(1.2 if local.x<5.0 else 0.0,-2,2.5) if (local.x>4.3 and local.y>7.8) else Vector3(3.5,-2,0)
+  body.move_and_slide()
+ local = flat.to_local(body.global_position)
+ check(local.y>7.7 and local.z>-6.4,"capsule stands on flat roof slab: %s"%local)
  body.free()
  district.unload_building(0)
  await process_frame

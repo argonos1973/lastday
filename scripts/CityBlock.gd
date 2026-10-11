@@ -223,6 +223,8 @@ func _dress_facade(building: Node3D, i: int) -> void:
      openings.append(Rect2(wu - 0.75 - clearance, level * 3.9 + .75, 1.5 + clearance * 2.0, 2.0))
    if is_front:
     openings.append(Rect2(-1.9, -.05, 3.8, 2.9)) # doorway + swing clearance
+   else:
+    openings.append(Rect2(-5.7, -.05, 11.5, 8.45)) # exterior roof stair zone
   else:
    openings.append(Rect2(-2.15, 4.75, 3.6, 3.0)) # upper side breach
   # Damp grime rising from the ground; split on the front so the doorway stays clear.
@@ -285,6 +287,13 @@ func _dress_facade(building: Node3D, i: int) -> void:
    if is_front and absf(u) - dw * 0.5 < 1.0: continue
    var top := height - 0.15 - rng.randf_range(0.0, 0.8)
    _wall_growth(building, "Drape", u_axis, side, face_off + 0.02, Rect2(u - dw * 0.5, top - dh, dw, dh), openings, drape_mat, false)
+ _emit_decals(building)
+
+## Facade decals are merged into one ArrayMesh per texture (ivy sheet, drape,
+## base moss, damp): ~60 wall quads per building would otherwise cost a mesh
+## instance + draw call each. The split-region UV remap that used to live in
+## duplicated materials is baked straight into each quad's UVs.
+var _decal_groups := {} # building instance id -> { material : quads }
 
 # Cuts `area` around the openings and emits one quad per surviving region,
 # remapping UVs so each piece keeps its share of the sheet (village logic).
@@ -305,33 +314,54 @@ func _wall_growth(building: Node3D, label: String, u_axis: String, side: float, 
  var tangent_sign := side if u_axis == "x" else -side
  if mirror: tangent_sign = -tangent_sign
  for region in regions:
-  var mat := material
-  if not region.is_equal_approx(area):
-   mat = material.duplicate() as StandardMaterial3D
-   mat.uv1_scale = Vector3(region.size.x / area.size.x, region.size.y / area.size.y, 1.0)
-   var u_start := region.position.x - area.position.x if tangent_sign > 0.0 else area.end.x - region.end.x
-   mat.uv1_offset = Vector3(u_start / area.size.x, (area.end.y - region.end.y) / area.size.y, 0.0)
-  _wall_decal(building, label, u_axis, side, face_off, region.get_center().x, region.position.y, region.size.x, region.size.y, mat, mirror)
+  var u_start := region.position.x - area.position.x if tangent_sign > 0.0 else area.end.x - region.end.x
+  var u0 := u_start / area.size.x
+  var u1 := u0 + region.size.x / area.size.x
+  var v0 := (area.end.y - region.end.y) / area.size.y
+  var v1 := v0 + region.size.y / area.size.y
+  _wall_decal(building, label, u_axis, side, face_off, region.get_center().x, region.position.y, region.size.x, region.size.y, material, mirror, Rect2(u0, v0, u1 - u0, v1 - v0))
 
-var _decal_seq := 0
-func _wall_decal(building: Node3D, node_name: String, u_axis: String, side: float, face_off: float, u: float, y_bottom: float, w: float, h: float, mat: Material, mirror: bool) -> void:
- var plane := PlaneMesh.new()
- plane.orientation = PlaneMesh.FACE_Z
- plane.size = Vector2(w, h)
- var mesh_instance := MeshInstance3D.new()
- _decal_seq += 1
- mesh_instance.name = "%s_%d" % [node_name, _decal_seq]
- mesh_instance.mesh = plane
- mesh_instance.material_override = mat
- mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
- if u_axis == "x":
-  mesh_instance.position = Vector3(u, y_bottom + h * 0.5, side * face_off)
-  mesh_instance.rotation_degrees.y = 0.0 if side > 0.0 else 180.0
- else:
-  mesh_instance.position = Vector3(side * face_off, y_bottom + h * 0.5, u)
-  mesh_instance.rotation_degrees.y = 90.0 if side > 0.0 else -90.0
- if mirror: mesh_instance.scale.x = -1.0
- building.add_child(mesh_instance)
+func _wall_decal(building: Node3D, node_name: String, u_axis: String, side: float, face_off: float, u: float, y_bottom: float, w: float, h: float, mat: Material, mirror: bool, uv_rect := Rect2(0.0, 0.0, 1.0, 1.0)) -> void:
+ # Baking the orientation into world-space corners lets every quad share one
+ # merged mesh; mirroring becomes a U swap (all overgrowth mats are cull-off).
+ var right := Vector3(1 if side > 0.0 else -1, 0, 0) if u_axis == "x" else Vector3(0, 0, -1 if side > 0.0 else 1)
+ var center := Vector3(u, y_bottom + h * 0.5, side * face_off) if u_axis == "x" else Vector3(side * face_off, y_bottom + h * 0.5, u)
+ var u0 := uv_rect.position.x
+ var u1 := uv_rect.end.x
+ if mirror:
+  var t := u0; u0 = u1; u1 = t
+ var groups: Dictionary = _decal_groups.get_or_add(building.get_instance_id(), {})
+ (groups.get_or_add(mat, []) as Array).append({
+  "a": center - right * w * 0.5 + Vector3.UP * h * 0.5,
+  "b": center + right * w * 0.5 + Vector3.UP * h * 0.5,
+  "c": center + right * w * 0.5 - Vector3.UP * h * 0.5,
+  "d": center - right * w * 0.5 - Vector3.UP * h * 0.5,
+  "uv": [Vector2(u0, uv_rect.position.y), Vector2(u1, uv_rect.position.y), Vector2(u1, uv_rect.end.y), Vector2(u0, uv_rect.end.y)],
+  "n": node_name})
+
+func _emit_decals(building: Node3D) -> void:
+ var groups: Dictionary = _decal_groups.get(building.get_instance_id(), {})
+ for mat in groups:
+  var quads: Array = groups[mat]
+  var st := SurfaceTool.new()
+  st.begin(Mesh.PRIMITIVE_TRIANGLES)
+  for quad in quads:
+   var normal: Vector3 = (quad["b"] - quad["a"]).cross(quad["d"] - quad["a"]).normalized()
+   st.set_normal(normal)
+   var uv: Array = quad["uv"]
+   st.set_uv(uv[0]); st.add_vertex(quad["a"])
+   st.set_uv(uv[1]); st.add_vertex(quad["b"])
+   st.set_uv(uv[2]); st.add_vertex(quad["c"])
+   st.set_uv(uv[0]); st.add_vertex(quad["a"])
+   st.set_uv(uv[2]); st.add_vertex(quad["c"])
+   st.set_uv(uv[3]); st.add_vertex(quad["d"])
+  var mesh_instance := MeshInstance3D.new()
+  mesh_instance.name = "Decals_%s" % str(quads[0]["n"])
+  mesh_instance.mesh = st.commit()
+  mesh_instance.material_override = mat
+  mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+  building.add_child(mesh_instance)
+ _decal_groups.erase(building.get_instance_id())
 
 static var _litter_mat: StandardMaterial3D
 static func _litter_material() -> StandardMaterial3D:
