@@ -212,20 +212,27 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
   for wx in [-3.5,3.5]:
    for k in range(5): box('Radiator',(wx-.4+k*.2,y+.45,5.62),(.08,.75,.12),metal,False)
   for lx in [-3.4,.4]: box('LampCord',(lx,y+3.42,1.2),(.02,.5,.02),char,False)
-  # Half-open door leaf on the partition gap. Blender Z is up: yaw about Z.
-  # Hinge on the west jamb (x=-3.45), leaf swung ~58 deg into the front room.
-  ang=math.radians(58)
+  # Fully open door leaf beside the partition gap. Blender Z is up: yaw about Z.
+  # Hinge on the west jamb (x=-3.45), leaf swung 90 deg into the front room.
+  ang=math.radians(90)
   box('RoomDoor',(-3.45+.55*math.cos(ang),y+1.15,-1.0+.55*math.sin(ang)),(1.1,2.1,.05),wood,True,rot=(0,0,-ang))
  # Paper the stair side facing the room so it reads as a finished wall, not a
  # stretched wood panel.
  for k in range(n):
   h=(k+1)*3.8/n
   box('StairSide',(3.556,.12+h/2,4.5-(k+.5)*6.4/n),(.02,h,6.4/n),paper0,False)
+ # Frames align with the current floor height; the 1.4 m opening stays clear.
+ for level in range(2):
+  y=.12+level*FH
+  for x in [-3.54,-2.06]: box('InteriorDoorTrim',(x,y+1.2,-.89),(.075,2.4,.06),wood,False)
  # Plinth, entrance frame and shallow threshold ramp.
  for x in [-5.95,5.95]: box('CornerStone',(x,3.9,6.18),(.28,7.8,.1),stone,False)
  for x in [-.96,.96]: box('DoorFrame',(x,1.33,6.15),(.1,2.48,.15),char if idx==1 else wood)
  box('DoorFrameTop',(0,2.6,6.15),(2.02,.1,.15),char if idx==1 else wood)
- box('EntranceStep',(0,.05,6.35),(2.2,.1,.7),stone)
+ # A continuous threshold wedge, instead of a vertical 10 cm step.
+ verts=[(-1.1,-6.85,0),(1.1,-6.85,0),(-1.1,-5.9,.12),(1.1,-5.9,.12)]
+ me=bpy.data.meshes.new('Threshold');me.from_pydata(verts,[],[(0,1,3,2)]);me.materials.append(stone)
+ ob=bpy.data.objects.new('Solid_EntranceRamp',me);bpy.context.collection.objects.link(ob)
  # Broken masonry, rusty pipework and damaged parapet vary each building.
  rust=mat('Rust',(.19,.085,.035))
  for x in [-5.5,5.5]: box('Drainpipe',(x,3.95,6.32),(.09,7.8,.09),rust,False)

@@ -5716,7 +5716,7 @@ func _create_map() -> void:
 	_generated_hills.clear()
 	_road_segments = _generate_road_segments() # Reserve the real route before generating relief.
 	river_segments_data = _default_river_segments()
-	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.2, (CityExpansion.SOUTH_LIMIT-MAP_EXTENT)*.5), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT+CityExpansion.SOUTH_LIMIT))
+	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.1, (CityExpansion.SOUTH_LIMIT-MAP_EXTENT)*.5), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT+CityExpansion.SOUTH_LIMIT))
 	var is_client: bool = net != null and net.is_connected and not net.is_host and not net.is_dedicated_server
 	var is_server: bool = net != null and net.is_dedicated_server
 	if not is_server:
@@ -5995,9 +5995,6 @@ func _create_road() -> void:
 		_zi += 1
 	var tex_dir := "res://assets/textures/dirt_road/"
 	var color_tex := load(tex_dir + "Ground038_1K-JPG_Color.jpg")
-	var road_body := StaticBody3D.new()
-	road_body.name = "RoadCollision"
-	add_child(road_body)
 	# Filter segments by slope: skip those outside the flat road range
 	var filtered_segments: Array = []
 	for seg in _road_segments:
@@ -6013,7 +6010,6 @@ func _create_road() -> void:
 		var seg: Dictionary = _road_segments[si]
 		var center: Vector3 = seg["center"]
 		var yaw: float = deg_to_rad(float(seg["yaw"]))
-		var seg_ground_y := _get_exact_ground_y(center.x, center.z)
 		var seg_width: float = float(seg["size"].y)
 		var seg_len: float = float(seg["size"].x)
 		var half_w := seg_width * 0.5
@@ -6069,13 +6065,9 @@ func _create_road() -> void:
 		road_mi.name = "DirtRoad_%d" % si
 		road_mi.material_override = asphalt_mat
 		add_child(road_mi)
-		var col_shape := BoxShape3D.new()
-		col_shape.size = Vector3(seg_width, 0.1, seg_len)
-		var col := CollisionShape3D.new()
-		col.shape = col_shape
-		col.position = Vector3(center.x - road_body.global_position.x, seg_ground_y + 0.04 - road_body.global_position.y, center.z - road_body.global_position.z)
-		col.rotation_degrees.y = float(seg["yaw"])
-		road_body.add_child(col)
+		# The road is a thin overlay on walkable terrain, not a raised box.
+		# Matching ground collision avoids invisible kerbs at every segment.
+
 	# Utility poles along the road (placed every N segments)
 	var pole_spacing := 40.0
 	var pole_scale := 9.0 / 49.45
@@ -13020,6 +13012,8 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
 	if abs(pos.x) > MAP_EXTENT * 0.98 or (abs(pos.z) > MAP_EXTENT * 0.98 and not _is_in_southern_band(pos)):
 		return false
+	if CityExpansion.near_building(pos, 4.0):
+		return false
 	if _is_near_house(pos, 1.0):
 		return false
 	if _is_in_house_doorway(pos):
@@ -13702,7 +13696,7 @@ func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array,
 		var z := forest_rng.randf_range(south_z0, south_z1)
 		var city_dist := Vector2(x - CityExpansion.CENTER.x, z - CityExpansion.CENTER.z).length()
 		# The district core and its immediate surroundings stay clear.
-		if city_dist < 55.0 or (city_dist < 100.0 and forest_rng.randf() < 0.8):
+		if city_dist < 34.0 or (city_dist < 65.0 and forest_rng.randf() < 0.4):
 			continue
 		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
 		if get_river_depth_at(pos) > 0.0 or _is_inside_river_band(pos, 2.0):

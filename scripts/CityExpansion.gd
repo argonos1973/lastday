@@ -7,6 +7,12 @@ static func reserves_terrain(pos: Vector3, radius: float = 0.0) -> bool:
  # An open southern pass, then the new district. Existing inner terrain remains.
  return pos.z+radius>440 and pos.z-radius<760 and absf(pos.x-CENTER.x)<radius+55
 
+static func near_building(pos: Vector3, margin: float) -> bool:
+ for definition in BLOCK.BUILDINGS:
+  var offset: Vector3 = pos-CENTER-definition.position
+  if absf(offset.x)<6+margin and absf(offset.z)<6+margin: return true
+ return false
+
 static func inside_building(pos: Vector3) -> bool:
  for definition in BLOCK.BUILDINGS:
   var offset: Vector3=pos-CENTER-definition.position
