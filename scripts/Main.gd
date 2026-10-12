@@ -8006,16 +8006,12 @@ func _create_house_loot() -> void:
 			loot_idx += 1
 			_create_pickup_item(loot_data)
 	# City block houses: same pool, spread over both floors of each building.
-	var city_center := Vector3(9, 0, 680)
-	var city_offsets := [
-		{"p": Vector3(-16, 0, -17), "yaw": 0.0},
-		{"p": Vector3(16, 0, -17), "yaw": 0.0},
-		{"p": Vector3(-16, 0, 17), "yaw": PI},
-		{"p": Vector3(16, 0, 17), "yaw": PI},
-	]
-	for b_i in range(city_offsets.size()):
-		var b_pos: Vector3 = city_center + city_offsets[b_i]["p"]
-		var b_yaw: float = float(city_offsets[b_i]["yaw"])
+	# Iterates the district registry so every listed building gets loot while
+	# the first entries keep their ids/rng consumption (persistent saves).
+	var city_center := CityExpansion.CENTER
+	for definition in CityExpansion.BLOCK.BUILDINGS:
+		var b_pos: Vector3 = city_center + definition["position"]
+		var b_yaw: float = float(definition["yaw"])
 		var city_items := 3 + _world_rng.randi() % 3
 		for _j in range(city_items):
 			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
