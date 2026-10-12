@@ -5,6 +5,7 @@ func check(ok: bool, label: String) -> void:
  print("PASS " if ok else "FAIL ", label)
  if not ok: failures += 1
 func run() -> void:
+ Engine.time_scale=4.0
  var world := Node3D.new()
  root.add_child(world)
  current_scene = world
@@ -50,29 +51,44 @@ func run() -> void:
   body.move_and_slide()
  var local := building.to_local(body.global_position)
  check(local.y>3.1 and local.z< -2.0,"capsule walks up staircase to upper landing: %s"%local)
- # Exterior roof stair: ramp along the back wall (local z -6.3..-7.2) rises
- # x -5.3 -> 4.5 to a landing at ~8.1, then the capsule steps through the
- # parapet gap onto the roof (slab for flat roofs, slate strip for pitched).
- body.global_position=building.to_global(Vector3(-5.05,.55,-6.75))
- local = building.to_local(body.global_position)
- for frame in range(700):
-  await physics_frame
-  local = building.to_local(body.global_position)
-  body.velocity=Vector3(1.2 if local.x<5.0 else 0.0,-2,2.5) if (local.x>4.3 and local.y>7.8) else Vector3(3.5,-2,0)
-  body.move_and_slide()
- check(local.y>7.8 and local.x>4.0,"capsule climbs exterior stair to roof landing: %s"%local)
- check(local.y>7.7 and local.z>-6.4,"capsule stands on pitched roof edge: %s"%local)
- # Flat-roof building: same stair, lands on the concrete slab.
- var flat: Node3D = district.buildings[1]
- body.global_position=flat.to_global(Vector3(-5.05,.55,-6.75))
- local = flat.to_local(body.global_position)
- for frame in range(700):
-  await physics_frame
-  local = flat.to_local(body.global_position)
-  body.velocity=Vector3(1.2 if local.x<5.0 else 0.0,-2,2.5) if (local.x>4.3 and local.y>7.8) else Vector3(3.5,-2,0)
-  body.move_and_slide()
- local = flat.to_local(body.global_position)
- check(local.y>7.7 and local.z>-6.4,"capsule stands on flat roof slab: %s"%local)
+ # Pitched slate roofs (building_1/4) have no roof access: walking the same
+ # line from the upper-front landing stays on the upper floor, and a ray up
+ # through the stairwell hits the closed ceiling slab.
+ for index in [0,3]:
+  var house:Node3D=district.buildings[index]
+  body.global_position=house.to_global(Vector3(4.5,3.96,4.7))
+  for frame in range(160):
+   await physics_frame
+   body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
+  local=house.to_local(body.global_position)
+  check(local.y<5.0,"pitched roof house %d has no roof stair: %s"%[index,local])
+  var ray := PhysicsRayQueryParameters3D.create(house.to_global(Vector3(4.5,5.0,1.0)),house.to_global(Vector3(4.5,9.0,1.0)))
+  ray.exclude=[body.get_rid()]
+  var ceiling := space.intersect_ray(ray)
+  check(not ceiling.is_empty() and house.to_local(ceiling.position).y<8.2,"pitched roof house %d ceiling is closed"%index)
+ # Flat roofs (building_2/3) get an internal second flight above the first.
+ for index in [1,2]:
+  var house:Node3D=district.buildings[index]
+  body.global_position=house.to_global(Vector3(4.5,3.96,4.7))
+  for frame in range(240):
+   await physics_frame
+   body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
+   local=house.to_local(body.global_position)
+   if local.z< -3 and local.y>7.8:break
+  local=house.to_local(body.global_position)
+  check(local.y>7.8 and local.z< -2.0,"internal roof staircase %d: %s"%[index,local])
+  # Stop on the roof landing, then descend the same flight.
+  for frame in range(20):
+   await physics_frame
+   body.velocity=Vector3(0,-2,0);body.move_and_slide()
+  check(house.to_local(body.global_position).y>7.8,"stable roof landing")
+  for frame in range(220):
+   await physics_frame
+   body.velocity=house.global_basis*Vector3(0,-2,4.0);body.move_and_slide()
+   local=house.to_local(body.global_position)
+   if local.z>5.2 and local.y<4.2:break
+  local=house.to_local(body.global_position)
+  check(local.y>3.7 and local.y<4.2,"roof descent returns to upper floor %d: %s"%[index,local])
  body.free()
  district.unload_building(0)
  await process_frame

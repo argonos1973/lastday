@@ -41,6 +41,10 @@ Validación adicional: `tools/debug/CityIntegrationRegression.gd` (paso libre, l
 
 Se conservan city_01–city_04; city_05–city_16 reutilizan los cuatro GLB en las manzanas con desplazamientos (64,0), (0,96) y (64,96) respecto a la original. CityRoad.expanded conecta las cuatro manzanas. CityStreetscape añade ocho coches con colisiones también en servidor, aceras batched de 12 cm y una plaza con fuente de piedra llena de agua (pileta octogonal escaneada — `district_fountain.glb`, recortada de su peana museográfica y alas de captura por `tools/blender/clean_fountain_scan.py` — sobre zócalo y pedestal generados, con agua estancada y resto de surtidor), bancos y postes de luz (sin iluminación eléctrica). Los dos nuevos GLB se generan con tools/blender/create_city_streetscape.py; las fuentes .blend están en outputs/city.
 
+Al sur de la plaza, con la entrada mirando a la fuente, se alza la torre del reloj (`CityClockTower.gd`, GLB generado por `tools/blender/create_clock_tower.py`): vestíbulo público con mostradores y archivo, siete plantas con escaleras transitables, mirador con barandilla, campanario y chapitel de cobre. Las cuatro esferas siguen la hora local del ciclo día/noche (la misma que el cielo y el HUD). Validación: `ClockTowerRegression.gd`.
+
+Acceso a los tejados: solo las viviendas de tejado plano (`building_2`/`building_3`) tienen un segundo tramo interior sobre el primero que sale a la azotea por un hueco del forjado. Las de tejado de pizarra (`building_1`/`building_4`) no tienen acceso: el forjado bajo el desván está cerrado.
+
 Las filas de árboles cada 9 m se incorporan a los MultiMesh y al sistema de tala existente. Se respetan edificios, carretera y agua. Las colisiones permanecen residentes; los pequeños objetos interiores dejan de dibujarse a 48 m. No se ha cambiado el límite de fauna.
 
 Validación: CityLevelOneRegression comprueba las 16 casas, identificadores originales, suelo seco, calles, refugio, colisiones de coches en servidor y paso de cápsula sobre la acera; CityIntegrationRegression comprueba RPC de puertas. CityPerfSnapshot captura vistas y métricas con bosque completo; no equivale a una prueba de dos clientes.

@@ -21,6 +21,11 @@ static func tree_positions() -> Array[Vector3]:
  return result
 
 static func create(world: Node3D, server: bool) -> void:
+ var tower:=preload("res://scripts/CityClockTower.gd").new()
+ tower.name="CityClockTower";tower.position=tower.WORLD_POSITION
+ world.add_child(tower);tower.visible=not server
+ world._register_wildlife_blocker(tower.position,12.0)
+
  var plaza: Node3D = load("res://assets/models/environment/city/district_plaza.glb").instantiate()
  plaza.name="DistrictPlaza";plaza.position=ORIGIN+Vector3(32,0,48)
  world.add_child(plaza)

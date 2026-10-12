@@ -265,8 +265,6 @@ func _dress_facade(building: Node3D, i: int) -> void:
      openings.append(Rect2(wu - 0.75 - clearance, level * 3.9 + .75, 1.5 + clearance * 2.0, 2.0))
    if is_front:
     openings.append(Rect2(-1.9, -.05, 3.8, 2.9)) # doorway + swing clearance
-   else:
-    openings.append(Rect2(-5.7, -.05, 11.5, 8.45)) # exterior roof stair zone
   else:
    openings.append(Rect2(-2.15, 4.75, 3.6, 3.0)) # upper side breach
   # Damp grime rising from the ground; split on the front so the doorway stays clear.

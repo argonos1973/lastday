@@ -106,7 +106,7 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
  # Upper floor leaves an open 2.4 x 7.4 m stairwell on the right.
  box('UpperFloorMain',(-1.45,FH-.08,0),(9.1,.2,12),floor)
  box('UpperLanding',(4.55,FH-.08,-4.4),(2.9,.2,3.2),floor)
- box('UpperFrontFloor',(4.55,FH-.08,5.5),(2.9,.2,1),floor)
+ box('UpperFrontFloor',(4.55,FH-.08,5.25),(2.9,.2,1.5),floor)
  for level in range(2):
   # Two usable rooms on the left, door gap 1.4 m wide.
   for a,b in [(-6,-3.5),(-2.1,2.9)]: box('RoomPartition',((a+b)/2,level*FH+1.9,-1),(b-a,3.7,.16),plaster)
@@ -123,42 +123,26 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
  box('LandingBridge',(4.5,FH-.08,-2.35),(1.85,.2,.9),floor)
  for z in [-1.8,-.6,.6,1.8,3,4.3]: box('RailPost',(3.35,FH+.52,z),(.055,1.0,.055),metal)
  box('StairwellRail',(3.35,FH+1.02,1.25),(.07,.07,6.25),metal)
- # Exterior masonry stair up the back wall to the roof (escalera de obra):
- # stepped stone columns hugging the rear facade, a stepped balustrade on the
- # outer edge and a landing at parapet level. Same on every building — flat
- # roofs are walked directly, pitched roofs get a walkable slate strip below.
- RN=20; RX0=-5.3; RX1=4.5; RTOP=8.12
- for k in range(RN):
-  h=(k+1)*RTOP/RN
-  xk=RX0+(k+.5)*(RX1-RX0)/RN
-  box('RoofStep',(xk,h/2,-6.72),((RX1-RX0)/RN,h,.98),stone,False)
-  box('RoofBaluster',(xk,(h+.72)/2,-7.26),((RX1-RX0)/RN,h+.72,.13),stone,False)
- verts=[(x,-z,y) for x,y,z in [(RX0-.6,.02,-7.2),(RX0-.6,.02,-6.32),(RX1-.1,RTOP+.04,-7.2),(RX1-.1,RTOP+.04,-6.32),(RX1-.1,.02,-7.2),(RX1-.1,.02,-6.32)]]
- me=bpy.data.meshes.new('RampRoof'); me.from_pydata(verts,[],[(0,1,3,2),(2,3,5,4),(0,2,4),(1,5,3),(0,4,5,1)]); me.update(); ob=bpy.data.objects.new('Collision_StairRampRoof',me); bpy.context.collection.objects.link(ob)
- box('RoofLanding',(5.2,RTOP/2,-6.85),(1.5,RTOP,1.15),stone)
- box('LandingBaluster',(5.2,RTOP+.42,-7.38),(1.55,.85,.14),stone,False)
- box('LandingBaluster',(5.93,RTOP+.42,-6.85),(.14,.85,1.2),stone,False)
- if idx in [0,3]:
-  # Pitched roofs: a thin collision strip on the lower slate course lets the
-  # player step off the landing onto the slope near the eave.
-  sverts=[(x,-z,y) for x,y,z in [(-5.5,8.23,-6.05),(5.5,8.23,-6.05),(-5.5,8.93,-4.2),(5.5,8.93,-4.2),(-5.5,8.13,-6.05),(5.5,8.13,-6.05),(-5.5,8.83,-4.2),(5.5,8.83,-4.2)]]
-  sme=bpy.data.meshes.new('SlateWalk'); sme.from_pydata(sverts,[],[(0,1,3,2),(2,3,7,6),(0,2,6,4),(1,5,7,3),(0,4,5,1),(4,6,7,5)]); sme.update(); sob=bpy.data.objects.new('Collision_SlateWalk',sme); bpy.context.collection.objects.link(sob)
-  # Invisible stops keep the player on the walkable eave band: stepping past
-  # them would drop through the (collision-free) slate into the attic gap.
-  cbox('SlateStopTop',(0,9.6,-4.1),(11.0,2.8,.1))
-  cbox('SlateStopW',(-5.55,9.35,-5.1),(.1,2.4,2.0))
-  cbox('SlateStopE',(5.55,9.35,-5.1),(.1,2.4,2.0))
- # Roof and parapet; roof supported by perimeter, interiors unobstructed.
- if idx==2:
-  # Tejado hundido: agujero de ~2.3x2.3 m con borde carbonizado y escombro abajo.
-  for p,s in [((-1.875,TH+.06,0),(8.65,.24,12.4)),((5.475,TH+.06,0),(1.45,.24,12.4)),((3.6,TH+.06,-1.875),(2.3,.24,8.65)),((3.6,TH+.06,5.475),(2.3,.24,1.45))]: box('Roof',p,s,stone)
-  for p,s in [((3.6,TH+.07,2.42),(2.5,.22,.1)),((3.6,TH+.07,4.78),(2.5,.22,.1)),((2.42,TH+.07,3.6),(.1,.22,2.5)),((4.78,TH+.07,3.6),(.1,.22,2.5))]: box('CharEdge',p,s,char,False)
-  for k in range(6): box('Debris',(3.6+rng.uniform(-.8,.8),FH+.14,3.6+rng.uniform(-.8,.8)),(rng.uniform(.3,.8),rng.uniform(.12,.3),rng.uniform(.3,.7)),rng.choice([stone,char,wood]),False,rot=(0,0,rng.uniform(0,3)))
- else: # A collapsed roof bay over the rear room; staircase and upper floor remain intact.
-  for p0,s0 in [((1.9,TH+.06,0),(8.6,.24,12.4)),((-4.3,TH+.06,3),(3.8,.24,6.4)),((-4.3,TH+.06,-5.7),(3.8,.24,1.0))]:
-   box('BrokenRoof',p0,s0,stone)
-  for k in range(9):
-   box('RoofFracture',(-2.4,TH+.08,-4.7+k*.5),(rng.uniform(.2,.8),.27,.48),stone)
+ roof_top=TH+.18
+ if idx in [1,2]:
+  # Flat roofs only: a second indoor flight directly above the first one,
+  # reached from the upper-front landing via the west side of the stairwell.
+  for k in range(n):
+   t=(k+.5)/n; h=(k+1)*(roof_top-(FH+.02))/n
+   box('RoofStep',(4.5,FH+.02+h-.08,4.5-t*6.4),(1.85,.16,6.4/n),wood,False)
+  verts=[(x,-z,y) for x,y,z in [(3.57,FH+.02,4.5),(5.43,FH+.02,4.5),(3.57,roof_top,-1.9),(5.43,roof_top,-1.9)]]
+  me=bpy.data.meshes.new('IndoorRoofRamp');me.from_pydata(verts,[],[(0,1,3,2)]);me.update()
+  ob=bpy.data.objects.new('Collision_StairRampRoof',me);bpy.context.collection.objects.link(ob)
+  # An actual opening in the roof slab, with a landing at the head of the stairs.
+  box('RoofMain',(-1.45,roof_top-.1,0),(9.1,.2,12),stone)
+  box('RoofBackLanding',(4.55,roof_top-.1,-4.4),(2.9,.2,3.2),stone)
+  box('RoofLandingBridge',(4.5,roof_top-.1,-2.35),(1.85,.2,.9),stone)
+  box('RoofFrontLanding',(4.55,roof_top-.1,5.5),(2.9,.2,1),stone)
+  for z in [-1.8,-.6,.6,1.8,3,4.3]:box('RoofRailPost',(3.35,roof_top+.5,z),(.06,1,.06),metal)
+  box('RoofStairRail',(3.35,roof_top+1,1.25),(.07,.07,6.25),metal)
+ else:
+  # Pitched slate roofs have no roof access: a closed ceiling slab under the attic.
+  box('RoofMain',(0,roof_top-.1,0),(12.2,.2,12),stone)
 
  # Parapets: some are broken into segments with gaps (fachada derruida).
  for x in [-6.05,6.05]:
@@ -167,12 +151,7 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
    for s in [-1,1]: box('Parapet',(x,TH+.4,s*(gap/2+half/2)),(.18,.5,half),plaster)
   else: box('Parapet',(x,TH+.4,0),(.18,.5,12.3),plaster)
  for z in [-6.05,6.05]:
-  if z<0:
-   # Back parapet keeps a gap over the roof-stair landing (x 4.3..6.15).
-   if rng.random()<.4:
-    for a,b in [(-6.15,-1.4),(-.6,4.3)]: box('Parapet',((a+b)/2,TH+.4,z),(b-a,.5,.18),plaster)
-   else: box('Parapet',(-.925,TH+.4,z),(10.45,.5,.18),plaster)
-  elif rng.random()<.4:
+  if rng.random()<.4:
    half=rng.uniform(3.5,4.5); gap=12.3-2*half
    for s in [-1,1]: box('Parapet',(s*(gap/2+half/2),TH+.4,z),(half,.5,.18),plaster)
   else: box('Parapet',(0,TH+.4,z),(12.3,.5,.18),plaster)

@@ -8,12 +8,14 @@ static func reserves_terrain(pos: Vector3, radius: float = 0.0) -> bool:
  return pos.z+radius>440 and pos.z-radius<840 and pos.x+radius>-46 and pos.x-radius<130
 
 static func near_building(pos: Vector3, margin: float) -> bool:
+ if preload("res://scripts/CityClockTower.gd").contains(pos,margin):return true
  for definition in BLOCK.BUILDINGS:
   var offset: Vector3 = pos-CENTER-definition.position
   if absf(offset.x)<6+margin and absf(offset.z)<6+margin: return true
  return false
 
 static func inside_building(pos: Vector3) -> bool:
+ if preload("res://scripts/CityClockTower.gd").contains(pos):return true
  for definition in BLOCK.BUILDINGS:
   var offset: Vector3=pos-CENTER-definition.position
   if absf(offset.x)<5.85 and absf(offset.z)<5.85 and pos.y<7.9: return true
