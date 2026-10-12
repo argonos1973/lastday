@@ -8288,6 +8288,9 @@ func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: flo
 func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float) -> Vector3:
 	# Building-local frame: the stairwell opening (local x>2.4) is off-limits
 	# upstairs, and downstairs keeps clear of the stair run and the door swing.
+	# Bulky furniture footprints are rejected too — a drop inside a wardrobe or
+	# the bed would be invisible and unreachable.
+	var rects: Array = CityExpansion.BLOCK.LOOT_BLOCK_RECTS[0] if floor_y < 1.0 else CityExpansion.BLOCK.LOOT_BLOCK_RECTS[1]
 	for _attempt in range(25):
 		var lx := _world_rng.randf_range(-5.0, 5.0)
 		var lz := _world_rng.randf_range(-5.0, 5.0)
@@ -8299,8 +8302,16 @@ func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float)
 				continue
 			if absf(lx) < 1.3 and lz > 4.9:
 				continue
+		var blocked := false
+		for r in rects:
+			if (r as Rect2).has_point(Vector2(lx, lz)):
+				blocked = true
+				break
+		if blocked:
+			continue
 		return origin + Vector3(lx, floor_y, lz).rotated(Vector3.UP, yaw)
-	return origin + Vector3(0.0, floor_y, 0.0)
+	# Fallbacks sit in verified-clear spots on each floor.
+	return origin + Vector3(-0.5, floor_y, 0.9 if floor_y < 1.0 else -3.0).rotated(Vector3.UP, yaw)
 
 func _find_safe_loot_pos() -> Vector3:
 	for _attempt in range(60):

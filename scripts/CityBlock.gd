@@ -29,16 +29,19 @@ const TEX_IVY_SHEET := TEX_OVERGROWTH_DIR + "ivy_sheet.png"
 const TEX_IVY_DRAPE := TEX_OVERGROWTH_DIR + "ivy_drape.png"
 const TEX_BASE_MOSS := TEX_OVERGROWTH_DIR + "village_base_moss_albedo.png"
 const FLOOR_Y := [.12, 3.92]
-## Furniture scale vs a 1.75 m character — the kit pieces model ~70% of real
-## furniture size. Scaled pieces can sink a few cm into walls (backs are never
-## visible); fronts gain presence instead. Colliders inherit node.scale.
+## Furniture scale vs a 1.75 m character — sized to match the VILLAGE houses'
+## placed props (Main._create_house_interior): bed 4.1x1.6x1.7, hutch 2.8 tall,
+## fridge 1.9, stove/sink 1.4-1.5, toilet 1.4, bath sink 1.8. Pieces with no
+## village counterpart (sofas, chairs, tables, shelves) share the same chunky
+## ~1.4x proportion so rooms read like the village. Colliders inherit node.scale.
 const MODEL_SCALES := {
- "bed": 1.15, "fridge": 1.2, "gas_stove": 1.15, "stove": 1.15,
- "sink_cabinet": 1.2, "toilet": 1.15, "bath_sink": 1.2,
- "armchair": 1.25, "chair_a": 1.25, "chair_b": 1.25,
- "bookshelf": 1.3, "cabinet": 1.25, "tall_dresser": 1.35,
- "dresser_hutch": 1.15, "tv_stand": 1.2, "desk_table": 1.15,
- "side_table": 1.15, "floor_lamp": 1.1, "picture": 1.15,
+ "bed": 2.07, "fridge": 1.2, "gas_stove": 1.55, "stove": 1.52,
+ "sink_cabinet": 1.67, "toilet": 1.78, "bath_sink": 2.0,
+ "sofa_old": 1.4, "sofa_wrecked": 1.4,
+ "armchair": 1.4, "chair_a": 1.4, "chair_b": 1.4,
+ "bookshelf": 1.4, "cabinet": 1.4, "tall_dresser": 1.92,
+ "dresser_hutch": 1.43, "tv_stand": 1.4, "desk_table": 1.4,
+ "side_table": 1.3, "floor_lamp": 1.2, "picture": 1.15,
  "cardboard_box_0": 1.15, "cardboard_box_1": 1.15,
  "garbage_bag_0": 1.1, "garbage_bag_1": 1.1, "rug": 1.1,
 }
@@ -47,7 +50,7 @@ const MODEL_SCALES := {
 ## ground floor) and the upper landing (x>3.1, z<-1.9).
 const FURNITURE := [
  # Ground floor — living room (front).
- ["sofa", -5.2, 2.6, 0, 90.0, true, 0.0],
+ ["sofa", -5.1, 2.6, 0, 90.0, true, 0.0],
  ["tv_stand", 2.9, 2.6, 0, -90.0, true, 0.0],
  ["rug", -2.6, 2.6, 0, 90.0, false, 0.003],
  ["side_table", -3.3, 2.6, 0, 0.0, false, 0.0],
@@ -59,32 +62,55 @@ const FURNITURE := [
  ["garbage_bag_0", 2.4, 5.1, 0, 30.0, false, 0.0],
  ["cardboard_box_0", -1.7, 0.1, 0, 20.0, false, 0.0],
  # Ground floor — kitchen (back).
- ["fridge", 5.1, -5.2, 0, -90.0, true, 0.0],
- ["sink_cabinet", 5.55, -4.1, 0, -90.0, true, 0.0],
- ["stove", 5.5, -3.3, 0, -90.0, true, 0.0],
+ ["fridge", 4.75, -5.05, 0, -90.0, true, 0.0],
+ ["sink_cabinet", 5.1, -4.1, 0, -90.0, true, 0.0],
+ ["stove", 5.15, -3.3, 0, -90.0, true, 0.0],
  ["desk_table", 1.0, -3.6, 0, 0.0, true, 0.0],
  ["chair_a", 1.0, -2.8, 0, 180.0, false, 0.0],
  ["chair_b", 0.0, -4.4, 0, 60.0, false, 0.0],
- ["dresser_hutch", -5.62, -3.4, 0, 90.0, true, 0.0],
- ["cabinet", -2.8, -5.58, 0, 0.0, true, 0.0],
+ ["dresser_hutch", -5.3, -3.4, 0, 90.0, true, 0.0],
+ ["cabinet", -2.8, -5.28, 0, 0.0, true, 0.0],
  ["garbage_bag_1", 3.9, -2.6, 0, 0.0, false, 0.0],
  ["garbage_bag_0", -4.6, -5.2, 0, 70.0, false, 0.0],
  ["cardboard_box_1", -1.2, -5.3, 0, -15.0, false, 0.0],
- # Upper floor — bedroom (back).
- ["bed", -4.4, -5.42, 1, 0.0, true, 0.0],
- ["side_table", -3.0, -5.5, 1, 0.0, false, 0.0],
- ["tall_dresser", 1.9, -5.6, 1, 0.0, true, 0.0],
- ["picture", -4.4, -5.76, 1, 0.0, false, 1.25],
+ # Upper floor — bedroom (back). The bed carries no generic collider:
+ # _make_bed_sleepable adds a low frame body plus the sleep area.
+ ["bed", -3.55, -4.75, 1, 0.0, false, 0.0],
+ ["side_table", -0.75, -5.3, 1, 0.0, false, 0.0],
+ ["tall_dresser", 1.9, -5.15, 1, 0.0, true, 0.0],
+ ["picture", -3.55, -5.76, 1, 0.0, false, 1.7],
  ["chair_b", -1.2, -4.6, 1, 30.0, false, 0.0],
  ["cardboard_box_0", 0.4, -2.0, 1, 20.0, false, 0.0],
  # Upper floor — front room with the bathroom corner.
- ["toilet", -5.52, 5.1, 1, 90.0, true, 0.0],
- ["bath_sink", -5.62, 3.9, 1, 90.0, false, 0.0],
+ ["toilet", -5.05, 5.1, 1, 90.0, true, 0.0],
+ ["bath_sink", -5.2, 3.9, 1, 90.0, false, 0.0],
  ["sofa", 0.6, -0.5, 1, 0.0, true, 0.0],
  ["armchair", -1.6, 2.4, 1, 200.0, false, 0.0],
  ["floor_lamp", 2.2, 0.4, 1, 0.0, false, 0.0],
  ["garbage_bag_1", -3.4, 5.2, 1, 0.0, false, 0.0],
 ]
+## Building-local XZ footprints of the bulky pieces — loot placement in
+## Main._find_pos_inside_city_building rejects points inside these so a drop
+## can never spawn hidden inside a wardrobe, the bed or the sofa.
+const LOOT_BLOCK_RECTS := {
+ 0: [
+  Rect2(-5.8, 1.1, 1.4, 3.0), # sofa
+  Rect2(2.55, 1.95, 0.7, 1.3), # tv stand
+  Rect2(1.7, -1.0, 1.0, 0.7), # bookshelf
+  Rect2(3.8, -5.65, 1.9, 1.2), # fridge
+  Rect2(4.55, -4.7, 1.1, 1.2), # sink cabinet
+  Rect2(4.6, -3.8, 1.1, 1.0), # stove
+  Rect2(0.4, -4.0, 1.2, 0.8), # table
+  Rect2(-5.65, -4.2, 0.75, 1.6), # dresser hutch
+  Rect2(-3.3, -5.65, 1.0, 0.8), # cabinet
+ ],
+ 1: [
+  Rect2(-5.7, -5.65, 4.35, 1.85), # bed
+  Rect2(1.4, -5.65, 1.0, 1.0), # tall dresser
+  Rect2(-5.65, 4.65, 1.2, 0.95), # toilet
+  Rect2(-0.85, -1.1, 2.9, 1.2), # sofa
+ ],
+}
 var observer: Node3D
 var buildings: Dictionary = {}
 var door_states: Dictionary = {}
@@ -175,7 +201,9 @@ func _furnish(building: Node3D, i: int) -> void:
   if not item[5] and model in ["chair_a", "chair_b", "armchair", "floor_lamp", "side_table"] and rng.randf() < .45:
    tilt = Vector3(0, 0, deg_to_rad(rng.randf_range(80, 95)))
   var yaw: float = item[4] + rng.randf_range(-6.0, 6.0)
-  _place(root, model, Vector3(item[1], FLOOR_Y[item[3]] + item[6], item[2]), yaw, tilt, item[5])
+  var placed := _place(root, model, Vector3(item[1], FLOOR_Y[item[3]] + item[6], item[2]), yaw, tilt, item[5])
+  if item[0] == "bed" and placed != null:
+   _make_bed_sleepable(building, placed, FLOOR_Y[item[3]])
  for level in [0, 1]:
   # Torn curtains on some windows (front windows face -Z into the room).
   for wz in [5.74, -5.74]:
@@ -195,20 +223,21 @@ func _furnish(building: Node3D, i: int) -> void:
    patch.rotation.y = rng.randf() * TAU
    root.add_child(patch)
 
-func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: Vector3, collide: bool, grounded := true) -> void:
+func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: Vector3, collide: bool, grounded := true) -> Node3D:
  var packed: PackedScene = load(KIT_DIR + model + ".glb")
- if packed == null: return
+ if packed == null: return null
  var node: Node3D = packed.instantiate()
  node.name = model
  var scale: float = MODEL_SCALES.get(model, 1.0)
- node.scale = Vector3.ONE * scale
  var basis := Basis.from_euler(Vector3(0, deg_to_rad(yaw_deg), 0)) * Basis.from_euler(tilt)
  var aabb := _local_aabb(node)
  if grounded:
   # Knocked-over pieces pivot on their base: lift them back onto the floor.
   var saabb := AABB(aabb.position * scale, aabb.size * scale)
   pos.y -= (Transform3D(basis) * saabb).position.y
- node.transform = Transform3D(basis, pos)
+ # The scale must live in the basis — assigning node.scale first and then a
+ # plain Transform3D(basis, pos) silently resets it to 1.
+ node.transform = Transform3D(basis.scaled(Vector3.ONE * scale), pos)
  parent.add_child(node)
  if collide:
   var body := StaticBody3D.new()
@@ -219,6 +248,37 @@ func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: V
   shape.position = aabb.get_center()
   body.add_child(shape)
   node.add_child(body)
+ return node
+
+## Village beds are sleepable through a BedInteractable Area3D (the player aims
+## with `collide_with_areas`). The area must fully enclose the frame collider so
+## the aim ray always hits it first; the low frame body still stops the player
+## from walking through the mattress.
+func _make_bed_sleepable(building: Node3D, node: Node3D, floor_y: float) -> void:
+ var aabb := _local_aabb(node)
+ var scale := node.scale.x
+ var body := StaticBody3D.new()
+ body.name = "BedFrame"
+ var shape := CollisionShape3D.new()
+ var box := BoxShape3D.new()
+ var frame_h := 0.85 / scale
+ box.size = Vector3(aabb.size.x, frame_h, aabb.size.z)
+ shape.shape = box
+ shape.position = Vector3(aabb.get_center().x, frame_h * 0.5, aabb.get_center().z)
+ body.add_child(shape)
+ node.add_child(body)
+ var area := Area3D.new()
+ area.name = "BedInteractable"
+ var acol := CollisionShape3D.new()
+ var abox := BoxShape3D.new()
+ abox.size = aabb.size + Vector3(0.25 / scale, 0.35 / scale, 0.25 / scale)
+ acol.shape = abox
+ acol.position = aabb.get_center() + Vector3(0, 0.1 / scale, 0)
+ area.add_child(acol)
+ area.set_script(load("res://scripts/BedInteractable.gd"))
+ node.add_child(area)
+ # World-space point on top of the mattress (same +0.9 the village uses).
+ area.set("bed_position", building.to_global(Vector3(node.position.x, floor_y + 0.95, node.position.z)))
 
 static func _local_aabb(node: Node3D) -> AABB:
  var result := AABB()

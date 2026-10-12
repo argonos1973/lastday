@@ -1,6 +1,6 @@
 """Four enterable pilot buildings. Coordinates below are Godot metres (Y up).
 FH = floor-to-floor height; TH = total wall height above the foundation."""
-import bpy, math, random
+import bpy, bmesh, math, random
 random.seed(812)
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
@@ -45,6 +45,14 @@ def box(name,p,s,m,collision=True,rot=None):
    uvm=UV_METRES.get(name,2.8)
    o.data.uv_layers.active.data[loop].uv=(co[axes[0]]/uvm,co[axes[1]]/uvm)
  return o
+
+def wedge(name,x0,x1,yl,zl,yh,zh,yb):
+ # Closed stair wedge: slope from (zl,yl) up to (zh,yh), base at yb under the
+ # high end. Normals recomputed so either climbing direction collides.
+ pts=[(x0,yl,zl),(x1,yl,zl),(x0,yh,zh),(x1,yh,zh),(x0,yb,zh),(x1,yb,zh)]
+ me=bpy.data.meshes.new(name);me.from_pydata([(x,-z,y) for x,y,z in pts],[],[(0,1,3,2),(2,3,5,4),(0,2,4),(1,5,3),(0,4,5,1)])
+ bm=bmesh.new();bm.from_mesh(me);bmesh.ops.recalc_face_normals(bm,faces=bm.faces);bm.to_mesh(me);bm.free();me.update()
+ ob=bpy.data.objects.new(name,me);bpy.context.collection.objects.link(ob);return ob
 
 def cbox(name,p,s):
  # Collision-only box: stays outside the Solid_/Detail_ visual joins, gets
@@ -111,35 +119,48 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
   # Two usable rooms on the left, door gap 1.4 m wide.
   for a,b in [(-6,-3.5),(-2.1,2.9)]: box('RoomPartition',((a+b)/2,level*FH+1.9,-1),(b-a,3.7,.16),plaster)
   box('RoomDoorLintel',(-2.8,level*FH+3.12,-1),(1.4,1.25,.16),plaster)
- # Stair treads and a smooth, matching collision ramp for CharacterBody3D.
+ # Stair treads and a smooth, matching collision wedge for CharacterBody3D.
+ # Flat-roof houses switch back: the first flight takes the east lane of the
+ # stairwell and the roof flight returns along the west lane behind a spine.
+ flat=idx in [1,2]
  n=20
+ sx0,sx1=(4.58,5.84) if flat else (3.57,5.43)
  for k in range(n):
   h=(k+1)*3.8/n
-  box('Step',(4.5,.12+h/2,4.5-(k+.5)*6.4/n),(1.85,h,6.4/n),wood,False)
-
- verts=[(x,-z,y) for x,y,z in [(3.57,.12,4.5),(5.43,.12,4.5),(3.57,FH+.02,-1.9),(5.43,FH+.02,-1.9),(3.57,.0,-1.9),(5.43,.0,-1.9)]]
- me=bpy.data.meshes.new('Ramp'); me.from_pydata(verts,[],[(0,1,3,2),(2,3,5,4),(0,2,4),(1,5,3),(0,4,5,1)]); me.update(); ob=bpy.data.objects.new('Collision_StairRamp',me); bpy.context.collection.objects.link(ob)
+  box('Step',((sx0+sx1)/2,.12+h/2,4.5-(k+.5)*6.4/n),(sx1-sx0,h,6.4/n),wood,False)
+ wedge('Collision_StairRamp',sx0,sx1,.12,4.5,FH+.02,-1.9,.0)
  # Short landing bridges final stair height to back-room floor.
- box('LandingBridge',(4.5,FH-.08,-2.35),(1.85,.2,.9),floor)
- for z in [-1.8,-.6,.6,1.8,3,4.3]: box('RailPost',(3.35,FH+.52,z),(.055,1.0,.055),metal)
- box('StairwellRail',(3.35,FH+1.02,1.25),(.07,.07,6.25),metal)
+ if flat:
+  box('LandingBridge',(4.48,FH-.08,-2.35),(2.76,.2,.9),floor)
+  box('UpperStairBase',(3.81,FH-.08,1.3),(1.42,.2,6.4),floor)
+ else:
+  box('LandingBridge',(4.5,FH-.08,-2.35),(1.85,.2,.9),floor)
+  for z in [-1.8,-.6,.6,1.8,3,4.3]: box('RailPost',(3.35,FH+.52,z),(.055,1.0,.055),metal)
+  box('StairwellRail',(3.35,FH+1.02,1.25),(.07,.07,6.25),metal)
  roof_top=TH+.18
- if idx in [1,2]:
-  # Flat roofs only: a second indoor flight directly above the first one,
-  # reached from the upper-front landing via the west side of the stairwell.
+ if flat:
+  # Roof flight: from the back landing (where the first flight arrives) back
+  # towards the front, on the west lane, out through an opening in the slab.
+  rise=roof_top-(FH+.02)
   for k in range(n):
-   t=(k+.5)/n; h=(k+1)*(roof_top-(FH+.02))/n
-   box('RoofStep',(4.5,FH+.02+h-.08,4.5-t*6.4),(1.85,.16,6.4/n),wood,False)
-  verts=[(x,-z,y) for x,y,z in [(3.57,FH+.02,4.5),(5.43,FH+.02,4.5),(3.57,roof_top,-1.9),(5.43,roof_top,-1.9)]]
-  me=bpy.data.meshes.new('IndoorRoofRamp');me.from_pydata(verts,[],[(0,1,3,2)]);me.update()
-  ob=bpy.data.objects.new('Collision_StairRampRoof',me);bpy.context.collection.objects.link(ob)
-  # An actual opening in the roof slab, with a landing at the head of the stairs.
+   h=(k+1)*rise/n
+   box('RoofStep',(3.85,FH+.02+h/2,-1.9+(k+.5)*6.4/n),(1.26,h,6.4/n),wood,False)
+  wedge('Collision_StairRampRoof',3.22,4.48,FH+.02,-1.9,roof_top,4.5,FH-.02)
+  # West guard of the roof flight (also the rail on that side of the opening).
+  cbox('RoofStairGuard',(3.16,(FH+roof_top+1.1)/2,1.3),(.06,roof_top+1.1-FH,6.4))
+  for k in range(9):
+   t=(k+.5)/9;box('RoofStairPost',(3.17,FH+.02+t*rise+.5,-1.9+t*6.4),(.05,1.0,.05),metal,False)
+  slope=math.atan2(rise,6.4)
+  box('RoofStairHandrail',(3.17,FH+.02+rise/2+1.0,1.3),(.06,.06,math.hypot(6.4,rise)),metal,False,rot=(-slope,0,0))
   box('RoofMain',(-1.45,roof_top-.1,0),(9.1,.2,12),stone)
   box('RoofBackLanding',(4.55,roof_top-.1,-4.4),(2.9,.2,3.2),stone)
-  box('RoofLandingBridge',(4.5,roof_top-.1,-2.35),(1.85,.2,.9),stone)
-  box('RoofFrontLanding',(4.55,roof_top-.1,5.5),(2.9,.2,1),stone)
-  for z in [-1.8,-.6,.6,1.8,3,4.3]:box('RoofRailPost',(3.35,roof_top+.5,z),(.06,1,.06),metal)
-  box('RoofStairRail',(3.35,roof_top+1,1.25),(.07,.07,6.25),metal)
+  box('RoofBackBridge',(4.48,roof_top-.1,-2.35),(2.76,.2,.9),stone)
+  box('RoofOverFirstFlight',(5.26,roof_top-.1,1.3),(1.48,.2,6.4),stone)
+  box('RoofFrontLanding',(4.55,roof_top-.1,5.25),(2.9,.2,1.5),stone)
+  # Stop across the low end of the opening.
+  cbox('RoofOpeningStop',(3.83,roof_top+.55,-1.93),(1.36,1.1,.06))
+  box('RoofOpeningRail',(3.83,roof_top+1.0,-1.93),(1.36,.06,.06),metal,False)
+  for x in [3.25,3.83,4.41]:box('RoofOpeningPost',(x,roof_top+.5,-1.93),(.05,1.0,.05),metal,False)
  else:
   # Pitched slate roofs have no roof access: a closed ceiling slab under the attic.
   box('RoofMain',(0,roof_top-.1,0),(12.2,.2,12),stone)
@@ -197,9 +218,13 @@ for idx,color in enumerate([(.56,.49,.37),(.39,.45,.42),(.57,.38,.29),(.50,.53,.
   box('RoomDoor',(-3.45+.55*math.cos(ang),y+1.15,-1.0+.55*math.sin(ang)),(1.1,2.1,.05),wood,True,rot=(0,0,-ang))
  # Paper the stair side facing the room so it reads as a finished wall, not a
  # stretched wood panel.
- for k in range(n):
-  h=(k+1)*3.8/n
-  box('StairSide',(3.556,.12+h/2,4.5-(k+.5)*6.4/n),(.02,h,6.4/n),paper0,False)
+ if flat:
+  # Spine between the two lanes: ground floor up to a 1 m parapet on the roof.
+  box('StairSpine',(4.52,(roof_top+1.0)/2,1.3),(.08,roof_top+1.0,6.4),paper0)
+ else:
+  for k in range(n):
+   h=(k+1)*3.8/n
+   box('StairSide',(3.556,.12+h/2,4.5-(k+.5)*6.4/n),(.02,h,6.4/n),paper0,False)
  # Frames align with the current floor height; the 1.4 m opening stays clear.
  for level in range(2):
   y=.12+level*FH

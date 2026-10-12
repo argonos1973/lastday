@@ -15,8 +15,9 @@ func _ready() -> void:
    mi.create_trimesh_collision()
   if str(mi.name).begins_with("Collision_"):
    mi.visible=false
-   for body in mi.get_children():
-    if body is StaticBody3D:body.add_to_group("stair_surface")
+   if str(mi.name).contains("StairRamp"):
+    for body in mi.get_children():
+     if body is StaticBody3D:body.add_to_group("stair_surface")
  for kind in ["Hour","Minute"]:
   for face in range(4):
    var hand:Node3D=model.find_child("Clock%s_%d"%[kind,face],true,false)

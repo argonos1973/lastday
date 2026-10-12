@@ -23,23 +23,32 @@ func run():
   var turns:=3.25/12 if i<4 else .25
   check(tower._hands[i].basis.is_equal_approx(tower._bases[i]*Basis(Vector3(0,0,1),TAU*turns)),"03:15 hand angle")
  var body:=CharacterBody3D.new();var collider:=CollisionShape3D.new();var capsule:=CapsuleShape3D.new();capsule.radius=.35;capsule.height=1.75;collider.shape=capsule;collider.position.y=.9;body.add_child(collider);body.floor_snap_length=.4;world.add_child(body)
- body.position=Vector3(4.5,.05,-5.5)
+ # Switchback: flight L climbs lane A (x 4.7) towards +z when even, lane B
+ # (x 2.35) towards -z when odd; each starts on the landing where the last ended.
+ var lane_x:=func(level:int)->float:return 4.7 if level%2==0 else 2.35
+ var dir:=func(level:int)->float:return 1.0 if level%2==0 else -1.0
+ body.position=Vector3(4.7,.05,-5.0)
  await physics_frame
  for level in range(7):
-  check(await walk(body,Vector3(4.5,0,5.5)),"tower ascent flight %d"%level)
+  var x:float=lane_x.call(level);var d:float=dir.call(level)
+  check(await walk(body,Vector3(x,0,-5.0*d)),"stair entry %d"%level)
+  check(await walk(body,Vector3(x,0,5.0*d)),"tower ascent flight %d"%level)
   check(absf(body.position.y-(level+1)*4.2)<.18,"tower landing height %d: %s"%[level,body.position])
   for frame in range(10):
    await physics_frame;body.velocity=Vector3(0,-2,0);body.move_and_slide()
   check(absf(body.position.y-(level+1)*4.2)<.18,"stable floor %d"%level)
-  if level<6:
-   check(await walk(body,Vector3(1.5,0,5.5)),"landing to corridor")
-   check(await walk(body,Vector3(1.5,0,-5.5)),"return corridor")
-   check(await walk(body,Vector3(4.5,0,-5.5)),"next stair entry")
  for level in range(6,-1,-1):
-  check(await walk(body,Vector3(4.5,0,-5.5)),"tower descent %d"%level)
-  check(absf(body.position.y-level*4.2)<.18,"descent landing %d"%level)
-  if level>0:
-   await walk(body,Vector3(1.5,0,-5.5));await walk(body,Vector3(1.5,0,5.5));await walk(body,Vector3(4.5,0,5.5))
+  var x:float=lane_x.call(level);var d:float=dir.call(level)
+  check(await walk(body,Vector3(x,0,5.0*d)),"descent entry %d"%level)
+  check(await walk(body,Vector3(x,0,-5.0*d)),"tower descent %d"%level)
+  check(absf(body.position.y-level*4.2)<.18,"descent landing %d: %s"%[level,body.position])
+ # The open stairwell of an arriving flight cannot be walked into from the far
+ # landing: floor 1, lane A, stepping south from the z=-5 landing stays at 4.2.
+ body.position=Vector3(4.7,4.25,-5.0)
+ await physics_frame
+ for frame in range(90):
+  await physics_frame;body.velocity=Vector3(0,-2,3.0);body.move_and_slide()
+ check(body.position.y>4.0,"stairwell stop holds: %s"%body.position)
  world.free()
  print("CLOCK_TOWER failures=",failures)
  quit(1 if failures else 0)

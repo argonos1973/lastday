@@ -54,52 +54,24 @@ static func create(world: Node3D, server: bool) -> void:
     world._disable_emission_recursive(car)
     if i%2:car.position.y+=world.SCRAP_CAR_Y_CORRECTION
 
-# Scanned octagonal stone bowl (clean_fountain_scan.py drops the museum stand
-# and detached urn shells), carried on a generated plinth and pedestal, full
-# of stagnant water. A short broken spout just reaches the surface.
+# The complete scanned stone fountain (octagonal basin, column and finial),
+# recentred and stripped of its scanned paving by clean_fountain_scan.py.
+# It stands directly on the plaza medallion; the baked 'FountainWater' sheet
+# follows the real inner rim, so the basin reads full to just below the coping.
 static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
- world._create_invisible_collision_box("DistrictFountainCollision",center,Vector3(2.5,1.2,2.5))
- world._register_wildlife_blocker(center,1.6)
+ world._create_invisible_collision_box("DistrictFountainCollision",center,Vector3(2.0,.62,2.0))
+ world._create_invisible_collision_box("DistrictFountainColumnCollision",center,Vector3(.6,2.3,.6))
+ world._register_wildlife_blocker(center,1.3)
  if server:return
- var stone:=StandardMaterial3D.new()
- stone.albedo_texture=load("res://assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg")
- stone.uv1_scale=Vector3(3,3,3);stone.roughness=.95
- var plinth:=MeshInstance3D.new();plinth.name="DistrictFountainPlinth"
- var plinth_box:=BoxMesh.new();plinth_box.size=Vector3(1.5,.14,1.5);plinth.mesh=plinth_box
- plinth.position=center+Vector3(0,.10,0);plinth.material_override=stone;world.add_child(plinth)
- var pedestal:=MeshInstance3D.new();pedestal.name="DistrictFountainPedestal"
- var column:=CylinderMesh.new();column.top_radius=.38;column.bottom_radius=.5;column.height=.30;column.radial_segments=8
- pedestal.mesh=column;pedestal.rotation.y=PI/8
- pedestal.position=center+Vector3(0,.32,0);pedestal.material_override=stone;world.add_child(pedestal)
  var fountain: Node3D = load("res://assets/models/environment/city/district_fountain.glb").instantiate()
- fountain.name="DistrictFountain"
- var box:=_node_aabb(fountain)
- var bowl_center:=box.position+box.size*.5 # scanned bowl is off-centre in its node
- fountain.position=center+Vector3(-bowl_center.x,.45-box.position.y,-bowl_center.z)
+ fountain.name="DistrictFountain";fountain.position=center+Vector3(0,.03,0)
  world.add_child(fountain)
- var water:=MeshInstance3D.new();water.name="DistrictFountainWater"
- var disc:=CylinderMesh.new();disc.top_radius=.78;disc.bottom_radius=.78;disc.height=.02;disc.radial_segments=8
- water.mesh=disc;water.rotation.y=PI/8;water.position=center+Vector3(0,.95,0)
- var wm:=StandardMaterial3D.new();wm.albedo_color=Color(.13,.19,.12,.82);wm.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
- wm.roughness=.08;wm.metallic=.3;wm.cull_mode=BaseMaterial3D.CULL_DISABLED
- water.material_override=wm;world.add_child(water)
- var spout:=MeshInstance3D.new();spout.name="DistrictFountainSpout"
- var stem:=CylinderMesh.new();stem.top_radius=.10;stem.bottom_radius=.16;stem.height=.55;stem.radial_segments=8
- spout.mesh=stem;spout.rotation.y=PI/8;spout.position=center+Vector3(0,.72,0);spout.material_override=stone;world.add_child(spout)
- var cap:=MeshInstance3D.new();cap.name="DistrictFountainSpoutCap"
- var cap_box:=BoxMesh.new();cap_box.size=Vector3(.26,.06,.26);cap.mesh=cap_box
- cap.position=center+Vector3(0,.98,0);cap.material_override=stone;world.add_child(cap)
-
-static func _node_aabb(n: Node) -> AABB:
- var box:=AABB();var first:=true;var stack:Array=[n]
- while not stack.is_empty():
-  var cur: Node=stack.pop_back()
-  if cur is MeshInstance3D:
-   var a: AABB=cur.transform*cur.get_aabb()
-   if first:box=a;first=false
-   else:box=box.merge(a)
-  stack.append_array(cur.get_children())
- return box
+ var water:=fountain.find_child("FountainWater",true,false) as MeshInstance3D
+ if water!=null:
+  water.name="DistrictFountainWater"
+  var wm:=StandardMaterial3D.new();wm.albedo_color=Color(.16,.22,.17,.86);wm.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
+  wm.roughness=.06;wm.metallic_specular=.8;wm.cull_mode=BaseMaterial3D.CULL_DISABLED
+  water.material_override=wm
 
 static func _pavements(world: Node3D, server: bool) -> void:
  var source:Node3D=load("res://assets/models/environment/city/district_pavement.glb").instantiate()

@@ -66,29 +66,38 @@ func run() -> void:
   ray.exclude=[body.get_rid()]
   var ceiling := space.intersect_ray(ray)
   check(not ceiling.is_empty() and house.to_local(ceiling.position).y<8.2,"pitched roof house %d ceiling is closed"%index)
- # Flat roofs (building_2/3) get an internal second flight above the first.
+ # Flat roofs (building_2/3) switch back: first flight on the east lane up to
+ # the back landing, turn west, roof flight climbs back towards the front.
  for index in [1,2]:
   var house:Node3D=district.buildings[index]
-  body.global_position=house.to_global(Vector3(4.5,3.96,4.7))
-  for frame in range(240):
+  body.global_position=house.to_global(Vector3(5.21,.2,4.8))
+  for frame in range(260):
    await physics_frame
    body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
    local=house.to_local(body.global_position)
-   if local.z< -3 and local.y>7.8:break
-  local=house.to_local(body.global_position)
-  check(local.y>7.8 and local.z< -2.0,"internal roof staircase %d: %s"%[index,local])
-  # Stop on the roof landing, then descend the same flight.
+   if local.z< -2.3 and local.y>3.8:break
+  check(local.y>3.8 and local.z< -2.0,"flat house %d first flight to back landing: %s"%[index,local])
+  for frame in range(80):
+   await physics_frame
+   body.velocity=house.global_basis*Vector3(-3.0,-2,0);body.move_and_slide()
+   local=house.to_local(body.global_position)
+   if local.x<3.9:break
+  for frame in range(260):
+   await physics_frame
+   body.velocity=house.global_basis*Vector3(0,-2,4.0);body.move_and_slide()
+   local=house.to_local(body.global_position)
+   if local.z>4.8 and local.y>7.8:break
+  check(local.y>7.8 and local.z>4.5,"roof flight returns towards the front %d: %s"%[index,local])
   for frame in range(20):
    await physics_frame
    body.velocity=Vector3(0,-2,0);body.move_and_slide()
   check(house.to_local(body.global_position).y>7.8,"stable roof landing")
-  for frame in range(220):
+  for frame in range(260):
    await physics_frame
-   body.velocity=house.global_basis*Vector3(0,-2,4.0);body.move_and_slide()
+   body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
    local=house.to_local(body.global_position)
-   if local.z>5.2 and local.y<4.2:break
-  local=house.to_local(body.global_position)
-  check(local.y>3.7 and local.y<4.2,"roof descent returns to upper floor %d: %s"%[index,local])
+   if local.z< -2.3 and local.y<4.2:break
+  check(local.y>3.7 and local.y<4.2,"roof descent returns to back landing %d: %s"%[index,local])
  body.free()
  district.unload_building(0)
  await process_frame
