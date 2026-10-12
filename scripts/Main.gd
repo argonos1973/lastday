@@ -8014,14 +8014,21 @@ func _create_house_loot() -> void:
 		var b_pos: Vector3 = city_center + definition["position"]
 		var b_yaw: float = float(definition["yaw"])
 		var city_items := 3 + _world_rng.randi() % 3
-		for _j in range(city_items):
+		var loot_floors: Array = definition.get("loot_floor_values", [])
+		var item_count := maxi(city_items, loot_floors.size())
+		for _j in range(item_count):
 			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			if template.get("rare", false) and _world_rng.randf() > 0.50:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
-			var floor_y := 0.06 if _world_rng.randf() < 0.6 else 4.22
+			var floor_y: float
+			if loot_floors.size() > 2:
+				var level := _j if _j < loot_floors.size() else _world_rng.randi() % loot_floors.size()
+				floor_y = float(loot_floors[level])
+			else:
+				floor_y = 0.06 if _world_rng.randf() < 0.6 else 4.22
 			var loot_data: Dictionary = template.duplicate()
-			loot_data["pos"] = _find_pos_inside_city_building(b_pos, b_yaw, floor_y)
-			if floor_y > 1.0:
+			loot_data["pos"] = _find_pos_inside_city_building(b_pos, b_yaw, floor_y, definition)
+			if floor_y > 1.0 or loot_floors.size() > 2:
 				loot_data["floor_y"] = floor_y
 			loot_data["id"] = "city_loot_%d" % loot_idx
 			loot_idx += 1
@@ -8286,11 +8293,31 @@ func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: flo
 			return pos
 	return _find_pos_inside_house(origin, half_w, half_d)
 
-func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float) -> Vector3:
+func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float, definition: Dictionary = {}) -> Vector3:
 	# Building-local frame: the stairwell opening (local x>2.4) is off-limits
 	# upstairs, and downstairs keeps clear of the stair run and the door swing.
 	# Bulky furniture footprints are rejected too — a drop inside a wardrobe or
 	# the bed would be invisible and unreachable.
+	var highrise_floors: Array = definition.get("loot_floor_values", [])
+	if highrise_floors.size() > 2:
+		var level := 0
+		for i in range(highrise_floors.size()):
+			if absf(floor_y-float(highrise_floors[i])) < .02:
+				level = i
+				break
+		for _attempt in range(40):
+			# The stair shaft is on the west side; loot is placed in the clear
+			# east rooms, with a walkable lane from each landing kept open.
+			var lx := _world_rng.randf_range(-1.65,5.15)
+			var lz := _world_rng.randf_range(-4.45,4.45)
+			if level == 0:
+				if lx > 1.0 and lx < 4.2 and lz > 1.9: continue # shop counter
+				if lx > 4.0 and lz < -3.8: continue # cabinet and rear counter
+				if lx > 4.15 and lz > -4.0 and lz < 2.2: continue # shelving
+			elif (lx > .4 and lx < 4.45 and lz < -1.35) or (lx > 1.0 and lx < 4.5 and lz > 2.2) or (lx > 4.0 and lz > -.2 and lz < 2.1):
+				continue # bed/dresser and sofa clearances
+			return origin + Vector3(lx, floor_y, lz).rotated(Vector3.UP, yaw)
+		return origin + Vector3(.0, floor_y, 0.0).rotated(Vector3.UP, yaw)
 	var rects: Array = CityExpansion.BLOCK.LOOT_BLOCK_RECTS[0] if floor_y < 1.0 else CityExpansion.BLOCK.LOOT_BLOCK_RECTS[1]
 	for _attempt in range(25):
 		var lx := _world_rng.randf_range(-5.0, 5.0)

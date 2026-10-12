@@ -43,9 +43,9 @@ func run():
      break
   if e["floor_y"] > 1.0: upstairs += 1
  var failures := stray + inside_furniture
- if covered.size() != 16:
+ if covered.size() != CITY.BLOCK.BUILDINGS.size():
   failures += 1
-  push_error("viviendas cubiertas: %d/16" % covered.size())
+  push_error("viviendas cubiertas: %d/%d" % [covered.size(), CITY.BLOCK.BUILDINGS.size()])
  for d in CITY.BLOCK.BUILDINGS:
   if not covered.has(d["id"]): push_error("sin loot: " + d["id"])
  print("CITY_LOOT total=%d covered=%d upstairs=%d stray=%d furniture=%d failures=%d" % [total, covered.size(), upstairs, stray, inside_furniture, failures])

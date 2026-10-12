@@ -11,9 +11,9 @@ func run():
  var world:=World.new();root.add_child(world);current_scene=world
  world.river_segments_data=world._default_river_segments()
  var district:=preload("res://scripts/CityExpansion.gd").create(world,true)
- check(district.buildings.size()==16,"16 resident houses")
+ check(district.buildings.size()==preload("res://scripts/CityBlock.gd").BUILDINGS.size(),"all resident houses")
  var ids:Dictionary={}
- for i in range(16):
+ for i in range(district.buildings.size()):
   var b:Node3D=district.buildings[i]
   check(not ids.has(b.name),"unique persistent building id")
   ids[b.name]=true

@@ -11,12 +11,13 @@ func run() -> void:
  current_scene = world
  var district := preload("res://scripts/CityBlock.gd").new()
  world.add_child(district)
- for i in range(16): district.load_building(i)
+ var NB := district.BUILDINGS.size()
+ for i in range(NB): district.load_building(i)
  await physics_frame
  await physics_frame
- check(district.buildings.size()==16,"sixteen enterable buildings loaded")
+ check(district.buildings.size()==NB,"all buildings loaded")
  var space := world.get_world_3d().direct_space_state
- for i in range(16):
+ for i in range(NB):
   var b: Node3D = district.buildings[i]
   var door: Door = b.get_node("city_%02d_door"%(i+1))
   var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(0,1.2,8)),b.to_global(Vector3(0,1.2,4))))
@@ -24,10 +25,11 @@ func run() -> void:
   door.is_open=true
   door.rotation_degrees.y=door.open_yaw
  await physics_frame
- for i in range(16):
+ for i in range(NB):
   var b: Node3D = district.buildings[i]
   var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(0,1.2,8)),b.to_global(Vector3(0,1.2,4))))
   check(hit.is_empty(),"open doorway has no hidden full-wall collider %d"%i)
+  if district.BUILDINGS[i].has("asset"): continue # highrise has its own window layout
   # x=-4.1 = centro de una hoja de ventana (el partidor solido va en -3.5)
   hit = space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(-4.1,1.8,7)),b.to_global(Vector3(-4.1,1.8,5))))
   check(hit.is_empty(),"window opening is real %d"%i)
@@ -99,6 +101,27 @@ func run() -> void:
    if local.z< -2.3 and local.y<4.2:break
   check(local.y>3.7 and local.y<4.2,"roof descent returns to back landing %d: %s"%[index,local])
  body.free()
+ # Highrise (city_17): the stair collision must be a thin slab — a fat wedge
+ # underside once ate the headroom over the lower flight and blocked the stairs.
+ for index in range(NB):
+  var def: Dictionary = district.BUILDINGS[index]
+  if not def.has("asset"): continue
+  var tower: Node3D = district.buildings[index]
+  var floors: Array = def.get("loot_floor_values", [])
+  var room_min := 99.0
+  for lvl in range(floors.size() - 1):
+   var y0: float = float(floors[lvl])
+   for z in range(43, -45, -4):
+    var zz: float = z / 10.0
+    var surf: float = y0 + (4.65 - zz) * 3.9 / 9.3
+    var up := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+     tower.to_global(Vector3(-3.0, surf + 1.0, zz)), tower.to_global(Vector3(-3.0, 20.0, zz))))
+    if not up.is_empty():
+     room_min = minf(room_min, tower.to_local(up.position).y - surf)
+  check(room_min > 2.6, "highrise stair headroom %.2f m" % room_min)
+  var stair_bodies := tower.find_children("*", "StaticBody3D", true, false).filter(
+   func(n): return n.is_in_group("stair_surface"))
+  check(stair_bodies.size() >= 3, "highrise stair surfaces (%d)" % stair_bodies.size())
  district.unload_building(0)
  await process_frame
  check(district.door_states.get("city_01_door",false),"door state retained after sector unload")
@@ -107,7 +130,7 @@ func run() -> void:
  district.update_observer(Vector3(300,0,300))
  check(district.buildings.is_empty(),"distant buildings unloaded")
  for i in range(17): district.update_observer(Vector3(32,0,48))
- check(district.buildings.size()==16,"buildings stream back on return")
+ check(district.buildings.size()==NB,"buildings stream back on return")
  world.free()
  print("CITY_REGRESSION failures=",failures)
  quit(1 if failures else 0)

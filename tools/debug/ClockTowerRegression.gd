@@ -23,6 +23,12 @@ func run():
   var turns:=3.25/12 if i<4 else .25
   check(tower._hands[i].basis.is_equal_approx(tower._bases[i]*Basis(Vector3(0,0,1),TAU*turns)),"03:15 hand angle")
  var body:=CharacterBody3D.new();var collider:=CollisionShape3D.new();var capsule:=CapsuleShape3D.new();capsule.radius=.35;capsule.height=1.75;collider.shape=capsule;collider.position.y=.9;body.add_child(collider);body.floor_snap_length=.4;world.add_child(body)
+ # The dressed entrance and flush apron must remain clear in both directions.
+ body.position=Vector3(0,.08,-9.4)
+ await physics_frame
+ check(await walk(body,Vector3(0,0,-5.2)),"enter through dressed portico")
+ check(body.position.y>-.1,"entrance supports capsule")
+ check(await walk(body,Vector3(0,0,-9.4)),"leave through dressed portico")
  # Switchback: flight L climbs lane A (x 4.7) towards +z when even, lane B
  # (x 2.35) towards -z when odd; each starts on the landing where the last ended.
  var lane_x:=func(level:int)->float:return 4.7 if level%2==0 else 2.35

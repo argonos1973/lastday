@@ -6,20 +6,23 @@ const BLOCK := preload("res://scripts/CityBlock.gd")
 
 static func reserves_terrain(pos: Vector3, radius: float = 0.0) -> bool:
  # An open southern pass, then the new district. Existing inner terrain remains.
- return pos.z+radius>440 and pos.z-radius<840 and pos.x+radius>-46 and pos.x-radius<130
+ return pos.z+radius>440 and pos.z-radius<840 and pos.x+radius>-46 and pos.x-radius<138
 
 static func near_building(pos: Vector3, margin: float) -> bool:
  if preload("res://scripts/CityClockTower.gd").contains(pos,margin):return true
  for definition in BLOCK.BUILDINGS:
   var offset: Vector3 = pos-CENTER-definition.position
-  if absf(offset.x)<6+margin and absf(offset.z)<6+margin: return true
+  var footprint: Vector2 = definition.get("footprint", Vector2(6,6))
+  if absf(offset.x)<footprint.x+margin and absf(offset.z)<footprint.y+margin: return true
  return false
 
 static func inside_building(pos: Vector3) -> bool:
  if preload("res://scripts/CityClockTower.gd").contains(pos):return true
  for definition in BLOCK.BUILDINGS:
   var offset: Vector3=pos-CENTER-definition.position
-  if absf(offset.x)<5.85 and absf(offset.z)<5.85 and pos.y<7.9: return true
+  var footprint: Vector2 = definition.get("footprint", Vector2(5.85,5.85))
+  var height: float = float(definition.get("interior_height", 7.9))
+  if absf(offset.x)<footprint.x and absf(offset.z)<footprint.y and pos.y<height: return true
  return false
 
 static func on_road(pos: Vector3, margin: float = 0.0, start_z: float = 500.0) -> bool:
@@ -49,9 +52,10 @@ static func create(world: Node3D, server: bool) -> Node3D:
  for i in range(BLOCK.BUILDINGS.size()):
   var building:Node3D=district.load_building(i)
   var door:Door=building.get_node(str(BLOCK.BUILDINGS[i].id)+"_door")
-  var index:int=world._register_wildlife_blocker(building.global_position,9)
+  var footprint:Vector2=BLOCK.BUILDINGS[i].get("footprint",Vector2(6,6))
+  var index:int=world._register_wildlife_blocker(building.global_position,maxf(footprint.x,footprint.y)+3.0)
   world.wildlife_blockers[index]["door"]=door
-  world.wildlife_blockers[index]["house_bounds"]=Rect2(Vector2(building.global_position.x-6,building.global_position.z-6),Vector2(12,12))
+  world.wildlife_blockers[index]["house_bounds"]=Rect2(Vector2(building.global_position.x-footprint.x,building.global_position.z-footprint.y),footprint*2.0)
  preload("res://scripts/CityStreetscape.gd").create(world, server)
  if server:
   district.visible=false

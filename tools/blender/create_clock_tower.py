@@ -79,6 +79,49 @@ def framewall(z,y,width,height,door=False):
   box('WindowSill',((a+b)/2,y+lo,z),(b-a+.2,.09,.50),concrete,False)
   at=b
  if at<width/2:box('Pier',((at+width/2)/2,y+height/2,z),(width/2-at,height,.3),stone)
+# Detailed Blender furniture and joinery. Visual meshes are baked into the GLB;
+# broad, uncomplicated collision volumes keep handles/nosings from snagging players.
+from mathutils import Vector
+
+def softened(name,p,s,m,width=.018):
+ o=box(name,p,s,m,False,2.0)
+ bevel=o.modifiers.new('Crafted edge','BEVEL');bevel.width=width;bevel.segments=2
+ bpy.context.view_layer.objects.active=o
+ bpy.ops.object.modifier_apply(modifier=bevel.name)
+ return o
+
+def rod(name,a,b,r,m):
+ av,bv=Vector(v(a)),Vector(v(b));delta=bv-av
+ bpy.ops.mesh.primitive_cylinder_add(vertices=10,radius=r,depth=delta.length,location=(av+bv)/2)
+ o=bpy.context.object;o.name='Detail_'+name;o.rotation_euler=delta.to_track_quat('Z','Y').to_euler();o.data.materials.append(m)
+ for poly in o.data.polygons:poly.use_smooth=len(poly.vertices)==4
+ return o
+
+def counter(x):
+ # Oak public-service counter: framed customer face, recessed panels, rear
+ # storage, plinth and a thick overhanging worktop with eased corners.
+ cbox('ReceptionCounter',(x,.57,-2.2),(3.02,1.14,1.02))
+ softened('CounterPlinth',(x,.10,-2.2),(3.04,.18,1.02),wood)
+ softened('CounterTop',(x,1.18,-2.2),(3.22,.13,1.22),wood,.035)
+ for sx in [-1,1]:
+  softened('CounterEnd',(x+sx*1.45,.63,-2.2),(.12,1.02,.96),wood)
+ for xx in [-1.42,-.48,.48,1.42]:
+  softened('CounterStile',(x+xx,.63,-2.71),(.085,.94,.065),wood,.008)
+ for yy in [.23,1.06]:softened('CounterFaceRail',(x,yy,-2.71),(2.94,.095,.065),wood,.01)
+ for xx in [-.95,0,.95]:
+  softened('CounterRecessedPanel',(x+xx,.65,-2.665),(.84,.69,.035),wood,.008)
+  for yy in [.32,.97]:softened('CounterPanelBead',(x+xx,yy,-2.703),(.77,.024,.018),wood,.004)
+  for dx in [-.38,.38]:softened('CounterPanelBead',(x+xx+dx,.645,-2.703),(.024,.65,.018),wood,.004)
+  # Rear drawers face the staff aisle; brass pulls have real loops.
+  softened('CounterDrawer',(x+xx,.91,-1.697),(.84,.24,.065),wood,.009)
+  for dx in [-.11,.11]:rod('DrawerPullMount',(x+xx+dx,.91,-1.66),(x+xx+dx,.91,-1.60),.016,gold)
+  rod('DrawerPull',(x+xx-.11,.91,-1.60),(x+xx+.11,.91,-1.60),.016,gold)
+ for yy in [.23,.57]:softened('CounterRearShelf',(x,yy,-2.17),(2.84,.045,.91),wood,.008)
+ for xx in [-.48,.48]:softened('CounterDivider',(x+xx,.50,-2.2),(.055,.65,.94),wood,.006)
+ # Protective brass foot rail on the public face.
+ for xx in [-1.2,0,1.2]:rod('CounterFootrailBracket',(x+xx,.23,-2.72),(x+xx,.23,-2.91),.025,iron)
+ rod('CounterFootrail',(x-1.30,.23,-2.91),(x+1.30,.23,-2.91),.032,gold)
+
 # Large ground-floor public hall, open main entrance facing the plaza (north).
 box('HallFloor',(0,-.05,0),(18,.18,16),floor)
 framewall(-8,0,18,4.2,True);framewall(8,0,18,4.2)
@@ -86,10 +129,7 @@ for x in [-9,9]:box('HallSide',(x,2.1,0),(.3,4.2,16),stone)
 paperwall(-7.83,0,18,papers[0],True);paperwall(7.83,0,18,papers[0])
 for x in [-8.83,8.83]:box('Paper',(x,2.0,0),(.02,4.0,15.6),papers[0],False)
 # Counters flank a central aisle, clear of the west stair lane (x>1.2).
-for x in [-6.0,-1.4]:
- box('CounterBase',(x,.57,-2.2),(3.0,1.14,1.0),wood)
- box('CounterTop',(x,1.18,-2.2),(3.2,.12,1.18),concrete)
- for xx in [x-1.0,x,x+1.0]:box('CounterPanel',(xx,.58,-2.73),(.9,.78,.035),wood,False)
+for x in [-6.0,-1.4]:counter(x)
 for x in [-7.8,-6.0,-4.2]:
  box('ArchiveSide',(x,1.5,6.8),(.09,3,.55),wood)
 for y in [.45,1.15,1.85,2.55]:box('ArchiveShelf',(-6, y,6.8),(3.7,.08,.55),wood)
@@ -123,8 +163,23 @@ for level in range(N+1):
   for xx in [a0+.15,(a0+a1)/2,a1-.15]:box('StairwellPost',(xx,y+.5,zstop),(.05,1.0,.05),iron,False)
  if level<N:
   x0,x1=LANE[lane(level)];d=1 if level%2==0 else -1;z0=-ZS*d
+  # Thin profiled stone treads over a masonry stair body, with a separate
+  # riser and worn nosing, instead of 24 full-height overlapping wood boxes.
+  backing=wedge('Detail_StairMasonry_%d'%level,x0,x1,y-.12,z0,y+FH-.12,-z0)
+  backing.data.materials.append(concrete)
   for k in range(24):
-   h=FH*(k+1)/24;box('StairStep',((x0+x1)/2,y+h/2,z0+d*(k+.5)*2*ZS/24),(x1-x0,h,2*ZS/24),wood,False,2.4)
+   rise=FH/24;run=2*ZS/24;h=rise*(k+1);zc=z0+d*(k+.5)*run
+   softened('StoneTread',((x0+x1)/2,y+h-.035,zc),(x1-x0,.07,run+.025),concrete,.012)
+   softened('StairNosing',((x0+x1)/2,y+h-.035,zc-d*run*.5),(x1-x0,.065,.055),stone,.012)
+   box('StairRiser',((x0+x1)/2,y+h-rise*.5-.035,zc-d*run*.5+.025*d),(x1-x0,rise-.065,.04),concrete,False,2.4)
+  # Wall-mounted oak handrails with iron brackets, no posts in the walking lane.
+  for rx in [x0+.08,x1-.08]:
+   rod('OakStairHandrail',(rx,y+.95,z0),(rx,y+FH+.95,-z0),.043,wood)
+   for t in [.08,.30,.52,.74,.94]:
+    rz=z0+d*t*2*ZS;ry=y+t*FH+.95
+    wallx=x0-.025 if rx<x0+.2 else x1+.025
+    rod('HandrailBracket',(wallx,ry-.14,rz),(rx,ry-.14,rz),.018,iron)
+    rod('HandrailBracket',(rx,ry-.14,rz),(rx,ry-.035,rz),.018,iron)
   wedge('Collision_StairRamp_%d'%level,x0,x1,y,z0,y+FH,-z0)
  if level and level<N:
   framewall(-6,y,12,FH);framewall(6,y,12,FH)
@@ -180,12 +235,29 @@ for face in range(4):
   # Blender parent supplies face yaw; child vertices are local to the clock centre.
   local=[(-width/2,-.18,0),(width/2,-.18,0),(width/2,length*.82,0),(0,length,0),(-width/2,length*.82,0)]
   o=mesh('Clock%s_%d'%(kind,face),local,[(4,3,2,1,0)],gold);o.location=v(orient((0,27.3,-6.30)));o.rotation_euler.z=angle
-# Recessed civic portico: pillars and stepped cornice frame the broad entrance.
+# Civic entrance: coursed stone jambs, layered capitals and cornice. Keep
+# the full original 3.2 x 3.4 m aperture and the approach at ground level.
 for x in [-2.1,2.1]:
- box('EntranceColumn',(x,1.7,-8.45),(.38,3.4,.55),concrete)
- box('ColumnBase',(x,.12,-8.45),(.64,.24,.76),concrete)
- box('ColumnCapital',(x,3.4,-8.45),(.68,.22,.75),concrete)
-box('PorticoCornice',(0,3.65,-8.45),(5.4,.28,1.0),concrete)
+ softened('PorticoPlinth',(x,.10,-8.48),(.80,.20,.91),concrete,.025)
+ softened('PorticoBaseMoulding',(x,.26,-8.48),(.65,.13,.78),stone,.018)
+ for course in range(7):
+  softened('DressedJambStone',(x,.55+course*.39,-8.45),(.49,.375,.62),stone,.015)
+ softened('PorticoCapitalNeck',(x,3.17,-8.45),(.56,.12,.68),stone,.012)
+ softened('PorticoCapital',(x,3.31,-8.45),(.72,.16,.82),concrete,.018)
+ softened('PorticoAbacus',(x,3.44,-8.45),(.84,.10,.93),stone,.012)
+softened('EntranceLintel',(0,3.62,-8.45),(5.10,.25,.84),stone,.022)
+softened('EntranceFrieze',(0,3.83,-8.47),(5.26,.16,.92),concrete,.015)
+softened('EntranceCornice',(0,3.97,-8.50),(5.52,.14,1.10),stone,.022)
+# Recessed timber jamb moulding and metal kickplates around the open passage.
+for x in [-1.64,1.64]:
+ softened('EntryOakJamb',(x,1.65,-8.18),(.07,3.30,.10),wood,.01)
+ softened('EntryJambKickplate',(x,.20,-8.25),(.08,.36,.025),bronze,.008)
+softened('EntryOakHead',(0,3.35,-8.18),(3.35,.09,.10),wood,.01)
+# Flush laid-stone apron: small joints and varied slabs, no new stair lip.
+for row in range(3):
+ for col in range(6):
+  softened('EntrancePaving',(-2.0+col*.8,.017,-8.35-row*.60),(.785,.03,.585),concrete,.007)
+cbox('EntranceApron',(0,-.025,-8.92),(4.8,.08,1.85))
 # Jagged areas of exposed brick, avoiding the door and windows.
 mesh('Detail_ExposedBrick',[(-6.5,.1,-8.17),(-4.5,.1,-8.17),(-4.4,1.1,-8.17),(-4.8,1.25,-8.17),(-4.75,1.9,-8.17),(-5.2,2.3,-8.17),(-5.5,1.9,-8.17),(-6.1,2.1,-8.17),(-6.2,1.3,-8.17),(-6.5,1.1,-8.17)],[tuple(reversed(range(10)))],brick)
 # Merge static surfaces by collision role, retaining the seven stair ramps and hands.

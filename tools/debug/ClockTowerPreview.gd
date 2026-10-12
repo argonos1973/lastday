@@ -9,6 +9,9 @@ func run():
  var camera:=Camera3D.new();camera.fov=55;camera.far=200;world.add_child(camera)
  var lamp:=OmniLight3D.new();lamp.omni_range=14;lamp.light_energy=1.6;world.add_child(lamp)
  var shots:={"exterior":[Vector3(43,24,-48),Vector3(0,18,0)],"hall":[Vector3(-3,2.5,-6.5),Vector3(2,1.6,3)],"stairs":[Vector3(1.6,6.0,5.6),Vector3(3.6,5.6,-2.5)]}
+ shots["entrance"]=[Vector3(5,2.7,-14),Vector3(0,1.8,-8.3)]
+ shots["counter"]=[Vector3(-3.5,2.0,-5.3),Vector3(-4.0,.75,-2.2)]
+ shots["stair_detail"]=[Vector3(4.75,1.8,-5.9),Vector3(4.7,2.2,0)]
  for shot in shots:
   camera.position=shots[shot][0];lamp.position=camera.position+Vector3(0,.8,0)
   camera.look_at(shots[shot][1])

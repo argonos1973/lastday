@@ -30,12 +30,12 @@ func run():
  var district:Node3D=expansion.create(world,true)
  check(world.get_river_depth_at(Vector3(9,0.0,385))>0.0,"road crosses the river as a wading ford")
  check(district.position==Vector3(9,0,680),"city positioned beyond old southern boundary")
- check(district.buildings.size()==16,"sixteen buildings loaded on dedicated server")
+ check(district.buildings.size()==expansion.BLOCK.BUILDINGS.size(),"all buildings loaded on dedicated server")
  check(not district.is_processing(),"main-world doors/collisions stay resident")
  check(world._is_player_in_house(Vector3(-7,1,663)),"city interiors recognized as shelter")
  check(not world._is_player_in_house(Vector3(9,1,680)),"city street is outdoors")
  check(world._is_on_road(Vector3(9,0,610)),"extension participates in road placement queries")
- for i in range(16):
+ for i in range(district.buildings.size()):
   var door:Door=district.buildings[i].get_node("city_%02d_door"%(i+1))
   check(world._net_door_state_changed(str(door.name),true),"server applies city door state")
   check(door.is_open and world._server_door_states[str(door.name)],"door state recorded for world sync")

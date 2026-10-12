@@ -17,6 +17,11 @@ const BUILDINGS := [
  {"id":"city_14", "position":Vector3(80,0,79), "yaw":0.0},
  {"id":"city_15", "position":Vector3(48,0,113), "yaw":PI},
  {"id":"city_16", "position":Vector3(80,0,113), "yaw":PI},
+ {"id":"city_17", "position":Vector3(117,0,48), "yaw":-PI/2.0,
+  "asset":"res://assets/models/environment/city/building_highrise_1.glb",
+  "floors":4, "interior_height":15.6, "footprint":Vector2(6.4,6.4),
+  "loot_floor_values":[.16,4.02,7.92,11.82],
+  "door_position":Vector3(-1.4,.02,6.08), "door_size":Vector3(2.8,3.1,.12), "door_label":"Puerta del bloque"},
 ]
 const LOAD_DISTANCE := 100.0
 const UNLOAD_DISTANCE := 135.0
@@ -129,6 +134,8 @@ func _ready() -> void:
   _requested[i] = true
 
 static func asset_path(i: int) -> String:
+ if BUILDINGS[i].has("asset"):
+  return str(BUILDINGS[i].asset)
  return "res://assets/models/environment/city/building_%d.glb" % (i%4+1)
 
 func _process(delta: float) -> void:
@@ -167,15 +174,19 @@ func load_building(i: int) -> Node3D:
  building.rotation.y = BUILDINGS[i].yaw
  add_child(building)
  _collisions(building)
+ var definition: Dictionary = BUILDINGS[i]
  var door := Door.new()
  door.name = str(BUILDINGS[i].id)+"_door"
- door.position = Vector3(-.85,.12,6.08)
+ door.position = definition.get("door_position", Vector3(-.85,.12,6.08))
  building.add_child(door)
- door.setup("Puerta de vivienda",Vector3(1.7,2.8,.12),Color.SADDLE_BROWN,-100)
+ door.setup(str(definition.get("door_label", "Puerta de vivienda")), definition.get("door_size", Vector3(1.7,2.8,.12)), Color.SADDLE_BROWN,-100)
  door.is_open = bool(door_states.get(str(door.name), false))
  door.rotation_degrees.y = door.open_yaw if door.is_open else door.closed_yaw
- _furnish(building, i)
- _dress_facade(building, i)
+ if int(definition.get("floors", 2)) > 2:
+  _furnish_highrise(building, i, int(definition.floors))
+ else:
+  _furnish(building, i)
+  _dress_facade(building, i)
  # Keep physics and doors resident; small interior props need not draw across town.
  var interior:Node3D=building.get_node("Interior")
  for mesh in interior.find_children("*","GeometryInstance3D",true,false):
@@ -185,6 +196,42 @@ func load_building(i: int) -> Node3D:
   mesh.visibility_range_end=85.0
  buildings[i] = building
  return building
+
+func _furnish_highrise(building: Node3D, i: int, floor_count: int) -> void:
+ var root := Node3D.new()
+ root.name = "Interior"
+ building.add_child(root)
+ var floors: Array = BUILDINGS[i].get("loot_floor_values", [.16, 4.02, 7.92, 11.82])
+ for level in range(floor_count):
+  var floor_y := float(floors[level])
+  if level == 0:
+   # Large ground-floor shop: two broad counters and shelves along the
+   # back wall; keep the entrance, stair lane and centre aisle open.
+   _place(root, "desk_table", Vector3(2.15, floor_y, 3.0), 0.0, Vector3.ZERO, true, true, 2.0)
+   _place(root, "cabinet", Vector3(4.8, floor_y, -4.7), 0.0, Vector3.ZERO, true, true, 1.2)
+   _place(root, "bookshelf", Vector3(4.8, floor_y, -1.8), 0.0, Vector3.ZERO, true, true, 1.25)
+   _place(root, "desk_table", Vector3(2.2, floor_y, -4.8), 0.0, Vector3.ZERO, true, true, 1.7)
+  else:
+   var bed := _place(root, "bed", Vector3(2.4, floor_y, -3.45), 0.0, Vector3.ZERO, false, true)
+   if bed != null:
+    _make_bed_sleepable(building, bed, floor_y)
+   _place(root, "tall_dresser", Vector3(4.8, floor_y, -.9), 0.0, Vector3.ZERO, true, true, 1.2)
+   _place(root, "side_table", Vector3(0.0, floor_y, -3.45), 0.0, Vector3.ZERO, true, true, 1.15)
+   _place(root, "sofa_old", Vector3(2.7, floor_y, 3.25), 180.0, Vector3.ZERO, true, true, 1.05)
+   _place(root, "bookshelf", Vector3(4.8, floor_y, 1.0), 0.0, Vector3.ZERO, true, true, 1.0)
+  # Rubble and floor litter add variation without occupying the stair/corridor.
+  var rng := RandomNumberGenerator.new()
+  rng.seed = 8841 + level * 67
+  for k in range(3):
+   var patch := MeshInstance3D.new()
+   var plane := PlaneMesh.new()
+   plane.size = Vector2.ONE * rng.randf_range(1.0, 1.8)
+   patch.mesh = plane
+   patch.material_override = _litter_material()
+   patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+   patch.position = Vector3(rng.randf_range(-.8, 4.8), floor_y + .005 + k * .001, rng.randf_range(-4.4, 4.4))
+   patch.rotation.y = rng.randf() * TAU
+   root.add_child(patch)
 
 func _furnish(building: Node3D, i: int) -> void:
  var rng := RandomNumberGenerator.new()
@@ -223,12 +270,12 @@ func _furnish(building: Node3D, i: int) -> void:
    patch.rotation.y = rng.randf() * TAU
    root.add_child(patch)
 
-func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: Vector3, collide: bool, grounded := true) -> Node3D:
+func _place(parent: Node3D, model: String, pos: Vector3, yaw_deg: float, tilt: Vector3, collide: bool, grounded := true, scale_override := 0.0) -> Node3D:
  var packed: PackedScene = load(KIT_DIR + model + ".glb")
  if packed == null: return null
  var node: Node3D = packed.instantiate()
  node.name = model
- var scale: float = MODEL_SCALES.get(model, 1.0)
+ var scale: float = scale_override if scale_override > 0.0 else MODEL_SCALES.get(model, 1.0)
  var basis := Basis.from_euler(Vector3(0, deg_to_rad(yaw_deg), 0)) * Basis.from_euler(tilt)
  var aabb := _local_aabb(node)
  if grounded:

@@ -1,15 +1,16 @@
 # Ciudad: revisión y siguiente ampliación
 
-Revisión del 12 de octubre de 2026, checkout `/Volumes/copia/lastday2`, rama `multiplayer`, referencia `6595d78`. Este documento propone trabajo futuro; no añade edificios ni modifica el mapa.
+Revisión del 12 de octubre de 2026, checkout `/Volumes/copia/lastday2`, rama `multiplayer`. El trabajo de esta revisión añade un bloque jugable de cuatro plantas como primer paso de diversidad; quedan pendientes las comprobaciones de recorrido en una partida.
 
 ## Avance de implementación
 
-- **Anillo vial — geometría añadida, pendiente de comprobar dentro del juego.** `CityRoad.gd` genera cuatro tramos que cierran los extremos de la retícula; `CityExpansion.on_road` reconoce esa misma huella para el resto de sistemas. Está dentro de la reserva actual y no cruza los cauces definidos en el mapa. El trazado aún necesita una revisión visual y de navegación en Godot.
-- El bloque alto jugable sigue siendo el siguiente paso. No se ha añadido ningún edificio decorativo.
+- **Anillo vial — geometría añadida, pendiente de comprobar dentro del juego.** `CityRoad.gd` genera cuatro tramos que cierran los extremos de la retícula; `CityExpansion.on_road` reconoce esa misma huella para el resto de sistemas.
+- **Bloque de cuatro plantas — añadido como edificio 17**, al este del barrio. Tiene acceso por la calle, puerta interactuable, escalera interior, cuatro niveles con habitaciones, muebles con colisión, camas utilizables y loot distribuido por planta. El GLB y el `.blend` se generan con `tools/blender/create_city_highrise.py`.
+- El bloque tiene colisión de terreno y rampas ocultas para subir las escaleras; el sistema de refugios reconoce su altura completa. Falta probar dentro del juego que el jugador pueda abrir la puerta, subir y bajar cada tramo, permanecer en todas las plantas e interactuar con el loot y las camas. No se han añadido edificios de fachada inaccesible.
 
 ## Estado comprobado
 
-- `CityBlock.BUILDINGS`: 16 viviendas, cuatro modelos repetidos por `i % 4`, todas con dos plantas. Plantas a 0,12 y 3,92 m; huella de 12 × 12 m. Cambiar colores no resolverá la repetición de siluetas, distribución y usos.
+- `CityBlock.BUILDINGS`: 16 viviendas repetidas y un bloque comercial-residencial de cuatro plantas (15,6 m) con huella aproximada de 12,8 × 12,8 m. El bloque nuevo usa su propio GLB y distribución interior; las viviendas anteriores conservan sus modelos e IDs.
 - Dos calles longitudinales en x=9 y x=73; transversales en z=680 y z=776. Calzada de 7 m. La primera enlaza con el final real de la carretera existente. Los extremos del barrio siguen abiertos.
 - Hay aceras, arbolado, coches, mobiliario, fuente y torre del reloj al sur de la plaza, en (41,0,750). No hace falta otra torre como hito: conviene que los edificios nuevos queden por debajo de ella.
 - Casas con cubierta plana: escalera interior de retorno hasta la azotea. Casas con cubierta inclinada: techo cerrado, sin acceso al tejado. La torre tiene siete tramos con descansillos, hasta 29,4 m.
@@ -34,9 +35,9 @@ Es una propuesta geométrica, no un trazado aprobado por pruebas de terreno. Ant
 
 Extraer una definición común de segmentos para malla, colisión, `on_road`, aceras y exclusión de vegetación. Hoy `CityRoad` y `CityExpansion.on_road` duplican el trazado: ampliar solo una parte produciría discrepancias. Revisar también que la colisión necesaria esté disponible en servidor; `CityRoad` se crea actualmente en la rama cliente.
 
-### 2. Un edificio piloto de cuatro plantas, completamente jugable
+### 2. Cerrar y validar el edificio piloto de cuatro plantas
 
-Crear en Blender un bloque residencial envejecido, con planta baja comercial, tres plantas superiores y escalera interior en U. No estirar una casa existente ni colocar una carcasa vacía: modelar cada planta, descansillo, hueco y puerta como espacio real por el que el personaje pueda moverse.
+El piloto ya está creado en Blender como un bloque residencial envejecido, con planta baja comercial, tres plantas superiores y escalera interior en U. El generador se conserva para que el GLB pueda reconstruirse. La prioridad es comprobar y corregirlo con el controlador real del juego, no extenderlo con edificios vacíos.
 
 - Fachada de ladrillo/revoco, balcones deteriorados, bajantes, ventanas de distintos estados y cubierta parcialmente dañada.
 - Entrada legible, pasillos despejados, locales en planta baja y viviendas con distribuciones distintas arriba.
@@ -93,4 +94,4 @@ Antes y después de cada lote: repetir `CityPerfSnapshot` con mismas vistas/conf
 - Mantener colisiones, puertas y datos de loot disponibles en el servidor aunque no dibuje. Probar un cliente tardío, puertas y loot de plantas superiores.
 - Pruebas repetidas hoy: parse de `Main.gd` sin errores; `CityBlockRegression` y `ClockTowerRegression`, ambas con cero fallos. Son pruebas aisladas; no certifican partida multiplayer ni todos los recorridos con cámara y animación.
 
-Siguiente entrega recomendada: anillo vial verificado y un bloque de cuatro plantas completo con recorrido, loot, puertas y colisiones probados. Aceptar el modelo solo tras poder entrar desde la calle, interactuar con sus elementos y recorrer todas las plantas tanto en cliente como en servidor; luego medir el coste antes de producir los otros tres edificios.
+Siguiente entrega recomendada: revisar en Godot el anillo vial y recorrer el bloque desde la calle hasta la cuarta planta en cliente y servidor; verificar puerta, loot y cama en cada nivel y después medir el coste con `CityPerfSnapshot`. Solo entonces añadir otra tipología. Mantener cada nueva parcela accesible, con colisiones, loot o interacciones útiles, y conectada a una calle.
