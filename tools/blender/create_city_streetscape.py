@@ -21,12 +21,9 @@ def box(name,pos,size,mat):
 def save(name):
  bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'outputs/city'/f'{name}.blend'))
  bpy.ops.export_scene.gltf(filepath=str(OUT/f'{name}.glb'),export_format='GLB',export_animations=False)
-# Dry ornamental fountain, broken spout; open plaza leaves circulation around it.
-for x in [-2.1,2.1]:box('Solid_BasinSide',(x,.30,0),(.22,.6,4.4),stone)
-for z in [-2.1,2.1]:box('Solid_BasinEnd',(0,.3,z),(4.0,.6,.22),stone)
-box('Solid_BasinFloor',(0,.06,0),(4.1,.12,4.1),stone)
-box('Solid_Monument',(0,.9,0),(.9,1.7,.9),stone)
-box('Detail_Cap',(0,1.80,0),(1.2,.16,1.2),stone)
+# The plaza centre is the scanned district_fountain.glb (placed by
+# CityStreetscape) — no generated basin; open plaza leaves circulation.
+box('Solid_PlazaMark',(0,.015,0),(4.4,.03,4.4),stone)
 for z in [-6,6]:
  for x in [-.85,.85]:box('Solid_BenchLeg',(x,.27,z),(.12,.54,.55),iron)
  for dz in [-.21,-.07,.07,.21]:box('Solid_BenchSeat',(0,.56,z+dz),(2.3,.065,.12),wood)

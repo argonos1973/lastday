@@ -39,7 +39,7 @@ Validación adicional: `tools/debug/CityIntegrationRegression.gd` (paso libre, l
 
 ## Barrio nivel 1 (16 viviendas)
 
-Se conservan city_01–city_04; city_05–city_16 reutilizan los cuatro GLB en las manzanas con desplazamientos (64,0), (0,96) y (64,96) respecto a la original. CityRoad.expanded conecta las cuatro manzanas. CityStreetscape añade ocho coches con colisiones también en servidor, aceras batched de 12 cm y una plaza con fuente seca, bancos y postes de luz (sin iluminación eléctrica). Los dos nuevos GLB se generan con tools/blender/create_city_streetscape.py; las fuentes .blend están en outputs/city.
+Se conservan city_01–city_04; city_05–city_16 reutilizan los cuatro GLB en las manzanas con desplazamientos (64,0), (0,96) y (64,96) respecto a la original. CityRoad.expanded conecta las cuatro manzanas. CityStreetscape añade ocho coches con colisiones también en servidor, aceras batched de 12 cm y una plaza con fuente de piedra llena de agua (pileta octogonal escaneada — `district_fountain.glb`, recortada de su peana museográfica y alas de captura por `tools/blender/clean_fountain_scan.py` — sobre zócalo y pedestal generados, con agua estancada y resto de surtidor), bancos y postes de luz (sin iluminación eléctrica). Los dos nuevos GLB se generan con tools/blender/create_city_streetscape.py; las fuentes .blend están en outputs/city.
 
 Las filas de árboles cada 9 m se incorporan a los MultiMesh y al sistema de tala existente. Se respetan edificios, carretera y agua. Las colisiones permanecen residentes; los pequeños objetos interiores dejan de dibujarse a 48 m. No se ha cambiado el límite de fauna.
 

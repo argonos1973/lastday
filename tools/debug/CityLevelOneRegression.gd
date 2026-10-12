@@ -35,6 +35,9 @@ func run():
  check(absf(pavement.multimesh.mesh.get_aabb().size.y-.12)<.01,"pavement module is 12 cm high")
  check(world.has_node("DistrictPavementCollision"),"server pavement collider")
  check(world.has_node("DistrictPlaza"),"Blender plaza loaded")
+ check(world.has_node("DistrictFountainCollision"),"server fountain collider")
+ check(not world.has_node("DistrictFountain"),"fountain mesh is client-only")
+ check(not world.has_node("DistrictFountainWater"),"fountain water is client-only")
  world._create_invisible_collision_box("TestGround",Vector3(0,-.1,700),Vector3(300,.2,300))
  var walker:=CharacterBody3D.new();var cs:=CollisionShape3D.new();var capsule:=CapsuleShape3D.new()
  capsule.radius=.35;capsule.height=1.75;cs.shape=capsule;cs.position.y=.9;walker.add_child(cs);walker.floor_snap_length=.4
