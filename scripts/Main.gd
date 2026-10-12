@@ -6111,6 +6111,8 @@ func _create_road() -> void:
 			_snap_node_bottom_to_y_cached(node, pole_y, pole_path, Vector3.ONE * pole_scale)
 			_add_collision_to_prop_group(node)
 		poles_placed += 1
+	if pole_scene is Node3D:
+		pole_scene.free() # Temporary template; duplicates retain their own resources.
 	# Procedural grass along both road edges — extends outward with decreasing density
 	var grass_depth := 8.0
 	var tuft_spacing := 0.25
@@ -12931,6 +12933,7 @@ func _create_power_line(start: Vector3, end: Vector3) -> void:
 			add_child(node)
 			_snap_node_bottom_to_y_cached(node, pos.y, pole_path, Vector3.ONE * pole_scale)
 			_add_collision_to_prop_group(node)
+		pole_scene.free()
 	_register_wildlife_blocker(center, 1.0)
 
 func _create_fence_line(start: Vector3, end: Vector3, posts: int) -> void:
