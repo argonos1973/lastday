@@ -13681,12 +13681,30 @@ func _create_forest() -> void:
 	
 	_append_lake_forest(batch_transforms, all_tree_positions)
 	await _append_southern_growth(batch_transforms, all_tree_positions, forest_rng)
+	_append_city_avenue_trees(batch_transforms, all_tree_positions)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
 	_hide_depleted_forest_trees()
+
+func _append_city_avenue_trees(batches: Array, positions: Array) -> void:
+	if _forest_tree_meshes.is_empty(): return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 681907
+	for pos: Vector3 in preload("res://scripts/CityStreetscape.gd").tree_positions():
+		if CityExpansion.near_building(pos, 1.5) or get_river_depth_at(pos)>0.0: continue
+		pos.y = _get_exact_ground_y(pos.x,pos.z)
+		var variant := _pick_forest_tree_variant(rng)
+		var entry: Dictionary = _forest_tree_meshes[variant]
+		var scale_value := 5.5 / maxf(1.0,float(entry.get("height",5.0)))
+		var basis := Basis.from_euler(Vector3(deg_to_rad(float(entry.get("up_fix_deg",-90.0))),0,rng.randf()*TAU)).scaled(Vector3.ONE*scale_value)
+		var transform := Transform3D(basis,pos)
+		batches[variant].append(transform)
+		positions.append(pos)
+		var tree_id := absi(int(round(pos.x))*73856093 ^ int(round(pos.z))*19349663)
+		_register_tree_in_grid({"pos":pos,"id":tree_id,"visual_name":"Tree_%d"%tree_id,"active":false,"multimesh":true,"variant_idx":variant,"mm_transform":transform})
 
 func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator) -> void:
 	# Scattered woodland south of the old map edge, thinning out near the city.
@@ -13710,7 +13728,7 @@ func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array,
 		# The connector road, the bridge approach and the city streets stay clear.
 		if absf(x - 9.0) < 9.0 and z > 330.0:
 			continue
-		if CityExpansion.on_road(pos, 4.0, _south_road_end()) or CityExpansion.inside_building(pos):
+		if CityExpansion.on_road(pos, 9.0, _south_road_end()) or CityExpansion.near_building(pos, 5.0) or pos.distance_to(CityExpansion.CENTER+Vector3(32,0,48))<15.0:
 			continue
 		if _is_near_house(pos, 8.0):
 			continue

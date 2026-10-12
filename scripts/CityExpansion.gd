@@ -5,7 +5,7 @@ const BLOCK := preload("res://scripts/CityBlock.gd")
 
 static func reserves_terrain(pos: Vector3, radius: float = 0.0) -> bool:
  # An open southern pass, then the new district. Existing inner terrain remains.
- return pos.z+radius>440 and pos.z-radius<760 and absf(pos.x-CENTER.x)<radius+55
+ return pos.z+radius>440 and pos.z-radius<840 and pos.x+radius>-46 and pos.x-radius<130
 
 static func near_building(pos: Vector3, margin: float) -> bool:
  for definition in BLOCK.BUILDINGS:
@@ -20,9 +20,14 @@ static func inside_building(pos: Vector3) -> bool:
  return false
 
 static func on_road(pos: Vector3, margin: float = 0.0, start_z: float = 500.0) -> bool:
- # start_z: where the generated main road actually ends (mesh continues from there).
+ # start_z: world z where the generated main road actually ends (mesh continues from there).
  var local:=pos-CENTER
- return (absf(local.x)<3.5+margin and pos.z>=start_z-margin and pos.z<=720+margin) or (absf(local.z)<3.5+margin and absf(local.x)<40+margin)
+ for x in [0.0,64.0]:
+  var z_begin := start_z-CENTER.z if x==0.0 else -40.0
+  if absf(local.x-x)<3.5+margin and local.z>=z_begin-margin and local.z<=136+margin: return true
+ for z in [0.0,96.0]:
+  if absf(local.z-z)<3.5+margin and local.x>=-40-margin and local.x<=104+margin: return true
+ return false
 
 static func create(world: Node3D, server: bool) -> Node3D:
  var district:=BLOCK.new()
@@ -38,12 +43,14 @@ static func create(world: Node3D, server: bool) -> Node3D:
   var index:int=world._register_wildlife_blocker(building.global_position,9)
   world.wildlife_blockers[index]["door"]=door
   world.wildlife_blockers[index]["house_bounds"]=Rect2(Vector2(building.global_position.x-6,building.global_position.z-6),Vector2(12,12))
+ preload("res://scripts/CityStreetscape.gd").create(world, server)
  if server:
   district.visible=false
  else:
   var streets:=preload("res://scripts/CityRoad.gd").new()
   streets.position=CENTER
   streets.road_width=7.0
+  streets.expanded=true
   # Connect to the actual generated road end, not an assumed nominal boundary.
   streets.main_start=world._south_road_end()-CENTER.z
   world.add_child(streets)
@@ -52,33 +59,8 @@ static func create(world: Node3D, server: bool) -> Node3D:
   world.add_child(decay)
   _ford(world)
   _road_grass(world)
-  _cars(world)
+  # Cars and plaza are shared with dedicated-server collision setup.
  return district
-
-# Abandoned cars on the new road and the cross street, same client-only
-# pattern as _create_new_world_props (visual + local collision box).
-static func _cars(world: Node3D) -> void:
- var space_state: PhysicsDirectSpaceState3D = world.get_world_3d().direct_space_state
- var specs := [
-  {"name":"CityJunkCar0","pos":Vector3(10.5,0.0,555.0),"scale":Vector3.ONE*2.0,"rot":Vector3(0,35,0),"coll":Vector3(2.0,2.0,4.0),"paths":[world.ABANDONED_JUNK_CAR_MODEL],"fix":0.0},
-  {"name":"CityJunkCar1","pos":Vector3(7.2,0.0,646.0),"scale":Vector3.ONE*2.0,"rot":Vector3(0,-58,0),"coll":Vector3(2.0,2.0,4.0),"paths":[world.ABANDONED_JUNK_CAR_MODEL],"fix":0.0},
-  {"name":"CityScrapCar","pos":Vector3(24.0,0.0,681.5),"scale":Vector3.ONE*0.5,"rot":Vector3(0,82,0),"coll":Vector3(2.0,2.5,4.0),"paths":[world.SCRAP_BARRICADE_CAR_MODEL],"fix":world.SCRAP_CAR_Y_CORRECTION},
- ]
- for spec in specs:
-  var pos: Vector3 = spec["pos"]
-  var ground_y: float = NodeUtils.raycast_ground_y(space_state,pos)
-  if not world._try_instance_external_scene(spec["paths"],spec["name"],pos,spec["scale"],spec["rot"],true,ground_y):
-   continue
-  var node := world.get_node_or_null(spec["name"])
-  var coll_pos := pos
-  if node is Node3D:
-   (node as Node3D).force_update_transform()
-   (node as Node3D).position.y += float(spec["fix"])
-   coll_pos = Vector3(pos.x,(node as Node3D).position.y,pos.z)
-   world._disable_emission_recursive(node)
-  world._create_invisible_collision_box_rotated(str(spec["name"])+"Collision",coll_pos,spec["coll"],float(spec["rot"].y))
-  var coll := world.get_node_or_null(str(spec["name"])+"Collision")
-  if coll != null: coll.add_to_group("prop_collision")
 
 # The road crosses the river where the old bridge used to be: the carriageway
 # dips under the waterline as a flooded ford. A worn gravel apron fades over
@@ -149,10 +131,10 @@ static func _road_grass(world: Node3D) -> void:
  var grass_depth := 8.0
  var tuft_spacing := 0.25
  var edge := 3.4 # CityRoad road_width=7 -> half 3.5, minus the 4 cm deck lip
- # North-south strip: generated road end -> city south edge (z=720).
+ # Rural approach: deep verges until the pavements begin (local z=-40 -> world 640).
  for side in [-1,1]:
   var z0: float = world._south_road_end()
-  var num := int((720.0-z0)/tuft_spacing)
+  var num := int((640.0-z0)/tuft_spacing)
   for i in range(num):
    var z := z0+(i+0.5)*tuft_spacing+rng.randf_range(-0.12,0.12)
    for j in range(5):
@@ -161,14 +143,30 @@ static func _road_grass(world: Node3D) -> void:
     if world._is_near_river(pos,2.0): continue
     pos.y = world._get_exact_ground_y(pos.x,pos.z)+0.02
     world._queue_grass_instance(pos,rng.randf_range(0.15,0.35)*(1.0-t),rng.randf_range(0.18,0.38),grass_base.lerp(color_var,rng.randf()).darkened(rng.randf_range(0.0,0.12)))
- # Cross street through the block: x -31..49 at z=680, same treatment.
- for side in [-1,1]:
-  var num := int(80.0/tuft_spacing)
-  for i in range(num):
-   var x := CENTER.x-40.0+(i+0.5)*tuft_spacing+rng.randf_range(-0.12,0.12)
-   for j in range(5):
-    var t: float = pow(rng.randf(),1.5)
-    var pos := Vector3(x,0.0,CENTER.z+side*(edge+t*grass_depth))
-    if world._is_near_river(pos,2.0): continue
-    pos.y = world._get_exact_ground_y(pos.x,pos.z)+0.02
-    world._queue_grass_instance(pos,rng.randf_range(0.15,0.35)*(1.0-t),rng.randf_range(0.18,0.38),grass_base.lerp(color_var,rng.randf()).darkened(rng.randf_range(0.0,0.12)))
+ # District streets: shallow tufts in the verge between pavement and facades.
+ _verge_grass(world,rng,grass_base,color_var)
+
+static func _verge_grass(world: Node3D, rng: RandomNumberGenerator, base: Color, varc: Color) -> void:
+ var spacing := 0.25
+ for xc in [0.0,64.0]: # avenues run along z, local z -40..136
+  for i in range(int(176.0/spacing)):
+   var lz := -40.0+(i+0.5)*spacing+rng.randf_range(-0.12,0.12)
+   for side in [-1,1]:
+    for j in range(3):
+     var t := pow(rng.randf(),1.5)
+     _verge_tuft(world,rng,Vector3(CENTER.x+xc+side*(6.4+t*2.2),0.0,CENTER.z+lz),base,varc,t)
+ for zc in [0.0,96.0]: # cross streets run along x, local x -40..104
+  for i in range(int(144.0/spacing)):
+   var lx := -40.0+(i+0.5)*spacing+rng.randf_range(-0.12,0.12)
+   for side in [-1,1]:
+    for j in range(3):
+     var t := pow(rng.randf(),1.5)
+     _verge_tuft(world,rng,Vector3(CENTER.x+lx,0.0,CENTER.z+zc+side*(6.4+t*2.2)),base,varc,t)
+
+static func _verge_tuft(world: Node3D, rng: RandomNumberGenerator, pos: Vector3, base: Color, varc: Color, t: float) -> void:
+ var streetscape := preload("res://scripts/CityStreetscape.gd")
+ if streetscape.on_pavement(pos,0.0) or near_building(pos,0.4) or world._is_near_river(pos,2.0): return
+ for car in streetscape.CAR_POSITIONS:
+  if Vector2(pos.x,pos.z).distance_squared_to(Vector2(streetscape.ORIGIN.x+car.x,streetscape.ORIGIN.z+car.z))<6.8: return
+ pos.y = world._get_exact_ground_y(pos.x,pos.z)+0.02
+ world._queue_grass_instance(pos,rng.randf_range(0.15,0.35)*(1.0-t),rng.randf_range(0.18,0.38),base.lerp(varc,rng.randf()).darkened(rng.randf_range(0.0,0.12)))

@@ -5,6 +5,18 @@ const BUILDINGS := [
  {"id":"city_02", "position":Vector3(16,0,-17), "yaw":0.0},
  {"id":"city_03", "position":Vector3(-16,0,17), "yaw":PI},
  {"id":"city_04", "position":Vector3(16,0,17), "yaw":PI},
+ {"id":"city_05", "position":Vector3(48,0,-17), "yaw":0.0},
+ {"id":"city_06", "position":Vector3(80,0,-17), "yaw":0.0},
+ {"id":"city_07", "position":Vector3(48,0,17), "yaw":PI},
+ {"id":"city_08", "position":Vector3(80,0,17), "yaw":PI},
+ {"id":"city_09", "position":Vector3(-16,0,79), "yaw":0.0},
+ {"id":"city_10", "position":Vector3(16,0,79), "yaw":0.0},
+ {"id":"city_11", "position":Vector3(-16,0,113), "yaw":PI},
+ {"id":"city_12", "position":Vector3(16,0,113), "yaw":PI},
+ {"id":"city_13", "position":Vector3(48,0,79), "yaw":0.0},
+ {"id":"city_14", "position":Vector3(80,0,79), "yaw":0.0},
+ {"id":"city_15", "position":Vector3(48,0,113), "yaw":PI},
+ {"id":"city_16", "position":Vector3(80,0,113), "yaw":PI},
 ]
 const LOAD_DISTANCE := 100.0
 const UNLOAD_DISTANCE := 135.0
@@ -82,13 +94,16 @@ var _tick := 0.0
 
 func _ready() -> void:
  if DisplayServer.get_name() == "headless": return
+ var requested_paths: Dictionary = {}
  for i in range(BUILDINGS.size()):
   var path := asset_path(i)
-  ResourceLoader.load_threaded_request(path)
+  if not requested_paths.has(path):
+   ResourceLoader.load_threaded_request(path)
+   requested_paths[path] = true
   _requested[i] = true
 
 static func asset_path(i: int) -> String:
- return "res://assets/models/environment/city/building_%d.glb" % (i+1)
+ return "res://assets/models/environment/city/building_%d.glb" % (i%4+1)
 
 func _process(delta: float) -> void:
  if not is_instance_valid(observer): return
@@ -113,6 +128,10 @@ func load_building(i: int) -> Node3D:
  if buildings.has(i): return buildings[i]
  var packed: PackedScene = ResourceLoader.load_threaded_get(asset_path(i)) if _requested.has(i) else load(asset_path(i))
  if packed == null:
+  # Threaded get can return null when the request was issued inside a
+  # deferred/ready context (harnesses); a blocking load still works.
+  packed = load(asset_path(i))
+ if packed == null:
   push_error("CityBlock: no se pudo cargar %s" % asset_path(i))
   _failed[i] = true
   return null
@@ -131,6 +150,13 @@ func load_building(i: int) -> Node3D:
  door.rotation_degrees.y = door.open_yaw if door.is_open else door.closed_yaw
  _furnish(building, i)
  _dress_facade(building, i)
+ # Keep physics and doors resident; small interior props need not draw across town.
+ var interior:Node3D=building.get_node("Interior")
+ for mesh in interior.find_children("*","GeometryInstance3D",true,false):
+  mesh.visibility_range_end=48.0
+  mesh.visibility_range_end_margin=6.0
+ for mesh in building.find_children("Decals_*","MeshInstance3D",true,false):
+  mesh.visibility_range_end=85.0
  buildings[i] = building
  return building
 

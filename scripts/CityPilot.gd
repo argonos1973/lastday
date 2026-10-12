@@ -32,7 +32,10 @@ func _ready() -> void:
  sun.directional_shadow_max_distance = 180
  add_child(sun)
  _box("Ground",Vector3(0,-.15,0),Vector3(340,.3,340),Color(.25,.30,.20))
- add_child(preload("res://scripts/CityRoad.gd").new())
+ var streets := preload("res://scripts/CityRoad.gd").new()
+ streets.road_width = 7.0
+ streets.expanded = true
+ add_child(streets)
  add_child(preload("res://scripts/CityDecay.gd").new())
  district = preload("res://scripts/CityBlock.gd").new()
  district.name = "CityBlock"

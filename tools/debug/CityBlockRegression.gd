@@ -10,20 +10,20 @@ func run() -> void:
  current_scene = world
  var district := preload("res://scripts/CityBlock.gd").new()
  world.add_child(district)
- for i in range(4): district.load_building(i)
+ for i in range(16): district.load_building(i)
  await physics_frame
  await physics_frame
- check(district.buildings.size()==4,"four enterable buildings loaded")
+ check(district.buildings.size()==16,"sixteen enterable buildings loaded")
  var space := world.get_world_3d().direct_space_state
- for i in range(4):
+ for i in range(16):
   var b: Node3D = district.buildings[i]
-  var door: Door = b.get_node("city_0%d_door"%(i+1))
+  var door: Door = b.get_node("city_%02d_door"%(i+1))
   var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(0,1.2,8)),b.to_global(Vector3(0,1.2,4))))
   check(not hit.is_empty() and hit.collider == door,"closed door blocks entry %d"%i)
   door.is_open=true
   door.rotation_degrees.y=door.open_yaw
  await physics_frame
- for i in range(4):
+ for i in range(16):
   var b: Node3D = district.buildings[i]
   var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(0,1.2,8)),b.to_global(Vector3(0,1.2,4))))
   check(hit.is_empty(),"open doorway has no hidden full-wall collider %d"%i)
@@ -81,8 +81,8 @@ func run() -> void:
  check(building.get_node("city_01_door").is_open,"open door restored on reload")
  district.update_observer(Vector3(300,0,300))
  check(district.buildings.is_empty(),"distant buildings unloaded")
- for i in range(5): district.update_observer(Vector3.ZERO)
- check(district.buildings.size()==4,"buildings stream back on return")
+ for i in range(17): district.update_observer(Vector3(32,0,48))
+ check(district.buildings.size()==16,"buildings stream back on return")
  world.free()
  print("CITY_REGRESSION failures=",failures)
  quit(1 if failures else 0)

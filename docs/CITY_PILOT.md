@@ -35,3 +35,16 @@ La calle principal enlaza con el extremo real de la carretera generada (aprox. Z
 Las cuatro casas permanecen cargadas en Main para conservar colisiones, puertas, guardado y estado de red mediante los sistemas existentes. El servidor también crea sus colisiones y puertas, con los modelos ocultos. El streaming por distancia sigue siendo exclusivo del piloto. No se ha añadido loot nuevo a la ciudad ni se ha exportado una aplicación.
 
 Validación adicional: `tools/debug/CityIntegrationRegression.gd` (paso libre, límites, abrigo y puertas del servidor), `tools/debug/CityIntegrationPreview.gd` (vista aislada de conexión con las funciones reales de terreno y carretera, sin modificar partidas). No sustituye una prueba completa con dos clientes.
+
+
+## Barrio nivel 1 (16 viviendas)
+
+Se conservan city_01–city_04; city_05–city_16 reutilizan los cuatro GLB en las manzanas con desplazamientos (64,0), (0,96) y (64,96) respecto a la original. CityRoad.expanded conecta las cuatro manzanas. CityStreetscape añade ocho coches con colisiones también en servidor, aceras batched de 12 cm y una plaza con fuente seca, bancos y postes de luz (sin iluminación eléctrica). Los dos nuevos GLB se generan con tools/blender/create_city_streetscape.py; las fuentes .blend están en outputs/city.
+
+Las filas de árboles cada 9 m se incorporan a los MultiMesh y al sistema de tala existente. Se respetan edificios, carretera y agua. Las colisiones permanecen residentes; los pequeños objetos interiores dejan de dibujarse a 48 m. No se ha cambiado el límite de fauna.
+
+Validación: CityLevelOneRegression comprueba las 16 casas, identificadores originales, suelo seco, calles, refugio, colisiones de coches en servidor y paso de cápsula sobre la acera; CityIntegrationRegression comprueba RPC de puertas. CityPerfSnapshot captura vistas y métricas con bosque completo; no equivale a una prueba de dos clientes.
+
+Medición local de esta ampliación (Godot Compatibility, Apple M2, prueba aislada con bosque): 55 FPS mirando la calle, 25 FPS en vista aérea y 28 FPS mirando al bosque. 5445 nodos en el escenario de prueba; ~1052 MB de memoria gráfica. Son muestras puntuales, no un benchmark de la app multijugador. Remedición tras las correcciones: 5535 nodos, 1603 MultiMesh, 1609-2932 draw calls, 43/23/28 FPS. Los avisos de recursos/RID al cerrar son ruido estándar del arnés de salida (compartido por todas las vistas previas), no un fallo funcional.
+
+Nota técnica: `CityBlock._ready` ahora deduplica `load_threaded_request` (los 16 edificios comparten 4 GLB) y `load_building` cae a `load()` síncrono si `load_threaded_get` devuelve null — puede ocurrir cuando el árbol se monta dentro de un `call_deferred` con `current_scene` asignado.
