@@ -1253,7 +1253,8 @@ func _tick_drink_hold(delta: float) -> void:
 			if _stats.thirst > 35.0:
 				_stats.health = min(_stats.max_health, _stats.health + max(1.0, 5.0 * 0.15))
 			var _r_river: String = _drink_hold_actor.inventory._fmt_restore(0.0, 0.0, _ot_river, float(_stats.thirst), _ohp_river, float(_stats.health))
-			_drink_hold_actor.notice.emit("Bebes agua del rio.%s" % _r_river)
+			var _drink_source: String = str(_drink_hold_actor.get_meta("drink_source", "del rio"))
+			_drink_hold_actor.notice.emit("Bebes agua %s.%s" % [_drink_source, _r_river])
 		_stats.changed.emit()
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
 
@@ -9294,7 +9295,7 @@ func _execute_world_action(action, actor) -> void:
 					held_dw = null
 			if held_dw != null and held_dw.item_name == "Botella de plastico":
 				_play_actor_action(actor, "plant", 5.0)
-				actor.notice.emit("Llenando botella en el rio...")
+				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				await get_tree().create_timer(5.0).timeout
@@ -9316,7 +9317,7 @@ func _execute_world_action(action, actor) -> void:
 			# If holding a partially empty water bottle, refill it
 			if held_dw != null and (held_dw.item_name == "Botella de agua" or held_dw.item_name == "Botella de agua llena") and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
 				_play_actor_action(actor, "plant", 5.0)
-				actor.notice.emit("Llenando botella en el rio...")
+				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				await get_tree().create_timer(5.0).timeout
@@ -9332,6 +9333,7 @@ func _execute_world_action(action, actor) -> void:
 				return
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)
 			_drink_hold_actor = actor
+			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
 			_drink_hold_timer = 0.0
 			actor.notice.emit("Mantén E para beber...")
 		"light_campfire":

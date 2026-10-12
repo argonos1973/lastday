@@ -1,6 +1,7 @@
 extends RefCounted
 const CENTER := Vector3(9,0,680)
 const SOUTH_LIMIT := 900.0
+const ROAD_RING := Rect2(-40.0,-40.0,144.0,176.0) # local X/Z: world x=-31..113, z=640..816
 const BLOCK := preload("res://scripts/CityBlock.gd")
 
 static func reserves_terrain(pos: Vector3, radius: float = 0.0) -> bool:
@@ -24,6 +25,12 @@ static func inside_building(pos: Vector3) -> bool:
 static func on_road(pos: Vector3, margin: float = 0.0, start_z: float = 500.0) -> bool:
  # start_z: world z where the generated main road actually ends (mesh continues from there).
  var local:=pos-CENTER
+ # Perimeter loop around the district. Match the same local rectangle used by
+ # CityRoad so traffic, vegetation, loot and AI see the rendered road as road.
+ var ring_right:=ROAD_RING.position.x+ROAD_RING.size.x
+ var ring_bottom:=ROAD_RING.position.y+ROAD_RING.size.y
+ if local.z>=ROAD_RING.position.y-margin and local.z<=ring_bottom+margin and (absf(local.x-ROAD_RING.position.x)<=3.5+margin or absf(local.x-ring_right)<=3.5+margin):return true
+ if local.x>=ROAD_RING.position.x-margin and local.x<=ring_right+margin and (absf(local.z-ROAD_RING.position.y)<=3.5+margin or absf(local.z-ring_bottom)<=3.5+margin):return true
  for x in [0.0,64.0]:
   var z_begin := start_z-CENTER.z if x==0.0 else -40.0
   if absf(local.x-x)<3.5+margin and local.z>=z_begin-margin and local.z<=136+margin: return true
@@ -53,6 +60,7 @@ static func create(world: Node3D, server: bool) -> Node3D:
   streets.position=CENTER
   streets.road_width=7.0
   streets.expanded=true
+  streets.perimeter_enabled=true
   # Connect to the actual generated road end, not an assumed nominal boundary.
   streets.main_start=world._south_road_end()-CENTER.z
   world.add_child(streets)

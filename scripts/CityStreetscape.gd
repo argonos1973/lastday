@@ -59,12 +59,16 @@ static func create(world: Node3D, server: bool) -> void:
 # It stands directly on the plaza medallion; the baked 'FountainWater' sheet
 # follows the real inner rim, so the basin reads full to just below the coping.
 static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
- world._create_invisible_collision_box("DistrictFountainCollision",center,Vector3(2.0,.62,2.0))
- world._create_invisible_collision_box("DistrictFountainColumnCollision",center,Vector3(.6,2.3,.6))
- world._register_wildlife_blocker(center,1.3)
+ # The scan is ~1.8x2.3 m; 1.6x/1.4x scaling turns it into a monumental
+ # plaza fountain (~2.9 m basin, ~3.3 m tall, rim ~1.2 m — still reachable).
+ world._create_invisible_collision_box("DistrictFountainCollision",center,Vector3(3.0,.95,3.0))
+ world._create_invisible_collision_box("DistrictFountainColumnCollision",center+Vector3(0,.95,0),Vector3(.9,2.4,.9))
+ world._register_wildlife_blocker(center,2.0)
+ var drink=world._create_world_action("district_fountain_drink","drink_water","Fuente de la plaza",center+Vector3(0,.9,0),Vector3(4.6,1.7,4.6),Color(0.08,0.22,0.48,0.0),true,false)
+ if drink!=null:drink.set_meta("drink_source","de la fuente")
  if server:return
  var fountain: Node3D = load("res://assets/models/environment/city/district_fountain.glb").instantiate()
- fountain.name="DistrictFountain";fountain.position=center+Vector3(0,.03,0)
+ fountain.name="DistrictFountain";fountain.position=center+Vector3(0,.03,0);fountain.scale=Vector3(1.6,1.4,1.6)
  world.add_child(fountain)
  var water:=fountain.find_child("FountainWater",true,false) as MeshInstance3D
  if water!=null:

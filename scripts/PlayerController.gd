@@ -477,6 +477,9 @@ var _clothing_wear_timer := 0.0
 var _is_falling_from_height := false
 var _fall_height := 0.0
 var _max_fall_height := 0.0
+const FALL_SAFE_HEIGHT := 3.0
+const FALL_DAMAGE_SCALE := 9.0
+const FALL_WATER_FACTOR := 0.3
 var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
 var _pain_audio_player: AudioStreamPlayer = null
@@ -1691,6 +1694,9 @@ func _input(event: InputEvent) -> void:
 			is_jumping = true
 			_jump_apex = false
 			_jump_animation_timer = 1.2
+			_is_falling_from_height = true
+			_fall_height = global_position.y
+			_max_fall_height = global_position.y
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_1:
 			_frontal_camera = not _frontal_camera
@@ -3419,15 +3425,14 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		if not is_on_floor():
 			_jump_apex = true
+			_max_fall_height = max(_max_fall_height, global_position.y)
 		if _jump_apex and is_on_floor() and velocity.y <= 0.0:
 			is_jumping = false
 			_jump_velocity = 0.0
 			velocity.y = 0.0
 			_jump_animation_timer = 0.0
-			_is_falling_from_height = false
-			_fall_height = 0.0
-			_max_fall_height = 0.0
 			_jump_apex = false
+			_land_after_fall()
 	elif not is_on_floor():
 		if not _is_falling_from_height:
 			_is_falling_from_height = true
@@ -3436,10 +3441,8 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= _gravity * delta
 		move_and_slide()
 		if is_on_floor():
-			_is_falling_from_height = false
-			_fall_height = 0.0
-			_max_fall_height = 0.0
 			velocity.y = 0.0
+			_land_after_fall()
 	else:
 		velocity.y = -1.0
 		move_and_slide()
@@ -10993,6 +10996,23 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 			_play_hit_reaction()
 		return
 	apply_damage(amount)
+
+func _land_after_fall() -> void:
+	var drop := _max_fall_height - global_position.y
+	_is_falling_from_height = false
+	_fall_height = 0.0
+	_max_fall_height = 0.0
+	if drop <= FALL_SAFE_HEIGHT or is_puppet:
+		return
+	var damage := (drop - FALL_SAFE_HEIGHT) * FALL_DAMAGE_SCALE
+	if is_in_water or _water_depth >= 0.5:
+		damage *= FALL_WATER_FACTOR
+	if damage <= 0.0:
+		return
+	stats.feet_wound = minf(100.0, stats.feet_wound + damage * 0.5)
+	apply_damage(damage)
+	if not is_dead:
+		notice.emit("Te has hecho dano al caer.")
 
 func apply_damage(amount: float) -> void:
 	if is_puppet or is_dead:

@@ -38,6 +38,11 @@ func run():
  check(world.has_node("DistrictFountainCollision"),"server fountain collider")
  check(not world.has_node("DistrictFountain"),"fountain mesh is client-only")
  check(not world.has_node("DistrictFountainWater"),"fountain water is client-only")
+ var basin:CollisionShape3D=world.get_node("DistrictFountainCollision").get_child(0)
+ check(basin.shape.size.x>=3.0,"fountain basin collider is enlarged")
+ var drink=world.world_actions_by_id.get("district_fountain_drink")
+ check(drink!=null and drink.action_type=="drink_water","fountain drink action registered")
+ check(drink!=null and drink.get_meta("drink_source")=="de la fuente","fountain drink source label")
  world._create_invisible_collision_box("TestGround",Vector3(0,-.1,700),Vector3(300,.2,300))
  var walker:=CharacterBody3D.new();var cs:=CollisionShape3D.new();var capsule:=CapsuleShape3D.new()
  capsule.radius=.35;capsule.height=1.75;cs.shape=capsule;cs.position.y=.9;walker.add_child(cs);walker.floor_snap_length=.4

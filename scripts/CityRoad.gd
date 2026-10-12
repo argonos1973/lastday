@@ -5,6 +5,7 @@ extends Node3D
 var road_width := 10.0
 var main_start := -40.0
 var expanded := false
+var perimeter_enabled := false
 var _offset := Vector3.ZERO
 func _ready() -> void:
  var material := ShaderMaterial.new()
@@ -18,6 +19,15 @@ func _ready() -> void:
    _offset=Vector3(0,0,z)
    for span in [Vector2(-40,-3.5),Vector2(3.5,60.5),Vector2(67.5,104)]:
     _strip(span.x,span.y,true,material)
+  if perimeter_enabled:
+   # Close the four open ends of the district grid. These roads form a loop
+   # around the houses and connect the existing cross streets at both ends.
+   for x in [-40.0,104.0]:
+    _offset=Vector3(x,0,0)
+    _strip(-40,136,false,material,false,false)
+   for z in [-40.0,136.0]:
+    _offset=Vector3(0,0,z)
+    _strip(-40,104,true,material,false,false)
  else:
   _strip(main_start,40,false,material,true,true,-4.6,4.6)
   _strip(-40,-road_width*.5,true,material,true,false)
