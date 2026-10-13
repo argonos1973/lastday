@@ -21,7 +21,7 @@ const BUILDINGS := [
   "asset":"res://assets/models/environment/city/building_highrise_1.glb",
   "floors":4, "interior_height":15.6, "footprint":Vector2(6.4,6.4),
   "loot_floor_values":[.16,4.02,7.92,11.82],
-  "door_position":Vector3(-1.4,.02,6.08), "door_size":Vector3(2.8,3.1,.12), "door_label":"Puerta del bloque"},
+  "door_position":Vector3(-1.35,.02,6.08), "door_size":Vector3(2.7,3.1,.12), "door_label":"Puerta del bloque"},
 ]
 const LOAD_DISTANCE := 100.0
 const UNLOAD_DISTANCE := 135.0
@@ -175,6 +175,8 @@ func load_building(i: int) -> Node3D:
  add_child(building)
  _collisions(building)
  var definition: Dictionary = BUILDINGS[i]
+ if not definition.has("asset"):
+  _add_stair_landing_supports(building, i % 4 == 1 or i % 4 == 2)
  var door := Door.new()
  door.name = str(BUILDINGS[i].id)+"_door"
  door.position = definition.get("door_position", Vector3(-.85,.12,6.08))
@@ -207,10 +209,12 @@ func _furnish_highrise(building: Node3D, i: int, floor_count: int) -> void:
   if level == 0:
    # Large ground-floor shop: two broad counters and shelves along the
    # back wall; keep the entrance, stair lane and centre aisle open.
-   _place(root, "desk_table", Vector3(2.15, floor_y, 3.0), 0.0, Vector3.ZERO, true, true, 2.0)
+   # Keep the doorway and centre aisle clear; the previous oversized counter
+   # sat directly in the entrance sightline and made the facade read sealed.
+   _place(root, "desk_table", Vector3(3.55, floor_y, 3.0), 0.0, Vector3.ZERO, true, true, 1.3)
    _place(root, "cabinet", Vector3(4.8, floor_y, -4.7), 0.0, Vector3.ZERO, true, true, 1.2)
    _place(root, "bookshelf", Vector3(4.8, floor_y, -1.8), 0.0, Vector3.ZERO, true, true, 1.25)
-   _place(root, "desk_table", Vector3(2.2, floor_y, -4.8), 0.0, Vector3.ZERO, true, true, 1.7)
+   _place(root, "desk_table", Vector3(2.7, floor_y, -4.8), 0.0, Vector3.ZERO, true, true, 1.3)
   else:
    var bed := _place(root, "bed", Vector3(2.4, floor_y, -3.45), 0.0, Vector3.ZERO, false, true)
    if bed != null:
@@ -531,6 +535,28 @@ func _collisions(node: Node) -> void:
     for body in mesh_node.get_children():
      if body is StaticBody3D: body.add_to_group("stair_surface")
  for child in node.get_children(): _collisions(child)
+
+func _add_stair_landing_supports(building: Node3D, roof_access: bool) -> void:
+ # Keep the switch-back stairs walkable when descending as well as ascending.
+ # The imported house collision is a single merged trimesh; tiny seams around
+ # its upper landing/bridge can let a full-size player capsule fall through.
+ _add_stair_landing_box(building, "UpperLandingSupport", Vector3(4.55, 3.855, -4.4), Vector3(2.72, 0.09, 3.08))
+ _add_stair_landing_box(building, "LandingBridgeSupport", Vector3(4.48, 3.855, -2.35), Vector3(2.64, 0.09, 0.82))
+ if roof_access:
+  _add_stair_landing_box(building, "UpperStairBaseSupport", Vector3(3.81, 3.855, 1.3), Vector3(1.3, 0.09, 6.16))
+
+func _add_stair_landing_box(building: Node3D, node_name: String, at: Vector3, size: Vector3) -> void:
+ var body := StaticBody3D.new()
+ body.name = node_name
+ body.collision_layer = 1
+ body.collision_mask = 1
+ body.position = at
+ var collision := CollisionShape3D.new()
+ var shape := BoxShape3D.new()
+ shape.size = size
+ collision.shape = shape
+ body.add_child(collision)
+ building.add_child(body)
 
 func unload_building(i: int) -> void:
  if not buildings.has(i): return

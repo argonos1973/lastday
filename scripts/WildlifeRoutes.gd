@@ -14,9 +14,13 @@ static func build_circular_route(rng: RandomNumberGenerator, radius: float, angl
 		route.append(pos)
 	return route
 
-static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_points: int, step_min: float, step_max: float, is_allowed: Callable) -> Array:
+static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_points: int, step_min: float, step_max: float, is_allowed: Callable, include_start := false) -> Array:
 	var route: Array = []
 	var cursor := start
+	if include_start:
+		if not is_allowed.call(cursor):
+			cursor = find_allowed_near(cursor, 105.0, is_allowed)
+		route.append(cursor)
 	var heading := rng.randf_range(0.0, TAU)
 	var limit := GameConst.WORLD_LIMIT
 	var limit_z := GameConst.WORLD_LIMIT_Z

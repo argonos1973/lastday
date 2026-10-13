@@ -50,7 +50,9 @@ plaster = material("Peeling grey lime", (.58, .57, .49), "assets/textures/city_i
 concrete = material("Stained concrete", (.38, .37, .34), "assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg")
 wood = material("Rotten timber", (.22, .15, .09), "assets/textures/overgrowth/village_wood_albedo.png")
 iron = material("Oxidised iron", (.13, .12, .095))
-glass = material("Smoky glass", (.16, .19, .18))
+glass = material("Broken pale glass", (.32, .36, .34))
+glass.node_tree.nodes.get("Principled BSDF").inputs["Roughness"].default_value = .2
+glass.node_tree.nodes.get("Principled BSDF").inputs["Metallic"].default_value = .18
 
 
 def cube(name, p, size, mat, prefix="Solid_"):
@@ -100,8 +102,11 @@ def wall_x(name, level, z, openings, mat):
             cube(name + "Jamb", (right, level * FH + (sill + head) / 2, z), (.08, head - sill, .38), plaster, "Detail_")
             cube(name + "Sill", ((left + right) / 2, level * FH + sill, z), (right - left + .18, .10, .52), concrete, "Detail_")
             if (int(abs(left) * 10) + level) % 3 != 0:
-                pane = cube(name + "BrokenPane", ((left + right) / 2, level * FH + (sill + head) / 2, z), (right - left - .12, head - sill - .12, .025), glass, "Detail_")
-                pane.display_type = "TEXTURED"
+                # Leave the openings visibly broken out. A full dark pane reads
+                # as a boarded window in the game's distant, low-contrast view.
+                if level % 3 == 1 and int(abs(left) * 10) % 2 == 0:
+                    pane = cube(name + "BrokenGlassShard", (left + .2, level * FH + sill + .24, z), (.38, .42, .025), glass, "Detail_")
+                    pane.display_type = "TEXTURED"
         x = right
     if x < HALF:
         cube(name + "Pier", ((x + HALF) / 2, level * FH + FH / 2, z), (HALF - x, FH, wall_depth), brick)
@@ -176,13 +181,23 @@ for level in range(FLOORS):
     wall_z("West", level, -6.0, [(-2.7, 1.8, .9, 2.75), (3.4, 1.5, 1.0, 2.6)], plaster)
     wall_z("East", level, 6.0, [(-3.0, 1.7, .9, 2.8), (3.1, 1.7, .9, 2.8)], plaster)
 
+    if level == 0:
+        # A legible, recessed shop entrance: bright stone jambs and a deep
+        # lintel frame the usable opening without filling it with wall mesh.
+        cube("ShopDoorJamb", (-1.48, 1.55, 6.22), (.16, 3.1, .22), concrete, "Detail_")
+        cube("ShopDoorJamb", (1.48, 1.55, 6.22), (.16, 3.1, .22), concrete, "Detail_")
+        cube("ShopDoorLintel", (0, 3.18, 6.22), (3.12, .18, .22), concrete, "Detail_")
+        cube("ShopThreshold", (0, .05, 6.22), (2.9, .10, .52), concrete, "Detail_")
+
     # Ruined sill boards, drain pipes and ledge bands make each storey distinct.
     cube("StoreyBandFront", (0, base_y + FH - .08, 6.10), (12.12, .16, .18), concrete, "Detail_")
     cube("StoreyBandRear", (0, base_y + FH - .08, -6.10), (12.12, .16, .18), concrete, "Detail_")
     for x in [-5.82, 5.82]:
         cube("Drainpipe", (x, base_y + FH / 2, 6.25), (.12, FH, .12), iron, "Detail_")
     for wx in [-3.35, 3.35]:
-        if (level + (0 if wx < 0 else 1)) % 2 == 0:
+        # Keep the shop frontage open and readable; boarded windows remain
+        # on some upper floors only, where they do not hide the entrance.
+        if level > 0 and (level + (0 if wx < 0 else 1)) % 3 == 0:
             cube("BoardedWindow", (wx, base_y + 1.75, 6.30), (1.95, .18, .10), wood, "Detail_")
 
     # Apartment separation on the upper floors. The 1.5 m opening by x=0.7
@@ -199,7 +214,11 @@ for level in range(FLOORS):
         for step in range(count):
             rise = (step + 1) * FH / count
             z = 4.65 - (step + .5) * 9.3 / count
-            cube("StairTread", (-3.0, base_y + .12 + rise - .08, z), (2.05, .16, .58), wood, "Detail_")
+            cube("StairTread", (-3.0, base_y + .12 + rise - .055, z), (2.05, .11, .58), wood, "Detail_")
+            # Deep, closed risers and a lighter worn nosing make the flight
+            # read as a real staircase instead of a stack of floating planks.
+            cube("StairRiser", (-3.0, base_y + .12 + rise - .11, z + .25), (2.0, FH / count - .12, .07), concrete, "Detail_")
+            cube("StairNosing", (-3.0, base_y + .12 + rise - .01, z + .20), (2.08, .035, .09), plaster, "Detail_")
         stair_wedge(level, lane0, lane1)
         # Knee-height rails/posts are solid collision geometry at the edge of
         # the stairwell; they leave the 2.1 m walking lane clear.
@@ -207,6 +226,8 @@ for level in range(FLOORS):
             for post in range(9):
                 pz = 4.25 - post * 1.06
                 cube("StairRailPost", (rx, base_y + .70 + post * FH / 9, pz), (.07, 1.05, .07), iron)
+            cube("StairHandrail", (rx, base_y + .12 + FH * .5 + .84, 0), (.09, .09, 9.7), wood, "Detail_")
+            bpy.context.object.rotation_euler.x = math.atan2(FH, 9.3)
 
 # Roof/cornice closes the top floor; it is not an inaccessible fake extra level.
 cube("RoofSlab", (0, FLOORS * FH + .02, 0), (12.35, .24, 12.35), concrete)

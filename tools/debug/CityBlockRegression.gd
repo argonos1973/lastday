@@ -18,6 +18,11 @@ func run() -> void:
  check(district.buildings.size()==NB,"all buildings loaded")
  var space := world.get_world_3d().direct_space_state
  for i in range(NB):
+  if i % 4 == 1 or i % 4 == 2:
+   var flat:Node3D=district.buildings[i]
+   var flat_stairs := flat.find_children("*", "StaticBody3D", true, false).filter(func(n): return n.is_in_group("stair_surface"))
+   check(flat_stairs.size() >= 2, "flat-roof house %d has both interior stair flights" % i)
+ for i in range(NB):
   var b: Node3D = district.buildings[i]
   var door: Door = b.get_node("city_%02d_door"%(i+1))
   var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(0,1.2,8)),b.to_global(Vector3(0,1.2,4))))
@@ -33,16 +38,22 @@ func run() -> void:
   # x=-4.1 = centro de una hoja de ventana (el partidor solido va en -3.5)
   hit = space.intersect_ray(PhysicsRayQueryParameters3D.create(b.to_global(Vector3(-4.1,1.8,7)),b.to_global(Vector3(-4.1,1.8,5))))
   check(hit.is_empty(),"window opening is real %d"%i)
+ var highrise_building:Node3D=district.buildings[16]
+ var tower_window := space.intersect_ray(PhysicsRayQueryParameters3D.create(highrise_building.to_global(Vector3(-3.35,1.8,7)),highrise_building.to_global(Vector3(-3.35,1.8,5.3))))
+ check(tower_window.is_empty(),"highrise shop window is visibly open, not paneled over")
+ var tower_entry := space.intersect_ray(PhysicsRayQueryParameters3D.create(highrise_building.to_global(Vector3(0,1.5,7.8)),highrise_building.to_global(Vector3(0,1.5,-1.0))))
+ check(tower_entry.is_empty(),"highrise entrance and central aisle remain clear")
  var building: Node3D = district.buildings[0]
  var body := CharacterBody3D.new()
  var shape := CollisionShape3D.new()
  var capsule := CapsuleShape3D.new()
- capsule.height=1.8
- capsule.radius=.3
+ # Match PlayerController._create_body exactly; a smaller capsule and longer
+ # floor snap could conceal clearances that snag the real avatar.
+ capsule.height=1.75
+ capsule.radius=.35
  shape.shape=capsule
  shape.position.y=.9
  body.add_child(shape)
- body.floor_snap_length=.4
  world.add_child(body)
  body.global_position=building.to_global(Vector3(4.5,.15,4.7))
  # ~4.5 m/s horizontal como el paseo del jugador; la pendiente de 26 deg
@@ -70,36 +81,46 @@ func run() -> void:
   check(not ceiling.is_empty() and house.to_local(ceiling.position).y<8.2,"pitched roof house %d ceiling is closed"%index)
  # Flat roofs (building_2/3) switch back: first flight on the east lane up to
  # the back landing, turn west, roof flight climbs back towards the front.
- for index in [1,2]:
+ # Exercise every placed house, not just one copy of each GLB: position and
+ # yaw must not break roof access.
+ for index in [1,2,5,6,9,10,13,14]:
   var house:Node3D=district.buildings[index]
+  check(house.get_node_or_null("UpperLandingSupport")!=null,"flat house %d has collision support for the upper landing"%index)
+  check(house.get_node_or_null("LandingBridgeSupport")!=null,"flat house %d has collision support for the stair bridge"%index)
+  check(house.get_node_or_null("UpperStairBaseSupport")!=null,"flat house %d has collision support under the roof flight"%index)
   body.global_position=house.to_global(Vector3(5.21,.2,4.8))
   for frame in range(260):
    await physics_frame
-   body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
+   body.velocity=house.global_basis*Vector3(0,-1,-4.0);body.move_and_slide()
    local=house.to_local(body.global_position)
    if local.z< -2.3 and local.y>3.8:break
   check(local.y>3.8 and local.z< -2.0,"flat house %d first flight to back landing: %s"%[index,local])
   for frame in range(80):
    await physics_frame
-   body.velocity=house.global_basis*Vector3(-3.0,-2,0);body.move_and_slide()
+   body.velocity=house.global_basis*Vector3(-3.0,-1,0);body.move_and_slide()
    local=house.to_local(body.global_position)
    if local.x<3.9:break
   for frame in range(260):
    await physics_frame
-   body.velocity=house.global_basis*Vector3(0,-2,4.0);body.move_and_slide()
+   body.velocity=house.global_basis*Vector3(0,-1,4.0);body.move_and_slide()
    local=house.to_local(body.global_position)
    if local.z>4.8 and local.y>7.8:break
   check(local.y>7.8 and local.z>4.5,"roof flight returns towards the front %d: %s"%[index,local])
   for frame in range(20):
    await physics_frame
-   body.velocity=Vector3(0,-2,0);body.move_and_slide()
+   body.velocity=Vector3(0,-1,0);body.move_and_slide()
   check(house.to_local(body.global_position).y>7.8,"stable roof landing")
+  # Use normal speed for the transition back onto the narrow landing; speeding
+  # physics up can tunnel through it and does not represent the shipped game.
+  Engine.time_scale=1.0
   for frame in range(260):
    await physics_frame
-   body.velocity=house.global_basis*Vector3(0,-2,-4.0);body.move_and_slide()
+   body.velocity=house.global_basis*Vector3(0,-1,-4.0);body.move_and_slide()
    local=house.to_local(body.global_position)
-   if local.z< -2.3 and local.y<4.2:break
+   # Stop inside the upper back landing before walking past its front edge.
+   if local.z< -2.65 and local.y<4.2:break
   check(local.y>3.7 and local.y<4.2,"roof descent returns to back landing %d: %s"%[index,local])
+  Engine.time_scale=4.0
  body.free()
  # Highrise (city_17): the stair collision must be a thin slab — a fat wedge
  # underside once ate the headroom over the lower flight and blocked the stairs.

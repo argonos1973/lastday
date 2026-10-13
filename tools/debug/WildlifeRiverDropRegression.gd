@@ -71,13 +71,14 @@ func run() -> void:
 		check(entered_water and animal.position.distance_to(goal) < 0.1, kind + ": must cross river continuously")
 		animal.free()
 	world.river_segments_data.clear()
-	for item in ["Ciervo muerto", "Lobo muerto", "Zorro muerto", "Animal muerto"]:
+	for item in ["Ciervo muerto", "Lobo muerto", "Zorro muerto", "Oso muerto", "Animal muerto"]:
 		var kind := WildlifeController.corpse_species(item)
 		var alive := WildlifeController.new()
 		world.add_child(alive)
 		alive.set_process(false)
 		alive.animal_type = kind
 		check(alive._try_build_external_animal(), item + ": live model loads")
+		check(alive._visual_root != null and alive._visual_root.visible, item + ": live model is visible")
 		var id := kind + str(randi())
 		world._spawn_dropped_item_visual(id, item, "material", 8.0, 1, 0.0, Vector3(0, 0, 30))
 		var corpse := world.get_node_or_null("Pickup_" + id) as Node3D

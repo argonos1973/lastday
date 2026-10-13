@@ -7584,7 +7584,9 @@ func _create_wildlife() -> void:
 	var player_start := Vector3(8, 0.0, 2.5)
 	# Deer: large outer ring routes around the expanded map
 	var deer_routes := [
-		WildlifeRoutes.build_circular_route(_world_rng, 100.0, 0.0, 16, 12.0, is_wildlife_allowed_at),
+		# One herd starts within sight of the initial trail; the rest remain spread
+		# through the wider forest so the starting area never feels overrun.
+		WildlifeRoutes.build_circular_route(_world_rng, 52.0, 0.0, 16, 10.0, is_wildlife_allowed_at),
 		WildlifeRoutes.build_circular_route(_world_rng, 160.0, PI * 0.5, 16, 12.0, is_wildlife_allowed_at),
 		WildlifeRoutes.build_circular_route(_world_rng, 220.0, PI, 18, 15.0, is_wildlife_allowed_at),
 		WildlifeRoutes.build_circular_route(_world_rng, 280.0, PI * 1.5, 20, 18.0, is_wildlife_allowed_at),
@@ -7601,12 +7603,14 @@ func _create_wildlife() -> void:
 			if is_wildlife_allowed_at(sc):
 				break
 			sc = Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(500.0, 860.0))
-		_create_deer_pair(WildlifeRoutes.build_roaming_route(_world_rng, sc, 22, 70.0, 140.0, is_wildlife_allowed_at))
+		_create_deer_pair(WildlifeRoutes.build_roaming_route(_world_rng, sc, 22, 70.0, 140.0, is_wildlife_allowed_at, true))
 
 	# Foxes: 10 animals starting in distinct zones, each roaming the whole map
 	var fox_zones := [
-		[Vector3(-150, 0, -100), Vector3(-80, 0, -40)],
-		[Vector3(80, 0, 140), Vector3(150, 0, 70)],
+		# Two foxes patrol the outer edge of the starting clearing and are easy to
+		# spot; the remaining packs stay in their existing distant territories.
+		[Vector3(-38, 0, -30), Vector3(-22, 0, -12)],
+		[Vector3(30, 0, 25), Vector3(52, 0, 45)],
 		[Vector3(-200, 0, 120), Vector3(-120, 0, 200)],
 		[Vector3(100, 0, -180), Vector3(180, 0, -100)],
 		[Vector3(-70, 0, 220), Vector3(20, 0, 280)],
@@ -7622,7 +7626,7 @@ func _create_wildlife() -> void:
 	for fz in fox_zones:
 		# Ruta larga que recorre el mapa partiendo de la zona de origen
 		var fox_start: Vector3 = (fz[0] as Vector3).lerp(fz[1] as Vector3, 0.5)
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 24, 80.0, 160.0, is_wildlife_allowed_at)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 24, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("fox", fox_route)
 	
 	# Wolves: spread across 12 expanded quadrants of the open world
@@ -7644,7 +7648,7 @@ func _create_wildlife() -> void:
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -7723,12 +7727,12 @@ func _check_wildlife_respawn() -> void:
 			if is_wildlife_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = _wildlife_spawn_pos()
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("wolf", route)
 	elif total_deer < 14 and total_deer <= total_fox:
 		var deer_route: Array
 		if randf() < 0.3:
-			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, _wildlife_spawn_pos(), 22, 70.0, 140.0, is_wildlife_allowed_at)
+			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, _wildlife_spawn_pos(), 22, 70.0, 140.0, is_wildlife_allowed_at, true)
 		else:
 			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
@@ -7738,7 +7742,7 @@ func _check_wildlife_respawn() -> void:
 			if is_wildlife_allowed_at(fox_zone):
 				break
 			fox_zone = _wildlife_spawn_pos()
-		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
+		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("fox", fox_route)
 	if alive_bear < _bear_territory_anchors().size():
 		var territory_counts := [0, 0, 0, 0]
