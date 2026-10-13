@@ -790,69 +790,122 @@ func _update_real_clock() -> void:
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
 	status_panel.offset_left = 18
-	status_panel.offset_top = 420
-	status_panel.offset_right = 268
-	status_panel.offset_bottom = 720
+	status_panel.offset_top = -158
+	status_panel.offset_right = 360
+	status_panel.offset_bottom = -16
 	status_panel.anchor_left = 0.0
 	status_panel.anchor_top = 1.0
 	status_panel.anchor_right = 0.0
 	status_panel.anchor_bottom = 1.0
-	status_panel.offset_top = -70
-	status_panel.offset_bottom = 0
 	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
+	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.91), Color(0.43, 0.48, 0.38, 0.78), 1)
+	frame.set_corner_radius_all(7)
+	frame.content_margin_left = 9
+	frame.content_margin_right = 9
+	frame.content_margin_top = 7
+	frame.content_margin_bottom = 7
+	status_panel.add_theme_stylebox_override("panel", frame)
 	root.add_child(status_panel)
 
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 5)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_panel.add_child(content)
+	var heading := HBoxContainer.new()
+	heading.add_theme_constant_override("separation", 8)
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(heading)
+	var title := Label.new()
+	title.text = "ESTADO DEL PERSONAJE"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 10)
+	title.add_theme_color_override("font_color", Color(0.72, 0.77, 0.63))
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	heading.add_child(title)
+	var sick_badge := PanelContainer.new()
+	sick_badge.visible = false
+	sick_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sick_badge.add_theme_stylebox_override("panel", _panel_style(Color(0.25, 0.055, 0.04, 0.96), Color(0.9, 0.22, 0.12), 1))
+	heading.add_child(sick_badge)
+	var sick_text := Label.new()
+	sick_text.text = "!  ENFERMO"
+	sick_text.add_theme_font_size_override("font_size", 9)
+	sick_text.add_theme_color_override("font_color", Color(1.0, 0.69, 0.55))
+	sick_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sick_badge.add_child(sick_text)
+	status_icons["sick"] = {"panel": sick_badge, "wrapper": sick_badge, "icon": null}
+
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 5)
+	grid.add_theme_constant_override("v_separation", 4)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(grid)
+	_add_vital_icon(grid, "health", "heart", "SALUD")
+	_add_vital_icon(grid, "hunger", "apple", "HAMBRE")
+	_add_vital_icon(grid, "thirst", "drop", "SED")
+	_add_vital_icon(grid, "temp", "thermometer", "CUERPO")
+	_add_vital_icon(grid, "energy", "bolt", "ENERGÍA")
+	_add_vital_icon(grid, "sleep", "bed", "SUEÑO")
+
+func _add_vital_icon(parent: GridContainer, key: String, shape: String, label_text: String) -> void:
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(102, 43)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var neutral := Color(0.35, 0.39, 0.32)
+	var card_style := _panel_style(Color(0.075, 0.09, 0.07, 0.96), neutral.darkened(0.45), 1)
+	card_style.set_corner_radius_all(5)
+	card_style.content_margin_left = 5
+	card_style.content_margin_right = 5
+	card_style.content_margin_top = 3
+	card_style.content_margin_bottom = 3
+	card.add_theme_stylebox_override("panel", card_style)
+	parent.add_child(card)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 5)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.add_child(row)
-
-	_add_vital_icon(row, "health", "heart", true)
-	_add_vital_icon(row, "hunger", "apple", true)
-	_add_vital_icon(row, "thirst", "drop", true)
-	_add_vital_icon(row, "temp", "thermometer", true)
-	_add_vital_icon(row, "energy", "bolt", true)
-	_add_vital_icon(row, "sleep", "bed", true)
-	_add_vital_icon(row, "sick", "warning", false)
-
-func _add_vital_icon(parent: HBoxContainer, key: String, shape: String, always_visible: bool) -> void:
-	var wrapper := VBoxContainer.new()
-	wrapper.custom_minimum_size = Vector2(34, 48)
-	wrapper.visible = always_visible
-	wrapper.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	wrapper.add_theme_constant_override("separation", 2)
-	parent.add_child(wrapper)
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(34, 34)
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var neutral := Color(0.32, 0.35, 0.31)
-	panel.add_theme_stylebox_override("panel", _panel_style(neutral.darkened(0.55), neutral, 1))
-	wrapper.add_child(panel)
+	card.add_child(row)
 	var icon := HudIconScript.new()
-	icon.custom_minimum_size = Vector2(30, 30)
+	icon.custom_minimum_size = Vector2(25, 25)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_shape(shape)
-	icon.set_icon_color(Color(0.92, 0.94, 0.88))
-	panel.add_child(icon)
-	# Level bar below the icon
+	icon.set_icon_color(Color(0.85, 0.88, 0.77))
+	row.add_child(icon)
+	var details := VBoxContainer.new()
+	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.add_theme_constant_override("separation", 0)
+	details.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(details)
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 9)
+	label.add_theme_color_override("font_color", Color(0.64, 0.69, 0.59))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	details.add_child(label)
+	var state_hint := Label.new()
+	state_hint.text = ""
+	state_hint.add_theme_font_size_override("font_size", 9)
+	state_hint.add_theme_color_override("font_color", Color(0.73, 0.76, 0.68))
+	state_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	details.add_child(state_hint)
 	var bar_bg := Control.new()
-	bar_bg.custom_minimum_size = Vector2(30, 6)
+	bar_bg.custom_minimum_size = Vector2(58, 6)
+	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_bg.clip_contents = true
-	var bar_bg_style := PanelContainer.new()
-	bar_bg_style.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_bg_style.add_theme_stylebox_override("panel", _panel_style(Color(0.05, 0.05, 0.05, 0.9), Color(0.2, 0.2, 0.2, 0.6), 1))
-	bar_bg_style.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bar_bg.add_child(bar_bg_style)
-	wrapper.add_child(bar_bg)
+	var bg := PanelContainer.new()
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.add_theme_stylebox_override("panel", _panel_style(Color(0.025, 0.03, 0.025), Color(0.17, 0.19, 0.16), 1))
+	bar_bg.add_child(bg)
+	details.add_child(bar_bg)
 	var bar_fill := ColorRect.new()
-	bar_fill.custom_minimum_size = Vector2(0, 6)
 	bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_fill.color = Color(0.32, 0.35, 0.31)
-	bar_fill.size = Vector2(30, 6)
+	bar_fill.color = Color(0.55, 0.68, 0.39)
+	bar_fill.size = Vector2(70, 6)
 	bar_bg.add_child(bar_fill)
-	status_icons[key] = {"panel": panel, "icon": icon, "always": always_visible, "wrapper": wrapper, "bar_fill": bar_fill, "bar_bg": bar_bg}
+	status_icons[key] = {"panel": card, "icon": icon, "wrapper": card, "bar_fill": bar_fill, "bar_bg": bar_bg, "value": state_hint}
 
 func _tier_color(ratio: float) -> Color:
 	if ratio > 0.6:
@@ -877,7 +930,7 @@ func _temp_color(ratio: float, is_hot: bool) -> Color:
 
 func _tier_bar_color(ratio: float) -> Color:
 	if ratio > 0.6:
-		return Color.WHITE
+		return Color(0.56, 0.72, 0.39)
 	elif ratio > 0.3:
 		return Color(0.78, 0.55, 0.10)
 	else:
@@ -893,7 +946,13 @@ func _set_vital_icon_color(key: String, color: Color) -> void:
 	if not status_icons.has(key):
 		return
 	var panel := status_icons[key]["panel"] as PanelContainer
-	panel.add_theme_stylebox_override("panel", _panel_style(color.darkened(0.65), color, 2))
+	var style := _panel_style(color.darkened(0.65), color, 1)
+	style.set_corner_radius_all(5)
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 3
+	style.content_margin_bottom = 3
+	panel.add_theme_stylebox_override("panel", style)
 
 func _set_vital_bar(key: String, ratio: float) -> void:
 	if not status_icons.has(key):
@@ -905,7 +964,7 @@ func _set_vital_bar(key: String, ratio: float) -> void:
 	bar_fill.color = _tier_bar_color(ratio)
 	var max_w: float = bar_bg.size.x
 	if max_w <= 0.0:
-		max_w = 30.0
+		max_w = 70.0
 	bar_fill.size.x = max_w * clamp(ratio, 0.0, 1.0)
 
 func _set_vital_bar_color(key: String, color: Color) -> void:
@@ -918,8 +977,17 @@ func _set_vital_bar_color(key: String, color: Color) -> void:
 	bar_fill.color = color
 	var max_w: float = bar_bg.size.x
 	if max_w <= 0.0:
-		max_w = 30.0
+		max_w = 70.0
 	bar_fill.size.x = max_w
+
+func _set_vital_bar_tinted(key: String, color: Color, ratio: float) -> void:
+	if not status_icons.has(key) or not status_icons[key].has("bar_fill"):
+		return
+	var bar_fill: ColorRect = status_icons[key]["bar_fill"]
+	var bar_bg: Control = status_icons[key]["bar_bg"]
+	var max_w: float = bar_bg.size.x if bar_bg.size.x > 0.0 else 70.0
+	bar_fill.color = color
+	bar_fill.size.x = max_w * clampf(ratio, 0.0, 1.0)
 
 func _update_status_icons() -> void:
 	if player == null or player.stats == null:
@@ -959,12 +1027,36 @@ func _update_status_icons() -> void:
 		_set_vital_bar_color("thirst", _overfull_bar_color(int(stats.overdrink_count)))
 	else:
 		_set_vital_bar("thirst", thirst_ratio)
-	_set_vital_bar_color("temp", _temp_color(temp_ratio, temp_is_hot))
 	_set_vital_bar("temp", temp_ratio)
+	_set_vital_bar_tinted("temp", _temp_color(temp_ratio, temp_is_hot), temp_ratio)
 	_set_vital_bar("energy", energy_ratio)
 	_set_vital_bar("sleep", sleep_ratio)
+	_set_vital_value("health", _vital_state(health_ratio))
+	_set_vital_value("hunger", _vital_state(hunger_ratio))
+	_set_vital_value("thirst", _vital_state(thirst_ratio))
+	_set_vital_value("temp", _temperature_state(stats.body_temperature))
+	_set_vital_value("energy", _vital_state(energy_ratio))
+	_set_vital_value("sleep", _vital_state(sleep_ratio))
 	if status_icons.has("sick") and bool(stats.sick):
 		_set_vital_bar("sick", 1.0)
+
+func _set_vital_value(key: String, value: String) -> void:
+	if status_icons.has(key) and status_icons[key].has("value"):
+		(status_icons[key]["value"] as Label).text = value
+
+func _vital_state(ratio: float) -> String:
+	if ratio <= 0.20:
+		return "CRÍTICO"
+	if ratio <= 0.40:
+		return "BAJO"
+	return "ESTABLE"
+
+func _temperature_state(body_temperature: float) -> String:
+	if body_temperature < 35.0:
+		return "FRÍO"
+	if body_temperature > 37.5:
+		return "CALOR"
+	return "NORMAL"
 
 func _build_inventory_panel() -> void:
 	survival_inventory = preload("res://scripts/SurvivalInventory.gd").new()
