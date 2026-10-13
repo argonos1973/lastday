@@ -71,6 +71,26 @@ const RECIPES := [
 		"label": "Construir refugio con palos"
 	},
 	{
+		"inputs": { "ANY_PELT": 4, "Cuchillo": 1 },
+		"output": { "name": "Chaqueta de piel", "type": "clothing", "weight": 1.8, "use_value": 0.0 },
+		"label": "Coser una chaqueta resistente con pieles"
+	},
+	{
+		"inputs": { "ANY_PELT": 2, "Cuchillo": 1 },
+		"output": { "name": "Botas de piel", "type": "clothing", "weight": 1.0, "use_value": 0.0 },
+		"label": "Fabricar botas de piel"
+	},
+	{
+		"inputs": { "ANY_PELT": 2, "Trapos": 1, "Cuchillo": 1 },
+		"output": { "name": "Gorro de piel", "type": "clothing", "weight": 0.35, "use_value": 0.0 },
+		"label": "Coser un gorro de piel"
+	},
+	{
+		"inputs": { "ANY_PELT": 3, "Cuerda": 1, "Cuchillo": 1 },
+		"output": { "name": "Tocado de piel animal", "type": "clothing", "weight": 0.7, "use_value": 0.0 },
+		"label": "Crear un tocado de piel animal"
+	},
+	{
 		"inputs": { "Palo": 1, "Trapos": 1 },
 		"output": { "name": "Antorcha", "type": "tool_torch", "weight": 0.3, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0 },
 		"label": "Crear antorcha con palo y trapos"
@@ -178,7 +198,10 @@ static func get_recipes_for_item(item_name: String, item_type: String = "") -> A
 			result.append(recipe)
 		else:
 			for input_name in recipe["inputs"]:
-				if _is_substitute(input_name, item_name):
+				if input_name == "ANY_PELT" and _is_pelt_name(item_name):
+					result.append(recipe)
+					break
+				elif _is_substitute(input_name, item_name):
 					result.append(recipe)
 					break
 				elif input_name == "ANY_CLOTHING" and item_type == "clothing":
@@ -200,6 +223,8 @@ static func consume_inputs(recipe: Dictionary, inventory) -> void:
 			continue
 		if input_name == "ANY_CLOTHING":
 			_consume_clothing(inventory, needed)
+		elif input_name == "ANY_PELT":
+			_consume_pelts(inventory, needed)
 		else:
 			inventory.consume_item_name(input_name, needed)
 			inventory.changed.emit()
@@ -242,6 +267,8 @@ static func _matches_ground_input(input_name: String, g: Dictionary) -> bool:
 	var gtype: String = str(g.get("type", ""))
 	if input_name == "ANY_CLOTHING":
 		return gtype == "clothing"
+	if input_name == "ANY_PELT":
+		return _is_pelt_name(gname)
 	if gname == input_name or _is_substitute(input_name, gname):
 		return true
 	return false
@@ -253,6 +280,8 @@ static func _matches_input(input_name: String, item) -> bool:
 		return false
 	if input_name == "ANY_CLOTHING":
 		return str(item.item_type) == "clothing"
+	if input_name == "ANY_PELT":
+		return _is_pelt_name(str(item.item_name))
 	if str(item.item_name) == input_name or _is_substitute(input_name, str(item.item_name)):
 		return true
 	return false
@@ -383,6 +412,23 @@ static func _consume_clothing(inventory, amount: int) -> void:
 				inventory.items.erase(item)
 	inventory.changed.emit()
 
+static func _consume_pelts(inventory, amount: int) -> void:
+	var consumed := 0
+	for item in inventory.items.duplicate():
+		if consumed >= amount:
+			break
+		if not _is_pelt_name(str(item.item_name)):
+			continue
+		var take: int = mini(item.quantity, amount - consumed)
+		item.quantity -= take
+		consumed += take
+		if item.quantity <= 0:
+			inventory.items.erase(item)
+	inventory.changed.emit()
+
+static func _is_pelt_name(item_name: String) -> bool:
+	return item_name.begins_with("Piel de ")
+
 static func _is_tool(item_name: String) -> bool:
 	return item_name in ["Cuchillo", "Hacha", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]
 
@@ -403,6 +449,8 @@ static func get_recipe_inputs_text(recipe: Dictionary) -> String:
 			parts.append("%s (no se gasta)" % input_name)
 		elif input_name == "ANY_CLOTHING":
 			parts.append("%dx Ropa (cualquiera)" % amount)
+		elif input_name == "ANY_PELT":
+			parts.append("%dx Piel animal (cualquiera)" % amount)
 		else:
 			parts.append("%dx %s" % [amount, input_name])
 	return " + ".join(parts)

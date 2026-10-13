@@ -1046,6 +1046,8 @@ func _process(delta: float) -> void:
 	# Use real weather temperature when available
 	if hud != null and hud._real_temp_parsed != -999.0:
 		ambient_temp = hud._real_temp_parsed
+	if _is_near_pelt_lined_shelter(player.global_position):
+		ambient_temp += 1.5
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
 	_update_weather_effects(delta)
 	_tick_stat_warnings(delta, player)
@@ -3225,10 +3227,13 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 	# Spawn shelters built by other players
 	for sh in shelters:
 		if not world_actions_by_id.has(str(sh["id"])):
-			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
+			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)), bool(sh.get("pelt_lined", false)))
 		var sh_action = world_actions_by_id.get(str(sh["id"]))
 		if sh_action != null and is_instance_valid(sh_action):
 			sh_action.set_meta("contents", sh.get("contents", []))
+			sh_action.set_meta("pelt_lined", bool(sh.get("pelt_lined", false)))
+			if bool(sh.get("pelt_lined", false)):
+				_apply_shelter_lining_visual(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
 		_set_backpack_entry_contents(str(sh["id"]), sh.get("contents", []))
 	for crop in planted_crops:
 		var cpos_raw = crop.get("pos", [0.0, 0.0, 0.0])
@@ -3546,21 +3551,36 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	var meat_drops: Array = []
 	var meat_name := "Carne cruda de lobo"
 	var meat_qty := 4
+	var hide_name := "Piel de lobo"
+	var hide_qty := 1
 	if not collect_mode:
 		var animal_type: String = animal.get("animal_type")
 		match animal_type:
 			"deer":
 				meat_name = "Carne cruda de ciervo"
 				meat_qty = 8
+				hide_name = "Piel de ciervo"
+				hide_qty = 2
 			"bird":
 				meat_name = "Carne cruda de ave"
 				meat_qty = 1
+				hide_name = "Piel de ave"
+				hide_qty = 1
 			"fox":
 				meat_name = "Carne cruda de zorro"
 				meat_qty = 3
+				hide_name = "Piel de zorro"
+				hide_qty = 1
+			"bear":
+				meat_name = "Carne cruda de oso"
+				meat_qty = 12
+				hide_name = "Piel de oso"
+				hide_qty = 4
 			_:
 				meat_name = "Carne cruda de lobo"
 				meat_qty = 4
+				hide_name = "Piel de lobo"
+				hide_qty = 1
 	# Spawn meat immediately on server and notify clients - clients delay puppet removal to match animation
 	if not collect_mode:
 		var meat_action_type := "bird_meat_raw" if meat_name == "Carne cruda de ave" else "wolf_meat_raw"
@@ -3574,6 +3594,12 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var mid := "gut_meat_%d_%d_%d" % [Time.get_ticks_msec(), _drop_seq, i]
 			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, meat_action_type)
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": meat_action_type})
+		var hpos := base_pos + Vector3(0.15, 0.0, -0.2)
+		hpos.y = _get_exact_ground_y(hpos.x, hpos.z, base_pos.y + 0.5) + 0.04
+		_drop_seq += 1
+		var hid := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
+		_spawn_ground_pickup(hide_name, "resource", hpos, 0.65, hide_qty, 0.0, hid)
+		meat_drops.append({"id": hid, "name": hide_name, "type": "resource", "pos": [hpos.x, hpos.y, hpos.z], "weight": 0.65, "qty": hide_qty, "use": 0.0})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
 		animal._remove_corpse()
@@ -3613,13 +3639,15 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 		# Also remove from net.animals so it doesn't respawn
 		if net != null and net.animals.has(puppet_key):
 			net.animals.erase(puppet_key)
-		# Spawn meat drops on this client
+		# Spawn synchronized meat and hide drops on this client
 		for drop in meat_drops_ref:
 			var mid: String = str(drop.get("id", ""))
 			var mname: String = str(drop.get("name", "Carne cruda"))
 			var mpos_arr = drop.get("pos", [0.0, 0.06, 0.0])
 			var mpos := Vector3(float(mpos_arr[0]), float(mpos_arr[1]), float(mpos_arr[2]))
-			if not world_actions_by_id.has(mid):
+			if not world_actions_by_id.has(mid) and str(drop.get("type", "food")) == "resource":
+				_spawn_ground_pickup(mname, "resource", mpos, float(drop.get("weight", 0.65)), int(drop.get("qty", 1)), float(drop.get("use", 0.0)), mid)
+			elif not world_actions_by_id.has(mid):
 				_spawn_raw_meat_visual(mid, mname, mpos)
 	)
 
@@ -5229,7 +5257,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		_mark_world_action_visual(visual_name)
 	else:
 		# Fallback: no model available, create a simple shape
-		if item_name == "Trapos":
+		if item_name.begins_with("Piel de "):
+			_create_pelt_visual(visual_name, pos, item_name)
+		elif item_name == "Trapos":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
 		elif item_name == "Naranja":
 			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
@@ -5268,6 +5298,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
 	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
+	_apply_fur_clothing_material(item_name, get_node_or_null(NodePath(visual_name)))
 	if camo and item_name in ["Camiseta", "Pantalones"]:
 		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
 	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
@@ -5383,6 +5414,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 			return [GameConst.DEER_MODEL]
 		"Zorro muerto":
 			return [GameConst.FOX_MODEL]
+		"Oso muerto":
+			return [GameConst.BEAR_MODEL]
 		"Lobo muerto", "Animal muerto":
 			return [GameConst.WOLF_MODEL]
 	match item_type:
@@ -5391,6 +5424,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 				return [PLASTIC_BOTTLE_MODEL]
 			return [K_SURVIVAL + "bottle-large.glb", K_SURVIVAL + "bottle.glb"]
 		"resource":
+			if item_name.begins_with("Piel de "):
+				return []
 			if item_name == "Piedra":
 				return [SURVIVAL_TOOL_MODELS["stone"]]
 			if item_name == "Tronco":
@@ -5453,6 +5488,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 		"battery":
 			return [K_SURVIVAL + "box.glb"]
 		"material":
+			if item_name.begins_with("Piel de "):
+				return []
 			if item_name == "Palo":
 				return ["res://assets/models/props/wood_stick.glb"]
 			if item_name == "Trapos":
@@ -5476,12 +5513,18 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
 					return [GameConst.FISHERMANS_HAT_MODEL]
+				"Gorro de piel", "Tocado de piel animal":
+					return [GameConst.FISHERMANS_HAT_MODEL]
 				"Casco militar":
 					return [GameConst.MILITARY_HELMET_MODEL]
 				"Guantes survival":
 					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Botas survival":
 					return ["res://assets/characters/Remy.glb"]
+				"Chaqueta de piel":
+					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
+				"Botas de piel":
+					return ["res://assets/characters/adapted/pickup_military_boots.glb"]
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
@@ -5512,6 +5555,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				return 0.02
 			return 1.0
 		"resource":
+			if item_name.begins_with("Piel de "):
+				return 0.65
 			if item_name == "Tronco":
 				return 0.5
 			if item_name == "Palo":
@@ -5584,6 +5629,14 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 1.2
 				"Botas survival":
 					return 0.8
+				"Chaqueta de piel":
+					return 0.8
+				"Botas de piel":
+					return 1.0
+				"Gorro de piel":
+					return 1.0
+				"Tocado de piel animal":
+					return 1.0
 				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return 0.8
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
@@ -7620,6 +7673,12 @@ func _create_wildlife() -> void:
 			for point in bird_route:
 				shifted.append((point as Vector3) + offset)
 			_create_bird(shifted, _bird_flock_counter)
+	# Rare bears live in four separate outer-forest territories. Their patrol
+	# routes stay local; only a hunt can take them beyond the home range.
+	for territory_id in range(_bear_territory_anchors().size()):
+		var bear_center := _bear_spawn_center(territory_id)
+		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wildlife_allowed_at)
+		_create_bear(territory_id, bear_route)
 
 var _bird_flock_counter := 0
 
@@ -7636,6 +7695,7 @@ func _check_wildlife_respawn() -> void:
 	var alive_fox := 0
 	var alive_wolf := 0
 	var alive_bird := 0
+	var alive_bear := 0
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if node is WildlifeController:
 			if not node._is_dead:
@@ -7646,6 +7706,8 @@ func _check_wildlife_respawn() -> void:
 						alive_fox += 1
 					"wolf":
 						alive_wolf += 1
+					"bear":
+						alive_bear += 1
 		elif node is BirdController:
 			if not node._is_dead:
 				alive_bird += 1
@@ -7678,6 +7740,23 @@ func _check_wildlife_respawn() -> void:
 			fox_zone = _wildlife_spawn_pos()
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at)
 		_create_wildlife_animal("fox", fox_route)
+	if alive_bear < _bear_territory_anchors().size():
+		var territory_counts := [0, 0, 0, 0]
+		for node in get_tree().get_nodes_in_group("wildlife"):
+			if not node is WildlifeController or node._is_dead or node.animal_type != "bear":
+				continue
+			var territory_id := int(node.get_meta("bear_territory_id", -1))
+			if territory_id < 0 or territory_id >= territory_counts.size():
+				territory_id = _nearest_bear_territory(node.global_position)
+				node.set_meta("bear_territory_id", territory_id)
+			territory_counts[territory_id] += 1
+		var next_territory := 0
+		for i in range(1, territory_counts.size()):
+			if territory_counts[i] < territory_counts[next_territory]:
+				next_territory = i
+		var bear_center := _bear_spawn_center(next_territory)
+		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wildlife_allowed_at)
+		_create_bear(next_territory, bear_route)
 	# Respawn birds if population drops below threshold
 	if alive_bird < 3:
 		var bird_always_allowed := func(_pos: Vector3) -> bool: return true
@@ -7701,6 +7780,44 @@ func _wildlife_spawn_pos() -> Vector3:
 		return Vector3(randf_range(-45.0, 65.0), 0.0, randf_range(445.0, 880.0))
 	return Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 
+func _bear_territory_anchors() -> Array[Vector3]:
+	return [
+		Vector3(-390.0, 0.0, -350.0), Vector3(390.0, 0.0, -350.0),
+		Vector3(-390.0, 0.0, 500.0), Vector3(390.0, 0.0, 700.0),
+	]
+
+func _nearest_bear_territory(pos: Vector3) -> int:
+	var anchors := _bear_territory_anchors()
+	var nearest_id := 0
+	var nearest_distance := INF
+	for i in range(anchors.size()):
+		var distance := Vector2(pos.x - anchors[i].x, pos.z - anchors[i].z).length_squared()
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_id = i
+	return nearest_id
+
+func _bear_spawn_center(territory_id: int) -> Vector3:
+	var anchors := _bear_territory_anchors()
+	var safe_id := clampi(territory_id, 0, anchors.size() - 1)
+	var anchor: Vector3 = anchors[safe_id]
+	for _retry in range(80):
+		var angle := _world_rng.randf_range(0.0, TAU)
+		var radius := sqrt(_world_rng.randf()) * 34.0
+		var candidate := anchor + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+		candidate.x = clampf(candidate.x, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT - 10.0)
+		candidate.z = clampf(candidate.z, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT_Z - 10.0)
+		var from_start := Vector2(candidate.x - 8.0, candidate.z - 2.5).length()
+		if from_start >= 300.0 and is_wildlife_allowed_at(candidate) and not _is_near_wildlife_blocker(candidate, 8.0):
+			return candidate
+	for radius in [8.0, 16.0, 24.0, 34.0, 46.0, 58.0, 68.0]:
+		for step in range(24):
+			var angle := TAU * float(step) / 24.0
+			var fallback := anchor + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+			if is_wildlife_allowed_at(fallback) and not _is_near_wildlife_blocker(fallback, 8.0):
+				return fallback
+	return anchor
+
 func _create_deer_pair(route: Array) -> void:
 	var offsets := [Vector3(-2.4, 0.0, -1.6), Vector3(2.4, 0.0, 1.6)]
 	for offset in offsets:
@@ -7711,12 +7828,17 @@ func _create_deer_pair(route: Array) -> void:
 
 var _animal_id_counter := 0
 
-func _create_wildlife_animal(kind: String, points: Array) -> void:
-	var animal = WildlifeControllerScript.new()
+func _create_wildlife_animal(kind: String, points: Array) -> WildlifeController:
+	var animal: WildlifeController = WildlifeControllerScript.new()
 	animal.name = "Wildlife_%s_%d" % [kind, _animal_id_counter]
 	_animal_id_counter += 1
 	add_child(animal)
 	animal.setup(kind, points)
+	return animal
+
+func _create_bear(territory_id: int, points: Array) -> void:
+	var bear: WildlifeController = _create_wildlife_animal("bear", points)
+	bear.set_meta("bear_territory_id", territory_id)
 
 func _apply_pending_dead_wildlife() -> void:
 	if _pending_dead_wildlife.is_empty():
@@ -8474,6 +8596,18 @@ func _apply_military_drop_material(item_name: String, node: Node) -> void:
 		else:
 			_apply_camo_material_recursive(node as Node3D, Color(0.20, 0.25, 0.15))
 
+func _apply_fur_clothing_material(item_name: String, node: Node) -> void:
+	if not (node is Node3D):
+		return
+	var fur_tints := {
+		"Chaqueta de piel": Color(0.29, 0.20, 0.12),
+		"Botas de piel": Color(0.38, 0.27, 0.16),
+		"Gorro de piel": Color(0.31, 0.22, 0.13),
+		"Tocado de piel animal": Color(0.22, 0.15, 0.09),
+	}
+	if fur_tints.has(item_name):
+		_apply_color_material_recursive(node as Node3D, fur_tints[item_name])
+
 func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = MaterialFactory.make_camo_texture(base_color)
@@ -8711,7 +8845,9 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, pos.y)
 	if not spawned:
-		if item_name == "Trapos":
+		if item_name.begins_with("Piel de "):
+			_create_pelt_visual(visual_name, pos, item_name)
+		elif item_name == "Trapos":
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), Vector3(0, randf_range(0, 360), 0))
 		else:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
@@ -8747,6 +8883,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	# Military garments (corpse loot and scripted ground pickups) need the same
 	# tint/camo treatment manual drops get in _spawn_dropped_item_visual.
 	_apply_military_drop_material(item_name, ground_node)
+	_apply_fur_clothing_material(item_name, ground_node)
 	var actual_action_type := action_type_override if not action_type_override.is_empty() else ("plant_seeds" if item_name == "Semillas" else "pickup_item")
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
@@ -9015,19 +9152,31 @@ func _execute_world_action(action, actor) -> void:
 			var an_lower := "lobo"
 			var meat_name := "Carne cruda de lobo"
 			var meat_qty := 5
+			var hide_name := "Piel de lobo"
+			var hide_qty := 1
 			match animal_kind:
 				"deer":
 					an_lower = "ciervo"
 					meat_name = "Carne cruda de ciervo"
 					meat_qty = 8
+					hide_name = "Piel de ciervo"
+					hide_qty = 2
 				"fox":
 					an_lower = "zorro"
 					meat_name = "Carne cruda de zorro"
 					meat_qty = 3
+					hide_name = "Piel de zorro"
+				"bear":
+					an_lower = "oso"
+					meat_name = "Carne cruda de oso"
+					meat_qty = 12
+					hide_name = "Piel de oso"
+					hide_qty = 4
 				_:
 					an_lower = "lobo"
 					meat_name = "Carne cruda de lobo"
 					meat_qty = 5
+					hide_name = "Piel de lobo"
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
@@ -9056,7 +9205,13 @@ func _execute_world_action(action, actor) -> void:
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
 				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
-			actor.notice.emit("Destripar al %s: +%d carne cruda." % [an_lower, meat_qty])
+			var hide_pos := animal_pos + Vector3(0.15, 0.0, -0.2)
+			hide_pos.y = _get_exact_ground_y(hide_pos.x, hide_pos.z, animal_pos.y + 0.5) + 0.04
+			_drop_seq += 1
+			var hide_id := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
+			_spawn_ground_pickup(hide_name, "resource", hide_pos, 0.65, hide_qty, 0.0, hide_id)
+			gut_spawns.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
+			actor.notice.emit("Destripas %s: +%d carne y %d piel." % [an_lower, meat_qty, hide_qty])
 			if held_g != null and held_g.has_method("reduce_durability"):
 				held_g.reduce_durability(6.0)
 				if held_g.is_broken():
@@ -9795,6 +9950,24 @@ func _execute_world_action(action, actor) -> void:
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 		"shelter":
+			if not bool(action.get_meta("pelt_lined", false)) and _player_has_pelts(actor, 4):
+				if not _consume_player_pelts(actor, 4):
+					return
+				_play_actor_action(actor, "forage", 3.0)
+				if hud != null:
+					hud.show_countdown("Forrando refugio con piel", 3.0)
+				await get_tree().create_timer(3.0).timeout
+				if _scene_quitting or not is_instance_valid(action): return
+				var lined_id := str(action.action_id)
+				_apply_shelter_lining_state(lined_id)
+				actor.notice.emit("Forras el suelo del refugio con piel. Ahora conserva mejor el calor.")
+				if net != null and net.is_connected:
+					if net.is_host:
+						net.shelter_lined.rpc(lined_id)
+					else:
+						net.shelter_lined.rpc_id(1, lined_id)
+						call_deferred("_sync_local_player_inventory")
+				return
 			var stash_contents: Array = action.get_meta("contents", [])
 			if not stash_contents.is_empty():
 				actor.notice.emit("El refugio tiene objetos dentro. Sacalos con [K] antes de desmontarlo.")
@@ -9813,6 +9986,7 @@ func _execute_world_action(action, actor) -> void:
 			for i in range(9):
 				stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
 			stick_names.append("PlayerShelter_%s_Net" % sh_id)
+			stick_names.append("PlayerShelter_%s_PeltLining" % sh_id)
 			for sn in stick_names:
 				var sn_node := get_node_or_null(sn)
 				if sn_node != null:
@@ -10322,7 +10496,7 @@ func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> boo
 	_spawn_player_campfire_with_id(cf_id, pos)
 	return true
 
-func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0) -> void:
+func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0, pelt_lined: bool = false) -> void:
 	if world_actions_by_id.has(sh_id):
 		return
 	# One model keeps the frame, covering and bedding together on load/sync/removal.
@@ -10330,9 +10504,95 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0
 	# Register as world action so it syncs
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
+	shelter_action.set_meta("pelt_lined", pelt_lined)
 	shelter_action.rotation.y = yaw
 	if not _tracked_has_id(_built_shelters, sh_id):
-		_built_shelters.append({"id": sh_id, "pos": pos, "yaw": yaw, "contents": []})
+		_built_shelters.append({"id": sh_id, "pos": pos, "yaw": yaw, "contents": [], "pelt_lined": pelt_lined})
+	elif pelt_lined:
+		for entry in _built_shelters:
+			if str(entry.get("id", "")) == sh_id:
+				entry["pelt_lined"] = true
+	if pelt_lined:
+		_apply_shelter_lining_visual(sh_id, pos, yaw)
+
+func _player_has_pelts(actor, needed: int = 4) -> bool:
+	if actor == null or actor.get("inventory") == null:
+		return false
+	var total := 0
+	for item in actor.inventory.items:
+		if item != null and str(item.item_name).begins_with("Piel de "):
+			total += int(item.quantity)
+	return total >= needed
+
+func _consume_player_pelts(actor, needed: int = 4) -> bool:
+	if not _player_has_pelts(actor, needed):
+		return false
+	for item in actor.inventory.items.duplicate():
+		if needed <= 0:
+			break
+		if item == null or not str(item.item_name).begins_with("Piel de "):
+			continue
+		var take := mini(needed, int(item.quantity))
+		item.quantity -= take
+		needed -= take
+		if item.quantity <= 0:
+			actor.inventory.items.erase(item)
+	actor.inventory.changed.emit()
+	return true
+
+func _apply_shelter_lining_visual(sh_id: String, pos: Vector3, yaw: float) -> void:
+	var node_name := "PlayerShelter_%s_PeltLining" % sh_id
+	var old := get_node_or_null(NodePath(node_name))
+	if old != null:
+		return
+	var lining := Node3D.new()
+	lining.name = node_name
+	lining.position = pos + Vector3(0.0, 0.055, 0.0)
+	lining.rotation.y = yaw
+	add_child(lining)
+	var patch_colors := [Color(0.25, 0.18, 0.11), Color(0.34, 0.24, 0.14), Color(0.29, 0.23, 0.17), Color(0.20, 0.16, 0.12)]
+	var patches := [Vector3(-0.43, 0.0, -0.56), Vector3(0.43, 0.0, -0.56), Vector3(-0.43, 0.0, 0.28), Vector3(0.43, 0.0, 0.28)]
+	for i in range(patches.size()):
+		var patch_mesh := MeshInstance3D.new()
+		patch_mesh.name = "HidePatch%d" % i
+		var box := BoxMesh.new()
+		box.size = Vector3(0.88, 0.025, 0.92)
+		patch_mesh.mesh = box
+		patch_mesh.position = patches[i]
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = patch_colors[i]
+		mat.roughness = 0.98
+		patch_mesh.material_override = mat
+		patch_mesh.rotation.y = [-0.05, 0.08, 0.03, -0.07][i]
+		lining.add_child(patch_mesh)
+	lining.add_to_group("world_action_visual")
+
+func _apply_shelter_lining_state(sh_id: String) -> bool:
+	var action = world_actions_by_id.get(sh_id)
+	if action == null or not is_instance_valid(action):
+		return false
+	if bool(action.get_meta("pelt_lined", false)):
+		return true
+	action.set_meta("pelt_lined", true)
+	for entry in _built_shelters:
+		if str(entry.get("id", "")) == sh_id:
+			entry["pelt_lined"] = true
+			var p = entry.get("pos", action.global_position)
+			if p is Array:
+				p = Vector3(float(p[0]), float(p[1]), float(p[2]))
+			_apply_shelter_lining_visual(sh_id, p, float(entry.get("yaw", action.rotation.y)))
+			break
+	_save_world_change_silent()
+	return true
+
+func _net_shelter_lined(sh_id: String, sender_id: int = 0) -> bool:
+	var action = world_actions_by_id.get(sh_id)
+	if action == null or not is_instance_valid(action):
+		return false
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, action.global_position, 8.0):
+			return false
+	return _apply_shelter_lining_state(sh_id)
 
 func _fit_shelter_net(sh_id: String) -> void:
 	var net_node := get_node_or_null("PlayerShelter_%s_Net" % sh_id) as Node3D
@@ -10448,6 +10708,7 @@ func _net_shelter_dismantled(sh_id: String, sender_id: int = 0) -> bool:
 	for i in range(9):
 		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
 	stick_names.append("PlayerShelter_%s_Net" % sh_id)
+	stick_names.append("PlayerShelter_%s_PeltLining" % sh_id)
 	for sn in stick_names:
 		var sn_node := get_node_or_null(sn)
 		if sn_node != null:
@@ -11311,6 +11572,22 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 		else:
 			continue
 		if pos.distance_to(sh_pos) < 3.5:
+			return true
+	return false
+
+func _is_near_pelt_lined_shelter(pos: Vector3) -> bool:
+	for sh in _built_shelters:
+		if not bool(sh.get("pelt_lined", false)):
+			continue
+		var raw_pos = sh.get("pos", sh)
+		var shelter_pos: Vector3
+		if raw_pos is Vector3:
+			shelter_pos = raw_pos
+		elif raw_pos is Array and raw_pos.size() >= 3:
+			shelter_pos = Vector3(float(raw_pos[0]), float(raw_pos[1]), float(raw_pos[2]))
+		else:
+			continue
+		if pos.distance_to(shelter_pos) < 1.8:
 			return true
 	return false
 
@@ -15068,6 +15345,43 @@ func _create_visual_cylinder(node_name: String, pos: Vector3, radius: float, hei
 	mesh_instance.scale = Vector3(radius, height, radius)
 	mesh_instance.material_override = MaterialFactory.make_material(color, true)
 	add_child(mesh_instance)
+
+func _create_pelt_visual(node_name: String, pos: Vector3, pelt_name: String) -> void:
+	var fur_color := Color(0.38, 0.27, 0.16)
+	if pelt_name == "Piel de zorro":
+		fur_color = Color(0.48, 0.22, 0.09)
+	elif pelt_name == "Piel de oso":
+		fur_color = Color(0.20, 0.14, 0.09)
+	elif pelt_name == "Piel de lobo":
+		fur_color = Color(0.34, 0.33, 0.29)
+	elif pelt_name == "Piel de ave":
+		fur_color = Color(0.43, 0.39, 0.28)
+	var outline := PackedVector3Array([
+		Vector3(-0.22, 0.015, -0.27), Vector3(-0.11, 0.025, -0.36), Vector3(0.08, 0.018, -0.34),
+		Vector3(0.22, 0.012, -0.22), Vector3(0.19, 0.02, 0.21), Vector3(0.08, 0.015, 0.34),
+		Vector3(-0.12, 0.025, 0.32), Vector3(-0.23, 0.015, 0.16)
+	])
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var center := Vector3(0.0, 0.018, -0.005)
+	for i in range(outline.size()):
+		var shade := 0.88 + float((i * 7) % 5) * 0.045
+		surface.set_color(Color(fur_color.r * shade, fur_color.g * shade, fur_color.b * shade, 1.0))
+		surface.add_vertex(center)
+		surface.add_vertex(outline[i])
+		surface.add_vertex(outline[(i + 1) % outline.size()])
+	surface.generate_normals()
+	var visual := MeshInstance3D.new()
+	visual.name = node_name
+	visual.position = pos + Vector3(0.0, 0.015, 0.0)
+	visual.mesh = surface.commit()
+	var fur_material := StandardMaterial3D.new()
+	fur_material.vertex_color_use_as_albedo = true
+	fur_material.roughness = 0.96
+	fur_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	visual.material_override = fur_material
+	visual.add_to_group("world_action_visual")
+	add_child(visual)
 
 func _create_textured_cylinder(node_name: String, pos: Vector3, radius: float, height: float, texture_path: String, fallback_color: Color, uv_scale: Vector3) -> void:
 	var mesh_instance := MeshInstance3D.new()

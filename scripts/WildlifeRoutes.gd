@@ -35,6 +35,34 @@ static func build_roaming_route(rng: RandomNumberGenerator, start: Vector3, num_
 		cursor = candidate
 	return route
 
+static func build_territory_route(rng: RandomNumberGenerator, center: Vector3, num_points: int, min_radius: float, max_radius: float, territory_radius: float, is_allowed: Callable) -> Array:
+	# Predators patrol a bounded home range instead of using the world-wide
+	# roaming route, which otherwise drifts into towns over time.
+	var route: Array = []
+	var cursor := center
+	var phase := rng.randf_range(0.0, TAU)
+	for i in range(num_points):
+		var base_angle := phase + TAU * float(i) / float(maxi(num_points, 1))
+		var candidate := cursor
+		var found := false
+		for attempt in range(12):
+			var angle := base_angle + rng.randf_range(-0.5, 0.5) + float(attempt) * 0.31
+			var radius := rng.randf_range(min_radius, max_radius)
+			candidate = center + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+			candidate.x = clamp(candidate.x, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT)
+			candidate.z = clamp(candidate.z, -GameConst.WORLD_LIMIT, GameConst.WORLD_LIMIT_Z)
+			if Vector2(candidate.x - center.x, candidate.z - center.z).length() <= territory_radius and is_allowed.call(candidate):
+				found = true
+				break
+		if found:
+			route.append(candidate)
+			cursor = candidate
+		else:
+			# Keep the route inside the home range when a river, lake, or building
+			# blocks every candidate around this section.
+			route.append(cursor)
+	return route
+
 static func build_zigzag_route(rng: RandomNumberGenerator, corner_a: Vector3, corner_b: Vector3, num_points: int, jitter: float, is_allowed: Callable) -> Array:
 	var route: Array = []
 	for i in range(num_points):

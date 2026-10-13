@@ -27,6 +27,9 @@ exports/
 *.log
 __MACOSX/
 Wolf 2.0/
+Deer 2.0/
+Fox 2.0/
+Bear 2.0/
 
 # Debug screenshots
 debug_clothing_*.png

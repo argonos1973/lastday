@@ -302,7 +302,8 @@ func get_interaction_text(_player = null) -> String:
 		"shelter":
 			var stash_n: int = (get_meta("contents", []) as Array).size()
 			var stash_tag := " (%d)" % stash_n if stash_n > 0 else ""
-			return "Desmontar - [F] (recuperar 11 palos) | Objetos%s - [K]" % stash_tag
+			var lining_tag := "Revestido con piel | " if bool(get_meta("pelt_lined", false)) else "Forrar con 4 pieles - [F] (si tienes pieles) | "
+			return "%sDesmontar - [F] (recuperar 11 palos) | Objetos%s - [K]" % [lining_tag, stash_tag]
 	return "%s - [F]" % display_name
 
 func to_dict() -> Dictionary:

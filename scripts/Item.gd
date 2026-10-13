@@ -27,6 +27,7 @@ const PERISHABLE_FOODS := {
 	"Carne cruda de ave": 0.5,
 	"Carne cruda de ciervo": 0.5,
 	"Carne cruda de zorro": 0.5,
+	"Carne cruda de oso": 0.5,
 	"Carne cruda de lobo": 0.5,
 	"Carne asada en palo": 0.3,
 	"Carne ensartada": 0.4,
@@ -62,6 +63,10 @@ const CLOTHING_STORAGE := {
 	"Chaqueta camuflaje desert": 5,
 	"Guantes de trabajo": 1,
 	"Sombrero de pescador": 1,
+	"Chaqueta de piel": 3,
+	"Botas de piel": 0,
+	"Gorro de piel": 1,
+	"Tocado de piel animal": 0,
 	"Casco militar": 2,
 }
 

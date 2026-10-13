@@ -984,6 +984,7 @@ func interact(player: Node) -> void:
 	_butchering = false
 	if scene.has_method("_spawn_ground_pickup"):
 		scene._spawn_ground_pickup("Carne cruda de ave", "food", global_position, 0.3, 1, 15.0, "bird_meat_%d" % get_instance_id(), "bird_meat_raw")
+		scene._spawn_ground_pickup("Piel de ave", "resource", global_position + Vector3(0.18, 0.0, 0.12), 0.65, 1, 0.0, "bird_hide_%d" % get_instance_id())
 	queue_free()
 
 func puppet_apply(pos: Vector3, yaw: float, dead: bool, gutted: bool, landed: bool) -> void:

@@ -41,6 +41,8 @@ const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
 	"Sombrero de pescador": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
+	"Gorro de piel": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.065, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.31, 0.22, 0.13)},
+	"Tocado de piel animal": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.09, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.22, 0.15, 0.09)},
 	"Casco militar": {"path": GameConst.MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
 	"Guantes de trabajo": {"path": GameConst.GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
@@ -50,11 +52,13 @@ const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
 # Survival garments that are skinned to the Mixamo rig inside GameConst.PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
+	"Chaqueta de piel": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "tint": Color(0.28, 0.19, 0.11)},
 	"Chaqueta de campaña verde": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Chaqueta de campaña azul": {"mesh": "field_jacket_navy", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Chaqueta de campaña arena": {"mesh": "field_jacket_sand", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
+	"Botas de piel": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.35, 0.24, 0.13)},
 	"Botas militares": {"mesh": "military_boots", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.10, 0.10, 0.075)},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
@@ -93,6 +97,8 @@ const DEFAULT_CLOTHING := {
 }
 
 const DEFAULT_SKIN_HIDES := {
+	"Chaqueta de piel": ["Desnudo_torso", "Desnudo_arms"],
+	"Botas de piel": ["Desnudo_feet"],
 	"Chaqueta de campaña verde": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de campaña azul": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de campaña arena": ["Desnudo_torso", "Desnudo_arms"],
@@ -118,6 +124,8 @@ const DEFAULT_SKIN_HIDES := {
 }
 
 const DEFAULT_BODY_HIDES := {
+	"Chaqueta de piel": ["Body_arms"],
+	"Botas de piel": ["Body_feet"],
 	"Chaqueta de campaña verde": ["Body_arms"],
 	"Chaqueta de campaña azul": ["Body_arms"],
 	"Chaqueta de campaña arena": ["Body_arms"],
@@ -130,6 +138,8 @@ const DEFAULT_BODY_HIDES := {
 # Map of body zones covered by each clothing item.
 # Used for debug messages and to know which body regions to restore on unequip.
 const CLOTHING_COVERED_ZONES := {
+	"Chaqueta de piel": ["torso", "brazos"],
+	"Botas de piel": ["pies"],
 	"Chaqueta de campaña verde": ["torso", "brazos"],
 	"Chaqueta de campaña azul": ["torso", "brazos"],
 	"Chaqueta de campaña arena": ["torso", "brazos"],
@@ -152,6 +162,8 @@ const CLOTHING_COVERED_ZONES := {
 	"Botas militares": ["pies"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
+	"Gorro de piel": ["cabeza"],
+	"Tocado de piel animal": ["cabeza"],
 	"Casco militar": ["cabeza"],
 	"Chaqueta de cuadros": ["torso", "brazos"],
 	"Chaleco táctico": ["torso"],
@@ -159,6 +171,8 @@ const CLOTHING_COVERED_ZONES := {
 
 # Maps each clothing item to a body slot for exchange logic.
 const CLOTHING_SLOTS := {
+	"Chaqueta de piel": "torso",
+	"Botas de piel": "feet",
 	"Chaqueta de campaña verde": "torso",
 	"Chaqueta de campaña azul": "torso",
 	"Chaqueta de campaña arena": "torso",
@@ -181,6 +195,8 @@ const CLOTHING_SLOTS := {
 	"Chaqueta camuflaje desert": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
+	"Gorro de piel": "head",
+	"Tocado de piel animal": "head",
 	"Casco militar": "head",
 	"Chaqueta de cuadros": "torso",
 	# The plate carrier rides over the clothing in its own vest slot.
@@ -190,6 +206,8 @@ const CLOTHING_SLOTS := {
 # Warmth value per clothing item. Higher = warmer.
 # Short sleeves / shorts give little warmth; jackets and long pants give more.
 const CLOTHING_WARMTH := {
+	"Chaqueta de piel": 0.52,
+	"Botas de piel": 0.28,
 	"Chaqueta de campaña verde": 0.32,
 	"Chaqueta de campaña azul": 0.32,
 	"Chaqueta de campaña arena": 0.32,
@@ -212,6 +230,8 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.12,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
+	"Gorro de piel": 0.20,
+	"Tocado de piel animal": 0.24,
 	"Casco militar": 0.05,
 	"Chaqueta de cuadros": 0.45,
 	"Chaleco táctico": 0.10,
@@ -220,6 +240,8 @@ const CLOTHING_WARMTH := {
 # Heat protection: reduces body temperature gain in hot environments.
 # Hats and headwear shield from the sun; other clothing has no heat protection.
 const CLOTHING_HEAT_PROTECTION := {
+	"Gorro de piel": 0.20,
+	"Tocado de piel animal": 0.20,
 	"Sombrero de pescador": 0.35,
 	"Casco militar": 0.30,
 }
@@ -6835,9 +6857,11 @@ func _build_held_clothing(item_name: String) -> void:
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
 		"Sombrero de pescador": path = GameConst.FISHERMANS_HAT_MODEL
+		"Gorro de piel", "Tocado de piel animal": path = GameConst.FISHERMANS_HAT_MODEL
 		"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
 		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
 		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
+		"Botas de piel": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		_:
 			if item_name.begins_with("Pantalones"):
 				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"

@@ -32,6 +32,9 @@ func run() -> void:
 	check(meshes.size() == 1, "Shelter stays batched in one mesh")
 	var box: AABB = meshes[0].get_aabb()
 	check(box.size.y > 1.9 and box.size.y < 2.4 and box.size.z > 3.0, "Shelter uses human-scale dimensions")
+	check(world._apply_shelter_lining_state("test"), "A built shelter accepts its hide lining")
+	check(world.get_node_or_null("PlayerShelter_test_PeltLining") != null, "Hide lining has a persistent visual node")
+	check(bool(world._built_shelters[0].get("pelt_lined", false)), "Hide lining is stored with shelter world state")
 	world._spawn_player_shelter_with_id("test", Vector3.ZERO)
 	check(world.world_actions_by_id.size() == 1, "Repeated network spawn does not duplicate shelter")
 	if "--preview" in OS.get_cmdline_user_args():
@@ -39,6 +42,7 @@ func run() -> void:
 	world._net_shelter_dismantled("test")
 	await process_frame
 	check(world.get_node_or_null("PlayerShelter_test") == null, "Dismantling removes entire shelter")
+	check(world.get_node_or_null("PlayerShelter_test_PeltLining") == null, "Dismantling removes hide lining too")
 	check(not world.world_actions_by_id.has("test"), "Dismantling removes interaction")
 	world.free()
 	if failures == 0:

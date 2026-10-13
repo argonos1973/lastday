@@ -1,5 +1,5 @@
 extends SceneTree
-## Dead-animal corpse thumbnails: 'Lobo muerto'/'Ciervo muerto'/'Zorro muerto'
+## Dead-animal corpse thumbnails for all harvestable species
 ## must resolve to the species model and render visible pixels through
 ## ItemThumbnail3D — the same component used by the survival inventory and
 ## the shelter/container UI. Whole-corpse drops must spawn the same model.
@@ -39,6 +39,21 @@ func _count_solid_pixels(img: Image) -> int:
 				n += 1
 	return n
 
+func _find_animation_player(root_node: Node) -> AnimationPlayer:
+	if root_node is AnimationPlayer:
+		return root_node as AnimationPlayer
+	for child in root_node.get_children():
+		var found := _find_animation_player(child)
+		if found != null:
+			return found
+	return null
+
+func _collect_animation_players(root_node: Node, result: Array) -> void:
+	if root_node is AnimationPlayer:
+		result.append(root_node as AnimationPlayer)
+	for child in root_node.get_children():
+		_collect_animation_players(child, result)
+
 func _initialize() -> void:
 	call_deferred("run")
 
@@ -53,7 +68,9 @@ func run() -> void:
 		"Lobo muerto": GameConst.WOLF_MODEL,
 		"Ciervo muerto": GameConst.DEER_MODEL,
 		"Zorro muerto": GameConst.FOX_MODEL,
+		"Oso muerto": GameConst.BEAR_MODEL,
 	}
+	var animated_species := {"Ciervo muerto": true, "Zorro muerto": true, "Oso muerto": true}
 	for item_name in cases:
 		var expected: String = cases[item_name]
 		var paths: Array = test_world._get_drop_model_paths(item_name, "material")
@@ -68,6 +85,17 @@ func run() -> void:
 			continue
 		var inst := ps.instantiate()
 		check(_count_meshes(inst) > 0, "%s: model has no MeshInstance3D" % item_name)
+		if animated_species.has(item_name):
+			var animation_players: Array = []
+			_collect_animation_players(inst, animation_players)
+			var animation_names := PackedStringArray()
+			for animation_player in animation_players:
+				for clip_name in animation_player.get_animation_list():
+					animation_names.append(str(clip_name))
+			check(not animation_players.is_empty(), "%s: model has no AnimationPlayer" % item_name)
+			if not animation_players.is_empty():
+				for clip in ["idle", "walk", "trot", "run"]:
+					check(animation_names.has(clip), "%s: missing %s animation; found %s" % [item_name, clip, str(animation_names)])
 
 		var thumb: SubViewportContainer = Thumb.new()
 		thumb.custom_minimum_size = Vector2(96, 96)
@@ -106,6 +134,19 @@ func run() -> void:
 	var generic: Array = test_world._get_drop_model_paths("Animal muerto", "material")
 	check(generic.size() > 0 and ResourceLoader.exists(generic[0]),
 		"Animal muerto: fallback path missing: %s" % str(generic))
+	for kind in ["deer", "fox", "bear"]:
+		var animal := WildlifeController.new()
+		root.add_child(animal)
+		animal.setup(kind, [Vector3.ZERO, Vector3(10.0, 0.0, 0.0)])
+		check(animal._visual_root != null, "%s: runtime model did not load" % kind)
+		if animal._visual_root != null:
+			check(animal._visual_root.scale.y > 0.25 and animal._visual_root.scale.y < 2.5,
+				"%s: body normalization includes bone-detail bounds (%s)" % [kind, str(animal._visual_root.scale)])
+			check(animal._animation_player != null and animal._animation_player.current_animation == "idle",
+				"%s: animal did not start in its idle animation" % kind)
+		animal.queue_free()
+	check(WildlifeController.corpse_species("Oso muerto") == "bear", "Oso muerto: species mapping missing")
+	check(WildlifeController.species_height("bear") > WildlifeController.species_height("deer"), "Bear target height is not larger than deer")
 
 	if failures == 0:
 		print("DEAD_ANIMAL_THUMBNAIL_ERRORS=0")
