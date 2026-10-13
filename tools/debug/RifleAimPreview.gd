@@ -76,10 +76,10 @@ func run() -> void:
 	root.add_child(env)
 	var camera := Camera3D.new()
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = 1.1
+	camera.size = 1.1 if aiming else 1.8
 	root.add_child(camera)
 	var sh_center := (skel.global_transform * skel.get_bone_global_pose(skel.find_bone("mixamorig_Neck"))).origin
-	var center := sh_center + (actor.global_basis * Vector3.FORWARD) * 0.25 - Vector3.UP * 0.12
+	var center := sh_center + (actor.global_basis * Vector3.FORWARD) * 0.25 - Vector3.UP * (0.12 if aiming else 0.45)
 	var front := (actor.global_basis * Vector3.FORWARD).normalized()
 	var right := front.cross(Vector3.UP).normalized()
 	var views := {

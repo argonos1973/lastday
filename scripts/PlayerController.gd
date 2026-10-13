@@ -7298,8 +7298,7 @@ func _build_rifle_on_back() -> void:
 	_strap_stock_marker.position = stock_local
 	_rifle_on_back.add_child(_strap_stock_marker)
 	_rifle_on_back.force_update_transform()
-	RifleStrapScript.snap_to_mesh(_strap_barrel_marker, model)
-	RifleStrapScript.snap_to_mesh(_strap_stock_marker, model)
+	RifleStrapScript.attach_swivels(_strap_barrel_marker, _strap_stock_marker, model)
 	_strap_barrel_marker.force_update_transform()
 	_strap_stock_marker.force_update_transform()
 	# Create BoneAttachment3D guide points on torso for natural chest curve
@@ -7456,6 +7455,7 @@ func _build_rifle_strap() -> void:
 		push_warning("RIFLE STRAP: sling scene root is not Node3D")
 		return
 	sling_root.name = "RifleSlingRoot"
+	sling_root.visible = false # The fitted procedural band owns the visible sling.
 	# Initial identity transforms
 	sling_root.position = Vector3.ZERO
 	sling_root.rotation = Vector3.ZERO
@@ -7858,6 +7858,7 @@ func _build_third_person_rifle() -> void:
 	_strap_stock_marker.name = "StrapStockPoint"
 	_strap_stock_marker.position = Vector3(stock_x, stock_y + 0.05, stock_z * 0.90 + muzzle_z * 0.10)
 	_rifle_root.add_child(_strap_stock_marker)
+	RifleStrapScript.attach_swivels(_strap_barrel_marker, _strap_stock_marker, model)
 
 	_build_rifle_strap()
 

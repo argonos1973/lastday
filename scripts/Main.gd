@@ -5310,6 +5310,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var action = _create_world_action(drop_id, action_kind, action_label, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
+	# Los drops del jugador nunca regeneran los cargadores del chaleco —
+	# si no, soltar y recoger el mismo chaleco crearía munición infinita.
+	action.set_meta("player_dropped", true)
 	if not corpse_kind.is_empty():
 		action.set_meta("animal_type", corpse_kind)
 		action.set_meta("gutted", false)
@@ -9351,6 +9354,7 @@ func _execute_world_action(action, actor) -> void:
 					actor.inventory.add_item(item)
 					actor.equip_clothing(item.item_name, _eq_color, item)
 					actor.notice.emit("Equipas %s." % item.item_name)
+					_grant_vest_magazines(action, actor, item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -9361,6 +9365,7 @@ func _execute_world_action(action, actor) -> void:
 					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.equip_clothing(item.item_name, _eq_color2, item)
 					actor.notice.emit("Equipas %s." % item.item_name)
+					_grant_vest_magazines(action, actor, item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -10055,6 +10060,21 @@ func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 		if node.has_method("attract_to_noise"):
 			node.attract_to_noise(pos, radius)
 
+# Los chalecos tácticos del mundo vienen con las pouch cargadas: cinco
+# cargadores completos de rifle en reserva. Los chalecos soltados por un
+# jugador llegan con el meta player_dropped y ya fueron vaciados — sin esto,
+# soltar y recoger el mismo chaleco crearía munición infinita.
+func _grant_vest_magazines(action, actor, item_name: String) -> void:
+	if item_name != "Chaleco táctico":
+		return
+	if action != null and action.has_meta("player_dropped"):
+		return
+	if actor == null or not ("_rifle_reserve_ammo" in actor):
+		return
+	var rounds: int = actor.RIFLE_MAG_SIZE * 5
+	actor._rifle_reserve_ammo += rounds
+	actor.notice.emit("El chaleco viene con 5 cargadores llenos: +%d balas de rifle." % rounds)
+
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
 	if action.has_meta("item_max_durability"):
@@ -10199,6 +10219,7 @@ func handle_world_action_collect(action, actor) -> void:
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
 				actor.notice.emit("Coges %s." % item.item_name)
+				_grant_vest_magazines(action, actor, item.item_name)
 			elif not actor.inventory.add_item(item):
 				return
 			else:

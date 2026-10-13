@@ -37,6 +37,16 @@ func run():
 			actor.rotation.y = frame * 0.02
 			actor._update_rifle_ik(skel, 1.0 / 30.0)
 			actor._on_skeleton_updated()
+			actor._update_rifle_strap(1.0 / 30.0)
+			var sling = actor._rifle_strap_system
+			var points: PackedVector3Array = sling._previous
+			var model: Node3D = actor.third_person_model
+			check(sling._route.is_empty(), "Held rifle must not reuse the back/body route")
+			check(model.to_global(points[0]).distance_to(actor._strap_barrel_marker.global_position) < 0.001, "Moving barrel swivel stays attached")
+			check(model.to_global(points[-1]).distance_to(actor._strap_stock_marker.global_position) < 0.001, "Moving stock swivel stays attached")
+			var middle := model.to_global(points[points.size() / 2])
+			var chord := (actor._strap_barrel_marker.global_position + actor._strap_stock_marker.global_position) * 0.5
+			check(middle.y < chord.y - 0.1, "Sling hangs down while aiming, walking and firing")
 			for side in ["Right", "Left"]:
 				var idx := skel.find_bone("mixamorig_" + side + "HandMiddle1")
 				var point: Vector3 = actor.RIFLE_AIM_RIGHT_KNUCKLE if side == "Right" else actor.RIFLE_AIM_LEFT_KNUCKLE

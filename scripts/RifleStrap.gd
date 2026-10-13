@@ -11,7 +11,7 @@ extends RefCounted
 # pose: guide points are densified and shrink-wrapped onto the
 # outermost visible torso garment (nearest-vertex planes + clearance),
 # so the band rests on the shirt/jacket instead of sinking into it.
-# Every wrapped point is skinned to its two nearest torso bones; per
+# Every wrapped point is skinned to its three nearest torso bones; per
 # update only those rigid transforms run, plus the exact rifle anchors
 # at both ends. The route is rebuilt when the worn torso garment or the
 # rifle instance changes.
@@ -95,17 +95,22 @@ func _update_rifle_strap(delta: float) -> void:
 		return
 	var barrel: Vector3 = model.to_local(barrel_marker.global_position)
 	var stock: Vector3 = model.to_local(stock_marker.global_position)
-	var signature := _current_signature(skel)
-	if signature != _signature or _route.is_empty():
+	var held: bool = player._rifle_root != null and is_instance_valid(player._rifle_root) and player._rifle_root.is_ancestor_of(barrel_marker)
+	var signature := _current_signature(skel) + ("|held" if held else "|back")
+	if signature != _signature:
 		_signature = signature
-		_build_route(model, skel, barrel, stock)
+		_route.clear()
 		_previous = PackedVector3Array()
-	if _route.is_empty():
-		return
-	var frame := _skinned_body(model, skel)
-	var points: PackedVector3Array = frame[0]
-	var normals: PackedVector3Array = frame[1]
-	var path := _assemble_path(barrel, stock, points, normals)
+	var path: Array
+	if held:
+		path = _hanging_path(model, barrel, stock)
+	else:
+		if _route.is_empty():
+			_build_route(model, skel, barrel, stock)
+		if _route.is_empty():
+			return
+		var frame := _skinned_body(model, skel)
+		path = _assemble_path(barrel, stock, frame[0], frame[1])
 	var path_points: PackedVector3Array = path[0]
 	var path_normals: PackedVector3Array = path[1]
 	# Damp interior jitter while both weapon anchors stay exact.
@@ -168,7 +173,7 @@ func _find_skeleton(root: Node) -> Skeleton3D:
 
 func _current_signature(_skel: Skeleton3D) -> String:
 	var parts := PackedStringArray()
-	var rifle: Node = player._rifle_on_back
+	var rifle: Node = player._strap_barrel_marker
 	parts.append(str(rifle.get_instance_id()) if rifle != null and is_instance_valid(rifle) else "0")
 	for mi in _candidates:
 		if is_instance_valid(mi) and mi.visible and mi.mesh != null:
@@ -186,7 +191,7 @@ func _bone(key: String, fallback: String = "") -> int:
 		return int(_bones[key])
 	return int(_bones.get(fallback, -1))
 
-func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, stock: Vector3) -> void:
+func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, _stock: Vector3) -> void:
 	_route.clear()
 	var spine := _bone("spine", "spine1")
 	var spine1 := _bone("spine1", "spine2")
@@ -207,17 +212,16 @@ func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, stock: Vecto
 	# the bone the back-item root follows.
 	var to_rest: Transform3D = rest["spine2"] * _pose_model(model, skel, spine2).affine_inverse()
 	var rest_barrel: Vector3 = to_rest * barrel
-	var rest_stock: Vector3 = to_rest * stock
 	var s2: Vector3 = rest["spine2"].origin
 	var s1: Vector3 = rest["spine1"].origin
 	var s0: Vector3 = rest["spine"].origin
 	var hip: Vector3 = rest["hips"].origin
 	var neck_pos: Vector3 = rest["neck"].origin
 	var torso_center := (s2 + s1 + s0) / 3.0
-	var back_dir := (rest_barrel + rest_stock) * 0.5 - torso_center
-	back_dir.y = 0.0
-	back_dir = back_dir.normalized() if back_dir.length_squared() > 0.000001 else Vector3.BACK
-	var front := -back_dir
+	# Character rest-space facing is +Z. An off-centre shoulder weapon must
+	# not rotate the body's chest/back frame toward the gun.
+	var front := Vector3.BACK
+	var back_dir := -front
 	var right := front.cross(Vector3.UP).normalized()
 	# The sling goes over the shoulder on the rifle's muzzle side.
 	var side := 1.0 if (rest_barrel - torso_center).dot(right) >= 0.0 else -1.0
@@ -254,8 +258,11 @@ func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, stock: Vecto
 		for i in dense.size():
 			dense[i] = _project(dense[i], false)
 		dense = _relax(dense, 0.5)
-	for i in dense.size():
-		dense[i] = _project(dense[i], false)
+	# Projection can move a point into a different nearest-surface cell.
+	# Resolve that new plane before freezing the rest-space route.
+	for _pass in 6:
+		for i in dense.size():
+			dense[i] = _project(dense[i], false)
 	_rest_body_points = PackedVector3Array(dense)
 	var band_normals: Array[Vector3] = []
 	for p in dense:
@@ -533,6 +540,37 @@ func _skinned_body(model: Node3D, skel: Skeleton3D) -> Array:
 		points[i] = p
 		normals[i] = n.normalized() if n.length_squared() > 0.000001 else Vector3.UP
 	return [points, normals]
+
+# With the weapon in the hands the sling hangs below its two swivels.
+# Gravity is world-space, so pitching/rolling the rifle cannot invert the loop.
+func _hanging_path(model: Node3D, barrel: Vector3, stock: Vector3) -> Array:
+	var down := (model.global_basis.inverse() * Vector3.DOWN).normalized()
+	var axis := stock - barrel
+	var normal := axis.cross(down).normalized()
+	if normal.length_squared() < 0.001:
+		normal = Vector3.RIGHT
+	var sag := clampf(axis.length() * 0.38, 0.28, 0.65)
+	var points := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var count := BODY_POINTS + CONNECTOR_POINTS * 2
+	for i in count:
+		var t := float(i) / float(count - 1)
+		points.append(barrel.lerp(stock, t) + down * (4.0 * t * (1.0 - t) * sag))
+		normals.append(normal)
+	return [points, normals]
+
+# Both carry modes use the same physical fore-end and buttstock anchors,
+# expressed in the source rifle's space (barrel -Z). Snap on these parts only;
+# the imported model also contains decorative straps and scope geometry.
+static func attach_swivels(barrel: Node3D, stock: Node3D, rifle: Node3D) -> void:
+	var targets := [Vector3(0.52, -0.35, -5.5), Vector3(0.43, -0.50, 7.2)]
+	var parts := ["Cube_053_Mat1_0", "Cube_043_Mat2_0"]
+	var markers := [barrel, stock]
+	for i in 2:
+		var marker: Node3D = markers[i]
+		marker.position = (marker.get_parent() as Node3D).to_local(rifle.to_global(targets[i]))
+		var part := rifle.find_child(parts[i], true, false) as Node3D
+		snap_to_mesh(marker, part if part != null else rifle)
 
 # Joins the rifle swivels to the skinned body run with quadratic curves that
 # leave each body end along its own tangent (no kink, no overshoot inward).

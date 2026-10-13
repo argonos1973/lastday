@@ -86,7 +86,7 @@ const RECIPES := [
 		"label": "Coser un gorro de piel"
 	},
 	{
-		"inputs": { "ANY_PELT": 3, "Cuerda": 1, "Cuchillo": 1 },
+		"inputs": { "ANY_PELT": 3, "Cuchillo": 1 },
 		"output": { "name": "Tocado de piel animal", "type": "clothing", "weight": 0.7, "use_value": 0.0 },
 		"label": "Crear un tocado de piel animal"
 	},
