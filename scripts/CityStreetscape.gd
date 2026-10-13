@@ -1,6 +1,16 @@
 extends RefCounted
 const ORIGIN := Vector3(9,0,680)
 const CAR_POSITIONS := [Vector3(-7.5,0,-30),Vector3(7.5,0,35),Vector3(56.5,0,-30),Vector3(71.5,0,35),Vector3(-7.5,0,66),Vector3(7.5,0,125),Vector3(56.5,0,66),Vector3(71.5,0,125)]
+const APOCALYPSE_KIT := "res://assets/external/quaternius_zombie_apocalypse/Environment/glTF/"
+const STREET_LAMP_MODEL := "res://assets/models/environment/city/props/street_lamp_01.glb"
+const BUS_STOP_MODEL := "res://assets/models/environment/city/props/bus_stop.glb"
+const CITY_BENCH_MODEL := "res://assets/models/environment/city/props/city_bench.glb"
+# Keep lamps on the broad transverse sidewalks, away from the parked cars and
+# the narrow house entrances. Each instance shares the imported GLB resources.
+const STREET_LAMP_OFFSETS := [
+ Vector3(-30,0,-5), Vector3(28,0,5), Vector3(38,0,-5), Vector3(90,0,5),
+ Vector3(-30,0,101), Vector3(28,0,91), Vector3(38,0,101), Vector3(90,0,91)
+]
 
 # Pavement modules sit 4..6 m off each street centre; a 6.2 half-band also
 # covers the asphalt so verge dressing can simply skip the whole corridor.
@@ -38,6 +48,7 @@ static func create(world: Node3D, server: bool) -> void:
  paving.material_override=material;world.add_child(paving)
  _fountain(world,server,plaza.position)
  _pavements(world,server)
+ _urban_details(world,server)
  for i in range(CAR_POSITIONS.size()):
   var pos: Vector3=ORIGIN+CAR_POSITIONS[i]
   var name: String="DistrictParkedCar%d"%i
@@ -53,6 +64,94 @@ static func create(world: Node3D, server: bool) -> void:
    if car!=null:
     world._disable_emission_recursive(car)
     if i%2:car.position.y+=world.SCRAP_CAR_Y_CORRECTION
+
+# Street furniture gives the residential grid a readable urban scale: full-size
+# PBR lamps, traffic control at the two main crossings, and small abandoned
+# service piles. Colliders are created on both hosts so traversal matches in MP.
+static func _urban_details(world: Node3D, server: bool) -> void:
+ for i in range(STREET_LAMP_OFFSETS.size()):
+  var pos: Vector3 = ORIGIN + STREET_LAMP_OFFSETS[i]
+  var name := "CityStreetLamp_%02d" % i
+  world._create_invisible_collision_box(name + "Collision", pos, Vector3(.28,3.9,.28))
+  world._register_wildlife_blocker(pos,0.5)
+  if not server:
+   world._try_instance_external_scene([STREET_LAMP_MODEL],name,pos,Vector3.ONE,Vector3(0,90.0 if i%2 else -90.0,0),true,0.0)
+
+ # A small bus shelter anchors the eastern approach to the main crossing.
+ var stop_pos: Vector3 = ORIGIN + Vector3(40,0,5)
+ world._create_invisible_collision_box("CityBusStopCollision",stop_pos,Vector3(3.8,2.5,1.6))
+ world._register_wildlife_blocker(stop_pos,2.2)
+ if not server:
+  if world._try_instance_external_scene([BUS_STOP_MODEL],"CityBusStop",stop_pos,Vector3.ONE,Vector3.ZERO,true,0.0):
+   _weather_prop(world.get_node_or_null("CityBusStop"),Color(.38,.39,.33))
+
+ # The benches face the fountain and keep a clear route around its basin.
+ var bench_spots := [
+  [Vector3(26,0,48),90.0], [Vector3(38,0,48),-90.0],
+  [Vector3(32,0,42),0.0], [Vector3(32,0,54),180.0]
+ ]
+ for i in range(bench_spots.size()):
+  var spot: Array = bench_spots[i]
+  var pos: Vector3 = ORIGIN + spot[0]
+  var name := "CityPlazaBench_%d" % i
+  world._create_invisible_collision_box(name + "Collision",pos,Vector3(1.9,1.0,.75))
+  world._register_wildlife_blocker(pos,1.0)
+  if not server:
+   if world._try_instance_external_scene([CITY_BENCH_MODEL],name,pos,Vector3.ONE,Vector3(0,float(spot[1]),0),true,0.0):
+    _weather_prop(world.get_node_or_null(name),Color(.48,.45,.38))
+
+ # The signals sit on the outer corners of the crossings, leaving the road
+ # centre and pedestrian entrances clear.
+ var signal_spots := [
+  [Vector3(3.5,0,-4.3),180.0],
+  [Vector3(67.5,0,91.7),0.0]
+ ]
+ for i in range(signal_spots.size()):
+  var spot: Array = signal_spots[i]
+  var pos: Vector3 = ORIGIN + spot[0]
+  var name := "CityTrafficSignal_%d" % i
+  world._create_invisible_collision_box(name + "Collision",pos,Vector3(.48,3.5,.48))
+  world._register_wildlife_blocker(pos,0.5)
+  if not server:
+   world._try_instance_external_scene([APOCALYPSE_KIT + "TrafficLight_1.gltf"],name,pos,Vector3.ONE,Vector3(0,float(spot[1]),0),true,0.0)
+
+ # A damaged town marker and refuse piles establish the outskirts without
+ # filling the plaza or narrowing the sidewalks.
+ var clutter := [
+  ["TownSign.gltf",Vector3(-35,0,-34),Vector3.ONE,270.0,Vector3(.8,1.8,.5)],
+  ["TrashBag_1.gltf",Vector3(-25,0,-8),Vector3.ONE,25.0,Vector3(.85,.75,.8)],
+  ["TrashBag_2.gltf",Vector3(-24.3,0,-8.35),Vector3(.9,.9,.9),-12.0,Vector3(.85,.7,.8)],
+  ["Pallet_Broken.gltf",Vector3(99,0,129),Vector3.ONE,18.0,Vector3(1.4,.35,1.1)],
+  ["Barrel.gltf",Vector3(100.5,0,128.5),Vector3(.9,.9,.9),-8.0,Vector3(.65,1.0,.65)],
+  ["TrashBag_1.gltf",Vector3(86,0,87),Vector3(.9,.9,.9),48.0,Vector3(.8,.7,.75)]
+ ]
+ for i in range(clutter.size()):
+  var item: Array = clutter[i]
+  var pos: Vector3 = ORIGIN + item[1]
+  var name := "CityAbandonedProp_%02d" % i
+  world._create_invisible_collision_box(name + "Collision",pos,item[4])
+  world._register_wildlife_blocker(pos,maxf((item[4] as Vector3).x,(item[4] as Vector3).z)*0.5+0.3)
+  if not server:
+   world._try_instance_external_scene([APOCALYPSE_KIT + str(item[0])],name,pos,item[2],Vector3(0,float(item[3]),0),true,0.0)
+
+static func _weather_prop(root: Node, tint: Color) -> void:
+ if root == null:
+  return
+ var meshes: Array = root.find_children("*","MeshInstance3D",true,false)
+ if root is MeshInstance3D:
+  meshes.append(root)
+ for mesh_node in meshes:
+  var mesh_instance := mesh_node as MeshInstance3D
+  if mesh_instance.mesh == null:
+   continue
+  for surface in range(mesh_instance.mesh.get_surface_count()):
+   var source: Material = mesh_instance.get_active_material(surface)
+   if source is StandardMaterial3D:
+    var material := (source as StandardMaterial3D).duplicate() as StandardMaterial3D
+    material.albedo_color = material.albedo_color * tint
+    material.roughness = maxf(material.roughness,.88)
+    material.metallic = minf(material.metallic,.12)
+    mesh_instance.set_surface_override_material(surface,material)
 
 # The complete scanned stone fountain (octagonal basin, column and finial),
 # recentred and stripped of its scanned paving by clean_fountain_scan.py.

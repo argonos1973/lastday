@@ -34,6 +34,15 @@ func run():
  var pavement: MultiMeshInstance3D=world.get_node("DistrictPavements")
  check(absf(pavement.multimesh.mesh.get_aabb().size.y-.12)<.01,"pavement module is 12 cm high")
  check(world.has_node("DistrictPavementCollision"),"server pavement collider")
+ for i in range(preload("res://scripts/CityStreetscape.gd").STREET_LAMP_OFFSETS.size()):
+  check(world.has_node("CityStreetLamp_%02dCollision" % i),"server street lamp collider %d" % i)
+ check(world.has_node("CityBusStopCollision"),"server bus stop collider")
+ for i in range(4):
+  check(world.has_node("CityPlazaBench_%dCollision" % i),"server plaza bench collider %d" % i)
+ for i in range(2):
+  check(world.has_node("CityTrafficSignal_%dCollision" % i),"server traffic signal collider %d" % i)
+ for i in range(6):
+  check(world.has_node("CityAbandonedProp_%02dCollision" % i),"server urban prop collider %d" % i)
  check(world.has_node("DistrictPlaza"),"Blender plaza loaded")
  check(world.has_node("DistrictFountainCollision"),"server fountain collider")
  check(not world.has_node("DistrictFountain"),"fountain mesh is client-only")
