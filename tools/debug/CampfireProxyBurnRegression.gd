@@ -76,6 +76,17 @@ func run() -> void:
 	main._update_server_proxies(1.0)
 	_check(absf(burning.get_meta("proxy_health") - hp_after) < 0.01, "dead proxy not damaged further")
 
+	# A campfire on a rooftop must not burn a proxy standing on the floor
+	# directly below — the burn check is gated on vertical distance.
+	var roof_fire := Vector3(20.0, 8.15, 20.0)
+	main.campfire_positions.append(roof_fire)
+	var below := _make_proxy(Vector3(20.0, 0.0, 20.2))
+	get_root().add_child(below)
+	below.global_position = Vector3(20.0, 0.0, 20.2)
+	main.proxy_by_client_id["cid_below"] = below
+	main._update_server_proxies(1.0)
+	_check(absf(below.get_meta("proxy_health") - 10.0) < 0.01, "proxy under a rooftop fire takes no damage")
+
 	if _failures > 0:
 		push_error("CampfireProxyBurnRegression: %d failure(s)" % _failures)
 		quit(1)

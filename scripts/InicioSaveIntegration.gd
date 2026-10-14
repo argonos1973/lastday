@@ -2,6 +2,7 @@ extends Node
 class_name InicioSaveIntegration
 
 const MilitaryJacketsScript = preload("res://scripts/MilitaryJackets.gd")
+const AutumnClothesScript = preload("res://scripts/AutumnClothes.gd")
 
 static func maybe_insert_saved_character(inicio: Node) -> void:
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
@@ -159,7 +160,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			feet_item = n
 		elif n.find("Guantes") >= 0:
 			hands_item = n
-		elif n.find("Sombrero") >= 0 or n.find("Casco") >= 0:
+		elif n.find("Sombrero") >= 0 or n.find("Gorro") >= 0 or n.find("Casco") >= 0:
 			head_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
@@ -184,6 +185,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Field jackets are a separate skinned GLB hung on the skeleton (same as
 	# in-game MilitaryJackets.attach), not the soldier_torso mesh.
 	var is_field_torso := MilitaryJacketsScript.VARIANTS.has(torso_item)
+	var is_autumn_jacket := torso_item in ["Chaqueta de otoño", "Chaqueta militar digital"]
+	var is_autumn_pants := legs_item in ["Pantalones de senderismo", "Pantalones cargo con rodilleras"]
+	var is_autumn_boots := feet_item == "Botas de montaña"
+	var is_autumn_hat := head_item == "Gorro de otoño"
 	# Determine which clothing meshes to show
 	var show_tops := has_torso and (torso_item == "Camiseta")
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
@@ -191,7 +196,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var show_cloth_feet := has_feet and is_survival_feet
 	var show_military_feet := has_feet and is_military_feet
 	var show_soldier_legs := has_legs and is_military_legs
-	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso
+	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso and not is_autumn_jacket
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
 	for mi in meshes:
@@ -232,7 +237,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			# shoe doesn't cover the toes and Remy's bare-foot texture shows through.
 			m.visible = false
 		elif nl == "body_torso":
-			m.visible = has_torso
+			m.visible = has_torso and not is_autumn_jacket
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "body_arms":
@@ -240,7 +245,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "body_legs":
-			m.visible = has_legs and not is_military_legs
+			m.visible = has_legs and not is_military_legs and not is_autumn_pants
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_torso":
@@ -292,6 +297,12 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		var jacket := MilitaryJacketsScript.attach(model, torso_item)
 		if jacket != null:
 			jacket.visible = true
+	for autumn_item in [torso_item, legs_item, feet_item, head_item]:
+		if AutumnClothesScript.VARIANTS.has(autumn_item):
+			var autumn_mesh := AutumnClothesScript.attach(model, autumn_item)
+			if autumn_mesh != null:
+				autumn_mesh.visible = true
+	AutumnClothesScript.set_jacket_mask(model, is_autumn_jacket)
 	# Add backpack
 	var backpack := str(pd.get("equipped_backpack", ""))
 	if not backpack.is_empty():
@@ -300,15 +311,15 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if not hands_item.is_empty():
 		_add_preview_gloves(model, hands_item)
 	# Add hat
-	if not head_item.is_empty():
+	if not head_item.is_empty() and not is_autumn_hat:
 		_add_preview_hat(model, head_item)
 	# Add held item (weapon/tool in hand)
 	var held_item_name := str(pd.get("held_item", ""))
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
-const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"]}
-const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Pantalones militares":["Body_legs"]}
+const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
+const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Pantalones militares":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
 const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
 
@@ -327,6 +338,8 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 		elif n.find("Pantalones m") >= 0 and not hide.has("Bottoms"):
 			hide.append("Bottoms")
 		elif n.find("Pantalones c") >= 0 and not hide.has("Bottoms"):
+			hide.append("Bottoms")
+		elif n in ["Pantalones de senderismo", "Pantalones cargo con rodilleras"] and not hide.has("Bottoms"):
 			hide.append("Bottoms")
 		elif n.find("Chaqueta") >= 0 and not hide.has("Tops"):
 			hide.append("Tops")

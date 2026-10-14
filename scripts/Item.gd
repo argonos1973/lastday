@@ -68,6 +68,12 @@ const CLOTHING_STORAGE := {
 	"Gorro de piel": 1,
 	"Tocado de piel animal": 0,
 	"Casco militar": 2,
+	"Chaqueta de otoño": 4,
+	"Chaqueta militar digital": 4,
+	"Pantalones de senderismo": 4,
+	"Pantalones cargo con rodilleras": 4,
+	"Botas de montaña": 0,
+	"Gorro de otoño": 1,
 }
 
 static func create(new_name: String, new_type: String, new_weight: float, new_quantity := 1, new_use_value := 0.0):

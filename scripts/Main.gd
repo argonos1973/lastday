@@ -2,6 +2,7 @@ extends Node3D
 
 const PlayerControllerScript = preload("res://scripts/PlayerController.gd")
 const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
+const AutumnClothes = preload("res://scripts/AutumnClothes.gd")
 const SaveGameHooks = preload("res://scripts/SaveGameHooks.gd")
 const HUDScript = preload("res://scripts/HUD.gd")
 const DayNightCycleScript = preload("res://scripts/DayNightCycle.gd")
@@ -1185,12 +1186,15 @@ func _apply_campfire_effect(player_node: Node3D, delta: float) -> void:
 		var dx: float = fire_pos.x - ppos.x
 		var dz: float = fire_pos.z - ppos.z
 		var dist_sq: float = dx * dx + dz * dz
-		if dist_sq < 0.36:
+		var dy: float = absf(fire_pos.y - ppos.y)
+		# Fires sit on arbitrary surfaces now (e.g. rooftops): heat and burn
+		# must not bleed through a floor to the level below.
+		if dist_sq < 0.36 and dy < 1.2:
 			player_node.stats.health -= 5.0 * delta
 			emit_stats = true
 			if randf() < delta * 2.0:
 				player_node.notice.emit("Te quemas al estar demasiado cerca del fuego.")
-		elif dist_sq < 16.0:
+		elif dist_sq < 16.0 and dy < 2.5:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - (dist - 0.6) / 3.4
 			player_node.stats.apply_external_heat(warmth_factor * 3.0 * delta, 38.0)
@@ -1214,7 +1218,8 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 		var dx: float = fire_pos.x - ppos.x
 		var dz: float = fire_pos.z - ppos.z
 		var dist_sq: float = dx * dx + dz * dz
-		if dist_sq < 4.0:
+		# Same vertical gate as campfires: no torch warmth through floors.
+		if dist_sq < 4.0 and absf(fire_pos.y - ppos.y) < 2.5:
 			var dist: float = sqrt(dist_sq)
 			var warmth_factor: float = 1.0 - dist / 2.0
 			player_node.stats.apply_external_heat(warmth_factor * 1.5 * delta, 37.5)
@@ -4094,7 +4099,7 @@ func _update_server_proxies(delta: float) -> void:
 			for fire_pos in campfire_positions:
 				var fdx: float = fire_pos.x - dp_pos.x
 				var fdz: float = fire_pos.z - dp_pos.z
-				if fdx * fdx + fdz * fdz < 0.36:
+				if fdx * fdx + fdz * fdz < 0.36 and absf(fire_pos.y - dp_pos.y) < 1.2:
 					_damage_offline_proxy(dp, 5.0 * delta)
 					break
 
@@ -5229,7 +5234,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Botas survival", "Botas militares"] or MilitaryJackets.VARIANTS.has(item_name)
+	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño"] or MilitaryJackets.VARIANTS.has(item_name)
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var corpse_kind := WildlifeController.corpse_species(item_name)
@@ -5403,6 +5408,8 @@ func _is_meat_item_name(n: String) -> bool:
 func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 	if MilitaryJackets.VARIANTS.has(item_name):
 		return [MilitaryJackets.pickup_path(item_name)]
+	if AutumnClothes.VARIANTS.has(item_name):
+		return [AutumnClothes.pickup_path(item_name)]
 	# Old saves can contain tools with the generic "tool" type. Resolve named
 	# tools first so the inventory thumbnail never falls back to a box model.
 	if item_name == "Hacha":
@@ -5549,6 +5556,8 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 
 func _get_drop_scale(item_name: String, item_type: String) -> float:
 	if MilitaryJackets.VARIANTS.has(item_name):
+		return 0.5
+	if AutumnClothes.VARIANTS.has(item_name):
 		return 0.5
 	if item_name == "Hacha":
 		return 1.0
@@ -8092,6 +8101,12 @@ func _create_house_loot() -> void:
 		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["hoe"]], "scale": 1.5, "rot": Vector3(0, 130, 0), "color": Color(0.28, 0.18, 0.08), "rare": true},
 		{"name": "Pala", "type": "tool_shovel", "weight": 1.0, "qty": 1, "use": 0.0, "paths": [SURVIVAL_TOOL_MODELS["shovel"]], "scale": 0.85, "rot": Vector3(0, 250, 0), "color": Color(0.26, 0.17, 0.08), "rare": true},
 		{"name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "paths": [MilitaryJackets.pickup_path("Chaqueta de cuadros")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
+		{"name": "Chaqueta de otoño", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.22, "paths": [AutumnClothes.pickup_path("Chaqueta de otoño")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
+		{"name": "Chaqueta militar digital", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.22, "paths": [AutumnClothes.pickup_path("Chaqueta militar digital")], "scale": 0.5, "rot": Vector3(90, 200, 0), "color": Color.WHITE},
+		{"name": "Pantalones de senderismo", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": [AutumnClothes.pickup_path("Pantalones de senderismo")], "scale": 0.5, "rot": Vector3(90, 90, 0), "color": Color.WHITE},
+		{"name": "Pantalones cargo con rodilleras", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": [AutumnClothes.pickup_path("Pantalones cargo con rodilleras")], "scale": 0.5, "rot": Vector3(90, 90, 0), "color": Color.WHITE},
+		{"name": "Botas de montaña", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.16, "paths": [AutumnClothes.pickup_path("Botas de montaña")], "scale": 0.5, "rot": Vector3(90, 30, 0), "color": Color.WHITE},
+		{"name": "Gorro de otoño", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "paths": [AutumnClothes.pickup_path("Gorro de otoño")], "scale": 0.5, "rot": Vector3(0, 20, 0), "color": Color.WHITE},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},

@@ -101,16 +101,12 @@ func _update_rifle_strap(delta: float) -> void:
 		_signature = signature
 		_route.clear()
 		_previous = PackedVector3Array()
-	var path: Array
-	if held:
-		path = _hanging_path(model, barrel, stock)
-	else:
-		if _route.is_empty():
-			_build_route(model, skel, barrel, stock)
-		if _route.is_empty():
-			return
-		var frame := _skinned_body(model, skel)
-		path = _assemble_path(barrel, stock, frame[0], frame[1])
+	if _route.is_empty():
+		_build_route(model, skel, barrel, stock, held)
+	if _route.is_empty():
+		return
+	var frame := _skinned_body(model, skel)
+	var path := _assemble_path(barrel, stock, frame[0], frame[1], held)
 	var path_points: PackedVector3Array = path[0]
 	var path_normals: PackedVector3Array = path[1]
 	# Damp interior jitter while both weapon anchors stay exact.
@@ -191,7 +187,7 @@ func _bone(key: String, fallback: String = "") -> int:
 		return int(_bones[key])
 	return int(_bones.get(fallback, -1))
 
-func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, _stock: Vector3) -> void:
+func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, _stock: Vector3, held: bool = false) -> void:
 	_route.clear()
 	var spine := _bone("spine", "spine1")
 	var spine1 := _bone("spine1", "spine2")
@@ -245,7 +241,29 @@ func _build_route(model: Node3D, skel: Skeleton3D, barrel: Vector3, _stock: Vect
 		s0.lerp(s1, 0.25) - near * flank * 0.85 + back_dir * 0.14,
 		s0.lerp(s1, 0.35) - near * 0.12 + back_dir * 0.22,
 	]
+	if held:
+		# Front-carried rifle: fore-end -> left flank -> diagonal across BACK
+		# -> right shoulder -> stock. Keep the shoulder choice anatomical,
+		# independent of where the animated muzzle happens to point.
+		near = right
+		near_key = "right"
+		far_key = "left"
+		shoulder = rest.get("right_shoulder", Transform3D(Basis(), s2 + right * 0.13 + Vector3.UP * 0.19)).origin
+		arm = rest.get("right_arm", Transform3D(Basis(), shoulder + right * 0.26)).origin
+		trap = shoulder.lerp(arm, 0.45)
+		guides = [
+			s1 - right * 0.28 + front * 0.18,
+			s1 - right * 0.34,
+			s1 - right * 0.25 + back_dir * 0.20,
+			s1.lerp(s2, 0.45) + back_dir * 0.26,
+			s2 + right * 0.12 + back_dir * 0.23,
+			trap + back_dir * 0.12 + Vector3.UP * 0.03,
+			trap + Vector3.UP * 0.09,
+			trap + front * 0.14 + Vector3.UP * 0.01,
+		]
 	_build_surface(rest, hip, neck_pos, s2, near)
+	if held:
+		_surface_clearance += 0.018
 	var dense := _resample(_catmull_rom(guides, 12), BODY_POINTS)
 	for _iteration in 4:
 		for i in dense.size():
@@ -541,24 +559,6 @@ func _skinned_body(model: Node3D, skel: Skeleton3D) -> Array:
 		normals[i] = n.normalized() if n.length_squared() > 0.000001 else Vector3.UP
 	return [points, normals]
 
-# With the weapon in the hands the sling hangs below its two swivels.
-# Gravity is world-space, so pitching/rolling the rifle cannot invert the loop.
-func _hanging_path(model: Node3D, barrel: Vector3, stock: Vector3) -> Array:
-	var down := (model.global_basis.inverse() * Vector3.DOWN).normalized()
-	var axis := stock - barrel
-	var normal := axis.cross(down).normalized()
-	if normal.length_squared() < 0.001:
-		normal = Vector3.RIGHT
-	var sag := clampf(axis.length() * 0.38, 0.28, 0.65)
-	var points := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var count := BODY_POINTS + CONNECTOR_POINTS * 2
-	for i in count:
-		var t := float(i) / float(count - 1)
-		points.append(barrel.lerp(stock, t) + down * (4.0 * t * (1.0 - t) * sag))
-		normals.append(normal)
-	return [points, normals]
-
 # Both carry modes use the same physical fore-end and buttstock anchors,
 # expressed in the source rifle's space (barrel -Z). Snap on these parts only;
 # the imported model also contains decorative straps and scope geometry.
@@ -574,12 +574,12 @@ static func attach_swivels(barrel: Node3D, stock: Node3D, rifle: Node3D) -> void
 
 # Joins the rifle swivels to the skinned body run with quadratic curves that
 # leave each body end along its own tangent (no kink, no overshoot inward).
-func _assemble_path(barrel: Vector3, stock: Vector3, body: PackedVector3Array, body_normals: PackedVector3Array) -> Array:
+func _assemble_path(barrel: Vector3, stock: Vector3, body: PackedVector3Array, body_normals: PackedVector3Array, held: bool = false) -> Array:
 	var points := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var last := body.size() - 1
 	var start_tangent := (body[1] - body[0]).normalized()
-	var control_a := body[0] - start_tangent * barrel.distance_to(body[0]) * 0.45
+	var control_a := body[0] - start_tangent * (minf(0.08, barrel.distance_to(body[0]) * 0.2) if held else barrel.distance_to(body[0]) * 0.45)
 	for s in CONNECTOR_POINTS:
 		var t := float(s) / float(CONNECTOR_POINTS)
 		points.append(barrel.lerp(control_a, t).lerp(control_a.lerp(body[0], t), t))
@@ -587,7 +587,7 @@ func _assemble_path(barrel: Vector3, stock: Vector3, body: PackedVector3Array, b
 	points.append_array(body)
 	normals.append_array(body_normals)
 	var end_tangent := (body[last] - body[last - 1]).normalized()
-	var control_b := body[last] + end_tangent * stock.distance_to(body[last]) * 0.45
+	var control_b := body[last] + end_tangent * (minf(0.08, stock.distance_to(body[last]) * 0.2) if held else stock.distance_to(body[last]) * 0.45)
 	for s in range(1, CONNECTOR_POINTS + 1):
 		var t := float(s) / float(CONNECTOR_POINTS)
 		points.append(body[last].lerp(control_b, t).lerp(control_b.lerp(stock, t), t))

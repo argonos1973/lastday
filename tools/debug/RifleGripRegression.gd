@@ -41,12 +41,11 @@ func run():
 			var sling = actor._rifle_strap_system
 			var points: PackedVector3Array = sling._previous
 			var model: Node3D = actor.third_person_model
-			check(sling._route.is_empty(), "Held rifle must not reuse the back/body route")
+			check(sling._route.size() == sling.BODY_POINTS, "Held sling stays worn on the body")
 			check(model.to_global(points[0]).distance_to(actor._strap_barrel_marker.global_position) < 0.001, "Moving barrel swivel stays attached")
 			check(model.to_global(points[-1]).distance_to(actor._strap_stock_marker.global_position) < 0.001, "Moving stock swivel stays attached")
-			var middle := model.to_global(points[points.size() / 2])
-			var chord := (actor._strap_barrel_marker.global_position + actor._strap_stock_marker.global_position) * 0.5
-			check(middle.y < chord.y - 0.1, "Sling hangs down while aiming, walking and firing")
+			var spine_rest: Vector3 = (model.global_transform.affine_inverse() * skel.global_transform * skel.get_bone_global_rest(skel.find_bone("mixamorig_Spine1"))).origin
+			check(sling._rest_body_points[sling.BODY_POINTS / 2].z < spine_rest.z - 0.1, "Held sling crosses the back, not the chest or below the rifle")
 			for side in ["Right", "Left"]:
 				var idx := skel.find_bone("mixamorig_" + side + "HandMiddle1")
 				var point: Vector3 = actor.RIFLE_AIM_RIGHT_KNUCKLE if side == "Right" else actor.RIFLE_AIM_LEFT_KNUCKLE

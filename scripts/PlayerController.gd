@@ -48,6 +48,7 @@ const CLOTHING_VISUALS := {
 }
 const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
 const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
+const AutumnClothes = preload("res://scripts/AutumnClothes.gd")
 
 # Survival garments that are skinned to the Mixamo rig inside GameConst.PLAYER_MODEL.
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
@@ -75,6 +76,12 @@ const SURVIVAL_CLOTHING := {
 	"Chaqueta camuflaje desert": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.32, 0.28, 0.16)},
 	# Skinned Sketchfab garments adapted in Blender (adapt_new_gear.py).
 	"Chaqueta de cuadros": {"mesh": "field_jacket_plaid", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms", "Body_torso"]},
+	"Chaqueta de otoño": {"mesh": "autumn_jacket", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms", "Body_torso"]},
+	"Chaqueta militar digital": {"mesh": "digital_field_jacket", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms", "Body_torso"]},
+	"Pantalones de senderismo": {"mesh": "autumn_pants", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
+	"Pantalones cargo con rodilleras": {"mesh": "cargo_kneepad_pants", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
+	"Botas de montaña": {"mesh": "autumn_boots", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
+	"Gorro de otoño": {"mesh": "autumn_hat", "hides": [], "skin_hides": [], "body_hides": []},
 	# Plate carrier is worn over the clothes: it hides nothing, only overlays.
 	"Chaleco táctico": {"mesh": "field_jacket_plate_carrier", "hides": [], "skin_hides": [], "body_hides": []},
 }
@@ -120,6 +127,11 @@ const DEFAULT_SKIN_HIDES := {
 	"Chaqueta camuflaje": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta camuflaje desert": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de cuadros": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta de otoño": ["Desnudo_torso", "Desnudo_arms"],
+	"Chaqueta militar digital": ["Desnudo_torso", "Desnudo_arms"],
+	"Pantalones de senderismo": ["Desnudo_legs"],
+	"Pantalones cargo con rodilleras": ["Desnudo_legs"],
+	"Botas de montaña": ["Desnudo_feet"],
 	"Chaleco táctico": [],
 }
 
@@ -130,6 +142,11 @@ const DEFAULT_BODY_HIDES := {
 	"Chaqueta de campaña azul": ["Body_arms"],
 	"Chaqueta de campaña arena": ["Body_arms"],
 	"Chaqueta de cuadros": ["Body_arms"],
+	"Chaqueta de otoño": ["Body_arms", "Body_torso"],
+	"Chaqueta militar digital": ["Body_arms", "Body_torso"],
+	"Pantalones de senderismo": ["Body_legs"],
+	"Pantalones cargo con rodilleras": ["Body_legs"],
+	"Botas de montaña": ["Body_feet"],
 	"Camiseta": [],
 	"Pantalones": [],
 	"Zapatillas": ["Body_feet"],
@@ -166,6 +183,12 @@ const CLOTHING_COVERED_ZONES := {
 	"Tocado de piel animal": ["cabeza"],
 	"Casco militar": ["cabeza"],
 	"Chaqueta de cuadros": ["torso", "brazos"],
+	"Chaqueta de otoño": ["torso", "brazos"],
+	"Chaqueta militar digital": ["torso", "brazos"],
+	"Pantalones de senderismo": ["cadera", "piernas"],
+	"Pantalones cargo con rodilleras": ["cadera", "piernas"],
+	"Botas de montaña": ["pies"],
+	"Gorro de otoño": ["cabeza"],
 	"Chaleco táctico": ["torso"],
 }
 
@@ -199,6 +222,12 @@ const CLOTHING_SLOTS := {
 	"Tocado de piel animal": "head",
 	"Casco militar": "head",
 	"Chaqueta de cuadros": "torso",
+	"Chaqueta de otoño": "torso",
+	"Chaqueta militar digital": "torso",
+	"Pantalones de senderismo": "legs",
+	"Pantalones cargo con rodilleras": "legs",
+	"Botas de montaña": "feet",
+	"Gorro de otoño": "head",
 	# The plate carrier rides over the clothing in its own vest slot.
 	"Chaleco táctico": "chaleco",
 }
@@ -234,6 +263,12 @@ const CLOTHING_WARMTH := {
 	"Tocado de piel animal": 0.24,
 	"Casco militar": 0.05,
 	"Chaqueta de cuadros": 0.45,
+	"Chaqueta de otoño": 0.42,
+	"Chaqueta militar digital": 0.42,
+	"Pantalones de senderismo": 0.22,
+	"Pantalones cargo con rodilleras": 0.22,
+	"Botas de montaña": 0.20,
+	"Gorro de otoño": 0.08,
 	"Chaleco táctico": 0.10,
 }
 
@@ -2676,6 +2711,8 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = Color(0, 0, 0, 0)) -> void:
 	if not SURVIVAL_CLOTHING.has(item_name):
 		return
+	if item_name in ["Chaqueta de otoño", "Chaqueta militar digital"]:
+		AutumnClothes.set_jacket_mask(third_person_model, worn)
 	var cfg: Dictionary = SURVIVAL_CLOTHING[item_name]
 	var mesh_name := String(cfg["mesh"])
 	var mi: MeshInstance3D = _survival_cloth_nodes.get(mesh_name)
@@ -2683,9 +2720,19 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 		mi = MilitaryJackets.attach(third_person_model, item_name)
 		if mi != null:
 			_survival_cloth_nodes[mesh_name] = mi
+	if mi == null and worn and AutumnClothes.VARIANTS.has(item_name):
+		mi = AutumnClothes.attach(third_person_model, item_name)
+		if mi != null:
+			_survival_cloth_nodes[mesh_name] = mi
+	# The fur jacket rides on the olive field-jacket mesh; attach it lazily so
+	# it renders even when no campaign jacket created that node first.
+	if mi == null and worn and item_name == "Chaqueta de piel":
+		mi = MilitaryJackets.attach(third_person_model, "Chaqueta de campaña verde")
+		if mi != null:
+			_survival_cloth_nodes[mesh_name] = mi
 	if mi != null:
 		mi.visible = worn
-		if MilitaryJackets.VARIANTS.has(item_name):
+		if MilitaryJackets.VARIANTS.has(item_name) or AutumnClothes.VARIANTS.has(item_name):
 			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
 			mi.material_override = null
 		elif worn and loot_color.a > 0.0 and not cfg.has("camo"):
@@ -5802,7 +5849,10 @@ func _craft_campfire() -> void:
 	# Wait for animation then spawn campfire
 	await get_tree().create_timer(2.0).timeout
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
-	pos.y = 0.15
+	# Keep the player's height: _on_item_dropped raycasts down from pos.y+0.5,
+	# so a campfire crafted on a rooftop lands on the roof instead of being
+	# pinned to terrain level inside the building.
+	pos.y = global_position.y
 	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 

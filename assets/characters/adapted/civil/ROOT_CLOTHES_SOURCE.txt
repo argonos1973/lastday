@@ -1,0 +1,6 @@
+User-provided source models from tools/blender/sources/root_clothes/:
+low_poly_military_jacket_tactical_top.glb -> digital_field_jacket.glb
+clothes_pants.glb -> cargo_kneepad_pants.glb
+
+Adaptation script: tools/blender/adapt_root_clothes.py
+Textures retained from the provided assets. Original author/license not supplied; these assets are separate from the Autumn Clothes CC-BY pack.
