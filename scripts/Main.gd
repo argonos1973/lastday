@@ -7349,12 +7349,14 @@ func _create_world_details() -> void:
 	if city_tent_node != null:
 		_build_military_tent_collision(city_tent_node, "MilitaryTentCityCollision", "MilitaryTentCityRoofCollision")
 		_add_tent_interior_light(city_tent_node, "MilitaryTentCityLight")
-		_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", Vector3(city_tent_pos.x, city_tent_ground_y + 3.9, city_tent_pos.z), Vector3.ONE * 3.6, Vector3(0, CITY_TENT_YAW, 0), true, 0.0)
-		var cont_off := Vector3(8.5, 0.0, -2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
+		var cont_yaw := CITY_TENT_YAW + 90.0
+		var cont_off := Vector3(10.5, 0.0, -2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
 		var cont_pos := Vector3(city_tent_pos.x + cont_off.x, city_tent_ground_y, city_tent_pos.z + cont_off.z)
-		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "MilitaryTentCityContainer", cont_pos, Vector3.ONE, Vector3(0, CITY_TENT_YAW + 90.0, 0), true, 0.0):
-			_create_invisible_collision_box_rotated("MilitaryTentCityContainerCollision", cont_pos + Vector3(0, 1.5, 0), Vector3(7.3, 3.0, 2.9), CITY_TENT_YAW + 90.0)
+		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "MilitaryTentCityContainer", cont_pos, Vector3.ONE, Vector3(0, cont_yaw, 0), true, 0.0):
+			_create_invisible_collision_box_rotated("MilitaryTentCityContainerCollision", cont_pos + Vector3(0, 1.45, 0), Vector3(7.25, 2.9, 2.96), cont_yaw)
 			_register_wildlife_blocker(cont_pos, 7.0)
+			# Drape the cloth-simulated camo net directly over the red container (centered at cont_pos).
+			_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", cont_pos, Vector3.ONE, Vector3(0, cont_yaw, 0), false, 0.0)
 
 # Box collision for a military tent: back/left/right walls plus a front wall
 # split around a door gap, then a thin roof plate. Yaw comes from the node.
