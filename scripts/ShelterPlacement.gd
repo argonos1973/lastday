@@ -5,7 +5,7 @@ var world
 var recipe: Dictionary
 var from_ground := false
 var yaw := 0.0
-var distance := 4.0
+var distance := 3.2
 var check_timer := 0.0
 var valid := false
 var reason := ""
@@ -41,7 +41,7 @@ func _process(delta: float) -> void:
 		queue_free()
 		return
 	global_position = actor.global_position - actor.global_basis.z * distance
-	global_position.y = world._get_exact_ground_y(global_position.x, global_position.z, actor.global_position.y + 3.0)
+	global_position.y = world._get_exact_ground_y(global_position.x, global_position.z, actor.global_position.y + 1.2)
 	rotation.y = yaw
 	check_timer -= delta
 	if check_timer > 0.0:
@@ -62,9 +62,9 @@ func handle_input(event: InputEvent) -> void:
 			confirm()
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			distance = clampf(distance + 0.5, 3.0, 6.0)
+			distance = clampf(distance + 0.5, 1.8, 6.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			distance = clampf(distance - 0.5, 3.0, 6.0)
+			distance = clampf(distance - 0.5, 1.8, 6.0)
 
 func confirm() -> void:
 	if is_queued_for_deletion():
@@ -75,10 +75,20 @@ func confirm() -> void:
 		return
 	actor.set_meta("shelter_placement_position", global_position)
 	actor.set_meta("shelter_placement_yaw", yaw)
+	var sh_recipe := recipe
+	if sh_recipe.is_empty():
+		for r in world.CraftingSystemScript.RECIPES:
+			if r.get("output", {}).get("type", "") == "shelter":
+				sh_recipe = r
+				break
 	var built := false
-	if from_ground:
-		built = world.craft_ground_recipe(actor, recipe)
-	elif actor.inventory.has_item_name("Palo", 11):
+	if not from_ground and actor.inventory != null and actor.inventory.has_item_name("Palo", 11):
+		actor.inventory.consume_item_name("Palo", 11)
+		world._on_item_dropped("shelter", "shelter", 0.0, 1, 0.0, global_position)
+		built = true
+	elif not sh_recipe.is_empty() and world.craft_ground_recipe(actor, sh_recipe):
+		built = true
+	elif actor.inventory != null and actor.inventory.has_item_name("Palo", 11):
 		actor.inventory.consume_item_name("Palo", 11)
 		world._on_item_dropped("shelter", "shelter", 0.0, 1, 0.0, global_position)
 		built = true

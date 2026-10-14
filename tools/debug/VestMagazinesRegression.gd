@@ -65,5 +65,18 @@ func _initialize() -> void:
 	check(player._rifle_reserve_ammo == before,
 		"non-vest items and missing actors are ignored")
 
+	# Equipping the rifle AFTER receiving the vest's 5 magazines must preserve
+	# all 5 magazines (25 rounds) instead of overwriting reserve to 15.
+	var player2 := TestPlayer.new()
+	root.add_child(player2)
+	player2.set_process(false)
+	player2.set_physics_process(false)
+	world._grant_vest_magazines(loot_action, player2, "Chaleco táctico")
+	player2._initialize_rifle_ammo()
+	check(player2._rifle_reserve_ammo >= player2.RIFLE_MAG_SIZE * 5,
+		"rifle initialization preserves the 5 vest magazines (%d rounds)" % player2._rifle_reserve_ammo)
+	check(player2.get_vest_magazines_count() >= 5,
+		"vest reports at least 5 magazines available")
+
 	print("VEST_MAGAZINES failures=", failures)
 	quit(1 if failures else 0)

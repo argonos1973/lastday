@@ -183,7 +183,7 @@ func refresh() -> void:
 	if not visible or menu.visible or split_dialog.visible or get_viewport().gui_is_dragging():
 		return
 	var ground := nearby()
-	var state := str(player.inventory.to_array()) + str(player._equipped_slots) + str(player.get_held_item()) + str(player.equipped_backpack)
+	var state := str(player.inventory.to_array()) + str(player._equipped_slots) + str(player.get_held_item()) + str(player.equipped_backpack) + str(player._rifle_magazine) + ":" + str(player._rifle_reserve_ammo)
 	for slot in range(2):
 		state += str(player.get_back_item_data(slot))
 	for action in ground:
@@ -273,7 +273,14 @@ func item_text(item) -> String:
 		state += "EQUIPADO · "
 	if item.has_method("is_wet") and item.is_wet():
 		state += "%s · " % item.wet_state_label()
-	return "%s%s\nx%d · %.2f kg · %d%%" % [state, item.item_name, item.quantity, item.weight * item.quantity, item.durability_pct() * 100]
+	var extra_ammo := ""
+	if item.item_type == "weapon_rifle" and player.has_method("get_rifle_info"):
+		var ri: Dictionary = player.get_rifle_info()
+		extra_ammo = "\nCargador: %d/%d · Cargadores: %d (%d balas) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), int(ri.get("magazines_left", 0)), int(ri.get("reserve", 0))]
+	elif item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
+		var ri2: Dictionary = player.get_rifle_info()
+		extra_ammo = "\n%d cargadores de fusil (%d balas)" % [int(ri2.get("magazines_left", 0)), int(ri2.get("reserve", 0))]
+	return "%s%s\nx%d · %.2f kg · %d%%%s" % [state, item.item_name, item.quantity, item.weight * item.quantity, item.durability_pct() * 100, extra_ammo]
 
 func matches_filter(item) -> bool:
 	if not search.text.is_empty() and not search.text.to_lower() in item.item_name.to_lower():
@@ -329,6 +336,12 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	var label := text_label(str(item.item_name) if item != null else title, 12 if item != null else 13)
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if item != null else HORIZONTAL_ALIGNMENT_LEFT
+	if item != null and item.item_type == "weapon_rifle" and player.has_method("get_rifle_info"):
+		var ri_card: Dictionary = player.get_rifle_info()
+		label.text += "\n%d/%d · %d carg." % [int(ri_card.get("magazine", 0)), int(ri_card.get("mag_size", 5)), int(ri_card.get("magazines_left", 0))]
+	elif item != null and item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
+		var ri_vest: Dictionary = player.get_rifle_info()
+		label.text += "\n%d cargadores (%d)" % [int(ri_vest.get("magazines_left", 0)), int(ri_vest.get("reserve", 0))]
 	if item != null and item.has_method("is_wet") and item.is_wet():
 		label.text += "\n[%s]" % item.wet_state_label()
 		label.add_theme_color_override("font_color", item.wet_state_color())
@@ -595,10 +608,20 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 		var item = data.item
 		if not player.inventory.items.has(item):
 			if player.get_held_item() == item:
+				if item.item_type == "weapon_rifle" and player.has_method("_reload_rifle"):
+					add_action("Recargar fusil [R]", func():
+						hud.toggle_inventory()
+						player._reload_rifle())
 				add_action("Guardar", func(): player._store_held_item())
 				add_action("Soltar", func(): player._drop_held_item())
 		else:
 			add_action("Llevar a las manos", func(): activate({"item": item}) if item.item_type not in ["clothing", "backpack"] else player._select_held_item(player.inventory.items.find(item)))
+			if item.item_type == "weapon_rifle" and player.has_method("_reload_rifle"):
+				add_action("Recargar fusil [R]", func():
+					if player.get_held_item() != item:
+						player._select_held_item(player.inventory.items.find(item))
+					hud.toggle_inventory()
+					player._reload_rifle())
 			if item.item_type in ["clothing", "backpack"]:
 				add_action("Equipar", func(): equip(item))
 			if item.item_type == "clothing" and player._equipped_slots.values().has(item.item_name):

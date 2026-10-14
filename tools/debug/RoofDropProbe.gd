@@ -94,5 +94,49 @@ func _initialize() -> void:
 	if found == null:
 		_fail("InteractionRaycast fallback found nothing on tower deck")
 
-	print("[PASS] Rooftop campfire & tower wolf gutting checks passed")
+	# 5. Gutting a dropped corpse on the tower deck must spawn meat & hide visuals
+	# AT the tower deck height (~29.4), NOT at 2x height (58.8) or ground (0).
+	var mvis_pos := deck_pt + Vector3(0.5, 0.06, 0.0)
+	world._spawn_raw_meat_visual("tower_meat_test", "Carne cruda de lobo", mvis_pos)
+	var meat_vis := world.get_node_or_null("Pickup_tower_meat_test") as Node3D
+	if meat_vis == null:
+		_fail("tower meat visual was not spawned")
+	print("[TEST] tower meat visual y=%.2f" % meat_vis.global_position.y)
+	if absf(meat_vis.global_position.y - 29.4) > 0.6:
+		_fail("tower meat visual spawned at wrong y=%.2f (expected ~29.4)" % meat_vis.global_position.y)
+
+	# 6. Shelter placement on house roof and tower deck must be valid (no false
+	# obstacle or slope error).
+	dummy_player.global_position = Vector3(20.0, roof_y + 0.7, 20.0)
+	var house_sh_err := world.shelter_placement_error(Vector3(20.0, roof_y + 0.7, 20.0), 0.0, dummy_player)
+	if not house_sh_err.is_empty():
+		_fail("house roof shelter placement rejected: " + house_sh_err)
+	dummy_player.global_position = deck_pt
+	var tower_sh_err := world.shelter_placement_error(deck_pt, 0.0, dummy_player)
+	if not tower_sh_err.is_empty():
+		_fail("tower deck shelter placement rejected: " + tower_sh_err)
+
+	# 7. Camo net material must have a valid albedo texture (never plain white).
+	var net_test := Node3D.new()
+	var net_mi := MeshInstance3D.new()
+	net_mi.mesh = BoxMesh.new()
+	net_test.add_child(net_mi)
+	world.add_child(net_test)
+	world._apply_camo_net_material(net_test)
+	if net_mi.material_override == null or (net_mi.material_override as StandardMaterial3D).albedo_texture == null:
+		_fail("camo net material is missing albedo_texture (would render white)")
+
+	# 8. Wildlife gunshot flee works at long range (100 m) even when _player is null
+	# (like on the dedicated server).
+	var flee_wolf := preload("res://scripts/WildlifeController.gd").new()
+	flee_wolf.animal_type = "wolf"
+	flee_wolf.patrol_points = [Vector3(0, 0, 0), Vector3(10, 0, 0)]
+	world.add_child(flee_wolf)
+	flee_wolf.global_position = Vector3(95.0, 0.0, 0.0)
+	flee_wolf.flee_from_gunshot(Vector3.ZERO, 120.0)
+	var ai_res := flee_wolf._wolf_ai(0.1)
+	if float(ai_res["speed"]) <= flee_wolf.move_speed * 2.0 or Vector3(ai_res["target"]).x <= 95.0:
+		_fail("wolf did not flee running from distant gunshot: " + str(ai_res))
+
+	print("[PASS] Rooftop campfire, shelter, tower wolf gutting, camo net & gunshot flee checks passed")
 	quit(0)

@@ -493,19 +493,27 @@ func _update_craft_panel() -> void:
 	var main = player.get_parent()
 	var ground_items: Array = []
 	if main != null and main.has_method("get_nearby_ground_items"):
-		ground_items = main.get_nearby_ground_items(player.global_position, 3.0)
+		ground_items = main.get_nearby_ground_items(player.global_position, 5.5)
 	var tools: Array = player.get_ground_crafting_tools()
+	var inv_items: Array = player.inventory.items if player.inventory != null else []
+	var all_carried: Array = tools.duplicate()
+	for it in inv_items:
+		if it != null and not all_carried.has(it):
+			all_carried.append(it)
 	var totals := {}
 	for entry in ground_items:
 		totals[entry.name] = int(totals.get(entry.name, 0)) + int(entry.quantity)
+	for it in inv_items:
+		if it != null and not CraftingSystemScript._is_tool(str(it.item_name)):
+			totals[str(it.item_name)] = int(totals.get(str(it.item_name), 0)) + int(it.quantity)
 	var material_names: Array = totals.keys()
 	material_names.sort()
 	var summary := PackedStringArray()
 	for item_name in material_names:
 		summary.append("%s ×%d" % [item_name, totals[item_name]])
-	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo a menos de 3 m."
+	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo ni en el inventario."
 	_craft_materials.tooltip_text = _craft_materials.text
-	_craft_tool.text = "Herramienta en mano: %s" % tools[0].item_name if not tools.is_empty() else "Sin herramienta en mano. Puedes usar una herramienta válida que esté en el suelo."
+	_craft_tool.text = "Herramienta en mano: %s" % tools[0].item_name if not tools.is_empty() else "Sin herramienta en mano. Puedes usar una herramienta válida que esté en el suelo o en el inventario."
 	var recipes: Array = []
 	var ready_count := 0
 	for recipe in CraftingSystemScript.RECIPES:
@@ -516,23 +524,26 @@ func _update_craft_panel() -> void:
 			for entry in ground_items:
 				if CraftingSystemScript._matches_ground_input(input_name, entry):
 					relevant = true
-		if not relevant:
+			for it in inv_items:
+				if it != null and CraftingSystemScript._matches_input(input_name, it):
+					relevant = true
+		if not relevant and recipe.output.get("type", "") not in ["campfire", "shelter"]:
 			continue
-		var ready := CraftingSystemScript.can_craft_with_ground(recipe, tools, ground_items)
+		var ready := CraftingSystemScript.can_craft_with_ground(recipe, all_carried, ground_items)
 		recipes.append({"recipe": recipe, "ready": ready})
 		if ready:
 			ready_count += 1
 	recipes.sort_custom(func(a, b): return a.ready and not b.ready)
-	_craft_count.text = "%d DISPONIBLES  /  %d RECETAS DEL SUELO" % [ready_count, recipes.size()]
+	_craft_count.text = "%d DISPONIBLES  /  %d RECETAS" % [ready_count, recipes.size()]
 	if recipes.is_empty():
 		var empty := VBoxContainer.new()
 		empty.add_theme_constant_override("separation", 12)
 		craft_panel_items.add_child(empty)
 		_craft_label(empty, "Prepara tu zona de trabajo", 22, Color(0.85, 0.88, 0.75))
-		_craft_label(empty, "Deja troncos, palos, trapos u otros materiales a tus pies y pulsa Actualizar materiales. Las recetas aparecerán aquí.", 16, Color(0.65, 0.73, 0.65))
-		_craft_label(empty, "Ejemplo: un tronco en el suelo + un hacha en la mano = dos palos en el suelo.", 14, Color(0.73, 0.80, 0.55))
+		_craft_label(empty, "Deja troncos, palos, trapos u otros materiales a tus pies o en tu inventario y pulsa Actualizar materiales.", 16, Color(0.65, 0.73, 0.65))
+		_craft_label(empty, "Ejemplo: 2 troncos + 1 palo = Fogata · 11 palos = Refugio.", 14, Color(0.73, 0.80, 0.55))
 	for entry in recipes:
-		_build_ground_recipe_card(entry.recipe, entry.ready, tools, ground_items)
+		_build_ground_recipe_card(entry.recipe, entry.ready, all_carried, ground_items)
 
 func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, ground_items: Array) -> void:
 	var card := PanelContainer.new()
@@ -564,10 +575,9 @@ func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, gr
 		for entry in ground_items:
 			if CraftingSystemScript._matches_ground_input(input_name, entry):
 				have += int(entry.quantity)
-		if CraftingSystemScript._is_tool(input_name):
-			for tool in tools:
-				if CraftingSystemScript._matches_input(input_name, tool):
-					have += int(tool.quantity)
+		for tool in tools:
+			if CraftingSystemScript._matches_input(input_name, tool):
+				have += int(tool.quantity)
 		var enough := have >= needed
 		var pill := PanelContainer.new()
 		pill.add_theme_stylebox_override("panel", _panel_style(Color(0.13, 0.19, 0.12) if enough else Color(0.23, 0.13, 0.10), Color(0, 0, 0, 0), 0))
@@ -785,7 +795,21 @@ func _update_real_clock() -> void:
 		temp_label.text = "Ambiente: %.0f°C%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
 	if hand_stats_label != null:
 		var held_item = player.get_held_item() if player.has_method("get_held_item") else null
-		hand_stats_label.text = "Mano: %s" % (str(held_item.item_name) if held_item != null else "vacia")
+		var hand_str := "Mano: %s" % (str(held_item.item_name) if held_item != null else "vacia")
+		if player.has_method("get_rifle_info"):
+			var has_rifle: bool = held_item != null and str(held_item.item_type) == "weapon_rifle"
+			var has_vest: bool = "_equipped_slots" in player and str(player._equipped_slots.get("chaleco", "")) == "Chaleco táctico"
+			if has_rifle or has_vest:
+				var ri: Dictionary = player.get_rifle_info()
+				var mag_cur: int = int(ri.get("magazine", 0))
+				var mag_max: int = int(ri.get("mag_size", 5))
+				var res_rounds: int = int(ri.get("reserve", 0))
+				var mags_left: int = int(ri.get("magazines_left", int(ceil(float(res_rounds) / float(maxi(1, mag_max))))))
+				if has_rifle:
+					hand_str += "\nCargador: %d/%d · Chaleco: %d carg. (%d balas) [R]" % [mag_cur, mag_max, mags_left, res_rounds]
+				else:
+					hand_str += "\nChaleco táctico: %d cargadores (%d balas)" % [mags_left, res_rounds]
+		hand_stats_label.text = hand_str
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
@@ -1558,7 +1582,8 @@ func _update_equipment_labels() -> void:
 			# Mostrar municion del rifle si esta equipado
 			if player.has_method("get_rifle_info") and player.has_method("_has_rifle_equipped") and player._has_rifle_equipped():
 				var ri: Dictionary = player.get_rifle_info()
-				hand_text += "\nMun: %d/%d  Res: %d" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), int(ri.get("reserve", 0))]
+				var mags_left: int = int(ri.get("magazines_left", int(ceil(float(int(ri.get("reserve", 0))) / 5.0))))
+				hand_text += "\nCargador: %d/%d · Cargadores: %d (%d balas) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), mags_left, int(ri.get("reserve", 0))]
 		equipment_hand_label.text = "Manos\n%s" % hand_text
 	if equipment_clothing_label != null:
 		var parts: Array = []

@@ -3185,6 +3185,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
 		player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
 		player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
+	if player._equipped_slots.get("chaleco", "") == "Chaleco táctico" and not player._rifle_ammo_initialized and player._rifle_reserve_ammo < player.RIFLE_MAG_SIZE * 5:
+		player._rifle_reserve_ammo = player.RIFLE_MAG_SIZE * 5
 	var held_payload = extra.get("held_item_data", {})
 	if not held_payload is Dictionary:
 		held_payload = {}
@@ -3388,6 +3390,13 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> v
 		var rp: Node3D = remote_players[shooter_id]
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
 			rp.play_rifle_shot_remote(origin, dir)
+	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
+	# bears and birds flee running when they hear a gunshot.
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == null or not is_instance_valid(w):
+			continue
+		if w.has_method("flee_from_gunshot"):
+			w.flee_from_gunshot(origin, 120.0)
 
 # El servidor dedicado no instancia nodos Door — deriva la posición de la
 # puerta desde la tabla _HOUSE_DOOR_LAYOUT (bisagra del marco).
@@ -3438,9 +3447,9 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 		return
 	# Clamp the reported hit and require the sender to be within weapon reach —
 	# otherwise any client could kill any animal from anywhere on the map.
-	amount = clampf(amount, 0.0, 600.0)
+	amount = clampf(amount, 0.0, 800.0)
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
-		var reach := 8.0 if from_knife else 175.0
+		var reach := 8.0 if from_knife else 320.0
 		if not _sender_within(sender_id, animal.global_position, reach):
 			return
 	var attacker_proxy: Node3D = null
@@ -3954,7 +3963,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				if old_visual != null and iname == "Tocado de piel animal":
 					old_visual.free()
 					var dpaths := _get_drop_model_paths(iname, itype, dpelt)
-					_try_instance_external_scene(dpaths, "Pickup_" + did, dpos, Vector3.ONE * _get_drop_scale(iname, itype), Vector3(0, randf_range(0, 360), 0), true, dpos.y)
+					_try_instance_external_scene(dpaths, "Pickup_" + did, dpos, Vector3.ONE * _get_drop_scale(iname, itype), Vector3(0, randf_range(0, 360), 0), true, 0.0)
 		if camo and iname in ["Camiseta", "Pantalones"]:
 			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
 			if dropped_visual != null:
@@ -5278,10 +5287,11 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
-	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+	if net == null or not net.is_dedicated_server:
+		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	var visual_name := "Pickup_" + drop_id
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
-	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, pos.y)
+	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0)
 	_mark_world_action_visual(visual_name)
 	var meat_action_type := "bird_meat_raw" if item_name == "Carne cruda de ave" else "wolf_meat_raw"
 	var maction = _create_world_action(drop_id, meat_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
@@ -5320,7 +5330,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	elif lay_flat:
 		rot.x += 90.0
 	if not paths.is_empty():
-		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, pos.y, WildlifeController.species_height(corpse_kind) if not corpse_kind.is_empty() else 0.0)
+		var _spawned_ok := _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.0, WildlifeController.species_height(corpse_kind) if not corpse_kind.is_empty() else 0.0)
 		if not _spawned_ok:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.15, 0.3, Color(0.5, 0.4, 0.3), rot)
 		else:
@@ -7356,7 +7366,34 @@ func _create_world_details() -> void:
 			_create_invisible_collision_box_rotated("MilitaryTentCityContainerCollision", cont_pos + Vector3(0, 1.45, 0), Vector3(7.25, 2.9, 2.96), cont_yaw)
 			_register_wildlife_blocker(cont_pos, 7.0)
 			# Drape the cloth-simulated camo net directly over the red container (centered at cont_pos).
-			_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", cont_pos, Vector3.ONE, Vector3(0, cont_yaw, 0), false, 0.0)
+			if _try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", cont_pos, Vector3.ONE, Vector3(0, cont_yaw, 0), false, 0.0):
+				_apply_camo_net_material(get_node_or_null("MilitaryTentCityNet"))
+
+func _apply_camo_net_material(net_root: Node) -> void:
+	if net_root == null:
+		return
+	var base_tex := load("res://assets/models/props/camo_net_camo_net_basecolor.png") as Texture2D
+	if base_tex == null:
+		return
+	var norm_tex := load("res://assets/models/props/camo_net_camo_net_normal.png") as Texture2D
+	var rough_tex := load("res://assets/models/props/camo_net_camo_net_roughness.png") as Texture2D
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = base_tex
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.45
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.88
+	if rough_tex != null:
+		mat.roughness_texture = rough_tex
+	if norm_tex != null:
+		mat.normal_enabled = true
+		mat.normal_texture = norm_tex
+		mat.normal_scale = 0.85
+	var meshes: Array = []
+	NodeUtils.collect_mesh_instances(net_root, meshes)
+	for mi in meshes:
+		if mi is MeshInstance3D:
+			(mi as MeshInstance3D).material_override = mat
 
 # Box collision for a military tent: back/left/right walls plus a front wall
 # split around a door gap, then a thin roof plate. Yaw comes from the node.
@@ -9048,13 +9085,14 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 		return
 	# Los llamadores pueden pasar una y heredada (altura del actor, y fija a 0) —
 	# fijar el pickup a la superficie real evita objetos enterrados o flotando.
-	pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5) + 0.02
+	if net == null or not net.is_dedicated_server:
+		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5) + 0.02
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var drop_scale := _get_drop_scale(item_name, item_type)
 	var spawned := false
 	if not paths.is_empty():
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, pos.y)
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0)
 	if not spawned:
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
@@ -9222,12 +9260,19 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			var spawn_id := str(spawn.get("id", ""))
 			if not world_actions_by_id.has(spawn_id):
 				var spos = spawn.get("pos")
+				if spos is Array and spos.size() >= 3:
+					spos = Vector3(float(spos[0]), float(spos[1]), float(spos[2]))
 				if not spos is Vector3:
 					continue
-				_spawn_ground_pickup(
-					str(spawn.get("name", "")), str(spawn.get("type", "")), spos,
-					float(spawn.get("weight", 0.1)), int(spawn.get("qty", 1)), float(spawn.get("use", 0.0)), spawn_id
-				)
+				var sname := str(spawn.get("name", ""))
+				var stype := str(spawn.get("type", ""))
+				if sname.begins_with("Carne cruda"):
+					_spawn_raw_meat_visual(spawn_id, sname, spos)
+				else:
+					_spawn_ground_pickup(
+						sname, stype, spos,
+						float(spawn.get("weight", 0.1)), int(spawn.get("qty", 1)), float(spawn.get("use", 0.0)), spawn_id
+					)
 	# Create extra visual if specified
 	if extra_visual == "tree_remains":
 		_create_cut_tree_remains(extra_pos)
@@ -9409,7 +9454,7 @@ func _execute_world_action(action, actor) -> void:
 				_drop_seq += 1
 				var mid := "gut_meat_%d_%d_%d" % [Time.get_ticks_msec(), _drop_seq, i]
 				var mvis := "Pickup_" + mid
-				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, mpos.y)
+				_try_instance_external_scene([meat_model], mvis, mpos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0)
 				_mark_world_action_visual(mvis)
 				var maction = _create_world_action(mid, "wolf_meat_raw", meat_name, mpos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
 				maction.set_meta("visual_name", mvis)
@@ -9418,32 +9463,35 @@ func _execute_world_action(action, actor) -> void:
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
+				_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
 				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
 			var hide_pos := animal_pos + Vector3(0.15, 0.0, -0.2)
 			hide_pos.y = _get_exact_ground_y(hide_pos.x, hide_pos.z, animal_pos.y + 0.5) + 0.04
 			_drop_seq += 1
 			var hide_id := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 			_spawn_ground_pickup(hide_name, "resource", hide_pos, 0.65, hide_qty, 0.0, hide_id)
+			_dropped_items.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
 			gut_spawns.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
 			actor.notice.emit("Destripas %s: +%d carne y %d piel." % [an_lower, meat_qty, hide_qty])
 			if held_g != null and held_g.has_method("reduce_durability"):
 				held_g.reduce_durability(6.0)
 				if held_g.is_broken():
 					actor.notice.emit("Tu %s se ha roto!" % str(held_g.item_name))
-			_save_world_change_silent()
-			# Hide the wolf corpse after the 5-second animation finishes
-			var action_ref: Node = action
 			var gut_action_id: String = action.action_id
-			var t := get_tree().create_timer(5.0)
-			t.timeout.connect(func():
-				_hide_action_visual(action_ref)
-				action_ref.mark_depleted()
-				if not _depleted_action_ids.has(gut_action_id):
-					_depleted_action_ids.append(gut_action_id)
-				_save_world_change_silent()
-				if net != null and net.is_connected and not net.is_host:
+			_hide_action_visual(action)
+			action.mark_depleted()
+			if not _depleted_action_ids.has(gut_action_id):
+				_depleted_action_ids.append(gut_action_id)
+			for di in range(_dropped_items.size() - 1, -1, -1):
+				if str(_dropped_items[di].get("id", "")) == gut_action_id:
+					_dropped_items.remove_at(di)
+			_save_world_change_silent()
+			if net != null and net.is_connected:
+				if net.is_host:
+					if net.peer != null:
+						net.world_action_completed.rpc(gut_action_id, gut_spawns, "", Vector3.ZERO)
+				else:
 					net.world_action_completed.rpc_id(1, gut_action_id, gut_spawns, "", Vector3.ZERO)
-			)
 			return
 		"wolf_meat_raw", "bird_meat_raw":
 			var meat_item = ItemScript.create(
@@ -9562,9 +9610,9 @@ func _execute_world_action(action, actor) -> void:
 					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color, false, 0.0)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					actor.inventory.add_item(item)
+					_grant_vest_magazines(action, actor, item.item_name, item)
 					actor.equip_clothing(item.item_name, _eq_color, item)
-					actor.notice.emit("Equipas %s." % item.item_name)
-					_grant_vest_magazines(action, actor, item.item_name)
+					actor.notice.emit("Equipas %s (5 cargadores de fusil listos, pulsa [R] para recargar)." % item.item_name if item.item_name == "Chaleco táctico" else "Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -9573,9 +9621,9 @@ func _execute_world_action(action, actor) -> void:
 					return
 				else:
 					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					_grant_vest_magazines(action, actor, item.item_name, item)
 					actor.equip_clothing(item.item_name, _eq_color2, item)
-					actor.notice.emit("Equipas %s." % item.item_name)
-					_grant_vest_magazines(action, actor, item.item_name)
+					actor.notice.emit("Equipas %s (5 cargadores de fusil listos, pulsa [R] para recargar)." % item.item_name if item.item_name == "Chaleco táctico" else "Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -10274,16 +10322,21 @@ func _attract_wolves_to_noise(pos: Vector3, radius: float = 40.0) -> void:
 # cargadores completos de rifle en reserva. Los chalecos soltados por un
 # jugador llegan con el meta player_dropped y ya fueron vaciados — sin esto,
 # soltar y recoger el mismo chaleco crearía munición infinita.
-func _grant_vest_magazines(action, actor, item_name: String) -> void:
+func _grant_vest_magazines(action, actor, item_name: String, item_obj = null) -> void:
 	if item_name != "Chaleco táctico":
 		return
 	if action != null and action.has_meta("player_dropped"):
+		if item_obj != null:
+			item_obj.set_meta("player_dropped", true)
 		return
 	if actor == null or not ("_rifle_reserve_ammo" in actor):
 		return
 	var rounds: int = actor.RIFLE_MAG_SIZE * 5
 	actor._rifle_reserve_ammo += rounds
-	actor.notice.emit("El chaleco viene con 5 cargadores llenos: +%d balas de rifle." % rounds)
+	if item_obj != null:
+		item_obj.set_meta("vest_mags_granted", true)
+	var total_mags: int = int(ceil(float(actor._rifle_reserve_ammo) / float(actor.RIFLE_MAG_SIZE)))
+	actor.notice.emit("El chaleco viene con 5 cargadores llenos (+%d balas, %d cargadores en reserva). Pulsa [R] con el fusil para recargar." % [rounds, total_mags])
 
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
@@ -10431,7 +10484,7 @@ func handle_world_action_collect(action, actor) -> void:
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
 				actor.notice.emit("Coges %s." % item.item_name)
-				_grant_vest_magazines(action, actor, item.item_name)
+				_grant_vest_magazines(action, actor, item.item_name, item)
 			elif not actor.inventory.add_item(item):
 				return
 			else:
@@ -11585,7 +11638,7 @@ func _is_in_open_house(pos: Vector3) -> bool:
 #   "name", "type", "quantity", "action" (the WorldAction node to consume).
 # Tools (Cuchillo, Hacha, etc.) are included so recipes that need them
 # (e.g. tallar tronco) work from the ground.
-func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
+func get_nearby_ground_items(player_pos: Vector3, radius: float = 5.5) -> Array:
 	var result: Array = []
 	var r2 := radius * radius
 	for action in WorldActionScript.get_nearby_interactables(player_pos, radius):
@@ -11600,7 +11653,7 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
 			continue
 		var dx: float = action.global_position.x - player_pos.x
 		var dz: float = action.global_position.z - player_pos.z
-		if dx * dx + dz * dz > r2 or absf(action.global_position.y - player_pos.y) > 2.0:
+		if dx * dx + dz * dz > r2 or absf(action.global_position.y - player_pos.y) > 3.2:
 			continue
 		var iname: String = str(action.get_meta("item_name", ""))
 		var itype: String = str(action.get_meta("item_type", ""))
@@ -11622,7 +11675,8 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 3.0) -> Array:
 
 func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 	var ground_items := get_nearby_ground_items(actor.global_position)
-	var plan := CraftingSystemScript.plan_ground_craft(recipe, actor.get_ground_crafting_tools(), ground_items)
+	var inv_items: Array = actor.inventory.items if (actor != null and actor.get("inventory") != null) else []
+	var plan := CraftingSystemScript.plan_ground_craft(recipe, actor.get_ground_crafting_tools(), ground_items, inv_items)
 	if plan.is_empty():
 		return false
 	var output = plan.output
@@ -17195,14 +17249,22 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 		return "Posición no válida"
 	if pos.distance_to(actor.global_position) > 8.0:
 		return "Demasiado lejos"
-	for x in [-1.4, 0.0, 1.4]:
-		for z in [-1.7, 0.0, 1.7]:
+	var on_elevated_roof := pos.y > 2.5
+	var probe_from_y := pos.y + (0.9 if on_elevated_roof else 3.0)
+	var center_h := _get_exact_ground_y(pos.x, pos.z, probe_from_y)
+	if absf(center_h - pos.y) > 0.45:
+		return "El terreno tiene demasiado desnivel"
+	var bad_samples := 0
+	for x in [-0.85, 0.0, 0.85]:
+		for z in [-1.0, 0.0, 1.0]:
 			var sample := pos + Vector3(x, 0, z).rotated(Vector3.UP, yaw)
-			if get_river_depth_at(sample) > 0.02:
+			if not on_elevated_roof and get_river_depth_at(sample) > 0.02:
 				return "No se puede construir en el agua"
-			var height := _get_exact_ground_y(sample.x, sample.z, pos.y + 3.0)
-			if absf(height - pos.y) > 0.35:
-				return "El terreno tiene demasiado desnivel"
+			var height := _get_exact_ground_y(sample.x, sample.z, probe_from_y)
+			if absf(height - pos.y) > 0.45:
+				bad_samples += 1
+				if not on_elevated_roof or bad_samples > 4:
+					return "El terreno tiene demasiado desnivel"
 	for sh in _built_shelters:
 		var other = sh.get("pos")
 		if other is Array:
@@ -17210,11 +17272,18 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 		if other is Vector3 and pos.distance_to(other) < 4.0:
 			return "Hay otro refugio demasiado cerca"
 	var box := BoxShape3D.new()
-	box.size = Vector3(2.8, 1.6, 3.4)
+	box.size = Vector3(1.8, 1.2, 2.0) if on_elevated_roof else Vector3(2.8, 1.6, 3.4)
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = box
+	query.collision_mask = 1
 	query.transform = Transform3D(Basis(Vector3.UP, yaw), pos + Vector3.UP * 1.25)
 	query.exclude = [actor.get_rid()]
-	if not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty():
+	for hit in get_world_3d().direct_space_state.intersect_shape(query, 8):
+		var col: Object = hit.get("collider")
+		if col is Node and on_elevated_roof:
+			var cname := str((col as Node).name)
+			var pname := str((col as Node).get_parent().name) if (col as Node).get_parent() != null else ""
+			if cname.begins_with("Solid_") or pname.begins_with("Solid_") or cname.contains("Stair") or pname.contains("Stair") or cname.contains("Roof") or pname.contains("Roof"):
+				continue
 		return "Hay un obstáculo en el área del refugio"
 	return ""

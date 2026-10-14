@@ -288,7 +288,7 @@ static func _matches_input(input_name: String, item) -> bool:
 
 static var craft_error := ""
 
-static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_items: Array) -> Dictionary:
+static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_items: Array, inventory_items: Array = []) -> Dictionary:
 	craft_error = ""
 	if not RECIPES.has(recipe):
 		craft_error = "Receta desconocida."
@@ -300,8 +300,9 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 		item.max_durability = float(entry.get("max_durability", 100.0))
 		item.spoilage = float(entry.get("spoilage", 0.0))
 		sources.append({"item": item, "action": entry.action, "quantity": item.quantity, "durability": item.durability})
-	# Carried entries are tools only (e.g. the held axe); materials must be
-	# on the ground. The ground panel never consumes inventory materials.
+	for inv_item in inventory_items:
+		if inv_item != null and not _is_tool(str(inv_item.item_name)):
+			sources.append({"item": inv_item, "action": null, "quantity": inv_item.quantity, "durability": inv_item.durability})
 	for item in carried_tools:
 		if item != null and _is_tool(str(item.item_name)):
 			sources.append({"item": item, "action": null, "quantity": item.quantity, "durability": item.durability})

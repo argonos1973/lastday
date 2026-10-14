@@ -82,6 +82,10 @@ func _process(_delta: float) -> void:
 	else:
 		compass = "NW"
 	var wind_text := "Viento: %.1f m/s %s" % [strength, compass]
+	if player.has_method("get_rifle_info"):
+		var ri: Dictionary = player.get_rifle_info()
+		var mags_left: int = int(ri.get("magazines_left", 0))
+		wind_text += "\nMunición: %d/%d · Cargadores: %d (%d) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), mags_left, int(ri.get("reserve", 0))]
 	if _wind_label != null:
 		_wind_label.text = wind_text
 	# Breath hold status

@@ -320,11 +320,11 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 ]
 const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
-const RIFLE_RANGE := 150.0
+const RIFLE_RANGE := 300.0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
-const RIFLE_DAMAGE := 200.0
+const RIFLE_DAMAGE := 260.0
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -1849,7 +1849,7 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_N:
 			_light_action()
 			return
-		if event.keycode == KEY_R and _has_rifle_equipped():
+		if (event.keycode == KEY_R or event.keycode == KEY_T) and _has_rifle_equipped():
 			_reload_rifle()
 			return
 		# Atajos de equipo: H guarda el objeto que esta en la mano y J usa
@@ -2133,6 +2133,19 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 			item_ref.wetness = maxf(float(item_ref.wetness), wetness * 0.35)
 			if stats != null:
 				stats.wetness = _effective_wetness()
+		# Equipping a tactical vest guarantees its 5 magazines (25 rounds) of
+		# rifle reserve unless it was already drained/dropped by a player.
+		if item_name == "Chaleco táctico" and not is_puppet and not _initializing:
+			var already_granted := item_ref != null and bool(item_ref.get_meta("vest_mags_granted", false))
+			var from_player_drop := item_ref != null and bool(item_ref.get_meta("player_dropped", false))
+			if not already_granted and not from_player_drop:
+				var vest_rounds: int = RIFLE_MAG_SIZE * 5
+				if _rifle_reserve_ammo < vest_rounds:
+					_rifle_reserve_ammo = vest_rounds
+				if item_ref != null:
+					item_ref.set_meta("vest_mags_granted", true)
+			var mags_count: int = int(ceil(float(_rifle_reserve_ammo) / float(RIFLE_MAG_SIZE)))
+			notice.emit("Chaleco táctico equipado: %d cargadores (%d balas) para el fusil [R para recargar]." % [mags_count, _rifle_reserve_ammo])
 	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
 	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
 	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
@@ -5892,11 +5905,20 @@ func _cycle_held_item() -> void:
 func _craft_campfire() -> void:
 	if inventory == null:
 		return
-	if not inventory.has_item_name("Tronco", 2):
-		notice.emit("Necesitas 2 troncos para craftear una fogata.")
-		return
-	if not inventory.has_item_name("Palo", 1):
-		notice.emit("Necesitas 1 palo para craftear una fogata.")
+	if not inventory.has_item_name("Tronco", 2) or not inventory.has_item_name("Palo", 1):
+		var main_node := get_parent()
+		if main_node != null and main_node.has_method("craft_ground_recipe"):
+			for r in CraftingSystemScript.RECIPES:
+				if r.get("output", {}).get("type", "") == "campfire":
+					if main_node.craft_ground_recipe(self, r):
+						play_action_animation("plant", 2.0)
+						notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
+						return
+					break
+		if not inventory.has_item_name("Tronco", 2):
+			notice.emit("Necesitas 2 troncos para craftear una fogata.")
+		else:
+			notice.emit("Necesitas 1 palo para craftear una fogata.")
 		return
 	inventory.consume_item_name("Tronco", 2)
 	inventory.consume_item_name("Palo", 1)
@@ -11484,7 +11506,13 @@ func _initialize_rifle_ammo() -> void:
 		return
 	_rifle_ammo_initialized = true
 	_rifle_magazine = RIFLE_MAG_SIZE
-	_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
+	if _equipped_slots.get("chaleco", "") == "Chaleco táctico":
+		_rifle_reserve_ammo = maxi(_rifle_reserve_ammo, RIFLE_MAG_SIZE * 5)
+	elif _rifle_reserve_ammo <= 0:
+		_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
+
+func get_vest_magazines_count() -> int:
+	return int(ceil(float( maxi(0, _rifle_reserve_ammo)) / float(RIFLE_MAG_SIZE)))
 
 func _reload_rifle() -> void:
 	var rifle = get_held_item()
@@ -11494,15 +11522,15 @@ func _reload_rifle() -> void:
 		return
 	var needed := RIFLE_MAG_SIZE - _rifle_magazine
 	if needed <= 0:
-		notice.emit("Cargador lleno.")
+		notice.emit("Cargador lleno (%d/%d). Reserva: %d cargadores (%d balas)." % [_rifle_magazine, RIFLE_MAG_SIZE, get_vest_magazines_count(), _rifle_reserve_ammo])
 		return
 	if _rifle_reserve_ammo <= 0:
-		notice.emit("Sin municion de reserva.")
+		notice.emit("Sin cargadores ni munición de reserva.")
 		return
 	_is_reloading = true
 	var selection_revision := _held_selection_revision
-	notice.emit("Recargando...")
-	await get_tree().create_timer(3.0).timeout
+	notice.emit("Recargando fusil con cargador del chaleco...")
+	await get_tree().create_timer(2.2).timeout
 	_is_reloading = false
 	if is_dead or get_held_item() != rifle or selection_revision != _held_selection_revision:
 		return
@@ -11510,10 +11538,16 @@ func _reload_rifle() -> void:
 	_rifle_reserve_ammo -= to_load
 	_rifle_magazine += to_load
 	_is_reloading = false
-	notice.emit("Recargado: %d/%d en cargador, %d en reserva." % [_rifle_magazine, RIFLE_MAG_SIZE, _rifle_reserve_ammo])
+	var mags_left := get_vest_magazines_count()
+	notice.emit("Fusil recargado: %d/%d en cargador · %d cargadores en reserva (%d balas)." % [_rifle_magazine, RIFLE_MAG_SIZE, mags_left, _rifle_reserve_ammo])
 	var main := get_tree().current_scene
-	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
-		main.hud._update_equipment_labels()
+	if main != null and main.get("hud") != null:
+		if main.hud.has_method("_update_equipment_labels"):
+			main.hud._update_equipment_labels()
+		if main.hud.has_method("_update_inventory"):
+			main.hud._update_inventory()
+	if main != null and main.has_method("_sync_local_player_inventory"):
+		main.call_deferred("_sync_local_player_inventory")
 
 func get_rifle_info() -> Dictionary:
 	return {
@@ -11522,6 +11556,7 @@ func get_rifle_info() -> Dictionary:
 		"magazine": _rifle_magazine,
 		"mag_size": RIFLE_MAG_SIZE,
 		"reserve": _rifle_reserve_ammo,
+		"magazines_left": get_vest_magazines_count(),
 		"damage": RIFLE_DAMAGE,
 		"range": RIFLE_RANGE,
 	}
@@ -11544,7 +11579,11 @@ func _shoot_rifle() -> void:
 	if _shoot_cooldown > 0.0:
 		return
 	if _rifle_magazine <= 0:
-		notice.emit("Sin municion. Pulsa T para recargar.")
+		if _rifle_reserve_ammo > 0:
+			notice.emit("Cargador vacío. Recargando... (o pulsa [R])")
+			_reload_rifle()
+		else:
+			notice.emit("Sin munición. No quedan cargadores en el chaleco.")
 		return
 	if stats.energy < 3.0:
 		notice.emit("Estas demasiado cansado para disparar.")
@@ -11555,15 +11594,13 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
-	# Notify nearby wildlife of gunshot — wolves flee, prey scatters
+	# Notify nearby wildlife of gunshot — all animals flee running
 	var gunshot_pos := global_position
 	for w in get_tree().get_nodes_in_group("wildlife"):
 		if w == null or not is_instance_valid(w):
 			continue
 		if w.has_method("flee_from_gunshot"):
-			w.flee_from_gunshot(gunshot_pos, 80.0)
-		elif w.has_method("attract_to_noise"):
-			w.attract_to_noise(gunshot_pos, 80.0)
+			w.flee_from_gunshot(gunshot_pos, 120.0)
 	# Recoil: strong kick camera up, less when prone/crouching/aiming
 	var recoil_kick := 8.0
 	if is_prone:
@@ -11627,7 +11664,7 @@ func _shoot_rifle() -> void:
 	# Converge the muzzle ray on the point beneath the reticle. Parallel camera
 	# and muzzle rays miss nearby targets, especially through the scope.
 	var camera_origin: Vector3 = cam_ray_origin
-	var aim_query := PhysicsRayQueryParameters3D.create(camera_origin, camera_origin + aim_dir * RIFLE_RANGE)
+	var aim_query := PhysicsRayQueryParameters3D.create(camera_origin, camera_origin + aim_dir * RIFLE_RANGE, 5)
 	aim_query.exclude = exclude_arr
 	aim_query.collide_with_areas = true
 	var aim_hit := space_state.intersect_ray(aim_query)
@@ -11637,7 +11674,7 @@ func _shoot_rifle() -> void:
 		aim_hit = space_state.intersect_ray(aim_query)
 	var aim_target: Vector3 = aim_hit.position if not aim_hit.is_empty() else camera_origin + aim_dir * RIFLE_RANGE
 	aim_dir = (aim_target - shot_origin).normalized()
-	var hit_query := PhysicsRayQueryParameters3D.create(shot_origin, shot_origin + aim_dir * RIFLE_RANGE)
+	var hit_query := PhysicsRayQueryParameters3D.create(shot_origin, shot_origin + aim_dir * RIFLE_RANGE, 5)
 	hit_query.exclude = exclude_arr
 	hit_query.collide_with_areas = true
 	hit_query.collide_with_bodies = true
@@ -11674,7 +11711,7 @@ func _shoot_rifle() -> void:
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP) -> void:
 	# Smooth energy loss; damage remains a game abstraction rather than a medical model.
-	var damage := RIFLE_DAMAGE * exp(-0.0003 * hit_dist)
+	var damage := RIFLE_DAMAGE * exp(-0.0002 * hit_dist)
 	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D

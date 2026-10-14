@@ -40,6 +40,7 @@ var _wolf_hunger_threshold := 70.0
 var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
+var _flee_origin := Vector3.INF
 # Segundos de huida continua: al agotarse, la presa pierde el sprint y el lobo
 # (más resistente) la alcanza — sin esto, dos velocidades parecidas hacían la
 # persecución eterna.
@@ -179,6 +180,11 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
 		_prey_flee_timer = 8.0
+		if attacker is Node3D and is_instance_valid(attacker):
+			_flee_origin = (attacker as Node3D).global_position
+		_current_path.clear()
+		_path_index = 0
+		_path_recalc_timer = 0.0
 		_chase_cooldown = 10.0
 		_spawn_blood_splatter()
 		_play_pain_sound()
@@ -409,10 +415,11 @@ func _process_body(delta: float) -> void:
 		# Acumular el delta mientras esperamos para procesar el tiempo completo
 		# al despertar, no solo el delta del frame actual.
 		var lod_interval := 0.0
-		if dist_to_player > AI_LOD_MID:
-			lod_interval = 1.0
-		elif dist_to_player > AI_LOD_NEAR:
-			lod_interval = 0.25
+		if _prey_flee_timer <= 0.0:
+			if dist_to_player > AI_LOD_MID:
+				lod_interval = 1.0
+			elif dist_to_player > AI_LOD_NEAR:
+				lod_interval = 0.25
 		if lod_interval > 0.0:
 			_ai_lod_timer += delta
 			_ai_lod_clock += delta
@@ -584,10 +591,16 @@ func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 	var dist := global_position.distance_to(pos)
 	if dist > radius:
 		return
-	_prey_flee_timer = 6.0
-	_chase_cooldown = 8.0
+	_prey_flee_timer = 8.0
+	_flee_stamina = 0.0
+	_flee_origin = pos
+	_chase_cooldown = 10.0
 	_chase_target = null
+	_idle_timer = 0.0
 	_state = "patrol"
+	_current_path.clear()
+	_path_index = 0
+	_path_recalc_timer = 0.0
 
 func _retreat_from_player() -> Dictionary:
 	var away := global_position - _player.global_position
@@ -626,15 +639,21 @@ func _wolf_ai(delta: float) -> Dictionary:
 	# Flee from player when attacked or when gunshot heard nearby.
 	# Un lobo domesticado no huye de su amenaza designada: su trabajo es defender.
 	# Y ningun lobo abandona un combate canino en curso.
-	if _prey_flee_timer > 0.0 and _player != null and is_instance_valid(_player) and tamed_to == "" and _wolf_foe == null:
-		var flee_dist := global_position.distance_to(_player.global_position)
-		if flee_dist < 50.0:
-			var away := global_position - _player.global_position
+	if _prey_flee_timer > 0.0 and tamed_to == "" and _wolf_foe == null:
+		var threat_pos: Vector3 = _flee_origin
+		if not threat_pos.is_finite() and _player != null and is_instance_valid(_player):
+			threat_pos = _player.global_position
+		if not threat_pos.is_finite():
+			var np := _find_nearest_proxy()
+			if np != null:
+				threat_pos = np.global_position
+		if threat_pos.is_finite() and global_position.distance_to(threat_pos) < 130.0:
+			var away := global_position - threat_pos
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = _clamp_flee_goal(global_position, away, 30.0)
-			speed = move_speed * 3.0
+			target = _clamp_flee_goal(global_position, away, 35.0)
+			speed = move_speed * 2.8
 			_state = "patrol"
 			_chase_target = null
 			_chase_cooldown = 10.0
@@ -1066,6 +1085,17 @@ func _prey_ai(delta: float) -> Dictionary:
 			_prey_flee_timer = 5.0
 			_play_animation_by_name("gallop")
 			return {"target": target, "speed": speed}
+	# Gunshot or damage panic: flee directly away from the gunshot/threat origin
+	# even when the shooter is far beyond normal proximity detection.
+	if _prey_flee_timer > 0.0 and _flee_origin.is_finite():
+		var away_shot := global_position - _flee_origin
+		away_shot.y = 0.0
+		if away_shot.length() < 0.01:
+			away_shot = Vector3.RIGHT
+		target = _clamp_flee_goal(global_position, away_shot, 35.0)
+		speed = flee_speed
+		_play_animation_by_name("gallop")
+		return {"target": target, "speed": speed}
 	# Flee from player
 	var flee_from: Node3D = _player
 	if flee_from == null or not is_instance_valid(flee_from):
@@ -1120,6 +1150,9 @@ func _lie_corpse_flat() -> void:
 	# Add collision body so the player can interact with the corpse
 	_corpse_body = StaticBody3D.new()
 	_corpse_body.name = "CorpseBody"
+	_corpse_body.collision_layer = 2
+	_corpse_body.collision_mask = 0
+	_corpse_body.add_to_group("prop_collision")
 	var col_shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = Vector3(1.2, 0.4, 2.0)
@@ -2701,10 +2734,10 @@ func _build_animal() -> void:
 	_create_hitbox()
 
 func _create_hitbox() -> void:
-	var body_height := 1.65 if animal_type == "bear" else (1.2 if animal_type == "deer" else (0.9 if animal_type == "wolf" else 0.4))
+	var body_height := 1.75 if animal_type == "bear" else (1.35 if animal_type == "deer" else (1.05 if animal_type == "wolf" else 0.55))
 	var body_center := body_height * 0.5
 	var head_y := body_height * 0.85
-	var head_radius := 0.30 if animal_type == "bear" else (0.22 if animal_type == "deer" else 0.16)
+	var head_radius := 0.34 if animal_type == "bear" else (0.26 if animal_type == "deer" else 0.24)
 	var body_area := Area3D.new()
 	body_area.name = "BodyHitbox"
 	body_area.collision_layer = 1
@@ -2713,7 +2746,7 @@ func _create_hitbox() -> void:
 	body_area.monitoring = false
 	var body_col := CollisionShape3D.new()
 	var body_shape := CapsuleShape3D.new()
-	body_shape.radius = 0.50 if animal_type == "bear" else (0.35 if animal_type == "deer" else 0.25)
+	body_shape.radius = 0.60 if animal_type == "bear" else (0.46 if animal_type == "deer" else (0.40 if animal_type == "wolf" else 0.30))
 	body_shape.height = body_height
 	body_col.shape = body_shape
 	body_col.position.y = body_center
