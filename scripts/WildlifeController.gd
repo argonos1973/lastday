@@ -284,6 +284,12 @@ func _nearest_allowed_point(origin: Vector3):
 # force-walk it toward the nearest shore, ignoring the per-step allow check so it
 # can cross the water out of the trap.
 func _escape_if_trapped(delta: float) -> bool:
+	var _t := Time.get_ticks_usec()
+	var _r := _escape_if_trapped_impl(delta)
+	_pp("escape", _t)
+	return _r
+
+func _escape_if_trapped_impl(delta: float) -> bool:
 	if _is_position_allowed(global_position):
 		_shore_escape_target = null
 		return false
@@ -320,7 +326,20 @@ func _exit_tree() -> void:
 	_shared_sphere = null
 	_shared_cylinder = null
 
+static var perf_usec := 0
+static var perf_parts := {}
+var _is_dedicated := false
+var _dedicated_checked := false
+
+static func _pp(part: String, t0: int) -> void:
+	perf_parts[part] = int(perf_parts.get(part, 0)) + Time.get_ticks_usec() - t0
+
 func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	perf_usec += Time.get_ticks_usec() - _t0
+
+func _process_body(delta: float) -> void:
 	_update_tracks()
 	_wildlife_cache_timer += delta
 	if _wildlife_cache_timer >= 1.0:
@@ -366,7 +385,21 @@ func _process(delta: float) -> void:
 					break
 	# ---- LOD de IA por distancia al jugador ----
 	var dist_to_player := 0.0
-	if _player != null and is_instance_valid(_player) and not _near_network_observer:
+	if not _dedicated_checked:
+		_dedicated_checked = true
+		var _nm := get_node_or_null("/root/NetworkManager")
+		_is_dedicated = _nm != null and _nm.is_dedicated_server
+	if not _near_network_observer and _is_dedicated and (_player == null or not is_instance_valid(_player)):
+		# Dedicated server with no observer anywhere near: keep the world alive
+		# at the far-LOD rate instead of burning a full-rate tick per frame.
+		_ai_lod_timer += delta
+		_ai_lod_clock += delta
+		if _ai_lod_clock < 1.0:
+			return
+		_ai_lod_clock = fmod(_ai_lod_clock, 1.0)
+		delta = _ai_lod_timer
+		_ai_lod_timer = 0.0
+	elif _player != null and is_instance_valid(_player) and not _near_network_observer:
 		dist_to_player = global_position.distance_to(_player.global_position)
 		# Animales fuera de rango de cull: solo cuenta rot_timer de cadáver (ya retorna antes si _is_dead)
 		if dist_to_player > AI_LOD_CULL and animal_type != "wolf" and animal_type != "bear":
@@ -1076,10 +1109,12 @@ func _lie_corpse_flat() -> void:
 	var skel := _find_skeleton(_visual_root)
 	if skel != null:
 		skel.reset_bone_poses()
-	# Rotate the entire node -90 on Z to lie on its side (not on its back)
+	# Rotate the entire node -90 on Z to lie on its side (not on its back),
+	# preserving its elevation so rooftop/tower/hill kills stay reachable.
 	var current_y_rad := rotation.y
 	var basis := Basis.from_euler(Vector3(0.0, current_y_rad, deg_to_rad(-90.0)))
-	global_transform = Transform3D(basis, Vector3(global_position.x, 0.1, global_position.z))
+	var corpse_y := maxf(global_position.y, 0.1)
+	global_transform = Transform3D(basis, Vector3(global_position.x, corpse_y, global_position.z))
 	_visual_root.position = Vector3.ZERO
 	_visual_root.rotation_degrees = Vector3.ZERO
 	# Add collision body so the player can interact with the corpse
@@ -1310,17 +1345,18 @@ func _spawn_gut_pickups() -> void:
 	var meat_qty := _meat_count()
 	var meat_weight := 0.3
 	var meat_use_value := 15.0
+	var drop_y := maxf(base_pos.y - 0.04, 0.06)
 	# Spawn meat pieces scattered around the corpse
 	for i in range(meat_qty):
 		var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 		var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 		var pos := base_pos + offset
-		pos.y = 0.06
+		pos.y = drop_y
 		var drop_id := "gut_meat_%d_%d" % [Time.get_ticks_msec(), i]
 		if scene.has_method("_spawn_ground_pickup"):
 			scene.call("_spawn_ground_pickup", meat, "food", pos, meat_weight, 1, meat_use_value, drop_id, "wolf_meat_raw")
 	var hide_pos := base_pos + Vector3(0.15, 0.0, -0.2)
-	hide_pos.y = 0.06
+	hide_pos.y = drop_y
 	if scene.has_method("_spawn_ground_pickup"):
 		scene.call("_spawn_ground_pickup", _hide_name(), "resource", hide_pos, 0.65, _hide_count(), 0.0, "gut_hide_%d" % Time.get_ticks_msec())
 
@@ -2217,6 +2253,11 @@ func _try_flee_from_player(delta: float) -> bool:
 	return true
 
 func _update_water_depth(delta: float) -> void:
+	var _t := Time.get_ticks_usec()
+	_update_water_depth_impl(delta)
+	_pp("water_depth", _t)
+
+func _update_water_depth_impl(delta: float) -> void:
 	_water_query_timer += delta
 	if _water_query_timer >= 0.25:
 		_water_query_timer = 0.0
@@ -2231,6 +2272,11 @@ func _update_water_depth(delta: float) -> void:
 		_visual_root.position.y = _water_sink
 
 func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: float) -> void:
+	var _t := Time.get_ticks_usec()
+	_move_towards_impl(target_pos, speed, delta, turn_speed)
+	_pp("move_towards", _t)
+
+func _move_towards_impl(target_pos: Vector3, speed: float, delta: float, turn_speed: float) -> void:
 	var dir: Vector3 = target_pos - global_position
 	dir.y = 0.0
 	if dir.length() < 0.01:
@@ -2256,6 +2302,11 @@ func _move_towards(target_pos: Vector3, speed: float, delta: float, turn_speed: 
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
 
 func _snap_to_terrain() -> void:
+	var _t := Time.get_ticks_usec()
+	_snap_to_terrain_impl()
+	_pp("snap_terrain", _t)
+
+func _snap_to_terrain_impl() -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_get_exact_ground_y"):
 		global_position.y = float(scene.call("_get_exact_ground_y", global_position.x, global_position.z))
@@ -2266,6 +2317,11 @@ func _snap_to_terrain() -> void:
 # igual para el host y para los puppets de otros clientes, que se mueven por
 # _network_motion.advance en el frame anterior).
 func _update_tracks() -> void:
+	var _t := Time.get_ticks_usec()
+	_update_tracks_impl()
+	_pp("tracks", _t)
+
+func _update_tracks_impl() -> void:
 	# tracks_enabled() ya descarta el dedicado (OS.has_feature).
 	if not TrackPrintScript.tracks_enabled():
 		return
@@ -2396,6 +2452,12 @@ func _direct_route_allowed(goal: Vector3) -> bool:
 	return true
 
 func _is_position_allowed(pos: Vector3) -> bool:
+	var _t := Time.get_ticks_usec()
+	var _r := _is_position_allowed_impl(pos)
+	_pp("pos_allowed", _t)
+	return _r
+
+func _is_position_allowed_impl(pos: Vector3) -> bool:
 	var scene := get_tree().current_scene
 	if animal_type == "wolf" and scene != null and scene.has_method("is_wolf_allowed_at"):
 		return bool(scene.call("is_wolf_allowed_at", pos))
@@ -2407,25 +2469,34 @@ func _is_position_allowed(pos: Vector3) -> bool:
 	return true
 
 func _get_separation_vector() -> Vector3:
+	var _t := Time.get_ticks_usec()
+	var _r := _get_separation_vector_impl()
+	_pp("separation", _t)
+	return _r
+
+func _get_separation_vector_impl() -> Vector3:
 	var push := Vector3.ZERO
 	for node in _cached_wildlife:
-		if not is_instance_valid(node) or node.is_queued_for_deletion():
-			continue
 		if node == self:
+			continue
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
 			continue
 		if not (node is Node3D):
 			continue
 		var other := node as Node3D
+		var diff := global_position - other.global_position
+		diff.y = 0.0
+		var d_sq := diff.length_squared()
+		if d_sq <= 0.000001 or d_sq >= 9.0:
+			continue
+		# Cheap distance gate first: the dynamic property lookups below only run
+		# for animals that are actually close.
 		if other.get("animal_type") == null:
 			continue
 		if str(other.get("animal_type")) != animal_type:
 			continue
-		var diff := global_position - other.global_position
-		diff.y = 0.0
-		var d_sq := diff.length_squared()
-		if d_sq > 0.000001 and d_sq < 9.0:
-			var d := sqrt(d_sq)
-			push += diff.normalized() * (3.0 - d) / 3.0
+		var d := sqrt(d_sq)
+		push += diff.normalized() * (3.0 - d) / 3.0
 	if push.length() > 0.01:
 		return push.normalized()
 	return Vector3.ZERO
@@ -2477,6 +2548,11 @@ func _is_near_lit_campfire(pos: Vector3, radius: float) -> bool:
 	return false
 
 func _resolve_player() -> void:
+	var _t := Time.get_ticks_usec()
+	_resolve_player_impl()
+	_pp("resolve_player", _t)
+
+func _resolve_player_impl() -> void:
 	if tamed_to != "":
 		# Domesticado: solo persigue a la amenaza designada, nunca a otros
 		# jugadores por su cuenta (y jamás a su dueño).
@@ -2544,6 +2620,12 @@ func _resolve_player() -> void:
 		_player = null
 
 func _request_path(start: Vector3, goal: Vector3) -> Array:
+	var _t := Time.get_ticks_usec()
+	var _r: Array = _request_path_impl(start, goal)
+	_pp("request_path", _t)
+	return _r
+
+func _request_path_impl(start: Vector3, goal: Vector3) -> Array:
 	var scene := get_tree().current_scene
 	if animal_type == "wolf" and scene != null and scene.has_method("find_path_wolf"):
 		return scene.call("find_path_wolf", start, goal) as Array

@@ -43,7 +43,7 @@ func _update_interaction_index() -> void:
 		add_to_group("wolf_meat_pickups")
 	elif is_in_group("wolf_meat_pickups"):
 		remove_from_group("wolf_meat_pickups")
-	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "farm_plot"]
+	var spatial := action_type in ["fell_tree", "fell_bush", "pickup_item", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "farm_plot", "gut_wolf"]
 	var pos := global_position
 	var cell := Vector2i(floori(pos.x / GameConst.INTERACTION_CELL_SIZE), floori(pos.z / GameConst.INTERACTION_CELL_SIZE))
 	if _interaction_indexed and _interaction_spatial == spatial and (not spatial or cell == _interaction_cell):

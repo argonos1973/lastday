@@ -162,6 +162,11 @@ var _cached_leafy_material: Material = null
 var _mountain_shared_material: Material = null
 var _forest_rock_meshes: Array[ArrayMesh] = []
 var _generated_hills: Array = []
+# Spatial index for _generated_hills: Vector2i cell -> Array of hill indices.
+# Hills are static once generated; bucketing turns _get_ground_height's
+# per-call full scan (with trig per hill) into a single cell lookup.
+var _hill_grid := {}
+const _HILL_CELL := 48.0
 var _roof_texture: Texture2D = null
 var _shared_sphere_mesh: SphereMesh = null
 var _shared_visual_sphere_mesh: SphereMesh = null
@@ -173,8 +178,15 @@ var _shared_foliage_green_mat: StandardMaterial3D = null
 var _display_props_stripped := {}
 var river_segments_data: Array = []
 var wildlife_blockers: Array = []
+# Spatial index for wildlife_blockers: Vector2i cell -> Array of blocker indices.
+# Registration inserts a blocker into every cell its footprint can touch
+# (house_bounds can grow ~15 m past pos), so queries scan one cell only.
+var _blocker_grid := {}
+const _BLOCKER_CELL := 24.0
+const _BLOCKER_COVER := 40.0
 var _wildlife_respawn_timer := 0.0
 var _server_save_timer := 0.0
+var _perf_probe := 0.0
 # Dedicated-server graceful shutdown: stdin console commands, stop-file poll
 # (tools/stop_server.sh touches it) and the OS close request.
 const SERVER_STOP_FLAG := "user://stop_server.flag"
@@ -620,6 +632,12 @@ func _ready() -> void:
 		SaveGameHooks.preload_saved_world_state(self)
 		await _create_map()
 		_load_server_world_state()
+		# Headless has no vsync: without a cap the idle loop spins _process as
+		# fast as possible and pins a core forever. Physics is fixed at 60 Hz,
+		# so capping idle iterations to 60 matches the sim rate for free. The cap
+		# is applied only after world gen so the many process_frame awaits used
+		# during generation are not slowed to one step per 16 ms.
+		Engine.max_fps = 60
 		# Clients that registered before this scene existed were never matched:
 		# spawn their proxies and run the saved-state match now.
 		for pid in net.players.keys():
@@ -741,7 +759,7 @@ func _cleanup_tent_rifle() -> void:
 		return
 	# Strip leftover world pickups whose fixed ID is already marked collected.
 	# Each tent keeps its own rifle until that specific pickup is taken.
-	for rifle_id in ["tent_loot_rifle", "remote_tent_loot_rifle"]:
+	for rifle_id in ["tent_loot_rifle", "remote_tent_loot_rifle", "city_tent_loot_rifle"]:
 		if not _depleted_action_ids.has(rifle_id):
 			continue
 		if world_actions_by_id.has(rifle_id):
@@ -807,7 +825,7 @@ func _send_final_state() -> void:
 		for slot in player._equipped_slots.keys():
 			var item_name: String = str(player._equipped_slots[slot])
 			if not item_name.is_empty():
-				clothing_items.append(item_name)
+				clothing_items.append(player.clothing_sync_label(item_name))
 		clothing = ",".join(clothing_items)
 	var held: String = ""
 	var actual_held = player.get_held_item()
@@ -994,6 +1012,23 @@ func _process(delta: float) -> void:
 		if _server_save_timer >= 60.0:
 			_server_save_timer = 0.0
 			_save_world_change_silent()
+		_perf_probe += delta
+		if _perf_probe >= 10.0:
+			_perf_probe = 0.0
+			print("[PERF] fps=%.1f proc=%.2fms phys=%.2fms nav_proc=%.2fms wild_usec/s=%d nodes=%d phys_active=%d wild=%d" % [
+				Engine.get_frames_per_second(),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+				Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
+				Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0,
+				WildlifeController.perf_usec / 10,
+				int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+				int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
+				get_tree().get_nodes_in_group("wildlife").size(),
+			])
+			for k in WildlifeController.perf_parts.keys():
+				print("[PERF]   %s: %d ms/s" % [k, int(WildlifeController.perf_parts[k]) / 10 / 1000])
+			WildlifeController.perf_usec = 0
+			WildlifeController.perf_parts.clear()
 		return
 	# Single player: respawn wildlife periodically (no net)
 	if net == null or not net.is_connected:
@@ -2350,6 +2385,8 @@ func _notification(what: int) -> void:
 
 var _military_tent_pos := Vector3.ZERO
 var _remote_tent_pos := Vector3.ZERO
+var _city_tent_pos := Vector3.ZERO
+const CITY_TENT_YAW := 205.0
 var _spawn_zones: Array = [
 	Vector3(8.0, 0.4, 2.5),
 	Vector3(15.0, 0.4, -35.0),
@@ -3097,7 +3134,13 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.unequip_clothing(default_item)
 	if not equipped_clothing.is_empty():
 		var slots := equipped_clothing.split(",")
-		for slot_name in slots:
+		for slot_entry in slots:
+			var slot_name := slot_entry
+			var slot_pelt := ""
+			if slot_name.contains("|"):
+				var _p := slot_name.split("|")
+				slot_name = _p[0]
+				slot_pelt = _p[1] if _p.size() > 1 else ""
 			if not slot_name.is_empty():
 				var _load_color := Color(0, 0, 0, 0)
 				var _found_in_inv := false
@@ -3119,7 +3162,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 						_w = 0.4
 						_u = 0.08
 					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
-				player.equip_clothing(slot_name, _load_color)
+				player.equip_clothing(slot_name, _load_color, null, slot_pelt)
 	# Back-slotted equipment (rifle, rod, spear) lives outside the inventory
 	var back_items = extra.get("back_items", [])
 	if back_items is Array and "_stored_back_items" in player:
@@ -3212,7 +3255,7 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 				var color_arr = drop.get("color")
 				if color_arr is Array and color_arr.size() >= 4:
 					drop_color = Color(float(color_arr[0]), float(color_arr[1]), float(color_arr[2]), float(color_arr[3]))
-				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []), float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)))
+				_spawn_dropped_item_visual(str(drop["id"]), str(drop["name"]), str(drop["type"]), float(drop["weight"]), int(drop["qty"]), float(drop["use"]), dpos, drop_color, false, float(drop.get("spoilage", 0.0)), drop.get("contents", []), float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)), str(drop.get("pelt", "")))
 	for cf in campfires:
 		if not world_actions_by_id.has(str(cf["id"])):
 			_spawn_player_campfire_with_id(str(cf["id"]), cf["pos"])
@@ -3590,17 +3633,18 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 	if not collect_mode:
 		var meat_action_type := "bird_meat_raw" if meat_name == "Carne cruda de ave" else "wolf_meat_raw"
 		var base_pos: Vector3 = animal.global_position
+		var is_ded_srv: bool = net != null and bool(net.is_dedicated_server)
 		for i in range(meat_qty):
 			var angle := TAU * float(i) / float(meat_qty) + randf_range(-0.3, 0.3)
 			var offset := Vector3(cos(angle) * randf_range(0.4, 0.9), 0.0, sin(angle) * randf_range(0.4, 0.9))
 			var mpos := base_pos + offset
-			mpos.y = _get_exact_ground_y(mpos.x, mpos.z, base_pos.y + 0.5) + 0.06
+			mpos.y = (base_pos.y if is_ded_srv else _get_exact_ground_y(mpos.x, mpos.z, base_pos.y + 0.5)) + 0.06
 			_drop_seq += 1
 			var mid := "gut_meat_%d_%d_%d" % [Time.get_ticks_msec(), _drop_seq, i]
 			_spawn_ground_pickup(meat_name, "food", mpos, 0.3, 1, 15.0, mid, meat_action_type)
 			meat_drops.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": meat_action_type})
 		var hpos := base_pos + Vector3(0.15, 0.0, -0.2)
-		hpos.y = _get_exact_ground_y(hpos.x, hpos.z, base_pos.y + 0.5) + 0.04
+		hpos.y = (base_pos.y if is_ded_srv else _get_exact_ground_y(hpos.x, hpos.z, base_pos.y + 0.5)) + 0.04
 		_drop_seq += 1
 		var hid := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 		_spawn_ground_pickup(hide_name, "resource", hpos, 0.65, hide_qty, 0.0, hid)
@@ -3890,13 +3934,27 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				entry["camo"] = camo
 				break
 		var dropped_action = world_actions_by_id.get(did)
+		var dpelt := str(d.get("pelt_species", ""))
 		if is_instance_valid(dropped_action):
 			dropped_action.set_meta("item_camo", camo)
+			if not dpelt.is_empty():
+				dropped_action.set_meta("item_pelt", dpelt)
+				for entry in _dropped_items:
+					if str(entry.get("id", "")) == did:
+						entry["pelt"] = dpelt
+						break
+				# El visual del tocado ya salió con el modelo por defecto:
+				# regenerarlo con la especie correcta.
+				var old_visual := get_node_or_null("Pickup_" + did)
+				if old_visual != null and iname == "Tocado de piel animal":
+					old_visual.free()
+					var dpaths := _get_drop_model_paths(iname, itype, dpelt)
+					_try_instance_external_scene(dpaths, "Pickup_" + did, dpos, Vector3.ONE * _get_drop_scale(iname, itype), Vector3(0, randf_range(0, 360), 0), true, dpos.y)
 		if camo and iname in ["Camiseta", "Pantalones"]:
 			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
 			if dropped_visual != null:
 				_apply_camo_material_recursive(dropped_visual, Color(0.20, 0.25, 0.15))
-		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol, "camo": camo})
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol, "camo": camo, "pelt": dpelt})
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -3909,7 +3967,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			for drop in drops:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
-				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)))
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)), str(drop.get("pelt", "")))
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 	proxy.set_meta("saved_backpack", "")
@@ -4201,7 +4259,7 @@ func _sync_local_player_state() -> void:
 		for slot in player._equipped_slots.keys():
 			var item_name: String = str(player._equipped_slots[slot])
 			if not item_name.is_empty():
-				clothing_items.append(item_name)
+				clothing_items.append(player.clothing_sync_label(item_name))
 				clothing_colors.append(player.get_current_clothing_color(item_name, str(slot)))
 		clothing = ",".join(clothing_items)
 	var held: String = ""
@@ -4246,7 +4304,7 @@ func _sync_local_player_inventory() -> void:
 		for slot in player._equipped_slots.keys():
 			var item_name: String = str(player._equipped_slots[slot])
 			if not item_name.is_empty():
-				clothing_items.append(item_name)
+				clothing_items.append(player.clothing_sync_label(item_name))
 		clothing = ",".join(clothing_items)
 	var backpack: String = player.equipped_backpack
 	var held: String = ""
@@ -4568,7 +4626,7 @@ func _on_player_died() -> void:
 			for slot in player._equipped_slots.keys():
 				var item_name: String = str(player._equipped_slots[slot])
 				if not item_name.is_empty():
-					clothing_items.append(item_name)
+					clothing_items.append(player.clothing_sync_label(item_name))
 			clothing = ",".join(clothing_items)
 		var backpack := ""
 		var held := ""
@@ -4876,7 +4934,7 @@ func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 	thumb.custom_minimum_size = Vector2(52, 52)
 	thumb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	thumb.ready.connect(func():
-		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type)
+		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type, str(item.get_meta("pelt_species", "")))
 		var scale_value: float = _get_drop_scale(item.item_name, item.item_type)
 		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
@@ -5066,6 +5124,7 @@ func _net_backpack_give(item_dict: Dictionary) -> void:
 	else:
 		var dpos: Vector3 = player.global_position + (player.global_transform.basis * Vector3.FORWARD * 0.8)
 		player.set_meta("last_dropped_wetness", float(item.wetness))
+		player.set_meta("last_dropped_pelt", str(item.get_meta("pelt_species", "")))
 		player.item_dropped.emit(str(item.item_name), str(item.item_type), float(item.weight), int(item.quantity), float(item.use_value), dpos, Color(0, 0, 0, 0), false, float(item.spoilage))
 		player.notice.emit("Sin espacio: %s cae al suelo." % item.item_name)
 
@@ -5121,6 +5180,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	if player != null:
 		drop_wetness = float(player.get_meta("last_dropped_wetness", 0.0))
 		player.remove_meta("last_dropped_wetness")
+	# Especie de la piel con que se cosió la prenda ("Tocado de piel animal|oso"
+	# en el suelo muestra la cabeza de oso; al recogerla vuelve al item).
+	var drop_pelt := ""
+	if player != null:
+		drop_pelt = str(player.get_meta("last_dropped_pelt", ""))
+		player.remove_meta("last_dropped_pelt")
 	if item_type != "backpack":
 		pending_contents = []
 	# La sync va diferida al frame siguiente y captura el estado final del
@@ -5171,9 +5236,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_save_world_change_silent()
 		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness, drop_camo)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness, drop_camo, drop_pelt)
 	_tag_meat_drop(drop_id, item_name, "local")
 	var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos, "camo": drop_camo}
+	if not drop_pelt.is_empty():
+		drop_entry["pelt"] = drop_pelt
 	if spoilage > 0.0:
 		drop_entry["spoilage"] = spoilage
 	if color.a > 0.0:
@@ -5200,7 +5267,7 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		drop_entry["wetness"] = drop_wetness
 	_dropped_items.append(drop_entry)
 	if net != null and net.is_connected:
-		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents, drop_wetness, drop_camo)
+		net.item_dropped.rpc_id(1, drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, pending_contents, drop_wetness, drop_camo, drop_pelt)
 
 func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) -> void:
 	if _is_water_drop_position(pos):
@@ -5221,16 +5288,18 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		maction.set_meta("item_quantity", 1)
 		maction.set_meta("item_use_value", 15.0)
 
-func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = [], wetness: float = 0.0, camo: bool = false) -> void:
+func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), broken: bool = false, spoilage: float = 0.0, contents: Array = [], wetness: float = 0.0, camo: bool = false, pelt: String = "") -> void:
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return
 	# La y recibida puede venir de una posición elevada o de un save antiguo —
-	# fijarla a la superficie real evita drops flotando en el aire.
-	if not _pos_on_rowboat_deck(pos):
+	# fijarla a la superficie real evita drops flotando en el aire. En servidor
+	# dedicado no existen colliders de techos/torre: respetar la y resuelta por
+	# el cliente para no arrastrar drops de azoteas al terreno.
+	if not _pos_on_rowboat_deck(pos) and (net == null or not net.is_dedicated_server):
 		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	var visual_name := "Pickup_" + drop_id
-	var paths: Array = _get_drop_model_paths(item_name, item_type)
+	var paths: Array = _get_drop_model_paths(item_name, item_type, pelt)
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
@@ -5303,7 +5372,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
 	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
-	_apply_fur_clothing_material(item_name, get_node_or_null(NodePath(visual_name)))
+	_apply_fur_clothing_material(item_name, get_node_or_null(NodePath(visual_name)), pelt)
 	if camo and item_name in ["Camiseta", "Pantalones"]:
 		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
 	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
@@ -5322,6 +5391,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		action.set_meta("animal_type", corpse_kind)
 		action.set_meta("gutted", false)
 	action.set_meta("item_camo", camo)
+	if not pelt.is_empty():
+		action.set_meta("item_pelt", pelt)
 	action.set_meta("item_type", item_type)
 	action.set_meta("item_weight", item_weight)
 	action.set_meta("item_quantity", item_quantity)
@@ -5344,7 +5415,7 @@ func _track_dropped_item(entry: Dictionary) -> void:
 		return
 	_dropped_items.append(entry)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false) -> bool:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false, pelt: String = "") -> bool:
 	# Host: a client can only drop near itself and with a sane payload —
 	# otherwise arbitrary items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
@@ -5361,8 +5432,10 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 		_play_water_drop_effect(pos)
 		return true
 	# La posición del cliente puede venir elevada (drops a la altura del jugador
-	# o aterrizajes sobre colliders altos) — fijarla a la superficie real.
-	if not _pos_on_rowboat_deck(pos):
+	# o aterrizajes sobre colliders altos) — fijarla a la superficie real. En
+	# servidor dedicado no hay geometría de techos/ciudad, así que mantenemos la
+	# y que ya resolvió el cliente en `_on_item_dropped`.
+	if not _pos_on_rowboat_deck(pos) and (net == null or not net.is_dedicated_server):
 		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
 	item_weight = clampf(item_weight, 0.0, 100.0)
 	item_quantity = clampi(item_quantity, 1, 999)
@@ -5370,6 +5443,8 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	contents = contents.slice(0, 64)
 	if net != null and net.is_host:
 		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos, "camo": camo}
+		if not pelt.is_empty():
+			drop_entry["pelt"] = pelt
 		if color.a > 0.0:
 			drop_entry["color"] = [color.r, color.g, color.b, color.a]
 		if not contents.is_empty():
@@ -5379,7 +5454,7 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
 		return true
-	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness, camo)
+	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness, camo, pelt)
 	# El servidor necesita saber quién la tiró para la domesticación de lobos;
 	# el drop del propio host llega ya etiquetado por _on_item_dropped.
 	var dropper := "local"
@@ -5405,7 +5480,7 @@ func _tag_meat_drop(drop_id: String, item_name: String, feeder_key: String) -> v
 func _is_meat_item_name(n: String) -> bool:
 	return n.begins_with("Carne") or n.begins_with("Pez")
 
-func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
+func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = "") -> Array:
 	if MilitaryJackets.VARIANTS.has(item_name):
 		return [MilitaryJackets.pickup_path(item_name)]
 	if AutumnClothes.VARIANTS.has(item_name):
@@ -5523,8 +5598,12 @@ func _get_drop_model_paths(item_name: String, item_type: String) -> Array:
 					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Sombrero de pescador":
 					return [GameConst.FISHERMANS_HAT_MODEL]
-				"Gorro de piel", "Tocado de piel animal":
+				"Gorro de piel":
 					return [GameConst.FISHERMANS_HAT_MODEL]
+				"Tocado de piel animal":
+					# The trophy IS the animal: wolf head for wolf pelts, deer
+					# antlers for deer pelts — the species rides with the drop.
+					return [str(GameConst.PELT_HEADDRESS.get(pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))]
 				"Casco militar":
 					return [GameConst.MILITARY_HELMET_MODEL]
 				"Guantes survival":
@@ -5780,6 +5859,7 @@ func _create_npc() -> void:
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	_generated_hills.clear()
+	_hill_grid.clear()
 	_road_segments = _generate_road_segments() # Reserve the real route before generating relief.
 	river_segments_data = _default_river_segments()
 	_create_invisible_collision_box("GroundCollision", Vector3(0, -0.1, (CityExpansion.SOUTH_LIMIT-MAP_EXTENT)*.5), Vector3(MAP_EXTENT * 2.0, 0.2, MAP_EXTENT+CityExpansion.SOUTH_LIMIT))
@@ -5899,6 +5979,7 @@ func _create_map() -> void:
 		# Match client roof locations even though the server skips visual props.
 		_military_tent_pos = _find_flat_area_for_tent()
 		_remote_tent_pos = _find_flat_area_for_remote_tent()
+		_city_tent_pos = _find_flat_area_for_city_tent()
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
@@ -5912,6 +5993,9 @@ func _create_map() -> void:
 		await get_tree().process_frame
 	if not is_server:
 		await _flush_grass_batches()
+		await get_tree().process_frame
+		await _flush_prop_batches()
+		await _flush_bush_multimeshes()
 		await get_tree().process_frame
 		for water in get_tree().get_nodes_in_group("river_water"):
 			if water.has_method("request_reflection_refresh"):
@@ -6691,8 +6775,10 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	_create_house_ivy(origin, label, half_w, half_d, height, wall_t)
 	_create_house_interior(origin, label, id_prefix, width, depth, height)
 	preload("res://scripts/VillageArchitecture.gd").interior(self, origin, label, width, depth, height)
-	# Roof collision
-	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth), 2)
+	# Roof collision on the dedicated surface layer (4): players still stand on
+	# it (mask=3 collides with layer 1), and _get_exact_ground_y can land drops
+	# and campfires on the roof when the caller passes the player's height.
+	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth), 4)
 	# Link door to wildlife blocker so wolves can enter when door is open
 	var door_node := get_node_or_null(label + " Door")
 	if door_node != null:
@@ -7185,6 +7271,44 @@ func _find_flat_area_for_remote_tent() -> Vector3:
 			best_pos = Vector3(-420.0, 0, -380.0)
 	return best_pos
 
+func _find_flat_area_for_city_tent() -> Vector3:
+	# Third military outpost just outside the city road ring — close enough to
+	# reach on foot, far enough to stay clear of buildings and traffic lanes.
+	var best_pos := Vector3.ZERO
+	var best_score := 99999.0
+	for angle_deg in range(0, 360, 5):
+		var angle: float = deg_to_rad(float(angle_deg))
+		for dist in [150.0, 175.0, 200.0, 230.0]:
+			var cx: float = CityExpansion.CENTER.x + dist * cos(angle)
+			var cz: float = CityExpansion.CENTER.z + dist * sin(angle)
+			if cz > CityExpansion.SOUTH_LIMIT - 20.0 or cz < 460.0:
+				continue
+			if abs(cx) > MAP_EXTENT * 0.95:
+				continue
+			var cand := Vector3(cx, 0, cz)
+			if CityExpansion.near_building(cand, 10.0):
+				continue
+			if CityExpansion.on_road(cand, 6.0, _south_road_end()):
+				continue
+			if _is_near_river(cand, 15.0):
+				continue
+			var cy: float = _get_ground_height(cand)
+			var max_diff := 0.0
+			for s in range(10):
+				var sa: float = deg_to_rad(float(s) * 36.0)
+				var sy: float = _get_ground_height(Vector3(cx + 6.0 * cos(sa), 0, cz + 6.0 * sin(sa)))
+				max_diff = max(max_diff, abs(sy - cy))
+			# Prefer flat ground close to the ring edge
+			var score: float = max_diff + (dist - 150.0) * 0.02
+			if max_diff < 1.2 and score < best_score:
+				best_score = score
+				best_pos = cand
+	if best_pos == Vector3.ZERO:
+		# Fallback: south-west of the ring, off the roads
+		best_pos = CityExpansion.CENTER + Vector3(-80.0, 0, 175.0)
+	_city_tent_pos = best_pos
+	return best_pos
+
 func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
@@ -7197,51 +7321,7 @@ func _create_world_details() -> void:
 	# Add box collision for tent walls, leaving a door gap on the front (-Z side)
 	var tent_node := get_node_or_null("MilitaryTent")
 	if tent_node != null:
-		_remove_collision_from_node(tent_node)
-		var _meshes: Array = []
-		NodeUtils.collect_mesh_instances(tent_node, _meshes)
-		for m in _meshes:
-			var mi := m as MeshInstance3D
-			if mi != null:
-				for c in mi.get_children():
-					if c is CollisionShape3D or c is StaticBody3D:
-						c.queue_free()
-		var tw := 4.5
-		var td := 6.0
-		var th := 1.5
-		var door_w := 2.0
-		var body := StaticBody3D.new()
-		body.name = "MilitaryTentCollision"
-		add_child(body)
-		body.global_position = tent_node.global_position
-		body.global_rotation = tent_node.global_rotation
-		var back := CollisionShape3D.new()
-		back.shape = BoxShape3D.new()
-		back.shape.size = Vector3(tw * 2.0, th * 2.0, 0.3)
-		back.position = Vector3(0.0, th, -td)
-		body.add_child(back)
-		var left := CollisionShape3D.new()
-		left.shape = BoxShape3D.new()
-		left.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
-		left.position = Vector3(-tw, th, 0.0)
-		body.add_child(left)
-		var right := CollisionShape3D.new()
-		right.shape = BoxShape3D.new()
-		right.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
-		right.position = Vector3(tw, th, 0.0)
-		body.add_child(right)
-		var front_left := CollisionShape3D.new()
-		front_left.shape = BoxShape3D.new()
-		front_left.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
-		front_left.position = Vector3(-(tw + door_w) * 0.5, th, td)
-		body.add_child(front_left)
-		var front_right := CollisionShape3D.new()
-		front_right.shape = BoxShape3D.new()
-		front_right.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
-		front_right.position = Vector3((tw + door_w) * 0.5, th, td)
-		body.add_child(front_right)
-		_add_collision_to_prop_group(body)
-		_create_invisible_collision_box_rotated("MilitaryTentRoofCollision", tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), 35.0, 2)
+		_build_military_tent_collision(tent_node, "MilitaryTentCollision", "MilitaryTentRoofCollision")
 		_add_tent_interior_light(tent_node, "MilitaryTentLight")
 	# Fruit trees — near tent, near barn, and scattered in forest
 	_create_fruit_trees()
@@ -7252,53 +7332,73 @@ func _create_world_details() -> void:
 	HOUSE_FOOTPRINTS.append({"origin": remote_tent_pos, "w": 9.0, "d": 12.0})
 	var remote_tent_node := get_node_or_null("MilitaryTentRemote")
 	if remote_tent_node != null:
-		_remove_collision_from_node(remote_tent_node)
-		var _rt_meshes: Array = []
-		NodeUtils.collect_mesh_instances(remote_tent_node, _rt_meshes)
-		for m in _rt_meshes:
-			var mi := m as MeshInstance3D
-			if mi != null:
-				for c in mi.get_children():
-					if c is CollisionShape3D or c is StaticBody3D:
-						c.queue_free()
-		var rtw := 4.5
-		var rtd := 6.0
-		var rth := 1.5
-		var rdoor_w := 2.0
-		var rbody := StaticBody3D.new()
-		rbody.name = "MilitaryTentRemoteCollision"
-		add_child(rbody)
-		rbody.global_position = remote_tent_node.global_position
-		rbody.global_rotation = remote_tent_node.global_rotation
-		var rback := CollisionShape3D.new()
-		rback.shape = BoxShape3D.new()
-		rback.shape.size = Vector3(rtw * 2.0, rth * 2.0, 0.3)
-		rback.position = Vector3(0.0, rth, -rtd)
-		rbody.add_child(rback)
-		var rleft := CollisionShape3D.new()
-		rleft.shape = BoxShape3D.new()
-		rleft.shape.size = Vector3(0.3, rth * 2.0, rtd * 2.0)
-		rleft.position = Vector3(-rtw, rth, 0.0)
-		rbody.add_child(rleft)
-		var rright := CollisionShape3D.new()
-		rright.shape = BoxShape3D.new()
-		rright.shape.size = Vector3(0.3, rth * 2.0, rtd * 2.0)
-		rright.position = Vector3(rtw, rth, 0.0)
-		rbody.add_child(rright)
-		var rfront_left := CollisionShape3D.new()
-		rfront_left.shape = BoxShape3D.new()
-		rfront_left.shape.size = Vector3(rtw - rdoor_w, rth * 2.0, 0.3)
-		rfront_left.position = Vector3(-(rtw + rdoor_w) * 0.5, rth, rtd)
-		rbody.add_child(rfront_left)
-		var rfront_right := CollisionShape3D.new()
-		rfront_right.shape = BoxShape3D.new()
-		rfront_right.shape.size = Vector3(rtw - rdoor_w, rth * 2.0, 0.3)
-		rfront_right.position = Vector3((rtw + rdoor_w) * 0.5, rth, rtd)
-		rbody.add_child(rfront_right)
-		_add_collision_to_prop_group(rbody)
-		_create_invisible_collision_box_rotated("MilitaryTentRemoteRoofCollision", remote_tent_node.global_position + Vector3(0, rth * 2.0, 0), Vector3(rtw * 2.0, 0.7, rtd * 2.0), 120.0, 2)
+		_build_military_tent_collision(remote_tent_node, "MilitaryTentRemoteCollision", "MilitaryTentRemoteRoofCollision")
 		_add_tent_interior_light(remote_tent_node, "MilitaryTentRemoteLight")
 	_remote_tent_pos = remote_tent_pos
+	# Military store at the city edge — tent + camo net + supply container
+	var city_tent_pos := _find_flat_area_for_city_tent()
+	var city_tent_ground_y := _get_exact_ground_y(city_tent_pos.x, city_tent_pos.z)
+	_try_instance_external_scene(["res://assets/models/props/tent/tent_military.glb"], "MilitaryTentCity", Vector3(city_tent_pos.x, city_tent_ground_y, city_tent_pos.z), Vector3.ONE * 1.5, Vector3(0, CITY_TENT_YAW, 0), true, 0.0)
+	HOUSE_FOOTPRINTS.append({"origin": city_tent_pos, "w": 9.0, "d": 12.0})
+	var city_tent_node := get_node_or_null("MilitaryTentCity")
+	if city_tent_node != null:
+		_build_military_tent_collision(city_tent_node, "MilitaryTentCityCollision", "MilitaryTentCityRoofCollision")
+		_add_tent_interior_light(city_tent_node, "MilitaryTentCityLight")
+		_try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", Vector3(city_tent_pos.x, city_tent_ground_y + 3.9, city_tent_pos.z), Vector3.ONE * 3.6, Vector3(0, CITY_TENT_YAW, 0), true, 0.0)
+		var cont_off := Vector3(8.5, 0.0, -2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
+		var cont_pos := Vector3(city_tent_pos.x + cont_off.x, city_tent_ground_y, city_tent_pos.z + cont_off.z)
+		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "MilitaryTentCityContainer", cont_pos, Vector3.ONE, Vector3(0, CITY_TENT_YAW + 90.0, 0), true, 0.0):
+			_create_invisible_collision_box_rotated("MilitaryTentCityContainerCollision", cont_pos + Vector3(0, 1.5, 0), Vector3(7.3, 3.0, 2.9), CITY_TENT_YAW + 90.0)
+			_register_wildlife_blocker(cont_pos, 7.0)
+
+# Box collision for a military tent: back/left/right walls plus a front wall
+# split around a door gap, then a thin roof plate. Yaw comes from the node.
+func _build_military_tent_collision(tent_node: Node3D, body_name: String, roof_name: String) -> void:
+	_remove_collision_from_node(tent_node)
+	var _meshes: Array = []
+	NodeUtils.collect_mesh_instances(tent_node, _meshes)
+	for m in _meshes:
+		var mi := m as MeshInstance3D
+		if mi != null:
+			for c in mi.get_children():
+				if c is CollisionShape3D or c is StaticBody3D:
+					c.queue_free()
+	var tw := 4.5
+	var td := 6.0
+	var th := 1.5
+	var door_w := 2.0
+	var body := StaticBody3D.new()
+	body.name = body_name
+	add_child(body)
+	body.global_position = tent_node.global_position
+	body.global_rotation = tent_node.global_rotation
+	var back := CollisionShape3D.new()
+	back.shape = BoxShape3D.new()
+	back.shape.size = Vector3(tw * 2.0, th * 2.0, 0.3)
+	back.position = Vector3(0.0, th, -td)
+	body.add_child(back)
+	var left := CollisionShape3D.new()
+	left.shape = BoxShape3D.new()
+	left.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+	left.position = Vector3(-tw, th, 0.0)
+	body.add_child(left)
+	var right := CollisionShape3D.new()
+	right.shape = BoxShape3D.new()
+	right.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+	right.position = Vector3(tw, th, 0.0)
+	body.add_child(right)
+	var front_left := CollisionShape3D.new()
+	front_left.shape = BoxShape3D.new()
+	front_left.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+	front_left.position = Vector3(-(tw + door_w) * 0.5, th, td)
+	body.add_child(front_left)
+	var front_right := CollisionShape3D.new()
+	front_right.shape = BoxShape3D.new()
+	front_right.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+	front_right.position = Vector3((tw + door_w) * 0.5, th, td)
+	body.add_child(front_right)
+	_add_collision_to_prop_group(body)
+	_create_invisible_collision_box_rotated(roof_name, tent_node.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), tent_node.rotation_degrees.y, 4)
 
 # Warm fill light so floor loot inside the shaded canvas is actually visible.
 func _add_tent_interior_light(tent_node: Node3D, light_name: String) -> void:
@@ -8401,6 +8501,69 @@ func _create_house_loot() -> void:
 		_create_pickup_item(food_data)
 	# Guaranteed backpack in remote tent
 	_create_backpack_pickup("remote_tent_backpack_0", _find_pos_inside_house(remote_tent_origin, remote_tent_half_w - 1.0, remote_tent_half_d - 1.0) + Vector3(0, remote_tent_ground_y + 0.06, 0))
+	# City military store — same military pool, guaranteed rifle + gear
+	var city_tent_origin := _city_tent_pos
+	var city_tent_half_w := 4.0
+	var city_tent_half_d := 5.5
+	var city_tent_ground_y := _get_exact_ground_y(city_tent_origin.x, city_tent_origin.z)
+	var city_tent_floor_y := city_tent_ground_y + 0.10
+	if not _depleted_action_ids.has("city_tent_loot_rifle"):
+		var ct_rifle: Dictionary = rifle_template.duplicate()
+		ct_rifle["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+		ct_rifle["pos"].y = city_tent_floor_y
+		ct_rifle["floor_y"] = city_tent_floor_y
+		ct_rifle["id"] = "city_tent_loot_rifle"
+		_create_pickup_item(ct_rifle)
+	else:
+		_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+	_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+	if not _depleted_action_ids.has("city_tent_loot_hat"):
+		var ct_hat: Dictionary = hat_template.duplicate()
+		ct_hat["pos"] = city_tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
+		ct_hat["pos"].y = city_tent_floor_y
+		ct_hat["floor_y"] = city_tent_floor_y
+		ct_hat["scale"] = 1.4
+		ct_hat["id"] = "city_tent_loot_hat"
+		_create_pickup_item(ct_hat)
+	var city_tent_helmet := {"id": "city_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, CITY_TENT_YAW, 0), "color": Color.TRANSPARENT, "floor_y": city_tent_floor_y, "pos": city_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)}
+	_create_pickup_item(city_tent_helmet)
+	var city_tent_vest: Dictionary = tent_loot_pool[18].duplicate()
+	city_tent_vest["id"] = "city_tent_loot_vest"
+	city_tent_vest["pos"] = city_tent_origin + Vector3(1.6, 0.0, -1.4).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
+	city_tent_vest["floor_y"] = city_tent_floor_y
+	_create_pickup_item(city_tent_vest)
+	var city_tent_pack: Dictionary = tent_loot_pool[19].duplicate()
+	city_tent_pack["id"] = "city_tent_loot_milbackpack"
+	city_tent_pack["pos"] = city_tent_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
+	city_tent_pack["floor_y"] = city_tent_floor_y
+	_create_pickup_item(city_tent_pack)
+	var city_tent_loot := [
+		tent_loot_pool[0], # Chaqueta de campaña verde
+		tent_loot_pool[1], # Chaqueta de campaña azul
+		tent_loot_pool[3], # Pantalones militares
+		tent_loot_pool[6], # Pantalones camuflaje desert
+		tent_loot_pool[12], # Guantes militares
+		tent_loot_pool[15], # Lata de guiso
+		tent_loot_pool[16], # Lata de atun
+		tent_loot_pool[17], # Botella de plastico
+	]
+	# Guaranteed: 1 jacket + 1 pants + 1 extra (gloves/alt jacket/alt pants)
+	var ct_extra_choices := [1, 3, 4]
+	var ct_guaranteed := [0, 2, ct_extra_choices[_world_rng.randi() % ct_extra_choices.size()]]
+	var _ct_loot_idx := 0
+	for gidx in ct_guaranteed:
+		var g_data: Dictionary = city_tent_loot[gidx].duplicate()
+		g_data["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+		g_data["pos"].y = city_tent_ground_y + 0.06
+		g_data["id"] = "city_tent_loot_item_%d" % _ct_loot_idx
+		_ct_loot_idx += 1
+		_create_pickup_item(g_data)
+	for _fi in range(2):
+		var food_data: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
+		food_data["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+		food_data["pos"].y = city_tent_ground_y + 0.06
+		food_data["id"] = "city_tent_loot_food_%d" % _fi
+		_create_pickup_item(food_data)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
@@ -8618,17 +8781,30 @@ func _apply_military_drop_material(item_name: String, node: Node) -> void:
 		else:
 			_apply_camo_material_recursive(node as Node3D, Color(0.20, 0.25, 0.15))
 
-func _apply_fur_clothing_material(item_name: String, node: Node) -> void:
+func _apply_fur_clothing_material(item_name: String, node: Node, pelt: String = "") -> void:
 	if not (node is Node3D):
+		return
+	# El tocado cae con el modelo real del animal (texturas propias); las demás
+	# prendas de piel llevan la textura de la especie via shader triplanar.
+	if item_name == "Tocado de piel animal":
 		return
 	var fur_tints := {
 		"Chaqueta de piel": Color(0.29, 0.20, 0.12),
 		"Botas de piel": Color(0.38, 0.27, 0.16),
 		"Gorro de piel": Color(0.31, 0.22, 0.13),
-		"Tocado de piel animal": Color(0.22, 0.15, 0.09),
 	}
 	if fur_tints.has(item_name):
-		_apply_color_material_recursive(node as Node3D, fur_tints[item_name])
+		var fur_mat := MaterialFactory.pelt_fur_material(pelt) if not pelt.is_empty() else null
+		if fur_mat != null:
+			var stack: Array = [node]
+			while not stack.is_empty():
+				var n: Node = stack.pop_back()
+				if n is MeshInstance3D:
+					(n as MeshInstance3D).material_override = fur_mat
+				for c in n.get_children():
+					stack.append(c)
+		else:
+			_apply_color_material_recursive(node as Node3D, fur_tints[item_name])
 
 func _apply_camo_material_recursive(node: Node3D, base_color: Color) -> void:
 	var mat := StandardMaterial3D.new()
@@ -8834,6 +9010,12 @@ func _shrink_bush_animation(action) -> void:
 	if visual_name.is_empty():
 		return
 	var visual_names := visual_name.split("|", false)
+	# Batched bushes live inside MultiMesh chunks — materialize a real node
+	# first so the shrink tween has something to animate.
+	if _bush_mm_entries.has(_bush_pos_key(action.position)):
+		for vn in visual_names:
+			if get_node_or_null(vn) == null:
+				_materialize_bush_node(vn, action.position)
 	for vn in visual_names:
 		var node := get_node_or_null(vn)
 		if node == null or not is_instance_valid(node):
@@ -9078,6 +9260,9 @@ func _hide_action_visual(action) -> void:
 	var collision_name := str(action.get_meta("collision_name")) if action.has_meta("collision_name") else ""
 	if visual_name.is_empty() and collision_name.is_empty():
 		return
+	# Batched bushes have no per-action node — hide the MultiMesh instance.
+	if str(action.action_id).begins_with("fell_bush_"):
+		_hide_batched_bush(action.position)
 	var visual_names := visual_name.split("|", false)
 	var freed_any := false
 	# 1. Search the "world_action_visual" group
@@ -9296,6 +9481,8 @@ func _execute_world_action(action, actor) -> void:
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if item.item_type == "clothing":
 				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
+			if action.has_meta("item_pelt"):
+				item.set_meta("pelt_species", str(action.get_meta("item_pelt")))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			# If clothing on ground and holding knife: cut into rags (not shoes)
@@ -9360,6 +9547,7 @@ func _execute_world_action(action, actor) -> void:
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
+								actor.set_meta("last_dropped_pelt", str(actor.inventory.items[i].get_meta("pelt_species", "")))
 								actor.inventory.remove_index(i)
 								break
 					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
@@ -10197,6 +10385,8 @@ func handle_world_action_collect(action, actor) -> void:
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if item.item_type == "clothing":
 				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
+			if action.has_meta("item_pelt"):
+				item.set_meta("pelt_species", str(action.get_meta("item_pelt")))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
 			if action.has_meta("item_wetness"):
@@ -11353,7 +11543,7 @@ func _is_player_in_house(pos: Vector3) -> bool:
 	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
 	# Use the actual generated tent locations and their model rotations.
-	for tent in [{"pos": _military_tent_pos, "yaw": 35.0}, {"pos": _remote_tent_pos, "yaw": 120.0}]:
+	for tent in [{"pos": _military_tent_pos, "yaw": 35.0}, {"pos": _remote_tent_pos, "yaw": 120.0}, {"pos": _city_tent_pos, "yaw": CITY_TENT_YAW}]:
 		var origin: Vector3 = tent["pos"]
 		if origin == Vector3.ZERO:
 			continue
@@ -11430,13 +11620,14 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 		return false
 	var output = plan.output
 	var pos: Vector3 = actor.global_position - actor.global_basis.z * 0.8
-	pos.y = _get_exact_ground_y(pos.x, pos.z) + 0.06
+	var craft_y: float = float(actor.global_position.y) + 0.5
+	pos.y = _get_exact_ground_y(pos.x, pos.z, craft_y) + 0.06
 	if output.item_type == "shelter":
 		pos = actor.get_meta("shelter_placement_position", pos)
 	var drop_positions: Array[Vector3] = []
 	for index in range(output.quantity):
 		var drop_pos: Vector3 = pos + actor.global_basis.x * (float(index) - float(output.quantity - 1) * 0.5) * 0.45
-		drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z) + 0.06
+		drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z, craft_y) + 0.06
 		if _is_water_drop_position(drop_pos):
 			CraftingSystemScript.craft_error = "Necesitas suelo seco para dejar lo fabricado."
 			return false
@@ -11467,6 +11658,7 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 		for drop_pos in drop_positions:
 			actor.set_meta("last_dropped_durability", output.durability)
 			actor.set_meta("last_dropped_max_durability", output.max_durability)
+			actor.set_meta("last_dropped_pelt", str(output.get_meta("pelt_species", "")))
 			_on_item_dropped(output.item_name, output.item_type, output.weight, 1, output.use_value, drop_pos, Color(0, 0, 0, 0), false, output.spoilage)
 	actor.inventory.changed.emit()
 	_save_world_change_silent()
@@ -11906,16 +12098,14 @@ func _create_river_seam_cover(center: Vector3, size: Vector2, yaw: float) -> voi
 func _create_river_pebble_cluster(pos: Vector3, along: Vector3, across: Vector3, side: float) -> void:
 	# Half the clusters come from the Blender pebble patch (real small stones);
 	# the rest are small textured spheres — pebble-sized, not slabs.
-	if _world_rng.randf() < 0.5 and _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * _world_rng.randf_range(0.55, 1.0), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
-		_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.34, 0.35, 0.37))
+	if _world_rng.randf() < 0.5 and _queue_shore_prop(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), pos, Vector3.ONE * _world_rng.randf_range(0.55, 1.0), Vector3(0, _world_rng.randf_range(0, 360), 0), Vector3(0.34, 0.35, 0.37)):
 		return
 	for i in range(3 + _world_rng.randi() % 4):
 		var pebble_pos: Vector3 = pos + along * _world_rng.randf_range(-0.65, 0.65) + across * side * _world_rng.randf_range(-0.22, 0.56)
 		pebble_pos.y = 0.055
 		var pebble_scale: Vector3 = Vector3(_world_rng.randf_range(0.05, 0.15), _world_rng.randf_range(0.02, 0.05), _world_rng.randf_range(0.05, 0.13))
-		var texture_path: String = MaterialFactory.POLY_RIVER_PEBBLES_DIFF if _world_rng.randf() < 0.62 else MaterialFactory.POLY_ROCK_07_DIFF
-		_create_textured_visual_sphere("RiverPebbleClusterStone", pebble_pos, pebble_scale, texture_path, Color(0.30, 0.29, 0.25))
-		_apply_rock_material(get_child(get_child_count() - 1))
+		var _texture_roll := _world_rng.randf() < 0.62
+		_queue_rock_sphere(pebble_pos, pebble_scale, Vector3(0.38, 0.40, 0.42))
 
 # --- Orillas reales: banda texturizada de arena/barro + props de Blender ---
 
@@ -12126,21 +12316,18 @@ func _scatter_shore_props(center: Vector3, size: Vector2, yaw: float) -> void:
 			# Driftwood lies roughly parallel to the waterline
 			var tangent_yaw := rad_to_deg(atan2(-shore_dir.z, shore_dir.x)) + _world_rng.randf_range(-28.0, 28.0)
 			var sc := _world_rng.randf_range(0.7, 1.1)
-			if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_DRIFTWOOD, _world_rng), "ShoreDriftwood", pos, Vector3.ONE * sc, Vector3(0, tangent_yaw, 0), false, 0.0):
-				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.40, 0.35, 0.29))
+			_queue_shore_prop(NodeUtils.shuffled_paths(SHORE_DRIFTWOOD, _world_rng), pos, Vector3.ONE * sc, Vector3(0, tangent_yaw, 0), Vector3(0.40, 0.35, 0.29))
 		elif roll < 0.55:
 			_create_shore_stone(pos, Vector3(_world_rng.randf_range(0.3, 0.8), _world_rng.randf_range(0.15, 0.4), _world_rng.randf_range(0.3, 0.8)))
 		else:
 			var sc3 := _world_rng.randf_range(0.5, 0.95)
-			if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), "ShorePebblePatch", pos, Vector3.ONE * sc3, Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
-				_apply_rock_material(get_child(get_child_count() - 1), Vector3(0.34, 0.35, 0.37))
+			_queue_shore_prop(NodeUtils.shuffled_paths(SHORE_PEBBLES, _world_rng), pos, Vector3.ONE * sc3, Vector3(0, _world_rng.randf_range(0, 360), 0), Vector3(0.34, 0.35, 0.37))
 
 # Flat water-worn stone for river/lake edges — falls back to the textured
 # boulder if the Blender props are unavailable.
 func _create_shore_stone(pos: Vector3, fallback_scale: Vector3) -> void:
 	var sc := _world_rng.randf_range(0.09, 0.22)
-	if _try_instance_external_scene(NodeUtils.shuffled_paths(SHORE_FLATSTONES, _world_rng), "ShoreFlatStone", pos, Vector3(sc, sc * 0.6, sc), Vector3(0, _world_rng.randf_range(0, 360), 0), false, 0.0):
-		_apply_rock_material(get_child(get_child_count() - 1))
+	if _queue_shore_prop(NodeUtils.shuffled_paths(SHORE_FLATSTONES, _world_rng), pos, Vector3(sc, sc * 0.6, sc), Vector3(0, _world_rng.randf_range(0, 360), 0), Vector3(0.38, 0.40, 0.42)):
 		return
 	_create_polyhaven_boulder(pos, fallback_scale)
 
@@ -12550,6 +12737,7 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	if CityExpansion.reserves_terrain(pos, maxf(radius_x, radius_z)): return
 	if _is_near_road(pos, maxf(radius_x, radius_z)+5.0): return
 	if not node_name.contains("SnowCap"):
+		var hill_idx := _generated_hills.size()
 		_generated_hills.append({
 			"pos": pos,
 			"radius_x": radius_x,
@@ -12557,6 +12745,15 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			"height": height,
 			"yaw_rad": deg_to_rad(yaw)
 		})
+		var cover := maxf(radius_x, radius_z)
+		var hc0 := Vector2i(floori((pos.x - cover) / _HILL_CELL), floori((pos.z - cover) / _HILL_CELL))
+		var hc1 := Vector2i(floori((pos.x + cover) / _HILL_CELL), floori((pos.z + cover) / _HILL_CELL))
+		for hcx in range(hc0.x, hc1.x + 1):
+			for hcz in range(hc0.y, hc1.y + 1):
+				var hcell := Vector2i(hcx, hcz)
+				if not _hill_grid.has(hcell):
+					_hill_grid[hcell] = []
+				_hill_grid[hcell].append(hill_idx)
 	# Dedicated server only needs the analytic record above — no mesh or
 	# collision body is built there.
 	if net != null and net.is_dedicated_server:
@@ -13675,6 +13872,14 @@ func _register_wildlife_blocker(pos: Vector3, radius := 1.8) -> int:
 		"radius": radius,
 		"door": null
 	})
+	var c0 := Vector2i(floori((pos.x - _BLOCKER_COVER) / _BLOCKER_CELL), floori((pos.z - _BLOCKER_COVER) / _BLOCKER_CELL))
+	var c1 := Vector2i(floori((pos.x + _BLOCKER_COVER) / _BLOCKER_CELL), floori((pos.z + _BLOCKER_COVER) / _BLOCKER_CELL))
+	for cx in range(c0.x, c1.x + 1):
+		for cz in range(c0.y, c1.y + 1):
+			var cell := Vector2i(cx, cz)
+			if not _blocker_grid.has(cell):
+				_blocker_grid[cell] = []
+			_blocker_grid[cell].append(idx)
 	return idx
 
 func _check_door_open(door, blocker: Dictionary) -> bool:
@@ -13691,7 +13896,9 @@ func _check_door_open(door, blocker: Dictionary) -> bool:
 
 func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 	var p := Vector2(pos.x, pos.z)
-	for blocker in wildlife_blockers:
+	var cell := Vector2i(floori(pos.x / _BLOCKER_CELL), floori(pos.z / _BLOCKER_CELL))
+	for idx in _blocker_grid.get(cell, []):
+		var blocker: Dictionary = wildlife_blockers[idx]
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var door = blocker.get("door", null)
 		var door_is_open := _check_door_open(door, blocker)
@@ -13745,23 +13952,37 @@ func _add_collision_to_prop_group(root: Node) -> void:
 	for child in root.get_children():
 		_add_collision_to_prop_group(child)
 
+var _ground_exclude_rids: Array[RID] = []
+var _ground_exclude_refresh := 0.0
+
 func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 	# Hills from _generated_hills are the analytic terrain height. The physics
 	# raycast finds prop surfaces and hill collision meshes — but on the
 	# dedicated server there are no hill meshes, only the flat GroundCollision
-	# plane, so the ray alone would pin wildlife/drops at y≈0 (under the
-	# client's rendered terrain). Take whichever is higher.
+	# plane (top at y=0), so the ray can never beat the analytic height and the
+	# whole scan is wasted — skip it there.
 	var analytic_y := _get_ground_height(Vector3(x, 0.0, z))
+	if net != null and net.is_dedicated_server:
+		return analytic_y
 	var space_state := get_world_3d().direct_space_state
 	if space_state != null:
 		var query := PhysicsRayQueryParameters3D.create(Vector3(x, from_y, z), Vector3(x, -50.0, z))
-		query.collision_mask = 1
-		var exclude_rids: Array[RID] = []
-		for node in get_tree().get_nodes_in_group("prop_collision"):
-			if node is CollisionObject3D:
-				exclude_rids.append((node as CollisionObject3D).get_rid())
-		if not exclude_rids.is_empty():
-			query.exclude = exclude_rids
+		# Roof/floor surfaces live on collision layer 3 (bit 4). They only count
+		# when the caller passed a real entity height (drops/crafting at the
+		# player's level); generation callers use the 500 m sky probe, which must
+		# keep seeing through roofs to reach the interior floor.
+		query.collision_mask = 5 if from_y < 400.0 else 1
+		# get_nodes_in_group walks the whole tree — cache the RID list for a few
+		# seconds instead of rebuilding it on every wildlife step.
+		var now := Time.get_ticks_msec()
+		if now > _ground_exclude_refresh:
+			_ground_exclude_refresh = now + 3000
+			_ground_exclude_rids.clear()
+			for node in get_tree().get_nodes_in_group("prop_collision"):
+				if node is CollisionObject3D:
+					_ground_exclude_rids.append((node as CollisionObject3D).get_rid())
+		if not _ground_exclude_rids.is_empty():
+			query.exclude = _ground_exclude_rids
 		var result := space_state.intersect_ray(query)
 		if not result.is_empty() and result.has("position"):
 			return maxf((result["position"] as Vector3).y, analytic_y)
@@ -13769,7 +13990,9 @@ func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 
 func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0
-	for hill in _generated_hills:
+	var hcell := Vector2i(floori(pos.x / _HILL_CELL), floori(pos.z / _HILL_CELL))
+	for hill_idx in _hill_grid.get(hcell, []):
+		var hill: Dictionary = _generated_hills[hill_idx]
 		var dx_world: float = pos.x - hill.pos.x
 		var dz_world: float = pos.z - hill.pos.z
 		
@@ -15147,6 +15370,212 @@ func _flush_grass_batches() -> void:
 			await get_tree().process_frame
 
 #region PRIMITIVAS Y GEOMETRÍA (PrimitiveBuilder)
+
+# Decorative-prop batching: the world used to spawn one MeshInstance3D per
+# pebble/stone/bush (~40k geometry instances). On the Compatibility renderer
+# every instance costs per-frame render-server bookkeeping regardless of
+# visibility, so props are queued during generation and flushed into spatially
+# chunked MultiMeshes — same strategy as the grass/forest batches.
+var _prop_batch_items: Array = []        # {path|mesh, tint, t}
+var _prop_model_cache: Dictionary = {}   # path -> [{mesh, local, mat}]
+var _prop_mat_cache: Dictionary = {}     # tint -> Material
+var _pending_bushes: Array = []          # {path, pos, t}
+var _bush_mm_entries: Dictionary = {}    # pos key -> {mmis, inst, t, pos, path}
+var _bush_unit_offsets: Dictionary = {}  # path -> float
+
+func _node_transform_relative_to(root: Node3D, node: Node3D) -> Transform3D:
+	var t := node.transform
+	var p := node.get_parent()
+	while p != null and p != root and p is Node3D:
+		t = (p as Node3D).transform * t
+		p = p.get_parent()
+	return t
+
+func _prop_model_submeshes(path: String) -> Array:
+	if _prop_model_cache.has(path):
+		return _prop_model_cache[path]
+	var subs: Array = []
+	var scene = _get_external_scene_resource(path)
+	var inst: Node = null
+	if scene is PackedScene:
+		inst = (scene as PackedScene).instantiate()
+	elif scene is Node3D:
+		inst = (scene as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION)
+	if inst is Node3D:
+		var root := inst as Node3D
+		_strip_display_props(root)
+		var meshes: Array = []
+		NodeUtils.collect_mesh_instances(root, meshes)
+		for m in meshes:
+			var mi := m as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			subs.append({"mesh": mi.mesh, "local": _node_transform_relative_to(root, mi), "mat": mi.get_active_material(0)})
+		inst.free()
+	_prop_model_cache[path] = subs
+	return subs
+
+func _bush_unit_offset(path: String) -> float:
+	if _bush_unit_offsets.has(path):
+		return float(_bush_unit_offsets[path])
+	var unit := 1000000.0
+	for sm in _prop_model_submeshes(path):
+		var aabb: AABB = (sm.local as Transform3D) * (sm.mesh as Mesh).get_aabb()
+		unit = minf(unit, aabb.position.y)
+	if unit > 999999.0:
+		unit = 0.0
+	_bush_unit_offsets[path] = unit
+	return unit
+
+func _queue_shore_prop(paths: Array, pos: Vector3, scale_value: Vector3, rot: Vector3, tint: Vector3) -> bool:
+	for path in paths:
+		if not MaterialFactory.resource_path_exists(path):
+			continue
+		var e := Vector3(deg_to_rad(rot.x), deg_to_rad(rot.y), deg_to_rad(rot.z))
+		_prop_batch_items.append({"path": str(path), "tint": tint, "t": Transform3D(Basis.from_euler(e).scaled(scale_value), pos)})
+		return true
+	return false
+
+func _queue_rock_sphere(pos: Vector3, scale_value: Vector3, tint: Vector3) -> void:
+	# Consumes the same RNG calls in the same order as the node-based
+	# _create_textured_visual_sphere so the world layout stays deterministic.
+	var rot := Vector3(deg_to_rad(_world_rng.randf_range(-4.0, 4.0)), deg_to_rad(_world_rng.randf_range(0.0, 360.0)), deg_to_rad(_world_rng.randf_range(-4.0, 4.0)))
+	_prop_batch_items.append({"mesh": _get_forest_rock_mesh(pos), "tint": tint, "t": Transform3D(Basis.from_euler(rot).scaled(scale_value), pos)})
+
+func _prop_rock_material(tint: Vector3) -> Material:
+	var key := str(tint)
+	if not _prop_mat_cache.has(key):
+		_prop_mat_cache[key] = MaterialFactory.make_forest_rock_material(tint)
+	return _prop_mat_cache[key]
+
+func _flush_prop_batches() -> void:
+	if _prop_batch_items.is_empty():
+		return
+	var by_key := {}
+	for it in _prop_batch_items:
+		var path: String = str(it.get("path", ""))
+		var key := path if not path.is_empty() else "rock%d" % (it.mesh as Mesh).get_instance_id()
+		key += "|" + str(it.tint)
+		if not by_key.has(key):
+			by_key[key] = {"items": [], "tint": it.tint, "path": path}
+		(by_key[key]["items"] as Array).append(it)
+	var flushed := 0
+	for key in by_key:
+		var group: Dictionary = by_key[key]
+		var path: String = group.path
+		var subs: Array
+		if not path.is_empty():
+			subs = _prop_model_submeshes(path)
+		else:
+			subs = [{"mesh": (group.items[0] as Dictionary).mesh, "local": Transform3D.IDENTITY, "mat": null}]
+		if subs.is_empty():
+			continue
+		var mat := _prop_rock_material(group.tint)
+		var transforms: Array = []
+		for it in group.items:
+			transforms.append(it.t)
+		var spatial := _spatial_instance_batches(transforms, 48.0, 1200)
+		for indices in spatial:
+			for sm in subs:
+				var mm := MultiMesh.new()
+				mm.transform_format = MultiMesh.TRANSFORM_3D
+				mm.mesh = sm.mesh
+				mm.instance_count = indices.size()
+				for j in range(indices.size()):
+					mm.set_instance_transform(j, (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D))
+				var mmi := MultiMeshInstance3D.new()
+				mmi.name = "ShorePropMM_%d" % flushed
+				mmi.multimesh = mm
+				mmi.material_override = mat
+				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(mmi)
+				flushed += 1
+		await get_tree().process_frame
+	_prop_batch_items.clear()
+
+func _bush_pos_key(pos: Vector3) -> String:
+	return "%d_%d_%d" % [roundi(pos.x * 50.0), roundi(pos.y * 50.0), roundi(pos.z * 50.0)]
+
+func _flush_bush_multimeshes() -> void:
+	if _pending_bushes.is_empty():
+		return
+	var by_path := {}
+	for b in _pending_bushes:
+		var p: String = b.path
+		if not by_path.has(p):
+			by_path[p] = []
+		by_path[p].append(b)
+	var flushed := 0
+	for path in by_path:
+		var subs := _prop_model_submeshes(path)
+		if subs.is_empty():
+			continue
+		var items: Array = by_path[path]
+		var transforms: Array = []
+		for b in items:
+			transforms.append(b.t)
+		var spatial := _spatial_instance_batches(transforms, 64.0, 600)
+		for indices in spatial:
+			var batch_mmis: Array = []
+			for sm in subs:
+				var mm := MultiMesh.new()
+				mm.transform_format = MultiMesh.TRANSFORM_3D
+				mm.mesh = sm.mesh
+				mm.instance_count = indices.size()
+				for j in range(indices.size()):
+					mm.set_instance_transform(j, (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D))
+				var mmi := MultiMeshInstance3D.new()
+				mmi.name = "BushMM_%d" % flushed
+				mmi.multimesh = mm
+				if sm.mat != null:
+					mmi.material_override = sm.mat
+				add_child(mmi)
+				batch_mmis.append(mmi)
+				flushed += 1
+			for j in range(indices.size()):
+				var b: Dictionary = items[indices[j]]
+				_bush_mm_entries[_bush_pos_key(b.pos)] = {"mmis": batch_mmis, "inst": j, "t": b.t, "pos": b.pos, "path": path}
+		await get_tree().process_frame
+	_pending_bushes.clear()
+
+func _hide_batched_bush(pos: Vector3) -> bool:
+	var entry: Dictionary = _bush_mm_entries.get(_bush_pos_key(pos), {})
+	if entry.is_empty():
+		return false
+	var mmis: Array = entry.mmis
+	var inst_idx: int = entry.inst
+	for mmi in mmis:
+		if not is_instance_valid(mmi):
+			continue
+		var mm: MultiMesh = (mmi as MultiMeshInstance3D).multimesh
+		if mm == null or inst_idx >= mm.instance_count:
+			continue
+		var t := mm.get_instance_transform(inst_idx)
+		mm.set_instance_transform(inst_idx, t.scaled_local(Vector3(0.0001, 0.0001, 0.0001)))
+	return true
+
+# Spawns a real node for a bush that lives inside a MultiMesh batch so the
+# fell_bush shrink tween (and _hide_action_visual cleanup) has something to
+# animate. The batched instance is hidden at the same time.
+func _materialize_bush_node(visual_name: String, pos: Vector3) -> void:
+	var entry: Dictionary = _bush_mm_entries.get(_bush_pos_key(pos), {})
+	if entry.is_empty():
+		return
+	var scene = _get_external_scene_resource(str(entry.path))
+	var inst: Node = null
+	if scene is PackedScene:
+		inst = (scene as PackedScene).instantiate()
+	elif scene is Node3D:
+		inst = (scene as Node3D).duplicate(Node.DUPLICATE_GROUPS | Node.DUPLICATE_SCRIPTS | Node.DUPLICATE_USE_INSTANTIATION)
+	if not (inst is Node3D):
+		return
+	var node := inst as Node3D
+	node.name = visual_name
+	node.transform = entry.t
+	add_child(node)
+	node.add_to_group("world_action_visual")
+	_hide_batched_bush(pos)
+
 func _create_bush(pos: Vector3, radius: float) -> void:
 	pos.y = _get_exact_ground_y(pos.x, pos.z)
 	if not _can_place_ground_vegetation(pos):
@@ -15157,11 +15586,21 @@ func _create_bush(pos: Vector3, radius: float) -> void:
 	var visual_name := "Bush_%d" % bush_id
 	var made_visual := false
 	var meta_names := ""
-	if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_BUSH_MODELS, _world_rng), visual_name, pos, Vector3.ONE * _world_rng.randf_range(radius * 0.22, radius * 0.42), Vector3(0, _world_rng.randf_range(0, 360), 0), true, pos.y):
-		var vn := get_node_or_null(visual_name)
-		if vn != null:
-			vn.add_to_group("world_action_visual")
-			_remove_collision_from_node(vn)
+	# Batched path: same RNG consumption order as _try_instance_external_scene
+	# (shuffled_paths -> scale -> yaw) so the deterministic layout is preserved.
+	var shuffled := NodeUtils.shuffled_paths(REAL_BUSH_MODELS, _world_rng)
+	var model_path := ""
+	for p in shuffled:
+		if MaterialFactory.resource_path_exists(str(p)):
+			model_path = str(p)
+			break
+	if not model_path.is_empty():
+		var s := _world_rng.randf_range(radius * 0.22, radius * 0.42)
+		var yaw := _world_rng.randf_range(0, 360)
+		# Same ground-snap math as _snap_node_bottom_to_y_cached: the node ends
+		# at pos.y + (ground_y - unit_offset * scale) with ground_y == pos.y.
+		var final_y := pos.y + pos.y - _bush_unit_offset(model_path) * s
+		_pending_bushes.append({"path": model_path, "pos": pos, "t": Transform3D(Basis.from_euler(Vector3(0, deg_to_rad(yaw), 0)).scaled(Vector3.ONE * s), Vector3(pos.x, final_y, pos.z))})
 		meta_names = visual_name
 		made_visual = true
 	else:
@@ -15923,8 +16362,44 @@ func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3,
 			add_child(node)
 			if snap_to_ground:
 				_snap_node_bottom_to_y_cached(node, ground_y, path_str, scale_value)
+			_apply_prop_culling(node)
 			return true
 	return false
+
+# Distance-cull small instanced props by measured footprint and drop shadow
+# casting on tiny ones: the world spawns tens of thousands of sub-3 m meshes
+# (shore pebbles, slabs, plants, house furniture) and on the Compatibility
+# renderer each visible mesh is a draw call — a prop under a metre is a few
+# pixels past ~40 m, so range-culling it is free. Props >= 3 m stay untouched;
+# callers may still raise ranges afterwards via _set_visibility_range_recursive.
+func _apply_prop_culling(node: Node3D) -> void:
+	var aabb := NodeUtils.compute_node_world_aabb(node)
+	if aabb.size == Vector3.ZERO:
+		return
+	var longest: float = maxf(aabb.size.x, maxf(aabb.size.y, aabb.size.z))
+	var range_end := 0.0
+	var shadows := true
+	if longest < 0.6:
+		range_end = 35.0
+		shadows = false
+	elif longest < 1.5:
+		range_end = 60.0
+		shadows = false
+	elif longest < 3.0:
+		range_end = 90.0
+	if range_end <= 0.0:
+		return
+	var meshes: Array = []
+	NodeUtils.collect_mesh_instances(node, meshes)
+	for m in meshes:
+		var mi := m as MeshInstance3D
+		if mi == null:
+			continue
+		mi.visibility_range_end = range_end
+		mi.visibility_range_end_margin = 6.0
+		mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		if not shadows:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 # Removes the turntable/display "Circle" plane and any baked lights that some
 # downloaded Sketchfab models ship with (e.g. the concrete road barrier showed a
@@ -16422,6 +16897,10 @@ func _setup_cinematic() -> void:
 		var rp := _remote_tent_pos
 		var rgy := _get_exact_ground_y(rp.x, rp.z)
 		_cinematic_shots[15] = ["Tienda militar remota", Vector3(rp.x + 15, rgy + 12, rp.z + 15), Vector3(rp.x, rgy + 2, rp.z), 10.0, "day"]
+	if _city_tent_pos != Vector3.ZERO:
+		var cp := _city_tent_pos
+		var cgy := _get_exact_ground_y(cp.x, cp.z)
+		_cinematic_shots.append(["Puesto militar urbano", Vector3(cp.x + 15, cgy + 12, cp.z + 15), Vector3(cp.x, cgy + 2, cp.z), 10.0, "day"])
 	if cin_args.has("--reel"):
 		# Short showcase reel (~2:20). The optional 6th field selects a tracking
 		# mode: "boat" frames lake_rowboat, "player" frames the character.
