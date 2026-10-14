@@ -42,7 +42,7 @@ const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 const CLOTHING_VISUALS := {
 	"Sombrero de pescador": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
 	"Gorro de piel": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.065, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.31, 0.22, 0.13)},
-	"Tocado de piel animal": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.09, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.22, 0.15, 0.09)},
+	"Tocado de piel animal": {"path": "", "frac_y": 0.94, "size": 0.09, "yaw": 0.0, "seat_height": 0.56},
 	"Casco militar": {"path": GameConst.MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
 	"Guantes de trabajo": {"path": GameConst.GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
@@ -853,6 +853,8 @@ var _survival_cloth_nodes := {}
 var _survival_body_nodes := {}
 var _worn_survival := {}        # item_name -> true while the garment is shown
 var _equipped_slots := {}         # slot -> item_name currently equipped
+var _equipped_pelt := {}          # item_name -> hide species of the worn pelt garment
+var _active_pelt_species := ""    # species being equipped right now (read by the wear fns)
 var _initializing := true         # true during _ready, prevents drop_excess
 
 var _pitch := 0.0
@@ -1094,13 +1096,14 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 	if clothing != _puppet_clothing or clothing_colors != _puppet_clothing_colors:
 		var old_items: Array = []
 		for item_name in _puppet_clothing.split(","):
-			var name := item_name.strip_edges()
+			var name := item_name.strip_edges().split("|")[0]
 			if not name.is_empty():
 				old_items.append(name)
 		_puppet_clothing = clothing
 		_puppet_clothing_colors = clothing_colors.duplicate()
 		var new_items: Array = []
 		var new_colors: Array = []
+		var new_species: Array = []
 		if clothing.is_empty():
 			if is_dead:
 				# Dead body: delay naked swap until death animation finishes
@@ -1115,9 +1118,19 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 		else:
 			var raw_names := clothing.split(",")
 			for ri in range(raw_names.size()):
-				var name := raw_names[ri].strip_edges()
-				if not name.is_empty():
-					new_items.append(name)
+				# Pelt garments carry their species as "name|species" so remote
+				# players render the same animal hide (fisherman cap -> wolf
+				# head, jacket -> wolf fur). Plain names stay valid for peers
+				# that never wear pelt clothing.
+				var entry := raw_names[ri].strip_edges()
+				var sp := ""
+				if entry.contains("|"):
+					var parts := entry.split("|")
+					entry = parts[0]
+					sp = parts[1] if parts.size() > 1 else ""
+				if not entry.is_empty():
+					new_items.append(entry)
+					new_species.append(sp)
 					var c: Variant = clothing_colors[ri] if ri < clothing_colors.size() else null
 					new_colors.append(c if c is Color else Color(0, 0, 0, 0))
 		# Unequip items that were worn before but are no longer in the list
@@ -1126,7 +1139,7 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 				unequip_clothing(name)
 		# Equip items in the new list
 		for ni in range(new_items.size()):
-			equip_clothing(new_items[ni], new_colors[ni])
+			equip_clothing(new_items[ni], new_colors[ni], null, new_species[ni])
 	# Update held item
 	if held_item != _puppet_held:
 		_puppet_held = held_item
@@ -1963,10 +1976,24 @@ func get_current_clothing_color(item_name: String, slot := "") -> Color:
 				return gsess.selected_shoes_color
 	return Color(0, 0, 0, 0)
 
-func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0), source_item = null) -> void:
+func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0), source_item = null, pelt_species: String = "") -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
 		slot = CLOTHING_SLOTS[item_name]
+	# The crafted garment keeps the hide of the animal it was made from:
+	# "Chaqueta de piel" sewn from wolf pelts wears the wolf's fur. The species
+	# travels on the item's `pelt_species` meta (craft → save → drop → puppet).
+	var species := pelt_species
+	if species.is_empty() and source_item != null:
+		species = str(source_item.get_meta("pelt_species", ""))
+	if species.is_empty() and inventory != null:
+		for it in inventory.items:
+			if it != null and str(it.item_name) == item_name and it.has_meta("pelt_species"):
+				species = str(it.get_meta("pelt_species"))
+				break
+	_active_pelt_species = species
+	if item_name in GameConst.PELT_FUR_ITEMS:
+		_equipped_pelt[item_name] = species
 	# Unequip previous item in the same slot and drop it on the ground
 	if not slot.is_empty() and _equipped_slots.get(slot, "") != item_name:
 		var prev_name := str(_equipped_slots.get(slot, ""))
@@ -1979,6 +2006,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 				for i in range(inventory.items.size()):
 					if str(inventory.items[i].item_name) == prev_name:
 						set_meta("last_dropped_wetness", float(inventory.items[i].wetness))
+						set_meta("last_dropped_pelt", str(inventory.items[i].get_meta("pelt_species", "")))
 						inventory.remove_index(i)
 						break
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
@@ -2168,6 +2196,7 @@ func unequip_clothing(item_name: String) -> void:
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
+		_equipped_pelt.erase(item_name)
 		if inventory != null:
 			for it in inventory.items:
 				if it != null and str(it.item_name) == item_name and str(it.get_meta("equipped_slot", "")) == slot:
@@ -2367,6 +2396,17 @@ func _clothing_material_for(mesh_name: String, color: Color) -> StandardMaterial
 	elif mesh_name == "soldier_legs":
 		grow = -0.5
 	return MaterialFactory.make_clothing_material(kind, color, grow)
+
+# Sync label for the equipped_clothing CSV: pelt garments append "|species" so
+# remote puppets render the same animal hide (wolf jacket, deer tocado...).
+func clothing_sync_label(item_name: String) -> String:
+	var species := str(_equipped_pelt.get(item_name, ""))
+	return item_name + "|" + species if not species.is_empty() else item_name
+
+# Fur of the hunted species projected over the garment mesh — shared with the
+# world drops and the saved-character preview via MaterialFactory.
+func _pelt_fur_material(species: String) -> Material:
+	return MaterialFactory.pelt_fur_material(species)
 
 # Applies the selected character's colors (clothing, hair, skin) to the
 # player_with_clothes.glb meshes. Colors are read from GameSession.
@@ -2747,7 +2787,10 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 				mat.grow_amount = 0.015
 			mi.material_override = mat
 		elif worn and cfg.has("tint"):
-			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
+			if item_name in GameConst.PELT_FUR_ITEMS and not _active_pelt_species.is_empty():
+				mi.material_override = _pelt_fur_material(_active_pelt_species)
+			else:
+				mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
 		elif worn:
 			if mesh_name.begins_with("soldier_"):
 				mi.material_override = _clothing_material_for(mesh_name, Color(0.15, 0.18, 0.12))
@@ -2814,7 +2857,13 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	if body.size.y <= 0.001:
 		return
 	var node: Node3D = null
-	node = _load_external_node3d(str(cfg["path"]))
+	var model_path := str(cfg["path"])
+	if item_name == "Tocado de piel animal":
+		# The tocado IS the hunted animal: head + draped pelt of the species
+		# whose hide went into the recipe (fallback: wolf).
+		model_path = str(GameConst.PELT_HEADDRESS.get(_active_pelt_species,
+			GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
+	node = _load_external_node3d(model_path)
 	if node == null:
 		return
 	node.name = worn_name
@@ -2838,7 +2887,12 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	node.position += anchor - item_center
 	node.position += cfg.get("offset", Vector3.ZERO)
 	if CLOTHING_SLOTS.get(item_name, "") == "head":
-		preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
+		if item_name == "Tocado de piel animal":
+			# Authored with its scalp seat at the GLB origin — sit it on the
+			# crown as-is instead of crown-fitting it like a generic hat.
+			preload("res://scripts/HeadwearFit.gd").fit_pelt(parent, node, _active_pelt_species)
+		else:
+			preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
 	if clothing_has_camo(item_name):
 		var camo_meshes: Array = []
 		_collect_mesh_instances(node, camo_meshes)
@@ -2859,9 +2913,13 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 			mi.material_override = mat
 	elif cfg.has("tint"):
 		var tint: Color = cfg["tint"]
+		var pelt_mat := _pelt_fur_material(_active_pelt_species) if (item_name in GameConst.PELT_FUR_ITEMS and not _active_pelt_species.is_empty()) else null
 		var meshes: Array = []
 		_collect_mesh_instances(node, meshes)
 		for mi in meshes:
+			if pelt_mat != null:
+				mi.material_override = pelt_mat
+				continue
 			var mat := StandardMaterial3D.new()
 			mat.albedo_color = tint
 			mat.roughness = 0.9
@@ -3172,6 +3230,7 @@ func _drop_excess_items(count: int) -> void:
 		set_meta("last_dropped_durability", float(item.durability))
 		set_meta("last_dropped_max_durability", float(item.max_durability))
 		set_meta("last_dropped_wetness", float(item.wetness))
+		set_meta("last_dropped_pelt", str(item.get_meta("pelt_species", "")))
 		var is_broken := false
 		if item.has_method("is_broken"):
 			is_broken = item.is_broken()
@@ -3301,6 +3360,7 @@ func _physics_process(delta: float) -> void:
 				var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 				drop_pos.y = global_position.y
 				var drop_color := get_current_clothing_color(broken_name)
+				set_meta("last_dropped_pelt", str(broken_item.get_meta("pelt_species", "")))
 				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true, 0.0)
 				inventory.remove_index(i_broken, 1)
 			# After losing clothing, capacity is reduced — drop items that no longer fit
@@ -3312,6 +3372,7 @@ func _physics_process(delta: float) -> void:
 				if overflow_item != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
 					set_meta("last_dropped_wetness", float(overflow_item.wetness))
+					set_meta("last_dropped_pelt", str(overflow_item.get_meta("pelt_species", "")))
 					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
 				inventory.remove_index(inventory.items.size() - 1)
 			while inventory.get_total_weight() > inventory.max_weight and inventory.items.size() > 0:
@@ -3321,6 +3382,7 @@ func _physics_process(delta: float) -> void:
 				if overflow_item2 != null:
 					notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
 					set_meta("last_dropped_wetness", float(overflow_item2.wetness))
+					set_meta("last_dropped_pelt", str(overflow_item2.get_meta("pelt_species", "")))
 					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
 				inventory.items.remove_at(inventory.items.size() - 1)
 			if held_index >= inventory.items.size():
@@ -6068,6 +6130,7 @@ func _drop_held_item() -> void:
 		set_meta("last_dropped_durability", float(item.durability))
 		set_meta("last_dropped_max_durability", float(item.max_durability))
 		set_meta("last_dropped_wetness", float(item.wetness))
+		set_meta("last_dropped_pelt", str(item.get_meta("pelt_species", "")))
 		item_dropped.emit(item_name, item_type, float(item.weight), 1, float(item.use_value), drop_pos, get_current_clothing_color(item_name), item.is_broken(), float(item.spoilage))
 		_held_item_reference = null
 		_held_item_external = false
@@ -6152,6 +6215,7 @@ func drop_inventory_item(index: int) -> void:
 	set_meta("last_dropped_durability", float(item.durability))
 	set_meta("last_dropped_max_durability", float(item.max_durability))
 	set_meta("last_dropped_wetness", float(item.wetness))
+	set_meta("last_dropped_pelt", str(item.get_meta("pelt_species", "")))
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
@@ -6230,6 +6294,7 @@ func _throw_held_item(charge: float) -> void:
 	set_meta("last_dropped_durability", float(item.durability))
 	set_meta("last_dropped_max_durability", float(item.max_durability))
 	set_meta("last_dropped_wetness", float(item.wetness))
+	set_meta("last_dropped_pelt", str(item.get_meta("pelt_species", "")))
 	var is_broken := false
 	if item.has_method("is_broken"):
 		is_broken = item.is_broken()
@@ -6275,11 +6340,11 @@ func _throw_held_item(charge: float) -> void:
 	var launch_dir := (cam_dir + Vector3(0, 0.15, 0)).normalized()
 	var launch_vel: Vector3 = launch_dir * throw_force
 	# Lanzar el objeto con física real (RigidBody3D)
-	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, thrown_visual, thrown_contents)
+	_spawn_thrown_item_physics(item_name, item_type, item_weight, item_use_value, drop_color, is_broken, item_spoilage, launch_pos, launch_vel, thrown_visual, thrown_contents, str(item.get_meta("pelt_species", "")) if item != null else "")
 
 # Crea un RigidBody3D que vuela con física real (gravedad, colisiones).
 # Al aterrizar genera el drop; si cae al agua: splash + ondas + hundimiento.
-func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, prepared_visual: Node3D, contents: Array = []) -> void:
+func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weight: float, item_use_value: float, color: Color, broken: bool, spoilage: float, start_pos: Vector3, velocity: Vector3, prepared_visual: Node3D, contents: Array = [], pelt_species: String = "") -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -6316,7 +6381,8 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 		"color": color,
 		"broken": broken,
 		"spoilage": spoilage,
-		"contents": contents
+		"contents": contents,
+		"pelt": pelt_species
 	}
 	# Monitorear colisiones para detectar aterrizaje
 	var landed := false
@@ -6377,6 +6443,7 @@ func _spawn_thrown_item_physics(item_name: String, item_type: String, item_weigh
 	var landed_contents: Array = drop_data.get("contents", [])
 	if not landed_contents.is_empty():
 		set_meta("pending_backpack_contents", landed_contents)
+	set_meta("last_dropped_pelt", str(drop_data.get("pelt", "")))
 	item_dropped.emit(
 		drop_data["item_name"], drop_data["item_type"],
 		drop_data["item_weight"], 1, drop_data["item_use_value"],
@@ -6907,7 +6974,11 @@ func _build_held_clothing(item_name: String) -> void:
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
 		"Sombrero de pescador": path = GameConst.FISHERMANS_HAT_MODEL
-		"Gorro de piel", "Tocado de piel animal": path = GameConst.FISHERMANS_HAT_MODEL
+		"Gorro de piel": path = GameConst.FISHERMANS_HAT_MODEL
+		"Tocado de piel animal":
+			var held = get_held_item()
+			var held_pelt := str(held.get_meta("pelt_species", "")) if held != null else ""
+			path = str(GameConst.PELT_HEADDRESS.get(held_pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
 		"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
 		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
 		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
@@ -6917,6 +6988,18 @@ func _build_held_clothing(item_name: String) -> void:
 				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
 	if path.is_empty() or not _add_named_held_model(path, "HeldClothing"):
 		_build_third_person_clothing_bundle()
+	elif item_name in GameConst.PELT_FUR_ITEMS and item_name != "Tocado de piel animal":
+		# Held pelt garment: fur of the species it was sewn from.
+		var held2 = get_held_item()
+		var sp2 := str(held2.get_meta("pelt_species", "")) if held2 != null else ""
+		var fm := _pelt_fur_material(sp2) if not sp2.is_empty() else null
+		if fm != null:
+			var held_node := third_person_hand_item_root.get_node_or_null("HeldClothing") if third_person_hand_item_root != null else null
+			if held_node != null:
+				var _hm: Array = []
+				_collect_mesh_instances(held_node, _hm)
+				for _mi in _hm:
+					(_mi as MeshInstance3D).material_override = fm
 
 func _backpack_model_path(bp_name: String = "") -> String:
 	if bp_name.is_empty():
@@ -7207,6 +7290,7 @@ func _drop_stored_back_item(slot: int = -1) -> bool:
 	set_meta("last_dropped_durability", durability)
 	set_meta("last_dropped_max_durability", max_durability)
 	set_meta("last_dropped_wetness", float(data.get("wetness", 0.0)))
+	set_meta("last_dropped_pelt", str(data.get("pelt_species", "")))
 	var stored_visual = _stored_back_visuals[slot]
 	if stored_visual != null and is_instance_valid(stored_visual):
 		stored_visual.free()

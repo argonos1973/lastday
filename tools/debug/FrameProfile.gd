@@ -31,9 +31,9 @@ class ProfileAnimal extends WildlifeController:
 		var result := super._wolf_ai(delta)
 		get_parent().record("wolf_ai", started)
 		return result
-	func _find_nearest_meat_pickup() -> Node3D:
+	func _find_nearest_meat_pickup(feeder_id: String = "") -> Node3D:
 		var started := Time.get_ticks_usec()
-		var result := super._find_nearest_meat_pickup()
+		var result := super._find_nearest_meat_pickup(feeder_id)
 		get_parent().record("meat_scan", started)
 		return result
 	func _escape_if_trapped(delta: float) -> bool:
@@ -89,12 +89,13 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		add_child(player)
 		player.stats.died.connect(_on_player_died)
 		player.item_dropped.connect(_on_item_dropped)
-	func _create_wildlife_animal(kind: String, points: Array) -> void:
+	func _create_wildlife_animal(kind: String, points: Array) -> WildlifeController:
 		var animal := ProfileAnimal.new()
 		animal.name = "Wildlife_%s_%d" % [kind, _animal_id_counter]
 		_animal_id_counter += 1
 		add_child(animal)
 		animal.setup(kind, points)
+		return animal
 	func _process(delta: float) -> void:
 		var started := Time.get_ticks_usec()
 		super._process(delta)
@@ -134,6 +135,12 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		super._update_weather_effects(delta)
 		record("weather", started)
 
+func _all_nodes(n: Node) -> Array:
+	var r: Array = [n]
+	for c in n.get_children():
+		r += _all_nodes(c)
+	return r
+
 func _initialize() -> void:
 	call_deferred("run")
 
@@ -152,6 +159,7 @@ func run() -> void:
 	current_scene = world
 	await world.profile_ready
 	print("PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " player=", world.player.global_position, " camera=", root.get_camera_3d())
+	print("VIEWPORT size=", root.size, " screen_scale=", DisplayServer.screen_get_scale(), " drawable=", root.get_size() * DisplayServer.screen_get_scale())
 	world.player.camera.make_current()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	await create_timer(3.0).timeout
@@ -159,11 +167,49 @@ func run() -> void:
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--frames="):
 			frames = int(argument.trim_prefix("--frames="))
+		if argument.begins_with("--scale3d="):
+			root.scaling_3d_scale = float(argument.trim_prefix("--scale3d="))
+		if argument.begins_with("--winsize="):
+			var parts := argument.trim_prefix("--winsize=").split("x")
+			root.size = Vector2i(int(parts[0]), int(parts[1]))
 	if "--no-wildlife" in OS.get_cmdline_user_args():
 		for animal in get_nodes_in_group("wildlife"):
 			animal.set_process(false)
 	if "--no-render" in OS.get_cmdline_user_args():
 		root.disable_3d = true
+	if "--no-shadows" in OS.get_cmdline_user_args():
+		var sun := world.get_node_or_null("Sun") as DirectionalLight3D
+		if sun != null:
+			sun.shadow_enabled = false
+	if "--flat-sky" in OS.get_cmdline_user_args():
+		var we := world.get_node_or_null("WorldEnvironment") as WorldEnvironment
+		if we != null and we.environment != null:
+			we.environment.background_mode = Environment.BG_CLEAR_COLOR
+			we.environment.sky = null
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--strip="):
+			var pattern := argument.trim_prefix("--strip=")
+			var freed := 0
+			for n in _all_nodes(world):
+				if not is_instance_valid(n):
+					continue
+				if str(n.name).contains(pattern):
+					freed += 1
+					n.free()
+			print("STRIP '", pattern, "' freed=", freed)
+			await process_frame
+			await process_frame
+		elif argument == "--strip-geo":
+			var freed := 0
+			for n in _all_nodes(world):
+				if not is_instance_valid(n):
+					continue
+				if n is GeometryInstance3D and not world.player.is_ancestor_of(n):
+					freed += 1
+					n.free()
+			print("STRIP-GEO freed=", freed)
+			await process_frame
+			await process_frame
 	world.sampling = true
 	var samples: Array[float] = []
 	var previous := Time.get_ticks_usec()
@@ -185,6 +231,11 @@ func run() -> void:
 			Input.action_press("move_forward")
 	Input.action_release("move_forward")
 	world.sampling = false
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--shot="):
+			await RenderingServer.frame_post_draw
+			var shot_path := argument.trim_prefix("--shot=")
+			print("SHOT_SAVED ", root.get_texture().get_image().save_png(shot_path), " -> ", shot_path)
 	samples.sort()
 	print("FRAME_RESULT samples=", samples.size(), " p50_ms=", samples[samples.size() / 2], " p95_ms=", samples[int(samples.size() * 0.95)], " max_ms=", samples.back(), " spikes_over_50ms=", spikes)
 	for label in world.totals:

@@ -40,6 +40,36 @@ static func load_texture(tp: String):
 	_tex_cache[tp] = r
 	return r
 
+# Fur of the hunted species projected over a garment mesh. The clothing UVs
+# were authored for cloth prints, so the hide goes through the triplanar
+# shader — the jacket reads as wolf/deer/fox/bear/bird fur on any mesh.
+static var _pelt_mat_cache: Dictionary = {}
+
+static func pelt_fur_material(species: String) -> Material:
+	if species.is_empty():
+		return null
+	if _pelt_mat_cache.has(species):
+		return _pelt_mat_cache[species]
+	var tex := _pelt_fur_texture(species)
+	if tex == null:
+		_pelt_mat_cache[species] = null
+		return null
+	var sm := ShaderMaterial.new()
+	var sh: Shader = load("res://shaders/pelt_fur.gdshader")
+	if sh == null:
+		_pelt_mat_cache[species] = null
+		return null
+	sm.shader = sh
+	sm.set_shader_parameter("fur_tex", tex)
+	_pelt_mat_cache[species] = sm
+	return sm
+
+static func _pelt_fur_texture(species: String) -> Texture2D:
+	var path := str(GameConst.PELT_FUR_TEXTURES.get(species, ""))
+	if path.is_empty():
+		return null
+	return load_texture(path) as Texture2D
+
 static func make_material(color: Color, noisy: bool) -> StandardMaterial3D:
 	var key := "%0.2f_%0.2f_%0.2f_%s" % [color.r, color.g, color.b, str(noisy)]
 	if _mat_cache.has(key):

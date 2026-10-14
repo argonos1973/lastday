@@ -305,6 +305,7 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 	for item in carried_tools:
 		if item != null and _is_tool(str(item.item_name)):
 			sources.append({"item": item, "action": null, "quantity": item.quantity, "durability": item.durability})
+	var consumed_pelts: Dictionary = {}
 	for input_name in recipe.inputs:
 		var needed: int = recipe.inputs[input_name]
 		var ordered := sources.duplicate()
@@ -320,12 +321,18 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 				source.durability = maxf(0.0, float(source.durability) - 3.0)
 			else:
 				source.quantity -= take
+				if input_name == "ANY_PELT":
+					consumed_pelts[str(source.item.item_name)] = consumed_pelts.get(str(source.item.item_name), 0) + take
 			needed -= take
 		if needed > 0:
 			craft_error = "Faltan materiales cercanos: %dx %s." % [needed, input_name]
 			return {}
 	var out: Dictionary = recipe.output
+	var pelt_species := _dominant_species(consumed_pelts)
+	out = _pelt_output(out, pelt_species)
 	var output = ItemScript.create(out.name, out.type, out.weight, int(out.get("quantity", 1)), out.use_value)
+	if not pelt_species.is_empty():
+		output.set_meta("pelt_species", pelt_species)
 	output.durability = float(out.get("durability", output.durability))
 	output.max_durability = float(out.get("max_durability", output.durability))
 	return {"sources": sources, "output": output}
@@ -354,6 +361,7 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 		var copy = item.duplicate_stack()
 		staged.items.append(copy)
 		staged_originals.append(copy)
+	var consumed_pelts: Dictionary = {}
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
 		for item in staged.items.duplicate():
@@ -368,6 +376,8 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 				var taken := mini(needed, int(item.quantity))
 				item.quantity -= taken
 				needed -= taken
+				if input_name == "ANY_PELT":
+					consumed_pelts[item.item_name] = consumed_pelts.get(item.item_name, 0) + taken
 				if item.quantity <= 0:
 					staged.items.erase(item)
 		if needed > 0:
@@ -375,7 +385,13 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 			staged.free()
 			return false
 	var out: Dictionary = recipe["output"]
+	# The garment keeps the species of the dominant pelt used — a jacket sewn
+	# from wolf pelts keeps the wolf's fur, one from deer pelts the deer's.
+	var pelt_species := _dominant_species(consumed_pelts)
+	out = _pelt_output(out, pelt_species)
 	var new_item = ItemScript.create(out["name"], out["type"], out["weight"], int(out.get("quantity", 1)), out["use_value"])
+	if not pelt_species.is_empty():
+		new_item.set_meta("pelt_species", pelt_species)
 	if out.has("durability"):
 		new_item.durability = float(out["durability"])
 		new_item.max_durability = float(out.get("max_durability", out["durability"]))
@@ -428,6 +444,38 @@ static func _consume_pelts(inventory, amount: int) -> void:
 
 static func _is_pelt_name(item_name: String) -> bool:
 	return item_name.begins_with("Piel de ")
+
+## The species behind a pelt item name ("Piel de lobo" -> "lobo"). The crafted
+## garment keeps this in its `pelt_species` meta so the visual layer can show
+## the real animal's fur on the jacket/boots/hat and its head on the tocado.
+static func pelt_species_of(pelt_name: String) -> String:
+	if not _is_pelt_name(pelt_name):
+		return ""
+	return pelt_name.trim_prefix("Piel de ").strip_edges()
+
+static func _dominant_species(consumed: Dictionary) -> String:
+	if consumed.is_empty():
+		return ""
+	var best_name := ""
+	var best_count := -1
+	for pelt_name in consumed:
+		if int(consumed[pelt_name]) > best_count:
+			best_count = int(consumed[pelt_name])
+			best_name = str(pelt_name)
+	return pelt_species_of(best_name)
+
+# Species without an animal-head headdress (e.g. bird pelts — the bird has no
+# trophy GLB) downgrade the "Tocado de piel animal" recipe output to the
+# generic fur cap, which still takes the species' fur texture.
+static func _pelt_output(out: Dictionary, pelt_species: String) -> Dictionary:
+	if str(out.get("name", "")) != "Tocado de piel animal":
+		return out
+	if pelt_species.is_empty() or GameConst.PELT_HEADDRESS.has(pelt_species):
+		return out
+	var downgraded := out.duplicate()
+	downgraded["name"] = "Gorro de piel"
+	downgraded["weight"] = 0.35
+	return downgraded
 
 static func _is_tool(item_name: String) -> bool:
 	return item_name in ["Cuchillo", "Hacha", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]

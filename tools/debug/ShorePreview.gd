@@ -106,6 +106,8 @@ func run() -> void:
 				water.request_reflection_refresh()
 	main._create_leafy_floor_ground()
 	await main._flush_grass_batches()
+	await main._flush_prop_batches()
+	await main._flush_bush_multimeshes()
 	if "--diffuse" in OS.get_cmdline_user_args():
 		env.background_mode = Environment.BG_COLOR
 		env.background_color = Color(.4,.48,.54)

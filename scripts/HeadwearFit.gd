@@ -12,10 +12,64 @@ const WORN_HIDE := {
 # line (positive raises the tuck, negative lowers it inside the skull volume).
 # The helmet swallows the whole scalp, so hair collapses down into the head
 # instead of just under the rim — no tufts can poke through the shell.
-const TUCK_DROP := {"Casco militar": -0.15}
+const TUCK_DROP := {"Casco militar": -0.15, "Tocado de piel animal": -0.10}
 # Items that bury the scalp also pull the collapsed hair verts inward, so the
 # squashed layer stays inside the skull instead of ringing the face.
-const TUCK_SHRINK := {"Casco militar": 0.55}
+const TUCK_SHRINK := {"Casco militar": 0.55, "Tocado de piel animal": 0.45}
+
+# Shared by the saved-character preview and the animated actor.
+static func fit_pelt(model: Node3D, hat: Node3D, species: String = "") -> bool:
+	return seat_on_scalp(model, hat, "Tocado de piel animal", 0.56, 0.34, species)
+
+# Seats a headpiece whose GLB is authored with the scalp seat at the local
+# origin and the trophy rising +Y (the pelt tocados): scales it to
+# `fit_height` and puts the origin on top of the head, centered on the scalp.
+# Unlike fit(), the animal head keeps its authored size relative to the human
+# head instead of being squashed onto the crown.
+static func seat_on_scalp(model: Node3D, hat: Node3D, item_name: String, fit_height: float, sink: float = 0.06, species: String = "") -> bool:
+	var head := model.find_child("HeadMesh", true, false) as MeshInstance3D
+	if head == null or head.mesh == null:
+		return false
+	var parent := hat.get_parent() as Node3D
+	if parent == null:
+		return false
+	var head_bounds := head.get_aabb()
+	var scalp := upper_bounds(head, Transform3D.IDENTITY, head_bounds.end.y - head_bounds.size.y * 0.34)
+	if scalp.size.x <= 0.001 or scalp.size.z <= 0.001:
+		return false
+	hat.transform = Transform3D.IDENTITY
+	var raw := AABB()
+	var first := true
+	for mesh in hat.find_children("*", "MeshInstance3D", true, false):
+		if not mesh.visible:
+			continue
+		var frame: Transform3D = hat.global_transform.affine_inverse() * mesh.global_transform
+		var bounds: AABB = frame * mesh.get_aabb()
+		raw = bounds if first else raw.merge(bounds)
+		first = false
+	if first or raw.size.y <= 0.001:
+		return false
+	# The trophy rises above the GLB origin (the throat seat); the pelt sheet
+	# hangs below it. Scale by the part above the seat so the animal head
+	# keeps its authored size relative to the wearer regardless of pelt length.
+	var above := maxf(raw.end.y, 0.001)
+	var s := fit_height / above
+	var center := scalp.get_center()
+	var seat_y := head_bounds.end.y - head_bounds.size.y * sink
+	# Seating the throat AT the crown wraps the muzzle around the wearer's
+	# face — lift it so the animal's jaw rides over the forehead, like the
+	# reference tocados.
+	var raise := head_bounds.size.y * 0.07
+	# Animal GLBs face -Z; the character bind mesh faces +Z.
+	# Rotate in bind space before composing the animated head frame.
+	var pitched := Basis.from_euler(Vector3(0.0, PI, 0.0)) * Basis.from_scale(Vector3.ONE * s)
+	var in_head := Transform3D(pitched,
+		Vector3(center.x, seat_y + raise, center.z + head_bounds.size.z * 0.22))
+	hat.transform = _head_frame(model, head, parent) * in_head
+	var tuck := float(TUCK_DROP.get(item_name, 0.02))
+	var shrink := float(TUCK_SHRINK.get(item_name, 0.0))
+	_tuck_hair(model, seat_y + head_bounds.size.y * tuck, shrink)
+	return true
 
 # These character meshes contain baked bind-pose coordinates. Use only the
 # scalp, never whole-body bounds (arms, footwear and export helpers vary).

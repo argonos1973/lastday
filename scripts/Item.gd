@@ -172,6 +172,8 @@ func to_dict() -> Dictionary:
 	if has_meta("clothing_color"):
 		var c: Color = get_meta("clothing_color")
 		d["clothing_color"] = [c.r, c.g, c.b, c.a]
+	if has_meta("pelt_species"):
+		d["pelt_species"] = str(get_meta("pelt_species"))
 	if not contents.is_empty():
 		var cdata: Array = []
 		for c in contents:
@@ -213,6 +215,8 @@ static func from_dict(data: Dictionary):
 		var c_arr = data["clothing_color"]
 		if c_arr is Array and c_arr.size() >= 3:
 			item.set_meta("clothing_color", Color(float(c_arr[0]), float(c_arr[1]), float(c_arr[2]), float(c_arr[3]) if c_arr.size() > 3 else 1.0))
+	if data.has("pelt_species"):
+		item.set_meta("pelt_species", str(data["pelt_species"]))
 	if data.has("contents") and data["contents"] is Array:
 		for cd in data["contents"]:
 			if cd is Dictionary:

@@ -127,8 +127,14 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var pd := _equipment_fields(raw_pd)
 	var eq := str(pd.get("equipped_clothing", ""))
 	var equipped_items: Array = []
+	var pelt_species: Dictionary = {}
 	for _s in eq.split(",", false):
 		var _sn := str(_s).strip_edges()
+		if _sn.contains("|"):
+			var _sp := _sn.split("|")
+			_sn = _sp[0]
+			if _sp.size() > 1:
+				pelt_species[_sn] = _sp[1]
 		if not _sn.is_empty():
 			equipped_items.append(_sn)
 	# Saves without clothing data (e.g. a proxy that never synced equipment)
@@ -160,7 +166,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			feet_item = n
 		elif n.find("Guantes") >= 0:
 			hands_item = n
-		elif n.find("Sombrero") >= 0 or n.find("Gorro") >= 0 or n.find("Casco") >= 0:
+		elif n.find("Sombrero") >= 0 or n.find("Gorro") >= 0 or n.find("Casco") >= 0 or n.find("Tocado") >= 0:
 			head_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
@@ -180,6 +186,8 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Survival/military approximations on base meshes
 	var is_survival_feet := feet_item == "Botas survival"
 	var is_military_feet := feet_item == "Botas militares"
+	var is_pelt_torso := torso_item == "Chaqueta de piel"
+	var is_pelt_feet := feet_item == "Botas de piel"
 	var is_military_legs := legs_item.find("Pantalones m") >= 0
 	var is_military_torso := torso_item.find("Chaqueta") >= 0
 	# Field jackets are a separate skinned GLB hung on the skeleton (same as
@@ -193,10 +201,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var show_tops := has_torso and (torso_item == "Camiseta")
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
-	var show_cloth_feet := has_feet and is_survival_feet
+	var show_cloth_feet := has_feet and (is_survival_feet or is_pelt_feet)
 	var show_military_feet := has_feet and is_military_feet
 	var show_soldier_legs := has_legs and is_military_legs
-	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso and not is_autumn_jacket
+	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso and not is_autumn_jacket and not is_pelt_torso
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
 	for mi in meshes:
@@ -223,7 +231,11 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl == "cloth_feet":
 			m.visible = show_cloth_feet
 			if m.visible:
-				_mat(m, Color(0.05, 0.05, 0.05))
+				var _pf := MaterialFactory.pelt_fur_material(str(pelt_species.get(feet_item, ""))) if is_pelt_feet else null
+				if _pf != null:
+					m.material_override = _pf
+				else:
+					_mat(m, Color(0.05, 0.05, 0.05))
 		elif nl == "military_boots":
 			m.visible = show_military_feet
 			if m.visible:
@@ -262,7 +274,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_feet":
-			m.visible = not (has_feet and (is_survival_feet or is_military_feet or feet_item == "Zapatillas"))
+			m.visible = not (has_feet and (is_survival_feet or is_military_feet or is_pelt_feet or feet_item == "Zapatillas"))
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_hands":
@@ -282,7 +294,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			elif nl == "soldier_torso":
 				m.visible = show_soldier_torso
 				if m.visible:
-					if torso_item.find("camuflaje") >= 0:
+					var _pf := MaterialFactory.pelt_fur_material(str(pelt_species.get(torso_item, ""))) if is_pelt_torso else null
+					if _pf != null:
+						m.material_override = _pf
+					elif torso_item.find("camuflaje") >= 0:
 						_mat_camo(m)
 					else:
 						_mat(m, _MILITARY_TINTS.get(torso_item, Color(0.2, 0.25, 0.12)))
@@ -297,6 +312,15 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		var jacket := MilitaryJacketsScript.attach(model, torso_item)
 		if jacket != null:
 			jacket.visible = true
+	# Pelt jacket: rides the field-jacket mesh in-game, wearing the hunted
+	# animal's fur instead of the campaign cloth.
+	if is_pelt_torso:
+		var pj := MilitaryJacketsScript.attach(model, "Chaqueta de campaña verde")
+		if pj != null:
+			pj.visible = true
+			var pf := MaterialFactory.pelt_fur_material(str(pelt_species.get(torso_item, "")))
+			if pf != null:
+				pj.material_override = pf
 	for autumn_item in [torso_item, legs_item, feet_item, head_item]:
 		if AutumnClothesScript.VARIANTS.has(autumn_item):
 			var autumn_mesh := AutumnClothesScript.attach(model, autumn_item)
@@ -312,14 +336,14 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		_add_preview_gloves(model, hands_item)
 	# Add hat
 	if not head_item.is_empty() and not is_autumn_hat:
-		_add_preview_hat(model, head_item)
+		_add_preview_hat(model, head_item, str(pelt_species.get(head_item, "")))
 	# Add held item (weapon/tool in hand)
 	var held_item_name := str(pd.get("held_item", ""))
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
 const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
-const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Pantalones militares":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
+const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Botas de piel":["Body_feet"],"Pantalones militares":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Chaqueta de piel":["Body_arms"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
 const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
 
@@ -441,11 +465,13 @@ static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 		p = p.get_parent()
 	return false
 
-static func _add_preview_hat(model: Node3D, item_name: String) -> void:
+static func _add_preview_hat(model: Node3D, item_name: String, pelt_species: String = "") -> void:
 	var hat_model := ""
 	match item_name:
 		"Sombrero de pescador": hat_model = GameConst.FISHERMANS_HAT_MODEL
 		"Casco militar": hat_model = GameConst.MILITARY_HELMET_MODEL
+		"Gorro de piel": hat_model = GameConst.FISHERMANS_HAT_MODEL
+		"Tocado de piel animal": hat_model = str(GameConst.PELT_HEADDRESS.get(pelt_species, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
 		_: return
 	var packed := load(hat_model)
 	if packed == null or not packed is PackedScene:
@@ -491,7 +517,17 @@ static func _add_preview_hat(model: Node3D, item_name: String) -> void:
 	var item_center := item_aabb.position + item_aabb.size * 0.5
 	item_center.y = item_aabb.position.y
 	hat.position = anchor - item_center
-	preload("res://scripts/HeadwearFit.gd").fit(model, hat, item_name)
+	if item_name == "Tocado de piel animal":
+		preload("res://scripts/HeadwearFit.gd").fit_pelt(model, hat, pelt_species)
+	else:
+		preload("res://scripts/HeadwearFit.gd").fit(model, hat, item_name)
+		if item_name == "Gorro de piel" and not pelt_species.is_empty():
+			var fm := MaterialFactory.pelt_fur_material(pelt_species)
+			if fm != null:
+				var hm: Array = []
+				_collect_meshes(hat, hm)
+				for m in hm:
+					(m as MeshInstance3D).material_override = fm
 	_bind_preview_bone(model, hat, ["mixamorig:Head", "mixamorig_Head", "Head"])
 
 static func _add_preview_knife(model: Node3D) -> void:

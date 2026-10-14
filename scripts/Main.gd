@@ -3148,6 +3148,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 					for inv_item in player.inventory.items:
 						if str(inv_item.item_name) == slot_name:
 							_found_in_inv = true
+							if not slot_pelt.is_empty() and not inv_item.has_meta("pelt_species"):
+								inv_item.set_meta("pelt_species", slot_pelt)
 							if inv_item.has_meta("clothing_color"):
 								_load_color = inv_item.get_meta("clothing_color")
 							break
@@ -3161,7 +3163,10 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 					elif slot_name == "Zapatillas":
 						_w = 0.4
 						_u = 0.08
-					player.inventory.add_item(ItemScript2.create(slot_name, "clothing", _w, 1, _u))
+					var _synth = ItemScript2.create(slot_name, "clothing", _w, 1, _u)
+					if not slot_pelt.is_empty():
+						_synth.set_meta("pelt_species", slot_pelt)
+					player.inventory.add_item(_synth)
 				player.equip_clothing(slot_name, _load_color, null, slot_pelt)
 	# Back-slotted equipment (rifle, rod, spear) lives outside the inventory
 	var back_items = extra.get("back_items", [])
