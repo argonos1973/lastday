@@ -3935,7 +3935,8 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 				dpos = pos
 		# Cada drop se fija a la superficie real bajo su punto — la y del cadáver
 		# dejaba items enterrados bajo terreno elevado o flotando en pendientes.
-		dpos.y = _get_exact_ground_y(dpos.x, dpos.z, pos.y + 0.5)
+		# En azoteas/torre se recoloca al nivel del cadáver (hueco de escalera).
+		dpos = _settle_drop_pos(Vector3(dpos.x, pos.y, dpos.z))
 		# peer_id en el id: dos muertes procesadas en el mismo milisegundo
 		# compartirían "death_loot_<ticks>_<i>" y la segunda quedaría
 		# deduplicada fuera de _dropped_items — loot del cadáver perdido.
@@ -5345,9 +5346,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	if net != null and net.is_connected and not net.is_host:
 		call_deferred("_sync_local_player_inventory")
 	# El drop llega a la altura del jugador — bajarlo a la superficie real evita
-	# objetos flotando al soltar en bordes de colina o sobre desniveles.
+	# objetos flotando al soltar en bordes de colina o sobre desniveles. En
+	# superficies elevadas (azotea/torre) además se recoloca en el mismo nivel
+	# si el punto cae por el hueco de la escalera o más allá del pretil.
 	if not _pos_on_rowboat_deck(pos):
-		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+		pos = _settle_drop_pos(pos)
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -5424,7 +5427,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		_play_water_drop_effect(pos)
 		return
 	if net == null or not net.is_dedicated_server:
-		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+		pos = _settle_drop_pos(pos)
 	var visual_name := "Pickup_" + drop_id
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
 	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0)
@@ -5448,7 +5451,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	# dedicado no existen colliders de techos/torre: respetar la y resuelta por
 	# el cliente para no arrastrar drops de azoteas al terreno.
 	if not _pos_on_rowboat_deck(pos) and (net == null or not net.is_dedicated_server):
-		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+		pos = _settle_drop_pos(pos)
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type, pelt)
 	var scale_value := _get_drop_scale(item_name, item_type)
@@ -5587,7 +5590,7 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	# servidor dedicado no hay geometría de techos/ciudad, así que mantenemos la
 	# y que ya resolvió el cliente en `_on_item_dropped`.
 	if not _pos_on_rowboat_deck(pos) and (net == null or not net.is_dedicated_server):
-		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5)
+		pos = _settle_drop_pos(pos)
 	item_weight = clampf(item_weight, 0.0, 100.0)
 	item_quantity = clampi(item_quantity, 1, 999)
 	item_use_value = clampf(item_use_value, -100.0, 100.0)
@@ -9363,7 +9366,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	# Los llamadores pueden pasar una y heredada (altura del actor, y fija a 0) —
 	# fijar el pickup a la superficie real evita objetos enterrados o flotando.
 	if net == null or not net.is_dedicated_server:
-		pos.y = _get_exact_ground_y(pos.x, pos.z, pos.y + 0.5) + 0.02
+		pos = _settle_drop_pos(pos) + Vector3(0.0, 0.02, 0.0)
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var drop_scale := _get_drop_scale(item_name, item_type)
@@ -10524,7 +10527,7 @@ func _execute_world_action(action, actor) -> void:
 			if not actor.inventory.add_item(palo_item):
 				# Inventory full or too heavy — drop palos on the ground
 				var drop_pos: Vector3 = Vector3(action.global_position) + Vector3(0.5, 0.0, 0.5)
-				drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z, action.global_position.y + 0.5) + 0.06
+				drop_pos = _settle_drop_pos(drop_pos) + Vector3(0.0, 0.06, 0.0)
 				_spawn_ground_pickup("Palo", "material", drop_pos, 0.3, 11, 0.0)
 				_dropped_items.append({"id": "dismantle_palos_%d" % Time.get_ticks_msec(), "name": "Palo", "type": "material", "weight": 0.3, "qty": 11, "use": 0.0, "pos": [drop_pos.x, drop_pos.y, drop_pos.z]})
 				actor.notice.emit("No tienes espacio o peso para 11 palos. Los has dejado en el suelo.")
@@ -11951,14 +11954,13 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 		return false
 	var output = plan.output
 	var pos: Vector3 = actor.global_position - actor.global_basis.z * 0.8
-	var craft_y: float = float(actor.global_position.y) + 0.5
-	pos.y = _get_exact_ground_y(pos.x, pos.z, craft_y) + 0.06
+	pos = _settle_drop_pos(pos) + Vector3(0.0, 0.06, 0.0)
 	if output.item_type == "shelter":
 		pos = actor.get_meta("shelter_placement_position", pos)
 	var drop_positions: Array[Vector3] = []
 	for index in range(output.quantity):
 		var drop_pos: Vector3 = pos + actor.global_basis.x * (float(index) - float(output.quantity - 1) * 0.5) * 0.45
-		drop_pos.y = _get_exact_ground_y(drop_pos.x, drop_pos.z, craft_y) + 0.06
+		drop_pos = _settle_drop_pos(drop_pos) + Vector3(0.0, 0.06, 0.0)
 		if _is_water_drop_position(drop_pos):
 			CraftingSystemScript.craft_error = "Necesitas suelo seco para dejar lo fabricado."
 			return false
@@ -14322,6 +14324,32 @@ func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 		if not result.is_empty() and result.has("position"):
 			return maxf((result["position"] as Vector3).y, analytic_y)
 	return analytic_y
+
+func _settle_drop_pos(pos: Vector3) -> Vector3:
+	# Resuelve la superficie real bajo un drop/crafteo. Si el punto cae sobre el
+	# hueco de la escalera de la torre, más allá de un pretil o sobre un collider
+	# de techo que aún no está registrado en física, el raycast devuelve un piso
+	# muy inferior y el objeto queda "dentro" de la estructura (invisible desde
+	# la azotea). En ese caso se busca una superficie cercana al mismo nivel y,
+	# en último término, se conserva la y recibida — ya resuelta por el emisor
+	# o por el save — antes que hundir el objeto en un piso interior.
+	var probe_y: float = pos.y + 0.5
+	var gy: float = _get_exact_ground_y(pos.x, pos.z, probe_y)
+	if gy >= pos.y - 2.0 or pos.y <= _get_ground_height(pos) + 1.5:
+		return Vector3(pos.x, gy, pos.z)
+	# Primera pasada: superficies caminables al nivel del suelo (a la altura del
+	# emisor o por debajo) — prefieren la cubierta o el primer peldaño antes que
+	# la barandilla; la segunda pasada admite cualquier superficie cercana.
+	for max_g in [pos.y + 0.1, pos.y + 1.6]:
+		for radius in [0.2, 0.4, 0.7, 1.0, 1.4]:
+			for k in range(8):
+				var ang: float = TAU * float(k) / 8.0
+				var px: float = pos.x + cos(ang) * radius
+				var pz: float = pos.z + sin(ang) * radius
+				var g: float = _get_exact_ground_y(px, pz, probe_y)
+				if g >= pos.y - 1.6 and g <= max_g:
+					return Vector3(px, g, pz)
+	return pos
 
 func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0

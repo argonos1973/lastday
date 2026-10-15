@@ -105,6 +105,57 @@ func _initialize() -> void:
 	if absf(meat_vis.global_position.y - 29.4) > 0.6:
 		_fail("tower meat visual spawned at wrong y=%.2f (expected ~29.4)" % meat_vis.global_position.y)
 
+	# 5b. Drops/crafting next to the tower stairwell opening or past the parapet
+	# must be pulled back onto the deck — otherwise they land on inner floors
+	# (y=25.3/4.2) and are invisible from the roof. Cells from the deck grid
+	# scan: standing at (45, 745) facing +z the 0.8 m drop fell into the stair
+	# flight; standing at x=35 facing -x the drop flew over the parapet onto
+	# the wing roof at y=4.2.
+	var cap_y := 29.4 + 0.95
+	var hole_drop: Vector3 = world._settle_drop_pos(Vector3(45.0, cap_y, 745.8))
+	print("[TEST] stairwell-hole drop resolved=", hole_drop)
+	if hole_drop.y < 28.5:
+		_fail("drop over stairwell hole sank inside tower: %s" % str(hole_drop))
+	var edge_drop: Vector3 = world._settle_drop_pos(Vector3(34.2, cap_y, 750.0))
+	print("[TEST] parapet-edge drop resolved=", edge_drop)
+	if edge_drop.y < 28.5:
+		_fail("drop past parapet fell inside tower: %s" % str(edge_drop))
+
+	# Real drops through _on_item_dropped at the same bad spots: the recorded
+	# position AND the spawned visual must both stay at deck level.
+	var drop_count := world._dropped_items.size()
+	world._on_item_dropped("Tronco", "resource", 1.2, 1, 0.0, Vector3(45.0, cap_y, 745.8))
+	if world._dropped_items.size() <= drop_count:
+		_fail("tower Tronco drop was not recorded")
+	var trunk_entry: Dictionary = world._dropped_items[-1]
+	var trunk_pos: Vector3 = trunk_entry["pos"]
+	print("[TEST] tower Tronco drop pos=", trunk_pos)
+	if trunk_pos.y < 28.5:
+		_fail("Tronco drop sank inside tower: %s" % str(trunk_pos))
+	var trunk_vis := world.get_node_or_null("Pickup_" + str(trunk_entry["id"])) as Node3D
+	if trunk_vis == null:
+		_fail("Tronco visual missing on tower deck")
+	elif trunk_vis.global_position.y < 28.0:
+		_fail("Tronco visual inside tower y=%.2f" % trunk_vis.global_position.y)
+
+	world._on_item_dropped("Palo", "material", 0.3, 2, 0.0, Vector3(34.2, cap_y, 750.0))
+	var stick_entry: Dictionary = world._dropped_items[-1]
+	var stick_pos: Vector3 = stick_entry["pos"]
+	print("[TEST] tower Palo drop pos=", stick_pos)
+	if stick_pos.y < 28.5:
+		_fail("Palo drop fell past parapet inside tower: %s" % str(stick_pos))
+	var stick_vis := world.get_node_or_null("Pickup_" + str(stick_entry["id"])) as Node3D
+	if stick_vis == null:
+		_fail("Palo visual missing on tower deck")
+	elif stick_vis.global_position.y < 28.0:
+		_fail("Palo visual inside tower y=%.2f" % stick_vis.global_position.y)
+
+	world._on_item_dropped("campfire", "campfire", 0.0, 1, 0.0, Vector3(45.0, cap_y, 745.8))
+	var hole_cf_pos: Vector3 = world._built_campfires[-1]["pos"]
+	print("[TEST] stairwell campfire pos=", hole_cf_pos)
+	if hole_cf_pos.y < 28.5:
+		_fail("campfire over stairwell hole sank inside tower: %s" % str(hole_cf_pos))
+
 	# 6. Shelter placement on house roof and tower deck must be valid (no false
 	# obstacle or slope error).
 	dummy_player.global_position = Vector3(20.0, roof_y + 0.7, 20.0)
