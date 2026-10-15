@@ -180,9 +180,109 @@ static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
  var water:=fountain.find_child("FountainWater",true,false) as MeshInstance3D
  if water!=null:
   water.name="DistrictFountainWater"
-  var wm:=StandardMaterial3D.new();wm.albedo_color=Color(.16,.22,.17,.86);wm.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
-  wm.roughness=.06;wm.metallic_specular=.8;wm.cull_mode=BaseMaterial3D.CULL_DISABLED
-  water.material_override=wm
+  water.material_override=_make_fountain_water_material()
+ _spawn_fountain_water_fx(fountain)
+
+static func _make_fountain_water_material() -> ShaderMaterial:
+ var sm := ShaderMaterial.new()
+ var sh := Shader.new()
+ sh.code = """
+shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx;
+varying vec3 lpos;
+
+void vertex() {
+	lpos = VERTEX;
+	float r = length(VERTEX.xz);
+	float wave = sin(r * 18.0 - TIME * 4.2) * 0.008 + cos(VERTEX.x * 14.0 + TIME * 3.1) * 0.004;
+	VERTEX.y += wave * smoothstep(0.95, 0.1, r);
+}
+
+void fragment() {
+	float r = length(lpos.xz);
+	float angle = atan(lpos.z, lpos.x);
+	float w1 = sin(r * 22.0 - TIME * 4.5 + sin(angle * 4.0) * 0.35);
+	float w2 = cos(r * 34.0 - TIME * 6.2 - cos(angle * 6.0) * 0.25);
+	float ripple = (w1 * 0.6 + w2 * 0.4);
+	// Concentric foam rings near center jet and outer stone rim
+	float center_foam = smoothstep(0.28, 0.05, r) * (0.55 + 0.45 * sin(TIME * 7.0 + r * 30.0));
+	float ring_foam = smoothstep(0.65, 0.92, ripple) * smoothstep(0.88, 0.15, r) * 0.38;
+	float rim_foam = smoothstep(0.68, 0.82, r) * (0.35 + 0.25 * sin(angle * 8.0 + TIME * 2.5));
+	float foam = clamp(center_foam + ring_foam + rim_foam, 0.0, 1.0);
+
+	vec3 deep_col = vec3(0.09, 0.21, 0.23);
+	vec3 shallow_col = vec3(0.16, 0.34, 0.36);
+	vec3 water_col = mix(deep_col, shallow_col, smoothstep(0.0, 0.8, r) * 0.6 + ripple * 0.15);
+	vec3 foam_col = vec3(0.82, 0.90, 0.92);
+
+	ALBEDO = mix(water_col, foam_col, foam * 0.78);
+	ALPHA = mix(0.84, 0.96, foam);
+	ROUGHNESS = mix(0.05, 0.35, foam);
+	METALLIC = 0.08;
+	SPECULAR = 0.85;
+	vec2 grad = normalize(lpos.xz + vec2(0.0001)) * cos(r * 22.0 - TIME * 4.5) * 0.28;
+	NORMAL = normalize(VIEW_MATRIX * vec4(normalize(vec3(-grad.x, 1.0, -grad.y)), 0.0)).xyz;
+}
+"""
+ sm.shader = sh
+ return sm
+
+static func _spawn_fountain_water_fx(fountain: Node3D) -> void:
+ # Top water spout arcing out of the finial and falling into the basin
+ var jet := GPUParticles3D.new()
+ jet.name = "DistrictFountainJet"
+ jet.position = Vector3(0.0, 1.72, 0.0)
+ jet.amount = 48
+ jet.lifetime = 0.95
+ jet.preprocess = 0.5
+ jet.visibility_aabb = AABB(Vector3(-2.5, -2.5, -2.5), Vector3(5.0, 5.0, 5.0))
+ var pmat := ParticleProcessMaterial.new()
+ pmat.direction = Vector3(0.0, 1.0, 0.0)
+ pmat.spread = 28.0
+ pmat.initial_velocity_min = 1.6
+ pmat.initial_velocity_max = 2.3
+ pmat.gravity = Vector3(0.0, -4.8, 0.0)
+ pmat.scale_min = 0.7
+ pmat.scale_max = 1.35
+ pmat.color = Color(0.80, 0.91, 0.95, 0.68)
+ jet.process_material = pmat
+ var drop_quad := QuadMesh.new()
+ drop_quad.size = Vector2(0.08, 0.14)
+ var dmat := StandardMaterial3D.new()
+ dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+ dmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+ dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+ dmat.vertex_color_use_as_albedo = true
+ dmat.albedo_color = Color(0.82, 0.92, 0.96, 0.65)
+ drop_quad.material = dmat
+ jet.draw_pass_1 = drop_quad
+ fountain.add_child(jet)
+
+ # Basin splash mist where the falling streams strike the water sheet
+ var splash := GPUParticles3D.new()
+ splash.name = "DistrictFountainSplash"
+ splash.position = Vector3(0.0, 0.62, 0.0)
+ splash.amount = 32
+ splash.lifetime = 0.65
+ splash.preprocess = 0.3
+ splash.visibility_aabb = AABB(Vector3(-2.0, -1.0, -2.0), Vector3(4.0, 2.5, 4.0))
+ var smat := ParticleProcessMaterial.new()
+ smat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
+ smat.emission_ring_axis = Vector3(0.0, 1.0, 0.0)
+ smat.emission_ring_height = 0.04
+ smat.emission_ring_radius = 0.42
+ smat.emission_ring_inner_radius = 0.12
+ smat.direction = Vector3(0.0, 1.0, 0.0)
+ smat.spread = 55.0
+ smat.initial_velocity_min = 0.45
+ smat.initial_velocity_max = 1.15
+ smat.gravity = Vector3(0.0, -3.2, 0.0)
+ splash.process_material = smat
+ var mist_quad := QuadMesh.new()
+ mist_quad.size = Vector2(0.11, 0.11)
+ mist_quad.material = dmat
+ splash.draw_pass_1 = mist_quad
+ fountain.add_child(splash)
 
 static func _make_pavement_material(is_plaza: bool = false) -> ShaderMaterial:
  var sm := ShaderMaterial.new()

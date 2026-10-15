@@ -76,7 +76,8 @@ func run() -> void:
 	player._recalculate_carry_capacity()
 	var slots_sin_mochila: int = int(player._compute_carry_capacity(false)["slots"])
 	var size_before: int = player.inventory.items.size()
-	var expected_packed: int = size_before - 1 - slots_sin_mochila
+	var stored_before: int = player.inventory.get_stored_count()
+	var expected_packed: int = stored_before - slots_sin_mochila
 	var expected_slots: int = slots_sin_mochila + player.SMALL_BACKPACK_SLOTS
 	check(player.inventory.max_slots == expected_slots, "Backpack raises carry capacity to %d (got %d)" % [expected_slots, player.inventory.max_slots])
 
@@ -118,6 +119,22 @@ func run() -> void:
 			units_after += int(it.quantity)
 	check(units_after == size_before, "Packed contents merge back into the inventory (expected %d units, got %d)" % [size_before, units_after])
 	check(world._dropped_items.is_empty(), "Consumed drop leaves no ghost entries")
+
+	# Al recoger una mochila llevando ya otra equipada, debe soltar la que lleva puesta.
+	drops.clear()
+	var mil_bp_action = world._create_world_action("bp_swap_test", "pickup_item", "Mochila militar", Vector3.ZERO, Vector3.ONE, Color.WHITE, false, false)
+	mil_bp_action.set_meta("item_name", "Mochila militar")
+	mil_bp_action.set_meta("item_type", "backpack")
+	mil_bp_action.set_meta("item_weight", 1.8)
+	world.handle_world_action_collect(mil_bp_action, player)
+	check(player.equipped_backpack == "Mochila militar", "Picking up a new backpack equips it")
+	check(drops.size() == 1 and drops[0]["n"] == "Mochila pequena", "Picking up a new backpack drops the previously worn backpack")
+	var bp_count := 0
+	for it in player.inventory.items:
+		if it != null and str(it.item_type) == "backpack":
+			bp_count += 1
+	check(bp_count == 1, "Only the newly equipped backpack stays in inventory (got %d)" % bp_count)
+	drops.clear()
 
 	# Panel K: sacar un objeto del contenido al inventario (host/offline).
 	var bp_action = world._create_world_action("bp_drop_1", "pickup_item", "Mochila pequena", Vector3.ZERO, Vector3.ONE, Color.WHITE, false, false)

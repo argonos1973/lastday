@@ -18,6 +18,8 @@ func _ready() -> void:
    if str(mi.name).contains("StairRamp"):
     for body in mi.get_children():
      if body is StaticBody3D:body.add_to_group("stair_surface")
+  else:
+   _upgrade_tower_mesh_materials(mi)
  for kind in ["Hour","Minute"]:
   for face in range(4):
    var hand:Node3D=model.find_child("Clock%s_%d"%[kind,face],true,false)
@@ -49,3 +51,25 @@ func set_clock_time(hour:float) -> void:
 static func contains(pos:Vector3, margin:float=0.0) -> bool:
  var local:=pos-WORLD_POSITION
  return absf(local.x)<9+margin and absf(local.z)<8+margin and local.y>=-.2 and local.y<29.4
+
+func _upgrade_tower_mesh_materials(mi: MeshInstance3D) -> void:
+ if mi == null or mi.mesh == null:
+  return
+ var block_script := preload("res://scripts/CityBlock.gd")
+ for s in range(mi.mesh.get_surface_count()):
+  var smat := mi.mesh.surface_get_material(s)
+  var mname := str(smat.resource_name).to_lower() if smat != null else ""
+  if "aged_stone" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("stone", Color(0.76, 0.72, 0.64), 0.28, 1.40))
+  elif "exposed_brick" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("brick", Color(0.72, 0.46, 0.36), 0.36, 1.45))
+  elif "concrete" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("stone", Color(0.56, 0.55, 0.50), 0.35, 1.30))
+  elif "old_oak" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("wood", Color(0.46, 0.32, 0.20), 0.40, 1.25))
+  elif "verdigris" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("slate", Color(0.18, 0.34, 0.30), 0.45, 1.10, 0.65, 0.48))
+  elif "clock_brass" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("stone", Color(0.85, 0.68, 0.32), 0.50, 0.60, 0.88, 0.28))
+  elif "tower_iron" in mname:
+   mi.set_surface_override_material(s, block_script._pbr_mat("stone", Color(0.16, 0.16, 0.15), 0.50, 0.85, 0.80, 0.40))

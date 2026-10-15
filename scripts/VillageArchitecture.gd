@@ -5,15 +5,15 @@ const TEXTURE_DIR := "res://assets/textures/overgrowth/village_"
 const MOSS_MAX_HEIGHT := 0.85
 const STYLES := [
 	["lime", Color(1.0,0.99,0.94), "slate", 2.65, Color(0.38,0.49,0.37), 2, 5, false, -1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 1.55, Color(0.36,0.44,0.49), 3, 3, false, 1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 2.10, Color(0.45,0.35,0.26), 0, 4, false, -1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 2.85, Color(0.42,0.25,0.22), 1, 6, true, 1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 1.30, Color(0.27,0.38,0.43), 4, 3, false, 1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 2.35, Color(0.34,0.41,0.30), 2, 4, true, -1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 1.80, Color(0.46,0.34,0.23), 3, 6, true, -1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 2.50, Color(0.46,0.43,0.37), 1, 5, false, 1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 3.05, Color(0.28,0.36,0.29), 4, 4, true, -1.0],
-	["lime", Color(1.0,0.99,0.94), "slate", 1.65, Color(0.49,0.43,0.32), 0, 2, false, 1.0],
+	["ochre", Color(0.95,0.89,0.78), "slate", 1.55, Color(0.36,0.44,0.49), 3, 3, false, 1.0],
+	["clay", Color(0.92,0.80,0.72), "slate", 2.10, Color(0.45,0.35,0.26), 0, 4, false, -1.0],
+	["brick", Color(0.90,0.76,0.68), "slate", 2.85, Color(0.42,0.25,0.22), 1, 6, true, 1.0],
+	["stone", Color(0.88,0.89,0.86), "slate", 1.30, Color(0.27,0.38,0.43), 4, 3, false, 1.0],
+	["lime", Color(0.94,0.95,0.90), "slate", 2.35, Color(0.34,0.41,0.30), 2, 4, true, -1.0],
+	["ochre", Color(0.92,0.84,0.72), "slate", 1.80, Color(0.46,0.34,0.23), 3, 6, true, -1.0],
+	["clay", Color(0.90,0.82,0.74), "slate", 2.50, Color(0.46,0.43,0.37), 1, 5, false, 1.0],
+	["stone", Color(0.86,0.87,0.84), "slate", 3.05, Color(0.28,0.36,0.29), 4, 4, true, -1.0],
+	["lime", Color(0.98,0.96,0.90), "slate", 1.65, Color(0.49,0.43,0.32), 0, 2, false, 1.0],
 ]
 
 static func profile(key: String) -> Dictionary:
@@ -29,7 +29,7 @@ static func material(kind: String, tint: Color = Color.WHITE, scale_value: float
 	mat.albedo_texture = load(TEXTURE_DIR + kind + "_albedo.png")
 	mat.normal_enabled = true
 	mat.normal_texture = load(TEXTURE_DIR + kind + "_normal.png")
-	mat.normal_scale = 0.65
+	mat.normal_scale = 1.15
 	mat.roughness_texture = load(TEXTURE_DIR + kind + "_roughness.png")
 	mat.roughness = 1.0
 	mat.albedo_color = tint

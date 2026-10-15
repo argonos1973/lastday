@@ -151,8 +151,8 @@ var _forest_multimesh_centers: Array[Vector3] = []
 var _forest_multimesh_radii: Array[float] = []
 var _hidden_tree_transforms: Dictionary = {} # Vector3 pos key -> original Transform3D
 var _cut_remains_positions: Dictionary = {} # Vector3 rounded pos -> bool (prevent duplicate stumps)
-const FOREST_MM_VISIBLE_RADIUS := 140.0
-const FOREST_MM_HIDE_RADIUS := 165.0
+const FOREST_MM_VISIBLE_RADIUS := 560.0
+const FOREST_MM_HIDE_RADIUS := 600.0
 var _forest_collision_grid: Dictionary = {} # cell_key -> Array[Vector3]
 var _forest_collision_grid_size := 25.0
 var _forest_collision_active_cells: Dictionary = {} # cell_key -> StaticBody3D
@@ -8655,6 +8655,45 @@ func _create_house_loot() -> void:
 		food_data["pos"].y = city_tent_ground_y + 0.06
 		food_data["id"] = "city_tent_loot_food_%d" % _fi
 		_create_pickup_item(food_data)
+	# Water tower loot in the starting village (-43, 0, -48) and Clock Tower loot in the city (41, 0, 750)
+	var tower_rng := RandomNumberGenerator.new()
+	tower_rng.seed = _stable_loot_seed("towers_loot_v1")
+	var water_tower_origin := Vector3(-43.0, 0.0, -48.0)
+	var wt_items := [
+		{"name": "Cuerda", "type": "resource", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [K_SURVIVAL + "rope.glb"], "scale": 1.1, "rot": Vector3(0, 25, 0), "color": Color(0.55, 0.45, 0.28)},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.6, "qty": 1, "use": 35.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.18, 0.35, 0.52)},
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 40, 0), "color": Color(0.38, 0.28, 0.15)},
+		{"name": "Cerillas", "type": "tool_matches", "weight": 0.05, "qty": 1, "use": 0.0, "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.0005, "rot": Vector3(0, 15, 0), "color": Color(0.55, 0.20, 0.15)},
+	]
+	for wti in range(wt_items.size()):
+		var wt_data: Dictionary = wt_items[wti].duplicate()
+		var wt_ang := TAU * float(wti) / float(wt_items.size()) + 0.35
+		var wt_pos := water_tower_origin + Vector3(cos(wt_ang) * 2.1, 0.0, sin(wt_ang) * 2.1)
+		wt_pos.y = _get_exact_ground_y(wt_pos.x, wt_pos.z) + 0.06
+		wt_data["pos"] = wt_pos
+		wt_data["id"] = "water_tower_loot_%d" % wti
+		_create_pickup_item(wt_data)
+	# Clock Tower (41, 0, 750): loot across landings and on the top roof platform (29.4m)
+	var ct_origin := Vector3(41.0, 0.0, 750.0)
+	var ct_floors := [0.06, 4.26, 8.46, 12.66, 16.86, 21.06, 25.26, 29.46]
+	for ctf in range(ct_floors.size()):
+		var fy: float = ct_floors[ctf]
+		var count_on_floor := 3 if ctf == ct_floors.size() - 1 else (2 if ctf % 2 == 0 else 1)
+		for k in range(count_on_floor):
+			var tmpl: Dictionary
+			if ctf == ct_floors.size() - 1 and k == 0:
+				tmpl = tent_loot_pool[18].duplicate() # Chaleco táctico en la cima de la torre
+			elif ctf == ct_floors.size() - 1 and k == 1:
+				tmpl = tent_loot_pool[14].duplicate() # Casco militar en la cima
+			else:
+				tmpl = house_loot_pool[tower_rng.randi() % house_loot_pool.size()].duplicate()
+			var lx := tower_rng.randf_range(-4.2, 0.4)
+			var lz := tower_rng.randf_range(-3.8, 3.8)
+			tmpl["pos"] = ct_origin + Vector3(lx, fy, lz)
+			if fy > 1.0:
+				tmpl["floor_y"] = fy
+			tmpl["id"] = "clock_tower_loot_%d_%d" % [ctf, k]
+			_create_pickup_item(tmpl)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
@@ -9040,6 +9079,59 @@ func _mark_world_action_visual(node_name: String) -> void:
 	var node := get_node_or_null(NodePath(node_name))
 	if node != null:
 		node.add_to_group("world_action_visual")
+
+func _pickup_and_swap_backpack(action, actor, bp_item) -> bool:
+	if actor == null or actor.get("inventory") == null or not actor.has_method("equip_backpack"):
+		return false
+	if action != null and action.has_meta("contents") and bp_item.contents.is_empty():
+		for cd in action.get_meta("contents"):
+			if cd is Dictionary:
+				var ci = ItemScript.from_dict(cd)
+				if ci != null:
+					bp_item.contents.append(ci)
+	var prev_bp_name := str(actor.equipped_backpack)
+	var old_bp_item = null
+	var old_bp_packed: Array = []
+	if not prev_bp_name.is_empty() and actor.inventory != null:
+		for i in range(actor.inventory.items.size()):
+			var it = actor.inventory.items[i]
+			if it != null and str(it.item_type) == "backpack":
+				old_bp_item = actor.inventory.remove_index(i, 1)
+				break
+		if old_bp_item != null:
+			for c in old_bp_item.contents:
+				if c != null:
+					old_bp_packed.append(c.to_dict())
+			old_bp_item.contents.clear()
+	actor.equip_backpack(bp_item.item_name)
+	if not actor.inventory.add_item(bp_item):
+		if old_bp_item != null:
+			actor.inventory.add_item(old_bp_item)
+		actor.equip_backpack(prev_bp_name)
+		return false
+	# Unpack contents of the newly picked up backpack into the player's inventory
+	if not bp_item.contents.is_empty():
+		var leftover: Array = []
+		for ci in bp_item.contents:
+			if ci != null and actor.inventory.add_item(ci):
+				continue
+			leftover.append(ci)
+		bp_item.contents = leftover
+	# If the player was already wearing a backpack, drop the previous one on the ground
+	if not prev_bp_name.is_empty():
+		var old_w := float(old_bp_item.weight) if old_bp_item != null else (1.8 if prev_bp_name == "Mochila militar" else 0.8)
+		var drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
+		drop_pos.y = actor.global_position.y
+		if old_bp_item != null:
+			actor.set_meta("last_dropped_durability", float(old_bp_item.durability))
+			actor.set_meta("last_dropped_max_durability", float(old_bp_item.max_durability))
+			actor.set_meta("last_dropped_wetness", float(old_bp_item.wetness))
+		if not old_bp_packed.is_empty():
+			actor.set_meta("pending_backpack_contents", old_bp_packed)
+		actor.item_dropped.emit(prev_bp_name, "backpack", old_w, 1, 0.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+	if actor.has_method("_sync_held_item"):
+		actor._sync_held_item()
+	return true
 
 func _create_backpack_pickup(id: String, pos: Vector3) -> void:
 	if _depleted_action_ids.has(id):
@@ -9581,11 +9673,11 @@ func _execute_world_action(action, actor) -> void:
 			_finish_pickup_action(action, actor, torch_item, "Recoges la antorcha.")
 		"pickup_item":
 			var item = ItemScript.create(
-				str(action.get_meta("item_name")),
-				str(action.get_meta("item_type")),
-				float(action.get_meta("item_weight")),
-				int(action.get_meta("item_quantity")),
-				float(action.get_meta("item_use_value"))
+				str(action.get_meta("item_name", action.display_name)),
+				str(action.get_meta("item_type", "resource")),
+				float(action.get_meta("item_weight", 0.5)),
+				int(action.get_meta("item_quantity", 1)),
+				float(action.get_meta("item_use_value", 0.0))
 			)
 			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
@@ -9686,15 +9778,7 @@ func _execute_world_action(action, actor) -> void:
 					_save_world_change_silent()
 					_net_notify_pickup(action)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
-				# Equip first so carry capacity expands before the weight check in
-				# add_item runs — otherwise a previous drop (which shrinks capacity
-				# without removing carried items) can make the weight check fail
-				# and silently block re-equipping the backpack. On failure restore
-				# the previously equipped backpack instead of unequipping it.
-				var _prev_bp := str(actor.equipped_backpack)
-				actor.equip_backpack(item.item_name)
-				if not actor.inventory.add_item(item):
-					actor.equip_backpack(_prev_bp)
+				if not _pickup_and_swap_backpack(action, actor, item):
 					return
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 				_hide_action_visual(action)
@@ -9976,30 +10060,9 @@ func _execute_world_action(action, actor) -> void:
 		"pickaxe_tool":
 			_finish_pickup_action(action, actor, ItemScript.create("Pico", "tool_pickaxe", 1.35, 1, 0.0), "Recoges un pico.")
 		"backpack_pickup":
-			var _prev_bp := str(actor.equipped_backpack) if "equipped_backpack" in actor else ""
-			if actor.has_method("equip_backpack"):
-				actor.equip_backpack("Mochila pequena")
 			var bp_item = ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)
-			if action.has_meta("contents"):
-				for cd in action.get_meta("contents"):
-					if cd is Dictionary:
-						var ci = ItemScript.from_dict(cd)
-						if ci != null:
-							bp_item.contents.append(ci)
-			if not actor.inventory.add_item(bp_item):
-				if actor.has_method("equip_backpack"):
-					actor.equip_backpack(_prev_bp)
+			if not _pickup_and_swap_backpack(action, actor, bp_item):
 				return
-			# Al equiparla, su contenido vuelve al inventario plano.
-			if not bp_item.contents.is_empty():
-				var leftover: Array = []
-				for ci in bp_item.contents:
-					if ci != null and actor.inventory.add_item(ci):
-						continue
-					leftover.append(ci)
-				bp_item.contents = leftover
-			if actor.has_method("_sync_held_item"):
-				actor._sync_held_item()
 			actor.notice.emit("Recoges una mochila pequena. Puedes cargar mas.")
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -10493,11 +10556,11 @@ func handle_world_action_collect(action, actor) -> void:
 				handle_world_action(action, actor)
 				return
 			var item = ItemScript.create(
-				str(action.get_meta("item_name")),
-				str(action.get_meta("item_type")),
-				float(action.get_meta("item_weight")),
-				int(action.get_meta("item_quantity")),
-				float(action.get_meta("item_use_value"))
+				str(action.get_meta("item_name", action.display_name)),
+				str(action.get_meta("item_type", "resource")),
+				float(action.get_meta("item_weight", 0.5)),
+				int(action.get_meta("item_quantity", 1)),
+				float(action.get_meta("item_use_value", 0.0))
 			)
 			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
@@ -10524,18 +10587,8 @@ func handle_world_action_collect(action, actor) -> void:
 			if str(item.item_type) != "backpack":
 				_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
-				var _prev_bp := str(actor.equipped_backpack)
-				actor.equip_backpack(item.item_name)
-				if not actor.inventory.add_item(item):
-					actor.equip_backpack(_prev_bp)
+				if not _pickup_and_swap_backpack(action, actor, item):
 					return
-				# Al equiparla, su contenido vuelve al inventario plano.
-				var leftover: Array = []
-				for ci in item.contents:
-					if ci != null and actor.inventory.add_item(ci):
-						continue
-					leftover.append(ci)
-				item.contents = leftover
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 			elif str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
 				var slot_key2 := ""
@@ -14672,6 +14725,7 @@ func _update_forest_visibility() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
+	var vis_bonus := 320.0 if ppos.y > 2.5 else 0.0
 	for i in range(_forest_multimesh_nodes.size()):
 		var node: MultiMeshInstance3D = _forest_multimesh_nodes[i]
 		if not is_instance_valid(node):
@@ -14682,9 +14736,9 @@ func _update_forest_visibility() -> void:
 		# Show batch if any tree could be within visible radius
 		var should_show := false
 		if node.visible:
-			should_show = dist < (FOREST_MM_HIDE_RADIUS + batch_radius)
+			should_show = dist < (FOREST_MM_HIDE_RADIUS + vis_bonus + batch_radius)
 		else:
-			should_show = dist < (FOREST_MM_VISIBLE_RADIUS + batch_radius)
+			should_show = dist < (FOREST_MM_VISIBLE_RADIUS + vis_bonus + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if dist < 65.0 + batch_radius else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -14927,7 +14981,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 	trunk_mi.name = "Trunk"
 	trunk_mi.mesh = src_mesh
 	trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	trunk_mi.visibility_range_end = 120.0
+	trunk_mi.visibility_range_end = 480.0
 	trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	mi.add_child(trunk_mi)
 	if branch_mesh != null:
@@ -14935,7 +14989,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 		branch_mi.name = "Branches"
 		branch_mi.mesh = branch_mesh
 		branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		branch_mi.visibility_range_end = 120.0
+		branch_mi.visibility_range_end = 480.0
 		branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		mi.add_child(branch_mi)
 	add_child(mi)

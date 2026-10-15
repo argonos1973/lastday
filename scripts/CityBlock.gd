@@ -186,9 +186,11 @@ func load_building(i: int) -> Node3D:
  door.rotation_degrees.y = door.open_yaw if door.is_open else door.closed_yaw
  if int(definition.get("floors", 2)) > 2:
   _furnish_highrise(building, i, int(definition.floors))
+  _dress_highrise_facade(building, i)
  else:
   _furnish(building, i)
   _dress_facade(building, i)
+ _upgrade_building_materials(building, i)
  # Keep physics and doors resident; small interior props need not draw across town.
  var interior:Node3D=building.get_node("Interior")
  for mesh in interior.find_children("*","GeometryInstance3D",true,false):
@@ -513,6 +515,131 @@ func _emit_decals(building: Node3D) -> void:
   mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
   building.add_child(mesh_instance)
  _decal_groups.erase(building.get_instance_id())
+
+static var _city_pbr_cache: Dictionary = {}
+
+static func _pbr_mat(kind: String, tint: Color, uv_scale: float = 0.34, normal_str: float = 1.25, metallic_val: float = 0.0, rough_mult: float = 1.0) -> StandardMaterial3D:
+ var key := "%s|%s|%.2f|%.2f|%.2f|%.2f" % [kind, tint.to_html(), uv_scale, normal_str, metallic_val, rough_mult]
+ if _city_pbr_cache.has(key):
+  return _city_pbr_cache[key]
+ var base_dir := "res://assets/textures/overgrowth/village_"
+ var m := StandardMaterial3D.new()
+ m.albedo_texture = MaterialFactory.load_texture(base_dir + kind + "_albedo.png")
+ m.normal_enabled = true
+ m.normal_texture = MaterialFactory.load_texture(base_dir + kind + "_normal.png")
+ m.normal_scale = normal_str
+ m.roughness_texture = MaterialFactory.load_texture(base_dir + kind + "_roughness.png")
+ m.roughness = rough_mult
+ m.metallic = metallic_val
+ m.albedo_color = tint
+ m.uv1_triplanar = true
+ m.uv1_world_triplanar = false
+ m.uv1_scale = Vector3.ONE * uv_scale
+ m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+ _city_pbr_cache[key] = m
+ return m
+
+const BUILDING_PALETTES := [
+ {"wall": "ochre", "tint": Color(0.88, 0.80, 0.68), "brick": Color(0.76, 0.54, 0.44)},
+ {"wall": "lime", "tint": Color(0.78, 0.82, 0.79), "brick": Color(0.68, 0.52, 0.46)},
+ {"wall": "clay", "tint": Color(0.86, 0.68, 0.58), "brick": Color(0.72, 0.46, 0.38)},
+ {"wall": "stone", "tint": Color(0.78, 0.80, 0.82), "brick": Color(0.65, 0.50, 0.44)},
+ {"wall": "brick", "tint": Color(0.84, 0.64, 0.54), "brick": Color(0.78, 0.52, 0.42)},
+ {"wall": "lime", "tint": Color(0.86, 0.84, 0.76), "brick": Color(0.74, 0.54, 0.44)},
+ {"wall": "ochre", "tint": Color(0.82, 0.72, 0.60), "brick": Color(0.70, 0.48, 0.38)},
+ {"wall": "clay", "tint": Color(0.80, 0.74, 0.68), "brick": Color(0.68, 0.50, 0.42)},
+]
+
+func _upgrade_building_materials(building: Node3D, index: int) -> void:
+ var pal: Dictionary = BUILDING_PALETTES[index % BUILDING_PALETTES.size()]
+ var wall_mat := _pbr_mat(str(pal["wall"]), pal["tint"], 0.30, 1.35)
+ var brick_mat := _pbr_mat("brick", pal["brick"], 0.38, 1.45)
+ var stone_mat := _pbr_mat("stone", Color(0.64, 0.65, 0.62), 0.36, 1.35)
+ var wood_mat := _pbr_mat("wood", Color(0.48, 0.34, 0.22), 0.42, 1.20)
+ var roof_mat := _pbr_mat("slate", Color(0.46, 0.48, 0.50), 0.40, 1.30)
+ var iron_mat := _pbr_mat("stone", Color(0.18, 0.19, 0.18), 0.50, 0.90, 0.78, 0.42)
+ var glass_mat: StandardMaterial3D = _city_pbr_cache.get("city_glass")
+ if glass_mat == null:
+  glass_mat = StandardMaterial3D.new()
+  glass_mat.albedo_color = Color(0.36, 0.48, 0.54, 0.72)
+  glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+  glass_mat.roughness = 0.08
+  glass_mat.metallic = 0.25
+  glass_mat.metallic_specular = 0.85
+  _city_pbr_cache["city_glass"] = glass_mat
+ for node in building.find_children("*", "MeshInstance3D", true, false):
+  var mi := node as MeshInstance3D
+  if mi == null or mi.mesh == null:
+   continue
+  var nname := str(mi.name)
+  if nname.begins_with("Collision_") or nname.begins_with("Decals_"):
+   continue
+  if mi.get_parent() != null and mi.get_parent().name == "Interior":
+   continue
+  for s in range(mi.mesh.get_surface_count()):
+   var smat := mi.mesh.surface_get_material(s)
+   var mname := str(smat.resource_name).to_lower() if smat != null else ""
+   if "plaster" in mname or "lime" in mname:
+    mi.set_surface_override_material(s, wall_mat)
+   elif "brick" in mname:
+    mi.set_surface_override_material(s, brick_mat)
+   elif "foundation" in mname or "concrete" in mname or "stone" in mname:
+    mi.set_surface_override_material(s, stone_mat)
+   elif "wood" in mname or "timber" in mname:
+    mi.set_surface_override_material(s, wood_mat)
+   elif "iron" in mname or "metal" in mname:
+    mi.set_surface_override_material(s, iron_mat)
+   elif "glass" in mname:
+    mi.set_surface_override_material(s, glass_mat)
+   elif "roof" in nname.to_lower() or "slate" in mname:
+    mi.set_surface_override_material(s, roof_mat)
+
+func _dress_highrise_facade(building: Node3D, i: int) -> void:
+ var rng := RandomNumberGenerator.new()
+ rng.seed = 9700 + i * 131
+ var ivy_mat := MaterialFactory.make_overgrowth_material("ivy_sheet", TEX_IVY_SHEET, 0.28)
+ var drape_mat := MaterialFactory.make_overgrowth_material("ivy_drape", TEX_IVY_DRAPE, 0.3)
+ var grime_mat := MaterialFactory.make_overgrowth_material("base_damp", TEX_BASE_MOSS, 0.0, true)
+ grime_mat.albedo_color = Color(0.55, 0.48, 0.35, 0.65)
+ var moss_mat := MaterialFactory.make_overgrowth_material("base_moss", TEX_BASE_MOSS, 0.0, true)
+ var height := 15.6
+ var extent := 6.0
+ var face_off := 6.0 + 0.17
+ var base_height := 1.35
+ for face in [
+  {"u_axis": "x", "side": -1.0, "is_front": false},
+  {"u_axis": "x", "side": 1.0, "is_front": true},
+  {"u_axis": "z", "side": -1.0, "is_front": false},
+  {"u_axis": "z", "side": 1.0, "is_front": false},
+ ]:
+  var u_axis: String = face["u_axis"]
+  var side: float = face["side"]
+  var is_front: bool = face["is_front"]
+  var openings: Array[Rect2] = []
+  if is_front:
+   openings.append(Rect2(-2.9, -0.05, 3.2, 3.2))
+  for level in range(4):
+   for wu in [-3.5, 0.0, 3.5]:
+    openings.append(Rect2(wu - 0.85, level * 3.9 + 0.75, 1.7, 2.2))
+  if not is_front:
+   _wall_decal(building, "Grime", u_axis, side, face_off, 0.0, -0.05, extent * 2.0 + 0.2, base_height, grime_mat, false)
+  for k in range(8):
+   var mw := rng.randf_range(1.4, 2.8)
+   var mu := rng.randf_range(-extent + mw * 0.5, extent - mw * 0.5)
+   if is_front and mu < 0.5 and mu > -3.2:
+    continue
+   _wall_decal(building, "BaseMoss", u_axis, side, face_off + 0.01, mu, 0.0, mw, base_height * rng.randf_range(0.75, 1.0), moss_mat, rng.randf() < 0.5)
+  for anchor_u in [-(extent - 0.65), extent - 0.65]:
+   var pw := rng.randf_range(1.2, 2.0)
+   var ph := rng.randf_range(height * 0.55, height * 0.88)
+   _wall_growth(building, "Ivy", u_axis, side, face_off + 0.02, Rect2(anchor_u - pw * 0.5, 0.0, pw, ph), openings, ivy_mat, rng.randf() < 0.5)
+  for k in range(3):
+   var dw := rng.randf_range(0.7, 1.5)
+   var dh := rng.randf_range(0.7, 1.5)
+   var u := rng.randf_range(-extent + dw * 0.5, extent - dw * 0.5)
+   var top := height - 0.15
+   _wall_growth(building, "Drape", u_axis, side, face_off + 0.02, Rect2(u - dw * 0.5, top - dh, dw, dh), openings, drape_mat, false)
+ _emit_decals(building)
 
 static var _litter_mat: StandardMaterial3D
 static func _litter_material() -> StandardMaterial3D:
