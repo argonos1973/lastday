@@ -12,14 +12,14 @@ const WORN_HIDE := {
 # line (positive raises the tuck, negative lowers it inside the skull volume).
 # The helmet swallows the whole scalp, so hair collapses down into the head
 # instead of just under the rim — no tufts can poke through the shell.
-const TUCK_DROP := {"Casco militar": -0.15, "Tocado de piel animal": -0.10}
+const TUCK_DROP := {"Casco militar": -0.15, "Tocado de piel animal": -0.28}
 # Items that bury the scalp also pull the collapsed hair verts inward, so the
 # squashed layer stays inside the skull instead of ringing the face.
-const TUCK_SHRINK := {"Casco militar": 0.55, "Tocado de piel animal": 0.45}
+const TUCK_SHRINK := {"Casco militar": 0.55, "Tocado de piel animal": 0.68}
 
 # Shared by the saved-character preview and the animated actor.
 static func fit_pelt(model: Node3D, hat: Node3D, species: String = "") -> bool:
-	return seat_on_scalp(model, hat, "Tocado de piel animal", 0.56, 0.34, species)
+	return seat_on_scalp(model, hat, "Tocado de piel animal", 0.52, 0.35, species)
 
 # Seats a headpiece whose GLB is authored with the scalp seat at the local
 # origin and the trophy rising +Y (the pelt tocados): scales it to
@@ -56,10 +56,9 @@ static func seat_on_scalp(model: Node3D, hat: Node3D, item_name: String, fit_hei
 	var s := fit_height / above
 	var center := scalp.get_center()
 	var seat_y := head_bounds.end.y - head_bounds.size.y * sink
-	# Seating the throat AT the crown wraps the muzzle around the wearer's
-	# face — lift it so the animal's jaw rides over the forehead, like the
-	# reference tocados.
-	var raise := head_bounds.size.y * 0.07
+	# Seating the upper lip arch right above the eyebrows frames the forehead
+	# and eyes like the reference wolf/bear tocados.
+	var raise := head_bounds.size.y * 0.048
 	# Animal GLBs face -Z; the character bind mesh faces +Z.
 	# Rotate in bind space before composing the animated head frame.
 	var pitched := Basis.from_euler(Vector3(0.0, PI, 0.0)) * Basis.from_scale(Vector3.ONE * s)

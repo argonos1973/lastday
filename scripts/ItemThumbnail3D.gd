@@ -34,7 +34,7 @@ func _ready() -> void:
 	_model_root = Node3D.new()
 	_viewport.add_child(_model_root)
 
-func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0)) -> void:
+func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0), pelt_species: String = "") -> void:
 	for child in _model_root.get_children():
 		child.queue_free()
 	if _model_root == null:
@@ -62,6 +62,7 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	# node-space AABB sits elsewhere, so the viewport culls it to a blank
 	# icon. Flatten them to static copies that render the bind pose.
 	_flatten_skinned_meshes(inst)
+	var pelt_mat := MaterialFactory.pelt_fur_material(pelt_species) if not pelt_species.is_empty() else null
 	if not only_mesh_name.is_empty():
 		var all_meshes: Array = []
 		_collect_meshes(inst, all_meshes)
@@ -70,13 +71,22 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 			if m == null:
 				continue
 			if m.name.to_lower() == only_mesh_name.to_lower():
-				if tint.a > 0.0:
+				if pelt_mat != null:
+					m.material_override = pelt_mat
+				elif tint.a > 0.0:
 					var mat := StandardMaterial3D.new()
 					mat.albedo_color = tint
 					mat.roughness = 0.9
 					m.material_override = mat
 			else:
 				m.visible = false
+	elif pelt_mat != null:
+		var pelt_meshes: Array = []
+		_collect_meshes(inst, pelt_meshes)
+		for mi in pelt_meshes:
+			var m := mi as MeshInstance3D
+			if m != null:
+				m.material_override = pelt_mat
 	elif camo.a > 0.0:
 		# Camouflage garments show the same generated camo cloth the character
 		# wears when no loot color overrides it.

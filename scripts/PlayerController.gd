@@ -2140,12 +2140,14 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 			var from_player_drop := item_ref != null and bool(item_ref.get_meta("player_dropped", false))
 			if not already_granted and not from_player_drop:
 				var vest_rounds: int = RIFLE_MAG_SIZE * 5
-				if _rifle_reserve_ammo < vest_rounds:
-					_rifle_reserve_ammo = vest_rounds
+				_rifle_reserve_ammo += vest_rounds
 				if item_ref != null:
 					item_ref.set_meta("vest_mags_granted", true)
 			var mags_count: int = int(ceil(float(_rifle_reserve_ammo) / float(RIFLE_MAG_SIZE)))
 			notice.emit("Chaleco táctico equipado: %d cargadores (%d balas) para el fusil [R para recargar]." % [mags_count, _rifle_reserve_ammo])
+			var main_v := get_tree().current_scene if is_inside_tree() else null
+			if main_v != null and main_v.has_method("_sync_local_player_inventory"):
+				main_v.call_deferred("_sync_local_player_inventory")
 	# Custom character: show the clothing mesh, hide Desnudo_* for covered zones
 	# Skip for survival clothing items — _wear_survival_clothing handles mesh visibility
 	if is_custom_character and not slot.is_empty() and not SURVIVAL_CLOTHING.has(item_name):
@@ -11594,6 +11596,9 @@ func _shoot_rifle() -> void:
 	stats.energy = max(0.0, stats.energy - 3.0)
 	stats.changed.emit()
 	_is_firing = true
+	var main_shot := get_tree().current_scene if is_inside_tree() else null
+	if main_shot != null and main_shot.has_method("_sync_local_player_inventory"):
+		main_shot.call_deferred("_sync_local_player_inventory")
 	# Notify nearby wildlife of gunshot — all animals flee running
 	var gunshot_pos := global_position
 	for w in get_tree().get_nodes_in_group("wildlife"):

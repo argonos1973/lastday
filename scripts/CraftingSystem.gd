@@ -300,11 +300,14 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 		item.max_durability = float(entry.get("max_durability", 100.0))
 		item.spoilage = float(entry.get("spoilage", 0.0))
 		sources.append({"item": item, "action": entry.action, "quantity": item.quantity, "durability": item.durability})
+	var seen_items: Array = []
 	for inv_item in inventory_items:
-		if inv_item != null and not _is_tool(str(inv_item.item_name)):
+		if inv_item != null and not seen_items.has(inv_item):
+			seen_items.append(inv_item)
 			sources.append({"item": inv_item, "action": null, "quantity": inv_item.quantity, "durability": inv_item.durability})
 	for item in carried_tools:
-		if item != null and _is_tool(str(item.item_name)):
+		if item != null and _is_tool(str(item.item_name)) and not seen_items.has(item):
+			seen_items.append(item)
 			sources.append({"item": item, "action": null, "quantity": item.quantity, "durability": item.durability})
 	var consumed_pelts: Dictionary = {}
 	for input_name in recipe.inputs:

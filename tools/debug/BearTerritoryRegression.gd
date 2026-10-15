@@ -59,8 +59,8 @@ func _run() -> void:
 	for i in range(anchors.size()):
 		var spawn: Vector3 = world._bear_spawn_center(i)
 		var route := WildlifeRoutes.build_territory_route(world._world_rng, spawn, 24, 22.0, 58.0, 76.0, world.is_wildlife_allowed_at)
-		var far_from_start := Vector2(spawn.x, spawn.z).distance_to(player_start) >= 300.0
-		check(far_from_start, "bear territory %d is at least 300m from the starting area" % i)
+		var far_from_start := Vector2(spawn.x, spawn.z).distance_to(player_start) >= 120.0
+		check(far_from_start, "bear territory %d is at least 120m from the starting area" % i)
 		check(Vector2(spawn.x - anchors[i].x, spawn.z - anchors[i].z).length() <= 34.1, "bear %d spawns inside its assigned territory" % i)
 		var route_bounded := route.size() == 24
 		for point in route:

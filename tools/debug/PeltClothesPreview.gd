@@ -26,8 +26,8 @@ func run():
 		actor.setup_as_puppet()
 		for item in ["Chaqueta de piel", "Pantalones", "Botas de piel", head_items[i]]:
 			actor.equip_clothing(item, Color(0,0,0,0), null, sp)
-		var anims := [actor.third_person_idle_animation, actor.third_person_walk_animation, actor._rifle_aim_idle_animation]
-		actor.third_person_animation_player.play(anims[i % 3], 0.0)
+		var anims := [actor.third_person_idle_animation, actor.third_person_walk_animation]
+		actor.third_person_animation_player.play(anims[i % 2], 0.0)
 		actor.third_person_animation_player.advance(.4)
 		actor.third_person_animation_player.pause()
 		actors.append(actor)
@@ -68,7 +68,7 @@ func run():
 		root.get_texture().get_image().save_png("/tmp/pelt_clothes_"+view+".png")
 	# Individual closeups reveal face clearance and the rear drape.
 	cam.size = 1.3
-	for i in [0, 3]:
+	for i in [0, 1, 2, 3]:
 		var actor = actors[i]
 		for other in actors: other.visible = other == actor
 		var focus := Vector3(actor.position.x, 2.85, 0)

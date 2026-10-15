@@ -4950,11 +4950,11 @@ func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 	thumb.ready.connect(func():
 		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type, str(item.get_meta("pelt_species", "")))
 		var scale_value: float = _get_drop_scale(item.item_name, item.item_type)
-		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT}
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": ""}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo)
+		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
 		thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	, CONNECT_ONE_SHOT)
 	row.add_child(thumb)
@@ -7901,7 +7901,10 @@ func _check_wildlife_respawn() -> void:
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("fox", fox_route)
 	if alive_bear < _bear_territory_anchors().size():
-		var territory_counts := [0, 0, 0, 0]
+		var anchors_count := _bear_territory_anchors().size()
+		var territory_counts: Array = []
+		territory_counts.resize(anchors_count)
+		territory_counts.fill(0)
 		for node in get_tree().get_nodes_in_group("wildlife"):
 			if not node is WildlifeController or node._is_dead or node.animal_type != "bear":
 				continue
@@ -7942,8 +7945,16 @@ func _wildlife_spawn_pos() -> Vector3:
 
 func _bear_territory_anchors() -> Array[Vector3]:
 	return [
-		Vector3(-390.0, 0.0, -350.0), Vector3(390.0, 0.0, -350.0),
-		Vector3(-390.0, 0.0, 500.0), Vector3(390.0, 0.0, 700.0),
+		Vector3(-125.0, 0.0, -95.0),   # Bosque noroeste saliendo del pueblo
+		Vector3(135.0, 0.0, -110.0),   # Bosque noreste camino al lago
+		Vector3(195.0, 0.0, -210.0),   # Bosque junto al lago y cabaña
+		Vector3(-140.0, 0.0, 95.0),    # Bosque suroeste cerca del río
+		Vector3(115.0, 0.0, 115.0),    # Bosque sureste detrás del granero
+		Vector3(-15.0, 0.0, 210.0),    # Camino sur hacia el paso
+		Vector3(35.0, 0.0, 390.0),     # Entrada del paso sur
+		Vector3(-30.0, 0.0, 560.0),    # Bosque de la extensión sur
+		Vector3(55.0, 0.0, 675.0),     # Afueras de la ciudad / tienda militar
+		Vector3(-45.0, 0.0, 790.0),    # Bosque oeste junto a la ciudad
 	]
 
 func _nearest_bear_territory(pos: Vector3) -> int:
@@ -7968,7 +7979,7 @@ func _bear_spawn_center(territory_id: int) -> Vector3:
 		candidate.x = clampf(candidate.x, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT - 10.0)
 		candidate.z = clampf(candidate.z, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT_Z - 10.0)
 		var from_start := Vector2(candidate.x - 8.0, candidate.z - 2.5).length()
-		if from_start >= 300.0 and is_wildlife_allowed_at(candidate) and not _is_near_wildlife_blocker(candidate, 8.0):
+		if from_start >= 120.0 and is_wildlife_allowed_at(candidate) and not _is_near_wildlife_blocker(candidate, 8.0):
 			return candidate
 	for radius in [8.0, 16.0, 24.0, 34.0, 46.0, 58.0, 68.0]:
 		for step in range(24):
@@ -9234,6 +9245,10 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			cs_action.remove_meta("watered_until")
 			cs_action.remove_meta("ready_unix")
 			cs_action.set_crop_state(cs_state, 0.0)
+	if not action_id.is_empty():
+		for di in range(_dropped_items.size() - 1, -1, -1):
+			if str(_dropped_items[di].get("id", "")) == action_id:
+				_dropped_items.remove_at(di)
 	# Remove the completed action's visual on this client
 	if not action_id.is_empty() and world_actions_by_id.has(action_id):
 		var action = world_actions_by_id[action_id]
@@ -9463,14 +9478,14 @@ func _execute_world_action(action, actor) -> void:
 				maction.set_meta("item_weight", 0.3)
 				maction.set_meta("item_quantity", 1)
 				maction.set_meta("item_use_value", 15.0)
-				_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
+				if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
+					_dropped_items.append({"id": mid, "name": meat_name, "type": "food", "pos": [mpos.x, mpos.y, mpos.z], "weight": 0.3, "qty": 1, "use": 15.0, "action_type": "wolf_meat_raw"})
 				gut_spawns.append({"id": mid, "name": meat_name, "type": "food", "pos": mpos, "weight": 0.3, "qty": 1, "use": 15.0})
 			var hide_pos := animal_pos + Vector3(0.15, 0.0, -0.2)
 			hide_pos.y = _get_exact_ground_y(hide_pos.x, hide_pos.z, animal_pos.y + 0.5) + 0.04
 			_drop_seq += 1
 			var hide_id := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 			_spawn_ground_pickup(hide_name, "resource", hide_pos, 0.65, hide_qty, 0.0, hide_id)
-			_dropped_items.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
 			gut_spawns.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
 			actor.notice.emit("Destripas %s: +%d carne y %d piel." % [an_lower, meat_qty, hide_qty])
 			if held_g != null and held_g.has_method("reduce_durability"):
@@ -9612,7 +9627,8 @@ func _execute_world_action(action, actor) -> void:
 					actor.inventory.add_item(item)
 					_grant_vest_magazines(action, actor, item.item_name, item)
 					actor.equip_clothing(item.item_name, _eq_color, item)
-					actor.notice.emit("Equipas %s (5 cargadores de fusil listos, pulsa [R] para recargar)." % item.item_name if item.item_name == "Chaleco táctico" else "Equipas %s." % item.item_name)
+					if item.item_name != "Chaleco táctico":
+						actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -9623,7 +9639,8 @@ func _execute_world_action(action, actor) -> void:
 					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
 					_grant_vest_magazines(action, actor, item.item_name, item)
 					actor.equip_clothing(item.item_name, _eq_color2, item)
-					actor.notice.emit("Equipas %s (5 cargadores de fusil listos, pulsa [R] para recargar)." % item.item_name if item.item_name == "Chaleco táctico" else "Equipas %s." % item.item_name)
+					if item.item_name != "Chaleco táctico":
+						actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
@@ -14015,6 +14032,7 @@ func _add_collision_to_prop_group(root: Node) -> void:
 
 var _ground_exclude_rids: Array[RID] = []
 var _ground_exclude_refresh := 0.0
+var _ground_exclude_count := -1
 
 func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 	# Hills from _generated_hills are the analytic terrain height. The physics
@@ -14034,10 +14052,13 @@ func _get_exact_ground_y(x: float, z: float, from_y: float = 500.0) -> float:
 		# keep seeing through roofs to reach the interior floor.
 		query.collision_mask = 5 if from_y < 400.0 else 1
 		# get_nodes_in_group walks the whole tree — cache the RID list for a few
-		# seconds instead of rebuilding it on every wildlife step.
+		# seconds instead of rebuilding it on every wildlife step, but refresh
+		# immediately whenever the prop_collision group size changes.
 		var now := Time.get_ticks_msec()
-		if now > _ground_exclude_refresh:
+		var prop_count := get_tree().get_node_count_in_group("prop_collision")
+		if now > _ground_exclude_refresh or prop_count != _ground_exclude_count:
 			_ground_exclude_refresh = now + 3000
+			_ground_exclude_count = prop_count
 			_ground_exclude_rids.clear()
 			for node in get_tree().get_nodes_in_group("prop_collision"):
 				if node is CollisionObject3D:
@@ -15915,11 +15936,16 @@ func _create_pelt_visual(node_name: String, pos: Vector3, pelt_name: String) -> 
 	visual.name = node_name
 	visual.position = pos + Vector3(0.0, 0.015, 0.0)
 	visual.mesh = surface.commit()
-	var fur_material := StandardMaterial3D.new()
-	fur_material.vertex_color_use_as_albedo = true
-	fur_material.roughness = 0.96
-	fur_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	visual.material_override = fur_material
+	var pelt_sp := CraftingSystem.pelt_species_of(pelt_name)
+	var pelt_tex_mat := MaterialFactory.pelt_fur_material(pelt_sp) if not pelt_sp.is_empty() else null
+	if pelt_tex_mat != null:
+		visual.material_override = pelt_tex_mat
+	else:
+		var fur_material := StandardMaterial3D.new()
+		fur_material.vertex_color_use_as_albedo = true
+		fur_material.roughness = 0.96
+		fur_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		visual.material_override = fur_material
 	visual.add_to_group("world_action_visual")
 	add_child(visual)
 

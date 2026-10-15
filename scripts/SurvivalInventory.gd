@@ -368,16 +368,17 @@ func add_item_thumbnail(parent: Control, item) -> void:
 	thumbnail.ready.connect(func():
 		var paths: Array = []
 		var scale_value := 1.0
+		var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
 		if hud.main_node != null and hud.main_node.has_method("_get_drop_model_paths"):
-			paths = hud.main_node._get_drop_model_paths(item.item_name, item.item_type)
+			paths = hud.main_node._get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 			scale_value = hud.main_node._get_drop_scale(item.item_name, item.item_type)
 		if item.item_name == "Trapos":
 			paths = []
-		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT}
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": ""}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo)
+		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
 		if paths.is_empty() and item.item_name == "Trapos":
 			var mesh := MeshInstance3D.new()
 			var cylinder := CylinderMesh.new()

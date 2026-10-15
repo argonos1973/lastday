@@ -1670,8 +1670,9 @@ func _create_inventory_slot(index: int, item) -> void:
 		var model_paths: Array = []
 		var model_scale: float = 1.0
 		var frame_zoom: float = 1.0
+		var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
 		if main_node != null and main_node.has_method("_get_drop_model_paths"):
-			model_paths = main_node._get_drop_model_paths(item.item_name, item.item_type)
+			model_paths = main_node._get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 			model_scale = main_node._get_drop_scale(item.item_name, item.item_type)
 		# Fishing rod is long and thin — zoom in so it fills the thumbnail
 		if str(item.item_type) == "tool_fishing":
@@ -1680,6 +1681,7 @@ func _create_inventory_slot(index: int, item) -> void:
 		var only_mesh := ""
 		var mesh_tint := Color(0, 0, 0, 0)
 		var mesh_camo := Color(0, 0, 0, 0)
+		var mesh_pelt := ""
 		if str(item.item_name) == "Botas survival":
 			only_mesh = "shoes"
 			mesh_tint = Color(0.05, 0.05, 0.05)
@@ -1688,12 +1690,13 @@ func _create_inventory_slot(index: int, item) -> void:
 			var cloth_colors := _clothing_thumbnail_colors(item)
 			mesh_tint = cloth_colors["tint"]
 			mesh_camo = cloth_colors["camo"]
+			mesh_pelt = str(cloth_colors.get("pelt", ""))
 		if not model_paths.is_empty():
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumbnail.add_child(thumb3d)
-			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint, mesh_camo)
+			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint, mesh_camo, mesh_pelt)
 		else:
 			var thumb_icon := HudIconScript.new()
 			thumb_icon.custom_minimum_size = Vector2(36, 30)
@@ -1795,9 +1798,13 @@ func _item_thumbnail_color(item) -> Color:
 # Mirror the character's worn-material priority so the inventory thumbnail
 # shows the same color the garment has while equipped.
 func _clothing_thumbnail_colors(item) -> Dictionary:
-	var result := {"tint": Color(0, 0, 0, 0), "camo": Color(0, 0, 0, 0)}
+	var result := {"tint": Color(0, 0, 0, 0), "camo": Color(0, 0, 0, 0), "pelt": ""}
 	var iname := str(item.item_name)
-	if bool(item.get_meta("clothing_camo", false)) or PlayerController.SURVIVAL_CLOTHING.get(iname, {}).has("camo"):
+	if iname in GameConst.PELT_FUR_ITEMS and iname != "Tocado de piel animal" and item.has_meta("pelt_species"):
+		var pelt_sp := str(item.get_meta("pelt_species", ""))
+		if not pelt_sp.is_empty():
+			result["pelt"] = pelt_sp
+	if bool(item.get_meta("clothing_camo", false)):
 		result["camo"] = PlayerController.SURVIVAL_CLOTHING.get(iname, {}).get("camo", Color(0.20, 0.25, 0.15))
 		return result
 	# Field jackets keep their authored materials on the character too.
