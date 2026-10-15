@@ -21,12 +21,17 @@ static func compartments(player) -> Array:
 		result.append({"id": "backpack", "name": player.equipped_backpack.to_upper(), "capacity": int(player.backpack_capacity()["slots"])})
 	return result
 
+static func is_equipment(item) -> bool:
+	return item != null and str(item.item_type) in ["clothing", "backpack"]
+
 static func arrange(items: Array, containers: Array) -> Dictionary:
 	var groups := {}
 	for container in containers:
 		groups[container.id] = []
 	var pending: Array = []
 	for item in items:
+		if is_equipment(item):
+			continue
 		var placed := false
 		for container in containers:
 			if item.cargo_location == container.id and groups[container.id].size() < container.capacity:
@@ -51,7 +56,7 @@ static func arrange(items: Array, containers: Array) -> Dictionary:
 
 # Hover validation must not assign cargo locations or emit inventory changes.
 static func can_move(item, destination: String, inventory, containers: Array) -> bool:
-	if not inventory.items.has(item):
+	if is_equipment(item) or not inventory.items.has(item):
 		return false
 	var capacities := {}
 	var counts := {}
@@ -63,6 +68,8 @@ static func can_move(item, destination: String, inventory, containers: Array) ->
 	var assigned := {}
 	var pending: Array = []
 	for entry in inventory.items:
+		if is_equipment(entry):
+			continue
 		var location: String = entry.cargo_location
 		if capacities.has(location) and counts[location] < capacities[location]:
 			counts[location] += 1

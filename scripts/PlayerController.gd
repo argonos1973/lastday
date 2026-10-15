@@ -235,8 +235,8 @@ const CLOTHING_SLOTS := {
 # Warmth value per clothing item. Higher = warmer.
 # Short sleeves / shorts give little warmth; jackets and long pants give more.
 const CLOTHING_WARMTH := {
-	"Chaqueta de piel": 0.52,
-	"Botas de piel": 0.28,
+	"Chaqueta de piel": 0.85,
+	"Botas de piel": 0.48,
 	"Chaqueta de campaña verde": 0.32,
 	"Chaqueta de campaña azul": 0.32,
 	"Chaqueta de campaña arena": 0.32,
@@ -259,8 +259,8 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.12,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
-	"Gorro de piel": 0.20,
-	"Tocado de piel animal": 0.24,
+	"Gorro de piel": 0.38,
+	"Tocado de piel animal": 0.45,
 	"Casco militar": 0.05,
 	"Chaqueta de cuadros": 0.45,
 	"Chaqueta de otoño": 0.42,
@@ -3141,8 +3141,9 @@ func _recalculate_carry_capacity() -> void:
 	# unequip reduce los slots, lo que soltaba items (p. ej. el sombrero) antes
 	# de que el servidor repartiera el loot del cadáver — y sus item_dropped
 	# llegaban rechazados (proxy_dead) o duplicados.
-	if not _initializing and not is_dead and slots < old_max and inventory.items.size() > slots:
-		_drop_excess_items(inventory.items.size() - slots)
+	var stored_count: int = inventory.get_stored_count() if inventory.has_method("get_stored_count") else inventory.items.size()
+	if not _initializing and not is_dead and slots < old_max and stored_count > slots:
+		_drop_excess_items(stored_count - slots)
 
 func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 	var slots := BASE_CARRY_SLOTS
@@ -3197,7 +3198,8 @@ func _pack_backpack_drop_contents() -> Array:
 	if _has_backpack_in_inventory():
 		return []
 	var slots: int = int(_compute_carry_capacity(false)["slots"])
-	var overflow: int = inventory.items.size() - slots
+	var stored_count: int = inventory.get_stored_count() if inventory.has_method("get_stored_count") else inventory.items.size()
+	var overflow: int = stored_count - slots
 	var held = get_held_item()
 	var contents: Array = []
 	var taken: Array = []
@@ -3275,6 +3277,8 @@ func _recalculate_warmth() -> void:
 		var item_name: String = str(_equipped_slots[slot])
 		if CLOTHING_WARMTH.has(item_name):
 			total += CLOTHING_WARMTH[item_name]
+			if str(_equipped_pelt.get(item_name, "")) == "oso":
+				total += 0.10
 	stats.warmth_bonus = total
 	stats.changed.emit()
 
@@ -3373,7 +3377,8 @@ func _physics_process(delta: float) -> void:
 							is_equipped = true
 							break
 					if is_equipped:
-						item.reduce_durability(1.0)
+						var wear_amount := 0.30 if (item.item_name in GameConst.PELT_FUR_ITEMS or item.item_name == "Tocado de piel animal") else 1.0
+						item.reduce_durability(wear_amount)
 						if item.is_broken():
 							notice.emit("%s se ha deteriorado y ya no sirve." % item.item_name)
 							_broken_indices.append(i)
@@ -3391,8 +3396,15 @@ func _physics_process(delta: float) -> void:
 				inventory.remove_index(i_broken, 1)
 			# After losing clothing, capacity is reduced — drop items that no longer fit
 			_recalculate_carry_capacity()
-			while inventory.items.size() > inventory.max_slots:
-				var overflow_item = inventory.items[inventory.items.size() - 1]
+			while inventory.get_stored_count() > inventory.max_slots:
+				var drop_idx := -1
+				for k in range(inventory.items.size() - 1, -1, -1):
+					if not InventoryScript.is_equipment_item(inventory.items[k]):
+						drop_idx = k
+						break
+				if drop_idx < 0:
+					break
+				var overflow_item = inventory.items[drop_idx]
 				var overflow_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
 				overflow_pos.y = global_position.y
 				if overflow_item != null:
@@ -3400,9 +3412,16 @@ func _physics_process(delta: float) -> void:
 					set_meta("last_dropped_wetness", float(overflow_item.wetness))
 					set_meta("last_dropped_pelt", str(overflow_item.get_meta("pelt_species", "")))
 					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
-				inventory.remove_index(inventory.items.size() - 1)
-			while inventory.get_total_weight() > inventory.max_weight and inventory.items.size() > 0:
-				var overflow_item2 = inventory.items[inventory.items.size() - 1]
+				inventory.remove_index(drop_idx)
+			while inventory.get_total_weight() > inventory.max_weight and inventory.get_stored_count() > 0:
+				var drop_idx2 := -1
+				for k2 in range(inventory.items.size() - 1, -1, -1):
+					if not InventoryScript.is_equipment_item(inventory.items[k2]):
+						drop_idx2 = k2
+						break
+				if drop_idx2 < 0:
+					break
+				var overflow_item2 = inventory.items[drop_idx2]
 				var overflow_pos2 := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
 				overflow_pos2.y = global_position.y
 				if overflow_item2 != null:
@@ -3410,7 +3429,7 @@ func _physics_process(delta: float) -> void:
 					set_meta("last_dropped_wetness", float(overflow_item2.wetness))
 					set_meta("last_dropped_pelt", str(overflow_item2.get_meta("pelt_species", "")))
 					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
-				inventory.items.remove_at(inventory.items.size() - 1)
+				inventory.items.remove_at(drop_idx2)
 			if held_index >= inventory.items.size():
 				held_index = max(0, inventory.items.size() - 1)
 			_sync_held_item()
@@ -5997,6 +6016,14 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 		var clothing_name := str(_equipped_slots[slot])
 		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
 			unequip_clothing(clothing_name)
+	# Crafted clothing goes straight onto its equipment slot instead of staying
+	# unequipped in pockets.
+	if str(out.get("type", "")) == "clothing" and inventory != null:
+		for i in range(inventory.items.size() - 1, -1, -1):
+			var it = inventory.items[i]
+			if it != null and str(it.item_type) == "clothing" and not _equipped_slots.values().has(str(it.item_name)):
+				equip_clothing(str(it.item_name), it.get_meta("clothing_color", Color.TRANSPARENT), it, str(it.get_meta("pelt_species", "")))
+				break
 	inventory.changed.emit()
 	# Determine animation and duration based on recipe type
 	var craft_anim := "forage"
@@ -11721,13 +11748,21 @@ func _shoot_rifle() -> void:
 			hit_collider = aim_hit.collider
 			hit_pos = aim_hit.position
 			hit_normal = aim_hit.normal
+	# Check distant MultiMesh trees and giant boulders that only spawn their
+	# StaticBody3D within 8-10m of the player.
+	var scene_root := get_tree().current_scene
+	if scene_root != null and scene_root.has_method("raycast_distant_props"):
+		var prop_hit: Dictionary = scene_root.raycast_distant_props(shot_origin, hit_pos)
+		if not prop_hit.is_empty():
+			hit_pos = prop_hit["position"]
+			hit_normal = prop_hit["normal"]
+			hit_collider = prop_hit["collider"]
 	# Aplicar dano/impacto inmediatamente (hitscan) — las particulas salen ya.
 	if hit_collider != null:
 		_apply_rifle_damage(hit_collider, hit_pos, shot_origin.distance_to(hit_pos), hit_normal)
-	# Fogonazo y trazadora: en la punta REAL del cañon, igual que la bala.
+	# Fogonazo en la punta REAL del cañon (sin rayo/trazadora).
 	var flash_pos: Vector3 = shot_origin
 	_spawn_muzzle_flash(flash_pos, aim_dir)
-	_spawn_bullet_tracer(flash_pos, aim_dir)
 	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
 		_scope_overlay.muzzle_flash()
 	if not is_puppet:
@@ -11930,7 +11965,7 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 static var _bullet_hole_texture: Texture2D = null
 static var _soft_particle_texture: Texture2D = null
 static var _bullet_holes: Array = []
-const MAX_BULLET_HOLES := 80
+const MAX_BULLET_HOLES := 160
 
 func _get_soft_particle_texture() -> Texture2D:
 	if _soft_particle_texture != null:
@@ -12011,38 +12046,68 @@ func _spawn_impact_dust(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> 
 		return
 	var particles := GPUParticles3D.new()
 	particles.name = "BulletDust"
-	particles.amount = 22
-	particles.lifetime = 1.4
-	particles.explosiveness = 0.65
-	particles.randomness = 0.9
+	particles.amount = 36
+	particles.lifetime = 1.65
+	particles.explosiveness = 0.82
+	particles.randomness = 0.92
 	particles.one_shot = true
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = hit_normal
-	mat.spread = 65.0
-	mat.initial_velocity_min = 0.8
-	mat.initial_velocity_max = 3.2
-	mat.gravity = Vector3(0, -0.4, 0)
-	mat.damping_min = 2.5
-	mat.damping_max = 5.0
-	mat.scale_min = 0.25
-	mat.scale_max = 0.7
-	mat.color = color
+	mat.spread = 68.0
+	mat.initial_velocity_min = 0.9
+	mat.initial_velocity_max = 3.8
+	mat.gravity = Vector3(0, -0.35, 0)
+	mat.damping_min = 2.2
+	mat.damping_max = 4.8
+	mat.scale_min = 0.32
+	mat.scale_max = 0.88
+	mat.color = Color(minf(1.0, color.r + 0.08), minf(1.0, color.g + 0.08), minf(1.0, color.b + 0.08), 0.92)
 	mat.hue_variation_min = -0.02
 	mat.hue_variation_max = 0.02
-	mat.color_ramp = _make_fade_ramp(0.12, 0.5)
+	mat.color_ramp = _make_fade_ramp(0.08, 0.55)
 	var scale_tex := CurveTexture.new()
 	var scale_curve := Curve.new()
-	scale_curve.add_point(Vector2(0.0, 0.35))
-	scale_curve.add_point(Vector2(0.35, 0.9))
-	scale_curve.add_point(Vector2(1.0, 1.6))
+	scale_curve.add_point(Vector2(0.0, 0.4))
+	scale_curve.add_point(Vector2(0.35, 1.0))
+	scale_curve.add_point(Vector2(1.0, 1.85))
 	scale_tex.curve = scale_curve
 	mat.scale_curve = scale_tex
 	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.14, 0.14), Color.WHITE)
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.16, 0.16), Color.WHITE)
 	scene.add_child(particles)
-	particles.global_position = hit_pos + hit_normal * 0.04
+	particles.global_position = hit_pos + hit_normal * 0.05
 	particles.emitting = true
-	get_tree().create_timer(3.0).timeout.connect(func(): particles.queue_free())
+	# Motas finas de polvo en suspensión alrededor del punto de impacto
+	var motes := GPUParticles3D.new()
+	motes.name = "BulletDustMotes"
+	motes.amount = 28
+	motes.lifetime = 2.1
+	motes.explosiveness = 0.92
+	motes.randomness = 0.95
+	motes.one_shot = true
+	var mmat := ParticleProcessMaterial.new()
+	mmat.direction = (hit_normal + Vector3(0, 0.35, 0)).normalized()
+	mmat.spread = 78.0
+	mmat.initial_velocity_min = 0.45
+	mmat.initial_velocity_max = 2.4
+	mmat.gravity = Vector3(0, -0.65, 0)
+	mmat.damping_min = 1.2
+	mmat.damping_max = 2.6
+	mmat.scale_min = 0.35
+	mmat.scale_max = 0.95
+	mmat.color = Color(minf(1.0, color.r + 0.16), minf(1.0, color.g + 0.15), minf(1.0, color.b + 0.12), 0.95)
+	mmat.color_ramp = _make_fade_ramp(0.04, 0.65)
+	motes.process_material = mmat
+	motes.draw_pass_1 = _make_soft_mesh(Vector2(0.032, 0.032), Color.WHITE)
+	scene.add_child(motes)
+	motes.global_position = hit_pos + hit_normal * 0.04
+	motes.emitting = true
+	get_tree().create_timer(3.2).timeout.connect(func():
+		if is_instance_valid(particles):
+			particles.queue_free()
+		if is_instance_valid(motes):
+			motes.queue_free()
+	)
 
 func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
 	var scene := get_tree().current_scene
@@ -12050,8 +12115,8 @@ func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) ->
 		return
 	var particles := GPUParticles3D.new()
 	particles.name = "BulletChips"
-	particles.amount = 16
-	particles.lifetime = 0.45
+	particles.amount = 22
+	particles.lifetime = 0.55
 	particles.explosiveness = 1.0
 	particles.randomness = 0.75
 	particles.one_shot = true
@@ -12066,16 +12131,19 @@ func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) ->
 	mat.color = Color(color.r + 0.08, color.g + 0.08, color.b + 0.08, 0.95)
 	mat.color_ramp = _make_fade_ramp(0.05, 0.7)
 	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.035, 0.035), Color.WHITE)
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.04, 0.04), Color.WHITE)
 	scene.add_child(particles)
-	particles.global_position = hit_pos + hit_normal * 0.02
+	particles.global_position = hit_pos + hit_normal * 0.025
 	particles.emitting = true
-	get_tree().create_timer(1.2).timeout.connect(func(): particles.queue_free())
+	get_tree().create_timer(1.2).timeout.connect(func():
+		if is_instance_valid(particles):
+			particles.queue_free()
+	)
 
 func _get_bullet_hole_texture() -> Texture2D:
 	if _bullet_hole_texture != null:
 		return _bullet_hole_texture
-	var size := 64
+	var size := 96
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	var center := Vector2(size, size) * 0.5
 	for y in range(size):
@@ -12083,13 +12151,14 @@ func _get_bullet_hole_texture() -> Texture2D:
 			var offset := Vector2(x, y) - center
 			var d: float = offset.length() / (size * 0.5)
 			var angle := atan2(offset.y, offset.x)
-			# Borde irregular para que no parezca un circulo perfecto
-			var edge := 0.42 + 0.12 * sin(angle * 5.0 + 0.7) + 0.07 * sin(angle * 11.0 + 2.1)
+			# Borde irregular astillado con grietas radiales
+			var crack := maxf(0.0, cos(angle * 7.0 + 0.4) * 0.14 + sin(angle * 13.0 + 1.9) * 0.09)
+			var edge := 0.48 + 0.11 * sin(angle * 5.0 + 0.7) + 0.07 * sin(angle * 11.0 + 2.1) + crack
 			var a := clampf(1.0 - d / max(edge, 0.01), 0.0, 1.0)
-			a = pow(a, 0.55)
-			# Centro mas oscuro, halo de raspadura alrededor
-			var shade := 0.02 if d < edge * 0.45 else 0.09
-			img.set_pixel(x, y, Color(shade, shade, shade, a * 0.92))
+			a = pow(a, 0.48)
+			# Centro perforado negro profundo + anillo astillado/desconchado alrededor
+			var shade := 0.01 if d < edge * 0.42 else (0.22 if d < edge * 0.72 else 0.08)
+			img.set_pixel(x, y, Color(shade, shade * 0.95, shade * 0.88, a * 0.96))
 	_bullet_hole_texture = ImageTexture.create_from_image(img)
 	return _bullet_hole_texture
 
@@ -12097,26 +12166,33 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
-	# Compatibility renderer (GLES3) no soporta Decal: usamos un quad pegado
-	# a la superficie con la textura del impacto.
 	var mi := MeshInstance3D.new()
 	mi.name = "BulletHole"
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.09, 0.09)
+	quad.size = Vector2(0.13, 0.13)
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = _get_bullet_hole_texture()
 	m.albedo_color = Color.WHITE
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.render_priority = 4
 	quad.material = m
 	mi.mesh = quad
-	if is_instance_valid(collider) and collider is Node3D:
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if is_instance_valid(collider) and collider is Door:
 		collider.add_child(mi)
 	else:
 		scene.add_child(mi)
-	# +Z del quad mira hacia quien dispara (la cara visible)
-	var pos := hit_pos + hit_normal * 0.012
+	# En fachadas de casas con láminas de musgo/hiedra (+3..5 cm sobre el muro),
+	# adelantar el decal para que quede siempre delante del recubrimiento.
+	var surface_offset := 0.018
+	if collider is Node:
+		var cname := str((collider as Node).name).to_lower()
+		var pname := str((collider as Node).get_parent().name).to_lower() if (collider as Node).get_parent() != null else ""
+		if "house" in cname or "casa" in cname or "front" in cname or "back" in cname or "left" in cname or "right" in cname or "solid_" in cname or "city_" in pname or "house" in pname:
+			surface_offset = 0.056
+	var pos := hit_pos + hit_normal * surface_offset
 	var up := Vector3.UP if absf(hit_normal.y) < 0.95 else Vector3.RIGHT
 	var basis_ := Basis.looking_at(-hit_normal, up)
 	mi.global_transform = Transform3D(basis_, pos)
@@ -12210,9 +12286,28 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
 		third_person_action_timer = 1.0
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	_play_shoot_sound()
-	# Show the shot itself — tracer streak + muzzle flash at the reported muzzle.
-	_spawn_bullet_tracer(_origin, _dir)
+	# Show muzzle flash at the reported muzzle (no tracer streak) and impact on static surfaces.
 	_spawn_muzzle_flash(_origin, _dir)
+	if get_world_3d() != null and _dir.length_squared() > 0.001:
+		var space := get_world_3d().direct_space_state
+		var rdir := _dir.normalized()
+		var rq := PhysicsRayQueryParameters3D.create(_origin, _origin + rdir * RIFLE_RANGE, 5)
+		rq.exclude = [get_rid()]
+		rq.collide_with_bodies = true
+		rq.collide_with_areas = false
+		var rhit := space.intersect_ray(rq)
+		var rpos: Vector3 = rhit["position"] if not rhit.is_empty() else _origin + rdir * RIFLE_RANGE
+		var rnorm: Vector3 = rhit["normal"] if not rhit.is_empty() else Vector3.UP
+		var rcol = rhit.get("collider") if not rhit.is_empty() else null
+		var scene_r := get_tree().current_scene
+		if scene_r != null and scene_r.has_method("raycast_distant_props"):
+			var ph: Dictionary = scene_r.raycast_distant_props(_origin, rpos)
+			if not ph.is_empty():
+				rpos = ph["position"]
+				rnorm = ph["normal"]
+				rcol = ph["collider"]
+		if rcol != null and not _is_rifle_damage_target(rcol as Node):
+			_spawn_bullet_impact(rpos, rnorm, rcol)
 
 func _load_wav_stream(path: String) -> AudioStream:
 	var stream: AudioStream = null

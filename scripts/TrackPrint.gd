@@ -5,9 +5,9 @@ class_name TrackPrint
 # animal interpolado y dibuja su rastro local; no se sincroniza el historial
 # de pisadas ni se reconstruye para jugadores que llegan después.
 
-const MAX_TRACKS := 400
-const LIFETIME := 180.0
-const FADE_TIME := 55.0
+const MAX_TRACKS := 1600
+const LIFETIME := 600.0
+const FADE_TIME := 90.0
 
 static var _tracks: Array = []
 static var _textures: Dictionary = {}

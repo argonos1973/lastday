@@ -4114,6 +4114,8 @@ func _update_server_proxies(delta: float) -> void:
 			proxy.set_meta("has_real_pos", true)
 			proxy.global_position = data["pos"]
 			proxy.set_meta("in_built_shelter", _is_near_built_shelter(proxy.global_position))
+		if data.has("held_item") and not proxy.get_meta("reconnecting", false):
+			proxy.set_meta("saved_held_item", str(data["held_item"]))
 		# Decrement spawn protection timer using real delta
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:
@@ -7748,31 +7750,37 @@ func _create_river_drink_zones() -> void:
 			if action != null:
 				action.rotation_degrees.y = yaw
 
+func is_deer_allowed_at(pos: Vector3) -> bool:
+	# Deer stay in the outer forests, well away from the starting village and city blocks.
+	if Vector2(pos.x - 8.0, pos.z - 2.5).length() < 145.0:
+		return false
+	if pos.z > 610.0 and absf(pos.x - 40.0) < 95.0:
+		return false
+	return is_wildlife_allowed_at(pos)
+
 func _create_wildlife() -> void:
 	print("[WILDLIFE] _create_wildlife started")
 	var player_start := Vector3(8, 0.0, 2.5)
-	# Deer: large outer ring routes around the expanded map
+	# Deer: outer forest ring routes well away from the starting village
 	var deer_routes := [
-		# One herd starts within sight of the initial trail; the rest remain spread
-		# through the wider forest so the starting area never feels overrun.
-		WildlifeRoutes.build_circular_route(_world_rng, 52.0, 0.0, 16, 10.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 160.0, PI * 0.5, 16, 12.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 220.0, PI, 18, 15.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 280.0, PI * 1.5, 20, 18.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 340.0, PI * 0.25, 22, 20.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 400.0, PI * 0.75, 24, 22.0, is_wildlife_allowed_at),
-		WildlifeRoutes.build_circular_route(_world_rng, 450.0, PI * 1.25, 26, 24.0, is_wildlife_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 180.0, 0.0, 16, 12.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 220.0, PI * 0.5, 16, 14.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 265.0, PI, 18, 16.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 310.0, PI * 1.5, 20, 18.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 355.0, PI * 0.25, 22, 20.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 405.0, PI * 0.75, 24, 22.0, is_deer_allowed_at),
+		WildlifeRoutes.build_circular_route(_world_rng, 450.0, PI * 1.25, 26, 24.0, is_deer_allowed_at),
 	]
 	for dr in deer_routes:
 		_create_deer_pair(dr)
-	# Deer roaming the southern extension woods and open pass.
+	# Deer roaming the southern extension woods (outside the city center).
 	for i in range(2):
-		var sc := Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(500.0, 860.0))
+		var sc := Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(470.0, 595.0))
 		for _retry in range(30):
-			if is_wildlife_allowed_at(sc):
+			if is_deer_allowed_at(sc):
 				break
-			sc = Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(500.0, 860.0))
-		_create_deer_pair(WildlifeRoutes.build_roaming_route(_world_rng, sc, 22, 70.0, 140.0, is_wildlife_allowed_at, true))
+			sc = Vector3(_world_rng.randf_range(-40.0, 60.0), 0.0, _world_rng.randf_range(470.0, 595.0))
+		_create_deer_pair(WildlifeRoutes.build_roaming_route(_world_rng, sc, 22, 60.0, 120.0, is_deer_allowed_at, true))
 
 	# Foxes: 10 animals starting in distinct zones, each roaming the whole map
 	var fox_zones := [
@@ -7902,9 +7910,14 @@ func _check_wildlife_respawn() -> void:
 	if total_deer < 14:
 		var deer_route: Array
 		if randf() < 0.3:
-			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, _wildlife_spawn_pos(), 22, 70.0, 140.0, is_wildlife_allowed_at, true)
+			var d_start := _wildlife_spawn_pos()
+			for _r in range(30):
+				if is_deer_allowed_at(d_start):
+					break
+				d_start = _wildlife_spawn_pos()
+			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, d_start, 22, 70.0, 140.0, is_deer_allowed_at, true)
 		else:
-			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
+			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(175.0, 450.0), randf() * TAU, 20, 18.0, is_deer_allowed_at)
 		_create_deer_pair(deer_route)
 	if total_fox < 10:
 		var fox_zone := _wildlife_spawn_pos()
@@ -9909,7 +9922,8 @@ func _execute_world_action(action, actor) -> void:
 			var cooked_item = ItemScript.create(cooked_name, "food", cooked_weight, 1, cooked_use)
 			# Verificar si hay slot libre o si puede apilarse con algo existente
 			var can_hold := false
-			if actor.inventory.items.size() < actor.inventory.max_slots:
+			var stored_cnt: int = actor.inventory.get_stored_count() if actor.inventory.has_method("get_stored_count") else actor.inventory.items.size()
+			if stored_cnt < actor.inventory.max_slots:
 				can_hold = true
 			else:
 				for existing in actor.inventory.items:
@@ -10523,12 +10537,34 @@ func handle_world_action_collect(action, actor) -> void:
 					leftover.append(ci)
 				item.contents = leftover
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
-			elif str(item.item_type) == "clothing":
+			elif str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
+				var slot_key2 := ""
+				if actor.get("_equipped_slots") != null:
+					for sk2 in actor._equipped_slots.keys():
+						if str(actor._equipped_slots[sk2]) == item.item_name:
+							slot_key2 = sk2
+							break
+				if not slot_key2.is_empty():
+					var _old_color2: Color = actor.get_current_clothing_color(item.item_name)
+					actor.set_meta("last_dropped_camo", actor.clothing_has_camo(item.item_name))
+					actor.unequip_clothing(item.item_name)
+					if actor.inventory != null:
+						for i in range(actor.inventory.items.size()):
+							if str(actor.inventory.items[i].item_name) == item.item_name:
+								actor.set_meta("last_dropped_pelt", str(actor.inventory.items[i].get_meta("pelt_species", "")))
+								actor.inventory.remove_index(i)
+								break
+					var swap_drop_pos2: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
+					swap_drop_pos2.y = actor.global_position.y
+					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos2, _old_color2, false, 0.0)
 				if not actor.inventory.add_item(item):
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
-				actor.notice.emit("Coges %s." % item.item_name)
+				var _eq_color_c: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
 				_grant_vest_magazines(action, actor, item.item_name, item)
+				actor.equip_clothing(item.item_name, _eq_color_c, item)
+				if item.item_name != "Chaleco táctico":
+					actor.notice.emit("Equipas %s." % item.item_name)
 			elif not actor.inventory.add_item(item):
 				return
 			else:
@@ -11097,14 +11133,36 @@ func _create_quaternius_environment_props() -> void:
 		var path: String = Q_ENV + str(prop_names[i % prop_names.size()])
 		_spawn_external(path, "QWorldProp", pos, Vector3.ONE, Vector3(0, _world_rng.randf_range(0, 360), 0), Vector3(1.0, 1.0, 1.0))
 
+var _rock_trimesh_cache: Dictionary = {}
+
+func _add_rock_collision(rock_node: Node) -> void:
+	if rock_node == null or not is_instance_valid(rock_node):
+		return
+	var meshes: Array = []
+	NodeUtils.collect_mesh_instances(rock_node, meshes)
+	for mi in meshes:
+		var mesh_inst := mi as MeshInstance3D
+		if mesh_inst == null or mesh_inst.mesh == null:
+			continue
+		if not _rock_trimesh_cache.has(mesh_inst.mesh):
+			_rock_trimesh_cache[mesh_inst.mesh] = mesh_inst.mesh.create_trimesh_shape()
+		var body := StaticBody3D.new()
+		body.name = "RockCollision"
+		var col := CollisionShape3D.new()
+		col.shape = _rock_trimesh_cache[mesh_inst.mesh]
+		body.add_child(col)
+		mesh_inst.add_child(body)
+
 func _create_terrain_variation() -> void:
 	for i in range(26):
 		var rock_pos := Vector3(_world_rng.randf_range(-70, 70), 0.04, _world_rng.randf_range(-70, 70))
 		if not _can_place_ground_vegetation(rock_pos, 1.6):
 			continue
 		var rock_scale := _world_rng.randf_range(0.7, 1.35)
+		var before_children := get_child_count()
 		if _try_instance_external_scene(NodeUtils.shuffled_paths(REAL_ROCK_MODELS, _world_rng), "RealRock", rock_pos, Vector3.ONE * rock_scale, Vector3(0, _world_rng.randf_range(0, 360), 0), true, 0.0):
-			pass
+			if get_child_count() > before_children:
+				_add_rock_collision(get_child(get_child_count() - 1))
 		else:
 			_create_polyhaven_boulder(rock_pos, Vector3(_world_rng.randf_range(0.32, 0.74), _world_rng.randf_range(0.16, 0.34), _world_rng.randf_range(0.28, 0.62)))
 	for i in range(16):
@@ -11358,8 +11416,8 @@ func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
 	_create_textured_visual_sphere("PolyhavenBoulder", pos + Vector3(0, scale_value.y * 0.55, 0), scale_value, rock_texture, base_color)
 	if _world_rng.randf() < 0.45:
 		_create_textured_visual_sphere("PolyhavenBoulderLobe", pos + Vector3(scale_value.x * _world_rng.randf_range(-0.35, 0.35), scale_value.y * 0.42, scale_value.z * _world_rng.randf_range(-0.35, 0.35)), scale_value * Vector3(_world_rng.randf_range(0.45, 0.72), _world_rng.randf_range(0.45, 0.72), _world_rng.randf_range(0.45, 0.72)), rock_texture, base_color.darkened(0.05))
-	if scale_value.x > 1.25 and scale_value.z > 1.25:
-		_create_invisible_collision_box("PolyhavenBoulderCollision", pos, Vector3(scale_value.x, scale_value.y, scale_value.z))
+	if scale_value.x >= 0.30 and scale_value.z >= 0.30:
+		_create_invisible_collision_box("PolyhavenBoulderCollision", pos, Vector3(scale_value.x * 0.92, scale_value.y, scale_value.z * 0.92))
 
 func _create_mountain_river() -> void:
 	var segments := _default_river_segments()
@@ -14696,6 +14754,114 @@ func _update_forest_collision() -> void:
 func _tree_grid_key(pos: Vector3) -> Vector2i:
 	return Vector2i(int(pos.x / _tree_grid_cell_size), int(pos.z / _tree_grid_cell_size))
 
+func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
+	var seg := to_pos - from_pos
+	var total_len := seg.length()
+	if total_len < 0.05:
+		return {}
+	var best_t := 1.0
+	var best_hit: Dictionary = {}
+	var checked_tree_cells: Dictionary = {}
+	var checked_forest_cells: Dictionary = {}
+	var checked_boulder_cells: Dictionary = {}
+	var steps := maxi(2, int(ceil(total_len / 6.0)))
+	var ox := from_pos.x
+	var oz := from_pos.z
+	var dx := seg.x
+	var dz := seg.z
+	var a2d := dx * dx + dz * dz
+	for s in range(steps + 1):
+		var frac := float(s) / float(steps)
+		if frac > best_t + 0.05:
+			break
+		var sample := from_pos + seg * frac
+		# 1. Trees in _tree_grid
+		var tc := _tree_grid_key(sample)
+		for gx in range(tc.x - 1, tc.x + 2):
+			for gz in range(tc.y - 1, tc.y + 2):
+				var tkey := Vector2i(gx, gz)
+				if checked_tree_cells.has(tkey):
+					continue
+				checked_tree_cells[tkey] = true
+				if not _tree_grid.has(tkey):
+					continue
+				for entry in _tree_grid[tkey]:
+					if _depleted_action_ids.has("fell_tree_%d" % int(entry.id)):
+						continue
+					var tpos: Vector3 = entry.pos
+					var r := 0.24
+					if a2d > 1e-6:
+						var rx := ox - tpos.x
+						var rz := oz - tpos.z
+						var b := 2.0 * (rx * dx + rz * dz)
+						var c := rx * rx + rz * rz - r * r
+						var disc := b * b - 4.0 * a2d * c
+						if disc >= 0.0:
+							var t := (-b - sqrt(disc)) / (2.0 * a2d)
+							if t > 0.002 and t < best_t:
+								var hp := from_pos + seg * t
+								if hp.y >= tpos.y - 0.1 and hp.y <= tpos.y + 6.8:
+									best_t = t
+									var n := Vector3(hp.x - tpos.x, 0.0, hp.z - tpos.z).normalized()
+									best_hit = {"position": hp, "normal": n, "collider": self}
+		# 2. Trees in _forest_collision_grid
+		var fc := Vector2i(int(sample.x / _forest_collision_grid_size), int(sample.z / _forest_collision_grid_size))
+		for fgx in range(fc.x - 1, fc.x + 2):
+			for fgz in range(fc.y - 1, fc.y + 2):
+				var fkey := Vector2i(fgx, fgz)
+				if checked_forest_cells.has(fkey):
+					continue
+				checked_forest_cells[fkey] = true
+				if not _forest_collision_grid.has(fkey):
+					continue
+				for fpos in _forest_collision_grid[fkey]:
+					var fp: Vector3 = fpos
+					var r2 := 0.25
+					if a2d > 1e-6:
+						var rx2 := ox - fp.x
+						var rz2 := oz - fp.z
+						var b2 := 2.0 * (rx2 * dx + rz2 * dz)
+						var c2 := rx2 * rx2 + rz2 * rz2 - r2 * r2
+						var disc2 := b2 * b2 - 4.0 * a2d * c2
+						if disc2 >= 0.0:
+							var t2 := (-b2 - sqrt(disc2)) / (2.0 * a2d)
+							if t2 > 0.002 and t2 < best_t:
+								var hp2 := from_pos + seg * t2
+								if hp2.y >= fp.y - 0.1 and hp2.y <= fp.y + 6.0:
+									best_t = t2
+									var n2 := Vector3(hp2.x - fp.x, 0.0, hp2.z - fp.z).normalized()
+									best_hit = {"position": hp2, "normal": n2, "collider": self}
+		# 3. Giant boulders in _boulder_grid
+		var bc := _boulder_grid_key(sample)
+		for bgx in range(bc.x - 1, bc.x + 2):
+			for bgz in range(bc.y - 1, bc.y + 2):
+				var bkey := Vector2i(bgx, bgz)
+				if checked_boulder_cells.has(bkey):
+					continue
+				checked_boulder_cells[bkey] = true
+				if not _boulder_grid.has(bkey):
+					continue
+				for bentry in _boulder_grid[bkey]:
+					var bsc: Vector3 = bentry.scale * 0.5
+					if bsc.x < 0.05 or bsc.y < 0.05 or bsc.z < 0.05:
+						continue
+					var bcenter: Vector3 = bentry.pos + Vector3(0.0, bentry.scale.y * 0.45, 0.0)
+					var ro := Vector3((from_pos.x - bcenter.x) / bsc.x, (from_pos.y - bcenter.y) / bsc.y, (from_pos.z - bcenter.z) / bsc.z)
+					var rd := Vector3(seg.x / bsc.x, seg.y / bsc.y, seg.z / bsc.z)
+					var ba := rd.dot(rd)
+					if ba > 1e-6:
+						var bb := 2.0 * ro.dot(rd)
+						var bc_val := ro.dot(ro) - 1.0
+						var bdisc := bb * bb - 4.0 * ba * bc_val
+						if bdisc >= 0.0:
+							var bt := (-bb - sqrt(bdisc)) / (2.0 * ba)
+							if bt > 0.002 and bt < best_t:
+								best_t = bt
+								var bhp := from_pos + seg * bt
+								var bn := Vector3((bhp.x - bcenter.x) / (bsc.x * bsc.x), (bhp.y - bcenter.y) / (bsc.y * bsc.y), (bhp.z - bcenter.z) / (bsc.z * bsc.z)).normalized()
+								best_hit = {"position": bhp, "normal": bn, "collider": self}
+	return best_hit
+
 func _register_tree_in_grid(entry: Dictionary) -> void:
 	var key := _tree_grid_key(entry.pos)
 	if not _tree_grid.has(key):
@@ -15584,20 +15750,37 @@ func _flush_prop_batches() -> void:
 		for it in group.items:
 			transforms.append(it.t)
 		var spatial := _spatial_instance_batches(transforms, 48.0, 1200)
+		var is_solid_rock := ("lake_boulder" in path) or ("lake_slab" in path)
 		for indices in spatial:
 			for sm in subs:
 				var mm := MultiMesh.new()
 				mm.transform_format = MultiMesh.TRANSFORM_3D
 				mm.mesh = sm.mesh
 				mm.instance_count = indices.size()
+				var rock_col_body: StaticBody3D = null
+				var rock_shape: Shape3D = null
+				if is_solid_rock and sm.mesh != null:
+					if not _rock_trimesh_cache.has(sm.mesh):
+						_rock_trimesh_cache[sm.mesh] = (sm.mesh as Mesh).create_trimesh_shape()
+					rock_shape = _rock_trimesh_cache[sm.mesh]
+					rock_col_body = StaticBody3D.new()
+					rock_col_body.name = "ShoreRockCol_%d" % flushed
 				for j in range(indices.size()):
-					mm.set_instance_transform(j, (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D))
+					var inst_xf: Transform3D = (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D)
+					mm.set_instance_transform(j, inst_xf)
+					if rock_col_body != null and rock_shape != null:
+						var cshape := CollisionShape3D.new()
+						cshape.shape = rock_shape
+						cshape.transform = inst_xf
+						rock_col_body.add_child(cshape)
 				var mmi := MultiMeshInstance3D.new()
 				mmi.name = "ShorePropMM_%d" % flushed
 				mmi.multimesh = mm
 				mmi.material_override = mat
 				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				add_child(mmi)
+				if rock_col_body != null:
+					add_child(rock_col_body)
 				flushed += 1
 		await get_tree().process_frame
 	_prop_batch_items.clear()

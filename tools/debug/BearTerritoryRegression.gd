@@ -90,6 +90,27 @@ func _run() -> void:
 	bear._wolf_ai(0.016)
 	check(deer._is_dead and bear._state == "eating" and bear._wolf_eating_target == deer, "bear kills and begins eating its deer prey")
 
+	# Bears can also hunt wild wolves and eat wolf carrion
+	deer.free()
+	var wild_wolf := TestAnimal.new()
+	world.add_child(wild_wolf)
+	wild_wolf.setup("wolf", [Vector3(1.2, 0, 0), Vector3(3.2, 0, 0)])
+	bear._cached_wildlife = world.get_tree().get_nodes_in_group("wildlife")
+	bear._state = "patrol"
+	bear._wolf_eating_target = null
+	bear._wolf_eating_timer = 0.0
+	bear._wolf_hunger = 0.0
+	bear._wolf_hunger_threshold = 100.0
+	bear._attack_cooldown = 0.0
+	var wolf_prey_res: Dictionary = bear._wolf_ai(0.016)
+	check(bear._state == "chase_prey" and wolf_prey_res.target == wild_wolf.global_position, "hungry bear hunts wild wolves")
+	wild_wolf.health = 50.0
+	bear._attack_cooldown = 0.0
+	bear._wolf_ai(0.016)
+	bear._wolf_ai(0.016)
+	check(wild_wolf._is_dead and bear._state == "eating" and bear._wolf_eating_target == wild_wolf, "bear kills and eats wolf carrion")
+	wild_wolf.free()
+
 	var player := TestPlayer.new()
 	world.add_child(player)
 	bear._player = player

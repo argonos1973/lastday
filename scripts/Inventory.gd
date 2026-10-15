@@ -10,10 +10,21 @@ signal item_used(message: String)
 @export var max_weight := 18.0
 var items: Array = []
 
+static func is_equipment_item(item) -> bool:
+	return item != null and str(item.item_type) in ["clothing", "backpack"]
+
+func get_stored_count() -> int:
+	var count := 0
+	for item in items:
+		if not is_equipment_item(item):
+			count += 1
+	return count
+
 func add_item(item) -> bool:
 	if item == null or item.quantity <= 0:
 		return false
-	if get_total_weight() + item.weight * item.quantity > max_weight:
+	var is_equip := is_equipment_item(item)
+	if not is_equip and get_total_weight() + item.weight * item.quantity > max_weight:
 		item_used.emit("Demasiado peso.")
 		return false
 	for existing in items:
@@ -26,7 +37,7 @@ func add_item(item) -> bool:
 				existing.spoilage = item.spoilage
 			changed.emit()
 			return true
-	if items.size() >= max_slots:
+	if not is_equip and get_stored_count() >= max_slots:
 		item_used.emit("No queda espacio.")
 		return false
 	items.append(item.duplicate_stack())
@@ -88,7 +99,7 @@ func use_index(index: int, stats) -> bool:
 		return false
 	# Only the unit being used loses contents; the rest of the stack stays full.
 	if portioned and item.quantity > 1:
-		if items.size() >= max_slots:
+		if get_stored_count() >= max_slots:
 			item_used.emit("Necesitas un espacio libre para separar una unidad.")
 			return false
 		var unit = item.duplicate_stack()
@@ -347,7 +358,8 @@ func consume_match_charge() -> bool:
 func get_total_weight() -> float:
 	var total := 0.0
 	for item in items:
-		total += item.weight * item.quantity
+		if not is_equipment_item(item):
+			total += item.weight * item.quantity
 	return total
 
 func swap_items(index_a: int, index_b: int) -> void:
@@ -363,7 +375,7 @@ func swap_items(index_a: int, index_b: int) -> void:
 	changed.emit()
 
 func split_stack(item, amount: int) -> bool:
-	if not items.has(item) or amount <= 0 or amount >= item.quantity or items.size() >= max_slots:
+	if not items.has(item) or amount <= 0 or amount >= item.quantity or get_stored_count() >= max_slots:
 		return false
 	var separated = item.duplicate_stack()
 	separated.quantity = amount

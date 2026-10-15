@@ -72,22 +72,22 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "ANY_PELT": 4, "Cuchillo": 1 },
-		"output": { "name": "Chaqueta de piel", "type": "clothing", "weight": 1.8, "use_value": 0.0 },
+		"output": { "name": "Chaqueta de piel", "type": "clothing", "weight": 1.8, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Coser una chaqueta resistente con pieles"
 	},
 	{
 		"inputs": { "ANY_PELT": 2, "Cuchillo": 1 },
-		"output": { "name": "Botas de piel", "type": "clothing", "weight": 1.0, "use_value": 0.0 },
+		"output": { "name": "Botas de piel", "type": "clothing", "weight": 1.0, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Fabricar botas de piel"
 	},
 	{
 		"inputs": { "ANY_PELT": 2, "Trapos": 1, "Cuchillo": 1 },
-		"output": { "name": "Gorro de piel", "type": "clothing", "weight": 0.35, "use_value": 0.0 },
+		"output": { "name": "Gorro de piel", "type": "clothing", "weight": 0.35, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Coser un gorro de piel"
 	},
 	{
 		"inputs": { "ANY_PELT": 3, "Cuchillo": 1 },
-		"output": { "name": "Tocado de piel animal", "type": "clothing", "weight": 0.7, "use_value": 0.0 },
+		"output": { "name": "Tocado de piel animal", "type": "clothing", "weight": 0.7, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Crear un tocado de piel animal"
 	},
 	{

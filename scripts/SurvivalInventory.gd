@@ -200,7 +200,8 @@ func refresh() -> void:
 			parent.remove_child(child)
 			child.queue_free()
 	var carry_weight: float = player._get_total_carry_weight() if player.has_method("_get_total_carry_weight") else player.inventory.get_total_weight()
-	weight.text = "%.1f / %.1f kg · %d / %d espacios" % [carry_weight, player.inventory.max_weight, player.inventory.items.size(), player.inventory.max_slots]
+	var stored_count: int = player.inventory.get_stored_count() if player.inventory.has_method("get_stored_count") else player.inventory.items.size()
+	weight.text = "%.1f / %.1f kg · %d / %d espacios" % [carry_weight, player.inventory.max_weight, stored_count, player.inventory.max_slots]
 	var floor_card = make_card("Soltar al suelo", {}, "ground")
 	floor_card.tooltip_text = "Arrastra aquí para soltar una unidad. Alcance de recogida: 2 m."
 	vicinity.add_child(floor_card)
@@ -514,6 +515,8 @@ func button(parent: Control, title: String, action: Callable) -> void:
 	parent.add_child(control)
 
 func find_item(name: String):
+	if name.is_empty():
+		return null
 	for item in player.inventory.items:
 		if item.item_name == name:
 			return item
@@ -521,7 +524,11 @@ func find_item(name: String):
 
 func can_transfer(data: Dictionary, destination: String, target: Dictionary) -> bool:
 	if data.has("world"):
-		return destination in Cargo.compartments(player).map(func(c): return c.id) and reachable(data.world)
+		if not reachable(data.world):
+			return false
+		if destination == "equipment" or destination.begins_with("equip:"):
+			return true
+		return destination in Cargo.compartments(player).map(func(c): return c.id)
 	if not data.has("item") or data.item == null:
 		return false
 	var item = data.item
@@ -579,10 +586,23 @@ func activate(data: Dictionary) -> void:
 	if data.has("world"):
 		collect(data.world)
 	elif data.has("item") and player.inventory.items.has(data.item):
-		if data.item.item_type in ["clothing", "backpack"]:
-			equip(data.item)
+		var item = data.item
+		if item.item_type == "clothing":
+			if player._equipped_slots.values().has(item.item_name):
+				var idx: int = player.inventory.items.find(item)
+				if idx >= 0:
+					player.drop_inventory_item(idx)
+			else:
+				equip(item)
+		elif item.item_type == "backpack":
+			if player.equipped_backpack == item.item_name:
+				var idx_bp: int = player.inventory.items.find(item)
+				if idx_bp >= 0:
+					player.drop_inventory_item(idx_bp)
+			else:
+				equip(item)
 		else:
-			player._select_held_item(player.inventory.items.find(data.item))
+			player._select_held_item(player.inventory.items.find(item))
 	request_refresh(true)
 
 func open_split(item) -> void:
@@ -624,9 +644,9 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					hud.toggle_inventory()
 					player._reload_rifle())
 			if item.item_type in ["clothing", "backpack"]:
-				add_action("Equipar", func(): equip(item))
-			if item.item_type == "clothing" and player._equipped_slots.values().has(item.item_name):
-				add_action("Quitar prenda", func(): player.unequip_clothing(item.item_name))
+				var is_worn: bool = (item.item_type == "clothing" and player._equipped_slots.values().has(item.item_name)) or (item.item_type == "backpack" and player.equipped_backpack == item.item_name)
+				if not is_worn:
+					add_action("Equipar", func(): equip(item))
 			if player.get_held_item() == item:
 				add_action("Guardar en inventario", func(): player._store_held_item())
 			if item.item_type == "tool_torch":
@@ -635,9 +655,10 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					player._toggle_flashlight())
 			if item.quantity > 1:
 				add_action("Separar unidades…", func(): open_split(item))
-			for container in Cargo.compartments(player):
-				if container.id != item.cargo_location and Cargo.can_move(item, container.id, player.inventory, Cargo.compartments(player)):
-					add_action("Mover a " + str(container.name).to_lower(), func(): transfer({"item": item}, container.id, {}))
+			if item.item_type not in ["clothing", "backpack"]:
+				for container in Cargo.compartments(player):
+					if container.id != item.cargo_location and Cargo.can_move(item, container.id, player.inventory, Cargo.compartments(player)):
+						add_action("Mover a " + str(container.name).to_lower(), func(): transfer({"item": item}, container.id, {}))
 			if player.can_store_item_on_back(item):
 				add_action("Colgar en la espalda", func():
 					player._select_held_item(player.inventory.items.find(item))

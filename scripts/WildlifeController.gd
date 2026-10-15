@@ -245,8 +245,8 @@ func setup(kind: String, points: Array) -> void:
 	add_to_group("wildlife")
 	if animal_type == "wolf":
 		add_to_group("wildlife_wolf")
-		_wolf_hunger = randf_range(40.0, 80.0)
-		_wolf_hunger_threshold = randf_range(50.0, 80.0)
+		_wolf_hunger = randf_range(25.0, 50.0)
+		_wolf_hunger_threshold = randf_range(68.0, 82.0)
 	elif animal_type == "bear":
 		_wolf_hunger = randf_range(25.0, 65.0)
 		_wolf_hunger_threshold = randf_range(65.0, 85.0)
@@ -976,21 +976,22 @@ func _wolf_ai(delta: float) -> Dictionary:
 			rotation.y = lerp_angle(rotation.y, atan2(to_feeder.x, to_feeder.z), delta * 3.0)
 			_play_animation_by_name("idle")
 			return {"target": global_position, "speed": 0.0}
-	# Priority 3: hunt nearby prey (deer, fox) when hungry
+	# Priority 3: hunt nearby prey when hungry (wolves hunt deer/fox; bears hunt wolf/deer/fox)
 	if is_hungry:
 		var nearest_prey := _find_nearest_prey()
 		if nearest_prey != null and is_instance_valid(nearest_prey):
 			var dist_to_prey := global_position.distance_to(nearest_prey.global_position)
-			if dist_to_prey < 40.0:
+			if dist_to_prey < 45.0:
 				_state = "chase_prey"
 				_chase_target = nearest_prey
 				target = nearest_prey.global_position
 				speed = move_speed * 2.8
-				if dist_to_prey < 1.5:
+				var hit_range := 2.2 if animal_type == "bear" else 1.5
+				if dist_to_prey < hit_range:
 					if _attack_cooldown <= 0.0:
-						_attack_cooldown = 5.0
-						nearest_prey.take_damage(35.0 if animal_type == "bear" else 15.0, false)
-						if animal_type == "wolf":
+						_attack_cooldown = 2.8 if animal_type == "bear" else 5.0
+						nearest_prey.take_damage(60.0 if animal_type == "bear" else 15.0, false, self)
+						if animal_type == "wolf" or animal_type == "bear":
 							_play_wolf_sound("attack")
 					_play_animation_by_name("run")
 				else:
@@ -1003,6 +1004,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 	speed = move_speed * 1.0
 	_play_animation_by_name("walk")
 	return {"target": target, "speed": speed}
+
+func _another_bear_targeting_carrion(carrion: Node3D) -> bool:
+	for node in _cached_wildlife:
+		if node == self or not is_instance_valid(node) or not (node is Node3D):
+			continue
+		if str(node.get("animal_type")) == "bear" and not bool(node.get("_is_dead")):
+			if node.get("_wolf_eating_target") == carrion or node.get("_chase_target") == carrion:
+				return true
+	return false
 
 func _find_nearest_corpse() -> Node3D:
 	var nearest: Node3D = null
@@ -1017,26 +1027,27 @@ func _find_nearest_corpse() -> Node3D:
 		if not other.get("_is_dead") or other.get("_gutted"):
 			continue
 		if animal_type == "bear":
-			var c_type := str(other.get("animal_type"))
-			if c_type != "deer" and c_type != "fox":
+			if home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
 				continue
-			if home_anchor.distance_squared_to(other.global_position) > 80.0 * 80.0:
+			if _another_bear_targeting_carrion(other):
 				continue
 		var d_sq := global_position.distance_squared_to(other.global_position)
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
 			nearest = other
-	if nearest == null and animal_type != "bear":
+	if nearest == null:
 		for p in get_tree().get_nodes_in_group("net_player_proxy"):
 			if p is Node3D and p.get_meta("proxy_dead", false) and not p.get_meta("gutted", false):
+				if animal_type == "bear" and (home_anchor.distance_squared_to((p as Node3D).global_position) > 85.0 * 85.0 or _another_bear_targeting_carrion(p as Node3D)):
+					continue
 				var d_sq := global_position.distance_squared_to((p as Node3D).global_position)
 				if d_sq < nearest_dist_sq:
 					nearest_dist_sq = d_sq
 					nearest = p as Node3D
-	# Also search for gutted meat pickups on the ground (wolves only so bears don't converge)
-	if animal_type != "bear":
-		var meat := _find_nearest_meat_pickup()
-		if meat != null:
+	# Search for gutted meat pickups / carrion on the ground
+	var meat := _find_nearest_meat_pickup()
+	if meat != null:
+		if animal_type != "bear" or (home_anchor.distance_squared_to(meat.global_position) <= 85.0 * 85.0 and not _another_bear_targeting_carrion(meat)):
 			var d_sq := global_position.distance_squared_to(meat.global_position)
 			if d_sq < nearest_dist_sq:
 				nearest_dist_sq = d_sq
@@ -1080,11 +1091,18 @@ func _find_nearest_prey() -> Node3D:
 		if at == null:
 			continue
 		var ats := str(at)
-		# Only deer and foxes are prey — bears and wolves never hunt each other.
-		if ats != "deer" and ats != "fox":
-			continue
-		if animal_type == "bear" and home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
-			continue
+		if animal_type == "bear":
+			# Bears can hunt wolves, foxes and deer inside their forest territory,
+			# skipping tamed wolves and other bears.
+			if ats != "wolf" and ats != "deer" and ats != "fox":
+				continue
+			if ats == "wolf" and not str(other.get("tamed_to")).is_empty():
+				continue
+			if home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
+				continue
+		else:
+			if ats != "deer" and ats != "fox":
+				continue
 		var d_sq := global_position.distance_squared_to(other.global_position)
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
@@ -1697,7 +1715,16 @@ func _player_holds_meat(p: Node) -> bool:
 		return false
 	var held_name := ""
 	if p.is_in_group("net_player_proxy"):
-		held_name = str(p.get("_puppet_held"))
+		if p.get("_puppet_held") != null:
+			held_name = str(p.get("_puppet_held"))
+		if held_name.is_empty() and p.has_meta("saved_held_item"):
+			held_name = str(p.get_meta("saved_held_item", ""))
+		if held_name.is_empty():
+			var pid := int(p.get_meta("peer_id", 0))
+			var scene := get_tree().current_scene
+			var net_node := scene.get_node_or_null("/root/NetworkManager") if scene != null else null
+			if pid != 0 and net_node != null and "players" in net_node and net_node.players.has(pid):
+				held_name = str(net_node.players[pid].get("held_item", ""))
 	elif p.has_method("get_held_item"):
 		var it = p.get_held_item()
 		if it != null:

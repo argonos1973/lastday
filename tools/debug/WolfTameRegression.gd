@@ -392,6 +392,18 @@ func test_meat_in_hand() -> void:
 	check(too_close["speed"] > 0.0, "Wolf backs off when the holder gets too close")
 	check(not wolf._tame_progress.has("local"), "Carrying meat grants no trust until it is dropped")
 
+	# Proxy de red real (Node3D puro como _spawn_server_proxy, usando meta saved_held_item):
+	var bare_proxy := Node3D.new()
+	bare_proxy.name = "ServerProxy_99"
+	bare_proxy.add_to_group("net_player_proxy")
+	bare_proxy.set_meta("peer_id", 99)
+	bare_proxy.set_meta("has_real_pos", true)
+	bare_proxy.set_meta("saved_held_item", "Carne cruda de lobo")
+	bare_proxy.position = Vector3(15, 0, 0)
+	world.add_child(bare_proxy)
+	check(wolf._player_holds_meat(bare_proxy), "Bare server Node3D proxy with saved_held_item is recognized as holding meat")
+	bare_proxy.free()
+
 	# Proxy de red (servidor): se lee _puppet_held sincronizado.
 	player.held = null
 	var proxy := make_proxy(world, 7, Vector3(30, 0, 20))

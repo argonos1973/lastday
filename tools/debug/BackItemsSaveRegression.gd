@@ -123,6 +123,7 @@ func _check_network_restore(backpack: String = "") -> void:
 	check(restored._initializing and drops.is_empty(), "Nested initialization stays guarded without drops")
 	restored._initializing = false
 	if backpack.is_empty():
+		restored.inventory.items.append(ItemScript.create("Hongo", "food", 0.05, 1, 5.0))
 		restored.unequip_clothing("Camiseta")
 		check(not drops.is_empty(), "Normal equipment removal still drops excess items")
 	world.free()
