@@ -4806,6 +4806,14 @@ func _close_backpack_ui() -> void:
 	if player != null and not player.is_dead:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
+const SHELTER_STASH_CAPACITY := 100
+const BACKPACK_STASH_CAPACITY := 12
+
+func _stash_capacity_for(action) -> int:
+	if action != null and is_instance_valid(action) and str(action.action_type) == "shelter":
+		return SHELTER_STASH_CAPACITY
+	return BACKPACK_STASH_CAPACITY
+
 func _refresh_backpack_ui() -> void:
 	if hud == null or _backpack_action == null or not is_instance_valid(_backpack_action):
 		_backpack_panel = null
@@ -4813,149 +4821,262 @@ func _refresh_backpack_ui() -> void:
 		return
 	if _backpack_panel != null:
 		_backpack_panel.queue_free()
-	_backpack_panel = PanelContainer.new()
-	_backpack_panel.custom_minimum_size = Vector2(470, 0)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.04, 0.05, 0.04, 0.96)
-	style.border_color = Color(0.72, 0.74, 0.40, 0.95)
-	style.border_width_left = 2
-	style.border_width_right = 2
-	style.border_width_top = 2
-	style.border_width_bottom = 2
-	_backpack_panel.add_theme_stylebox_override("panel", style)
-	_backpack_panel.position = Vector2(280, 120)
-	_backpack_panel.z_index = 50
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 6)
-	_backpack_panel.add_child(vbox)
-	var title := Label.new()
-	title.text = "%s — cualquier tecla para cerrar" % str(_backpack_action.display_name)
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
-	vbox.add_child(title)
+	var is_shelter := str(_backpack_action.action_type) == "shelter"
+	var max_cap := _stash_capacity_for(_backpack_action)
 	var contents: Array = _backpack_action.get_meta("contents", [])
+	_backpack_panel = PanelContainer.new()
+	_backpack_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_backpack_panel.offset_left = 48
+	_backpack_panel.offset_right = -48
+	_backpack_panel.offset_top = 72
+	_backpack_panel.offset_bottom = -68
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.035, 0.042, 0.039, 0.96)
+	style.border_color = Color(0.32, 0.36, 0.30, 0.95)
+	style.set_border_width_all(1)
+	style.set_content_margin_all(14)
+	_backpack_panel.add_theme_stylebox_override("panel", style)
+	_backpack_panel.z_index = 50
+	var root_vbox := VBoxContainer.new()
+	root_vbox.add_theme_constant_override("separation", 10)
+	root_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_backpack_panel.add_child(root_vbox)
+	# Top header bar (DayZ style)
+	var top_bar := HBoxContainer.new()
+	top_bar.add_theme_constant_override("separation", 14)
+	root_vbox.add_child(top_bar)
+	var title := Label.new()
+	title.text = ("REFUGIO — ALMACENAMIENTO" if is_shelter else str(_backpack_action.display_name).to_upper())
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(0.92, 0.94, 0.88))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(title)
+	var cap_badge := Label.new()
+	cap_badge.text = "CAPACIDAD: %d / %d ESPACIOS" % [contents.size(), max_cap]
+	cap_badge.add_theme_font_size_override("font_size", 15)
+	cap_badge.add_theme_color_override("font_color", Color(0.74, 0.84, 0.56) if contents.size() < max_cap else Color(0.92, 0.45, 0.32))
+	top_bar.add_child(cap_badge)
+	var close_btn := Button.new()
+	close_btn.text = "CERRAR [TAB / K]"
+	close_btn.pressed.connect(func(): _close_backpack_ui())
+	top_bar.add_child(close_btn)
+	# Two side-by-side columns: Left = Shelter/Container Grid, Right = Player Inventory Grid
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 18)
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root_vbox.add_child(columns)
+	# --- LEFT COLUMN: SHELTER / CONTAINER ---
+	var left_col := VBoxContainer.new()
+	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.size_flags_stretch_ratio = 1.15
+	left_col.add_theme_constant_override("separation", 8)
+	columns.add_child(left_col)
+	var left_head := HBoxContainer.new()
+	left_col.add_child(left_head)
 	var head := Label.new()
-	head.text = "Objetos guardados: %d" % contents.size()
-	head.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
-	vbox.add_child(head)
+	head.text = "%s   (%d / %d objetos)" % [("CONTENIDO DEL REFUGIO" if is_shelter else "CONTENIDO DE LA MOCHILA"), contents.size(), max_cap]
+	head.add_theme_font_size_override("font_size", 16)
+	head.add_theme_color_override("font_color", Color(0.82, 0.86, 0.72))
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_head.add_child(head)
+	var cap_bar := ProgressBar.new()
+	cap_bar.custom_minimum_size = Vector2(0, 6)
+	cap_bar.max_value = max_cap
+	cap_bar.value = contents.size()
+	cap_bar.show_percentage = false
+	var cb_bg := StyleBoxFlat.new()
+	cb_bg.bg_color = Color(0.12, 0.14, 0.12)
+	cap_bar.add_theme_stylebox_override("background", cb_bg)
+	var cb_fill := StyleBoxFlat.new()
+	cb_fill.bg_color = Color(0.50, 0.64, 0.34) if contents.size() < max_cap else Color(0.82, 0.36, 0.24)
+	cap_bar.add_theme_stylebox_override("fill", cb_fill)
+	left_col.add_child(cap_bar)
 	var cscroll := ScrollContainer.new()
-	cscroll.custom_minimum_size = Vector2(430, clampi(maxi(contents.size(), 1), 1, 4) * 62 + 8)
 	cscroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cscroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	var cbox := VBoxContainer.new()
-	cbox.add_theme_constant_override("separation", 4)
-	cbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cscroll.add_child(cbox)
-	vbox.add_child(cscroll)
-	if contents.is_empty():
-		var empty := Label.new()
-		empty.text = "Vacia."
-		empty.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
-		cbox.add_child(empty)
-	else:
-		for i in range(contents.size()):
-			var cd = contents[i]
-			var row := HBoxContainer.new()
-			row.add_theme_constant_override("separation", 8)
-			cbox.add_child(row)
-			var citem = ItemScript.from_dict(cd) if cd is Dictionary else null
-			if citem != null:
-				_add_stash_thumbnail(row, citem)
-				var ctext := VBoxContainer.new()
-				ctext.custom_minimum_size = Vector2(230, 0)
-				ctext.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				row.add_child(ctext)
-				var name_label := Label.new()
-				name_label.text = "%s x%d" % [citem.item_name, citem.quantity]
-				name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
-				ctext.add_child(name_label)
-				var state: Array = _stash_item_state(citem)
-				if not str(state[0]).is_empty():
-					var state_label := Label.new()
-					state_label.text = str(state[0])
-					state_label.add_theme_font_size_override("font_size", 11)
-					state_label.add_theme_color_override("font_color", state[1])
-					ctext.add_child(state_label)
-			else:
-				var name_label2 := Label.new()
-				name_label2.text = "%s x%d" % [str(cd.get("name", "???")), int(cd.get("quantity", 1))]
-				name_label2.custom_minimum_size = Vector2(230, 24)
-				name_label2.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
-				row.add_child(name_label2)
-			var take_btn := Button.new()
-			take_btn.text = "Coger"
-			take_btn.custom_minimum_size = Vector2(80, 28)
-			var idx := i
-			take_btn.pressed.connect(func(): _backpack_take(idx))
-			row.add_child(take_btn)
-	# Meter objetos del inventario dentro de la mochila tirada
+	left_col.add_child(cscroll)
+	var cgrid := GridContainer.new()
+	cgrid.columns = 4
+	cgrid.add_theme_constant_override("h_separation", 8)
+	cgrid.add_theme_constant_override("v_separation", 8)
+	cgrid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cscroll.add_child(cgrid)
+	for i in range(contents.size()):
+		var cd = contents[i]
+		var citem = ItemScript.from_dict(cd) if cd is Dictionary else null
+		var idx := i
+		cgrid.add_child(_make_dayz_stash_card(citem, cd, "Coger", true, func(): _backpack_take(idx)))
+	var free_preview := clampi(max_cap - contents.size(), 0, 12 if is_shelter else 4)
+	for _fs in range(free_preview):
+		var slot_panel := PanelContainer.new()
+		slot_panel.custom_minimum_size = Vector2(110, 118)
+		slot_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var sp_style := StyleBoxFlat.new()
+		sp_style.bg_color = Color(0.055, 0.065, 0.058, 0.65)
+		sp_style.border_color = Color(0.18, 0.21, 0.18, 0.75)
+		sp_style.set_border_width_all(1)
+		slot_panel.add_theme_stylebox_override("panel", sp_style)
+		var plus_lbl := Label.new()
+		plus_lbl.text = "+\nLIBRE"
+		plus_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		plus_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		plus_lbl.add_theme_font_size_override("font_size", 11)
+		plus_lbl.add_theme_color_override("font_color", Color(0.36, 0.42, 0.36))
+		slot_panel.add_child(plus_lbl)
+		cgrid.add_child(slot_panel)
+	# --- RIGHT COLUMN: PLAYER INVENTORY ---
+	var right_col := VBoxContainer.new()
+	right_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_col.size_flags_stretch_ratio = 1.0
+	right_col.add_theme_constant_override("separation", 8)
+	columns.add_child(right_col)
+	var head2 := Label.new()
+	var inv_stored: int = int(player.inventory.get_stored_count()) if (player != null and player.inventory != null and player.inventory.has_method("get_stored_count")) else 0
+	var inv_max: int = int(player.inventory.max_slots) if (player != null and player.inventory != null) else 0
+	head2.text = "TU INVENTARIO   (%d / %d espacios)" % [inv_stored, inv_max]
+	head2.add_theme_font_size_override("font_size", 16)
+	head2.add_theme_color_override("font_color", Color(0.82, 0.86, 0.72))
+	right_col.add_child(head2)
+	var iscroll := ScrollContainer.new()
+	iscroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	iscroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	iscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right_col.add_child(iscroll)
+	var igrid := GridContainer.new()
+	igrid.columns = 3
+	igrid.add_theme_constant_override("h_separation", 8)
+	igrid.add_theme_constant_override("v_separation", 8)
+	igrid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	iscroll.add_child(igrid)
 	if player != null and player.inventory != null:
-		var sep := HSeparator.new()
-		vbox.add_child(sep)
-		var head2 := Label.new()
-		head2.text = "Meter desde el inventario:"
-		head2.add_theme_color_override("font_color", Color(0.70, 0.78, 0.55))
-		vbox.add_child(head2)
 		var held = player.get_held_item() if player.has_method("get_held_item") else null
-		var equipped_names := {}
-		for sv in player._equipped_slots.values():
-			equipped_names[str(sv)] = true
 		var any := false
-		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(430, 160)
-		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		var sbox := VBoxContainer.new()
-		sbox.add_theme_constant_override("separation", 4)
-		sbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(sbox)
-		vbox.add_child(scroll)
+		var can_store_more := contents.size() < max_cap
 		for i in range(player.inventory.items.size()):
 			var it = player.inventory.items[i]
-			if it == null or it == held or str(it.item_type) == "backpack" or equipped_names.has(str(it.item_name)):
+			if it == null or it == held or str(it.item_type) == "backpack" or not str(it.get_meta("equipped_slot", "")).is_empty():
 				continue
 			any = true
-			var row := HBoxContainer.new()
-			row.add_theme_constant_override("separation", 8)
-			sbox.add_child(row)
-			_add_stash_thumbnail(row, it)
-			var itext := VBoxContainer.new()
-			itext.custom_minimum_size = Vector2(230, 0)
-			itext.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			row.add_child(itext)
-			var name_label := Label.new()
-			name_label.text = "%s x%d" % [str(it.item_name), int(it.quantity)]
-			name_label.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
-			itext.add_child(name_label)
-			var istate: Array = _stash_item_state(it)
-			if not str(istate[0]).is_empty():
-				var state_label := Label.new()
-				state_label.text = str(istate[0])
-				state_label.add_theme_font_size_override("font_size", 11)
-				state_label.add_theme_color_override("font_color", istate[1])
-				itext.add_child(state_label)
-			var store_btn := Button.new()
-			store_btn.text = "Meter"
-			store_btn.custom_minimum_size = Vector2(80, 28)
 			var idx := i
-			store_btn.pressed.connect(func(): _backpack_store(idx))
-			row.add_child(store_btn)
+			igrid.add_child(_make_dayz_stash_card(it, {}, "Meter" if can_store_more else "Lleno", can_store_more, func(): _backpack_store(idx)))
 		if not any:
 			var empty2 := Label.new()
-			empty2.text = "No llevas nada que se pueda meter."
+			empty2.text = "No llevas objetos en los bolsillos para guardar."
 			empty2.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
-			sbox.add_child(empty2)
+			igrid.add_child(empty2)
+	var footer := Label.new()
+	footer.text = "DOBLE CLIC o BOTÓN para transferir objetos entre tu inventario y el %s (%d/%d max)." % [("refugio" if is_shelter else "contenedor"), contents.size(), max_cap]
+	footer.add_theme_font_size_override("font_size", 12)
+	footer.add_theme_color_override("font_color", Color(0.58, 0.64, 0.56))
+	root_vbox.add_child(footer)
 	hud.add_child(_backpack_panel)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _make_dayz_stash_card(item, fallback_dict, btn_label: String, btn_enabled: bool, on_activate: Callable) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(115, 134)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var cstyle := StyleBoxFlat.new()
+	cstyle.bg_color = Color(0.085, 0.10, 0.09, 0.96)
+	cstyle.border_color = Color(0.28, 0.32, 0.28)
+	cstyle.set_border_width_all(1)
+	cstyle.set_content_margin_all(6)
+	card.add_theme_stylebox_override("panel", cstyle)
+	if btn_enabled:
+		card.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.double_click and ev.pressed:
+				on_activate.call()
+		)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 3)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_child(box)
+	if item != null:
+		var img_holder := Control.new()
+		img_holder.custom_minimum_size = Vector2(0, 64)
+		img_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(img_holder)
+		var thumb := ItemThumbnail3DScript.new()
+		thumb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		thumb.ready.connect(func():
+			var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
+			if item_pelt.is_empty() and str(item.item_name).begins_with("Piel de "):
+				item_pelt = str(item.item_name).trim_prefix("Piel de ").strip_edges()
+			var paths: Array = _get_drop_model_paths(item.item_name, item.item_type, item_pelt)
+			var scale_value: float = _get_drop_scale(item.item_name, item.item_type)
+			var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": item_pelt}
+			var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
+			if not only_mesh.is_empty():
+				colors.tint = Color(0.05, 0.05, 0.05)
+			thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
+			thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+		, CONNECT_ONE_SHOT)
+		img_holder.add_child(thumb)
+		if int(item.quantity) > 1:
+			var qty_lbl := Label.new()
+			qty_lbl.text = "×%d" % int(item.quantity)
+			qty_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+			qty_lbl.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+			qty_lbl.add_theme_font_size_override("font_size", 12)
+			qty_lbl.add_theme_color_override("font_color", Color(0.95, 0.92, 0.72))
+			img_holder.add_child(qty_lbl)
+		var name_lbl := Label.new()
+		name_lbl.text = str(item.item_name)
+		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_lbl.add_theme_font_size_override("font_size", 12)
+		name_lbl.add_theme_color_override("font_color", Color(0.90, 0.91, 0.85))
+		box.add_child(name_lbl)
+		var cond := ProgressBar.new()
+		cond.custom_minimum_size.y = 3
+		cond.show_percentage = false
+		cond.value = item.durability_pct() * 100.0
+		var cbg := StyleBoxFlat.new()
+		cbg.bg_color = Color(0.14, 0.15, 0.14)
+		cond.add_theme_stylebox_override("background", cbg)
+		var cfill := StyleBoxFlat.new()
+		cfill.bg_color = Color(0.52, 0.62, 0.34) if cond.value > 50 else Color(0.77, 0.48, 0.25)
+		cond.add_theme_stylebox_override("fill", cfill)
+		box.add_child(cond)
+		var state: Array = _stash_item_state(item)
+		if not str(state[0]).is_empty():
+			var state_lbl := Label.new()
+			state_lbl.text = str(state[0])
+			state_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			state_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			state_lbl.add_theme_font_size_override("font_size", 10)
+			state_lbl.add_theme_color_override("font_color", state[1])
+			box.add_child(state_lbl)
+	else:
+		var fallback_lbl := Label.new()
+		var fname := str(fallback_dict.get("name", "???")) if fallback_dict is Dictionary else "???"
+		var fqty := int(fallback_dict.get("quantity", 1)) if fallback_dict is Dictionary else 1
+		fallback_lbl.text = "%s ×%d" % [fname, fqty]
+		fallback_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(fallback_lbl)
+	var btn := Button.new()
+	btn.text = btn_label
+	btn.disabled = not btn_enabled
+	btn.custom_minimum_size = Vector2(0, 24)
+	btn.add_theme_font_size_override("font_size", 11)
+	btn.pressed.connect(on_activate)
+	box.add_child(btn)
+	return card
 
 func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 	var thumb := ItemThumbnail3DScript.new()
 	thumb.custom_minimum_size = Vector2(52, 52)
 	thumb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	thumb.ready.connect(func():
-		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type, str(item.get_meta("pelt_species", "")))
+		var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
+		if item_pelt.is_empty() and str(item.item_name).begins_with("Piel de "):
+			item_pelt = str(item.item_name).trim_prefix("Piel de ").strip_edges()
+		var paths: Array = _get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 		var scale_value: float = _get_drop_scale(item.item_name, item.item_type)
-		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": ""}
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" and hud.has_method("_clothing_thumbnail_colors") else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": item_pelt}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
@@ -5065,6 +5186,11 @@ func _backpack_store(inv_index: int) -> void:
 	var item = player.inventory.items[inv_index]
 	if item == null or str(item.item_type) == "backpack":
 		return
+	var cur_contents: Array = action.get_meta("contents", [])
+	var max_cap := _stash_capacity_for(action)
+	if cur_contents.size() >= max_cap:
+		player.notice.emit("El %s está lleno (%d/%d objetos)." % [("refugio" if str(action.action_type) == "shelter" else "contenedor"), cur_contents.size(), max_cap])
+		return
 	var cd: Dictionary = item.to_dict()
 	var drop_id := str(action.action_id)
 	if net != null and net.is_connected and not net.is_host:
@@ -5124,6 +5250,11 @@ func _net_backpack_store(sender_id: int, drop_id: String, item_dict: Dictionary)
 	var contents: Array = []
 	if action != null and is_instance_valid(action):
 		contents = (action.get_meta("contents", []) as Array).duplicate(true)
+	var max_cap := _stash_capacity_for(action)
+	if contents.size() >= max_cap:
+		if net != null and net.peer != null and net.peer_alive(sender_id):
+			net.backpack_give.rpc_id(sender_id, item_dict)
+		return
 	contents.append(item_dict)
 	if action != null and is_instance_valid(action):
 		action.set_meta("contents", contents)
@@ -9103,12 +9234,15 @@ func _pickup_and_swap_backpack(action, actor, bp_item) -> bool:
 				if c != null:
 					old_bp_packed.append(c.to_dict())
 			old_bp_item.contents.clear()
+	bp_item.set_meta("equipped_slot", "backpack")
 	actor.equip_backpack(bp_item.item_name)
 	if not actor.inventory.add_item(bp_item):
 		if old_bp_item != null:
+			old_bp_item.set_meta("equipped_slot", "backpack")
 			actor.inventory.add_item(old_bp_item)
 		actor.equip_backpack(prev_bp_name)
 		return false
+	actor.equip_backpack(bp_item.item_name)
 	# Unpack contents of the newly picked up backpack into the player's inventory
 	if not bp_item.contents.is_empty():
 		var leftover: Array = []
@@ -9756,21 +9890,27 @@ func _execute_world_action(action, actor) -> void:
 					swap_drop_pos.y = actor.global_position.y
 					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color, false, 0.0)
 					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+					item.set_meta("equipped_slot", slot_key)
 					actor.inventory.add_item(item)
-					_grant_vest_magazines(action, actor, item.item_name, item)
-					actor.equip_clothing(item.item_name, _eq_color, item)
+					var added_item = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
+					_grant_vest_magazines(action, actor, item.item_name, added_item)
+					actor.equip_clothing(item.item_name, _eq_color, added_item)
 					if item.item_name != "Chaleco táctico":
 						actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
 					action.mark_depleted()
 					_save_world_change_silent()
 					_net_notify_pickup(action)
-				elif not actor.inventory.add_item(item):
-					return
 				else:
+					var eq_slot: String = str(actor.CLOTHING_SLOTS.get(item.item_name, "")) if "CLOTHING_SLOTS" in actor else ""
+					if not eq_slot.is_empty():
+						item.set_meta("equipped_slot", eq_slot)
+					if not actor.inventory.add_item(item):
+						return
+					var added_item2 = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
 					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					_grant_vest_magazines(action, actor, item.item_name, item)
-					actor.equip_clothing(item.item_name, _eq_color2, item)
+					_grant_vest_magazines(action, actor, item.item_name, added_item2)
+					actor.equip_clothing(item.item_name, _eq_color2, added_item2)
 					if item.item_name != "Chaleco táctico":
 						actor.notice.emit("Equipas %s." % item.item_name)
 					_hide_action_visual(action)
@@ -10590,34 +10730,12 @@ func handle_world_action_collect(action, actor) -> void:
 				if not _pickup_and_swap_backpack(action, actor, item):
 					return
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
-			elif str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				var slot_key2 := ""
-				if actor.get("_equipped_slots") != null:
-					for sk2 in actor._equipped_slots.keys():
-						if str(actor._equipped_slots[sk2]) == item.item_name:
-							slot_key2 = sk2
-							break
-				if not slot_key2.is_empty():
-					var _old_color2: Color = actor.get_current_clothing_color(item.item_name)
-					actor.set_meta("last_dropped_camo", actor.clothing_has_camo(item.item_name))
-					actor.unequip_clothing(item.item_name)
-					if actor.inventory != null:
-						for i in range(actor.inventory.items.size()):
-							if str(actor.inventory.items[i].item_name) == item.item_name:
-								actor.set_meta("last_dropped_pelt", str(actor.inventory.items[i].get_meta("pelt_species", "")))
-								actor.inventory.remove_index(i)
-								break
-					var swap_drop_pos2: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
-					swap_drop_pos2.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos2, _old_color2, false, 0.0)
+			elif str(item.item_type) == "clothing":
 				if not actor.inventory.add_item(item):
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
-				var _eq_color_c: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
+				actor.notice.emit("Coges %s." % item.item_name)
 				_grant_vest_magazines(action, actor, item.item_name, item)
-				actor.equip_clothing(item.item_name, _eq_color_c, item)
-				if item.item_name != "Chaleco táctico":
-					actor.notice.emit("Equipas %s." % item.item_name)
 			elif not actor.inventory.add_item(item):
 				return
 			else:
@@ -10924,6 +11042,9 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0
 		return
 	# One model keeps the frame, covering and bedding together on load/sync/removal.
 	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE, Vector3(0, rad_to_deg(yaw), 0), false, 0.0)
+	var sh_vis := get_node_or_null("PlayerShelter_%s" % sh_id)
+	if sh_vis != null:
+		MaterialFactory.apply_realistic_shelter_materials(sh_vis)
 	# Register as world action so it syncs
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
@@ -10970,23 +11091,17 @@ func _apply_shelter_lining_visual(sh_id: String, pos: Vector3, yaw: float) -> vo
 		return
 	var lining := Node3D.new()
 	lining.name = node_name
-	lining.position = pos + Vector3(0.0, 0.055, 0.0)
+	lining.position = pos + Vector3(0.0, 0.045, 0.0)
 	lining.rotation.y = yaw
 	add_child(lining)
-	var patch_colors := [Color(0.25, 0.18, 0.11), Color(0.34, 0.24, 0.14), Color(0.29, 0.23, 0.17), Color(0.20, 0.16, 0.12)]
-	var patches := [Vector3(-0.43, 0.0, -0.56), Vector3(0.43, 0.0, -0.56), Vector3(-0.43, 0.0, 0.28), Vector3(0.43, 0.0, 0.28)]
+	var patch_species := ["ciervo", "lobo", "oso", "zorro"]
+	var patches := [Vector3(-0.42, 0.0, -0.52), Vector3(0.42, 0.0, -0.52), Vector3(-0.42, 0.0, 0.26), Vector3(0.42, 0.0, 0.26)]
 	for i in range(patches.size()):
-		var patch_mesh := MeshInstance3D.new()
+		var patch_mesh := MaterialFactory.build_pelt_hide_mesh(patch_species[i])
 		patch_mesh.name = "HidePatch%d" % i
-		var box := BoxMesh.new()
-		box.size = Vector3(0.88, 0.025, 0.92)
-		patch_mesh.mesh = box
 		patch_mesh.position = patches[i]
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = patch_colors[i]
-		mat.roughness = 0.98
-		patch_mesh.material_override = mat
-		patch_mesh.rotation.y = [-0.05, 0.08, 0.03, -0.07][i]
+		patch_mesh.scale = Vector3(1.55, 1.0, 1.35)
+		patch_mesh.rotation.y = [-0.08, 0.12, 0.05, -0.10][i]
 		lining.add_child(patch_mesh)
 	lining.add_to_group("world_action_visual")
 
@@ -15301,7 +15416,13 @@ func _create_cut_tree_remains(pos: Vector3) -> void:
 	_remains_rng.seed = int(round(pos.x * 100.0)) ^ int(round(pos.z * 100.0))
 	var stump := _create_static_cylinder("CutTreeStump", pos, 0.32, 0.55, Color(0.18, 0.105, 0.045))
 	stump.add_to_group("cut_tree_remains")
-	_create_visual_cylinder("CutTreeStumpTop", pos + Vector3(0, 0.585, 0), 0.33, 0.035, Color(0.36, 0.24, 0.12), Vector3.ZERO)
+	for ch in stump.get_children():
+		if ch is MeshInstance3D:
+			(ch as MeshInstance3D).material_override = MaterialFactory.make_log_bark_material()
+	_create_visual_cylinder("CutTreeStumpTop", pos + Vector3(0, 0.585, 0), 0.325, 0.035, Color(0.36, 0.24, 0.12), Vector3.ZERO)
+	var stump_top := get_node_or_null("CutTreeStumpTop") as MeshInstance3D
+	if stump_top != null:
+		stump_top.material_override = MaterialFactory.make_log_end_material()
 	var yaw_a := _remains_rng.randf_range(0.0, 180.0)
 	var yaw_b := yaw_a + _remains_rng.randf_range(42.0, 86.0)
 	if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], "CutTreeLogAssetA", pos + Vector3(0.72, 0.12, 0.18), Vector3.ONE * 0.75, Vector3(0, yaw_a, 0), true, pos.y + 0.06):
@@ -16172,44 +16293,10 @@ func _create_visual_cylinder(node_name: String, pos: Vector3, radius: float, hei
 	add_child(mesh_instance)
 
 func _create_pelt_visual(node_name: String, pos: Vector3, pelt_name: String) -> void:
-	var fur_color := Color(0.38, 0.27, 0.16)
-	if pelt_name == "Piel de zorro":
-		fur_color = Color(0.48, 0.22, 0.09)
-	elif pelt_name == "Piel de oso":
-		fur_color = Color(0.20, 0.14, 0.09)
-	elif pelt_name == "Piel de lobo":
-		fur_color = Color(0.34, 0.33, 0.29)
-	elif pelt_name == "Piel de ave":
-		fur_color = Color(0.43, 0.39, 0.28)
-	var outline := PackedVector3Array([
-		Vector3(-0.22, 0.015, -0.27), Vector3(-0.11, 0.025, -0.36), Vector3(0.08, 0.018, -0.34),
-		Vector3(0.22, 0.012, -0.22), Vector3(0.19, 0.02, 0.21), Vector3(0.08, 0.015, 0.34),
-		Vector3(-0.12, 0.025, 0.32), Vector3(-0.23, 0.015, 0.16)
-	])
-	var surface := SurfaceTool.new()
-	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var center := Vector3(0.0, 0.018, -0.005)
-	for i in range(outline.size()):
-		var shade := 0.88 + float((i * 7) % 5) * 0.045
-		surface.set_color(Color(fur_color.r * shade, fur_color.g * shade, fur_color.b * shade, 1.0))
-		surface.add_vertex(center)
-		surface.add_vertex(outline[i])
-		surface.add_vertex(outline[(i + 1) % outline.size()])
-	surface.generate_normals()
-	var visual := MeshInstance3D.new()
+	var pelt_sp := CraftingSystem.pelt_species_of(pelt_name)
+	var visual := MaterialFactory.build_pelt_hide_mesh(pelt_sp if not pelt_sp.is_empty() else pelt_name)
 	visual.name = node_name
 	visual.position = pos + Vector3(0.0, 0.015, 0.0)
-	visual.mesh = surface.commit()
-	var pelt_sp := CraftingSystem.pelt_species_of(pelt_name)
-	var pelt_tex_mat := MaterialFactory.pelt_fur_material(pelt_sp) if not pelt_sp.is_empty() else null
-	if pelt_tex_mat != null:
-		visual.material_override = pelt_tex_mat
-	else:
-		var fur_material := StandardMaterial3D.new()
-		fur_material.vertex_color_use_as_albedo = true
-		fur_material.roughness = 0.96
-		fur_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-		visual.material_override = fur_material
 	visual.add_to_group("world_action_visual")
 	add_child(visual)
 
@@ -16710,6 +16797,8 @@ func _try_instance_external_scene(paths: Array, node_name: String, pos: Vector3,
 				WildlifeController._normalize_model_height(node, animal_height)
 				node.position = pos
 			node.rotation_degrees = rot
+			if "tree-log" in path_str or "resource-wood" in path_str or "wood_stick" in path_str:
+				MaterialFactory.apply_realistic_log_materials(node)
 			add_child(node)
 			if snap_to_ground:
 				_snap_node_bottom_to_y_cached(node, ground_y, path_str, scale_value)

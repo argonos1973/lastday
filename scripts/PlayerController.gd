@@ -3109,6 +3109,16 @@ func _collect_lights(node: Node, result: Array) -> void:
 
 func equip_backpack(item_name: String) -> void:
 	equipped_backpack = item_name
+	if inventory != null:
+		var marked := false
+		for it in inventory.items:
+			if it == null or str(it.item_type) != "backpack":
+				continue
+			if not marked and not item_name.is_empty() and str(it.item_name) == item_name:
+				it.set_meta("equipped_slot", "backpack")
+				marked = true
+			elif str(it.get_meta("equipped_slot", "")) == "backpack":
+				it.remove_meta("equipped_slot")
 	_recalculate_carry_capacity()
 	_sync_held_item()
 	if inventory != null:
@@ -4194,9 +4204,15 @@ func _create_body() -> void:
 	# torch_light will be re-parented to _torch_hand_root after model creation
 
 func _add_starting_items() -> void:
-	inventory.add_item(ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05))
-	inventory.add_item(ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10))
-	inventory.add_item(ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08))
+	var shirt = ItemScript.create("Camiseta", "clothing", 0.3, 1, 0.05)
+	shirt.set_meta("equipped_slot", "torso")
+	inventory.add_item(shirt)
+	var pants = ItemScript.create("Pantalones", "clothing", 0.5, 1, 0.10)
+	pants.set_meta("equipped_slot", "legs")
+	inventory.add_item(pants)
+	var shoes = ItemScript.create("Zapatillas", "clothing", 0.4, 1, 0.08)
+	shoes.set_meta("equipped_slot", "feet")
+	inventory.add_item(shoes)
 
 func _create_third_person_model() -> void:
 	var character: Node3D = null
@@ -6016,14 +6032,6 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 		var clothing_name := str(_equipped_slots[slot])
 		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
 			unequip_clothing(clothing_name)
-	# Crafted clothing goes straight onto its equipment slot instead of staying
-	# unequipped in pockets.
-	if str(out.get("type", "")) == "clothing" and inventory != null:
-		for i in range(inventory.items.size() - 1, -1, -1):
-			var it = inventory.items[i]
-			if it != null and str(it.item_type) == "clothing" and not _equipped_slots.values().has(str(it.item_name)):
-				equip_clothing(str(it.item_name), it.get_meta("clothing_color", Color.TRANSPARENT), it, str(it.get_meta("pelt_species", "")))
-				break
 	inventory.changed.emit()
 	# Determine animation and duration based on recipe type
 	var craft_anim := "forage"
@@ -9167,6 +9175,10 @@ func _build_third_person_resource(item_name: String) -> void:
 		_try_add_model_to_parent(third_person_hand_item_root, REAL_STONE_MODEL, "ThirdPersonStone", Vector3(0, 0, -0.12), Vector3(8, 18, 6), Vector3.ONE * 0.11)
 	elif item_name == "Tronco":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/tree-log.glb", "HeldLog")
+		if third_person_hand_item_root != null:
+			var held_log := third_person_hand_item_root.find_child("HeldLog", true, false)
+			if held_log != null:
+				MaterialFactory.apply_realistic_log_materials(held_log)
 	elif item_name == "Semillas":
 		_build_third_person_seed_bag()
 	elif item_name == "Trapos":

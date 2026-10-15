@@ -370,12 +370,14 @@ func add_item_thumbnail(parent: Control, item) -> void:
 		var paths: Array = []
 		var scale_value := 1.0
 		var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
+		if item_pelt.is_empty() and str(item.item_name).begins_with("Piel de "):
+			item_pelt = str(item.item_name).trim_prefix("Piel de ").strip_edges()
 		if hud.main_node != null and hud.main_node.has_method("_get_drop_model_paths"):
 			paths = hud.main_node._get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 			scale_value = hud.main_node._get_drop_scale(item.item_name, item.item_type)
 		if item.item_name == "Trapos":
 			paths = []
-		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": ""}
+		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": item_pelt}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
@@ -518,6 +520,9 @@ func find_item(name: String):
 	if name.is_empty():
 		return null
 	for item in player.inventory.items:
+		if item.item_name == name and not str(item.get_meta("equipped_slot", "")).is_empty():
+			return item
+	for item in player.inventory.items:
 		if item.item_name == name:
 			return item
 	return null
@@ -549,7 +554,11 @@ func transfer(data: Dictionary, destination: String, target: Dictionary) -> void
 	if not can_transfer(data, destination, target):
 		return
 	if data.has("world"):
-		collect(data.world)
+		if destination == "equipment" or destination.begins_with("equip:"):
+			if reachable(data.world):
+				data.world.interact(player)
+		else:
+			collect(data.world)
 	elif destination == "ground":
 		if player.inventory.items.has(data.item):
 			player.drop_inventory_item(player.inventory.items.find(data.item))
@@ -587,15 +596,14 @@ func activate(data: Dictionary) -> void:
 		collect(data.world)
 	elif data.has("item") and player.inventory.items.has(data.item):
 		var item = data.item
+		var is_worn := not str(item.get_meta("equipped_slot", "")).is_empty()
 		if item.item_type == "clothing":
-			if player._equipped_slots.values().has(item.item_name):
-				var idx: int = player.inventory.items.find(item)
-				if idx >= 0:
-					player.drop_inventory_item(idx)
+			if is_worn:
+				player.unequip_clothing(item.item_name)
 			else:
 				equip(item)
 		elif item.item_type == "backpack":
-			if player.equipped_backpack == item.item_name:
+			if is_worn or player.equipped_backpack == item.item_name:
 				var idx_bp: int = player.inventory.items.find(item)
 				if idx_bp >= 0:
 					player.drop_inventory_item(idx_bp)
@@ -643,10 +651,11 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 						player._select_held_item(player.inventory.items.find(item))
 					hud.toggle_inventory()
 					player._reload_rifle())
-			if item.item_type in ["clothing", "backpack"]:
-				var is_worn: bool = (item.item_type == "clothing" and player._equipped_slots.values().has(item.item_name)) or (item.item_type == "backpack" and player.equipped_backpack == item.item_name)
-				if not is_worn:
-					add_action("Equipar", func(): equip(item))
+			var is_worn: bool = not str(item.get_meta("equipped_slot", "")).is_empty()
+			if item.item_type in ["clothing", "backpack"] and not is_worn:
+				add_action("Equipar", func(): equip(item))
+			if item.item_type == "clothing" and is_worn:
+				add_action("Quitar prenda", func(): player.unequip_clothing(item.item_name))
 			if player.get_held_item() == item:
 				add_action("Guardar en inventario", func(): player._store_held_item())
 			if item.item_type == "tool_torch":
@@ -655,7 +664,7 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					player._toggle_flashlight())
 			if item.quantity > 1:
 				add_action("Separar unidades…", func(): open_split(item))
-			if item.item_type not in ["clothing", "backpack"]:
+			if not is_worn:
 				for container in Cargo.compartments(player):
 					if container.id != item.cargo_location and Cargo.can_move(item, container.id, player.inventory, Cargo.compartments(player)):
 						add_action("Mover a " + str(container.name).to_lower(), func(): transfer({"item": item}, container.id, {}))

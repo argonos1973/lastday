@@ -11,7 +11,11 @@ signal item_used(message: String)
 var items: Array = []
 
 static func is_equipment_item(item) -> bool:
-	return item != null and str(item.item_type) in ["clothing", "backpack"]
+	if item == null:
+		return false
+	if str(item.item_type) == "backpack":
+		return true
+	return not str(item.get_meta("equipped_slot", "")).is_empty()
 
 func get_stored_count() -> int:
 	var count := 0

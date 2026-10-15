@@ -1664,6 +1664,8 @@ func _create_inventory_slot(index: int, item) -> void:
 		var model_scale: float = 1.0
 		var frame_zoom: float = 1.0
 		var item_pelt := str(item.get_meta("pelt_species", "")) if item.has_meta("pelt_species") else ""
+		if item_pelt.is_empty() and str(item.item_name).begins_with("Piel de "):
+			item_pelt = str(item.item_name).trim_prefix("Piel de ").strip_edges()
 		if main_node != null and main_node.has_method("_get_drop_model_paths"):
 			model_paths = main_node._get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 			model_scale = main_node._get_drop_scale(item.item_name, item.item_type)
@@ -1674,7 +1676,7 @@ func _create_inventory_slot(index: int, item) -> void:
 		var only_mesh := ""
 		var mesh_tint := Color(0, 0, 0, 0)
 		var mesh_camo := Color(0, 0, 0, 0)
-		var mesh_pelt := ""
+		var mesh_pelt := item_pelt
 		if str(item.item_name) == "Botas survival":
 			only_mesh = "shoes"
 			mesh_tint = Color(0.05, 0.05, 0.05)
@@ -1684,7 +1686,7 @@ func _create_inventory_slot(index: int, item) -> void:
 			mesh_tint = cloth_colors["tint"]
 			mesh_camo = cloth_colors["camo"]
 			mesh_pelt = str(cloth_colors.get("pelt", ""))
-		if not model_paths.is_empty():
+		if not model_paths.is_empty() or not mesh_pelt.is_empty():
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE

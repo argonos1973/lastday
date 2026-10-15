@@ -200,7 +200,13 @@ func run() -> void:
 	player._select_held_item(player.inventory.items.find(axe))
 	var card = screen.make_card(screen.item_text(axe), {"item": axe, "label": axe.item_name}, "pockets")
 	screen.cargo.add_child(card)
+	var pelt_item = ItemData.create("Piel de lobo", "resource", 0.65, 1, 0.0)
+	var pelt_card = screen.make_card(screen.item_text(pelt_item), {"item": pelt_item, "label": pelt_item.item_name}, "pockets")
+	screen.cargo.add_child(pelt_card)
 	await process_frame
+	var pelt_thumbs: Array = pelt_card.find_children("*", "SubViewportContainer", true, false)
+	check(pelt_thumbs.size() == 1 and pelt_thumbs[0]._model_root.get_child_count() == 1, "Animal pelt card renders its 3D fur hide mesh in inventory")
+	pelt_card.queue_free()
 	var thumbnails: Array = card.find_children("*", "SubViewportContainer", true, false)
 	check(thumbnails.size() == 1, "Item card uses the actual 3D model")
 	if thumbnails.size() == 1:

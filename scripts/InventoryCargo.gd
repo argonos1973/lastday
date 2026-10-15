@@ -22,7 +22,11 @@ static func compartments(player) -> Array:
 	return result
 
 static func is_equipment(item) -> bool:
-	return item != null and str(item.item_type) in ["clothing", "backpack"]
+	if item == null:
+		return false
+	if str(item.item_type) == "backpack":
+		return true
+	return not str(item.get_meta("equipped_slot", "")).is_empty()
 
 static func arrange(items: Array, containers: Array) -> Dictionary:
 	var groups := {}

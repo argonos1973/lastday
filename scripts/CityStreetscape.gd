@@ -181,7 +181,6 @@ static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
  if water!=null:
   water.name="DistrictFountainWater"
   water.material_override=_make_fountain_water_material()
- _spawn_fountain_water_fx(fountain)
 
 static func _make_fountain_water_material() -> ShaderMaterial:
  var sm := ShaderMaterial.new()

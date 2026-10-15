@@ -437,3 +437,220 @@ static func make_fire_gradient() -> Gradient:
 	g.add_point(0.7, Color(0.8, 0.15, 0.02, 0.5))
 	g.add_point(1.0, Color(0.2, 0.05, 0.0, 0.0))
 	return g
+
+static func build_pelt_hide_mesh(pelt_species: String) -> MeshInstance3D:
+	var sp := pelt_species.strip_edges().to_lower()
+	if sp.begins_with("piel de "):
+		sp = sp.trim_prefix("piel de ").strip_edges()
+	var fur_color := Color(0.38, 0.27, 0.16)
+	match sp:
+		"zorro": fur_color = Color(0.55, 0.25, 0.10)
+		"oso": fur_color = Color(0.22, 0.15, 0.10)
+		"lobo": fur_color = Color(0.42, 0.41, 0.38)
+		"ave": fur_color = Color(0.46, 0.41, 0.30)
+	# Realistic stretched animal hide silhouette (neck, front legs, waist, hind legs, tail)
+	var outline := PackedVector3Array([
+		Vector3(0.0, 0.022, -0.38),     # Neck tip
+		Vector3(0.09, 0.020, -0.33),    # Right shoulder
+		Vector3(0.28, 0.012, -0.28),    # Right front paw out
+		Vector3(0.25, 0.014, -0.18),    # Right front armpit
+		Vector3(0.18, 0.024, -0.02),    # Right flank waist
+		Vector3(0.29, 0.012, 0.20),     # Right hind paw out
+		Vector3(0.19, 0.015, 0.28),     # Right hind inner
+		Vector3(0.06, 0.018, 0.33),     # Tail base right
+		Vector3(0.0, 0.010, 0.42),      # Tail tip
+		Vector3(-0.06, 0.018, 0.33),    # Tail base left
+		Vector3(-0.19, 0.015, 0.28),    # Left hind inner
+		Vector3(-0.29, 0.012, 0.20),    # Left hind paw out
+		Vector3(-0.18, 0.024, -0.02),   # Left flank waist
+		Vector3(-0.25, 0.014, -0.18),   # Left front armpit
+		Vector3(-0.28, 0.012, -0.28),   # Left front paw out
+		Vector3(-0.09, 0.020, -0.33),   # Left shoulder
+	])
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var spine := [
+		Vector3(0.0, 0.036, -0.18),
+		Vector3(0.0, 0.040, 0.0),
+		Vector3(0.0, 0.034, 0.18),
+	]
+	var center: Vector3 = spine[1]
+	var n_pts := outline.size()
+	for i in range(n_pts):
+		var a: Vector3 = outline[i]
+		var b: Vector3 = outline[(i + 1) % n_pts]
+		var shade := 0.90 + float((i * 5) % 4) * 0.035
+		var col := Color(fur_color.r * shade, fur_color.g * shade, fur_color.b * shade, 1.0)
+		# Top fur face
+		st.set_color(col)
+		st.set_uv(Vector2(0.5, 0.5))
+		st.add_vertex(center)
+		st.set_color(col)
+		st.set_uv(Vector2(a.x + 0.5, a.z + 0.5))
+		st.add_vertex(a)
+		st.set_color(col)
+		st.set_uv(Vector2(b.x + 0.5, b.z + 0.5))
+		st.add_vertex(b)
+		# Underside leather face so thickness reads from any angle
+		var a_low := a - Vector3(0.0, 0.014, 0.0)
+		var b_low := b - Vector3(0.0, 0.014, 0.0)
+		st.set_color(col.darkened(0.25))
+		st.set_uv(Vector2(a.x + 0.5, a.z + 0.5))
+		st.add_vertex(a)
+		st.add_vertex(a_low)
+		st.add_vertex(b_low)
+		st.add_vertex(a)
+		st.add_vertex(b_low)
+		st.add_vertex(b)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.name = "PeltHideMesh"
+	mi.mesh = st.commit()
+	var pelt_mat := pelt_fur_material(sp) if not sp.is_empty() else null
+	if pelt_mat != null:
+		mi.material_override = pelt_mat
+	else:
+		var fallback := StandardMaterial3D.new()
+		fallback.vertex_color_use_as_albedo = true
+		fallback.roughness = 0.94
+		fallback.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mi.material_override = fallback
+	return mi
+
+static func make_log_bark_material() -> StandardMaterial3D:
+	if _mat_cache.has("realistic_log_bark"):
+		return _mat_cache["realistic_log_bark"]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load_texture("res://assets/external/polyhaven/pine_tree_01/textures/pine_tree_01_bark_diff_4k.png")
+	m.albedo_color = Color(0.76, 0.68, 0.58)
+	m.normal_enabled = true
+	m.normal_texture = load_texture("res://assets/textures/overgrowth/village_wood_normal.png")
+	m.normal_scale = 1.65
+	m.roughness_texture = load_texture("res://assets/textures/overgrowth/village_wood_roughness.png")
+	m.roughness = 0.96
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = false
+	m.uv1_scale = Vector3(1.8, 1.8, 1.8)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	_mat_cache["realistic_log_bark"] = m
+	return m
+
+static func make_log_end_material() -> ShaderMaterial:
+	if _mat_cache.has("realistic_log_end"):
+		return _mat_cache["realistic_log_end"]
+	var sm := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+varying vec3 lpos;
+void vertex() {
+	lpos = VERTEX;
+}
+void fragment() {
+	vec2 p = lpos.xz * 6.5;
+	float r = length(p);
+	float a = atan(p.y, p.x);
+	float wobble = sin(a * 5.0) * 0.04 + cos(a * 11.0) * 0.02;
+	float rings = sin((r + wobble) * 42.0) * 0.5 + 0.5;
+	float fine = sin((r + wobble * 0.5) * 110.0) * 0.5 + 0.5;
+	// Radial drying cracks from pith
+	float crack = smoothstep(0.96, 0.995, cos(a * 3.0 + 0.7)) * smoothstep(0.05, 0.65, r) * smoothstep(0.95, 0.4, r);
+	vec3 heartwood = vec3(0.46, 0.30, 0.16);
+	vec3 sapwood = vec3(0.74, 0.58, 0.36);
+	vec3 col = mix(heartwood, sapwood, smoothstep(0.22, 0.78, r));
+	col *= mix(0.78, 1.08, rings * 0.7 + fine * 0.3);
+	col = mix(col, vec3(0.14, 0.09, 0.05), crack * 0.85);
+	ALBEDO = col;
+	ROUGHNESS = 0.88;
+	METALLIC = 0.0;
+}
+"""
+	sm.shader = sh
+	_mat_cache["realistic_log_end"] = sm
+	return sm
+
+static func apply_realistic_log_materials(root: Node) -> void:
+	if root == null:
+		return
+	var bark_mat := make_log_bark_material()
+	var end_mat := make_log_end_material()
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var n := stack.pop_back() as Node
+		for ch in n.get_children():
+			stack.append(ch)
+		if not (n is MeshInstance3D):
+			continue
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var scount := mi.mesh.get_surface_count()
+		if scount <= 1:
+			mi.material_override = bark_mat
+		else:
+			mi.material_override = null
+			for s in range(scount):
+				var smat := mi.mesh.surface_get_material(s)
+				var mname := str(smat.resource_name).to_lower() if smat != null else ""
+				var is_end := ("tan" in mname or "wood" in mname or "inner" in mname or "top" in mname or s == 1) and not ("bark" in mname or "brown" in mname)
+				mi.set_surface_override_material(s, end_mat if is_end else bark_mat)
+
+static func apply_realistic_shelter_materials(root: Node) -> void:
+	if root == null:
+		return
+	var bark_mat := make_log_bark_material()
+	var litter_tex: Texture2D = load_texture("res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_diffuse_2k.jpg") as Texture2D
+	var litter_nor: Texture2D = load_texture("res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_nor_gl_2k.jpg") as Texture2D
+	var rope_tex: Texture2D = load_texture("res://assets/textures/overgrowth/village_ochre_albedo.png") as Texture2D
+	var rope_nor: Texture2D = load_texture("res://assets/textures/overgrowth/village_ochre_normal.png") as Texture2D
+	var rock_mat := make_forest_rock_material(Vector3(0.28, 0.32, 0.24))
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var n := stack.pop_back() as Node
+		for ch in n.get_children():
+			stack.append(ch)
+		if not (n is MeshInstance3D):
+			continue
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for s in range(mi.mesh.get_surface_count()):
+			var smat := mi.mesh.surface_get_material(s)
+			var mname := str(smat.resource_name).to_lower() if smat != null else ""
+			if "bark" in mname:
+				mi.set_surface_override_material(s, bark_mat)
+			elif "stone" in mname or "rock" in mname:
+				mi.set_surface_override_material(s, rock_mat)
+			elif "fibre" in mname or "lashing" in mname or "rope" in mname:
+				var rkey := "shelter_rope_pbr"
+				if not _mat_cache.has(rkey):
+					var rm := StandardMaterial3D.new()
+					rm.albedo_texture = rope_tex
+					rm.albedo_color = Color(0.62, 0.48, 0.30)
+					rm.normal_enabled = true
+					rm.normal_texture = rope_nor
+					rm.normal_scale = 1.4
+					rm.roughness = 0.92
+					rm.uv1_triplanar = true
+					rm.uv1_scale = Vector3(4.0, 4.0, 4.0)
+					_mat_cache[rkey] = rm
+				mi.set_surface_override_material(s, _mat_cache[rkey])
+			elif "litter" in mname or "leaf" in mname or "foliage" in mname:
+				var lkey := "shelter_" + mname
+				if not _mat_cache.has(lkey):
+					var lm := StandardMaterial3D.new()
+					lm.albedo_texture = litter_tex
+					if "foliage" in mname:
+						lm.albedo_color = Color(0.42, 0.56, 0.26)
+					elif "dry leaf" in mname:
+						lm.albedo_color = Color(0.66, 0.52, 0.28)
+					else:
+						lm.albedo_color = Color(0.54, 0.45, 0.26)
+					lm.normal_enabled = true
+					lm.normal_texture = litter_nor
+					lm.normal_scale = 1.35
+					lm.roughness = 0.94
+					lm.cull_mode = BaseMaterial3D.CULL_DISABLED
+					lm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+					_mat_cache[lkey] = lm
+				mi.set_surface_override_material(s, _mat_cache[lkey])
