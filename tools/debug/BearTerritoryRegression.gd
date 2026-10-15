@@ -9,6 +9,10 @@ class TestMain extends MainScript:
 		pass
 	func is_wildlife_allowed_at(_pos: Vector3) -> bool:
 		return true
+	func is_wolf_allowed_at(_pos: Vector3) -> bool:
+		return true
+	func _is_near_road(_pos: Vector3, _margin: float) -> bool:
+		return false
 	func _is_near_wildlife_blocker(_pos: Vector3, _extra_margin: float = 0.0) -> bool:
 		return false
 	func _is_pos_wolf_protected(_pos: Vector3) -> bool:
@@ -19,12 +23,13 @@ class TestMain extends MainScript:
 		return false
 
 class TestAnimal extends WildlifeControllerScript:
+	var last_sound := ""
 	func _build_animal() -> void:
 		pass
 	func _play_animation_by_name(_keyword: String) -> void:
 		pass
-	func _play_wolf_sound(_sound: String) -> void:
-		pass
+	func _play_wolf_sound(sound: String) -> void:
+		last_sound = sound
 	func _compute_wolf_separation(_radius: float) -> Vector3:
 		return Vector3.ZERO
 	func _is_near_lit_campfire(_pos: Vector3, _radius: float) -> bool:
@@ -99,6 +104,19 @@ func _run() -> void:
 	bear._wolf_hunger_threshold = 0.0
 	bear._wolf_ai(0.016)
 	check(player.health == 65.0, "bear attack damages a nearby character for 35 health")
+	check(bear.last_sound == "attack", "bear plays attack roar when striking character")
+
+	# Bears require exactly 3 rifle shots (260 base dmg each) to die and do not flee when shot
+	var shot_bear := TestAnimal.new()
+	world.add_child(shot_bear)
+	shot_bear.setup("bear", [Vector3(10, 0, 0), Vector3(12, 0, 0)])
+	shot_bear.take_damage(260.0, false, player)
+	check(not shot_bear._is_dead and shot_bear.health > 0.0, "bear survives 1st rifle shot")
+	check(shot_bear._prey_flee_timer == 0.0 and shot_bear._chase_target == player, "bear charges attacker instead of fleeing on rifle hit")
+	shot_bear.take_damage(260.0, false, player)
+	check(not shot_bear._is_dead and shot_bear.health > 0.0, "bear survives 2nd rifle shot")
+	shot_bear.take_damage(260.0, false, player)
+	check(shot_bear._is_dead and shot_bear.health == 0.0, "bear dies on 3rd rifle shot")
 	world.queue_free()
 	await process_frame
 	if failures == 0:

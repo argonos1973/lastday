@@ -144,8 +144,8 @@ func setup_puppet(kind: String) -> void:
 			health = 50.0
 			max_health = 50.0
 		"bear":
-			health = 320.0
-			max_health = 320.0
+			health = 650.0
+			max_health = 650.0
 		_:
 			health = 100.0
 			max_health = 100.0
@@ -173,19 +173,35 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void:
+	if animal_type == "bear" and not from_knife:
+		# Bears require 3 rifle shots (650 HP / max 240 dmg per shot -> 3 shots).
+		amount = minf(amount, 240.0)
 	if not is_puppet:
 		# Real animal — apply damage directly
 		if _is_dead:
 			return
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
-		_prey_flee_timer = 8.0
-		if attacker is Node3D and is_instance_valid(attacker):
-			_flee_origin = (attacker as Node3D).global_position
+		if animal_type == "bear":
+			# Bears do not flee when shot: they roar and charge the attacker.
+			_prey_flee_timer = 0.0
+			_chase_cooldown = 0.0
+			_wolf_eating_timer = 0.0
+			_wolf_eating_target = null
+			_idle_timer = 0.0
+			if attacker is Node3D and is_instance_valid(attacker):
+				_player = attacker as Node3D
+				_chase_target = _player
+				_state = "chase_player"
+			_play_wolf_sound("attack")
+		else:
+			_prey_flee_timer = 8.0
+			if attacker is Node3D and is_instance_valid(attacker):
+				_flee_origin = (attacker as Node3D).global_position
+			_chase_cooldown = 10.0
 		_current_path.clear()
 		_path_index = 0
 		_path_recalc_timer = 0.0
-		_chase_cooldown = 10.0
 		_spawn_blood_splatter()
 		_play_pain_sound()
 		_note_attack(attacker)
@@ -203,8 +219,13 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 		return
 	health = max(0.0, health - amount)
 	_hit_flash_timer = 0.3
-	_prey_flee_timer = 8.0
-	_chase_cooldown = 10.0
+	if animal_type == "bear":
+		_prey_flee_timer = 0.0
+		_chase_cooldown = 0.0
+		_play_wolf_sound("attack")
+	else:
+		_prey_flee_timer = 8.0
+		_chase_cooldown = 10.0
 	_spawn_blood_splatter()
 	_play_pain_sound()
 	if health <= 0.0:
@@ -241,8 +262,8 @@ func setup(kind: String, points: Array) -> void:
 			health = 50.0
 			max_health = 50.0
 		"bear":
-			health = 320.0
-			max_health = 320.0
+			health = 650.0
+			max_health = 650.0
 		_:
 			health = 100.0
 			max_health = 100.0
@@ -355,7 +376,7 @@ func _process_body(delta: float) -> void:
 		if not _is_dead:
 			_network_motion.advance(self, delta)
 			_update_water_depth(delta)
-		if animal_type == "wolf" and not _is_dead:
+		if (animal_type == "wolf" or animal_type == "bear") and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
 			_rot_timer = max(0.0, _rot_timer - delta)
@@ -453,9 +474,16 @@ func _process_body(delta: float) -> void:
 	_wolf_ai_debug_timer = max(0.0, _wolf_ai_debug_timer - delta)
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
 	if animal_type == "wolf" or animal_type == "bear":
-		if animal_type == "wolf":
-			_update_wolf_sounds(delta)
-		_wolf_hunger = max(0.0, _wolf_hunger - delta * (0.15 if animal_type == "wolf" else 0.10))
+		_update_wolf_sounds(delta)
+		if animal_type == "bear":
+			# Wild bears forage in their territory and never starve to death on their own
+			_wolf_hunger = max(15.0, _wolf_hunger - delta * 0.03)
+			if _wolf_eating_timer > 0.0 and _player != null and is_instance_valid(_player) and global_position.distance_to(_player.global_position) < 40.0:
+				_wolf_eating_timer = 0.0
+				_wolf_eating_target = null
+		else:
+			var drain := 0.15 if _wolf_hunger < 1.0 else 0.035
+			_wolf_hunger = max(0.0, _wolf_hunger - delta * drain)
 		if _wolf_hunger <= 0.0:
 			health = max(0.0, health - delta * 5.0)
 			if health <= 0.0 and not _is_dead:
@@ -591,6 +619,13 @@ func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 	var dist := global_position.distance_to(pos)
 	if dist > radius:
 		return
+	if animal_type == "bear" and dist <= 68.0:
+		# A nearby gunshot alerts and angers the bear instead of making it flee
+		_prey_flee_timer = 0.0
+		_chase_cooldown = 0.0
+		_idle_timer = 0.0
+		_play_wolf_sound("growl")
+		return
 	_prey_flee_timer = 8.0
 	_flee_stamina = 0.0
 	_flee_origin = pos
@@ -618,7 +653,7 @@ func _retreat_from_player() -> Dictionary:
 	_current_path.clear()
 	_path_index = 0
 	_path_recalc_timer = 0.0
-	if animal_type == "wolf":
+	if animal_type == "wolf" or animal_type == "bear":
 		_play_wolf_sound("growl")
 	_play_animation_by_name("trot")
 	return {"target": _retreat_target, "speed": move_speed * 2.0}
@@ -805,7 +840,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-		if dist_to_player < 60.0 or (_state == "chase_player" and dist_to_player < 110.0):
+		var sight_range := 65.0 if animal_type == "bear" else 60.0
+		var another_bear_chasing := false
+		if animal_type == "bear":
+			for node in _cached_wildlife:
+				if node == self or not is_instance_valid(node) or not (node is Node3D):
+					continue
+				if str(node.get("animal_type")) == "bear" and not bool(node.get("_is_dead")) and str(node.get("_state")) == "chase_player" and node.get("_chase_target") == _player:
+					if (node as Node3D).global_position.distance_squared_to(_player.global_position) < global_position.distance_squared_to(_player.global_position):
+						another_bear_chasing = true
+						break
+		if not another_bear_chasing and (dist_to_player < sight_range or (_state == "chase_player" and dist_to_player < 110.0)):
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
 			_reach_check_timer -= delta
 			if _state != "chase_player" or _reach_check_timer <= 0.0 or height_diff >= 1.8:
@@ -814,6 +859,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 					return _retreat_from_player()
 				# Keep tracking the player while the route searches along the bank.
 				_chase_stuck_time = 0.0
+			if _state != "chase_player":
+				_play_wolf_sound("growl")
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
@@ -856,7 +903,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 								net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage())
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(_predator_player_damage())
-					if animal_type == "wolf":
+					if animal_type == "wolf" or animal_type == "bear":
 						_play_wolf_sound("attack")
 				_play_animation_by_name("run")
 				var away_dir := (global_position - _player.global_position).normalized()
@@ -891,8 +938,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * 2.0
 				_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
-	# Priority 1.5: detect gutted meat pickups from far away (60m)
-	if is_hungry:
+	# Priority 1.5: detect gutted meat pickups from far away (60m, wolves only so bears don't pack-converge)
+	if is_hungry and animal_type == "wolf":
 		var meat := _find_nearest_meat_pickup()
 		if meat != null and global_position.distance_to(meat.global_position) < 60.0:
 			return _seek_meat_pickup(meat)
@@ -960,6 +1007,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 func _find_nearest_corpse() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 9999.0 * 9999.0
+	var home_anchor: Vector3 = patrol_points[0] if not patrol_points.is_empty() else global_position
 	for node in _cached_wildlife:
 		if not is_instance_valid(node) or node.is_queued_for_deletion():
 			continue
@@ -968,24 +1016,31 @@ func _find_nearest_corpse() -> Node3D:
 		var other := node as Node3D
 		if not other.get("_is_dead") or other.get("_gutted"):
 			continue
+		if animal_type == "bear":
+			var c_type := str(other.get("animal_type"))
+			if c_type != "deer" and c_type != "fox":
+				continue
+			if home_anchor.distance_squared_to(other.global_position) > 80.0 * 80.0:
+				continue
 		var d_sq := global_position.distance_squared_to(other.global_position)
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
 			nearest = other
-	if nearest == null:
+	if nearest == null and animal_type != "bear":
 		for p in get_tree().get_nodes_in_group("net_player_proxy"):
 			if p is Node3D and p.get_meta("proxy_dead", false) and not p.get_meta("gutted", false):
 				var d_sq := global_position.distance_squared_to((p as Node3D).global_position)
 				if d_sq < nearest_dist_sq:
 					nearest_dist_sq = d_sq
 					nearest = p as Node3D
-	# Also search for gutted meat pickups on the ground
-	var meat := _find_nearest_meat_pickup()
-	if meat != null:
-		var d_sq := global_position.distance_squared_to(meat.global_position)
-		if d_sq < nearest_dist_sq:
-			nearest_dist_sq = d_sq
-			nearest = meat
+	# Also search for gutted meat pickups on the ground (wolves only so bears don't converge)
+	if animal_type != "bear":
+		var meat := _find_nearest_meat_pickup()
+		if meat != null:
+			var d_sq := global_position.distance_squared_to(meat.global_position)
+			if d_sq < nearest_dist_sq:
+				nearest_dist_sq = d_sq
+				nearest = meat
 	return nearest
 
 func _find_nearest_proxy() -> Node3D:
@@ -1012,6 +1067,7 @@ func _find_nearest_proxy() -> Node3D:
 func _find_nearest_prey() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 9999.0 * 9999.0
+	var home_anchor: Vector3 = patrol_points[0] if not patrol_points.is_empty() else global_position
 	for node in _cached_wildlife:
 		if not is_instance_valid(node) or node.is_queued_for_deletion():
 			continue
@@ -1021,7 +1077,13 @@ func _find_nearest_prey() -> Node3D:
 		if other.get("_is_dead"):
 			continue
 		var at = other.get("animal_type")
-		if at == null or str(at) == animal_type or (animal_type == "wolf" and str(at) == "bear"):
+		if at == null:
+			continue
+		var ats := str(at)
+		# Only deer and foxes are prey — bears and wolves never hunt each other.
+		if ats != "deer" and ats != "fox":
+			continue
+		if animal_type == "bear" and home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
 			continue
 		var d_sq := global_position.distance_squared_to(other.global_position)
 		if d_sq < nearest_dist_sq:
@@ -1988,13 +2050,14 @@ func _play_pain_sound() -> void:
 	var dist := 999.0
 	if player_node != null and player_node is Node3D:
 		dist = global_position.distance_to((player_node as Node3D).global_position)
-	if dist > 18.0:
+	var max_pain_dist := 60.0 if animal_type == "bear" else 35.0
+	if dist > max_pain_dist:
 		return
 	if _wolf_pain_player == null:
 		_wolf_pain_player = AudioStreamPlayer.new()
 		_wolf_pain_player.name = "PainSound"
 		add_child(_wolf_pain_player)
-	var path := "res://assets/audio/loboherido.wav" if animal_type == "wolf" else "res://assets/audio/animal_herido.wav"
+	var path := "res://assets/audio/loboherido.wav" if (animal_type == "wolf" or animal_type == "bear") else "res://assets/audio/animal_herido.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
@@ -2006,8 +2069,9 @@ func _play_pain_sound() -> void:
 		return
 	_wolf_pain_player.stop()
 	_wolf_pain_player.stream = stream
-	_wolf_pain_player.volume_db = -6.0 - (dist / 18.0) * 12.0
-	_wolf_pain_player.pitch_scale = randf_range(0.85, 1.15)
+	var base_vol := 0.0 if animal_type == "bear" else -4.0
+	_wolf_pain_player.volume_db = base_vol - (dist / max_pain_dist) * 14.0
+	_wolf_pain_player.pitch_scale = randf_range(0.46, 0.56) if animal_type == "bear" else randf_range(0.85, 1.15)
 	_wolf_pain_player.play()
 
 func _find_nearest_animal(kind: String) -> Node3D:
@@ -2078,12 +2142,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
 		# Dedicated servers can't play audio: relay events to clients so each
-		# puppet plays the sound locally. Ambient growls are already generated
-		# per-client by the puppet's own _update_wolf_sounds.
-		if (sound_type == "howl" or sound_type == "attack") and _net.is_connected:
+		# puppet plays the sound locally.
+		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl") and _net.is_connected:
 			_net.animal_sound.rpc(name, sound_type)
 		return
-	if sound_type == "howl":
+	var is_bear := animal_type == "bear"
+	if sound_type == "howl" and not is_bear:
 		var player_node_h := get_tree().current_scene.get_node_or_null("Player")
 		var dist_h := 999.0
 		if player_node_h != null and player_node_h is Node3D:
@@ -2119,15 +2183,15 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _wolf_audio_player == null:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
-		_wolf_audio_player.unit_size = 8.0
-		_wolf_audio_player.max_distance = 40.0
+		_wolf_audio_player.unit_size = 14.0 if is_bear else 8.0
+		_wolf_audio_player.max_distance = 65.0 if is_bear else 40.0
 		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_wolf_audio_player)
-	if _wolf_audio_player.playing:
+	if _wolf_audio_player.playing and sound_type != "attack":
 		return
 	var path := ""
 	match sound_type:
-		"growl":
+		"growl", "howl":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
@@ -2143,8 +2207,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
-	_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
-	_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
+	if is_bear:
+		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" else 1.0
+		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
+	else:
+		_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
+		_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:
@@ -2492,7 +2560,7 @@ func _is_position_allowed(pos: Vector3) -> bool:
 
 func _is_position_allowed_impl(pos: Vector3) -> bool:
 	var scene := get_tree().current_scene
-	if animal_type == "wolf" and scene != null and scene.has_method("is_wolf_allowed_at"):
+	if (animal_type == "wolf" or animal_type == "bear") and scene != null and scene.has_method("is_wolf_allowed_at"):
 		return bool(scene.call("is_wolf_allowed_at", pos))
 	if scene != null and scene.has_method("is_wildlife_allowed_at"):
 		return bool(scene.call("is_wildlife_allowed_at", pos))
@@ -2509,6 +2577,8 @@ func _get_separation_vector() -> Vector3:
 
 func _get_separation_vector_impl() -> Vector3:
 	var push := Vector3.ZERO
+	var sep_radius := 40.0 if animal_type == "bear" else 3.0
+	var sep_radius_sq := sep_radius * sep_radius
 	for node in _cached_wildlife:
 		if node == self:
 			continue
@@ -2520,7 +2590,7 @@ func _get_separation_vector_impl() -> Vector3:
 		var diff := global_position - other.global_position
 		diff.y = 0.0
 		var d_sq := diff.length_squared()
-		if d_sq <= 0.000001 or d_sq >= 9.0:
+		if d_sq <= 0.000001 or d_sq >= sep_radius_sq:
 			continue
 		# Cheap distance gate first: the dynamic property lookups below only run
 		# for animals that are actually close.
@@ -2529,7 +2599,7 @@ func _get_separation_vector_impl() -> Vector3:
 		if str(other.get("animal_type")) != animal_type:
 			continue
 		var d := sqrt(d_sq)
-		push += diff.normalized() * (3.0 - d) / 3.0
+		push += diff.normalized() * (sep_radius - d) / sep_radius
 	if push.length() > 0.01:
 		return push.normalized()
 	return Vector3.ZERO
@@ -2565,7 +2635,7 @@ func _find_safe_patrol_points(source_points: Array) -> Array:
 	return safe_points
 
 func _flee_distance() -> float:
-	if animal_type == "wolf":
+	if animal_type == "wolf" or animal_type == "bear":
 		return 0.0
 	return 16.0 if animal_type == "fox" else 13.0
 
@@ -2660,7 +2730,7 @@ func _request_path(start: Vector3, goal: Vector3) -> Array:
 
 func _request_path_impl(start: Vector3, goal: Vector3) -> Array:
 	var scene := get_tree().current_scene
-	if animal_type == "wolf" and scene != null and scene.has_method("find_path_wolf"):
+	if (animal_type == "wolf" or animal_type == "bear") and scene != null and scene.has_method("find_path_wolf"):
 		return scene.call("find_path_wolf", start, goal) as Array
 	if scene != null and scene.has_method("find_path_wildlife"):
 		return scene.call("find_path_wildlife", start, goal) as Array

@@ -40,12 +40,18 @@ static func create(world: Node3D, server: bool) -> void:
  plaza.name="DistrictPlaza";plaza.position=ORIGIN+Vector3(32,0,48)
  world.add_child(plaza)
  for mi in plaza.find_children("*","MeshInstance3D",true,false):
-  if str(mi.name).begins_with("Solid_"): mi.create_trimesh_collision()
+  var mname := str(mi.name)
+  # Strip the primitive baked benches inside district_plaza.glb (one was facing
+  # away from the fountain and both overlapped the PBR CityPlazaBench_2..3).
+  if mname.begins_with("Solid_Bench"):
+   mi.visible = false
+   continue
+  if mname.begins_with("Solid_"):
+   mi.create_trimesh_collision()
  plaza.visible=not server
  var paving:=MeshInstance3D.new();var plane:=PlaneMesh.new();plane.size=Vector2(20,18)
  paving.mesh=plane;paving.position=plaza.position+Vector3(0,.008,0);paving.visible=not server
- var material:=StandardMaterial3D.new();material.albedo_texture=load("res://assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg");material.uv1_scale=Vector3(8,8,8);material.roughness=.95
- paving.material_override=material;world.add_child(paving)
+ paving.material_override=_make_pavement_material(true);world.add_child(paving)
  _fountain(world,server,plaza.position)
  _pavements(world,server)
  _urban_details(world,server)
@@ -78,11 +84,13 @@ static func _urban_details(world: Node3D, server: bool) -> void:
    world._try_instance_external_scene([STREET_LAMP_MODEL],name,pos,Vector3.ONE,Vector3(0,90.0 if i%2 else -90.0,0),true,0.0)
 
  # A small bus shelter anchors the eastern approach to the main crossing.
- var stop_pos: Vector3 = ORIGIN + Vector3(40,0,5)
+ # Rotated 180 deg so its open front and bench face the roadway (z=0) instead
+ # of turning its back glass screen to the street.
+ var stop_pos: Vector3 = ORIGIN + Vector3(40,0,5.2)
  world._create_invisible_collision_box("CityBusStopCollision",stop_pos,Vector3(3.8,2.5,1.6))
  world._register_wildlife_blocker(stop_pos,2.2)
  if not server:
-  if world._try_instance_external_scene([BUS_STOP_MODEL],"CityBusStop",stop_pos,Vector3.ONE,Vector3.ZERO,true,0.0):
+  if world._try_instance_external_scene([BUS_STOP_MODEL],"CityBusStop",stop_pos,Vector3.ONE,Vector3(0,180.0,0),true,0.0):
    _weather_prop(world.get_node_or_null("CityBusStop"),Color(.38,.39,.33))
 
  # The benches face the fountain and keep a clear route around its basin.
@@ -176,6 +184,71 @@ static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
   wm.roughness=.06;wm.metallic_specular=.8;wm.cull_mode=BaseMaterial3D.CULL_DISABLED
   water.material_override=wm
 
+static func _make_pavement_material(is_plaza: bool = false) -> ShaderMaterial:
+ var sm := ShaderMaterial.new()
+ var sh := Shader.new()
+ sh.code = """
+shader_type spatial;
+uniform sampler2D concrete_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform bool is_plaza = false;
+varying vec3 wpos;
+varying vec3 lpos;
+varying vec3 lnorm;
+
+float hash21(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	lpos = VERTEX;
+	lnorm = NORMAL;
+}
+
+void fragment() {
+	vec2 uv_world = wpos.xz * 0.28;
+	vec3 base_tex = texture(concrete_tex, uv_world).rgb;
+	float grain = dot(base_tex, vec3(0.333));
+
+	// Sidewalk slab grid (0.66m x 0.66m tiles with beveled mortar joints)
+	float tile_sz = is_plaza ? 0.90 : 0.66;
+	vec2 tile_uv = wpos.xz / tile_sz;
+	vec2 tile_id = floor(tile_uv);
+	vec2 f = fract(tile_uv);
+	vec2 edge_d = min(f, 1.0 - f);
+	float joint = 1.0 - smoothstep(0.018, 0.048, min(edge_d.x, edge_d.y));
+
+	// Per-slab tone variation and weathered stain patches
+	float slab_rnd = hash21(tile_id);
+	vec3 slab_col = vec3(0.46, 0.45, 0.42) * (0.72 + grain * 0.58) * (0.91 + slab_rnd * 0.16);
+
+	// Granite curbstone along vertical faces and outer 18 cm lip
+	float is_side = 1.0 - smoothstep(0.45, 0.85, abs(lnorm.y));
+	float curb_band = max(is_side, smoothstep(0.80, 0.96, max(abs(lpos.x), abs(lpos.z))));
+	float curb_joint = 1.0 - smoothstep(0.015, 0.04, min(fract((wpos.x + wpos.z) * 0.85), 1.0 - fract((wpos.x + wpos.z) * 0.85)));
+	vec3 curb_col = vec3(0.38, 0.37, 0.34) * (0.76 + grain * 0.50);
+	curb_col = mix(curb_col, vec3(0.14, 0.13, 0.11), curb_joint * 0.65);
+
+	vec3 col = mix(slab_col, curb_col, curb_band * (is_plaza ? 0.0 : 1.0));
+	// Mortar joints and gutter grime at the base of the 12 cm curb
+	col = mix(col, vec3(0.15, 0.16, 0.13), joint * (1.0 - curb_band * 0.7) * 0.72);
+	float gutter_dirt = (1.0 - smoothstep(0.0, 0.055, lpos.y)) * is_side;
+	col = mix(col, vec3(0.16, 0.18, 0.12), gutter_dirt * 0.68);
+
+	float h = grain * 0.45 - joint * 0.35 - curb_joint * curb_band * 0.30;
+	vec3 n_pert = normalize(vec3(-dFdx(h) * 2.8, 1.0, -dFdy(h) * 2.8));
+	NORMAL = normalize(mix(NORMAL, n_pert, 0.45));
+
+	ALBEDO = col;
+	ROUGHNESS = clamp(0.90 - grain * 0.10 + joint * 0.06, 0.78, 0.97);
+	SPECULAR = 0.22;
+}
+"""
+ sm.shader = sh
+ sm.set_shader_parameter("concrete_tex", load("res://assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg"))
+ sm.set_shader_parameter("is_plaza", is_plaza)
+ return sm
+
 static func _pavements(world: Node3D, server: bool) -> void:
  var source:Node3D=load("res://assets/models/environment/city/district_pavement.glb").instantiate()
  var mi:MeshInstance3D=source as MeshInstance3D
@@ -189,18 +262,21 @@ static func _pavements(world: Node3D, server: bool) -> void:
  var placements:Array[Transform3D]=[]
  for x in [0.0,64.0]:
   for z in range(-40,136,2):
-   if absf(z)<6 or absf(z-96)<6:continue
+   if absf(z)<4 or absf(z-96)<4:continue
    for side in [-1,1]:placements.append(Transform3D(Basis.IDENTITY,ORIGIN+Vector3(x+side*5,0,z)))
  for z in [0.0,96.0]:
   for x in range(-40,104,2):
-   if absf(x)<7 or absf(x-64)<7:continue
+   if absf(x)<6 or absf(x-64)<6:continue
    for side in [-1,1]:placements.append(Transform3D(Basis(Vector3.UP,PI/2),ORIGIN+Vector3(x,0,z+side*5)))
  var mm:=MultiMesh.new();mm.transform_format=MultiMesh.TRANSFORM_3D;mm.mesh=mesh;mm.instance_count=placements.size()
  var faces:=PackedVector3Array();var base:=mesh.get_faces()
  for i in range(placements.size()):
   mm.set_instance_transform(i,placements[i])
   for vertex in base:faces.append(placements[i]*vertex)
- var visual:=MultiMeshInstance3D.new();visual.name="DistrictPavements";visual.multimesh=mm;visual.visible=not server;world.add_child(visual)
+ var visual:=MultiMeshInstance3D.new();visual.name="DistrictPavements";visual.multimesh=mm;visual.visible=not server
+ if not server:
+  visual.material_override=_make_pavement_material(false)
+ world.add_child(visual)
  var body:=StaticBody3D.new();body.name="DistrictPavementCollision"
  var shape:=ConcavePolygonShape3D.new();shape.set_faces(faces)
  var collider:=CollisionShape3D.new();collider.shape=shape;body.add_child(collider);world.add_child(body)

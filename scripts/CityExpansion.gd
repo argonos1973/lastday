@@ -94,24 +94,27 @@ static func _ford(world: Node3D) -> void:
  if wet0 < 0.0:
   return
  var rng: RandomNumberGenerator = world._world_rng
- var z0 := wet0 - 6.0
- var z1 := wet1 + 6.0
- var rows := 24
- var cols := 4
- var half_w := 4.8
+ var z0 := wet0 - 8.5
+ var z1 := wet1 + 8.5
+ var rows := 36
+ var cols := 10
+ var half_w := 5.8
  var st := SurfaceTool.new()
  st.begin(Mesh.PRIMITIVE_TRIANGLES)
  for iz in range(rows + 1):
   var t := float(iz) / rows
   var zz := lerpf(z0, z1, t)
-  var z_fade := smoothstep(0.0, 0.22, t) * smoothstep(1.0, 0.78, t)
+  var z_fade := smoothstep(0.0, 0.25, t) * smoothstep(1.0, 0.75, t)
   for ix in range(cols + 1):
    var u := float(ix) / cols
-   var xx := CENTER.x + (u - 0.5) * half_w * 2.0
-   var x_fade := smoothstep(0.0, 0.18, u) * smoothstep(1.0, 0.82, u)
-   var yy: float = float(world._get_exact_ground_y(xx, zz)) + 0.055
-   st.set_color(Color(1, 1, 1, 0.92 * z_fade * x_fade))
-   st.set_uv(Vector2(u * half_w * 2.0 / 4.5, zz / 4.5))
+   var wobble := sin(zz * 0.55 + u * 4.2) * 0.65 + cos(zz * 1.1 - u * 2.7) * 0.35
+   var xx := CENTER.x + (u - 0.5) * half_w * 2.0 + wobble * (1.0 - absf(u - 0.5) * 0.5)
+   var x_fade := smoothstep(0.0, 0.22, u) * smoothstep(1.0, 0.78, u)
+   var r_d: float = float(world.get_river_depth_at(Vector3(xx, 0.0, zz)))
+   var lift := 0.012 if r_d <= 0.0 else 0.004
+   var yy: float = float(world._get_exact_ground_y(xx, zz)) + lift
+   st.set_color(Color(1, 1, 1, 0.90 * z_fade * x_fade))
+   st.set_uv(Vector2(u * half_w * 2.0 / 3.8, zz / 3.8))
    st.set_normal(Vector3.UP)
    st.add_vertex(Vector3(xx, yy, zz))
  for iz in range(rows):
@@ -125,16 +128,16 @@ static func _ford(world: Node3D) -> void:
  mi.mesh = st.commit()
  mi.material_override = world._get_shore_band_material()
  world.add_child(mi)
- for zw in [wet0 + 0.4, wet1 - 0.4]:
-  for k in range(7):
-   var xx := CENTER.x + rng.randf_range(-5.5, 5.5)
-   var zz: float = zw + rng.randf_range(-1.2, 1.2)
+ for zw in [wet0 - 0.6, wet0 + 0.6, wet1 - 0.6, wet1 + 0.6]:
+  for k in range(9):
+   var xx := CENTER.x + rng.randf_range(-5.8, 5.8)
+   var zz: float = zw + rng.randf_range(-1.6, 1.6)
    var pos := Vector3(xx, 0.0, zz)
-   pos.y = world._get_exact_ground_y(xx, zz) + 0.02
-   if rng.randf() < 0.5:
-    world._try_instance_external_scene(NodeUtils.shuffled_paths(world.SHORE_PEBBLES, rng), "ShorePebblePatch", pos, Vector3.ONE * rng.randf_range(0.55, 1.0), Vector3(0, rng.randf_range(0, 360), 0), false, 0.0)
+   pos.y = world._get_exact_ground_y(xx, zz) + 0.01
+   if rng.randf() < 0.55:
+    world._try_instance_external_scene(NodeUtils.shuffled_paths(world.SHORE_PEBBLES, rng), "ShorePebblePatch", pos, Vector3.ONE * rng.randf_range(0.6, 1.15), Vector3(0, rng.randf_range(0, 360), 0), false, 0.0)
    else:
-    world._try_instance_external_scene(NodeUtils.shuffled_paths(world.SHORE_FLATSTONES, rng), "FordStone", pos, Vector3.ONE * rng.randf_range(0.45, 0.9), Vector3(0, rng.randf_range(0, 360), 0), false, 0.0)
+    world._try_instance_external_scene(NodeUtils.shuffled_paths(world.SHORE_FLATSTONES, rng), "FordStone", pos, Vector3.ONE * rng.randf_range(0.55, 1.05), Vector3(0, rng.randf_range(0, 360), 0), false, 0.0)
 
 # Same verge grass as Main._create_road: tufts fading outward from both edges,
 # queued into the shared grass MultiMesh batches before they flush.

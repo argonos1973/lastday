@@ -38,6 +38,7 @@ func _strip(start: float, finish: float, sideways: bool, material: Material, ski
  st.begin(Mesh.PRIMITIVE_TRIANGLES)
  var rows := int(ceil(finish-start))
  var cols := 13
+ var world := get_tree().current_scene
  for row in range(-1,rows+2):
   var end_row := row == -1 or row == rows+1
   var along := lerpf(start-.35,finish+.35,float(row+1)/float(rows+2)) if end_row else lerpf(start,finish,float(row)/rows)
@@ -49,17 +50,30 @@ func _strip(start: float, finish: float, sideways: bool, material: Material, ski
    var height := .0 if end_skirt or (edge and not side_flat) else .04
    var point := Vector3(along,height,across) if sideways else Vector3(across,height,along)
    point += _offset
+   var wpos := to_global(point)
+   var r_depth := float(world.get_river_depth_at(wpos)) if (world != null and world.has_method("get_river_depth_at")) else 0.0
+   var river_prox := 0.0
+   var submerged := 0.0
+   if r_depth > 0.0:
+    river_prox = 1.0
+    submerged = clampf(r_depth / 0.22, 0.05, 1.0)
+   elif world != null and world.has_method("_is_near_river"):
+    for m_step in [1.4, 3.0, 5.2]:
+     if bool(world._is_near_river(wpos, m_step)):
+      river_prox = maxf(river_prox, 1.0 - (m_step / 6.0))
+      break
+   point.y = lerpf(point.y, 0.004, river_prox)
+   st.set_color(Color(river_prox, submerged, 0.0, 1.0))
    st.set_uv(Vector2(point.x+global_position.x,point.z+global_position.z)*.5)
    st.set_uv2(Vector2(clampf(across/(road_width*.5),-1,1),along+(global_position.x if sideways else global_position.z)))
    st.add_vertex(point)
  var total_rows := rows+2
  for row in range(total_rows):
   for col in range(cols-1):
-   var world := get_tree().current_scene
    var along := lerpf(start,finish,clampf(float(row)/maxf(1,rows),0,1))
    var across := (float(col)/float(cols-1)-.5)*road_width
    var sample := to_global(_offset + (Vector3(along,0,across) if sideways else Vector3(across,0,along)))
-   if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(sample))>0.0: continue
+   if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(sample))>0.20: continue
    var a := row*cols+col
    var indices := [a,a+cols,a+1,a+1,a+cols,a+cols+1] if not sideways else [a,a+1,a+cols,a+1,a+cols+1,a+cols]
    for index in indices: st.add_index(index)

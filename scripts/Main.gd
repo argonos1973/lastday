@@ -2752,8 +2752,11 @@ func _spawn_server_proxy(id: int) -> void:
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
-		if weapon == "melee" and player.has_method("_play_hit_reaction"):
+		if (weapon == "melee" or weapon == "rifle") and player.has_method("_play_hit_reaction"):
 			player._play_hit_reaction()
+		if weapon == "rifle":
+			player._recoil_pitch -= deg_to_rad(5.5)
+			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
@@ -3741,7 +3744,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
 		if weapon == "rifle":
-			max_reach = 170.0
+			max_reach = 320.0
 		elif weapon != "melee":
 			return
 		if not _sender_within(sender, proxy.global_position, max_reach):
@@ -5386,7 +5389,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 						drop_color = gsess.selected_shoes_color
 			_apply_color_material_recursive(cloth_node, drop_color)
 	# Apply tint/camo to dropped military clothing variants
-	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)))
+	_apply_military_drop_material(item_name, get_node_or_null(NodePath(visual_name)), color)
 	_apply_fur_clothing_material(item_name, get_node_or_null(NodePath(visual_name)), pelt)
 	if camo and item_name in ["Camiseta", "Pantalones"]:
 		_apply_camo_material_recursive(get_node_or_null(NodePath(visual_name)), Color(0.20, 0.25, 0.15))
@@ -6181,8 +6184,9 @@ func _create_road() -> void:
 		var half_l := seg_len * 0.5
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))
-		var grid_w := max(3, int(seg_width / 1.5))
-		var grid_l := max(4, int(seg_len / 1.5))
+		var near_river_seg := _is_near_river(center, 14.0)
+		var grid_w := 8 if near_river_seg else max(4, int(seg_width / 1.5))
+		var grid_l := 16 if near_river_seg else max(5, int(seg_len / 1.5))
 		var start_center := center - along * half_l
 		var end_center := center + along * half_l
 		var start_across := across
@@ -6199,26 +6203,35 @@ func _create_road() -> void:
 			end_across = (across + Vector3(sin(next_yaw),0,cos(next_yaw))).normalized()
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		var uv_x_scale := seg_width / 2.0
-		var uv_y_scale := seg_len / 2.0
 		for iz in range(grid_l + 1):
 			var t_l: float = float(iz) / float(grid_l)
-			var local_l: float = -half_l + t_l * seg_len
 			for ix in range(grid_w + 1):
 				var t_w: float = float(ix) / float(grid_w)
 				var local_w: float = -half_w + t_w * seg_width
 				var world_pos: Vector3 = start_center.lerp(end_center,t_l) + start_across.lerp(end_across,t_l) * local_w
-				var gy: float = _get_exact_ground_y(world_pos.x, world_pos.z) + 0.04
+				var r_depth: float = get_river_depth_at(world_pos)
+				var river_prox := 0.0
+				var submerged := 0.0
+				if r_depth > 0.0:
+					river_prox = 1.0
+					submerged = clampf(r_depth / 0.22, 0.05, 1.0)
+				elif near_river_seg:
+					for margin_step in [1.2, 2.6, 4.2, 6.0]:
+						if _is_near_river(world_pos, margin_step):
+							river_prox = maxf(river_prox, 1.0 - (margin_step / 6.8))
+							break
+				var edge_lip := smoothstep(0.75, 1.0, absf(t_w * 2.0 - 1.0))
+				var deck_lift := lerpf(0.036, 0.004, maxf(river_prox, edge_lip * 0.85))
+				var gy: float = _get_exact_ground_y(world_pos.x, world_pos.z) + deck_lift
+				st.set_color(Color(river_prox, submerged, 0.0, 1.0))
 				st.set_uv(Vector2(world_pos.x,world_pos.z) * 0.5)
 				st.set_uv2(Vector2(t_w * 2.0 - 1.0, world_pos.z))
 				st.add_vertex(Vector3(world_pos.x, gy, world_pos.z))
 		for iz in range(grid_l):
 			for ix in range(grid_w):
-				# The carriageway never renders underwater: quads inside the river
-				# footprint are skipped so crossings read as flooded, not paved.
 				var t_q := (float(iz) + 0.5) / float(grid_l)
 				var qc := start_center.lerp(end_center, t_q) + start_across.lerp(end_across, t_q) * (-half_w + (float(ix) + 0.5) / float(grid_w) * seg_width)
-				if get_river_depth_at(qc) > 0.0:
+				if get_river_depth_at(qc) > 0.20:
 					continue
 				var i00: int = iz * (grid_w + 1) + ix
 				var i10: int = iz * (grid_w + 1) + ix + 1
@@ -7803,8 +7816,8 @@ func _create_wildlife() -> void:
 			if not _is_near_wildlife_blocker(center, 5.0) and not _is_near_lake(center, 15.0):
 				break
 			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
-		# Ruta larga: los lobos recorren grandes distancias por todo el mapa
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at, true)
+		# Ruta larga: los lobos recorren grandes distancias por todo el mapa sin cruzar ríos ni edificios
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
 		_create_wildlife_animal("wolf", route)
 		var _saved_rng_state := _world_rng.state
 		await get_tree().process_frame
@@ -7833,11 +7846,12 @@ func _create_wildlife() -> void:
 			for point in bird_route:
 				shifted.append((point as Vector3) + offset)
 			_create_bird(shifted, _bird_flock_counter)
-	# Rare bears live in four separate outer-forest territories. Their patrol
-	# routes stay local; only a hunt can take them beyond the home range.
+	# Solitary bears live in separate deep-forest territories away from roads,
+	# rivers and buildings. Their patrol routes use is_wolf_allowed_at so they
+	# never enter water or buildings.
 	for territory_id in range(_bear_territory_anchors().size()):
 		var bear_center := _bear_spawn_center(territory_id)
-		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wildlife_allowed_at)
+		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wolf_allowed_at)
 		_create_bear(territory_id, bear_route)
 
 var _bird_flock_counter := 0
@@ -7877,22 +7891,22 @@ func _check_wildlife_respawn() -> void:
 	var total_wolf := alive_wolf
 	var total_deer := alive_deer
 	var total_fox := alive_fox
-	if total_wolf < 18 and total_wolf <= total_fox and total_wolf <= total_deer:
+	if total_wolf < 22:
 		var center := _wildlife_spawn_pos()
 		for _retry in range(30):
-			if is_wildlife_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
+			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
 				break
 			center = _wildlife_spawn_pos()
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wildlife_allowed_at, true)
+		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
 		_create_wildlife_animal("wolf", route)
-	elif total_deer < 14 and total_deer <= total_fox:
+	if total_deer < 14:
 		var deer_route: Array
 		if randf() < 0.3:
 			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, _wildlife_spawn_pos(), 22, 70.0, 140.0, is_wildlife_allowed_at, true)
 		else:
 			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(100.0, 450.0), randf() * TAU, 20, 18.0, is_wildlife_allowed_at)
 		_create_deer_pair(deer_route)
-	elif total_fox < 10:
+	if total_fox < 10:
 		var fox_zone := _wildlife_spawn_pos()
 		for _retry in range(30):
 			if is_wildlife_allowed_at(fox_zone):
@@ -7918,7 +7932,7 @@ func _check_wildlife_respawn() -> void:
 			if territory_counts[i] < territory_counts[next_territory]:
 				next_territory = i
 		var bear_center := _bear_spawn_center(next_territory)
-		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wildlife_allowed_at)
+		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wolf_allowed_at)
 		_create_bear(next_territory, bear_route)
 	# Respawn birds if population drops below threshold
 	if alive_bird < 3:
@@ -7944,17 +7958,16 @@ func _wildlife_spawn_pos() -> Vector3:
 	return Vector3(randf_range(-400, 400), 0.0, randf_range(-400, 400))
 
 func _bear_territory_anchors() -> Array[Vector3]:
+	# Deep forest interiors (>200m apart, far from roads, rivers, lakes and buildings)
 	return [
-		Vector3(-125.0, 0.0, -95.0),   # Bosque noroeste saliendo del pueblo
-		Vector3(135.0, 0.0, -110.0),   # Bosque noreste camino al lago
-		Vector3(195.0, 0.0, -210.0),   # Bosque junto al lago y cabaña
-		Vector3(-140.0, 0.0, 95.0),    # Bosque suroeste cerca del río
-		Vector3(115.0, 0.0, 115.0),    # Bosque sureste detrás del granero
-		Vector3(-15.0, 0.0, 210.0),    # Camino sur hacia el paso
-		Vector3(35.0, 0.0, 390.0),     # Entrada del paso sur
-		Vector3(-30.0, 0.0, 560.0),    # Bosque de la extensión sur
-		Vector3(55.0, 0.0, 675.0),     # Afueras de la ciudad / tienda militar
-		Vector3(-45.0, 0.0, 790.0),    # Bosque oeste junto a la ciudad
+		Vector3(-230.0, 0.0, -210.0),   # Bosque profundo noroeste
+		Vector3(165.0, 0.0, -140.0),    # Bosque interior noreste
+		Vector3(-240.0, 0.0, 110.0),    # Bosque profundo oeste
+		Vector3(210.0, 0.0, 140.0),     # Bosque profundo este
+		Vector3(-190.0, 0.0, 320.0),    # Bosque interior suroeste
+		Vector3(185.0, 0.0, 330.0),     # Bosque interior sureste
+		Vector3(-32.0, 0.0, 535.0),     # Bosque denso del paso sur (oeste de la carretera)
+		Vector3(78.0, 0.0, 585.0),      # Bosque denso antes de la ciudad (este)
 	]
 
 func _nearest_bear_territory(pos: Vector3) -> int:
@@ -7968,6 +7981,16 @@ func _nearest_bear_territory(pos: Vector3) -> int:
 			nearest_id = i
 	return nearest_id
 
+func _is_far_from_other_bears(pos: Vector3, min_dist: float = 120.0) -> bool:
+	var min_sq := min_dist * min_dist
+	if not is_inside_tree():
+		return true
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node is WildlifeController and not node._is_dead and node.animal_type == "bear":
+			if Vector2(pos.x - node.global_position.x, pos.z - node.global_position.z).length_squared() < min_sq:
+				return false
+	return true
+
 func _bear_spawn_center(territory_id: int) -> Vector3:
 	var anchors := _bear_territory_anchors()
 	var safe_id := clampi(territory_id, 0, anchors.size() - 1)
@@ -7979,13 +8002,13 @@ func _bear_spawn_center(territory_id: int) -> Vector3:
 		candidate.x = clampf(candidate.x, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT - 10.0)
 		candidate.z = clampf(candidate.z, -GameConst.WORLD_LIMIT + 10.0, GameConst.WORLD_LIMIT_Z - 10.0)
 		var from_start := Vector2(candidate.x - 8.0, candidate.z - 2.5).length()
-		if from_start >= 120.0 and is_wildlife_allowed_at(candidate) and not _is_near_wildlife_blocker(candidate, 8.0):
+		if from_start >= 160.0 and is_wolf_allowed_at(candidate) and not _is_near_wildlife_blocker(candidate, 12.0) and not _is_near_road(candidate, 18.0) and _is_far_from_other_bears(candidate):
 			return candidate
-	for radius in [8.0, 16.0, 24.0, 34.0, 46.0, 58.0, 68.0]:
+	for radius in [8.0, 16.0, 24.0, 34.0]:
 		for step in range(24):
 			var angle := TAU * float(step) / 24.0
 			var fallback := anchor + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			if is_wildlife_allowed_at(fallback) and not _is_near_wildlife_blocker(fallback, 8.0):
+			if is_wolf_allowed_at(fallback) and not _is_near_wildlife_blocker(fallback, 8.0):
 				return fallback
 	return anchor
 
@@ -8817,21 +8840,25 @@ func _collect_meshes_recursive(node: Node3D, result: Array) -> void:
 			stack.append(c)
 
 # Military clothing dropped on the ground keeps its variant look (black/blue
-# tints, woodland/desert camo) instead of the pickup GLB's default green.
-func _apply_military_drop_material(item_name: String, node: Node) -> void:
+# tints, woodland/desert camo) instead of the pickup GLB's default blue texture.
+func _apply_military_drop_material(item_name: String, node: Node, drop_color: Color = Color(0, 0, 0, 0)) -> void:
 	if not (node is Node3D):
 		return
-	var military_black_names := ["Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar azul", "Chaqueta militar negra II"]
+	var military_solid_names := ["Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
 	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
-	if item_name in military_black_names:
-		if item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
+	if item_name in military_solid_names:
+		if item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
+			_apply_color_material_recursive(node as Node3D, Color(0.02, 0.02, 0.02))
+		elif item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
 			_apply_color_material_recursive(node as Node3D, Color(0.03, 0.05, 0.10))
-		elif item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
-			_apply_color_material_recursive(node as Node3D, Color(0.04, 0.04, 0.04))
+		elif drop_color.a > 0.0:
+			_apply_color_material_recursive(node as Node3D, drop_color)
 		else:
-			_apply_color_material_recursive(node as Node3D, Color(0.10, 0.12, 0.08))
+			_apply_color_material_recursive(node as Node3D, Color(0.12, 0.14, 0.10))
 	elif item_name in military_camo_names:
-		if item_name.findn("desert") >= 0:
+		if drop_color.a > 0.0 and not item_name.findn("camuflaje") >= 0:
+			_apply_color_material_recursive(node as Node3D, drop_color)
+		elif item_name.findn("desert") >= 0:
 			_apply_camo_material_recursive(node as Node3D, Color(0.35, 0.30, 0.18))
 		else:
 			_apply_camo_material_recursive(node as Node3D, Color(0.20, 0.25, 0.15))

@@ -941,13 +941,16 @@ func _create_puppet_hitboxes() -> void:
 	# plus a sphere glued to the head bone so headshots track animations.
 	var body_area := Area3D.new()
 	body_area.name = "BodyHitbox"
+	body_area.collision_layer = 1
+	body_area.collision_mask = 0
+	body_area.monitorable = true
 	body_area.monitoring = false
 	var body_col := CollisionShape3D.new()
 	var body_capsule := CapsuleShape3D.new()
-	body_capsule.radius = 0.32
-	body_capsule.height = 1.35
+	body_capsule.radius = 0.42
+	body_capsule.height = 1.55
 	body_col.shape = body_capsule
-	body_col.position.y = 0.75
+	body_col.position.y = 0.82
 	body_area.add_child(body_col)
 	add_child(body_area)
 	if _head_skeleton != null and _head_bone_idx >= 0:
@@ -957,11 +960,14 @@ func _create_puppet_hitboxes() -> void:
 		_head_skeleton.add_child(attach)
 		var head_area := Area3D.new()
 		head_area.name = "HeadHitbox"
+		head_area.collision_layer = 1
+		head_area.collision_mask = 0
+		head_area.monitorable = true
 		head_area.monitoring = false
 		var head_col := CollisionShape3D.new()
 		var head_sphere := SphereShape3D.new()
 		# Bone space is in centimetres — the armature carries a 0.01 scale.
-		head_sphere.radius = 20.0
+		head_sphere.radius = 25.0
 		head_col.shape = head_sphere
 		head_col.position = Vector3(0.0, 16.0, 0.0)
 		head_area.add_child(head_col)
@@ -969,10 +975,13 @@ func _create_puppet_hitboxes() -> void:
 	else:
 		var head_area := Area3D.new()
 		head_area.name = "HeadHitbox"
+		head_area.collision_layer = 1
+		head_area.collision_mask = 0
+		head_area.monitorable = true
 		head_area.monitoring = false
 		var head_col := CollisionShape3D.new()
 		var head_sphere := SphereShape3D.new()
-		head_sphere.radius = 0.22
+		head_sphere.radius = 0.26
 		head_col.shape = head_sphere
 		head_col.position.y = 1.58
 		head_area.add_child(head_col)
@@ -1974,6 +1983,8 @@ func get_current_clothing_color(item_name: String, slot := "") -> Color:
 				return gsess.selected_bottom_color
 			elif item_name == "Zapatillas":
 				return gsess.selected_shoes_color
+	if SURVIVAL_CLOTHING.has(item_name) and SURVIVAL_CLOTHING[item_name].has("tint"):
+		return SURVIVAL_CLOTHING[item_name]["tint"]
 	return Color(0, 0, 0, 0)
 
 func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0), source_item = null, pelt_species: String = "") -> void:
@@ -7024,6 +7035,11 @@ func _build_held_clothing(item_name: String) -> void:
 				_collect_mesh_instances(held_node, _hm)
 				for _mi in _hm:
 					(_mi as MeshInstance3D).material_override = fm
+	else:
+		var held_node2 := third_person_hand_item_root.get_node_or_null("HeldClothing") if third_person_hand_item_root != null else null
+		var scene_main := get_tree().current_scene if is_inside_tree() else null
+		if held_node2 != null and scene_main != null and scene_main.has_method("_apply_military_drop_material"):
+			scene_main._apply_military_drop_material(item_name, held_node2, get_current_clothing_color(item_name))
 
 func _backpack_model_path(bp_name: String = "") -> String:
 	if bp_name.is_empty():
@@ -11175,7 +11191,7 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 		# Instant feedback on the attacker's screen — the victim's own client
 		# also plays it via apply_damage_to_client, and its synced anim name
 		# replays the flinch on every other puppet.
-		if weapon == "melee":
+		if weapon == "melee" or weapon == "rifle":
 			_play_hit_reaction()
 		return
 	apply_damage(amount)
@@ -11697,12 +11713,21 @@ func _shoot_rifle() -> void:
 		hit_pos = hit_result["position"]
 		hit_normal = hit_result["normal"]
 		hit_collider = hit_result["collider"]
+	# When aiming down sights, if the camera reticle ray directly hit a target
+	# hitbox and the muzzle ray did not strike a closer wall, prefer the reticle
+	# hitbox so scope headshots never miss due to barrel offset.
+	if not aim_hit.is_empty() and aim_hit.collider is Node and ("hitbox" in str((aim_hit.collider as Node).name).to_lower()):
+		if hit_collider == null or hit_pos.distance_to(aim_hit.position) < 1.8:
+			hit_collider = aim_hit.collider
+			hit_pos = aim_hit.position
+			hit_normal = aim_hit.normal
 	# Aplicar dano/impacto inmediatamente (hitscan) — las particulas salen ya.
 	if hit_collider != null:
 		_apply_rifle_damage(hit_collider, hit_pos, shot_origin.distance_to(hit_pos), hit_normal)
-	# Fogonazo: en la punta REAL del cañon, igual que la bala.
+	# Fogonazo y trazadora: en la punta REAL del cañon, igual que la bala.
 	var flash_pos: Vector3 = shot_origin
 	_spawn_muzzle_flash(flash_pos, aim_dir)
+	_spawn_bullet_tracer(flash_pos, aim_dir)
 	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
 		_scope_overlay.muzzle_flash()
 	if not is_puppet:
@@ -11751,6 +11776,16 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 					break
 				walked = walked.get_parent()
 		if target_node != null:
+			var is_player_target := target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy")
+			if is_player_target:
+				# PvP rifle balance: headshot is a lethal 1-shot kill (120 dmg),
+				# bodyshot deals 60 dmg (2 shots to kill a 100 HP player).
+				var pvp_dmg := 120.0 if is_headshot else 60.0
+				_apply_rifle_target_damage(target_node, pvp_dmg)
+				_spawn_blood_splatter(hit_pos, 1.8 if is_headshot else 1.3)
+				_hit_marker(is_headshot or bool(target_node.get("is_dead")))
+				notice.emit("¡Disparo en la cabeza!" if is_headshot else "¡Impacto al jugador!")
+				return
 			if is_headshot:
 				_apply_rifle_target_damage(target_node, damage * 3.0)
 			else:
