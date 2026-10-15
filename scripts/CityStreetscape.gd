@@ -16,10 +16,12 @@ const STREET_LAMP_OFFSETS := [
 # covers the asphalt so verge dressing can simply skip the whole corridor.
 static func on_pavement(pos: Vector3, margin: float = 0.0) -> bool:
  var local := pos - ORIGIN
- for x in [0.0,64.0]:
-  if absf(local.x-x)<6.2+margin and local.z>-40.0-margin and local.z<136.0+margin: return true
- for z in [0.0,96.0]:
-  if absf(local.z-z)<6.2+margin and local.x>-40.0-margin and local.x<104.0+margin: return true
+ for x in [-40.0, 0.0, 64.0, 104.0]:
+  if absf(local.x - x) < 6.2 + margin and local.z > -46.0 - margin and local.z < 142.0 + margin:
+   return true
+ for z in [-40.0, 0.0, 96.0, 136.0]:
+  if absf(local.z - z) < 6.2 + margin and local.x > -46.0 - margin and local.x < 110.0 + margin:
+   return true
  return false
 
 static func tree_positions() -> Array[Vector3]:
@@ -359,14 +361,38 @@ static func _pavements(world: Node3D, server: bool) -> void:
   mi=meshes[0]
  var mesh:Mesh=mi.mesh
  var placements:Array[Transform3D]=[]
- for x in [0.0,64.0]:
-  for z in range(-40,136,2):
-   if absf(z)<4 or absf(z-96)<4:continue
-   for side in [-1,1]:placements.append(Transform3D(Basis.IDENTITY,ORIGIN+Vector3(x+side*5,0,z)))
- for z in [0.0,96.0]:
-  for x in range(-40,104,2):
-   if absf(x)<6 or absf(x-64)<6:continue
-   for side in [-1,1]:placements.append(Transform3D(Basis(Vector3.UP,PI/2),ORIGIN+Vector3(x,0,z+side*5)))
+ var ns_lanes := [-40.0, 0.0, 64.0, 104.0]
+ var ew_lanes := [-40.0, 0.0, 96.0, 136.0]
+ # Sidewalks along all 4 N-S streets (interior avenues + west/east perimeter roads)
+ for x in ns_lanes:
+  for z in range(-44, 142, 2):
+   for side in [-1, 1]:
+    var px: float = x + float(side) * 5.0
+    var pz: float = float(z)
+    # Skip modules that would sit directly across an intersecting E-W roadway
+    var on_ew_road := false
+    for zw in ew_lanes:
+     if absf(pz - zw) < 3.8 and px > -43.5 and px < 107.5:
+      on_ew_road = true
+      break
+    if on_ew_road:
+     continue
+    placements.append(Transform3D(Basis.IDENTITY, ORIGIN + Vector3(px, 0.0, pz)))
+ # Sidewalks along all 4 E-W streets (interior cross streets + north/south perimeter roads)
+ for z in ew_lanes:
+  for x in range(-44, 110, 2):
+   for side in [-1, 1]:
+    var px: float = float(x)
+    var pz: float = z + float(side) * 5.0
+    # Skip modules that would sit on an intersecting N-S roadway or overlap a N-S sidewalk corner
+    var skip := false
+    for xw in ns_lanes:
+     if absf(px - xw) < 5.8 and pz > -45.0 and pz < 141.0:
+      skip = true
+      break
+    if skip:
+     continue
+    placements.append(Transform3D(Basis(Vector3.UP, PI / 2.0), ORIGIN + Vector3(px, 0.0, pz)))
  var mm:=MultiMesh.new();mm.transform_format=MultiMesh.TRANSFORM_3D;mm.mesh=mesh;mm.instance_count=placements.size()
  var faces:=PackedVector3Array();var base:=mesh.get_faces()
  for i in range(placements.size()):

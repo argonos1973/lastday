@@ -190,6 +190,8 @@ func load_building(i: int) -> Node3D:
  else:
   _furnish(building, i)
   _dress_facade(building, i)
+  if i % 4 == 0 or i % 4 == 3:
+   _build_slate_roof_architecture(building, i)
  _upgrade_building_materials(building, i)
  # Keep physics and doors resident; small interior props need not draw across town.
  var interior:Node3D=building.get_node("Interior")
@@ -550,13 +552,150 @@ const BUILDING_PALETTES := [
  {"wall": "clay", "tint": Color(0.80, 0.74, 0.68), "brick": Color(0.68, 0.50, 0.42)},
 ]
 
+static func _make_slate_roof_material() -> ShaderMaterial:
+ if _city_pbr_cache.has("slate_roof_shader"):
+  return _city_pbr_cache["slate_roof_shader"]
+ var sm := ShaderMaterial.new()
+ var sh := Shader.new()
+ sh.code = """
+shader_type spatial;
+render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
+uniform sampler2D slate_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D slate_nor : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+varying vec3 lpos;
+varying vec3 lnorm;
+
+float hash21(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void vertex() {
+	lpos = VERTEX;
+	lnorm = NORMAL;
+}
+
+void fragment() {
+	// Pitched roof slopes along Z (ridge at z=0, eaves at z=+-6) and runs along X
+	float slope_u = lpos.x * 2.2;
+	float slope_v = abs(lpos.z) * 3.4;
+	float row = floor(slope_v);
+	float col_shift = mod(row, 2.0) * 0.5;
+	vec2 tile_uv = vec2(slope_u + col_shift, slope_v);
+	vec2 tile_id = floor(tile_uv);
+	vec2 f = fract(tile_uv);
+
+	// Overlapping slate shingle edges + lower lip shadow
+	float side_gap = 1.0 - smoothstep(0.018, 0.045, min(f.x, 1.0 - f.x));
+	float overlap_lip = 1.0 - smoothstep(0.02, 0.09, f.y);
+	float under_shadow = smoothstep(0.88, 0.99, f.y);
+
+	vec3 tex_col = texture(slate_tex, vec2(lpos.x, lpos.z) * 0.45).rgb;
+	float rnd = hash21(tile_id);
+	float rnd2 = hash21(tile_id + vec2(19.3, 47.1));
+
+	// Natural blue-grey / charcoal slate palette with per-shingle variation
+	vec3 base_slate = mix(vec3(0.17, 0.19, 0.22), vec3(0.26, 0.28, 0.31), rnd);
+	base_slate *= (0.75 + dot(tex_col, vec3(0.333)) * 0.55);
+
+	// Subtle weathered moss/lichen in shingle crevices and lower eaves
+	float eave_factor = smoothstep(2.5, 5.8, abs(lpos.z));
+	float moss_mask = smoothstep(0.74, 0.95, rnd2) * (0.35 + 0.65 * eave_factor) * smoothstep(0.0, 0.25, f.y);
+	vec3 moss_col = vec3(0.18, 0.25, 0.13);
+	vec3 col = mix(base_slate, moss_col, moss_mask * 0.55);
+
+	// Darken joints and shingle overlap steps
+	col *= (1.0 - side_gap * 0.55);
+	col *= (1.0 - under_shadow * 0.48);
+	col *= (1.0 + overlap_lip * 0.12);
+
+	vec3 n_tex = texture(slate_nor, vec2(lpos.x, lpos.z) * 0.55).rgb * 2.0 - 1.0;
+	float step_ny = (overlap_lip - under_shadow) * 0.35;
+	float step_nx = (smoothstep(0.0, 0.04, f.x) - smoothstep(0.96, 1.0, f.x)) * 0.22;
+	NORMAL = normalize(NORMAL + vec3(step_nx + n_tex.x * 0.35, n_tex.y * 0.35, step_ny));
+	ALBEDO = col;
+	ROUGHNESS = clamp(0.68 + rnd * 0.18 - overlap_lip * 0.08 + moss_mask * 0.2, 0.52, 0.92);
+	METALLIC = 0.06;
+	SPECULAR = 0.38;
+}
+"""
+ sm.shader = sh
+ sm.set_shader_parameter("slate_tex", MaterialFactory.load_texture("res://assets/textures/overgrowth/village_slate_albedo.png"))
+ sm.set_shader_parameter("slate_nor", MaterialFactory.load_texture("res://assets/textures/overgrowth/village_slate_normal.png"))
+ _city_pbr_cache["slate_roof_shader"] = sm
+ return sm
+
+func _build_slate_roof_architecture(building: Node3D, _index: int) -> void:
+ if building.has_node("SlateRoofTrim"):
+  return
+ var root := Node3D.new()
+ root.name = "SlateRoofTrim"
+ building.add_child(root)
+ var slate_mat := _make_slate_roof_material()
+ var wood_mat := _pbr_mat("wood", Color(0.38, 0.26, 0.16), 0.42, 1.25)
+ var stone_mat := _pbr_mat("stone", Color(0.58, 0.59, 0.56), 0.36, 1.35)
+ var metal_mat := _pbr_mat("stone", Color(0.22, 0.24, 0.25), 0.50, 0.90, 0.72, 0.38)
+ # Continuous pitched slate planes (sealing the missing tile gaps in the raw GLB)
+ # Ridge at y=10.46, z=0; eaves at z=+-6.25, y=8.14 -> slope angle = atan2(2.31, 6.25)
+ var half_span := 6.28
+ var rise := 2.32
+ var slope_len := sqrt(half_span * half_span + rise * rise)
+ var pitch := atan2(rise, half_span)
+ for side in [-1.0, 1.0]:
+  var deck := MeshInstance3D.new()
+  deck.name = "SlateDeck_" + ("N" if side < 0.0 else "S")
+  var box := BoxMesh.new()
+  box.size = Vector3(13.1, 0.07, slope_len)
+  deck.mesh = box
+  deck.material_override = slate_mat
+  deck.position = Vector3(0.0, 10.46 - rise * 0.5 + 0.02, side * half_span * 0.5)
+  deck.rotation.x = side * pitch
+  root.add_child(deck)
+  # Timber fascia board along the eave
+  var fascia := MeshInstance3D.new()
+  var fbox := BoxMesh.new()
+  fbox.size = Vector3(13.15, 0.18, 0.06)
+  fascia.mesh = fbox
+  fascia.material_override = wood_mat
+  fascia.position = Vector3(0.0, 8.10, side * (half_span + 0.02))
+  root.add_child(fascia)
+  # Exposed wooden rafter tails under the eave overhang
+  for rx in range(-6, 7):
+   var rafter := MeshInstance3D.new()
+   var rbox := BoxMesh.new()
+   rbox.size = Vector3(0.09, 0.11, 0.42)
+   rafter.mesh = rbox
+   rafter.material_override = wood_mat
+   rafter.position = Vector3(float(rx), 8.05, side * (half_span - 0.14))
+   rafter.rotation.x = side * pitch
+   root.add_child(rafter)
+ # Lead/zinc ridge cap along the apex (y=10.52)
+ var ridge := MeshInstance3D.new()
+ ridge.name = "SlateRidgeCap"
+ var ridge_box := BoxMesh.new()
+ ridge_box.size = Vector3(13.2, 0.14, 0.34)
+ ridge.mesh = ridge_box
+ ridge.material_override = metal_mat
+ ridge.position = Vector3(0.0, 10.50, 0.0)
+ root.add_child(ridge)
+ # Stone gable verge coping on both ends (x = -6.52 and +6.52)
+ for gx in [-6.52, 6.52]:
+  for side in [-1.0, 1.0]:
+   var barge := MeshInstance3D.new()
+   var bbox := BoxMesh.new()
+   bbox.size = Vector3(0.14, 0.16, slope_len + 0.08)
+   barge.mesh = bbox
+   barge.material_override = stone_mat
+   barge.position = Vector3(gx, 10.46 - rise * 0.5 + 0.04, side * half_span * 0.5)
+   barge.rotation.x = side * pitch
+   root.add_child(barge)
+
 func _upgrade_building_materials(building: Node3D, index: int) -> void:
  var pal: Dictionary = BUILDING_PALETTES[index % BUILDING_PALETTES.size()]
  var wall_mat := _pbr_mat(str(pal["wall"]), pal["tint"], 0.30, 1.35)
  var brick_mat := _pbr_mat("brick", pal["brick"], 0.38, 1.45)
  var stone_mat := _pbr_mat("stone", Color(0.64, 0.65, 0.62), 0.36, 1.35)
  var wood_mat := _pbr_mat("wood", Color(0.48, 0.34, 0.22), 0.42, 1.20)
- var roof_mat := _pbr_mat("slate", Color(0.46, 0.48, 0.50), 0.40, 1.30)
+ var roof_mat := _make_slate_roof_material()
  var iron_mat := _pbr_mat("stone", Color(0.18, 0.19, 0.18), 0.50, 0.90, 0.78, 0.42)
  var glass_mat: StandardMaterial3D = _city_pbr_cache.get("city_glass")
  if glass_mat == null:
