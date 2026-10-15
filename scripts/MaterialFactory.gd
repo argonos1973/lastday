@@ -522,12 +522,12 @@ static func make_log_bark_material() -> StandardMaterial3D:
 		return _mat_cache["realistic_log_bark"]
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = load_texture("res://assets/external/polyhaven/pine_tree_01/textures/pine_tree_01_bark_diff_4k.png")
-	m.albedo_color = Color(0.76, 0.68, 0.58)
+	m.albedo_color = Color(0.92, 0.78, 0.62)
 	m.normal_enabled = true
 	m.normal_texture = load_texture("res://assets/textures/overgrowth/village_wood_normal.png")
-	m.normal_scale = 1.65
+	m.normal_scale = 1.45
 	m.roughness_texture = load_texture("res://assets/textures/overgrowth/village_wood_roughness.png")
-	m.roughness = 0.96
+	m.roughness = 0.88
 	m.uv1_triplanar = true
 	m.uv1_world_triplanar = false
 	m.uv1_scale = Vector3(1.8, 1.8, 1.8)
@@ -555,13 +555,14 @@ void fragment() {
 	float fine = sin((r + wobble * 0.5) * 110.0) * 0.5 + 0.5;
 	// Radial drying cracks from pith
 	float crack = smoothstep(0.96, 0.995, cos(a * 3.0 + 0.7)) * smoothstep(0.05, 0.65, r) * smoothstep(0.95, 0.4, r);
-	vec3 heartwood = vec3(0.46, 0.30, 0.16);
-	vec3 sapwood = vec3(0.74, 0.58, 0.36);
+	vec3 heartwood = vec3(0.56, 0.37, 0.20);
+	vec3 sapwood = vec3(0.84, 0.68, 0.44);
 	vec3 col = mix(heartwood, sapwood, smoothstep(0.22, 0.78, r));
-	col *= mix(0.78, 1.08, rings * 0.7 + fine * 0.3);
-	col = mix(col, vec3(0.14, 0.09, 0.05), crack * 0.85);
+	col *= mix(0.82, 1.12, rings * 0.7 + fine * 0.3);
+	col = mix(col, vec3(0.18, 0.11, 0.06), crack * 0.85);
 	ALBEDO = col;
-	ROUGHNESS = 0.88;
+	EMISSION = col * 0.06;
+	ROUGHNESS = 0.84;
 	METALLIC = 0.0;
 }
 """
@@ -569,11 +570,80 @@ void fragment() {
 	_mat_cache["realistic_log_end"] = sm
 	return sm
 
+static func _get_unified_log_shader() -> Shader:
+	if _mat_cache.has("unified_log_shader_res"):
+		return _mat_cache["unified_log_shader_res"]
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+render_mode diffuse_burley, specular_schlick_ggx;
+uniform sampler2D bark_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D bark_nor : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform int axis_mode = 2;
+uniform vec2 cross_center = vec2(0.0, 0.0);
+uniform float cross_radius = 0.125;
+uniform vec3 bark_tint = vec3(0.94, 0.78, 0.60);
+varying vec3 lpos;
+varying vec3 lnorm;
+
+void vertex() {
+	lpos = VERTEX;
+	lnorm = NORMAL;
+}
+
+void fragment() {
+	float axial_n = abs(lnorm.z);
+	vec2 cross_p = lpos.xy;
+	vec2 bark_uv = vec2(atan(lpos.y - cross_center.y, lpos.x - cross_center.x) * 0.45, lpos.z * 1.6);
+	if (axis_mode == 0) {
+		axial_n = abs(lnorm.x);
+		cross_p = lpos.yz;
+		bark_uv = vec2(atan(lpos.z - cross_center.y, lpos.y - cross_center.x) * 0.45, lpos.x * 4.5);
+	} else if (axis_mode == 1) {
+		axial_n = abs(lnorm.y);
+		cross_p = lpos.xz;
+		bark_uv = vec2(atan(lpos.z - cross_center.y, lpos.x - cross_center.x) * 0.45, lpos.y * 1.6);
+	}
+	float cap_mask = smoothstep(0.52, 0.68, axial_n);
+	vec2 p = (cross_p - cross_center) / max(cross_radius, 0.015);
+	float r = length(p);
+	float a = atan(p.y, p.x);
+	float wobble = sin(a * 5.0) * 0.04 + cos(a * 11.0) * 0.02;
+	float rings = sin((r + wobble) * 28.0) * 0.5 + 0.5;
+	float fine = sin((r + wobble * 0.5) * 76.0) * 0.5 + 0.5;
+	float crack = smoothstep(0.95, 0.995, cos(a * 3.0 + 0.7)) * smoothstep(0.06, 0.65, r) * smoothstep(0.92, 0.4, r);
+	vec3 heartwood = vec3(0.58, 0.38, 0.20);
+	vec3 sapwood = vec3(0.86, 0.71, 0.46);
+	vec3 end_col = mix(heartwood, sapwood, smoothstep(0.20, 0.76, r));
+	end_col *= mix(0.82, 1.12, rings * 0.72 + fine * 0.28);
+	end_col = mix(end_col, vec3(0.20, 0.12, 0.06), crack * 0.85);
+	// Outer bark collar around the cut face
+	float collar = smoothstep(0.84, 0.96, r);
+	end_col = mix(end_col, vec3(0.34, 0.23, 0.14), collar);
+
+	vec3 btex = texture(bark_tex, bark_uv).rgb;
+	// Warm amber-brown bark with bright ridge contrast so logs stand out on dark floors
+	vec3 bark_col = mix(vec3(0.36, 0.24, 0.14), vec3(0.72, 0.54, 0.35), smoothstep(0.15, 0.82, dot(btex, vec3(0.333)))) * bark_tint;
+	vec3 n_sample = texture(bark_nor, bark_uv * 1.4).rgb * 2.0 - 1.0;
+
+	vec3 final_col = mix(bark_col, end_col, cap_mask);
+	ALBEDO = final_col;
+	EMISSION = final_col * 0.07;
+	NORMAL = normalize(NORMAL + n_sample * (1.0 - cap_mask) * 0.45);
+	ROUGHNESS = mix(0.86, 0.80, cap_mask);
+	METALLIC = 0.0;
+	SPECULAR = 0.28;
+}
+"""
+	_mat_cache["unified_log_shader_res"] = sh
+	return sh
+
 static func apply_realistic_log_materials(root: Node) -> void:
 	if root == null:
 		return
-	var bark_mat := make_log_bark_material()
-	var end_mat := make_log_end_material()
+	var bark_tex: Texture2D = load_texture("res://assets/external/polyhaven/pine_tree_01/textures/pine_tree_01_bark_diff_4k.png") as Texture2D
+	var bark_nor: Texture2D = load_texture("res://assets/textures/overgrowth/village_wood_normal.png") as Texture2D
+	var sh := _get_unified_log_shader()
 	var stack: Array[Node] = [root]
 	while not stack.is_empty():
 		var n := stack.pop_back() as Node
@@ -584,16 +654,35 @@ static func apply_realistic_log_materials(root: Node) -> void:
 		var mi := n as MeshInstance3D
 		if mi.mesh == null:
 			continue
-		var scount := mi.mesh.get_surface_count()
-		if scount <= 1:
-			mi.material_override = bark_mat
-		else:
-			mi.material_override = null
-			for s in range(scount):
-				var smat := mi.mesh.surface_get_material(s)
-				var mname := str(smat.resource_name).to_lower() if smat != null else ""
-				var is_end := ("tan" in mname or "wood" in mname or "inner" in mname or "top" in mname or s == 1) and not ("bark" in mname or "brown" in mname)
-				mi.set_surface_override_material(s, end_mat if is_end else bark_mat)
+		var aabb := mi.get_aabb()
+		var sx := aabb.size.x
+		var sy := aabb.size.y
+		var sz := aabb.size.z
+		var axis_mode := 2
+		var c_center := Vector2(aabb.position.x + sx * 0.5, aabb.position.y + sy * 0.5)
+		var c_radius := maxf(sx, sy) * 0.5
+		if sx >= sy and sx >= sz:
+			axis_mode = 0
+			c_center = Vector2(aabb.position.y + sy * 0.5, aabb.position.z + sz * 0.5)
+			c_radius = maxf(sy, sz) * 0.5
+		elif sy >= sx and sy >= sz:
+			axis_mode = 1
+			c_center = Vector2(aabb.position.x + sx * 0.5, aabb.position.z + sz * 0.5)
+			c_radius = maxf(sx, sz) * 0.5
+		var is_stick := ("cylinder" in str(mi.name).to_lower()) or ("stick" in str(mi.name).to_lower()) or ("stick" in str(root.name).to_lower())
+		var cache_key := "unified_log_%d_%.3f_%.3f_%.3f_%d" % [axis_mode, c_center.x, c_center.y, c_radius, 1 if is_stick else 0]
+		var sm: ShaderMaterial = _mat_cache.get(cache_key)
+		if sm == null:
+			sm = ShaderMaterial.new()
+			sm.shader = sh
+			sm.set_shader_parameter("bark_tex", bark_tex)
+			sm.set_shader_parameter("bark_nor", bark_nor)
+			sm.set_shader_parameter("axis_mode", axis_mode)
+			sm.set_shader_parameter("cross_center", c_center)
+			sm.set_shader_parameter("cross_radius", maxf(c_radius, 0.02))
+			sm.set_shader_parameter("bark_tint", Vector3(1.10, 0.94, 0.72) if is_stick else Vector3(0.96, 0.82, 0.64))
+			_mat_cache[cache_key] = sm
+		mi.material_override = sm
 
 static func apply_realistic_shelter_materials(root: Node) -> void:
 	if root == null:

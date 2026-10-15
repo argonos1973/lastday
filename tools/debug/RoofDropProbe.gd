@@ -156,6 +156,27 @@ func _initialize() -> void:
 	if hole_cf_pos.y < 28.5:
 		_fail("campfire over stairwell hole sank inside tower: %s" % str(hole_cf_pos))
 
+	# 5c. Tower roof deck (y=29.46) must count as sheltered inside the tower,
+	# repeated drops at the center of the roof must spread out instead of
+	# stacking on the exact same coordinate, and _update_loot_wear must never
+	# free a Pickup_* visual while leaving its WorldAction prompt active.
+	if not preload("res://scripts/CityClockTower.gd").contains(Vector3(41.0, 29.46, 750.0)):
+		_fail("CityClockTower.contains rejected roof deck y=29.46")
+	world._on_item_dropped("Tronco", "resource", 1.2, 1, 0.0, Vector3(41.0, cap_y, 748.8))
+	var first_center_pos: Vector3 = world._dropped_items[-1]["pos"]
+	world._on_item_dropped("Tronco", "resource", 1.2, 1, 0.0, Vector3(41.0, cap_y, 748.8))
+	var second_center_pos: Vector3 = world._dropped_items[-1]["pos"]
+	if first_center_pos.distance_to(second_center_pos) < 0.15:
+		_fail("repeated Tronco drops stacked on the exact same spot: %s vs %s" % [str(first_center_pos), str(second_center_pos)])
+	# Unsheltered drop outside buildings: when wear reaches 100, its WorldAction
+	# must be depleted alongside the visual (no ghost interaction prompt).
+	world._on_item_dropped("Palo", "material", 0.3, 1, 0.0, Vector3(0.0, 0.5, 0.0))
+	var exp_id := str(world._dropped_items[-1]["id"])
+	for _t in range(310):
+		world._update_loot_wear()
+	if world.world_actions_by_id.has(exp_id):
+		_fail("_update_loot_wear left ghost WorldAction after freeing visual: " + exp_id)
+
 	# 6. Shelter placement on house roof and tower deck must be valid (no false
 	# obstacle or slope error).
 	dummy_player.global_position = Vector3(20.0, roof_y + 0.7, 20.0)

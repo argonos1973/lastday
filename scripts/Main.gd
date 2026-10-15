@@ -5351,6 +5351,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 	# si el punto cae por el hueco de la escalera o más allá del pretil.
 	if not _pos_on_rowboat_deck(pos):
 		pos = _settle_drop_pos(pos)
+		if item_name not in ["campfire", "shelter"]:
+			pos = _spread_overlapping_drop_pos(pos)
 	if item_name == "campfire":
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
@@ -5430,7 +5432,10 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 		pos = _settle_drop_pos(pos)
 	var visual_name := "Pickup_" + drop_id
 	var meat_model := "res://assets/models/props/cc0_-_raw_meat_4.glb"
-	_try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0)
+	if _try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0):
+		var meat_node := get_node_or_null(NodePath(visual_name))
+		if meat_node is Node3D:
+			_snap_node_bottom_to_y(meat_node as Node3D, pos.y)
 	_mark_world_action_visual(visual_name)
 	var meat_action_type := "bird_meat_raw" if item_name == "Carne cruda de ave" else "wolf_meat_raw"
 	var maction = _create_world_action(drop_id, meat_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
@@ -5803,9 +5808,9 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			if item_name.begins_with("Piel de "):
 				return 0.65
 			if item_name == "Tronco":
-				return 0.5
+				return 0.85
 			if item_name == "Palo":
-				return 0.2
+				return 0.28
 			if item_name == "Piedra":
 				return 0.11
 			return 1.0
@@ -5854,7 +5859,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 			return 1.0
 		"material":
 			if item_name == "Palo":
-				return 0.2
+				return 0.28
 			return 1.0
 		"campfire":
 			return 1.0
@@ -6127,6 +6132,9 @@ func _create_map() -> void:
 		_create_survival_objectives()
 		await get_tree().process_frame
 	CityExpansion.create(self, is_server)
+	if not is_server:
+		await get_tree().physics_frame
+		await get_tree().physics_frame
 	_create_river_drink_zones()
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
@@ -9206,7 +9214,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 		"id": id, "name": item_name, "type": item_type,
 		"weight": float(data.get("weight", 0.1)), "qty": int(data.get("qty", 1)),
 		"use": float(data.get("use", 0.0)), "pos": [pos.x, pos.y, pos.z],
-		"wear": 0.0, "spoilage": 0.0, "camo": item_camo
+		"wear": 0.0, "spoilage": 0.0, "camo": item_camo, "static_loot": true
 	})
 
 func _mark_world_action_visual(node_name: String) -> void:
@@ -9373,6 +9381,10 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var spawned := false
 	if not paths.is_empty():
 		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0)
+		if spawned:
+			var snapped_ground_node := get_node_or_null(NodePath(visual_name))
+			if snapped_ground_node is Node3D:
+				_snap_node_bottom_to_y(snapped_ground_node as Node3D, pos.y)
 	if not spawned:
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
@@ -11007,6 +11019,10 @@ func _spawn_player_campfire(pos: Vector3) -> void:
 
 func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
 	var spawned := _try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], "PlayerCampfire_" + cf_id, pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
+	if spawned:
+		var cf_vis := get_node_or_null(NodePath("PlayerCampfire_" + cf_id))
+		if cf_vis is Node3D:
+			_snap_node_bottom_to_y(cf_vis as Node3D, pos.y)
 	if not spawned:
 		_create_visual_box("PlayerCampfireAsh_" + cf_id, pos, Vector3(0.7, 0.04, 0.7), Color(0.09, 0.085, 0.075), Vector3.ZERO)
 		for i in range(8):
@@ -12097,10 +12113,13 @@ func _update_loot_wear() -> void:
 								var swarm2: Node = wa2.get_node_or_null("FlySwarm")
 								if swarm2 != null:
 									swarm2.queue_free()
+								_hide_action_visual(wa2)
+								wa2.mark_depleted()
+							world_actions_by_id.erase(entry_id)
 						if not _depleted_action_ids.has(entry_id):
 							_depleted_action_ids.append(entry_id)
 						continue
-		if _is_loot_sheltered(pos):
+		if bool(entry.get("static_loot", false)) or _is_loot_sheltered(pos):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))
 		var rate := 0.33
@@ -12110,11 +12129,17 @@ func _update_loot_wear() -> void:
 			var drop_id: String = str(entry.get("id", ""))
 			removed_ids.append(drop_id)
 			_dropped_items.remove_at(i)
-			# Remove visual node
+			# Remove visual node and deplete WorldAction so no ghost prompt remains
 			var visual_name := "Pickup_" + drop_id
 			var vnode := get_node_or_null(NodePath(visual_name))
 			if vnode != null:
 				vnode.queue_free()
+			if world_actions_by_id.has(drop_id):
+				var wa_exp = world_actions_by_id[drop_id]
+				if wa_exp != null and is_instance_valid(wa_exp):
+					_hide_action_visual(wa_exp)
+					wa_exp.mark_depleted()
+				world_actions_by_id.erase(drop_id)
 			# Mark as depleted so it doesn't respawn
 			if not _depleted_action_ids.has(drop_id):
 				_depleted_action_ids.append(drop_id)
@@ -14349,6 +14374,47 @@ func _settle_drop_pos(pos: Vector3) -> Vector3:
 				var g: float = _get_exact_ground_y(px, pz, probe_y)
 				if g >= pos.y - 1.6 and g <= max_g:
 					return Vector3(px, g, pz)
+	return pos
+
+func _spread_overlapping_drop_pos(pos: Vector3) -> Vector3:
+	var overlap_count := 0
+	for e in _dropped_items:
+		if not (e is Dictionary):
+			continue
+		var ep = e.get("pos")
+		var epos := Vector3.INF
+		if ep is Vector3:
+			epos = ep
+		elif ep is Array and ep.size() >= 3:
+			epos = Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
+		if epos == Vector3.INF:
+			continue
+		if absf(epos.y - pos.y) < 1.0 and Vector2(epos.x - pos.x, epos.z - pos.z).length() < 0.32:
+			overlap_count += 1
+	if overlap_count <= 0:
+		return pos
+	var golden_angle := 2.39996323
+	for attempt in range(overlap_count, overlap_count + 12):
+		var ang := float(attempt) * golden_angle
+		var rad := 0.28 + 0.14 * sqrt(float(attempt))
+		var cand := Vector3(pos.x + cos(ang) * rad, pos.y, pos.z + sin(ang) * rad)
+		var settled := _settle_drop_pos(cand)
+		if absf(settled.y - pos.y) <= 0.6 and not _is_water_drop_position(settled):
+			var clear := true
+			for e2 in _dropped_items:
+				if not (e2 is Dictionary):
+					continue
+				var ep2 = e2.get("pos")
+				var epos2 := Vector3.INF
+				if ep2 is Vector3:
+					epos2 = ep2
+				elif ep2 is Array and ep2.size() >= 3:
+					epos2 = Vector3(float(ep2[0]), float(ep2[1]), float(ep2[2]))
+				if epos2 != Vector3.INF and absf(epos2.y - settled.y) < 1.0 and Vector2(epos2.x - settled.x, epos2.z - settled.z).length() < 0.24:
+					clear = false
+					break
+			if clear:
+				return settled
 	return pos
 
 func _get_ground_height(pos: Vector3) -> float:

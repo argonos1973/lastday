@@ -50,7 +50,7 @@ func set_clock_time(hour:float) -> void:
 
 static func contains(pos:Vector3, margin:float=0.0) -> bool:
  var local:=pos-WORLD_POSITION
- return absf(local.x)<9+margin and absf(local.z)<8+margin and local.y>=-.2 and local.y<29.4
+ return absf(local.x)<9+margin and absf(local.z)<8+margin and local.y>=-.2 and local.y<33.8
 
 func _upgrade_tower_mesh_materials(mi: MeshInstance3D) -> void:
  if mi == null or mi.mesh == null:

@@ -1145,7 +1145,7 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 @rpc("authority", "reliable")
 func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array, planted_crops: Array = []) -> void:
 	var scene := get_tree().current_scene
-	if scene != null and scene.has_method("_net_sync_world_state"):
+	if scene != null and scene.has_method("_net_sync_world_state") and scene.get("player") != null:
 		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters, planted_crops)
 	elif not is_host:
 		_buffered_world_state = [depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters, planted_crops]
