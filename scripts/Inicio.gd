@@ -99,15 +99,6 @@ func _ready() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, false)
 
-	# Start UDP discovery listener to auto-find server on local network
-	_discovery = PacketPeerUDP.new()
-	var bind_err := _discovery.bind(GameConst.DISCOVERY_PORT)
-	if bind_err == OK:
-		pass # print("[DISCOVERY] Escuchando broadcasts del servidor en puerto %d" % GameConst.DISCOVERY_PORT)
-	else:
-		pass # print("[DISCOVERY] No se pudo bind puerto %d: %d" % [GameConst.DISCOVERY_PORT, bind_err])
-		_discovery = null
-
 	var screen_w := get_viewport().get_visible_rect().size.x
 	var screen_h := get_viewport().get_visible_rect().size.y
 
@@ -439,8 +430,8 @@ func _process(_delta: float) -> void:
 							_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
 						pass # print("[DISCOVERY] Servidor encontrado: %s" % str(_discovered_ips))
 			count -= 1
-	# Active scan fallback: probe IPs on local subnet if no server found yet
-	if _discovered_ips.is_empty() and not _scanning:
+	# Active scan fallback: only probe local subnet when "Conectar por IP" is open
+	if _ip_edit != null and _ip_edit.visible and _discovered_ips.is_empty() and not _scanning:
 		_scan_timer += _delta
 		if _scan_timer >= 3.0:
 			_scan_timer = 0.0
@@ -542,6 +533,10 @@ func _on_show_join() -> void:
 	_ip_edit.visible = true
 	_btn_connect.visible = true
 	_ip_edit.grab_focus()
+	if _discovery == null:
+		_discovery = PacketPeerUDP.new()
+		if _discovery.bind(GameConst.DISCOVERY_PORT) != OK:
+			_discovery = null
 
 func _on_join_official() -> void:
 	if _started:
