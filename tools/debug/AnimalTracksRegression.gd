@@ -92,6 +92,18 @@ func run() -> void:
 	# 30 * 0.1 = 3.0 m / 0.62 stride → ~4-5 huellas
 	check(deer_prints >= 4 and deer_prints <= 6, "Deer drops ~5 prints over 3 m (got %d)" % deer_prints)
 
+	# Oso usa plantígrado de 5 dedos (kind=bear_paw, stride=0.78 m, size=0.58 m).
+	var bear = WildlifeScript.new()
+	bear.animal_type = "bear"
+	scene.add_child(bear)
+	bear._update_tracks()
+	var before_bear := _n_tracks()
+	for i in range(40):
+		bear.global_position += Vector3(0, 0, step)
+		bear._update_tracks()
+	var bear_prints := _n_tracks() - before_bear
+	check(bear_prints >= 4 and bear_prints <= 6, "Bear drops ~5 bear_paw prints over 4 m (got %d)" % bear_prints)
+
 	# Segmento grande de LOD: 3.0 m en un solo paso -> huellas repartidas por el
 	# segmento (antes soltaba una sola por frame y el rastro quedaba hueco).
 	var lod = WildlifeScript.new()

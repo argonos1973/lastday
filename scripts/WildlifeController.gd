@@ -87,7 +87,7 @@ const TRACK_SPECS := {
 	"wolf": {"kind": "paw", "size": 0.34, "stride": 0.48, "lat": 0.14},
 	"deer": {"kind": "hoof", "size": 0.30, "stride": 0.62, "lat": 0.12},
 	"fox": {"kind": "paw", "size": 0.24, "stride": 0.38, "lat": 0.11},
-	"bear": {"kind": "paw", "size": 0.48, "stride": 0.82, "lat": 0.18},
+	"bear": {"kind": "bear_paw", "size": 0.58, "stride": 0.78, "lat": 0.22},
 }
 var _track_started := false
 var _track_anchor := Vector3.ZERO
@@ -2474,6 +2474,15 @@ func _update_tracks_impl() -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	# En partida real hay ~80 animales repartidos por todo el mapa: si los
+	# lejanos (>240 m) generan huellas cada frame, agotan el pool global
+	# MAX_TRACKS en pocos segundos y borran las huellas cercanas de osos/lobos.
+	var local_player = scene.get("player")
+	if local_player is Node3D and is_instance_valid(local_player):
+		var lp: Vector3 = (local_player as Node3D).global_position
+		if Vector2(pos.x - lp.x, pos.z - lp.z).length_squared() > 240.0 * 240.0:
+			_track_acc = 0.0
+			return
 	# Teleport/snap (corrección de red, escape de atasco): retomar sin huella.
 	if dist > 8.0:
 		_track_acc = 0.0

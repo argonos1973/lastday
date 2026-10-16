@@ -12085,6 +12085,8 @@ func _apply_ground_craft_state(action_id: String, quantity: int, durability: flo
 
 # Segundos que tarda la carne totalmente podrida en desaparecer con sus moscas
 const ROT_MEAT_REMOVE_SECONDS := 120.0
+# Duración en el suelo del loot de personajes muertos: 8 horas (28800 s)
+const DEATH_LOOT_LIFETIME_SECONDS := 8.0 * 3600.0
 
 func _attach_flies_to_drop(drop_id: String) -> void:
 	var target := get_node_or_null(NodePath("Pickup_" + drop_id)) as Node3D
@@ -12098,11 +12100,13 @@ func _attach_flies_to_drop(drop_id: String) -> void:
 	target.add_child(swarm)
 
 func _update_loot_wear() -> void:
-	# Wear rate: 0.5 per tick (every 5s) when sheltered, 0.33 when exposed
-	# 100 wear = ~1000s (16min) sheltered, ~1500s (25min) exposed
+	# Wear rate: 0.33 per tick (every 5s) when exposed (~25min),
+	# 8 hours (28800s) for dead player loot (death_loot_*).
 	var removed_ids: Array = []
 	for i in range(_dropped_items.size() - 1, -1, -1):
 		var entry: Dictionary = _dropped_items[i]
+		var entry_id_str := str(entry.get("id", ""))
+		var is_death_loot := entry_id_str.begins_with("death_loot_") or bool(entry.get("death_loot", false))
 		var pos_data = entry.get("pos", [0, 0, 0])
 		var pos: Vector3
 		if pos_data is Array and pos_data.size() >= 3:
@@ -12129,7 +12133,7 @@ func _update_loot_wear() -> void:
 					var wa = world_actions_by_id[entry_id]
 					if wa != null and is_instance_valid(wa):
 						wa.set_meta("item_spoilage", spoil)
-				if spoil >= 100.0:
+				if spoil >= 100.0 and not is_death_loot:
 					# Totalmente podrida: las moscas acuden y la carne acaba
 					# desapareciendo junto con el enjambre (hijo del pickup).
 					if not bool(entry.get("flies", false)):
@@ -12155,10 +12159,10 @@ func _update_loot_wear() -> void:
 						if not _depleted_action_ids.has(entry_id):
 							_depleted_action_ids.append(entry_id)
 						continue
-		if bool(entry.get("static_loot", false)) or _is_loot_sheltered(pos):
+		if bool(entry.get("static_loot", false)) or (not is_death_loot and _is_loot_sheltered(pos)):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))
-		var rate := 0.33
+		var rate := (500.0 / DEATH_LOOT_LIFETIME_SECONDS) if is_death_loot else 0.33
 		wear += rate
 		entry["wear"] = wear
 		if wear >= 100.0:
