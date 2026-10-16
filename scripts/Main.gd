@@ -8802,7 +8802,7 @@ func _create_house_loot() -> void:
 	tower_rng.seed = _stable_loot_seed("towers_loot_v1")
 	var water_tower_origin := Vector3(-43.0, 0.0, -48.0)
 	var wt_items := [
-		{"name": "Cuerda", "type": "resource", "weight": 0.1, "qty": 1, "use": 0.0, "paths": [K_SURVIVAL + "rope.glb"], "scale": 1.1, "rot": Vector3(0, 25, 0), "color": Color(0.55, 0.45, 0.28)},
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "qty": 1, "use": 18.0, "paths": [FOOD_CAN_415G_MODEL], "scale": 1.35, "rot": Vector3(0, 25, 0), "color": Color(0.42, 0.30, 0.12)},
 		{"name": "Botella de agua llena", "type": "water", "weight": 0.6, "qty": 1, "use": 35.0, "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 80, 0), "color": Color(0.18, 0.35, 0.52)},
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 40, 0), "color": Color(0.38, 0.28, 0.15)},
 		{"name": "Cerillas", "type": "tool_matches", "weight": 0.05, "qty": 1, "use": 0.0, "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.0005, "rot": Vector3(0, 15, 0), "color": Color(0.55, 0.20, 0.15)},
@@ -8815,23 +8815,55 @@ func _create_house_loot() -> void:
 		wt_data["pos"] = wt_pos
 		wt_data["id"] = "water_tower_loot_%d" % wti
 		_create_pickup_item(wt_data)
-	# Clock Tower (41, 0, 750): loot across landings and on the top roof platform (29.4m)
+	# Clock Tower (41, 0, 750): loot on ground hall, every stair landing + room, and top roof platform (29.4m)
 	var ct_origin := Vector3(41.0, 0.0, 750.0)
 	var ct_floors := [0.06, 4.26, 8.46, 12.66, 16.86, 21.06, 25.26, 29.46]
+	var roof_fixed_spots := [
+		Vector3(0.6, 29.46, 3.0),   # Justo a la salida de la escalera en la azotea
+		Vector3(-1.5, 29.46, 1.8),  # Centro-sur de la azotea
+		Vector3(-3.0, 29.46, 3.0),  # Galería soleada suroeste
+		Vector3(-2.2, 29.46, -1.5), # Centro-norte de la azotea
+		Vector3(0.5, 29.46, -2.0),  # Centro-este de la azotea
+	]
 	for ctf in range(ct_floors.size()):
 		var fy: float = ct_floors[ctf]
-		var count_on_floor := 3 if ctf == ct_floors.size() - 1 else (2 if ctf % 2 == 0 else 1)
+		var count_on_floor := 5 if ctf == ct_floors.size() - 1 else 3
 		for k in range(count_on_floor):
 			var tmpl: Dictionary
-			if ctf == ct_floors.size() - 1 and k == 0:
-				tmpl = tent_loot_pool[18].duplicate() # Chaleco táctico en la cima de la torre
-			elif ctf == ct_floors.size() - 1 and k == 1:
-				tmpl = tent_loot_pool[14].duplicate() # Casco militar en la cima
+			if ctf == ct_floors.size() - 1:
+				if k == 0:
+					tmpl = tent_loot_pool[18].duplicate() # Chaleco táctico en la cima
+				elif k == 1:
+					tmpl = tent_loot_pool[14].duplicate() # Casco militar en la cima
+				elif k == 2:
+					tmpl = tent_loot_pool[19].duplicate() # Mochila militar en la cima
+				elif k == 3:
+					tmpl = tent_loot_pool[13].duplicate() # Botas militares en la cima
+				else:
+					tmpl = tent_loot_pool[15].duplicate() # Lata de guiso en la cima
+				tmpl["pos"] = ct_origin + roof_fixed_spots[k]
+			elif ctf == 0:
+				tmpl = house_loot_pool[tower_rng.randi() % house_loot_pool.size()].duplicate()
+				# Vestíbulo de entrada y pasillo hacia la primera escalera (evitando mostradores en z=-2.2, x=-6/-1.4)
+				var hall_spots := [
+					Vector3(0.8, fy, -5.2),
+					Vector3(2.4, fy, -3.6),
+					Vector3(-3.2, fy, 2.2),
+				]
+				tmpl["pos"] = ct_origin + hall_spots[k]
 			else:
 				tmpl = house_loot_pool[tower_rng.randi() % house_loot_pool.size()].duplicate()
-			var lx := tower_rng.randf_range(-4.2, 0.4)
-			var lz := tower_rng.randf_range(-3.8, 3.8)
-			tmpl["pos"] = ct_origin + Vector3(lx, fy, lz)
+				if k == 0:
+					# En el rellano de la escalera por donde pasa el jugador al subir cada planta
+					var landing_z := 5.1 if (ctf % 2 == 1) else -5.1
+					tmpl["pos"] = ct_origin + Vector3(tower_rng.randf_range(1.4, 3.2), fy, landing_z)
+				elif k == 1:
+					# En el paso abierto entre el rellano y la sala de la planta
+					var pass_z := -5.0 if (ctf % 2 == 1) else 5.0
+					tmpl["pos"] = ct_origin + Vector3(tower_rng.randf_range(-0.4, 1.0), fy, pass_z)
+				else:
+					# En el centro de la sala oeste de la planta
+					tmpl["pos"] = ct_origin + Vector3(tower_rng.randf_range(-3.8, -0.8), fy, tower_rng.randf_range(-3.2, 3.2))
 			if fy > 1.0:
 				tmpl["floor_y"] = fy
 			tmpl["id"] = "clock_tower_loot_%d_%d" % [ctf, k]
@@ -9157,6 +9189,8 @@ func _create_pickup_item(data: Dictionary) -> void:
 						m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
 					else:
 						m.visible = false
+			_center_visible_meshes_xz(boot_node as Node3D, pos)
+			_snap_node_bottom_to_y(boot_node as Node3D, real_ground_y)
 	# Remy clothing: hide all meshes except the relevant one, paint with color
 	if data.has("remy_mesh"):
 		var remy_mesh_name := str(data["remy_mesh"])
@@ -9172,6 +9206,8 @@ func _create_pickup_item(data: Dictionary) -> void:
 						m.material_override = MaterialFactory.make_clothing_material(kind if not kind.is_empty() else "denim", color, 0.0)
 					else:
 						m.visible = false
+			_center_visible_meshes_xz(remy_node as Node3D, pos)
+			_snap_node_bottom_to_y(remy_node as Node3D, real_ground_y)
 	# Apply tint or camo material to military clothing pickups
 	if data.has("tint"):
 		var tint_node := get_node_or_null(NodePath(visual_name))
@@ -17124,6 +17160,31 @@ func _apply_foliage_green_to_node(node: Node3D) -> void:
 			continue
 		mi.material_override = _shared_foliage_green_mat
 
+func _center_visible_meshes_xz(node: Node3D, target_pos: Vector3) -> void:
+	node.force_update_transform()
+	var meshes := []
+	NodeUtils.collect_mesh_instances(node, meshes)
+	var min_x := 1000000.0
+	var max_x := -1000000.0
+	var min_z := 1000000.0
+	var max_z := -1000000.0
+	var any := false
+	for mesh_node in meshes:
+		var mi := mesh_node as MeshInstance3D
+		if mi == null or not mi.visible or mi.mesh == null:
+			continue
+		mi.force_update_transform()
+		var waabb: AABB = mi.global_transform * mi.get_aabb()
+		min_x = minf(min_x, waabb.position.x)
+		max_x = maxf(max_x, waabb.position.x + waabb.size.x)
+		min_z = minf(min_z, waabb.position.z)
+		max_z = maxf(max_z, waabb.position.z + waabb.size.z)
+		any = true
+	if any:
+		node.global_position.x += target_pos.x - (min_x + max_x) * 0.5
+		node.global_position.z += target_pos.z - (min_z + max_z) * 0.5
+		node.force_update_transform()
+
 func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 	node.force_update_transform()
 	var meshes := []
@@ -17131,7 +17192,7 @@ func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 	var min_y := 1000000.0
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
-		if mesh_instance.mesh == null:
+		if mesh_instance == null or not mesh_instance.visible or mesh_instance.mesh == null:
 			continue
 		mesh_instance.force_update_transform()
 		var world_aabb: AABB = mesh_instance.global_transform * mesh_instance.get_aabb()
