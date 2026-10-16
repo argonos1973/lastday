@@ -1708,33 +1708,7 @@ func _input(event: InputEvent) -> void:
 		# other actions (store item, switch slot, etc.) with the same press.
 		return
 	if event is InputEventMouseButton and event.pressed:
-		if _aerial_camera:
-			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-				_aerial_height = clamp(_aerial_height - _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
-				return
-			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				_aerial_height = clamp(_aerial_height + _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
-				return
-		_capture_mouse()
-		var has_rifle := _has_rifle_equipped()
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			if has_rifle:
-				_shoot_rifle()
-			else:
-				_melee_attack()
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			if has_rifle and not _is_aiming:
-				_toggle_aim()
-			else:
-				_quick_use_held_item()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
-			if camera != null:
-				camera.fov = _camera_fov
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_camera_fov = clamp(_camera_fov + 4.0, 30.0, 90.0)
-			if camera != null:
-				camera.fov = _camera_fov
+		_on_game_mouse_button_pressed(event)
 	elif event is InputEventMouseButton and not event.pressed:
 		if event.button_index == MOUSE_BUTTON_RIGHT and _is_aiming:
 			_toggle_aim()
@@ -1872,6 +1846,43 @@ func _input(event: InputEvent) -> void:
 			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+
+func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
+	if _aerial_camera:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_aerial_height = clamp(_aerial_height - _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
+			return
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_aerial_height = clamp(_aerial_height + _AERIAL_ZOOM_STEP, _AERIAL_MIN_HEIGHT, _AERIAL_MAX_HEIGHT)
+			return
+	_capture_mouse()
+	var has_rifle := _has_rifle_equipped()
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if has_rifle:
+			_shoot_rifle()
+		else:
+			_melee_attack()
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		# El aviso interactivo manda: con una accion anunciada el boton
+		# derecho la ejecuta igual que su tecla ([F]/[C]/[M]/[K]) en vez
+		# de apuntar. Sin aviso se conserva la punteria/uso rapido.
+		var rmb_target = _get_interaction_target()
+		if _nearby_rowboat() != null or (_can_fish_near_water and _has_fishing_rod_in_hand() and not _is_fishing):
+			_interact()
+		elif rmb_target != null and _right_click_interact(rmb_target):
+			pass
+		elif has_rifle and not _is_aiming:
+			_toggle_aim()
+		else:
+			_quick_use_held_item()
+	elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
+		if camera != null:
+			camera.fov = _camera_fov
+	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_camera_fov = clamp(_camera_fov + 4.0, 30.0, 90.0)
+		if camera != null:
+			camera.fov = _camera_fov
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
@@ -10160,6 +10171,52 @@ func _collect() -> void:
 		return
 	if target.has_method("collect"):
 		target.collect(self)
+
+# El boton derecho ejecuta la accion que el aviso anuncia primero
+# ([F]/[C]/[M]/[K]) por las mismas rutas que sus teclas. Devuelve false si el
+# aviso esta vacio para que el boton siga apuntando o usando el objeto en mano.
+func _right_click_interact(target) -> bool:
+	var prompt := ""
+	if raycast != null and raycast.has_method("get_default_text"):
+		prompt = str(raycast.get_default_text(target, self))
+	elif target != null and target.has_method("get_interaction_text"):
+		prompt = str(target.call("get_interaction_text", self))
+	if prompt.is_empty():
+		return false
+	var best_pos := -1
+	var best_tag := ""
+	for tag in ["[F]", "[C]", "[M]", "[K]"]:
+		var tag_pos := prompt.find(tag)
+		if tag_pos >= 0 and (best_pos < 0 or tag_pos < best_pos):
+			best_pos = tag_pos
+			best_tag = tag
+	match best_tag:
+		"[C]":
+			# Misma prioridad que la tecla C: una mochila abierta vuelve a
+			# abrirse, el resto se recoge.
+			if target != null and target.has_method("interact") and "is_open" in target and target.is_open:
+				target.interact(self)
+			else:
+				_collect()
+		"[M]":
+			_eat_action()
+		"[K]":
+			_open_pointed_container(target)
+		_:
+			# "[F]" o un aviso sin teclas: equivale a pulsar F.
+			_interact()
+	return true
+
+func _open_pointed_container(target) -> void:
+	var main := get_tree().current_scene
+	if main == null:
+		return
+	var is_shelter_target: bool = str(target.get("action_type", "")) == "shelter"
+	var is_container: bool = main.has_method("_is_backpack_container") and main._is_backpack_container(target)
+	if (is_container or is_shelter_target) and main.has_method("_toggle_backpack_ui"):
+		main._toggle_backpack_ui(target)
+	else:
+		_interact()
 
 #endregion
 

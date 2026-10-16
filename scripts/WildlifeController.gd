@@ -1319,7 +1319,7 @@ func get_interaction_text(player = null) -> String:
 	var has_knife := _player_has_knife(player)
 	if has_knife:
 		return "[F] Destripar %s  |  [C] Coger %s entero (necesitas mochila)" % [an, an]
-	return "[F] Necesitas un cuchillo o hacha  |  [C] Coger %s (necesitas mochila)" % an
+	return "[C] Coger %s entero (necesitas mochila)  |  [F] Destripar (necesitas cuchillo/hacha)" % an
 
 func interact(player: Node) -> void:
 	if not _is_dead:

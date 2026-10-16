@@ -226,9 +226,9 @@ func get_interaction_text(_player = null) -> String:
 		"gut_wolf":
 			if get_meta("gutted", false):
 				return "%s vacio" % display_name
-			if not _player_has_blade(_player):
-				return ""
-			return "Destripar - [F] | Coger - [C] (mochila)"
+			if _player_has_blade(_player):
+				return "Destripar - [F] | Coger - [C] (mochila)"
+			return "Coger - [C] (mochila)"
 		"wolf_meat_raw", "bird_meat_raw":
 			return "%s - [C] Coger | [M] Comer (cruda)" % display_name
 		"fell_tree":

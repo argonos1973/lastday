@@ -3895,6 +3895,11 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 	for be in saved_extra.get("back_items", []):
 		if be is Dictionary and not str(be.get("name", "")).is_empty():
 			drop_source.append(be)
+	# El equipo largo llevado en las manos (rifle, caña, lanza) vive fuera del
+	# inventario: viaja en extra.held_item_data y sin esto desaparecia al morir.
+	var held_payload = saved_extra.get("held_item_data", null)
+	if held_payload is Dictionary and not str(held_payload.get("name", held_payload.get("item_name", ""))).is_empty():
+		drop_source.append(held_payload)
 	var bp_name := str(proxy.get_meta("saved_backpack", ""))
 	# Fallback: el broadcast de estado (20 Hz) suele tener la mochila mas fresca
 	# que el meta (solo se escribe en el sync de inventario cada 2 s).
@@ -3972,7 +3977,20 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
 			if dropped_visual != null:
 				_apply_camo_material_recursive(dropped_visual, Color(0.20, 0.25, 0.15))
-		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol, "camo": camo, "pelt": dpelt})
+		# Mochilas anidadas viajan con contents dentro del item; durabilidad y
+		# contenido deben sobrevivir la caida o el loot saldria "nuevo"/vacio.
+		var dcontents: Array = d.get("contents", []) if d.get("contents", []) is Array else []
+		if is_instance_valid(dropped_action):
+			if not dcontents.is_empty():
+				dropped_action.set_meta("contents", dcontents)
+				for entry in _dropped_items:
+					if str(entry.get("id", "")) == did:
+						entry["contents"] = dcontents
+						break
+			if d.has("max_durability"):
+				dropped_action.set_meta("item_max_durability", float(d.get("max_durability", 100.0)))
+				dropped_action.set_meta("item_durability", float(d.get("durability", d.get("max_durability", 100.0))))
+		drops.append({"id": did, "name": iname, "type": itype, "pos": [dpos.x, dpos.y, dpos.z], "weight": iweight, "qty": iqty, "use": iuse, "wetness": iwet, "drop_color": dcol, "camo": camo, "pelt": dpelt, "contents": dcontents})
 	# Notify all clients to spawn the loot
 	if net.peer != null:
 		for pid in net.players.keys():
@@ -3985,7 +4003,7 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 			for drop in drops:
 				var dpos_arr = drop["pos"]
 				var dpos := Vector3(float(dpos_arr[0]), float(dpos_arr[1]), float(dpos_arr[2]))
-				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), [], float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)), str(drop.get("pelt", "")))
+				net.item_dropped.rpc_id(pid, drop["id"], drop["name"], drop["type"], drop["weight"], drop["qty"], drop["use"], dpos, drop.get("drop_color", Color(0, 0, 0, 0)), drop.get("contents", []), float(drop.get("wetness", 0.0)), bool(drop.get("camo", false)), str(drop.get("pelt", "")))
 	# Clear saved inventory so reconnecting player doesn't get items back
 	proxy.set_meta("saved_inventory", [])
 	proxy.set_meta("saved_backpack", "")
@@ -4336,8 +4354,12 @@ func _sync_local_player_inventory() -> void:
 	var prone: bool = player.is_prone
 	var crouching: bool = player.is_crouching
 	var rot: float = player.rotation.y
-	# Extended state that has no fixed RPC argument: back slots, externally-held
-	# equipment payload, rifle ammo and the rest of the survival stats.
+	var extra := _build_inventory_sync_extra(actual_held)
+	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching, extra)
+
+# Extended state that has no fixed RPC argument: back slots, externally-held
+# equipment payload, rifle ammo and the rest of the survival stats.
+func _build_inventory_sync_extra(actual_held) -> Dictionary:
 	var extra := {}
 	if "_stored_back_items" in player:
 		var back_items: Array = []
@@ -4360,7 +4382,7 @@ func _sync_local_player_inventory() -> void:
 		# servidor (registro/proxy), un restore no puede "matar" al cliente.
 		stats_extra.erase("dead")
 		extra["stats_extra"] = stats_extra
-	net.sync_player_inventory.rpc(items_data, hp, hunger, thirst, clothing, backpack, held, player.held_index, sleeping, sitting, rot, prone, crouching, extra)
+	return extra
 
 func _update_remote_players() -> void:
 	if net == null:
