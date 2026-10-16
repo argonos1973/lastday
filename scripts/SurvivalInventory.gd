@@ -26,7 +26,7 @@ var portrait_signature := ""
 var portrait_focus := Vector3.ZERO
 var portrait_yaw := 0.5
 var portrait_dragging := false
-const PICKUPS := ["pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat", "eat_food", "wood", "stone", "wolf_meat_raw", "bird_meat_raw", "pickup_torch", "plant_seeds"]
+const PICKUPS := ["pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat", "eat_food", "wood", "stone", "wolf_meat_raw", "bird_meat_raw", "pickup_torch", "plant_seeds", "gut_wolf"]
 
 func setup(owner_hud) -> void:
 	hud = owner_hud
@@ -164,11 +164,24 @@ func nearby() -> Array:
 	for action in WorldActions.get_nearby_interactables(player.global_position, 2.0):
 		if reachable(action):
 			result.append(action)
+	if player != null and player.get_tree() != null:
+		for node in player.get_tree().get_nodes_in_group("wildlife"):
+			if reachable(node) and not result.has(node):
+				result.append(node)
 	result.sort_custom(func(a, b): return player.global_position.distance_squared_to(a.global_position) < player.global_position.distance_squared_to(b.global_position))
 	return result
 
+func _is_dead_wildlife_corpse(node) -> bool:
+	return is_instance_valid(node) and not (node is WorldActions) and bool(node.get("_is_dead")) and not bool(node.get("_gutted")) and node.has_method("_corpse_item_name")
+
 func reachable(action) -> bool:
-	if not is_instance_valid(action) or action.is_queued_for_deletion() or action.depleted or action.action_type not in PICKUPS or bool(action.get_meta("no_pickup", false)):
+	if not is_instance_valid(action) or action.is_queued_for_deletion():
+		return false
+	if _is_dead_wildlife_corpse(action):
+		return player.global_position.distance_to(action.global_position) <= 2.4
+	if not ("depleted" in action) or action.depleted or action.action_type not in PICKUPS or bool(action.get_meta("no_pickup", false)):
+		return false
+	if action.action_type == "gut_wolf" and bool(action.get_meta("gutted", false)):
 		return false
 	if player.global_position.distance_to(action.global_position) > 2.0:
 		return false
@@ -206,7 +219,8 @@ func refresh() -> void:
 	floor_card.tooltip_text = "Arrastra aquí para soltar una unidad. Alcance de recogida: 2 m."
 	vicinity.add_child(floor_card)
 	for action in ground:
-		vicinity.add_child(make_card(action.display_name, {"world": action, "label": action.display_name}, ""))
+		var wlabel: String = str(action._corpse_item_name()) if _is_dead_wildlife_corpse(action) else str(action.display_name)
+		vicinity.add_child(make_card(wlabel, {"world": action, "label": wlabel}, ""))
 	if ground.is_empty():
 		vicinity.add_child(text_label("No hay objetos al alcance."))
 	var held = player.get_held_item()
@@ -214,7 +228,7 @@ func refresh() -> void:
 	if portrait != null:
 		equipment.add_child(portrait)
 	equipment.add_child(text_label("MANOS", 16))
-	equipment.add_child(make_card("Manos libres" if held == null else item_text(held), {} if held == null else {"item": held, "label": held.item_name, "qty": 1}, "hands"))
+	equipment.add_child(make_card("Manos libres" if held == null else item_text(held, 1, true), {} if held == null else {"item": held, "label": held.item_name, "qty": 1, "from_hands": true}, "hands"))
 	if held != null:
 		button(equipment, "Guardar", func(): player._store_held_item(); request_refresh(true))
 	equipment.add_child(text_label("EQUIPAMIENTO", 16))
@@ -258,7 +272,8 @@ func refresh() -> void:
 				if item == held_item:
 					grid_payload["qty"] = item.quantity - 1
 					grid_payload["held_remainder"] = true
-				grid.add_child(make_card(item_text(item), grid_payload, container.id))
+				var card_qty: int = int(grid_payload.get("qty", item.quantity))
+				grid.add_child(make_card(item_text(item, card_qty, item != held_item), grid_payload, container.id))
 		if items.size() < container.capacity:
 			var free_slot = make_card("+", {}, container.id)
 			free_slot.tooltip_text = "Espacio libre: arrastra un objeto aquí."
@@ -268,8 +283,9 @@ func toggle_compartment(id: String) -> void:
 	collapsed_compartments[id] = not bool(collapsed_compartments.get(id, false))
 	request_refresh(true)
 
-func item_text(item) -> String:
-	var state: String = "EN MANOS · " if player.get_held_item() == item else ""
+func item_text(item, qty_override: int = -1, show_held_tag: bool = true) -> String:
+	var shown_q: int = qty_override if qty_override > 0 else int(item.quantity)
+	var state: String = "EN MANOS · " if (show_held_tag and player.get_held_item() == item) else ""
 	if player._equipped_slots.values().has(item.item_name) or item.item_name == player.equipped_backpack:
 		state += "EQUIPADO · "
 	if item.has_method("is_wet") and item.is_wet():
@@ -281,7 +297,7 @@ func item_text(item) -> String:
 	elif item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
 		var ri2: Dictionary = player.get_rifle_info()
 		extra_ammo = "\n%d cargadores de fusil (%d balas)" % [int(ri2.get("magazines_left", 0)), int(ri2.get("reserve", 0))]
-	return "%s%s\nx%d · %.2f kg · %d%%%s" % [state, item.item_name, item.quantity, item.weight * item.quantity, item.durability_pct() * 100, extra_ammo]
+	return "%s%s\nx%d · %.2f kg · %d%%%s" % [state, item.item_name, shown_q, item.weight * float(shown_q), item.durability_pct() * 100, extra_ammo]
 
 func matches_filter(item) -> bool:
 	if not search.text.is_empty() and not search.text.to_lower() in item.item_name.to_lower():
@@ -311,14 +327,17 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	var item = payload.get("item")
 	if payload.has("world"):
 		var action = payload.world
-		var types := {"pickup_torch": "tool_torch", "backpack_pickup": "backpack", "wolf_meat_raw": "food", "bird_meat_raw": "food", "axe_tool": "tool_axe", "hoe_tool": "tool_hoe", "shovel_tool": "tool_shovel", "hammer_tool": "tool_hammer", "pickaxe_tool": "tool_pickaxe", "matches_tool": "tool_matches"}
-		var type: String = types.get(action.action_type, str(action.get_meta("item_type", "resource")))
-		var name: String = {"wood": "Tronco", "stone": "Piedra"}.get(action.action_type, str(action.get_meta("item_name", action.display_name)))
-		item = preload("res://scripts/Item.gd").create(name, type, float(action.get_meta("item_weight", 0.0)), int(action.get_meta("item_quantity", 1)))
-		if action.has_meta("item_color"):
-			item.set_meta("clothing_color", action.get_meta("item_color"))
-		item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
-		item.wetness = float(action.get_meta("item_wetness", 0.0))
+		if _is_dead_wildlife_corpse(action):
+			item = preload("res://scripts/Item.gd").create(str(action._corpse_item_name()), "material", 8.0, 1)
+		else:
+			var types := {"pickup_torch": "tool_torch", "backpack_pickup": "backpack", "wolf_meat_raw": "food", "bird_meat_raw": "food", "axe_tool": "tool_axe", "hoe_tool": "tool_hoe", "shovel_tool": "tool_shovel", "hammer_tool": "tool_hammer", "pickaxe_tool": "tool_pickaxe", "matches_tool": "tool_matches", "gut_wolf": "material"}
+			var type: String = types.get(action.action_type, str(action.get_meta("item_type", "resource")))
+			var name: String = {"wood": "Tronco", "stone": "Piedra"}.get(action.action_type, str(action.get_meta("item_name", action.display_name)))
+			item = preload("res://scripts/Item.gd").create(name, type, float(action.get_meta("item_weight", 8.0 if action.action_type == "gut_wolf" else 0.0)), int(action.get_meta("item_quantity", 1)))
+			if action.has_meta("item_color"):
+				item.set_meta("clothing_color", action.get_meta("item_color"))
+			item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
+			item.wetness = float(action.get_meta("item_wetness", 0.0))
 	if item != null:
 		card.custom_minimum_size.x = 96
 		var image := Control.new()
@@ -360,7 +379,8 @@ func make_card(title: String, payload: Dictionary, destination: String):
 		fill.bg_color = Color(0.52, 0.62, 0.34) if condition.value > 50 else Color(0.77, 0.48, 0.25)
 		condition.add_theme_stylebox_override("fill", fill)
 		details.add_child(condition)
-	card.tooltip_text = (item_text(item) if payload.has("item") else title) + "\nDoble clic: usar · Clic derecho: opciones"
+	var tip_qty: int = int(payload.get("qty", item.quantity)) if item != null else 1
+	card.tooltip_text = (item_text(item, tip_qty, not bool(payload.get("held_remainder", false))) if payload.has("item") else title) + "\nDoble clic: usar · Clic derecho: opciones"
 	return card
 
 func add_item_thumbnail(parent: Control, item) -> void:
@@ -538,7 +558,12 @@ func can_transfer(data: Dictionary, destination: String, target: Dictionary) -> 
 		return false
 	var item = data.item
 	if not player.inventory.items.has(item):
-		return player.get_held_item() == item and destination == "ground"
+		if player.get_held_item() == item:
+			if destination == "ground":
+				return true
+			if destination in Cargo.compartments(player).map(func(c): return c.id):
+				return player.inventory.get_stored_count() < player.inventory.max_slots and player.inventory.get_total_weight() + item.weight <= player.inventory.max_weight
+		return false
 	if destination.begins_with("equip:"):
 		var slot := destination.trim_prefix("equip:")
 		return (item.item_type == "backpack" and slot == "backpack") or (item.item_type == "clothing" and player.CLOTHING_SLOTS.get(item.item_name, "") == slot)
@@ -546,6 +571,10 @@ func can_transfer(data: Dictionary, destination: String, target: Dictionary) -> 
 		return item.item_type == "backpack" or (item.item_type == "clothing" and player.CLOTHING_SLOTS.has(item.item_name))
 	if destination in ["ground", "hands"]:
 		return true
+	if bool(data.get("from_hands", false)) and destination in Cargo.compartments(player).map(func(c): return c.id):
+		if destination == item.cargo_location:
+			return true
+		return Cargo.can_move(item, destination, player.inventory, Cargo.compartments(player))
 	if target.has("item") and player.inventory.items.has(target.item) and target.item != item and target.item.can_stack_with(item, true):
 		return true
 	return Cargo.can_move(item, destination, player.inventory, Cargo.compartments(player))
@@ -554,13 +583,21 @@ func transfer(data: Dictionary, destination: String, target: Dictionary) -> void
 	if not can_transfer(data, destination, target):
 		return
 	if data.has("world"):
-		if destination == "equipment" or destination.begins_with("equip:"):
+		if (destination == "equipment" or destination.begins_with("equip:")) and not _is_dead_wildlife_corpse(data.world):
 			if reachable(data.world):
 				data.world.interact(player)
 		else:
+			var prev_items: Array = player.inventory.items.duplicate()
 			collect(data.world)
+			if destination in Cargo.compartments(player).map(func(c): return c.id):
+				for added_item in player.inventory.items:
+					if not prev_items.has(added_item):
+						Cargo.move(added_item, destination, player.inventory, Cargo.compartments(player))
+						break
 	elif destination == "ground":
-		if player.inventory.items.has(data.item):
+		if bool(data.get("from_hands", false)):
+			player._drop_held_item()
+		elif player.inventory.items.has(data.item):
 			player.drop_inventory_item(player.inventory.items.find(data.item))
 		else:
 			player._drop_held_item()
@@ -568,6 +605,26 @@ func transfer(data: Dictionary, destination: String, target: Dictionary) -> void
 		player._select_held_item(player.inventory.items.find(data.item))
 	elif destination == "equipment" or destination.begins_with("equip:"):
 		equip(data.item)
+	elif bool(data.get("from_hands", false)) and destination in Cargo.compartments(player).map(func(c): return c.id):
+		if not player.inventory.items.has(data.item):
+			player._store_held_item()
+			var stored_idx: int = player.inventory.items.find(data.item)
+			if stored_idx >= 0:
+				Cargo.move(data.item, destination, player.inventory, Cargo.compartments(player))
+		else:
+			if data.item.quantity > 1 and destination != data.item.cargo_location:
+				if player.inventory.split_stack(data.item, 1):
+					Cargo.move(player.inventory.items.back(), destination, player.inventory, Cargo.compartments(player))
+			elif destination != data.item.cargo_location:
+				Cargo.move(data.item, destination, player.inventory, Cargo.compartments(player))
+			player._store_held_item()
+	elif bool(data.get("held_remainder", false)) and destination in Cargo.compartments(player).map(func(c): return c.id):
+		if destination != data.item.cargo_location and data.item.quantity > 1:
+			var rem_qty: int = data.item.quantity - 1
+			if player.inventory.split_stack(data.item, rem_qty):
+				Cargo.move(player.inventory.items.back(), destination, player.inventory, Cargo.compartments(player))
+			else:
+				Cargo.move(data.item, destination, player.inventory, Cargo.compartments(player))
 	elif target.has("item") and target.item != data.item and target.item.can_stack_with(data.item, true):
 		# Store a held source before removing its resource during merge.
 		if player.get_held_item() == data.item:
@@ -641,7 +698,7 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					add_action("Recargar fusil [R]", func():
 						hud.toggle_inventory()
 						player._reload_rifle())
-				add_action("Guardar", func(): player._store_held_item())
+				add_action("Guardar en inventario", func(): player._store_held_item())
 				add_action("Soltar", func(): player._drop_held_item())
 		else:
 			add_action("Llevar a las manos", func(): activate({"item": item}) if item.item_type not in ["clothing", "backpack"] else player._select_held_item(player.inventory.items.find(item)))
@@ -664,10 +721,6 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					player._toggle_flashlight())
 			if item.quantity > 1:
 				add_action("Separar unidades…", func(): open_split(item))
-			if not is_worn:
-				for container in Cargo.compartments(player):
-					if container.id != item.cargo_location and Cargo.can_move(item, container.id, player.inventory, Cargo.compartments(player)):
-						add_action("Mover a " + str(container.name).to_lower(), func(): transfer({"item": item}, container.id, {}))
 			if player.can_store_item_on_back(item):
 				add_action("Colgar en la espalda", func():
 					player._select_held_item(player.inventory.items.find(item))

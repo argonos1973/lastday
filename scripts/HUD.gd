@@ -1570,8 +1570,6 @@ func _update_equipment_labels() -> void:
 			_hand_store_button.disabled = held_item == null
 		if held_item != null:
 			hand_text = held_item.item_name
-			if int(held_item.quantity) > 1:
-				hand_text += " x%d" % int(held_item.quantity)
 			# Mostrar municion del rifle si esta equipado
 			if player.has_method("get_rifle_info") and player.has_method("_has_rifle_equipped") and player._has_rifle_equipped():
 				var ri: Dictionary = player.get_rifle_info()
@@ -2121,7 +2119,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	# Add Cortar en trapos button only when a rag recipe actually exists for
 	# this garment — otherwise the option shows but silently does nothing.
 	var has_rag_recipe := false
-	if str(item.item_type) == "clothing":
+	if str(item.item_type) == "clothing" and not CraftingSystemScript.is_rag_exempt(str(item.item_name)):
 		for recipe in CraftingSystemScript.get_recipes_for_item(str(item.item_name), "clothing"):
 			if recipe["inputs"].has(str(item.item_name)) and recipe["output"]["name"] == "Trapos":
 				has_rag_recipe = true

@@ -1404,7 +1404,9 @@ func collect(player: Node) -> void:
 	if inventory == null or not inventory.has_method("add_item"):
 		return
 	var ItemScript = load("res://scripts/Item.gd")
-	var whole_animal = ItemScript.create(corpse_name, "material", 24.0 if animal_type == "bear" else 8.0, 1, 0.0)
+	var whole_animal = ItemScript.create(corpse_name, "material", 8.0, 1, 0.0)
+	if player != null and player.get("equipped_backpack") != null and not str(player.get("equipped_backpack")).is_empty():
+		whole_animal.cargo_location = "backpack"
 	var added: bool = inventory.add_item(whole_animal)
 	if added:
 		if player != null and player.has_signal("notice"):

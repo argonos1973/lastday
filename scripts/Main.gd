@@ -4909,7 +4909,7 @@ func _refresh_backpack_ui() -> void:
 		var cd = contents[i]
 		var citem = ItemScript.from_dict(cd) if cd is Dictionary else null
 		var idx := i
-		cgrid.add_child(_make_dayz_stash_card(citem, cd, "Coger", true, func(): _backpack_take(idx)))
+		cgrid.add_child(_make_dayz_stash_card(citem, cd, {"stash_index": idx}, func(): _backpack_take(idx), "inv_index", func(d): _backpack_store(int(d["inv_index"]))))
 	var free_preview := clampi(max_cap - contents.size(), 0, 12 if is_shelter else 4)
 	for _fs in range(free_preview):
 		var slot_panel := PanelContainer.new()
@@ -4927,6 +4927,7 @@ func _refresh_backpack_ui() -> void:
 		plus_lbl.add_theme_font_size_override("font_size", 11)
 		plus_lbl.add_theme_color_override("font_color", Color(0.36, 0.42, 0.36))
 		slot_panel.add_child(plus_lbl)
+		_stash_make_drop_zone(slot_panel, "inv_index", contents.size() < max_cap, func(d): _backpack_store(int(d["inv_index"])))
 		cgrid.add_child(slot_panel)
 	# --- RIGHT COLUMN: PLAYER INVENTORY ---
 	var right_col := VBoxContainer.new()
@@ -4962,21 +4963,29 @@ func _refresh_backpack_ui() -> void:
 				continue
 			any = true
 			var idx := i
-			igrid.add_child(_make_dayz_stash_card(it, {}, "Meter" if can_store_more else "Lleno", can_store_more, func(): _backpack_store(idx)))
+			igrid.add_child(_make_dayz_stash_card(it, {}, {"inv_index": idx} if can_store_more else {}, func(): _backpack_store(idx), "stash_index", func(d): _backpack_take(int(d["stash_index"]))))
 		if not any:
 			var empty2 := Label.new()
 			empty2.text = "No llevas objetos en los bolsillos para guardar."
 			empty2.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
 			igrid.add_child(empty2)
+	# Las columnas enteras aceptan drops: soltar sobre hueco libre o zona vacía
+	# también transfiere, no hace falta acertar una tarjeta.
+	_stash_make_drop_zone(left_col, "inv_index", contents.size() < max_cap, func(d): _backpack_store(int(d["inv_index"])))
+	_stash_make_drop_zone(cscroll, "inv_index", contents.size() < max_cap, func(d): _backpack_store(int(d["inv_index"])))
+	_stash_make_drop_zone(cgrid, "inv_index", contents.size() < max_cap, func(d): _backpack_store(int(d["inv_index"])))
+	_stash_make_drop_zone(right_col, "stash_index", true, func(d): _backpack_take(int(d["stash_index"])))
+	_stash_make_drop_zone(iscroll, "stash_index", true, func(d): _backpack_take(int(d["stash_index"])))
+	_stash_make_drop_zone(igrid, "stash_index", true, func(d): _backpack_take(int(d["stash_index"])))
 	var footer := Label.new()
-	footer.text = "DOBLE CLIC o BOTÓN para transferir objetos entre tu inventario y el %s (%d/%d max)." % [("refugio" if is_shelter else "contenedor"), contents.size(), max_cap]
+	footer.text = "ARRASTRA un objeto de una columna a la otra (o DOBLE CLIC) para transferirlo entre tu inventario y el %s (%d/%d max)." % [("refugio" if is_shelter else "contenedor"), contents.size(), max_cap]
 	footer.add_theme_font_size_override("font_size", 12)
 	footer.add_theme_color_override("font_color", Color(0.58, 0.64, 0.56))
 	root_vbox.add_child(footer)
 	hud.add_child(_backpack_panel)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
-func _make_dayz_stash_card(item, fallback_dict, btn_label: String, btn_enabled: bool, on_activate: Callable) -> PanelContainer:
+func _make_dayz_stash_card(item, fallback_dict, drag_payload: Dictionary, on_activate: Callable, drop_key: String, on_drop: Callable) -> PanelContainer:
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(115, 134)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4986,11 +4995,38 @@ func _make_dayz_stash_card(item, fallback_dict, btn_label: String, btn_enabled: 
 	cstyle.set_border_width_all(1)
 	cstyle.set_content_margin_all(6)
 	card.add_theme_stylebox_override("panel", cstyle)
-	if btn_enabled:
-		card.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.double_click and ev.pressed:
-				on_activate.call()
-		)
+	card.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.double_click and ev.pressed:
+			on_activate.call()
+	)
+	var card_item = item
+	card.set_drag_forwarding(
+		func(_pos):
+			if drag_payload.is_empty():
+				return null
+			var preview := Label.new()
+			var pname := str(card_item.item_name) if card_item != null else str(fallback_dict.get("name", "objeto"))
+			var pqty := int(card_item.quantity) if card_item != null else int(fallback_dict.get("quantity", 1))
+			preview.text = "%s%s" % [pname, "  ×%d" % pqty if pqty > 1 else ""]
+			preview.add_theme_font_size_override("font_size", 12)
+			preview.add_theme_color_override("font_color", Color(0.92, 0.94, 0.85))
+			var ppanel := PanelContainer.new()
+			var pstyle := StyleBoxFlat.new()
+			pstyle.bg_color = Color(0.05, 0.07, 0.05, 0.92)
+			pstyle.border_color = Color(0.55, 0.66, 0.40)
+			pstyle.set_border_width_all(1)
+			pstyle.set_content_margin_all(6)
+			ppanel.add_theme_stylebox_override("panel", pstyle)
+			ppanel.add_child(preview)
+			card.set_drag_preview(ppanel)
+			return drag_payload,
+		func(_pos, data):
+			return not drop_key.is_empty() and data is Dictionary and data.has(drop_key),
+		func(_pos, data):
+			if drop_key.is_empty() or not (data is Dictionary) or not data.has(drop_key):
+				return
+			on_drop.call(data)
+	)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 3)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -5058,14 +5094,25 @@ func _make_dayz_stash_card(item, fallback_dict, btn_label: String, btn_enabled: 
 		fallback_lbl.text = "%s ×%d" % [fname, fqty]
 		fallback_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(fallback_lbl)
-	var btn := Button.new()
-	btn.text = btn_label
-	btn.disabled = not btn_enabled
-	btn.custom_minimum_size = Vector2(0, 24)
-	btn.add_theme_font_size_override("font_size", 11)
-	btn.pressed.connect(on_activate)
-	box.add_child(btn)
+	var hint := Label.new()
+	hint.text = "Arrastrar / doble clic"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 9)
+	hint.add_theme_color_override("font_color", Color(0.42, 0.48, 0.40))
+	box.add_child(hint)
 	return card
+
+func _stash_make_drop_zone(control: Control, accepts_key: String, enabled: bool, on_drop: Callable) -> void:
+	control.set_drag_forwarding(
+		func(_pos):
+			return null,
+		func(_pos, data):
+			return enabled and data is Dictionary and data.has(accepts_key),
+		func(_pos, data):
+			if not enabled or not (data is Dictionary) or not data.has(accepts_key):
+				return
+			on_drop.call(data)
+	)
 
 func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 	var thumb := ItemThumbnail3DScript.new()
@@ -9414,9 +9461,13 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
 	var drop_scale := _get_drop_scale(item_name, item_type)
+	var corpse_kind := WildlifeController.corpse_species(item_name)
+	var g_rot := Vector3(0, randf_range(0, 360), 0)
+	if not corpse_kind.is_empty():
+		g_rot.z = -90.0
 	var spawned := false
 	if not paths.is_empty():
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, Vector3(0, randf_range(0, 360), 0), true, 0.0)
+		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * drop_scale, g_rot, true, 0.0, WildlifeController.species_height(corpse_kind) if not corpse_kind.is_empty() else 0.0)
 		if spawned:
 			var snapped_ground_node := get_node_or_null(NodePath(visual_name))
 			if snapped_ground_node is Node3D:
@@ -9461,8 +9512,11 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	# tint/camo treatment manual drops get in _spawn_dropped_item_visual.
 	_apply_military_drop_material(item_name, ground_node)
 	_apply_fur_clothing_material(item_name, ground_node)
-	var actual_action_type := action_type_override if not action_type_override.is_empty() else ("plant_seeds" if item_name == "Semillas" else "pickup_item")
+	var actual_action_type := action_type_override if not action_type_override.is_empty() else ("gut_wolf" if not corpse_kind.is_empty() else ("plant_seeds" if item_name == "Semillas" else "pickup_item"))
 	var action = _create_world_action(id, actual_action_type, item_name, pos, Vector3(1.0, 0.72, 1.0), Color(0.42, 0.38, 0.28), false, false)
+	if not corpse_kind.is_empty():
+		action.set_meta("animal_type", corpse_kind)
+		action.set_meta("gutted", false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", item_name)
 	action.set_meta("item_type", item_type)
@@ -9872,8 +9926,8 @@ func _execute_world_action(action, actor) -> void:
 				item.set_meta("pelt_species", str(action.get_meta("item_pelt")))
 			if action.has_meta("item_spoilage"):
 				item.spoilage = float(action.get_meta("item_spoilage"))
-			# If clothing on ground and holding knife: cut into rags (not shoes)
-			if str(item.item_type) == "clothing" and item.item_name != "Zapatillas" and not str(item.item_name).begins_with("Botas") and not str(item.item_name).contains("Casco"):
+			# If clothing on ground and holding knife: cut into rags (not shoes, hats or helmets)
+			if str(item.item_type) == "clothing" and not CraftingSystem.is_rag_exempt(str(item.item_name)):
 				var _has_cut_tool := false
 				var _held = actor.get_held_item() if actor.has_method("get_held_item") else null
 				if _held != null and (str(_held.item_name) == "Cuchillo" or str(_held.item_name) == "Hacha"):
@@ -10690,8 +10744,24 @@ func _net_notify_pickup(action) -> void:
 func handle_world_action_collect(action, actor) -> void:
 	match action.action_type:
 		"gut_wolf":
+			var corpse_species := str(action.get_meta("animal_type", "wolf"))
+			var corpse_item_name := str(action.get_meta("item_name", ""))
+			if corpse_item_name.is_empty():
+				match corpse_species:
+					"deer": corpse_item_name = "Ciervo muerto"
+					"fox": corpse_item_name = "Zorro muerto"
+					"bear": corpse_item_name = "Oso muerto"
+					_: corpse_item_name = "Lobo muerto"
+			var resolved_sp := WildlifeController.corpse_species(corpse_item_name)
+			if not resolved_sp.is_empty():
+				corpse_species = resolved_sp
+			var animal_label := "lobo"
+			match corpse_species:
+				"deer": animal_label = "ciervo"
+				"fox": animal_label = "zorro"
+				"bear": animal_label = "oso"
 			if action.get_meta("gutted", false):
-				actor.notice.emit("El lobo ya esta vacio, no hay nada que coger.")
+				actor.notice.emit("El %s ya esta vacio, no hay nada que coger." % animal_label)
 				return
 			var has_backpack := false
 			if actor.get("equipped_backpack") != null and not str(actor.get("equipped_backpack")).is_empty():
@@ -10702,14 +10772,16 @@ func handle_world_action_collect(action, actor) -> void:
 						has_backpack = true
 						break
 			if not has_backpack:
-				actor.notice.emit("Necesitas una mochila para cargar el lobo entero.")
+				actor.notice.emit("Necesitas una mochila para cargar el %s entero." % animal_label)
 				return
-			var wolf_item = ItemScript.create("Lobo muerto", "material", 8.0, 1, 0.0)
+			var wolf_item = ItemScript.create(corpse_item_name, "material", 8.0, 1, 0.0)
+			if actor.get("equipped_backpack") != null and not str(actor.get("equipped_backpack")).is_empty():
+				wolf_item.cargo_location = "backpack"
 			_play_actor_action(actor, "pickup", 0.8)
 			if not actor.inventory.add_item(wolf_item):
-				actor.notice.emit("No puedes cargar con el lobo, demasiado peso.")
+				actor.notice.emit("No puedes cargar con el %s, demasiado peso." % animal_label)
 				return
-			actor.notice.emit("Coges el lobo entero.")
+			actor.notice.emit("Coges el %s entero." % animal_label)
 			_hide_action_visual(action)
 			action.mark_depleted()
 			_save_world_change_silent()

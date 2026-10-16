@@ -56,6 +56,11 @@ const RECIPES := [
 		"label": "Ensartar carne de ave en palo"
 	},
 	{
+		"inputs": { "Palo afilado": 1, "Carne cruda de oso": 1 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 22.0 },
+		"label": "Ensartar carne de oso en palo"
+	},
+	{
 		"inputs": { "Palo afilado": 1, "Pez crudo": 1 },
 		"output": { "name": "Pez ensartado", "type": "food", "weight": 0.45, "use_value": 18.0 },
 		"label": "Ensartar pez en palo"
@@ -181,6 +186,12 @@ const RECIPES := [
 		"label": "Abrir lata de comida con cuchillo"
 	},
 ]
+
+# Footwear, hats and helmets are never cut into rags — the recipe list has no
+# entries for them, and this guard keeps menus/prompts consistent everywhere.
+static func is_rag_exempt(item_name: String) -> bool:
+	var n := str(item_name)
+	return n == "Zapatillas" or n.begins_with("Botas") or n.contains("Casco") or n.contains("Sombrero") or n.begins_with("Gorro") or n.begins_with("Tocado")
 
 # Returns all recipes that can be crafted with the given inventory items
 static func get_available_recipes(inventory_items: Array) -> Array:

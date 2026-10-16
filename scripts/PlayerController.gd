@@ -423,8 +423,8 @@ const FEET_WOUND_RUN_RATE := 5.5     # gravedad por segundo corriendo descalzo
 const FEET_DPS_WALK := 0.14          # hp/s con heridas, caminando descalzo
 const FEET_DPS_RUN := 0.9            # hp/s con heridas, corriendo descalzo
 const FEET_COLD_AMBIENT := 14.0      # bajo esta temperatura ambiente los pies descalzos enfrian
-const HEAD_CARRY_SLOTS := 1
-const HEAD_CARRY_WEIGHT := 0.5
+const HEAD_CARRY_SLOTS := 0
+const HEAD_CARRY_WEIGHT := 0.0
 const SMALL_BACKPACK_SLOTS := 8
 const SMALL_BACKPACK_WEIGHT := 10.0
 # Plate carriers add magazine/utility pouches on top of the clothes below.
@@ -3178,10 +3178,9 @@ func _compute_carry_capacity(with_backpack := true) -> Dictionary:
 					slots += 2
 					weight += 2.0
 			"head":
-				# A rigid helmet is not a container.
-				if equipped_item_name != "Casco militar":
-					slots += HEAD_CARRY_SLOTS
-					weight += HEAD_CARRY_WEIGHT
+				# Sombreros, gorros y cascos no son contenedores.
+				slots += HEAD_CARRY_SLOTS
+				weight += HEAD_CARRY_WEIGHT
 			"chaleco":
 				slots += VEST_CARRY_SLOTS
 				weight += VEST_CARRY_WEIGHT
@@ -6309,8 +6308,11 @@ func drop_inventory_item(index: int) -> void:
 		if not packed.is_empty():
 			set_meta("pending_backpack_contents", packed)
 	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
-	if held_index >= inventory.items.size():
-		held_index = max(0, inventory.items.size() - 1)
+	if _held_item_reference != null and inventory.items.has(_held_item_reference):
+		held_index = inventory.items.find(_held_item_reference)
+	else:
+		_held_item_reference = null
+		held_index = -1
 	_sync_held_item()
 	notice.emit("Sueltas %s." % item_name)
 

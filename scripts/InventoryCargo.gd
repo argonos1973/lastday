@@ -5,13 +5,10 @@ extends RefCounted
 static func compartments(player) -> Array:
 	var result: Array = [{"id": "pockets", "name": "BOLSILLOS", "capacity": player.BASE_CARRY_SLOTS}]
 	var bonuses := {"torso": player.TORSO_CARRY_SLOTS, "legs": player.LEGS_CARRY_SLOTS,
-		"head": player.HEAD_CARRY_SLOTS, "chaleco": player.VEST_CARRY_SLOTS}
+		"chaleco": player.VEST_CARRY_SLOTS}
 	for slot in bonuses:
 		var garment: String = str(player._equipped_slots.get(slot, ""))
 		if garment.is_empty():
-			continue
-		# A rigid helmet is not a container — no items can go inside it.
-		if slot == "head" and garment == "Casco militar":
 			continue
 		var capacity: int = bonuses[slot]
 		if "militar" in garment or "camuflaje" in garment:

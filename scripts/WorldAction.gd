@@ -251,7 +251,7 @@ func get_interaction_text(_player = null) -> String:
 				var count_tag := " (%d)" % n_contents if n_contents > 0 else ""
 				return "%s%s%s%s - [C] Coger | [K] Abrir" % [display_name, spoil_tag, wet_tag, count_tag]
 			if _is_clothing():
-				if _player_has_knife(_player) and not _is_footwear():
+				if _player_has_knife(_player) and not _is_rag_exempt():
 					return "%s%s%s - [F] Cortar para trapos | [C] Coger" % [display_name, spoil_tag, wet_tag]
 				return "%s%s%s - [F] Equipar | [C] Coger" % [display_name, spoil_tag, wet_tag]
 			return "%s%s%s - [C] Coger" % [display_name, spoil_tag, wet_tag]
@@ -540,8 +540,7 @@ func _player_has_knife(player) -> bool:
 			return true
 	return false
 
-func _is_footwear() -> bool:
+func _is_rag_exempt() -> bool:
 	if not has_meta("item_name"):
 		return false
-	var n := str(get_meta("item_name"))
-	return n == "Zapatillas" or n.begins_with("Botas")
+	return CraftingSystem.is_rag_exempt(str(get_meta("item_name")))
