@@ -837,6 +837,9 @@ func take_damage(amount: float, from_knife: bool = false) -> void:
 	current_anim_keyword = "fall"
 	_is_perched = false
 	_remove_fish_from_talons()
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_note_wildlife_death"):
+		scene._note_wildlife_death("bird", global_position)
 	if _animation_player != null:
 		_animation_player.stop()
 

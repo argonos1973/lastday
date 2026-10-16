@@ -185,6 +185,38 @@ var _blocker_grid := {}
 const _BLOCKER_CELL := 24.0
 const _BLOCKER_COVER := 40.0
 var _wildlife_respawn_timer := 0.0
+const WILDLIFE_RESPAWN_DELAY := 60.0   # s mínimos desde la última muerte de la especie
+const BEAR_RESPAWN_DELAY := 120.0      # osos tardan el doble en ser repuestos
+const WILDLIFE_RESPAWN_AVOID_RADIUS := 200.0 # el reemplazo nunca nace en la zona de la muerte
+const BEAR_RESPAWN_AVOID_RADIUS := 150.0     # osos: excluye el territorio donde murió
+var _wildlife_death_time: Dictionary = {} # species -> unix time de su última muerte
+var _wildlife_death_sites: Dictionary = {}  # species -> Array[Vector3] FIFO de zonas de muerte
+
+# Los animales (WildlifeController/BirdController) avisan aquí al morir: el
+# respawn de su especie queda bloqueado hasta pasado el cooldown, en vez de
+# reponerse en el siguiente tick de 30 s.
+func _note_wildlife_death(species: String, pos: Vector3 = Vector3.ZERO) -> void:
+	_wildlife_death_time[species] = Time.get_unix_time_from_system()
+	if not _wildlife_death_sites.has(species):
+		_wildlife_death_sites[species] = []
+	_wildlife_death_sites[species].append(pos)
+
+# Cada reposición "cubre" la muerte más antigua pendiente: su zona queda libre.
+func _wildlife_mark_replaced(species: String) -> void:
+	var sites: Array = _wildlife_death_sites.get(species, [])
+	if not sites.is_empty():
+		sites.pop_front()
+
+func _far_from_death_sites(species: String, pos: Vector3) -> bool:
+	var radius := BEAR_RESPAWN_AVOID_RADIUS if species == "bear" else WILDLIFE_RESPAWN_AVOID_RADIUS
+	for s in _wildlife_death_sites.get(species, []):
+		if pos.distance_to(s) < radius:
+			return false
+	return true
+
+func _wildlife_respawn_ready(species: String) -> bool:
+	var delay := BEAR_RESPAWN_DELAY if species == "bear" else WILDLIFE_RESPAWN_DELAY
+	return Time.get_unix_time_from_system() - float(_wildlife_death_time.get(species, -1e9)) >= delay
 var _server_save_timer := 0.0
 var _perf_probe := 0.0
 # Dedicated-server graceful shutdown: stdin console commands, stop-file poll
@@ -8110,38 +8142,49 @@ func _check_wildlife_respawn() -> void:
 	var total_wolf := alive_wolf
 	var total_deer := alive_deer
 	var total_fox := alive_fox
-	if total_wolf < 22:
+	if total_wolf < 22 and _wildlife_respawn_ready("wolf"):
 		var center := _wildlife_spawn_pos()
-		for _retry in range(30):
-			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
+		for _retry in range(40):
+			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0) and _far_from_death_sites("wolf", center):
 				break
 			center = _wildlife_spawn_pos()
 		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
 		_create_wildlife_animal("wolf", route)
-	if total_deer < 14:
+		_wildlife_mark_replaced("wolf")
+	if total_deer < 14 and _wildlife_respawn_ready("deer"):
 		var deer_route: Array
 		if randf() < 0.3:
 			var d_start := _wildlife_spawn_pos()
-			for _r in range(30):
-				if is_deer_allowed_at(d_start):
+			for _r in range(40):
+				if is_deer_allowed_at(d_start) and _far_from_death_sites("deer", d_start):
 					break
 				d_start = _wildlife_spawn_pos()
 			deer_route = WildlifeRoutes.build_roaming_route(_world_rng, d_start, 22, 70.0, 140.0, is_deer_allowed_at, true)
 		else:
-			deer_route = WildlifeRoutes.build_circular_route(_world_rng, randf_range(175.0, 450.0), randf() * TAU, 20, 18.0, is_deer_allowed_at)
+			var dc_radius := randf_range(175.0, 450.0)
+			var dc_angle := randf() * TAU
+			for _r in range(24):
+				var dc := Vector3(cos(dc_angle) * dc_radius, 0.0, sin(dc_angle) * dc_radius)
+				if _far_from_death_sites("deer", dc):
+					break
+				dc_radius = randf_range(175.0, 450.0)
+				dc_angle = randf() * TAU
+			deer_route = WildlifeRoutes.build_circular_route(_world_rng, dc_radius, dc_angle, 20, 18.0, is_deer_allowed_at)
 		_create_deer_pair(deer_route)
-	if total_fox < 10:
+		_wildlife_mark_replaced("deer")
+	if total_fox < 10 and _wildlife_respawn_ready("fox"):
 		var fox_zone := _wildlife_spawn_pos()
-		for _retry in range(30):
-			if is_wildlife_allowed_at(fox_zone):
+		for _retry in range(40):
+			if is_wildlife_allowed_at(fox_zone) and _far_from_death_sites("fox", fox_zone):
 				break
 			fox_zone = _wildlife_spawn_pos()
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_zone, 24, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("fox", fox_route)
-	if alive_bear < _bear_territory_anchors().size():
-		var anchors_count := _bear_territory_anchors().size()
+		_wildlife_mark_replaced("fox")
+	var bear_anchors := _bear_territory_anchors()
+	if alive_bear < bear_anchors.size() and _wildlife_respawn_ready("bear"):
 		var territory_counts: Array = []
-		territory_counts.resize(anchors_count)
+		territory_counts.resize(bear_anchors.size())
 		territory_counts.fill(0)
 		for node in get_tree().get_nodes_in_group("wildlife"):
 			if not node is WildlifeController or node._is_dead or node.animal_type != "bear":
@@ -8151,17 +8194,30 @@ func _check_wildlife_respawn() -> void:
 				territory_id = _nearest_bear_territory(node.global_position)
 				node.set_meta("bear_territory_id", territory_id)
 			territory_counts[territory_id] += 1
-		var next_territory := 0
-		for i in range(1, territory_counts.size()):
-			if territory_counts[i] < territory_counts[next_territory]:
+		# El reemplazo nunca nace en el territorio donde murió el oso: se elige
+		# el territorio menos poblado cuyo anchor esté lejos de las muertes
+		# pendientes. Si todas están bloqueadas se usa el menos poblado igual.
+		var next_territory := -1
+		var fallback_territory := 0
+		for i in range(territory_counts.size()):
+			if territory_counts[i] < territory_counts[fallback_territory]:
+				fallback_territory = i
+			if _far_from_death_sites("bear", bear_anchors[i]) and (next_territory < 0 or territory_counts[i] < territory_counts[next_territory]):
 				next_territory = i
+		if next_territory < 0:
+			next_territory = fallback_territory
 		var bear_center := _bear_spawn_center(next_territory)
 		var bear_route := WildlifeRoutes.build_territory_route(_world_rng, bear_center, 24, 22.0, 58.0, 76.0, is_wolf_allowed_at)
 		_create_bear(next_territory, bear_route)
+		_wildlife_mark_replaced("bear")
 	# Respawn birds if population drops below threshold
-	if alive_bird < 3:
+	if alive_bird < 3 and _wildlife_respawn_ready("bird"):
 		var bird_always_allowed := func(_pos: Vector3) -> bool: return true
 		var bird_start := Vector3(randf_range(-350, 350), 0.0, randf_range(-350.0, 850.0))
+		for _r in range(24):
+			if _far_from_death_sites("bird", bird_start):
+				break
+			bird_start = Vector3(randf_range(-350, 350), 0.0, randf_range(-350.0, 850.0))
 		var bird_route := WildlifeRoutes.build_roaming_route(_world_rng, bird_start, 30, 100.0, 200.0, bird_always_allowed)
 		var far := Vector3(randf_range(-440.0, 440.0), 0.0, randf_range(-440.0, 880.0))
 		bird_route.push_front(far)
@@ -8173,6 +8229,7 @@ func _check_wildlife_respawn() -> void:
 			for point in bird_route:
 				shifted.append((point as Vector3) + offset)
 			_create_bird(shifted, _bird_flock_counter)
+		_wildlife_mark_replaced("bird")
 
 func _wildlife_spawn_pos() -> Vector3:
 	# ~35% of respawn anchors land in the southern extension (open pass + city
@@ -8555,6 +8612,14 @@ func _create_house_loot() -> void:
 	# City block houses: same pool, spread over both floors of each building.
 	# Iterates the district registry so every listed building gets loot while
 	# the first entries keep their ids/rng consumption (persistent saves).
+	# Hachas garantizadas en algunas viviendas repartidas por el distrito, en
+	# la planta baja para que se vean nada mas entrar.
+	var city_axe_houses := ["city_02", "city_09", "city_15"]
+	var axe_template_idx := -1
+	for _ti in range(house_loot_pool.size()):
+		if str(house_loot_pool[_ti].get("name", "")) == "Hacha":
+			axe_template_idx = _ti
+			break
 	var city_center := CityExpansion.CENTER
 	for definition in CityExpansion.BLOCK.BUILDINGS:
 		var b_pos: Vector3 = city_center + definition["position"]
@@ -8562,12 +8627,19 @@ func _create_house_loot() -> void:
 		var city_items := 3 + _world_rng.randi() % 3
 		var loot_floors: Array = definition.get("loot_floor_values", [])
 		var item_count := maxi(city_items, loot_floors.size())
+		var guarantee_axe := axe_template_idx >= 0 and city_axe_houses.has(str(definition.get("id", "")))
 		for _j in range(item_count):
-			var template: Dictionary = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
-			if template.get("rare", false) and _world_rng.randf() > 0.50:
+			var template: Dictionary
+			if _j == 0 and guarantee_axe:
+				template = house_loot_pool[axe_template_idx]
+			else:
 				template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
+				if template.get("rare", false) and _world_rng.randf() > 0.50:
+					template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var floor_y: float
-			if loot_floors.size() > 2:
+			if _j == 0 and guarantee_axe:
+				floor_y = 0.06
+			elif loot_floors.size() > 2:
 				var level := _j if _j < loot_floors.size() else _world_rng.randi() % loot_floors.size()
 				floor_y = float(loot_floors[level])
 			else:
@@ -8893,10 +8965,11 @@ func _create_house_loot() -> void:
 		Vector3(-3.0, 29.46, 3.0),  # Galería soleada suroeste
 		Vector3(-2.2, 29.46, -1.5), # Centro-norte de la azotea
 		Vector3(0.5, 29.46, -2.0),  # Centro-este de la azotea
+		Vector3(1.6, 29.46, 0.8),   # Centro-este, visible al subir (rifle)
 	]
 	for ctf in range(ct_floors.size()):
 		var fy: float = ct_floors[ctf]
-		var count_on_floor := 5 if ctf == ct_floors.size() - 1 else 3
+		var count_on_floor := 6 if ctf == ct_floors.size() - 1 else 3
 		for k in range(count_on_floor):
 			var tmpl: Dictionary
 			if ctf == ct_floors.size() - 1:
@@ -8908,8 +8981,10 @@ func _create_house_loot() -> void:
 					tmpl = tent_loot_pool[19].duplicate() # Mochila militar en la cima
 				elif k == 3:
 					tmpl = tent_loot_pool[13].duplicate() # Botas militares en la cima
-				else:
+				elif k == 4:
 					tmpl = tent_loot_pool[15].duplicate() # Lata de guiso en la cima
+				else:
+					tmpl = rifle_template.duplicate()    # Rifle francotirador en la cima
 				tmpl["pos"] = ct_origin + roof_fixed_spots[k]
 			elif ctf == 0:
 				tmpl = house_loot_pool[tower_rng.randi() % house_loot_pool.size()].duplicate()

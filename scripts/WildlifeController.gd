@@ -213,6 +213,9 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				_animation_player.stop()
 			_release_owner_record()
 			_lie_corpse_flat()
+			var scene := get_tree().current_scene
+			if scene != null and scene.has_method("_note_wildlife_death"):
+				scene._note_wildlife_death(animal_type, global_position)
 		return
 	# Puppet: apply damage locally for immediate visual feedback
 	if _is_dead:
@@ -496,6 +499,9 @@ func _process_body(delta: float) -> void:
 					_animation_player.stop()
 				_release_owner_record()
 				_lie_corpse_flat()
+				var scene := get_tree().current_scene
+				if scene != null and scene.has_method("_note_wildlife_death"):
+					scene._note_wildlife_death(animal_type, global_position)
 		if _wolf_eating_timer > 0.0:
 			_wolf_eating_timer -= delta
 			var satiation_cap := 60.0 if animal_type == "wolf" else 85.0
