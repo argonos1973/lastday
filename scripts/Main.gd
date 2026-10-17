@@ -1078,6 +1078,11 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	_process_pending_puppets()
+	# La protección de aparición expira en tiempo real — espejo del tick que
+	# _update_server_proxies aplica a los proxies, pero para el jugador local.
+	var _spawn_prot: float = player.get_meta("protection_timer", 0.0)
+	if _spawn_prot > 0.0:
+		player.set_meta("protection_timer", maxf(0.0, _spawn_prot - delta))
 	# Keep the star/moon dome centered on the player and refresh the real
 	# star positions periodically so the sky slowly rotates like the real one.
 	if day_cycle != null and player != null:
@@ -2116,6 +2121,10 @@ func _create_player() -> void:
 	player.name = "Player"
 	player.position = _get_random_spawn_pos()
 	add_child(player)
+	# La misma gracia de 30 s que tienen los proxies de red: una partida
+	# cargada puede soltar al personaje dentro del territorio de un lobo
+	# y sin protección moría durante la propia entrada al mundo.
+	player.set_meta("protection_timer", 30.0)
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
 	# Apply pending spawn position if received before player was ready
