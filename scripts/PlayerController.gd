@@ -1409,6 +1409,8 @@ func _process(delta: float) -> void:
 		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
+		if not is_dead:
+			_update_rifle_visuals(delta)
 		if is_dead:
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
@@ -1539,22 +1541,7 @@ func _process(delta: float) -> void:
 		if main != null and main.hud != null:
 			_update_crosshair(_has_rifle_equipped())
 	_update_crosshair_spread(delta)
-	# Update rifle: two-point alignment
-	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset) and _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
-		var skel := _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
-		if skel != null:
-			_update_rifle_ik(skel, delta)
-	# The strap rebuilds a procedural ribbon mesh. Thirty updates per second
-	# are visually indistinguishable from a per-frame rebuild and avoid doing
-	# mesh commits when no rifle is mounted on the back.
-	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
-		_rifle_strap_update_accum += delta
-		if _rifle_strap_system == null or _rifle_strap_update_accum >= (1.0 / 30.0):
-			var strap_delta := _rifle_strap_update_accum
-			_rifle_strap_update_accum = 0.0
-			_update_rifle_strap(strap_delta)
-	else:
-		_rifle_strap_update_accum = 0.0
+	_update_rifle_visuals(delta)
 	# Camera overrides for debug views only
 	if camera != null and (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera or _aerial_camera):
 		var char_forward := -global_basis.z.normalized()
@@ -8128,6 +8115,23 @@ func _build_third_person_rifle() -> void:
 
 
 #region RIFLE: IK Y POSICIONAMIENTO (PlayerRifle)
+func _update_rifle_visuals(delta: float) -> void:
+	# Both local players and puppets need the solve that also registers the
+	# post-animation skeleton callback; the initial attachment is only a seed.
+	if is_instance_valid(_rifle_weapon_offset) and is_instance_valid(_rifle_bone_attachment):
+		var skel := _spine_skeleton if is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
+		if skel != null:
+			_update_rifle_ik(skel, delta)
+	# Keep the procedural sling at 30 Hz for either carry mode.
+	if is_instance_valid(_rifle_on_back_strap):
+		_rifle_strap_update_accum += delta
+		if _rifle_strap_system == null or _rifle_strap_update_accum >= (1.0 / 30.0):
+			var strap_delta := _rifle_strap_update_accum
+			_rifle_strap_update_accum = 0.0
+			_update_rifle_strap(strap_delta)
+	else:
+		_rifle_strap_update_accum = 0.0
+
 func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# Rifle placed by the animation hands and right shoulder; IK disabled.
 	if _rifle_root == null or not is_instance_valid(_rifle_root):

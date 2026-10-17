@@ -3,6 +3,7 @@ extends SceneTree
 class Actor extends "res://scripts/PlayerController.gd":
 	func _ready(): pass
 	func _process(_delta): pass
+	func process_remote(delta: float): super._process(delta)
 	func _physics_process(_delta): pass
 	func _create_scope_overlay(): pass
 	func _has_rifle_equipped() -> bool: return true
@@ -19,6 +20,32 @@ func run():
 	actor.inventory = preload("res://scripts/Inventory.gd").new()
 	actor.add_child(actor.inventory)
 	actor.setup_as_puppet()
+	# Exercise the real remote update before any direct IK calls. Otherwise a
+	# test can register the skeleton callback that gameplay forgot to install.
+	actor.puppet_apply_visuals("", "Rifle francotirador", "")
+	var remote_skel: Skeleton3D = actor._find_skeleton(actor.third_person_model)
+	for aiming in [false, true, false]:
+		actor.puppet_set_aiming(aiming)
+		var clip: String = actor._rifle_aim_idle_animation if aiming else actor._rifle_idle_animation
+		for frame in 12:
+			actor.puppet_apply(Vector3(15, 0, 20), frame * 0.15, clip)
+			actor.third_person_animation_player.advance(1.0 / 30.0)
+			actor.process_remote(1.0 / 30.0)
+			remote_skel.force_update_all_bone_transforms()
+			check(actor._ik_skeleton_connected, "Remote process installs post-animation rifle alignment")
+			check(actor._rifle_aim_pose_active == aiming, "Remote process follows synced aim state")
+			if not aiming:
+				var palm := (remote_skel.global_transform * remote_skel.get_bone_global_pose(remote_skel.find_bone("mixamorig_RightHand"))).origin
+				check(absf(actor._rifle_right_grip.global_position.distance_to(palm) - 0.40) < 0.02, "Remote idle rifle follows the hand at world position/yaw")
+			check(actor._rifle_strap_system != null, "Remote process updates the worn sling")
+	actor.puppet_apply_visuals("", "Cuchillo", "")
+	actor.process_remote(1.0 / 30.0)
+	check(not is_instance_valid(actor._rifle_weapon_offset), "Remote item swap clears held rifle")
+	actor.puppet_apply_visuals("", "Rifle francotirador", "")
+	actor.process_remote(1.0 / 30.0)
+	check(actor._ik_skeleton_connected, "Remote re-equip restores rifle alignment")
+	actor.position = Vector3.ZERO
+	actor.rotation = Vector3.ZERO
 	actor._update_puppet_held_item("Rifle francotirador")
 	actor._is_aiming = true
 	var skel: Skeleton3D = actor._find_skeleton(actor.third_person_model)
