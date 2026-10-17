@@ -11,7 +11,10 @@ global flagPath
 
 on run
 	set coreApp to (POSIX path of (path to me)) & "Contents/Resources/LastDayServerCore.app/"
-	set coreBin to coreApp & "Contents/MacOS/Un dia mas"
+	-- The export binary name follows the app name ("Un dia mas" -> "Last Day"
+	-- after the rename): pick whatever executable the export produced instead
+	-- of hardcoding it, so a future rename can't silently break the launcher.
+	set coreBin to do shell script "find " & quoted form of (coreApp & "Contents/MacOS") & " -type f -perm +111 | head -1"
 	set supportDir to (POSIX path of (path to application support from user domain)) & "Godot/app_userdata/Un dia mas"
 	set flagPath to supportDir & "/stop_server.flag"
 	set logPath to supportDir & "/server_stdout.log"
