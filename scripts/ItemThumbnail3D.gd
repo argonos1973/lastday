@@ -34,7 +34,7 @@ func _ready() -> void:
 	_model_root = Node3D.new()
 	_viewport.add_child(_model_root)
 
-func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0), pelt_species: String = "") -> void:
+func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0), pelt_species: String = "", proc_kind: String = "") -> void:
 	for child in _model_root.get_children():
 		child.queue_free()
 	if _model_root == null:
@@ -63,6 +63,10 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 			_model_root.add_child(inst)
 			inst.rotation_degrees = Vector3(52.0, -18.0, 0.0)
 			_frame_camera(inst, 0.85)
+		elif proc_kind == "rag":
+			var rag := MaterialFactory.build_rag_mesh()
+			_model_root.add_child(rag)
+			_frame_camera(rag, 0.85)
 		return
 	_model_root.add_child(inst)
 	if is_log_model:

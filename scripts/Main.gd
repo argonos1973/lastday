@@ -5102,7 +5102,7 @@ func _make_dayz_stash_card(item, fallback_dict, drag_payload: Dictionary, on_act
 			var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 			if not only_mesh.is_empty():
 				colors.tint = Color(0.05, 0.05, 0.05)
-			thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
+			thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
 			thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 		, CONNECT_ONE_SHOT)
 		img_holder.add_child(thumb)
@@ -5182,7 +5182,7 @@ func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
+		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
 		thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	, CONNECT_ONE_SHOT)
 	row.add_child(thumb)
@@ -5491,6 +5491,12 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_dropped_items.append({"id": torch_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": [pos.x, pos.y, pos.z], "durability": torch_durability, "lit": torch_lit})
 		_save_world_change_silent()
 		return
+	# Un objeto sin modelo real sólo renderizaría la caja genérica — se limpia
+	# al soltarlo en vez de dejar basura visual en el mundo.
+	if _drop_paths_are_box_only(_get_drop_model_paths(item_name, item_type, drop_pelt)):
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("%s se ha perdido: no tiene forma física." % item_name)
+		return
 	var drop_id := "drop_%d_%d" % [Time.get_ticks_msec(), randi() % 1000]
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, broken, spoilage, pending_contents, drop_wetness, drop_camo, drop_pelt)
 	_tag_meat_drop(drop_id, item_name, "local")
@@ -5560,6 +5566,10 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		pos = _settle_drop_pos(pos)
 	var visual_name := "Pickup_" + drop_id
 	var paths: Array = _get_drop_model_paths(item_name, item_type, pelt)
+	# Items without a real model used to land as the generic kit box — those
+	# are cleaned instead of leaving placeholder crates on the ground.
+	if _drop_paths_are_box_only(paths):
+		return
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
@@ -5594,7 +5604,11 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
 		elif item_name == "Trapos":
-			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), rot)
+			var rag := MaterialFactory.build_rag_mesh()
+			rag.name = visual_name
+			rag.position = pos + Vector3(0, 0.02, 0)
+			rag.rotation_degrees.y = randf_range(0, 360)
+			add_child(rag)
 		elif item_name == "Naranja":
 			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
 		elif item_name == "Pez crudo":
@@ -5688,6 +5702,10 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 		# quit inside the sync window can't resurrect it on reconnect. Applies
 		# to water drops too: the item is lost below the surface either way.
 		_saved_inventory_remove(sender_id, item_name, item_type, clampi(item_quantity, 1, 999))
+	# Items that can only render as the generic box are cleaned on drop — the
+	# inventory removal above still applies so they can't reconnect-dupe.
+	if _drop_paths_are_box_only(_get_drop_model_paths(item_name, item_type, pelt)):
+		return true
 	if _is_water_drop_position(pos):
 		_play_water_drop_effect(pos)
 		return true
@@ -5739,6 +5757,18 @@ func _tag_meat_drop(drop_id: String, item_name: String, feeder_key: String) -> v
 
 func _is_meat_item_name(n: String) -> bool:
 	return n.begins_with("Carne") or n.begins_with("Pez")
+
+const DROP_BOX_MODELS := ["box.glb", "box-large.glb", "box-open.glb", "box-large-open.glb"]
+
+func _drop_paths_are_box_only(paths: Array) -> bool:
+	# True cuando el objeto solo resolvería la caja genérica del kit: esos
+	# drops se limpian en vez de dejar cajas falsas en el suelo.
+	if paths.is_empty():
+		return false
+	for p in paths:
+		if not DROP_BOX_MODELS.has(str(p).get_file()):
+			return false
+	return true
 
 func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = "") -> Array:
 	if MilitaryJackets.VARIANTS.has(item_name):
@@ -5838,7 +5868,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			if item_name == "Palo":
 				return ["res://assets/models/props/wood_stick.glb"]
 			if item_name == "Trapos":
-				return [K_SURVIVAL + "bedroll.glb", K_SURVIVAL + "box.glb"]
+				return []
 			return [K_SURVIVAL + "box.glb"]
 		"campfire":
 			return [K_SURVIVAL + "campfire-pit.glb"]
@@ -9557,6 +9587,9 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 		pos = _settle_drop_pos(pos) + Vector3(0.0, 0.02, 0.0)
 	var visual_name := "Pickup_" + id
 	var paths: Array = _get_drop_model_paths(item_name, item_type)
+	# Box-only items get cleaned instead of landing as placeholder crates.
+	if _drop_paths_are_box_only(paths):
+		return
 	var drop_scale := _get_drop_scale(item_name, item_type)
 	var corpse_kind := WildlifeController.corpse_species(item_name)
 	var g_rot := Vector3(0, randf_range(0, 360), 0)
@@ -9573,7 +9606,11 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
 		elif item_name == "Trapos":
-			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.03, 0), 0.25, 0.06, Color(0.9, 0.85, 0.7), Vector3(0, randf_range(0, 360), 0))
+			var rag := MaterialFactory.build_rag_mesh()
+			rag.name = visual_name
+			rag.position = pos + Vector3(0, 0.02, 0)
+			rag.rotation_degrees.y = randf_range(0, 360)
+			add_child(rag)
 		else:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
 	_mark_world_action_visual(visual_name)

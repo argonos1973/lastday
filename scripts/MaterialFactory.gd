@@ -517,6 +517,55 @@ static func build_pelt_hide_mesh(pelt_species: String) -> MeshInstance3D:
 		mi.material_override = fallback
 	return mi
 
+static func build_rag_mesh() -> MeshInstance3D:
+	# Crumpled pile of cut rags: several folded cloth strips with ragged
+	# edges, stacked at odd yaws. The survival kit has no cloth model and the
+	# old flat cylinder read wrong on the ground and in thumbnails.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7311
+	var light := Color(0.80, 0.72, 0.55)
+	var dark := Color(0.42, 0.36, 0.27)
+	var strips := [
+		{"yaw": 0.15, "y": 0.004, "hw": 0.150, "hd": 0.085, "h": 0.038},
+		{"yaw": 1.85, "y": 0.016, "hw": 0.135, "hd": 0.075, "h": 0.030},
+		{"yaw": 3.60, "y": 0.028, "hw": 0.120, "hd": 0.070, "h": 0.026},
+		{"yaw": 4.90, "y": 0.012, "hw": 0.110, "hd": 0.060, "h": 0.022},
+	]
+	for spec in strips:
+		var col := light.lerp(dark, rng.randf() * 0.55)
+		var fold_col := col.lightened(0.12)
+		var hw: float = spec["hw"]
+		var hd: float = spec["hd"]
+		var h: float = spec["h"]
+		var y0: float = spec["y"]
+		var p := [
+			Vector3(-hw + rng.randf_range(-0.02, 0.02), y0, -hd + rng.randf_range(-0.015, 0.015)),
+			Vector3( hw + rng.randf_range(-0.02, 0.02), y0, -hd + rng.randf_range(-0.015, 0.015)),
+			Vector3( hw * 0.92, y0 + h, rng.randf_range(-0.02, 0.02)),
+			Vector3(-hw * 0.92, y0 + h, rng.randf_range(-0.02, 0.02)),
+			Vector3( hw + rng.randf_range(-0.02, 0.02), y0,  hd + rng.randf_range(-0.015, 0.015)),
+			Vector3(-hw + rng.randf_range(-0.02, 0.02), y0,  hd + rng.randf_range(-0.015, 0.015)),
+		]
+		var rot := Transform3D(Basis(Vector3.UP, spec["yaw"]), Vector3(rng.randf_range(-0.03, 0.03), 0.0, rng.randf_range(-0.03, 0.03)))
+		for i in range(p.size()):
+			p[i] = rot * p[i]
+		for t in [[0, 1, 2], [0, 2, 3], [3, 2, 4], [3, 4, 5]]:
+			for vi in t:
+				st.set_color(fold_col if vi == 2 or vi == 3 else col)
+				st.add_vertex(p[vi])
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.name = "RagPileMesh"
+	mi.mesh = st.commit()
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.95
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = mat
+	return mi
+
 static func make_log_bark_material() -> StandardMaterial3D:
 	if _mat_cache.has("realistic_log_bark"):
 		return _mat_cache["realistic_log_bark"]

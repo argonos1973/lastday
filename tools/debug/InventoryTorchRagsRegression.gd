@@ -135,6 +135,35 @@ func _init() -> void:
 	thumb.free()
 	hud.free()
 
+	# --- Rag pile mesh + box-drop cleanup -------------------------------------
+	var rag_inst := MaterialFactory.build_rag_mesh()
+	check(rag_inst.mesh != null and rag_inst.mesh.get_surface_count() >= 1, "rag pile mesh builds with surfaces")
+	check(rag_inst.material_override != null, "rag pile carries its own material")
+	rag_inst.free()
+
+	var rag_thumb := ItemThumbnailScript.new()
+	root.add_child(rag_thumb)
+	await process_frame
+	rag_thumb.set_model([], 1.0, Vector3.ZERO, 1.0, "", Color(0, 0, 0, 0), Color(0, 0, 0, 0), "", "rag")
+	var rag_found := false
+	for c in rag_thumb._model_root.get_children():
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh != null:
+			rag_found = true
+	check(rag_found, "Trapos thumbnail renders the procedural rag pile")
+	rag_thumb.free()
+
+	var mn = load("res://scripts/Main.gd").new()
+	check(mn._get_drop_model_paths("Trapos", "resource").is_empty(), "Trapos uses procedural rag (resource)")
+	check(mn._get_drop_model_paths("Trapos", "material").is_empty(), "Trapos uses procedural rag (material)")
+	check(mn._drop_paths_are_box_only(mn._get_drop_model_paths("Vendaje", "medical")), "Vendaje resolves box-only -> cleaned on drop")
+	check(mn._drop_paths_are_box_only(mn._get_drop_model_paths("Bateria", "battery")), "Bateria resolves box-only -> cleaned on drop")
+	check(mn._drop_paths_are_box_only(mn._get_drop_model_paths("Invento raro", "misc")), "unknown misc resolves box-only -> cleaned on drop")
+	check(not mn._drop_paths_are_box_only(mn._get_drop_model_paths("Hacha", "tool_axe")), "Hacha keeps a real model")
+	check(not mn._drop_paths_are_box_only(mn._get_drop_model_paths("Botella de plastico", "misc")), "Botella keeps a real model")
+	check(not mn._drop_paths_are_box_only(mn._get_drop_model_paths("Trapos", "resource")), "Trapos is procedural, not a box")
+	check(not mn._drop_paths_are_box_only(mn._get_drop_model_paths("Piel de Lobo", "resource")), "pelt is procedural, not a box")
+	mn.free()
+
 	if failures == 0:
 		print("ALL CHECKS PASSED")
 	else:

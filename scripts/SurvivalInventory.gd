@@ -395,25 +395,11 @@ func add_item_thumbnail(parent: Control, item) -> void:
 		if hud.main_node != null and hud.main_node.has_method("_get_drop_model_paths"):
 			paths = hud.main_node._get_drop_model_paths(item.item_name, item.item_type, item_pelt)
 			scale_value = hud.main_node._get_drop_scale(item.item_name, item.item_type)
-		if item.item_name == "Trapos":
-			paths = []
 		var colors: Dictionary = hud._clothing_thumbnail_colors(item) if item.item_type == "clothing" else {"tint": Color.TRANSPARENT, "camo": Color.TRANSPARENT, "pelt": item_pelt}
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")))
-		if paths.is_empty() and item.item_name == "Trapos":
-			var mesh := MeshInstance3D.new()
-			var cylinder := CylinderMesh.new()
-			cylinder.top_radius = 0.25
-			cylinder.bottom_radius = 0.25
-			cylinder.height = 0.06
-			mesh.mesh = cylinder
-			var material := StandardMaterial3D.new()
-			material.albedo_color = Color(0.9, 0.85, 0.7)
-			mesh.material_override = material
-			thumbnail._model_root.add_child(mesh)
-			thumbnail._frame_camera(mesh)
+		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
 		thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 		thumbnail.resized.connect(func(): thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE)
 	, CONNECT_ONE_SHOT)

@@ -1684,12 +1684,12 @@ func _create_inventory_slot(index: int, item) -> void:
 			mesh_tint = cloth_colors["tint"]
 			mesh_camo = cloth_colors["camo"]
 			mesh_pelt = str(cloth_colors.get("pelt", ""))
-		if not model_paths.is_empty() or not mesh_pelt.is_empty():
+		if not model_paths.is_empty() or not mesh_pelt.is_empty() or str(item.item_name) == "Trapos":
 			var thumb3d := ItemThumbnail3DScript.new()
 			thumb3d.custom_minimum_size = Vector2(48, 42)
 			thumb3d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			thumbnail.add_child(thumb3d)
-			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint, mesh_camo, mesh_pelt)
+			thumb3d.set_model(model_paths, model_scale, Vector3.ZERO, frame_zoom, only_mesh, mesh_tint, mesh_camo, mesh_pelt, "rag" if str(item.item_name) == "Trapos" else "")
 		else:
 			var thumb_icon := HudIconScript.new()
 			thumb_icon.custom_minimum_size = Vector2(36, 30)
