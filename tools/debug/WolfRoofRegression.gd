@@ -27,8 +27,8 @@ func run() -> void:
 	current_scene = world
 	world._military_tent_pos = Vector3(200, 0, 200)
 	world._remote_tent_pos = Vector3(-400, 0, -380)
-	world._built_shelters.append({"pos": [100.0, 0.0, 100.0]})
-	var positions: Array[Vector3] = [Vector3(-340, 0, 280), Vector3(250, 0, -258), world._military_tent_pos, world._remote_tent_pos, Vector3(100, 0, 100)]
+	world._built_shelters.append({"pos": [350.0, 0.0, 350.0]})
+	var positions: Array[Vector3] = [Vector3(-340, 0, 280), Vector3(250, 0, -258), world._military_tent_pos, world._remote_tent_pos, Vector3(350, 0, 350)]
 	for i in range(world.HOUSE_DATA.size()):
 		positions.append(world.HOUSE_DATA[i]["pos"])
 		world._server_door_states["Casa abandonada %d Door" % (i + 1)] = true
@@ -57,10 +57,34 @@ func run() -> void:
 			check(wolf._state != "chase_player" and wolf._chase_target == null, "Roof cancels an active chase")
 			check(player.damage == 0 and player.get_meta("proxy_health") == 100.0, "No damage under roof")
 			if proxy: player.remove_from_group("net_player_proxy")
-	check(not world._is_pos_wolf_protected(Vector3(48, 0, -48)), "Old tent location must not protect empty ground")
+	check(not world._is_pos_wolf_protected(Vector3(90, 0, -90)), "Old tent location must not protect empty ground")
 	check(not world._is_pos_wolf_protected(Vector3(600, 0, 600)), "Outdoors remains exposed")
+	# Spawn zones are wolf sanctuaries: fresh spawns and parked offline bodies
+	# must not be targetable or attackable inside the radius.
+	for sz: Vector3 in world._spawn_zones:
+		check(world._is_pos_wolf_protected(sz), "Spawn zone must protect at %s" % sz)
+		check(world._is_pos_wolf_protected(sz + Vector3(20, 0, 20)), "Spawn zone protects its inner radius at %s" % sz)
+	var exposed_zone: Vector3 = world._spawn_zones[0]
+	for sz: Vector3 in world._spawn_zones:
+		if sz.length() > exposed_zone.length():
+			exposed_zone = sz
+	var outside := exposed_zone + exposed_zone.normalized() * (world.SPAWN_WOLF_SAFE_RADIUS + 15.0)
+	check(not world._is_pos_wolf_protected(outside), "Outside spawn radius stays exposed at %s" % outside)
+	var safe_zone: Vector3 = world._spawn_zones[14]
+	player.position = safe_zone
+	player.set_meta("proxy_health", 100.0)
+	player.damage = 0.0
+	wolf.position = safe_zone + Vector3(2, 0, 0)
+	wolf._player = player
+	wolf._chase_cooldown = 0.0
+	wolf._state = "chase_player"
+	wolf._chase_target = player
+	wolf._attack_cooldown = 0.0
+	wolf._wolf_ai(0.016)
+	check(wolf._state != "chase_player" and wolf._chase_target == null, "Spawn zone cancels an active chase")
+	check(player.damage == 0.0 and player.get_meta("proxy_health") == 100.0, "No damage inside spawn zone")
 	world._built_shelters.clear()
-	check(not world._is_pos_wolf_protected(Vector3(100, 0, 100)), "Dismantling shelter removes protection")
+	check(not world._is_pos_wolf_protected(Vector3(350, 0, 350)), "Dismantling shelter removes protection")
 	for tent in [{"pos": world._military_tent_pos, "yaw": 35.0}, {"pos": world._remote_tent_pos, "yaw": 120.0}]:
 		var origin: Vector3 = tent["pos"]
 		var angle := deg_to_rad(float(tent["yaw"]))

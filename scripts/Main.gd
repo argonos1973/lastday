@@ -12427,10 +12427,23 @@ func _is_near_pelt_lined_shelter(pos: Vector3) -> bool:
 			return true
 	return false
 
+const SPAWN_WOLF_SAFE_RADIUS := 40.0
+
 # Roof protection is independent of doors and visual/collision nodes, so the
 # dedicated server applies the same rule before damaging connected/offline bodies.
+# Spawn zones count too: a fresh spawn, a player still loading, or a body
+# parked at spawn on disconnect must not be wolf food. Predators can still
+# patrol through — they just cannot target or keep chasing anyone inside.
 func _is_pos_wolf_protected(pos: Vector3) -> bool:
-	return _is_player_in_house(pos) or _is_near_built_shelter(pos)
+	if _is_player_in_house(pos) or _is_near_built_shelter(pos):
+		return true
+	var r2: float = SPAWN_WOLF_SAFE_RADIUS * SPAWN_WOLF_SAFE_RADIUS
+	for sz: Vector3 in _spawn_zones:
+		var dx: float = pos.x - sz.x
+		var dz: float = pos.z - sz.z
+		if dx * dx + dz * dz < r2:
+			return true
+	return false
 
 func _is_named_door_open(door_name: String) -> bool:
 	# Live node state first (clients, single player, host); the server-side
