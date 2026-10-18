@@ -5823,6 +5823,8 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			return [GameConst.KNIFE_MODEL]
 		"weapon_rifle":
 			return ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"]
+		"ammo":
+			return ["res://assets/models/weapons/rifle_magazine.glb"]
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
@@ -8775,6 +8777,7 @@ func _create_house_loot() -> void:
 	]
 	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [GameConst.FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
+	var mag_template := {"name": "Cargador de fusil", "type": "ammo", "weight": 0.3, "qty": 1, "use": 5.0, "paths": ["res://assets/models/weapons/rifle_magazine.glb"], "scale": 1.6, "rot": Vector3(0, 55, 0), "color": Color(0.10, 0.11, 0.12)}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
@@ -8816,6 +8819,14 @@ func _create_house_loot() -> void:
 	tent_pack["pos"] = tent_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
 	tent_pack["floor_y"] = tent_floor_y
 	_create_pickup_item(tent_pack)
+	# Spare rifle magazines next to the rifle — fixed IDs like the other
+	# guaranteed tent pieces so they never respawn once collected.
+	for mi in range(2):
+		var mag_data: Dictionary = mag_template.duplicate()
+		mag_data["id"] = "tent_loot_mag_%d" % mi
+		mag_data["pos"] = tent_origin + Vector3(-0.5 + 0.7 * mi, 0.0, -2.3).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
+		mag_data["floor_y"] = tent_floor_y
+		_create_pickup_item(mag_data)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
@@ -9005,10 +9016,12 @@ func _create_house_loot() -> void:
 		Vector3(-2.2, 29.46, -1.5), # Centro-norte de la azotea
 		Vector3(0.5, 29.46, -2.0),  # Centro-este de la azotea
 		Vector3(1.6, 29.46, 0.8),   # Centro-este, visible al subir (rifle)
+		Vector3(1.9, 29.46, 1.2),   # Junto al fusil (cargador)
+		Vector3(1.4, 29.46, 1.5),   # Junto al fusil (cargador)
 	]
 	for ctf in range(ct_floors.size()):
 		var fy: float = ct_floors[ctf]
-		var count_on_floor := 6 if ctf == ct_floors.size() - 1 else 3
+		var count_on_floor := 8 if ctf == ct_floors.size() - 1 else 3
 		for k in range(count_on_floor):
 			var tmpl: Dictionary
 			if ctf == ct_floors.size() - 1:
@@ -9022,8 +9035,10 @@ func _create_house_loot() -> void:
 					tmpl = tent_loot_pool[13].duplicate() # Botas militares en la cima
 				elif k == 4:
 					tmpl = tent_loot_pool[15].duplicate() # Lata de guiso en la cima
-				else:
+				elif k == 5:
 					tmpl = rifle_template.duplicate()    # Rifle francotirador en la cima
+				else:
+					tmpl = mag_template.duplicate()      # Cargadores junto al fusil
 				tmpl["pos"] = ct_origin + roof_fixed_spots[k]
 			elif ctf == 0:
 				tmpl = house_loot_pool[tower_rng.randi() % house_loot_pool.size()].duplicate()

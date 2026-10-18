@@ -325,6 +325,7 @@ const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
 const RIFLE_DAMAGE := 260.0
+const RIFLE_MAGAZINE_MODEL := "res://assets/models/weapons/rifle_magazine.glb"
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -1902,6 +1903,11 @@ func _use_inventory_index(index: int) -> void:
 	var item_type := str(item.item_type)
 	if item.has_method("is_broken") and item.is_broken() and item_type != "food" and item_type != "water":
 		notice.emit("%s esta roto y no se puede usar." % item_name)
+		return
+	# Loose ammunition loads straight into the rifle reserve — there is no
+	# hands animation for it and "use" consumes one unit immediately.
+	if item_type == "ammo":
+		_load_ammo_item(item, index)
 		return
 	# Food items: first put in hand, then eat with animation when used again
 	if item_type == "food":
@@ -6976,6 +6982,9 @@ func _sync_third_person_equipment(held_item) -> void:
 		"tool_pickaxe":
 			_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10), 0.9)
 			_clear_rifle_attachment()
+		"ammo":
+			_add_named_held_model(RIFLE_MAGAZINE_MODEL, "HeldRifleMagazine")
+			_clear_rifle_attachment()
 		_:
 			_build_third_person_pack()
 			_clear_rifle_attachment()
@@ -11660,6 +11669,27 @@ func _reload_rifle() -> void:
 	_is_reloading = false
 	var mags_left := get_vest_magazines_count()
 	notice.emit("Fusil recargado: %d/%d en cargador · %d cargadores en reserva (%d balas)." % [_rifle_magazine, RIFLE_MAG_SIZE, mags_left, _rifle_reserve_ammo])
+	var main := get_tree().current_scene
+	if main != null and main.get("hud") != null:
+		if main.hud.has_method("_update_equipment_labels"):
+			main.hud._update_equipment_labels()
+		if main.hud.has_method("_update_inventory"):
+			main.hud._update_inventory()
+	if main != null and main.has_method("_sync_local_player_inventory"):
+		main.call_deferred("_sync_local_player_inventory")
+
+func _load_ammo_item(item, index := -1) -> void:
+	if item == null or inventory == null or str(item.item_type) != "ammo":
+		return
+	var idx: int = index if index >= 0 else inventory.items.find(item)
+	if idx < 0:
+		return
+	var rounds := RIFLE_MAG_SIZE
+	if item.use_value > 0.0:
+		rounds = int(item.use_value)
+	inventory.remove_index(idx, 1)
+	_rifle_reserve_ammo += rounds
+	notice.emit("Munición guardada: +%d balas de reserva (%d en total). Mantén el fusil en las manos y pulsa [R] para recargar." % [rounds, _rifle_reserve_ammo])
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null:
 		if main.hud.has_method("_update_equipment_labels"):

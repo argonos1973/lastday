@@ -362,6 +362,8 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	elif item != null and item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
 		var ri_vest: Dictionary = player.get_rifle_info()
 		label.text += "\n%d cargadores (%d)" % [int(ri_vest.get("magazines_left", 0)), int(ri_vest.get("reserve", 0))]
+	elif item != null and item.item_type == "ammo":
+		label.text += "\n%d balas" % maxi(1, int(item.use_value))
 	if item != null and item.has_method("is_wet") and item.is_wet():
 		label.text += "\n[%s]" % item.wet_state_label()
 		label.add_theme_color_override("font_color", item.wet_state_color())
@@ -711,6 +713,9 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 				add_action("Colgar en la espalda", func():
 					player._select_held_item(player.inventory.items.find(item))
 					player.store_held_on_back())
+			if item.item_type == "ammo":
+				add_action("Cargar en el fusil", func():
+					player._use_inventory_index(player.inventory.items.find(item)))
 			if item.item_type in ["food", "water", "medical"]:
 				add_action("Comer" if item.item_type == "food" else ("Beber" if item.item_type == "water" else "Aplicar"), func():
 					var index: int = player.inventory.items.find(item)
