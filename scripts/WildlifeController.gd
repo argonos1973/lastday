@@ -510,7 +510,8 @@ func _process_body(delta: float) -> void:
 			_wolf_eating_timer -= delta
 			var satiation_cap := 60.0 if animal_type == "wolf" else 85.0
 			_wolf_hunger = min(satiation_cap, _wolf_hunger + delta * 5.0)
-			if _wolf_hunger >= satiation_cap or _wolf_eating_timer <= 0.0:
+			var is_meat_pickup_target := _wolf_eating_target != null and is_instance_valid(_wolf_eating_target) and ("action_type" in _wolf_eating_target) and _is_meat_action(_wolf_eating_target)
+			if (not is_meat_pickup_target and _wolf_hunger >= satiation_cap) or _wolf_eating_timer <= 0.0:
 				_wolf_eating_timer = 0.0
 				if _wolf_eating_target != null and is_instance_valid(_wolf_eating_target):
 					if _wolf_eating_target is WildlifeController:
@@ -708,22 +709,23 @@ func _wolf_ai(delta: float) -> Dictionary:
 	# presa — el lobo huele el cebo, lo ronda a distancia y espera a que lo
 	# tire al suelo. Si YA hay carne suya tirada, este bloque no interviene:
 	# el bloque de alimentación lo manda a comerla directamente.
-	if animal_type == "wolf" and tamed_to.is_empty() and _player != null and is_instance_valid(_player) and _player_holds_meat(_player):
-		var holder_id := _feeder_key(_player)
+	var bait_holder := _resolve_bait_holder()
+	if animal_type == "wolf" and tamed_to.is_empty() and bait_holder != null:
+		var holder_id := _feeder_key(bait_holder)
 		var ground_offering := _find_nearest_meat_pickup(holder_id) if (not holder_id.is_empty() and is_hungry) else null
 		if ground_offering == null:
-			if _state == "chase_player" or _chase_target == _player:
+			if _state == "chase_player" or _chase_target == bait_holder:
 				_chase_target = null
 				_chase_stuck_time = 0.0
 				_state = "patrol"
 				_current_path.clear()
 				_path_index = 0
 				_chase_cooldown = 3.0
-			var bait_dist := global_position.distance_to(_player.global_position)
+			var bait_dist := global_position.distance_to(bait_holder.global_position)
 			if bait_dist > 14.0:
 				_play_animation_by_name("walk")
-				return {"target": _player.global_position, "speed": move_speed * 1.4}
-			var to_holder := _player.global_position - global_position
+				return {"target": bait_holder.global_position, "speed": move_speed * 1.4}
+			var to_holder := bait_holder.global_position - global_position
 			to_holder.y = 0.0
 			if to_holder.length() > 0.01:
 				rotation.y = lerp_angle(rotation.y, atan2(to_holder.x, to_holder.z), delta * 4.0)
@@ -815,15 +817,13 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if bool(tamed.get("handled", false)):
 			return tamed
 		# Si no está "handled", _player apunta a la amenaza y sigue la persecución normal
-	if animal_type == "wolf" and tamed_to.is_empty() and is_hungry and _prey_flee_timer <= 0.0 and _can_feed_from(_player):
-		var feeder_id := _feeder_key(_player)
-		if not feeder_id.is_empty() and global_position.distance_to(_player.global_position) <= TAME_FEED_RADIUS:
-			var offering := _find_nearest_meat_pickup(feeder_id)
-			if offering != null and global_position.distance_to(offering.global_position) <= TAME_FEED_RADIUS and not _request_path(global_position, offering.global_position).is_empty():
-				if _state == "chase_player":
-					_path_recalc_timer = 0.0
-				_chase_target = null
-				return _seek_meat_pickup(offering)
+	if animal_type == "wolf" and tamed_to.is_empty() and is_hungry and _prey_flee_timer <= 0.0:
+		var offering := _find_active_tame_offering()
+		if offering != null:
+			if _state == "chase_player":
+				_path_recalc_timer = 0.0
+			_chase_target = null
+			return _seek_meat_pickup(offering)
 	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
 		var nearby_bear := _find_nearest_live_bear(22.0)
 		if nearby_bear != null:
@@ -1474,6 +1474,13 @@ func get_interaction_text(player = null) -> String:
 			if _is_owner_actor(player):
 				return "Lobo domesticado - [F] %s" % ("Quieto" if _follow_mode == "follow" else "Seguir")
 			return "Lobo domesticado"
+		if animal_type == "wolf" and tamed_to.is_empty() and player != null:
+			var fkey := _feeder_key(player)
+			var prog := int(_tame_progress.get(fkey, 0)) if not fkey.is_empty() else 0
+			if prog > 0:
+				return "Lobo receloso (%d/%d comidas) - Suelta carne para domarlo" % [mini(prog, TAME_FEEDINGS), TAME_FEEDINGS]
+			if _player_holds_meat(player):
+				return "Lobo salvaje - Suelta la carne en el suelo para domarlo (0/%d)" % TAME_FEEDINGS
 		return ""
 	var an := _animal_name()
 	var an_cap := _animal_name_cap()
@@ -1762,6 +1769,19 @@ func _consume_meat_pickup(action: Node3D) -> void:
 	# "local" en SP/host).
 	if action.has_meta("dropped_by"):
 		_register_feeding(str(action.get_meta("dropped_by")))
+	# Si el jugador soltó un stack (quantity > 1), consumir solo 1 unidad por
+	# comida para que un stack de 3 carnes sirva para las 3 comidas en vez de
+	# desaparecer entero de un bocado.
+	var qty := int(action.get_meta("item_quantity", 1))
+	if qty > 1:
+		var remaining := qty - 1
+		action.set_meta("item_quantity", remaining)
+		if "_dropped_items" in scene and scene._dropped_items is Array:
+			for entry in scene._dropped_items:
+				if entry is Dictionary and str(entry.get("id", "")) == action_id:
+					entry["qty"] = remaining
+					break
+		return
 	# Remove the meat pickup from the world
 	if not action_id.is_empty() and scene.has_method("_net_item_picked_up"):
 		scene._net_item_picked_up(action_id)
@@ -1861,6 +1881,34 @@ func _nearest_feeder_in_range(radius: float) -> Node3D:
 			best = n
 	return best
 
+func _resolve_bait_holder() -> Node3D:
+	if _player != null and is_instance_valid(_player) and _player_holds_meat(_player):
+		return _player
+	for id in _tame_progress.keys():
+		var n := _find_feeder_node(str(id))
+		if n != null and _can_feed_from(n) and global_position.distance_to(n.global_position) <= 35.0 and _player_holds_meat(n):
+			return n
+	return null
+
+func _find_active_tame_offering() -> Node3D:
+	var candidates: Array[Node3D] = []
+	if _player != null and is_instance_valid(_player):
+		candidates.append(_player)
+	for id in _tame_progress.keys():
+		var fn := _find_feeder_node(str(id))
+		if fn != null and not candidates.has(fn):
+			candidates.append(fn)
+	for feeder in candidates:
+		if not _can_feed_from(feeder):
+			continue
+		var feeder_id := _feeder_key(feeder)
+		if feeder_id.is_empty() or global_position.distance_to(feeder.global_position) > TAME_FEED_RADIUS:
+			continue
+		var offering := _find_nearest_meat_pickup(feeder_id)
+		if offering != null and global_position.distance_to(offering.global_position) <= TAME_FEED_RADIUS and not _request_path(global_position, offering.global_position).is_empty():
+			return offering
+	return null
+
 func _resolve_owner() -> Node3D:
 	if _owner_node != null and is_instance_valid(_owner_node):
 		return _owner_node
@@ -1921,7 +1969,7 @@ func _register_feeding(feeder_id: String) -> void:
 	else:
 		if _player == feeder:
 			_player = null
-		_notify_owner_msg(feeder, "El lobo devora la carne y te observa... parece menos hostil.")
+		_notify_owner_msg(feeder, "El lobo devora la carne y te observa... parece menos hostil (%d/%d)." % [n, TAME_FEEDINGS])
 
 func _tame(feeder_id: String, feeder: Node3D) -> void:
 	tamed_to = feeder_id
@@ -2051,15 +2099,15 @@ func _tamed_ai(delta: float) -> Dictionary:
 	_play_animation_by_name(anim)
 	return {"handled": true, "target": owner.global_position + off, "speed": spd}
 
-# Un lobo salvaje que persiga/ataque al dueño se convierte en enemigo del domesticado
+# Un lobo salvaje u oso que persiga/ataque al dueño se convierte en enemigo del domesticado
 func _find_wolf_threatening(owner: Node3D) -> Node3D:
 	for node in _cached_wildlife:
 		if not is_instance_valid(node) or node == self or not (node is WildlifeController):
 			continue
 		var w := node as WildlifeController
-		if w.is_puppet or w.animal_type != "wolf" or w._is_dead:
+		if w.is_puppet or (w.animal_type != "wolf" and w.animal_type != "bear") or w._is_dead:
 			continue
-		if w.tamed_to == tamed_to:
+		if w.animal_type == "wolf" and w.tamed_to == tamed_to:
 			continue  # lobos del mismo dueño no se atacan
 		if w._player != owner and w._chase_target != owner:
 			continue

@@ -354,6 +354,37 @@ func test_feeding_priority() -> void:
 	proxy.set_meta("disconnected", true)
 	wolf._process(8.0)
 	check(not wolf._tame_progress.has("7"), "Disconnecting before the meal ends grants no trust")
+
+	# Stack de carne (quantity=3): se consume de 1 en 1 en 3 ciclos reales (y la 2a/3a comida no se cortan en 1 frame por satiation_cap)
+	var stack_wolf := make_wolf(world, Vector3.ZERO)
+	stack_wolf._wolf_hunger = 55.0
+	player.position = Vector3(6, 0, 0)
+	var stack_meat := spawn_meat(world, Vector3(1, 0, 0), "local")
+	stack_meat.set_meta("item_quantity", 3)
+	# 1a comida
+	stack_wolf._process(0.1)
+	check(stack_wolf._wolf_eating_target == stack_meat, "Wolf starts eating 1st piece of stack")
+	stack_wolf._process(2.0) # alcanza satiation_cap=60, pero sigue comiendo el pickup hasta completar 8s
+	check(stack_wolf._wolf_eating_timer > 0.0 and int(stack_meat.get_meta("item_quantity", 0)) == 3, "Meat pickup meal does not abort early at satiation_cap")
+	stack_wolf._process(6.5)
+	check(int(stack_meat.get_meta("item_quantity", 0)) == 2 and int(stack_wolf._tame_progress.get("local", 0)) == 1, "1st meal decrements stack to 2 and records 1/3 progress")
+	check(stack_wolf.get_interaction_text(player).find("1/3") >= 0, "Interaction text displays 1/3 taming progress")
+	# 2a comida (incluso con otro jugador cerca al que _player apunta)
+	var bystander := make_proxy(world, 22, Vector3(8, 0, 0))
+	stack_wolf._resolve_player()
+	check(stack_wolf._player == bystander, "Wolf resolves non-feeder bystander as _player")
+	stack_wolf._process(0.1)
+	check(stack_wolf._wolf_eating_target == stack_meat, "2nd offering still takes priority over chasing bystander")
+	stack_wolf._process(0.05)
+	check(stack_wolf._wolf_eating_timer > 7.0, "2nd meal does not finish in 1 frame despite hunger=60")
+	stack_wolf._process(8.0)
+	check(int(stack_meat.get_meta("item_quantity", 0)) == 1 and int(stack_wolf._tame_progress.get("local", 0)) == 2, "2nd meal decrements stack to 1 and records 2/3 progress")
+	# 3a comida
+	stack_wolf._process(0.1)
+	stack_wolf._process(8.0)
+	check(world.removed_actions.has(stack_meat.action_id) and stack_wolf.tamed_to == "local", "3rd meal consumes final stack unit and tames the wolf")
+	bystander.free()
+	stack_wolf.free()
 	world.free()
 
 # Carne en la mano: un jugador con carne/pescado equipado no provoca ataque —
