@@ -916,9 +916,18 @@ func _input(event: InputEvent) -> void:
 	if game_over:
 		return
 	if hud != null and player != null and not player.is_dead and event is InputEventKey and event.pressed and not event.echo:
+		if hud.get("chat_open") == true:
+			if event.keycode == KEY_ESCAPE:
+				hud.close_chat()
+				get_viewport().set_input_as_handled()
+			return
 		# Con el panel de alijo abierto cualquier tecla (Tab, Esc, K...) lo cierra.
 		if _backpack_panel != null:
 			_close_backpack_ui()
+			get_viewport().set_input_as_handled()
+			return
+		if (event.keycode == KEY_T or event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER) and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
+			hud.open_chat()
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_K and not player.is_sleeping:
@@ -3615,6 +3624,44 @@ func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
 func _net_notice(text: String) -> void:
 	if hud != null:
 		hud.show_notice(text)
+
+func _net_receive_chat_message(sender_id: int, sender_name: String, text: String) -> void:
+	var my_id: int = net.get_my_id() if net != null else 1
+	var is_self: bool = sender_id == my_id
+	if hud != null and hud.has_method("add_chat_message"):
+		hud.add_chat_message(sender_name, text, is_self)
+	var actor: Node3D = null
+	if is_self:
+		actor = player
+	elif remote_players.has(sender_id):
+		actor = remote_players[sender_id]
+	if actor != null and is_instance_valid(actor):
+		_show_player_chat_bubble(actor, sender_name, text)
+
+func _show_player_chat_bubble(actor: Node3D, sender_name: String, text: String) -> void:
+	if net != null and net.is_dedicated_server:
+		return
+	var old := actor.get_node_or_null("ChatBubble3D")
+	if old != null:
+		old.queue_free()
+	var bubble := Label3D.new()
+	bubble.name = "ChatBubble3D"
+	bubble.text = "%s: %s" % [sender_name, text]
+	bubble.position = Vector3(0.0, 2.15, 0.0)
+	bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	bubble.no_depth_test = false
+	bubble.pixel_size = 0.0042
+	bubble.font_size = 42
+	bubble.outline_size = 10
+	bubble.modulate = Color(0.95, 0.97, 0.88, 0.96)
+	bubble.outline_modulate = Color(0.05, 0.07, 0.05, 0.92)
+	bubble.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bubble.width = 420.0
+	actor.add_child(bubble)
+	var tw := bubble.create_tween()
+	tw.tween_interval(4.2)
+	tw.tween_property(bubble, "modulate:a", 0.0, 0.8)
+	tw.tween_callback(bubble.queue_free)
 
 func _net_animal_hit(animal_name: String) -> void:
 	# Find the puppet for this animal and play hit feedback

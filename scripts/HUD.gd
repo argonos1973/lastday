@@ -96,6 +96,14 @@ var players_list_box: VBoxContainer = null
 var players_hint: Label = null
 var players_list_visible := false
 var _players_refresh_timer := 0.0
+var chat_panel: PanelContainer = null
+var chat_messages_box: VBoxContainer = null
+var chat_input: LineEdit = null
+var chat_open := false
+var _chat_history: Array = []
+var _chat_fade_timer := 0.0
+const CHAT_MAX_MESSAGES := 8
+const CHAT_VISIBLE_SECONDS := 10.0
 var _context_menu: PanelContainer = null
 var _context_menu_slot_index := -1
 var _context_menu_recipes: Array = []
@@ -181,13 +189,20 @@ func _process(delta: float) -> void:
 		if _players_refresh_timer >= 0.5:
 			_players_refresh_timer = 0.0
 			_update_players_list()
+	if chat_panel != null and not chat_open:
+		if _chat_fade_timer > 0.0:
+			_chat_fade_timer -= delta
+			chat_panel.visible = not _chat_history.is_empty()
+			chat_panel.modulate.a = clampf(_chat_fade_timer / 2.0, 0.0, 1.0)
+		else:
+			chat_panel.visible = false
 
 func _build_players_panel() -> void:
 	var net = get_node_or_null("/root/NetworkManager")
 	var is_mp: bool = net != null and net.has_method("join_game") and (net.get("is_connected") or net.get("peer") != null)
 	# Tiny hint below the clock panel — multiplayer only.
 	players_hint = Label.new()
-	players_hint.text = "[P] Jugadores"
+	players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat"
 	players_hint.position = Vector2(20, 158)
 	players_hint.add_theme_font_size_override("font_size", 12)
 	players_hint.add_theme_color_override("font_color", Color(0.6, 0.62, 0.55, 0.8))
@@ -255,6 +270,115 @@ func _update_players_list() -> void:
 			players_list_box.add_child(line)
 			count += 1
 	title.text = "JUGADORES (%d)" % count
+
+func _build_chat_panel() -> void:
+	chat_panel = PanelContainer.new()
+	chat_panel.anchor_left = 0.0
+	chat_panel.anchor_top = 1.0
+	chat_panel.anchor_right = 0.0
+	chat_panel.anchor_bottom = 1.0
+	chat_panel.offset_left = 18
+	chat_panel.offset_top = -355
+	chat_panel.offset_right = 410
+	chat_panel.offset_bottom = -166
+	chat_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.86), Color(0.43, 0.48, 0.38, 0.68), 1)
+	frame.set_corner_radius_all(6)
+	frame.content_margin_left = 10
+	frame.content_margin_right = 10
+	frame.content_margin_top = 8
+	frame.content_margin_bottom = 8
+	chat_panel.add_theme_stylebox_override("panel", frame)
+	chat_panel.visible = false
+	root.add_child(chat_panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 5)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chat_panel.add_child(vbox)
+
+	chat_messages_box = VBoxContainer.new()
+	chat_messages_box.add_theme_constant_override("separation", 3)
+	chat_messages_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_messages_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(chat_messages_box)
+
+	chat_input = LineEdit.new()
+	chat_input.placeholder_text = "Escribe un mensaje... [Enter enviar · Esc cerrar]"
+	chat_input.max_length = 160
+	chat_input.add_theme_font_size_override("font_size", 13)
+	chat_input.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
+	chat_input.visible = false
+	chat_input.text_submitted.connect(_on_chat_submitted)
+	chat_input.gui_input.connect(_on_chat_gui_input)
+	vbox.add_child(chat_input)
+
+func open_chat() -> void:
+	if chat_panel == null or chat_input == null:
+		return
+	chat_open = true
+	_chat_fade_timer = CHAT_VISIBLE_SECONDS
+	chat_panel.visible = true
+	chat_panel.modulate.a = 1.0
+	chat_input.visible = true
+	chat_input.text = ""
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	chat_input.grab_focus()
+
+func close_chat() -> void:
+	if not chat_open:
+		return
+	chat_open = false
+	if chat_input != null:
+		chat_input.release_focus()
+		chat_input.text = ""
+		chat_input.visible = false
+	if chat_panel != null:
+		chat_panel.visible = not _chat_history.is_empty() and _chat_fade_timer > 0.0
+	if not inventory_visible and not craft_panel_visible and player != null and not player.get("is_dead"):
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _on_chat_gui_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		close_chat()
+		get_viewport().set_input_as_handled()
+
+func _on_chat_submitted(new_text: String) -> void:
+	var clean := new_text.strip_edges()
+	close_chat()
+	if clean.is_empty():
+		return
+	var net = get_node_or_null("/root/NetworkManager")
+	if net != null and net.get("is_connected") == true and net.has_method("send_chat_message"):
+		if net.get("is_host") == true:
+			net.send_chat_message(clean)
+		else:
+			net.send_chat_message.rpc_id(1, clean)
+	else:
+		add_chat_message("Tú", clean, true)
+
+func add_chat_message(sender_name: String, text: String, is_self: bool = false) -> void:
+	if chat_messages_box == null:
+		return
+	_chat_history.append({"sender": sender_name, "text": text, "self": is_self})
+	while _chat_history.size() > CHAT_MAX_MESSAGES:
+		_chat_history.pop_front()
+	for c in chat_messages_box.get_children():
+		c.queue_free()
+	for entry in _chat_history:
+		var lbl := Label.new()
+		var sname := str(entry.get("sender", "Jugador"))
+		var msg := str(entry.get("text", ""))
+		lbl.text = "%s: %s" % [sname, msg]
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.add_theme_font_size_override("font_size", 13)
+		lbl.add_theme_color_override("font_color", Color(0.84, 0.93, 0.68) if bool(entry.get("self", false)) else Color(0.92, 0.92, 0.86))
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chat_messages_box.add_child(lbl)
+	_chat_fade_timer = CHAT_VISIBLE_SECONDS
+	if chat_panel != null:
+		chat_panel.visible = true
+		chat_panel.modulate.a = 1.0
 
 func _ensure_hud_visibility() -> void:
 	# Restore the interface in case a scene transition or a fullscreen night
@@ -625,6 +749,7 @@ func _build_ui() -> void:
 	_build_center_messages()
 	_build_real_clock_panel()
 	_build_players_panel()
+	_build_chat_panel()
 	_add_shadows_recursive(root)
 
 func _build_real_clock_panel() -> void:

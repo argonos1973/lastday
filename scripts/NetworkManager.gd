@@ -13,6 +13,7 @@ signal player_name_required()
 # Server reclaimed a live character for this client — the menu picker locks
 # to that character (payload: name, colors, current equipment).
 signal server_character_locked(payload: Dictionary)
+signal chat_message_received(sender_id: int, sender_name: String, text: String)
 
 const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
@@ -1324,3 +1325,36 @@ func sync_character_appearance_remote(peer_id: int, char_name: String, top_color
 	players[peer_id]["skin_color"] = skin_color
 	players[peer_id]["top_camo"] = top_camo
 	players[peer_id]["bottom_camo"] = bottom_camo
+
+@rpc("any_peer", "reliable")
+func send_chat_message(text: String) -> void:
+	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
+	if sender == 0 and is_host:
+		sender = get_my_id()
+	if not _accepts_client_request(sender):
+		return
+	var clean := text.strip_edges().replace("\n", " ").replace("\r", " ")
+	if clean.length() > 160:
+		clean = clean.substr(0, 160)
+	if clean.is_empty():
+		return
+	var sender_name := "Jugador"
+	if players.has(sender):
+		var pdata: Dictionary = players[sender]
+		sender_name = str(pdata.get("char_name", ""))
+		if sender_name.is_empty():
+			sender_name = str(pdata.get("name", "Jugador"))
+	if not is_dedicated_server:
+		receive_chat_message(sender, sender_name, clean)
+	if peer != null:
+		for pid in players.keys():
+			if pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
+				continue
+			receive_chat_message.rpc_id(pid, sender, sender_name, clean)
+
+@rpc("authority", "reliable")
+func receive_chat_message(sender_id: int, sender_name: String, text: String) -> void:
+	chat_message_received.emit(sender_id, sender_name, text)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_receive_chat_message"):
+		scene._net_receive_chat_message(sender_id, sender_name, text)

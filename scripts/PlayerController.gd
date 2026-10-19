@@ -3316,6 +3316,12 @@ func _get_carry_weight_ratio() -> float:
 	var current: float = inventory.get_total_weight()
 	return clamp(current / inventory.max_weight, 0.0, 1.0)
 
+func _is_chat_open() -> bool:
+	var sc := get_tree().current_scene if get_tree() != null else null
+	if sc != null and sc.get("hud") != null and sc.hud.get("chat_open") == true:
+		return true
+	return false
+
 func _update_crouch_collision() -> void:
 	if _collision_shape == null:
 		return
@@ -3551,7 +3557,8 @@ func _physics_process(delta: float) -> void:
 		_update_drink_hand_socket()
 		_update_head_worn_items()
 		return
-	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var chat_typing := _is_chat_open()
+	var input_dir := Vector2.ZERO if chat_typing else Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := (global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
 	is_moving = input_dir.length() > 0.1 and not is_dead
 	if _sit_cooldown > 0.0:
@@ -3564,7 +3571,7 @@ func _physics_process(delta: float) -> void:
 			velocity.x = 0.0
 			velocity.z = 0.0
 			direction = Vector3.ZERO
-	if Input.is_action_just_pressed("crouch"):
+	if not chat_typing and Input.is_action_just_pressed("crouch"):
 		is_crouching = not is_crouching
 		_force_crouch = false
 	if _force_crouch and input_dir.length() < 0.1:
