@@ -400,10 +400,10 @@ const FARMING_DIR := "res://assets/models/props/farming/"
 const TOOLS_DIR := "res://assets/models/props/tools/"
 # Offline bodies keep a slowed metabolism (~25x slower than connected rates):
 # logging out pauses survival pressure without being a free pause.
-const OFFLINE_HUNGER_DECAY := 0.005
-const OFFLINE_THIRST_DECAY := 0.004
-const OFFLINE_SLEEP_DECAY := 0.003
-const OFFLINE_ENERGY_DECAY := 0.0025
+const OFFLINE_HUNGER_DECAY := 0.0005
+const OFFLINE_THIRST_DECAY := 0.0004
+const OFFLINE_SLEEP_DECAY := 0.0003
+const OFFLINE_ENERGY_DECAY := 0.00025
 const REAL_ROCK_MODELS := [
 	GameConst.LAKE_DIR + "lake_boulder_0.glb",
 	GameConst.LAKE_DIR + "lake_boulder_1.glb",
