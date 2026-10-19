@@ -1075,6 +1075,14 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_sleep_animation
 			elif lower.find("drink") >= 0:
 				target = third_person_drink_animation
+			elif lower.find("plant") >= 0:
+				target = third_person_plant_animation
+			elif lower.find("gather") >= 0:
+				target = third_person_gather_animation
+			elif lower.find("fish") >= 0:
+				target = third_person_fish_animation
+			elif lower.find("interact") >= 0:
+				target = third_person_interact_animation
 			elif lower.find("dying") >= 0 or lower.find("dead") >= 0:
 				target = third_person_dying_animation
 			elif lower.find("low") >= 0:
@@ -1086,7 +1094,10 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			var clip_offset := _third_person_clip_start_offset(target)
 			if clip_offset > 0.0:
 				third_person_animation_player.seek(clip_offset, true)
+			else:
+				third_person_animation_player.advance(0.0)
 			_puppet_current_anim = anim
+			_update_puppet_ground_alignment(1.0)
 			# Melee combat audio follows the synced clip: the victim's flinch
 			# carries the impact thud, a thrown swing carries the whoosh.
 			if target == third_person_hit_animation:
@@ -1405,13 +1416,14 @@ func _update_puppet_held_item(item_name: String) -> void:
 #region PROCESO PRINCIPAL (_process + input)
 func _process(delta: float) -> void:
 	if is_puppet:
+		if not is_dead:
+			_update_puppet_ground_alignment(delta)
+			_update_rifle_visuals(delta)
 		_update_hand_socket()
 		_update_torch_hand_socket()
 		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
-		if not is_dead:
-			_update_rifle_visuals(delta)
 		if is_dead:
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
@@ -5684,24 +5696,21 @@ func _align_third_person_model_to_ground() -> void:
 		return
 	third_person_ground_offset = 0.0
 	third_person_model.position = Vector3.ZERO
-	# For custom characters and clothing model, use skeleton foot bone global positions
-	# which are more accurate than mesh AABB (which reflects T-pose, not actual pose)
+	# Measure in third_person_model local space so the offset is independent of
+	# the character's current global_position in the world.
 	var min_y := 1000000.0
 	if is_custom_character or is_clothing_model:
 		var skeleton := _find_skeleton(third_person_model)
 		if skeleton != null:
+			skeleton.force_update_all_bone_transforms()
 			for i in range(skeleton.get_bone_count()):
 				var bone_name := skeleton.get_bone_name(i)
 				if bone_name.find("Foot") >= 0 or bone_name.find("foot") >= 0 or bone_name.find("Toe") >= 0 or bone_name.find("toe") >= 0:
 					var gp := skeleton.get_bone_global_pose(i)
-					# For clothing model, bone poses are in skeleton local space (cm).
-					# Convert to world space via skeleton.global_transform (includes model scale).
-					if is_clothing_model:
-						var world_pos: Vector3 = skeleton.global_transform * gp.origin
-						min_y = min(min_y, world_pos.y)
-					else:
-						min_y = min(min_y, gp.origin.y)
-	# Fallback: use global AABB of non-Body meshes
+					var world_pos: Vector3 = skeleton.global_transform * gp.origin
+					var offset_y: float = world_pos.y - third_person_model.global_position.y
+					min_y = min(min_y, offset_y)
+	# Fallback: use world-scaled height of non-Body meshes relative to third_person_model
 	if min_y > 999999.0:
 		var was_visible := third_person_model.visible
 		third_person_model.visible = true
@@ -5712,10 +5721,11 @@ func _align_third_person_model_to_ground() -> void:
 			if is_custom_character and mesh_instance.name == "Body":
 				continue
 			var world_aabb: AABB = mesh_instance.global_transform * mesh_instance.get_aabb()
-			min_y = min(min_y, world_aabb.position.y)
+			var offset_min_y: float = world_aabb.position.y - third_person_model.global_position.y
+			min_y = min(min_y, offset_min_y)
 		third_person_model.visible = was_visible
 	if min_y < 999999.0:
-		third_person_ground_offset = -min_y + 0.45
+		third_person_ground_offset = 0.025 - min_y
 		third_person_model.position.y = third_person_ground_offset
 
 func _collect_mesh_instances(root: Node, result: Array) -> void:
@@ -9516,6 +9526,60 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 
 
 #region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
+func _compute_skeleton_ground_target_y(bob: float = 0.0) -> float:
+	var target_y := third_person_ground_offset + bob + _water_sink
+	if third_person_model == null:
+		return target_y
+	if _anim_skel_dirty or _anim_skel_cache == null or not is_instance_valid(_anim_skel_cache):
+		_anim_skel_cache = _find_skeleton(third_person_model)
+		_anim_skel_dirty = false
+	var skel := _anim_skel_cache
+	if skel == null:
+		return target_y
+	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+	skel.force_update_all_bone_transforms()
+	_prev_anim_name = cur_anim
+	_bone_update_pending = false
+	var sitting_or_sleeping_clip := (not cur_anim.is_empty() and (cur_anim == third_person_sit_animation or cur_anim == third_person_sleep_animation))
+	if ((is_prone or is_sitting or is_sleeping) and third_person_action_timer <= 0.0 and not is_crouching) or sitting_or_sleeping_clip:
+		# Align by hip/pelvis bone — feet are off ground when sitting/sleeping/prone
+		var hip_model_y := 0.0
+		var found_hip := false
+		for i in range(skel.get_bone_count()):
+			var bn := skel.get_bone_name(i)
+			if bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0:
+				var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
+				hip_model_y = bone_world.y - third_person_model.global_position.y
+				found_hip = true
+				break
+		if found_hip:
+			var has_rifle := _has_rifle_equipped()
+			var sit_pose := is_sitting or (not cur_anim.is_empty() and cur_anim == third_person_sit_animation)
+			var target_hip_ground_y := (0.85 if has_rifle else 0.25) if sit_pose else (0.2 if has_rifle else 0.15)
+			target_y = target_hip_ground_y - hip_model_y + _water_sink
+	else:
+		# Standing, crouching, walking, eating (plant), foraging (gather), drinking, etc.: align by lowest foot/toe
+		var min_foot_model_y := 1000000.0
+		for i in range(skel.get_bone_count()):
+			var bn := skel.get_bone_name(i)
+			if bn.find("Foot") >= 0 or bn.find("Toe") >= 0:
+				var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
+				var foot_offset_y := bone_world.y - third_person_model.global_position.y
+				if foot_offset_y < min_foot_model_y:
+					min_foot_model_y = foot_offset_y
+		if min_foot_model_y < 999999.0:
+			target_y = 0.025 - min_foot_model_y + bob + _water_sink
+	return target_y
+
+func _update_puppet_ground_alignment(delta: float) -> void:
+	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")):
+		return
+	var character: Node3D = third_person_model if third_person_model != null else body_mesh
+	if character == null:
+		return
+	var target_y := _compute_skeleton_ground_target_y(0.0)
+	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), minf(1.0, delta * 14.0))
+
 func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var climbing_stairs := _update_stair_motion(moving, delta)
 	if is_instance_valid(rowing_boat) and not _boat_standing:
@@ -9539,52 +9603,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
 	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
 	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
-	var crouch_lift := 0.0
-	var sit_drop := 0.0
-	var target_y := third_person_ground_offset + bob + crouch_lift + sit_drop + _water_sink
-	if third_person_model != null:
-		# Cache del skeleton para evitar búsqueda recursiva cada frame
-		if _anim_skel_dirty or _anim_skel_cache == null or not is_instance_valid(_anim_skel_cache):
-			_anim_skel_cache = _find_skeleton(third_person_model)
-			_anim_skel_dirty = false
-		var skel := _anim_skel_cache
-		if skel != null:
-			# Solo forzar update de bones cuando cambia la animación o hay cambio de postura
-			var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
-			if _bone_update_pending or cur_anim != _prev_anim_name:
-				skel.force_update_all_bone_transforms()
-				_prev_anim_name = cur_anim
-				_bone_update_pending = false
-			if is_prone and third_person_action_timer <= 0.0 and not is_crouching:
-				# Align by hip/pelvis bone — feet are off ground when sitting
-				var hip_model_y := 0.0
-				var found_hip := false
-				for i in range(skel.get_bone_count()):
-					var bn := skel.get_bone_name(i)
-					if bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0:
-						var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
-						var bone_model := third_person_model.to_local(bone_world)
-						hip_model_y = bone_model.y
-						found_hip = true
-						break
-				if found_hip:
-					# Target hip height above ground: sitting ~0.6, prone ~0.2
-					var has_rifle := _has_rifle_equipped()
-					var target_hip_ground_y := (0.85 if has_rifle else 0.25) if is_sitting else (0.2 if has_rifle else 0.15)
-					target_y = target_hip_ground_y - hip_model_y
-			else:
-				# Standing, crouching, walking, or transitions: align by feet
-				var min_foot_model_y := 1000000.0
-				for i in range(skel.get_bone_count()):
-					var bn := skel.get_bone_name(i)
-					if bn.find("Foot") >= 0 or bn.find("Toe") >= 0:
-						var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
-						var bone_model := third_person_model.to_local(bone_world)
-						if bone_model.y < min_foot_model_y:
-							min_foot_model_y = bone_model.y
-				if min_foot_model_y < 999999.0:
-					# Target: feet at ground level (capsule bottom = 0.025), sink in water
-					target_y = 0.025 - min_foot_model_y + _water_sink
+	var target_y := _compute_skeleton_ground_target_y(bob)
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:

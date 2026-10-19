@@ -106,7 +106,31 @@ func run() -> void:
 	check(fp.global_position.distance_to(Vector3(30.0, 0.0, 0.0)) < 0.01,
 		"large jump snaps instead of gliding across the map")
 
+	# --- Puppet ground alignment during actions (comer/plant, forage/gather, drink, chop) ---
+	var PlayerScript := preload("res://scripts/PlayerController.gd")
+	var real_puppet = PlayerScript.new()
+	real_puppet.is_puppet = true
+	world.add_child(real_puppet)
+	real_puppet.setup_as_puppet()
+	real_puppet.global_position = Vector3(0.0, 2.0, 0.0)
+	for clip in [real_puppet.third_person_idle_animation, real_puppet.third_person_plant_animation, real_puppet.third_person_gather_animation, real_puppet.third_person_drink_animation, real_puppet.third_person_attack_animation]:
+		if str(clip).is_empty():
+			continue
+		real_puppet.puppet_apply(real_puppet.global_position, 0.0, str(clip))
+		for _step in range(25):
+			real_puppet.third_person_animation_player.advance(0.04)
+			real_puppet._process(0.04)
+		var skel: Skeleton3D = real_puppet._find_skeleton(real_puppet.third_person_model)
+		skel.force_update_all_bone_transforms()
+		var min_foot_rel_y := 999.0
+		for bi in range(skel.get_bone_count()):
+			var bname := skel.get_bone_name(bi)
+			if bname.find("Foot") >= 0 or bname.find("Toe") >= 0:
+				var wy := (skel.global_transform * skel.get_bone_global_pose(bi).origin).y
+				min_foot_rel_y = minf(min_foot_rel_y, wy - real_puppet.global_position.y)
+		check(absf(min_foot_rel_y - 0.025) < 0.05, "remote puppet stays grounded on %s (foot_rel_y=%.3f)" % [str(clip), min_foot_rel_y])
+
 	world.free()
 	if failures == 0:
-		print("PASS: remote stop-slide fixed — locomotion follows real puppet motion")
+		print("PASS: remote stop-slide and action ground alignment verified")
 	quit(1 if failures else 0)
