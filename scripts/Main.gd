@@ -3634,22 +3634,16 @@ func _net_notice(text: String) -> void:
 	if hud != null:
 		hud.show_notice(text)
 
-func _net_receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "") -> void:
+func _net_sync_chat_group(group_id: String, group_name: String, _member_ids: Array, _member_names: Array) -> void:
+	if hud != null and hud.has_method("on_chat_group_synced"):
+		hud.on_chat_group_synced(group_id, group_name)
+
+func _net_receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	var my_id: int = net.get_my_id() if net != null else 1
 	var is_self: bool = sender_id == my_id
-	var is_private: bool = target_id > 0
+	var peer_key := target_id if is_self else sender_id
 	if hud != null and hud.has_method("add_chat_message"):
-		hud.add_chat_message(sender_name, text, is_self, is_private, target_name)
-	# Los mensajes privados no muestran burbuja 3D pública sobre la cabeza
-	if is_private:
-		return
-	var actor: Node3D = null
-	if is_self:
-		actor = player
-	elif remote_players.has(sender_id):
-		actor = remote_players[sender_id]
-	if actor != null and is_instance_valid(actor):
-		_show_player_chat_bubble(actor, sender_name, text)
+		hud.add_chat_message(sender_name, text, is_self, true, target_name, peer_key, group_id)
 
 func _show_player_chat_bubble(actor: Node3D, sender_name: String, text: String) -> void:
 	if net != null and net.is_dedicated_server:

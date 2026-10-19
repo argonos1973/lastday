@@ -13,7 +13,8 @@ signal player_name_required()
 # Server reclaimed a live character for this client — the menu picker locks
 # to that character (payload: name, colors, current equipment).
 signal server_character_locked(payload: Dictionary)
-signal chat_message_received(sender_id: int, sender_name: String, text: String, target_id: int, target_name: String)
+signal chat_message_received(sender_id: int, sender_name: String, text: String, target_id: int, target_name: String, group_id: String)
+signal chat_group_synced(group_id: String, group_name: String, member_ids: Array, member_names: Array)
 
 const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
@@ -53,6 +54,8 @@ var pending_player_name := ""
 # player_id -> { "name": String, "pos": Vector3, "rot": float, "ready": bool }
 var players: Dictionary = {}
 var rowboat_state: Dictionary = {}
+var chat_groups: Dictionary = {} # group_id -> { "id": String, "name": String, "members": Array, "member_names": Array }
+var _chat_group_seq := 0
 
 func _load_or_generate_client_id() -> void:
 	# Dedicated server doesn't need a client_id — skip to avoid overwriting client's file
@@ -347,6 +350,8 @@ func close_connection() -> void:
 	is_host = false
 	players.clear()
 	rowboat_state.clear()
+	chat_groups.clear()
+	_chat_group_seq = 0
 
 func _on_peer_connected(id: int) -> void:
 	# Only server has direct ENet connections to all peers — set timeout there.
@@ -1327,34 +1332,72 @@ func sync_character_appearance_remote(peer_id: int, char_name: String, top_color
 	players[peer_id]["bottom_camo"] = bottom_camo
 
 @rpc("any_peer", "reliable")
-func send_chat_message(text: String, target_peer_id: int = 0) -> void:
+func create_chat_group(group_name: String, member_ids: Array) -> String:
+	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
+	if sender == 0 and is_host:
+		sender = get_my_id()
+	if not _accepts_client_request(sender):
+		return ""
+	var valid_members: Array = []
+	var member_names: Array = []
+	var requested := [sender]
+	for mid in member_ids:
+		var pid := int(mid)
+		if not requested.has(pid):
+			requested.append(pid)
+	for pid in requested:
+		if not players.has(pid) or players[pid].get("offline", false):
+			continue
+		valid_members.append(pid)
+		var pdata: Dictionary = players[pid]
+		var pname := str(pdata.get("char_name", ""))
+		if pname.is_empty():
+			pname = str(pdata.get("name", "Jugador_%d" % pid))
+		member_names.append(pname)
+	# Un grupo requiere al menos 2 miembros conectados
+	if valid_members.size() < 2:
+		return ""
+	_chat_group_seq += 1
+	var gid := "grp_%d_%d" % [_chat_group_seq, Time.get_ticks_msec() % 100000]
+	var gname := group_name.strip_edges().replace("\n", " ").substr(0, 40)
+	if gname.is_empty():
+		gname = "Grupo (%s)" % ", ".join(PackedStringArray(member_names))
+		if gname.length() > 42:
+			gname = gname.substr(0, 39) + "..."
+	chat_groups[gid] = {"id": gid, "name": gname, "members": valid_members, "member_names": member_names}
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not is_dedicated_server and valid_members.has(my_uid):
+		sync_chat_group(gid, gname, valid_members, member_names)
+	if peer != null:
+		for pid in valid_members:
+			if pid <= 1 or pid == my_uid:
+				continue
+			if players.has(pid) and not players[pid].get("offline", false) and peer_alive(pid):
+				sync_chat_group.rpc_id(pid, gid, gname, valid_members, member_names)
+	return gid
+
+@rpc("authority", "reliable")
+func sync_chat_group(group_id: String, group_name: String, member_ids: Array, member_names: Array) -> void:
+	chat_groups[group_id] = {"id": group_id, "name": group_name, "members": member_ids.duplicate(), "member_names": member_names.duplicate()}
+	chat_group_synced.emit(group_id, group_name, member_ids, member_names)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_sync_chat_group"):
+		scene._net_sync_chat_group(group_id, group_name, member_ids, member_names)
+
+@rpc("any_peer", "reliable")
+func send_chat_message(text: String, target_peer_id: int = 0, group_id: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
 	if sender == 0 and is_host:
 		sender = get_my_id()
 	if not _accepts_client_request(sender):
 		return
 	var clean := text.strip_edges().replace("\n", " ").replace("\r", " ")
-	# Soporte opcional para comando "/w Nombre mensaje" o "/p Nombre mensaje"
-	if target_peer_id == 0 and (clean.begins_with("/w ") or clean.begins_with("/p ")):
-		var rest := clean.substr(3).strip_edges()
-		var sp_idx := rest.find(" ")
-		if sp_idx > 0:
-			var wanted_name := rest.substr(0, sp_idx).strip_edges().to_lower()
-			var body := rest.substr(sp_idx + 1).strip_edges()
-			for pid in players.keys():
-				if players[pid].get("offline", false):
-					continue
-				var pdata_w: Dictionary = players[pid]
-				var pname_w := str(pdata_w.get("char_name", ""))
-				if pname_w.is_empty():
-					pname_w = str(pdata_w.get("name", ""))
-				if pname_w.to_lower() == wanted_name or pname_w.to_lower().begins_with(wanted_name):
-					target_peer_id = int(pid)
-					clean = body
-					break
 	if clean.length() > 160:
 		clean = clean.substr(0, 160)
 	if clean.is_empty():
+		return
+	# No existe chat público global: exige destinatario directo (target_peer_id > 0) o grupo válido (group_id != "")
+	if target_peer_id <= 0 and group_id.is_empty():
 		return
 	var sender_name := "Jugador"
 	if players.has(sender):
@@ -1362,39 +1405,45 @@ func send_chat_message(text: String, target_peer_id: int = 0) -> void:
 		sender_name = str(pdata.get("char_name", ""))
 		if sender_name.is_empty():
 			sender_name = str(pdata.get("name", "Jugador"))
-	var target_name := ""
-	if target_peer_id > 0:
-		if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not group_id.is_empty():
+		if not chat_groups.has(group_id):
 			return
-		var tdata: Dictionary = players[target_peer_id]
-		target_name = str(tdata.get("char_name", ""))
-		if target_name.is_empty():
-			target_name = str(tdata.get("name", "Jugador"))
-	if target_peer_id > 0:
-		# Mensaje privado: solo lo reciben el emisor y el destinatario
-		var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
-		if not is_dedicated_server and (sender == my_uid or target_peer_id == my_uid):
-			receive_chat_message(sender, sender_name, clean, target_peer_id, target_name)
+		var ginfo: Dictionary = chat_groups[group_id]
+		var members: Array = ginfo.get("members", [])
+		if not members.has(sender):
+			return
+		var gname := str(ginfo.get("name", "Grupo"))
+		if not is_dedicated_server and members.has(my_uid):
+			receive_chat_message(sender, sender_name, clean, 0, gname, group_id)
 		if peer != null:
-			for recipient in [sender, target_peer_id]:
-				if recipient <= 1 or recipient == my_uid:
+			for pid in members:
+				var m_pid := int(pid)
+				if m_pid <= 1 or m_pid == my_uid:
 					continue
-				if players.has(recipient) and not players[recipient].get("offline", false) and peer_alive(recipient):
-					receive_chat_message.rpc_id(recipient, sender, sender_name, clean, target_peer_id, target_name)
-				if sender == target_peer_id:
-					break
+				if players.has(m_pid) and not players[m_pid].get("offline", false) and peer_alive(m_pid):
+					receive_chat_message.rpc_id(m_pid, sender, sender_name, clean, 0, gname, group_id)
 		return
-	if not is_dedicated_server:
-		receive_chat_message(sender, sender_name, clean, 0, "")
+	if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+		return
+	var tdata: Dictionary = players[target_peer_id]
+	var target_name := str(tdata.get("char_name", ""))
+	if target_name.is_empty():
+		target_name = str(tdata.get("name", "Jugador"))
+	if not is_dedicated_server and (sender == my_uid or target_peer_id == my_uid):
+		receive_chat_message(sender, sender_name, clean, target_peer_id, target_name, "")
 	if peer != null:
-		for pid in players.keys():
-			if pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
+		for recipient in [sender, target_peer_id]:
+			if recipient <= 1 or recipient == my_uid:
 				continue
-			receive_chat_message.rpc_id(pid, sender, sender_name, clean, 0, "")
+			if players.has(recipient) and not players[recipient].get("offline", false) and peer_alive(recipient):
+				receive_chat_message.rpc_id(recipient, sender, sender_name, clean, target_peer_id, target_name, "")
+			if sender == target_peer_id:
+				break
 
 @rpc("authority", "reliable")
-func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "") -> void:
-	chat_message_received.emit(sender_id, sender_name, text, target_id, target_name)
+func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
+	chat_message_received.emit(sender_id, sender_name, text, target_id, target_name, group_id)
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_receive_chat_message"):
-		scene._net_receive_chat_message(sender_id, sender_name, text, target_id, target_name)
+		scene._net_receive_chat_message(sender_id, sender_name, text, target_id, target_name, group_id)

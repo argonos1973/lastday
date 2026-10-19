@@ -99,12 +99,18 @@ var _players_refresh_timer := 0.0
 var chat_panel: PanelContainer = null
 var chat_messages_box: VBoxContainer = null
 var chat_target_row: HBoxContainer = null
+var chat_group_builder_box: VBoxContainer = null
+var chat_group_name_input: LineEdit = null
 var chat_input_row: HBoxContainer = null
 var chat_input: LineEdit = null
 var chat_close_btn: Button = null
 var chat_open := false
-var chat_target_peer_id := 0 # 0 = Todos, >0 = peer_id en privado
-var _chat_history: Array = []
+var chat_group_builder_open := false
+var chat_selected_group_members: Dictionary = {} # peer_id -> bool
+var chat_target_peer_id := 0 # >0 = peer_id en chat 1 a 1
+var chat_target_group_id := "" # != "" = group_id en chat de grupo
+var _chat_conversations: Dictionary = {} # conv_key ("dm_<pid>" | "grp_<gid>") -> Array
+var _chat_history: Array = [] # vista activa de la conversacion seleccionada
 var _chat_fade_timer := 0.0
 const CHAT_MAX_MESSAGES := 8
 const CHAT_VISIBLE_SECONDS := 10.0
@@ -229,13 +235,13 @@ func _build_players_panel() -> void:
 	players_panel.anchor_top = 0.0
 	players_panel.anchor_right = 0.0
 	players_panel.anchor_bottom = 0.0
-	players_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	players_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
+	players_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	players_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.92), Color(0.45, 0.48, 0.42, 0.7), 1))
 	players_panel.visible = false
 	root.add_child(players_panel)
 	players_list_box = VBoxContainer.new()
-	players_list_box.add_theme_constant_override("separation", 3)
-	players_list_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	players_list_box.add_theme_constant_override("separation", 5)
+	players_list_box.mouse_filter = Control.MOUSE_FILTER_STOP
 	players_panel.add_child(players_list_box)
 
 func toggle_players_list() -> void:
@@ -249,6 +255,11 @@ func toggle_players_list() -> void:
 		players_hint.visible = not players_list_visible
 	if players_list_visible:
 		_update_players_list()
+		if can_use_chat():
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		if not chat_open and not inventory_visible and not craft_panel_visible and player != null and not player.get("is_dead"):
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _update_players_list() -> void:
 	if players_list_box == null:
@@ -261,6 +272,7 @@ func _update_players_list() -> void:
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	players_list_box.add_child(title)
 	var count := 0
+	var other_count := 0
 	var net = get_node_or_null("/root/NetworkManager")
 	if net != null:
 		var my_id: int = net.get_my_id() if net.has_method("get_my_id") else -1
@@ -274,14 +286,45 @@ func _update_players_list() -> void:
 			if pname.is_empty():
 				pname = str(pdata.get("name", "Jugador"))
 			var dead := str(pdata.get("anim", "")).begins_with("dead")
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			players_list_box.add_child(row)
 			var line := Label.new()
-			line.text = "• %s%s%s" % [pname, " (tú)" if pid == my_id else "", " †" if dead else ""]
+			line.text = "• %s%s%s" % [pname, " (tú)" if int(pid) == my_id else "", " †" if dead else ""]
+			line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.add_theme_font_size_override("font_size", 15)
 			line.add_theme_color_override("font_color", Color(0.5, 0.48, 0.42) if dead else Color(0.9, 0.9, 0.84))
-			line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			players_list_box.add_child(line)
+			row.add_child(line)
+			if int(pid) != my_id:
+				other_count += 1
+				var target_pid := int(pid)
+				var chat_btn := Button.new()
+				chat_btn.text = "Chatear"
+				chat_btn.add_theme_font_size_override("font_size", 12)
+				chat_btn.pressed.connect(func():
+					players_list_visible = false
+					if players_panel != null:
+						players_panel.visible = false
+					if players_hint != null:
+						players_hint.visible = true
+					open_chat(target_pid)
+				)
+				row.add_child(chat_btn)
 			count += 1
-	title.text = "JUGADORES (%d)" % count
+	if other_count >= 1:
+		var grp_btn := Button.new()
+		grp_btn.text = "+ Crear grupo de chat"
+		grp_btn.add_theme_font_size_override("font_size", 12)
+		grp_btn.pressed.connect(func():
+			players_list_visible = false
+			if players_panel != null:
+				players_panel.visible = false
+			if players_hint != null:
+				players_hint.visible = true
+			open_chat_group_builder()
+		)
+		players_list_box.add_child(grp_btn)
+	title.text = "JUGADORES (%d) — clic para chatear" % count if other_count >= 1 else "JUGADORES (%d)" % count
 
 func _online_players_count() -> int:
 	var net = get_node_or_null("/root/NetworkManager")
@@ -318,6 +361,28 @@ func _other_online_peers() -> Array:
 			out.append({"id": int(pid), "name": pname})
 	return out
 
+func _my_chat_groups() -> Array:
+	var out: Array = []
+	var net = get_node_or_null("/root/NetworkManager")
+	if net == null:
+		return out
+	var my_id: int = net.get_my_id() if net.has_method("get_my_id") else -1
+	var gdict: Dictionary = net.get("chat_groups") if net.get("chat_groups") is Dictionary else {}
+	for gid in gdict.keys():
+		var ginfo = gdict[gid]
+		if ginfo is Dictionary:
+			var members: Array = ginfo.get("members", [])
+			if members.has(my_id):
+				out.append(ginfo)
+	return out
+
+func _active_conversation_key() -> String:
+	if not chat_target_group_id.is_empty():
+		return "grp_" + chat_target_group_id
+	if chat_target_peer_id > 0:
+		return "dm_%d" % chat_target_peer_id
+	return ""
+
 func _build_chat_panel() -> void:
 	chat_panel = PanelContainer.new()
 	chat_panel.anchor_left = 0.0
@@ -325,11 +390,11 @@ func _build_chat_panel() -> void:
 	chat_panel.anchor_right = 0.0
 	chat_panel.anchor_bottom = 1.0
 	chat_panel.offset_left = 18
-	chat_panel.offset_top = -380
-	chat_panel.offset_right = 450
+	chat_panel.offset_top = -410
+	chat_panel.offset_right = 470
 	chat_panel.offset_bottom = -166
 	chat_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.88), Color(0.43, 0.48, 0.38, 0.68), 1)
+	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.90), Color(0.43, 0.48, 0.38, 0.68), 1)
 	frame.set_corner_radius_all(6)
 	frame.content_margin_left = 10
 	frame.content_margin_right = 10
@@ -340,20 +405,25 @@ func _build_chat_panel() -> void:
 	root.add_child(chat_panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 5)
+	vbox.add_theme_constant_override("separation", 6)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chat_panel.add_child(vbox)
+
+	chat_target_row = HBoxContainer.new()
+	chat_target_row.add_theme_constant_override("separation", 5)
+	chat_target_row.visible = false
+	vbox.add_child(chat_target_row)
+
+	chat_group_builder_box = VBoxContainer.new()
+	chat_group_builder_box.add_theme_constant_override("separation", 4)
+	chat_group_builder_box.visible = false
+	vbox.add_child(chat_group_builder_box)
 
 	chat_messages_box = VBoxContainer.new()
 	chat_messages_box.add_theme_constant_override("separation", 3)
 	chat_messages_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	chat_messages_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(chat_messages_box)
-
-	chat_target_row = HBoxContainer.new()
-	chat_target_row.add_theme_constant_override("separation", 6)
-	chat_target_row.visible = false
-	vbox.add_child(chat_target_row)
 
 	chat_input_row = HBoxContainer.new()
 	chat_input_row.add_theme_constant_override("separation", 6)
@@ -362,7 +432,7 @@ func _build_chat_panel() -> void:
 
 	chat_input = LineEdit.new()
 	chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chat_input.placeholder_text = "Mensaje a Todos... [Tab: privado · Enter: enviar · Esc: salir]"
+	chat_input.placeholder_text = "Selecciona un jugador o grupo con el ratón..."
 	chat_input.max_length = 160
 	chat_input.add_theme_font_size_override("font_size", 13)
 	chat_input.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
@@ -379,71 +449,212 @@ func _build_chat_panel() -> void:
 
 func set_chat_target(peer_id: int) -> void:
 	chat_target_peer_id = peer_id
+	chat_target_group_id = ""
+	chat_group_builder_open = false
 	_refresh_chat_target_ui()
+	_render_active_conversation()
+	if chat_open and chat_input != null:
+		chat_input.grab_focus()
+
+func set_chat_group(group_id: String) -> void:
+	chat_target_group_id = group_id
+	chat_target_peer_id = 0
+	chat_group_builder_open = false
+	_refresh_chat_target_ui()
+	_render_active_conversation()
 	if chat_open and chat_input != null:
 		chat_input.grab_focus()
 
 func cycle_chat_target() -> void:
 	var others := _other_online_peers()
-	if others.is_empty():
-		set_chat_target(0)
-		return
-	var options: Array = [0]
+	var groups := _my_chat_groups()
+	var options: Array = []
 	for entry in others:
-		options.append(int(entry["id"]))
-	var idx := options.find(chat_target_peer_id)
-	var next_idx := (idx + 1) % options.size() if idx >= 0 else 0
-	set_chat_target(int(options[next_idx]))
+		options.append({"type": "dm", "id": int(entry["id"])})
+	for g in groups:
+		options.append({"type": "grp", "id": str(g.get("id", ""))})
+	if options.is_empty():
+		return
+	var cur_idx := -1
+	for i in range(options.size()):
+		var opt: Dictionary = options[i]
+		if opt["type"] == "dm" and chat_target_group_id.is_empty() and int(opt["id"]) == chat_target_peer_id:
+			cur_idx = i
+			break
+		if opt["type"] == "grp" and str(opt["id"]) == chat_target_group_id:
+			cur_idx = i
+			break
+	var next_opt: Dictionary = options[(cur_idx + 1) % options.size()]
+	if next_opt["type"] == "grp":
+		set_chat_group(str(next_opt["id"]))
+	else:
+		set_chat_target(int(next_opt["id"]))
+
+func open_chat_group_builder() -> void:
+	if not can_use_chat():
+		return
+	if not chat_open:
+		open_chat()
+	chat_group_builder_open = true
+	chat_selected_group_members.clear()
+	for entry in _other_online_peers():
+		chat_selected_group_members[int(entry["id"])] = true
+	_refresh_chat_target_ui()
+
+func _confirm_create_chat_group() -> void:
+	var chosen: Array = []
+	for pid in chat_selected_group_members.keys():
+		if bool(chat_selected_group_members[pid]):
+			chosen.append(int(pid))
+	if chosen.is_empty():
+		show_notice("Selecciona al menos un jugador con el ratón para crear el grupo.", 3.0)
+		return
+	var gname := ""
+	if chat_group_name_input != null:
+		gname = chat_group_name_input.text.strip_edges()
+	chat_group_builder_open = false
+	var net = get_node_or_null("/root/NetworkManager")
+	if net != null and net.get("is_connected") == true and net.has_method("create_chat_group"):
+		if net.get("is_host") == true:
+			var gid: String = net.create_chat_group(gname, chosen)
+			if not gid.is_empty():
+				set_chat_group(gid)
+		else:
+			net.create_chat_group.rpc_id(1, gname, chosen)
+	_refresh_chat_target_ui()
+
+func on_chat_group_synced(group_id: String, _group_name: String) -> void:
+	if chat_target_group_id.is_empty() and chat_target_peer_id <= 0:
+		chat_target_group_id = group_id
+	elif chat_open and not chat_group_builder_open:
+		chat_target_group_id = group_id
+		chat_target_peer_id = 0
+	_refresh_chat_target_ui()
+	_render_active_conversation()
 
 func _refresh_chat_target_ui() -> void:
-	if chat_target_row == null or chat_input == null:
+	if chat_target_row == null or chat_input == null or chat_group_builder_box == null:
 		return
 	var others := _other_online_peers()
-	var valid_target := false
-	var target_name := "Todos"
+	var groups := _my_chat_groups()
+	var valid_dm := false
+	var target_label := ""
 	for entry in others:
 		if int(entry["id"]) == chat_target_peer_id:
-			valid_target = true
-			target_name = str(entry["name"])
+			valid_dm = true
+			target_label = str(entry["name"])
 			break
-	if not valid_target:
-		chat_target_peer_id = 0
+	var valid_grp := false
+	for g in groups:
+		if str(g.get("id", "")) == chat_target_group_id:
+			valid_grp = true
+			target_label = str(g.get("name", "Grupo"))
+			break
+	if not valid_dm and not valid_grp:
+		chat_target_group_id = ""
+		if not others.is_empty():
+			chat_target_peer_id = int(others[0]["id"])
+			target_label = str(others[0]["name"])
+		elif not groups.is_empty():
+			chat_target_group_id = str(groups[0].get("id", ""))
+			target_label = str(groups[0].get("name", "Grupo"))
+		else:
+			chat_target_peer_id = 0
 	for c in chat_target_row.get_children():
 		c.queue_free()
 	var to_lbl := Label.new()
-	to_lbl.text = "Para [Tab]:"
+	to_lbl.text = "Chat:"
 	to_lbl.add_theme_font_size_override("font_size", 12)
 	to_lbl.add_theme_color_override("font_color", Color(0.70, 0.75, 0.64))
 	chat_target_row.add_child(to_lbl)
-	var all_btn := Button.new()
-	all_btn.text = "● Todos" if chat_target_peer_id == 0 else "Todos"
-	all_btn.add_theme_font_size_override("font_size", 12)
-	all_btn.add_theme_color_override("font_color", Color(0.88, 0.96, 0.70) if chat_target_peer_id == 0 else Color(0.75, 0.78, 0.72))
-	all_btn.pressed.connect(func(): set_chat_target(0))
-	chat_target_row.add_child(all_btn)
 	for entry in others:
 		var pid: int = int(entry["id"])
 		var pname: String = str(entry["name"])
 		var pbtn := Button.new()
-		var selected := (chat_target_peer_id == pid)
-		pbtn.text = ("🔒 " + pname) if selected else pname
+		var selected := (chat_target_group_id.is_empty() and chat_target_peer_id == pid)
+		pbtn.text = ("● " + pname) if selected else pname
 		pbtn.add_theme_font_size_override("font_size", 12)
 		pbtn.add_theme_color_override("font_color", Color(1.0, 0.86, 0.45) if selected else Color(0.78, 0.80, 0.74))
 		pbtn.pressed.connect(func(): set_chat_target(pid))
 		chat_target_row.add_child(pbtn)
-	if chat_target_peer_id == 0:
-		chat_input.placeholder_text = "Mensaje a Todos... [Tab: privado · Enter: enviar · Esc: salir]"
-	else:
-		chat_input.placeholder_text = "Privado para %s... [Tab: cambiar · Enter: enviar · Esc: salir]" % target_name
+	for g in groups:
+		var gid: String = str(g.get("id", ""))
+		var gname: String = str(g.get("name", "Grupo"))
+		var gbtn := Button.new()
+		var gsel := (chat_target_group_id == gid)
+		gbtn.text = ("● 👥 " + gname) if gsel else ("👥 " + gname)
+		gbtn.add_theme_font_size_override("font_size", 12)
+		gbtn.add_theme_color_override("font_color", Color(0.65, 0.95, 0.75) if gsel else Color(0.74, 0.82, 0.76))
+		gbtn.pressed.connect(func(): set_chat_group(gid))
+		chat_target_row.add_child(gbtn)
+	var new_grp_btn := Button.new()
+	new_grp_btn.text = "+ Grupo"
+	new_grp_btn.add_theme_font_size_override("font_size", 12)
+	new_grp_btn.pressed.connect(func():
+		chat_group_builder_open = not chat_group_builder_open
+		if chat_group_builder_open:
+			chat_selected_group_members.clear()
+			for e2 in _other_online_peers():
+				chat_selected_group_members[int(e2["id"])] = true
+		_refresh_chat_target_ui()
+	)
+	chat_target_row.add_child(new_grp_btn)
 
-func open_chat(initial_target_peer_id: int = -1) -> void:
+	for c in chat_group_builder_box.get_children():
+		c.queue_free()
+	chat_group_builder_box.visible = chat_open and chat_group_builder_open
+	if chat_group_builder_open:
+		var ghead := Label.new()
+		ghead.text = "Marca los jugadores para el grupo:"
+		ghead.add_theme_font_size_override("font_size", 12)
+		ghead.add_theme_color_override("font_color", Color(0.84, 0.90, 0.72))
+		chat_group_builder_box.add_child(ghead)
+		var checks_row := HBoxContainer.new()
+		checks_row.add_theme_constant_override("separation", 8)
+		chat_group_builder_box.add_child(checks_row)
+		for entry in others:
+			var mpid: int = int(entry["id"])
+			var cb := CheckBox.new()
+			cb.text = str(entry["name"])
+			cb.button_pressed = bool(chat_selected_group_members.get(mpid, true))
+			cb.add_theme_font_size_override("font_size", 12)
+			cb.toggled.connect(func(pressed: bool): chat_selected_group_members[mpid] = pressed)
+			checks_row.add_child(cb)
+		var gact_row := HBoxContainer.new()
+		gact_row.add_theme_constant_override("separation", 6)
+		chat_group_builder_box.add_child(gact_row)
+		chat_group_name_input = LineEdit.new()
+		chat_group_name_input.placeholder_text = "Nombre del grupo (opcional)"
+		chat_group_name_input.max_length = 32
+		chat_group_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		chat_group_name_input.add_theme_font_size_override("font_size", 12)
+		gact_row.add_child(chat_group_name_input)
+		var create_btn := Button.new()
+		create_btn.text = "Crear grupo"
+		create_btn.add_theme_font_size_override("font_size", 12)
+		create_btn.pressed.connect(_confirm_create_chat_group)
+		gact_row.add_child(create_btn)
+
+	if not chat_target_group_id.is_empty():
+		chat_input.placeholder_text = "Escribir a %s... [Enter: enviar · Esc: salir]" % target_label
+	elif chat_target_peer_id > 0:
+		chat_input.placeholder_text = "Escribir a %s... [Enter: enviar · Esc: salir]" % target_label
+	else:
+		chat_input.placeholder_text = "Selecciona un jugador o crea un grupo con el ratón..."
+
+func open_chat(initial_target_peer_id: int = -1, initial_group_id: String = "") -> void:
 	if chat_panel == null or chat_input == null:
 		return
 	if not can_use_chat():
 		return
-	if initial_target_peer_id >= 0:
+	if not initial_group_id.is_empty():
+		chat_target_group_id = initial_group_id
+		chat_target_peer_id = 0
+	elif initial_target_peer_id > 0:
 		chat_target_peer_id = initial_target_peer_id
+		chat_target_group_id = ""
 	_refresh_chat_target_ui()
+	_render_active_conversation()
 	chat_open = true
 	_chat_fade_timer = CHAT_VISIBLE_SECONDS
 	chat_panel.visible = true
@@ -461,6 +672,9 @@ func close_chat() -> void:
 	if not chat_open:
 		return
 	chat_open = false
+	chat_group_builder_open = false
+	if chat_group_builder_box != null:
+		chat_group_builder_box.visible = false
 	if chat_target_row != null:
 		chat_target_row.visible = false
 	if chat_input_row != null:
@@ -471,7 +685,7 @@ func close_chat() -> void:
 		chat_input.visible = false
 	if chat_panel != null:
 		chat_panel.visible = can_use_chat() and not _chat_history.is_empty() and _chat_fade_timer > 0.0
-	if not inventory_visible and not craft_panel_visible and player != null and not player.get("is_dead"):
+	if not inventory_visible and not craft_panel_visible and not players_list_visible and player != null and not player.get("is_dead"):
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _on_chat_gui_input(event: InputEvent) -> void:
@@ -486,47 +700,75 @@ func _on_chat_gui_input(event: InputEvent) -> void:
 func _on_chat_submitted(new_text: String) -> void:
 	var clean := new_text.strip_edges()
 	var target_pid := chat_target_peer_id
+	var target_gid := chat_target_group_id
 	close_chat()
 	if clean.is_empty():
+		return
+	if target_pid <= 0 and target_gid.is_empty():
 		return
 	var net = get_node_or_null("/root/NetworkManager")
 	if net != null and net.get("is_connected") == true and net.has_method("send_chat_message"):
 		if net.get("is_host") == true:
-			net.send_chat_message(clean, target_pid)
+			net.send_chat_message(clean, target_pid, target_gid)
 		else:
-			net.send_chat_message.rpc_id(1, clean, target_pid)
+			net.send_chat_message.rpc_id(1, clean, target_pid, target_gid)
 
-func add_chat_message(sender_name: String, text: String, is_self: bool = false, is_private: bool = false, target_name: String = "") -> void:
+func _render_active_conversation() -> void:
 	if chat_messages_box == null:
 		return
-	_chat_history.append({"sender": sender_name, "text": text, "self": is_self, "private": is_private, "target": target_name})
-	while _chat_history.size() > CHAT_MAX_MESSAGES:
-		_chat_history.pop_front()
+	var conv_key := _active_conversation_key()
+	_chat_history = (_chat_conversations.get(conv_key, []) as Array).duplicate() if _chat_conversations.has(conv_key) else []
 	for c in chat_messages_box.get_children():
 		c.queue_free()
 	for entry in _chat_history:
 		var lbl := Label.new()
 		var sname := str(entry.get("sender", "Jugador"))
 		var msg := str(entry.get("text", ""))
-		var priv := bool(entry.get("private", false))
 		var tname := str(entry.get("target", ""))
-		if priv:
-			if bool(entry.get("self", false)) and not tname.is_empty():
-				lbl.text = "[Privado -> %s]: %s" % [tname, msg]
-			else:
-				lbl.text = "[Privado de %s]: %s" % [sname, msg]
+		var gid := str(entry.get("group_id", ""))
+		if not gid.is_empty():
+			lbl.text = "[%s] %s: %s" % [tname if not tname.is_empty() else "Grupo", sname, msg]
+		elif bool(entry.get("self", false)) and not tname.is_empty():
+			lbl.text = "[Para %s]: %s" % [tname, msg]
 		else:
 			lbl.text = "%s: %s" % [sname, msg]
 		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		lbl.add_theme_font_size_override("font_size", 13)
-		var col := Color(0.92, 0.92, 0.86)
-		if priv:
-			col = Color(1.0, 0.85, 0.45)
+		var col := Color(1.0, 0.85, 0.45)
+		if not gid.is_empty():
+			col = Color(0.68, 0.95, 0.78)
 		elif bool(entry.get("self", false)):
 			col = Color(0.84, 0.93, 0.68)
 		lbl.add_theme_color_override("font_color", col)
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		chat_messages_box.add_child(lbl)
+
+func add_chat_message(sender_name: String, text: String, is_self: bool = false, _is_private: bool = true, target_name: String = "", peer_key_id: int = 0, group_id: String = "") -> void:
+	if chat_messages_box == null:
+		return
+	var conv_key := ""
+	if not group_id.is_empty():
+		conv_key = "grp_" + group_id
+	elif peer_key_id > 0:
+		conv_key = "dm_%d" % peer_key_id
+	else:
+		conv_key = _active_conversation_key()
+		if conv_key.is_empty():
+			conv_key = "dm_0"
+	var list: Array = _chat_conversations.get(conv_key, [])
+	list.append({"sender": sender_name, "text": text, "self": is_self, "target": target_name, "group_id": group_id})
+	while list.size() > CHAT_MAX_MESSAGES:
+		list.pop_front()
+	_chat_conversations[conv_key] = list
+	# Si no estaba escribiendo en otra conversación, activar la que acaba de recibir mensaje
+	if not chat_open:
+		if not group_id.is_empty():
+			chat_target_group_id = group_id
+			chat_target_peer_id = 0
+		elif peer_key_id > 0:
+			chat_target_peer_id = peer_key_id
+			chat_target_group_id = ""
+	_render_active_conversation()
 	_chat_fade_timer = CHAT_VISIBLE_SECONDS
 	if chat_panel != null and can_use_chat():
 		chat_panel.visible = true
