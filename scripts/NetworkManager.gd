@@ -568,6 +568,9 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			# Send character appearance if available
 			if pdata.has("top_color"):
 				sync_character_appearance_remote.rpc_id(id, pid, pdata.get("char_name", ""), pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
+		for gid in chat_groups.keys():
+			var ginfo: Dictionary = chat_groups[gid]
+			sync_chat_group.rpc_id(id, str(ginfo.get("id", gid)), str(ginfo.get("name", "Grupo")), ginfo.get("members", []), ginfo.get("member_names", []))
 	_check_all_ready()
 
 # client_id es el token con el que se reivindica el personaje del servidor al
@@ -1331,12 +1334,33 @@ func sync_character_appearance_remote(peer_id: int, char_name: String, top_color
 	players[peer_id]["top_camo"] = top_camo
 	players[peer_id]["bottom_camo"] = bottom_camo
 
+func _broadcast_chat_group(gid: String) -> void:
+	if not chat_groups.has(gid):
+		return
+	var ginfo: Dictionary = chat_groups[gid]
+	var gname := str(ginfo.get("name", "Grupo"))
+	var valid_members: Array = ginfo.get("members", [])
+	var member_names: Array = ginfo.get("member_names", [])
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not is_dedicated_server:
+		sync_chat_group(gid, gname, valid_members, member_names)
+	if peer != null:
+		for pid in players.keys():
+			var p_int := int(pid)
+			if p_int <= 1 or p_int == my_uid:
+				continue
+			if not players[pid].get("offline", false) and peer_alive(p_int):
+				sync_chat_group.rpc_id(p_int, gid, gname, valid_members, member_names)
+
 @rpc("any_peer", "reliable")
-func create_chat_group(group_name: String, member_ids: Array) -> String:
+func create_chat_group(group_name: String, member_ids: Array = []) -> String:
 	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
 	if sender == 0 and is_host:
 		sender = get_my_id()
 	if not _accepts_client_request(sender):
+		return ""
+	var gname := group_name.strip_edges().replace("\n", " ").replace("\r", " ").substr(0, 40)
+	if gname.is_empty():
 		return ""
 	var valid_members: Array = []
 	var member_names: Array = []
@@ -1354,27 +1378,40 @@ func create_chat_group(group_name: String, member_ids: Array) -> String:
 		if pname.is_empty():
 			pname = str(pdata.get("name", "Jugador_%d" % pid))
 		member_names.append(pname)
-	# Un grupo requiere al menos 2 miembros conectados
-	if valid_members.size() < 2:
+	if valid_members.is_empty():
 		return ""
 	_chat_group_seq += 1
 	var gid := "grp_%d_%d" % [_chat_group_seq, Time.get_ticks_msec() % 100000]
-	var gname := group_name.strip_edges().replace("\n", " ").substr(0, 40)
-	if gname.is_empty():
-		gname = "Grupo (%s)" % ", ".join(PackedStringArray(member_names))
-		if gname.length() > 42:
-			gname = gname.substr(0, 39) + "..."
 	chat_groups[gid] = {"id": gid, "name": gname, "members": valid_members, "member_names": member_names}
-	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
-	if not is_dedicated_server and valid_members.has(my_uid):
-		sync_chat_group(gid, gname, valid_members, member_names)
-	if peer != null:
-		for pid in valid_members:
-			if pid <= 1 or pid == my_uid:
-				continue
-			if players.has(pid) and not players[pid].get("offline", false) and peer_alive(pid):
-				sync_chat_group.rpc_id(pid, gid, gname, valid_members, member_names)
+	_broadcast_chat_group(gid)
 	return gid
+
+@rpc("any_peer", "reliable")
+func join_chat_group(group_id: String) -> bool:
+	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
+	if sender == 0 and is_host:
+		sender = get_my_id()
+	if not _accepts_client_request(sender):
+		return false
+	if not chat_groups.has(group_id):
+		return false
+	var ginfo: Dictionary = chat_groups[group_id]
+	var members: Array = (ginfo.get("members", []) as Array).duplicate()
+	var mnames: Array = (ginfo.get("member_names", []) as Array).duplicate()
+	if not members.has(sender):
+		members.append(sender)
+		var pname := "Jugador_%d" % sender
+		if players.has(sender):
+			var pdata: Dictionary = players[sender]
+			pname = str(pdata.get("char_name", ""))
+			if pname.is_empty():
+				pname = str(pdata.get("name", pname))
+		mnames.append(pname)
+		ginfo["members"] = members
+		ginfo["member_names"] = mnames
+		chat_groups[group_id] = ginfo
+	_broadcast_chat_group(group_id)
+	return true
 
 @rpc("authority", "reliable")
 func sync_chat_group(group_id: String, group_name: String, member_ids: Array, member_names: Array) -> void:

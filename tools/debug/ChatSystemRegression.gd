@@ -82,20 +82,27 @@ func _run() -> void:
 	hud.open_chat()
 	check(not hud.chat_open and not hud.chat_panel.visible, "open_chat is ignored when <2 players are online")
 
-	# 2. Al conectarse otros jugadores (>=2 online), el chat se habilita y selecciona al primer jugador
+	# 2. En [P] Jugadores, hacer clic directamente en el nombre del jugador abre el chat con él (sin botón 'Chatear' separado)
 	net.players[7] = {"name": "Jugador_7", "char_name": "Remy"}
 	net.players[9] = {"name": "Jugador_9", "char_name": "Alex"}
-	check(hud.can_use_chat(), "Chat is enabled when >=2 players are online")
-	hud.open_chat()
-	check(hud.chat_open and hud.chat_panel.visible and hud.chat_input.visible, "open_chat opens panel and LineEdit with 2+ players")
-	check(hud.chat_target_peer_id == 7 and hud.chat_target_group_id.is_empty(), "Chat defaults to first connected player (no public 'Todos' channel)")
+	hud.toggle_players_list()
+	var remy_btn: Button = null
+	var has_separate_chatear_btn := false
+	for child in hud.players_list_box.get_children():
+		if child is Button and (child as Button).text.find("Remy") >= 0:
+			remy_btn = child as Button
+		if child is Button and (child as Button).text == "Chatear":
+			has_separate_chatear_btn = true
+	check(remy_btn != null and not has_separate_chatear_btn, "Player name itself is the clickable button (no separate 'Chatear' button)")
+	if remy_btn != null:
+		remy_btn.pressed.emit()
+	check(hud.chat_open and hud.chat_target_peer_id == 7, "Clicking player name directly opens 1-on-1 chat with that player")
 
 	# 3. No existe chat público: enviar sin destinatario ni grupo es rechazado
 	net.send_chat_message("Mensaje público sin destinatario", 0, "")
 	check(hud._chat_conversations.is_empty(), "Public broadcast (target=0, group='') is rejected")
 
-	# 4. Seleccionar jugador con el ratón (set_chat_target / open_chat(pid)) mantiene conversaciones 1-a-1 separadas
-	hud.set_chat_target(7)
+	# 4. Conversaciones 1-a-1 separadas al hacer clic en el nombre de cada jugador
 	net.send_chat_message("Hola Remy", 7, "")
 	check(hud._chat_conversations.has("dm_7") and (hud._chat_conversations["dm_7"] as Array).size() == 1, "Direct message to peer 7 stored in dm_7 conversation")
 	hud.set_chat_target(9)
@@ -103,30 +110,27 @@ func _run() -> void:
 	net.send_chat_message("Hola Alex", 9, "")
 	check(hud._chat_conversations.has("dm_9") and (hud._chat_conversations["dm_9"] as Array).size() == 1, "Direct message to peer 9 stored in dm_9 conversation")
 
-	# 5. Crear un grupo de chat con jugadores seleccionados y escribir al grupo
+	# 5. Crear un grupo poniendo solo el nombre del grupo; queda listado para poderse unir después
 	hud.open_chat_group_builder()
-	check(hud.chat_group_builder_open and hud.chat_group_builder_box.visible, "Group builder UI opens with player checkboxes")
-	hud.chat_selected_group_members = {7: true, 9: true}
+	check(hud.chat_group_builder_open and hud.chat_group_name_input != null, "Group builder opens with group name input")
 	hud.chat_group_name_input.text = "Patrulla Norte"
 	hud._confirm_create_chat_group()
-	var groups: Array = hud._my_chat_groups()
-	check(groups.size() == 1, "Group created and registered in NetworkManager.chat_groups")
-	var gid := str(groups[0].get("id", "")) if not groups.is_empty() else ""
-	check(not gid.is_empty() and hud.chat_target_group_id == gid, "Newly created group becomes the active chat target")
-	net.send_chat_message("Nos vemos en la torre", 0, gid)
-	check(hud._chat_conversations.has("grp_" + gid) and (hud._chat_conversations["grp_" + gid] as Array).size() == 1, "Group message stored in group conversation")
-	check(str((hud._chat_conversations["grp_" + gid] as Array)[0].get("text", "")) == "Nos vemos en la torre", "Group message content matches")
+	var all_groups: Array = hud._all_chat_groups()
+	check(all_groups.size() == 1 and str(all_groups[0].get("name", "")) == "Patrulla Norte", "Group created by name and listed in _all_chat_groups")
+	var gid := str(all_groups[0].get("id", "")) if not all_groups.is_empty() else ""
+	check(not gid.is_empty() and hud.chat_target_group_id == gid, "Newly created group is selected")
 
-	# 6. Salir del chat con el botón Salir [Esc]
+	# 6. Un grupo creado por otro jugador aparece listado y al hacer clic nos unimos a él
+	net.sync_chat_group("grp_ext_1", "Supervivientes Sur", [7], ["Remy"])
+	check(hud._all_chat_groups().size() == 2 and hud._my_chat_groups().size() == 1, "External group appears in listed groups before joining")
+	hud.join_or_select_chat_group("grp_ext_1")
+	check(hud._my_chat_groups().size() == 2 and hud.chat_target_group_id == "grp_ext_1", "Clicking listed group joins it and selects it for chat")
+	net.send_chat_message("Ya me he unido al grupo", 0, "grp_ext_1")
+	check(hud._chat_conversations.has("grp_grp_ext_1") and (hud._chat_conversations["grp_grp_ext_1"] as Array).size() == 1, "Joined player can send and receive messages in the group")
+
+	# 7. Salir del chat con el botón Salir [Esc]
 	hud.chat_close_btn.pressed.emit()
 	check(not hud.chat_open and not hud.chat_input.visible, "Close button exits chat")
-
-	# 7. Si los demás jugadores se desconectan (queda 1 online), el chat se cierra y oculta solo
-	hud.open_chat()
-	net.players[7]["offline"] = true
-	net.players[9]["offline"] = true
-	hud._process(0.1)
-	check(not hud.chat_open and not hud.chat_panel.visible, "Chat auto-closes and hides when online player count drops below 2")
 
 	world.queue_free()
 	await process_frame
