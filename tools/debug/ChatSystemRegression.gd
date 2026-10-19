@@ -336,18 +336,23 @@ func _run() -> void:
 		var g_members: Array = net.chat_groups[radio_gid].get("members", [])
 		check(g_members.has(id_a) and g_members.has(id_b) and not g_members.has(id_c), "Alex joined 'Radio Alfa' while Sara remains outside the group")
 
-		# Ambos miembros del grupo (Remy y Alex) hablan en el grupo -> ambos se escuchan y Sara (C) no escucha nada
+		# Ambos miembros del grupo (Remy y Alex) hablan en el grupo -> ambos se escuchan y Sara (C) no escucha nada.
+		# Los paquetes de voz son unreliable_ordered: en el loopback in-process una ráfaga de los 3
+		# clientes en el mismo frame puede perder alguno, así que cada dirección se envía y se espera
+		# por separado (en producción el stream manda ~20 paquetes/s y perder uno es irrelevante).
 		cli_a.received_voice.clear()
 		cli_b.received_voice.clear()
 		cli_c.received_voice.clear()
 		cli_a.send_voice_packet.rpc_id(1, voice_dm, 0, radio_gid)
+		await create_timer(0.15).timeout
+		check(cli_b.received_voice.size() == 1 and int(cli_b.received_voice[0]["sender_id"]) == id_a and str(cli_b.received_voice[0]["group_id"]) == radio_gid, "Group member Alex receives Remy's group voice packet over ENet")
 		cli_b.send_voice_packet.rpc_id(1, voice_dm, 0, radio_gid)
+		await create_timer(0.15).timeout
+		check(cli_a.received_voice.size() == 1 and int(cli_a.received_voice[0]["sender_id"]) == id_b and str(cli_a.received_voice[0]["group_id"]) == radio_gid, "Group member Remy simultaneously receives Alex's group voice packet over ENet")
 		# Sara (no miembro) intenta enviar voz al grupo -> el servidor lo bloquea
 		cli_c.send_voice_packet.rpc_id(1, voice_dm, 0, radio_gid)
-		await create_timer(0.2).timeout
-		check(cli_b.received_voice.size() == 1 and int(cli_b.received_voice[0]["sender_id"]) == id_a and str(cli_b.received_voice[0]["group_id"]) == radio_gid, "Group member Alex receives Remy's group voice packet over ENet")
-		check(cli_a.received_voice.size() == 1 and int(cli_a.received_voice[0]["sender_id"]) == id_b and str(cli_a.received_voice[0]["group_id"]) == radio_gid, "Group member Remy simultaneously receives Alex's group voice packet over ENet")
-		check(cli_c.received_voice.is_empty(), "Non-member Sara receives 0 voice packets from the group")
+		await create_timer(0.15).timeout
+		check(cli_c.received_voice.is_empty() and cli_a.received_voice.size() == 1 and cli_b.received_voice.size() == 1, "Non-member Sara receives 0 voice packets and her rejected send reaches no member")
 
 		for cli in [cli_a, cli_b, cli_c]:
 			cli.close_connection()
