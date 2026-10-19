@@ -108,6 +108,8 @@ var chat_close_btn: Button = null
 var voice_status_label: Label = null
 var chat_open := false
 var voice_mic_active := false
+var _voice_target_peer_id := 0
+var _voice_target_group_id := ""
 var _mic_player: AudioStreamPlayer = null
 var _mic_capture: AudioEffectCapture = null
 var _mic_out_buffer: PackedByteArray = PackedByteArray()
@@ -630,6 +632,8 @@ func on_chat_group_synced(group_id: String, _group_name: String) -> void:
 		_update_players_list()
 
 func _refresh_chat_target_ui() -> void:
+	if voice_mic_active and not _voice_session_is_valid():
+		set_voice_mic_active(false)
 	if chat_target_row == null or chat_input == null or chat_group_builder_box == null:
 		return
 	var others := _other_online_peers()
@@ -878,23 +882,34 @@ func _active_voice_target_label() -> String:
 func _ensure_mic_capture() -> void:
 	if _mic_capture != null and _mic_player != null:
 		return
+	ProjectSettings.set_setting("audio/driver/enable_input", true)
 	var bus_name := "VoiceMicCapture"
 	var bus_idx := AudioServer.get_bus_index(bus_name)
 	if bus_idx < 0:
 		AudioServer.add_bus()
 		bus_idx = AudioServer.get_bus_count() - 1
 		AudioServer.set_bus_name(bus_idx, bus_name)
-	AudioServer.set_bus_mute(bus_idx, true)
+	# IMPORTANTE: en Godot 4 set_bus_mute(true) salta los efectos del bus y deja
+	# AudioEffectCapture en 0 frames. Mantenemos el bus sin mute para que el
+	# efecto capture la onda completa y silenciamos la salida tras la captura.
+	AudioServer.set_bus_mute(bus_idx, false)
+	AudioServer.set_bus_volume_db(bus_idx, -80.0)
 	var found_cap: AudioEffectCapture = null
+	var has_silencer := false
 	for i in range(AudioServer.get_bus_effect_count(bus_idx)):
 		var eff := AudioServer.get_bus_effect(bus_idx, i)
 		if eff is AudioEffectCapture:
 			found_cap = eff as AudioEffectCapture
-			break
+		elif eff is AudioEffectAmplify:
+			has_silencer = true
 	if found_cap == null:
 		found_cap = AudioEffectCapture.new()
 		found_cap.buffer_length = 0.25
-		AudioServer.add_bus_effect(bus_idx, found_cap)
+		AudioServer.add_bus_effect(bus_idx, found_cap, 0)
+	if not has_silencer:
+		var silencer := AudioEffectAmplify.new()
+		silencer.volume_db = -80.0
+		AudioServer.add_bus_effect(bus_idx, silencer)
 	_mic_capture = found_cap
 	if _mic_player == null:
 		_mic_player = AudioStreamPlayer.new()
@@ -906,8 +921,16 @@ func _ensure_mic_capture() -> void:
 func toggle_voice_mic() -> void:
 	set_voice_mic_active(not voice_mic_active)
 
+func _can_transmit_voice() -> bool:
+	return (can_use_chat() and is_instance_valid(player) and not player.get("is_dead")
+		and (not is_instance_valid(main_node) or not main_node.get("game_over")))
+
+func _voice_session_is_valid() -> bool:
+	return (_can_transmit_voice() and chat_target_peer_id == _voice_target_peer_id
+		and chat_target_group_id == _voice_target_group_id and not _active_voice_target_label().is_empty())
+
 func set_voice_mic_active(active: bool) -> void:
-	if active and not can_use_chat():
+	if active and not _can_transmit_voice():
 		active = false
 	if active and chat_target_peer_id <= 0 and chat_target_group_id.is_empty():
 		_refresh_chat_target_ui()
@@ -915,6 +938,8 @@ func set_voice_mic_active(active: bool) -> void:
 		show_notice("Selecciona primero un jugador o únete a un grupo en el chat.", 3.0)
 		return
 	voice_mic_active = active
+	_voice_target_peer_id = chat_target_peer_id if active else 0
+	_voice_target_group_id = chat_target_group_id if active else ""
 	_mic_out_buffer.clear()
 	_mic_Peak_accum = 0.0
 	if voice_mic_active:
@@ -922,7 +947,8 @@ func set_voice_mic_active(active: bool) -> void:
 			_ensure_mic_capture()
 			if _mic_capture != null:
 				_mic_capture.clear_buffer()
-			if _mic_player != null and not _mic_player.playing:
+			var has_real_mic := AudioServer.get_driver_name() != "Dummy" and (OS.get_name() != "macOS" or AudioServer.get_input_device_list().size() > 1)
+			if has_real_mic and _mic_player != null and not _mic_player.playing:
 				_mic_player.play()
 	else:
 		if _mic_player != null and _mic_player.playing:
@@ -934,14 +960,12 @@ func set_voice_mic_active(active: bool) -> void:
 		chat_mic_btn.add_theme_color_override("font_color", Color(1.0, 0.45, 0.40) if voice_mic_active else Color(0.90, 0.92, 0.86))
 
 func _process_voice_chat(delta: float) -> void:
-	# Validar que el objetivo actual siga conectado o en nuestro grupo
+	# A live capture belongs to the explicitly enabled conversation. Never
+	# carry it across automatic UI retargeting, disconnection or death.
 	if voice_mic_active:
-		var tlabel := _active_voice_target_label()
-		if tlabel.is_empty():
+		if not _voice_session_is_valid():
+			set_voice_mic_active(false)
 			_refresh_chat_target_ui()
-			tlabel = _active_voice_target_label()
-			if tlabel.is_empty():
-				set_voice_mic_active(false)
 		elif _mic_capture != null:
 			var avail := _mic_capture.get_frames_available()
 			if avail > 0:
@@ -988,6 +1012,11 @@ func _process_voice_chat(delta: float) -> void:
 		voice_status_label.visible = not lines.is_empty()
 
 func _dispatch_voice_packet(pcm_bytes: PackedByteArray) -> void:
+	if not voice_mic_active:
+		return
+	if not _voice_session_is_valid():
+		set_voice_mic_active(false)
+		return
 	if pcm_bytes.is_empty():
 		return
 	var target_pid := chat_target_peer_id if chat_target_group_id.is_empty() else 0
@@ -1001,9 +1030,28 @@ func _dispatch_voice_packet(pcm_bytes: PackedByteArray) -> void:
 		else:
 			net.send_voice_packet.rpc_id(1, pcm_bytes, target_pid, target_gid)
 
+func _exit_tree() -> void:
+	if voice_mic_active or (_mic_player != null and _mic_player.playing):
+		set_voice_mic_active(false)
+	for sid in _voice_players.keys():
+		var vp = _voice_players[sid]
+		if vp is AudioStreamPlayer and is_instance_valid(vp):
+			(vp as AudioStreamPlayer).stop()
+	_voice_players.clear()
+	_voice_playbacks.clear()
+	_voice_speaking_timers.clear()
+
 func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, _target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
-	if pcm_bytes.is_empty():
+	if pcm_bytes.is_empty() or not can_use_chat():
 		return
+	if not group_id.is_empty():
+		var in_group := false
+		for g in _my_chat_groups():
+			if str(g.get("id", "")) == group_id:
+				in_group = true
+				break
+		if not in_group:
+			return
 	_voice_speaking_timers[sender_id] = {
 		"name": sender_name,
 		"group": target_name if not group_id.is_empty() else "",

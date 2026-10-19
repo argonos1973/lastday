@@ -4756,6 +4756,8 @@ func _update_puppet_animals() -> void:
 		puppet_animals.erase(aid)
 
 func _on_player_died() -> void:
+	if hud != null:
+		hud.set_voice_mic_active(false)
 	if game_over:
 		return
 	game_over = true
