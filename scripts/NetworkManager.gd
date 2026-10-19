@@ -15,6 +15,7 @@ signal player_name_required()
 signal server_character_locked(payload: Dictionary)
 signal chat_message_received(sender_id: int, sender_name: String, text: String, target_id: int, target_name: String, group_id: String)
 signal chat_group_synced(group_id: String, group_name: String, member_ids: Array, member_names: Array)
+signal voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_id: int, target_name: String, group_id: String)
 
 const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
@@ -1484,3 +1485,59 @@ func receive_chat_message(sender_id: int, sender_name: String, text: String, tar
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_receive_chat_message"):
 		scene._net_receive_chat_message(sender_id, sender_name, text, target_id, target_name, group_id)
+
+@rpc("any_peer", "unreliable_ordered")
+func send_voice_packet(pcm_bytes: PackedByteArray, target_peer_id: int = 0, group_id: String = "") -> void:
+	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
+	if sender == 0 and is_host:
+		sender = get_my_id()
+	if not _accepts_client_request(sender):
+		return
+	if pcm_bytes.is_empty() or pcm_bytes.size() > 1200:
+		return
+	# Sin canal público: requiere destinatario 1-a-1 o un grupo al que el emisor pertenezca
+	if target_peer_id <= 0 and group_id.is_empty():
+		return
+	var sender_name := "Jugador"
+	if players.has(sender):
+		var pdata: Dictionary = players[sender]
+		sender_name = str(pdata.get("char_name", ""))
+		if sender_name.is_empty():
+			sender_name = str(pdata.get("name", "Jugador"))
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not group_id.is_empty():
+		if not chat_groups.has(group_id):
+			return
+		var ginfo: Dictionary = chat_groups[group_id]
+		var members: Array = ginfo.get("members", [])
+		if not members.has(sender):
+			return
+		var gname := str(ginfo.get("name", "Grupo"))
+		# Todos los demás miembros del grupo reciben el audio y pueden hablar simultáneamente
+		if not is_dedicated_server and members.has(my_uid) and sender != my_uid:
+			receive_voice_packet(sender, sender_name, pcm_bytes, 0, gname, group_id)
+		if peer != null:
+			for pid in members:
+				var m_pid := int(pid)
+				if m_pid <= 1 or m_pid == my_uid or m_pid == sender:
+					continue
+				if players.has(m_pid) and not players[m_pid].get("offline", false) and peer_alive(m_pid):
+					receive_voice_packet.rpc_id(m_pid, sender, sender_name, pcm_bytes, 0, gname, group_id)
+		return
+	if target_peer_id == sender or not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+		return
+	var tdata: Dictionary = players[target_peer_id]
+	var target_name := str(tdata.get("char_name", ""))
+	if target_name.is_empty():
+		target_name = str(tdata.get("name", "Jugador"))
+	if not is_dedicated_server and target_peer_id == my_uid:
+		receive_voice_packet(sender, sender_name, pcm_bytes, target_peer_id, target_name, "")
+	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
+		receive_voice_packet.rpc_id(target_peer_id, sender, sender_name, pcm_bytes, target_peer_id, target_name, "")
+
+@rpc("authority", "unreliable_ordered")
+func receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
+	voice_packet_received.emit(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_receive_voice_packet"):
+		scene._net_receive_voice_packet(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)

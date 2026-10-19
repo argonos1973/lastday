@@ -939,6 +939,11 @@ func _input(event: InputEvent) -> void:
 				hud.open_chat()
 				get_viewport().set_input_as_handled()
 				return
+		if event.keycode == KEY_V and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
+			if hud.has_method("can_use_chat") and hud.can_use_chat() and hud.has_method("toggle_voice_mic"):
+				hud.toggle_voice_mic()
+				get_viewport().set_input_as_handled()
+				return
 		if event.keycode == KEY_K and not player.is_sleeping:
 			if _loot_panel != null:
 				_close_loot_ui()
@@ -3644,6 +3649,10 @@ func _net_receive_chat_message(sender_id: int, sender_name: String, text: String
 	var peer_key := target_id if is_self else sender_id
 	if hud != null and hud.has_method("add_chat_message"):
 		hud.add_chat_message(sender_name, text, is_self, true, target_name, peer_key, group_id)
+
+func _net_receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
+	if hud != null and hud.has_method("on_voice_packet_received"):
+		hud.on_voice_packet_received(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)
 
 func _show_player_chat_bubble(actor: Node3D, sender_name: String, text: String) -> void:
 	if net != null and net.is_dedicated_server:

@@ -103,8 +103,20 @@ var chat_group_builder_box: VBoxContainer = null
 var chat_group_name_input: LineEdit = null
 var chat_input_row: HBoxContainer = null
 var chat_input: LineEdit = null
+var chat_mic_btn: Button = null
 var chat_close_btn: Button = null
+var voice_status_label: Label = null
 var chat_open := false
+var voice_mic_active := false
+var _mic_player: AudioStreamPlayer = null
+var _mic_capture: AudioEffectCapture = null
+var _mic_out_buffer: PackedByteArray = PackedByteArray()
+var _mic_Peak_accum := 0.0
+var _voice_players: Dictionary = {} # sender_id -> AudioStreamPlayer
+var _voice_playbacks: Dictionary = {} # sender_id -> AudioStreamGeneratorPlayback
+var _voice_speaking_timers: Dictionary = {} # sender_id -> {"name": String, "group": String, "time": float}
+const VOICE_SAMPLE_RATE := 12000.0
+const VOICE_PACKET_SAMPLES := 600
 var chat_group_builder_open := false
 var chat_selected_group_members: Dictionary = {} # peer_id -> bool
 var chat_target_peer_id := 0 # >0 = peer_id en chat 1 a 1
@@ -201,26 +213,32 @@ func _process(delta: float) -> void:
 			_update_players_list()
 	var multi_active := can_use_chat()
 	if players_hint != null and not players_list_visible:
-		players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat" if multi_active else "[P] Jugadores"
+		players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat  ·  [V] Micro" if multi_active else "[P] Jugadores"
 	if not multi_active:
+		if voice_mic_active:
+			set_voice_mic_active(false)
 		if chat_open:
 			close_chat()
 		if chat_panel != null:
 			chat_panel.visible = false
-	elif chat_panel != null and not chat_open:
-		if _chat_fade_timer > 0.0:
-			_chat_fade_timer -= delta
-			chat_panel.visible = not _chat_history.is_empty()
-			chat_panel.modulate.a = clampf(_chat_fade_timer / 2.0, 0.0, 1.0)
-		else:
-			chat_panel.visible = false
+		if voice_status_label != null:
+			voice_status_label.visible = false
+	else:
+		_process_voice_chat(delta)
+		if chat_panel != null and not chat_open:
+			if _chat_fade_timer > 0.0:
+				_chat_fade_timer -= delta
+				chat_panel.visible = not _chat_history.is_empty()
+				chat_panel.modulate.a = clampf(_chat_fade_timer / 2.0, 0.0, 1.0)
+			else:
+				chat_panel.visible = false
 
 func _build_players_panel() -> void:
 	var net = get_node_or_null("/root/NetworkManager")
 	var is_mp: bool = net != null and net.has_method("join_game") and (net.get("is_connected") or net.get("peer") != null)
 	# Tiny hint below the clock panel — multiplayer only.
 	players_hint = Label.new()
-	players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat"
+	players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat  ·  [V] Micro"
 	players_hint.position = Vector2(20, 158)
 	players_hint.add_theme_font_size_override("font_size", 12)
 	players_hint.add_theme_color_override("font_color", Color(0.6, 0.62, 0.55, 0.8))
@@ -228,9 +246,17 @@ func _build_players_panel() -> void:
 	players_hint.visible = is_mp
 	root.add_child(players_hint)
 
+	voice_status_label = Label.new()
+	voice_status_label.position = Vector2(20, 176)
+	voice_status_label.add_theme_font_size_override("font_size", 13)
+	voice_status_label.add_theme_color_override("font_color", Color(0.96, 0.84, 0.44))
+	voice_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	voice_status_label.visible = false
+	root.add_child(voice_status_label)
+
 	players_panel = PanelContainer.new()
 	players_panel.offset_left = 18
-	players_panel.offset_top = 178
+	players_panel.offset_top = 198
 	players_panel.anchor_left = 0.0
 	players_panel.anchor_top = 0.0
 	players_panel.anchor_right = 0.0
@@ -502,6 +528,12 @@ func _build_chat_panel() -> void:
 	chat_input.text_submitted.connect(_on_chat_submitted)
 	chat_input.gui_input.connect(_on_chat_gui_input)
 	chat_input_row.add_child(chat_input)
+
+	chat_mic_btn = Button.new()
+	chat_mic_btn.text = "🎤 Micro [V]"
+	chat_mic_btn.add_theme_font_size_override("font_size", 12)
+	chat_mic_btn.pressed.connect(toggle_voice_mic)
+	chat_input_row.add_child(chat_mic_btn)
 
 	chat_close_btn = Button.new()
 	chat_close_btn.text = "Salir [Esc]"
@@ -831,6 +863,179 @@ func add_chat_message(sender_name: String, text: String, is_self: bool = false, 
 	if chat_panel != null and can_use_chat():
 		chat_panel.visible = true
 		chat_panel.modulate.a = 1.0
+
+func _active_voice_target_label() -> String:
+	if not chat_target_group_id.is_empty():
+		for g in _my_chat_groups():
+			if str(g.get("id", "")) == chat_target_group_id:
+				return "👥 " + str(g.get("name", "Grupo"))
+	if chat_target_peer_id > 0:
+		for entry in _other_online_peers():
+			if int(entry["id"]) == chat_target_peer_id:
+				return str(entry["name"])
+	return ""
+
+func _ensure_mic_capture() -> void:
+	if _mic_capture != null and _mic_player != null:
+		return
+	var bus_name := "VoiceMicCapture"
+	var bus_idx := AudioServer.get_bus_index(bus_name)
+	if bus_idx < 0:
+		AudioServer.add_bus()
+		bus_idx = AudioServer.get_bus_count() - 1
+		AudioServer.set_bus_name(bus_idx, bus_name)
+	AudioServer.set_bus_mute(bus_idx, true)
+	var found_cap: AudioEffectCapture = null
+	for i in range(AudioServer.get_bus_effect_count(bus_idx)):
+		var eff := AudioServer.get_bus_effect(bus_idx, i)
+		if eff is AudioEffectCapture:
+			found_cap = eff as AudioEffectCapture
+			break
+	if found_cap == null:
+		found_cap = AudioEffectCapture.new()
+		found_cap.buffer_length = 0.25
+		AudioServer.add_bus_effect(bus_idx, found_cap)
+	_mic_capture = found_cap
+	if _mic_player == null:
+		_mic_player = AudioStreamPlayer.new()
+		_mic_player.name = "VoiceMicInput"
+		_mic_player.bus = bus_name
+		_mic_player.stream = AudioStreamMicrophone.new()
+		add_child(_mic_player)
+
+func toggle_voice_mic() -> void:
+	set_voice_mic_active(not voice_mic_active)
+
+func set_voice_mic_active(active: bool) -> void:
+	if active and not can_use_chat():
+		active = false
+	if active and chat_target_peer_id <= 0 and chat_target_group_id.is_empty():
+		_refresh_chat_target_ui()
+	if active and chat_target_peer_id <= 0 and chat_target_group_id.is_empty():
+		show_notice("Selecciona primero un jugador o únete a un grupo en el chat.", 3.0)
+		return
+	voice_mic_active = active
+	_mic_out_buffer.clear()
+	_mic_Peak_accum = 0.0
+	if voice_mic_active:
+		if DisplayServer.get_name() != "headless":
+			_ensure_mic_capture()
+			if _mic_capture != null:
+				_mic_capture.clear_buffer()
+			if _mic_player != null and not _mic_player.playing:
+				_mic_player.play()
+	else:
+		if _mic_player != null and _mic_player.playing:
+			_mic_player.stop()
+		if _mic_capture != null:
+			_mic_capture.clear_buffer()
+	if chat_mic_btn != null:
+		chat_mic_btn.text = "🔴 Micro ON [V]" if voice_mic_active else "🎤 Micro [V]"
+		chat_mic_btn.add_theme_color_override("font_color", Color(1.0, 0.45, 0.40) if voice_mic_active else Color(0.90, 0.92, 0.86))
+
+func _process_voice_chat(delta: float) -> void:
+	# Validar que el objetivo actual siga conectado o en nuestro grupo
+	if voice_mic_active:
+		var tlabel := _active_voice_target_label()
+		if tlabel.is_empty():
+			_refresh_chat_target_ui()
+			tlabel = _active_voice_target_label()
+			if tlabel.is_empty():
+				set_voice_mic_active(false)
+		elif _mic_capture != null:
+			var avail := _mic_capture.get_frames_available()
+			if avail > 0:
+				var frames: PackedVector2Array = _mic_capture.get_buffer(avail)
+				var mix_rate := maxf(AudioServer.get_mix_rate(), VOICE_SAMPLE_RATE)
+				var step := mix_rate / VOICE_SAMPLE_RATE
+				var f_idx := 0.0
+				while int(f_idx) < frames.size():
+					var fr: Vector2 = frames[int(f_idx)]
+					var mono := clampf((fr.x + fr.y) * 0.5, -1.0, 1.0)
+					_mic_Peak_accum = maxf(_mic_Peak_accum, absf(mono))
+					var u8 := clampi(int(round(mono * 127.0 + 128.0)), 0, 255)
+					_mic_out_buffer.append(u8)
+					if _mic_out_buffer.size() >= VOICE_PACKET_SAMPLES:
+						if _mic_Peak_accum >= 0.012:
+							_dispatch_voice_packet(_mic_out_buffer.duplicate())
+						_mic_out_buffer.clear()
+						_mic_Peak_accum = 0.0
+					f_idx += step
+	# Actualizar temporizadores de quién está hablando
+	var expired: Array = []
+	var speaking_parts: Array = []
+	for sid in _voice_speaking_timers.keys():
+		var info: Dictionary = _voice_speaking_timers[sid]
+		var left := float(info.get("time", 0.0)) - delta
+		if left <= 0.0:
+			expired.append(sid)
+		else:
+			info["time"] = left
+			_voice_speaking_timers[sid] = info
+			var sname := str(info.get("name", "Jugador"))
+			var gname := str(info.get("group", ""))
+			speaking_parts.append(("%s [%s]" % [sname, gname]) if not gname.is_empty() else sname)
+	for sid in expired:
+		_voice_speaking_timers.erase(sid)
+	if voice_status_label != null:
+		var lines: Array = []
+		if voice_mic_active:
+			var target_lbl := _active_voice_target_label()
+			lines.append("🎤 Micro ACTIVO → %s  [V para silenciar]" % target_lbl)
+		if not speaking_parts.is_empty():
+			lines.append("🔊 Hablando: %s" % ", ".join(PackedStringArray(speaking_parts)))
+		voice_status_label.text = "\n".join(PackedStringArray(lines))
+		voice_status_label.visible = not lines.is_empty()
+
+func _dispatch_voice_packet(pcm_bytes: PackedByteArray) -> void:
+	if pcm_bytes.is_empty():
+		return
+	var target_pid := chat_target_peer_id if chat_target_group_id.is_empty() else 0
+	var target_gid := chat_target_group_id
+	if target_pid <= 0 and target_gid.is_empty():
+		return
+	var net = get_node_or_null("/root/NetworkManager")
+	if net != null and net.get("is_connected") == true and net.has_method("send_voice_packet"):
+		if net.get("is_host") == true:
+			net.send_voice_packet(pcm_bytes, target_pid, target_gid)
+		else:
+			net.send_voice_packet.rpc_id(1, pcm_bytes, target_pid, target_gid)
+
+func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, _target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
+	if pcm_bytes.is_empty():
+		return
+	_voice_speaking_timers[sender_id] = {
+		"name": sender_name,
+		"group": target_name if not group_id.is_empty() else "",
+		"time": 0.45
+	}
+	if voice_status_label != null and can_use_chat():
+		voice_status_label.visible = true
+	if DisplayServer.get_name() == "headless":
+		return
+	var vplayer: AudioStreamPlayer = _voice_players.get(sender_id)
+	if vplayer == null or not is_instance_valid(vplayer):
+		vplayer = AudioStreamPlayer.new()
+		vplayer.name = "VoicePeer_%d" % sender_id
+		var gen := AudioStreamGenerator.new()
+		gen.mix_rate = VOICE_SAMPLE_RATE
+		gen.buffer_length = 0.35
+		vplayer.stream = gen
+		add_child(vplayer)
+		vplayer.play()
+		_voice_players[sender_id] = vplayer
+		_voice_playbacks[sender_id] = vplayer.get_stream_playback()
+	if not vplayer.playing:
+		vplayer.play()
+		_voice_playbacks[sender_id] = vplayer.get_stream_playback()
+	var playback: AudioStreamGeneratorPlayback = _voice_playbacks.get(sender_id)
+	if playback == null:
+		return
+	var avail_frames := playback.get_frames_available()
+	var count := mini(pcm_bytes.size(), avail_frames)
+	for i in range(count):
+		var sample := clampf((float(pcm_bytes[i]) - 128.0) / 127.0, -1.0, 1.0)
+		playback.push_frame(Vector2(sample, sample))
 
 func _ensure_hud_visibility() -> void:
 	# Restore the interface in case a scene transition or a fullscreen night

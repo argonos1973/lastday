@@ -128,7 +128,20 @@ func _run() -> void:
 	net.send_chat_message("Ya me he unido al grupo", 0, "grp_ext_1")
 	check(hud._chat_conversations.has("grp_grp_ext_1") and (hud._chat_conversations["grp_grp_ext_1"] as Array).size() == 1, "Joined player can send and receive messages in the group")
 
-	# 7. Salir del chat con el botón Salir [Esc]
+	# 7. Voz por micrófono: toggle_voice_mic, paquetes de voz 1-a-1 y en grupo
+	hud.toggle_voice_mic()
+	check(hud.voice_mic_active, "toggle_voice_mic activates microphone for active group/player")
+	var sample_pkt := PackedByteArray([128, 160, 200, 90, 128])
+	net.receive_voice_packet(7, "Remy", sample_pkt, 0, "Supervivientes Sur", "grp_ext_1")
+	check(hud._voice_speaking_timers.has(7) and str(hud._voice_speaking_timers[7].get("group", "")) == "Supervivientes Sur", "Incoming group voice packet registers speaker and group in HUD")
+	net.receive_voice_packet(9, "Alex", sample_pkt, 1, "Líder", "")
+	check(hud._voice_speaking_timers.has(9) and hud._voice_speaking_timers.has(7), "Multiple speakers in group/chat can speak simultaneously without overwriting each other")
+	hud._process_voice_chat(0.05)
+	check(hud.voice_status_label.visible and hud.voice_status_label.text.find("Remy") >= 0 and hud.voice_status_label.text.find("Alex") >= 0, "HUD voice_status_label displays active microphone and all simultaneous speakers")
+	hud.toggle_voice_mic()
+	check(not hud.voice_mic_active, "toggle_voice_mic deactivates microphone")
+
+	# 8. Salir del chat con el botón Salir [Esc]
 	hud.chat_close_btn.pressed.emit()
 	check(not hud.chat_open and not hud.chat_input.visible, "Close button exits chat")
 
