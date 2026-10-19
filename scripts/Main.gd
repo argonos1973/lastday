@@ -4176,6 +4176,12 @@ func _update_server_proxies(delta: float) -> void:
 			proxy.set_meta("in_built_shelter", _is_near_built_shelter(proxy.global_position))
 		if data.has("held_item") and not proxy.get_meta("reconnecting", false):
 			proxy.set_meta("saved_held_item", str(data["held_item"]))
+		if not proxy.get_meta("reconnecting", false):
+			proxy.set_meta("prone", bool(data.get("prone", false)))
+			proxy.set_meta("crouching", bool(data.get("crouching", false)))
+			proxy.set_meta("torch_lit", bool(data.get("torch_lit", false)))
+			var anim_str := str(data.get("anim", ""))
+			proxy.set_meta("sprinting", anim_str.to_lower().find("run") >= 0 or anim_str.to_lower().find("sprint") >= 0)
 		# Decrement spawn protection timer using real delta
 		var pt: float = proxy.get_meta("protection_timer", 0.0)
 		if pt > 0.0:

@@ -123,6 +123,8 @@ var _threat_timer := 0.0
 var _owner_node: Node3D = null
 var _owner_client_id := ""
 var _owner_dead_timer := 0.0
+var _bear_warn_timer := 0.0
+var _flank_sign := 0.0
 
 # Cache de grupo wildlife para evitar get_nodes_in_group cada frame
 var _cached_wildlife: Array = []
@@ -186,6 +188,7 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 			# Bears do not flee when shot: they roar and charge the attacker.
 			_prey_flee_timer = 0.0
 			_chase_cooldown = 0.0
+			_bear_warn_timer = 0.0
 			_wolf_eating_timer = 0.0
 			_wolf_eating_target = null
 			_idle_timer = 0.0
@@ -195,10 +198,11 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				_state = "chase_player"
 			_play_wolf_sound("attack")
 		else:
-			_prey_flee_timer = 8.0
+			var critical_wound := animal_type == "wolf" and health > 0.0 and health <= max_health * 0.25
+			_prey_flee_timer = 14.0 if critical_wound else 8.0
 			if attacker is Node3D and is_instance_valid(attacker):
 				_flee_origin = (attacker as Node3D).global_position
-			_chase_cooldown = 10.0
+			_chase_cooldown = 16.0 if critical_wound else 10.0
 		_current_path.clear()
 		_path_index = 0
 		_path_recalc_timer = 0.0
@@ -820,6 +824,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_path_recalc_timer = 0.0
 				_chase_target = null
 				return _seek_meat_pickup(offering)
+	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
+		var nearby_bear := _find_nearest_live_bear(22.0)
+		if nearby_bear != null:
+			var away_bear := global_position - nearby_bear.global_position
+			away_bear.y = 0.0
+			if away_bear.length_squared() < 0.0001:
+				away_bear = Vector3.RIGHT
+			_state = "patrol"
+			_chase_target = null
+			_play_animation_by_name("run")
+			return {"target": _clamp_flee_goal(global_position, away_bear, 28.0), "speed": move_speed * 2.6}
 	# Priority 0: chase player (highest priority)
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
@@ -835,6 +850,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if out_of_reach:
 			_state = "patrol"
 			_chase_target = null
+			_bear_warn_timer = 0.0
 			_chase_cooldown = 3.0
 			if animal_type == "wolf":
 				_play_wolf_sound("growl")
@@ -844,9 +860,26 @@ func _wolf_ai(delta: float) -> Dictionary:
 			speed = move_speed * 2.0
 			_play_animation_by_name("trot")
 			return {"target": target, "speed": speed}
+		if animal_type == "wolf" and tamed_to.is_empty() and _player_holds_lit_torch(_player) and dist_to_player < 9.5 and health >= max_health * 0.99:
+			_state = "wary_torch"
+			_chase_target = null
+			var to_torch := _player.global_position - global_position
+			to_torch.y = 0.0
+			if to_torch.length() > 0.01:
+				rotation.y = lerp_angle(rotation.y, atan2(to_torch.x, to_torch.z), delta * 4.5)
+			if randf() < delta * 0.35:
+				_play_wolf_sound("growl")
+			if dist_to_player < 6.2:
+				var back_dir := -to_torch.normalized() if to_torch.length() > 0.01 else Vector3.RIGHT
+				_play_animation_by_name("walk")
+				return {"target": _clamp_flee_goal(global_position, back_dir, 8.0), "speed": move_speed * 1.4}
+			var side_sign := _get_flank_sign()
+			var tangent_torch := Vector3(-to_torch.z, 0.0, to_torch.x).normalized() * side_sign if to_torch.length() > 0.01 else Vector3.RIGHT
+			_play_animation_by_name("walk")
+			return {"target": global_position + tangent_torch * 3.0, "speed": move_speed * 1.1}
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-		var sight_range := 65.0 if animal_type == "bear" else 60.0
+		var sight_range := _effective_player_sight_range(_player)
 		var another_bear_chasing := false
 		if animal_type == "bear":
 			for node in _cached_wildlife:
@@ -856,7 +889,33 @@ func _wolf_ai(delta: float) -> Dictionary:
 					if (node as Node3D).global_position.distance_squared_to(_player.global_position) < global_position.distance_squared_to(_player.global_position):
 						another_bear_chasing = true
 						break
+		if animal_type == "bear" and _state == "bear_warn":
+			if dist_to_player > 34.0:
+				_state = "patrol"
+				_chase_target = null
+				_bear_warn_timer = 0.0
+				_chase_cooldown = 4.0
+				_play_animation_by_name("walk")
+				return {"target": patrol_points[target_index], "speed": move_speed}
+			_bear_warn_timer -= delta
+			if dist_to_player > 22.0 and _bear_warn_timer > 0.0 and health >= max_health * 0.99:
+				var to_intruder := _player.global_position - global_position
+				to_intruder.y = 0.0
+				if to_intruder.length() > 0.01:
+					rotation.y = lerp_angle(rotation.y, atan2(to_intruder.x, to_intruder.z), delta * 4.0)
+				_play_animation_by_name("walk")
+				return {"target": _player.global_position, "speed": move_speed * 0.75}
+			_bear_warn_timer = 0.0
 		if not another_bear_chasing and (dist_to_player < sight_range or (_state == "chase_player" and dist_to_player < 110.0)):
+			if animal_type == "bear" and _bear_beyond_territory(_player.global_position):
+				return _retreat_from_player()
+			if animal_type == "bear" and _state != "chase_player" and _state != "bear_warn" and dist_to_player > 22.0 and health >= max_health * 0.99:
+				_state = "bear_warn"
+				_bear_warn_timer = 3.5
+				_chase_target = _player
+				_play_wolf_sound("growl")
+				_play_animation_by_name("walk")
+				return {"target": _player.global_position, "speed": move_speed * 0.75}
 			# If player is elevated (on car/container) and wolf can't reach, give up and leave
 			_reach_check_timer -= delta
 			if _state != "chase_player" or _reach_check_timer <= 0.0 or height_diff >= 1.8:
@@ -867,13 +926,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_chase_stuck_time = 0.0
 			if _state != "chase_player":
 				_play_wolf_sound("growl")
+				if animal_type == "wolf" and tamed_to.is_empty():
+					_alert_nearby_pack(_player)
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
 			if dist_to_player < 5.0:
 				speed = move_speed * 1.5
 			else:
-				speed = move_speed * 4.0
+				speed = move_speed * (4.2 if animal_type == "bear" else 4.0)
 			if flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
@@ -911,15 +972,32 @@ func _wolf_ai(delta: float) -> Dictionary:
 						_player.apply_damage(_predator_player_damage())
 					if animal_type == "wolf" or animal_type == "bear":
 						_play_wolf_sound("attack")
-				_play_animation_by_name("run")
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
-				target = _player.global_position + away_dir * 2.5
-				speed = 0.0
+				if away_dir.length_squared() < 0.0001:
+					away_dir = Vector3.RIGHT
+				else:
+					away_dir = away_dir.normalized()
+				if animal_type == "wolf":
+					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
+					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
+					speed = move_speed * 1.35
+					_play_animation_by_name("trot")
+				else:
+					_play_animation_by_name("run")
+					target = _player.global_position + away_dir * 2.5
+					speed = 0.0
 				_chase_stuck_time = 0.0
 			else:
 				_play_animation_by_name("run")
 				target = _player.global_position
+				if animal_type == "wolf" and dist_to_player > 5.0 and dist_to_player < 18.0 and _pack_mate_also_chasing(_player):
+					var to_p := (_player.global_position - global_position)
+					to_p.y = 0.0
+					if to_p.length() > 0.1:
+						var n_to_p := to_p.normalized()
+						var lat := Vector3(-n_to_p.z, 0.0, n_to_p.x) * _get_flank_sign()
+						target += lat * 2.8
 			var sep := _compute_wolf_separation(3.5)
 			if sep.length() > 0.01:
 				target += sep
@@ -1117,6 +1195,85 @@ func _find_nearest_prey() -> Node3D:
 
 func _predator_player_damage() -> float:
 	return 35.0 if animal_type == "bear" else 25.0
+
+func _effective_player_sight_range(p: Node3D) -> float:
+	var base := 65.0 if animal_type == "bear" else 60.0
+	if p == null or not is_instance_valid(p):
+		return base
+	var is_prone_flag: bool = (p.get("is_prone") == true) or (p.get_meta("prone", false) == true)
+	if is_prone_flag:
+		return base * 0.35
+	var is_crouch_flag: bool = (p.get("is_crouching") == true) or (p.get_meta("crouching", false) == true)
+	if is_crouch_flag:
+		return base * 0.55
+	var is_sprint_flag: bool = (p.get("is_sprinting") == true) or (p.get_meta("sprinting", false) == true)
+	if is_sprint_flag:
+		return base * 1.25
+	return base
+
+func _player_holds_lit_torch(p: Node) -> bool:
+	if p == null or not is_instance_valid(p):
+		return false
+	if p.get_meta("torch_lit", false) == true:
+		return true
+	if p.get("_torch_lit") == true:
+		return true
+	return false
+
+func _find_nearest_live_bear(max_dist: float) -> Node3D:
+	var best: Node3D = null
+	var best_sq := max_dist * max_dist
+	for node in _cached_wildlife:
+		if node == self or not is_instance_valid(node) or not (node is Node3D):
+			continue
+		if str(node.get("animal_type")) != "bear" or bool(node.get("_is_dead")):
+			continue
+		var d_sq := global_position.distance_squared_to((node as Node3D).global_position)
+		if d_sq < best_sq:
+			best_sq = d_sq
+			best = node as Node3D
+	return best
+
+func _bear_beyond_territory(target_pos: Vector3) -> bool:
+	if patrol_points.is_empty():
+		return false
+	var home: Vector3 = patrol_points[0]
+	var max_leash := 115.0 if health >= max_health * 0.99 else 160.0
+	return Vector2(target_pos.x - home.x, target_pos.z - home.z).length_squared() > max_leash * max_leash
+
+func _alert_nearby_pack(target_node: Node3D) -> void:
+	if target_node == null or not is_instance_valid(target_node):
+		return
+	for node in _cached_wildlife:
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var mate := node as WildlifeController
+		if mate.is_puppet or mate.animal_type != "wolf" or mate._is_dead or not mate.tamed_to.is_empty():
+			continue
+		if mate._chase_cooldown > 0.0 or mate._prey_flee_timer > 0.0:
+			continue
+		var d := global_position.distance_to(mate.global_position)
+		if d <= 55.0 and (mate._state == "patrol" or mate._state == "investigate"):
+			mate._noise_attract_pos = target_node.global_position
+			mate._noise_attract_timer = maxf(mate._noise_attract_timer, 12.0)
+			if mate.global_position.distance_to(target_node.global_position) < 75.0:
+				mate._player = target_node
+				mate._state = "chase_player"
+				mate._chase_target = target_node
+
+func _pack_mate_also_chasing(target_node: Node3D) -> bool:
+	for node in _cached_wildlife:
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var mate := node as WildlifeController
+		if mate.animal_type == "wolf" and not mate._is_dead and mate._state == "chase_player" and mate._chase_target == target_node:
+			return true
+	return false
+
+func _get_flank_sign() -> float:
+	if _flank_sign == 0.0:
+		_flank_sign = 1.0 if (get_instance_id() % 2 == 0) else -1.0
+	return _flank_sign
 
 # Un objetivo de huida fuera del mapa se recorta a +/-GameConst.WORLD_LIMIT y el animal se queda
 # clavado contra el límite. Si el destino sale del área jugable, se gira la
