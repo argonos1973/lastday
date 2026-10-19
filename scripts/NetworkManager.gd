@@ -13,7 +13,7 @@ signal player_name_required()
 # Server reclaimed a live character for this client — the menu picker locks
 # to that character (payload: name, colors, current equipment).
 signal server_character_locked(payload: Dictionary)
-signal chat_message_received(sender_id: int, sender_name: String, text: String)
+signal chat_message_received(sender_id: int, sender_name: String, text: String, target_id: int, target_name: String)
 
 const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
@@ -1327,13 +1327,31 @@ func sync_character_appearance_remote(peer_id: int, char_name: String, top_color
 	players[peer_id]["bottom_camo"] = bottom_camo
 
 @rpc("any_peer", "reliable")
-func send_chat_message(text: String) -> void:
+func send_chat_message(text: String, target_peer_id: int = 0) -> void:
 	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
 	if sender == 0 and is_host:
 		sender = get_my_id()
 	if not _accepts_client_request(sender):
 		return
 	var clean := text.strip_edges().replace("\n", " ").replace("\r", " ")
+	# Soporte opcional para comando "/w Nombre mensaje" o "/p Nombre mensaje"
+	if target_peer_id == 0 and (clean.begins_with("/w ") or clean.begins_with("/p ")):
+		var rest := clean.substr(3).strip_edges()
+		var sp_idx := rest.find(" ")
+		if sp_idx > 0:
+			var wanted_name := rest.substr(0, sp_idx).strip_edges().to_lower()
+			var body := rest.substr(sp_idx + 1).strip_edges()
+			for pid in players.keys():
+				if players[pid].get("offline", false):
+					continue
+				var pdata_w: Dictionary = players[pid]
+				var pname_w := str(pdata_w.get("char_name", ""))
+				if pname_w.is_empty():
+					pname_w = str(pdata_w.get("name", ""))
+				if pname_w.to_lower() == wanted_name or pname_w.to_lower().begins_with(wanted_name):
+					target_peer_id = int(pid)
+					clean = body
+					break
 	if clean.length() > 160:
 		clean = clean.substr(0, 160)
 	if clean.is_empty():
@@ -1344,17 +1362,39 @@ func send_chat_message(text: String) -> void:
 		sender_name = str(pdata.get("char_name", ""))
 		if sender_name.is_empty():
 			sender_name = str(pdata.get("name", "Jugador"))
+	var target_name := ""
+	if target_peer_id > 0:
+		if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+			return
+		var tdata: Dictionary = players[target_peer_id]
+		target_name = str(tdata.get("char_name", ""))
+		if target_name.is_empty():
+			target_name = str(tdata.get("name", "Jugador"))
+	if target_peer_id > 0:
+		# Mensaje privado: solo lo reciben el emisor y el destinatario
+		var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+		if not is_dedicated_server and (sender == my_uid or target_peer_id == my_uid):
+			receive_chat_message(sender, sender_name, clean, target_peer_id, target_name)
+		if peer != null:
+			for recipient in [sender, target_peer_id]:
+				if recipient <= 1 or recipient == my_uid:
+					continue
+				if players.has(recipient) and not players[recipient].get("offline", false) and peer_alive(recipient):
+					receive_chat_message.rpc_id(recipient, sender, sender_name, clean, target_peer_id, target_name)
+				if sender == target_peer_id:
+					break
+		return
 	if not is_dedicated_server:
-		receive_chat_message(sender, sender_name, clean)
+		receive_chat_message(sender, sender_name, clean, 0, "")
 	if peer != null:
 		for pid in players.keys():
 			if pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
 				continue
-			receive_chat_message.rpc_id(pid, sender, sender_name, clean)
+			receive_chat_message.rpc_id(pid, sender, sender_name, clean, 0, "")
 
 @rpc("authority", "reliable")
-func receive_chat_message(sender_id: int, sender_name: String, text: String) -> void:
-	chat_message_received.emit(sender_id, sender_name, text)
+func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "") -> void:
+	chat_message_received.emit(sender_id, sender_name, text, target_id, target_name)
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_receive_chat_message"):
-		scene._net_receive_chat_message(sender_id, sender_name, text)
+		scene._net_receive_chat_message(sender_id, sender_name, text, target_id, target_name)

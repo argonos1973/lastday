@@ -915,10 +915,18 @@ func _input(event: InputEvent) -> void:
 		return
 	if game_over:
 		return
+	if hud != null and hud.get("chat_open") == true and event is InputEventMouseButton and event.pressed:
+		if hud.chat_panel != null and not hud.chat_panel.get_global_rect().has_point(event.position):
+			hud.close_chat()
+			get_viewport().set_input_as_handled()
+			return
 	if hud != null and player != null and not player.is_dead and event is InputEventKey and event.pressed and not event.echo:
 		if hud.get("chat_open") == true:
 			if event.keycode == KEY_ESCAPE:
 				hud.close_chat()
+				get_viewport().set_input_as_handled()
+			elif event.keycode == KEY_TAB and hud.has_method("cycle_chat_target"):
+				hud.cycle_chat_target()
 				get_viewport().set_input_as_handled()
 			return
 		# Con el panel de alijo abierto cualquier tecla (Tab, Esc, K...) lo cierra.
@@ -927,9 +935,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if (event.keycode == KEY_T or event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER) and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
-			hud.open_chat()
-			get_viewport().set_input_as_handled()
-			return
+			if hud.has_method("can_use_chat") and hud.can_use_chat():
+				hud.open_chat()
+				get_viewport().set_input_as_handled()
+				return
 		if event.keycode == KEY_K and not player.is_sleeping:
 			if _loot_panel != null:
 				_close_loot_ui()
@@ -3625,11 +3634,15 @@ func _net_notice(text: String) -> void:
 	if hud != null:
 		hud.show_notice(text)
 
-func _net_receive_chat_message(sender_id: int, sender_name: String, text: String) -> void:
+func _net_receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "") -> void:
 	var my_id: int = net.get_my_id() if net != null else 1
 	var is_self: bool = sender_id == my_id
+	var is_private: bool = target_id > 0
 	if hud != null and hud.has_method("add_chat_message"):
-		hud.add_chat_message(sender_name, text, is_self)
+		hud.add_chat_message(sender_name, text, is_self, is_private, target_name)
+	# Los mensajes privados no muestran burbuja 3D pública sobre la cabeza
+	if is_private:
+		return
 	var actor: Node3D = null
 	if is_self:
 		actor = player
