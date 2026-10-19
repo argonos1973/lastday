@@ -3971,11 +3971,15 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		# Re-muestrea hacia la orilla y, en último caso, al punto del cadáver.
 		if _is_water_drop_position(dpos):
 			var landed := false
-			for attempt in range(6):
-				var alt := pos + Vector3(cos(randf() * TAU), 0.0, sin(randf() * TAU)) * randf_range(0.8, 2.2)
-				if not _is_water_drop_position(alt):
-					dpos = alt
-					landed = true
+			for r in [1.2, 2.2, 3.5, 5.0]:
+				for a_idx in range(16):
+					var ang := TAU * float(a_idx) / 16.0
+					var alt := pos + Vector3(cos(ang) * r, 0.0, sin(ang) * r)
+					if not _is_water_drop_position(alt):
+						dpos = alt
+						landed = true
+						break
+				if landed:
 					break
 			if not landed:
 				dpos = pos
@@ -4723,7 +4727,11 @@ func _on_player_died() -> void:
 		if player != null:
 			backpack = player.equipped_backpack
 			held_idx = player.held_index
-			if player.inventory != null and player.inventory.items.size() > 0:
+			if player.has_method("get_held_item"):
+				var hi = player.get_held_item()
+				if hi != null:
+					held = str(hi.item_name)
+			elif player.inventory != null and held_idx >= 0 and held_idx < player.inventory.items.size() and player.inventory.items[held_idx] != null:
 				held = player.inventory.items[held_idx].item_name
 		var rot_y: float = player.rotation.y if player != null else 0.0
 		var death_pos: Vector3 = player.global_position if player != null else Vector3.ZERO
@@ -5242,6 +5250,13 @@ func _backpack_drop_pos(drop_id: String, action) -> Vector3:
 				return p
 			if p is Array and p.size() >= 3:
 				return Vector3(float(p[0]), float(p[1]), float(p[2]))
+	for sh in _built_shelters:
+		if str(sh.get("id", "")) == drop_id:
+			var sp = sh.get("pos")
+			if sp is Vector3:
+				return sp
+			if sp is Array and sp.size() >= 3:
+				return Vector3(float(sp[0]), float(sp[1]), float(sp[2]))
 	return Vector3.INF
 
 func _broadcast_backpack_contents(drop_id: String, contents: Array) -> void:
@@ -5337,6 +5352,12 @@ func _net_backpack_take(sender_id: int, drop_id: String, item_index: int) -> voi
 				contents = (e.get("contents", []) as Array).duplicate(true)
 				found = true
 				break
+		if not found:
+			for sh in _built_shelters:
+				if str(sh.get("id", "")) == drop_id:
+					contents = (sh.get("contents", []) as Array).duplicate(true)
+					found = true
+					break
 	if not found or item_index < 0 or item_index >= contents.size():
 		return
 	var drop_pos := _backpack_drop_pos(drop_id, action)
@@ -5349,6 +5370,12 @@ func _net_backpack_take(sender_id: int, drop_id: String, item_index: int) -> voi
 	if action != null and is_instance_valid(action):
 		action.set_meta("contents", contents)
 	_set_backpack_entry_contents(drop_id, contents)
+	if sender_id != 0 and sender_id != net.get_my_id():
+		var sp := _server_proxy_for_sender(sender_id)
+		if sp != null and sp.has_meta("saved_inventory"):
+			var sinv: Array = sp.get_meta("saved_inventory", []).duplicate(true)
+			sinv.append(cd.duplicate(true))
+			sp.set_meta("saved_inventory", sinv)
 	_save_world_change_silent()
 	_broadcast_backpack_contents(drop_id, contents)
 	net.backpack_give.rpc_id(sender_id, cd)
@@ -5365,13 +5392,27 @@ func _net_backpack_store(sender_id: int, drop_id: String, item_dict: Dictionary)
 	if sender_id != 0 and sender_id != net.get_my_id() and not _sender_within(sender_id, drop_pos, 8.0):
 		return
 	var contents: Array = []
+	var is_shelter_entry := false
 	if action != null and is_instance_valid(action):
 		contents = (action.get_meta("contents", []) as Array).duplicate(true)
-	var max_cap := _stash_capacity_for(action)
+		is_shelter_entry = str(action.action_type) == "shelter"
+	else:
+		for e in _dropped_items:
+			if str(e.get("id", "")) == drop_id:
+				contents = (e.get("contents", []) as Array).duplicate(true)
+				break
+		for sh in _built_shelters:
+			if str(sh.get("id", "")) == drop_id:
+				contents = (sh.get("contents", []) as Array).duplicate(true)
+				is_shelter_entry = true
+				break
+	var max_cap := SHELTER_STASH_CAPACITY if is_shelter_entry else _stash_capacity_for(action)
 	if contents.size() >= max_cap:
 		if net != null and net.peer != null and net.peer_alive(sender_id):
 			net.backpack_give.rpc_id(sender_id, item_dict)
 		return
+	if sender_id != 0 and sender_id != net.get_my_id():
+		_saved_inventory_remove(sender_id, nm, str(item_dict.get("type", "")), clampi(int(item_dict.get("quantity", 1)), 1, 999))
 	contents.append(item_dict)
 	if action != null and is_instance_valid(action):
 		action.set_meta("contents", contents)
@@ -5476,6 +5517,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 			net.campfire_built.rpc_id(1, cf_id, pos)
 		else:
 			_built_campfires.append({"id": cf_id, "pos": pos})
+			if net != null and net.is_connected and net.is_host and net.peer != null:
+				net.campfire_built.rpc(cf_id, pos)
 		return
 	if item_name == "shelter":
 		var sh_id := "player_shelter_%d" % randi()
@@ -5505,6 +5548,8 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		_spawn_placed_torch(torch_id, pos, torch_durability, torch_lit, item_quantity)
 		_dropped_items.append({"id": torch_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": [pos.x, pos.y, pos.z], "durability": torch_durability, "lit": torch_lit})
 		_save_world_change_silent()
+		if net != null and net.is_connected:
+			net.item_dropped.rpc_id(1, torch_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, [], drop_wetness, drop_camo, drop_pelt, torch_lit, torch_durability)
 		return
 	# Un objeto sin modelo real sólo renderizaría la caja genérica — se limpia
 	# al soltarlo en vez de dejar basura visual en el mundo.
@@ -5618,7 +5663,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		# Fallback: no model available, create a simple shape
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
-		elif item_name == "Trapos":
+		elif item_name == "Trapos" or item_type == "medical":
 			var rag := MaterialFactory.build_rag_mesh()
 			rag.name = visual_name
 			rag.position = pos + Vector3(0, 0.02, 0)
@@ -5704,7 +5749,7 @@ func _track_dropped_item(entry: Dictionary) -> void:
 		return
 	_dropped_items.append(entry)
 
-func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false, pelt: String = "") -> bool:
+func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false, pelt: String = "", lit: bool = false, durability: float = 0.0) -> bool:
 	# Host: a client can only drop near itself and with a sane payload —
 	# otherwise arbitrary items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
@@ -5736,6 +5781,9 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 	contents = contents.slice(0, 64)
 	if net != null and net.is_host:
 		var drop_entry := {"id": drop_id, "name": item_name, "type": item_type, "weight": item_weight, "qty": item_quantity, "use": item_use_value, "pos": pos, "camo": camo}
+		if item_type == "tool_torch":
+			drop_entry["lit"] = lit
+			drop_entry["durability"] = durability if durability > 0.0 else 600.0
 		if not pelt.is_empty():
 			drop_entry["pelt"] = pelt
 		if color.a > 0.0:
@@ -5746,6 +5794,9 @@ func _net_item_dropped(drop_id: String, item_name: String, item_type: String, it
 			drop_entry["wetness"] = wetness
 		_track_dropped_item(drop_entry)
 	if world_actions_by_id.has(drop_id):
+		return true
+	if item_type == "tool_torch":
+		_spawn_placed_torch(drop_id, pos, durability if durability > 0.0 else 600.0, lit, item_quantity)
 		return true
 	_spawn_dropped_item_visual(drop_id, item_name, item_type, item_weight, item_quantity, item_use_value, pos, color, false, 0.0, contents, wetness, camo, pelt)
 	# El servidor necesita saber quién la tiró para la domesticación de lobos;
@@ -5876,7 +5927,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 		"tool_torch":
 			return ["res://assets/animations/torch_stick.glb", "res://assets/models/props/wood_stick.glb"]
 		"medical":
-			return [K_SURVIVAL + "box-open.glb", K_SURVIVAL + "box.glb"]
+			return []
 		"battery":
 			return [K_SURVIVAL + "box.glb"]
 		"material":
@@ -9635,7 +9686,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	if not spawned:
 		if item_name.begins_with("Piel de "):
 			_create_pelt_visual(visual_name, pos, item_name)
-		elif item_name == "Trapos":
+		elif item_name == "Trapos" or item_type == "medical":
 			var rag := MaterialFactory.build_rag_mesh()
 			rag.name = visual_name
 			rag.position = pos + Vector3(0, 0.02, 0)
@@ -11398,28 +11449,33 @@ func _apply_shelter_lining_visual(sh_id: String, pos: Vector3, yaw: float) -> vo
 
 func _apply_shelter_lining_state(sh_id: String) -> bool:
 	var action = world_actions_by_id.get(sh_id)
-	if action == null or not is_instance_valid(action):
-		return false
-	if bool(action.get_meta("pelt_lined", false)):
-		return true
-	action.set_meta("pelt_lined", true)
+	if action != null and is_instance_valid(action):
+		if bool(action.get_meta("pelt_lined", false)):
+			return true
+		action.set_meta("pelt_lined", true)
+	var found := false
 	for entry in _built_shelters:
 		if str(entry.get("id", "")) == sh_id:
+			found = true
 			entry["pelt_lined"] = true
-			var p = entry.get("pos", action.global_position)
+			var p = entry.get("pos", action.global_position if (action != null and is_instance_valid(action)) else Vector3.ZERO)
 			if p is Array:
 				p = Vector3(float(p[0]), float(p[1]), float(p[2]))
-			_apply_shelter_lining_visual(sh_id, p, float(entry.get("yaw", action.rotation.y)))
+			if net == null or not net.is_dedicated_server:
+				_apply_shelter_lining_visual(sh_id, p, float(entry.get("yaw", action.rotation.y if (action != null and is_instance_valid(action)) else 0.0)))
 			break
+	if not found and (action == null or not is_instance_valid(action)):
+		return false
 	_save_world_change_silent()
 	return true
 
 func _net_shelter_lined(sh_id: String, sender_id: int = 0) -> bool:
 	var action = world_actions_by_id.get(sh_id)
-	if action == null or not is_instance_valid(action):
+	var sh_pos := _backpack_drop_pos(sh_id, action)
+	if sh_pos == Vector3.INF:
 		return false
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
-		if not _sender_within(sender_id, action.global_position, 8.0):
+		if not _sender_within(sender_id, sh_pos, 8.0):
 			return false
 	return _apply_shelter_lining_state(sh_id)
 

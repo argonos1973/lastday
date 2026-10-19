@@ -1781,6 +1781,12 @@ func _consume_meat_pickup(action: Node3D) -> void:
 				if entry is Dictionary and str(entry.get("id", "")) == action_id:
 					entry["qty"] = remaining
 					break
+		if net_node != null and net_node.peer != null and not action_id.is_empty():
+			var dur := float(action.get_meta("item_durability", 100.0))
+			for pid in net_node.players.keys():
+				if pid == multiplayer.get_unique_id() or net_node.players[pid].get("offline", false) or not net_node.peer_alive(pid):
+					continue
+				net_node.ground_craft_state_changed.rpc_id(pid, action_id, remaining, dur)
 		return
 	# Remove the meat pickup from the world
 	if not action_id.is_empty() and scene.has_method("_net_item_picked_up"):
