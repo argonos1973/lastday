@@ -290,7 +290,7 @@ static func clothing_kind_for_mesh(mesh_name: String) -> String:
 		return "gloves"
 	if mesh_id == "cloth_feet":
 		return "boots"
-	if mesh_id == "military_boots":
+	if mesh_id == "military_boots" or mesh_id == "boots_pickup":
 		return "mboots"
 	if "shoes" in mesh_id:
 		return "shoes"

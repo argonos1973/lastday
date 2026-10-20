@@ -80,6 +80,8 @@ func run() -> void:
 		pa = pa.merge(mi.get_aabb())
 	check(pm > 0, "pickup GLB has no mesh")
 	check(pa.size.x < 1.5 and pa.size.y < 1.5, "pickup GLB not meter-scale")
+	check(MaterialFactory.clothing_kind_for_mesh("boots_pickup") == "mboots",
+		"boots_pickup mesh resolves to mboots material kind")
 	pk.free()
 
 	if failures == 0:

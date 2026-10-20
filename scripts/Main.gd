@@ -6279,7 +6279,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Chaqueta de piel":
 					return 0.8
 				"Botas de piel":
-					return 1.0
+					return 0.55
 				"Gorro de piel":
 					return 1.0
 				"Tocado de piel animal":
@@ -6291,7 +6291,9 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Guantes militares":
 					return 1.2
 				"Botas militares":
-					return 1.1
+					return 0.55
+				"Botas de montaña":
+					return 0.5
 				"Casco militar":
 					return 1.0
 				_:
@@ -9021,7 +9023,7 @@ func _create_house_loot() -> void:
 		{"name": "Chaqueta camuflaje desert", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Gloves ---
 		{"name": "Guantes militares", "type": "clothing", "weight": 0.3, "qty": 1, "use": 0.08, "paths": ["res://assets/characters/adapted/pickup_soldier_hands.glb"], "scale": 1.5, "rot": Vector3(0, 60, 0), "flat": false, "color": Color(0.10, 0.12, 0.08), "tint": Color(0.10, 0.12, 0.08)},
-		{"name": "Botas militares", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_military_boots.glb"], "scale": 1.1, "rot": Vector3(0, 40, 0), "flat": true, "color": Color(0.10, 0.10, 0.075), "tint": Color(0.10, 0.10, 0.075), "rare": true},
+		{"name": "Botas militares", "type": "clothing", "weight": 1.4, "qty": 1, "use": 0.22, "paths": ["res://assets/characters/adapted/pickup_military_boots.glb"], "scale": 0.55, "rot": Vector3(0, 40, 0), "flat": true, "color": Color(0.10, 0.10, 0.075), "tint": Color(0.10, 0.10, 0.075), "rare": true},
 		{"name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.0, "rot": Vector3(0, 30, 0), "flat": false, "color": Color(0, 0, 0, 0), "rare": true},
 		# --- Supplies ---
 		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "qty": 1, "use": 35.0, "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 30, 0), "color": Color(0.38, 0.28, 0.15)},
@@ -9527,7 +9529,9 @@ func _apply_military_drop_material(item_name: String, node: Node, drop_color: Co
 		return
 	var military_solid_names := ["Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
 	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
-	if item_name in military_solid_names:
+	if item_name == "Botas militares":
+		_apply_color_material_recursive(node as Node3D, drop_color if drop_color.a > 0.0 else Color(0.10, 0.10, 0.075))
+	elif item_name in military_solid_names:
 		if item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
 			_apply_color_material_recursive(node as Node3D, Color(0.02, 0.02, 0.02))
 		elif item_name.findn("azul") >= 0 or item_name.findn("azules") >= 0:
@@ -9705,6 +9709,7 @@ func _create_pickup_item(data: Dictionary) -> void:
 		"id": id, "name": item_name, "type": item_type,
 		"weight": float(data.get("weight", 0.1)), "qty": int(data.get("qty", 1)),
 		"use": float(data.get("use", 0.0)), "pos": [pos.x, pos.y, pos.z],
+		"color": [color.r, color.g, color.b, color.a],
 		"wear": 0.0, "spoilage": 0.0, "camo": item_camo, "static_loot": true
 	})
 
