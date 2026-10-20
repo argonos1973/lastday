@@ -348,6 +348,7 @@ const THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION := "AttackExternal"
 const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
 const THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION := "MeleeDeathExternal"
 const THIRD_PERSON_EXTERNAL_HIT_ANIMATION := "HitExternal"
+const THIRD_PERSON_EXTERNAL_SHOT_ANIMATION := "ShotReceivedExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -389,6 +390,7 @@ const DRINK_ANIMATION_GLB := "res://assets/animations/Drinking.glb"
 const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
 const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forward 02.glb"
 const HIT_ANIMATION_GLB := "res://assets/animations/Head Hit.glb"
+const SHOT_ANIMATION_GLB := "res://assets/animations/RecibirDisparo.glb"
 # Swing timers: the clip's contact frame, and the lead so the whoosh peaks
 # just before impact instead of firing at click time.
 const MELEE_PUNCH_IMPACT_DELAY := 0.95
@@ -504,6 +506,7 @@ var third_person_attack_animation := ""
 var third_person_punch_animation := ""
 var third_person_melee_death_animation := ""
 var third_person_hit_animation := ""
+var third_person_shot_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -544,6 +547,9 @@ var _pain_audio_player = null
 var _shoot_audio_player = null
 var _swing_audio_player = null
 var _impact_audio_player = null
+var _shot_audio_player = null
+var _fall_audio_player = null
+var _unwell_audio_player = null
 var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
@@ -581,6 +587,8 @@ var _drink_animation_length := 2.0
 var _punch_animation_loaded := false
 var _melee_death_animation_loaded := false
 var _hit_animation_loaded := false
+var _shot_animation_loaded := false
+var _was_sick := false
 var _beaten_death := false
 var _torch_in_hands := false
 var _has_fishing_rod := false
@@ -1063,6 +1071,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_jump_down_animation
 			elif lower.find("jump") >= 0:
 				target = third_person_jump_animation
+			elif lower.find("shot") >= 0:
+				target = third_person_shot_animation
 			elif lower.find("hit") >= 0:
 				target = third_person_hit_animation
 			elif lower.find("punch") >= 0:
@@ -1100,7 +1110,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			_update_puppet_ground_alignment(1.0)
 			# Melee combat audio follows the synced clip: the victim's flinch
 			# carries the impact thud, a thrown swing carries the whoosh.
-			if target == third_person_hit_animation:
+			if target == third_person_shot_animation:
+				_play_shot_received_sound()
+			elif target == third_person_hit_animation:
 				_play_punch_impact_sound()
 			elif target == third_person_punch_animation or target == third_person_attack_animation:
 				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
@@ -1432,6 +1444,10 @@ func _process(delta: float) -> void:
 					_puppet_naked_pending = false
 					_puppet_swap_to_naked()
 		return
+	if stats != null and stats.sick != _was_sick:
+		_was_sick = stats.sick
+		if _was_sick:
+			_play_unwell_sound()
 	# Detectar hold de F y G por polling (mas fiable que eventos)
 	var f_held := Input.is_key_pressed(KEY_F) and (not is_instance_valid(rowing_boat) or _boat_standing)
 	var g_held := Input.is_key_pressed(KEY_G) and (not is_instance_valid(rowing_boat) or _boat_standing)
@@ -4661,6 +4677,9 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	# Hit reaction (Head Hit.glb) — the victim plays it on validated melee
 	# damage; the synced anim name makes remote puppets flinch too.
 	_load_hit_animation()
+	# Shot-received reaction (RecibirDisparo.glb) — rifle hits play the
+	# impact-only clip; synced to puppets the same way.
+	_load_shot_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -5595,6 +5614,19 @@ func _play_hit_reaction() -> void:
 	third_person_action_timer = 0.55
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
 	_play_punch_impact_sound()
+
+func _play_shot_reaction() -> void:
+	if is_dead or third_person_animation_player == null:
+		return
+	if third_person_shot_animation.is_empty() or not third_person_animation_player.has_animation(third_person_shot_animation):
+		_play_hit_reaction()
+		return
+	# Route through the action-anim slot so the clip also travels in
+	# sync_player_state — remote puppets see the victim flinch too.
+	third_person_action_animation = third_person_shot_animation
+	third_person_action_timer = 0.5
+	third_person_animation_player.play(third_person_shot_animation, 0.06)
+	_play_shot_received_sound()
 
 func _update_death_pose(delta: float) -> void:
 	if _beaten_death:
@@ -10747,6 +10779,55 @@ func _load_hit_animation() -> void:
 	if third_person_animation_player.has_animation("hit/" + THIRD_PERSON_EXTERNAL_HIT_ANIMATION):
 		third_person_hit_animation = "hit/" + THIRD_PERSON_EXTERNAL_HIT_ANIMATION
 
+func _load_shot_animation() -> void:
+	if _shot_animation_loaded:
+		return
+	_shot_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(SHOT_ANIMATION_GLB):
+		return
+	var loaded = load(SHOT_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_NONE
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	instance.queue_free()
+	var shot_lib: AnimationLibrary = AnimationLibrary.new()
+	shot_lib.add_animation(THIRD_PERSON_EXTERNAL_SHOT_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("shot", shot_lib)
+	if third_person_animation_player.has_animation("shot/" + THIRD_PERSON_EXTERNAL_SHOT_ANIMATION):
+		third_person_shot_animation = "shot/" + THIRD_PERSON_EXTERNAL_SHOT_ANIMATION
+
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
 		return
@@ -11328,7 +11409,9 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 		# Instant feedback on the attacker's screen — the victim's own client
 		# also plays it via apply_damage_to_client, and its synced anim name
 		# replays the flinch on every other puppet.
-		if weapon == "melee" or weapon == "rifle":
+		if weapon == "rifle":
+			_play_shot_reaction()
+		elif weapon == "melee":
 			_play_hit_reaction()
 		return
 	apply_damage(amount)
@@ -11346,9 +11429,12 @@ func _land_after_fall() -> void:
 	if damage <= 0.0:
 		return
 	stats.feet_wound = minf(100.0, stats.feet_wound + damage * 0.5)
+	# The dedicated landing grunt replaces the generic pain tick this frame.
+	_pain_sound_timer = 1.5
 	apply_damage(damage)
 	if not is_dead:
 		notice.emit("Te has hecho dano al caer.")
+		_play_fall_damage_sound()
 
 func apply_damage(amount: float) -> void:
 	if is_puppet or is_dead:
@@ -11857,6 +11943,9 @@ func _shoot_rifle() -> void:
 	hit_query.exclude = exclude_arr
 	hit_query.collide_with_areas = true
 	hit_query.collide_with_bodies = true
+	# Point-blank: the muzzle can start inside the victim's hitbox (~1 m);
+	# without this the ray skips the collider and the shot whiffs entirely.
+	hit_query.hit_from_inside = true
 	var hit_result := space_state.intersect_ray(hit_query)
 	# Atravesar Area3D que no sean hitboxes (zonas de interaccion, triggers)
 	while not hit_result.is_empty() and hit_result["collider"] is Area3D \
@@ -12382,12 +12471,12 @@ func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
 			light.light_energy = 0.0)
 	get_tree().create_timer(0.4).timeout.connect(func(): flash_root.queue_free())
 
-func _make_action_sound_player(player_name: String) -> Node:
+func _make_action_sound_player(player_name: String, unit_size: float = 6.0, max_distance: float = 45.0) -> Node:
 	var p: Node
 	if is_puppet:
 		var p3 := AudioStreamPlayer3D.new()
-		p3.unit_size = 6.0
-		p3.max_distance = 45.0
+		p3.unit_size = unit_size
+		p3.max_distance = max_distance
 		p3.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		p = p3
 	else:
@@ -12398,7 +12487,9 @@ func _make_action_sound_player(player_name: String) -> Node:
 
 func _play_shoot_sound() -> void:
 	if _shoot_audio_player == null:
-		_shoot_audio_player = _make_action_sound_player("ShootSound")
+		# A gunshot carries far: full volume inside ~30 m, still audible at
+		# the rifle's own max reach (320 m, matches the server reach check).
+		_shoot_audio_player = _make_action_sound_player("ShootSound", 30.0, 320.0)
 	var path := "res://assets/audio/disparo.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
@@ -12462,6 +12553,54 @@ func _load_wav_stream(path: String) -> AudioStream:
 			stream = AudioStreamWAV.load_from_file(disk_path)
 	return stream
 
+func _load_audio_stream(path: String) -> AudioStream:
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			if path.get_extension().to_lower() == "mp3":
+				stream = AudioStreamMP3.load_from_file(disk_path)
+			else:
+				stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream is AudioStreamMP3:
+		(stream as AudioStreamMP3).loop = false
+	return stream
+
+func _play_shot_received_sound() -> void:
+	if _shot_audio_player == null:
+		_shot_audio_player = _make_action_sound_player("ShotReceivedSound")
+	var stream := _load_audio_stream("res://assets/audio/recibirdisparo.mp3")
+	if stream == null:
+		return
+	_shot_audio_player.stream = stream
+	_shot_audio_player.volume_db = 3.0
+	_shot_audio_player.pitch_scale = randf_range(0.9, 1.1)
+	_shot_audio_player.play()
+
+func _play_fall_damage_sound() -> void:
+	if _fall_audio_player == null:
+		_fall_audio_player = _make_action_sound_player("FallDamageSound")
+	var stream := _load_audio_stream("res://assets/audio/saltardano.mp3")
+	if stream == null:
+		return
+	_fall_audio_player.stream = stream
+	_fall_audio_player.volume_db = 3.0
+	_fall_audio_player.pitch_scale = randf_range(0.9, 1.1)
+	_fall_audio_player.play()
+
+func _play_unwell_sound() -> void:
+	if _unwell_audio_player == null:
+		_unwell_audio_player = _make_action_sound_player("UnwellSound")
+	var stream := _load_audio_stream("res://assets/audio/malo.mp3")
+	if stream == null:
+		return
+	_unwell_audio_player.stream = stream
+	_unwell_audio_player.volume_db = 3.0
+	_unwell_audio_player.pitch_scale = randf_range(0.9, 1.1)
+	_unwell_audio_player.play()
+
 func _schedule_melee_swing_sound(impact_delay: float) -> void:
 	# The whoosh belongs to the arm's extension, not the initial recoil —
 	# schedule it just ahead of the contact frame.
@@ -12501,16 +12640,11 @@ func _play_pain_sound() -> void:
 	var paths := [
 		"res://assets/external/audio/downloaded/pain1.wav",
 		"res://assets/external/audio/downloaded/pain2.wav",
-		"res://assets/external/audio/downloaded/pain3.wav"
+		"res://assets/external/audio/downloaded/pain3.wav",
+		"res://assets/audio/malo.mp3"
 	]
 	var path: String = paths[randi() % paths.size()]
-	var stream: AudioStream = null
-	if ResourceLoader.exists(path):
-		stream = load(path)
-	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
+	var stream := _load_audio_stream(path)
 	if stream == null:
 		return
 	_pain_audio_player.stream = stream

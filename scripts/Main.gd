@@ -2827,7 +2827,9 @@ func _spawn_server_proxy(id: int) -> void:
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	if player != null and player.has_method("apply_damage"):
 		player.apply_damage(amount)
-		if (weapon == "melee" or weapon == "rifle") and player.has_method("_play_hit_reaction"):
+		if weapon == "rifle" and player.has_method("_play_shot_reaction"):
+			player._play_shot_reaction()
+		elif weapon == "melee" and player.has_method("_play_hit_reaction"):
 			player._play_hit_reaction()
 		if weapon == "rifle":
 			player._recoil_pitch -= deg_to_rad(5.5)

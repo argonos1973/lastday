@@ -971,7 +971,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(_predator_player_damage())
 					if animal_type == "wolf" or animal_type == "bear":
-						_play_wolf_sound("attack")
+						_play_wolf_sound("bite")
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
 				if away_dir.length_squared() < 0.0001:
@@ -2389,7 +2389,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _net != null and _net.is_dedicated_server:
 		# Dedicated servers can't play audio: relay events to clients so each
 		# puppet plays the sound locally.
-		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl") and _net.is_connected:
+		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "bite") and _net.is_connected:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	var is_bear := animal_type == "bear"
@@ -2433,7 +2433,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_audio_player.max_distance = 65.0 if is_bear else 40.0
 		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_wolf_audio_player)
-	if _wolf_audio_player.playing and sound_type != "attack":
+	if _wolf_audio_player.playing and sound_type != "attack" and sound_type != "bite":
 		return
 	var path := ""
 	match sound_type:
@@ -2441,6 +2441,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
+		"bite":
+			path = "res://assets/audio/mordedura.mp3"
 		_:
 			return
 	var stream: AudioStream = null
@@ -2449,15 +2451,20 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if stream == null:
 		var disk_path := ProjectSettings.globalize_path(path)
 		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
+			if path.get_extension().to_lower() == "mp3":
+				stream = AudioStreamMP3.load_from_file(disk_path)
+			else:
+				stream = AudioStreamWAV.load_from_file(disk_path)
 	if stream == null:
 		return
+	if stream is AudioStreamMP3:
+		(stream as AudioStreamMP3).loop = false
 	_wolf_audio_player.stream = stream
 	if is_bear:
-		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" else 1.0
+		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0
 		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
 	else:
-		_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
+		_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" or sound_type == "bite" else -4.0
 		_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
 	_wolf_audio_player.play()
 
