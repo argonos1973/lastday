@@ -10083,7 +10083,24 @@ func _hide_remote_felled_tree(action_id: String) -> void:
 const PICKUP_CLAIM_TIMEOUT_MSEC := 60000
 
 func _pickup_needs_claim(action) -> bool:
-	return is_instance_valid(action) and str(action.action_type) in ["pickup_item", "pickup_torch", "backpack_pickup", "eat_food", "wolf_meat_raw", "bird_meat_raw", "forage", "wood", "stone", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "gut_wolf", "pick_fruit", "fell_tree", "fell_bush", "cut_log", "build_cabin", "shelter"]
+	return is_instance_valid(action) and str(action.action_type) in ["pickup_item", "pickup_torch", "backpack_pickup", "eat_food", "wolf_meat_raw", "bird_meat_raw", "forage", "wood", "stone", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "gut_wolf", "pick_fruit", "fell_tree", "fell_bush", "cut_log", "build_cabin", "shelter", "farm_plot"]
+
+# Revalida el alcance justo antes de commitear una accion larga: el actor pudo
+# alejarse durante el temporizador y el servidor rechazaria el commit, dejando
+# el estado divergente (item consumido localmente, intacto para los demas).
+func _actor_still_reaches(action, actor, max_dist: float) -> bool:
+	if actor == null or not is_instance_valid(actor) or not is_instance_valid(action):
+		return false
+	var a3 = actor as Node3D
+	var t3 = action as Node3D
+	if a3 == null or t3 == null:
+		return true
+	if not a3.is_inside_tree() or not t3.is_inside_tree():
+		return false
+	if a3.global_position.distance_to(t3.global_position) <= max_dist:
+		return true
+	actor.notice.emit("Te has alejado demasiado.")
+	return false
 
 func _claim_world_pickup(action_id: String, sender: int) -> bool:
 	if action_id.is_empty() or _depleted_action_ids.has(action_id):
@@ -10224,6 +10241,8 @@ func _execute_world_action(action, actor) -> void:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
 			await get_tree().create_timer(5.0).timeout
 			if _scene_quitting: return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			action.set_meta("gutted", true)
 			# Spawn 5 meat pieces and 1 skin around the animal
 			var animal_pos: Vector3 = action.global_position
@@ -10770,6 +10789,8 @@ func _execute_world_action(action, actor) -> void:
 			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			_fall_tree_animation(action)
 			await get_tree().create_timer(1.5).timeout
 			if _scene_quitting: return
@@ -10822,6 +10843,8 @@ func _execute_world_action(action, actor) -> void:
 			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			_shrink_bush_animation(action)
 			await get_tree().create_timer(0.8).timeout
 			if _scene_quitting: return
@@ -10871,6 +10894,8 @@ func _execute_world_action(action, actor) -> void:
 				hud.show_countdown("Plantando semillas", 4.0)
 			await get_tree().create_timer(4.0).timeout
 			if _scene_quitting: return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			var planted_pos: Vector3 = action.position
 			_hide_action_visual(action)
 			action.mark_depleted()
@@ -10908,6 +10933,8 @@ func _execute_world_action(action, actor) -> void:
 			if _scene_quitting: return
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			_hide_action_visual(action)
 			var log_pos: Vector3 = action.position
 			var clog1_id := "pickup_Tronco_%d" % (Time.get_ticks_msec() + randi() % 1000)
@@ -10962,6 +10989,8 @@ func _execute_world_action(action, actor) -> void:
 				hud.show_countdown("Construyendo cabana", 3.0)
 			await get_tree().create_timer(3.0).timeout
 			if _scene_quitting: return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			actor.inventory.consume_item_name("Tronco", 6)
 			actor.inventory.consume_item_name("Piedra", 4)
 			if actor.inventory.has_item_name("Martillo"):
@@ -10981,13 +11010,15 @@ func _execute_world_action(action, actor) -> void:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 		"shelter":
 			if not bool(action.get_meta("pelt_lined", false)) and _player_has_pelts(actor, 4):
-				if not _consume_player_pelts(actor, 4):
-					return
 				_play_actor_action(actor, "forage", 3.0)
 				if hud != null:
 					hud.show_countdown("Forrando refugio con piel", 3.0)
 				await get_tree().create_timer(3.0).timeout
 				if _scene_quitting or not is_instance_valid(action): return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
+				if not _consume_player_pelts(actor, 4):
+					return
 				var lined_id := str(action.action_id)
 				_apply_shelter_lining_state(lined_id)
 				actor.notice.emit("Forras el suelo del refugio con piel. Ahora conserva mejor el calor.")
@@ -11007,6 +11038,8 @@ func _execute_world_action(action, actor) -> void:
 				hud.show_countdown("Desmontando refugio", 3.0)
 			await get_tree().create_timer(3.0).timeout
 			if _scene_quitting: return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			var sh_id: String = action.action_id
 			# Remove shelter stick visuals
 			var stick_names := [
@@ -11300,9 +11333,6 @@ func _execute_world_action_eat(action, actor) -> void:
 			# Una pila con varias unidades se come de una en una: solo se
 			# consume el ultimo trozo cuando la cantidad llega a cero.
 			var pile_partial: bool = not is_portioned_can and pile_qty > 1
-			if not is_portioned_can and not pile_partial:
-				_hide_action_visual(action)
-				action.mark_depleted()
 			_play_actor_action(actor, "plant", 1.2)
 			if hud != null:
 				hud.show_countdown("Comiendo", 1.2)
@@ -11315,6 +11345,11 @@ func _execute_world_action_eat(action, actor) -> void:
 			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
+			if not _actor_still_reaches(action, actor, 5.0):
+				return
+			if not is_portioned_can and not pile_partial:
+				_hide_action_visual(action)
+				action.mark_depleted()
 			# Las latas abiertas se comen por porciones: cada uso gasta la mitad
 			# del contenido restante y solo se agotan al llegar a 0.
 			var eat_scale := 1.0
@@ -11392,8 +11427,6 @@ func _execute_world_action_eat(action, actor) -> void:
 				if actor.has_method("die"):
 					actor.die()
 		"wolf_meat_raw", "bird_meat_raw":
-			_hide_action_visual(action)
-			action.mark_depleted()
 			_play_actor_action(actor, "plant", 3.0)
 			if hud != null:
 				hud.show_countdown("Comiendo carne cruda", 3.0)
@@ -11403,6 +11436,10 @@ func _execute_world_action_eat(action, actor) -> void:
 			if _scene_quitting: return
 			if not is_instance_valid(action):
 				return
+			if not _actor_still_reaches(action, actor, 5.0):
+				return
+			_hide_action_visual(action)
+			action.mark_depleted()
 			var _oh_raw: float = float(actor.stats.hunger)
 			var _ot_raw: float = float(actor.stats.thirst)
 			var _ohp_raw: float = float(actor.stats.health)
@@ -11438,6 +11475,8 @@ func _handle_farm_plot(action, actor) -> void:
 				if _scene_quitting: return
 				if not is_instance_valid(action) or action.action_state != "planted":
 					return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
 				# Durability is shared across the stack — charge one bottle.
 				held_water.durability = maxf(0.0, float(held_water.durability) - GameConst.CROP_WATER_USE / maxf(1.0, float(held_water.quantity)))
 				actor.inventory.changed.emit()
@@ -11462,6 +11501,8 @@ func _handle_farm_plot(action, actor) -> void:
 			if _scene_quitting: return
 			if not is_instance_valid(action) or action.action_state != "ready":
 				return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
 			if not actor.inventory.add_item(ItemScript.create("Verduras", "food", 0.22, 3, 16.0)):
 				return
 			if randf() < 0.55:
@@ -11479,6 +11520,8 @@ func _handle_farm_plot(action, actor) -> void:
 			action.remove_meta("farm_busy")
 			if _scene_quitting: return
 			if not is_instance_valid(action) or action.action_state != "rotten":
+				return
+			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			if randf() < 0.3:
 				actor.inventory.add_item(ItemScript.create("Semillas", "seed", 0.02, 1, 0.0))
@@ -11507,6 +11550,8 @@ func _handle_farm_plot(action, actor) -> void:
 			# Seeds are consumed only when the work actually completes — never
 			# on an interrupted or already-planted attempt.
 			if not is_instance_valid(action) or action.action_state != "empty":
+				return
+			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			if not actor.inventory.consume_item_name("Semillas", 1):
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")

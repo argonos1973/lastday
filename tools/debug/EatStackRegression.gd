@@ -66,6 +66,7 @@ func _initialize() -> void:
 	await process_frame  # root enters the tree after _initialize
 	var player := TestPlayer.new()
 	root.add_child(player)
+	player.set_physics_process(false)
 	player.stats.hunger = 50.0
 	player.stats.thirst = 50.0
 
@@ -116,6 +117,8 @@ func _initialize() -> void:
 	pile.set_meta("item_quantity", 3)
 	pile.set_meta("item_use_value", 12.0)
 	pile.set_meta("item_spoilage", 0.0)
+	# El commit revalida el alcance: el comensal debe seguir junto a la pila.
+	player.global_position = pile.global_position
 	world.handle_world_action_eat(pile, player)
 	await create_timer(1.4).timeout
 	check(not pile.depleted and int(pile.get_meta("item_quantity", 0)) == 2, "Eating from a 3-fig pile leaves qty 2 (got %d, depleted=%s)" % [int(pile.get_meta("item_quantity", 0)), pile.depleted])
@@ -138,6 +141,7 @@ func _initialize() -> void:
 	mp_world.net = mp_net
 	var mp_player := TestPlayer.new()
 	mp_world.add_child(mp_player)
+	mp_player.set_physics_process(false)
 	mp_world.player = mp_player
 	_add_raw_stack(mp_player, "Higo", 0.10, 2, 12.0)
 	var mp_idx: int = _slots_of(mp_player, "Higo")[0]
@@ -156,6 +160,7 @@ func _initialize() -> void:
 	current_scene = eat_world  # _eat_action routes through get_tree().current_scene
 	var eat_player := TestPlayer.new()
 	eat_world.add_child(eat_player)
+	eat_player.set_physics_process(false)
 	eat_world.player = eat_player
 	eat_player.stats.hunger = 50.0
 	eat_player.stats.thirst = 50.0

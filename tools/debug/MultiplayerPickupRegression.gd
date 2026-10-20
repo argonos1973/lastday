@@ -149,11 +149,24 @@ func run() -> void:
 	check(main._claim_world_pickup("treeX", bid), "expired claim can be re-taken by another peer")
 	check(main._net_world_action_completed("treeX", [], "", Vector3.ZERO, bid), "new claim owner may complete its reserved action")
 	# Tipos consumibles/de construccion recien cubiertos por el claim.
-	for t in ["pick_fruit", "fell_tree", "fell_bush", "cut_log", "build_cabin", "shelter"]:
+	for t in ["pick_fruit", "fell_tree", "fell_bush", "cut_log", "build_cabin", "shelter", "farm_plot"]:
 		var wa := WorldAction.new()
 		wa.action_type = t
 		check(main._pickup_needs_claim(wa), "claim covers %s" % t)
 		wa.free()
+	# Revalidacion de alcance: quien se aleja durante el timer no commitea.
+	var far_actor := Actor.new()
+	client.add_child(far_actor)
+	far_actor.global_position = Vector3(100.0, 0.0, 0.0)
+	var wa_reach := WorldAction.new()
+	wa_reach.action_id = "reach_a"
+	wa_reach.action_type = "pickup_item"
+	client.add_child(wa_reach)
+	check(not main._actor_still_reaches(wa_reach, far_actor, 15.0), "walked-away actor fails commit reach check")
+	far_actor.global_position = Vector3(1.0, 0.0, 0.0)
+	check(main._actor_still_reaches(wa_reach, far_actor, 15.0), "near actor passes commit reach check")
+	wa_reach.free()
+	far_actor.free()
 	client.free()
 	a.close_connection()
 	b.close_connection()
