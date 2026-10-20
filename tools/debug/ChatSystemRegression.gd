@@ -4,6 +4,10 @@ const MainScript = preload("res://scripts/Main.gd")
 const HUDScript = preload("res://scripts/HUD.gd")
 const SurvivalStatsScript = preload("res://scripts/SurvivalStats.gd")
 
+# Lifecycle tests use synthetic input, independently of hardware availability.
+class TestHUD extends HUDScript:
+	func _voice_capture_unavailable_reason() -> String: return ""
+
 class ProbeVoiceNet extends "res://scripts/NetworkManager.gd":
 	var received_voice: Array = []
 	func _ready() -> void:
@@ -96,7 +100,7 @@ func _run() -> void:
 	world.add_child(day_cycle)
 	world.day_cycle = day_cycle
 
-	var hud := HUDScript.new()
+	var hud := TestHUD.new()
 	world.add_child(hud)
 	world.hud = hud
 	hud.setup(player, day_cycle, world)

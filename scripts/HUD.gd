@@ -882,7 +882,10 @@ func _active_voice_target_label() -> String:
 func _ensure_mic_capture() -> void:
 	if _mic_capture != null and _mic_player != null:
 		return
-	ProjectSettings.set_setting("audio/driver/enable_input", true)
+	# CoreAudio must initialize input at boot; changing this at runtime cannot
+	# create an input unit and would hide the output-only recovery state.
+	if OS.get_name() != "macOS":
+		ProjectSettings.set_setting("audio/driver/enable_input", true)
 	var bus_name := "VoiceMicCapture"
 	var bus_idx := AudioServer.get_bus_index(bus_name)
 	if bus_idx < 0:
@@ -929,6 +932,10 @@ func _voice_session_is_valid() -> bool:
 	return (_can_transmit_voice() and chat_target_peer_id == _voice_target_peer_id
 		and chat_target_group_id == _voice_target_group_id and not _active_voice_target_label().is_empty())
 
+func _voice_capture_unavailable_reason() -> String:
+	var audio_startup := get_node_or_null("/root/AudioStartup")
+	return str(audio_startup.microphone_unavailable_reason()) if audio_startup != null else ""
+
 func set_voice_mic_active(active: bool) -> void:
 	if active and not _can_transmit_voice():
 		active = false
@@ -937,6 +944,11 @@ func set_voice_mic_active(active: bool) -> void:
 	if active and chat_target_peer_id <= 0 and chat_target_group_id.is_empty():
 		show_notice("Selecciona primero un jugador o únete a un grupo en el chat.", 3.0)
 		return
+	if active and DisplayServer.get_name() != "headless":
+		var reason := _voice_capture_unavailable_reason()
+		if not reason.is_empty():
+			show_notice(reason, 6.0)
+			active = false
 	voice_mic_active = active
 	_voice_target_peer_id = chat_target_peer_id if active else 0
 	_voice_target_group_id = chat_target_group_id if active else ""
