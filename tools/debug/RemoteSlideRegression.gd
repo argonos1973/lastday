@@ -130,6 +130,21 @@ func run() -> void:
 				min_foot_rel_y = minf(min_foot_rel_y, wy - real_puppet.global_position.y)
 		check(absf(min_foot_rel_y - 0.025) < 0.05, "remote puppet stays grounded on %s (foot_rel_y=%.3f)" % [str(clip), min_foot_rel_y])
 
+	# --- Remote action sounds must be positional ---
+	# Los players 2D sonaban a volumen completo en todo el mapa; en puppets deben
+	# ser AudioStreamPlayer3D para atenuar por distancia.
+	real_puppet._play_pain_sound()
+	real_puppet._play_melee_swing_sound()
+	real_puppet._play_punch_impact_sound()
+	real_puppet._play_shoot_sound()
+	for p in [real_puppet._pain_audio_player, real_puppet._swing_audio_player, real_puppet._impact_audio_player, real_puppet._shoot_audio_player]:
+		check(p is AudioStreamPlayer3D, "remote puppet action sound '%s' is positional" % (str(p.name) if p != null else "null"))
+	var local_pc = PlayerScript.new()
+	var local_snd = local_pc._make_action_sound_player("PainSound")
+	check(local_snd != null and not local_snd is AudioStreamPlayer3D,
+		"local player action sounds stay 2D")
+	local_pc.free()
+
 	world.free()
 	if failures == 0:
 		print("PASS: remote stop-slide and action ground alignment verified")

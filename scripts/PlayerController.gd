@@ -540,10 +540,10 @@ const FALL_DAMAGE_SCALE := 9.0
 const FALL_WATER_FACTOR := 0.3
 var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
-var _pain_audio_player: AudioStreamPlayer = null
-var _shoot_audio_player: AudioStreamPlayer = null
-var _swing_audio_player: AudioStreamPlayer = null
-var _impact_audio_player: AudioStreamPlayer = null
+var _pain_audio_player = null
+var _shoot_audio_player = null
+var _swing_audio_player = null
+var _impact_audio_player = null
 var _pain_sound_timer := 0.0
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
@@ -12382,11 +12382,23 @@ func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
 			light.light_energy = 0.0)
 	get_tree().create_timer(0.4).timeout.connect(func(): flash_root.queue_free())
 
+func _make_action_sound_player(player_name: String) -> Node:
+	var p: Node
+	if is_puppet:
+		var p3 := AudioStreamPlayer3D.new()
+		p3.unit_size = 6.0
+		p3.max_distance = 45.0
+		p3.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+		p = p3
+	else:
+		p = AudioStreamPlayer.new()
+	p.name = player_name
+	add_child(p)
+	return p
+
 func _play_shoot_sound() -> void:
 	if _shoot_audio_player == null:
-		_shoot_audio_player = AudioStreamPlayer.new()
-		_shoot_audio_player.name = "ShootSound"
-		add_child(_shoot_audio_player)
+		_shoot_audio_player = _make_action_sound_player("ShootSound")
 	var path := "res://assets/audio/disparo.wav"
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
@@ -12460,9 +12472,7 @@ func _schedule_melee_swing_sound(impact_delay: float) -> void:
 
 func _play_melee_swing_sound() -> void:
 	if _swing_audio_player == null:
-		_swing_audio_player = AudioStreamPlayer.new()
-		_swing_audio_player.name = "MeleeSwingSound"
-		add_child(_swing_audio_player)
+		_swing_audio_player = _make_action_sound_player("MeleeSwingSound")
 	var stream := _load_wav_stream("res://assets/audio/punch_swing.wav")
 	if stream == null:
 		return
@@ -12473,9 +12483,7 @@ func _play_melee_swing_sound() -> void:
 
 func _play_punch_impact_sound() -> void:
 	if _impact_audio_player == null:
-		_impact_audio_player = AudioStreamPlayer.new()
-		_impact_audio_player.name = "PunchImpactSound"
-		add_child(_impact_audio_player)
+		_impact_audio_player = _make_action_sound_player("PunchImpactSound")
 	var stream := _load_wav_stream("res://assets/audio/punch_impact.wav")
 	if stream == null:
 		return
@@ -12489,9 +12497,7 @@ func _play_pain_sound() -> void:
 		return
 	_pain_sound_timer = 1.5
 	if _pain_audio_player == null:
-		_pain_audio_player = AudioStreamPlayer.new()
-		_pain_audio_player.name = "PainSound"
-		add_child(_pain_audio_player)
+		_pain_audio_player = _make_action_sound_player("PainSound")
 	var paths := [
 		"res://assets/external/audio/downloaded/pain1.wav",
 		"res://assets/external/audio/downloaded/pain2.wav",
