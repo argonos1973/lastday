@@ -123,6 +123,24 @@ func run() -> void:
 	var miss: Array = main._clothing_colors_from_items("Chaqueta", items_data)
 	check(miss.size() == 1 and (miss[0] as Color).a <= 0.0, "missing item yields transparent color")
 
+	# Chaqueta de piel tras soltarla y recogerla: el item llega con
+	# clothing_color plano (el tinte del drop) y la especie viaja en la
+	# etiqueta "name|species" — el pelaje siempre gana al tinte plano.
+	puppet.puppet_apply_visuals("Chaqueta de piel|lobo", "", "", [Color(0.28, 0.19, 0.11, 1.0)])
+	await process_frame
+	var fj: MeshInstance3D = puppet._survival_cloth_nodes.get("field_jacket_olive")
+	check(fj != null and fj.visible, "fur jacket mesh attaches and is visible")
+	check(fj != null and fj.material_override is ShaderMaterial, "fur jacket keeps pelt shader over flat loot color")
+
+	# Especie por prenda: chaqueta de lobo + botas de zorro no se pisan.
+	puppet.puppet_apply_visuals("Chaqueta de piel|lobo,Botas de piel|zorro", "", "", [Color(0.28, 0.19, 0.11, 1.0), Color(0.35, 0.24, 0.13, 1.0)])
+	await process_frame
+	check(str(puppet._equipped_pelt.get("Botas de piel", "")) == "zorro", "per-item species survives multi-pelt equip")
+	var feet: MeshInstance3D = puppet._survival_cloth_nodes.get("cloth_feet")
+	check(feet != null and feet.material_override is ShaderMaterial, "pelt boots keep their own fur shader")
+	var fj2: MeshInstance3D = puppet._survival_cloth_nodes.get("field_jacket_olive")
+	check(fj2 != null and fj2.material_override is ShaderMaterial, "pelt jacket keeps fur with other pelt items equipped")
+
 	world.free()
 	if failures == 0:
 		print("PASS: clothing colors sync to puppets and remote tree cuts hide batched instances")

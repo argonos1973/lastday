@@ -285,6 +285,7 @@ func run() -> void:
 	world.free()
 	await test_feeding_priority()
 	await test_meat_in_hand()
+	await test_multi_wolf_offering()
 	await test_server_persistence()
 	if failures == 0:
 		print("WolfTameRegression: ALL PASS")
@@ -579,3 +580,80 @@ func test_server_persistence() -> void:
 	world.free()
 	net.players.clear()
 	net.is_host = false
+
+# Varios lobos, un solo cebo: sólo uno lo reclama y come; el resto ronda la
+# zona esperando en vez de amontonarse — y el progreso converge en un solo lobo.
+func test_multi_wolf_offering() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player := TestPlayer.new()
+	player.name = "Player"
+	player.position = Vector3(10, 0, 0)
+	world.add_child(player)
+
+	var wolfA := make_wolf(world, Vector3(0, 0, 0))
+	var wolfB := make_wolf(world, Vector3(0, 0, 4))
+	wolfA._wolf_hunger = 20.0
+	wolfB._wolf_hunger = 20.0
+	var meat := spawn_meat(world, Vector3(3, 0, 0), "local")
+
+	wolfA._wolf_ai(0.05)
+	wolfB._wolf_ai(0.05)
+	var claimer: TestWolf = null
+	var shadower: TestWolf = null
+	if wolfA._claimed_meat == meat:
+		claimer = wolfA
+		shadower = wolfB
+	elif wolfB._claimed_meat == meat:
+		claimer = wolfB
+		shadower = wolfA
+	check(claimer != null, "One wolf claims the dropped offering")
+	check(shadower != null and shadower._claimed_meat != meat, "The other wolf does not claim the same offering")
+	if shadower != null:
+		check(shadower._state == "wary", "Locked-out wolf shadows the offering instead of piling on")
+
+	claimer._consume_meat_pickup(meat)
+	check(int(claimer._tame_progress.get("local", 0)) == 1, "Claiming wolf records 1/3")
+	check(shadower._tame_progress.is_empty(), "Shadowing wolf gains no trust")
+
+	# Nueva pieza: el lobo con confianza la toma; el otro cede el paso.
+	var meat2 := spawn_meat(world, Vector3(3, 0, 0), "local")
+	wolfA._wolf_ai(0.05)
+	wolfB._wolf_ai(0.05)
+	check(claimer._claimed_meat == meat2, "Progress-holder claims the next piece too")
+	check(shadower._claimed_meat != meat2, "Progress-less wolf yields the next piece")
+
+	# Atasco real: el camino termina sin alcanzar el cebo -> veto, no plantado.
+	stuck_meat_setup(world, player)
+	await process_frame
+
+func stuck_meat_setup(world: TestWorld, player: TestPlayer) -> void:
+	var wolfC := make_wolf(world, Vector3(0, 0, 30))
+	wolfC._wolf_hunger = 20.0
+	player.global_position = wolfC.global_position + Vector3(8, 0, 0)
+	var stuck_meat := spawn_meat(world, wolfC.global_position + Vector3(4, 0, 0), "local")
+	world.blocked_goal = stuck_meat.global_position
+	wolfC._wolf_ai(0.05)
+	check(wolfC._claimed_meat == null, "Unreachable offering is never claimed or stalked")
+	world.blocked_goal = Vector3.INF
+
+	# Give-up cuando el camino dice alcanzable pero el lobo no avanza (empujado
+	# por otro animal o borde dinámico): vetar la pieza en vez de quedarse.
+	wolfC._claimed_meat = stuck_meat
+	stuck_meat.set_meta("wolf_claim", wolfC)
+	wolfC._route_waiting = true
+	wolfC._offer_stall_msec = Time.get_ticks_msec() - 4000
+	var res := wolfC._seek_meat_pickup(stuck_meat)
+	check(wolfC._claimed_meat == null and wolfC._is_blacklisted_offering(stuck_meat), "Stalled wolf blacklists unreachable meat instead of staying stuck")
+	check(float(res["speed"]) == 0.0, "Stalled wolf stops instead of walking in place")
+	wolfC._route_waiting = false
+
+	# El cebador puede apartarse del lobo mientras siga cerca del cebo.
+	var wolfD := make_wolf(world, Vector3(0, 0, 60))
+	player.global_position = wolfD.global_position + Vector3(18, 0, 0)
+	var near_meat := spawn_meat(world, wolfD.global_position + Vector3(5, 0, 0), "local")
+	wolfD._consume_meat_pickup(near_meat)
+	check(int(wolfD._tame_progress.get("local", 0)) == 1, "Feeder near the bait (not the wolf) still gains trust")
+	player.global_position = Vector3(10, 0, 0)
+	world.free()

@@ -18,12 +18,14 @@ func _initialize() -> void:
 		check(not recipes.is_empty(), "%s must unlock pelt recipes" % pelt_name)
 	var outputs := {
 		"Chaqueta de piel": {"Piel de oso": 4},
+		"Pantalones de piel": {"Piel de ciervo": 3},
 		"Botas de piel": {"Piel de zorro": 2},
 		"Gorro de piel": {"Piel de ave": 2, "Trapos": 1},
 		"Tocado de piel animal": {"Piel de lobo": 3},
 	}
 	var expected_species := {
 		"Chaqueta de piel": "oso",
+		"Pantalones de piel": "ciervo",
 		"Botas de piel": "zorro",
 		"Gorro de piel": "ave",
 		"Tocado de piel animal": "lobo",

@@ -189,6 +189,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var is_pelt_torso := torso_item == "Chaqueta de piel"
 	var is_pelt_feet := feet_item == "Botas de piel"
 	var is_military_legs := legs_item.find("Pantalones m") >= 0
+	var is_pelt_legs := legs_item == "Pantalones de piel"
 	var is_military_torso := torso_item.find("Chaqueta") >= 0
 	# Field jackets are a separate skinned GLB hung on the skeleton (same as
 	# in-game MilitaryJackets.attach), not the soldier_torso mesh.
@@ -203,7 +204,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
 	var show_cloth_feet := has_feet and (is_survival_feet or is_pelt_feet)
 	var show_military_feet := has_feet and is_military_feet
-	var show_soldier_legs := has_legs and is_military_legs
+	var show_soldier_legs := has_legs and (is_military_legs or is_pelt_legs)
 	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso and not is_autumn_jacket and not is_pelt_torso
 	var meshes: Array = []
 	_collect_meshes(model, meshes)
@@ -257,7 +258,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "body_legs":
-			m.visible = has_legs and not is_military_legs and not is_autumn_pants
+			m.visible = has_legs and not is_military_legs and not is_pelt_legs and not is_autumn_pants
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_torso":
@@ -287,7 +288,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if nl == "soldier_legs":
 				m.visible = show_soldier_legs
 				if m.visible:
-					if legs_item.find("camuflaje") >= 0:
+					var _pf := MaterialFactory.pelt_fur_material(str(pelt_species.get(legs_item, ""))) if is_pelt_legs else null
+					if _pf != null:
+						m.material_override = _pf
+					elif legs_item.find("camuflaje") >= 0:
 						_mat_camo(m)
 					else:
 						_mat(m, _MILITARY_TINTS.get(legs_item, Color(0.2, 0.25, 0.12)))
@@ -342,10 +346,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
-const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
-const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Botas de piel":["Body_feet"],"Pantalones militares":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Chaqueta de piel":["Body_arms"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
+const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Pantalones de piel":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
+const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Botas de piel":["Body_feet"],"Pantalones militares":["Body_legs"],"Pantalones de piel":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Chaqueta de piel":["Body_arms"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
-const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs"}
+const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs","Pantalones de piel":"soldier_legs"}
 
 static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 	var hide: Array = []
@@ -363,7 +367,7 @@ static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 			hide.append("Bottoms")
 		elif n.find("Pantalones c") >= 0 and not hide.has("Bottoms"):
 			hide.append("Bottoms")
-		elif n in ["Pantalones de senderismo", "Pantalones cargo con rodilleras"] and not hide.has("Bottoms"):
+		elif n in ["Pantalones de senderismo", "Pantalones cargo con rodilleras", "Pantalones de piel"] and not hide.has("Bottoms"):
 			hide.append("Bottoms")
 		elif n.find("Chaqueta") >= 0 and not hide.has("Tops"):
 			hide.append("Tops")

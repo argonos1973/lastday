@@ -54,6 +54,7 @@ const AutumnClothes = preload("res://scripts/AutumnClothes.gd")
 # item_name -> mesh node to show + Mixamo default meshes to hide while worn.
 const SURVIVAL_CLOTHING := {
 	"Chaqueta de piel": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "tint": Color(0.28, 0.19, 0.11)},
+	"Pantalones de piel": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "tint": Color(0.28, 0.19, 0.11)},
 	"Chaqueta de campaña verde": {"mesh": "field_jacket_olive", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Chaqueta de campaña azul": {"mesh": "field_jacket_navy", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
 	"Chaqueta de campaña arena": {"mesh": "field_jacket_sand", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"]},
@@ -105,6 +106,7 @@ const DEFAULT_CLOTHING := {
 
 const DEFAULT_SKIN_HIDES := {
 	"Chaqueta de piel": ["Desnudo_torso", "Desnudo_arms"],
+	"Pantalones de piel": ["Desnudo_legs"],
 	"Botas de piel": ["Desnudo_feet"],
 	"Chaqueta de campaña verde": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de campaña azul": ["Desnudo_torso", "Desnudo_arms"],
@@ -137,6 +139,7 @@ const DEFAULT_SKIN_HIDES := {
 
 const DEFAULT_BODY_HIDES := {
 	"Chaqueta de piel": ["Body_arms"],
+	"Pantalones de piel": ["Body_legs"],
 	"Botas de piel": ["Body_feet"],
 	"Chaqueta de campaña verde": ["Body_arms"],
 	"Chaqueta de campaña azul": ["Body_arms"],
@@ -156,6 +159,7 @@ const DEFAULT_BODY_HIDES := {
 # Used for debug messages and to know which body regions to restore on unequip.
 const CLOTHING_COVERED_ZONES := {
 	"Chaqueta de piel": ["torso", "brazos"],
+	"Pantalones de piel": ["cadera", "piernas"],
 	"Botas de piel": ["pies"],
 	"Chaqueta de campaña verde": ["torso", "brazos"],
 	"Chaqueta de campaña azul": ["torso", "brazos"],
@@ -195,6 +199,7 @@ const CLOTHING_COVERED_ZONES := {
 # Maps each clothing item to a body slot for exchange logic.
 const CLOTHING_SLOTS := {
 	"Chaqueta de piel": "torso",
+	"Pantalones de piel": "legs",
 	"Botas de piel": "feet",
 	"Chaqueta de campaña verde": "torso",
 	"Chaqueta de campaña azul": "torso",
@@ -236,6 +241,7 @@ const CLOTHING_SLOTS := {
 # Short sleeves / shorts give little warmth; jackets and long pants give more.
 const CLOTHING_WARMTH := {
 	"Chaqueta de piel": 0.85,
+	"Pantalones de piel": 0.55,
 	"Botas de piel": 0.48,
 	"Chaqueta de campaña verde": 0.32,
 	"Chaqueta de campaña azul": 0.32,
@@ -285,6 +291,7 @@ const CLOTHING_HEAT_PROTECTION := {
 # Heavy clothing retains heat (bad in hot weather); light/short items ventilate (good in hot weather).
 # 0.0 = neutral, positive = retains heat, negative = ventilates (cools down).
 const CLOTHING_HEAT_RETENTION := {
+	"Pantalones de piel": 0.24,
 	"Chaqueta de campaña verde": 0.26,
 	"Chaqueta de campaña azul": 0.26,
 	"Chaqueta de campaña arena": 0.26,
@@ -2844,6 +2851,10 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 		if MilitaryJackets.VARIANTS.has(item_name) or AutumnClothes.VARIANTS.has(item_name):
 			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
 			mi.material_override = null
+		elif worn and item_name in GameConst.PELT_FUR_ITEMS and not str(_equipped_pelt.get(item_name, _active_pelt_species)).is_empty():
+			# Una prenda de piel recogida del suelo llega con clothing_color (el
+			# tinte plano del drop): el pelaje de SU especie siempre manda.
+			mi.material_override = _pelt_fur_material(str(_equipped_pelt.get(item_name, _active_pelt_species)))
 		elif worn and loot_color.a > 0.0 and not cfg.has("camo"):
 			mi.material_override = _clothing_material_for(mesh_name, loot_color)
 		elif worn and cfg.has("camo"):
@@ -2856,10 +2867,7 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 				mat.grow_amount = 0.015
 			mi.material_override = mat
 		elif worn and cfg.has("tint"):
-			if item_name in GameConst.PELT_FUR_ITEMS and not _active_pelt_species.is_empty():
-				mi.material_override = _pelt_fur_material(_active_pelt_species)
-			else:
-				mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
+			mi.material_override = _clothing_material_for(mesh_name, cfg["tint"])
 		elif worn:
 			if mesh_name.begins_with("soldier_"):
 				mi.material_override = _clothing_material_for(mesh_name, Color(0.15, 0.18, 0.12))
@@ -2971,29 +2979,25 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 			cmat.albedo_color = Color.WHITE
 			cmat.roughness = 0.9
 			mi.material_override = cmat
-	elif loot_color.a > 0.0:
-		var meshes2: Array = []
-		_collect_mesh_instances(node, meshes2)
-		for mi in meshes2:
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = loot_color
-			mat.roughness = 0.9
-			mat.metallic = 0.0
-			mi.material_override = mat
-	elif cfg.has("tint"):
-		var tint: Color = cfg["tint"]
-		var pelt_mat := _pelt_fur_material(_active_pelt_species) if (item_name in GameConst.PELT_FUR_ITEMS and not _active_pelt_species.is_empty()) else null
-		var meshes: Array = []
-		_collect_mesh_instances(node, meshes)
-		for mi in meshes:
-			if pelt_mat != null:
-				mi.material_override = pelt_mat
-				continue
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = tint
-			mat.roughness = 0.9
-			mat.metallic = 0.0
-			mi.material_override = mat
+	else:
+		# Pelaje primero: una prenda de piel recogida del suelo trae
+		# clothing_color plano, pero la especie siempre manda sobre el tinte.
+		var pelt_sp := str(_equipped_pelt.get(item_name, _active_pelt_species))
+		var pelt_mat := _pelt_fur_material(pelt_sp) if (item_name in GameConst.PELT_FUR_ITEMS and item_name != "Tocado de piel animal" and not pelt_sp.is_empty()) else null
+		var tint: Color = cfg["tint"] if cfg.has("tint") else Color(0, 0, 0, 0)
+		var base_col := loot_color if loot_color.a > 0.0 else tint
+		if pelt_mat != null or base_col.a > 0.0:
+			var meshes: Array = []
+			_collect_mesh_instances(node, meshes)
+			for mi in meshes:
+				if pelt_mat != null:
+					mi.material_override = pelt_mat
+					continue
+				var mat := StandardMaterial3D.new()
+				mat.albedo_color = base_col
+				mat.roughness = 0.9
+				mat.metallic = 0.0
+				mi.material_override = mat
 	# If this is a head-slot item and we have a head bone, store the relative
 	# transform so _update_head_worn_items() can follow the bone each frame.
 	# The offset is captured against the bone REST pose, not the current

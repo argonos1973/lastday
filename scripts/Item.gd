@@ -64,6 +64,7 @@ const CLOTHING_STORAGE := {
 	"Guantes de trabajo": 1,
 	"Sombrero de pescador": 0,
 	"Chaqueta de piel": 3,
+	"Pantalones de piel": 3,
 	"Botas de piel": 0,
 	"Gorro de piel": 0,
 	"Tocado de piel animal": 0,

@@ -86,6 +86,11 @@ const RECIPES := [
 		"label": "Fabricar botas de piel"
 	},
 	{
+		"inputs": { "ANY_PELT": 3, "Cuchillo": 1 },
+		"output": { "name": "Pantalones de piel", "type": "clothing", "weight": 1.2, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
+		"label": "Coser unos pantalones de piel"
+	},
+	{
 		"inputs": { "ANY_PELT": 2, "Trapos": 1, "Cuchillo": 1 },
 		"output": { "name": "Gorro de piel", "type": "clothing", "weight": 0.35, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Coser un gorro de piel"

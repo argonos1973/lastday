@@ -46,6 +46,14 @@ var _flee_origin := Vector3.INF
 # persecución eterna.
 var _flee_stamina := 0.0
 var _seek_corpse_timer := 0.0
+# Cebo reclamado: solo un lobo va a por cada pieza de carne tirada; los demás
+# la rondan en vez de amontonarse. La meta wolf_claim en el WorldAction apunta
+# al lobo, y el claim solo vale mientras _claimed_meat siga apuntando a ella.
+var _claimed_meat: Node3D = null
+var _offer_stall_msec := 0
+# Acción -> fin del veto (Time.get_ticks_msec): cebo inalcanzable para este
+# lobo se ignora un tiempo en vez de dejarlo plantado reintentando.
+var _offering_blacklist := {}
 var _rot_timer := 0.0
 var _flies_attached := false
 var _wolf_ai_debug_timer := 0.0
@@ -672,6 +680,10 @@ func _retreat_from_player() -> Dictionary:
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
+	# Suelta la reclamación si el cebo desapareció o el lobo ya va a por otra
+	# cosa: así otro animal puede tomar la pieza enseguida.
+	if _claimed_meat != null and (not is_instance_valid(_claimed_meat) or _claimed_meat.get("depleted") or (_state != "seek_corpse" and _state != "eating")):
+		_claimed_meat = null
 	var target: Vector3
 	var speed: float = move_speed
 	_attack_timer -= delta
@@ -824,6 +836,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_path_recalc_timer = 0.0
 			_chase_target = null
 			return _seek_meat_pickup(offering)
+		# Cebo reclamado o ligado a otro lobo: este ronda la zona esperando
+		# su turno en vez de amontonarse encima o atacar al cebador.
+		var shadow := _find_shadow_offering()
+		if shadow != null:
+			var sh_feeder := _find_feeder_node(str(shadow.get_meta("dropped_by")))
+			if sh_feeder != null and (_player == null or not is_instance_valid(_player) or _player == sh_feeder):
+				_chase_target = null
+				return _shadow_offering(shadow, delta)
 	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
 		var nearby_bear := _find_nearest_live_bear(22.0)
 		if nearby_bear != null:
@@ -1775,7 +1795,7 @@ func _consume_meat_pickup(action: Node3D) -> void:
 	# La meta dropped_by la pone Main al crear el drop (peer_id en servidor,
 	# "local" en SP/host).
 	if action.has_meta("dropped_by"):
-		_register_feeding(str(action.get_meta("dropped_by")))
+		_register_feeding(str(action.get_meta("dropped_by")), action.global_position)
 	# Si el jugador soltó un stack (quantity > 1), consumir solo 1 unidad por
 	# comida para que un stack de 3 carnes sirva para las 3 comidas en vez de
 	# desaparecer entero de un bocado.
@@ -1810,12 +1830,35 @@ func _consume_meat_pickup(action: Node3D) -> void:
 			net_node.item_picked_up.rpc_id(pid, action_id)
 
 func _seek_meat_pickup(meat: Node3D) -> Dictionary:
-	if global_position.distance_to(meat.global_position) < 2.0:
+	# Una pieza, un lobo: mientras la reclama (y sigue yendo a por ella o
+	# comiéndola) los demás la rondan en vez de amontonarse encima.
+	if _claimed_meat != meat:
+		_claimed_meat = meat
+		meat.set_meta("wolf_claim", self)
+		_offer_stall_msec = 0
+	if _flat_distance_to(meat.global_position) < 2.3:
+		_offer_stall_msec = 0
 		_wolf_eating_timer = 8.0
 		_wolf_eating_target = meat
 		_state = "eating"
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
+	# Si el cebo quedó sobre una celda bloqueada el nav lo deja a 2-3 m y el
+	# lobo se plantaba reintentando para siempre. Sin progreso real en ~3.5 s
+	# se rinde y veta esa pieza en lugar de quedarse pegado.
+	if _route_waiting:
+		if _offer_stall_msec == 0:
+			_offer_stall_msec = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - _offer_stall_msec > 3500:
+			_offer_stall_msec = 0
+			_claimed_meat = null
+			_blacklist_offering(meat)
+			_state = "patrol"
+			_current_path.clear()
+			_path_index = 0
+			return {"handled": true, "target": global_position, "speed": 0.0}
+	else:
+		_offer_stall_msec = 0
 	_state = "seek_corpse"
 	_seek_corpse_timer = 15.0
 	_play_animation_by_name("trot")
@@ -1830,11 +1873,23 @@ func _find_nearest_meat_pickup(feeder_id: String = "") -> Node3D:
 	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
 		if not is_instance_valid(action) or not action is Node3D or action.is_queued_for_deletion():
 			continue
-		if not feeder_id.is_empty() and str(action.get_meta("dropped_by", "")) != feeder_id:
-			continue
 		# El grupo recoge tanto los pickups de destripar (wolf_meat_raw) como
 		# la carne que un jugador suelta en el suelo (marcada con dropped_by).
 		if action.get("depleted"):
+			continue
+		var drop_owner := str(action.get_meta("dropped_by")) if action.has_meta("dropped_by") else ""
+		if not feeder_id.is_empty():
+			if drop_owner != feeder_id:
+				continue
+		elif not drop_owner.is_empty():
+			# Carroñeo libre: el cebo de domesticación de un jugador no se lo
+			# come cualquier lobo — sólo el que ya tiene su confianza o su fiel.
+			if drop_owner != tamed_to and not _tame_progress.has(drop_owner):
+				continue
+		if _is_blacklisted_offering(action):
+			continue
+		# Otro lobo ya reclamó esta pieza y sigue yendo a por ella.
+		if _meat_claimed_by_other(action):
 			continue
 		var d := global_position.distance_to((action as Node3D).global_position)
 		if d < nearest_dist:
@@ -1903,24 +1958,125 @@ func _resolve_bait_holder() -> Node3D:
 			return n
 	return null
 
+func _flat_dist2(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+func _flat_distance_to(pos: Vector3) -> float:
+	return _flat_dist2(global_position, pos)
+
+func _offering_key(action: Node) -> String:
+	var id := str(action.get("action_id"))
+	return id if not id.is_empty() and id != "<null>" else str(action.name)
+
+func _blacklist_offering(action: Node3D) -> void:
+	_offering_blacklist[_offering_key(action)] = Time.get_ticks_msec() + 40000
+
+func _is_blacklisted_offering(action: Node3D) -> bool:
+	var key := _offering_key(action)
+	var until := int(_offering_blacklist.get(key, 0))
+	if until == 0:
+		return false
+	if Time.get_ticks_msec() > until:
+		_offering_blacklist.erase(key)
+		return false
+	return true
+
+func _progress_holder_nearby(feeder_id: String, pos: Vector3) -> WildlifeController:
+	# El lobo que ya comió más veces la carne de quien ceba es el que puede
+	# domesticarse: los demás ceden la pieza en vez de repartirse el progreso.
+	var my_progress := int(_tame_progress.get(feeder_id, 0))
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		var w := node as WildlifeController
+		if w == null or w == self or not is_instance_valid(w) or w._is_dead or w.animal_type != "wolf":
+			continue
+		if int(w._tame_progress.get(feeder_id, 0)) > my_progress and w.global_position.distance_to(pos) <= 25.0:
+			return w
+	return null
+
+func _meat_claimed_by_other(action: Node3D) -> bool:
+	if not action.has_meta("wolf_claim"):
+		return false
+	var claimer = action.get_meta("wolf_claim")
+	if claimer == null or claimer == self or not is_instance_valid(claimer):
+		return false
+	if claimer.get("_is_dead") == true or claimer.get("_claimed_meat") != action:
+		return false
+	return true
+
 func _find_active_tame_offering() -> Node3D:
-	var candidates: Array[Node3D] = []
-	if _player != null and is_instance_valid(_player):
-		candidates.append(_player)
-	for id in _tame_progress.keys():
-		var fn := _find_feeder_node(str(id))
-		if fn != null and not candidates.has(fn):
-			candidates.append(fn)
-	for feeder in candidates:
+	var best: Node3D = null
+	var best_d := 9999.0
+	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
+		if not is_instance_valid(action) or not action is Node3D or action.is_queued_for_deletion():
+			continue
+		if action.get("depleted"):
+			continue
+		var dropped_by := str(action.get_meta("dropped_by")) if action.has_meta("dropped_by") else ""
+		if dropped_by.is_empty():
+			continue
+		if _is_blacklisted_offering(action) or _meat_claimed_by_other(action):
+			continue
+		var feeder := _find_feeder_node(dropped_by)
 		if not _can_feed_from(feeder):
 			continue
-		var feeder_id := _feeder_key(feeder)
-		if feeder_id.is_empty() or global_position.distance_to(feeder.global_position) > TAME_FEED_RADIUS:
+		var dist_meat := _flat_distance_to(action.global_position)
+		if dist_meat > TAME_FEED_RADIUS:
 			continue
-		var offering := _find_nearest_meat_pickup(feeder_id)
-		if offering != null and global_position.distance_to(offering.global_position) <= TAME_FEED_RADIUS and not _request_path(global_position, offering.global_position).is_empty():
-			return offering
+		# Quien la tiró tiene que seguir cerca del cebo: si se marcha, la
+		# comida no suma confianza y el lobo no pierde el tiempo yendo a por ella.
+		if _flat_dist2(feeder.global_position, action.global_position) > TAME_FEED_RADIUS:
+			continue
+		# La primera comida decide el vínculo: si otro lobo ya tiene más
+		# confianza con el mismo jugador, este cede el paso.
+		if _progress_holder_nearby(dropped_by, action.global_position) != null:
+			continue
+		var path := _request_path(global_position, action.global_position)
+		if path.is_empty() or _flat_dist2(path[path.size() - 1], action.global_position) > 3.2:
+			continue
+		if dist_meat < best_d:
+			best_d = dist_meat
+			best = action as Node3D
+	return best
+
+# Cebo que este lobo NO puede comer (reclamado o ligado a otro lobo con más
+# confianza): el animal lo ronda en vez de atacar a quien lo tiró.
+func _find_shadow_offering() -> Node3D:
+	for action in get_tree().get_nodes_in_group("wolf_meat_pickups"):
+		if not is_instance_valid(action) or not action is Node3D or action.is_queued_for_deletion():
+			continue
+		if action.get("depleted"):
+			continue
+		var dropped_by := str(action.get_meta("dropped_by")) if action.has_meta("dropped_by") else ""
+		if dropped_by.is_empty():
+			continue
+		if not _meat_claimed_by_other(action) and _progress_holder_nearby(dropped_by, action.global_position) == null:
+			continue
+		var feeder := _find_feeder_node(dropped_by)
+		if not _can_feed_from(feeder):
+			continue
+		if _flat_distance_to(action.global_position) > TAME_FEED_RADIUS + 10.0:
+			continue
+		return action as Node3D
 	return null
+
+func _shadow_offering(offering: Node3D, delta: float) -> Dictionary:
+	_state = "wary"
+	var md := _flat_distance_to(offering.global_position)
+	if md > 9.0:
+		var tgt := offering.global_position + _compute_wolf_separation(2.5)
+		_play_animation_by_name("walk")
+		return {"target": tgt, "speed": move_speed * 1.6}
+	var to_meat := offering.global_position - global_position
+	to_meat.y = 0.0
+	if to_meat.length() > 0.01:
+		rotation.y = lerp_angle(rotation.y, atan2(to_meat.x, to_meat.z), delta * 4.0)
+	if md < 4.0:
+		_play_animation_by_name("walk")
+		return {"target": global_position - to_meat.normalized() * 2.5, "speed": move_speed * 0.9}
+	if randf() < delta * 0.2:
+		_play_wolf_sound("growl")
+	_play_animation_by_name("idle")
+	return {"target": global_position, "speed": 0.0}
 
 func _resolve_owner() -> Node3D:
 	if _owner_node != null and is_instance_valid(_owner_node):
@@ -1963,14 +2119,18 @@ func _is_meat_name(n: String) -> bool:
 		return scene._is_meat_item_name(n)
 	return n.begins_with("Carne") or n.begins_with("Pez")
 
-func _register_feeding(feeder_id: String) -> void:
+func _register_feeding(feeder_id: String, meat_pos: Vector3 = Vector3.INF) -> void:
 	if feeder_id.is_empty() or tamed_to != "" or _is_dead:
 		return
 	var feeder := _find_feeder_node(feeder_id)
 	if not _can_feed_from(feeder):
 		return
-	# Solo cuenta si quien la tiró sigue cerca: no confía en quien tira y huye.
-	if global_position.distance_to(feeder.global_position) > TAME_FEED_RADIUS:
+	# Solo cuenta si quien la tiró sigue cerca del lobo O del cebo: tirar la
+	# carne y apartarse unos metros no debe anular la confianza ganada.
+	var close := global_position.distance_to(feeder.global_position) <= TAME_FEED_RADIUS
+	if not close and meat_pos.is_finite():
+		close = feeder.global_position.distance_to(meat_pos) <= TAME_FEED_RADIUS
+	if not close:
 		return
 	var n := int(_tame_progress.get(feeder_id, 0)) + 1
 	_tame_progress[feeder_id] = n
@@ -1987,6 +2147,7 @@ func _register_feeding(feeder_id: String) -> void:
 func _tame(feeder_id: String, feeder: Node3D) -> void:
 	tamed_to = feeder_id
 	_tame_progress.clear()
+	_claimed_meat = null
 	_follow_mode = "follow"
 	_player = null
 	_chase_target = null
@@ -2022,6 +2183,7 @@ func _go_wild() -> void:
 	_owner_client_id = ""
 	_owner_dead_timer = 0.0
 	_tame_progress.clear()
+	_claimed_meat = null
 	_state = "patrol"
 	_chase_target = null
 	if not old_owner.is_empty():

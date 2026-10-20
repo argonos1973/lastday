@@ -5832,7 +5832,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
 	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño"] or MilitaryJackets.VARIANTS.has(item_name)
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones de piel", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var corpse_kind := WildlifeController.corpse_species(item_name)
 	var is_rifle := item_type == "weapon_rifle"
@@ -6170,7 +6170,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
 				"Botas de piel":
 					return ["res://assets/characters/adapted/pickup_military_boots.glb"]
-				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
+				"Pantalones de piel", "Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
@@ -6284,7 +6284,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 1.0
 				"Tocado de piel animal":
 					return 1.0
-				"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
+				"Pantalones de piel", "Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert":
 					return 0.8
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
 					return 0.8
@@ -9557,6 +9557,7 @@ func _apply_fur_clothing_material(item_name: String, node: Node, pelt: String = 
 		return
 	var fur_tints := {
 		"Chaqueta de piel": Color(0.29, 0.20, 0.12),
+		"Pantalones de piel": Color(0.26, 0.18, 0.11),
 		"Botas de piel": Color(0.38, 0.27, 0.16),
 		"Gorro de piel": Color(0.31, 0.22, 0.13),
 	}
