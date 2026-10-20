@@ -1513,7 +1513,12 @@ func receive_chat_message(sender_id: int, sender_name: String, text: String, tar
 	if scene != null and scene.has_method("_net_receive_chat_message"):
 		scene._net_receive_chat_message(sender_id, sender_name, text, target_id, target_name, group_id)
 
-@rpc("any_peer", "unreliable_ordered")
+# La voz va "unreliable" a secas, sin ordenar: si compartiera la secuencia
+# ordenada del canal 0 con sync_player_state/sync_animals (20 Hz + fauna), los
+# paquetes de voz que llegaran tras un estado más nuevo se descartarían como
+# obsoletos — cortes al quieto y silencio total al moverse. Sin orden, cada
+# chunk se entrega siempre; en LAN el reordenamiento real es raro.
+@rpc("any_peer", "unreliable")
 func send_voice_packet(pcm_bytes: PackedByteArray, target_peer_id: int = 0, group_id: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id() if multiplayer.has_multiplayer_peer() else 0
 	if sender == 0 and is_host:
@@ -1562,7 +1567,7 @@ func send_voice_packet(pcm_bytes: PackedByteArray, target_peer_id: int = 0, grou
 	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
 		receive_voice_packet.rpc_id(target_peer_id, sender, sender_name, pcm_bytes, target_peer_id, target_name, "")
 
-@rpc("authority", "unreliable_ordered")
+@rpc("authority", "unreliable")
 func receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	voice_packet_received.emit(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)
 	var scene := get_tree().current_scene
