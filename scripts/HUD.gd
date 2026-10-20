@@ -907,7 +907,10 @@ func _ensure_mic_capture() -> void:
 			has_silencer = true
 	if found_cap == null:
 		found_cap = AudioEffectCapture.new()
-		found_cap.buffer_length = 0.25
+		# El drenaje ocurre en _process: frames largos por streaming de mundo
+		# (ciudad) desbordaban 0.25 s y tiraban la voz al moverse. 1.0 s da
+		# margen para hitches de ~medio segundo sin perder captura.
+		found_cap.buffer_length = 1.0
 		AudioServer.add_bus_effect(bus_idx, found_cap, 0)
 	if not has_silencer:
 		var silencer := AudioEffectAmplify.new()
@@ -1079,7 +1082,7 @@ func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: Pa
 		vplayer.name = "VoicePeer_%d" % sender_id
 		var gen := AudioStreamGenerator.new()
 		gen.mix_rate = VOICE_SAMPLE_RATE
-		gen.buffer_length = 0.35
+		gen.buffer_length = 0.6
 		vplayer.stream = gen
 		add_child(vplayer)
 		vplayer.play()
