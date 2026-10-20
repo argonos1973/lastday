@@ -196,6 +196,76 @@ var _dedicated_bind_retries := 0
 var _dedicated_bind_wait := 0.0
 var water_world_time := 0.0
 var _water_clock_timer := 0.0
+var authoritative_weather: Dictionary = {}
+var _weather_source_peer := 0
+
+func publish_weather_observation(observation: Dictionary) -> void:
+	if not is_connected or peer == null:
+		return
+	if is_host:
+		_accept_weather_observation(observation, multiplayer.get_unique_id())
+	else:
+		_submit_weather_observation.rpc_id(1, observation)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _submit_weather_observation(observation: Dictionary) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not is_host or not _accepts_client_request(sender):
+		return
+	_accept_weather_observation(observation, sender)
+
+func _accept_weather_observation(observation: Dictionary, sender: int) -> void:
+	# A single publisher is chosen for this session so clients cannot race their
+	# local geolocation/weather requests and show different conditions.
+	if _weather_source_peer != 0 and sender != _weather_source_peer:
+		_send_weather_state_to(sender)
+		return
+	var clean := _sanitize_weather_observation(observation)
+	if clean.is_empty():
+		return
+	_weather_source_peer = sender
+	authoritative_weather = clean
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_apply_network_weather"):
+		scene.call("_apply_network_weather", clean)
+	if is_host and peer != null:
+		for pid in players.keys():
+			if pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
+				continue
+			_sync_weather_state.rpc_id(pid, clean)
+
+static func _sanitize_weather_observation(observation: Dictionary) -> Dictionary:
+	var result := {}
+	for key in ["temperature", "rain", "snow", "cloud_cover", "wind_speed", "wind_direction"]:
+		var value = observation.get(key)
+		if not (value is float or value is int) or not is_finite(float(value)):
+			return {}
+	result["weather_code"] = clampi(int(observation.get("weather_code", -1)), -1, 99)
+	result["temperature"] = clampf(float(observation.temperature), -80.0, 65.0)
+	result["rain"] = clampf(float(observation.rain), 0.0, 500.0)
+	result["snow"] = clampf(float(observation.snow), 0.0, 500.0)
+	result["cloud_cover"] = clampf(float(observation.cloud_cover), -1.0, 1.0)
+	result["wind_speed"] = clampf(float(observation.wind_speed), 0.0, 300.0)
+	result["wind_direction"] = fposmod(float(observation.wind_direction), 360.0)
+	result["updated_at"] = Time.get_unix_time_from_system()
+	return result
+
+@rpc("authority", "call_remote", "reliable")
+func _sync_weather_state(observation: Dictionary) -> void:
+	if is_host:
+		return
+	var clean := _sanitize_weather_observation(observation)
+	if clean.is_empty():
+		return
+	authoritative_weather = clean
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_apply_network_weather"):
+		scene.call("_apply_network_weather", clean)
+
+func _send_weather_state_to(pid: int) -> void:
+	if not is_host or authoritative_weather.is_empty() or peer == null or not peer_alive(pid):
+		return
+	_sync_weather_state.rpc_id(pid, authoritative_weather)
 
 @rpc("authority", "unreliable_ordered")
 func sync_water_clock(seconds: float) -> void:
@@ -343,6 +413,8 @@ func close_connection() -> void:
 	_animals_gen = -1
 	water_world_time = 0.0
 	_water_clock_timer = 0.0
+	authoritative_weather.clear()
+	_weather_source_peer = 0
 	if peer != null:
 		peer.close()
 		peer = null
@@ -376,6 +448,8 @@ func _kick_if_unregistered(id: int) -> void:
 		p.disconnect_peer(id)
 
 func _on_peer_disconnected(id: int) -> void:
+	if is_host and id == _weather_source_peer:
+		_weather_source_peer = 0
 	if is_host:
 		# On server: keep player in list but mark as offline (don't erase)
 		# so other clients still see the character in the world
@@ -573,6 +647,7 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			var ginfo: Dictionary = chat_groups[gid]
 			sync_chat_group.rpc_id(id, str(ginfo.get("id", gid)), str(ginfo.get("name", "Grupo")), ginfo.get("members", []), ginfo.get("member_names", []))
 	_check_all_ready()
+	_send_weather_state_to(id)
 
 # client_id es el token con el que se reivindica el personaje del servidor al
 # reconectar — nunca se broadcastea: quien lo tuviera podría apropiarse del
@@ -804,6 +879,21 @@ var animals: Dictionary = {}
 var _animals_gen := -1
 var _animals_seen := {}
 
+@rpc("authority", "reliable")
+func sync_bear_animals(data: Dictionary) -> void:
+	# The ordinary wildlife stream is deliberately split into small UDP packets.
+	# Bears are rare and distant, so send their compact state on a reliable lane
+	# too; a lost chunk must never hide the only bear in a territory.
+	for aid in animals.keys():
+		if str(animals[aid].get("t", "")) == "bear" and not data.has(aid):
+			animals.erase(aid)
+	for aid in data.keys():
+		var entry = data[aid]
+		if not (entry is Dictionary) or str(entry.get("t", "")) != "bear":
+			continue
+		animals[aid] = entry.duplicate(true)
+		animals[aid]["_sample"] = Time.get_ticks_usec()
+
 @rpc("authority", "unreliable_ordered")
 func sync_animals(data: Dictionary) -> void:
 	# Chunks carry "_gen"/"_total" so a broadcast split across packets is only
@@ -848,6 +938,52 @@ func apply_damage_to_client(amount: float, weapon: String = "") -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_apply_damage"):
 		scene._net_apply_damage(amount, weapon)
+
+# One-shot impacts and condition sounds travel separately from the frequent,
+# unreliable pose snapshots so packet loss cannot hide a hit reaction.
+@rpc("any_peer", "reliable")
+func player_condition_audio(condition: String) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender) or (condition != "sick" and condition != "critical"):
+		return
+	_broadcast_player_condition_audio(sender, condition)
+
+func _broadcast_player_condition_audio(peer_id: int, condition: String) -> void:
+	if not is_host or peer == null:
+		return
+	for pid in players.keys():
+		if pid == peer_id or pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
+			continue
+		player_condition_audio_event.rpc_id(pid, peer_id, condition)
+
+@rpc("authority", "reliable")
+func player_condition_audio_event(peer_id: int, condition: String) -> void:
+	if condition != "sick" and condition != "critical":
+		return
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_player_condition_audio"):
+		scene._net_player_condition_audio(peer_id, condition)
+
+func _broadcast_player_hit(peer_id: int, kind: String, pos: Vector3, include_victim: bool = false) -> void:
+	if not is_host or peer == null:
+		return
+	var scene := get_tree().current_scene
+	if include_victim and peer_alive(peer_id) and peer_id != multiplayer.get_unique_id():
+		player_hit_event.rpc_id(peer_id, peer_id, kind, pos)
+	elif include_victim and peer_id == multiplayer.get_unique_id() and scene != null and scene.has_method("_net_player_hit_event"):
+		scene._net_player_hit_event(peer_id, kind, pos)
+	for pid in players.keys():
+		if pid == peer_id or pid == multiplayer.get_unique_id() or players[pid].get("offline", false) or not peer_alive(pid):
+			continue
+		player_hit_event.rpc_id(pid, peer_id, kind, pos)
+
+@rpc("authority", "reliable")
+func player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
+	if kind not in ["rifle", "melee", "wolf_bite", "bear_bite"] or not pos.is_finite():
+		return
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_player_hit_event"):
+		scene._net_player_hit_event(peer_id, kind, pos)
 
 # Server tells specific client that they are dead (HP reached 0 on server).
 # `cause` lets the victim pick the right death visual ("melee" = beaten).

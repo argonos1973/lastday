@@ -54,6 +54,7 @@ var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is 
 var _net_sync_timer := 0.0
 var _inv_sync_timer := 0.0
 var _animal_sync_timer := 0.0
+var _bear_reliable_sync_timer := 0.0
 var _animal_broadcast_gen := 0
 var _cached_wildlife: Array = []
 var _wildlife_cache_timer := 0.0
@@ -1144,8 +1145,11 @@ func _process(delta: float) -> void:
 	var is_sheltered: bool = player.in_shelter or (in_house and not _is_in_open_house(player.global_position))
 	var ambient_temp: float = day_cycle.get_ambient_temperature()
 	# Use real weather temperature when available
-	if hud != null and hud._real_temp_parsed != -999.0:
-		ambient_temp = hud._real_temp_parsed
+	if hud != null:
+		var temperature_observation := _get_weather_observation()
+		var shared_temperature := float(temperature_observation.get("temperature", -999.0))
+		if shared_temperature != -999.0:
+			ambient_temp = shared_temperature
 	if _is_near_pelt_lined_shelter(player.global_position):
 		ambient_temp += 1.5
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
@@ -1538,7 +1542,8 @@ func _update_weather_effects(delta: float) -> void:
 		return
 	var weather_elapsed := _weather_effect_timer
 	_weather_effect_timer = 0.0
-	var weather := WeatherConditionsScript.from_observation(hud._real_weather_code, hud._real_rain, hud._real_snow, hud._real_cloud_cover)
+	var observation := _get_weather_observation()
+	var weather := WeatherConditionsScript.from_observation(int(observation.weather_code), float(observation.rain), float(observation.snow), float(observation.cloud_cover))
 	var rain_amount: float = weather.rain
 	var snow_amount: float = weather.snow
 	var storm: bool = weather.storm
@@ -1605,6 +1610,37 @@ func _update_weather_effects(delta: float) -> void:
 	if rain_amount > 1.0:
 		_extinguish_fires_in_rain(weather_elapsed)
 
+func _get_weather_observation() -> Dictionary:
+	if net != null and net.is_connected and not net.authoritative_weather.is_empty():
+		return net.authoritative_weather
+	if net != null and net.is_connected:
+		# Before the first registered client publishes the server's observation,
+		# all peers use the same neutral cloudy state instead of local IP weather.
+		return {"weather_code": 3, "temperature": -999.0, "rain": 0.0, "snow": 0.0,
+			"cloud_cover": 0.88, "wind_speed": 0.0, "wind_direction": 0.0}
+	return {
+		"weather_code": hud._real_weather_code,
+		"temperature": hud._real_temp_parsed,
+		"rain": hud._real_rain,
+		"snow": hud._real_snow,
+		"cloud_cover": hud._real_cloud_cover,
+		"wind_speed": hud._real_wind_speed,
+		"wind_direction": hud._real_wind_direction,
+	}
+
+func _apply_network_weather(observation: Dictionary) -> void:
+	if hud == null or observation.is_empty():
+		return
+	hud._real_weather_code = int(observation.get("weather_code", -1))
+	hud._real_temp_parsed = float(observation.get("temperature", -999.0))
+	hud._real_temp = "%.0f°C" % hud._real_temp_parsed if hud._real_temp_parsed > -999.0 else "Sin datos"
+	hud._real_weather_desc = hud._weather_code_to_desc(hud._real_weather_code)
+	hud._real_rain = float(observation.get("rain", 0.0))
+	hud._real_snow = float(observation.get("snow", 0.0))
+	hud._real_cloud_cover = float(observation.get("cloud_cover", -1.0))
+	hud._real_wind_speed = float(observation.get("wind_speed", 0.0))
+	hud._real_wind_direction = float(observation.get("wind_direction", 0.0))
+
 var _cloud_time := 0.0
 var _cloud_wind_direction := deg_to_rad(35.0)
 var _cloud_displacement := Vector3.ZERO
@@ -1629,8 +1665,9 @@ func _update_weather_visuals(delta: float) -> void:
 	# Open-Meteo provides meteorological degrees clockwise from north. Preserve
 	# the direction between updates and ease into a new reading so cloud layers
 	# drift continuously rather than snapping when weather refreshes.
-	var wind_speed := maxf(hud._real_wind_speed, 0.0)
-	var target_wind_direction := deg_to_rad(hud._real_wind_direction)
+	var observation := _get_weather_observation()
+	var wind_speed := maxf(float(observation.get("wind_speed", 0.0)), 0.0)
+	var target_wind_direction := deg_to_rad(float(observation.get("wind_direction", 0.0)))
 	_cloud_wind_direction = lerp_angle(_cloud_wind_direction, target_wind_direction, 1.0 - exp(-delta / 8.0))
 	var weather_gust: float = float(_weather_visual.darkness) / 0.6
 	var cloud_wind_strength := clampf(wind_speed / 12.0 + weather_gust * 0.45, 0.22, 1.8)
@@ -2829,11 +2866,51 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 		player.apply_damage(amount)
 		if weapon == "rifle" and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
-		elif weapon == "melee" and player.has_method("_play_hit_reaction"):
-			player._play_hit_reaction()
+		elif weapon in ["melee", "wolf_bite", "bear_bite"] and player.has_method("_play_hit_reaction"):
+			player._play_hit_reaction(not weapon.ends_with("_bite"))
 		if weapon == "rifle":
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
+
+func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
+	# Sound/animation feedback for observers (and a lethal hit's victim) is a
+	# reliable one-shot event; movement snapshots remain lossy by design.
+	if peer_id == net.get_my_id():
+		if player == null or not is_instance_valid(player):
+			return
+		if kind == "rifle":
+			player._spawn_blood_splatter(pos, 0.8)
+			player._play_pain_sound()
+			player._play_shot_reaction()
+		elif kind in ["melee", "wolf_bite", "bear_bite"]:
+			player._spawn_blood_splatter(pos, 0.8)
+			player._play_hit_reaction(not kind.ends_with("_bite"))
+			if kind.ends_with("_bite"):
+				player._play_pain_sound()
+		return
+	if not remote_players.has(peer_id):
+		return
+	var rp: Node3D = remote_players[peer_id]
+	if not is_instance_valid(rp):
+		return
+	if kind == "rifle":
+		rp._spawn_blood_splatter(pos, 0.8)
+		rp._play_pain_sound()
+		rp._play_shot_reaction()
+	elif kind in ["melee", "wolf_bite", "bear_bite"]:
+		rp._spawn_blood_splatter(pos, 0.8)
+		rp._play_hit_reaction(not kind.ends_with("_bite"))
+		if kind.ends_with("_bite"):
+			rp._play_pain_sound()
+
+func _net_player_condition_audio(peer_id: int, condition: String) -> void:
+	var target: Node = player if peer_id == net.get_my_id() else remote_players.get(peer_id)
+	if target == null or not is_instance_valid(target):
+		return
+	if condition == "sick":
+		target._play_unwell_sound()
+	elif condition == "critical":
+		target._play_pain_sound()
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
@@ -3880,12 +3957,14 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# first) must not drop the melee cause: a validated melee hit on the
 		# corpse still upgrades it to the beaten-death clip on the victim and
 		# every observer — but it never re-drops loot nor re-broadcasts twice.
-		if weapon == "melee":
+		if weapon == "melee" and not proxy.get_meta("pvp_death_pending", false):
 			var stored_anim := str(net.players.get(target_peer_id, {}).get("anim", ""))
 			if not stored_anim.begins_with("dead_melee"):
 				_broadcast_player_death(target_peer_id, proxy, "melee")
 				if net.peer != null and net.peer_alive(target_peer_id):
 					net.force_death_to_client.rpc_id(target_peer_id, "melee")
+		elif weapon == "melee" and proxy.get_meta("pvp_death_pending", false):
+			proxy.set_meta("pending_death_cause", "melee")
 		return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
@@ -3903,18 +3982,31 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# The server knows the validated weapon — only melee kills play the
 		# beaten-death animation on the victim and on remote puppets.
 		var death_cause := "melee" if weapon == "melee" else ""
-		_broadcast_player_death(target_peer_id, proxy, death_cause)
-		# Force death on the target client if connected
-		if net.peer != null and net.peer_alive(target_peer_id):
-			net.force_death_to_client.rpc_id(target_peer_id, death_cause)
+		proxy.set_meta("pvp_death_pending", true)
+		proxy.set_meta("pending_death_cause", death_cause)
+		# Let the hit reaction and its sound land before the corpse animation
+		# replaces it. Loot remains server-authoritative and drops immediately.
+		net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position, true)
+		_finish_pvp_death_after_impact(target_peer_id, proxy, death_cause)
 	else:
 		# Send damage to the target client if still connected — melee hits also
 		# carry the weapon so the victim plays the head-hit flinch.
 		if net.peer != null and net.peer_alive(target_peer_id):
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount, weapon)
+		net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position)
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
 	# asiste el ataque (solo si el lobo está cerca del combate).
 	_notify_tamed_wolves_pvp(sender, target_peer_id, proxy, sender_proxy)
+
+func _finish_pvp_death_after_impact(target_peer_id: int, proxy: Node3D, death_cause: String) -> void:
+	await get_tree().create_timer(0.48).timeout
+	if not is_instance_valid(proxy):
+		return
+	var final_cause := str(proxy.get_meta("pending_death_cause", death_cause))
+	proxy.set_meta("pvp_death_pending", false)
+	_broadcast_player_death(target_peer_id, proxy, final_cause)
+	if net != null and net.peer != null and net.peer_alive(target_peer_id):
+		net.force_death_to_client.rpc_id(target_peer_id, final_cause)
 
 func _notify_tamed_wolves_pvp(sender: int, target_peer_id: int, proxy: Node3D, sender_proxy: Node3D) -> void:
 	for w in get_tree().get_nodes_in_group("wildlife"):
@@ -4678,6 +4770,14 @@ func _broadcast_animals() -> void:
 			"fm": str(animal.get("_follow_mode"))
 		}
 	net.animals = data
+	_bear_reliable_sync_timer += 0.15
+	if _bear_reliable_sync_timer >= 1.0:
+		_bear_reliable_sync_timer = fmod(_bear_reliable_sync_timer, 1.0)
+		var bear_snapshot := {}
+		for aid in data.keys():
+			if str(data[aid].get("t", "")) == "bear":
+				bear_snapshot[aid] = data[aid]
+		net.sync_bear_animals.rpc(bear_snapshot)
 	_animal_debug_timer += 1
 	if _animal_debug_timer >= 50:
 		_animal_debug_timer = 0
@@ -4688,6 +4788,14 @@ func _broadcast_animals() -> void:
 	_animal_broadcast_gen += 1
 	var chunk := {}
 	var keys := data.keys()
+	# Bears are intentionally rare and live in distant territories. Put their
+	# snapshots first so an occasional lost tail packet cannot make the whole
+	# population look bear-free on clients.
+	keys.sort_custom(func(a, b):
+		var a_bear := str(data[a].get("t", "")) == "bear"
+		var b_bear := str(data[b].get("t", "")) == "bear"
+		return a_bear and not b_bear
+	)
 	for i in range(keys.size()):
 		chunk[keys[i]] = data[keys[i]]
 		if var_to_bytes(chunk).size() > 900:
@@ -6211,6 +6319,8 @@ func _create_hud() -> void:
 	hud = HUDScript.new()
 	add_child(hud)
 	hud.setup(player, day_cycle, self)
+	if net != null and not net.authoritative_weather.is_empty():
+		_apply_network_weather(net.authoritative_weather)
 
 func _create_debug_overlay() -> void:
 	_debug_overlay = CanvasLayer.new()

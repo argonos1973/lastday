@@ -97,6 +97,7 @@ func run() -> void:
 		"shot-received grunt stays short-range")
 
 	var local_pc = PlayerScript.new()
+	root.add_child(local_pc)
 	local_pc._play_shot_received_sound()
 	local_pc._play_fall_damage_sound()
 	local_pc._play_unwell_sound()

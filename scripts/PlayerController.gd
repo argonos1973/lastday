@@ -551,6 +551,8 @@ var _shot_audio_player = null
 var _fall_audio_player = null
 var _unwell_audio_player = null
 var _pain_sound_timer := 0.0
+var _critical_sound_timer := 0.0
+var _was_critical := false
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
@@ -1108,13 +1110,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				third_person_animation_player.advance(0.0)
 			_puppet_current_anim = anim
 			_update_puppet_ground_alignment(1.0)
-			# Melee combat audio follows the synced clip: the victim's flinch
-			# carries the impact thud, a thrown swing carries the whoosh.
-			if target == third_person_shot_animation:
-				_play_shot_received_sound()
-			elif target == third_person_hit_animation:
-				_play_punch_impact_sound()
-			elif target == third_person_punch_animation or target == third_person_attack_animation:
+			# Confirmed impact audio arrives through a reliable hit event. Swing
+			# sounds still follow the attacker's synced action clip.
+			if target == third_person_punch_animation or target == third_person_attack_animation:
 				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
@@ -1448,6 +1446,19 @@ func _process(delta: float) -> void:
 		_was_sick = stats.sick
 		if _was_sick:
 			_play_unwell_sound()
+			_sync_condition_audio("sick")
+	if stats != null:
+		var critical: bool = stats.health > 0.0 and stats.health <= 20.0
+		if critical:
+			_critical_sound_timer = maxf(0.0, _critical_sound_timer - delta)
+			if not _was_critical or _critical_sound_timer <= 0.0:
+				_was_critical = true
+				_critical_sound_timer = 14.0
+				_play_pain_sound()
+				_sync_condition_audio("critical")
+		else:
+			_was_critical = false
+			_critical_sound_timer = 0.0
 	# Detectar hold de F y G por polling (mas fiable que eventos)
 	var f_held := Input.is_key_pressed(KEY_F) and (not is_instance_valid(rowing_boat) or _boat_standing)
 	var g_held := Input.is_key_pressed(KEY_G) and (not is_instance_valid(rowing_boat) or _boat_standing)
@@ -5603,7 +5614,7 @@ func _apply_melee_death_visual() -> void:
 		character.position = Vector3(0.0, third_person_ground_offset, 0.0)
 	third_person_animation_player.play(third_person_melee_death_animation, 0.1)
 
-func _play_hit_reaction() -> void:
+func _play_hit_reaction(play_impact_sound: bool = true) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
@@ -5613,7 +5624,8 @@ func _play_hit_reaction() -> void:
 	third_person_action_animation = third_person_hit_animation
 	third_person_action_timer = 0.55
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
-	_play_punch_impact_sound()
+	if play_impact_sound:
+		_play_punch_impact_sound()
 
 func _play_shot_reaction() -> void:
 	if is_dead or third_person_animation_player == null:
@@ -11405,14 +11417,8 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 			var peer_id: int = get_meta("peer_id", 0)
 			if peer_id != 0:
 				net_node.damage_player.rpc_id(1, peer_id, amount, weapon)
-		_spawn_blood_splatter()
-		# Instant feedback on the attacker's screen — the victim's own client
-		# also plays it via apply_damage_to_client, and its synced anim name
-		# replays the flinch on every other puppet.
-		if weapon == "rifle":
-			_play_shot_reaction()
-		elif weapon == "melee":
-			_play_hit_reaction()
+		# The server confirms the hit before blood, audio, or the flinch is shown;
+		# otherwise an out-of-range client could fake hit feedback for everyone.
 		return
 	apply_damage(amount)
 
@@ -12053,23 +12059,32 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			var peer_id: int = node.get_meta("peer_id", 0)
 			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
 			if not is_proxy_dead and peer_id != 0:
-				var hp: float = node.get_meta("proxy_health", 100.0)
-				hp = max(0.0, hp - damage)
-				node.set_meta("proxy_health", hp)
-				if hp <= 0.0:
-					node.set_meta("proxy_dead", true)
-					node.remove_from_group("net_player_proxy")
-					var scene_node := get_tree().current_scene
-					if scene_node != null:
-						if scene_node.has_method("_drop_player_loot"):
-							scene_node._drop_player_loot(peer_id, node)
-						if scene_node.has_method("_broadcast_player_death") and not node.get_meta("death_broadcasted", false):
-							node.set_meta("death_broadcasted", true)
-							scene_node._broadcast_player_death(peer_id, node)
+				var proxy_dmg := 120.0 if is_headshot else 60.0
+				var scene_node := get_tree().current_scene
+				if scene_node != null and scene_node.has_method("_net_damage_player"):
+					var my_id := 1
+					var net_node := scene_node.get_node_or_null("/root/NetworkManager")
+					if net_node != null and net_node.has_method("get_my_id"):
+						my_id = net_node.get_my_id()
+					scene_node._net_damage_player(peer_id, proxy_dmg, my_id, "rifle")
 				else:
-					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
-						net_node.apply_damage_to_client.rpc_id(peer_id, damage, "rifle")
+					var hp: float = node.get_meta("proxy_health", 100.0)
+					hp = max(0.0, hp - proxy_dmg)
+					node.set_meta("proxy_health", hp)
+					node.set_meta("saved_health", hp)
+					if hp <= 0.0:
+						node.set_meta("proxy_dead", true)
+						node.remove_from_group("net_player_proxy")
+						if scene_node != null:
+							if scene_node.has_method("_drop_player_loot"):
+								scene_node._drop_player_loot(peer_id, node)
+							if scene_node.has_method("_broadcast_player_death") and not node.get_meta("death_broadcasted", false):
+								node.set_meta("death_broadcasted", true)
+								scene_node._broadcast_player_death(peer_id, node)
+					else:
+						var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+						if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
+							net_node.apply_damage_to_client.rpc_id(peer_id, proxy_dmg, "rifle")
 			_spawn_blood_splatter(hit_pos)
 			_hit_marker(true)
 			return
@@ -12600,6 +12615,15 @@ func _play_unwell_sound() -> void:
 	_unwell_audio_player.volume_db = 3.0
 	_unwell_audio_player.pitch_scale = randf_range(0.9, 1.1)
 	_unwell_audio_player.play()
+
+func _sync_condition_audio(condition: String) -> void:
+	var net_node := get_tree().root.get_node_or_null("NetworkManager")
+	if net_node == null or not net_node.get("is_connected"):
+		return
+	if net_node.get("is_host"):
+		net_node._broadcast_player_condition_audio(net_node.get_my_id(), condition)
+	else:
+		net_node.player_condition_audio.rpc_id(1, condition)
 
 func _schedule_melee_swing_sound(impact_delay: float) -> void:
 	# The whoosh belongs to the arm's extension, not the initial recoil —

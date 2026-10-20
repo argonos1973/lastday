@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry ALC294 speaker restore until the PipeWire user session is ready
+
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=20s
+Unit=alc294-speaker-fix.service
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target

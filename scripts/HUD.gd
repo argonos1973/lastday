@@ -1590,6 +1590,21 @@ func _on_weather_received(result: int, response_code: int, _headers: PackedStrin
 					_real_wind_speed = maxf(float(current.wind_speed_10m), 0.0)
 				if current.get("wind_direction_10m") is float or current.get("wind_direction_10m") is int:
 					_real_wind_direction = fposmod(float(current.wind_direction_10m), 360.0)
+				# The server selects the first registered publisher for this
+				# session and relays its observation, keeping every client on
+				# the same weather even when IP geolocation differs.
+				var scene := get_tree().current_scene
+				var network = scene.get("net") if scene != null else null
+				if network != null and network.has_method("publish_weather_observation"):
+					network.call("publish_weather_observation", {
+						"weather_code": _real_weather_code,
+						"temperature": _real_temp_parsed,
+						"rain": _real_rain,
+						"snow": _real_snow,
+						"cloud_cover": _real_cloud_cover,
+						"wind_speed": _real_wind_speed,
+						"wind_direction": _real_wind_direction,
+					})
 				_weather_retry_timer = 0.0
 				return
 	# Keep the last complete observation when the service temporarily fails.

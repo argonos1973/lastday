@@ -1,0 +1,8 @@
+[Unit]
+Description=Restore ALC294 laptop speaker amplifier coefficient
+After=sound.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/alc294-speaker-fix

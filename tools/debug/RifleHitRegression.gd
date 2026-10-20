@@ -69,8 +69,11 @@ func run() -> void:
 	if body_area != null:
 		shooter._apply_rifle_damage(body_area, body_area.global_position, 1.0)
 		check("¡Impacto al jugador!" in notices, "body hit reports '¡Impacto al jugador!'")
+		check(puppet.third_person_action_animation.is_empty(),
+			"unconfirmed client-side hit does not fake a victim reaction before server validation")
+		puppet._play_shot_reaction() # same callback the server's reliable hit event invokes
 		check(puppet.third_person_action_animation == puppet.third_person_shot_animation,
-			"rifle body hit plays the shot-received reaction on the victim")
+			"server-confirmed rifle hit plays the shot-received reaction on the victim")
 	if head_area != null:
 		notices.clear()
 		shooter._apply_rifle_damage(head_area, head_area.global_position, 1.0)

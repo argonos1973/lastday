@@ -967,9 +967,16 @@ func _wolf_ai(delta: float) -> Dictionary:
 						elif peer_id != 0:
 							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 							if net_node != null and net_node.players.has(peer_id):
-								net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage())
+								var bite_kind := "%s_bite" % animal_type
+								net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage(), bite_kind)
+								net_node._broadcast_player_hit(peer_id, bite_kind, _player.global_position)
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(_predator_player_damage())
+						if _player.has_method("_play_hit_reaction"):
+							_player._play_hit_reaction(false)
+						var local_net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+						if local_net != null and local_net.is_host:
+							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)
 					if animal_type == "wolf" or animal_type == "bear":
 						_play_wolf_sound("bite")
 				var away_dir := (global_position - _player.global_position).normalized()
