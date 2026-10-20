@@ -80,6 +80,10 @@ var _collected_animal_tombstones: Dictionary = {}  # aid -> msec; skip re-creati
 var _puppet_absent_since: Dictionary = {}  # aid -> msec first missing from net.animals
 var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
+var _pickup_claims: Dictionary = {}
+var _pickup_replies: Dictionary = {}
+var _pickup_claim_until: Dictionary = {}
+var _local_pickup_claim := ""
 var _legit_cut_trees: Array = []
 var _dropped_items: Array = []
 # Contador monotónico para ids de drops: Time.get_ticks_msec() tiene
@@ -2275,6 +2279,13 @@ func _on_remote_player_disconnected(id: int) -> void:
 			# queda de un peer que se fue sin registrarse; no hay nada que
 			# conservar y quedaba como objetivo fantasma para la fauna.
 			sp.queue_free()
+	# Libera reservas de pickup que el peer que se va aun mantenia — el check
+	# perezoso peer_alive ya las reutilizaba, pero esto las limpia de inmediato.
+	if net != null and net.is_host:
+		for aid in _pickup_claims.keys():
+			if int(_pickup_claims[aid]) == id:
+				_pickup_claims.erase(aid)
+				_pickup_claim_until.erase(aid)
 	# Always sync player list to all remaining clients (even if no proxy)
 	if net != null and net.is_host:
 		net._broadcast_player_list()
@@ -3060,6 +3071,10 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 			if entry.has("color"):
 				item_dict["clothing_color"] = entry["color"]
 			item_dict["clothing_camo"] = bool(entry.get("camo", false))
+			if entry.has("pelt"):
+				item_dict["pelt_species"] = str(entry["pelt"])
+			if entry.has("contents"):
+				item_dict["contents"] = entry["contents"].duplicate(true)
 			if entry.has("wetness"):
 				item_dict["wetness"] = float(entry.get("wetness", 0.0))
 			break
@@ -3072,6 +3087,8 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 				item_dict["max_durability"] = float(action.get_meta("item_max_durability", 100.0))
 			if action.has_meta("item_spoilage"):
 				item_dict["spoilage"] = float(action.get_meta("item_spoilage", 0.0))
+			if action.has_meta("item_pelt"):
+				item_dict["pelt_species"] = str(action.get_meta("item_pelt"))
 			if action.has_meta("item_wetness"):
 				item_dict["wetness"] = float(action.get_meta("item_wetness", 0.0))
 	if item_dict.is_empty() or str(item_dict.get("name", "")).is_empty():
@@ -3398,6 +3415,9 @@ func _apply_pending_doors() -> void:
 		_pending_open_doors.erase(door_name)
 
 func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
+	if net != null and net.is_host and sender_id != 0:
+		if _depleted_action_ids.has(action_id) or (_pickup_claims.has(action_id) and int(_pickup_claims[action_id]) != sender_id):
+			return false
 	# Host: a client-reported pickup must be plausible. Dynamic drops carry a
 	# server-known position, so the sender's proxy has to be within reach.
 	# (Static world-loot positions aren't tracked on the dedicated server;
@@ -5345,7 +5365,7 @@ func _backpack_take(item_index: int) -> void:
 		return
 	var drop_id := str(action.action_id)
 	if net != null and net.is_connected and not net.is_host:
-		net.backpack_take.rpc_id(1, drop_id, item_index)
+		net.backpack_take.rpc_id(1, drop_id, item_index, (action.get_meta("contents", []) as Array).duplicate(true))
 		return
 	# Host / offline: aplicar directamente al jugador local.
 	var contents: Array = action.get_meta("contents", [])
@@ -5404,7 +5424,7 @@ func _backpack_store(inv_index: int) -> void:
 	_refresh_backpack_ui()
 
 # Host: un cliente saca un objeto de la mochila.
-func _net_backpack_take(sender_id: int, drop_id: String, item_index: int) -> void:
+func _net_backpack_take(sender_id: int, drop_id: String, item_index: int, expected_contents: Array = []) -> void:
 	var action = world_actions_by_id.get(drop_id)
 	var contents: Array = []
 	var found := false
@@ -5427,6 +5447,9 @@ func _net_backpack_take(sender_id: int, drop_id: String, item_index: int) -> voi
 		return
 	var drop_pos := _backpack_drop_pos(drop_id, action)
 	if sender_id != 0 and sender_id != net.get_my_id() and not _sender_within(sender_id, drop_pos, 8.0):
+		return
+	if contents != expected_contents:
+		_broadcast_backpack_contents(drop_id, contents)
 		return
 	var cd = contents[item_index]
 	if not cd is Dictionary:
@@ -9847,6 +9870,12 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			return false
 		if not extra_visual.is_empty() and not _sender_within(sender_id, extra_pos, 15.0):
 			return false
+	# Una accion reservada por otro peer no puede completarla este sender:
+	# cierra la carrera de doble recoleccion para talar/construir/desmontar,
+	# que commitean por esta RPC y no por item_picked_up.
+	if check_sender and not action_id.is_empty() and _pickup_claims.has(action_id) \
+			and int(_pickup_claims[action_id]) != sender_id:
+		return false
 	if net != null and net.is_dedicated_server:
 		if not action_id.is_empty() and not _depleted_action_ids.has(action_id):
 			_depleted_action_ids.append(action_id)
@@ -10047,16 +10076,104 @@ func _hide_remote_felled_tree(action_id: String) -> void:
 	if col_node != null and is_instance_valid(col_node):
 		col_node.queue_free()
 
+# Reserve consumable world actions before applying any local effects. The reliable
+# commit/release RPCs share a channel, so another claimant cannot overtake commit.
+# Claims expire anyway so a live peer that never releases cannot lock an item
+# forever; the longest claimable action (fell_tree) lasts ~12 s.
+const PICKUP_CLAIM_TIMEOUT_MSEC := 60000
+
+func _pickup_needs_claim(action) -> bool:
+	return is_instance_valid(action) and str(action.action_type) in ["pickup_item", "pickup_torch", "backpack_pickup", "eat_food", "wolf_meat_raw", "bird_meat_raw", "forage", "wood", "stone", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds", "gut_wolf", "pick_fruit", "fell_tree", "fell_bush", "cut_log", "build_cabin", "shelter"]
+
+func _claim_world_pickup(action_id: String, sender: int) -> bool:
+	if action_id.is_empty() or _depleted_action_ids.has(action_id):
+		return false
+	var owner := int(_pickup_claims.get(action_id, 0))
+	if owner != 0 and owner != sender and (owner == net.get_my_id() or net.peer_alive(owner)) \
+			and int(_pickup_claim_until.get(action_id, 0)) > Time.get_ticks_msec():
+		return false
+	var pos := Vector3.INF
+	var action = world_actions_by_id.get(action_id)
+	if is_instance_valid(action):
+		pos = action.global_position
+	else:
+		for entry in _dropped_items:
+			if str(entry.get("id", "")) == action_id:
+				var ep = entry.get("pos")
+				if ep is Vector3:
+					pos = ep
+				elif ep is Array and ep.size() >= 3:
+					pos = Vector3(ep[0], ep[1], ep[2])
+				break
+	if sender != net.get_my_id() and pos != Vector3.INF and not _sender_within(sender, pos, 8.0):
+		return false
+	_pickup_claims[action_id] = sender
+	_pickup_claim_until[action_id] = Time.get_ticks_msec() + PICKUP_CLAIM_TIMEOUT_MSEC
+	return true
+
+func _acquire_world_pickup(action, actor = null) -> bool:
+	if not is_instance_valid(action):
+		return false
+	if not _pickup_needs_claim(action) or net == null or not net.is_connected:
+		return true
+	var id := str(action.action_id)
+	if net.is_host:
+		if _claim_world_pickup(id, net.get_my_id()):
+			_local_pickup_claim = id
+			return true
+		_notify_claim_denied(action, actor)
+		return false
+	if _pickup_replies.has(id):
+		return false
+	_pickup_replies[id] = null
+	net.request_pickup_claim.rpc_id(1, id)
+	var deadline := Time.get_ticks_msec() + 5000
+	while _pickup_replies.get(id) == null and net.is_connected and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	var accepted: bool = _pickup_replies.get(id) == true
+	_pickup_replies.erase(id)
+	if not accepted or not is_instance_valid(action) or _depleted_action_ids.has(id):
+		if net.is_connected:
+			net.release_pickup_claim.rpc_id(1, id)
+		if not accepted and net.is_connected:
+			_notify_claim_denied(action, actor)
+		return false
+	_local_pickup_claim = id
+	return true
+
+# El aviso solo aplica a una denegacion con la accion aun viva: si ya estaba
+# agotada el objeto desaparecio y el jugador lo ve por si mismo.
+func _notify_claim_denied(action, actor) -> void:
+	if is_instance_valid(action) and not _depleted_action_ids.has(str(action.action_id)) \
+			and actor != null and is_instance_valid(actor):
+		actor.notice.emit("Otro jugador esta usando esto.")
+
+# Liberamos por id guardado, no por la accion: el nodo puede haberse liberado
+# durante la ejecucion (carne podrida, descarga de chunk) y el claim quedaria
+# colgado en el servidor.
+func _release_world_pickup(_action) -> void:
+	var id := _local_pickup_claim
+	_local_pickup_claim = ""
+	if id.is_empty() or net == null or not net.is_connected:
+		return
+	if net.is_host:
+		_pickup_claims.erase(id)
+		_pickup_claim_until.erase(id)
+	else:
+		net.release_pickup_claim.rpc_id(1, id)
+
 func handle_world_action(action, actor) -> void:
 	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
 	# destripar, construir) no deben solaparse por repeticion de tecla.
-	if actor != null and actor.get("_interact_busy") == true:
+	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
 		return
 	if actor != null:
 		actor.set("_interact_busy", true)
-	# Revalidar que el jugador sigue cerca y con la herramienta correcta tras await
-	await _execute_world_action(action, actor)
-	if actor != null:
+	var claimed := await _acquire_world_pickup(action, actor)
+	if claimed:
+		await _execute_world_action(action, actor)
+		_release_world_pickup(action)
+	if is_instance_valid(actor):
 		actor.set("_interact_busy", false)
 
 func _execute_world_action(action, actor) -> void:
@@ -11022,6 +11139,16 @@ func _net_notify_pickup(action) -> void:
 	_save_world_change_silent()
 
 func handle_world_action_collect(action, actor) -> void:
+	if actor == null or not is_instance_valid(actor) or actor.get("_interact_busy") == true:
+		return
+	actor.set("_interact_busy", true)
+	if await _acquire_world_pickup(action, actor):
+		await _execute_world_action_collect(action, actor)
+		_release_world_pickup(action)
+	if is_instance_valid(actor):
+		actor.set("_interact_busy", false)
+
+func _execute_world_action_collect(action, actor) -> void:
 	match action.action_type:
 		"gut_wolf":
 			var corpse_species := str(action.get_meta("animal_type", "wolf"))
@@ -11096,7 +11223,7 @@ func handle_world_action_collect(action, actor) -> void:
 			_finish_pickup_action(action, actor, eat_item, "Coges %s." % eat_item.item_name)
 		"pickup_item", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds":
 			if not action.has_meta("item_name"):
-				handle_world_action(action, actor)
+				await _execute_world_action(action, actor)
 				return
 			var item = ItemScript.create(
 				str(action.get_meta("item_name", action.display_name)),
@@ -11150,20 +11277,21 @@ func handle_world_action_collect(action, actor) -> void:
 			_save_world_change_silent()
 			_net_notify_pickup(action)
 		_:
-			handle_world_action(action, actor)
+			await _execute_world_action(action, actor)
 
 func handle_world_action_eat(action, actor) -> void:
 	# Mismo guard que handle_world_action: bloquear interacciones concurrentes
-	if actor != null and actor.get("_interact_busy") == true:
+	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
 		return
 	if actor != null:
 		actor.set("_interact_busy", true)
-	await _execute_world_action_eat(action, actor)
-	if actor != null:
+	if await _acquire_world_pickup(action, actor):
+		await _execute_world_action_eat(action, actor)
+		_release_world_pickup(action)
+	if is_instance_valid(actor):
 		actor.set("_interact_busy", false)
 
 func _execute_world_action_eat(action, actor) -> void:
-	print("[DEBUG handle_world_action_eat] ENTER action_type=%s action_id=%s" % [action.action_type if action != null else "NULL", action.action_id if action != null else "NULL"])
 	match action.action_type:
 		"eat_food":
 			var eat_name0: String = str(action.get_meta("item_name", ""))

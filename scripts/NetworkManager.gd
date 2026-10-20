@@ -929,6 +929,33 @@ func animal_gutted(animal_name: String, meat_drops: Array) -> void:
 
 # Client tells server it picked up an item (server relays to all other clients)
 @rpc("any_peer", "reliable")
+func request_pickup_claim(action_id: String) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
+	var scene := get_tree().current_scene
+	var accepted := scene != null and scene.has_method("_claim_world_pickup") and bool(scene._claim_world_pickup(action_id, sender))
+	pickup_claim_result.rpc_id(sender, action_id, accepted)
+
+@rpc("authority", "reliable")
+func pickup_claim_result(action_id: String, accepted: bool) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.get("_pickup_replies") is Dictionary and scene._pickup_replies.has(action_id):
+		scene._pickup_replies[action_id] = accepted
+
+@rpc("any_peer", "reliable")
+func release_pickup_claim(action_id: String) -> void:
+	# Allow cleanup after death too; only the owning peer can release a claim.
+	if not is_host:
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var scene := get_tree().current_scene
+	if scene != null and scene.get("_pickup_claims") is Dictionary and int(scene._pickup_claims.get(action_id, 0)) == sender:
+		scene._pickup_claims.erase(action_id)
+		if scene.get("_pickup_claim_until") is Dictionary:
+			scene._pickup_claim_until.erase(action_id)
+
+@rpc("any_peer", "reliable")
 func item_picked_up(action_id: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_world_sender(sender):
@@ -973,13 +1000,13 @@ func item_dropped(drop_id: String, item_name: String, item_type: String, item_we
 
 # Cliente: saca un objeto de una mochila tirada en el suelo
 @rpc("any_peer", "reliable")
-func backpack_take(drop_id: String, item_index: int) -> void:
+func backpack_take(drop_id: String, item_index: int, expected_contents: Array = []) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_client_request(sender):
 		return
 	var scene := get_tree().current_scene
 	if is_host and scene != null and scene.has_method("_net_backpack_take"):
-		scene._net_backpack_take(sender, drop_id, item_index)
+		scene._net_backpack_take(sender, drop_id, item_index, expected_contents)
 
 # Cliente: mete un objeto dentro de una mochila tirada en el suelo
 @rpc("any_peer", "reliable")
