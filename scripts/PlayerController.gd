@@ -1454,7 +1454,7 @@ func _process(delta: float) -> void:
 			if not _was_critical or _critical_sound_timer <= 0.0:
 				_was_critical = true
 				_critical_sound_timer = 14.0
-				_play_pain_sound()
+				_play_unwell_sound()
 				_sync_condition_audio("critical")
 		else:
 			_was_critical = false
@@ -12664,8 +12664,7 @@ func _play_pain_sound() -> void:
 	var paths := [
 		"res://assets/external/audio/downloaded/pain1.wav",
 		"res://assets/external/audio/downloaded/pain2.wav",
-		"res://assets/external/audio/downloaded/pain3.wav",
-		"res://assets/audio/malo.mp3"
+		"res://assets/external/audio/downloaded/pain3.wav"
 	]
 	var path: String = paths[randi() % paths.size()]
 	var stream := _load_audio_stream(path)

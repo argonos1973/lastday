@@ -24,6 +24,9 @@ func run() -> void:
 			"res://assets/audio/saltardano.mp3", "res://assets/audio/recibirdisparo.mp3",
 			"res://assets/animations/RecibirDisparo.glb"]:
 		check(ResourceLoader.exists(p), "resource exists: " + p)
+	var bite_stream: AudioStream = load("res://assets/audio/mordedura.mp3")
+	check(bite_stream != null and bite_stream.get_length() < 2.2,
+		"mordedura.mp3 has leading/trailing silence trimmed (len=%.2fs)" % (bite_stream.get_length() if bite_stream != null else -1.0))
 
 	var shot_scene: PackedScene = load("res://assets/animations/RecibirDisparo.glb")
 	check(shot_scene != null, "RecibirDisparo.glb loads as PackedScene")

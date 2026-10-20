@@ -2863,6 +2863,10 @@ func _spawn_server_proxy(id: int) -> void:
 # `weapon` tags the source: "melee" triggers the hit-reaction flinch.
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	if player != null and player.has_method("apply_damage"):
+		if weapon == "rifle":
+			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
+			# pain grunt inside apply_damage so two voices do not overlap.
+			player._pain_sound_timer = 1.5
 		player.apply_damage(amount)
 		if weapon == "rifle" and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
@@ -2880,7 +2884,6 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			return
 		if kind == "rifle":
 			player._spawn_blood_splatter(pos, 0.8)
-			player._play_pain_sound()
 			player._play_shot_reaction()
 		elif kind in ["melee", "wolf_bite", "bear_bite"]:
 			player._spawn_blood_splatter(pos, 0.8)
@@ -2895,7 +2898,6 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		return
 	if kind == "rifle":
 		rp._spawn_blood_splatter(pos, 0.8)
-		rp._play_pain_sound()
 		rp._play_shot_reaction()
 	elif kind in ["melee", "wolf_bite", "bear_bite"]:
 		rp._spawn_blood_splatter(pos, 0.8)
@@ -2907,10 +2909,8 @@ func _net_player_condition_audio(peer_id: int, condition: String) -> void:
 	var target: Node = player if peer_id == net.get_my_id() else remote_players.get(peer_id)
 	if target == null or not is_instance_valid(target):
 		return
-	if condition == "sick":
+	if condition == "sick" or condition == "critical":
 		target._play_unwell_sound()
-	elif condition == "critical":
-		target._play_pain_sound()
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
