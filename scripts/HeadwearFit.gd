@@ -163,10 +163,20 @@ static func fit(model: Node3D, hat: Node3D, item_name: String = "") -> bool:
 	return true
 
 static func restore_hair(model: Node3D) -> void:
+	restore_hair_visible(model)
+	restore_hair_mesh(model)
+
+# Face-worn items (balaclavas) hide the hair; hats only tuck it. Restoring
+# each effect separately lets the two stack: removing a hat over a balaclava
+# untucks the hair but keeps it hidden under the mask.
+static func restore_hair_visible(model: Node3D) -> void:
 	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
 		if hair.has_meta("headwear_original_visible"):
 			hair.visible = bool(hair.get_meta("headwear_original_visible"))
 			hair.remove_meta("headwear_original_visible")
+
+static func restore_hair_mesh(model: Node3D) -> void:
+	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
 		if hair.has_meta("headwear_original_mesh"):
 			hair.mesh = hair.get_meta("headwear_original_mesh")
 			hair.remove_meta("headwear_original_mesh")

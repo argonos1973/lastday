@@ -166,6 +166,21 @@ func run() -> void:
 			root.get_texture().get_image().save_png("/tmp/tactical_helmet_%s.png" % view)
 	actor.unequip_clothing("Casco militar")
 	check(hair.mesh == original_hair, "Removing the helmet restores the original hairstyle")
+	# Balaclavas stack under headwear in their own face slot: they hide the
+	# hair while hats only tuck it, so removing one must not revive the hair.
+	actor.equip_clothing("Pasamontañas")
+	check(str(actor._equipped_slots.get("face", "")) == "Pasamontañas", "Balaclava occupies its own face slot")
+	check(not hair.visible, "Balaclava hides the hair")
+	actor.equip_clothing("Sombrero de pescador")
+	check(str(actor._equipped_slots.get("head", "")) == "Sombrero de pescador" and str(actor._equipped_slots.get("face", "")) == "Pasamontañas", "Hat equips over the balaclava without dropping it")
+	check(not hair.visible, "Hair stays hidden while the balaclava remains")
+	actor.unequip_clothing("Sombrero de pescador")
+	check(not hair.visible and str(actor._equipped_slots.get("face", "")) == "Pasamontañas", "Removing the hat keeps the balaclava and the hidden hair")
+	actor.equip_clothing("Sombrero de pescador")
+	actor.unequip_clothing("Pasamontañas")
+	check(hair.visible and hair.mesh != original_hair, "Removing the balaclava reveals hair still tucked by the hat")
+	actor.unequip_clothing("Sombrero de pescador")
+	check(hair.visible and hair.mesh == original_hair, "Removing the last headwear restores the hairstyle")
 	actor.stats.free()
 	actor.queue_free()
 	await process_frame

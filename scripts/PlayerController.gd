@@ -229,8 +229,9 @@ const CLOTHING_SLOTS := {
 	"Chaqueta camuflaje desert": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
-	"Pasamontañas": "head",
-	"Pasamontañas navideño": "head",
+	# Balaclavas ride in their own face slot so they can be worn under any hat.
+	"Pasamontañas": "face",
+	"Pasamontañas navideño": "face",
 	"Gorro de piel": "head",
 	"Tocado de piel animal": "head",
 	"Casco militar": "head",
@@ -1364,6 +1365,12 @@ func _puppet_swap_to_naked() -> void:
 	# Show head
 	if _head_mesh != null:
 		_head_mesh.visible = true
+	# Hair belongs to the naked body too — the hide-all above switched it off.
+	# Strands never touched by headwear go back visible; strands hidden by a
+	# balaclava keep their meta and are resolved by restore_hair below.
+	for hm in third_person_model.find_children("Hair", "MeshInstance3D", true, false):
+		if not hm.has_meta("headwear_original_visible"):
+			hm.visible = true
 	# Remove any worn visual garments
 	preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
 	for child in third_person_model.get_children():
@@ -2286,7 +2293,7 @@ func unequip_clothing(item_name: String) -> void:
 	if SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, false)
 		if item_name in ["Gorra militar", "Gorro de otoño"]:
-			preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
+			preload("res://scripts/HeadwearFit.gd").restore_hair_mesh(third_person_model)
 	# Remove the attached 3D garment visual (vests, hat, rubber boots, gloves)
 	# so swapping two visual garments in the same slot doesn't leave the old one
 	# stuck on the character.
@@ -2295,8 +2302,13 @@ func unequip_clothing(item_name: String) -> void:
 		if worn != null:
 			worn.free()
 		_head_worn_rel.erase("Worn_" + item_name)
-		if CLOTHING_SLOTS.get(item_name, "") == "head":
-			preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
+		match CLOTHING_SLOTS.get(item_name, ""):
+			"head":
+				# Hats tuck the hair; a balaclava still equipped keeps it hidden.
+				preload("res://scripts/HeadwearFit.gd").restore_hair_mesh(third_person_model)
+			"face":
+				# Balaclavas hide the hair; a hat still equipped keeps it tucked.
+				preload("res://scripts/HeadwearFit.gd").restore_hair_visible(third_person_model)
 	if CLOTHING_SLOTS.has(item_name):
 		if _equipped_slots.get(slot, "") == item_name:
 			_equipped_slots.erase(slot)
@@ -3047,7 +3059,7 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	# The offset is captured against the bone REST pose, not the current
 	# animated pose — the anchor above was computed from the bind-pose AABB,
 	# so equipping while crouched/sitting must not bake that pose's offset.
-	if CLOTHING_SLOTS.get(item_name, "") == "head" and _head_skeleton != null and _head_bone_idx >= 0:
+	if CLOTHING_SLOTS.get(item_name, "") in ["head", "face"] and _head_skeleton != null and _head_bone_idx >= 0:
 		var bone_rest := _head_skeleton.get_bone_global_rest(_head_bone_idx)
 		var skel_global := _head_skeleton.global_transform
 		var rest_world := skel_global * bone_rest

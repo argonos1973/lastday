@@ -238,8 +238,8 @@ func refresh() -> void:
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment.add_child(equipment_grid)
-	for slot in ["head", "torso", "chaleco", "hands", "legs", "feet", "backpack"]:
-		var names := {"head": "Cabeza", "torso": "Torso", "chaleco": "Chaleco", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
+	for slot in ["head", "face", "torso", "chaleco", "hands", "legs", "feet", "backpack"]:
+		var names := {"head": "Cabeza", "face": "Cara", "torso": "Torso", "chaleco": "Chaleco", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
 		var name: String = player.equipped_backpack if slot == "backpack" else str(player._equipped_slots.get(slot, ""))
 		var item = find_item(name)
 		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equip:" + slot))
