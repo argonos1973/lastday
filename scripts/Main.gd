@@ -3611,6 +3611,8 @@ func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 
 	return true
 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0) -> void:
+	if not is_finite(amount) or amount <= 0.0:
+		return
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
 	var real_name := animal_name.replacen("Puppet_", "")
 	var animal := get_node_or_null(real_name)
@@ -3926,6 +3928,8 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 	)
 
 func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon: String = "melee") -> void:
+	if not is_finite(amount) or amount <= 0.0:
+		return
 	if net == null or not net.is_host:
 		return
 	# Find target proxy: check active proxies first, then disconnected ones
@@ -15783,7 +15787,7 @@ func _update_forest_collision() -> void:
 			# flotando encima del collider invisible del árbol).
 			body.add_to_group("prop_collision")
 			var trunk_shape := CylinderShape3D.new()
-			trunk_shape.radius = 0.25
+			trunk_shape.radius = 0.28
 			trunk_shape.height = 6.0
 			for pos in positions:
 				var col := CollisionShape3D.new()
@@ -15846,7 +15850,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 					if _depleted_action_ids.has("fell_tree_%d" % int(entry.id)):
 						continue
 					var tpos: Vector3 = entry.pos
-					var r := 0.24
+					var r := 0.28
 					if a2d > 1e-6:
 						var rx := ox - tpos.x
 						var rz := oz - tpos.z
@@ -15860,7 +15864,8 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 								if hp.y >= tpos.y - 0.1 and hp.y <= tpos.y + 6.8:
 									best_t = t
 									var n := Vector3(hp.x - tpos.x, 0.0, hp.z - tpos.z).normalized()
-									best_hit = {"position": hp, "normal": n, "collider": self}
+									var tree_col: Node = get_node_or_null(str(entry.get("visual_name", "")))
+									best_hit = {"position": hp, "normal": n, "collider": tree_col if tree_col != null else self}
 		# 2. Trees in _forest_collision_grid
 		var fc := Vector2i(int(sample.x / _forest_collision_grid_size), int(sample.z / _forest_collision_grid_size))
 		for fgx in range(fc.x - 1, fc.x + 2):
@@ -15873,7 +15878,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 					continue
 				for fpos in _forest_collision_grid[fkey]:
 					var fp: Vector3 = fpos
-					var r2 := 0.25
+					var r2 := 0.28
 					if a2d > 1e-6:
 						var rx2 := ox - fp.x
 						var rz2 := oz - fp.z
@@ -17136,7 +17141,7 @@ func _create_tree_collision(node_name: String, pos: Vector3) -> StaticBody3D:
 
 	var trunk_collision := CollisionShape3D.new()
 	var trunk_shape := CylinderShape3D.new()
-	trunk_shape.radius = 0.20
+	trunk_shape.radius = 0.28
 	trunk_shape.height = 6.8
 	trunk_collision.shape = trunk_shape
 	trunk_collision.position.y = trunk_shape.height * 0.5

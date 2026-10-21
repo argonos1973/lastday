@@ -238,9 +238,34 @@ func run():
 	var rexpected: Vector3 = actor._rifle_weapon_offset.global_transform * actor._rg_right_knuckle
 	check(ractual.distance_to(rexpected) < 0.02, "M4 right hand lands on its own grip")
 	actor._is_aiming = false
+	# Hip-fire (_is_firing without _is_aiming): both rifles must shoulder and
+	# grip cleanly during RifleFireExternal instead of firing out of the idle
+	# carry pose with detached hands.
+	actor._is_firing = true
+	player.play(actor._rifle_fire_animation, 0.0)
+	for frame in 10:
+		player.advance(1.0 / 30.0)
+		actor._update_rifle_ik(skel, 1.0 / 30.0)
+		actor._on_skeleton_updated()
+	var m4_hip_barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
+	check(m4_hip_barrel.dot(-actor.global_basis.z) > 0.99, "M4 hip-fire shoulders barrel along facing")
+	var m4_hip_l: Vector3 = skel.global_transform * skel.get_bone_global_pose(lidx) * lrig["middle_pivot"]
+	check(m4_hip_l.distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle) < 0.02, "M4 hip-fire keeps left hand on handguard")
+	actor._is_firing = false
 	actor.puppet_apply_visuals("", "Rifle francotirador", "")
 	actor.process_remote(1.0 / 30.0)
 	check(actor._rg_eye == actor.RIFLE_AIM_EYE, "Swapping back restores sniper geometry")
+	actor._is_firing = true
+	player.play(actor._rifle_fire_animation, 0.0)
+	for frame in 10:
+		player.advance(1.0 / 30.0)
+		actor._update_rifle_ik(skel, 1.0 / 30.0)
+		actor._on_skeleton_updated()
+	var sn_hip_barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
+	check(sn_hip_barrel.dot(-actor.global_basis.z) > 0.99, "Sniper hip-fire shoulders barrel along facing")
+	var sn_hip_l: Vector3 = skel.global_transform * skel.get_bone_global_pose(lidx) * lrig["middle_pivot"]
+	check(sn_hip_l.distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle) < 0.02, "Sniper hip-fire keeps left hand on handguard")
+	actor._is_firing = false
 	actor.stats.free()
 	actor.free()
 	print("RIFLE_GRIP_ERRORS=", errors, " MAX_CONTACT_ERROR_METRES=", worst)

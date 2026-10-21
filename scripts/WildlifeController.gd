@@ -229,27 +229,11 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 			if scene != null and scene.has_method("_note_wildlife_death"):
 				scene._note_wildlife_death(animal_type, global_position)
 		return
-	# Puppet: apply damage locally for immediate visual feedback
+	# A client reports each hit; health/death and hit feedback come from the
+	# server. Predicting death here could hide a still-living animal and
+	# discard the remaining rounds of a burst before they reach the server.
 	if _is_dead:
 		return
-	health = max(0.0, health - amount)
-	_hit_flash_timer = 0.3
-	if animal_type == "bear":
-		_prey_flee_timer = 0.0
-		_chase_cooldown = 0.0
-		_play_wolf_sound("attack")
-	else:
-		_prey_flee_timer = 8.0
-		_chase_cooldown = 10.0
-	_spawn_blood_splatter()
-	_play_pain_sound()
-	if health <= 0.0:
-		_is_dead = true
-		_hit_flash_timer = 2.0
-		_rot_timer = 300.0
-		if _animation_player != null:
-			_animation_player.stop()
-		_lie_corpse_flat()
 	# Also notify the server
 	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if net_node != null and net_node.peer != null:
@@ -632,12 +616,22 @@ func attract_to_noise(pos: Vector3, radius: float) -> void:
 	_noise_attract_pos = pos
 	_noise_attract_timer = 15.0
 
+var _last_gunshot_ms := -1000
+var _last_gunshot_origin := Vector3.ZERO
+
 func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 	if _is_dead:
 		return
 	var dist := global_position.distance_to(pos)
 	if dist > radius:
 		return
+	# Keep the escape path through successive rounds from the same vicinity.
+	# A different shooter still changes the threat direction immediately.
+	var now := Time.get_ticks_msec()
+	if now - _last_gunshot_ms < 500 and pos.distance_squared_to(_last_gunshot_origin) < 64.0:
+		return
+	_last_gunshot_ms = now
+	_last_gunshot_origin = pos
 	if animal_type == "bear" and dist <= 68.0:
 		# A nearby gunshot alerts and angers the bear instead of making it flee
 		_prey_flee_timer = 0.0

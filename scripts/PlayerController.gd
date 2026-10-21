@@ -368,7 +368,7 @@ const M4_BURST_ROUNDS := 3
 const M4_DAMAGE := 95.0
 const M4_PVP_HEAD := 60.0
 const M4_PVP_BODY := 28.0
-const M4_COOLDOWN := 0.16
+const M4_COOLDOWN := 0.27
 const M4_MUZZLE_SPEED := 880.0
 const M4_SPREAD_MULT := 2.2
 const M4_RECOIL := 4.5
@@ -690,6 +690,8 @@ var _has_rifle := false
 var _rifle_in_hands := false
 var _is_reloading := false
 var _is_firing := false
+var _fire_button_held := false
+var _rifle_burst_revision := 0
 var _held_selection_revision := 0
 var _rifle_ammo_initialized := false
 # Pool de municion propio del M4 (5.56) — independiente del 7.62 del
@@ -1805,7 +1807,9 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		_on_game_mouse_button_pressed(event)
 	elif event is InputEventMouseButton and not event.pressed:
-		if event.button_index == MOUSE_BUTTON_RIGHT and _is_aiming:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_fire_button_held = false
+		elif event.button_index == MOUSE_BUTTON_RIGHT and _is_aiming:
 			_toggle_aim()
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not _aerial_camera:
 		rotate_y(-event.relative.x * mouse_sensitivity)
@@ -1954,6 +1958,7 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 	var has_rifle := _has_rifle_equipped()
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		if has_rifle:
+			_fire_button_held = true
 			_shoot_rifle()
 		else:
 			_melee_attack()
@@ -3501,6 +3506,15 @@ func _physics_process(delta: float) -> void:
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	_shoot_cooldown = max(0.0, _shoot_cooldown - delta)
+	var headless_run := DisplayServer.get_name() == "headless"
+	var lmb_live := not headless_run and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _aerial_camera
+	if _fire_button_held and (is_dead or _is_reloading or not _held_is_m4() or (not headless_run and not lmb_live)):
+		_fire_button_held = false
+	if (_fire_button_held or (lmb_live and _held_is_m4() and not is_dead and not _is_reloading)) and _held_is_m4() and _shoot_cooldown <= 0.0:
+		_fire_button_held = true
+		_shoot_rifle()
+	elif _shoot_cooldown <= 0.0 and _held_is_m4() and _shoot_audio_player != null and _shoot_audio_player.playing:
+		_shoot_audio_player.stop()
 	# Gradually wear equipped clothing (faster when moving, slower when sleeping)
 	if not is_dead and inventory != null:
 		var wear_rate := 1.0
@@ -8388,7 +8402,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# line through the eye, butt into the right-shoulder pocket, barrel along
 	# the aim direction — and both arms are IK'd onto it. WeaponOffset goes
 	# top-level so the IK'd hands cannot drag it back out of place.
-	var want_direct_aim := _is_aiming and not is_sitting and not is_prone
+	var want_direct_aim := (_is_aiming or _is_firing) and not is_sitting and not is_prone
 	if not want_direct_aim and (_rifle_aim_pose_active or _rifle_weapon_offset.top_level):
 		_restore_grip_origins()
 	_rifle_aim_pose_active = false
@@ -8828,7 +8842,7 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 func _on_skeleton_updated() -> void:
 	if _ik_skel == null or not is_instance_valid(_ik_skel):
 		return
-	if not _is_aiming:
+	if not _is_aiming and not _is_firing:
 		# Turn clips update the hands after _process. Refit to that final pose.
 		_update_rifle_ik(_ik_skel, 0.0)
 		if _mounted_rifle_is_m4 and _ik_lh_idx >= 0 and _ik_upper_arm_idx >= 0 and _ik_forearm_idx >= 0 and is_instance_valid(_rifle_root):
@@ -8856,6 +8870,9 @@ func _on_skeleton_updated() -> void:
 				_ik_skel.set_bone_global_pose(thumb, Transform3D(tbasis, base - tbasis * pivot))
 		return
 	if _rifle_aim_pose_active:
+		if is_instance_valid(_rifle_weapon_offset):
+			var skel_s := _ik_skel.global_transform.basis.get_scale().x
+			_try_place_rifle_aiming(_ik_skel, _rifle_weapon_scale() * skel_s)
 		_solve_aim_arms()
 		return
 	if _ik_lh_idx < 0 or _ik_upper_arm_idx < 0 or _ik_forearm_idx < 0:
@@ -12034,6 +12051,7 @@ func _reload_rifle() -> void:
 		notice.emit("Sin cargadores ni munición de reserva.")
 		return
 	_is_reloading = true
+	_rifle_burst_revision += 1
 	var selection_revision := _held_selection_revision
 	notice.emit("Recargando fusil...")
 	await get_tree().create_timer(2.2).timeout
@@ -12122,6 +12140,20 @@ func get_wind_info() -> Dictionary:
 		"target_strength": _wind_target_strength,
 	}
 
+func _apply_rifle_recoil(is_m4: bool) -> void:
+	var recoil_kick := M4_RECOIL if is_m4 else 8.0
+	if is_prone:
+		recoil_kick *= 0.375
+	elif is_crouching:
+		recoil_kick *= 0.625
+	if _is_aiming:
+		recoil_kick *= 0.7
+	_recoil_pitch -= deg_to_rad(recoil_kick)
+	_recoil_yaw += deg_to_rad(randf_range(-recoil_kick * 0.4, recoil_kick * 0.4))
+	if camera != null:
+		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+		camera.rotation.y = _recoil_yaw + _breath_yaw_offset
+
 func _shoot_rifle() -> void:
 	var held = get_held_item()
 	if is_dead or _is_reloading or camera == null or held == null or held.item_type != "weapon_rifle":
@@ -12145,7 +12177,11 @@ func _shoot_rifle() -> void:
 		notice.emit("Estas demasiado cansado para disparar.")
 		return
 	var burst_rounds := mini(M4_BURST_ROUNDS, _loaded_rounds()) if is_m4_shot else 1
-	_set_loaded_rounds(_loaded_rounds() - burst_rounds)
+	# Consume only rounds that actually leave the barrel.
+	_set_loaded_rounds(_loaded_rounds() - 1)
+	_rifle_burst_revision += 1
+	var burst_revision := _rifle_burst_revision
+	var selection_revision := _held_selection_revision
 	_shoot_cooldown = _rifle_cooldown_time()
 	_crosshair_bloom = minf(_crosshair_bloom + 26.0, 60.0)
 	stats.energy = max(0.0, stats.energy - energy_cost)
@@ -12161,19 +12197,7 @@ func _shoot_rifle() -> void:
 			continue
 		if w.has_method("flee_from_gunshot"):
 			w.flee_from_gunshot(gunshot_pos, 120.0)
-	# Recoil: strong kick camera up, less when prone/crouching/aiming
-	var recoil_kick := M4_RECOIL if _held_is_m4() else 8.0
-	if is_prone:
-		recoil_kick *= 0.375
-	elif is_crouching:
-		recoil_kick *= 0.625
-	if _is_aiming:
-		recoil_kick *= 0.7
-	_recoil_pitch -= deg_to_rad(recoil_kick)
-	_recoil_yaw += deg_to_rad(randf_range(-recoil_kick * 0.4, recoil_kick * 0.4))
-	if camera != null:
-		camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
-		camera.rotation.y = _recoil_yaw + _breath_yaw_offset
+	_apply_rifle_recoil(is_m4_shot)
 	if third_person_animation_player != null:
 		var fire_anim_name := ""
 		if is_prone and not _rifle_prone_fire_animation.is_empty():
@@ -12189,6 +12213,9 @@ func _shoot_rifle() -> void:
 			third_person_action_animation = fire_anim_name
 			third_person_action_timer = 1.0
 			third_person_animation_player.play(fire_anim_name, 0.05)
+	if not _is_aiming and not is_sitting and not is_prone:
+		_update_rifle_visuals(0.0)
+		_on_skeleton_updated()
 	_play_shoot_sound(is_m4_shot)
 	var space_state := get_world_3d().direct_space_state
 	if _cached_rids_dirty:
@@ -12209,12 +12236,25 @@ func _shoot_rifle() -> void:
 	aim_dir = (aim_dir+right*cos(angle)*radius+up*sin(angle)*radius).normalized()
 	var shot_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
 	if is_instance_valid(_rifle_muzzle): shot_origin = _rifle_muzzle.global_position
-	# Fixed 100 m optical zero, not automatic compensation for the target.
+	# Fixed 100 m optical zero in ADS; in third-person hip-fire, converge the
+	# muzzle onto whatever is under the crosshair ray so the 6.5 m camera
+	# offset does not send close shots below the target.
 	var muzzle_speed := M4_MUZZLE_SPEED if _held_is_m4() else RIFLE_MUZZLE_SPEED
-	var zero_target := cam_ray_origin + aim_dir * 100.0
-	var flight_time := -log(1.0-100.0*0.12/muzzle_speed)/0.12
-	zero_target.y += 0.5*9.81*flight_time*flight_time
-	aim_dir = (zero_target-shot_origin).normalized()
+	var converge_dist := 100.0
+	if not _is_aiming and space_state != null:
+		var sight_q := PhysicsRayQueryParameters3D.create(cam_ray_origin, cam_ray_origin + cam_ray_dir.normalized() * RIFLE_RANGE, 7)
+		sight_q.exclude = exclude_arr
+		sight_q.collide_with_areas = true
+		var sight_hit := space_state.intersect_ray(sight_q)
+		if not sight_hit.is_empty():
+			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
+			if hit_d > 2.5:
+				converge_dist = clampf(hit_d, 3.0, RIFLE_RANGE)
+	var zero_target := cam_ray_origin + aim_dir * converge_dist
+	var drop_dist := minf(shot_origin.distance_to(zero_target), 100.0)
+	var flight_time := -log(maxf(0.05, 1.0 - drop_dist * 0.12 / muzzle_speed)) / 0.12
+	zero_target.y += 0.5 * 9.81 * flight_time * flight_time
+	aim_dir = (zero_target - shot_origin).normalized()
 	# A muzzle pushed through cover must not shoot through that cover.
 	var obstruction := PhysicsRayQueryParameters3D.create(cam_ray_origin, shot_origin, 5)
 	obstruction.exclude = exclude_arr
@@ -12230,16 +12270,56 @@ func _shoot_rifle() -> void:
 	_spawn_muzzle_flash(flash_pos, aim_dir)
 	for extra_i in range(1, burst_rounds):
 		get_tree().create_timer(0.09 * float(extra_i)).timeout.connect(func():
-			if not is_inside_tree() or is_dead or not _held_is_m4():
+			if not is_inside_tree() or is_dead or _is_reloading or camera == null or not _held_is_m4() or get_held_item() != held or _held_selection_revision != selection_revision or _rifle_burst_revision != burst_revision or _loaded_rounds() <= 0:
 				return
-			var b_origin := shot_origin
-			if is_instance_valid(_rifle_muzzle):
-				b_origin = _rifle_muzzle.global_position
+			var b_vp := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
+			var b_cam_orig := camera.project_ray_origin(b_vp)
+			var b_cam_dir := camera.project_ray_normal(b_vp).normalized()
+			var b_right := camera.global_basis.x.normalized()
+			var b_up := b_right.cross(b_cam_dir).normalized()
 			var b_ang := randf() * TAU
 			var b_rad := sqrt(randf()) * tan(spread_rad * 1.15)
-			var b_dir := (aim_dir + right * cos(b_ang) * b_rad + up * sin(b_ang) * b_rad).normalized()
+			var b_aim := (b_cam_dir + b_right * cos(b_ang) * b_rad + b_up * sin(b_ang) * b_rad).normalized()
+			var b_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
+			if is_instance_valid(_rifle_muzzle):
+				b_origin = _rifle_muzzle.global_position
+			var b_space := get_world_3d().direct_space_state
+			var b_conv := 100.0
+			if not _is_aiming and b_space != null:
+				var b_sq := PhysicsRayQueryParameters3D.create(b_cam_orig, b_cam_orig + b_cam_dir * RIFLE_RANGE, 7)
+				b_sq.exclude = exclude_arr
+				b_sq.collide_with_areas = true
+				var b_sh := b_space.intersect_ray(b_sq)
+				if not b_sh.is_empty():
+					var b_hd := b_cam_orig.distance_to(b_sh.position)
+					if b_hd > 2.5:
+						b_conv = clampf(b_hd, 3.0, RIFLE_RANGE)
+			var b_zero := b_cam_orig + b_aim * b_conv
+			var b_drop_d := minf(b_origin.distance_to(b_zero), 100.0)
+			var b_ft := -log(maxf(0.05, 1.0 - b_drop_d * 0.12 / M4_MUZZLE_SPEED)) / 0.12
+			b_zero.y += 0.5 * 9.81 * b_ft * b_ft
+			var b_dir := (b_zero - b_origin).normalized()
+			if b_space != null:
+				var b_obs := PhysicsRayQueryParameters3D.create(b_cam_orig, b_origin, 5)
+				b_obs.exclude = exclude_arr
+				b_obs.collide_with_areas = false
+				b_obs.hit_from_inside = true
+				var b_blk := b_space.intersect_ray(b_obs)
+				if not b_blk.is_empty():
+					b_origin = b_blk.position - b_dir * 0.01
+			_apply_rifle_recoil(true)
+			_set_loaded_rounds(_loaded_rounds() - 1)
 			_launch_rifle_projectile(b_origin, b_dir, shot_wind, exclude_arr, true, true)
-			_spawn_muzzle_flash(b_origin, b_dir))
+			var world := get_tree().current_scene
+			if world != null and world.has_method("_sync_local_player_inventory"):
+				world.call_deferred("_sync_local_player_inventory")
+			if world != null and world.get("hud") != null and world.hud.has_method("_update_equipment_labels"):
+				world.hud._update_equipment_labels()
+			_spawn_muzzle_flash(b_origin, b_dir)
+			if not is_puppet:
+				var b_net := get_node_or_null("/root/NetworkManager")
+				if b_net != null and b_net.is_connected:
+					b_net.player_shot_rifle.rpc_id(1, b_net.get_my_id(), b_origin, b_dir, shot_wind))
 	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
 		_scope_overlay.muzzle_flash()
 	if not is_puppet:
@@ -12294,9 +12374,9 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 				# bodyshot deals 60 dmg (2 shots to kill a 100 HP player).
 				var pvp_dmg := ((M4_PVP_HEAD if is_headshot else M4_PVP_BODY) if is_m4
 					else (120.0 if is_headshot else 60.0))
-				_apply_rifle_target_damage(target_node, pvp_dmg)
+				_apply_rifle_target_damage(target_node, pvp_dmg * exp(-0.0002 * hit_dist))
 				_spawn_blood_splatter(hit_pos, 1.8 if is_headshot else 1.3)
-				_hit_marker(is_headshot or bool(target_node.get("is_dead")))
+				_hit_marker(bool(target_node.get("is_dead")))
 				notice.emit("¡Disparo en la cabeza!" if is_headshot else "¡Impacto al jugador!")
 				return
 			if is_headshot:
@@ -12313,6 +12393,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			if not is_proxy_dead and peer_id != 0:
 				var proxy_dmg := ((M4_PVP_HEAD if is_headshot else M4_PVP_BODY) if is_m4
 					else (120.0 if is_headshot else 60.0))
+				proxy_dmg *= exp(-0.0002 * hit_dist)
 				var scene_node := get_tree().current_scene
 				if scene_node != null and scene_node.has_method("_net_damage_player"):
 					var my_id := 1
@@ -12669,10 +12750,27 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	var is_ground := hit_normal.y > 0.55
+	var is_tree_or_rock := false
+	var is_building := false
+	var can_parent_to_collider := false
+	if is_instance_valid(collider) and collider is Node3D:
+		var cnode := collider as Node3D
+		var cname := str(cnode.name).to_lower()
+		var pname := str(cnode.get_parent().name).to_lower() if cnode.get_parent() != null else ""
+		if "tree" in cname or "forestcol" in cname or "arbol" in cname or "tronco" in cname or "rock" in cname or "boulder" in cname or "tree" in pname:
+			is_tree_or_rock = true
+		if "house" in cname or "casa" in cname or "front" in cname or "back" in cname or "left" in cname or "right" in cname or "solid_" in cname or "city_" in pname or "house" in pname or "wall" in cname or "pared" in cname:
+			is_building = true
+		var cscale := cnode.global_transform.basis.get_scale()
+		var uniform_scale := absf(cscale.x - cscale.y) < 0.05 and absf(cscale.y - cscale.z) < 0.05
+		if uniform_scale and not ("forestcol" in cname):
+			can_parent_to_collider = true
 	var mi := MeshInstance3D.new()
 	mi.name = "BulletHole"
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.13, 0.13)
+	var hole_size := 0.20 if is_ground else 0.16
+	quad.size = Vector2(hole_size, hole_size)
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = _get_bullet_hole_texture()
 	m.albedo_color = Color.WHITE
@@ -12683,23 +12781,32 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 	quad.material = m
 	mi.mesh = quad
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if is_instance_valid(collider) and collider is Node3D:
-		collider.add_child(mi)
+	# Núcleo volumétrico achatado: garantiza que en troncos curvos de árboles,
+	# rocas y terreno con desnivel o hierba la marca nunca quede enterrada.
+	var core := MeshInstance3D.new()
+	core.name = "BulletHoleCore"
+	var core_sphere := SphereMesh.new()
+	core_sphere.radius = hole_size * 0.28
+	core_sphere.height = hole_size * 0.22
+	core_sphere.radial_segments = 10
+	core_sphere.rings = 5
+	var core_mat := StandardMaterial3D.new()
+	core_mat.albedo_color = Color(0.05, 0.04, 0.035, 0.96)
+	core_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	core_mat.render_priority = 5
+	core_sphere.material = core_mat
+	core.mesh = core_sphere
+	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.add_child(core)
+	if can_parent_to_collider:
+		(collider as Node3D).add_child(mi)
 	else:
 		scene.add_child(mi)
-	# En fachadas de casas con láminas de musgo/hiedra (+3..5 cm sobre el muro),
-	# adelantar el decal para que quede siempre delante del recubrimiento.
-	var surface_offset := 0.018
-	if collider is Node:
-		var cname := str((collider as Node).name).to_lower()
-		var pname := str((collider as Node).get_parent().name).to_lower() if (collider as Node).get_parent() != null else ""
-		if "house" in cname or "casa" in cname or "front" in cname or "back" in cname or "left" in cname or "right" in cname or "solid_" in cname or "city_" in pname or "house" in pname:
-			surface_offset = 0.056
+	var surface_offset := 0.038 if is_ground else (0.062 if is_tree_or_rock else (0.056 if is_building else 0.028))
 	var pos := hit_pos + hit_normal * surface_offset
 	var up := Vector3.UP if absf(hit_normal.y) < 0.95 else Vector3.RIGHT
-	var basis_ := Basis.looking_at(-hit_normal, up)
+	var basis_ := Basis.looking_at(-hit_normal, up) * Basis(Vector3.BACK, randf() * TAU)
 	mi.global_transform = Transform3D(basis_, pos)
-	mi.rotate_object_local(Vector3.BACK, randf() * TAU)
 	_bullet_holes.append(mi)
 	while _bullet_holes.size() > MAX_BULLET_HOLES:
 		var old = _bullet_holes.pop_front()
@@ -12777,6 +12884,8 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	var stream := _load_audio_stream(M4_SHOOT_SOUND if use_m4 else "res://assets/audio/disparo.wav")
 	if stream == null:
 		return
+	if use_m4 and _shoot_audio_player.playing and _shoot_audio_player.stream == stream and _shoot_audio_player.get_playback_position() < 1.15:
+		return
 	_shoot_audio_player.stream = stream
 	_shoot_audio_player.volume_db = 3.0
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
@@ -12795,14 +12904,19 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vec
 			fire_anim.loop_mode = Animation.LOOP_NONE
 		third_person_action_animation = _rifle_fire_animation
 		third_person_action_timer = 1.0
+		_is_firing = true
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	var remote_m4 := is_puppet and _puppet_held == M4_NAME
+	if not _is_aiming and not is_sitting and not is_prone:
+		_update_rifle_visuals(0.0)
+		_on_skeleton_updated()
 	_play_shoot_sound(remote_m4)
 	# Show muzzle flash at the reported muzzle (no tracer streak) and impact on static surfaces.
 	_spawn_muzzle_flash(_origin, _dir)
 	var excluded: Array[RID] = [get_rid()]
 	_collect_child_collision_rids(self, excluded)
 	_launch_rifle_projectile(_origin, _dir, wind, excluded, false, remote_m4)
+	# Each RPC describes one actual round; never synthesize extra burst shots.
 
 func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3, excluded: Array[RID], deal_damage: bool, is_m4 := false) -> void:
 	if direction.length_squared() < .001 or get_tree().current_scene == null: return

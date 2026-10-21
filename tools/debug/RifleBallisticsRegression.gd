@@ -140,6 +140,18 @@ func run():
 	check(not actor._held_is_m4(), "Sniper keeps the default profile")
 	actor.is_puppet = false
 	actor._puppet_held = ""
+	# Impact marks on ground, walls and trees (including BulletHoleCore so
+	# curved trunks and uneven terrain never bury the mark).
+	var holes_before := actor._bullet_holes.size()
+	var tree_body := StaticBody3D.new()
+	tree_body.name = "Tree_TestTrunk"
+	world.add_child(tree_body)
+	actor._apply_rifle_damage(world, Vector3(0, 0, -10), 10.0, Vector3.UP, true)
+	actor._apply_rifle_damage(tree_body, Vector3(1, 1.5, -12), 12.0, Vector3.BACK, true)
+	check(actor._bullet_holes.size() >= holes_before + 2, "M4 impacts leave bullet holes on ground and trees")
+	var last_hole: Node3D = actor._bullet_holes.back()
+	check(last_hole != null and last_hole.get_node_or_null("BulletHoleCore") != null, "Bullet holes include volumetric 3D core")
+	tree_body.free()
 	if "--preview" in OS.get_cmdline_user_args() and DisplayServer.get_name() != "headless":
 		root.size=Vector2i(1280,800)
 		var overlay:=preload("res://scripts/ScopeOverlay.gd").new()
@@ -149,7 +161,10 @@ func run():
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/rifle_scope_preview.png")
 		overlay.free()
-	await process_frame
+	if is_instance_valid(actor._shoot_audio_player):
+		actor._shoot_audio_player.stop()
+		actor._shoot_audio_player.stream = null
+	await create_timer(.1).timeout
 	world.free()
 	print("RIFLE_BALLISTICS_ERRORS=",failures)
 	quit(1 if failures else 0)
