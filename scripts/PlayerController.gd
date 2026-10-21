@@ -1655,10 +1655,16 @@ func _process(delta: float) -> void:
 			camera.fov = 90.0
 			camera.far = 2000.0
 	else:
-		if camera != null and camera.fov != _camera_fov:
-			camera.fov = _camera_fov
-		if camera != null and camera.far != 500.0:
-			camera.far = 500.0
+		_sync_camera_lens()
+
+func _sync_camera_lens() -> void:
+	if camera == null:
+		return
+	var want_far := RIFLE_RANGE + 50.0 if _is_aiming else 500.0
+	if camera.far != want_far:
+		camera.far = want_far
+	if not _is_aiming and camera.fov != _camera_fov:
+		camera.fov = _camera_fov
 
 #endregion
 

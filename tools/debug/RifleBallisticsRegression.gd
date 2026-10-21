@@ -72,6 +72,13 @@ func run():
 		actor._scope_zoom_index=zoom;actor._update_scope_zoom()
 		var actual:=tan(deg_to_rad(55.0)*.5)/tan(deg_to_rad(actor.camera.fov)*.5)
 		check(absf(actual-actor.SCOPE_MAGNIFICATIONS[zoom])<.01,"Scope must match its advertised magnification")
+	actor._is_aiming=true;actor._scope_zoom_index=3;actor._update_scope_zoom()
+	var scoped_fov:=actor.camera.fov
+	actor._sync_camera_lens()
+	check(is_equal_approx(actor.camera.fov,scoped_fov),"Frame camera sync must not stomp the scoped FOV")
+	check(actor.camera.far>=actor.RIFLE_RANGE,"Scoped far plane must cover the full rifle range")
+	actor._is_aiming=false;actor._sync_camera_lens()
+	check(is_equal_approx(actor.camera.fov,55.0) and actor.camera.far==500.0,"Unscoping restores base FOV and far plane")
 	actor._is_aiming=true;actor._cancel_aim()
 	check(is_equal_approx(actor.camera.fov,55.0),"Leaving the scope restores normal FOV")
 	if "--preview" in OS.get_cmdline_user_args() and DisplayServer.get_name() != "headless":
