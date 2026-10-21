@@ -563,8 +563,11 @@ func _skinned_body(model: Node3D, skel: Skeleton3D) -> Array:
 # expressed in the source rifle's space (barrel -Z). Snap on these parts only;
 # the imported model also contains decorative straps and scope geometry.
 static func attach_swivels(barrel: Node3D, stock: Node3D, rifle: Node3D) -> void:
-	var targets := [Vector3(0.52, -0.35, -5.5), Vector3(0.43, -0.50, 7.2)]
-	var parts := ["Cube_053_Mat1_0", "Cube_043_Mat2_0"]
+	var is_m4 := rifle != null and rifle.find_child("Front_Barrel", true, false) != null
+	# For the M4, rifle's local +Z is the barrel and -Z is the buttstock (its
+	# parent applies the 180° Y flip so the assembly faces -Z like the sniper).
+	var targets := [Vector3(-0.004, 0.044, 0.032), Vector3(0.0, 0.012, -0.096)] if is_m4 else [Vector3(0.52, -0.35, -5.5), Vector3(0.43, -0.50, 7.2)]
+	var parts := ["Front_Barrel", "Butt_Stock"] if is_m4 else ["Cube_053_Mat1_0", "Cube_043_Mat2_0"]
 	var markers := [barrel, stock]
 	for i in 2:
 		var marker: Node3D = markers[i]

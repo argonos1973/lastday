@@ -353,6 +353,28 @@ const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
 const RIFLE_DAMAGE := 260.0
 const RIFLE_MAGAZINE_MODEL := "res://assets/models/weapons/rifle_magazine.glb"
+# Fusil de asalto M4 — mismo item_type "weapon_rifle" pero semiautomatico,
+# mira fija 4x y municion 5.56 propia. El GLB Sketchfab mide ~0.184 m en
+# escena (nodo .fbx con escala 0.01) frente a las ~18 unidades del
+# francotirador, asi que su weapon_scale y toda su geometria de agarre van
+# en el espacio de ese modelo (0.01 x las unidades crudas del mesh).
+const M4_NAME := "Fusil de asalto"
+const M4_MODEL := "res://assets/models/weapons/m4_carbine_rifle.glb"
+const M4_MAGAZINE_MODEL := "res://assets/models/weapons/m4_magazine.glb"
+const M4_SHOOT_SOUND := "res://assets/audio/m4_disparo.mp3"
+const M4_AMMO_TYPE := "5,56 × 45 mm NATO"
+const M4_MAG_SIZE := 30
+const M4_BURST_ROUNDS := 3
+const M4_DAMAGE := 95.0
+const M4_PVP_HEAD := 60.0
+const M4_PVP_BODY := 28.0
+const M4_COOLDOWN := 0.16
+const M4_MUZZLE_SPEED := 880.0
+const M4_SPREAD_MULT := 2.2
+const M4_RECOIL := 4.5
+const M4_ENERGY_COST := 1.2
+const M4_SCALE_FACTOR := 82.0
+const M4_SCOPE_MAGNIFICATIONS := [4.0]
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -670,6 +692,22 @@ var _is_reloading := false
 var _is_firing := false
 var _held_selection_revision := 0
 var _rifle_ammo_initialized := false
+# Pool de municion propio del M4 (5.56) — independiente del 7.62 del
+# francotirador para que cada fusil guarde sus balas por separado.
+var _m4_magazine := 0
+var _m4_reserve_ammo := 0
+var _m4_ammo_initialized := false
+# Geometria de agarre/apuntado del arma en mano, en unidades del propio
+# modelo. Los valores por defecto son los del francotirador; al montar un
+# M4 se cargan sus medidas (espacio 0.01 x unidades crudas, ya volteado).
+var _rg_eye := RIFLE_AIM_EYE
+var _rg_right_knuckle := RIFLE_AIM_RIGHT_KNUCKLE
+var _rg_left_knuckle := RIFLE_AIM_LEFT_KNUCKLE
+var _rg_left_thumb := Vector3(-0.55, 0.65, -1.7)
+var _rg_right_grip := Vector3(0.5000, -0.5000, 1.2000)
+var _rg_left_grip := Vector3(-1.5, -0.5, -3.8)
+var _mounted_rifle_is_m4 := false
+var _m4_saved_left_arm_poses: Array = []
 var _fishing_session := 0
 var _rifle_magazine := 0
 var _rifle_reserve_ammo := 0
@@ -1409,8 +1447,8 @@ func _update_puppet_held_item(item_name: String) -> void:
 			return
 		"Cuchillo":
 			_build_third_person_knife()
-		"Rifle francotirador":
-			_build_third_person_rifle()
+		"Rifle francotirador", M4_NAME:
+			_build_third_person_rifle(item_name)
 		"Hacha":
 			_build_third_person_axe()
 		"Pala":
@@ -1935,7 +1973,7 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 	elif event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		var direction := 1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1
 		if _is_aiming:
-			_scope_zoom_index = clampi(_scope_zoom_index + direction, 0, SCOPE_MAGNIFICATIONS.size()-1)
+			_scope_zoom_index = clampi(_scope_zoom_index + direction, 0, _rifle_scope_mags().size()-1)
 			_update_scope_zoom()
 		else:
 			_camera_fov = clampf(_camera_fov - direction * 4.0, 30.0, 90.0)
@@ -7015,7 +7053,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_store_inventory_fishing_rod_on_back()
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
-			_build_third_person_rifle()
+			_build_third_person_rifle(str(held_item.item_name))
 			_initialize_rifle_ammo()
 			return
 	if held_item == null:
@@ -7040,7 +7078,7 @@ func _sync_third_person_equipment(held_item) -> void:
 				_build_third_person_knife()
 			_clear_rifle_attachment()
 		"weapon_rifle":
-			_build_third_person_rifle()
+			_build_third_person_rifle(str(held_item.item_name))
 			_initialize_rifle_ammo()
 		"tool":
 			if held_name == "Pala":
@@ -7557,7 +7595,7 @@ func _build_stored_back_visual(slot: int) -> void:
 	var path := ""
 	var item_type := str(data.get("type", ""))
 	if item_type == "weapon_rifle":
-		path = REAL_RIFLE_MODEL
+		path = _rifle_model_path_for(str(data.get("name", "")))
 	elif item_type == "tool_fishing":
 		path = ROD_MODEL_PATH
 	else:
@@ -7571,7 +7609,10 @@ func _build_stored_back_visual(slot: int) -> void:
 	visual.position = Vector3.ZERO
 	visual.scale = Vector3.ONE
 	if item_type == "weapon_rifle":
-		visual.rotation_degrees = Vector3(90, 0, -15)
+		var r_basis := Basis.from_euler(Vector3(deg_to_rad(90.0), 0.0, deg_to_rad(-15.0)))
+		if str(data.get("name", "")) == M4_NAME:
+			r_basis = r_basis * Basis(Vector3.UP, PI)
+		visual.basis = r_basis
 	elif item_type == "tool_fishing":
 		visual.quaternion = _stored_rod_upright_rotation(visual)
 	else:
@@ -7582,7 +7623,8 @@ func _build_stored_back_visual(slot: int) -> void:
 	var bounds := _hierarchy_local_aabb(container)
 	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
 	if extent > 0.00001:
-		var fit_scale := 1.65 / extent
+		var target_extent := 1.45 if (item_type == "weapon_rifle" and str(data.get("name", "")) == M4_NAME) else 1.65
+		var fit_scale := target_extent / extent
 		visual.scale = Vector3.ONE * fit_scale
 		visual.position = -bounds.get_center() * fit_scale
 	_disable_collision_recursive(visual)
@@ -7599,7 +7641,13 @@ func _build_rifle_on_back() -> void:
 	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
 	if skeleton == null or not is_instance_valid(skeleton):
 		return
-	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	var back_rifle_name := RIFLE_NAME
+	if inventory != null:
+		for it in inventory.items:
+			if it != null and str(it.item_type) == "weapon_rifle":
+				back_rifle_name = str(it.item_name)
+				break
+	var model := _load_external_node3d(_rifle_model_path_for(back_rifle_name))
 	if model == null:
 		return
 	# Rifle on back: container node
@@ -7613,19 +7661,16 @@ func _build_rifle_on_back() -> void:
 		_rifle_on_back.queue_free()
 		_rifle_on_back = null
 		return
-	# Scale: target ~1.8m length on the back
+	# Scale: target ~1.8m length on the back for the sniper, ~1.10m for the M4 carbine
 	var model_length: float = max(raw_aabb.size.x, max(raw_aabb.size.y, raw_aabb.size.z))
-	var back_scale: float = 1.8 / model_length
-	model.scale = Vector3.ONE * back_scale
-	# Center the model on its midpoint
-	var center_offset := Vector3(
-		-(raw_aabb.position.x + raw_aabb.size.x * 0.5) * back_scale,
-		-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * back_scale,
-		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * back_scale
-	)
-	model.position = center_offset
-	# Rotate: barrel up (+Y), stock down (-Y). Model barrel points -Z.
-	model.rotation_degrees = Vector3(90.0, 0.0, -15.0)
+	var back_scale: float = (1.45 if back_rifle_name == M4_NAME else 1.8) / model_length
+	# Rotate: barrel up (+Y), stock down (-Y). The sniper barrel points -Z;
+	# the M4's points +Z, so post-multiply a 180° Y flip in model space first.
+	var back_rot := Basis.from_euler(Vector3(deg_to_rad(90.0), 0.0, deg_to_rad(-15.0)))
+	if back_rifle_name == M4_NAME:
+		back_rot = back_rot * Basis(Vector3.UP, PI)
+	model.basis = back_rot.scaled(Vector3.ONE * back_scale)
+	model.position = -(model.basis * raw_aabb.get_center())
 	model.visible = true
 	_rifle_on_back.add_child(model)
 	_disable_collision_recursive(model)
@@ -8103,11 +8148,32 @@ func _clear_rifle_on_back() -> void:
 			if child is Node3D and (child.name == "RifleSlingRoot" or child.name.begins_with("RifleSling") or child.name == "ProceduralStrapMesh"):
 				child.free()
 
-func _build_third_person_rifle() -> void:
+func _build_third_person_rifle(item_name := "") -> void:
 	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
 		return
+	if item_name.is_empty():
+		item_name = _held_rifle_name()
 	_clear_rifle_attachment()
-	var model := _load_external_node3d(REAL_RIFLE_MODEL)
+	var is_m4 := item_name == M4_NAME
+	_mounted_rifle_is_m4 = is_m4
+	if is_m4:
+		# Medidas del M4 en el espacio del modelo volteado 180° (bocacha -Z,
+		# culata +Z): guardamanos Front_Barrel en z≈-0.024, empuñadura Grip
+		# en z≈0.052, linea del rail superior en y≈0.054.
+		_rg_eye = Vector3(0.0025, 0.068, 0.032)
+		_rg_right_knuckle = Vector3(0.0038, 0.0285, 0.0415)
+		_rg_left_knuckle = Vector3(0.0068, 0.0365, -0.022)
+		_rg_left_thumb = Vector3(-0.0065, 0.045, -0.018)
+		_rg_right_grip = Vector3(0.005, 0.020, 0.048)
+		_rg_left_grip = Vector3(-0.007, 0.048, -0.024)
+	else:
+		_rg_eye = RIFLE_AIM_EYE
+		_rg_right_knuckle = RIFLE_AIM_RIGHT_KNUCKLE
+		_rg_left_knuckle = RIFLE_AIM_LEFT_KNUCKLE
+		_rg_left_thumb = Vector3(-0.55, 0.65, -1.7)
+		_rg_right_grip = Vector3(0.5000, -0.5000, 1.2000)
+		_rg_left_grip = Vector3(-1.5, -0.5, -3.8)
+	var model := _load_external_node3d(_rifle_model_path_for(item_name))
 	if model == null:
 		return
 	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
@@ -8137,9 +8203,11 @@ func _build_third_person_rifle() -> void:
 	# Rifle model
 	model.name = "RifleMesh"
 	model.position = Vector3.ZERO
-	model.rotation = Vector3.ZERO
+	# El M4 lleva el canon al +Z; se voltea para coincidir con la convencion
+	# -Z que asumen todos los marcadores (culata = max Z, boca = min Z).
+	model.rotation_degrees = Vector3(0.0, 180.0, 0.0) if is_m4 else Vector3.ZERO
 	var skel_scale := skeleton.global_transform.basis.get_scale().x
-	var effective_scale := weapon_scale * skel_scale
+	var effective_scale := _rifle_weapon_scale() * skel_scale
 	# Model at scale 1.0; all scale goes on WeaponOffset (like previous working version)
 	model.scale = Vector3.ONE
 	model.visible = true
@@ -8158,7 +8226,9 @@ func _build_third_person_rifle() -> void:
 	var has_aabb := false
 	var mesh_count := 0
 	var aabb_state := {"aabb": AABB(), "has_aabb": false, "mesh_count": 0}
-	_traverse_mesh_aabb(model, Transform3D.IDENTITY, aabb_state)
+	# model.transform entra en el AABB: el M4 va volteado 180° y sus
+	# marcadores de culata/boca deben salir ya en el espacio volteado.
+	_traverse_mesh_aabb(model, model.transform, aabb_state)
 	has_aabb = aabb_state["has_aabb"]
 	combined_aabb = aabb_state["aabb"]
 	mesh_count = aabb_state["mesh_count"]
@@ -8173,13 +8243,13 @@ func _build_third_person_rifle() -> void:
 	# RightGrip: centro de la empuñadura/palma, sobre el gatillo, ligeramente a la derecha del eje del rifle
 	_rifle_right_grip = Marker3D.new()
 	_rifle_right_grip.name = "RightGrip"
-	_rifle_right_grip.position = Vector3(0.5000, -0.5000, 1.2000)
+	_rifle_right_grip.position = _rg_right_grip
 	_rifle_right_grip.rotation_degrees = Vector3(0.0, 0.0, 0.0)
 	_rifle_root.add_child(_rifle_right_grip)
 	# LeftHandGripTarget: guardamanos, delante del grip, lado izquierdo del rifle
 	_rifle_left_hand_grip = Marker3D.new()
 	_rifle_left_hand_grip.name = "LeftHandGripTarget"
-	_rifle_left_hand_grip.position = Vector3(-1.5, -0.5, -3.8)
+	_rifle_left_hand_grip.position = _rg_left_grip
 	_rifle_root.add_child(_rifle_left_hand_grip)
 	# Left elbow pole: hijo del personaje, no del rifle
 	_rifle_left_elbow_pole = Marker3D.new()
@@ -8236,10 +8306,11 @@ func _build_third_person_rifle() -> void:
 	var rh_bone_idx_init := skeleton.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skeleton))
 	var rh_world_init := (skeleton.global_transform * skeleton.get_bone_global_pose(rh_bone_idx_init)).origin
 	var rot_basis_init := global_basis * Basis.from_euler(weapon_offset_rot_deg * deg_to_rad(1.0))
-	var weapon_basis_init := rot_basis_init.scaled(Vector3.ONE * weapon_scale * skel_scale_wo)
+	var weapon_basis_init := rot_basis_init.scaled(Vector3.ONE * _rifle_weapon_scale() * skel_scale_wo)
 	_rifle_weapon_offset.global_basis = weapon_basis_init
 	# Offset so RightGrip sits on the right hand bone
-	_rifle_weapon_offset.global_position = rh_world_init + _rifle_weapon_offset.global_basis * (weapon_offset_pos - _rifle_right_grip.position)
+	var init_offset := Vector3.ZERO if is_m4 else weapon_offset_pos
+	_rifle_weapon_offset.global_position = rh_world_init + _rifle_weapon_offset.global_basis * (init_offset - _rifle_right_grip.position)
 	_rifle_root.transform = Transform3D.IDENTITY
 	# Force transforms
 	_rifle_bone_attachment.force_update_transform()
@@ -8298,9 +8369,13 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var sh_idx := _find_bone_cached("sh_idx", shoulder_bone_name, skel)
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return
+	if not _m4_saved_left_arm_poses.is_empty() and _m4_saved_left_arm_poses.size() == 3:
+		for entry in _m4_saved_left_arm_poses:
+			skel.set_bone_pose(entry[0], entry[1])
+		_m4_saved_left_arm_poses.clear()
 
 	var skel_scale_wo := skel.global_transform.basis.get_scale().x
-	var s := weapon_scale * skel_scale_wo
+	var s := _rifle_weapon_scale() * skel_scale_wo
 	var rh_pos := (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
 	var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
 	var shoulder_pos := (skel.global_transform * skel.get_bone_global_pose(sh_idx)).origin
@@ -8398,7 +8473,11 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# muzzle and stock markers.
 	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
 		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
-		_rifle_root.global_position += barrel_dir * 0.40
+		if _mounted_rifle_is_m4:
+			var up_dir := weapon_basis.y.normalized()
+			_rifle_root.global_position += barrel_dir * 0.18 + up_dir * 0.055
+		else:
+			_rifle_root.global_position += barrel_dir * 0.40
 
 	# While aiming the right-hand grip pivot above is authoritative. A later
 	# root translation would visibly detach the rifle from the palm.
@@ -8470,7 +8549,7 @@ func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	var bz := -sight_dir
 	var by := bz.cross(bx).normalized()
 	var b := Basis(bx, by, bz).scaled(Vector3.ONE * s)
-	var o := eye - b * RIFLE_AIM_EYE
+	var o := eye - b * _rg_eye
 	# Preserve the ocular eye line and 10 cm eye relief. A shoulder correction
 	# here would move the scope into the nose as the animation changes.
 	if not _rifle_weapon_offset.top_level:
@@ -8498,7 +8577,7 @@ func _solve_aim_arms() -> void:
 	var w2s := skel_inv.basis * wo_xf.basis
 	if _ik_lh_idx >= 0 and _ik_upper_arm_idx >= 0 and _ik_forearm_idx >= 0:
 		_grip_hand(skel, _ik_upper_arm_idx, _ik_forearm_idx, _ik_lh_idx, true,
-			skel_inv * (wo_xf * RIFLE_AIM_LEFT_KNUCKLE), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, w2s * RIFLE_AIM_LEFT_ELBOW)
+			skel_inv * (wo_xf * _rg_left_knuckle), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, w2s * RIFLE_AIM_LEFT_ELBOW)
 		var rig := _grip_rig_for(skel, _ik_lh_idx, true)
 		if rig.has("thumb_child") and rig["thumb_child"] >= 0:
 			var thumb: int = rig["thumb"]
@@ -8507,13 +8586,13 @@ func _solve_aim_arms() -> void:
 			var base := thumb_pose * pivot
 			var child: int = rig["thumb_child"]
 			var tip := skel.get_bone_global_pose(child) * (rig["pivots"].get(child, Vector3.ZERO) as Vector3)
-			var target: Vector3 = skel_inv * (wo_xf * Vector3(-0.55, 0.65, -1.7))
+			var target: Vector3 = skel_inv * (wo_xf * _rg_left_thumb)
 			var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
 			var basis := Basis(turn) * thumb_pose.basis
 			skel.set_bone_global_pose(thumb, Transform3D(basis, base - basis * pivot))
 	if _ik_rh_idx >= 0 and _ik_right_upper_arm_idx >= 0 and _ik_right_forearm_idx >= 0:
 		_grip_hand(skel, _ik_right_upper_arm_idx, _ik_right_forearm_idx, _ik_rh_idx, false,
-			skel_inv * (wo_xf * RIFLE_AIM_RIGHT_KNUCKLE), w2s * RIFLE_AIM_RIGHT_FINGERS, w2s * RIFLE_AIM_RIGHT_PALM, w2s * RIFLE_AIM_RIGHT_ELBOW)
+			skel_inv * (wo_xf * _rg_right_knuckle), w2s * RIFLE_AIM_RIGHT_FINGERS, w2s * RIFLE_AIM_RIGHT_PALM, w2s * RIFLE_AIM_RIGHT_ELBOW)
 
 static func _anatomical_frame(fingers: Vector3, palm: Vector3) -> Basis:
 	var f := fingers.normalized()
@@ -8752,6 +8831,29 @@ func _on_skeleton_updated() -> void:
 	if not _is_aiming:
 		# Turn clips update the hands after _process. Refit to that final pose.
 		_update_rifle_ik(_ik_skel, 0.0)
+		if _mounted_rifle_is_m4 and _ik_lh_idx >= 0 and _ik_upper_arm_idx >= 0 and _ik_forearm_idx >= 0 and is_instance_valid(_rifle_root):
+			_m4_saved_left_arm_poses = [
+				[_ik_upper_arm_idx, _ik_skel.get_bone_pose(_ik_upper_arm_idx)],
+				[_ik_forearm_idx, _ik_skel.get_bone_pose(_ik_forearm_idx)],
+				[_ik_lh_idx, _ik_skel.get_bone_pose(_ik_lh_idx)],
+			]
+			var rf_xf := _rifle_root.global_transform
+			var skel_inv2 := _ik_skel.global_transform.affine_inverse()
+			var w2s2 := skel_inv2.basis * rf_xf.basis
+			_grip_hand(_ik_skel, _ik_upper_arm_idx, _ik_forearm_idx, _ik_lh_idx, true,
+				skel_inv2 * (rf_xf * _rg_left_knuckle), w2s2 * RIFLE_AIM_LEFT_FINGERS, w2s2 * RIFLE_AIM_LEFT_PALM, Vector3.ZERO)
+			var lrig := _grip_rig_for(_ik_skel, _ik_lh_idx, true)
+			if lrig.has("thumb_child") and lrig["thumb_child"] >= 0:
+				var thumb: int = lrig["thumb"]
+				var thumb_pose := _ik_skel.get_bone_global_pose(thumb)
+				var pivot: Vector3 = lrig["pivots"].get(thumb, Vector3.ZERO)
+				var base := thumb_pose * pivot
+				var child: int = lrig["thumb_child"]
+				var tip := _ik_skel.get_bone_global_pose(child) * (lrig["pivots"].get(child, Vector3.ZERO) as Vector3)
+				var target: Vector3 = skel_inv2 * (rf_xf * _rg_left_thumb)
+				var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
+				var tbasis := Basis(turn) * thumb_pose.basis
+				_ik_skel.set_bone_global_pose(thumb, Transform3D(tbasis, base - tbasis * pivot))
 		return
 	if _rifle_aim_pose_active:
 		_solve_aim_arms()
@@ -8821,8 +8923,11 @@ func _on_skeleton_updated() -> void:
 	var fa_new_basis := Basis(fa_q) * fa_pose.basis
 	skel.set_bone_global_pose(_ik_forearm_idx, Transform3D(fa_new_basis, new_mid))
 	# Preserve the reachable wrist position; using the original grip origin
-	# here stretched the forearm whenever the marker was out of reach.
-	skel.set_bone_global_pose(_ik_lh_idx, Transform3D(grip_in_skel.basis, target_clamped))
+	# here stretched the forearm whenever the marker was out of reach. The
+	# basis must stay orthonormal: grip_in_skel carries the WeaponOffset
+	# scale (weapon_scale x skeleton scale), and storing it would corrupt
+	# the hand pose scale read by the next _grip_hand solve.
+	skel.set_bone_global_pose(_ik_lh_idx, Transform3D(grip_in_skel.basis.orthonormalized(), target_clamped))
 
 func _measure_right_hand_to_grip(skel: Skeleton3D, delta: float) -> void:
 	# Phase 1 only: measure dist between right hand bone and RightGrip after 2s stable RifleIdle.
@@ -9025,6 +9130,8 @@ func _clear_rifle_attachment() -> void:
 	_rifle_muzzle = null
 	_rifle_model = null
 	_rifle_root = null
+	_mounted_rifle_is_m4 = false
+	_m4_saved_left_arm_poses.clear()
 	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset):
 		_rifle_weapon_offset.queue_free()
 	_rifle_weapon_offset = null
@@ -11727,6 +11834,53 @@ func _has_rifle_equipped() -> bool:
 		return false
 	return held.item_type == "weapon_rifle"
 
+# --- Perfil por arma: todo el comportamiento que cambia entre el
+# francotirador y el fusil de asalto se decide por el nombre del item.
+static func _is_rifle_item_name(item_name: String) -> bool:
+	return item_name == RIFLE_NAME or item_name == M4_NAME
+
+func _held_rifle_name() -> String:
+	if is_puppet:
+		return _puppet_held
+	var held = get_held_item()
+	return "" if held == null else str(held.item_name)
+
+func _held_is_m4() -> bool:
+	return _held_rifle_name() == M4_NAME
+
+func _rifle_mag_size() -> int:
+	return M4_MAG_SIZE if _held_is_m4() else RIFLE_MAG_SIZE
+
+func _loaded_rounds() -> int:
+	return _m4_magazine if _held_is_m4() else _rifle_magazine
+
+func _set_loaded_rounds(v: int) -> void:
+	if _held_is_m4():
+		_m4_magazine = v
+	else:
+		_rifle_magazine = v
+
+func _reserve_rounds() -> int:
+	return _m4_reserve_ammo if _held_is_m4() else _rifle_reserve_ammo
+
+func _set_reserve_rounds(v: int) -> void:
+	if _held_is_m4():
+		_m4_reserve_ammo = v
+	else:
+		_rifle_reserve_ammo = v
+
+func _rifle_scope_mags() -> Array:
+	return M4_SCOPE_MAGNIFICATIONS if _held_is_m4() else SCOPE_MAGNIFICATIONS
+
+func _rifle_cooldown_time() -> float:
+	return M4_COOLDOWN if _held_is_m4() else 1.5
+
+func _rifle_model_path_for(item_name: String) -> String:
+	return M4_MODEL if item_name == M4_NAME else REAL_RIFLE_MODEL
+
+func _rifle_weapon_scale() -> float:
+	return weapon_scale * M4_SCALE_FACTOR if (_mounted_rifle_is_m4 or _held_is_m4()) else weapon_scale
+
 func _current_spread_deg() -> float:
 	# Misma regla que _shoot_rifle: mas precision quieto/agachado/tumbado/apuntando
 	var spread_deg := 0.6
@@ -11737,6 +11891,8 @@ func _current_spread_deg() -> float:
 	if _is_aiming:
 		spread_deg = .010 if is_prone else (.016 if is_crouching else .025)
 		if _breath_hold_active: spread_deg *= .7
+	if _held_is_m4():
+		spread_deg *= M4_SPREAD_MULT
 	if is_moving:
 		spread_deg *= 2.5
 	if not is_on_floor() and not (is_instance_valid(rowing_boat) and _boat_standing):
@@ -11782,7 +11938,9 @@ func _update_breath_hold(delta: float, shift_pressed: bool) -> void:
 			_breath_hold_recover = 4.0
 
 func _update_scope_zoom() -> void:
-	var magnification: float = SCOPE_MAGNIFICATIONS[_scope_zoom_index]
+	var mags := _rifle_scope_mags()
+	_scope_zoom_index = clampi(_scope_zoom_index, 0, mags.size() - 1)
+	var magnification: float = mags[_scope_zoom_index]
 	if camera != null:
 		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(_camera_fov)*0.5)/magnification))
 	mouse_sensitivity = 0.0025 / magnification
@@ -11840,6 +11998,14 @@ func _remove_scope_overlay() -> void:
 	_scope_overlay = null
 
 func _initialize_rifle_ammo() -> void:
+	if _held_is_m4():
+		if _m4_ammo_initialized:
+			return
+		_m4_ammo_initialized = true
+		_m4_magazine = M4_MAG_SIZE
+		if _m4_reserve_ammo <= 0:
+			_m4_reserve_ammo = M4_MAG_SIZE * 3
+		return
 	if _rifle_ammo_initialized:
 		return
 	_rifle_ammo_initialized = true
@@ -11850,7 +12016,8 @@ func _initialize_rifle_ammo() -> void:
 		_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
 
 func get_vest_magazines_count() -> int:
-	return int(ceil(float( maxi(0, _rifle_reserve_ammo)) / float(RIFLE_MAG_SIZE)))
+	var mag_size := _rifle_mag_size()
+	return int(ceil(float(maxi(0, _reserve_rounds())) / float(mag_size)))
 
 func _reload_rifle() -> void:
 	var rifle = get_held_item()
@@ -11858,26 +12025,27 @@ func _reload_rifle() -> void:
 		return
 	if _is_reloading:
 		return
-	var needed := RIFLE_MAG_SIZE - _rifle_magazine
+	var mag_size := _rifle_mag_size()
+	var needed := mag_size - _loaded_rounds()
 	if needed <= 0:
-		notice.emit("Cargador lleno (%d/%d). Reserva: %d cargadores (%d balas)." % [_rifle_magazine, RIFLE_MAG_SIZE, get_vest_magazines_count(), _rifle_reserve_ammo])
+		notice.emit("Cargador lleno (%d/%d). Reserva: %d cargadores (%d balas)." % [_loaded_rounds(), mag_size, get_vest_magazines_count(), _reserve_rounds()])
 		return
-	if _rifle_reserve_ammo <= 0:
+	if _reserve_rounds() <= 0:
 		notice.emit("Sin cargadores ni munición de reserva.")
 		return
 	_is_reloading = true
 	var selection_revision := _held_selection_revision
-	notice.emit("Recargando fusil con cargador del chaleco...")
+	notice.emit("Recargando fusil...")
 	await get_tree().create_timer(2.2).timeout
 	_is_reloading = false
 	if is_dead or get_held_item() != rifle or selection_revision != _held_selection_revision:
 		return
-	var to_load: int = min(needed, _rifle_reserve_ammo)
-	_rifle_reserve_ammo -= to_load
-	_rifle_magazine += to_load
+	var to_load: int = min(needed, _reserve_rounds())
+	_set_reserve_rounds(_reserve_rounds() - to_load)
+	_set_loaded_rounds(_loaded_rounds() + to_load)
 	_is_reloading = false
 	var mags_left := get_vest_magazines_count()
-	notice.emit("Fusil recargado: %d/%d en cargador · %d cargadores en reserva (%d balas)." % [_rifle_magazine, RIFLE_MAG_SIZE, mags_left, _rifle_reserve_ammo])
+	notice.emit("Fusil recargado: %d/%d en cargador · %d cargadores en reserva (%d balas)." % [_loaded_rounds(), mag_size, mags_left, _reserve_rounds()])
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null:
 		if main.hud.has_method("_update_equipment_labels"):
@@ -11893,12 +12061,19 @@ func _load_ammo_item(item, index := -1) -> void:
 	var idx: int = index if index >= 0 else inventory.items.find(item)
 	if idx < 0:
 		return
-	var rounds := RIFLE_MAG_SIZE
+	# La 5.56 del M4 va a su propia reserva; el resto alimenta el 7.62 del
+	# francotirador. Los nombres de los items de municion deciden el calibre.
+	var ammo_name := str(item.item_name)
+	var is_556 := ammo_name.findn("5.56") >= 0 or ammo_name.findn("5,56") >= 0 or ammo_name.findn("m4") >= 0 or ammo_name.findn("asalto") >= 0
+	var rounds := M4_MAG_SIZE if is_556 else RIFLE_MAG_SIZE
 	if item.use_value > 0.0:
 		rounds = int(item.use_value)
 	inventory.remove_index(idx, 1)
-	_rifle_reserve_ammo += rounds
-	notice.emit("Munición guardada: +%d balas de reserva (%d en total). Mantén el fusil en las manos y pulsa [R] para recargar." % [rounds, _rifle_reserve_ammo])
+	if is_556:
+		_m4_reserve_ammo += rounds
+	else:
+		_rifle_reserve_ammo += rounds
+	notice.emit("Munición guardada: +%d balas de reserva (%d en total). Mantén el fusil en las manos y pulsa [R] para recargar." % [rounds, _m4_reserve_ammo if is_556 else _rifle_reserve_ammo])
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null:
 		if main.hud.has_method("_update_equipment_labels"):
@@ -11908,7 +12083,23 @@ func _load_ammo_item(item, index := -1) -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
-func get_rifle_info() -> Dictionary:
+func get_rifle_info(weapon_name := "") -> Dictionary:
+	var is_m4 := _held_is_m4() if weapon_name.is_empty() else weapon_name == M4_NAME
+	if is_m4:
+		return {
+			"name": M4_NAME,
+			"ammo_type": M4_AMMO_TYPE,
+			"magazine": _m4_magazine,
+			"mag_size": M4_MAG_SIZE,
+			"reserve": _m4_reserve_ammo,
+			"magazines_left": int(ceil(float(maxi(0, _m4_reserve_ammo)) / float(M4_MAG_SIZE))),
+			"damage": M4_DAMAGE,
+			"range": RIFLE_RANGE,
+			"magnification": M4_SCOPE_MAGNIFICATIONS[0],
+			"zoom_fixed": true,
+			"zero_range": 100.0,
+			"scope_fov": camera.fov if camera != null else 15.0,
+		}
 	return {
 		"name": RIFLE_NAME,
 		"ammo_type": RIFLE_AMMO_TYPE,
@@ -11918,7 +12109,8 @@ func get_rifle_info() -> Dictionary:
 		"magazines_left": get_vest_magazines_count(),
 		"damage": RIFLE_DAMAGE,
 		"range": RIFLE_RANGE,
-		"magnification": SCOPE_MAGNIFICATIONS[_scope_zoom_index],
+		"magnification": _rifle_scope_mags()[clampi(_scope_zoom_index, 0, _rifle_scope_mags().size() - 1)],
+		"zoom_fixed": false,
 		"zero_range": 100.0,
 		"scope_fov": camera.fov if camera != null else 15.0,
 	}
@@ -11940,20 +12132,23 @@ func _shoot_rifle() -> void:
 	var cam_ray_dir := camera.project_ray_normal(aim_point)
 	if _shoot_cooldown > 0.0:
 		return
-	if _rifle_magazine <= 0:
-		if _rifle_reserve_ammo > 0:
+	if _loaded_rounds() <= 0:
+		if _reserve_rounds() > 0:
 			notice.emit("Cargador vacío. Recargando... (o pulsa [R])")
 			_reload_rifle()
 		else:
-			notice.emit("Sin munición. No quedan cargadores en el chaleco.")
+			notice.emit("Sin munición. No quedan cargadores ni balas de reserva.")
 		return
-	if stats.energy < 3.0:
+	var is_m4_shot := _held_is_m4()
+	var energy_cost := M4_ENERGY_COST if is_m4_shot else 3.0
+	if stats.energy < energy_cost:
 		notice.emit("Estas demasiado cansado para disparar.")
 		return
-	_rifle_magazine -= 1
-	_shoot_cooldown = 1.5
+	var burst_rounds := mini(M4_BURST_ROUNDS, _loaded_rounds()) if is_m4_shot else 1
+	_set_loaded_rounds(_loaded_rounds() - burst_rounds)
+	_shoot_cooldown = _rifle_cooldown_time()
 	_crosshair_bloom = minf(_crosshair_bloom + 26.0, 60.0)
-	stats.energy = max(0.0, stats.energy - 3.0)
+	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
 	_is_firing = true
 	var main_shot := get_tree().current_scene if is_inside_tree() else null
@@ -11967,11 +12162,11 @@ func _shoot_rifle() -> void:
 		if w.has_method("flee_from_gunshot"):
 			w.flee_from_gunshot(gunshot_pos, 120.0)
 	# Recoil: strong kick camera up, less when prone/crouching/aiming
-	var recoil_kick := 8.0
+	var recoil_kick := M4_RECOIL if _held_is_m4() else 8.0
 	if is_prone:
-		recoil_kick = 3.0
+		recoil_kick *= 0.375
 	elif is_crouching:
-		recoil_kick = 5.0
+		recoil_kick *= 0.625
 	if _is_aiming:
 		recoil_kick *= 0.7
 	_recoil_pitch -= deg_to_rad(recoil_kick)
@@ -11994,7 +12189,7 @@ func _shoot_rifle() -> void:
 			third_person_action_animation = fire_anim_name
 			third_person_action_timer = 1.0
 			third_person_animation_player.play(fire_anim_name, 0.05)
-	_play_shoot_sound()
+	_play_shoot_sound(is_m4_shot)
 	var space_state := get_world_3d().direct_space_state
 	if _cached_rids_dirty:
 		_cached_exclude_rids = [self.get_rid()]
@@ -12015,8 +12210,9 @@ func _shoot_rifle() -> void:
 	var shot_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
 	if is_instance_valid(_rifle_muzzle): shot_origin = _rifle_muzzle.global_position
 	# Fixed 100 m optical zero, not automatic compensation for the target.
+	var muzzle_speed := M4_MUZZLE_SPEED if _held_is_m4() else RIFLE_MUZZLE_SPEED
 	var zero_target := cam_ray_origin + aim_dir * 100.0
-	var flight_time := -log(1.0-100.0*0.12/RIFLE_MUZZLE_SPEED)/0.12
+	var flight_time := -log(1.0-100.0*0.12/muzzle_speed)/0.12
 	zero_target.y += 0.5*9.81*flight_time*flight_time
 	aim_dir = (zero_target-shot_origin).normalized()
 	# A muzzle pushed through cover must not shoot through that cover.
@@ -12028,10 +12224,22 @@ func _shoot_rifle() -> void:
 	if not blocked.is_empty():
 		shot_origin = blocked.position - aim_dir*.01
 	var shot_wind := _wind_dir * _wind_strength
-	_launch_rifle_projectile(shot_origin, aim_dir, shot_wind, exclude_arr, true)
+	_launch_rifle_projectile(shot_origin, aim_dir, shot_wind, exclude_arr, true, is_m4_shot)
 	# Fogonazo en la punta REAL del cañon (sin rayo/trazadora).
 	var flash_pos: Vector3 = shot_origin
 	_spawn_muzzle_flash(flash_pos, aim_dir)
+	for extra_i in range(1, burst_rounds):
+		get_tree().create_timer(0.09 * float(extra_i)).timeout.connect(func():
+			if not is_inside_tree() or is_dead or not _held_is_m4():
+				return
+			var b_origin := shot_origin
+			if is_instance_valid(_rifle_muzzle):
+				b_origin = _rifle_muzzle.global_position
+			var b_ang := randf() * TAU
+			var b_rad := sqrt(randf()) * tan(spread_rad * 1.15)
+			var b_dir := (aim_dir + right * cos(b_ang) * b_rad + up * sin(b_ang) * b_rad).normalized()
+			_launch_rifle_projectile(b_origin, b_dir, shot_wind, exclude_arr, true, true)
+			_spawn_muzzle_flash(b_origin, b_dir))
 	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
 		_scope_overlay.muzzle_flash()
 	if not is_puppet:
@@ -12043,9 +12251,9 @@ func _shoot_rifle() -> void:
 	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
 		main.hud._update_equipment_labels()
 
-func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP) -> void:
+func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP, is_m4 := false) -> void:
 	# Smooth energy loss; damage remains a game abstraction rather than a medical model.
-	var damage := RIFLE_DAMAGE * exp(-0.0002 * hit_dist)
+	var damage := (M4_DAMAGE if is_m4 else RIFLE_DAMAGE) * exp(-0.0002 * hit_dist)
 	var is_headshot := false
 	if collider is Node3D:
 		var node: Node3D = collider as Node3D
@@ -12084,7 +12292,8 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			if is_player_target:
 				# PvP rifle balance: headshot is a lethal 1-shot kill (120 dmg),
 				# bodyshot deals 60 dmg (2 shots to kill a 100 HP player).
-				var pvp_dmg := 120.0 if is_headshot else 60.0
+				var pvp_dmg := ((M4_PVP_HEAD if is_headshot else M4_PVP_BODY) if is_m4
+					else (120.0 if is_headshot else 60.0))
 				_apply_rifle_target_damage(target_node, pvp_dmg)
 				_spawn_blood_splatter(hit_pos, 1.8 if is_headshot else 1.3)
 				_hit_marker(is_headshot or bool(target_node.get("is_dead")))
@@ -12102,7 +12311,8 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			var peer_id: int = node.get_meta("peer_id", 0)
 			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
 			if not is_proxy_dead and peer_id != 0:
-				var proxy_dmg := 120.0 if is_headshot else 60.0
+				var proxy_dmg := ((M4_PVP_HEAD if is_headshot else M4_PVP_BODY) if is_m4
+					else (120.0 if is_headshot else 60.0))
 				var scene_node := get_tree().current_scene
 				if scene_node != null and scene_node.has_method("_net_damage_player"):
 					var my_id := 1
@@ -12558,19 +12768,13 @@ func _make_action_sound_player(player_name: String, unit_size: float = 6.0, max_
 	add_child(p)
 	return p
 
-func _play_shoot_sound() -> void:
+func _play_shoot_sound(is_m4 := false) -> void:
 	if _shoot_audio_player == null:
 		# A gunshot carries far: full volume inside ~30 m, still audible at
 		# the rifle's own max reach (320 m, matches the server reach check).
 		_shoot_audio_player = _make_action_sound_player("ShootSound", 30.0, 320.0)
-	var path := "res://assets/audio/disparo.wav"
-	var stream: AudioStream = null
-	if ResourceLoader.exists(path):
-		stream = load(path)
-	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
+	var use_m4 := is_m4 or _held_is_m4()
+	var stream := _load_audio_stream(M4_SHOOT_SOUND if use_m4 else "res://assets/audio/disparo.wav")
 	if stream == null:
 		return
 	_shoot_audio_player.stream = stream
@@ -12580,7 +12784,7 @@ func _play_shoot_sound() -> void:
 
 func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	if is_puppet:
-		if _puppet_held != "Rifle francotirador":
+		if not _is_rifle_item_name(_puppet_held):
 			return
 	else:
 		if not _has_rifle_equipped():
@@ -12592,24 +12796,25 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vec
 		third_person_action_animation = _rifle_fire_animation
 		third_person_action_timer = 1.0
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
-	_play_shoot_sound()
+	var remote_m4 := is_puppet and _puppet_held == M4_NAME
+	_play_shoot_sound(remote_m4)
 	# Show muzzle flash at the reported muzzle (no tracer streak) and impact on static surfaces.
 	_spawn_muzzle_flash(_origin, _dir)
 	var excluded: Array[RID] = [get_rid()]
 	_collect_child_collision_rids(self, excluded)
-	_launch_rifle_projectile(_origin, _dir, wind, excluded, false)
+	_launch_rifle_projectile(_origin, _dir, wind, excluded, false, remote_m4)
 
-func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3, excluded: Array[RID], deal_damage: bool) -> void:
+func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3, excluded: Array[RID], deal_damage: bool, is_m4 := false) -> void:
 	if direction.length_squared() < .001 or get_tree().current_scene == null: return
 	var projectile := preload("res://scripts/RifleProjectile.gd").new()
-	projectile.velocity = direction.normalized()*RIFLE_MUZZLE_SPEED
+	projectile.velocity = direction.normalized()*(M4_MUZZLE_SPEED if is_m4 else RIFLE_MUZZLE_SPEED)
 	projectile.wind_velocity = wind
 	projectile.max_distance = RIFLE_RANGE
 	projectile.excluded = excluded.duplicate()
 	get_tree().current_scene.add_child(projectile)
 	projectile.global_position = origin
 	if deal_damage:
-		projectile.impact.connect(_apply_rifle_damage)
+		projectile.impact.connect(_apply_rifle_damage.bind(is_m4))
 	else:
 		projectile.impact.connect(func(collider, point: Vector3, _distance: float, normal: Vector3):
 			if not is_instance_valid(collider): return

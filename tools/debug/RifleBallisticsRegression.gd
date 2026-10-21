@@ -104,6 +104,42 @@ func run():
 		wall.position.x+=1
 		check(mark.global_position.distance_to(before+Vector3.RIGHT)<.001, "Impact marks follow their hit object")
 	check(world.get_node_or_null("BulletDustMotes") != null, "Solid impacts produce dust")
+	# --- Fusil de asalto M4: perfil propio por nombre de item ---
+	actor.is_puppet = true
+	actor._puppet_held = "Fusil de asalto"
+	check(actor._held_is_m4(), "M4 profile resolves from the held item name")
+	check(actor._rifle_scope_mags() == [4.0], "M4 scope is a fixed 4x")
+	actor._scope_zoom_index = 3
+	actor._update_scope_zoom()
+	var m4_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(55.0) * 0.5) / 4.0))
+	check(absf(actor.camera.fov - m4_fov) < 0.01, "M4 wheel cannot exceed its fixed 4x magnification")
+	check(absf(actor._rifle_cooldown_time() - actor.M4_COOLDOWN) < 0.001, "M4 fires semi-auto, not bolt cadence")
+	actor._m4_magazine = 12
+	actor._m4_reserve_ammo = 40
+	check(actor._loaded_rounds() == 12 and actor._reserve_rounds() == 40, "M4 reads its own ammo pools")
+	actor._set_loaded_rounds(7)
+	actor._set_reserve_rounds(35)
+	check(actor._m4_magazine == 7 and actor._m4_reserve_ammo == 35 and actor._rifle_magazine == 0, "M4 pool writes stay in the M4 pool")
+	check(actor._rifle_mag_size() == 30 and actor.M4_MAG_SIZE == 30, "M4 magazine holds 30 5.56x45mm NATO cartridges")
+	check(actor.M4_AMMO_TYPE == "5,56 × 45 mm NATO", "M4 reports 5,56 × 45 mm NATO caliber")
+	check(actor._rifle_model_path_for("Fusil de asalto") == actor.M4_MODEL, "M4 resolves its own model")
+	actor._play_shoot_sound(true)
+	check(actor._shoot_audio_player != null and actor._shoot_audio_player.stream != null, "M4 trimmed burst sound stream loads")
+	if actor._shoot_audio_player != null and actor._shoot_audio_player.stream != null:
+		var dur: float = actor._shoot_audio_player.stream.get_length()
+		check(dur > 0.8 and dur < 2.2, "M4 sound is trimmed to the active audio segment (%.2f s)" % dur)
+	actor._launch_rifle_projectile(Vector3.ZERO, Vector3(0, 0, -1), Vector3.ZERO, [], true, true)
+	var m4_bullet: Node3D = null
+	for c in world.get_children():
+		if c.get("velocity") is Vector3 and absf(c.velocity.length() - 880.0) < 0.5:
+			m4_bullet = c
+	check(m4_bullet != null, "M4 projectile leaves at its own muzzle velocity")
+	if m4_bullet != null:
+		m4_bullet.free()
+	actor._puppet_held = "Rifle francotirador"
+	check(not actor._held_is_m4(), "Sniper keeps the default profile")
+	actor.is_puppet = false
+	actor._puppet_held = ""
 	if "--preview" in OS.get_cmdline_user_args() and DisplayServer.get_name() != "headless":
 		root.size=Vector2i(1280,800)
 		var overlay:=preload("res://scripts/ScopeOverlay.gd").new()

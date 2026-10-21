@@ -196,7 +196,7 @@ func refresh() -> void:
 	if not visible or menu.visible or split_dialog.visible or get_viewport().gui_is_dragging():
 		return
 	var ground := nearby()
-	var state := str(player.inventory.to_array()) + str(player._equipped_slots) + str(player.get_held_item()) + str(player.equipped_backpack) + str(player._rifle_magazine) + ":" + str(player._rifle_reserve_ammo)
+	var state := str(player.inventory.to_array()) + str(player._equipped_slots) + str(player.get_held_item()) + str(player.equipped_backpack) + str(player._rifle_magazine) + ":" + str(player._rifle_reserve_ammo) + ":" + str(player._m4_magazine) + ":" + str(player._m4_reserve_ammo)
 	for slot in range(2):
 		state += str(player.get_back_item_data(slot))
 	for action in ground:
@@ -292,7 +292,7 @@ func item_text(item, qty_override: int = -1, show_held_tag: bool = true) -> Stri
 		state += "%s · " % item.wet_state_label()
 	var extra_ammo := ""
 	if item.item_type == "weapon_rifle" and player.has_method("get_rifle_info"):
-		var ri: Dictionary = player.get_rifle_info()
+		var ri: Dictionary = player.get_rifle_info(str(item.item_name))
 		extra_ammo = "\nCargador: %d/%d · Cargadores: %d (%d balas) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), int(ri.get("magazines_left", 0)), int(ri.get("reserve", 0))]
 	elif item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
 		var ri2: Dictionary = player.get_rifle_info()
@@ -357,7 +357,7 @@ func make_card(title: String, payload: Dictionary, destination: String):
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if item != null else HORIZONTAL_ALIGNMENT_LEFT
 	if item != null and item.item_type == "weapon_rifle" and player.has_method("get_rifle_info"):
-		var ri_card: Dictionary = player.get_rifle_info()
+		var ri_card: Dictionary = player.get_rifle_info(str(item.item_name))
 		label.text += "\n%d/%d · %d carg." % [int(ri_card.get("magazine", 0)), int(ri_card.get("mag_size", 5)), int(ri_card.get("magazines_left", 0))]
 	elif item != null and item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
 		var ri_vest: Dictionary = player.get_rifle_info()

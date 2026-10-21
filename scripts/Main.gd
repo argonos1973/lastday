@@ -3350,6 +3350,9 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
 		player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
 		player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
+		player._m4_ammo_initialized = bool(ammo.get("m4_initialized", false))
+		player._m4_magazine = clampi(int(ammo.get("m4_magazine", 0)), 0, player.M4_MAG_SIZE)
+		player._m4_reserve_ammo = maxi(0, int(ammo.get("m4_reserve", 0)))
 	if player._equipped_slots.get("chaleco", "") == "Chaleco táctico" and not player._rifle_ammo_initialized and player._rifle_reserve_ammo < player.RIFLE_MAG_SIZE * 5:
 		player._rifle_reserve_ammo = player.RIFLE_MAG_SIZE * 5
 	var held_payload = extra.get("held_item_data", {})
@@ -4602,6 +4605,9 @@ func _build_inventory_sync_extra(actual_held) -> Dictionary:
 		"initialized": player._rifle_ammo_initialized,
 		"magazine": player._rifle_magazine,
 		"reserve": player._rifle_reserve_ammo,
+		"m4_initialized": player._m4_ammo_initialized,
+		"m4_magazine": player._m4_magazine,
+		"m4_reserve": player._m4_reserve_ammo,
 	}
 	if player.stats != null and player.stats.has_method("to_dict"):
 		var stats_extra: Dictionary = player.stats.to_dict()
@@ -6079,8 +6085,15 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 		"weapon":
 			return [GameConst.KNIFE_MODEL]
 		"weapon_rifle":
+			if item_name == PlayerController.M4_NAME:
+				return ["res://assets/models/weapons/m4_carbine_rifle.glb"]
 			return ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"]
 		"ammo":
+			var ammo_name := item_name
+			if ammo_name.findn("5.56") >= 0 or ammo_name.findn("5,56") >= 0 or ammo_name.findn("m4") >= 0 or ammo_name.findn("asalto") >= 0:
+				if ammo_name.findn("bala") >= 0:
+					return ["res://assets/models/weapons/m4_bullets.glb"]
+				return ["res://assets/models/weapons/m4_magazine.glb"]
 			return ["res://assets/models/weapons/rifle_magazine.glb"]
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
@@ -9045,10 +9058,15 @@ func _create_house_loot() -> void:
 		# remote_tent_loot and guaranteed draws reference this pool by index).
 		{"name": "Chaleco táctico", "type": "clothing", "weight": 4.0, "qty": 1, "use": 0.4, "paths": [MilitaryJackets.pickup_path("Chaleco táctico")], "scale": 0.8, "rot": Vector3(90, 60, 0), "color": Color.WHITE},
 		{"name": "Mochila militar", "type": "backpack", "weight": 1.8, "qty": 1, "use": 0.0, "paths": [GameConst.MILITARY_BACKPACK_MODEL], "scale": 1.0, "rot": Vector3(0, 150, 0), "color": Color(0.10, 0.12, 0.08)},
+		# M4 ammo (indices 20-21 — appended; 18/19 are referenced by id below).
+		{"name": "Cargador de M4", "type": "ammo", "weight": 0.45, "qty": 1, "use": 30.0, "paths": ["res://assets/models/weapons/m4_magazine.glb"], "scale": 1.0, "rot": Vector3(0, 55, 0), "color": Color.TRANSPARENT},
+		{"name": "Balas 5.56", "type": "ammo", "weight": 0.24, "qty": 1, "use": 30.0, "paths": ["res://assets/models/weapons/m4_bullets.glb"], "scale": 1.2, "rot": Vector3(0, 25, 0), "color": Color.TRANSPARENT},
 	]
 	var hat_template := {"name": "Sombrero de pescador", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.07, "paths": [GameConst.FISHERMANS_HAT_MODEL], "scale": 1.0, "rot": Vector3(0, 20, 0), "color": Color(0.12, 0.10, 0.08), "rare": true, "tint": Color(0.20, 0.25, 0.15), "camo": true}
 	var rifle_template := {"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 3.5, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"], "scale": 0.068, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color(0.25, 0.22, 0.15)}
 	var mag_template := {"name": "Cargador de fusil", "type": "ammo", "weight": 0.3, "qty": 1, "use": 5.0, "paths": ["res://assets/models/weapons/rifle_magazine.glb"], "scale": 1.6, "rot": Vector3(0, 55, 0), "color": Color(0.10, 0.11, 0.12)}
+	var m4_template := {"name": PlayerController.M4_NAME, "type": "weapon_rifle", "weight": 3.1, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/m4_carbine_rifle.glb"], "scale": 6.5, "rot": Vector3(-90, 30, 180), "flat": true, "color": Color.TRANSPARENT}
+	var m4_mag_template := {"name": "Cargador de M4", "type": "ammo", "weight": 0.45, "qty": 1, "use": 30.0, "paths": ["res://assets/models/weapons/m4_magazine.glb"], "scale": 1.0, "rot": Vector3(0, 55, 0), "color": Color.TRANSPARENT}
 	var tent_origin := _military_tent_pos
 	var tent_half_w := 4.0
 	var tent_half_d := 5.5
@@ -9098,6 +9116,13 @@ func _create_house_loot() -> void:
 		mag_data["pos"] = tent_origin + Vector3(-0.5 + 0.7 * mi, 0.0, -2.3).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
 		mag_data["floor_y"] = tent_floor_y
 		_create_pickup_item(mag_data)
+	# Dos cargadores 5.56 del M4 junto a los del francotirador — IDs fijos.
+	for m4i in range(2):
+		var m4mag_data: Dictionary = m4_mag_template.duplicate()
+		m4mag_data["id"] = "tent_loot_m4mag_%d" % m4i
+		m4mag_data["pos"] = tent_origin + Vector3(-0.5 + 0.7 * m4i, 0.0, -2.8).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
+		m4mag_data["floor_y"] = tent_floor_y
+		_create_pickup_item(m4mag_data)
 	# Guarantee a few clothing items in tent (not all, to avoid excessive loot)
 	# Use fixed IDs so cut/picked-up items don't respawn after save/load
 	# Limit to 1 pants max: pick 1 from pants pool (indices 3-6) and 1 from non-pants clothing
@@ -9139,6 +9164,19 @@ func _create_house_loot() -> void:
 	else:
 		# Keep the draw count identical whether or not the id is depleted.
 		_find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+	# Fusil de asalto M4 garantizado + 2 cargadores 5.56 — IDs fijos, no
+	# consumen RNG del mundo y no reaparecen tras recogerse.
+	var rt_m4: Dictionary = m4_template.duplicate()
+	rt_m4["id"] = "remote_tent_loot_m4"
+	rt_m4["pos"] = remote_tent_origin + Vector3(1.2, 0.0, -2.2).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)
+	rt_m4["floor_y"] = remote_tent_floor_y
+	_create_pickup_item(rt_m4)
+	for rmi in range(2):
+		var rt_mag: Dictionary = m4_mag_template.duplicate()
+		rt_mag["id"] = "remote_tent_loot_m4mag_%d" % rmi
+		rt_mag["pos"] = remote_tent_origin + Vector3(0.4 + 0.6 * rmi, 0.0, -2.5).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0, remote_tent_floor_y, 0)
+		rt_mag["floor_y"] = remote_tent_floor_y
+		_create_pickup_item(rt_mag)
 	var remote_tent_loot := [
 		tent_loot_pool[3], # green pants
 		tent_loot_pool[4], # blue pants
@@ -9211,6 +9249,19 @@ func _create_house_loot() -> void:
 		_create_pickup_item(ct_rifle)
 	else:
 		_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+	# M4 + 2 cargadores 5.56 tambien garantizados en la tienda militar de la
+	# ciudad — posiciones fijas, sin consumir RNG del mundo.
+	var ct_m4: Dictionary = m4_template.duplicate()
+	ct_m4["id"] = "city_tent_loot_m4"
+	ct_m4["pos"] = city_tent_origin + Vector3(1.2, 0.0, -2.2).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
+	ct_m4["floor_y"] = city_tent_floor_y
+	_create_pickup_item(ct_m4)
+	for cmi in range(2):
+		var ct_mag: Dictionary = m4_mag_template.duplicate()
+		ct_mag["id"] = "city_tent_loot_m4mag_%d" % cmi
+		ct_mag["pos"] = city_tent_origin + Vector3(0.4 + 0.6 * cmi, 0.0, -2.5).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
+		ct_mag["floor_y"] = city_tent_floor_y
+		_create_pickup_item(ct_mag)
 	_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
 	if not _depleted_action_ids.has("city_tent_loot_hat"):
 		var ct_hat: Dictionary = hat_template.duplicate()

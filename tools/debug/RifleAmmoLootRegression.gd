@@ -107,5 +107,41 @@ func _initialize() -> void:
 	check(player2._rifle_reserve_ammo == player2.RIFLE_MAG_SIZE,
 		"loose magazine restores a dead reserve without any vest")
 
+	# 5.56 ammo routes to its own M4 pool — never to the 7.62 reserve.
+	var m4_res_before: int = player._m4_reserve_ammo
+	var res762_before: int = player._rifle_reserve_ammo
+	var m4mag = ItemScript.create("Cargador de M4", "ammo", 0.45, 1, 30.0)
+	player.inventory.add_item(m4mag)
+	player._use_inventory_index(_find_item(player, "Cargador de M4"))
+	check(player._m4_reserve_ammo == m4_res_before + 30,
+		"M4 magazine feeds 30 NATO 5.56 rounds into the M4 reserve")
+	check(player._rifle_reserve_ammo == res762_before,
+		"M4 magazine never touches the 7.62 reserve")
+	check(_find_item(player, "Cargador de M4") < 0, "M4 magazine is consumed on use")
+	var loose = ItemScript.create("Balas 5.56", "ammo", 0.24, 1, 30.0)
+	player.inventory.add_item(loose)
+	player._use_inventory_index(_find_item(player, "Balas 5.56"))
+	check(player._m4_reserve_ammo == m4_res_before + 60,
+		"loose 5.56 rounds also feed the M4 reserve")
+	# The M4 reload drains only its own pool (30-round magazine).
+	var player3 := TestPlayer.new()
+	root.add_child(player3)
+	player3.set_process(false)
+	player3.set_physics_process(false)
+	player3._held_item_reference = ItemScript.create("Fusil de asalto", "weapon_rifle", 3.1, 1, 0.0)
+	player3._held_item_external = true
+	player3._m4_ammo_initialized = true
+	player3._m4_magazine = 5
+	player3._m4_reserve_ammo = 40
+	player3._rifle_magazine = 4
+	player3._rifle_reserve_ammo = 11
+	player3._reload_rifle()
+	await create_timer(2.5).timeout
+	check(player3._m4_magazine == 30 and player3._m4_reserve_ammo == 15,
+		"M4 reload tops its 30-round magazine from its own reserve")
+	check(player3._rifle_magazine == 4 and player3._rifle_reserve_ammo == 11,
+		"M4 reload never touches the 7.62 pools")
+	player3.free()
+
 	print("RIFLE_AMMO_LOOT failures=", failures)
 	quit(1 if failures else 0)

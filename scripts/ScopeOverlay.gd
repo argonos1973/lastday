@@ -88,7 +88,8 @@ func _process(_delta: float) -> void:
 		var ri: Dictionary = player.get_rifle_info()
 		_scope_fov = float(ri.get("scope_fov", 15.0))
 		_magnification = float(ri.get("magnification",4.0))
-		wind_text = "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification + wind_text
+		var zoom_label := "%.0f× fija · Cero 100 m\n" % _magnification if bool(ri.get("zoom_fixed", false)) else "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification
+		wind_text = zoom_label + wind_text
 		queue_redraw()
 		var mags_left: int = int(ri.get("magazines_left", 0))
 		wind_text += "\nMunición: %d/%d · Cargadores: %d (%d) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), mags_left, int(ri.get("reserve", 0))]

@@ -113,7 +113,8 @@ func run():
 		actor._toggle_aim() # Headless display cannot capture a mouse.
 	else:
 		actor._input(rmb)
-	check(actor._is_aiming and is_equal_approx(actor.camera.fov,25.0), "Right button enters ADS through real input path")
+	var expected_ads_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(actor._camera_fov) * 0.5) / 4.0))
+	check(actor._is_aiming and is_equal_approx(actor.camera.fov, expected_ads_fov), "Right button enters ADS through real input path")
 	# RMB starts with the camera 6.5 m behind the player; its interpolation
 	# must not pull the physical weapon out of the hands.
 	for camera_pos in [actor.THIRD_PERSON_CAMERA_POS, Vector3(.1,2.0,3), Vector3(.12,1.65,.15)]:
@@ -195,6 +196,51 @@ func run():
 	for rig in actor._grip_rig.values():
 		for entry in rig["fingers"]:
 			check(skel.get_bone_pose_position(entry[0]).distance_to(skel.get_bone_rest(entry[0]).origin) < 0.001, "Un-aim restores finger origins")
+	# --- M4: the same rig path must mount the assault rifle with its own
+	# geometry (180° flip, ~x55 scale, separate grip/eye points).
+	actor.is_puppet = true
+	actor.puppet_apply_visuals("", "Fusil de asalto", "")
+	actor.process_remote(1.0 / 30.0)
+	check(is_instance_valid(actor._rifle_model), "M4 model builds on the puppet")
+	var m4_mesh_found := false
+	var stack: Array = [actor._rifle_model]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if str(n.name).findn("Flash_Muzzle") >= 0 or str(n.name).findn("Butt_Stock") >= 0:
+			m4_mesh_found = true
+		for c in n.get_children():
+			stack.append(c)
+	check(m4_mesh_found, "Mounted weapon is the M4 model, not the sniper")
+	check(is_instance_valid(actor._rifle_muzzle) and is_instance_valid(actor._rifle_stock_ref), "M4 keeps muzzle/stock markers")
+	if is_instance_valid(actor._rifle_muzzle) and is_instance_valid(actor._rifle_stock_ref):
+		var m4_len := actor._rifle_muzzle.global_position.distance_to(actor._rifle_stock_ref.global_position)
+		check(m4_len > 1.0 and m4_len < 1.65, "M4 renders at character-proportioned carbine length (%.2f m)" % m4_len)
+	check(actor._rg_eye.y < 0.12, "M4 geometry uses its own measured space")
+	# Aiming the M4: the direct-aim solver must place the barrel forward and
+	# put both hands on its own grip points (not the sniper's).
+	actor._is_aiming = true
+	player.play("external/RifleAimIdleExternal", 0.0)
+	for frame in 30:
+		player.advance(1.0 / 30.0)
+		actor._update_rifle_ik(skel, 1.0 / 30.0)
+		actor._on_skeleton_updated()
+	if is_instance_valid(actor._rifle_muzzle) and is_instance_valid(actor._rifle_stock_ref):
+		var m4_aim_barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
+		check(m4_aim_barrel.dot(-actor.global_basis.z) > 0.99, "M4 barrel follows facing while aiming")
+	var lidx := skel.find_bone("mixamorig_LeftHandMiddle1")
+	var lrig := actor._grip_rig_for(skel, skel.get_bone_parent(lidx), true)
+	var lactual: Vector3 = skel.global_transform * skel.get_bone_global_pose(lidx) * lrig["middle_pivot"]
+	var lexpected: Vector3 = actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle
+	check(lactual.distance_to(lexpected) < 0.02, "M4 left hand lands on its own handguard")
+	var ridx := skel.find_bone("mixamorig_RightHandMiddle1")
+	var rrig := actor._grip_rig_for(skel, skel.get_bone_parent(ridx), false)
+	var ractual: Vector3 = skel.global_transform * skel.get_bone_global_pose(ridx) * rrig["middle_pivot"]
+	var rexpected: Vector3 = actor._rifle_weapon_offset.global_transform * actor._rg_right_knuckle
+	check(ractual.distance_to(rexpected) < 0.02, "M4 right hand lands on its own grip")
+	actor._is_aiming = false
+	actor.puppet_apply_visuals("", "Rifle francotirador", "")
+	actor.process_remote(1.0 / 30.0)
+	check(actor._rg_eye == actor.RIFLE_AIM_EYE, "Swapping back restores sniper geometry")
 	actor.stats.free()
 	actor.free()
 	print("RIFLE_GRIP_ERRORS=", errors, " MAX_CONTACT_ERROR_METRES=", worst)

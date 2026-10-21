@@ -130,7 +130,7 @@ static func collect_player_data(player: Node) -> Dictionary:
 	data["pos"] = [player.global_position.x, player.global_position.y, player.global_position.z]
 	data["rot"] = player.rotation.y
 	data["rowboat_aboard"] = is_instance_valid(player.get("rowing_boat"))
-	data["rifle_ammo"] = {"initialized": player._rifle_ammo_initialized, "magazine": player._rifle_magazine, "reserve": player._rifle_reserve_ammo}
+	data["rifle_ammo"] = {"initialized": player._rifle_ammo_initialized, "magazine": player._rifle_magazine, "reserve": player._rifle_reserve_ammo, "m4_initialized": player._m4_ammo_initialized, "m4_magazine": player._m4_magazine, "m4_reserve": player._m4_reserve_ammo}
 	var anim := "idle"
 	if player.has_method("_get_current_anim"):
 		anim = player._get_current_anim()
@@ -509,6 +509,9 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 	player._rifle_ammo_initialized = bool(ammo.get("initialized", false))
 	player._rifle_magazine = clampi(int(ammo.get("magazine", 0)), 0, player.RIFLE_MAG_SIZE)
 	player._rifle_reserve_ammo = maxi(0, int(ammo.get("reserve", 0)))
+	player._m4_ammo_initialized = bool(ammo.get("m4_initialized", false))
+	player._m4_magazine = clampi(int(ammo.get("m4_magazine", 0)), 0, player.M4_MAG_SIZE)
+	player._m4_reserve_ammo = maxi(0, int(ammo.get("m4_reserve", 0)))
 	var held_item_data = data.get("held_item_data", {})
 	if not held_item_data is Dictionary:
 		held_item_data = {}

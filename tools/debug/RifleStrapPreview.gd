@@ -21,9 +21,13 @@ func run() -> void:
 	actor.setup_as_puppet()
 	actor.equip_clothing("Camiseta")
 	var suffix := ""
+	if "--m4" in OS.get_cmdline_user_args():
+		var ItemScript = preload("res://scripts/Item.gd")
+		actor.inventory.add_item(ItemScript.create(actor.M4_NAME, "weapon_rifle", 3.1, 1, 0.0))
+		suffix += "_m4"
 	if "--jacket" in OS.get_cmdline_user_args():
 		actor.equip_clothing("Chaqueta camuflaje")
-		suffix = "_jacket"
+		suffix += "_jacket"
 	actor._build_rifle_on_back()
 	if "--pose" in OS.get_cmdline_user_args():
 		# Arms down, torso leaning forward and twisted: the band must follow
