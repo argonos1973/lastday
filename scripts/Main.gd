@@ -2501,6 +2501,8 @@ var _military_tent_pos := Vector3.ZERO
 var _remote_tent_pos := Vector3.ZERO
 var _city_tent_pos := Vector3.ZERO
 const CITY_TENT_YAW := 205.0
+var _city_tent2_pos := Vector3.ZERO
+var _city_tent2_yaw := CITY_TENT_YAW
 var _spawn_zones: Array = [
 	Vector3(8.0, 0.4, 2.5),
 	Vector3(15.0, 0.4, -35.0),
@@ -6570,6 +6572,7 @@ func _create_map() -> void:
 		_military_tent_pos = _find_flat_area_for_tent()
 		_remote_tent_pos = _find_flat_area_for_remote_tent()
 		_city_tent_pos = _find_flat_area_for_city_tent()
+		_city_tent2_pos = _find_flat_area_for_city_tent2()
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
@@ -7909,6 +7912,46 @@ func _find_flat_area_for_city_tent() -> Vector3:
 	_city_tent_pos = best_pos
 	return best_pos
 
+func _find_flat_area_for_city_tent2() -> Vector3:
+	# Second military store right next to the first one — same flatness rules,
+	# 16–36 m away so the pair reads as a small encampment, not one tent.
+	if _city_tent_pos == Vector3.ZERO:
+		_city_tent_pos = _find_flat_area_for_city_tent()
+	var best_pos := Vector3.ZERO
+	var best_score := 99999.0
+	for angle_deg in range(0, 360, 10):
+		var angle: float = deg_to_rad(float(angle_deg))
+		for dist in [16.0, 22.0, 28.0, 36.0]:
+			var cx: float = _city_tent_pos.x + dist * cos(angle)
+			var cz: float = _city_tent_pos.z + dist * sin(angle)
+			if abs(cx) > MAP_EXTENT * 0.95:
+				continue
+			var cand := Vector3(cx, 0, cz)
+			if CityExpansion.near_building(cand, 12.0):
+				continue
+			if CityExpansion.on_road(cand, 6.0, _south_road_end()):
+				continue
+			if _is_near_river(cand, 15.0):
+				continue
+			var cy: float = _get_ground_height(cand)
+			var max_diff := 0.0
+			for s in range(10):
+				var sa: float = deg_to_rad(float(s) * 36.0)
+				var sy: float = _get_ground_height(Vector3(cx + 6.0 * cos(sa), 0, cz + 6.0 * sin(sa)))
+				max_diff = max(max_diff, abs(sy - cy))
+			var score: float = max_diff + absf(dist - 22.0) * 0.05
+			if max_diff < 1.2 and score < best_score:
+				best_score = score
+				best_pos = cand
+	if best_pos == Vector3.ZERO:
+		best_pos = _city_tent_pos + Vector3(22.0, 0, 8.0)
+	_city_tent2_pos = best_pos
+	# Face the door gap (local +Z) toward the first tent.
+	var dir := _city_tent_pos - best_pos
+	if dir.length() > 0.5:
+		_city_tent2_yaw = rad_to_deg(atan2(dir.x, dir.z))
+	return best_pos
+
 func _create_world_details() -> void:
 	_create_new_world_props()
 	_create_fence_line(Vector3(-8, 0, -9), Vector3(-8, 0, 8), 5)
@@ -7953,6 +7996,23 @@ func _create_world_details() -> void:
 			# Drape the cloth-simulated camo net directly over the red container (centered at cont_pos).
 			if _try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCityNet", cont_pos, Vector3.ONE, Vector3(0, cont_yaw, 0), false, 0.0):
 				_apply_camo_net_material(get_node_or_null("MilitaryTentCityNet"))
+	# Second military store next to the first — loot is split between the two.
+	var city_tent2_pos := _find_flat_area_for_city_tent2()
+	var city_tent2_ground_y := _get_exact_ground_y(city_tent2_pos.x, city_tent2_pos.z)
+	_try_instance_external_scene(["res://assets/models/props/tent/tent_military.glb"], "MilitaryTentCity2", Vector3(city_tent2_pos.x, city_tent2_ground_y, city_tent2_pos.z), Vector3.ONE * 1.5, Vector3(0, _city_tent2_yaw, 0), true, 0.0)
+	HOUSE_FOOTPRINTS.append({"origin": city_tent2_pos, "w": 9.0, "d": 12.0})
+	var city_tent2_node := get_node_or_null("MilitaryTentCity2")
+	if city_tent2_node != null:
+		_build_military_tent_collision(city_tent2_node, "MilitaryTentCity2Collision", "MilitaryTentCity2RoofCollision")
+		_add_tent_interior_light(city_tent2_node, "MilitaryTentCity2Light")
+		var cont2_yaw := _city_tent2_yaw - 90.0
+		var cont2_off := Vector3(10.5, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw))
+		var cont2_pos := Vector3(city_tent2_pos.x + cont2_off.x, city_tent2_ground_y, city_tent2_pos.z + cont2_off.z)
+		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "MilitaryTentCity2Container", cont2_pos, Vector3.ONE, Vector3(0, cont2_yaw, 0), true, 0.0):
+			_create_invisible_collision_box_rotated("MilitaryTentCity2ContainerCollision", cont2_pos + Vector3(0, 1.45, 0), Vector3(7.25, 2.9, 2.96), cont2_yaw)
+			_register_wildlife_blocker(cont2_pos, 7.0)
+			if _try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCity2Net", cont2_pos, Vector3.ONE, Vector3(0, cont2_yaw, 0), false, 0.0):
+				_apply_camo_net_material(get_node_or_null("MilitaryTentCity2Net"))
 
 func _apply_camo_net_material(net_root: Node) -> void:
 	if net_root == null:
@@ -9259,40 +9319,8 @@ func _create_house_loot() -> void:
 		_create_pickup_item(ct_rifle)
 	else:
 		_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
-	# M4 + 2 cargadores 5.56 tambien garantizados en la tienda militar de la
-	# ciudad — posiciones fijas, sin consumir RNG del mundo.
-	var ct_m4: Dictionary = m4_template.duplicate()
-	ct_m4["id"] = "city_tent_loot_m4"
-	ct_m4["pos"] = city_tent_origin + Vector3(1.2, 0.0, -2.2).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
-	ct_m4["floor_y"] = city_tent_floor_y
-	_create_pickup_item(ct_m4)
-	for cmi in range(2):
-		var ct_mag: Dictionary = m4_mag_template.duplicate()
-		ct_mag["id"] = "city_tent_loot_m4mag_%d" % cmi
-		ct_mag["pos"] = city_tent_origin + Vector3(0.4 + 0.6 * cmi, 0.0, -2.5).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
-		ct_mag["floor_y"] = city_tent_floor_y
-		_create_pickup_item(ct_mag)
-	_find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
-	if not _depleted_action_ids.has("city_tent_loot_hat"):
-		var ct_hat: Dictionary = hat_template.duplicate()
-		ct_hat["pos"] = city_tent_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
-		ct_hat["pos"].y = city_tent_floor_y
-		ct_hat["floor_y"] = city_tent_floor_y
-		ct_hat["scale"] = 1.4
-		ct_hat["id"] = "city_tent_loot_hat"
-		_create_pickup_item(ct_hat)
 	var city_tent_helmet := {"id": "city_tent_loot_helmet", "name": "Casco militar", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.05, "paths": [GameConst.MILITARY_HELMET_MODEL], "scale": 1.3, "rot": Vector3(0, CITY_TENT_YAW, 0), "color": Color.TRANSPARENT, "floor_y": city_tent_floor_y, "pos": city_tent_origin + Vector3(-1.8, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)}
 	_create_pickup_item(city_tent_helmet)
-	var city_tent_vest: Dictionary = tent_loot_pool[18].duplicate()
-	city_tent_vest["id"] = "city_tent_loot_vest"
-	city_tent_vest["pos"] = city_tent_origin + Vector3(1.6, 0.0, -1.4).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
-	city_tent_vest["floor_y"] = city_tent_floor_y
-	_create_pickup_item(city_tent_vest)
-	var city_tent_pack: Dictionary = tent_loot_pool[19].duplicate()
-	city_tent_pack["id"] = "city_tent_loot_milbackpack"
-	city_tent_pack["pos"] = city_tent_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0, city_tent_floor_y, 0)
-	city_tent_pack["floor_y"] = city_tent_floor_y
-	_create_pickup_item(city_tent_pack)
 	var city_tent_loot := [
 		tent_loot_pool[0], # Chaqueta de campaña verde
 		tent_loot_pool[1], # Chaqueta de campaña azul
@@ -9303,23 +9331,66 @@ func _create_house_loot() -> void:
 		tent_loot_pool[16], # Lata de atun
 		tent_loot_pool[17], # Botella de plastico
 	]
-	# Guaranteed: 1 jacket + 1 pants + 1 extra (gloves/alt jacket/alt pants)
-	var ct_extra_choices := [1, 3, 4]
-	var ct_guaranteed := [0, 2, ct_extra_choices[_world_rng.randi() % ct_extra_choices.size()]]
+	# Tienda 1: francotirador + casco + chaqueta + pantalones + 1 comida.
 	var _ct_loot_idx := 0
-	for gidx in ct_guaranteed:
+	for gidx in [0, 2]:
 		var g_data: Dictionary = city_tent_loot[gidx].duplicate()
 		g_data["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
 		g_data["pos"].y = city_tent_ground_y + 0.06
 		g_data["id"] = "city_tent_loot_item_%d" % _ct_loot_idx
 		_ct_loot_idx += 1
 		_create_pickup_item(g_data)
-	for _fi in range(2):
-		var food_data: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
-		food_data["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
-		food_data["pos"].y = city_tent_ground_y + 0.06
-		food_data["id"] = "city_tent_loot_food_%d" % _fi
-		_create_pickup_item(food_data)
+	var ct_food: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
+	ct_food["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+	ct_food["pos"].y = city_tent_ground_y + 0.06
+	ct_food["id"] = "city_tent_loot_food_0"
+	_create_pickup_item(ct_food)
+	# Tienda 2 (junto a la primera): M4 + 2 cargadores 5.56 + chaleco + mochila
+	# militar + sombrero + 1 prenda extra + 1 comida — IDs fijos, sin RNG.
+	var city_tent2_origin := _city_tent2_pos
+	if city_tent2_origin == Vector3.ZERO:
+		city_tent2_origin = city_tent_origin + Vector3(22.0, 0.0, 8.0)
+	var city_tent2_ground_y := _get_exact_ground_y(city_tent2_origin.x, city_tent2_origin.z)
+	var city_tent2_floor_y := city_tent2_ground_y + 0.10
+	var ct2_m4: Dictionary = m4_template.duplicate()
+	ct2_m4["id"] = "city_tent2_loot_m4"
+	ct2_m4["pos"] = city_tent2_origin + Vector3(1.2, 0.0, -2.2).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0, city_tent2_floor_y, 0)
+	ct2_m4["floor_y"] = city_tent2_floor_y
+	_create_pickup_item(ct2_m4)
+	for cmi in range(2):
+		var ct2_mag: Dictionary = m4_mag_template.duplicate()
+		ct2_mag["id"] = "city_tent2_loot_m4mag_%d" % cmi
+		ct2_mag["pos"] = city_tent2_origin + Vector3(0.4 + 0.6 * cmi, 0.0, -2.5).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0, city_tent2_floor_y, 0)
+		ct2_mag["floor_y"] = city_tent2_floor_y
+		_create_pickup_item(ct2_mag)
+	var ct2_vest: Dictionary = tent_loot_pool[18].duplicate()
+	ct2_vest["id"] = "city_tent2_loot_vest"
+	ct2_vest["pos"] = city_tent2_origin + Vector3(1.6, 0.0, -1.4).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0, city_tent2_floor_y, 0)
+	ct2_vest["floor_y"] = city_tent2_floor_y
+	_create_pickup_item(ct2_vest)
+	var ct2_pack: Dictionary = tent_loot_pool[19].duplicate()
+	ct2_pack["id"] = "city_tent2_loot_milbackpack"
+	ct2_pack["pos"] = city_tent2_origin + Vector3(1.8, 0.0, 1.8).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0, city_tent2_floor_y, 0)
+	ct2_pack["floor_y"] = city_tent2_floor_y
+	_create_pickup_item(ct2_pack)
+	var ct2_hat: Dictionary = hat_template.duplicate()
+	ct2_hat["pos"] = city_tent2_origin + Vector3(-1.8, 0.0, 1.0).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw))
+	ct2_hat["pos"].y = city_tent2_floor_y
+	ct2_hat["floor_y"] = city_tent2_floor_y
+	ct2_hat["scale"] = 1.4
+	ct2_hat["id"] = "city_tent2_loot_hat"
+	_create_pickup_item(ct2_hat)
+	var ct2_extra_choices := [1, 3, 4]
+	var ct2_extra: Dictionary = city_tent_loot[ct2_extra_choices[_world_rng.randi() % ct2_extra_choices.size()]].duplicate()
+	ct2_extra["pos"] = _find_pos_inside_house(city_tent2_origin, city_tent_half_w, city_tent_half_d)
+	ct2_extra["pos"].y = city_tent2_ground_y + 0.06
+	ct2_extra["id"] = "city_tent2_loot_item_0"
+	_create_pickup_item(ct2_extra)
+	var ct2_food: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
+	ct2_food["pos"] = _find_pos_inside_house(city_tent2_origin, city_tent_half_w, city_tent_half_d)
+	ct2_food["pos"].y = city_tent2_ground_y + 0.06
+	ct2_food["id"] = "city_tent2_loot_food_0"
+	_create_pickup_item(ct2_food)
 	# Water tower loot in the starting village (-43, 0, -48) and Clock Tower loot in the city (41, 0, 750)
 	var tower_rng := RandomNumberGenerator.new()
 	tower_rng.seed = _stable_loot_seed("towers_loot_v1")
@@ -12686,7 +12757,7 @@ func _is_player_in_house(pos: Vector3) -> bool:
 	if abs(pos.x - remote_barn_origin.x) < 4.0 and abs(pos.z - remote_barn_origin.z) < 9.0:
 		return true
 	# Use the actual generated tent locations and their model rotations.
-	for tent in [{"pos": _military_tent_pos, "yaw": 35.0}, {"pos": _remote_tent_pos, "yaw": 120.0}, {"pos": _city_tent_pos, "yaw": CITY_TENT_YAW}]:
+	for tent in [{"pos": _military_tent_pos, "yaw": 35.0}, {"pos": _remote_tent_pos, "yaw": 120.0}, {"pos": _city_tent_pos, "yaw": CITY_TENT_YAW}, {"pos": _city_tent2_pos, "yaw": _city_tent2_yaw}]:
 		var origin: Vector3 = tent["pos"]
 		if origin == Vector3.ZERO:
 			continue
