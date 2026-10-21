@@ -8,6 +8,7 @@ var excluded: Array[RID] = []
 var traveled := 0.0
 
 func _physics_process(delta: float) -> void:
+	if is_queued_for_deletion(): return
 	var remaining := delta
 	while remaining > 0.000001:
 		var step := minf(remaining, 1.0 / 240.0)
@@ -16,7 +17,7 @@ func _physics_process(delta: float) -> void:
 		var displacement := velocity * step + acceleration * (0.5 * step * step)
 		velocity += acceleration * step
 		displacement = displacement.limit_length(max_distance - traveled)
-		var query := PhysicsRayQueryParameters3D.create(global_position, global_position + displacement)
+		var query := PhysicsRayQueryParameters3D.create(global_position, global_position + displacement, 5)
 		query.exclude = excluded
 		query.collide_with_areas = true
 		query.hit_from_inside = true
@@ -27,6 +28,23 @@ func _physics_process(delta: float) -> void:
 			excluded.append(hit.rid)
 			query.exclude = excluded
 			hit = get_world_3d().direct_space_state.intersect_ray(query)
+		var world := get_tree().current_scene
+		if world != null and world.has_method("raycast_distant_props"):
+			var endpoint: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
+			var distant: Dictionary = world.raycast_distant_props(global_position, endpoint)
+			if not distant.is_empty(): hit = distant
+		# Transparent rivers/lakes have no physics surface: stop at the water
+		# before a submerged terrain hit, and use the existing splash/ripple FX.
+		var end: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
+		if world != null and world.has_method("get_river_surface_y_at") and world.has_method("get_river_depth_at"):
+			var surface_y: float = world.get_river_surface_y_at(end)
+			if global_position.y > surface_y and end.y <= surface_y:
+				var t := (global_position.y-surface_y)/maxf(.00001,global_position.y-end.y)
+				var water_point := global_position.lerp(end,t)
+				if float(world.get_river_depth_at(water_point)) > .02:
+					if world.has_method("_play_water_drop_effect"): world._play_water_drop_effect(water_point)
+					queue_free()
+					return
 		if not hit.is_empty():
 			traveled += global_position.distance_to(hit.position)
 			impact.emit(hit.collider, hit.position, traveled, hit.normal)

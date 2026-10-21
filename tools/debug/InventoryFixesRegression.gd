@@ -173,7 +173,7 @@ func run() -> void:
 	check(total_meat == 4, "No units are lost or duplicated across hands/compartment moves")
 
 	# --- Headwear carries no storage.
-	for hat in ["Sombrero de pescador", "Casco militar", "Gorro de piel", "Gorro de otoño", "Tocado de piel animal"]:
+	for hat in ["Sombrero de pescador", "Casco militar", "Gorra militar", "Gorro de piel", "Gorro de otoño", "Tocado de piel animal"]:
 		var hat_item = ItemData.create(hat, "clothing", 0.3)
 		check(hat_item.storage_capacity == 0, hat + " has zero storage capacity")
 	var slots_before: int = player.inventory.max_slots

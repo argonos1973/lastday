@@ -12,6 +12,15 @@ func check(ok: bool, label: String):
 	if not ok:
 		errors += 1
 		push_error(label)
+func mesh_element_count(mesh: Mesh) -> int:
+	if mesh == null: return 0
+	var total := 0
+	for surface in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(surface)
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		total += indices.size() if not indices.is_empty() else vertices.size()
+	return total
 func check_cuffs(garment: MeshInstance3D, skel: Skeleton3D, label: String):
 	for side in ["Left", "Right"]:
 		var hand := skel.find_bone("mixamorig_"+side+"Hand")
@@ -46,6 +55,7 @@ func check_cuffs(garment: MeshInstance3D, skel: Skeleton3D, label: String):
 			check(distance<.085,"Cuff detached from wrist: "+label+" "+side)
 func _initialize(): call_deferred("run")
 func run():
+	var cap_closeup := "--cap-closeup" in OS.get_cmdline_user_args()
 	var stage := Node3D.new()
 	root.add_child(stage)
 	current_scene = stage
@@ -59,8 +69,20 @@ func run():
 		actor.inventory = preload("res://scripts/Inventory.gd").new()
 		actor.add_child(actor.inventory)
 		actor.setup_as_puppet()
-		for item in ["Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño"]:
+		var hair := actor.third_person_model.find_child("Hair", true, false) as MeshInstance3D
+		var original_hair: Mesh = hair.mesh if hair != null else null
+		for item in ["Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorra militar"]:
 			actor.equip_clothing(item)
+		var cap: MeshInstance3D = actor._survival_cloth_nodes.get("autumn_hat")
+		check(cap != null and cap.is_visible_in_tree(), "Military cap visible on character")
+		if cap != null:
+			check(cap.skin != null and cap.skin.get_bind_count() > 0, "Military cap is skinned to the character")
+		if hair != null:
+			check(hair.mesh != original_hair, "Cap hides hair inside its crown without altering the shared mesh")
+			check(mesh_element_count(hair.mesh) < mesh_element_count(original_hair), "Cap trims only hair faces hidden by the crown")
+			actor.unequip_clothing("Gorra militar")
+			check(hair.mesh == original_hair, "Original hair is restored after removing the cap")
+			actor.equip_clothing("Gorra militar")
 		var head := actor.third_person_model.find_child("HeadMesh", true, false) as MeshInstance3D
 		check(head != null and head.has_meta("autumn_original_head"), "Head mask created")
 		if head != null and head.has_meta("autumn_original_head"):
@@ -96,6 +118,10 @@ func run():
 	env.environment.ambient_light_color=Color.WHITE
 	env.environment.ambient_light_energy=.6
 	stage.add_child(env)
+	if cap_closeup:
+		for actor_index in actors.size():
+			if actor_index != 1:
+				actors[actor_index].visible = false
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees=Vector3(-40,-35,0)
 	sun.light_energy=1.2
@@ -103,15 +129,26 @@ func run():
 	var cam := Camera3D.new()
 	stage.add_child(cam)
 	cam.projection=Camera3D.PROJECTION_ORTHOGONAL
-	cam.size=3.9
+	cam.size=1.1 if cap_closeup else 3.9
 	var middle_skel: Skeleton3D = actors[1]._find_skeleton(actors[1].third_person_model)
-	var focus: Vector3 = middle_skel.global_transform * middle_skel.get_bone_global_pose(middle_skel.find_bone("mixamorig_Hips")).origin
-	for view in ([] if DisplayServer.get_name()=="headless" else ["front","back"]):
-		cam.position = Vector3(0,focus.y+.25,-7) if view=="front" else Vector3(0,focus.y+.25,7)
+	var focus_idx := -1
+	var focus_candidates := ["mixamorig:Head", "mixamorig_Head", "Head"] if cap_closeup else ["mixamorig:Hips", "mixamorig_Hips", "Hips"]
+	for focus_bone in focus_candidates:
+		focus_idx = middle_skel.find_bone(focus_bone)
+		if focus_idx >= 0: break
+	if focus_idx < 0: focus_idx = 0
+	var focus: Vector3 = middle_skel.global_transform * middle_skel.get_bone_global_pose(focus_idx).origin
+	if cap_closeup: focus.y -= .05
+	var views := ["front", "side", "back"] if cap_closeup else ["front", "back"]
+	for view in ([] if DisplayServer.get_name()=="headless" else views):
+		if view == "front": cam.position = focus + Vector3(0, .05, -1.35 if cap_closeup else -7)
+		elif view == "side": cam.position = focus + Vector3(1.35, .05, 0)
+		else: cam.position = focus + Vector3(0, .05, 1.35 if cap_closeup else 7)
 		cam.look_at(focus)
 		await create_timer(.5).timeout
 		await RenderingServer.frame_post_draw
-		root.get_texture().get_image().save_png("/tmp/civil_clothes_"+view+".png")
+		var preview_path := "/tmp/civil_military_cap_%s.png" % view if cap_closeup else "/tmp/civil_clothes_%s.png" % view
+		root.get_texture().get_image().save_png(preview_path)
 	for actor in actors: actor.stats.free()
 	stage.free()
 	print("CIVIL_CLOTHES_ERRORS=",errors)

@@ -1381,11 +1381,11 @@ func get_my_id() -> int:
 
 # Client tells server it fired the rifle (server relays to all other clients)
 @rpc("any_peer", "reliable")
-func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
+func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_world_sender(sender) or (is_host and shooter_id != sender):
 		return
-	if not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 0.0001:
+	if not origin.is_finite() or not dir.is_finite() or not wind.is_finite() or wind.length() > 100.0 or dir.length_squared() < 0.0001:
 		return
 	dir = dir.normalized()
 	var scene := get_tree().current_scene
@@ -1395,9 +1395,9 @@ func player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
 			for pid in players.keys():
 				if pid != shooter_id and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false):
 					if peer_alive(pid):
-						player_shot_rifle.rpc_id(pid, shooter_id, origin, dir)
+						player_shot_rifle.rpc_id(pid, shooter_id, origin, dir, wind)
 	if scene != null and scene.has_method("_net_player_shot_rifle"):
-		scene._net_player_shot_rifle(shooter_id, origin, dir)
+		scene._net_player_shot_rifle(shooter_id, origin, dir, wind)
 
 # Client requests loot inventory from a dead player corpse
 @rpc("any_peer", "reliable")

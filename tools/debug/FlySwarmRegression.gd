@@ -59,6 +59,23 @@ func run() -> void:
 	action.mark_depleted()
 	await process_frame
 	check(not is_instance_valid(swarm2), "Picking up the item removes its flies")
+	# Wet ground clothing dries over time; under rain and exposed it stays wet.
+	var wet_pickup := Node3D.new()
+	wet_pickup.name = "Pickup_wet_jacket"
+	main.add_child(wet_pickup)
+	main._dropped_items.append({"id": "wet_jacket", "name": "Chaqueta militar", "type": "clothing", "wear": 0.0, "wetness": 1.0, "pos": [0.0, 0.0, 0.0]})
+	for i in range(30):
+		main._update_loot_wear()
+	var dried: float = float(main._dropped_items[0].get("wetness", 0.0)) if main._dropped_items.size() > 0 else -1.0
+	check(dried <= 0.02, "Soaked ground clothing dries out over time (wetness=%.2f)" % dried)
+	check(wet_pickup.get_meta("item_wetness", -1.0) <= 0.02, "Dried pickup passes dry wetness to whoever picks it up")
+	main._dropped_items[0]["wetness"] = 0.9
+	main._weather_target["rain"] = 5.0
+	main._update_loot_wear()
+	check(float(main._dropped_items[0].get("wetness", 0.0)) >= 0.89, "Exposed clothing does not dry while it rains")
+	main._weather_target["rain"] = 0.0
+	main._update_loot_wear()
+	check(float(main._dropped_items[0].get("wetness", 0.0)) < 0.9, "Drying resumes once the rain stops")
 	main.free()
 	swarm.free()
 	action.free()

@@ -59,7 +59,7 @@ func run():
 		actor.inventory = preload("res://scripts/Inventory.gd").new()
 		actor.add_child(actor.inventory)
 		actor.setup_as_puppet()
-		for item in ["Chaqueta militar digital", "Pantalones cargo con rodilleras", "Botas de montaña", "Gorro de otoño"]:
+		for item in ["Chaqueta militar digital", "Pantalones cargo con rodilleras", "Botas de montaña", "Gorra militar"]:
 			actor.equip_clothing(item)
 		var head := actor.third_person_model.find_child("HeadMesh", true, false) as MeshInstance3D
 		check(head != null and head.has_meta("autumn_original_head"), "Head mask created")

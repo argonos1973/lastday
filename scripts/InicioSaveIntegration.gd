@@ -197,7 +197,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var is_autumn_jacket := torso_item in ["Chaqueta de otoño", "Chaqueta militar digital"]
 	var is_autumn_pants := legs_item in ["Pantalones de senderismo", "Pantalones cargo con rodilleras"]
 	var is_autumn_boots := feet_item == "Botas de montaña"
-	var is_autumn_hat := head_item == "Gorro de otoño"
+	var is_autumn_hat := head_item in ["Gorro de otoño", "Gorra militar"]
 	# Determine which clothing meshes to show
 	var show_tops := has_torso and (torso_item == "Camiseta")
 	var show_bottoms := has_legs and (legs_item == "Pantalones")
@@ -472,6 +472,8 @@ static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 static func _add_preview_hat(model: Node3D, item_name: String, pelt_species: String = "") -> void:
 	var hat_model := ""
 	match item_name:
+		"Pasamontañas": hat_model = "res://assets/characters/adapted/civil/balaclava.glb"
+		"Pasamontañas navideño": hat_model = "res://assets/characters/adapted/civil/balaclava_navideno.glb"
 		"Sombrero de pescador": hat_model = GameConst.FISHERMANS_HAT_MODEL
 		"Casco militar": hat_model = GameConst.MILITARY_HELMET_MODEL
 		"Gorro de piel": hat_model = GameConst.FISHERMANS_HAT_MODEL
@@ -484,6 +486,16 @@ static func _add_preview_hat(model: Node3D, item_name: String, pelt_species: Str
 	if hat == null:
 		return
 	hat.name = "PreviewHat"
+	if item_name in ["Pasamontañas", "Pasamontañas navideño"]:
+		var wrapper := Node3D.new()
+		wrapper.name = "PreviewHat"
+		model.add_child(wrapper)
+		wrapper.add_child(hat)
+		if preload("res://scripts/HeadwearFit.gd").fit_face(model, wrapper, item_name):
+			_bind_preview_bone(model, wrapper, ["mixamorig:Head", "mixamorig_Head", "Head"])
+		else:
+			wrapper.queue_free()
+		return
 	var body_meshes: Array = []
 	_collect_meshes(model, body_meshes)
 	var bmin := Vector3(999999.0, 999999.0, 999999.0)

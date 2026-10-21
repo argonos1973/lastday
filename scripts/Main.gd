@@ -3553,11 +3553,11 @@ func _is_shooter_valid(shooter_id: int) -> bool:
 	var sp: Node3D = server_proxies.get(shooter_id)
 	return sp != null and not sp.get_meta("proxy_dead", false)
 
-func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3) -> void:
+func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	if remote_players.has(shooter_id):
 		var rp: Node3D = remote_players[shooter_id]
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
-			rp.play_rifle_shot_remote(origin, dir)
+			rp.play_rifle_shot_remote(origin, dir, wind)
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
 	# bears and birds flee running when they hear a gunshot.
 	for w in get_tree().get_nodes_in_group("wildlife"):
@@ -3617,7 +3617,7 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 	# otherwise any client could kill any animal from anywhere on the map.
 	amount = clampf(amount, 0.0, 800.0)
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
-		var reach := 8.0 if from_knife else 320.0
+		var reach := 8.0 if from_knife else PlayerController.RIFLE_RANGE + 20.0
 		if not _sender_within(sender_id, animal.global_position, reach):
 			return
 	var attacker_proxy: Node3D = null
@@ -3949,7 +3949,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
 		if weapon == "rifle":
-			max_reach = 320.0
+			max_reach = PlayerController.RIFLE_RANGE + 20.0
 		elif weapon != "melee":
 			return
 		if not _sender_within(sender, proxy.global_position, max_reach):
@@ -5833,7 +5833,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño"] or MilitaryJackets.VARIANTS.has(item_name)
+	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño", "Gorra militar"] or MilitaryJackets.VARIANTS.has(item_name)
 	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones de piel", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var corpse_kind := WildlifeController.corpse_species(item_name)
@@ -6154,6 +6154,10 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 					return ["res://assets/characters/adapted/pickup_default_shoes.glb"]
 				"Guantes de trabajo":
 					return [GameConst.GARDEN_GLOVES_MODEL]
+				"Pasamontañas":
+					return ["res://assets/characters/adapted/civil/pickup_balaclava.glb"]
+				"Pasamontañas navideño":
+					return ["res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"]
 				"Sombrero de pescador":
 					return [GameConst.FISHERMANS_HAT_MODEL]
 				"Gorro de piel":
@@ -6195,6 +6199,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 	if MilitaryJackets.VARIANTS.has(item_name):
 		return 0.5
 	if AutumnClothes.VARIANTS.has(item_name):
+		return 0.5
+	if item_name == "Pasamontañas":
+		return 0.5
+	if item_name == "Pasamontañas navideño":
 		return 0.5
 	if item_name == "Hacha":
 		return 1.0
@@ -8867,7 +8875,9 @@ func _create_house_loot() -> void:
 		{"name": "Pantalones de senderismo", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": [AutumnClothes.pickup_path("Pantalones de senderismo")], "scale": 0.5, "rot": Vector3(90, 90, 0), "color": Color.WHITE},
 		{"name": "Pantalones cargo con rodilleras", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": [AutumnClothes.pickup_path("Pantalones cargo con rodilleras")], "scale": 0.5, "rot": Vector3(90, 90, 0), "color": Color.WHITE},
 		{"name": "Botas de montaña", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.16, "paths": [AutumnClothes.pickup_path("Botas de montaña")], "scale": 0.5, "rot": Vector3(90, 30, 0), "color": Color.WHITE},
-		{"name": "Gorro de otoño", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "paths": [AutumnClothes.pickup_path("Gorro de otoño")], "scale": 0.5, "rot": Vector3(0, 20, 0), "color": Color.WHITE},
+		{"name": "Gorra militar", "type": "clothing", "weight": 0.2, "qty": 1, "use": 0.06, "paths": [AutumnClothes.pickup_path("Gorra militar")], "scale": 0.5, "rot": Vector3(0, 20, 0), "color": Color.WHITE},
+		{"name": "Pasamontañas", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.0, "paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5, "rot": Vector3.ZERO, "color": Color.TRANSPARENT, "rare": true},
+		{"name": "Pasamontañas navideño", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.0, "paths": ["res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"], "scale": 0.5, "rot": Vector3.ZERO, "color": Color.TRANSPARENT, "rare": true},
 	]
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
@@ -12737,6 +12747,9 @@ func _apply_ground_craft_state(action_id: String, quantity: int, durability: flo
 const ROT_MEAT_REMOVE_SECONDS := 120.0
 # Duración en el suelo del loot de personajes muertos: 8 horas (28800 s)
 const DEATH_LOOT_LIFETIME_SECONDS := 8.0 * 3600.0
+# Ropa/equipo mojado en el suelo se seca a este ritmo por tick (5 s):
+# empapado (~1.0) llega a seco en ~2 min.
+const LOOT_DRYING_PER_TICK := 0.04
 
 func _attach_flies_to_drop(drop_id: String) -> void:
 	var target := get_node_or_null(NodePath("Pickup_" + drop_id)) as Node3D
@@ -12809,6 +12822,21 @@ func _update_loot_wear() -> void:
 						if not _depleted_action_ids.has(entry_id):
 							_depleted_action_ids.append(entry_id)
 						continue
+		# Ropa mojada se seca con el tiempo en el suelo; bajo lluvia o nieve y
+		# sin cobijo la humedad se mantiene (la ropa no se seca mojandose).
+		var wet: float = float(entry.get("wetness", 0.0))
+		if wet > 0.02:
+			var precip_now := float(_weather_target.get("rain", 0.0)) > 0.1 or float(_weather_target.get("snow", 0.0)) > 0.05
+			if not (precip_now and not _is_loot_sheltered(pos)):
+				wet = maxf(0.0, wet - LOOT_DRYING_PER_TICK)
+				entry["wetness"] = wet
+				var wet_node := get_node_or_null(NodePath("Pickup_" + entry_id_str))
+				if wet_node != null:
+					wet_node.set_meta("item_wetness", wet)
+				if world_actions_by_id.has(entry_id_str):
+					var wa_wet = world_actions_by_id[entry_id_str]
+					if wa_wet != null and is_instance_valid(wa_wet):
+						wa_wet.set_meta("item_wetness", wet)
 		if bool(entry.get("static_loot", false)) or (not is_death_loot and _is_loot_sheltered(pos)):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))

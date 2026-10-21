@@ -63,6 +63,8 @@ const CLOTHING_STORAGE := {
 	"Chaqueta camuflaje desert": 5,
 	"Guantes de trabajo": 1,
 	"Sombrero de pescador": 0,
+	"Pasamontañas": 0,
+	"Pasamontañas navideño": 0,
 	"Chaqueta de piel": 3,
 	"Pantalones de piel": 3,
 	"Botas de piel": 0,
@@ -74,6 +76,7 @@ const CLOTHING_STORAGE := {
 	"Pantalones de senderismo": 4,
 	"Pantalones cargo con rodilleras": 4,
 	"Botas de montaña": 0,
+	"Gorra militar": 0,
 	"Gorro de otoño": 0,
 }
 

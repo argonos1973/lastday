@@ -8,6 +8,8 @@ const VARIANTS := {
 	"Pantalones de senderismo": "autumn_pants",
 	"Pantalones cargo con rodilleras": "cargo_kneepad_pants",
 	"Botas de montaña": "autumn_boots",
+	"Gorra militar": "autumn_hat",
+	# Kept for saved characters created before the cap was redesigned.
 	"Gorro de otoño": "autumn_hat",
 }
 

@@ -7,6 +7,8 @@ extends RefCounted
 const WORN_HIDE := {
 	"Casco militar": ["Front harness", "Rear harness", "Chin support strap", "Chin comfort pad",
 		"Strap adjuster", "Adjuster opening", "Removable suspension pad", "Crown comfort pad"],
+	"Pasamontañas": ["Hair"],
+	"Pasamontañas navideño": ["Hair"],
 }
 # Hair tuck depth per item, as a fraction of head height applied to the brim
 # line (positive raises the tuck, negative lowers it inside the skull volume).
@@ -28,6 +30,22 @@ const TUCK_SHRINK := {
 # Shared by the saved-character preview and the animated actor.
 static func fit_pelt(model: Node3D, hat: Node3D, species: String = "") -> bool:
 	return seat_on_scalp(model, hat, "Tocado de piel animal", 0.52, 0.35, species)
+
+# Bind-space cloth, shared by the character and saved-game preview.
+static func fit_face(model: Node3D, wrapper: Node3D, _item_name: String) -> bool:
+	var head := model.find_child("HeadMesh", true, false) as MeshInstance3D
+	if head == null or head.mesh == null or wrapper.get_parent() == null:
+		return false
+	# These adapted meshes are authored directly in the character head bind
+	# frame by adapt_balaclavas.py; no generic AABB scaling or axis guesswork.
+	if wrapper.find_child("FaceFittedBind", true, false) == null:
+		return false
+	wrapper.transform = _head_frame(model, head, wrapper.get_parent() as Node3D)
+	for mesh in model.find_children("Hair", "MeshInstance3D", true, false):
+		if not mesh.has_meta("headwear_original_visible"):
+			mesh.set_meta("headwear_original_visible", mesh.visible)
+		mesh.visible = false
+	return true
 
 # Seats a headpiece whose GLB is authored with the scalp seat at the local
 # origin and the trophy rising +Y (the pelt tocados): scales it to
@@ -146,11 +164,29 @@ static func fit(model: Node3D, hat: Node3D, item_name: String = "") -> bool:
 
 static func restore_hair(model: Node3D) -> void:
 	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
+		if hair.has_meta("headwear_original_visible"):
+			hair.visible = bool(hair.get_meta("headwear_original_visible"))
+			hair.remove_meta("headwear_original_visible")
 		if hair.has_meta("headwear_original_mesh"):
 			hair.mesh = hair.get_meta("headwear_original_mesh")
 			hair.remove_meta("headwear_original_mesh")
 
-static func _tuck_hair(model: Node3D, brim_height: float, shrink: float = 0.0) -> void:
+# The military cap is a skinned garment already in the character's bind space,
+# so fit its hairline directly from the cap brim instead of re-transforming it
+# as an external GLB. Keep side and nape hair visible while tucking stray locks.
+static func tuck_hair_under_skinned_cap(model: Node3D, cap: MeshInstance3D) -> void:
+	if model == null or cap == null or cap.mesh == null:
+		return
+	var head := model.find_child("HeadMesh", true, false) as MeshInstance3D
+	if head == null or head.mesh == null:
+		return
+	var cap_bounds := cap.get_aabb()
+	# get_aabb() is in the same bind-space coordinates used by the imported
+	# skinned mesh. Trim only strands whose triangles rise above the lower band.
+	var brim_height := cap_bounds.position.y + 0.018
+	_tuck_hair(model, brim_height, 0.0, true)
+
+static func _tuck_hair(model: Node3D, brim_height: float, shrink: float = 0.0, upper_only: bool = false) -> void:
 	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
 		if hair.mesh == null:
 			continue
@@ -163,6 +199,20 @@ static func _tuck_hair(model: Node3D, brim_height: float, shrink: float = 0.0) -
 		for surface in range(original.get_surface_count()):
 			var arrays := original.surface_get_arrays(surface)
 			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX].duplicate()
+			if upper_only and original.surface_get_primitive_type(surface) == Mesh.PRIMITIVE_TRIANGLES:
+				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+				if indices.is_empty():
+					indices = PackedInt32Array()
+					for vertex_idx in vertices.size(): indices.append(vertex_idx)
+				var kept := PackedInt32Array()
+				for tri in range(0, indices.size(), 3):
+					var center_y := (vertices[indices[tri]].y + vertices[indices[tri + 1]].y + vertices[indices[tri + 2]].y) / 3.0
+					if center_y <= brim_height:
+						kept.append(indices[tri]); kept.append(indices[tri + 1]); kept.append(indices[tri + 2])
+				arrays[Mesh.ARRAY_INDEX] = kept
+				tucked.add_surface_from_arrays(original.surface_get_primitive_type(surface), arrays)
+				tucked.surface_set_material(surface, original.surface_get_material(surface))
+				continue
 			var center := Vector2.ZERO
 			if shrink > 0.0 and not vertices.is_empty():
 				for vertex in vertices:
@@ -173,7 +223,7 @@ static func _tuck_hair(model: Node3D, brim_height: float, shrink: float = 0.0) -
 					vertices[index].y = brim_height + (vertices[index].y - brim_height) * 0.02
 				elif shrink <= 0.0:
 					continue
-				if shrink > 0.0:
+				if shrink > 0.0 and (not upper_only or vertices[index].y >= brim_height):
 					vertices[index].x = center.x + (vertices[index].x - center.x) * (1.0 - shrink)
 					vertices[index].z = center.y + (vertices[index].z - center.y) * (1.0 - shrink)
 			arrays[Mesh.ARRAY_VERTEX] = vertices

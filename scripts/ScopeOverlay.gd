@@ -11,6 +11,8 @@ var _wind_label: Label = null
 var _breath_label: Label = null
 var _flash := 0.0   # destello del fogonazo visible a traves de la mira
 var _hud_update_accum := 0.0
+var _scope_fov := 15.0
+var _magnification := 4.0
 
 func muzzle_flash() -> void:
 	_flash = 1.0
@@ -24,7 +26,7 @@ func _ready() -> void:
 	_wind_label = Label.new()
 	_wind_label.name = "WindIndicator"
 	_wind_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_wind_label.offset_left = -120.0
+	_wind_label.offset_left = -410.0
 	_wind_label.offset_top = 20.0
 	_wind_label.offset_right = -10.0
 	_wind_label.offset_bottom = 60.0
@@ -84,6 +86,10 @@ func _process(_delta: float) -> void:
 	var wind_text := "Viento: %.1f m/s %s" % [strength, compass]
 	if player.has_method("get_rifle_info"):
 		var ri: Dictionary = player.get_rifle_info()
+		_scope_fov = float(ri.get("scope_fov", 15.0))
+		_magnification = float(ri.get("magnification",4.0))
+		wind_text = "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification + wind_text
+		queue_redraw()
 		var mags_left: int = int(ri.get("magazines_left", 0))
 		wind_text += "\nMunición: %d/%d · Cargadores: %d (%d) [R]" % [int(ri.get("magazine", 0)), int(ri.get("mag_size", 5)), mags_left, int(ri.get("reserve", 0))]
 	if _wind_label != null:
@@ -120,20 +126,24 @@ func _draw() -> void:
 	draw_line(Vector2(center.x, center.y - radius), Vector2(center.x, center.y + radius), reticle_color, 1.5, true)
 	draw_line(Vector2(center.x - radius, center.y), Vector2(center.x + radius, center.y), reticle_color, 1.5, true)
 	# Center aim dot.
-	draw_circle(center, 3.0, center_dot_color)
+	draw_circle(center, 1.3, center_dot_color)
 	# Destello del fogonazo: brillo calido en la parte baja del visor
 	if _flash > 0.0:
 		var glow_pos := center + Vector2(0.0, radius * 0.45)
 		for i in range(4):
 			var t := float(i) / 4.0
 			var gr := radius * (0.18 + t * 0.4) * _flash
-			var ga := 0.55 * _flash * (1.0 - t)
+			var ga := 0.12 * _flash * (1.0 - t)
 			draw_circle(glow_pos, gr, Color(1.0, 0.8, 0.45, ga))
-	# Mildot marks on vertical crosshair for range estimation
-	for i in range(1, 5):
-		var dot_y: float = center.y + i * radius * 0.15
-		if dot_y < center.y + radius:
-			draw_circle(Vector2(center.x, dot_y), 2.0, reticle_color)
-		dot_y = center.y - i * radius * 0.15
-		if dot_y > center.y - radius:
-			draw_circle(Vector2(center.x, dot_y), 2.0, reticle_color)
+	# First-focal-plane reticle: ticks subtend 1 mrad at every zoom.
+	var pixels_per_mrad := vp_size.y * .5 / tan(deg_to_rad(_scope_fov)*.5) * .001
+	for i in range(1, 11):
+		var offset := i*pixels_per_mrad
+		if offset > radius*.88: break
+		var half_tick := 5.0 if i%5==0 else 2.5
+		for side in [-1,1]:
+			draw_line(center+Vector2(offset*side,-half_tick),center+Vector2(offset*side,half_tick),reticle_color,1.0,true)
+			draw_line(center+Vector2(-half_tick,offset*side),center+Vector2(half_tick,offset*side),reticle_color,1.0,true)
+	# Soft inner edge around the lens, without tinting the aiming area.
+	for i in range(8):
+		draw_arc(center,radius-i*1.8,0,TAU,128,Color(0,0,0,.24*(1.0-i/8.0)),2.0,true)

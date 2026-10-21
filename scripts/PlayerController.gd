@@ -40,6 +40,8 @@ const REAL_TORCH_MODEL := "res://assets/animations/torch_stick.glb"
 #   forward: shift toward the front of the body (fraction of depth)
 #   align:  "center" (default) or "bottom"; "strip" hides duplicate variant meshes
 const CLOTHING_VISUALS := {
+	"Pasamontañas": {"path": "res://assets/characters/adapted/civil/balaclava.glb", "frac_y": 0.94, "size": 0.16, "yaw": 0.0, "face_fit": true},
+	"Pasamontañas navideño": {"path": "res://assets/characters/adapted/civil/balaclava_navideno.glb", "frac_y": 0.94, "size": 0.16, "yaw": 0.0, "face_fit": true},
 	"Sombrero de pescador": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.06, "yaw": 0.0, "align": "bottom", "forward": -0.04},
 	"Gorro de piel": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.065, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.31, 0.22, 0.13)},
 	"Tocado de piel animal": {"path": "", "frac_y": 0.94, "size": 0.09, "yaw": 0.0, "seat_height": 0.56},
@@ -82,6 +84,7 @@ const SURVIVAL_CLOTHING := {
 	"Pantalones de senderismo": {"mesh": "autumn_pants", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Pantalones cargo con rodilleras": {"mesh": "cargo_kneepad_pants", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Botas de montaña": {"mesh": "autumn_boots", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"]},
+	"Gorra militar": {"mesh": "autumn_hat", "hides": [], "skin_hides": [], "body_hides": []},
 	"Gorro de otoño": {"mesh": "autumn_hat", "hides": [], "skin_hides": [], "body_hides": []},
 	# Plate carrier is worn over the clothes: it hides nothing, only overlays.
 	"Chaleco táctico": {"mesh": "field_jacket_plate_carrier", "hides": [], "skin_hides": [], "body_hides": []},
@@ -183,6 +186,8 @@ const CLOTHING_COVERED_ZONES := {
 	"Botas militares": ["pies"],
 	"Guantes de trabajo": ["manos"],
 	"Sombrero de pescador": ["cabeza"],
+	"Pasamontañas": ["cabeza"],
+	"Pasamontañas navideño": ["cabeza"],
 	"Gorro de piel": ["cabeza"],
 	"Tocado de piel animal": ["cabeza"],
 	"Casco militar": ["cabeza"],
@@ -192,6 +197,7 @@ const CLOTHING_COVERED_ZONES := {
 	"Pantalones de senderismo": ["cadera", "piernas"],
 	"Pantalones cargo con rodilleras": ["cadera", "piernas"],
 	"Botas de montaña": ["pies"],
+	"Gorra militar": ["cabeza"],
 	"Gorro de otoño": ["cabeza"],
 	"Chaleco táctico": ["torso"],
 }
@@ -223,6 +229,8 @@ const CLOTHING_SLOTS := {
 	"Chaqueta camuflaje desert": "torso",
 	"Guantes de trabajo": "hands",
 	"Sombrero de pescador": "head",
+	"Pasamontañas": "head",
+	"Pasamontañas navideño": "head",
 	"Gorro de piel": "head",
 	"Tocado de piel animal": "head",
 	"Casco militar": "head",
@@ -232,6 +240,7 @@ const CLOTHING_SLOTS := {
 	"Pantalones de senderismo": "legs",
 	"Pantalones cargo con rodilleras": "legs",
 	"Botas de montaña": "feet",
+	"Gorra militar": "head",
 	"Gorro de otoño": "head",
 	# The plate carrier rides over the clothing in its own vest slot.
 	"Chaleco táctico": "chaleco",
@@ -265,6 +274,8 @@ const CLOTHING_WARMTH := {
 	"Guantes militares": 0.12,
 	"Guantes de trabajo": 0.08,
 	"Sombrero de pescador": 0.07,
+	"Pasamontañas": 0.34,
+	"Pasamontañas navideño": 0.34,
 	"Gorro de piel": 0.38,
 	"Tocado de piel animal": 0.45,
 	"Casco militar": 0.05,
@@ -274,6 +285,7 @@ const CLOTHING_WARMTH := {
 	"Pantalones de senderismo": 0.22,
 	"Pantalones cargo con rodilleras": 0.22,
 	"Botas de montaña": 0.20,
+	"Gorra militar": 0.08,
 	"Gorro de otoño": 0.08,
 	"Chaleco táctico": 0.10,
 }
@@ -283,7 +295,10 @@ const CLOTHING_WARMTH := {
 const CLOTHING_HEAT_PROTECTION := {
 	"Gorro de piel": 0.20,
 	"Tocado de piel animal": 0.20,
+	"Pasamontañas": 0.12,
+	"Pasamontañas navideño": 0.12,
 	"Sombrero de pescador": 0.35,
+	"Gorra militar": 0.28,
 	"Casco militar": 0.30,
 }
 
@@ -314,6 +329,7 @@ const CLOTHING_HEAT_RETENTION := {
 	"Guantes militares": 0.10,
 	"Guantes de trabajo": 0.05,
 	"Sombrero de pescador": 0.0,
+	"Gorra militar": 0.02,
 	"Casco militar": 0.06,
 	"Chaqueta de cuadros": 0.36,
 	"Chaleco táctico": 0.15,
@@ -327,7 +343,10 @@ const THIRD_PERSON_MODEL_CANDIDATES := [
 ]
 const THIRD_PERSON_ANIMATION_LIBRARY := preload("res://assets/animations/third_person_animations.res")
 const REAL_RIFLE_MODEL := "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb"
-const RIFLE_RANGE := 300.0
+const RIFLE_RANGE := 600.0
+const RIFLE_MUZZLE_SPEED := 750.0
+const SCOPE_MAGNIFICATIONS := [4.0, 8.0, 12.0, 16.0]
+var _scope_zoom_index := 0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
@@ -1910,14 +1929,14 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 			_toggle_aim()
 		else:
 			_quick_use_held_item()
-	elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-		_camera_fov = clamp(_camera_fov - 4.0, 30.0, 90.0)
-		if camera != null:
-			camera.fov = _camera_fov
-	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-		_camera_fov = clamp(_camera_fov + 4.0, 30.0, 90.0)
-		if camera != null:
-			camera.fov = _camera_fov
+	elif event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		var direction := 1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1
+		if _is_aiming:
+			_scope_zoom_index = clampi(_scope_zoom_index + direction, 0, SCOPE_MAGNIFICATIONS.size()-1)
+			_update_scope_zoom()
+		else:
+			_camera_fov = clampf(_camera_fov - direction * 4.0, 30.0, 90.0)
+			if camera != null: camera.fov = _camera_fov
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
@@ -2260,6 +2279,8 @@ func unequip_clothing(item_name: String) -> void:
 					body_mi.visible = false
 	if SURVIVAL_CLOTHING.has(item_name):
 		_wear_survival_clothing(item_name, false)
+		if item_name in ["Gorra militar", "Gorro de otoño"]:
+			preload("res://scripts/HeadwearFit.gd").restore_hair(third_person_model)
 	# Remove the attached 3D garment visual (vests, hat, rubber boots, gloves)
 	# so swapping two visual garments in the same slot doesn't leave the old one
 	# stuck on the character.
@@ -2849,6 +2870,8 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 			_survival_cloth_nodes[mesh_name] = mi
 	if mi != null:
 		mi.visible = worn
+		if worn and item_name in ["Gorra militar", "Gorro de otoño"]:
+			preload("res://scripts/HeadwearFit.gd").tuck_hair_under_skinned_cap(third_person_model, mi)
 		if MilitaryJackets.VARIANTS.has(item_name) or AutumnClothes.VARIANTS.has(item_name):
 			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
 			mi.material_override = null
@@ -2944,33 +2967,47 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	node = _load_external_node3d(model_path)
 	if node == null:
 		return
-	node.name = worn_name
-	_strip_model_lights(node)
-	_strip_named_meshes(node, cfg.get("strip", []))
-	parent.add_child(node)
-	node.rotation_degrees = Vector3(0.0, float(cfg["yaw"]), 0.0)
-	var item := _local_aabb_in(parent, node, false)
-	if item.size.y > 0.001:
-		var target: float = float(cfg["size"]) * body.size.y
-		node.scale = Vector3.ONE * (target / item.size.y)
-	item = _local_aabb_in(parent, node, false)
-	var anchor := Vector3(
-		body.position.x + body.size.x * 0.5,
-		body.position.y + float(cfg["frac_y"]) * body.size.y,
-		body.position.z + body.size.z * 0.5 - float(cfg.get("forward", 0.0)) * body.size.z
-	)
-	var item_center := item.position + item.size * 0.5
-	if str(cfg.get("align", "center")) == "bottom":
-		item_center.y = item.position.y
-	node.position += anchor - item_center
-	node.position += cfg.get("offset", Vector3.ZERO)
-	if CLOTHING_SLOTS.get(item_name, "") == "head":
-		if item_name == "Tocado de piel animal":
-			# Authored with its scalp seat at the GLB origin — sit it on the
-			# crown as-is instead of crown-fitting it like a generic hat.
-			preload("res://scripts/HeadwearFit.gd").fit_pelt(parent, node, _active_pelt_species)
-		else:
-			preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
+	var face_fit := bool(cfg.get("face_fit", false))
+	var external_model := node
+	if face_fit:
+		node = Node3D.new()
+		node.name = worn_name
+		external_model.name = "BalaclavaModel"
+		_strip_model_lights(external_model)
+		_strip_named_meshes(external_model, cfg.get("strip", []))
+		parent.add_child(node)
+		node.add_child(external_model)
+		if not preload("res://scripts/HeadwearFit.gd").fit_face(parent, node, item_name):
+			node.queue_free()
+			return
+	else:
+		node.name = worn_name
+		_strip_model_lights(node)
+		_strip_named_meshes(node, cfg.get("strip", []))
+		parent.add_child(node)
+		node.rotation_degrees = Vector3(0.0, float(cfg["yaw"]), 0.0)
+		var item := _local_aabb_in(parent, node, false)
+		if item.size.y > 0.001:
+			var target: float = float(cfg["size"]) * body.size.y
+			node.scale = Vector3.ONE * (target / item.size.y)
+		item = _local_aabb_in(parent, node, false)
+		var anchor := Vector3(
+			body.position.x + body.size.x * 0.5,
+			body.position.y + float(cfg["frac_y"]) * body.size.y,
+			body.position.z + body.size.z * 0.5 - float(cfg.get("forward", 0.0)) * body.size.z
+		)
+		var item_center := item.position + item.size * 0.5
+		if str(cfg.get("align", "center")) == "bottom":
+			item_center.y = item.position.y
+		node.position += anchor - item_center
+		node.position += cfg.get("offset", Vector3.ZERO)
+		if CLOTHING_SLOTS.get(item_name, "") == "head":
+			if item_name == "Tocado de piel animal":
+				# Authored with its scalp seat at the GLB origin — sit it on the
+				# crown as-is instead of crown-fitting it like a generic hat.
+				preload("res://scripts/HeadwearFit.gd").fit_pelt(parent, node, _active_pelt_species)
+			else:
+				preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
 	if clothing_has_camo(item_name):
 		var camo_meshes: Array = []
 		_collect_mesh_instances(node, camo_meshes)
@@ -7131,6 +7168,8 @@ func _build_held_skewer(item_name: String) -> void:
 func _build_held_clothing(item_name: String) -> void:
 	var path := MilitaryJackets.pickup_path(item_name)
 	match item_name:
+		"Pasamontañas": path = "res://assets/characters/adapted/civil/pickup_balaclava.glb"
+		"Pasamontañas navideño": path = "res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"
 		"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
 		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
 		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
@@ -11688,7 +11727,8 @@ func _current_spread_deg() -> float:
 	if is_prone:
 		spread_deg = 0.12
 	if _is_aiming:
-		spread_deg *= 0.3
+		spread_deg = .010 if is_prone else (.016 if is_crouching else .025)
+		if _breath_hold_active: spread_deg *= .7
 	if is_moving:
 		spread_deg *= 2.5
 	if not is_on_floor() and not (is_instance_valid(rowing_boat) and _boat_standing):
@@ -11717,13 +11757,18 @@ func _update_crosshair(is_rifle: bool) -> void:
 	if main != null and main.hud != null and main.hud.has_method("set_crosshair_rifle"):
 		main.hud.set_crosshair_rifle(is_rifle)
 
+func _update_scope_zoom() -> void:
+	var magnification: float = SCOPE_MAGNIFICATIONS[_scope_zoom_index]
+	if camera != null:
+		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(_camera_fov)*0.5)/magnification))
+	mouse_sensitivity = 0.0025 / magnification
+	if is_instance_valid(_scope_overlay): _scope_overlay.queue_redraw()
+
 func _toggle_aim() -> void:
 	_is_aiming = not _is_aiming
 	if _is_aiming:
 		_create_scope_overlay()
-		if camera != null:
-			camera.fov = 25.0
-		mouse_sensitivity = 0.0008
+		_update_scope_zoom()
 		if third_person_model != null:
 			third_person_model.visible = false
 		_breath_hold_active = false
@@ -11848,6 +11893,9 @@ func get_rifle_info() -> Dictionary:
 		"magazines_left": get_vest_magazines_count(),
 		"damage": RIFLE_DAMAGE,
 		"range": RIFLE_RANGE,
+		"magnification": SCOPE_MAGNIFICATIONS[_scope_zoom_index],
+		"zero_range": 100.0,
+		"scope_fov": camera.fov if camera != null else 15.0,
 	}
 
 func get_wind_info() -> Dictionary:
@@ -11921,7 +11969,6 @@ func _shoot_rifle() -> void:
 			third_person_action_animation = fire_anim_name
 			third_person_action_timer = 1.0
 			third_person_animation_player.play(fire_anim_name, 0.05)
-	notice.emit("Bang!")
 	_play_shoot_sound()
 	var space_state := get_world_3d().direct_space_state
 	if _cached_rids_dirty:
@@ -11932,81 +11979,31 @@ func _shoot_rifle() -> void:
 	if is_instance_valid(rowing_boat):
 		exclude_arr.append(rowing_boat.get_rid())
 		_collect_child_collision_rids(rowing_boat, exclude_arr)
-	# Hitscan: la camara apunta donde mira el jugador. Aplicar spread al rayo
-	# de la camara y castear directamente — dano, particulas y fogonazo ocurren
-	# en el mismo frame. Sin proyectil que se pierda ni retardo visible.
-	var aim_dir: Vector3 = cam_ray_dir
-	var spread_deg := _current_spread_deg()
-	if spread_deg > 0.01:
-		var spread_rad := deg_to_rad(spread_deg)
-		aim_dir = aim_dir.rotated(Vector3.UP, randf_range(-spread_rad, spread_rad))
-		var right := aim_dir.cross(Vector3.UP).normalized()
-		aim_dir = aim_dir.rotated(right, randf_range(-spread_rad, spread_rad))
-		aim_dir = aim_dir.normalized()
-	# Hitscan: la direccion es donde mira la camara (cruceta), pero el rayo
-	# sale del cañon real del rifle — igual que el fogonazo. Si el muzzle no
-	# existe o esta dentro del propio personaje, se usa el hombro.
-	var shot_origin: Vector3 = global_position + Vector3(0.0, 1.4, 0.0)
-	if is_crouching:
-		shot_origin = global_position + Vector3(0.0, 1.0, 0.0)
-	elif is_prone:
-		shot_origin = global_position + Vector3(0.0, 0.3, 0.0)
-	if is_instance_valid(_rifle_muzzle):
-		shot_origin = _rifle_muzzle.global_position
-	# Converge the muzzle ray on the point beneath the reticle. Parallel camera
-	# and muzzle rays miss nearby targets, especially through the scope.
-	var camera_origin: Vector3 = cam_ray_origin
-	var aim_query := PhysicsRayQueryParameters3D.create(camera_origin, camera_origin + aim_dir * RIFLE_RANGE, 5)
-	aim_query.exclude = exclude_arr
-	aim_query.collide_with_areas = true
-	var aim_hit := space_state.intersect_ray(aim_query)
-	while not aim_hit.is_empty() and aim_hit.collider is Area3D and not ("hitbox" in str(aim_hit.collider.name).to_lower()):
-		exclude_arr.append(aim_hit.rid)
-		aim_query.exclude = exclude_arr
-		aim_hit = space_state.intersect_ray(aim_query)
-	var aim_target: Vector3 = aim_hit.position if not aim_hit.is_empty() else camera_origin + aim_dir * RIFLE_RANGE
-	aim_dir = (aim_target - shot_origin).normalized()
-	var hit_query := PhysicsRayQueryParameters3D.create(shot_origin, shot_origin + aim_dir * RIFLE_RANGE, 5)
-	hit_query.exclude = exclude_arr
-	hit_query.collide_with_areas = true
-	hit_query.collide_with_bodies = true
-	# Point-blank: the muzzle can start inside the victim's hitbox (~1 m);
-	# without this the ray skips the collider and the shot whiffs entirely.
-	hit_query.hit_from_inside = true
-	var hit_result := space_state.intersect_ray(hit_query)
-	# Atravesar Area3D que no sean hitboxes (zonas de interaccion, triggers)
-	while not hit_result.is_empty() and hit_result["collider"] is Area3D \
-	and not ("hitbox" in str((hit_result["collider"] as Node).name).to_lower()):
-		exclude_arr.append(hit_result["rid"])
-		hit_query.exclude = exclude_arr
-		hit_result = space_state.intersect_ray(hit_query)
-	var hit_pos: Vector3 = shot_origin + aim_dir * RIFLE_RANGE
-	var hit_normal: Vector3 = Vector3.UP
-	var hit_collider = null
-	if not hit_result.is_empty():
-		hit_pos = hit_result["position"]
-		hit_normal = hit_result["normal"]
-		hit_collider = hit_result["collider"]
-	# When aiming down sights, if the camera reticle ray directly hit a target
-	# hitbox and the muzzle ray did not strike a closer wall, prefer the reticle
-	# hitbox so scope headshots never miss due to barrel offset.
-	if not aim_hit.is_empty() and aim_hit.collider is Node and ("hitbox" in str((aim_hit.collider as Node).name).to_lower()):
-		if hit_collider == null or hit_pos.distance_to(aim_hit.position) < 1.8:
-			hit_collider = aim_hit.collider
-			hit_pos = aim_hit.position
-			hit_normal = aim_hit.normal
-	# Check distant MultiMesh trees and giant boulders that only spawn their
-	# StaticBody3D within 8-10m of the player.
-	var scene_root := get_tree().current_scene
-	if scene_root != null and scene_root.has_method("raycast_distant_props"):
-		var prop_hit: Dictionary = scene_root.raycast_distant_props(shot_origin, hit_pos)
-		if not prop_hit.is_empty():
-			hit_pos = prop_hit["position"]
-			hit_normal = prop_hit["normal"]
-			hit_collider = prop_hit["collider"]
-	# Aplicar dano/impacto inmediatamente (hitscan) — las particulas salen ya.
-	if hit_collider != null:
-		_apply_rifle_damage(hit_collider, hit_pos, shot_origin.distance_to(hit_pos), hit_normal)
+	var aim_dir: Vector3 = cam_ray_dir.normalized()
+	var spread_rad := deg_to_rad(_current_spread_deg())
+	# Uniform disk spread, without the old square-shaped distribution.
+	var angle := randf()*TAU
+	var radius := sqrt(randf())*tan(spread_rad)
+	var right := camera.global_basis.x.normalized()
+	var up := right.cross(aim_dir).normalized()
+	aim_dir = (aim_dir+right*cos(angle)*radius+up*sin(angle)*radius).normalized()
+	var shot_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
+	if is_instance_valid(_rifle_muzzle): shot_origin = _rifle_muzzle.global_position
+	# Fixed 100 m optical zero, not automatic compensation for the target.
+	var zero_target := cam_ray_origin + aim_dir * 100.0
+	var flight_time := -log(1.0-100.0*0.12/RIFLE_MUZZLE_SPEED)/0.12
+	zero_target.y += 0.5*9.81*flight_time*flight_time
+	aim_dir = (zero_target-shot_origin).normalized()
+	# A muzzle pushed through cover must not shoot through that cover.
+	var obstruction := PhysicsRayQueryParameters3D.create(cam_ray_origin, shot_origin, 5)
+	obstruction.exclude = exclude_arr
+	obstruction.collide_with_areas = false
+	obstruction.hit_from_inside = true
+	var blocked := space_state.intersect_ray(obstruction)
+	if not blocked.is_empty():
+		shot_origin = blocked.position - aim_dir*.01
+	var shot_wind := _wind_dir * _wind_strength
+	_launch_rifle_projectile(shot_origin, aim_dir, shot_wind, exclude_arr, true)
 	# Fogonazo en la punta REAL del cañon (sin rayo/trazadora).
 	var flash_pos: Vector3 = shot_origin
 	_spawn_muzzle_flash(flash_pos, aim_dir)
@@ -12015,7 +12012,7 @@ func _shoot_rifle() -> void:
 	if not is_puppet:
 		var net_node := get_node_or_null("/root/NetworkManager")
 		if net_node != null and net_node.is_connected:
-			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), shot_origin, aim_dir)
+			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), shot_origin, aim_dir, shot_wind)
 	# Refrescar contador de municion en el HUD
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
@@ -12113,7 +12110,6 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			node.apply_damage(damage)
 	# Non-living surface: dust puff, debris chips and a bullet hole decal
 	_spawn_bullet_impact(hit_pos, hit_normal, collider)
-	_hit_marker(false)
 
 func _is_rifle_damage_target(node: Node) -> bool:
 	return node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("net_player_proxy") or node.is_in_group("remote_player")
@@ -12271,9 +12267,18 @@ func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> vo
 		hit_normal = Vector3.UP
 	hit_normal = hit_normal.normalized()
 	var dust_color := _guess_surface_dust_color(hit_normal, collider)
+	var names := ""
+	var surface: Node = collider as Node
+	for i in 6:
+		if surface == null: break
+		names += String(surface.name).to_lower()+"|"
+		surface = surface.get_parent()
+	var water := "water" in names or "agua" in names
+	var metal := "metal" in names or "barrel" in names or "vehicle" in names or "car_" in names
 	_spawn_impact_dust(hit_pos, hit_normal, dust_color)
-	_spawn_impact_chips(hit_pos, hit_normal, dust_color)
-	_spawn_bullet_hole_decal(hit_pos, hit_normal, collider)
+	_spawn_impact_chips(hit_pos, hit_normal, dust_color, metal)
+	if not water and (hit_normal.y < .7 or metal or "rock" in names or "wood" in names):
+		_spawn_bullet_hole_decal(hit_pos, hit_normal, collider)
 
 func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
 	# Heuristica por nombre del collider y sus padres
@@ -12365,7 +12370,7 @@ func _spawn_impact_dust(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> 
 			motes.queue_free()
 	)
 
-func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
+func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color, sparks: bool = false) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
@@ -12387,7 +12392,14 @@ func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color) ->
 	mat.color = Color(color.r + 0.08, color.g + 0.08, color.b + 0.08, 0.95)
 	mat.color_ramp = _make_fade_ramp(0.05, 0.7)
 	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.04, 0.04), Color.WHITE)
+	particles.draw_pass_1 = _make_soft_mesh(Vector2(.012,.045) if sparks else Vector2(.025,.025), Color.WHITE)
+	if sparks:
+		mat.color = Color(1.0,.65,.18,1.0)
+		var spark_material := particles.draw_pass_1.material as StandardMaterial3D
+		if spark_material != null:
+			spark_material.emission_enabled = true
+			spark_material.emission = Color(1,.35,.06)
+			spark_material.emission_energy_multiplier = 3.0
 	scene.add_child(particles)
 	particles.global_position = hit_pos + hit_normal * 0.025
 	particles.emitting = true
@@ -12541,7 +12553,7 @@ func _play_shoot_sound() -> void:
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
-func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
+func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	if is_puppet:
 		if _puppet_held != "Rifle francotirador":
 			return
@@ -12558,26 +12570,29 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3) -> void:
 	_play_shoot_sound()
 	# Show muzzle flash at the reported muzzle (no tracer streak) and impact on static surfaces.
 	_spawn_muzzle_flash(_origin, _dir)
-	if get_world_3d() != null and _dir.length_squared() > 0.001:
-		var space := get_world_3d().direct_space_state
-		var rdir := _dir.normalized()
-		var rq := PhysicsRayQueryParameters3D.create(_origin, _origin + rdir * RIFLE_RANGE, 5)
-		rq.exclude = [get_rid()]
-		rq.collide_with_bodies = true
-		rq.collide_with_areas = false
-		var rhit := space.intersect_ray(rq)
-		var rpos: Vector3 = rhit["position"] if not rhit.is_empty() else _origin + rdir * RIFLE_RANGE
-		var rnorm: Vector3 = rhit["normal"] if not rhit.is_empty() else Vector3.UP
-		var rcol = rhit.get("collider") if not rhit.is_empty() else null
-		var scene_r := get_tree().current_scene
-		if scene_r != null and scene_r.has_method("raycast_distant_props"):
-			var ph: Dictionary = scene_r.raycast_distant_props(_origin, rpos)
-			if not ph.is_empty():
-				rpos = ph["position"]
-				rnorm = ph["normal"]
-				rcol = ph["collider"]
-		if rcol != null and not _is_rifle_damage_target(rcol as Node):
-			_spawn_bullet_impact(rpos, rnorm, rcol)
+	var excluded: Array[RID] = [get_rid()]
+	_collect_child_collision_rids(self, excluded)
+	_launch_rifle_projectile(_origin, _dir, wind, excluded, false)
+
+func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3, excluded: Array[RID], deal_damage: bool) -> void:
+	if direction.length_squared() < .001 or get_tree().current_scene == null: return
+	var projectile := preload("res://scripts/RifleProjectile.gd").new()
+	projectile.velocity = direction.normalized()*RIFLE_MUZZLE_SPEED
+	projectile.wind_velocity = wind
+	projectile.max_distance = RIFLE_RANGE
+	projectile.excluded = excluded.duplicate()
+	get_tree().current_scene.add_child(projectile)
+	projectile.global_position = origin
+	if deal_damage:
+		projectile.impact.connect(_apply_rifle_damage)
+	else:
+		projectile.impact.connect(func(collider, point: Vector3, _distance: float, normal: Vector3):
+			if not is_instance_valid(collider): return
+			var target: Node = collider as Node
+			while target != null:
+				if _is_rifle_damage_target(target): return
+				target = target.get_parent()
+			_spawn_bullet_impact(point, normal, collider))
 
 func _load_wav_stream(path: String) -> AudioStream:
 	var stream: AudioStream = null
