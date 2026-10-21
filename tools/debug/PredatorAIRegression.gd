@@ -76,21 +76,25 @@ func _run() -> void:
 	player.is_prone = true
 	wolf._state = "patrol"
 	wolf._wolf_ai(0.05)
-	check(wolf._state == "patrol", "Prone player at 28m is undetected by wolf (prone range ~21m)")
+	check(wolf._state == "patrol", "Prone player at 28m is undetected by wolf (prone range ~12.6m)")
 
 	player.is_prone = false
 	player.is_crouching = true
-	player.global_position = Vector3(40, 0, 0)
+	player.global_position = Vector3(28, 0, 0)
 	wolf._state = "patrol"
 	wolf._wolf_ai(0.05)
-	check(wolf._state == "patrol", "Crouching player at 40m is undetected by wolf (crouch range ~33m)")
+	check(wolf._state == "patrol", "Crouching player at 28m is undetected by wolf (crouch range ~23.4m)")
 
 	player.is_crouching = false
 	player.is_sprinting = true
-	player.global_position = Vector3(68, 0, 0)
+	player.global_position = Vector3(40, 0, 0)
 	wolf._state = "patrol"
 	wolf._wolf_ai(0.05)
-	check(wolf._state == "chase_player", "Sprinting player at 68m is detected by wolf (sprint range ~75m)")
+	check(wolf._state == "chase_player", "Sprinting player at 40m is detected by wolf (sprint range ~45m)")
+	wolf._state = "patrol"
+	player.global_position = Vector3(60, 0, 0)
+	wolf._wolf_ai(0.05)
+	check(wolf._state == "patrol", "Sprinting player at 60m stays unnoticed (outside sprint range ~45m)")
 	player.is_sprinting = false
 
 	# 2. Antorcha encendida mantiene al lobo salvaje a raya ("wary_torch")

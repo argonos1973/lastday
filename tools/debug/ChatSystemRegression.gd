@@ -6,7 +6,8 @@ const SurvivalStatsScript = preload("res://scripts/SurvivalStats.gd")
 
 # Lifecycle tests use synthetic input, independently of hardware availability.
 class TestHUD extends HUDScript:
-	func _voice_capture_unavailable_reason() -> String: return ""
+	var mic_reason_override := ""
+	func _voice_capture_unavailable_reason() -> String: return mic_reason_override
 
 class ProbeVoiceNet extends "res://scripts/NetworkManager.gd":
 	var received_voice: Array = []
@@ -104,6 +105,8 @@ func _run() -> void:
 	world.add_child(hud)
 	world.hud = hud
 	hud.setup(player, day_cycle, world)
+	check(hud.chat_target_scroller != null and hud.chat_messages_scroller != null, "Chat uses a horizontal channel selector and scrollable message history")
+	check(hud.voice_status_panel != null and hud.voice_status_dot != null, "Voice state has a dedicated status panel and indicator")
 
 	# 1. Con 0 o 1 jugador conectado, el chat NO se abre ni aparece
 	net.is_host = true
@@ -137,6 +140,7 @@ func _run() -> void:
 	# 4. Conversaciones 1-a-1 separadas al hacer clic en el nombre de cada jugador
 	net.send_chat_message("Hola Remy", 7, "")
 	check(hud._chat_conversations.has("dm_7") and (hud._chat_conversations["dm_7"] as Array).size() == 1, "Direct message to peer 7 stored in dm_7 conversation")
+	check(hud.chat_messages_box.get_child_count() == 1 and hud.chat_messages_box.get_child(0) is HBoxContainer, "Text messages render as aligned conversation bubbles")
 	hud.set_chat_target(9)
 	check(hud._chat_history.is_empty(), "Switching to peer 9 shows peer 9's separate conversation")
 	net.send_chat_message("Hola Alex", 9, "")
@@ -170,8 +174,18 @@ func _run() -> void:
 	check(hud._voice_speaking_timers.has(9) and hud._voice_speaking_timers.has(7), "Multiple speakers in group/chat can speak simultaneously without overwriting each other")
 	hud._process_voice_chat(0.05)
 	check(hud.voice_status_label.visible and hud.voice_status_label.text.find("Remy") >= 0 and hud.voice_status_label.text.find("Alex") >= 0, "HUD voice_status_label displays active microphone and all simultaneous speakers")
+	check(hud.voice_status_panel.visible and hud.voice_status_dot.color.r > hud.voice_status_dot.color.g, "Voice panel marks the open microphone in red")
+	var voices_before_invalid := hud._voice_speaking_timers.size()
+	hud.on_voice_packet_received(11, "Intruso", sample_pkt, 9, "Alex", "")
+	check(hud._voice_speaking_timers.size() == voices_before_invalid, "Direct voice addressed to another client is discarded")
 	hud.toggle_voice_mic()
 	check(not hud.voice_mic_active, "toggle_voice_mic deactivates microphone")
+	hud.mic_reason_override = "No se detecta un micrófono. Puedes seguir escuchando a los demás jugadores."
+	hud._process_voice_chat(0.05)
+	check(not hud.voice_mic_active and hud.voice_status_label.text.find("ESCUCHANDO") >= 0, "A player without a microphone sees listen-only status")
+	hud.on_voice_packet_received(7, "Remy", sample_pkt, 0, "Supervivientes Sur", "grp_ext_1")
+	check(hud._voice_speaking_timers.has(7), "Listen-only players still receive voice from the group")
+	hud.mic_reason_override = ""
 
 	# 8. Salir del chat con el botón Salir [Esc]
 	hud.chat_close_btn.pressed.emit()

@@ -99,6 +99,8 @@ var _players_refresh_timer := 0.0
 var chat_panel: PanelContainer = null
 var chat_messages_box: VBoxContainer = null
 var chat_target_row: HBoxContainer = null
+var chat_target_scroller: ScrollContainer = null
+var chat_messages_scroller: ScrollContainer = null
 var chat_group_builder_box: VBoxContainer = null
 var chat_group_name_input: LineEdit = null
 var chat_input_row: HBoxContainer = null
@@ -106,6 +108,8 @@ var chat_input: LineEdit = null
 var chat_mic_btn: Button = null
 var chat_close_btn: Button = null
 var voice_status_label: Label = null
+var voice_status_panel: PanelContainer = null
+var voice_status_dot: ColorRect = null
 var chat_open := false
 var voice_mic_active := false
 var _voice_target_peer_id := 0
@@ -223,8 +227,8 @@ func _process(delta: float) -> void:
 			close_chat()
 		if chat_panel != null:
 			chat_panel.visible = false
-		if voice_status_label != null:
-			voice_status_label.visible = false
+		if voice_status_panel != null:
+			voice_status_panel.visible = false
 	else:
 		_process_voice_chat(delta)
 		if chat_panel != null and not chat_open:
@@ -248,17 +252,30 @@ func _build_players_panel() -> void:
 	players_hint.visible = is_mp
 	root.add_child(players_hint)
 
+	voice_status_panel = PanelContainer.new()
+	voice_status_panel.position = Vector2(18, 174)
+	voice_status_panel.custom_minimum_size = Vector2(280, 30)
+	voice_status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	voice_status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.035, 0.045, 0.038, 0.88), Color(0.36, 0.43, 0.34, 0.72), 1))
+	voice_status_panel.visible = false
+	root.add_child(voice_status_panel)
+	var voice_status_row := HBoxContainer.new()
+	voice_status_row.add_theme_constant_override("separation", 7)
+	voice_status_panel.add_child(voice_status_row)
+	voice_status_dot = ColorRect.new()
+	voice_status_dot.custom_minimum_size = Vector2(7, 7)
+	voice_status_dot.color = Color(0.47, 0.69, 0.42)
+	voice_status_dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	voice_status_row.add_child(voice_status_dot)
 	voice_status_label = Label.new()
-	voice_status_label.position = Vector2(20, 176)
 	voice_status_label.add_theme_font_size_override("font_size", 13)
-	voice_status_label.add_theme_color_override("font_color", Color(0.96, 0.84, 0.44))
+	voice_status_label.add_theme_color_override("font_color", Color(0.84, 0.89, 0.78))
 	voice_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	voice_status_label.visible = false
-	root.add_child(voice_status_label)
+	voice_status_row.add_child(voice_status_label)
 
 	players_panel = PanelContainer.new()
 	players_panel.offset_left = 18
-	players_panel.offset_top = 198
+	players_panel.offset_top = 216
 	players_panel.anchor_left = 0.0
 	players_panel.anchor_top = 0.0
 	players_panel.anchor_right = 0.0
@@ -480,40 +497,70 @@ func _build_chat_panel() -> void:
 	chat_panel.anchor_right = 0.0
 	chat_panel.anchor_bottom = 1.0
 	chat_panel.offset_left = 18
-	chat_panel.offset_top = -410
-	chat_panel.offset_right = 470
-	chat_panel.offset_bottom = -166
+	chat_panel.offset_top = -450
+	chat_panel.offset_right = 520
+	chat_panel.offset_bottom = -128
 	chat_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.90), Color(0.43, 0.48, 0.38, 0.68), 1)
-	frame.set_corner_radius_all(6)
-	frame.content_margin_left = 10
-	frame.content_margin_right = 10
-	frame.content_margin_top = 8
-	frame.content_margin_bottom = 8
+	var frame := _panel_style(Color(0.025, 0.035, 0.030, 0.94), Color(0.58, 0.57, 0.40, 0.88), 1)
+	frame.set_corner_radius_all(9)
+	frame.content_margin_left = 12
+	frame.content_margin_right = 12
+	frame.content_margin_top = 10
+	frame.content_margin_bottom = 10
 	chat_panel.add_theme_stylebox_override("panel", frame)
 	chat_panel.visible = false
 	root.add_child(chat_panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 6)
+	vbox.add_theme_constant_override("separation", 8)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chat_panel.add_child(vbox)
 
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vbox.add_child(header)
+	var title := Label.new()
+	title.text = "COMUNICACIONES"
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.91, 0.82, 0.48))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var channel_badge := Label.new()
+	channel_badge.text = "RADIO · PRIVADO"
+	channel_badge.add_theme_font_size_override("font_size", 10)
+	channel_badge.add_theme_color_override("font_color", Color(0.66, 0.76, 0.62))
+	header.add_child(channel_badge)
+
+	chat_target_scroller = ScrollContainer.new()
+	chat_target_scroller.custom_minimum_size = Vector2(0, 32)
+	chat_target_scroller.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	chat_target_scroller.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	chat_target_scroller.mouse_filter = Control.MOUSE_FILTER_STOP
+	chat_target_scroller.visible = false
+	vbox.add_child(chat_target_scroller)
 	chat_target_row = HBoxContainer.new()
 	chat_target_row.add_theme_constant_override("separation", 5)
-	chat_target_row.visible = false
-	vbox.add_child(chat_target_row)
+	chat_target_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chat_target_scroller.add_child(chat_target_row)
 
 	chat_group_builder_box = VBoxContainer.new()
 	chat_group_builder_box.add_theme_constant_override("separation", 4)
 	chat_group_builder_box.visible = false
 	vbox.add_child(chat_group_builder_box)
 
+	chat_messages_scroller = ScrollContainer.new()
+	chat_messages_scroller.custom_minimum_size = Vector2(0, 142)
+	chat_messages_scroller.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_messages_scroller.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chat_messages_scroller.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	chat_messages_scroller.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	chat_messages_scroller.mouse_filter = Control.MOUSE_FILTER_PASS
+	vbox.add_child(chat_messages_scroller)
 	chat_messages_box = VBoxContainer.new()
-	chat_messages_box.add_theme_constant_override("separation", 3)
-	chat_messages_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_messages_box.add_theme_constant_override("separation", 5)
+	chat_messages_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	chat_messages_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(chat_messages_box)
+	chat_messages_scroller.add_child(chat_messages_box)
 
 	chat_input_row = HBoxContainer.new()
 	chat_input_row.add_theme_constant_override("separation", 6)
@@ -526,20 +573,25 @@ func _build_chat_panel() -> void:
 	chat_input.max_length = 160
 	chat_input.add_theme_font_size_override("font_size", 13)
 	chat_input.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
+	chat_input.add_theme_stylebox_override("normal", _panel_style(Color(0.065, 0.075, 0.065, 0.98), Color(0.36, 0.41, 0.34, 0.9), 1))
+	chat_input.add_theme_stylebox_override("focus", _panel_style(Color(0.075, 0.09, 0.07, 1.0), Color(0.72, 0.66, 0.39, 1.0), 1))
 	chat_input.visible = false
 	chat_input.text_submitted.connect(_on_chat_submitted)
 	chat_input.gui_input.connect(_on_chat_gui_input)
 	chat_input_row.add_child(chat_input)
 
 	chat_mic_btn = Button.new()
-	chat_mic_btn.text = "🎤 Micro [V]"
-	chat_mic_btn.add_theme_font_size_override("font_size", 12)
+	chat_mic_btn.text = "🎙 HABLAR [V]"
+	chat_mic_btn.add_theme_font_size_override("font_size", 11)
+	chat_mic_btn.custom_minimum_size.x = 116
+	_style_comms_button(chat_mic_btn, false, Color(0.76, 0.86, 0.70))
 	chat_mic_btn.pressed.connect(toggle_voice_mic)
 	chat_input_row.add_child(chat_mic_btn)
 
 	chat_close_btn = Button.new()
-	chat_close_btn.text = "Salir [Esc]"
-	chat_close_btn.add_theme_font_size_override("font_size", 12)
+	chat_close_btn.text = "CERRAR [Esc]"
+	chat_close_btn.add_theme_font_size_override("font_size", 11)
+	_style_comms_button(chat_close_btn, false, Color(0.82, 0.83, 0.77))
 	chat_close_btn.pressed.connect(close_chat)
 	chat_input_row.add_child(chat_close_btn)
 
@@ -667,9 +719,9 @@ func _refresh_chat_target_ui() -> void:
 	for c in chat_target_row.get_children():
 		c.queue_free()
 	var to_lbl := Label.new()
-	to_lbl.text = "Jugadores / Grupos:"
-	to_lbl.add_theme_font_size_override("font_size", 12)
-	to_lbl.add_theme_color_override("font_color", Color(0.70, 0.75, 0.64))
+	to_lbl.text = "CANAL"
+	to_lbl.add_theme_font_size_override("font_size", 10)
+	to_lbl.add_theme_color_override("font_color", Color(0.61, 0.68, 0.56))
 	chat_target_row.add_child(to_lbl)
 	for entry in others:
 		var pid: int = int(entry["id"])
@@ -677,8 +729,8 @@ func _refresh_chat_target_ui() -> void:
 		var pbtn := Button.new()
 		var selected := (chat_target_group_id.is_empty() and chat_target_peer_id == pid)
 		pbtn.text = ("● " + pname) if selected else pname
-		pbtn.add_theme_font_size_override("font_size", 12)
-		pbtn.add_theme_color_override("font_color", Color(1.0, 0.86, 0.45) if selected else Color(0.78, 0.80, 0.74))
+		pbtn.add_theme_font_size_override("font_size", 11)
+		_style_comms_button(pbtn, selected, Color(0.91, 0.80, 0.45) if selected else Color(0.78, 0.84, 0.75))
 		pbtn.pressed.connect(func(): set_chat_target(pid))
 		chat_target_row.add_child(pbtn)
 	for g in all_groups:
@@ -694,13 +746,14 @@ func _refresh_chat_target_ui() -> void:
 			gbtn.text = "👥 %s (%d)" % [gname, members.size()]
 		else:
 			gbtn.text = "👥 %s [Unirse]" % gname
-		gbtn.add_theme_font_size_override("font_size", 12)
-		gbtn.add_theme_color_override("font_color", Color(0.65, 0.95, 0.75) if gsel else (Color(0.76, 0.88, 0.78) if joined else Color(0.95, 0.82, 0.52)))
+		gbtn.add_theme_font_size_override("font_size", 11)
+		_style_comms_button(gbtn, gsel, Color(0.69, 0.92, 0.70) if joined else Color(0.90, 0.78, 0.48))
 		gbtn.pressed.connect(func(): join_or_select_chat_group(gid))
 		chat_target_row.add_child(gbtn)
 	var new_grp_btn := Button.new()
 	new_grp_btn.text = "+ Crear grupo"
-	new_grp_btn.add_theme_font_size_override("font_size", 12)
+	new_grp_btn.add_theme_font_size_override("font_size", 11)
+	_style_comms_button(new_grp_btn, false, Color(0.84, 0.88, 0.78))
 	new_grp_btn.pressed.connect(func():
 		chat_group_builder_open = not chat_group_builder_open
 		_refresh_chat_target_ui()
@@ -753,8 +806,8 @@ func open_chat(initial_target_peer_id: int = -1, initial_group_id: String = "") 
 	_chat_fade_timer = CHAT_VISIBLE_SECONDS
 	chat_panel.visible = true
 	chat_panel.modulate.a = 1.0
-	if chat_target_row != null:
-		chat_target_row.visible = true
+	if chat_target_scroller != null:
+		chat_target_scroller.visible = true
 	if chat_input_row != null:
 		chat_input_row.visible = true
 	chat_input.visible = true
@@ -769,8 +822,8 @@ func close_chat() -> void:
 	chat_group_builder_open = false
 	if chat_group_builder_box != null:
 		chat_group_builder_box.visible = false
-	if chat_target_row != null:
-		chat_target_row.visible = false
+	if chat_target_scroller != null:
+		chat_target_scroller.visible = false
 	if chat_input_row != null:
 		chat_input_row.visible = false
 	if chat_input != null:
@@ -815,27 +868,75 @@ func _render_active_conversation() -> void:
 	for c in chat_messages_box.get_children():
 		c.queue_free()
 	for entry in _chat_history:
-		var lbl := Label.new()
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 0)
+		var is_self := bool(entry.get("self", false))
+		if is_self:
+			var left_spacer := Control.new()
+			left_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(left_spacer)
+		var bubble := PanelContainer.new()
+		bubble.size_flags_horizontal = Control.SIZE_SHRINK_END if is_self else Control.SIZE_SHRINK_BEGIN
+		bubble.custom_minimum_size.x = 210
+		var bubble_fill := Color(0.17, 0.20, 0.14, 0.94) if is_self else Color(0.10, 0.13, 0.12, 0.94)
+		var bubble_border := Color(0.58, 0.51, 0.29, 0.72) if is_self else Color(0.32, 0.43, 0.37, 0.74)
+		var bubble_style := _panel_style(bubble_fill, bubble_border, 1)
+		bubble_style.set_corner_radius_all(7)
+		bubble_style.content_margin_left = 9
+		bubble_style.content_margin_right = 9
+		bubble_style.content_margin_top = 6
+		bubble_style.content_margin_bottom = 6
+		bubble.add_theme_stylebox_override("panel", bubble_style)
+		var bubble_box := VBoxContainer.new()
+		bubble_box.add_theme_constant_override("separation", 2)
+		bubble.add_child(bubble_box)
+		var meta_row := HBoxContainer.new()
+		meta_row.add_theme_constant_override("separation", 6)
+		bubble_box.add_child(meta_row)
+		var sender_lbl := Label.new()
 		var sname := str(entry.get("sender", "Jugador"))
 		var msg := str(entry.get("text", ""))
 		var tname := str(entry.get("target", ""))
 		var gid := str(entry.get("group_id", ""))
-		if not gid.is_empty():
-			lbl.text = "[%s] %s: %s" % [tname if not tname.is_empty() else "Grupo", sname, msg]
-		elif bool(entry.get("self", false)) and not tname.is_empty():
-			lbl.text = "[Para %s]: %s" % [tname, msg]
-		else:
-			lbl.text = "%s: %s" % [sname, msg]
-		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		lbl.add_theme_font_size_override("font_size", 13)
-		var col := Color(1.0, 0.85, 0.45)
-		if not gid.is_empty():
-			col = Color(0.68, 0.95, 0.78)
-		elif bool(entry.get("self", false)):
-			col = Color(0.84, 0.93, 0.68)
-		lbl.add_theme_color_override("font_color", col)
-		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		chat_messages_box.add_child(lbl)
+		sender_lbl.text = "TÚ" if is_self else sname.to_upper()
+		sender_lbl.add_theme_font_size_override("font_size", 10)
+		sender_lbl.add_theme_color_override("font_color", Color(0.91, 0.78, 0.40) if is_self else (Color(0.64, 0.83, 0.68) if not gid.is_empty() else Color(0.78, 0.83, 0.74)))
+		sender_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sender_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		meta_row.add_child(sender_lbl)
+		var context_lbl := Label.new()
+		context_lbl.text = ("GRUPO · " + (tname if not tname.is_empty() else "Grupo")) if not gid.is_empty() else ("A " + tname if is_self and not tname.is_empty() else "")
+		context_lbl.add_theme_font_size_override("font_size", 9)
+		context_lbl.add_theme_color_override("font_color", Color(0.62, 0.67, 0.58))
+		context_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		meta_row.add_child(context_lbl)
+		var time_lbl := Label.new()
+		time_lbl.text = str(entry.get("time", ""))
+		time_lbl.add_theme_font_size_override("font_size", 9)
+		time_lbl.add_theme_color_override("font_color", Color(0.57, 0.60, 0.54))
+		time_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		meta_row.add_child(time_lbl)
+		var body_lbl := Label.new()
+		body_lbl.text = msg
+		body_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		body_lbl.custom_minimum_size.x = 190
+		body_lbl.add_theme_font_size_override("font_size", 13)
+		body_lbl.add_theme_color_override("font_color", Color(0.95, 0.95, 0.88))
+		body_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bubble_box.add_child(body_lbl)
+		row.add_child(bubble)
+		if not is_self:
+			var right_spacer := Control.new()
+			right_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(right_spacer)
+		chat_messages_box.add_child(row)
+	if chat_messages_scroller != null:
+		call_deferred("_scroll_chat_to_bottom")
+
+func _scroll_chat_to_bottom() -> void:
+	if chat_messages_scroller != null and is_instance_valid(chat_messages_scroller):
+		chat_messages_scroller.scroll_vertical = int(chat_messages_scroller.get_v_scroll_bar().max_value)
 
 func add_chat_message(sender_name: String, text: String, is_self: bool = false, _is_private: bool = true, target_name: String = "", peer_key_id: int = 0, group_id: String = "") -> void:
 	if chat_messages_box == null:
@@ -850,7 +951,7 @@ func add_chat_message(sender_name: String, text: String, is_self: bool = false, 
 		if conv_key.is_empty():
 			conv_key = "dm_0"
 	var list: Array = _chat_conversations.get(conv_key, [])
-	list.append({"sender": sender_name, "text": text, "self": is_self, "target": target_name, "group_id": group_id})
+	list.append({"sender": sender_name, "text": text, "self": is_self, "target": target_name, "group_id": group_id, "time": Time.get_time_string_from_system().substr(0, 5)})
 	while list.size() > CHAT_MAX_MESSAGES:
 		list.pop_front()
 	_chat_conversations[conv_key] = list
@@ -971,8 +1072,9 @@ func set_voice_mic_active(active: bool) -> void:
 		if _mic_capture != null:
 			_mic_capture.clear_buffer()
 	if chat_mic_btn != null:
-		chat_mic_btn.text = "🔴 Micro ON [V]" if voice_mic_active else "🎤 Micro [V]"
-		chat_mic_btn.add_theme_color_override("font_color", Color(1.0, 0.45, 0.40) if voice_mic_active else Color(0.90, 0.92, 0.86))
+		chat_mic_btn.text = "🔴 EN DIRECTO [V]" if voice_mic_active else "🎙 HABLAR [V]"
+		_style_comms_button(chat_mic_btn, voice_mic_active, Color(1.0, 0.58, 0.48) if voice_mic_active else Color(0.76, 0.86, 0.70))
+		chat_mic_btn.tooltip_text = "Micrófono abierto hacia %s. Pulsa V para silenciar." % _active_voice_target_label() if voice_mic_active else "Mantén el micrófono cerrado hasta pulsar V. Puedes escuchar sin micrófono."
 
 func _process_voice_chat(delta: float) -> void:
 	# A live capture belongs to the explicitly enabled conversation. Never
@@ -1018,13 +1120,24 @@ func _process_voice_chat(delta: float) -> void:
 		_voice_speaking_timers.erase(sid)
 	if voice_status_label != null:
 		var lines: Array = []
+		var unavailable := _voice_capture_unavailable_reason()
 		if voice_mic_active:
 			var target_lbl := _active_voice_target_label()
-			lines.append("🎤 Micro ACTIVO → %s  [V para silenciar]" % target_lbl)
+			lines.append("MICRÓFONO ABIERTO · %s" % target_lbl)
+		elif unavailable.to_lower().contains("micrófono"):
+			lines.append("ESCUCHANDO · micrófono no disponible")
+		elif not unavailable.is_empty():
+			lines.append("AUDIO NO DISPONIBLE")
+		else:
+			lines.append("VOZ LISTA · pulsa V para hablar")
 		if not speaking_parts.is_empty():
-			lines.append("🔊 Hablando: %s" % ", ".join(PackedStringArray(speaking_parts)))
+			lines.append("EN CANAL: %s" % ", ".join(PackedStringArray(speaking_parts)))
 		voice_status_label.text = "\n".join(PackedStringArray(lines))
-		voice_status_label.visible = not lines.is_empty()
+		voice_status_label.visible = can_use_chat()
+		if voice_status_panel != null:
+			voice_status_panel.visible = can_use_chat()
+		if voice_status_dot != null:
+			voice_status_dot.color = Color(0.91, 0.30, 0.23) if voice_mic_active else (Color(0.45, 0.82, 0.56) if not speaking_parts.is_empty() else Color(0.55, 0.68, 0.44))
 
 func _dispatch_voice_packet(pcm_bytes: PackedByteArray) -> void:
 	if not voice_mic_active:
@@ -1059,6 +1172,13 @@ func _exit_tree() -> void:
 func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, _target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	if pcm_bytes.is_empty() or not can_use_chat():
 		return
+	var net = get_node_or_null("/root/NetworkManager")
+	var my_id := int(net.get_my_id()) if net != null and net.has_method("get_my_id") else -1
+	if sender_id == my_id:
+		return
+	if group_id.is_empty():
+		if _target_id <= 0 or _target_id != my_id:
+			return
 	if not group_id.is_empty():
 		var in_group := false
 		for g in _my_chat_groups():
@@ -2834,6 +2954,26 @@ func _panel_style(fill: Color, border: Color, border_width: int) -> StyleBoxFlat
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	return style
+
+func _style_comms_button(button: Button, selected: bool, text_color: Color) -> void:
+	button.flat = false
+	button.add_theme_color_override("font_color", text_color)
+	button.add_theme_color_override("font_hover_color", Color(1.0, 0.92, 0.62))
+	button.add_theme_font_size_override("font_size", 11)
+	var normal := _panel_style(Color(0.14, 0.16, 0.13, 0.88) if selected else Color(0.07, 0.09, 0.075, 0.88), Color(0.66, 0.58, 0.34, 0.9) if selected else Color(0.29, 0.35, 0.29, 0.75), 1)
+	normal.set_corner_radius_all(5)
+	normal.content_margin_left = 8
+	normal.content_margin_right = 8
+	normal.content_margin_top = 4
+	normal.content_margin_bottom = 4
+	button.add_theme_stylebox_override("normal", normal)
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.20, 0.22, 0.16, 0.98)
+	hover.border_color = Color(0.77, 0.70, 0.44, 1.0)
+	button.add_theme_stylebox_override("hover", hover)
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.22, 0.23, 0.16, 1.0)
+	button.add_theme_stylebox_override("pressed", pressed)
 
 func _update_slot_buttons() -> void:
 	pass

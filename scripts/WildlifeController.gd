@@ -926,7 +926,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_play_animation_by_name("walk")
 				return {"target": _player.global_position, "speed": move_speed * 0.75}
 			_bear_warn_timer = 0.0
-		if not another_bear_chasing and (dist_to_player < sight_range or (_state == "chase_player" and dist_to_player < 110.0)):
+		var chase_memory_range := _player_chase_memory_range(sight_range)
+		if not another_bear_chasing and (dist_to_player < sight_range or (_state == "chase_player" and dist_to_player < chase_memory_range)):
 			if animal_type == "bear" and _bear_beyond_territory(_player.global_position):
 				return _retreat_from_player()
 			if animal_type == "bear" and _state != "chase_player" and _state != "bear_warn" and dist_to_player > 22.0 and health >= max_health * 0.99:
@@ -1224,7 +1225,9 @@ func _predator_player_damage() -> float:
 	return 35.0 if animal_type == "bear" else 25.0
 
 func _effective_player_sight_range(p: Node3D) -> float:
-	var base := 65.0 if animal_type == "bear" else 60.0
+	# Predators should react at a readable distance, not acquire a player from
+	# across a clearing. Bears still notice farther away than wolves.
+	var base := 50.0 if animal_type == "bear" else 36.0
 	if p == null or not is_instance_valid(p):
 		return base
 	var is_prone_flag: bool = (p.get("is_prone") == true) or (p.get_meta("prone", false) == true)
@@ -1237,6 +1240,11 @@ func _effective_player_sight_range(p: Node3D) -> float:
 	if is_sprint_flag:
 		return base * 1.25
 	return base
+
+func _player_chase_memory_range(sight_range: float) -> float:
+	# Once it has spotted a target, a predator should lose interest shortly
+	# after it leaves sight instead of tracking it for half the map.
+	return minf(sight_range * 1.35, 70.0)
 
 func _player_holds_lit_torch(p: Node) -> bool:
 	if p == null or not is_instance_valid(p):

@@ -944,6 +944,7 @@ func setup_as_puppet() -> void:
 					_head_bone_idx = _head_skeleton.find_bone(bone_name)
 					if _head_bone_idx != -1:
 						break
+			_bind_headwear_socket_signal()
 	# PvP: puppets are the only shootable representation of remote players —
 	# give them damage hitboxes so rifle rays connect and headshots register.
 	add_to_group("remote_player")
@@ -3861,6 +3862,21 @@ func _held_handle_center(root: Node3D, axis: int, fallback: Vector3, tolerance: 
 	return center
 
 var _head_worn_rel: Dictionary = {}
+var _head_socket_signal_skeleton: Skeleton3D = null
+
+func _bind_headwear_socket_signal() -> void:
+	if _head_skeleton == null or _head_bone_idx < 0:
+		return
+	if _head_socket_signal_skeleton == _head_skeleton and _head_skeleton.skeleton_updated.is_connected(_on_head_skeleton_updated):
+		return
+	if is_instance_valid(_head_socket_signal_skeleton) and _head_socket_signal_skeleton.skeleton_updated.is_connected(_on_head_skeleton_updated):
+		_head_socket_signal_skeleton.skeleton_updated.disconnect(_on_head_skeleton_updated)
+	_head_socket_signal_skeleton = _head_skeleton
+	if not _head_skeleton.skeleton_updated.is_connected(_on_head_skeleton_updated):
+		_head_skeleton.skeleton_updated.connect(_on_head_skeleton_updated)
+
+func _on_head_skeleton_updated() -> void:
+	_update_head_worn_items()
 
 func _update_hand_socket() -> void:
 	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
@@ -4471,6 +4487,7 @@ func _create_third_person_item_slots() -> void:
 			_head_bone_idx = _head_skeleton.find_bone(bone_name)
 			if _head_bone_idx != -1:
 				break
+	_bind_headwear_socket_signal()
 
 	var head_socket := _create_equipment_socket("HeadSocket", Vector3(0.0, 1.72, -0.02), Vector3.ZERO)
 	var chest_socket := _create_equipment_socket("ChestSocket", Vector3(0.0, 1.24, -0.18), Vector3.ZERO)

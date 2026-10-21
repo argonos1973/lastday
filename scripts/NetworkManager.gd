@@ -879,7 +879,7 @@ var animals: Dictionary = {}
 var _animals_gen := -1
 var _animals_seen := {}
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 2)
 func sync_bear_animals(data: Dictionary) -> void:
 	# The ordinary wildlife stream is deliberately split into small UDP packets.
 	# Bears are rare and distant, so send their compact state on a reliable lane
@@ -894,7 +894,7 @@ func sync_bear_animals(data: Dictionary) -> void:
 		animals[aid] = entry.duplicate(true)
 		animals[aid]["_sample"] = Time.get_ticks_usec()
 
-@rpc("authority", "unreliable_ordered")
+@rpc("authority", "call_remote", "unreliable_ordered", 2)
 func sync_animals(data: Dictionary) -> void:
 	# Chunks carry "_gen"/"_total" so a broadcast split across packets is only
 	# pruned once every chunk arrived. Without this, animals deleted on the

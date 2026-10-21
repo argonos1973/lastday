@@ -1056,8 +1056,10 @@ func _process(delta: float) -> void:
 		_update_server_proxies(delta)
 		# Server broadcasts animal state to clients
 		_animal_sync_timer += delta
-		if _animal_sync_timer >= 0.15:
-			_animal_sync_timer = 0.0
+		if _animal_sync_timer >= 0.10:
+			# Keep the 10 Hz cadence stable when a frame runs late instead of
+			# adding the full frame time to every interval.
+			_animal_sync_timer = fmod(_animal_sync_timer, 0.10)
 			_broadcast_animals()
 		# Tick campfire fires on server
 		_tick_campfire_fires()
@@ -4770,7 +4772,7 @@ func _broadcast_animals() -> void:
 			"fm": str(animal.get("_follow_mode"))
 		}
 	net.animals = data
-	_bear_reliable_sync_timer += 0.15
+	_bear_reliable_sync_timer += 0.10
 	if _bear_reliable_sync_timer >= 1.0:
 		_bear_reliable_sync_timer = fmod(_bear_reliable_sync_timer, 1.0)
 		var bear_snapshot := {}

@@ -4,7 +4,7 @@ class Actor extends "res://scripts/PlayerController.gd":
 	func _ready() -> void: pass
 	func _process(_delta: float) -> void: pass
 	func _physics_process(_delta: float) -> void: pass
-	func _setup_third_person_animation(_character: Node3D) -> void: pass
+	func _setup_third_person_animation(character: Node3D) -> void: super._setup_third_person_animation(character)
 
 var errors := 0
 func check(ok: bool, message: String) -> void:
@@ -27,6 +27,7 @@ func run() -> void:
 	var original_hair := hair.mesh
 	actor.equip_clothing("Sombrero de pescador")
 	check(hair.mesh != original_hair, "Hair is tucked using an instance-local mesh")
+	check(hair.mesh.get_aabb().size.x > original_hair.get_aabb().size.x * 0.95, "Fisherman hat preserves the natural side and nape hair")
 	var model := actor.third_person_model
 	var hat := model.get_node("Worn_Sombrero de pescador") as Node3D
 	var rest := hat.transform
@@ -51,7 +52,7 @@ func run() -> void:
 	for angle in [-0.5, 0.3, 0.6]:
 		skeleton.set_bone_pose_rotation(bone, original * Quaternion(Vector3.RIGHT, angle))
 		skeleton.force_update_all_bone_transforms()
-		actor._update_head_worn_items()
+		skeleton.emit_signal("skeleton_updated")
 		var bone_local: Transform3D = model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
 		var got: Transform3D = bone_local.affine_inverse() * hat.transform
 		# Explicit epsilon: re-equips inside the loop recapture the stored rel
@@ -62,6 +63,24 @@ func run() -> void:
 		actor._wear_clothing_visual("Sombrero de pescador")
 		hat = model.get_node("Worn_Sombrero de pescador")
 		check(before.is_equal_approx(hat.transform), "Equipping during an animation does not bake a pose offset")
+	var walk_clip := actor.third_person_walk_animation
+	check(not walk_clip.is_empty() and actor.third_person_animation_player.has_animation(walk_clip), "Walk animation is loaded for headwear movement validation")
+	if not walk_clip.is_empty() and actor.third_person_animation_player.has_animation(walk_clip):
+		var saved_pose: Array[Transform3D] = []
+		for pose_idx in skeleton.get_bone_count():
+			saved_pose.append(skeleton.get_bone_pose(pose_idx))
+		actor.third_person_animation_player.play(walk_clip, 0.0)
+		actor.third_person_animation_player.advance(0.45)
+		skeleton.force_update_all_bone_transforms()
+		skeleton.emit_signal("skeleton_updated")
+		var walking_bone: Transform3D = model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
+		var walking_hat_rel: Transform3D = walking_bone.affine_inverse() * hat.transform
+		check(walking_hat_rel.origin.distance_to(fit.origin) < 0.01 and walking_hat_rel.basis.is_equal_approx(fit.basis), "Fisherman hat follows the animated head during the walk cycle")
+		actor.third_person_animation_player.stop()
+		for pose_idx in skeleton.get_bone_count():
+			skeleton.set_bone_pose(pose_idx, saved_pose[pose_idx])
+		skeleton.force_update_all_bone_transforms()
+		skeleton.emit_signal("skeleton_updated")
 	skeleton.set_bone_pose_rotation(bone, original)
 	skeleton.force_update_all_bone_transforms()
 	actor._update_head_worn_items()
@@ -123,7 +142,7 @@ func run() -> void:
 	check(helmet_bounds.end.y > head.end.y and helmet_bounds.end.y < head.end.y + head.size.y * 0.30, "Helmet dome clears the skull without floating")
 	skeleton.set_bone_pose_rotation(bone, original * Quaternion(Vector3.RIGHT, 0.5))
 	skeleton.force_update_all_bone_transforms()
-	actor._update_head_worn_items()
+	skeleton.emit_signal("skeleton_updated")
 	var helmet_local: Transform3D = model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
 	check((helmet_local.affine_inverse() * helmet.transform).is_equal_approx(helmet_fit), "Helmet remains anchored when the head tilts")
 	skeleton.set_bone_pose_rotation(bone, original)

@@ -12,10 +12,18 @@ const WORN_HIDE := {
 # line (positive raises the tuck, negative lowers it inside the skull volume).
 # The helmet swallows the whole scalp, so hair collapses down into the head
 # instead of just under the rim — no tufts can poke through the shell.
-const TUCK_DROP := {"Casco militar": -0.15, "Tocado de piel animal": -0.28}
+const TUCK_DROP := {
+	"Sombrero de pescador": 0.02,
+	"Casco militar": -0.23,
+	"Tocado de piel animal": -0.28,
+}
 # Items that bury the scalp also pull the collapsed hair verts inward, so the
 # squashed layer stays inside the skull instead of ringing the face.
-const TUCK_SHRINK := {"Casco militar": 0.55, "Tocado de piel animal": 0.68}
+const TUCK_SHRINK := {
+	"Sombrero de pescador": 0.0,
+	"Casco militar": 0.72,
+	"Tocado de piel animal": 0.68,
+}
 
 # Shared by the saved-character preview and the animated actor.
 static func fit_pelt(model: Node3D, hat: Node3D, species: String = "") -> bool:
