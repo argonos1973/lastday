@@ -9120,7 +9120,13 @@ func _create_house_loot() -> void:
 		mag_data["pos"] = tent_origin + Vector3(-0.5 + 0.7 * mi, 0.0, -2.3).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
 		mag_data["floor_y"] = tent_floor_y
 		_create_pickup_item(mag_data)
-	# Dos cargadores 5.56 del M4 junto a los del francotirador — IDs fijos.
+	# Fusil de asalto M4 garantizado + dos cargadores 5.56 junto a los del
+	# francotirador en la tienda militar principal — IDs fijos, sin consumir RNG.
+	var tent_m4: Dictionary = m4_template.duplicate()
+	tent_m4["id"] = "tent_loot_m4"
+	tent_m4["pos"] = tent_origin + Vector3(1.2, 0.0, -2.2).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0, tent_floor_y, 0)
+	tent_m4["floor_y"] = tent_floor_y
+	_create_pickup_item(tent_m4)
 	for m4i in range(2):
 		var m4mag_data: Dictionary = m4_mag_template.duplicate()
 		m4mag_data["id"] = "tent_loot_m4mag_%d" % m4i
@@ -9404,6 +9410,31 @@ func _create_house_loot() -> void:
 			"paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5,
 			"rot": Vector3.ZERO, "color": Color.TRANSPARENT, "pos": spot["pos"], "floor_y": spot["pos"].y}
 		_create_pickup_item(mask_loot)
+	# M4 + 2 cargadores 5.56 en la cima de la Torre del Reloj (29.46 m) y en la
+	# torre de agua del pueblo — IDs y posiciones fijos, sin consumir RNG.
+	var ct_roof_m4: Dictionary = m4_template.duplicate()
+	ct_roof_m4["id"] = "clock_tower_roof_m4"
+	ct_roof_m4["pos"] = ct_origin + Vector3(-1.4, 29.46, 0.4)
+	ct_roof_m4["floor_y"] = 29.46
+	_create_pickup_item(ct_roof_m4)
+	for ctmi in range(2):
+		var ct_roof_mag: Dictionary = m4_mag_template.duplicate()
+		ct_roof_mag["id"] = "clock_tower_roof_m4mag_%d" % ctmi
+		ct_roof_mag["pos"] = ct_origin + Vector3(-1.7 + 0.6 * ctmi, 29.46, 0.9)
+		ct_roof_mag["floor_y"] = 29.46
+		_create_pickup_item(ct_roof_mag)
+	var wt_floor_y := _get_exact_ground_y(water_tower_origin.x, water_tower_origin.z) + 0.06
+	var wt_m4: Dictionary = m4_template.duplicate()
+	wt_m4["id"] = "water_tower_loot_m4"
+	wt_m4["pos"] = Vector3(water_tower_origin.x + 1.4, wt_floor_y, water_tower_origin.z - 1.4)
+	wt_m4["floor_y"] = wt_floor_y
+	_create_pickup_item(wt_m4)
+	for wtmi in range(2):
+		var wt_mag: Dictionary = m4_mag_template.duplicate()
+		wt_mag["id"] = "water_tower_loot_m4mag_%d" % wtmi
+		wt_mag["pos"] = Vector3(water_tower_origin.x + 0.8 + 0.5 * wtmi, wt_floor_y, water_tower_origin.z - 1.8)
+		wt_mag["floor_y"] = wt_floor_y
+		_create_pickup_item(wt_mag)
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(

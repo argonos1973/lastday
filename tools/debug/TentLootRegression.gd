@@ -24,11 +24,12 @@ func run():
   if before[id] != world.generated.get(id):
    failures += 1
    push_error("Collected hats changed loot " + str(id))
- # Each military site must guarantee its own rifle pickup
- for rifle_id in ["tent_loot_rifle", "remote_tent_loot_rifle", "city_tent_loot_rifle"]:
+ # Each military site must guarantee its own sniper rifle and M4 pickup, plus
+ # the towers (clock tower roof and village water tower).
+ for rifle_id in ["tent_loot_rifle", "remote_tent_loot_rifle", "city_tent_loot_rifle", "tent_loot_m4", "remote_tent_loot_m4", "city_tent_loot_m4", "clock_tower_roof_m4", "water_tower_loot_m4", "clock_tower_roof_m4mag_0", "clock_tower_roof_m4mag_1"]:
   if not before.has(rifle_id):
    failures += 1
-   push_error("Missing guaranteed rifle " + rifle_id)
+   push_error("Missing guaranteed rifle/ammo " + rifle_id)
  # The city store must spawn military gear from the shared pool
  var city_ids := ["city_tent_loot_helmet", "city_tent_loot_vest", "city_tent_loot_milbackpack", "city_tent_loot_item_0", "city_tent_loot_item_1", "city_tent_loot_item_2", "city_tent_loot_food_0", "city_tent_loot_food_1"]
  for cid in city_ids:
