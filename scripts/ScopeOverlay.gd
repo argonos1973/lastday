@@ -99,7 +99,7 @@ func _process(_delta: float) -> void:
 		pass
 	if player.get("_breath_hold_active") == true:
 		var hold_t: float = player.get("_breath_hold_timer")
-		var remaining := 5.0 - hold_t
+		var remaining := maxf(0.0, PlayerController.BREATH_HOLD_DURATION - hold_t)
 		_breath_label.text = "Aguantando: %.1fs" % remaining
 		_breath_label.add_theme_color_override("font_color", Color(0.7, 0.85, 0.7, 0.9))
 	elif player.get("_breath_hold_recover") > 0.0:

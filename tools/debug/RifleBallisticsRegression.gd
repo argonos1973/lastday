@@ -81,6 +81,29 @@ func run():
 	check(is_equal_approx(actor.camera.fov,55.0) and actor.camera.far==500.0,"Unscoping restores base FOV and far plane")
 	actor._is_aiming=true;actor._cancel_aim()
 	check(is_equal_approx(actor.camera.fov,55.0),"Leaving the scope restores normal FOV")
+	actor._is_aiming=true
+	actor._update_breath_hold(0.0, true)
+	actor._update_breath_hold(14.99, false)
+	check(actor._breath_hold_active, "Shift steadies aim for the full 15 seconds")
+	actor._update_breath_hold(.02, false)
+	check(not actor._breath_hold_active and actor._breath_hold_recover > 0, "Breath hold expires after 15 seconds")
+	actor._update_breath_hold(4.1, true)
+	check(actor._breath_hold_active, "New Shift press after recovery starts another hold")
+	actor._update_breath_hold(15.1, true)
+	actor._update_breath_hold(5.0, true)
+	check(not actor._breath_hold_active, "Keeping Shift held must not automatically repeat the hold")
+	actor._update_breath_hold(0.0, false)
+	actor._update_breath_hold(0.0, true)
+	actor._cancel_aim()
+	check(not actor._breath_hold_active, "Leaving aim cancels breath hold")
+	actor._spawn_bullet_impact(wall.global_position, Vector3.UP, wall)
+	var mark=wall.get_node_or_null("BulletHole")
+	check(mark != null, "Horizontal solid surfaces retain a bullet mark")
+	if mark != null:
+		var before=mark.global_position
+		wall.position.x+=1
+		check(mark.global_position.distance_to(before+Vector3.RIGHT)<.001, "Impact marks follow their hit object")
+	check(world.get_node_or_null("BulletDustMotes") != null, "Solid impacts produce dust")
 	if "--preview" in OS.get_cmdline_user_args() and DisplayServer.get_name() != "headless":
 		root.size=Vector2i(1280,800)
 		var overlay:=preload("res://scripts/ScopeOverlay.gd").new()

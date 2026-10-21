@@ -9338,6 +9338,18 @@ func _create_house_loot() -> void:
 			tmpl["id"] = "clock_tower_loot_%d_%d" % [ctf, k]
 			_create_pickup_item(tmpl)
 
+	# Fixed IDs and positions: adding guaranteed loot must not advance the world RNG.
+	for spot in [
+		{"id": "tent_loot_balaclava", "pos": Vector3(tent_origin.x, tent_floor_y, tent_origin.z + 2.8)},
+		{"id": "remote_tent_loot_balaclava", "pos": Vector3(remote_tent_origin.x, remote_tent_floor_y, remote_tent_origin.z)},
+		{"id": "city_tent_loot_balaclava", "pos": Vector3(city_tent_origin.x, city_tent_floor_y, city_tent_origin.z)},
+		{"id": "clock_tower_roof_balaclava", "pos": ct_origin + Vector3(-0.8, 29.46, 2.8)},
+	]:
+		var mask_loot := {"id": spot["id"], "name": "Pasamontañas", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.0,
+			"paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5,
+			"rot": Vector3.ZERO, "color": Color.TRANSPARENT, "pos": spot["pos"], "floor_y": spot["pos"].y}
+		_create_pickup_item(mask_loot)
+
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
 	var pos := Vector3(
 		origin.x + _world_rng.randf_range(-half_w + 1.0, half_w - 1.0),

@@ -684,6 +684,8 @@ var _wind_timer := 0.0
 var _breath_timer := 0.0
 var _breath_pitch_offset := 0.0
 var _breath_yaw_offset := 0.0
+const BREATH_HOLD_DURATION := 15.0
+var _breath_shift_pressed := false
 var _breath_hold_timer := 0.0
 var _breath_hold_active := false
 var _breath_hold_recover := 0.0
@@ -1577,18 +1579,7 @@ func _process(delta: float) -> void:
 	_breath_timer += delta
 	_breath_pitch_offset = 0.0
 	_breath_yaw_offset = 0.0
-	# Breath hold: press Shift while aiming to steady aim, limited duration
-	if _is_aiming and Input.is_key_pressed(KEY_SHIFT) and _breath_hold_recover <= 0.0:
-		if not _breath_hold_active:
-			_breath_hold_active = true
-			_breath_hold_timer = 0.0
-	if _breath_hold_active:
-		_breath_hold_timer += delta
-		if _breath_hold_timer > 5.0:
-			_breath_hold_active = false
-			_breath_hold_recover = 4.0
-	if _breath_hold_recover > 0.0:
-		_breath_hold_recover -= delta
+	_update_breath_hold(delta, Input.is_key_pressed(KEY_SHIFT))
 	if _is_aiming and not is_moving:
 		# Fatigue increases breath amplitude: less energy = more sway
 		var fatigue_mult := 1.0
@@ -1597,9 +1588,8 @@ func _process(delta: float) -> void:
 		var breath_amp_pitch := 2.5 * fatigue_mult
 		var breath_amp_yaw := 1.8 * fatigue_mult
 		if _breath_hold_active:
-			var hold_factor: float = 1.0 - clamp(_breath_hold_timer / 5.0, 0.0, 1.0)
-			breath_amp_pitch *= 0.1 * hold_factor
-			breath_amp_yaw *= 0.1 * hold_factor
+			breath_amp_pitch = 0.0
+			breath_amp_yaw = 0.0
 		_breath_pitch_offset = deg_to_rad(breath_amp_pitch * sin(_breath_timer * 1.2))
 		_breath_yaw_offset = deg_to_rad(breath_amp_yaw * sin(_breath_timer * 0.8))
 		if is_prone:
@@ -5654,6 +5644,7 @@ func die(cause: String = "") -> void:
 	if death_scene != null and death_scene.has_method("_close_backpack_ui") and death_scene.get("_backpack_panel") != null:
 		death_scene._close_backpack_ui()
 	_is_aiming = false
+	_breath_hold_active = false
 	_remove_scope_overlay()
 	mouse_sensitivity = 0.0025
 	_death_anim_played = true
@@ -9616,9 +9607,8 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 			breath_sway_x = sin(_breath_timer * 0.8) * 0.02 * fatigue_mult
 			breath_sway_y = sin(_breath_timer * 1.2) * 0.015 * fatigue_mult
 			if _breath_hold_active:
-				var hf: float = 1.0 - clamp(_breath_hold_timer / 5.0, 0.0, 1.0)
-				breath_sway_x *= 0.1 * hf
-				breath_sway_y *= 0.1 * hf
+				breath_sway_x = 0.0
+				breath_sway_y = 0.0
 		else:
 			# Weapon sway when moving while aiming: more intense bob
 			var move_sway: float = 0.02 * _walk_intensity
@@ -11775,6 +11765,22 @@ func _update_crosshair(is_rifle: bool) -> void:
 	if main != null and main.hud != null and main.hud.has_method("set_crosshair_rifle"):
 		main.hud.set_crosshair_rifle(is_rifle)
 
+func _update_breath_hold(delta: float, shift_pressed: bool) -> void:
+	var just_pressed := shift_pressed and not _breath_shift_pressed
+	_breath_shift_pressed = shift_pressed
+	_breath_hold_recover = maxf(0.0, _breath_hold_recover - delta)
+	if not _is_aiming:
+		_breath_hold_active = false
+		return
+	if just_pressed and not _breath_hold_active and _breath_hold_recover <= 0.0:
+		_breath_hold_active = true
+		_breath_hold_timer = 0.0
+	if _breath_hold_active:
+		_breath_hold_timer = minf(BREATH_HOLD_DURATION, _breath_hold_timer + delta)
+		if _breath_hold_timer >= BREATH_HOLD_DURATION:
+			_breath_hold_active = false
+			_breath_hold_recover = 4.0
+
 func _update_scope_zoom() -> void:
 	var magnification: float = SCOPE_MAGNIFICATIONS[_scope_zoom_index]
 	if camera != null:
@@ -11805,6 +11811,7 @@ func _cancel_aim() -> void:
 	if not _is_aiming:
 		return
 	_is_aiming = false
+	_breath_hold_active = false
 	_remove_scope_overlay()
 	if camera != null:
 		camera.fov = _camera_fov
@@ -12295,7 +12302,7 @@ func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> vo
 	var metal := "metal" in names or "barrel" in names or "vehicle" in names or "car_" in names
 	_spawn_impact_dust(hit_pos, hit_normal, dust_color)
 	_spawn_impact_chips(hit_pos, hit_normal, dust_color, metal)
-	if not water and (hit_normal.y < .7 or metal or "rock" in names or "wood" in names):
+	if not water:
 		_spawn_bullet_hole_decal(hit_pos, hit_normal, collider)
 
 func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
@@ -12466,7 +12473,7 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 	quad.material = m
 	mi.mesh = quad
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if is_instance_valid(collider) and collider is Door:
+	if is_instance_valid(collider) and collider is Node3D:
 		collider.add_child(mi)
 	else:
 		scene.add_child(mi)

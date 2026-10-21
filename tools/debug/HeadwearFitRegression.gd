@@ -181,6 +181,35 @@ func run() -> void:
 	check(hair.visible and hair.mesh != original_hair, "Removing the balaclava reveals hair still tucked by the hat")
 	actor.unequip_clothing("Sombrero de pescador")
 	check(hair.visible and hair.mesh == original_hair, "Removing the last headwear restores the hairstyle")
+	# Every supported headpiece stacks in either equip order, including the
+	# survival-mesh cap (a different render path from helmet/boonie).
+	for mask_name in ["Pasamontañas", "Pasamontañas navideño"]:
+		for head_name in ["Casco militar", "Sombrero de pescador", "Gorra militar"]:
+			for mask_first in [true, false]:
+				actor.equip_clothing(mask_name if mask_first else head_name)
+				actor.equip_clothing(head_name if mask_first else mask_name)
+				check(actor._equipped_slots.get("face") == mask_name and actor._equipped_slots.get("head") == head_name, "Both slots survive equip order: " + head_name)
+				var mask_node := model.get_node_or_null("Worn_" + mask_name) as Node3D
+				check(mask_node != null and mask_node.visible, "Balaclava remains visible under " + head_name)
+				check(not hair.visible, "No hair shows through stacked headwear")
+				for angle in [-0.5, 0.4]:
+					skeleton.set_bone_pose_rotation(bone, original * Quaternion(Vector3.RIGHT, angle))
+					skeleton.force_update_all_bone_transforms()
+					skeleton.emit_signal("skeleton_updated")
+					var posed := model.global_transform.affine_inverse() * skeleton.global_transform * skeleton.get_bone_global_pose(bone)
+					if mask_node != null:
+						var rel := posed.affine_inverse() * mask_node.transform
+						var expected: Transform3D = actor._head_worn_rel[mask_node.name]
+						check(rel.origin.distance_to(expected.origin)<.01, "Stacked balaclava stays anchored when moving")
+				actor.unequip_clothing(head_name)
+				check(actor._equipped_slots.get("face") == mask_name and not hair.visible, "Removing headpiece preserves face layer")
+				actor.equip_clothing(head_name)
+				actor.unequip_clothing(mask_name)
+				check(actor._equipped_slots.get("head") == head_name, "Removing face layer preserves headpiece")
+				actor.unequip_clothing(head_name)
+				skeleton.set_bone_pose_rotation(bone, original)
+				skeleton.force_update_all_bone_transforms()
+				skeleton.emit_signal("skeleton_updated")
 	actor.stats.free()
 	actor.queue_free()
 	await process_frame
