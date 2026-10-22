@@ -7940,7 +7940,7 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 	var wall_scale := Vector3(2.2, 2.2, 2.2)
 	var wall_step := 3.90
 	var wall_len := 4.05
-	var wall_h := 1.98
+	var wall_h := 1.90
 	var wall_thick := 1.42
 	var x_min := -23.4
 	var x_max := 15.6
@@ -7956,6 +7956,8 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 	var tower_scale := Vector3(0.85, 0.85, 0.85)
 	# En military_watch_tower.glb las patas empiezan en y=+1.145 local; restamos
 	# ese offset escalado para que las 4 patas apoyen firmemente en el terreno.
+	# snap_to_ground debe ser false porque tower_pos ya incluye el offset de las
+	# patas (si fuera true con ground_y=0.0, hundiria el modelo visual 0.97 m).
 	var tower_pos := Vector3(tower_world.x, tower_ground_y - 1.145 * tower_scale.y, tower_world.z)
 	if not server_only:
 		_try_instance_external_scene(
@@ -7964,7 +7966,7 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 			tower_pos,
 			tower_scale,
 			Vector3(0.0, CITY_TENT_YAW, 0.0),
-			true,
+			false,
 			0.0
 		)
 	_register_wildlife_blocker(tower_world, 4.0)
@@ -7996,9 +7998,10 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 					false,
 					0.0
 				)
+			# _create_invisible_collision_box_rotated ya sube collision.position.y = size.y * 0.5
 			_create_invisible_collision_box_rotated(
 				"MilitaryBaseWallCol_%d" % seg_idx,
-				seg_pos + Vector3(0.0, wall_h * 0.5, 0.0),
+				seg_pos,
 				Vector3(wall_len, wall_h, wall_thick),
 				CITY_TENT_YAW
 			)
@@ -8027,7 +8030,7 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 				)
 			_create_invisible_collision_box_rotated(
 				"MilitaryBaseWallCol_%d" % seg_idx,
-				seg_pos + Vector3(0.0, wall_h * 0.5, 0.0),
+				seg_pos,
 				Vector3(wall_len, wall_h, wall_thick),
 				wall_yaw
 			)
@@ -8035,8 +8038,8 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 			seg_idx += 1
 
 # La GLB de la torre militar es una malla unica fusionada: la escalera en
-# caracol, los descansillos, la cubierta y el hueco de llegada se recrean como
-# colliders invisibles en su espacio local (patas en y=1.145, cubierta a y=11.09).
+# caracol, los descansillos, la cubierta y la caseta superior se recrean como
+# colliders invisibles en su espacio local (patas en y=1.145, cubierta a y=10.99).
 # Las rampas llevan el grupo "stair_surface" para que _update_stair_motion
 # reproduzca la animacion de escaleras, igual que en CityClockTower.
 func _build_military_watchtower_collision(tower_pos: Vector3, tower_scale: Vector3) -> void:
@@ -8057,43 +8060,45 @@ func _build_military_watchtower_collision(tower_pos: Vector3, tower_scale: Vecto
 	solid.collision_layer = 1
 	solid.collision_mask = 3
 	rig.add_child(solid)
-	# Cinco tramos en caracol: -z (norte del modelo) -> -x -> +z -> +x -> -z hasta la cubierta.
-	# Cada rampa termina a ras del borde del descansillo (misma altura, sin escalon).
-	_watchtower_ramp(stairs, Vector3(0.30, 0.92, -2.55), Vector3(-1.97, 2.00, -2.55), 0.95)
-	_watchtower_ramp(stairs, Vector3(-2.55, 2.00, -1.97), Vector3(-2.55, 4.25, 1.90), 0.95)
-	_watchtower_ramp(stairs, Vector3(-1.97, 4.25, 2.55), Vector3(1.90, 6.50, 2.55), 0.95)
-	_watchtower_ramp(stairs, Vector3(2.55, 6.42, 1.90), Vector3(2.55, 8.80, -1.50), 0.95)
-	_watchtower_ramp(stairs, Vector3(2.10, 8.62, -2.85), Vector3(-1.85, 11.15, -2.85), 0.95)
-	# Descansillos de esquina y pasillo de llegada al ultimo tramo.
-	_watchtower_box(solid, Vector3(-2.62, 1.92, -2.62), Vector3(1.30, 0.16, 1.30))
-	_watchtower_box(solid, Vector3(-2.62, 4.17, 2.62), Vector3(1.30, 0.16, 1.44))
-	_watchtower_box(solid, Vector3(2.62, 6.42, 2.62), Vector3(1.40, 0.16, 1.44))
-	_watchtower_box(solid, Vector3(2.00, 8.67, -2.45), Vector3(2.60, 0.16, 1.95))
-	# Cubierta superior: el hueco de la escalera queda abierto en x>-1.8, z<-1.95.
-	_watchtower_box(solid, Vector3(-0.10, 11.00, 0.60), Vector3(6.40, 0.16, 5.10))
-	_watchtower_box(solid, Vector3(-2.55, 11.00, -2.65), Vector3(1.50, 0.16, 1.40))
-	# Patas de esquina a altura completa y caseta cerrada de la cima.
+	# Cinco tramos en caracol ocupando de pared interior (+-1.88) a pared
+	# exterior (+-3.12): -z -> -x -> +z -> +x -> -z hasta la cubierta (y=10.99).
+	_watchtower_ramp(stairs, Vector3(-0.30, 1.12, -2.50), Vector3(-1.90, 2.01, -2.50), 1.24)
+	_watchtower_ramp(stairs, Vector3(-2.50, 2.01, -1.90), Vector3(-2.50, 4.25, 1.90), 1.24)
+	_watchtower_ramp(stairs, Vector3(-1.90, 4.25, 2.50), Vector3(1.90, 6.49, 2.50), 1.24)
+	_watchtower_ramp(stairs, Vector3(2.50, 6.49, 1.90), Vector3(2.50, 8.73, -1.68), 1.24)
+	_watchtower_ramp(stairs, Vector3(1.90, 8.73, -2.50), Vector3(-1.92, 10.99, -2.50), 1.24)
+	# Descansillos de esquina de pared a pared a ras con el final de cada rampa.
+	_watchtower_box(solid, Vector3(-2.50, 1.93, -2.50), Vector3(1.24, 0.16, 1.24))
+	_watchtower_box(solid, Vector3(-2.50, 4.17, 2.50), Vector3(1.24, 0.16, 1.24))
+	_watchtower_box(solid, Vector3(2.50, 6.41, 2.50), Vector3(1.24, 0.16, 1.24))
+	_watchtower_box(solid, Vector3(2.50, 8.65, -2.38), Vector3(1.24, 0.16, 1.48))
+	# Cubierta superior en L (cara superior en y=10.99): el borde -z sobre el
+	# hueco queda exactamente enrasado con la pared interior (z=-1.84) para que
+	# no exista ningun labio donde se enganche la cabeza al subir pegado al interior.
+	_watchtower_box(solid, Vector3(-0.62, 10.93, 0.64), Vector3(5.08, 0.12, 4.96))
+	_watchtower_box(solid, Vector3(2.52, 10.93, 0.84), Vector3(1.24, 0.12, 4.56))
+	_watchtower_box(solid, Vector3(-2.53, 10.93, -2.48), Vector3(1.22, 0.12, 1.28))
+	# Patas inferiores bajo el primer nivel (sin invadir el carril de subida).
 	for sx in [-1.0, 1.0]:
 		for sz in [-1.0, 1.0]:
-			_watchtower_box(solid, Vector3(3.10 * sx, 7.67, 3.10 * sz), Vector3(0.50, 13.10, 0.50))
-	_watchtower_box(solid, Vector3(0.0, 12.64, -0.15), Vector3(3.10, 3.14, 4.00))
-	# Barandilla perimetral de cubierta, antepecho del hueco y muro del marco -z.
-	_watchtower_box(solid, Vector3(-0.10, 11.75, 3.08), Vector3(6.50, 1.30, 0.10))
-	_watchtower_box(solid, Vector3(-3.32, 11.75, -0.12), Vector3(0.10, 1.30, 6.55))
-	_watchtower_box(solid, Vector3(3.12, 11.75, -0.15), Vector3(0.10, 1.30, 6.60))
-	_watchtower_box(solid, Vector3(0.65, 11.75, -1.98), Vector3(4.90, 1.30, 0.10))
-	_watchtower_box(solid, Vector3(-0.05, 10.60, -3.45), Vector3(6.70, 3.80, 0.10))
-	# Bordes abiertos del pasillo de llegada (el -z lo protege el muro del marco;
-	# el borde interior solo se barandea donde no pisa la rampa final).
-	_watchtower_box(solid, Vector3(3.32, 9.45, -2.45), Vector3(0.10, 1.50, 1.95))
-	_watchtower_box(solid, Vector3(0.70, 9.45, -1.92), Vector3(0.10, 1.50, 0.90))
-	_watchtower_box(solid, Vector3(1.38, 9.45, -1.48), Vector3(1.36, 1.50, 0.10))
-	# Bordillos exteriores de cada tramo para no salirse del marco al subir.
-	_watchtower_box(solid, Vector3(-1.20, 1.90, -3.02), Vector3(1.50, 2.60, 0.08))
-	_watchtower_box(solid, Vector3(-3.02, 3.45, 0.00), Vector3(0.08, 3.90, 3.90))
-	_watchtower_box(solid, Vector3(0.00, 5.70, 3.02), Vector3(3.90, 3.90, 0.08))
-	_watchtower_box(solid, Vector3(3.02, 7.90, 0.25), Vector3(0.08, 3.90, 3.40))
-	_watchtower_box(solid, Vector3(0.175, 10.20, -3.30), Vector3(3.75, 3.90, 0.08))
+			_watchtower_box(solid, Vector3(2.95 * sx, 1.48, 2.95 * sz), Vector3(0.32, 0.72, 0.32))
+	# Paredes interiores del nucleo central (caras exteriores en +-1.88 continuas
+	# hasta arriba) que guian el giro sin salientes ni labios.
+	_watchtower_box(solid, Vector3(0.0, 8.00, -1.84), Vector3(3.76, 12.20, 0.08))
+	_watchtower_box(solid, Vector3(-1.84, 6.40, 0.0), Vector3(0.08, 9.00, 3.76))
+	_watchtower_box(solid, Vector3(0.0, 8.00, 1.84), Vector3(3.76, 12.20, 0.08))
+	_watchtower_box(solid, Vector3(1.84, 8.00, 0.0), Vector3(0.08, 12.20, 3.76))
+	# Paredes exteriores de contencion del carril de escaleras (+-3.16) y de la cubierta.
+	_watchtower_box(solid, Vector3(-1.75, 2.00, -3.16), Vector3(2.90, 1.80, 0.08))
+	_watchtower_box(solid, Vector3(-3.16, 6.50, 0.0), Vector3(0.08, 11.20, 6.40))
+	_watchtower_box(solid, Vector3(0.0, 8.00, 3.16), Vector3(6.40, 8.20, 0.08))
+	_watchtower_box(solid, Vector3(3.16, 9.20, 0.0), Vector3(0.08, 6.80, 6.40))
+	_watchtower_box(solid, Vector3(0.0, 10.60, -3.16), Vector3(6.40, 4.00, 0.08))
+	# Barandilla del hueco de llegada en la cubierta (lado derecho x=1.88..3.12, z=-1.42).
+	_watchtower_box(solid, Vector3(2.52, 11.65, -1.42), Vector3(1.24, 1.30, 0.08))
+	# Caseta superior: el lado oeste (x=-1.84) deja la puerta abierta en z=-0.62..+0.62.
+	_watchtower_box(solid, Vector3(-1.84, 12.55, -1.25), Vector3(0.08, 3.10, 1.26))
+	_watchtower_box(solid, Vector3(-1.84, 12.55, 1.25), Vector3(0.08, 3.10, 1.26))
 
 func _watchtower_box(body: StaticBody3D, center: Vector3, size: Vector3) -> void:
 	var cs := CollisionShape3D.new()
@@ -8103,8 +8108,8 @@ func _watchtower_box(body: StaticBody3D, center: Vector3, size: Vector3) -> void
 	cs.position = center
 	body.add_child(cs)
 
-# Rampa inclinada de a (abajo) a b (arriba): la cara superior del box queda sobre
-# la linea a-b, por eso el centro se hunde media altura a lo largo de la normal.
+# Rampa inclinada exacta de a (abajo) a b (arriba): la cara superior del box
+# coincide con el segmento a-b sin sobresalir por encima del descansillo.
 func _watchtower_ramp(body: StaticBody3D, a: Vector3, b: Vector3, width: float) -> void:
 	var dir := b - a
 	var length := dir.length()
@@ -8113,7 +8118,7 @@ func _watchtower_ramp(body: StaticBody3D, a: Vector3, b: Vector3, width: float) 
 	var n := side.cross(dir).normalized()
 	var cs := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(length + 0.30, 0.12, width)
+	box.size = Vector3(length + 0.06, 0.12, width)
 	cs.shape = box
 	cs.transform = Transform3D(Basis(dir, n, side), (a + b) * 0.5 - n * 0.06)
 	body.add_child(cs)
