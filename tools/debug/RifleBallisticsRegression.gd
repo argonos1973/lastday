@@ -108,11 +108,16 @@ func run():
 	actor.is_puppet = true
 	actor._puppet_held = "Fusil de asalto"
 	check(actor._held_is_m4(), "M4 profile resolves from the held item name")
-	check(actor._rifle_scope_mags() == [4.0], "M4 scope is a fixed 4x")
+	check(actor._rifle_scope_mags() == [1.35], "M4 uses 1.35x iron sights, not a telescopic scope")
+	check(bool(actor.get_rifle_info().get("iron_sights", false)), "M4 rifle_info reports iron_sights=true")
 	actor._scope_zoom_index = 3
 	actor._update_scope_zoom()
-	var m4_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(55.0) * 0.5) / 4.0))
-	check(absf(actor.camera.fov - m4_fov) < 0.01, "M4 wheel cannot exceed its fixed 4x magnification")
+	var m4_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(55.0) * 0.5) / 1.35))
+	check(absf(actor.camera.fov - m4_fov) < 0.01, "M4 wheel cannot exceed its iron-sight FOV")
+	var m4_overlay := preload("res://scripts/ScopeOverlay.gd").new()
+	world.add_child(m4_overlay)
+	check(m4_overlay._iron_sights == true, "ScopeOverlay switches to M4 iron sights instead of telescopic tube")
+	m4_overlay.free()
 	check(absf(actor._rifle_cooldown_time() - actor.M4_COOLDOWN) < 0.001, "M4 fires semi-auto, not bolt cadence")
 	actor._m4_magazine = 12
 	actor._m4_reserve_ammo = 40
@@ -154,13 +159,29 @@ func run():
 	tree_body.free()
 	if "--preview" in OS.get_cmdline_user_args() and DisplayServer.get_name() != "headless":
 		root.size=Vector2i(1280,800)
+		var bg := ColorRect.new()
+		bg.color = Color(0.52, 0.63, 0.72, 1.0)
+		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		root.add_child(bg)
 		var overlay:=preload("res://scripts/ScopeOverlay.gd").new()
 		root.add_child(overlay)
 		actor._scope_zoom_index=3;actor._update_scope_zoom()
 		await create_timer(.3).timeout
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/rifle_scope_preview.png")
+		actor.is_puppet = true
+		actor._puppet_held = "Fusil de asalto"
+		actor._update_scope_zoom()
+		overlay._sync_from_player()
+		overlay._process(0.15)
+		overlay.queue_redraw()
+		await create_timer(.15).timeout
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("/tmp/m4_iron_sight_preview.png")
+		actor.is_puppet = false
+		actor._puppet_held = ""
 		overlay.free()
+		bg.free()
 	if is_instance_valid(actor._shoot_audio_player):
 		actor._shoot_audio_player.stop()
 		actor._shoot_audio_player.stream = null

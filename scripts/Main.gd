@@ -11430,12 +11430,17 @@ func _grant_vest_magazines(action, actor, item_name: String, item_obj = null) ->
 	var total_mags: int = int(ceil(float(actor._rifle_reserve_ammo) / float(actor.RIFLE_MAG_SIZE)))
 	actor.notice.emit("El chaleco viene con 5 cargadores llenos (+%d balas, %d cargadores en reserva). Pulsa [R] con el fusil para recargar." % [rounds, total_mags])
 
+func _receive_pickup_item(actor, item) -> bool:
+	if actor.has_method("receive_pickup_item"):
+		return actor.receive_pickup_item(item)
+	return actor.inventory.add_item(item)
+
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
 	_play_actor_action(actor, action_name, duration)
 	if action.has_meta("item_max_durability"):
 		item.max_durability = float(action.get_meta("item_max_durability"))
 		item.durability = float(action.get_meta("item_durability", item.max_durability))
-	if not actor.inventory.add_item(item):
+	if not _receive_pickup_item(actor, item):
 		return
 	if actor.has_method("refresh_carry_capacity"):
 		actor.refresh_carry_capacity()
@@ -11590,12 +11595,12 @@ func _execute_world_action_collect(action, actor) -> void:
 					return
 				actor.notice.emit("Recoges %s. Puedes cargar mas." % item.item_name)
 			elif str(item.item_type) == "clothing":
-				if not actor.inventory.add_item(item):
+				if not _receive_pickup_item(actor, item):
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
 				actor.notice.emit("Coges %s." % item.item_name)
 				_grant_vest_magazines(action, actor, item.item_name, item)
-			elif not actor.inventory.add_item(item):
+			elif not _receive_pickup_item(actor, item):
 				return
 			else:
 				actor.notice.emit("Coges %s." % item.item_name)

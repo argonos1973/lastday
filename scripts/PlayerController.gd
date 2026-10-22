@@ -374,7 +374,7 @@ const M4_SPREAD_MULT := 2.2
 const M4_RECOIL := 4.5
 const M4_ENERGY_COST := 1.2
 const M4_SCALE_FACTOR := 82.0
-const M4_SCOPE_MAGNIFICATIONS := [4.0]
+const M4_SCOPE_MAGNIFICATIONS := [1.35]
 const THIRD_PERSON_EXTERNAL_RUN_ANIMATION := "RunExternal"
 const THIRD_PERSON_EXTERNAL_IDLE_ANIMATION := "IdleExternal"
 const THIRD_PERSON_EXTERNAL_WALK_ANIMATION := "WalkExternal"
@@ -6401,7 +6401,7 @@ func _store_held_item() -> void:
 		return
 	# Rifle, cana y palo afilado son equipo de espalda. Nunca se guardan como
 	# un objeto normal del inventario al pulsar H o el boton equivalente.
-	if _is_back_only_item(item):
+	if _is_back_only_item(item) and can_store_item_on_back(item):
 		store_held_on_back()
 		return
 	# Objects taken from a shoulder are held outside the inventory until the
@@ -6427,6 +6427,8 @@ func _store_held_item() -> void:
 	if third_person_back_item_root != null:
 		if not equip_has_bp:
 			for child in third_person_back_item_root.get_children():
+				if _stored_back_visuals.has(child):
+					continue
 				third_person_back_item_root.remove_child(child)
 				child.free()
 		if (inventory != null or is_puppet) and not equip_has_bp and eq_bp_set:
@@ -7000,6 +7002,10 @@ func _sync_third_person_equipment(held_item) -> void:
 			# El objeto del hombro sigue visible mientras se usa el otro
 			# hombro o se lleva algo en la mano.
 			stored_visual.visible = true
+	if is_instance_valid(third_person_back_item_root):
+		for slot in _stored_back_items.size():
+			if _is_back_slot_occupied(slot) and not is_instance_valid(_stored_back_visuals[slot]):
+				_build_stored_back_visual(slot)
 	_rifle_in_hands = held_item != null and str(held_item.item_type) == "weapon_rifle"
 	# Hide torch character when not holding a torch
 	_torch_in_hands = held_item != null and str(held_item.item_type) == "tool_torch"
@@ -7042,19 +7048,8 @@ func _sync_third_person_equipment(held_item) -> void:
 	# borrado arriba nunca se reconstruia y la mochila remota desaparecia.
 	if (inventory != null or is_puppet) and not equip_has_bp and eq_bp_set:
 		_build_third_person_backpack()
-	# Rifle on back: check if rifle is in inventory but not held in hands
-	var _has_rifle_in_inventory := false
-	if inventory != null and not inventory.items.is_empty():
-		for item in inventory.items:
-			if item != null and str(item.item_type) == "weapon_rifle":
-				_has_rifle_in_inventory = true
-				break
-	if _has_rifle_in_inventory and not _rifle_in_hands and not _has_stored_back_item_type("weapon_rifle") and _back_slot_count() < 2:
-		# A rifle shown on the back must be the same physical item that left the
-		# inventory. Do not render a second copy directly from the inventory.
-		_store_inventory_rifle_on_back()
-	else:
-		_clear_rifle_on_back()
+	# Ownership changes happen in pickup/store actions, never while drawing.
+	_clear_rifle_on_back()
 	# Caña de pescar: si está en el inventario y no en mano, moverla a la espalda
 	var _has_rod_in_inventory := false
 	if inventory != null and not inventory.items.is_empty():
@@ -7360,18 +7355,24 @@ func _is_back_only_item(item) -> bool:
 	var item_type := str(item.item_type)
 	return item_type == "weapon_rifle" or item_type == "tool_fishing" or item_type == "tool_spear" or str(item.item_name) == "Palo afilado"
 
+func receive_pickup_item(item) -> bool:
+	if item == null or inventory == null:
+		return false
+	if str(item.item_type) == "weapon_rifle" and int(item.quantity) == 1:
+		var slot := _find_free_back_slot()
+		if slot >= 0:
+			_stored_back_items[slot] = _back_data_from_item(item)
+			_build_stored_back_visual(slot)
+			inventory.changed.emit()
+			return true
+	return inventory.add_item(item)
+
 func _back_data_from_item(item) -> Dictionary:
 	if item == null:
 		return {}
-	return {
-		"name": str(item.item_name),
-		"type": str(item.item_type),
-		"weight": float(item.weight),
-		"use_value": float(item.use_value),
-		"durability": float(item.durability),
-		"max_durability": float(item.max_durability),
-		"spoilage": float(item.spoilage)
-	}
+	var data: Dictionary = item.to_dict()
+	data["quantity"] = 1
+	return data
 
 func _has_stored_back_item_type(item_type: String) -> bool:
 	for entry in _stored_back_items:
@@ -12115,8 +12116,9 @@ func get_rifle_info(weapon_name := "") -> Dictionary:
 			"range": RIFLE_RANGE,
 			"magnification": M4_SCOPE_MAGNIFICATIONS[0],
 			"zoom_fixed": true,
+			"iron_sights": true,
 			"zero_range": 100.0,
-			"scope_fov": camera.fov if camera != null else 15.0,
+			"scope_fov": camera.fov if camera != null else 40.0,
 		}
 	return {
 		"name": RIFLE_NAME,
@@ -12129,6 +12131,7 @@ func get_rifle_info(weapon_name := "") -> Dictionary:
 		"range": RIFLE_RANGE,
 		"magnification": _rifle_scope_mags()[clampi(_scope_zoom_index, 0, _rifle_scope_mags().size() - 1)],
 		"zoom_fixed": false,
+		"iron_sights": false,
 		"zero_range": 100.0,
 		"scope_fov": camera.fov if camera != null else 15.0,
 	}
@@ -12139,6 +12142,26 @@ func get_wind_info() -> Dictionary:
 		"direction": _wind_dir,
 		"target_strength": _wind_target_strength,
 	}
+
+func _rifle_sight_hit(origin: Vector3, direction: Vector3, excluded: Array[RID]) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + direction.normalized() * RIFLE_RANGE, 5)
+	query.exclude = excluded.duplicate()
+	query.collide_with_areas = true
+	query.hit_from_inside = true
+	var space := get_world_3d().direct_space_state
+	var hit := space.intersect_ray(query)
+	while not hit.is_empty() and hit.collider is Area3D and not "hitbox" in str(hit.collider.name).to_lower():
+		var ignored := query.exclude
+		ignored.append(hit.rid)
+		query.exclude = ignored
+		hit = space.intersect_ray(query)
+	var world := get_tree().current_scene
+	if world != null and world.has_method("raycast_distant_props"):
+		var endpoint: Vector3 = hit.position if not hit.is_empty() else query.to
+		var distant: Dictionary = world.raycast_distant_props(origin, endpoint)
+		if not distant.is_empty():
+			hit = distant
+	return hit
 
 func _apply_rifle_recoil(is_m4: bool) -> void:
 	var recoil_kick := M4_RECOIL if is_m4 else 8.0
@@ -12242,10 +12265,7 @@ func _shoot_rifle() -> void:
 	var muzzle_speed := M4_MUZZLE_SPEED if _held_is_m4() else RIFLE_MUZZLE_SPEED
 	var converge_dist := 100.0
 	if not _is_aiming and space_state != null:
-		var sight_q := PhysicsRayQueryParameters3D.create(cam_ray_origin, cam_ray_origin + cam_ray_dir.normalized() * RIFLE_RANGE, 7)
-		sight_q.exclude = exclude_arr
-		sight_q.collide_with_areas = true
-		var sight_hit := space_state.intersect_ray(sight_q)
+		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
 		if not sight_hit.is_empty():
 			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
 			if hit_d > 2.5:
@@ -12286,10 +12306,7 @@ func _shoot_rifle() -> void:
 			var b_space := get_world_3d().direct_space_state
 			var b_conv := 100.0
 			if not _is_aiming and b_space != null:
-				var b_sq := PhysicsRayQueryParameters3D.create(b_cam_orig, b_cam_orig + b_cam_dir * RIFLE_RANGE, 7)
-				b_sq.exclude = exclude_arr
-				b_sq.collide_with_areas = true
-				var b_sh := b_space.intersect_ray(b_sq)
+				var b_sh := _rifle_sight_hit(b_cam_orig, b_cam_dir, exclude_arr)
 				if not b_sh.is_empty():
 					var b_hd := b_cam_orig.distance_to(b_sh.position)
 					if b_hd > 2.5:

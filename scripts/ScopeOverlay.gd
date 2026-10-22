@@ -13,15 +13,28 @@ var _flash := 0.0   # destello del fogonazo visible a traves de la mira
 var _hud_update_accum := 0.0
 var _scope_fov := 15.0
 var _magnification := 4.0
+var _iron_sights := false
 
 func muzzle_flash() -> void:
 	_flash = 1.0
 	queue_redraw()
 
+func _sync_from_player() -> void:
+	var scene := get_tree().current_scene if get_tree() != null else null
+	if scene == null:
+		return
+	var player = scene.get_node_or_null("Player")
+	if player != null and is_instance_valid(player) and player.has_method("get_rifle_info"):
+		var ri: Dictionary = player.get_rifle_info()
+		_scope_fov = float(ri.get("scope_fov", 15.0))
+		_magnification = float(ri.get("magnification", 4.0))
+		_iron_sights = bool(ri.get("iron_sights", false))
+
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	get_viewport().size_changed.connect(queue_redraw)
+	_sync_from_player()
 	# Wind indicator label
 	_wind_label = Label.new()
 	_wind_label.name = "WindIndicator"
@@ -88,7 +101,12 @@ func _process(_delta: float) -> void:
 		var ri: Dictionary = player.get_rifle_info()
 		_scope_fov = float(ri.get("scope_fov", 15.0))
 		_magnification = float(ri.get("magnification",4.0))
-		var zoom_label := "%.0f× fija · Cero 100 m\n" % _magnification if bool(ri.get("zoom_fixed", false)) else "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification
+		_iron_sights = bool(ri.get("iron_sights", false))
+		var zoom_label := "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification
+		if _iron_sights:
+			zoom_label = "Punto de mira · Cero 100 m\n"
+		elif bool(ri.get("zoom_fixed", false)):
+			zoom_label = "%.0f× fija · Cero 100 m\n" % _magnification
 		wind_text = zoom_label + wind_text
 		queue_redraw()
 		var mags_left: int = int(ri.get("magazines_left", 0))
@@ -112,9 +130,101 @@ func _process(_delta: float) -> void:
 		_flash = maxf(0.0, _flash - _delta * 7.0)
 		queue_redraw()
 
+func _draw_iron_sights(vp_size: Vector2, center: Vector2) -> void:
+	var h := minf(vp_size.x, vp_size.y)
+	var peep_r := h * 0.19
+	var steel_dark := Color(0.08, 0.085, 0.09, 0.94)
+	var steel_mid := Color(0.15, 0.16, 0.17, 0.92)
+	var steel_edge := Color(0.26, 0.28, 0.30, 0.85)
+	var rear_blur := Color(0.06, 0.065, 0.07, 0.52)
+
+	# Destello del fogonazo detras del punto de mira delantero
+	if _flash > 0.0:
+		for i in range(4):
+			var t := float(i) / 4.0
+			var gr := peep_r * (0.28 + t * 0.55) * _flash
+			var ga := 0.18 * _flash * (1.0 - t)
+			draw_circle(center + Vector2(0.0, peep_r * 0.12), gr, Color(1.0, 0.78, 0.38, ga))
+
+	# --- Punto de mira delantero (A2 Front Sight Base + orejetas + poste central) ---
+	var post_w := maxf(5.0, h * 0.0075)
+	var post_top_y := center.y
+	var post_bot_y := center.y + peep_r * 0.72
+	var base_top_y := post_bot_y
+	var base_bot_y := vp_size.y
+
+	# Cuerpo / torre triangular del punto de mira delantero y cañon inferior
+	var fsb_half_top := peep_r * 0.36
+	var fsb_half_bot := peep_r * 0.62
+	var fsb_poly := PackedVector2Array([
+		Vector2(center.x - fsb_half_top, base_top_y),
+		Vector2(center.x + fsb_half_top, base_top_y),
+		Vector2(center.x + fsb_half_bot, base_bot_y),
+		Vector2(center.x - fsb_half_bot, base_bot_y),
+	])
+	draw_colored_polygon(fsb_poly, steel_dark)
+	draw_line(Vector2(center.x - fsb_half_top, base_top_y), Vector2(center.x + fsb_half_top, base_top_y), steel_edge, 2.0, true)
+
+	# Dos orejetas protectoras laterales del punto de mira (M4 front sight wings)
+	var wing_top_y := center.y - peep_r * 0.08
+	var wing_outer_x := peep_r * 0.36
+	var wing_inner_x := peep_r * 0.24
+	var wing_tip_in_x := peep_r * 0.19
+	var wing_tip_out_x := peep_r * 0.27
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		var wing := PackedVector2Array([
+			Vector2(center.x + s * wing_inner_x, base_top_y + 2.0),
+			Vector2(center.x + s * wing_outer_x, base_top_y + 2.0),
+			Vector2(center.x + s * wing_tip_out_x, wing_top_y),
+			Vector2(center.x + s * wing_tip_in_x, wing_top_y + peep_r * 0.04),
+		])
+		draw_colored_polygon(wing, steel_dark)
+		draw_line(wing[0], wing[3], steel_edge, 1.6, true)
+
+	# Poste central vertical del punto de mira (la cuspide coincide con center)
+	var post_rect := Rect2(center.x - post_w * 0.5, post_top_y, post_w, post_bot_y - post_top_y + 3.0)
+	draw_rect(post_rect, steel_dark, true)
+	draw_line(Vector2(post_rect.position.x, post_top_y), Vector2(post_rect.position.x + post_w, post_top_y), steel_edge, 1.5, true)
+	# Punto de tritio / referencia luminosa en la punta del poste central
+	draw_circle(Vector2(center.x, post_top_y + post_w * 0.45), maxf(2.4, post_w * 0.36), center_dot_color)
+
+	# --- Alza trasera tipo diopter (rear peep sight ring, desenfocada por cercania al ojo) ---
+	var ring_thick := h * 0.032
+	for blur_i in range(4):
+		var bt := float(blur_i) / 3.0
+		var bw := ring_thick * (1.0 + bt * 0.65)
+		var ba := 0.22 * (1.0 - bt * 0.65)
+		draw_arc(center, peep_r, 0.0, TAU, 96, Color(0.05, 0.055, 0.06, ba), bw, true)
+	draw_arc(center, peep_r, 0.0, TAU, 96, rear_blur, ring_thick * 0.72, true)
+	# Base del alza / asa de transporte (carry handle) debajo del anillo trasero
+	var ch_top_y := center.y + peep_r * 0.86
+	var ch_half_top := peep_r * 0.65
+	var ch_half_bot := peep_r * 1.15
+	var ch_poly := PackedVector2Array([
+		Vector2(center.x - ch_half_top, ch_top_y),
+		Vector2(center.x + ch_half_top, ch_top_y),
+		Vector2(center.x + ch_half_bot, vp_size.y),
+		Vector2(center.x - ch_half_bot, vp_size.y),
+	])
+	draw_colored_polygon(ch_poly, steel_mid)
+	# Orejetas protectoras del alza trasera a ambos lados del diopter
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		var ear := PackedVector2Array([
+			Vector2(center.x + s * (peep_r * 0.88), center.y + peep_r * 0.55),
+			Vector2(center.x + s * (peep_r * 1.18), center.y + peep_r * 0.65),
+			Vector2(center.x + s * (peep_r * 1.14), center.y - peep_r * 0.42),
+			Vector2(center.x + s * (peep_r * 0.94), center.y - peep_r * 0.35),
+		])
+		draw_colored_polygon(ear, rear_blur)
+
 func _draw() -> void:
 	var vp_size := get_viewport_rect().size
 	var center := vp_size * 0.5
+	if _iron_sights:
+		_draw_iron_sights(vp_size, center)
+		return
 	var radius: float = min(vp_size.x, vp_size.y) * 0.4
 	# Mask the area outside the circle by drawing a very thick ring that
 	# reaches beyond the screen corners. The inside of the ring stays clear.
