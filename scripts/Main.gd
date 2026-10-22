@@ -7948,7 +7948,9 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 	var z_max := 13.65
 	var gate_x_min := -9.6
 	var gate_x_max := -2.0
-	var tower_local := Vector3(x_max - 2.1, 0.0, z_max - 2.1)
+	# La torre va DENTRO del perimetro, pegada a la esquina delantera derecha,
+	# con el muro cerrado por detras de ella en ambos lados.
+	var tower_local := Vector3(x_max - 5.0, 0.0, z_max - 5.0)
 	var tower_world := base_origin + tower_local.rotated(Vector3.UP, yaw_rad)
 	var tower_ground_y := _get_exact_ground_y(tower_world.x, tower_world.z)
 	var tower_scale := Vector3(0.85, 0.85, 0.85)
@@ -7977,9 +7979,6 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 			var x_cur := x_min + (float(bi) + 0.5) * wall_step
 			if is_front and x_cur > gate_x_min and x_cur < gate_x_max:
 				continue
-			if is_front and bi == 9:
-				# El ultimo tramo delantero lo ocupa la torre en la esquina
-				continue
 			var lpos := Vector3(x_cur, 0.0, z_local)
 			var wpos := base_origin + lpos.rotated(Vector3.UP, yaw_rad)
 			var gy := _get_exact_ground_y(wpos.x, wpos.z)
@@ -8006,12 +8005,8 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 	# Lados verticales (izquierdo x_min y derecho x_max: 7 bloques exactos)
 	for side_idx in range(2):
 		var side_x: float = x_min if side_idx == 0 else x_max
-		var is_right := side_idx == 1
 		var wall_yaw := CITY_TENT_YAW + 90.0
 		for bj in range(7):
-			if is_right and bj == 6:
-				# El ultimo tramo derecho delantero lo ocupa la torre en la esquina
-				continue
 			var z_cur := z_min + (float(bj) + 0.5) * wall_step
 			var lpos := Vector3(side_x, 0.0, z_cur)
 			var wpos := base_origin + lpos.rotated(Vector3.UP, yaw_rad)
