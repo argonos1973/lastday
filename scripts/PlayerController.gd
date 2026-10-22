@@ -72,7 +72,7 @@ const SURVIVAL_CLOTHING := {
 	"Pantalones camuflaje desert": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"], "camo": Color(0.32, 0.28, 0.16)},
 	# Military jackets reuse the soldier_torso mesh (long sleeves cover the arms);
 	# body_shows keeps Body_torso visible so the neck doesn't leave a hole.
-	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"]},
+	"Chaqueta militar": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},
 	"Chaqueta militar azul": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.04, 0.08)},
 	"Chaqueta militar negra II": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "tint": Color(0.02, 0.02, 0.03)},
 	"Chaqueta camuflaje": {"mesh": "soldier_torso", "hides": ["Tops"], "skin_hides": ["Desnudo_torso", "Desnudo_arms"], "body_hides": ["Body_arms"], "body_shows": ["Body_torso"], "camo": Color(0.18, 0.22, 0.13)},

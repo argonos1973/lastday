@@ -9264,7 +9264,7 @@ func _create_house_loot() -> void:
 		# --- Camo military ---
 		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 100, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Military jackets ---
-		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
 		{"name": "Chaqueta militar azul", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 70, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
 		{"name": "Chaqueta militar negra II", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
 		{"name": "Chaqueta camuflaje", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 110, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
@@ -9889,8 +9889,8 @@ func _collect_meshes_recursive(node: Node3D, result: Array) -> void:
 func _apply_military_drop_material(item_name: String, node: Node, drop_color: Color = Color(0, 0, 0, 0)) -> void:
 	if not (node is Node3D):
 		return
-	var military_solid_names := ["Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II"]
-	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
+	var military_solid_names := ["Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Guantes militares", "Chaqueta militar azul", "Chaqueta militar negra II"]
+	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	if item_name == "Botas militares":
 		_apply_color_material_recursive(node as Node3D, drop_color if drop_color.a > 0.0 else Color(0.10, 0.10, 0.075))
 	elif item_name in military_solid_names:
@@ -9903,7 +9903,7 @@ func _apply_military_drop_material(item_name: String, node: Node, drop_color: Co
 		else:
 			_apply_color_material_recursive(node as Node3D, Color(0.12, 0.14, 0.10))
 	elif item_name in military_camo_names:
-		if drop_color.a > 0.0 and not item_name.findn("camuflaje") >= 0:
+		if drop_color.a > 0.0 and item_name.findn("camuflaje") < 0 and not PlayerController.SURVIVAL_CLOTHING.get(item_name, {}).has("camo"):
 			_apply_color_material_recursive(node as Node3D, drop_color)
 		elif item_name.findn("desert") >= 0:
 			_apply_camo_material_recursive(node as Node3D, Color(0.35, 0.30, 0.18))
