@@ -7919,6 +7919,9 @@ func _find_flat_area_for_city_tent2() -> Vector3:
 		_city_tent_pos = _find_flat_area_for_city_tent()
 	var best_pos := Vector3.ZERO
 	var best_score := 99999.0
+	# Tent 1's supply container sits ~10.7 m off-centre — keep the second tent
+	# clear of it so the footprints never overlap.
+	var cont1_pos := _city_tent_pos + Vector3(10.5, 0.0, -2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
 	for angle_deg in range(0, 360, 10):
 		var angle: float = deg_to_rad(float(angle_deg))
 		for dist in [16.0, 22.0, 28.0, 36.0]:
@@ -7927,6 +7930,8 @@ func _find_flat_area_for_city_tent2() -> Vector3:
 			if abs(cx) > MAP_EXTENT * 0.95:
 				continue
 			var cand := Vector3(cx, 0, cz)
+			if cand.distance_to(cont1_pos) < 14.0:
+				continue
 			if CityExpansion.near_building(cand, 12.0):
 				continue
 			if CityExpansion.on_road(cand, 6.0, _south_road_end()):
@@ -8005,14 +8010,6 @@ func _create_world_details() -> void:
 	if city_tent2_node != null:
 		_build_military_tent_collision(city_tent2_node, "MilitaryTentCity2Collision", "MilitaryTentCity2RoofCollision")
 		_add_tent_interior_light(city_tent2_node, "MilitaryTentCity2Light")
-		var cont2_yaw := _city_tent2_yaw - 90.0
-		var cont2_off := Vector3(10.5, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw))
-		var cont2_pos := Vector3(city_tent2_pos.x + cont2_off.x, city_tent2_ground_y, city_tent2_pos.z + cont2_off.z)
-		if _try_instance_external_scene([ROOT_CONTAINER_MODEL], "MilitaryTentCity2Container", cont2_pos, Vector3.ONE, Vector3(0, cont2_yaw, 0), true, 0.0):
-			_create_invisible_collision_box_rotated("MilitaryTentCity2ContainerCollision", cont2_pos + Vector3(0, 1.45, 0), Vector3(7.25, 2.9, 2.96), cont2_yaw)
-			_register_wildlife_blocker(cont2_pos, 7.0)
-			if _try_instance_external_scene(["res://assets/models/props/camo_net.glb"], "MilitaryTentCity2Net", cont2_pos, Vector3.ONE, Vector3(0, cont2_yaw, 0), false, 0.0):
-				_apply_camo_net_material(get_node_or_null("MilitaryTentCity2Net"))
 
 func _apply_camo_net_material(net_root: Node) -> void:
 	if net_root == null:
