@@ -8384,7 +8384,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var sh_idx := _find_bone_cached("sh_idx", shoulder_bone_name, skel)
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return
-	if not _m4_saved_left_arm_poses.is_empty() and _m4_saved_left_arm_poses.size() == 3:
+	if not _m4_saved_left_arm_poses.is_empty():
 		for entry in _m4_saved_left_arm_poses:
 			skel.set_bone_pose(entry[0], entry[1])
 		_m4_saved_left_arm_poses.clear()
@@ -8420,14 +8420,23 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var lg_local := _rifle_left_hand_grip.position
 	var stock_local := _rifle_stock_ref.position
 
+	if _mounted_rifle_is_m4:
+		# En reposo, orientamos el eje del M4 para que desde la mano derecha
+		# hacia atras (-v_world_dir) la culata suba por delante del chaleco
+		# tactico y por encima del antebrazo derecho, sin forzar los hombros.
+		var char_fwd := -char_basis.z
+		lh_pos -= char_fwd * 0.10 + char_basis.y * 0.05
+		raw_shoulder += char_fwd * 0.25 - char_basis.x * 0.05 + char_basis.y * 0.08
+
 	var v_world_dir := (lh_pos - rh_pos).normalized()
-	var v_local_dir := (lg_local - rg_local).normalized()
+	var v_local_dir := Vector3(0.0, 0.0, -1.0) if _mounted_rifle_is_m4 else (lg_local - rg_local).normalized()
 	if v_world_dir.length_squared() < 0.0001 or v_local_dir.length_squared() < 0.0001:
 		return
 
 	# Move the left hand marker along the handguard so its world distance matches the animated left hand
 	var target_len := (lh_pos - rh_pos).length() / s
-	_rifle_left_hand_grip.position = rg_local + v_local_dir * target_len
+	if not _mounted_rifle_is_m4:
+		_rifle_left_hand_grip.position = rg_local + v_local_dir * target_len
 	lg_local = _rifle_left_hand_grip.position
 
 	# Rotation that aligns the handguard line with the animated hand direction
@@ -8470,6 +8479,15 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var roll := stock_aligned_perp.signed_angle_to(shoulder_perp, v_world_dir)
 	var roll_q := Quaternion(v_world_dir, roll)
 	var r := Basis(roll_q) * r0
+	if _mounted_rifle_is_m4 and not _is_aiming and not _is_firing:
+		# Mantener el plano lateral del M4 vertical/frontal para que la pala de
+		# la culata (Butt_Stock) no gire hacia dentro del pecho ni del brazo.
+		var barrel_axis := (r * Vector3(0.0, 0.0, -1.0)).normalized()
+		var desired_up := (char_basis.y - char_basis.z * 0.25).slide(barrel_axis).normalized()
+		var current_up := (r * Vector3.UP).slide(barrel_axis).normalized()
+		if desired_up.length_squared() > 0.001 and current_up.length_squared() > 0.001:
+			var fix_roll := current_up.signed_angle_to(desired_up, barrel_axis)
+			r = Basis(Quaternion(barrel_axis, fix_roll)) * r
 
 	# Build the world transform for WeaponOffset
 	var weapon_basis := r.scaled(Vector3.ONE * s)
@@ -8487,10 +8505,13 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# without changing rotation or scale. Direction is taken from the actual
 	# muzzle and stock markers.
 	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
+		_rifle_root.force_update_transform()
 		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
 		if _mounted_rifle_is_m4:
 			var up_dir := weapon_basis.y.normalized()
-			_rifle_root.global_position += barrel_dir * 0.18 + up_dir * 0.055
+			var char_fwd := -char_basis.z
+			_rifle_weapon_offset.global_position += barrel_dir * 0.095 - up_dir * 0.015 + char_fwd * 0.045
+			_rifle_weapon_offset.force_update_transform()
 		else:
 			_rifle_root.global_position += barrel_dir * 0.40
 

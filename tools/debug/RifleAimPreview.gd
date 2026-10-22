@@ -25,7 +25,13 @@ func run() -> void:
 	actor.add_child(actor.inventory)
 	actor.setup_as_puppet()
 	actor.set_process(false)
-	actor.equip_clothing("Camiseta")
+	if use_m4 and not aiming:
+		actor.equip_clothing("Chaqueta militar digital")
+		actor.equip_clothing("Chaleco táctico")
+		actor.equip_clothing("Pantalones cargo con rodilleras")
+		actor.equip_clothing("Guantes militares")
+	else:
+		actor.equip_clothing("Camiseta")
 	var w_name: String = actor.M4_NAME if use_m4 else "Rifle francotirador"
 	actor._puppet_held = w_name
 	actor._update_puppet_held_item(w_name)
