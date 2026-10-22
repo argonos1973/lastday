@@ -1276,6 +1276,23 @@ func shelter_lined(sh_id: String) -> void:
 	if scene != null and scene.has_method("_net_shelter_lined"):
 		scene._net_shelter_lined(sh_id)
 
+@rpc("any_peer", "reliable")
+func shelter_camo_changed(sh_id: String, covered: bool) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender):
+		return
+	var scene := get_tree().current_scene
+	if is_host:
+		if scene == null or not scene.has_method("_net_shelter_camo_changed") or not scene._net_shelter_camo_changed(sh_id, covered, sender):
+			return
+		if peer != null:
+			for pid in players.keys():
+				if pid != sender and pid != multiplayer.get_unique_id() and not players[pid].get("offline", false) and peer_alive(pid):
+					shelter_camo_changed.rpc_id(pid, sh_id, covered)
+		return
+	if scene != null and scene.has_method("_net_shelter_camo_changed"):
+		scene._net_shelter_camo_changed(sh_id, covered)
+
 # Client tells server it dismantled a shelter (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func shelter_dismantled(sh_id: String) -> void:

@@ -3451,14 +3451,21 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 	_apply_pending_doors()
 	# Spawn shelters built by other players
 	for sh in shelters:
+		var sh_lined := bool(sh.get("pelt_lined", false))
+		var sh_camo := bool(sh.get("camo_covered", false))
 		if not world_actions_by_id.has(str(sh["id"])):
-			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)), bool(sh.get("pelt_lined", false)))
+			_spawn_player_shelter_with_id(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)), sh_lined, sh_camo)
 		var sh_action = world_actions_by_id.get(str(sh["id"]))
 		if sh_action != null and is_instance_valid(sh_action):
 			sh_action.set_meta("contents", sh.get("contents", []))
-			sh_action.set_meta("pelt_lined", bool(sh.get("pelt_lined", false)))
-			if bool(sh.get("pelt_lined", false)):
+			sh_action.set_meta("pelt_lined", sh_lined)
+			sh_action.set_meta("camo_covered", sh_camo)
+			if sh_lined:
 				_apply_shelter_lining_visual(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
+			if sh_camo:
+				_apply_shelter_camo_visual(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
+			else:
+				_remove_shelter_camo_visual(str(sh["id"]))
 		_set_backpack_entry_contents(str(sh["id"]), sh.get("contents", []))
 	for crop in planted_crops:
 		var cpos_raw = crop.get("pos", [0.0, 0.0, 0.0])
@@ -6154,6 +6161,8 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 				return []
 			if item_name == "Palo":
 				return ["res://assets/models/props/wood_stick.glb"]
+			if item_name == "Tela de camuflaje":
+				return ["res://assets/models/props/camo_net_pickup.glb"]
 			if item_name == "Trapos":
 				return []
 			return [K_SURVIVAL + "box.glb"]
@@ -6573,6 +6582,7 @@ func _create_map() -> void:
 		_remote_tent_pos = _find_flat_area_for_remote_tent()
 		_city_tent_pos = _find_flat_area_for_city_tent()
 		_city_tent2_pos = _find_flat_area_for_city_tent2()
+		_build_city_military_base_perimeter(true)
 		_register_server_house_blockers()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
@@ -7913,49 +7923,118 @@ func _find_flat_area_for_city_tent() -> Vector3:
 	return best_pos
 
 func _find_flat_area_for_city_tent2() -> Vector3:
-	# Second military store right next to the first one — same flatness rules,
-	# 16–36 m away so the pair reads as a small encampment, not one tent.
+	# Segunda tienda militar dentro del mismo recinto de la base militar de la
+	# ciudad, alineada junto a la primera con las puertas mirando al patio.
 	if _city_tent_pos == Vector3.ZERO:
 		_city_tent_pos = _find_flat_area_for_city_tent()
-	var best_pos := Vector3.ZERO
-	var best_score := 99999.0
-	# Tent 1's supply container sits ~10.7 m off-centre — keep the second tent
-	# clear of it so the footprints never overlap.
-	var cont1_pos := _city_tent_pos + Vector3(10.5, 0.0, -2.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
-	for angle_deg in range(0, 360, 10):
-		var angle: float = deg_to_rad(float(angle_deg))
-		for dist in [16.0, 22.0, 28.0, 36.0]:
-			var cx: float = _city_tent_pos.x + dist * cos(angle)
-			var cz: float = _city_tent_pos.z + dist * sin(angle)
-			if abs(cx) > MAP_EXTENT * 0.95:
+	_city_tent2_yaw = CITY_TENT_YAW
+	var offset := Vector3(-13.5, 0.0, -1.0).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW))
+	_city_tent2_pos = _city_tent_pos + offset
+	return _city_tent2_pos
+
+func _build_city_military_base_perimeter(server_only := false) -> void:
+	if _city_tent_pos == Vector3.ZERO:
+		return
+	var base_origin := _city_tent_pos
+	var yaw_rad := deg_to_rad(CITY_TENT_YAW)
+	var wall_scale := Vector3(2.2, 2.2, 2.2)
+	var wall_step := 3.90
+	var wall_len := 4.05
+	var wall_h := 1.98
+	var wall_thick := 1.42
+	var x_min := -23.4
+	var x_max := 15.6
+	var z_min := -13.65
+	var z_max := 13.65
+	var gate_x_min := -9.6
+	var gate_x_max := -2.0
+	var tower_local := Vector3(x_max - 2.1, 0.0, z_max - 2.1)
+	var tower_world := base_origin + tower_local.rotated(Vector3.UP, yaw_rad)
+	var tower_ground_y := _get_exact_ground_y(tower_world.x, tower_world.z)
+	var tower_scale := Vector3(0.85, 0.85, 0.85)
+	# En military_watch_tower.glb las patas empiezan en y=+1.145 local; restamos
+	# ese offset escalado para que las 4 patas apoyen firmemente en el terreno.
+	var tower_pos := Vector3(tower_world.x, tower_ground_y - 1.145 * tower_scale.y, tower_world.z)
+	if not server_only:
+		_try_instance_external_scene(
+			["res://assets/models/props/military_watch_tower.glb"],
+			"MilitaryBaseWatchTower",
+			tower_pos,
+			tower_scale,
+			Vector3(0.0, CITY_TENT_YAW, 0.0),
+			true,
+			0.0
+		)
+	_register_wildlife_blocker(tower_world, 4.0)
+
+	var seg_idx := 0
+
+	# Lados horizontales (trasero z_min: 10 bloques exactos; delantero z_max con entrada)
+	for side_i in range(2):
+		var z_local: float = z_min if side_i == 0 else z_max
+		var is_front := side_i == 1
+		for bi in range(10):
+			var x_cur := x_min + (float(bi) + 0.5) * wall_step
+			if is_front and x_cur > gate_x_min and x_cur < gate_x_max:
 				continue
-			var cand := Vector3(cx, 0, cz)
-			if cand.distance_to(cont1_pos) < 14.0:
+			if is_front and bi == 9:
+				# El ultimo tramo delantero lo ocupa la torre en la esquina
 				continue
-			if CityExpansion.near_building(cand, 12.0):
+			var lpos := Vector3(x_cur, 0.0, z_local)
+			var wpos := base_origin + lpos.rotated(Vector3.UP, yaw_rad)
+			var gy := _get_exact_ground_y(wpos.x, wpos.z)
+			var seg_pos := Vector3(wpos.x, gy, wpos.z)
+			if not server_only:
+				_try_instance_external_scene(
+					["res://assets/models/props/concrete_barricade.glb"],
+					"MilitaryBaseWall_%d" % seg_idx,
+					seg_pos,
+					wall_scale,
+					Vector3(0.0, CITY_TENT_YAW, 0.0),
+					false,
+					0.0
+				)
+			_create_invisible_collision_box_rotated(
+				"MilitaryBaseWallCol_%d" % seg_idx,
+				seg_pos + Vector3(0.0, wall_h * 0.5, 0.0),
+				Vector3(wall_len, wall_h, wall_thick),
+				CITY_TENT_YAW
+			)
+			_register_wildlife_blocker(seg_pos, 2.1)
+			seg_idx += 1
+
+	# Lados verticales (izquierdo x_min y derecho x_max: 7 bloques exactos)
+	for side_idx in range(2):
+		var side_x: float = x_min if side_idx == 0 else x_max
+		var is_right := side_idx == 1
+		var wall_yaw := CITY_TENT_YAW + 90.0
+		for bj in range(7):
+			if is_right and bj == 6:
+				# El ultimo tramo derecho delantero lo ocupa la torre en la esquina
 				continue
-			if CityExpansion.on_road(cand, 6.0, _south_road_end()):
-				continue
-			if _is_near_river(cand, 15.0):
-				continue
-			var cy: float = _get_ground_height(cand)
-			var max_diff := 0.0
-			for s in range(10):
-				var sa: float = deg_to_rad(float(s) * 36.0)
-				var sy: float = _get_ground_height(Vector3(cx + 6.0 * cos(sa), 0, cz + 6.0 * sin(sa)))
-				max_diff = max(max_diff, abs(sy - cy))
-			var score: float = max_diff + absf(dist - 22.0) * 0.05
-			if max_diff < 1.2 and score < best_score:
-				best_score = score
-				best_pos = cand
-	if best_pos == Vector3.ZERO:
-		best_pos = _city_tent_pos + Vector3(22.0, 0, 8.0)
-	_city_tent2_pos = best_pos
-	# Face the door gap (local +Z) toward the first tent.
-	var dir := _city_tent_pos - best_pos
-	if dir.length() > 0.5:
-		_city_tent2_yaw = rad_to_deg(atan2(dir.x, dir.z))
-	return best_pos
+			var z_cur := z_min + (float(bj) + 0.5) * wall_step
+			var lpos := Vector3(side_x, 0.0, z_cur)
+			var wpos := base_origin + lpos.rotated(Vector3.UP, yaw_rad)
+			var gy := _get_exact_ground_y(wpos.x, wpos.z)
+			var seg_pos := Vector3(wpos.x, gy, wpos.z)
+			if not server_only:
+				_try_instance_external_scene(
+					["res://assets/models/props/concrete_barricade.glb"],
+					"MilitaryBaseWall_%d" % seg_idx,
+					seg_pos,
+					wall_scale,
+					Vector3(0.0, wall_yaw, 0.0),
+					false,
+					0.0
+				)
+			_create_invisible_collision_box_rotated(
+				"MilitaryBaseWallCol_%d" % seg_idx,
+				seg_pos + Vector3(0.0, wall_h * 0.5, 0.0),
+				Vector3(wall_len, wall_h, wall_thick),
+				wall_yaw
+			)
+			_register_wildlife_blocker(seg_pos, 2.1)
+			seg_idx += 1
 
 func _create_world_details() -> void:
 	_create_new_world_props()
@@ -8010,6 +8089,7 @@ func _create_world_details() -> void:
 	if city_tent2_node != null:
 		_build_military_tent_collision(city_tent2_node, "MilitaryTentCity2Collision", "MilitaryTentCity2RoofCollision")
 		_add_tent_interior_light(city_tent2_node, "MilitaryTentCity2Light")
+	_build_city_military_base_perimeter(false)
 
 func _apply_camo_net_material(net_root: Node) -> void:
 	if net_root == null:
@@ -9478,6 +9558,28 @@ func _create_house_loot() -> void:
 			"paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5,
 			"rot": Vector3.ZERO, "color": Color.TRANSPARENT, "pos": spot["pos"], "floor_y": spot["pos"].y}
 		_create_pickup_item(mask_loot)
+	# Tela de camuflaje garantizada en las tiendas militares — IDs fijos, sin RNG.
+	for cspot in [
+		{"id": "tent_loot_camonet", "pos": tent_origin + Vector3(-1.4, 0.0, 2.1).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0.0, tent_floor_y, 0.0), "floor_y": tent_floor_y},
+		{"id": "remote_tent_loot_camonet", "pos": remote_tent_origin + Vector3(-1.4, 0.0, 2.1).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0.0, remote_tent_floor_y, 0.0), "floor_y": remote_tent_floor_y},
+		{"id": "city_tent_loot_camonet", "pos": city_tent_origin + Vector3(-1.4, 0.0, -2.1).rotated(Vector3.UP, deg_to_rad(CITY_TENT_YAW)) + Vector3(0.0, city_tent_floor_y, 0.0), "floor_y": city_tent_floor_y},
+		{"id": "city_tent2_loot_camonet", "pos": city_tent2_origin + Vector3(-1.4, 0.0, -2.1).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0.0, city_tent2_floor_y, 0.0), "floor_y": city_tent2_floor_y},
+	]:
+		var cnet_loot := {
+			"id": cspot["id"],
+			"name": "Tela de camuflaje",
+			"type": "material",
+			"weight": 0.8,
+			"qty": 1,
+			"use": 0.0,
+			"paths": ["res://assets/models/props/camo_net_pickup.glb"],
+			"scale": 1.0,
+			"rot": Vector3.ZERO,
+			"color": Color.TRANSPARENT,
+			"pos": cspot["pos"],
+			"floor_y": cspot["floor_y"],
+		}
+		_create_pickup_item(cnet_loot)
 	# M4 + 2 cargadores 5.56 en la cima de la Torre del Reloj (29.46 m) y en la
 	# torre de agua del pueblo — IDs y posiciones fijos, sin consumir RNG.
 	var ct_roof_m4: Dictionary = m4_template.duplicate()
@@ -11305,6 +11407,28 @@ func _execute_world_action(action, actor) -> void:
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 		"shelter":
+			var held_sh_item = actor.get_held_item() if actor != null and actor.has_method("get_held_item") else null
+			var holds_camo := held_sh_item != null and str(held_sh_item.item_name) == "Tela de camuflaje"
+			if not bool(action.get_meta("camo_covered", false)) and _player_has_camo_net(actor) and (holds_camo or bool(action.get_meta("pelt_lined", false)) or not _player_has_pelts(actor, 4)):
+				_play_actor_action(actor, "forage", 1.8)
+				if hud != null:
+					hud.show_countdown("Cubriendo refugio con tela de camuflaje", 1.8)
+				await get_tree().create_timer(1.8).timeout
+				if _scene_quitting or not is_instance_valid(action): return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
+				if not _consume_player_camo_net(actor):
+					return
+				var camo_sh_id := str(action.action_id)
+				_apply_shelter_camo_state(camo_sh_id, true)
+				actor.notice.emit("Cubres el refugio con la tela de camuflaje. Puedes atravesar la entrada para entrar y salir.")
+				if net != null and net.is_connected:
+					if net.is_host:
+						net.shelter_camo_changed.rpc(camo_sh_id, true)
+					else:
+						net.shelter_camo_changed.rpc_id(1, camo_sh_id, true)
+						call_deferred("_sync_local_player_inventory")
+				return
 			if not bool(action.get_meta("pelt_lined", false)) and _player_has_pelts(actor, 4):
 				_play_actor_action(actor, "forage", 3.0)
 				if hud != null:
@@ -11323,6 +11447,37 @@ func _execute_world_action(action, actor) -> void:
 						net.shelter_lined.rpc(lined_id)
 					else:
 						net.shelter_lined.rpc_id(1, lined_id)
+						call_deferred("_sync_local_player_inventory")
+				return
+			if bool(action.get_meta("camo_covered", false)):
+				_play_actor_action(actor, "forage", 1.5)
+				if hud != null:
+					hud.show_countdown("Retirando tela de camuflaje", 1.5)
+				await get_tree().create_timer(1.5).timeout
+				if _scene_quitting or not is_instance_valid(action): return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
+				if not bool(action.get_meta("camo_covered", false)):
+					return
+				var uncamo_sh_id := str(action.action_id)
+				_apply_shelter_camo_state(uncamo_sh_id, false)
+				var camo_item = ItemScript.create("Tela de camuflaje", "material", 0.8, 1, 0.0)
+				if not _receive_pickup_item(actor, camo_item):
+					var c_drop: Vector3 = Vector3(action.global_position) + Vector3(0.4, 0.0, 0.4)
+					c_drop = _settle_drop_pos(c_drop) + Vector3(0.0, 0.06, 0.0)
+					_spawn_ground_pickup("Tela de camuflaje", "material", c_drop, 0.8, 1, 0.0)
+					_dropped_items.append({"id": "uncamo_net_%d" % Time.get_ticks_msec(), "name": "Tela de camuflaje", "type": "material", "weight": 0.8, "qty": 1, "use": 0.0, "pos": [c_drop.x, c_drop.y, c_drop.z]})
+					actor.notice.emit("Quitas la tela de camuflaje. No cabía en el inventario y ha quedado en el suelo.")
+				else:
+					actor.notice.emit("Quitas la tela de camuflaje del refugio.")
+				if actor.has_method("refresh_carry_capacity"):
+					actor.refresh_carry_capacity()
+				actor.inventory.changed.emit()
+				if net != null and net.is_connected:
+					if net.is_host:
+						net.shelter_camo_changed.rpc(uncamo_sh_id, false)
+					else:
+						net.shelter_camo_changed.rpc_id(1, uncamo_sh_id, false)
 						call_deferred("_sync_local_player_inventory")
 				return
 			var stash_contents: Array = action.get_meta("contents", [])
@@ -11346,6 +11501,7 @@ func _execute_world_action(action, actor) -> void:
 				stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
 			stick_names.append("PlayerShelter_%s_Net" % sh_id)
 			stick_names.append("PlayerShelter_%s_PeltLining" % sh_id)
+			stick_names.append("PlayerShelter_%s_CamoNet" % sh_id)
 			for sn in stick_names:
 				var sn_node := get_node_or_null(sn)
 				if sn_node != null:
@@ -11918,7 +12074,7 @@ func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> boo
 	_spawn_player_campfire_with_id(cf_id, pos)
 	return true
 
-func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0, pelt_lined: bool = false) -> void:
+func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0, pelt_lined: bool = false, camo_covered: bool = false) -> void:
 	if world_actions_by_id.has(sh_id):
 		return
 	# One model keeps the frame, covering and bedding together on load/sync/removal.
@@ -11930,15 +12086,112 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0
 	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
 	shelter_action.set_meta("pelt_lined", pelt_lined)
+	shelter_action.set_meta("camo_covered", camo_covered)
 	shelter_action.rotation.y = yaw
 	if not _tracked_has_id(_built_shelters, sh_id):
-		_built_shelters.append({"id": sh_id, "pos": pos, "yaw": yaw, "contents": [], "pelt_lined": pelt_lined})
-	elif pelt_lined:
+		_built_shelters.append({"id": sh_id, "pos": pos, "yaw": yaw, "contents": [], "pelt_lined": pelt_lined, "camo_covered": camo_covered})
+	else:
 		for entry in _built_shelters:
 			if str(entry.get("id", "")) == sh_id:
-				entry["pelt_lined"] = true
+				if pelt_lined:
+					entry["pelt_lined"] = true
+				if camo_covered:
+					entry["camo_covered"] = true
 	if pelt_lined:
 		_apply_shelter_lining_visual(sh_id, pos, yaw)
+	if camo_covered:
+		_apply_shelter_camo_visual(sh_id, pos, yaw)
+
+func _player_has_camo_net(actor) -> bool:
+	if actor == null:
+		return false
+	if actor.has_method("get_held_item"):
+		var held = actor.get_held_item()
+		if held != null and str(held.item_name) == "Tela de camuflaje" and int(held.quantity) > 0:
+			return true
+	if actor.get("inventory") != null:
+		for item in actor.inventory.items:
+			if item != null and str(item.item_name) == "Tela de camuflaje" and int(item.quantity) > 0:
+				return true
+	return false
+
+func _consume_player_camo_net(actor) -> bool:
+	if not _player_has_camo_net(actor):
+		return false
+	if actor.has_method("get_held_item"):
+		var held = actor.get_held_item()
+		if held != null and str(held.item_name) == "Tela de camuflaje":
+			if actor.get("inventory") != null and actor.inventory.items.has(held):
+				actor.inventory.consume_item_name("Tela de camuflaje", 1)
+			else:
+				held.quantity -= 1
+				if held.quantity <= 0 and actor.has_method("clear_hands"):
+					actor.clear_hands()
+			if actor.get("inventory") != null:
+				actor.inventory.changed.emit()
+			return true
+	if actor.get("inventory") != null:
+		return actor.inventory.consume_item_name("Tela de camuflaje", 1)
+	return false
+
+func _apply_shelter_camo_visual(sh_id: String, pos, yaw: float) -> void:
+	var node_name := "PlayerShelter_%s_CamoNet" % sh_id
+	if get_node_or_null(NodePath(node_name)) != null:
+		return
+	var p: Vector3 = Vector3(float(pos[0]), float(pos[1]), float(pos[2])) if pos is Array else (pos as Vector3)
+	if _try_instance_external_scene(["res://assets/models/props/shelter_camo_net.glb"], node_name, p, Vector3.ONE, Vector3(0.0, rad_to_deg(yaw), 0.0), false, 0.0):
+		var cnode := get_node_or_null(NodePath(node_name))
+		if cnode != null:
+			_remove_collision_from_node(cnode)
+			_apply_camo_net_material(cnode)
+			cnode.add_to_group("world_action_visual")
+
+func _remove_shelter_camo_visual(sh_id: String) -> void:
+	var node_name := "PlayerShelter_%s_CamoNet" % sh_id
+	var old := get_node_or_null(NodePath(node_name))
+	if old != null:
+		if old.get_parent() != null:
+			old.get_parent().remove_child(old)
+		old.free()
+
+func _apply_shelter_camo_state(sh_id: String, covered: bool) -> bool:
+	var action = world_actions_by_id.get(sh_id)
+	if action != null and is_instance_valid(action):
+		action.set_meta("camo_covered", covered)
+	var found := false
+	for entry in _built_shelters:
+		if str(entry.get("id", "")) == sh_id:
+			found = true
+			entry["camo_covered"] = covered
+			var p = entry.get("pos", action.global_position if (action != null and is_instance_valid(action)) else Vector3.ZERO)
+			if p is Array:
+				p = Vector3(float(p[0]), float(p[1]), float(p[2]))
+			var yw := float(entry.get("yaw", action.rotation.y if (action != null and is_instance_valid(action)) else 0.0))
+			if net == null or not net.is_dedicated_server:
+				if covered:
+					_apply_shelter_camo_visual(sh_id, p, yw)
+				else:
+					_remove_shelter_camo_visual(sh_id)
+			break
+	if not found and (action == null or not is_instance_valid(action)):
+		return false
+	if not found and action != null and is_instance_valid(action) and (net == null or not net.is_dedicated_server):
+		if covered:
+			_apply_shelter_camo_visual(sh_id, action.global_position, action.rotation.y)
+		else:
+			_remove_shelter_camo_visual(sh_id)
+	_save_world_change_silent()
+	return true
+
+func _net_shelter_camo_changed(sh_id: String, covered: bool, sender_id: int = 0) -> bool:
+	var action = world_actions_by_id.get(sh_id)
+	var sh_pos := _backpack_drop_pos(sh_id, action)
+	if sh_pos == Vector3.INF:
+		return false
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+		if not _sender_within(sender_id, sh_pos, 8.0):
+			return false
+	return _apply_shelter_camo_state(sh_id, covered)
 
 func _player_has_pelts(actor, needed: int = 4) -> bool:
 	if actor == null or actor.get("inventory") == null:

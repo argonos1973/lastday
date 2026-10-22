@@ -694,11 +694,20 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 			sh_pos = Vector3(float(sh_pos_raw[0]), float(sh_pos_raw[1]), float(sh_pos_raw[2]))
 		else:
 			sh_pos = sh_pos_raw
+		var sh_lined := bool(sh.get("pelt_lined", false))
+		var sh_camo := bool(sh.get("camo_covered", false))
 		if main.has_method("_spawn_player_shelter_with_id"):
-			main._spawn_player_shelter_with_id(sh_id, sh_pos, float(sh.get("yaw", 0.0)))
+			main._spawn_player_shelter_with_id(sh_id, sh_pos, float(sh.get("yaw", 0.0)), sh_lined, sh_camo)
 		# El alijo del refugio viaja en la entrada de _built_shelters.
 		if main.world_actions_by_id.has(sh_id):
-			main.world_actions_by_id[sh_id].set_meta("contents", sh.get("contents", []))
+			var sh_act = main.world_actions_by_id[sh_id]
+			sh_act.set_meta("contents", sh.get("contents", []))
+			sh_act.set_meta("pelt_lined", sh_lined)
+			sh_act.set_meta("camo_covered", sh_camo)
+			if sh_lined and main.has_method("_apply_shelter_lining_visual"):
+				main._apply_shelter_lining_visual(sh_id, sh_pos, float(sh.get("yaw", 0.0)))
+			if sh_camo and main.has_method("_apply_shelter_camo_visual"):
+				main._apply_shelter_camo_visual(sh_id, sh_pos, float(sh.get("yaw", 0.0)))
 		main._set_backpack_entry_contents(sh_id, sh.get("contents", []))
 	# Open doors
 	var open_doors = data.get("open_doors", [])

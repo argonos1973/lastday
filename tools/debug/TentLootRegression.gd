@@ -32,7 +32,7 @@ func run():
    push_error("Missing guaranteed rifle/ammo " + rifle_id)
  # Both city stores together must spawn the full military gear set — the loot
  # is split: tent 1 holds sniper/helmet/basics, tent 2 the M4 and heavy gear.
- var city_ids := ["city_tent_loot_helmet", "city_tent_loot_item_0", "city_tent_loot_item_1", "city_tent_loot_food_0", "city_tent2_loot_vest", "city_tent2_loot_milbackpack", "city_tent2_loot_hat", "city_tent2_loot_item_0", "city_tent2_loot_food_0"]
+ var city_ids := ["city_tent_loot_helmet", "city_tent_loot_item_0", "city_tent_loot_item_1", "city_tent_loot_food_0", "city_tent2_loot_vest", "city_tent2_loot_milbackpack", "city_tent2_loot_hat", "city_tent2_loot_item_0", "city_tent2_loot_food_0", "tent_loot_camonet", "remote_tent_loot_camonet", "city_tent_loot_camonet", "city_tent2_loot_camonet"]
  for cid in city_ids:
   if not before.has(cid):
    failures += 1

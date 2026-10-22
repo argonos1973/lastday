@@ -9485,6 +9485,8 @@ func _build_third_person_resource(item_name: String) -> void:
 		_build_third_person_seed_bag()
 	elif item_name == "Trapos":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/bedroll.glb", "HeldRags")
+	elif item_name == "Tela de camuflaje":
+		_add_named_held_model("res://assets/models/props/camo_net_pickup.glb", "HeldClothing")
 	else:
 		_build_third_person_pack()
 

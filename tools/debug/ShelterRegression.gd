@@ -35,10 +35,20 @@ func run() -> void:
 	check(world._apply_shelter_lining_state("test"), "A built shelter accepts its hide lining")
 	check(world.get_node_or_null("PlayerShelter_test_PeltLining") != null, "Hide lining has a persistent visual node")
 	check(bool(world._built_shelters[0].get("pelt_lined", false)), "Hide lining is stored with shelter world state")
-	world._spawn_player_shelter_with_id("test", Vector3.ZERO)
-	check(world.world_actions_by_id.size() == 1, "Repeated network spawn does not duplicate shelter")
+	check(world._apply_shelter_camo_state("test", true), "A built shelter accepts its camouflage net")
+	var camo_node := world.get_node_or_null("PlayerShelter_test_CamoNet") as Node3D
+	check(camo_node != null, "Camo net has a persistent visual node over the shelter")
+	if camo_node != null:
+		var cols := camo_node.find_children("*", "CollisionObject3D", true, false)
+		check(cols.is_empty(), "Camo net over shelter has no collision so the player can walk through the entrance")
+	check(bool(world._built_shelters[0].get("camo_covered", false)), "Camo state is stored with shelter world state")
 	if "--preview" in OS.get_cmdline_user_args():
 		await preview(world)
+	check(world._apply_shelter_camo_state("test", false), "Camo net can be removed from the shelter")
+	check(world.get_node_or_null("PlayerShelter_test_CamoNet") == null, "Removing camo net frees its visual node")
+	check(not bool(world._built_shelters[0].get("camo_covered", false)), "Removing camo net updates shelter world state")
+	world._spawn_player_shelter_with_id("test", Vector3.ZERO)
+	check(world.world_actions_by_id.size() == 1, "Repeated network spawn does not duplicate shelter")
 	world._net_shelter_dismantled("test")
 	await process_frame
 	check(world.get_node_or_null("PlayerShelter_test") == null, "Dismantling removes entire shelter")
