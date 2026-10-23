@@ -4092,6 +4092,105 @@ func _sync_posed_attachments(model: Node3D, skel: Skeleton3D) -> void:
 			var drink_euler := drink_local.basis.get_euler()
 			drink.rotation_degrees = Vector3(rad_to_deg(drink_euler.x), rad_to_deg(drink_euler.y), rad_to_deg(drink_euler.z))
 
+# Re-seats the held rifle/M4 inside a duplicated model (inventory portrait).
+# In the live rig WeaponOffset is top_level and re-solved every frame by
+# _update_rifle_ik; the duplicate keeps the stale world transform and the
+# weapon would render outside the portrait frame. Runs the same rest solve
+# against the posed duplicate skeleton. Returns true when a rifle was seated.
+func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
+	if model == null or skel == null or not is_instance_valid(skel):
+		return false
+	var weapon_offset := model.find_child("WeaponOffset", true, false) as Node3D
+	var rifle_root := model.find_child("RifleRoot", true, false) as Node3D
+	if weapon_offset == null or rifle_root == null:
+		return false
+	var right_grip := rifle_root.get_node_or_null("RightGrip") as Marker3D
+	var left_grip := rifle_root.get_node_or_null("LeftHandGripTarget") as Marker3D
+	var stock_ref := rifle_root.get_node_or_null("StockReference") as Marker3D
+	var muzzle_marker := rifle_root.get_node_or_null("MuzzleRef") as Marker3D
+	if right_grip == null or left_grip == null or stock_ref == null:
+		return false
+	var rh_idx := skel.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skel))
+	var lh_idx := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftHand", skel))
+	var sh_idx := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightShoulder", skel))
+	if sh_idx < 0:
+		sh_idx = skel.find_bone(_resolve_bone_name_safe("mixamorig:RightArm", skel))
+	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
+		return false
+	var s := _rifle_weapon_scale() * skel.global_transform.basis.get_scale().x
+	var rh_pos := (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
+	var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
+	var shoulder_pos := (skel.global_transform * skel.get_bone_global_pose(sh_idx)).origin
+	var char_basis := model.global_basis.orthonormalized()
+	var char_fwd := -char_basis.z
+	var raw_shoulder := shoulder_pos + char_basis.x * 0.06 + char_basis.z * 0.02 - char_basis.y * 0.08
+	if _mounted_rifle_is_m4:
+		lh_pos -= char_fwd * 0.10 + char_basis.y * 0.05
+		raw_shoulder += char_fwd * 0.25 - char_basis.x * 0.05 + char_basis.y * 0.08
+	var v_world_dir := (lh_pos - rh_pos).normalized()
+	var rg_local := right_grip.position
+	var lg_local := left_grip.position
+	var v_local_dir := Vector3(0.0, 0.0, -1.0) if _mounted_rifle_is_m4 else (lg_local - rg_local).normalized()
+	if v_world_dir.length_squared() < 0.0001 or v_local_dir.length_squared() < 0.0001:
+		return false
+	# Shift the left-hand marker along the handguard so its distance matches
+	# the animated hands, same as the live solve.
+	var target_len := (lh_pos - rh_pos).length() / s
+	if not _mounted_rifle_is_m4:
+		left_grip.position = rg_local + v_local_dir * target_len
+		lg_local = left_grip.position
+	var axis := v_local_dir.cross(v_world_dir)
+	var angle := v_local_dir.angle_to(v_world_dir)
+	if axis.length_squared() < 0.0001:
+		axis = Vector3(1.0, 0.0, 0.0) if abs(v_local_dir.y) < 0.9 else Vector3(0.0, 1.0, 0.0)
+		angle = PI if v_local_dir.dot(v_world_dir) < 0.0 else 0.0
+	var r0 := Basis(Quaternion(axis.normalized(), angle))
+	var stock_vec := stock_ref.position - rg_local
+	var stock_dist_world := s * stock_vec.length()
+	var stock_parallel_len := s * stock_vec.dot(v_local_dir)
+	var raw_shoulder_vec := raw_shoulder - rh_pos
+	var raw_shoulder_proj := raw_shoulder_vec - v_world_dir * raw_shoulder_vec.dot(v_world_dir)
+	var perp_radius_sq := stock_dist_world * stock_dist_world - stock_parallel_len * stock_parallel_len
+	if perp_radius_sq < 0.0001:
+		perp_radius_sq = 0.0001
+	var perp_radius := sqrt(perp_radius_sq)
+	var perp_dir := raw_shoulder_proj.normalized()
+	if perp_dir.length_squared() < 0.0001:
+		perp_dir = (Vector3(1.0, 0.0, 1.0).slide(v_world_dir)).normalized()
+	shoulder_pos = rh_pos + v_world_dir * stock_parallel_len + perp_dir * perp_radius
+	var stock_perp := stock_vec.slide(v_local_dir).normalized()
+	if stock_perp.length_squared() < 0.0001:
+		stock_perp = Vector3(0.0, 1.0, 0.0).slide(v_local_dir).normalized()
+	var shoulder_vec := shoulder_pos - rh_pos
+	var shoulder_perp := shoulder_vec.slide(v_world_dir).normalized()
+	if shoulder_perp.length_squared() < 0.0001:
+		shoulder_perp = Vector3(0.0, 1.0, 0.0).slide(v_world_dir).normalized()
+	var stock_aligned_perp := r0 * stock_perp
+	var roll := stock_aligned_perp.signed_angle_to(shoulder_perp, v_world_dir)
+	var r := Basis(Quaternion(v_world_dir, roll)) * r0
+	if _mounted_rifle_is_m4:
+		var barrel_axis := (r * Vector3(0.0, 0.0, -1.0)).normalized()
+		var desired_up := (char_basis.y - char_basis.z * 0.25).slide(barrel_axis).normalized()
+		var current_up := (r * Vector3.UP).slide(barrel_axis).normalized()
+		if desired_up.length_squared() > 0.001 and current_up.length_squared() > 0.001:
+			var fix_roll := current_up.signed_angle_to(desired_up, barrel_axis)
+			r = Basis(Quaternion(barrel_axis, fix_roll)) * r
+	var weapon_basis := r.scaled(Vector3.ONE * s)
+	rifle_root.position = Vector3.ZERO
+	weapon_offset.global_basis = weapon_basis
+	weapon_offset.global_position = rh_pos - weapon_basis * rg_local
+	weapon_offset.force_update_transform()
+	if muzzle_marker != null:
+		rifle_root.force_update_transform()
+		var barrel_dir := (muzzle_marker.global_position - stock_ref.global_position).normalized()
+		if _mounted_rifle_is_m4:
+			var up_dir := weapon_basis.y.normalized()
+			weapon_offset.global_position += barrel_dir * 0.095 - up_dir * 0.015 + char_fwd * 0.045
+			weapon_offset.force_update_transform()
+		else:
+			rifle_root.global_position += barrel_dir * 0.40
+	return true
+
 #endregion
 
 
@@ -8278,6 +8377,7 @@ func _build_third_person_rifle(item_name := "") -> void:
 	_rifle_root.add_child(_rifle_stock_ref)
 	# Muzzle: extremo delantero fisico del cañon (min Z del AABB — model barrel points -Z)
 	_rifle_muzzle = Marker3D.new()
+	_rifle_muzzle.name = "MuzzleRef"
 	_rifle_muzzle.position = Vector3(muzzle_x, muzzle_y, muzzle_z)
 	_rifle_root.add_child(_rifle_muzzle)
 

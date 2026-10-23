@@ -447,6 +447,10 @@ func update_portrait() -> void:
 	# (mitad de zancada, agachado, apuntando...). Reproduce un frame del idle
 	# para que el retrato siempre salga de pie, como pide el diseño.
 	var portrait_skel: Skeleton3D = player._find_skeleton(model)
+	# Los IK/agarre del duplicado resuelven contra marcadores que traen la
+	# transform del mundo real: desactivarlos para que la pose idle quede limpia.
+	for modifier in model.find_children("*", "SkeletonModifier3D", true, false):
+		(modifier as SkeletonModifier3D).active = false
 	if portrait_skel != null:
 		# Reset al rest pose primero: los huesos que la anim de idle no cubra
 		# (dedos, cadera, overrides de IK/aiming) quedan de pie, no en la pose
@@ -473,6 +477,17 @@ func update_portrait() -> void:
 	if portrait_skel != null:
 		portrait_skel.force_update_all_bone_transforms()
 		player._sync_posed_attachments(model, portrait_skel)
+	# El rifle/M4 en mano va con WeaponOffset en top_level resuelto por IK
+	# cada frame: el duplicado conserva la transform del mundo real y el arma
+	# saldria fuera del encuadre. Re-sentarlo sobre la pose idle del esqueleto.
+	if player.pose_rifle_for_portrait(model, portrait_skel):
+		# La correa se hornea en espacio del modelo con los extremos anclados
+		# a la posicion viva del arma; al re-sentar el rifle quedarian
+		# flotando, asi que se ocultan en el retrato.
+		for strap_name in ["ProceduralStrapMesh", "RifleSlingHardware"]:
+			var strap := model.find_child(strap_name, true, false) as Node3D
+			if strap != null:
+				strap.visible = false
 	for mesh in model.find_children("*", "MeshInstance3D", true, false):
 		mesh.layers = 1
 	# Los meshes del personaje son skinned: su AABB estatico esta en escala
