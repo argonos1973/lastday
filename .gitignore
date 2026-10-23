@@ -16,6 +16,8 @@ FBX2glTF*
 *.blend
 *.blend1
 *.fbm/
+low_poly_concrete_barricade_44_tris_-_game_ready*
+watch_tower_made_of_wood_low-poly*
 
 # Local build/export output
 build/
