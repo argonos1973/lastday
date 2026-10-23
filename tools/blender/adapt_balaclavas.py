@@ -18,7 +18,7 @@ bvh=BVHTree.FromPolygons(verts,faces)
 N=128; ROWS=49
 for source,target in [('balaclava_2.glb','balaclava'),('christmas_balaclava.glb','balaclava_navideno')]:
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=str(ROOT/source))
+    bpy.ops.import_scene.gltf(filepath=str(ROOT/'assets_src'/source))
     source_mat=next(o for o in bpy.data.objects if o.type=='MESH').data.materials[0]
     texture=next(n.image for n in source_mat.node_tree.nodes if n.type=='TEX_IMAGE' and any(link.to_socket.name=='Base Color' for link in n.outputs['Color'].links))
     pixels=np.array(texture.pixels[:],dtype=np.float32).reshape(texture.size[1],texture.size[0],4)
