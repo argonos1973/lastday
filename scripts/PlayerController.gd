@@ -1265,6 +1265,11 @@ func puppet_set_aiming(aiming: bool) -> void:
 	if not is_puppet:
 		return
 	_is_aiming = aiming
+	if not aiming:
+		# Release the direct-aim state immediately — the next _update_rifle_ik
+		# has to rebuild the idle grip instead of holding the last eye-line pose.
+		_rifle_aim_pose_active = false
+		_restore_grip_origins()
 
 func puppet_apply_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
 	if not is_puppet:
@@ -1502,6 +1507,15 @@ func _update_puppet_held_item(item_name: String) -> void:
 #region PROCESO PRINCIPAL (_process + input)
 func _process(delta: float) -> void:
 	if is_puppet:
+		# One-shot action clips (fire, punch, ...) must expire on puppets too —
+		# otherwise _is_firing pins want_direct_aim forever and the rifle stays
+		# glued to the aim pose after a remote shot.
+		if third_person_action_timer > 0.0:
+			third_person_action_timer = maxf(0.0, third_person_action_timer - delta)
+			if third_person_action_timer <= 0.0:
+				third_person_action_animation = ""
+				third_person_action_start_offset = 0.0
+				_is_firing = false
 		if not is_dead:
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
@@ -9275,6 +9289,7 @@ func _clear_rifle_attachment() -> void:
 		_rifle_weapon_offset.queue_free()
 	_rifle_weapon_offset = null
 	_rifle_aim_pose_active = false
+	_is_firing = false
 	if _rifle_bone_attachment != null and is_instance_valid(_rifle_bone_attachment):
 		_rifle_bone_attachment.queue_free()
 	_rifle_bone_attachment = null
@@ -12502,7 +12517,16 @@ func _shoot_rifle() -> void:
 	var up := right.cross(aim_dir).normalized()
 	aim_dir = (aim_dir+right*cos(angle)*radius+up*sin(angle)*radius).normalized()
 	var shot_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
-	if is_instance_valid(_rifle_muzzle): shot_origin = _rifle_muzzle.global_position
+	# La bala nace en la boca del cañón solo si su transform sigue la línea de
+	# puntería real — un WeaponOffset/top_level estaleado no debe desplazar el
+	# origen fuera del eje de mira ni desviar el tiro.
+	if is_instance_valid(_rifle_muzzle):
+		var muzzle_pos: Vector3 = _rifle_muzzle.global_position
+		var muzzle_off := muzzle_pos - cam_ray_origin
+		var muzzle_along := muzzle_off.dot(cam_ray_dir)
+		var muzzle_lateral := (muzzle_off - cam_ray_dir * muzzle_along).length()
+		if muzzle_pos.is_finite() and muzzle_along > -0.6 and muzzle_along < 3.5 and muzzle_lateral < 0.9:
+			shot_origin = muzzle_pos
 	# Fixed 100 m optical zero in ADS; in third-person hip-fire, converge the
 	# muzzle onto whatever is under the crosshair ray so the 6.5 m camera
 	# offset does not send close shots below the target.
@@ -12519,6 +12543,8 @@ func _shoot_rifle() -> void:
 	var flight_time := -log(maxf(0.05, 1.0 - drop_dist * 0.12 / muzzle_speed)) / 0.12
 	zero_target.y += 0.5 * 9.81 * flight_time * flight_time
 	aim_dir = (zero_target - shot_origin).normalized()
+	if aim_dir.length_squared() < 0.5:
+		aim_dir = cam_ray_dir
 	# A muzzle pushed through cover must not shoot through that cover.
 	var obstruction := PhysicsRayQueryParameters3D.create(cam_ray_origin, shot_origin, 5)
 	obstruction.exclude = exclude_arr
@@ -12546,7 +12572,12 @@ func _shoot_rifle() -> void:
 			var b_aim := (b_cam_dir + b_right * cos(b_ang) * b_rad + b_up * sin(b_ang) * b_rad).normalized()
 			var b_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
 			if is_instance_valid(_rifle_muzzle):
-				b_origin = _rifle_muzzle.global_position
+				var b_muzzle_pos: Vector3 = _rifle_muzzle.global_position
+				var b_off := b_muzzle_pos - b_cam_orig
+				var b_along := b_off.dot(b_cam_dir)
+				var b_lateral := (b_off - b_cam_dir * b_along).length()
+				if b_muzzle_pos.is_finite() and b_along > -0.6 and b_along < 3.5 and b_lateral < 0.9:
+					b_origin = b_muzzle_pos
 			var b_space := get_world_3d().direct_space_state
 			var b_conv := 100.0
 			if not _is_aiming and b_space != null:
@@ -12560,6 +12591,8 @@ func _shoot_rifle() -> void:
 			var b_ft := -log(maxf(0.05, 1.0 - b_drop_d * 0.12 / M4_MUZZLE_SPEED)) / 0.12
 			b_zero.y += 0.5 * 9.81 * b_ft * b_ft
 			var b_dir := (b_zero - b_origin).normalized()
+			if b_dir.length_squared() < 0.5:
+				b_dir = b_cam_dir
 			if b_space != null:
 				var b_obs := PhysicsRayQueryParameters3D.create(b_cam_orig, b_origin, 5)
 				b_obs.exclude = exclude_arr
