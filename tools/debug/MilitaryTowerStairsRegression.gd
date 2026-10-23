@@ -31,13 +31,14 @@ func run() -> void:
 
 	var vis := world.get_node_or_null("MilitaryBaseWatchTower") as Node3D
 	var rig := world.get_node_or_null("MilitaryBaseWatchTowerCol") as Node3D
-	if rig == null or vis == null:
-		_fail("no se creo la torre o el rig de colision")
+	var net := world.get_node_or_null("MilitaryBaseWatchTowerCamoNet") as Node3D
+	if rig == null or vis == null or net == null:
+		_fail("no se creo la torre, el rig de colision o la tela de camuflaje de la caseta")
 		print("WATCHTOWER_ERRORS=", failures)
 		quit(1)
 		return
-	if vis.global_position.distance_to(rig.global_position) > 0.01:
-		_fail("desfase entre torre visual (%s) y colision (%s)" % [str(vis.global_position), str(rig.global_position)])
+	if vis.global_position.distance_to(rig.global_position) > 0.01 or net.global_position.distance_to(rig.global_position) > 0.01:
+		_fail("desfase entre torre visual (%s), red (%s) y colision (%s)" % [str(vis.global_position), str(net.global_position), str(rig.global_position)])
 
 	# Verificar que los bloques de cemento tienen la colision a ras de su cara superior (~1.94 m), no al doble.
 	var wall_vis := world.get_node_or_null("MilitaryBaseWall_0") as Node3D
@@ -112,6 +113,17 @@ func run() -> void:
 		var hit_local_y: float = (rig.global_transform.affine_inverse() * (hit.position as Vector3)).y
 		if absf(hit_local_y - lp.y) > 0.30:
 			_fail("altura inesperada en %s: %.2f vs %.2f" % [s[0], hit_local_y, lp.y])
+
+	# El techo de la caseta debe estar al menos 2.7 m por encima del suelo de la
+	# cubierta (y_local >= 14.5) para que la cabeza del personaje no lo atraviese.
+	var ceil_hit := _ray(w3d, xf * Vector3(0.0, 11.5, 0.0), xf * Vector3(0.0, 16.0, 0.0))
+	if ceil_hit.is_empty():
+		_fail("la caseta superior no tiene techo de colision")
+	else:
+		var cy: float = (rig.global_transform.affine_inverse() * (ceil_hit.position as Vector3)).y
+		var clearance_m: float = (cy - 10.99) * scale_value
+		if clearance_m < 2.70:
+			_fail("techo de la caseta demasiado bajo: %.2f m sobre la cubierta" % clearance_m)
 
 	# El hueco de la cubierta debe dejar pasar la escalera: un rayo vertical en
 	# su centro topa con la rampa (~y9.5 local), no con suelo de cubierta (~11.0).

@@ -7969,6 +7969,16 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 			false,
 			0.0
 		)
+		if _try_instance_external_scene(
+			["res://assets/models/props/watchtower_camo_net.glb"],
+			"MilitaryBaseWatchTowerCamoNet",
+			tower_pos,
+			tower_scale,
+			Vector3(0.0, CITY_TENT_YAW, 0.0),
+			false,
+			0.0
+		):
+			_apply_camo_net_material(get_node_or_null("MilitaryBaseWatchTowerCamoNet"))
 	_register_wildlife_blocker(tower_world, 4.0)
 	# La GLB de la torre es una malla fusionada: la escalera caracol, los
 	# descansillos y la cubierta reciben colision propia en ambos lados.
@@ -8083,11 +8093,11 @@ func _build_military_watchtower_collision(tower_pos: Vector3, tower_scale: Vecto
 		for sz in [-1.0, 1.0]:
 			_watchtower_box(solid, Vector3(2.95 * sx, 1.48, 2.95 * sz), Vector3(0.32, 0.72, 0.32))
 	# Paredes interiores del nucleo central (caras exteriores en +-1.88 continuas
-	# hasta arriba) que guian el giro sin salientes ni labios.
-	_watchtower_box(solid, Vector3(0.0, 8.00, -1.84), Vector3(3.76, 12.20, 0.08))
+	# hasta arriba, y=15.10 con la caseta elevada) que guian el giro sin salientes.
+	_watchtower_box(solid, Vector3(0.0, 8.50, -1.84), Vector3(3.76, 13.20, 0.08))
 	_watchtower_box(solid, Vector3(-1.84, 6.40, 0.0), Vector3(0.08, 9.00, 3.76))
-	_watchtower_box(solid, Vector3(0.0, 8.00, 1.84), Vector3(3.76, 12.20, 0.08))
-	_watchtower_box(solid, Vector3(1.84, 8.00, 0.0), Vector3(0.08, 12.20, 3.76))
+	_watchtower_box(solid, Vector3(0.0, 8.50, 1.84), Vector3(3.76, 13.20, 0.08))
+	_watchtower_box(solid, Vector3(1.84, 8.50, 0.0), Vector3(0.08, 13.20, 3.76))
 	# Paredes exteriores de contencion del carril de escaleras (+-3.16) y de la cubierta.
 	_watchtower_box(solid, Vector3(-1.75, 2.00, -3.16), Vector3(2.90, 1.80, 0.08))
 	_watchtower_box(solid, Vector3(-3.16, 6.50, 0.0), Vector3(0.08, 11.20, 6.40))
@@ -8096,9 +8106,12 @@ func _build_military_watchtower_collision(tower_pos: Vector3, tower_scale: Vecto
 	_watchtower_box(solid, Vector3(0.0, 10.60, -3.16), Vector3(6.40, 4.00, 0.08))
 	# Barandilla del hueco de llegada en la cubierta (lado derecho x=1.88..3.12, z=-1.42).
 	_watchtower_box(solid, Vector3(2.52, 11.65, -1.42), Vector3(1.24, 1.30, 0.08))
-	# Caseta superior: el lado oeste (x=-1.84) deja la puerta abierta en z=-0.62..+0.62.
-	_watchtower_box(solid, Vector3(-1.84, 12.55, -1.25), Vector3(0.08, 3.10, 1.26))
-	_watchtower_box(solid, Vector3(-1.84, 12.55, 1.25), Vector3(0.08, 3.10, 1.26))
+	# Caseta superior elevada (dintel a y=14.26, techo a y=14.88): el lado oeste
+	# (x=-1.84) deja la puerta abierta en z=-0.62..+0.62 hasta y=14.26.
+	_watchtower_box(solid, Vector3(-1.84, 13.05, -1.25), Vector3(0.08, 4.10, 1.26))
+	_watchtower_box(solid, Vector3(-1.84, 13.05, 1.25), Vector3(0.08, 4.10, 1.26))
+	_watchtower_box(solid, Vector3(-1.84, 14.68, 0.0), Vector3(0.08, 0.84, 1.24))
+	_watchtower_box(solid, Vector3(0.0, 15.05, 0.0), Vector3(3.76, 0.16, 3.76))
 
 func _watchtower_box(body: StaticBody3D, center: Vector3, size: Vector3) -> void:
 	var cs := CollisionShape3D.new()
