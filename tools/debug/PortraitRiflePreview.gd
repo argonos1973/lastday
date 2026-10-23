@@ -98,7 +98,8 @@ func run() -> void:
 	for frame in range(30):
 		await process_frame
 	await RenderingServer.frame_post_draw
-	var output := "/tmp/portrait_rifle.png"
+	DirAccess.make_dir_recursive_absolute("res://build/tmp")
+	var output := "res://build/tmp/portrait_rifle.png"
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--output="):
 			output = argument.trim_prefix("--output=")

@@ -116,6 +116,11 @@ func run() -> void:
 	for frame in range(40):
 		await process_frame
 	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("/tmp/campfire_preview.png")
-	print("Preview saved: /tmp/campfire_preview.png")
+	DirAccess.make_dir_recursive_absolute("res://build/tmp")
+	var output := "res://build/tmp/campfire_preview.png"
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--output="):
+			output = argument.trim_prefix("--output=")
+	root.get_texture().get_image().save_png(output)
+	print("Preview saved: ", output)
 	quit()
