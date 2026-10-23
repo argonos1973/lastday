@@ -79,55 +79,77 @@ def build_shelter_drape():
     bm = bmesh.new()
     uv_coords = {}
 
-    # Clean 4-panel drape over the branch shelter (matching watchtower camo net UV scale):
-    # 1. Inclined roof panel: z in [-2.12, +1.58], x in [-1.78, +1.78], y = roof_height(z)
-    # 2. Front entrance curtain: x in [-1.78, +1.78], y from ridge (2.46) down to ground (0.02) at z ~ +1.58..+1.70
-    # 3. Left & right side drapes: z in [-2.12, +1.62], y from roof_height(z) down to ground (0.02) at x ~ +-1.78..+-2.00
-    NX = 52
-    NZ = 56
-    NY = 36
-    hw = 1.78
+    # Drape over the branch shelter with pronounced folds and a ground skirt
+    # pooling ~0.55 m outwards on every side:
+    # 1. Inclined roof panel + back skirt: z in [-2.70, +1.58], x in [-1.82, +1.82]
+    # 2. Front entrance curtain + front skirt on the ground (z out to ~+2.3)
+    # 3. Left & right side drapes + side skirts (x out to ~+-2.6 lying flat)
+    NX = 60
+    NZ = 72
+    NY = 48
+    hw = 1.82
     z_back = -2.12
     z_front = 1.58
+    skirt = 0.58          # ground pool reach
+    z_skirt0 = z_back - skirt
 
-    # Panel 1: Roof
+    # Panel 1: roof, extended backwards into a skirt that pools on the ground.
     roof = {}
     for j in range(NZ + 1):
         tz = j / NZ
-        z = z_back + tz * (z_front - z_back)
-        yb = roof_height(z)
+        z = z_skirt0 + tz * (z_front - z_skirt0)
+        in_skirt = max(0.0, min(1.0, (z_back - z) / skirt))
+        if z < z_back:
+            # Slope from the low back edge down to the ground, then lie flat.
+            drop = roof_height(z_back)
+            yb = max(0.02, drop * (1.0 - in_skirt * 1.6))
+        else:
+            yb = roof_height(z)
         for i in range(NX + 1):
             tx = (i / NX) * 2.0 - 1.0
             x = tx * hw
-            wave = 0.025 * math.cos(tx * math.pi * 6.0) * math.sin(tz * math.pi)
-            nval = 0.02 * noise.noise(Vector((x * 1.1, z * 1.1, yb * 1.1 + 0.7)))
-            v = bm.verts.new(game_to_blender((x + 0.015 * nval, yb + wave + nval, z + 0.015 * nval)))
+            # Sag between the rafters + cross wrinkles; bunching grows on the skirt.
+            wave = 0.055 * math.cos(tx * math.pi * 5.0) * math.sin(min(1.0, (z - z_back) / (z_front - z_back)) * math.pi)
+            wave += 0.030 * math.sin(tx * math.pi * 11.0 + tz * 9.0)
+            bunch = in_skirt * (0.075 * math.sin(tx * math.pi * 8.0 + in_skirt * 5.0)
+                              + 0.045 * math.sin(tx * math.pi * 15.0 - in_skirt * 8.0))
+            nval = 0.028 * noise.noise(Vector((x * 1.1, z * 1.1, yb * 1.1 + 0.7)))
+            v = bm.verts.new(game_to_blender((x + 0.02 * nval, max(0.018, yb + wave + bunch + nval), z + 0.02 * nval)))
             roof[(i, j)] = v
-            uv_coords[v] = ((x + hw) * 0.45, (z - z_back) * 0.45)
+            uv_coords[v] = ((x + hw) * 0.45, (z - z_skirt0) * 0.45)
     for j in range(NZ):
         for i in range(NX):
             bm.faces.new([roof[(i, j)], roof[(i + 1, j)], roof[(i + 1, j + 1)], roof[(i, j + 1)]])
 
-    # Panel 2: Front entrance curtain (hangs from ridge y=2.46 down to y=0.02)
+    # Panel 2: front entrance curtain — hangs from the ridge to the ground and
+    # keeps going ~0.55 m forward pooling flat with heavy wrinkles.
     front = {}
     y_ridge = roof_height(z_front)
+    z_ground_front = z_front + 0.16
     for j in range(NY + 1):
-        ty = j / NY  # 0 = top ridge, 1 = ground
-        y = y_ridge * (1.0 - ty) + 0.02 * ty
+        t = (j / NY) * 1.45   # 0 = ridge, 1 = ground contact, >1 = ground skirt
+        th = min(1.0, t)
+        ts = max(0.0, t - 1.0)
+        y = y_ridge * (1.0 - th) + 0.02 * th
+        z_base = z_front + th * 0.16 + ts * skirt * 1.15
         for i in range(NX + 1):
             tx = (i / NX) * 2.0 - 1.0
-            x = tx * (hw + 0.20 * ty)
-            pleat = 0.05 * math.sin(tx * math.pi * 7.0) * math.sin(ty * math.pi * 0.95)
-            z = z_front + ty * 0.14 + pleat
-            nval = 0.02 * noise.noise(Vector((x * 1.2, z * 1.2, y * 1.2 + 1.9)))
-            v = bm.verts.new(game_to_blender((x + 0.015 * nval, max(0.015, y + 0.01 * nval), z + nval)))
+            x = tx * (hw + 0.22 * th + 0.10 * ts)
+            # Strong vertical pleats on the hanging part, bunching on the pool.
+            pleat = (0.085 * math.sin(tx * math.pi * 7.0) * math.sin(th * math.pi * 0.9)
+                     + 0.040 * math.sin(tx * math.pi * 14.0 + th * 6.0))
+            z = z_base + pleat + ts * 0.10 * math.sin(tx * math.pi * 8.0 + 1.7)
+            yv = max(0.018, y + ts * (0.05 * math.sin(tx * math.pi * 9.0 + ts * 7.0)
+                                     + 0.03 * math.sin(tx * math.pi * 17.0)))
+            nval = 0.030 * noise.noise(Vector((x * 1.2, z * 1.2, yv * 1.2 + 1.9)))
+            v = bm.verts.new(game_to_blender((x + 0.02 * nval, max(0.015, yv + 0.015 * nval), z + nval)))
             front[(i, j)] = v
-            uv_coords[v] = ((x + hw) * 0.45, (y_ridge - y) * 0.45)
+            uv_coords[v] = ((x + hw) * 0.45, (y_ridge - y + ts * skirt) * 0.45)
     for j in range(NY):
         for i in range(NX):
             bm.faces.new([front[(i, j)], front[(i + 1, j)], front[(i + 1, j + 1)], front[(i, j + 1)]])
 
-    # Panels 3 & 4: Left (side=-1) and Right (side=+1) side drapes
+    # Panels 3 & 4: side drapes + side ground skirts (x out to ~+-2.6).
     for side in (-1.0, 1.0):
         sgrid = {}
         for j in range(NZ + 1):
@@ -135,15 +157,20 @@ def build_shelter_drape():
             z_top = z_back + tz * (z_front - z_back)
             y_top = roof_height(z_top)
             for k in range(NY + 1):
-                ty = k / NY  # 0 = roof edge, 1 = ground
-                y = y_top * (1.0 - ty) + 0.02 * ty
-                z = z_top + tz * ty * 0.14
-                pleat = 0.04 * math.sin(tz * math.pi * 7.0) * math.sin(ty * math.pi * 0.95)
-                x = side * (hw + ty * 0.22 + pleat)
-                nval = 0.02 * noise.noise(Vector((x * 1.1, z * 1.1, y * 1.1 + 3.3)))
-                v = bm.verts.new(game_to_blender((x + side * nval, max(0.015, y + 0.01 * nval), z + 0.015 * nval)))
+                t = (k / NY) * 1.45   # 0 = roof edge, 1 = ground, >1 = skirt
+                th = min(1.0, t)
+                ts = max(0.0, t - 1.0)
+                y = y_top * (1.0 - th) + 0.02 * th
+                z = z_top + tz * th * 0.14 + ts * 0.06 * math.sin(tz * math.pi * 9.0)
+                pleat = (0.075 * math.sin(tz * math.pi * 8.0) * math.sin(th * math.pi * 0.9)
+                         + 0.035 * math.sin(tz * math.pi * 15.0 + th * 5.0))
+                x = side * (hw + th * 0.24 + pleat + ts * skirt * 1.05)
+                yv = max(0.018, y + ts * (0.05 * math.sin(tz * math.pi * 10.0 + ts * 6.0)
+                                         + 0.03 * math.sin(tz * math.pi * 16.0)))
+                nval = 0.030 * noise.noise(Vector((x * 1.1, z * 1.1, yv * 1.1 + 3.3)))
+                v = bm.verts.new(game_to_blender((x + side * nval, max(0.015, yv + 0.012 * nval), z + 0.02 * nval)))
                 sgrid[(j, k)] = v
-                uv_coords[v] = ((z - z_back) * 0.45, (y_top - y) * 0.45)
+                uv_coords[v] = ((z - z_back) * 0.45, (y_top - y + ts * skirt) * 0.45)
         for j in range(NZ):
             for k in range(NY):
                 if side > 0:

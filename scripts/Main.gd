@@ -241,6 +241,11 @@ var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
 const _DRINK_HOLD_TIME := 1.5
 
+# Player-built branch shelters (and their camo net/lining overlays) spawn 20%
+# larger than the authored model so a standing player and an interior camera
+# fit under the roof.
+const SHELTER_SCALE := 1.2
+
 var world_streaming_mgr: WorldStreamingManager = null
 var sector_persistence_mgr: SectorPersistenceManager = null
 var _debug_overlay: CanvasLayer = null
@@ -12265,12 +12270,12 @@ func _spawn_player_shelter_with_id(sh_id: String, pos: Vector3, yaw: float = 0.0
 	if world_actions_by_id.has(sh_id):
 		return
 	# One model keeps the frame, covering and bedding together on load/sync/removal.
-	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE, Vector3(0, rad_to_deg(yaw), 0), false, 0.0)
+	_try_instance_external_scene(["res://assets/models/props/branch_shelter.glb"], "PlayerShelter_%s" % sh_id, pos, Vector3.ONE * SHELTER_SCALE, Vector3(0, rad_to_deg(yaw), 0), false, 0.0)
 	var sh_vis := get_node_or_null("PlayerShelter_%s" % sh_id)
 	if sh_vis != null:
 		MaterialFactory.apply_realistic_shelter_materials(sh_vis)
 	# Register as world action so it syncs
-	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0), Color(0.15, 0.12, 0.08), false, false)
+	var shelter_action = _create_world_action(sh_id, "shelter", "Refugio", pos, Vector3(2.0, 1.5, 3.0) * SHELTER_SCALE, Color(0.15, 0.12, 0.08), false, false)
 	shelter_action.set_meta("visual_name", "PlayerShelter_%s" % sh_id)
 	shelter_action.set_meta("pelt_lined", pelt_lined)
 	shelter_action.set_meta("camo_covered", camo_covered)
@@ -12326,7 +12331,7 @@ func _apply_shelter_camo_visual(sh_id: String, pos, yaw: float) -> void:
 	if get_node_or_null(NodePath(node_name)) != null:
 		return
 	var p: Vector3 = Vector3(float(pos[0]), float(pos[1]), float(pos[2])) if pos is Array else (pos as Vector3)
-	if _try_instance_external_scene(["res://assets/models/props/shelter_camo_net.glb"], node_name, p, Vector3.ONE, Vector3(0.0, rad_to_deg(yaw), 0.0), false, 0.0):
+	if _try_instance_external_scene(["res://assets/models/props/shelter_camo_net.glb"], node_name, p, Vector3.ONE * SHELTER_SCALE, Vector3(0.0, rad_to_deg(yaw), 0.0), false, 0.0):
 		var cnode := get_node_or_null(NodePath(node_name))
 		if cnode != null:
 			_remove_collision_from_node(cnode)
@@ -12414,6 +12419,7 @@ func _apply_shelter_lining_visual(sh_id: String, pos: Vector3, yaw: float) -> vo
 	lining.name = node_name
 	lining.position = pos + Vector3(0.0, 0.045, 0.0)
 	lining.rotation.y = yaw
+	lining.scale = Vector3.ONE * SHELTER_SCALE
 	add_child(lining)
 	var patch_species := ["ciervo", "lobo", "oso", "zorro"]
 	var patches := [Vector3(-0.42, 0.0, -0.52), Vector3(0.42, 0.0, -0.52), Vector3(-0.42, 0.0, 0.26), Vector3(0.42, 0.0, 0.26)]
@@ -19110,10 +19116,10 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 		var other = sh.get("pos")
 		if other is Array:
 			other = Vector3(other[0], other[1], other[2])
-		if other is Vector3 and pos.distance_to(other) < 4.0:
+		if other is Vector3 and pos.distance_to(other) < 4.0 * SHELTER_SCALE:
 			return "Hay otro refugio demasiado cerca"
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.8, 1.2, 2.0) if on_elevated_roof else Vector3(2.8, 1.6, 3.4)
+	box.size = Vector3(1.8, 1.2, 2.0) if on_elevated_roof else Vector3(2.8, 1.6, 3.4) * SHELTER_SCALE
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = box
 	query.collision_mask = 1

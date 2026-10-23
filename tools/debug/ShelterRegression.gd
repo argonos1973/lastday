@@ -32,6 +32,9 @@ func run() -> void:
 	check(meshes.size() == 1, "Shelter stays batched in one mesh")
 	var box: AABB = meshes[0].get_aabb()
 	check(box.size.y > 1.9 and box.size.y < 2.4 and box.size.z > 3.0, "Shelter uses human-scale dimensions")
+	check(absf(shelter.scale.x - world.SHELTER_SCALE) < 0.001, "Shelter spawns enlarged so a standing player fits inside")
+	var world_box := NodeUtils.compute_node_world_aabb(shelter)
+	check(world_box.size.y > 2.4 and world_box.size.z > 4.0, "Enlarged shelter gives real interior space")
 	check(world._apply_shelter_lining_state("test"), "A built shelter accepts its hide lining")
 	check(world.get_node_or_null("PlayerShelter_test_PeltLining") != null, "Hide lining has a persistent visual node")
 	check(bool(world._built_shelters[0].get("pelt_lined", false)), "Hide lining is stored with shelter world state")
@@ -41,6 +44,16 @@ func run() -> void:
 	if camo_node != null:
 		var cols := camo_node.find_children("*", "CollisionObject3D", true, false)
 		check(cols.is_empty(), "Camo net over shelter has no collision so the player can walk through the entrance")
+		var net_box := NodeUtils.compute_node_world_aabb(camo_node)
+		check(net_box.size.x > world_box.size.x + 0.6, "Camo net pools past the shelter sides onto the ground")
+		check(net_box.size.z > world_box.size.z + 0.6, "Camo net pools past the shelter front/back onto the ground")
+		check(net_box.position.y < 0.08, "Camo net skirt reaches down to the ground")
+		var net_mat: Material = null
+		for nm in camo_node.find_children("*", "MeshInstance3D", true, false):
+			if (nm as MeshInstance3D).material_override != null:
+				net_mat = (nm as MeshInstance3D).material_override
+				break
+		check(net_mat != null and net_mat.cull_mode == BaseMaterial3D.CULL_DISABLED, "Camo net renders double-sided so it is visible from inside the shelter")
 	check(bool(world._built_shelters[0].get("camo_covered", false)), "Camo state is stored with shelter world state")
 	if "--preview" in OS.get_cmdline_user_args():
 		await preview(world)
@@ -88,10 +101,18 @@ func preview(world: Node3D) -> void:
 	world.add_child(sun)
 	var camera := Camera3D.new()
 	world.add_child(camera)
-	camera.position = Vector3(4.6,3.25,5.5)
-	camera.look_at(Vector3(0,.90,-.1))
-	camera.fov = 43
-	for i in range(20):
-		await process_frame
-	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("/tmp/branch_shelter_preview.png")
+	camera.fov = 62
+	var shots := [
+		{"file": "shelter_camo_exterior.png", "pos": Vector3(5.4, 3.6, 6.6), "look": Vector3(0, 1.0, -0.1)},
+		{"file": "shelter_camo_inside.png", "pos": Vector3(0, 0.95, -0.55), "look": Vector3(0, 1.05, 4.0)},
+		{"file": "shelter_camo_inside_up.png", "pos": Vector3(0, 0.55, -0.15), "look": Vector3(0, 2.6, 0.8)},
+	]
+	for shot in shots:
+		camera.position = shot["pos"]
+		camera.look_at(shot["look"])
+		for i in range(20):
+			await process_frame
+		await RenderingServer.frame_post_draw
+		DirAccess.make_dir_recursive_absolute("res://build/tmp")
+		root.get_texture().get_image().save_png("res://build/tmp/" + shot["file"])
+		print("Preview saved: build/tmp/" + shot["file"])

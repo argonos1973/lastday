@@ -16,6 +16,7 @@ func _ready() -> void:
 	tint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	tint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	var model = load("res://assets/models/props/branch_shelter.glb").instantiate()
+	model.scale = Vector3.ONE * float(world.SHELTER_SCALE)
 	add_child(model)
 	_style(model)
 	var layer := CanvasLayer.new()
