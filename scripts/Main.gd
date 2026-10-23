@@ -9913,6 +9913,8 @@ func _apply_military_drop_material(item_name: String, node: Node, drop_color: Co
 		_apply_color_material_recursive(node as Node3D, drop_color if drop_color.a > 0.0 else Color(0.10, 0.10, 0.075))
 	elif item_name == "Chaqueta de campaña verde":
 		MilitaryJackets.apply_woodland_camo_recursive(node)
+	elif item_name == "Tela de camuflaje":
+		_apply_camo_net_material(node)
 	elif item_name in military_solid_names:
 		if item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
 			_apply_color_material_recursive(node as Node3D, Color(0.02, 0.02, 0.02))
@@ -10055,6 +10057,10 @@ func _create_pickup_item(data: Dictionary) -> void:
 		var olive_node := get_node_or_null(NodePath(visual_name))
 		if olive_node is Node3D:
 			MilitaryJackets.apply_woodland_camo_recursive(olive_node)
+	elif item_name == "Tela de camuflaje":
+		var cnet_node := get_node_or_null(NodePath(visual_name))
+		if cnet_node is Node3D:
+			_apply_camo_net_material(cnet_node)
 	elif data.has("tint"):
 		var tint_node := get_node_or_null(NodePath(visual_name))
 		if tint_node is Node3D:

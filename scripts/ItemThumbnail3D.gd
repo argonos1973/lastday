@@ -42,6 +42,7 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	var inst: Node3D = null
 	var is_log_model := false
 	var is_olive_field_jacket := false
+	var is_camo_net_pickup := false
 	for path in paths:
 		if typeof(path) != TYPE_STRING or path.is_empty():
 			continue
@@ -49,6 +50,8 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 			is_log_model = true
 		if "pickup_jacket_olive.glb" in str(path) or "military_jacket_olive.glb" in str(path):
 			is_olive_field_jacket = true
+		if "camo_net_pickup.glb" in str(path):
+			is_camo_net_pickup = true
 		if not ResourceLoader.exists(path):
 			continue
 		var scene: PackedScene = load(path)
@@ -76,6 +79,17 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 		MaterialFactory.apply_realistic_log_materials(inst)
 	if is_olive_field_jacket and pelt_species.is_empty():
 		preload("res://scripts/MilitaryJackets.gd").apply_woodland_camo_recursive(inst)
+	if is_camo_net_pickup:
+		var base_tex := load("res://assets/models/props/camo_net_camo_net_basecolor.png") as Texture2D
+		if base_tex != null:
+			var nmat := StandardMaterial3D.new()
+			nmat.albedo_texture = base_tex
+			nmat.roughness = 0.88
+			var n_meshes: Array = []
+			_collect_meshes(inst, n_meshes)
+			for mi in n_meshes:
+				if mi is MeshInstance3D:
+					(mi as MeshInstance3D).material_override = nmat
 	# Animated models (dead animals, gear pickups) keep their mesh bound to a
 	# skeleton: the skinned instance renders at the bone pose while its
 	# node-space AABB sits elsewhere, so the viewport culls it to a blank

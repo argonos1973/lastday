@@ -75,81 +75,88 @@ def roof_height(z_game):
 
 def build_shelter_drape():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    mat = make_camo_material()
+    mat = make_camo_material(opaque=False)
     bm = bmesh.new()
+    uv_coords = {}
 
-    # Parameterized continuous tent-drape grid:
-    # u in [-1, 1] spans left skirt -> roof width -> right skirt
-    # v in [0, 1] spans back ground skirt -> inclined roof -> front entrance curtain to ground
-    NU = 88
-    NV = 92
-    grid = {}
+    # Clean 4-panel drape over the branch shelter (matching watchtower camo net UV scale):
+    # 1. Inclined roof panel: z in [-2.12, +1.58], x in [-1.78, +1.78], y = roof_height(z)
+    # 2. Front entrance curtain: x in [-1.78, +1.78], y from ridge (2.46) down to ground (0.02) at z ~ +1.58..+1.70
+    # 3. Left & right side drapes: z in [-2.12, +1.62], y from roof_height(z) down to ground (0.02) at x ~ +-1.78..+-2.00
+    NX = 52
+    NZ = 56
+    NY = 36
+    hw = 1.78
+    z_back = -2.12
+    z_front = 1.58
 
-    for j in range(NV + 1):
-        v = j / NV
-        # Along v:
-        # 0.00 .. 0.72: from back ground (z=-2.10) up the roof to front ridge (z=+1.56, y=2.32)
-        # 0.72 .. 1.00: front curtain dropping down over the entrance (z=+1.56..+1.70, y=2.32 -> 0.02)
-        if v <= 0.72:
-            tv = v / 0.72
-            z_base = -2.10 + tv * (1.56 - (-2.10))
-            y_roof = roof_height(z_base)
-            # Soft sag between rafters
-        else:
-            tv = (v - 0.72) / 0.28
-            # Entrance curtain hangs from ridge (y=2.46) down to ground (y=0.02)
-            # flaring slightly outward at the bottom (+Z)
-            z_base = 1.56 + tv * 0.16 + 0.05 * math.sin(tv * math.pi)
-            y_roof = 2.46 * (1.0 - tv) + 0.02 * tv
+    # Panel 1: Roof
+    roof = {}
+    for j in range(NZ + 1):
+        tz = j / NZ
+        z = z_back + tz * (z_front - z_back)
+        yb = roof_height(z)
+        for i in range(NX + 1):
+            tx = (i / NX) * 2.0 - 1.0
+            x = tx * hw
+            wave = 0.025 * math.cos(tx * math.pi * 6.0) * math.sin(tz * math.pi)
+            nval = 0.02 * noise.noise(Vector((x * 1.1, z * 1.1, yb * 1.1 + 0.7)))
+            v = bm.verts.new(game_to_blender((x + 0.015 * nval, yb + wave + nval, z + 0.015 * nval)))
+            roof[(i, j)] = v
+            uv_coords[v] = ((x + hw) * 0.45, (z - z_back) * 0.45)
+    for j in range(NZ):
+        for i in range(NX):
+            bm.faces.new([roof[(i, j)], roof[(i + 1, j)], roof[(i + 1, j + 1)], roof[(i, j + 1)]])
 
-        for i in range(NU + 1):
-            u = (i / NU) * 2.0 - 1.0  # -1 .. +1
-            abs_u = abs(u)
-            sign_u = 1.0 if u >= 0.0 else -1.0
+    # Panel 2: Front entrance curtain (hangs from ridge y=2.46 down to y=0.02)
+    front = {}
+    y_ridge = roof_height(z_front)
+    for j in range(NY + 1):
+        ty = j / NY  # 0 = top ridge, 1 = ground
+        y = y_ridge * (1.0 - ty) + 0.02 * ty
+        for i in range(NX + 1):
+            tx = (i / NX) * 2.0 - 1.0
+            x = tx * (hw + 0.20 * ty)
+            pleat = 0.05 * math.sin(tx * math.pi * 7.0) * math.sin(ty * math.pi * 0.95)
+            z = z_front + ty * 0.14 + pleat
+            nval = 0.02 * noise.noise(Vector((x * 1.2, z * 1.2, y * 1.2 + 1.9)))
+            v = bm.verts.new(game_to_blender((x + 0.015 * nval, max(0.015, y + 0.01 * nval), z + nval)))
+            front[(i, j)] = v
+            uv_coords[v] = ((x + hw) * 0.45, (y_ridge - y) * 0.45)
+    for j in range(NY):
+        for i in range(NX):
+            bm.faces.new([front[(i, j)], front[(i + 1, j)], front[(i + 1, j + 1)], front[(i, j + 1)]])
 
-            # Inner 62% of u is the roof/curtain width (-1.62 .. +1.62 m);
-            # outer 38% drapes down the left/right sides to the ground.
-            if abs_u <= 0.62:
-                tu = u / 0.62
-                x = tu * 1.72
-                y = y_roof
-                z = z_base
-                if v > 0.72:
-                    # Vertical curtain pleats across the entrance
-                    tv = (v - 0.72) / 0.28
-                    pleat = 0.055 * math.sin(tu * math.pi * 6.0) * math.sin(tv * math.pi * 0.9)
-                    z += pleat
-                    # Slight center slit ripple so it looks like a parting curtain
-                    y += 0.02 * math.cos(tu * math.pi * 4.0) * (1.0 - tv)
+    # Panels 3 & 4: Left (side=-1) and Right (side=+1) side drapes
+    for side in (-1.0, 1.0):
+        sgrid = {}
+        for j in range(NZ + 1):
+            tz = j / NZ
+            z_top = z_back + tz * (z_front - z_back)
+            y_top = roof_height(z_top)
+            for k in range(NY + 1):
+                ty = k / NY  # 0 = roof edge, 1 = ground
+                y = y_top * (1.0 - ty) + 0.02 * ty
+                z = z_top + tz * ty * 0.14
+                pleat = 0.04 * math.sin(tz * math.pi * 7.0) * math.sin(ty * math.pi * 0.95)
+                x = side * (hw + ty * 0.22 + pleat)
+                nval = 0.02 * noise.noise(Vector((x * 1.1, z * 1.1, y * 1.1 + 3.3)))
+                v = bm.verts.new(game_to_blender((x + side * nval, max(0.015, y + 0.01 * nval), z + 0.015 * nval)))
+                sgrid[(j, k)] = v
+                uv_coords[v] = ((z - z_back) * 0.45, (y_top - y) * 0.45)
+        for j in range(NZ):
+            for k in range(NY):
+                if side > 0:
+                    bm.faces.new([sgrid[(j, k)], sgrid[(j + 1, k)], sgrid[(j + 1, k + 1)], sgrid[(j, k + 1)]])
                 else:
-                    # Slight rafter wave on roof
-                    y += 0.028 * math.cos(tu * math.pi * 7.0)
-            else:
-                # Side wall drape from roof edge (x=±1.72, y=y_roof) down to ground (x=±1.98, y=0.02)
-                ts = (abs_u - 0.62) / 0.38
-                x = sign_u * (1.72 + ts * 0.28 + 0.04 * math.sin(ts * math.pi))
-                y = y_roof * (1.0 - ts) + 0.02 * ts
-                z = z_base + 0.04 * math.sin(v * math.pi * 5.0) * ts
-
-            # Organic cloth noise
-            nval = noise.noise(Vector((x * 1.3, z * 1.3, y * 1.3 + 0.7)))
-            x += 0.025 * nval
-            z += 0.025 * noise.noise(Vector((x * 1.1 + 3.1, z * 1.1, y * 1.1)))
-            y = max(0.015, y + 0.02 * nval)
-
-            grid[(i, j)] = bm.verts.new(game_to_blender((x, y, z)))
+                    bm.faces.new([sgrid[(j, k)], sgrid[(j, k + 1)], sgrid[(j + 1, k + 1)], sgrid[(j + 1, k)]])
 
     bm.verts.ensure_lookup_table()
-    for j in range(NV):
-        for i in range(NU):
-            bm.faces.new([
-                grid[(i, j)],
-                grid[(i + 1, j)],
-                grid[(i + 1, j + 1)],
-                grid[(i, j + 1)],
-            ])
     bm.faces.ensure_lookup_table()
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+    # Copy per-vertex UVs by index before freeing bmesh
+    vert_uvs = [uv_coords[v] for v in bm.verts]
 
     mesh = bpy.data.meshes.new("ShelterCamoNet")
     bm.to_mesh(mesh)
@@ -157,11 +164,7 @@ def build_shelter_drape():
 
     uv_layer = mesh.uv_layers.new(name="UVMap")
     for loop in mesh.loops:
-        vi = loop.vertex_index
-        # Recover grid (i, j) from vertex index
-        i = vi % (NU + 1)
-        j = vi // (NU + 1)
-        uv_layer.data[loop.index].uv = ((i / NU) * 2.6, (j / NV) * 2.4)
+        uv_layer.data[loop.index].uv = vert_uvs[loop.vertex_index]
 
     for poly in mesh.polygons:
         poly.use_smooth = True
@@ -184,7 +187,7 @@ def build_shelter_drape():
 
 def build_folded_pickup():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    mat = make_camo_material(opaque=True)
+    mat = make_camo_material(opaque=False)
     # Folded/rolled military camouflage net bundle (~0.80 x 0.26 x 0.46 m)
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.13))
     obj = bpy.context.active_object
