@@ -62,6 +62,7 @@ var _water_night_timer := 0.0
 var _shelter_check_timer := 0.0
 var _cached_in_house := false
 var _cached_near_shelter := false
+var _cached_inside_shelter := false
 var _door_cache_timer := 0.0
 var _rain_particles: GPUParticles3D = null
 var _snow_particles: GPUParticles3D = null
@@ -1138,6 +1139,7 @@ func _process(delta: float) -> void:
 	if _shelter_check_timer >= 0.5:
 		_shelter_check_timer = 0.0
 		_cached_near_shelter = _is_near_built_shelter(player.global_position)
+		_cached_inside_shelter = _is_near_built_shelter(player.global_position, 2.4)
 		_cached_in_house = _is_player_in_house(player.global_position)
 	var near_built_shelter := _cached_near_shelter
 	player.in_shelter = player.global_position.distance_to(Vector3.ZERO) < 8.5 or near_built_shelter
@@ -1146,6 +1148,10 @@ func _process(delta: float) -> void:
 		player.set_meta("in_house", in_house)
 	if player.get_meta("in_built_shelter", false) != near_built_shelter:
 		player.set_meta("in_built_shelter", near_built_shelter)
+	# Tighter footprint used only by the local camera so the boom drops inside
+	# the shelter cone with the player instead of staying on the roof.
+	if player.get_meta("inside_built_shelter", false) != _cached_inside_shelter:
+		player.set_meta("inside_built_shelter", _cached_inside_shelter)
 	# A house only seals out wind and cold while its door is shut — an open
 	# doorway lets the weather in. Barns, tents and the hut have no real door
 	# and shelter as before.
@@ -13486,7 +13492,7 @@ func _update_loot_wear() -> void:
 				net.item_picked_up.rpc(str(rid))
 		_save_world_change_silent()
 
-func _is_near_built_shelter(pos: Vector3) -> bool:
+func _is_near_built_shelter(pos: Vector3, radius: float = 3.5) -> bool:
 	for sh in _built_shelters:
 		var sh_pos_raw = sh.get("pos", sh)
 		var sh_pos: Vector3
@@ -13496,7 +13502,7 @@ func _is_near_built_shelter(pos: Vector3) -> bool:
 			sh_pos = Vector3(float(sh_pos_raw[0]), float(sh_pos_raw[1]), float(sh_pos_raw[2]))
 		else:
 			continue
-		if pos.distance_to(sh_pos) < 3.5:
+		if pos.distance_to(sh_pos) < radius:
 			return true
 	return false
 

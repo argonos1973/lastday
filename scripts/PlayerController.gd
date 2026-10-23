@@ -3697,6 +3697,8 @@ func _physics_process(delta: float) -> void:
 					sleep_character.position = sleep_character.position.lerp(Vector3(0.0, sleep_target_y, 0.0), delta * 10.0)
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
+			if get_meta("inside_built_shelter", false):
+				sleep_cam_pos = Vector3(0.6, 1.1, 1.9)
 			camera.position = camera.position.lerp(sleep_cam_pos, delta * 5.0)
 			_pitch = lerp(_pitch, deg_to_rad(-12.0), delta * 5.0)
 			camera.rotation.x = _pitch
@@ -9835,7 +9837,14 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
 	var desired_z := THIRD_PERSON_CAMERA_POS.z
-	
+
+	# Built branch shelters have no colliders and their cone tops out below
+	# the camera ray height, so the boom would stay parked on the roof.
+	# Bring the camera inside the cone with the player instead.
+	if get_meta("inside_built_shelter", false):
+		third_height = minf(third_height, 1.5)
+		desired_z = minf(desired_z, 2.1)
+
 	# Camera collision: throttled to 10/s, caches exclude array
 	_cam_collision_timer += delta
 	if _cam_collision_timer >= 0.1:
