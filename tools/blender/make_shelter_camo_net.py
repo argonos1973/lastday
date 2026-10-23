@@ -262,80 +262,84 @@ def build_watchtower_camo_net():
     mat = make_camo_material(opaque=False)
     bm = bmesh.new()
 
-    # Part 1: Roof canopy over the raised watchtower roof (y_game = 15.32,
-    # x/z in [-3.65, +3.65]) with organic overhanging valance skirts down to y=14.32.
-    NR = 56
+    # Continuous canopy over the watchtower roof (y_game = 15.33, x/z in [-3.62, +3.62])
+    # that drapes down around all 4 outer sides from the roof edge (y=15.30)
+    # down to the balcony railings (y=11.88, x/z around +-3.22).
+    # Parameterized as:
+    # - Top roof sheet (NR x NR) covering [-3.62, +3.62]^2 at y=15.33
+    # - Connected 4-side outer curtain ring (NU_S x NV_S) hanging from the roof
+    #   perimeter (x/z = +-3.62, y=15.30) down to the top of the balcony
+    #   railings (x/z = +-3.25, y=11.88).
+    NR = 48
     roof_grid = {}
+    roof_hw = 3.68
     for j in range(NR + 1):
         vz = (j / NR) * 2.0 - 1.0
         for i in range(NR + 1):
             vx = (i / NR) * 2.0 - 1.0
+            x = vx * roof_hw
+            z = vz * roof_hw
+            # Subtle sag between roof rafters + slight dome over center
             edge = max(abs(vx), abs(vz))
-            if edge <= 0.78:
-                t = edge / 0.78
-                s = 3.66 / 0.78
-                x = vx * s
-                z = vz * s
-                y = 15.33 + 0.04 * math.cos(vx * math.pi * 3.0) * math.cos(vz * math.pi * 3.0)
-            else:
-                # Valance skirt hanging down around the roof perimeter
-                ts = (edge - 0.78) / 0.22
-                clamp_x = max(-0.78, min(0.78, vx)) / 0.78 * 3.66
-                clamp_z = max(-0.78, min(0.78, vz)) / 0.78 * 3.66
-                out_x = (vx - max(-0.78, min(0.78, vx))) / 0.22
-                out_z = (vz - max(-0.78, min(0.78, vz))) / 0.22
-                x = clamp_x + out_x * (0.14 + 0.05 * math.sin(ts * math.pi))
-                z = clamp_z + out_z * (0.14 + 0.05 * math.sin(ts * math.pi))
-                wave = 0.06 * math.sin((clamp_x + clamp_z) * 2.2)
-                y = 15.31 - ts * (0.98 + wave)
-            nval = noise.noise(Vector((x * 0.9, z * 0.9, y * 0.9 + 1.3)))
-            x += 0.03 * nval
-            z += 0.03 * noise.noise(Vector((x * 0.9 + 4.1, z * 0.9, y * 0.9)))
-            y += 0.025 * nval
+            y = 15.37 - 0.04 * (edge * edge) + 0.025 * math.cos(vx * math.pi * 3.0) * math.cos(vz * math.pi * 3.0)
+            nval = noise.noise(Vector((x * 0.8, z * 0.8, y * 0.8 + 1.3)))
+            x += 0.02 * nval
+            z += 0.02 * noise.noise(Vector((x * 0.8 + 4.1, z * 0.8, y * 0.8)))
+            y += 0.015 * nval
             roof_grid[(i, j)] = bm.verts.new(game_to_blender((x, y, z)))
 
-    # Part 2: 4-wall camo drape wrapping the entire cabin (x, z around +-2.13
-    # outside the +-2.08 corner posts, from deck y=11.02 up to under-roof y=15.18).
-    NU_W = 128
-    NV_W = 44
-    wall_grid = {}
-    half_w = 2.13
-    y_bot = 11.02
-    y_top = 15.18
-    for j in range(NV_W + 1):
-        tv = j / NV_W  # 0 = top under roof, 1 = bottom at deck
-        y = y_top * (1.0 - tv) + y_bot * tv
-        flare = 0.05 * math.sin(tv * math.pi * 0.85)
-        hw = half_w + flare
-        for i in range(NU_W + 1):
-            u = (i / NU_W) * 4.0  # 0..4 continuous with duplicate seam column i==NU_W
+    # Outer lateral drape from roof edge (y=15.34, hw=3.68) down to the balcony
+    # railings (y=11.85, hw=3.26 so it rests just outside the +-3.16 railing/posts),
+    # with observation window openings aligned with the cabin windows (y=12.40..14.15).
+    NU_S = 160
+    NV_S = 44
+    side_grid = {}
+    y_top = 15.34
+    y_bot = 11.85
+    # Window opening in normalized side coords: f in [0.32, 0.68], tv in [0.34, 0.84]
+    f_win_min, f_win_max = 0.32, 0.68
+    tv_win_min, tv_win_max = 0.34, 0.84
+    for j in range(NV_S + 1):
+        tv = j / NV_S  # 0 = roof edge (15.34), 1 = railing top (11.85)
+        hw = 3.68 * (1.0 - tv) + 3.26 * tv - 0.07 * math.sin(tv * math.pi)
+        for i in range(NU_S + 1):
+            u = (i / NU_S) * 4.0
             side = min(3, int(u))
-            f = u - side  # 0..1 along side
+            f = u - side  # 0..1 along each side
             s_coord = (f * 2.0 - 1.0) * hw
-            if side == 0:    # West (-X, doorway at z in [-0.63, 0.63])
-                x, z = -hw, s_coord
+            # Gently gather cloth folds around the window opening border
+            in_tv_band = (tv_win_min - 0.06) <= tv <= (tv_win_max + 0.06)
+            gather = 0.0
+            if in_tv_band:
+                dist_f = min(abs(f - f_win_min), abs(f - f_win_max))
+                if dist_f < 0.08:
+                    gather = 0.055 * (1.0 - dist_f / 0.08)
+            if side == 0:    # West (-X)
+                x, z = -(hw + gather), s_coord
                 nx, nz = -1.0, 0.0
             elif side == 1:  # South (+Z)
-                x, z = s_coord, hw
+                x, z = s_coord, hw + gather
                 nx, nz = 0.0, 1.0
             elif side == 2:  # East (+X)
-                x, z = hw, -s_coord
+                x, z = hw + gather, -s_coord
                 nx, nz = 1.0, 0.0
             else:            # North (-Z)
-                x, z = -s_coord, -hw
+                x, z = -s_coord, -(hw + gather)
                 nx, nz = 0.0, -1.0
-            # Round the 4 corners slightly so the cloth wraps smoothly around the posts
+            # Soft rounded corners
             corner_d = abs(f * 2.0 - 1.0)
             if corner_d > 0.88:
                 tc = (corner_d - 0.88) / 0.12
-                inset = 0.045 * tc * tc
+                inset = 0.07 * tc * tc
                 x -= (1.0 if x > 0 else -1.0) * inset
                 z -= (1.0 if z > 0 else -1.0) * inset
-            pleat = 0.04 * math.sin(f * math.pi * 8.0) * math.sin(tv * math.pi)
-            nval = 0.025 * noise.noise(Vector((x * 1.1, z * 1.1, y * 1.1 + 2.7)))
+            pleat = 0.05 * math.sin(f * math.pi * 10.0) * math.sin(tv * math.pi * 0.95)
+            hem_wave = 0.07 * math.sin(f * math.pi * 6.0) * (tv * tv)
+            y = y_top * (1.0 - tv) + (y_bot + hem_wave) * tv
+            nval = 0.028 * noise.noise(Vector((x * 0.9, z * 0.9, y * 0.9 + 2.7)))
             x += nx * (pleat + nval)
             z += nz * (pleat + nval)
-            wall_grid[(i, j)] = bm.verts.new(game_to_blender((x, y, z)))
+            side_grid[(i, j)] = bm.verts.new(game_to_blender((x, y, z)))
 
     bm.verts.ensure_lookup_table()
     roof_vert_count = (NR + 1) * (NR + 1)
@@ -348,13 +352,19 @@ def build_watchtower_camo_net():
                 roof_grid[(i, j + 1)],
             ])
 
-    for j in range(NV_W):
-        for i in range(NU_W):
+    for j in range(NV_S):
+        tv_mid = (j + 0.5) / NV_S
+        for i in range(NU_S):
+            u_mid = ((i + 0.5) / NU_S) * 4.0
+            f_mid = u_mid - min(3, int(u_mid))
+            # Leave window opening on all 4 sides aligned with the cabin windows
+            if f_win_min <= f_mid <= f_win_max and tv_win_min <= tv_mid <= tv_win_max:
+                continue
             bm.faces.new([
-                wall_grid[(i, j)],
-                wall_grid[(i + 1, j)],
-                wall_grid[(i + 1, j + 1)],
-                wall_grid[(i, j + 1)],
+                side_grid[(i, j)],
+                side_grid[(i + 1, j)],
+                side_grid[(i + 1, j + 1)],
+                side_grid[(i, j + 1)],
             ])
 
     bm.faces.ensure_lookup_table()
@@ -373,9 +383,9 @@ def build_watchtower_camo_net():
             uv_layer.data[loop.index].uv = ((i / NR) * 2.8, (j / NR) * 2.8)
         else:
             wvi = vi - roof_vert_count
-            i = wvi % (NU_W + 1)
-            j = wvi // (NU_W + 1)
-            uv_layer.data[loop.index].uv = ((i / NU_W) * 6.0, (j / NV_W) * 1.6)
+            i = wvi % (NU_S + 1)
+            j = wvi // (NU_S + 1)
+            uv_layer.data[loop.index].uv = ((i / NU_S) * 8.0, (j / NV_S) * 1.4)
 
     for poly in mesh.polygons:
         poly.use_smooth = True
