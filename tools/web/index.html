@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Last Day — Descargas</title>
+<meta name="description" content="Last Day — juego de supervivencia multijugador. Descarga el cliente para Linux, macOS y Windows.">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0b0e12;
+    --card: #141a21;
+    --card-border: #243040;
+    --text: #d8d5cc;
+    --muted: #8b949e;
+    --accent: #d99a4e;   /* ámbar del atardecer */
+    --accent2: #7fa3c0;  /* azul río */
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: Georgia, 'Times New Roman', serif;
+    min-height: 100vh;
+  }
+  .hero {
+    position: relative;
+    height: 52vh;
+    min-height: 300px;
+    background: url('hero.jpg') center 55% / cover no-repeat;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(11,14,18,.15) 0%, rgba(11,14,18,.55) 60%, var(--bg) 100%);
+  }
+  .hero h1 {
+    position: relative;
+    z-index: 1;
+    font-size: clamp(2.6rem, 8vw, 5rem);
+    letter-spacing: .18em;
+    font-weight: 400;
+    text-transform: uppercase;
+    color: #f0ead9;
+    text-shadow: 0 2px 24px rgba(0,0,0,.9);
+    padding-bottom: .4em;
+  }
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px 80px;
+  }
+  .tagline {
+    text-align: center;
+    color: var(--muted);
+    font-size: 1.15rem;
+    font-style: italic;
+    margin: -8px 0 12px;
+  }
+  .desc {
+    text-align: center;
+    color: var(--muted);
+    font-size: .98rem;
+    line-height: 1.65;
+    max-width: 640px;
+    margin: 0 auto 48px;
+  }
+  .downloads {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 56px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 28px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color .2s, transform .2s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card h2 {
+    font-size: 1.25rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 400;
+  }
+  .card .file {
+    color: var(--muted);
+    font-size: .85rem;
+    font-family: ui-monospace, monospace;
+    word-break: break-all;
+  }
+  .card .size {
+    color: var(--muted);
+    font-size: .9rem;
+  }
+  .card a.btn {
+    display: block;
+    text-align: center;
+    background: var(--accent);
+    color: #171106;
+    text-decoration: none;
+    font-size: 1rem;
+    letter-spacing: .06em;
+    padding: 13px 0;
+    border-radius: 6px;
+    font-weight: 700;
+    margin-top: auto;
+  }
+  .card a.btn:hover { background: #e8ac63; }
+  .card .note {
+    font-size: .82rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .card .note code {
+    background: #0d1218;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: .8rem;
+    color: var(--accent2);
+  }
+  section.bloque { margin-bottom: 56px; }
+  section.bloque h3 {
+    font-size: 1.05rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent2);
+    font-weight: 400;
+    margin-bottom: 22px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .feats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 14px;
+    list-style: none;
+  }
+  .feats li {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    color: var(--muted);
+    font-size: .92rem;
+    line-height: 1.55;
+  }
+  .feats li b { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px; }
+  ol.pasos {
+    list-style: none;
+    counter-reset: paso;
+  }
+  ol.pasos li {
+    counter-increment: paso;
+    color: var(--muted);
+    font-size: .95rem;
+    line-height: 1.7;
+    padding-left: 52px;
+    position: relative;
+    margin-bottom: 18px;
+  }
+  ol.pasos li::before {
+    content: counter(paso);
+    position: absolute;
+    left: 0; top: 2px;
+    width: 32px; height: 32px;
+    border: 1px solid var(--accent);
+    border-radius: 50%;
+    color: var(--accent);
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  ol.pasos li b { color: var(--text); }
+  table.controles {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .92rem;
+  }
+  table.controles td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #1a2230;
+    color: var(--muted);
+    vertical-align: top;
+  }
+  table.controles td.k {
+    width: 190px;
+    white-space: nowrap;
+  }
+  kbd {
+    display: inline-block;
+    background: #0d1218;
+    border: 1px solid #2a3648;
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 8px;
+    font-family: ui-monospace, monospace;
+    font-size: .8rem;
+    color: var(--accent2);
+    margin-right: 4px;
+  }
+  .ver {
+    text-align: center;
+    color: var(--muted);
+    font-size: .9rem;
+    margin: -30px 0 40px;
+  }
+  .ver b {
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+  }
+  .verlist {
+    list-style: none;
+  }
+  .verlist li {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 4px;
+    border-bottom: 1px solid #1a2230;
+    font-size: .9rem;
+  }
+  .verlist li b {
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+    min-width: 84px;
+  }
+  .verlist .vdate {
+    color: var(--muted);
+    font-size: .8rem;
+    min-width: 66px;
+  }
+  .verlist .vsub {
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  footer {
+    text-align: center;
+    color: #4a525c;
+    font-size: .8rem;
+    margin-top: 64px;
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Last Day</h1>
+</header>
+
+<main>
+  <p class="tagline">Sobrevive. Construye. Resiste.</p>
+  <p class="desc">
+    Supervivencia realista multijugador en una aldea abandonada junto al río.
+    Gestiona hambre, frío y energía; lotea las casas, construye refugios y fogatas,
+    pesca, domestica lobos y sobrevive un día más — solo o con hasta 4 jugadores.
+  </p>
+
+  <div class="downloads">
+    <div class="card">
+      <h2>Windows</h2>
+      <div class="file">LastDay-Windows.zip</div>
+      <div class="size">@SIZE_WINDOWS@ · LastDay.exe + LastDay.pck</div>
+      <a class="btn" href="LastDay-Windows.zip" download>Descargar</a>
+      <div class="note">
+        Descomprime el zip y ejecuta <code>LastDay.exe</code> — el archivo
+        <code>LastDay.pck</code> debe quedar junto al ejecutable.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Linux</h2>
+      <div class="file">LastDay-Linux.x86_64</div>
+      <div class="size">@SIZE_LINUX@ · ejecutable único (x86_64)</div>
+      <a class="btn" href="LastDay-Linux.x86_64" download>Descargar</a>
+      <div class="note">
+        Tras descargar: <code>chmod +x LastDay-Linux.x86_64</code> y ejecútalo
+        con doble clic o <code>./LastDay-Linux.x86_64</code>.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>macOS</h2>
+      <div class="file">LastDay-macOS.zip</div>
+      <div class="size">@SIZE_MACOS@ · LastDay.app comprimida</div>
+      <a class="btn" href="LastDay-macOS.zip" download>Descargar</a>
+      <div class="note">
+        Descomprime el zip y abre <code>LastDay.app</code>. Si Gatekeeper lo bloquea:
+        clic derecho → <b>Abrir</b>.
+      </div>
+    </div>
+  </div>
+
+  <p class="ver">Versión actual: <b>v@VERSION@</b></p>
+
+<!-- CAMBIOS:BEGIN -->
+  <section class="bloque" id="cambios">
+    <h3>Cambios por versión</h3>
+    <ul class="verlist">
+    </ul>
+  </section>
+<!-- CAMBIOS:END -->
+
+
+  <section class="bloque">
+    <h3>Servidor dedicado</h3>
+    <p class="desc" style="margin-bottom:28px">
+      Monta tu propio mundo y juega con tus amigos. Puerto de juego <code style="background:#0d1218;padding:1px 6px;border-radius:4px;color:var(--accent2)">5005/UDP</code>
+      y descubrimiento LAN <code style="background:#0d1218;padding:1px 6px;border-radius:4px;color:var(--accent2)">5006/UDP</code>.
+      El mundo es por sesión: al cerrar el servidor se borra.
+    </p>
+    <div class="downloads" style="margin-bottom:0">
+      <div class="card">
+        <h2>Windows</h2>
+        <div class="file">LastDayServer-Windows.zip</div>
+        <div class="size">2.3 GB · LastDayServer.exe + LastDayServer.pck</div>
+        <a class="btn" href="LastDayServer-Windows.zip" download>Descargar</a>
+        <div class="note">
+          Descomprime y ejecuta <code>LastDayServer.exe</code> con el
+          <code>.pck</code> junto a él. Escribe <code>quit</code> + Enter o
+          usa <code>stop_server.bat</code> para apagar.
+        </div>
+      </div>
+      <div class="card">
+        <h2>Linux</h2>
+        <div class="file">LastDayServer-Linux.zip</div>
+        <div class="size">2.2 GB · ejecutable + scripts</div>
+        <a class="btn" href="LastDayServer-Linux.zip" download>Descargar</a>
+        <div class="note">
+          <code>chmod +x LastDayServer.x86_64 start_server.sh stop_server.sh</code>
+          y arranca con <code>./start_server.sh</code>. Escribe
+          <code>quit</code> + Enter o usa <code>stop_server.sh</code> para apagar.
+        </div>
+      </div>
+      <div class="card">
+        <h2>macOS</h2>
+        <div class="file">LastDayServer-macOS.zip</div>
+        <div class="size">1.7 GB · LastDayServer.app</div>
+        <a class="btn" href="LastDayServer-macOS.zip" download>Descargar</a>
+        <div class="note">
+          Descomprime y abre <code>LastDayServer.app</code>. Para apagar:
+          Dock → <b>Salir</b> (limpia el mundo) o <code>stop_server.sh</code>.
+          Si Gatekeeper lo bloquea: clic derecho → <b>Abrir</b>.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bloque">
+    <h3>Características</h3>
+    <ul class="feats">
+      <li><b>Multijugador cooperativo</b> Hasta 4 jugadores por sesión en el servidor dedicado oficial, con lista de jugadores en vivo.</li>
+      <li><b>Supervivencia realista</b> Hambre, sed, frío, energía, temperatura corporal, heridas en los pies, ropa mojada que enfría.</li>
+      <li><b>Ciudad y aldea abandonadas</b> Casas, un rascacielos de cuatro plantas y la plaza de la torre del reloj, loteables: comida, ropa, herramientas, armas…</li>
+      <li><b>Loot finito</b> El loot es lo que hay — no respawnea nada nuevo. Tienes que sobrevivir con lo que encuentres.</li>
+      <li><b>Ciclo día/noche y clima</b> Atardeceres, niebla, lluvia que empapa la ropa y noches que matan de frío.</li>
+      <li><b>Construcción</b> Fogatas para cocinar y calentarse, refugios persistentes donde dormir y guardar provisiones.</li>
+      <li><b>Fauna con IA</b> Manadas de lobos que cazan, ciervos, zorros, osos, pájaros y peces. Los lobos pueden domesticarse a base de comida.</li>
+      <li><b>Combate y sigilo</b> Puños, armas blancas, rifle con respiración contenida; agáchate y usa la noche a tu favor.</li>
+      <li><b>Pesca y bote</b> Pesca en el río y el lago, y recorre el agua en bote de remos.</li>
+      <li><b>Muerte con consecuencias</b> Al morir, tu cadáver conserva todo el loot: puedes volver a por él… si llegas antes que los demás.</li>
+      <li><b>Tu personaje permanece</b> Al salir de la partida, tu personaje se queda en el mundo: lobos y otros jugadores pueden atacarlo si lo encuentran. Refugiarte o esconderte bien es la única forma de volver con vida.</li>
+      <li><b>Servidor dedicado</b> Mundo persistente durante la sesión — todos los jugadores se conectan al servidor oficial.</li>
+    </ul>
+  </section>
+
+  <section class="bloque">
+    <h3>Cómo se juega</h3>
+    <ol class="pasos">
+      <li><b>Explora la aldea.</b> Apareces con lo puesto. Entra en las casas y recoge comida, ropa y herramientas — el loot no se regenera y los demás también lo quieren.</li>
+      <li><b>Cúbrete lo esencial.</b> Come, bebe del río, busca ropa abrigada y algo con lo que defenderte. Una fogata te salva la primera noche.</li>
+      <li><b>Construye tu base.</b> Levanta un refugio, guarda provisiones y duerme para recuperarte. La mochila aumenta lo que puedes cargar.</li>
+      <li><b>Gestiona la energía.</b> Correr gasta stamina — sin ella solo podrás caminar. El frío y la lluvia drenan tu cuerpo; la ropa mojada es tu enemiga.</li>
+      <li><b>Sobrevive la noche.</b> Los lobos salen a cazar, la temperatura cae y la oscuridad es real. Antorcha, fuego y refugio marcan la diferencia.</li>
+      <li><b>Si mueres, empiezas de cero.</b> Nuevo personaje, inventario vacío — pero tu cadáver sigue ahí con todo tu equipo, esperando a que lo recuperes.</li>
+    </ol>
+  </section>
+
+  <section class="bloque">
+    <h3>Controles</h3>
+    <table class="controles">
+      <tr><td class="k"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> o flechas</td><td>Moverse</td></tr>
+      <tr><td class="k">Doble <kbd>W</kbd></td><td>Correr (gasta energía; sin stamina vuelves a andar)</td></tr>
+      <tr><td class="k"><kbd>Ctrl</kbd></td><td>Agacharse / sigilo</td></tr>
+      <tr><td class="k"><kbd>Espacio</kbd></td><td>Saltar</td></tr>
+      <tr><td class="k"><kbd>F</kbd></td><td>Interactuar: recoger, abrir puertas, subir al bote…</td></tr>
+      <tr><td class="k"><kbd>Tab</kbd></td><td>Inventario / mochila</td></tr>
+      <tr><td class="k"><kbd>E</kbd></td><td>Pescar junto al agua · ponerse de pie en el bote</td></tr>
+      <tr><td class="k"><kbd>C</kbd></td><td>Cerrar puerta o contenedor abierto</td></tr>
+      <tr><td class="k"><kbd>B</kbd></td><td>Construir fogata</td></tr>
+      <tr><td class="k"><kbd>D</kbd></td><td>Dormir / despertar</td></tr>
+      <tr><td class="k"><kbd>K</kbd></td><td>Panel de saqueo (cadáveres y contenedores)</td></tr>
+      <tr><td class="k"><kbd>L</kbd></td><td>Linterna / antorcha</td></tr>
+      <tr><td class="k"><kbd>G</kbd></td><td>Soltar objeto</td></tr>
+      <tr><td class="k"><kbd>U</kbd></td><td>Usar ranura rápida</td></tr>
+      <tr><td class="k"><kbd>P</kbd></td><td>Lista de jugadores conectados</td></tr>
+      <tr><td class="k"><kbd>Shift</kbd> apuntando</td><td>Contener la respiración con el rifle</td></tr>
+      <tr><td class="k"><kbd>Shift</kbd>+<kbd>Q</kbd></td><td>Salir del juego (<kbd>Esc</kbd> cancela)</td></tr>
+      <tr><td class="k">Clic izq / der / medio</td><td>Opciones · soltar directo · mover objetos (inventario)</td></tr>
+    </table>
+  </section>
+
+  <footer>Last Day — cronicasdesupervivencia.com</footer>
+</main>
+
+</body>
+</html>
