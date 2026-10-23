@@ -3676,6 +3676,82 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0) -> vo
 	if animal.has_method("apply_command"):
 		animal.apply_command(mode)
 
+# Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
+func _net_feed_other_player(target_peer_id: int, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool, sender: int = 0) -> void:
+	if net == null or not net.is_host:
+		return
+	if target_peer_id <= 0 or target_peer_id == sender:
+		return
+	if item_type not in ["food", "water"]:
+		return
+	var dh := clampf(d_hunger if is_finite(d_hunger) else 0.0, 0.0, 100.0)
+	var dt := clampf(d_thirst if is_finite(d_thirst) else 0.0, 0.0, 100.0)
+	var dhp := clampf(d_health if is_finite(d_health) else 0.0, 0.0, 60.0)
+	if dh <= 0.0 and dt <= 0.0 and dhp <= 0.0:
+		return
+	var proxy: Node3D = null
+	if server_proxies.has(target_peer_id):
+		proxy = server_proxies[target_peer_id]
+	else:
+		for cid in proxy_by_client_id.keys():
+			var dp: Node3D = proxy_by_client_id[cid]
+			if dp.get_meta("peer_id", 0) == target_peer_id:
+				proxy = dp
+				break
+	if proxy == null or bool(proxy.get_meta("proxy_dead", false)):
+		return
+	if sender != 0 and sender != net.get_my_id():
+		if not _sender_within(sender, proxy.global_position, 4.8):
+			return
+	var new_hunger := clampf(float(proxy.get_meta("saved_hunger", 100.0)) + dh, 0.0, 100.0)
+	var new_thirst := clampf(float(proxy.get_meta("saved_thirst", 100.0)) + dt, 0.0, 100.0)
+	var new_hp := clampf(float(proxy.get_meta("saved_health", 100.0)) + dhp, 0.0, 100.0)
+	proxy.set_meta("saved_hunger", new_hunger)
+	proxy.set_meta("saved_thirst", new_thirst)
+	proxy.set_meta("saved_health", new_hp)
+	proxy.set_meta("proxy_health", new_hp)
+	var giver_name := "Un superviviente"
+	if sender == net.get_my_id() and player != null:
+		giver_name = str(player.get("character_name")) if not str(player.get("character_name")).is_empty() else "Anfitrión"
+	elif net.players.has(sender):
+		var cn := str(net.players[sender].get("char_name", "")).strip_edges()
+		if not cn.is_empty():
+			giver_name = cn
+	if target_peer_id == net.get_my_id():
+		_net_receive_fed_by_player(giver_name, item_name, item_type, dh, dt, dhp, is_hot)
+	elif net.peer != null and net.peer_alive(target_peer_id):
+		net.receive_fed_by_player.rpc_id(target_peer_id, giver_name, item_name, item_type, dh, dt, dhp, is_hot)
+
+func _net_receive_fed_by_player(giver_name: String, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool) -> void:
+	if player == null or not is_instance_valid(player) or player.is_dead or player.stats == null:
+		return
+	var oh := float(player.stats.hunger)
+	var ot := float(player.stats.thirst)
+	var ohp := float(player.stats.health)
+	player.stats.hunger = minf(player.stats.max_stat, oh + maxf(0.0, d_hunger))
+	player.stats.thirst = minf(player.stats.max_stat, ot + maxf(0.0, d_thirst))
+	player.stats.health = minf(player.stats.max_health, ohp + maxf(0.0, d_health))
+	if is_hot and player.stats.has_method("add_hot_food"):
+		player.stats.add_hot_food(1)
+	player.stats.changed.emit()
+	if player.has_method("play_action_animation"):
+		player.play_action_animation("drink" if item_type == "water" else "plant", 1.5)
+	var verb := "te ha dado de beber" if item_type == "water" else "te ha dado de comer"
+	var parts: Array[String] = []
+	var gh := int(round(float(player.stats.hunger) - oh))
+	var gt := int(round(float(player.stats.thirst) - ot))
+	var ghp := int(round(float(player.stats.health) - ohp))
+	if gh > 0:
+		parts.append("+%d hambre" % gh)
+	if gt > 0:
+		parts.append("+%d sed" % gt)
+	if ghp > 0:
+		parts.append("+%d salud" % ghp)
+	var suffix := (" (" + ", ".join(parts) + ")") if not parts.is_empty() else ""
+	player.notice.emit("%s %s: %s%s." % [giver_name, verb, item_name, suffix])
+	if net != null and net.is_connected and has_method("_sync_local_player_inventory"):
+		call_deferred("_sync_local_player_inventory")
+
 # Registro del vínculo dueño->lobo en el estado persistente del servidor
 # (saved_extra viaja con la reconexión en la misma sesión).
 func _record_tamed_wolf(feeder_id: String, wolf_name: String) -> void:
@@ -6167,7 +6243,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 				return []
 			return [K_SURVIVAL + "box.glb"]
 		"campfire":
-			return [K_SURVIVAL + "campfire-pit.glb"]
+			return ["res://assets/models/props/realistic_campfire.glb", K_SURVIVAL + "campfire-pit.glb"]
 		"shelter":
 			return [K_SURVIVAL + "tent.glb"]
 		"clothing":
@@ -12148,7 +12224,7 @@ func _spawn_player_campfire(pos: Vector3) -> void:
 	_spawn_player_campfire_with_id(cf_id, pos)
 
 func _spawn_player_campfire_with_id(cf_id: String, pos: Vector3) -> void:
-	var spawned := _try_instance_external_scene([K_SURVIVAL + "campfire-pit.glb"], "PlayerCampfire_" + cf_id, pos, Vector3(1.5, 1.5, 1.5), Vector3.ZERO, true, 0.0)
+	var spawned := _try_instance_external_scene(["res://assets/models/props/realistic_campfire.glb", K_SURVIVAL + "campfire-pit.glb"], "PlayerCampfire_" + cf_id, pos, Vector3(1.15, 1.15, 1.15), Vector3.ZERO, true, 0.0)
 	if spawned:
 		var cf_vis := get_node_or_null(NodePath("PlayerCampfire_" + cf_id))
 		if cf_vis is Node3D:

@@ -1039,6 +1039,24 @@ func command_wolf(animal_name: String, mode: String) -> void:
 	if scene != null and scene.has_method("_net_command_wolf"):
 		scene._net_command_wolf(animal_name, mode, sender)
 
+# Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
+# El servidor valida alcance (<4.5 m) y que ambos esten vivos, actualiza las
+# estadisticas guardadas del receptor y le reenvia el efecto en vivo.
+@rpc("any_peer", "reliable")
+func feed_other_player(target_peer_id: int, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_feed_other_player"):
+		scene._net_feed_other_player(target_peer_id, item_name, item_type, d_hunger, d_thirst, d_health, is_hot, sender)
+
+@rpc("authority", "reliable")
+func receive_fed_by_player(giver_name: String, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_receive_fed_by_player"):
+		scene._net_receive_fed_by_player(giver_name, item_name, item_type, d_hunger, d_thirst, d_health, is_hot)
+
 # Aviso puntual del servidor a un cliente concreto (domesticación, órdenes, ...)
 @rpc("authority", "reliable")
 func notice_to_client(text: String) -> void:

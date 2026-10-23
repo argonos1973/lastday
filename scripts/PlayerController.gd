@@ -1967,7 +1967,7 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 		# derecho la ejecuta igual que su tecla ([F]/[C]/[M]/[K]) en vez
 		# de apuntar. Sin aviso se conserva la punteria/uso rapido.
 		var rmb_target = _get_interaction_target()
-		if _nearby_rowboat() != null or (_can_fish_near_water and _has_fishing_rod_in_hand() and not _is_fishing):
+		if _nearby_rowboat() != null or (_can_fish_near_water and _has_fishing_rod_in_hand() and not _is_fishing) or _find_nearby_feedable_player() != null:
 			_interact()
 		elif rmb_target != null and _right_click_interact(rmb_target):
 			pass
@@ -10424,6 +10424,10 @@ func _interact() -> void:
 	if boat_target != null:
 		boat_target.interact(self)
 		return
+	var feed_target := _find_nearby_feedable_player()
+	if feed_target != null:
+		_give_food_or_drink_to_player(feed_target)
+		return
 	if _has_fishing_rod_in_hand() and not _is_fishing:
 		var fishing_state := _get_fishing_water_state()
 		if bool(fishing_state.get("near", false)):
@@ -10651,6 +10655,15 @@ func _update_interaction_prompt() -> void:
 			return
 	_can_fish_near_water = false
 	_is_near_fishing_shore = false
+	# Cooperativo: si llevas comida o bebida en la mano y miras de cerca a otro
+	# jugador vivo, mostrar el aviso para darle de comer o de beber con [F].
+	var feed_peer := _find_nearby_feedable_player()
+	if feed_peer != null:
+		var held_f = get_held_item()
+		var peer_label := _get_remote_player_display_name(feed_peer)
+		var action_verb := "Dar de beber" if str(held_f.item_type) == "water" else "Dar de comer"
+		prompt_changed.emit("%s (%s) a %s - [F]" % [action_verb, str(held_f.item_name), peer_label])
+		return
 	# Primero: acciones del mundo (WorldAction) apuntadas con la mirada
 	var target = _get_interaction_target()
 	if target != null:
@@ -10662,6 +10675,114 @@ func _update_interaction_prompt() -> void:
 			prompt_changed.emit("Pulsa F para interactuar")
 		return
 	prompt_changed.emit("")
+
+func _find_nearby_feedable_player() -> Node3D:
+	if is_dead or _consumption_pending or _interact_busy:
+		return null
+	var held = get_held_item()
+	if held == null:
+		return null
+	var itype := str(held.item_type)
+	if itype != "food" and itype != "water":
+		return null
+	var iname := str(held.item_name)
+	if held.has_method("is_broken") and held.is_broken():
+		return null
+	if iname.begins_with("Lata de ") and not iname.ends_with(" abierta"):
+		return null
+	if iname == "Carne humana" or iname.begins_with("Carne cruda"):
+		return null
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main == null or not ("remote_players" in main):
+		return null
+	var rps: Dictionary = main.remote_players
+	if rps.is_empty():
+		return null
+	var forward := -global_transform.basis.z
+	forward.y = 0.0
+	if forward.length_squared() > 0.0001:
+		forward = forward.normalized()
+	var best: Node3D = null
+	var best_dist := 2.65
+	for pid in rps.keys():
+		var rp = rps[pid]
+		if rp == null or not is_instance_valid(rp) or not (rp is Node3D):
+			continue
+		if bool(rp.get("is_dead")) or bool(rp.get_meta("proxy_dead", false)):
+			continue
+		var rpos: Vector3 = (rp as Node3D).global_position
+		if absf(rpos.y - global_position.y) > 2.0:
+			continue
+		var delta_xz := Vector3(rpos.x - global_position.x, 0.0, rpos.z - global_position.z)
+		var d := delta_xz.length()
+		if d > best_dist:
+			continue
+		if d > 0.25 and forward.length_squared() > 0.0001:
+			if forward.dot(delta_xz / d) < 0.35:
+				continue
+		best_dist = d
+		best = rp as Node3D
+	return best
+
+func _get_remote_player_display_name(rp: Node3D) -> String:
+	if rp == null or not is_instance_valid(rp):
+		return "superviviente"
+	var pid := int(rp.get_meta("peer_id", -1))
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main != null and main.get("net") != null and pid > 0:
+		var net_node = main.net
+		if net_node.players.has(pid):
+			var cn := str(net_node.players[pid].get("char_name", "")).strip_edges()
+			if not cn.is_empty():
+				return cn
+	var fallback := str(rp.get("character_name")).strip_edges()
+	return fallback if not fallback.is_empty() else "superviviente"
+
+func _give_food_or_drink_to_player(target_puppet: Node3D) -> void:
+	if target_puppet == null or not is_instance_valid(target_puppet) or is_dead or _consumption_pending or inventory == null:
+		return
+	var held = get_held_item()
+	if held == null:
+		return
+	var itype := str(held.item_type)
+	if itype != "food" and itype != "water":
+		return
+	var idx: int = inventory.items.find(held)
+	if idx < 0:
+		return
+	var target_pid := int(target_puppet.get_meta("peer_id", -1))
+	if target_pid <= 0:
+		return
+	var iname := str(held.item_name)
+	var peer_label := _get_remote_player_display_name(target_puppet)
+	var is_hot := iname == "Carne asada en palo" or iname == "Carne ensartada" or iname == "Pez ensartado"
+	# Measure the exact stat restoration produced by Inventory.use_index on a probe stats object
+	var probe := SurvivalStatsScript.new()
+	probe.hunger = 20.0
+	probe.thirst = 20.0
+	probe.health = 50.0
+	var consumed: bool = inventory.use_index(idx, probe)
+	var d_hunger := maxf(0.0, float(probe.hunger) - 20.0)
+	var d_thirst := maxf(0.0, float(probe.thirst) - 20.0)
+	var d_health := maxf(0.0, float(probe.health) - 50.0)
+	probe.free()
+	if not consumed:
+		return
+	play_action_animation("interact", 1.2)
+	_sync_held_item()
+	var verb := "Le das de beber" if itype == "water" else "Le das de comer"
+	notice.emit("%s (%s) a %s." % [verb, iname, peer_label])
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main != null:
+		var net_node = main.get("net")
+		if net_node != null and net_node.is_connected:
+			if net_node.is_host:
+				if main.has_method("_net_feed_other_player"):
+					main._net_feed_other_player(target_pid, iname, itype, d_hunger, d_thirst, d_health, is_hot, net_node.get_my_id())
+			elif net_node.has_method("feed_other_player"):
+				net_node.feed_other_player.rpc_id(1, target_pid, iname, itype, d_hunger, d_thirst, d_health, is_hot)
+		if main.has_method("_sync_local_player_inventory"):
+			main.call_deferred("_sync_local_player_inventory")
 
 func _fishing_attempt_valid(session: int, rod, origin: Vector3) -> bool:
 	if session != _fishing_session or not _is_fishing or is_dead:

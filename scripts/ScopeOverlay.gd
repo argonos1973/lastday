@@ -14,9 +14,17 @@ var _hud_update_accum := 0.0
 var _scope_fov := 15.0
 var _magnification := 4.0
 var _iron_sights := false
+var _ads_viewport_container: SubViewportContainer = null
+var _ads_viewport: SubViewport = null
+var _ads_gun_rig: Node3D = null
+var _ads_flash_light: OmniLight3D = null
+var _ads_recoil := 0.0
 
 func muzzle_flash() -> void:
 	_flash = 1.0
+	_ads_recoil = 1.0
+	if _ads_flash_light != null and is_instance_valid(_ads_flash_light):
+		_ads_flash_light.light_energy = 5.5
 	queue_redraw()
 
 func _sync_from_player() -> void:
@@ -33,8 +41,9 @@ func _sync_from_player() -> void:
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	get_viewport().size_changed.connect(queue_redraw)
+	get_viewport().size_changed.connect(_on_vp_size_changed)
 	_sync_from_player()
+	_ensure_ads_viewport()
 	# Wind indicator label
 	_wind_label = Label.new()
 	_wind_label.name = "WindIndicator"
@@ -61,13 +70,26 @@ func _ready() -> void:
 	add_child(_breath_label)
 
 func _process(_delta: float) -> void:
+	_ensure_ads_viewport()
+	if _flash > 0.0 or _ads_recoil > 0.0:
+		_flash = maxf(0.0, _flash - _delta * 7.0)
+		_ads_recoil = maxf(0.0, _ads_recoil - _delta * 11.0)
+		if _ads_gun_rig != null and is_instance_valid(_ads_gun_rig):
+			_ads_gun_rig.position = Vector3(0.0, -0.005 * _ads_recoil, -0.042 * _ads_recoil)
+			_ads_gun_rig.rotation_degrees = Vector3(-0.65 * _ads_recoil, 0.0, 0.0)
+		if _ads_flash_light != null and is_instance_valid(_ads_flash_light):
+			_ads_flash_light.light_energy = 5.5 * _flash
+		queue_redraw()
 	_hud_update_accum += _delta
 	var refresh_hud := _hud_update_accum >= 0.10
 	if refresh_hud:
 		_hud_update_accum = 0.0
-	if not refresh_hud and _flash <= 0.0:
+	if not refresh_hud:
 		return
-	var player = get_tree().current_scene.get_node_or_null("Player")
+	var cur_scene := get_tree().current_scene if get_tree() != null else null
+	if cur_scene == null:
+		return
+	var player = cur_scene.get_node_or_null("Player")
 	if player == null or not is_instance_valid(player):
 		return
 	if not player.has_method("get_wind_info"):
@@ -126,98 +148,228 @@ func _process(_delta: float) -> void:
 		_breath_label.add_theme_color_override("font_color", Color(0.85, 0.6, 0.6, 0.9))
 	else:
 		_breath_label.text = "Shift: aguantar"
-	if _flash > 0.0:
-		_flash = maxf(0.0, _flash - _delta * 7.0)
-		queue_redraw()
+	_ensure_ads_viewport()
+
+func _on_vp_size_changed() -> void:
+	if _ads_viewport != null and is_instance_valid(_ads_viewport):
+		var sz := get_viewport_rect().size
+		if sz.x > 1.0 and sz.y > 1.0:
+			_ads_viewport.size = Vector2i(int(sz.x), int(sz.y))
+	queue_redraw()
+
+func _ensure_ads_viewport() -> void:
+	if not _iron_sights:
+		if _ads_viewport_container != null and is_instance_valid(_ads_viewport_container):
+			_ads_viewport_container.visible = false
+		return
+	var vp_sz := get_viewport_rect().size
+	if vp_sz.x < 2.0 or vp_sz.y < 2.0:
+		vp_sz = Vector2(1280.0, 720.0)
+	if _ads_viewport_container != null and is_instance_valid(_ads_viewport_container):
+		_ads_viewport_container.visible = true
+		_ads_viewport_container.size = vp_sz
+		if _ads_viewport != null and is_instance_valid(_ads_viewport) and _ads_viewport.size != Vector2i(int(vp_sz.x), int(vp_sz.y)):
+			_ads_viewport.size = Vector2i(int(vp_sz.x), int(vp_sz.y))
+		return
+	_ads_viewport_container = SubViewportContainer.new()
+	_ads_viewport_container.name = "M4AdsViewportContainer"
+	_ads_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ads_viewport_container.size = vp_sz
+	_ads_viewport_container.stretch = true
+	_ads_viewport_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_ads_viewport_container)
+	move_child(_ads_viewport_container, 0)
+
+	_ads_viewport = SubViewport.new()
+	_ads_viewport.name = "M4AdsViewport"
+	_ads_viewport.size = Vector2i(int(vp_sz.x), int(vp_sz.y))
+	_ads_viewport.transparent_bg = true
+	_ads_viewport.own_world_3d = true
+	_ads_viewport.msaa_3d = Viewport.MSAA_4X
+	_ads_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_ads_viewport_container.add_child(_ads_viewport)
+
+	var root3d := Node3D.new()
+	root3d.name = "AdsRoot3D"
+	_ads_viewport.add_child(root3d)
+
+	# Key + rim directional lights for realistic anodized gunmetal speculars
+	var key_light := DirectionalLight3D.new()
+	key_light.rotation_degrees = Vector3(-48.0, 28.0, 0.0)
+	key_light.light_color = Color(1.0, 0.97, 0.92)
+	key_light.light_energy = 1.65
+	root3d.add_child(key_light)
+
+	var rim_light := DirectionalLight3D.new()
+	rim_light.rotation_degrees = Vector3(-22.0, -145.0, 0.0)
+	rim_light.light_color = Color(0.75, 0.82, 0.95)
+	rim_light.light_energy = 0.75
+	root3d.add_child(rim_light)
+
+	_ads_gun_rig = Node3D.new()
+	_ads_gun_rig.name = "M4AdsRig"
+	root3d.add_child(_ads_gun_rig)
+
+	# Scale the internal M4 hierarchy by 10x so vertices live in normal meter
+	# units (~1.8 m long) instead of 0.01x centimeters (avoids near-clip plane culling).
+	var gun_scale_root := Node3D.new()
+	gun_scale_root.name = "GunScaleRoot"
+	gun_scale_root.scale = Vector3.ONE * 10.0
+	_ads_gun_rig.add_child(gun_scale_root)
+
+	var m4_scene := load("res://assets/models/weapons/m4_carbine_rifle.glb") as PackedScene
+	if m4_scene != null:
+		var m4_inst := m4_scene.instantiate() as Node3D
+		if m4_inst != null:
+			for node in m4_inst.find_children("*", "MeshInstance3D", true, false):
+				var mi := node as MeshInstance3D
+				if "Bullets" in str(mi.name):
+					mi.visible = false
+			gun_scale_root.add_child(m4_inst)
+
+	# Build a 3D tactical A2 rear aperture sight assembly mounted on the rear Picatinny rail
+	_build_3d_rear_sight(gun_scale_root)
+
+	# Glowing tritium / fiber-optic insert on the tip of the 3D A2 front sight post
+	var front_dot := MeshInstance3D.new()
+	var dot_sphere := SphereMesh.new()
+	dot_sphere.radius = 0.00020
+	dot_sphere.height = 0.00040
+	front_dot.mesh = dot_sphere
+	var dot_mat := StandardMaterial3D.new()
+	dot_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dot_mat.albedo_color = Color(1.0, 0.20, 0.08, 1.0)
+	front_dot.material_override = dot_mat
+	front_dot.position = Vector3(0.0, 0.06265, 0.0432)
+	gun_scale_root.add_child(front_dot)
+
+	# Warm muzzle flash light ahead of the front sight base
+	_ads_flash_light = OmniLight3D.new()
+	_ads_flash_light.position = Vector3(0.0, 0.060, 0.085)
+	_ads_flash_light.light_color = Color(1.0, 0.72, 0.32)
+	_ads_flash_light.light_energy = 0.0
+	_ads_flash_light.omni_range = 3.0
+	gun_scale_root.add_child(_ads_flash_light)
+
+	# First-person camera aligned down the sight line so the tip of the 3D front
+	# sight post (0.0, 0.626, +0.432 in scaled coords) projects to the exact screen center.
+	var cam := Camera3D.new()
+	cam.name = "AdsCamera3D"
+	cam.near = 0.03
+	cam.far = 20.0
+	cam.fov = 22.0
+	root3d.add_child(cam)
+	var cam_pos := Vector3(0.0, 0.626, -0.70)
+	var target_pos := Vector3(0.0, 0.626, 0.432)
+	cam.look_at_from_position(cam_pos, target_pos, Vector3.UP)
+
+func _build_3d_rear_sight(parent: Node3D) -> void:
+	var rear_scene := load("res://assets/models/weapons/m4_rear_sight.glb") as PackedScene
+	if rear_scene != null:
+		var rear_inst := rear_scene.instantiate() as Node3D
+		if rear_inst != null:
+			rear_inst.name = "RearSight3D"
+			parent.add_child(rear_inst)
+			return
+	var rear := Node3D.new()
+	rear.name = "RearSight3D"
+	rear.position = Vector3(0.0, 0.0, -0.044)
+	parent.add_child(rear)
+
+	var mat_body := StandardMaterial3D.new()
+	mat_body.albedo_color = Color(0.11, 0.115, 0.125)
+	mat_body.metallic = 0.78
+	mat_body.roughness = 0.38
+
+	var mat_dark := StandardMaterial3D.new()
+	mat_dark.albedo_color = Color(0.06, 0.065, 0.07)
+	mat_dark.metallic = 0.65
+	mat_dark.roughness = 0.48
+
+	var mat_brass := StandardMaterial3D.new()
+	mat_brass.albedo_color = Color(0.22, 0.23, 0.24)
+	mat_brass.metallic = 0.85
+	mat_brass.roughness = 0.30
+
+	# Picatinny clamp base sitting on the upper receiver rail (y=0.0535..0.0575)
+	var base_mi := MeshInstance3D.new()
+	var base_box := BoxMesh.new()
+	base_box.size = Vector3(0.0110, 0.0042, 0.0140)
+	base_mi.mesh = base_box
+	base_mi.position = Vector3(0.0, 0.0556, 0.0)
+	base_mi.material_override = mat_body
+	rear.add_child(base_mi)
+
+	# Protective sight ears (left & right forged aluminum wings flanking the peep ring)
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		var ear_mi := MeshInstance3D.new()
+		var ear_box := BoxMesh.new()
+		ear_box.size = Vector3(0.0016, 0.0086, 0.0075)
+		ear_mi.mesh = ear_box
+		ear_mi.position = Vector3(s * 0.0048, 0.0614, 0.0005)
+		ear_mi.rotation_degrees = Vector3(0.0, 0.0, -s * 6.0)
+		ear_mi.material_override = mat_body
+		rear.add_child(ear_mi)
+
+	# Circular diopter peep ring centered on the sight line (y=0.06209)
+	var ring_mi := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.0033
+	torus.outer_radius = 0.0043
+	torus.rings = 48
+	torus.ring_segments = 24
+	ring_mi.mesh = torus
+	ring_mi.position = Vector3(0.0, 0.06209, 0.0012)
+	ring_mi.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	ring_mi.material_override = mat_dark
+	rear.add_child(ring_mi)
+
+	# Stem connecting the peep ring to the rail base
+	var stem_mi := MeshInstance3D.new()
+	var stem_box := BoxMesh.new()
+	stem_box.size = Vector3(0.0032, 0.0022, 0.0030)
+	stem_mi.mesh = stem_box
+	stem_mi.position = Vector3(0.0, 0.0576, 0.0012)
+	stem_mi.material_override = mat_dark
+	rear.add_child(stem_mi)
+
+	# Knurled windage adjustment drum on the right side + locking nut on the left
+	var knob_mi := MeshInstance3D.new()
+	var knob_cyl := CylinderMesh.new()
+	knob_cyl.top_radius = 0.0021
+	knob_cyl.bottom_radius = 0.0021
+	knob_cyl.height = 0.0028
+	knob_mi.mesh = knob_cyl
+	knob_mi.position = Vector3(0.0068, 0.0602, 0.0010)
+	knob_mi.rotation_degrees = Vector3(0.0, 0.0, 90.0)
+	knob_mi.material_override = mat_brass
+	rear.add_child(knob_mi)
+
+	var nut_mi := MeshInstance3D.new()
+	var nut_cyl := CylinderMesh.new()
+	nut_cyl.top_radius = 0.0016
+	nut_cyl.bottom_radius = 0.0016
+	nut_cyl.height = 0.0022
+	nut_mi.mesh = nut_cyl
+	nut_mi.position = Vector3(-0.0064, 0.0558, 0.0)
+	nut_mi.rotation_degrees = Vector3(0.0, 0.0, 90.0)
+	nut_mi.material_override = mat_brass
+	rear.add_child(nut_mi)
 
 func _draw_iron_sights(vp_size: Vector2, center: Vector2) -> void:
+	# Subtle edge vignette to focus the eye when aiming down sights while the
+	# 3D SubViewport renders the actual M4 receiver, rail, rear peep & front post.
 	var h := minf(vp_size.x, vp_size.y)
-	var peep_r := h * 0.19
-	var steel_dark := Color(0.08, 0.085, 0.09, 0.94)
-	var steel_mid := Color(0.15, 0.16, 0.17, 0.92)
-	var steel_edge := Color(0.26, 0.28, 0.30, 0.85)
-	var rear_blur := Color(0.06, 0.065, 0.07, 0.52)
-
-	# Destello del fogonazo detras del punto de mira delantero
+	var vig_r := vp_size.length() * 0.46
+	for i in range(6):
+		var t := float(i) / 5.0
+		var r := vig_r + t * h * 0.22
+		draw_arc(center, r, 0.0, TAU, 96, Color(0.0, 0.0, 0.0, 0.06 * (t + 0.3)), h * 0.09, true)
 	if _flash > 0.0:
-		for i in range(4):
-			var t := float(i) / 4.0
-			var gr := peep_r * (0.28 + t * 0.55) * _flash
-			var ga := 0.18 * _flash * (1.0 - t)
-			draw_circle(center + Vector2(0.0, peep_r * 0.12), gr, Color(1.0, 0.78, 0.38, ga))
-
-	# --- Punto de mira delantero (A2 Front Sight Base + orejetas + poste central) ---
-	var post_w := maxf(5.0, h * 0.0075)
-	var post_top_y := center.y
-	var post_bot_y := center.y + peep_r * 0.72
-	var base_top_y := post_bot_y
-	var base_bot_y := vp_size.y
-
-	# Cuerpo / torre triangular del punto de mira delantero y cañon inferior
-	var fsb_half_top := peep_r * 0.36
-	var fsb_half_bot := peep_r * 0.62
-	var fsb_poly := PackedVector2Array([
-		Vector2(center.x - fsb_half_top, base_top_y),
-		Vector2(center.x + fsb_half_top, base_top_y),
-		Vector2(center.x + fsb_half_bot, base_bot_y),
-		Vector2(center.x - fsb_half_bot, base_bot_y),
-	])
-	draw_colored_polygon(fsb_poly, steel_dark)
-	draw_line(Vector2(center.x - fsb_half_top, base_top_y), Vector2(center.x + fsb_half_top, base_top_y), steel_edge, 2.0, true)
-
-	# Dos orejetas protectoras laterales del punto de mira (M4 front sight wings)
-	var wing_top_y := center.y - peep_r * 0.08
-	var wing_outer_x := peep_r * 0.36
-	var wing_inner_x := peep_r * 0.24
-	var wing_tip_in_x := peep_r * 0.19
-	var wing_tip_out_x := peep_r * 0.27
-	for side in [-1.0, 1.0]:
-		var s: float = side
-		var wing := PackedVector2Array([
-			Vector2(center.x + s * wing_inner_x, base_top_y + 2.0),
-			Vector2(center.x + s * wing_outer_x, base_top_y + 2.0),
-			Vector2(center.x + s * wing_tip_out_x, wing_top_y),
-			Vector2(center.x + s * wing_tip_in_x, wing_top_y + peep_r * 0.04),
-		])
-		draw_colored_polygon(wing, steel_dark)
-		draw_line(wing[0], wing[3], steel_edge, 1.6, true)
-
-	# Poste central vertical del punto de mira (la cuspide coincide con center)
-	var post_rect := Rect2(center.x - post_w * 0.5, post_top_y, post_w, post_bot_y - post_top_y + 3.0)
-	draw_rect(post_rect, steel_dark, true)
-	draw_line(Vector2(post_rect.position.x, post_top_y), Vector2(post_rect.position.x + post_w, post_top_y), steel_edge, 1.5, true)
-	# Punto de tritio / referencia luminosa en la punta del poste central
-	draw_circle(Vector2(center.x, post_top_y + post_w * 0.45), maxf(2.4, post_w * 0.36), center_dot_color)
-
-	# --- Alza trasera tipo diopter (rear peep sight ring, desenfocada por cercania al ojo) ---
-	var ring_thick := h * 0.032
-	for blur_i in range(4):
-		var bt := float(blur_i) / 3.0
-		var bw := ring_thick * (1.0 + bt * 0.65)
-		var ba := 0.22 * (1.0 - bt * 0.65)
-		draw_arc(center, peep_r, 0.0, TAU, 96, Color(0.05, 0.055, 0.06, ba), bw, true)
-	draw_arc(center, peep_r, 0.0, TAU, 96, rear_blur, ring_thick * 0.72, true)
-	# Base del alza / asa de transporte (carry handle) debajo del anillo trasero
-	var ch_top_y := center.y + peep_r * 0.86
-	var ch_half_top := peep_r * 0.65
-	var ch_half_bot := peep_r * 1.15
-	var ch_poly := PackedVector2Array([
-		Vector2(center.x - ch_half_top, ch_top_y),
-		Vector2(center.x + ch_half_top, ch_top_y),
-		Vector2(center.x + ch_half_bot, vp_size.y),
-		Vector2(center.x - ch_half_bot, vp_size.y),
-	])
-	draw_colored_polygon(ch_poly, steel_mid)
-	# Orejetas protectoras del alza trasera a ambos lados del diopter
-	for side in [-1.0, 1.0]:
-		var s: float = side
-		var ear := PackedVector2Array([
-			Vector2(center.x + s * (peep_r * 0.88), center.y + peep_r * 0.55),
-			Vector2(center.x + s * (peep_r * 1.18), center.y + peep_r * 0.65),
-			Vector2(center.x + s * (peep_r * 1.14), center.y - peep_r * 0.42),
-			Vector2(center.x + s * (peep_r * 0.94), center.y - peep_r * 0.35),
-		])
-		draw_colored_polygon(ear, rear_blur)
+		for i in range(3):
+			var t := float(i) / 3.0
+			draw_circle(center + Vector2(0.0, h * 0.02), h * (0.04 + t * 0.08) * _flash, Color(1.0, 0.78, 0.36, 0.14 * _flash * (1.0 - t)))
 
 func _draw() -> void:
 	var vp_size := get_viewport_rect().size

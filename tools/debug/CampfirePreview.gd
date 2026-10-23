@@ -34,38 +34,15 @@ func run() -> void:
 	log_mat.roughness = 0.95
 	log.material_override = log_mat
 	scene.add_child(log)
-	# La hoguera: troncos cruzados + piedras + fuego
-	var stone_mat := StandardMaterial3D.new()
-	stone_mat.albedo_color = Color(0.30, 0.28, 0.26)
-	stone_mat.roughness = 1.0
-	for i in range(8):
-		var angle := i * 45.0
-		var stone := MeshInstance3D.new()
-		var s := SphereMesh.new()
-		s.radius = 0.11
-		s.height = 0.16
-		stone.mesh = s
-		stone.material_override = stone_mat
-		stone.position = Vector3(cos(deg_to_rad(angle)) * 0.5, 0.05, sin(deg_to_rad(angle)) * 0.5)
-		scene.add_child(stone)
-	var wood_mat := StandardMaterial3D.new()
-	wood_mat.albedo_color = Color(0.16, 0.09, 0.04)
-	wood_mat.roughness = 0.9
-	for i in range(5):
-		var stick := MeshInstance3D.new()
-		var st := CylinderMesh.new()
-		st.top_radius = 0.035
-		st.bottom_radius = 0.045
-		st.height = 0.9
-		stick.mesh = st
-		stick.material_override = wood_mat
-		var a := i * 72.0
-		stick.position = Vector3(cos(deg_to_rad(a)) * 0.10, 0.22, sin(deg_to_rad(a)) * 0.10)
-		stick.rotation_degrees = Vector3(35.0 * sin(deg_to_rad(a)), a, 35.0 * cos(deg_to_rad(a)))
-		scene.add_child(stick)
-	# Luz + efectos de fuego (igual que _create_campfire_fire)
+	# La hoguera: modelo 3D realista (troncos con corteza, nudos, carbon, ceniza y piedras) + fuego
+	var cf_scene := load("res://assets/models/props/realistic_campfire.glb") as PackedScene
+	if cf_scene != null:
+		var cf_inst := cf_scene.instantiate() as Node3D
+		cf_inst.scale = Vector3(1.15, 1.15, 1.15)
+		scene.add_child(cf_inst)
+	# Luz + efectos de fuego (igual que _create_campfire_fire: pos + Vector3(0, 0.15, 0))
 	var light := OmniLight3D.new()
-	light.position = Vector3(0, 0.35, 0)
+	light.position = Vector3(0, 0.15, 0)
 	light.light_color = Color(1.0, 0.65, 0.25)
 	light.light_energy = 7.0
 	light.omni_range = 24.0
@@ -90,15 +67,15 @@ func run() -> void:
 	st2.bottom_radius = 0.04
 	st2.height = 0.9
 	stick2.mesh = st2
-	stick2.material_override = wood_mat
+	stick2.material_override = log_mat
 	stick2.position = Vector3(1.8, 0.45, -0.6)
 	scene.add_child(stick2)
-	# Camara
+	# Camara cercana para apreciar los troncos con corteza, nudos, carbon, ceniza y piedras
 	var camera := Camera3D.new()
 	scene.add_child(camera)
-	camera.position = Vector3(1.6, 1.5, 3.2)
-	camera.look_at(Vector3(0.2, 0.55, 0.0))
-	camera.fov = 46
+	camera.position = Vector3(1.05, 0.95, 1.85)
+	camera.look_at(Vector3(0.0, 0.25, 0.0))
+	camera.fov = 42
 	# Noche
 	var environment := WorldEnvironment.new()
 	environment.environment = Environment.new()

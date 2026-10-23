@@ -185,11 +185,11 @@ func _make_coal_bed() -> void:
 	material.emission = Color(1.0, 0.30, 0.04)
 	material.emission_energy_multiplier = 2.0
 	var lumps := [
-		[Vector3(0.00, 0.02, 0.00), 0.16],
-		[Vector3(0.11, 0.015, -0.06), 0.11],
-		[Vector3(-0.09, 0.015, 0.07), 0.10],
-		[Vector3(0.02, 0.018, 0.12), 0.09],
-		[Vector3(-0.12, 0.012, -0.08), 0.09],
+		[Vector3(0.00, -0.07, 0.00), 0.14],
+		[Vector3(0.09, -0.08, -0.05), 0.10],
+		[Vector3(-0.08, -0.08, 0.06), 0.09],
+		[Vector3(0.02, -0.075, 0.09), 0.08],
+		[Vector3(-0.09, -0.085, -0.07), 0.08],
 	]
 	for entry in lumps:
 		var coal := MeshInstance3D.new()
