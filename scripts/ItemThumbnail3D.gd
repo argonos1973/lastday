@@ -41,11 +41,14 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 		return
 	var inst: Node3D = null
 	var is_log_model := false
+	var is_olive_field_jacket := false
 	for path in paths:
 		if typeof(path) != TYPE_STRING or path.is_empty():
 			continue
 		if "tree-log" in str(path) or "resource-wood" in str(path) or "wood_stick" in str(path):
 			is_log_model = true
+		if "pickup_jacket_olive.glb" in str(path) or "military_jacket_olive.glb" in str(path):
+			is_olive_field_jacket = true
 		if not ResourceLoader.exists(path):
 			continue
 		var scene: PackedScene = load(path)
@@ -71,6 +74,8 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	_model_root.add_child(inst)
 	if is_log_model:
 		MaterialFactory.apply_realistic_log_materials(inst)
+	if is_olive_field_jacket and pelt_species.is_empty():
+		preload("res://scripts/MilitaryJackets.gd").apply_woodland_camo_recursive(inst)
 	# Animated models (dead animals, gear pickups) keep their mesh bound to a
 	# skeleton: the skinned instance renders at the bone pose while its
 	# node-space AABB sits elsewhere, so the viewport culls it to a blank

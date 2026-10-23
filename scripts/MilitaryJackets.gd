@@ -66,10 +66,38 @@ static func attach(character: Node3D, item_name: String) -> MeshInstance3D:
 	jacket.skin = skin
 	jacket.transform = source_mesh.transform
 	jacket.visible = false
+	if variant == "olive":
+		apply_woodland_camo_to_mesh(jacket)
 	destination.add_child(jacket)
 	jacket.skeleton = jacket.get_path_to(destination)
 	source.free()
 	return jacket
+
+static func apply_woodland_camo_to_mesh(mesh_inst: MeshInstance3D) -> void:
+	if mesh_inst == null or mesh_inst.mesh == null:
+		return
+	var dup_mesh := mesh_inst.mesh.duplicate() as Mesh
+	if dup_mesh == null:
+		return
+	var camo_tex: Texture2D = MaterialFactory.make_camo_texture(Color(0.18, 0.22, 0.13))
+	for s in range(mini(2, dup_mesh.get_surface_count())):
+		var mat := StandardMaterial3D.new()
+		mat.albedo_texture = camo_tex
+		mat.albedo_color = Color.WHITE if s == 0 else Color(0.82, 0.82, 0.82)
+		mat.uv1_scale = Vector3(2.0, 2.0, 2.0)
+		mat.roughness = 0.88
+		mat.metallic = 0.0
+		mat.metallic_specular = 0.18
+		dup_mesh.surface_set_material(s, mat)
+	mesh_inst.mesh = dup_mesh
+
+static func apply_woodland_camo_recursive(node: Node) -> void:
+	if node == null:
+		return
+	if node is MeshInstance3D:
+		apply_woodland_camo_to_mesh(node as MeshInstance3D)
+	for child in node.get_children():
+		apply_woodland_camo_recursive(child)
 
 static func fit_legacy_hem(mesh: MeshInstance3D) -> void:
 	if mesh == null or mesh.mesh == null or mesh.has_meta("hem_fitted"):

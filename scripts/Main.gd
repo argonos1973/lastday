@@ -9898,6 +9898,8 @@ func _apply_military_drop_material(item_name: String, node: Node, drop_color: Co
 	var military_camo_names := ["Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	if item_name == "Botas militares":
 		_apply_color_material_recursive(node as Node3D, drop_color if drop_color.a > 0.0 else Color(0.10, 0.10, 0.075))
+	elif item_name == "Chaqueta de campaña verde":
+		MilitaryJackets.apply_woodland_camo_recursive(node)
 	elif item_name in military_solid_names:
 		if item_name.findn("negra") >= 0 or item_name.findn("negros") >= 0:
 			_apply_color_material_recursive(node as Node3D, Color(0.02, 0.02, 0.02))
@@ -10036,7 +10038,11 @@ func _create_pickup_item(data: Dictionary) -> void:
 			_center_visible_meshes_xz(remy_node as Node3D, pos)
 			_snap_node_bottom_to_y(remy_node as Node3D, real_ground_y)
 	# Apply tint or camo material to military clothing pickups
-	if data.has("tint"):
+	if item_name == "Chaqueta de campaña verde":
+		var olive_node := get_node_or_null(NodePath(visual_name))
+		if olive_node is Node3D:
+			MilitaryJackets.apply_woodland_camo_recursive(olive_node)
+	elif data.has("tint"):
 		var tint_node := get_node_or_null(NodePath(visual_name))
 		if tint_node is Node3D:
 			if bool(data.get("camo", false)):
