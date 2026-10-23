@@ -28,11 +28,14 @@ class TestWorld extends "res://scripts/Main.gd":
 		pass
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
+	var action_calls: Array = []
 	func _ready() -> void:
 		set_process(false)
 		set_physics_process(false)
 	func _setup_third_person_animation(_c: Node3D) -> void:
 		pass
+	func play_action_animation(action_name: String, duration := 1.1) -> void:
+		action_calls.append(action_name)
 
 var failures := 0
 var _last_prompt := ""
@@ -92,6 +95,7 @@ func run() -> void:
 	check(int(giver.inventory.items[0].quantity) == 1, "se consumio 1 naranja del inventario del dador")
 	check(float(proxy.get_meta("saved_hunger", 0.0)) > 45.0, "el servidor subio saved_hunger del receptor (%.1f)" % float(proxy.get_meta("saved_hunger", 0.0)))
 	check(float(proxy.get_meta("saved_thirst", 0.0)) > 35.0, "la naranja tambien subio saved_thirst del receptor (%.1f)" % float(proxy.get_meta("saved_thirst", 0.0)))
+	check(giver.action_calls.has("give"), "el que da la comida reproduce el gesto 'give'")
 
 	# 2. Poner una Botella de agua en la mano de giver y darle de beber a Elena
 	var bottle = ItemScript.create("Botella de agua", "water", 0.5, 1, 80.0)
@@ -109,19 +113,35 @@ func run() -> void:
 	check(float(proxy.get_meta("saved_thirst", 0.0)) > thirst_before + 15.0, "el servidor subio saved_thirst tras dar de beber")
 
 	# 3. Probar recepcion directa en el cliente receptor (_net_receive_fed_by_player)
+	# El receptor NO gesticula: queda en idle (quien da la comida es quien hace el gesto).
 	giver.stats.hunger = 40.0
 	giver.stats.thirst = 35.0
 	giver.stats.health = 70.0
+	giver.action_calls.clear()
 	world._net_receive_fed_by_player("Elena", "Carne asada en palo", "food", 28.0, 4.0, 10.0, true)
 	check(absf(giver.stats.hunger - 68.0) < 0.1, "receptor recibe +28 hambre")
 	check(absf(giver.stats.thirst - 39.0) < 0.1, "receptor recibe +4 sed")
 	check(absf(giver.stats.health - 80.0) < 0.1, "receptor recibe +10 salud")
+	check(giver.action_calls.is_empty(), "el receptor permanece en idle (sin animacion de accion)")
 
 	# 4. Verificar que realistic_campfire.glb y m4_rear_sight.glb cargan y tienen geometria
 	var cf_scene := load("res://assets/models/props/realistic_campfire.glb") as PackedScene
 	check(cf_scene != null, "realistic_campfire.glb carga")
 	var rear_scene := load("res://assets/models/weapons/m4_rear_sight.glb") as PackedScene
 	check(rear_scene != null, "m4_rear_sight.glb carga")
+
+	# 5. GiveFood.glb dona su clip de "dar comida" (animacion hecha en Blender
+	# desde Drinking.glb con el brazo extendido ofreciendo).
+	var give_scene := load("res://assets/animations/GiveFood.glb") as PackedScene
+	check(give_scene != null, "GiveFood.glb carga")
+	if give_scene != null:
+		var inst = give_scene.instantiate()
+		var ap: AnimationPlayer = null
+		for n in inst.find_children("*", "AnimationPlayer", true, false):
+			ap = n
+			break
+		check(ap != null and ap.get_animation_list().size() > 0, "GiveFood.glb trae un clip de animacion")
+		inst.queue_free()
 
 	if failures == 0:
 		print("PASS: cooperative feeding/drinking, realistic campfire logs and 3D M4 sights verified")

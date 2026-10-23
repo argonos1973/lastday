@@ -398,6 +398,7 @@ const THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION := "PunchExternal"
 const THIRD_PERSON_EXTERNAL_MELEE_DEATH_ANIMATION := "MeleeDeathExternal"
 const THIRD_PERSON_EXTERNAL_HIT_ANIMATION := "HitExternal"
 const THIRD_PERSON_EXTERNAL_SHOT_ANIMATION := "ShotReceivedExternal"
+const THIRD_PERSON_EXTERNAL_GIVE_ANIMATION := "GiveFoodExternal"
 const THIRD_PERSON_EXTERNAL_LOW_HEALTH_ANIMATION := "LowHealthExternal"
 const THIRD_PERSON_EXTERNAL_DYING_ANIMATION := "DyingExternal"
 const THIRD_PERSON_EXTERNAL_JUMP_ANIMATION := "JumpExternal"
@@ -440,6 +441,7 @@ const PUNCH_ANIMATION_GLB := "res://assets/animations/Cross Punch.glb"
 const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forward 02.glb"
 const HIT_ANIMATION_GLB := "res://assets/animations/Head Hit.glb"
 const SHOT_ANIMATION_GLB := "res://assets/animations/RecibirDisparo.glb"
+const GIVE_FOOD_ANIMATION_GLB := "res://assets/animations/GiveFood.glb"
 # Swing timers: the clip's contact frame, and the lead so the whoosh peaks
 # just before impact instead of firing at click time.
 const MELEE_PUNCH_IMPACT_DELAY := 0.95
@@ -556,6 +558,7 @@ var third_person_punch_animation := ""
 var third_person_melee_death_animation := ""
 var third_person_hit_animation := ""
 var third_person_shot_animation := ""
+var third_person_give_animation := ""
 var third_person_low_health_animation := ""
 var third_person_dying_animation := ""
 var third_person_jump_animation := ""
@@ -639,6 +642,7 @@ var _punch_animation_loaded := false
 var _melee_death_animation_loaded := false
 var _hit_animation_loaded := false
 var _shot_animation_loaded := false
+var _give_animation_loaded := false
 var _was_sick := false
 var _beaten_death := false
 var _torch_in_hands := false
@@ -4922,6 +4926,9 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	# Shot-received reaction (RecibirDisparo.glb) — rifle hits play the
 	# impact-only clip; synced to puppets the same way.
 	_load_shot_animation()
+	# Cooperative feed gesture (GiveFood.glb) — loaded for puppets too so the
+	# giver plays the same synced clip on every client.
+	_load_give_food_animation()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -5751,6 +5758,12 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 				target_animation = third_person_plant_animation
 		"drink":
 			target_animation = third_person_drink_animation
+			if target_animation.is_empty():
+				target_animation = third_person_plant_animation
+		"give":
+			target_animation = third_person_give_animation
+			if target_animation.is_empty():
+				target_animation = third_person_interact_animation
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"interact", "chop":
@@ -10776,14 +10789,21 @@ func _give_food_or_drink_to_player(target_puppet: Node3D) -> void:
 	probe.hunger = 20.0
 	probe.thirst = 20.0
 	probe.health = 50.0
+	# The restore values are measured on a throwaway stats probe — suppress the
+	# "Comes/Bebes..." item_used chatter so the giver only sees the give notice.
+	var used_conns: Array = inventory.item_used.get_connections()
+	for conn in used_conns:
+		inventory.item_used.disconnect(conn.callable)
 	var consumed: bool = inventory.use_index(idx, probe)
+	for conn in used_conns:
+		inventory.item_used.connect(conn.callable, conn.flags)
 	var d_hunger := maxf(0.0, float(probe.hunger) - 20.0)
 	var d_thirst := maxf(0.0, float(probe.thirst) - 20.0)
 	var d_health := maxf(0.0, float(probe.health) - 50.0)
 	probe.free()
 	if not consumed:
 		return
-	play_action_animation("interact", 1.2)
+	play_action_animation("give", 1.4)
 	_sync_held_item()
 	var verb := "Le das de beber" if itype == "water" else "Le das de comer"
 	notice.emit("%s (%s) a %s." % [verb, iname, peer_label])
@@ -11291,6 +11311,55 @@ func _load_shot_animation() -> void:
 	third_person_animation_player.add_animation_library("shot", shot_lib)
 	if third_person_animation_player.has_animation("shot/" + THIRD_PERSON_EXTERNAL_SHOT_ANIMATION):
 		third_person_shot_animation = "shot/" + THIRD_PERSON_EXTERNAL_SHOT_ANIMATION
+
+func _load_give_food_animation() -> void:
+	if _give_animation_loaded:
+		return
+	_give_animation_loaded = true
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	if not ResourceLoader.exists(GIVE_FOOD_ANIMATION_GLB):
+		return
+	var loaded = load(GIVE_FOOD_ANIMATION_GLB)
+	if not loaded is PackedScene:
+		return
+	var instance = (loaded as PackedScene).instantiate()
+	if not instance is Node3D:
+		if instance != null:
+			instance.queue_free()
+		return
+	var src_skeleton := _find_skeleton(instance)
+	var src_anim_player := _find_animation_player(instance)
+	if src_anim_player == null:
+		instance.queue_free()
+		return
+	var best_anim: Animation = null
+	var best_length := 0.0
+	for src_anim_name in src_anim_player.get_animation_list():
+		var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+		if candidate == null:
+			continue
+		if candidate.length > best_length:
+			best_length = candidate.length
+			best_anim = candidate
+	if best_anim == null:
+		instance.queue_free()
+		return
+	var copied := best_anim.duplicate(true)
+	copied.loop_mode = Animation.LOOP_NONE
+	copied.step = 0.0166667
+	_retarget_animation_to_character_skeleton(copied)
+	_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+	_remove_non_hips_position_tracks(copied, false, 0.0)
+	instance.queue_free()
+	var give_lib: AnimationLibrary = AnimationLibrary.new()
+	give_lib.add_animation(THIRD_PERSON_EXTERNAL_GIVE_ANIMATION, copied)
+	third_person_animation_player.add_animation_library("give", give_lib)
+	if third_person_animation_player.has_animation("give/" + THIRD_PERSON_EXTERNAL_GIVE_ANIMATION):
+		third_person_give_animation = "give/" + THIRD_PERSON_EXTERNAL_GIVE_ANIMATION
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:

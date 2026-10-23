@@ -3734,8 +3734,7 @@ func _net_receive_fed_by_player(giver_name: String, item_name: String, item_type
 	if is_hot and player.stats.has_method("add_hot_food"):
 		player.stats.add_hot_food(1)
 	player.stats.changed.emit()
-	if player.has_method("play_action_animation"):
-		player.play_action_animation("drink" if item_type == "water" else "plant", 1.5)
+	# El receptor se queda en idle: quien ofrece la comida es el que gesticula.
 	var verb := "te ha dado de beber" if item_type == "water" else "te ha dado de comer"
 	var parts: Array[String] = []
 	var gh := int(round(float(player.stats.hunger) - oh))
