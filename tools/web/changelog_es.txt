@@ -1,0 +1,19 @@
+# Traducciones al castellano del bloque "Cambios por versión" de la web .23.
+# Formato: <hash_corto>|<descripción en castellano>
+# update_index.sh usa estas líneas cuando el hash coincide; si un commit no
+# está mapeado, se muestra el subject del commit tal cual.
+4326eb3|Prueba de regresión visual del aviso de opciones del refugio
+bfa3a39|Despiece autorizado por el servidor (plumas, huesos y tendones sin duplicados), disparos primitivos visibles para todos y ralentización real de las boleadoras
+f091e15|Arcos, flechas, lanzas arrojadizas, boleadoras y guantes de piel; opciones del refugio en varias líneas y mira más estable agachado o tumbado
+556fc84|La página de descargas muestra el historial de cambios por versión
+4caba7c|La cámara en tercera persona entra dentro del refugio construido
+cbae6d4|Limpieza de la raíz del proyecto: fuentes de assets movidas a assets_src
+eb65a78|Ignoradas las fuentes descargadas de barricada y torre de vigilancia
+d2ea34a|La red de camuflaje del refugio cae hasta el suelo y el refugio es más grande
+d70d4f1|Gesto dedicado de entrega al dar de comer o beber a otro jugador
+7c92b6f|Corregida la pose de apuntado atascada en tiradores remotos
+dcef68f|Miras de hierro 3D del M4, dar de comer y beber a otros jugadores y leños realistas en la fogata
+9d8ca59|Material y UVs de la red de camuflaje del refugio igualados a los de la torre
+4d77a30|Red de camuflaje de la torre de vigilancia del tejado a las barandillas
+b7a1d5f|Techo más alto en la cabina de la torre militar y red de camuflaje woodland
+2489e3d|Artefactos temporales y previews redirigidos a build/tmp
