@@ -1757,7 +1757,7 @@ func primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_n
 		return
 	if not origin.is_finite() or not direction.is_finite() or direction.length_squared() < 0.001 or not is_finite(speed):
 		return
-	if not item_name in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras"]:
+	if not item_name in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras"]:
 		return
 	if speed < 1.0 or speed > 95.0:
 		return

@@ -6002,7 +6002,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			rag.position = pos + Vector3(0, 0.02, 0)
 			rag.rotation_degrees.y = randf_range(0, 360)
 			add_child(rag)
-		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 			var prim := MaterialFactory.build_primitive_item_mesh(item_name)
 			prim.name = visual_name
 			prim.position = pos + Vector3(0, 0.04, 0)
@@ -6205,7 +6205,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			return ["res://assets/models/props/animal_bone.glb"]
 		"Tendón":
 			return ["res://assets/models/props/animal_sinew.glb"]
-	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+	if item_name in ["Flecha improvisada", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 		return []
 	# Harvested and bush-dropped seeds share the pouch model across item types.
 	if item_name == "Semillas":
@@ -10492,7 +10492,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 			rag.position = pos + Vector3(0, 0.02, 0)
 			rag.rotation_degrees.y = randf_range(0, 360)
 			add_child(rag)
-		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 			var prim := MaterialFactory.build_primitive_item_mesh(item_name)
 			prim.name = visual_name
 			prim.position = pos + Vector3(0, 0.04, 0)

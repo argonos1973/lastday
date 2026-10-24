@@ -841,6 +841,28 @@ static func build_primitive_item_mesh(item_name: String) -> Node3D:
 			string_mi.position = Vector3(0.0, 0.0, 0.01)
 			string_mi.material_override = cord_mat
 			root.add_child(string_mi)
+		"Flecha improvisada":
+			# Bare sharpened stick: no stone tip, no fletching — crude but
+			# craftable from a single stick and any edged tool.
+			var ishaft := MeshInstance3D.new()
+			var icyl := CylinderMesh.new()
+			icyl.top_radius = 0.006
+			icyl.bottom_radius = 0.0075
+			icyl.height = 0.60
+			ishaft.mesh = icyl
+			ishaft.rotation_degrees.x = 90.0
+			ishaft.material_override = wood_mat
+			root.add_child(ishaft)
+			var itip := MeshInstance3D.new()
+			var itip_cyl := CylinderMesh.new()
+			itip_cyl.top_radius = 0.001
+			itip_cyl.bottom_radius = 0.0075
+			itip_cyl.height = 0.12
+			itip.mesh = itip_cyl
+			itip.position = Vector3(0.0, 0.0, -0.355)
+			itip.rotation_degrees.x = -90.0
+			itip.material_override = wood_mat
+			root.add_child(itip)
 		"Flecha de madera", "Flecha de piedra", "Flecha de hueso":
 			var shaft := MeshInstance3D.new()
 			var scyl := CylinderMesh.new()

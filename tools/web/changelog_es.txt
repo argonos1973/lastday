@@ -9,6 +9,16 @@ f091e15|Arcos, flechas, lanzas arrojadizas, boleadoras y guantes de piel; opcion
 4caba7c|La cámara en tercera persona entra dentro del refugio construido
 cbae6d4|Limpieza de la raíz del proyecto: fuentes de assets movidas a assets_src
 eb65a78|Ignoradas las fuentes descargadas de barricada y torre de vigilancia
+42e5d7c|Retícula de arquero, balística realista de flechas y arcos/flechas como loot en las casas
+b588bb5|Disparos primitivos del anfitrión, IDs únicos de despojo y sincronización del viento
+db255ed|Changelog de la web .23 en castellano
+4326eb3|Regresión de render del prompt del refugio
+bfa3a39|Recolección primitiva autoritativa del servidor, tiros compartidos y ralentización de boleadoras
+f091e15|Arcos primitivos, flechas, lanzas, guantes de piel y mejoras de refugio/apuntado
+556fc84|Changelog por versión publicado en la página de descargas .23
+4caba7c|La cámara en tercera persona entra en los refugios construidos
+cbae6d4|Fuentes de assets sin usar movidas a assets_src y archivos muertos eliminados
+eb65a78|Ignorados los assets fuente descargados de barricada y torre
 d2ea34a|La red de camuflaje del refugio cae hasta el suelo y el refugio es más grande
 d70d4f1|Gesto dedicado de entrega al dar de comer o beber a otro jugador
 7c92b6f|Corregida la pose de apuntado atascada en tiradores remotos

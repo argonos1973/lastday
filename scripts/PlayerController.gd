@@ -1513,7 +1513,7 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_fishing_rod()
 		"Palo afilado", "Lanza", "Lanza de hueso":
 			_build_third_person_primitive(item_name)
-		"Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
+		"Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
 			_build_third_person_primitive(item_name)
 		"Hacha de piedra":
 			_build_third_person_axe()
@@ -7354,7 +7354,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_build_third_person_axe()
 		_clear_rifle_attachment()
 		return
-	if held_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+	if held_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 		_build_third_person_primitive(held_name)
 		_clear_rifle_attachment()
 		return
@@ -13636,14 +13636,14 @@ func _count_inventory_arrows() -> int:
 		return 0
 	var total := 0
 	for it in inventory.items:
-		if it != null and (str(it.item_type) == "ammo_arrow" or str(it.item_name) in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso"]):
+		if it != null and (str(it.item_type) == "ammo_arrow" or str(it.item_name) in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Flecha improvisada"]):
 			total += int(it.quantity)
 	return total
 
 func _consume_best_arrow() -> String:
 	if inventory == null:
 		return ""
-	for pref in ["Flecha de hueso", "Flecha de piedra", "Flecha de madera"]:
+	for pref in ["Flecha de hueso", "Flecha de piedra", "Flecha de madera", "Flecha improvisada"]:
 		if inventory.has_item_name(pref, 1):
 			inventory.consume_item_name(pref, 1)
 			inventory.changed.emit()
@@ -13688,6 +13688,11 @@ func _shoot_bow() -> void:
 		base_dmg = 175.0
 	elif arrow_name == "Flecha de hueso":
 		base_dmg = 215.0
+	elif arrow_name == "Flecha improvisada":
+		# Sin punta ni emplumado: el astil desnudo sale más lento, tarda más en
+		# llegar y golpea con mucha menos energía.
+		base_dmg = 60.0
+		arrow_speed *= 0.80
 	if is_reinf:
 		base_dmg *= 1.18
 	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
@@ -13776,6 +13781,8 @@ func _throw_aimed_weapon() -> void:
 # speed fast, heavy spears keep it, bolas tumble and stall quickest.
 func _primitive_projectile_drag(item_type: String, item_name: String) -> float:
 	match item_name:
+		"Flecha improvisada":
+			return 0.52
 		"Flecha de madera":
 			return 0.34
 		"Flecha de piedra":
@@ -13803,16 +13810,19 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.align_flight = item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
 	var vis: Node3D = null
 	if item_type == "ammo_arrow":
-		var apath := ARROW_WOOD_MODEL
-		if item_name == "Flecha de piedra":
+		var apath := ""
+		if item_name == "Flecha de madera":
+			apath = ARROW_WOOD_MODEL
+		elif item_name == "Flecha de piedra":
 			apath = ARROW_STONE_MODEL
 		elif item_name == "Flecha de hueso":
 			apath = ARROW_BONE_MODEL
-		vis = _load_external_node3d(apath)
-		if vis != null:
-			# GLB shafts are modeled head-at-+Z; projectile forward is -Z, so
-			# flip the visual or the arrow flies fletching-first.
-			vis.rotation_degrees.y = 180.0
+		if not apath.is_empty():
+			vis = _load_external_node3d(apath)
+			if vis != null:
+				# GLB shafts are modeled head-at-+Z; projectile forward is -Z, so
+				# flip the visual or the arrow flies fletching-first.
+				vis.rotation_degrees.y = 180.0
 	if vis == null:
 		vis = MaterialFactory.build_primitive_item_mesh(item_name)
 		vis.rotation_degrees.x = -90.0 if item_type != "ammo_arrow" else 0.0

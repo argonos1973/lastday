@@ -71,6 +71,11 @@ const RECIPES := [
 		"label": "Fabricar 3 flechas con punta de hueso"
 	},
 	{
+		"inputs": { "Palo": 1, "Cuchillo": 1 },
+		"output": { "name": "Flecha improvisada", "type": "ammo_arrow", "weight": 0.04, "use_value": 3.0, "quantity": 3 },
+		"label": "Tallar 3 flechas improvisadas sin plumas"
+	},
+	{
 		"inputs": { "Cuerda": 1, "Piedra": 3 },
 		"output": { "name": "Boleadoras", "type": "weapon_bola", "weight": 0.65, "use_value": 0.0, "quantity": 1 },
 		"label": "Atar 3 piedras con cuerda para hacer boleadoras"
