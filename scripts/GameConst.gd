@@ -66,4 +66,4 @@ const PELT_FUR_TEXTURES := {
 	"oso": "res://assets/textures/pelt/fur_oso.png",
 	"ave": "res://assets/textures/pelt/fur_ave.png",
 }
-const PELT_FUR_ITEMS := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Gorro de piel", "Tocado de piel animal"]
+const PELT_FUR_ITEMS := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel", "Gorro de piel", "Tocado de piel animal"]

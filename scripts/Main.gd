@@ -1163,9 +1163,14 @@ func _process(delta: float) -> void:
 		var shared_temperature := float(temperature_observation.get("temperature", -999.0))
 		if shared_temperature != -999.0:
 			ambient_temp = shared_temperature
+	var shelter_warmth := 0.0
 	if _is_near_pelt_lined_shelter(player.global_position):
-		ambient_temp += 1.5
-	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, 0.0, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
+		ambient_temp += 2.5
+		shelter_warmth += 0.45
+	if _is_near_camo_covered_shelter(player.global_position):
+		ambient_temp += 2.0
+		shelter_warmth += 0.35
+	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, shelter_warmth, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
 	_update_weather_effects(delta)
 	_tick_stat_warnings(delta, player)
 	_apply_campfire_effect(player, delta)
@@ -3473,6 +3478,8 @@ func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires:
 			sh_action.set_meta("camo_covered", sh_camo)
 			if sh_lined:
 				_apply_shelter_lining_visual(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
+			else:
+				_remove_shelter_lining_visual(str(sh["id"]))
 			if sh_camo:
 				_apply_shelter_camo_visual(str(sh["id"]), sh["pos"], float(sh.get("yaw", 0.0)))
 			else:
@@ -5427,7 +5434,7 @@ func _make_dayz_stash_card(item, fallback_dict, drag_payload: Dictionary, on_act
 			var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 			if not only_mesh.is_empty():
 				colors.tint = Color(0.05, 0.05, 0.05)
-			thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
+			thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else str(item.item_name))
 			thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 		, CONNECT_ONE_SHOT)
 		img_holder.add_child(thumb)
@@ -5938,8 +5945,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 	var scale_value := _get_drop_scale(item_name, item_type)
 	# Default clothing pickups are pre-flattened in their GLB (smallest extent up)
 	# so they only need the survival garments to be tipped 90 deg here.
-	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño", "Gorra militar"] or MilitaryJackets.VARIANTS.has(item_name)
-	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones de piel", "Pantalones militares", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
+	var lay_flat := item_name in ["Botas survival", "Botas militares", "Chaqueta militar digital", "Pantalones cargo con rodilleras", "Chaqueta de otoño", "Pantalones de senderismo", "Botas de montaña", "Gorro de otoño", "Gorra militar", "Arco de madera", "Arco reforzado"] or MilitaryJackets.VARIANTS.has(item_name)
+	var pre_flat := item_name in ["Camiseta", "Pantalones", "Zapatillas", "Pantalones de piel", "Pantalones militares", "Guantes de piel", "Guantes militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert"]
 	var rot := Vector3(0, randf_range(0, 360), 0)
 	var corpse_kind := WildlifeController.corpse_species(item_name)
 	var is_rifle := item_type == "weapon_rifle"
@@ -5974,6 +5981,14 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			rag.position = pos + Vector3(0, 0.02, 0)
 			rag.rotation_degrees.y = randf_range(0, 360)
 			add_child(rag)
+		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+			var prim := MaterialFactory.build_primitive_item_mesh(item_name)
+			prim.name = visual_name
+			prim.position = pos + Vector3(0, 0.04, 0)
+			prim.rotation_degrees.y = randf_range(0, 360)
+			if item_name in ["Arco de madera", "Arco reforzado", "Lanza", "Lanza de hueso", "Palo afilado"]:
+				prim.rotation_degrees.x = 90.0
+			add_child(prim)
 		elif item_name == "Naranja":
 			_create_visual_sphere(visual_name, pos + Vector3(0, 0.15, 0), Vector3(0.15, 0.15, 0.15), Color(1.0, 0.5, 0.05))
 		elif item_name == "Pez crudo":
@@ -6148,8 +6163,21 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 		return [AutumnClothes.pickup_path(item_name)]
 	# Old saves can contain tools with the generic "tool" type. Resolve named
 	# tools first so the inventory thumbnail never falls back to a box model.
-	if item_name == "Hacha":
+	if item_name in ["Hacha", "Hacha de piedra"]:
 		return ["res://assets/models/props/simple_axe.glb", ROOT_GLB_DIR + "axe_survival.glb", SURVIVAL_TOOL_MODELS["axe"]]
+	match item_name:
+		"Arco de madera":
+			return ["res://assets/models/weapons/wooden_bow.glb"]
+		"Arco reforzado":
+			return ["res://assets/models/weapons/reinforced_bow.glb"]
+		"Flecha de madera":
+			return ["res://assets/models/weapons/arrow_wood.glb"]
+		"Flecha de piedra":
+			return ["res://assets/models/weapons/arrow_stone.glb"]
+		"Flecha de hueso":
+			return ["res://assets/models/weapons/arrow_bone.glb"]
+	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+		return []
 	# Harvested and bush-dropped seeds share the pouch model across item types.
 	if item_name == "Semillas":
 		return [FARMING_DIR + "farm_seed_pouch.glb"]
@@ -6197,7 +6225,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 		"tool_matches":
 			return ["res://assets/models/props/box_of_matches_north_korea_1955.glb"]
 		"food":
-			if item_name.begins_with("Carne cruda"):
+			if item_name.begins_with("Carne cruda") or item_name == "Carne seca":
 				return ["res://assets/models/props/cc0_-_raw_meat_4.glb"]
 			if item_name == "Carne ensartada" or item_name == "Carne cocinada" or item_name == "Carne asada en palo":
 				return ["res://assets/models/props/skewer_meat.tscn", "res://assets/models/props/cc0_-_raw_meat_4.glb"]
@@ -6294,7 +6322,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 					return ["res://assets/characters/adapted/pickup_soldier_legs.glb"]
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
 					return ["res://assets/characters/adapted/pickup_soldier_torso.glb"]
-				"Guantes militares":
+				"Guantes de piel", "Guantes militares":
 					return ["res://assets/characters/adapted/pickup_soldier_hands.glb"]
 				"Botas militares":
 					return ["res://assets/characters/adapted/pickup_military_boots.glb"]
@@ -6412,7 +6440,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 0.8
 				"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
 					return 0.8
-				"Guantes militares":
+				"Guantes de piel", "Guantes militares":
 					return 1.2
 				"Botas militares":
 					return 0.55
@@ -10029,6 +10057,7 @@ func _apply_fur_clothing_material(item_name: String, node: Node, pelt: String = 
 		"Chaqueta de piel": Color(0.29, 0.20, 0.12),
 		"Pantalones de piel": Color(0.26, 0.18, 0.11),
 		"Botas de piel": Color(0.38, 0.27, 0.16),
+		"Guantes de piel": Color(0.32, 0.22, 0.13),
 		"Gorro de piel": Color(0.31, 0.22, 0.13),
 	}
 	if fur_tints.has(item_name):
@@ -10797,7 +10826,7 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("El %s ya esta vacio." % an_name.to_lower().replace(" muerto", ""))
 				return
 			var held_g = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_g == null or (held_g.item_type != "weapon" and held_g.item_name != "Hacha"):
+			if held_g == null or (held_g.item_type not in ["weapon", "tool_axe"] and held_g.item_name not in ["Hacha", "Hacha de piedra", "Piedra afilada"]):
 				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para destripar.")
 				return
 			if held_g.has_method("is_broken") and held_g.is_broken():
@@ -10809,6 +10838,8 @@ func _execute_world_action(action, actor) -> void:
 			var meat_qty := 5
 			var hide_name := "Piel de lobo"
 			var hide_qty := 1
+			var bone_qty := 2
+			var sinew_qty := 1
 			match animal_kind:
 				"deer":
 					an_lower = "ciervo"
@@ -10816,17 +10847,23 @@ func _execute_world_action(action, actor) -> void:
 					meat_qty = 8
 					hide_name = "Piel de ciervo"
 					hide_qty = 2
+					bone_qty = 2
+					sinew_qty = 2
 				"fox":
 					an_lower = "zorro"
 					meat_name = "Carne cruda de zorro"
 					meat_qty = 3
 					hide_name = "Piel de zorro"
+					bone_qty = 1
+					sinew_qty = 1
 				"bear":
 					an_lower = "oso"
 					meat_name = "Carne cruda de oso"
 					meat_qty = 12
 					hide_name = "Piel de oso"
 					hide_qty = 4
+					bone_qty = 3
+					sinew_qty = 2
 				_:
 					an_lower = "lobo"
 					meat_name = "Carne cruda de lobo"
@@ -10870,7 +10907,12 @@ func _execute_world_action(action, actor) -> void:
 			var hide_id := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 			_spawn_ground_pickup(hide_name, "resource", hide_pos, 0.65, hide_qty, 0.0, hide_id)
 			gut_spawns.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
-			actor.notice.emit("Destripas %s: +%d carne y %d piel." % [an_lower, meat_qty, hide_qty])
+			if actor != null and actor.get("inventory") != null:
+				actor.inventory.add_item(ItemScript.create("Hueso", "resource", 0.18, bone_qty, 0.0))
+				actor.inventory.add_item(ItemScript.create("Tendón", "resource", 0.06, sinew_qty, 0.0))
+				actor.inventory.changed.emit()
+				call_deferred("_sync_local_player_inventory")
+			actor.notice.emit("Destripas %s: +%d carne, %d piel, %d hueso y %d tendón." % [an_lower, meat_qty, hide_qty, bone_qty, sinew_qty])
 			if held_g != null and held_g.has_method("reduce_durability"):
 				held_g.reduce_durability(6.0)
 				if held_g.is_broken():
@@ -10942,7 +10984,7 @@ func _execute_world_action(action, actor) -> void:
 			if str(item.item_type) == "clothing" and not CraftingSystem.is_rag_exempt(str(item.item_name)):
 				var _has_cut_tool := false
 				var _held = actor.get_held_item() if actor.has_method("get_held_item") else null
-				if _held != null and (str(_held.item_name) == "Cuchillo" or str(_held.item_name) == "Hacha"):
+				if _held != null and str(_held.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra"]:
 					_has_cut_tool = true
 				if _has_cut_tool:
 					_play_actor_action(actor, "forage", 3.0)
@@ -10996,7 +11038,10 @@ func _execute_world_action(action, actor) -> void:
 					# Already wearing the same item: drop the old one and equip the new
 					var _old_color: Color = actor.get_current_clothing_color(item.item_name)
 					actor.set_meta("last_dropped_camo", actor.clothing_has_camo(item.item_name))
+					var _prev_init: bool = bool(actor.get("_initializing"))
+					actor.set("_initializing", true)
 					actor.unequip_clothing(item.item_name)
+					actor.set("_initializing", _prev_init)
 					if actor.inventory != null:
 						for i in range(actor.inventory.items.size()):
 							if str(actor.inventory.items[i].item_name) == item.item_name:
@@ -11422,7 +11467,7 @@ func _execute_world_action(action, actor) -> void:
 				net.world_action_completed.rpc_id(1, action.action_id, tree_spawns, "tree_remains", tree_pos)
 		"fell_bush":
 			var held_b = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_b == null or (held_b.item_name != "Cuchillo" and held_b.item_name != "Hacha"):
+			if held_b == null or str(held_b.item_name) not in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra"]:
 				actor.notice.emit("Necesitas tener un cuchillo o hacha en la mano para cortar.")
 				return
 			if held_b.has_method("is_broken") and held_b.is_broken():
@@ -11605,48 +11650,6 @@ func _execute_world_action(action, actor) -> void:
 			if net != null and net.is_connected and not net.is_host:
 				net.world_action_completed.rpc_id(1, action.action_id, [], "cabin", action.position)
 		"shelter":
-			var held_sh_item = actor.get_held_item() if actor != null and actor.has_method("get_held_item") else null
-			var holds_camo := held_sh_item != null and str(held_sh_item.item_name) == "Tela de camuflaje"
-			if not bool(action.get_meta("camo_covered", false)) and _player_has_camo_net(actor) and (holds_camo or bool(action.get_meta("pelt_lined", false)) or not _player_has_pelts(actor, 4)):
-				_play_actor_action(actor, "forage", 1.8)
-				if hud != null:
-					hud.show_countdown("Cubriendo refugio con tela de camuflaje", 1.8)
-				await get_tree().create_timer(1.8).timeout
-				if _scene_quitting or not is_instance_valid(action): return
-				if not _actor_still_reaches(action, actor, 15.0):
-					return
-				if not _consume_player_camo_net(actor):
-					return
-				var camo_sh_id := str(action.action_id)
-				_apply_shelter_camo_state(camo_sh_id, true)
-				actor.notice.emit("Cubres el refugio con la tela de camuflaje. Puedes atravesar la entrada para entrar y salir.")
-				if net != null and net.is_connected:
-					if net.is_host:
-						net.shelter_camo_changed.rpc(camo_sh_id, true)
-					else:
-						net.shelter_camo_changed.rpc_id(1, camo_sh_id, true)
-						call_deferred("_sync_local_player_inventory")
-				return
-			if not bool(action.get_meta("pelt_lined", false)) and _player_has_pelts(actor, 4):
-				_play_actor_action(actor, "forage", 3.0)
-				if hud != null:
-					hud.show_countdown("Forrando refugio con piel", 3.0)
-				await get_tree().create_timer(3.0).timeout
-				if _scene_quitting or not is_instance_valid(action): return
-				if not _actor_still_reaches(action, actor, 15.0):
-					return
-				if not _consume_player_pelts(actor, 4):
-					return
-				var lined_id := str(action.action_id)
-				_apply_shelter_lining_state(lined_id)
-				actor.notice.emit("Forras el suelo del refugio con piel. Ahora conserva mejor el calor.")
-				if net != null and net.is_connected:
-					if net.is_host:
-						net.shelter_lined.rpc(lined_id)
-					else:
-						net.shelter_lined.rpc_id(1, lined_id)
-						call_deferred("_sync_local_player_inventory")
-				return
 			if bool(action.get_meta("camo_covered", false)):
 				_play_actor_action(actor, "forage", 1.5)
 				if hud != null:
@@ -11678,60 +11681,27 @@ func _execute_world_action(action, actor) -> void:
 						net.shelter_camo_changed.rpc_id(1, uncamo_sh_id, false)
 						call_deferred("_sync_local_player_inventory")
 				return
-			var stash_contents: Array = action.get_meta("contents", [])
-			if not stash_contents.is_empty():
-				actor.notice.emit("El refugio tiene objetos dentro. Sacalos con [K] antes de desmontarlo.")
+			if _player_has_camo_net(actor):
+				_play_actor_action(actor, "forage", 1.8)
+				if hud != null:
+					hud.show_countdown("Cubriendo refugio con tela de camuflaje", 1.8)
+				await get_tree().create_timer(1.8).timeout
+				if _scene_quitting or not is_instance_valid(action): return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
+				if not _consume_player_camo_net(actor):
+					return
+				var camo_sh_id := str(action.action_id)
+				_apply_shelter_camo_state(camo_sh_id, true)
+				actor.notice.emit("Cubres el refugio con la tela de camuflaje. Protege mejor del frío.")
+				if net != null and net.is_connected:
+					if net.is_host:
+						net.shelter_camo_changed.rpc(camo_sh_id, true)
+					else:
+						net.shelter_camo_changed.rpc_id(1, camo_sh_id, true)
+						call_deferred("_sync_local_player_inventory")
 				return
-			_play_actor_action(actor, "forage", 3.0)
-			if hud != null:
-				hud.show_countdown("Desmontando refugio", 3.0)
-			await get_tree().create_timer(3.0).timeout
-			if _scene_quitting: return
-			if not _actor_still_reaches(action, actor, 15.0):
-				return
-			var sh_id: String = action.action_id
-			# Remove shelter stick visuals
-			var stick_names := [
-				"PlayerShelter_%s_SupportA" % sh_id,
-				"PlayerShelter_%s_SupportB" % sh_id,
-			]
-			for i in range(9):
-				stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
-			stick_names.append("PlayerShelter_%s_Net" % sh_id)
-			stick_names.append("PlayerShelter_%s_PeltLining" % sh_id)
-			stick_names.append("PlayerShelter_%s_CamoNet" % sh_id)
-			for sn in stick_names:
-				var sn_node := get_node_or_null(sn)
-				if sn_node != null:
-					sn_node.queue_free()
-			# Give back 11 palos
-			var palo_item = ItemScript.create("Palo", "material", 0.3, 11, 0.0)
-			if not actor.inventory.add_item(palo_item):
-				# Inventory full or too heavy — drop palos on the ground
-				var drop_pos: Vector3 = Vector3(action.global_position) + Vector3(0.5, 0.0, 0.5)
-				drop_pos = _settle_drop_pos(drop_pos) + Vector3(0.0, 0.06, 0.0)
-				_spawn_ground_pickup("Palo", "material", drop_pos, 0.3, 11, 0.0)
-				_dropped_items.append({"id": "dismantle_palos_%d" % Time.get_ticks_msec(), "name": "Palo", "type": "material", "weight": 0.3, "qty": 11, "use": 0.0, "pos": [drop_pos.x, drop_pos.y, drop_pos.z]})
-				actor.notice.emit("No tienes espacio o peso para 11 palos. Los has dejado en el suelo.")
-			else:
-				actor.notice.emit("Desmontas el refugio. Recuperas 11 palos.")
-			if actor.has_method("refresh_carry_capacity"):
-				actor.refresh_carry_capacity()
-			actor.inventory.changed.emit()
-			# Remove from _built_shelters
-			for i in range(_built_shelters.size() - 1, -1, -1):
-				if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
-					_built_shelters.remove_at(i)
-			# Remove the world action
-			_hide_action_visual(action)
-			action.mark_depleted()
-			if not _depleted_action_ids.has(sh_id):
-				_depleted_action_ids.append(sh_id)
-			world_actions_by_id.erase(sh_id)
-			_save_world_change_silent()
-			# Notify server to remove shelter for other clients
-			if net != null and net.is_connected and not net.is_host:
-				net.shelter_dismantled.rpc_id(1, sh_id)
+			actor.notice.emit("Necesitas una Tela de camuflaje para cubrir el refugio (usa [C] para pieles o [N] para desmontar).")
 
 #endregion
 
@@ -11964,8 +11934,134 @@ func _execute_world_action_collect(action, actor) -> void:
 			action.mark_depleted()
 			_save_world_change_silent()
 			_net_notify_pickup(action)
+		"shelter":
+			if bool(action.get_meta("pelt_lined", false)):
+				_play_actor_action(actor, "forage", 1.8)
+				if hud != null:
+					hud.show_countdown("Retirando pieles del suelo", 1.8)
+				await get_tree().create_timer(1.8).timeout
+				if _scene_quitting or not is_instance_valid(action): return
+				if not _actor_still_reaches(action, actor, 15.0):
+					return
+				if not bool(action.get_meta("pelt_lined", false)):
+					return
+				var unline_id := str(action.action_id)
+				_apply_shelter_lining_state(unline_id, false)
+				var pelt_item = ItemScript.create("Piel de lobo", "resource", 0.65, 4, 0.0)
+				if not _receive_pickup_item(actor, pelt_item):
+					var p_drop: Vector3 = Vector3(action.global_position) + Vector3(-0.4, 0.0, 0.4)
+					p_drop = _settle_drop_pos(p_drop) + Vector3(0.0, 0.06, 0.0)
+					_spawn_ground_pickup("Piel de lobo", "resource", p_drop, 0.65, 4, 0.0)
+					_dropped_items.append({"id": "unline_pelts_%d" % Time.get_ticks_msec(), "name": "Piel de lobo", "type": "resource", "weight": 0.65, "qty": 4, "use": 0.0, "pos": [p_drop.x, p_drop.y, p_drop.z]})
+					actor.notice.emit("Quitas las 4 pieles del suelo. No cabían en el inventario y han quedado en el suelo.")
+				else:
+					actor.notice.emit("Quitas las 4 pieles del suelo del refugio.")
+				if actor.has_method("refresh_carry_capacity"):
+					actor.refresh_carry_capacity()
+				actor.inventory.changed.emit()
+				if net != null and net.is_connected:
+					if net.is_host:
+						net.shelter_lined.rpc(unline_id, false)
+					else:
+						net.shelter_lined.rpc_id(1, unline_id, false)
+						call_deferred("_sync_local_player_inventory")
+				return
+			if not _player_has_pelts(actor, 4):
+				actor.notice.emit("Necesitas 4 pieles en el inventario para forrar el suelo del refugio.")
+				return
+			_play_actor_action(actor, "forage", 3.0)
+			if hud != null:
+				hud.show_countdown("Forrando refugio con piel", 3.0)
+			await get_tree().create_timer(3.0).timeout
+			if _scene_quitting or not is_instance_valid(action): return
+			if not _actor_still_reaches(action, actor, 15.0):
+				return
+			if not _consume_player_pelts(actor, 4):
+				return
+			var lined_id := str(action.action_id)
+			_apply_shelter_lining_state(lined_id, true)
+			actor.notice.emit("Forras el suelo del refugio con piel. Ahora protege mejor del frío.")
+			if net != null and net.is_connected:
+				if net.is_host:
+					net.shelter_lined.rpc(lined_id, true)
+				else:
+					net.shelter_lined.rpc_id(1, lined_id, true)
+					call_deferred("_sync_local_player_inventory")
+			return
 		_:
 			await _execute_world_action(action, actor)
+
+func handle_shelter_dismantle(action, actor) -> void:
+	if action == null or not is_instance_valid(action) or str(action.action_type) != "shelter":
+		return
+	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
+		return
+	if actor != null:
+		actor.set("_interact_busy", true)
+	if await _acquire_world_pickup(action, actor):
+		await _execute_shelter_dismantle(action, actor)
+		_release_world_pickup(action)
+	if is_instance_valid(actor):
+		actor.set("_interact_busy", false)
+
+func _execute_shelter_dismantle(action, actor) -> void:
+	if not is_instance_valid(action):
+		return
+	var stash_contents: Array = action.get_meta("contents", [])
+	if not stash_contents.is_empty():
+		actor.notice.emit("El refugio tiene objetos dentro. Sacalos con [K] antes de desmontarlo.")
+		return
+	if bool(action.get_meta("camo_covered", false)):
+		actor.notice.emit("Retira primero la tela de camuflaje con [F] antes de desmontar el refugio.")
+		return
+	if bool(action.get_meta("pelt_lined", false)):
+		actor.notice.emit("Retira primero las pieles del suelo con [C] antes de desmontar el refugio.")
+		return
+	_play_actor_action(actor, "forage", 3.0)
+	if hud != null:
+		hud.show_countdown("Desmontando refugio", 3.0)
+	await get_tree().create_timer(3.0).timeout
+	if _scene_quitting or not is_instance_valid(action):
+		return
+	if not _actor_still_reaches(action, actor, 15.0):
+		return
+	var sh_id: String = action.action_id
+	var stick_names := [
+		"PlayerShelter_%s_SupportA" % sh_id,
+		"PlayerShelter_%s_SupportB" % sh_id,
+	]
+	for i in range(9):
+		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+	stick_names.append("PlayerShelter_%s_Net" % sh_id)
+	stick_names.append("PlayerShelter_%s_PeltLining" % sh_id)
+	stick_names.append("PlayerShelter_%s_CamoNet" % sh_id)
+	for sn in stick_names:
+		var sn_node := get_node_or_null(sn)
+		if sn_node != null:
+			sn_node.queue_free()
+	var palo_item = ItemScript.create("Palo", "material", 0.3, 11, 0.0)
+	if not actor.inventory.add_item(palo_item):
+		var drop_pos: Vector3 = Vector3(action.global_position) + Vector3(0.5, 0.0, 0.5)
+		drop_pos = _settle_drop_pos(drop_pos) + Vector3(0.0, 0.06, 0.0)
+		_spawn_ground_pickup("Palo", "material", drop_pos, 0.3, 11, 0.0)
+		_dropped_items.append({"id": "dismantle_palos_%d" % Time.get_ticks_msec(), "name": "Palo", "type": "material", "weight": 0.3, "qty": 11, "use": 0.0, "pos": [drop_pos.x, drop_pos.y, drop_pos.z]})
+		actor.notice.emit("No tienes espacio o peso para 11 palos. Los has dejado en el suelo.")
+	else:
+		actor.notice.emit("Desmontas el refugio. Recuperas 11 palos.")
+	if actor.has_method("refresh_carry_capacity"):
+		actor.refresh_carry_capacity()
+	actor.inventory.changed.emit()
+	for i in range(_built_shelters.size() - 1, -1, -1):
+		if _built_shelters[i] is Dictionary and str(_built_shelters[i].get("id", "")) == sh_id:
+			_built_shelters.remove_at(i)
+	_hide_action_visual(action)
+	action.mark_depleted()
+	if not _depleted_action_ids.has(sh_id):
+		_depleted_action_ids.append(sh_id)
+	world_actions_by_id.erase(sh_id)
+	_save_world_change_silent()
+	if net != null and net.is_connected and not net.is_host:
+		net.shelter_dismantled.rpc_id(1, sh_id)
 
 func handle_world_action_eat(action, actor) -> void:
 	# Mismo guard que handle_world_action: bloquear interacciones concurrentes
@@ -12438,29 +12534,44 @@ func _apply_shelter_lining_visual(sh_id: String, pos: Vector3, yaw: float) -> vo
 		lining.add_child(patch_mesh)
 	lining.add_to_group("world_action_visual")
 
-func _apply_shelter_lining_state(sh_id: String) -> bool:
+func _remove_shelter_lining_visual(sh_id: String) -> void:
+	var node_name := "PlayerShelter_%s_PeltLining" % sh_id
+	var old := get_node_or_null(NodePath(node_name))
+	if old != null:
+		if old.get_parent() != null:
+			old.get_parent().remove_child(old)
+		old.free()
+
+func _apply_shelter_lining_state(sh_id: String, lined: bool = true) -> bool:
 	var action = world_actions_by_id.get(sh_id)
 	if action != null and is_instance_valid(action):
-		if bool(action.get_meta("pelt_lined", false)):
-			return true
-		action.set_meta("pelt_lined", true)
+		action.set_meta("pelt_lined", lined)
 	var found := false
 	for entry in _built_shelters:
 		if str(entry.get("id", "")) == sh_id:
 			found = true
-			entry["pelt_lined"] = true
+			entry["pelt_lined"] = lined
 			var p = entry.get("pos", action.global_position if (action != null and is_instance_valid(action)) else Vector3.ZERO)
 			if p is Array:
 				p = Vector3(float(p[0]), float(p[1]), float(p[2]))
+			var yw := float(entry.get("yaw", action.rotation.y if (action != null and is_instance_valid(action)) else 0.0))
 			if net == null or not net.is_dedicated_server:
-				_apply_shelter_lining_visual(sh_id, p, float(entry.get("yaw", action.rotation.y if (action != null and is_instance_valid(action)) else 0.0)))
+				if lined:
+					_apply_shelter_lining_visual(sh_id, p, yw)
+				else:
+					_remove_shelter_lining_visual(sh_id)
 			break
 	if not found and (action == null or not is_instance_valid(action)):
 		return false
+	if not found and action != null and is_instance_valid(action) and (net == null or not net.is_dedicated_server):
+		if lined:
+			_apply_shelter_lining_visual(sh_id, action.global_position, action.rotation.y)
+		else:
+			_remove_shelter_lining_visual(sh_id)
 	_save_world_change_silent()
 	return true
 
-func _net_shelter_lined(sh_id: String, sender_id: int = 0) -> bool:
+func _net_shelter_lined(sh_id: String, sender_id: int = 0, lined: bool = true) -> bool:
 	var action = world_actions_by_id.get(sh_id)
 	var sh_pos := _backpack_drop_pos(sh_id, action)
 	if sh_pos == Vector3.INF:
@@ -12468,7 +12579,7 @@ func _net_shelter_lined(sh_id: String, sender_id: int = 0) -> bool:
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, sh_pos, 8.0):
 			return false
-	return _apply_shelter_lining_state(sh_id)
+	return _apply_shelter_lining_state(sh_id, lined)
 
 func _fit_shelter_net(sh_id: String) -> void:
 	var net_node := get_node_or_null("PlayerShelter_%s_Net" % sh_id) as Node3D
@@ -13518,7 +13629,23 @@ func _is_near_pelt_lined_shelter(pos: Vector3) -> bool:
 			shelter_pos = Vector3(float(raw_pos[0]), float(raw_pos[1]), float(raw_pos[2]))
 		else:
 			continue
-		if pos.distance_to(shelter_pos) < 1.8:
+		if pos.distance_to(shelter_pos) < 2.8:
+			return true
+	return false
+
+func _is_near_camo_covered_shelter(pos: Vector3) -> bool:
+	for sh in _built_shelters:
+		if not bool(sh.get("camo_covered", false)):
+			continue
+		var raw_pos = sh.get("pos", sh)
+		var shelter_pos: Vector3
+		if raw_pos is Vector3:
+			shelter_pos = raw_pos
+		elif raw_pos is Array and raw_pos.size() >= 3:
+			shelter_pos = Vector3(float(raw_pos[0]), float(raw_pos[1]), float(raw_pos[2]))
+		else:
+			continue
+		if pos.distance_to(shelter_pos) < 2.8:
 			return true
 	return false
 

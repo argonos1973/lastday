@@ -63,6 +63,7 @@ const SURVIVAL_CLOTHING := {
 	"Guantes survival": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
 	"Botas survival": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.05, 0.05, 0.05)},
 	"Botas de piel": {"mesh": "cloth_feet", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.35, 0.24, 0.13)},
+	"Guantes de piel": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": [], "tint": Color(0.32, 0.22, 0.13)},
 	"Botas militares": {"mesh": "military_boots", "hides": ["Shoes"], "skin_hides": ["Desnudo_feet"], "body_hides": ["Body_feet"], "tint": Color(0.10, 0.10, 0.075)},
 	"Pantalones militares": {"mesh": "soldier_legs", "hides": ["Bottoms"], "skin_hides": ["Desnudo_legs"], "body_hides": ["Body_legs"]},
 	"Guantes militares": {"mesh": "cloth_hands", "hides": [], "skin_hides": ["Desnudo_hands"], "body_hides": []},
@@ -111,6 +112,7 @@ const DEFAULT_SKIN_HIDES := {
 	"Chaqueta de piel": ["Desnudo_torso", "Desnudo_arms"],
 	"Pantalones de piel": ["Desnudo_legs"],
 	"Botas de piel": ["Desnudo_feet"],
+	"Guantes de piel": ["Desnudo_hands"],
 	"Chaqueta de campaña verde": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de campaña azul": ["Desnudo_torso", "Desnudo_arms"],
 	"Chaqueta de campaña arena": ["Desnudo_torso", "Desnudo_arms"],
@@ -164,6 +166,7 @@ const CLOTHING_COVERED_ZONES := {
 	"Chaqueta de piel": ["torso", "brazos"],
 	"Pantalones de piel": ["cadera", "piernas"],
 	"Botas de piel": ["pies"],
+	"Guantes de piel": ["manos"],
 	"Chaqueta de campaña verde": ["torso", "brazos"],
 	"Chaqueta de campaña azul": ["torso", "brazos"],
 	"Chaqueta de campaña arena": ["torso", "brazos"],
@@ -207,6 +210,7 @@ const CLOTHING_SLOTS := {
 	"Chaqueta de piel": "torso",
 	"Pantalones de piel": "legs",
 	"Botas de piel": "feet",
+	"Guantes de piel": "hands",
 	"Chaqueta de campaña verde": "torso",
 	"Chaqueta de campaña azul": "torso",
 	"Chaqueta de campaña arena": "torso",
@@ -253,6 +257,7 @@ const CLOTHING_WARMTH := {
 	"Chaqueta de piel": 0.85,
 	"Pantalones de piel": 0.55,
 	"Botas de piel": 0.48,
+	"Guantes de piel": 0.28,
 	"Chaqueta de campaña verde": 0.32,
 	"Chaqueta de campaña azul": 0.32,
 	"Chaqueta de campaña arena": 0.32,
@@ -307,13 +312,20 @@ const CLOTHING_HEAT_PROTECTION := {
 # Heavy clothing retains heat (bad in hot weather); light/short items ventilate (good in hot weather).
 # 0.0 = neutral, positive = retains heat, negative = ventilates (cools down).
 const CLOTHING_HEAT_RETENTION := {
+	"Chaqueta de piel": 0.45,
 	"Pantalones de piel": 0.24,
+	"Botas de piel": 0.20,
+	"Guantes de piel": 0.14,
+	"Gorro de piel": 0.18,
+	"Tocado de piel animal": 0.22,
+	"Pasamontañas": 0.16,
+	"Pasamontañas navideño": 0.16,
 	"Chaqueta de campaña verde": 0.26,
 	"Chaqueta de campaña azul": 0.26,
 	"Chaqueta de campaña arena": 0.26,
-	"Camiseta": 0.0,
-	"Pantalones": 0.05,
-	"Zapatillas": 0.0,
+	"Camiseta": 0.04,
+	"Pantalones": 0.06,
+	"Zapatillas": 0.03,
 	"Guantes survival": 0.05,
 	"Botas survival": 0.10,
 	"Botas militares": 0.14,
@@ -331,8 +343,14 @@ const CLOTHING_HEAT_RETENTION := {
 	"Guantes de trabajo": 0.05,
 	"Sombrero de pescador": 0.0,
 	"Gorra militar": 0.02,
+	"Gorro de otoño": 0.10,
 	"Casco militar": 0.06,
 	"Chaqueta de cuadros": 0.36,
+	"Chaqueta de otoño": 0.34,
+	"Chaqueta militar digital": 0.34,
+	"Pantalones de senderismo": 0.20,
+	"Pantalones cargo con rodilleras": 0.20,
+	"Botas de montaña": 0.14,
 	"Chaleco táctico": 0.15,
 }
 
@@ -442,6 +460,15 @@ const MELEE_DEATH_ANIMATION_GLB := "res://assets/animations/Standing Death Forwa
 const HIT_ANIMATION_GLB := "res://assets/animations/Head Hit.glb"
 const SHOT_ANIMATION_GLB := "res://assets/animations/RecibirDisparo.glb"
 const GIVE_FOOD_ANIMATION_GLB := "res://assets/animations/GiveFood.glb"
+const BOW_SHOOT_ANIMATION_GLB := "res://assets/animations/BowShoot.glb"
+const BOW_AIM_IDLE_ANIMATION_GLB := "res://assets/animations/BowAimIdle.glb"
+const THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION := "BowShootExternal"
+const THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION := "BowAimIdleExternal"
+const WOODEN_BOW_MODEL := "res://assets/models/weapons/wooden_bow.glb"
+const REINFORCED_BOW_MODEL := "res://assets/models/weapons/reinforced_bow.glb"
+const ARROW_WOOD_MODEL := "res://assets/models/weapons/arrow_wood.glb"
+const ARROW_STONE_MODEL := "res://assets/models/weapons/arrow_stone.glb"
+const ARROW_BONE_MODEL := "res://assets/models/weapons/arrow_bone.glb"
 # Swing timers: the clip's contact frame, and the lead so the whoosh peaks
 # just before impact instead of firing at click time.
 const MELEE_PUNCH_IMPACT_DELAY := 0.95
@@ -626,6 +653,8 @@ var _rifle_prone_animation := ""
 var _rifle_getup_animation := ""
 var _rifle_sit_fire_animation := ""
 var _rifle_prone_fire_animation := ""
+var _bow_shoot_animation := ""
+var _bow_aim_idle_animation := ""
 var _torch_idle_animation := ""
 var _torch_walk_animation := ""
 var _torch_run_animation := ""
@@ -1474,8 +1503,12 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_flashlight()
 		"Caña de pescar":
 			_build_third_person_fishing_rod()
-		"Palo afilado", "Lanza":
-			_build_third_person_resource("Palo afilado")
+		"Palo afilado", "Lanza", "Lanza de hueso":
+			_build_third_person_primitive(item_name)
+		"Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
+			_build_third_person_primitive(item_name)
+		"Hacha de piedra":
+			_build_third_person_axe()
 		"Cerillas":
 			_add_held_box(third_person_hand_item_root, "HeldMatches", Vector3(0.12, 0.05, 0.075), Vector3.ZERO, Color(0.38, 0.16, 0.07), Vector3.ZERO)
 		"Botella de agua":
@@ -1643,19 +1676,20 @@ func _process(delta: float) -> void:
 		var fatigue_mult := 1.0
 		if stats != null:
 			fatigue_mult = 1.0 + (1.0 - clamp(stats.energy / 100.0, 0.0, 1.0)) * 1.5
-		var breath_amp_pitch := 2.5 * fatigue_mult
-		var breath_amp_yaw := 1.8 * fatigue_mult
+		var is_m4_aim := _held_is_m4()
+		var mag_scale := 1.0
+		if not is_m4_aim:
+			var mags := _rifle_scope_mags()
+			var mag: float = float(mags[clampi(_scope_zoom_index, 0, mags.size() - 1)]) if not mags.is_empty() else 4.0
+			mag_scale = sqrt(4.0 / maxf(mag, 1.0))
+		var breath_amp_pitch := (0.65 if is_m4_aim else 0.35 * mag_scale) * fatigue_mult
+		var breath_amp_yaw := (0.48 if is_m4_aim else 0.25 * mag_scale) * fatigue_mult
 		if _breath_hold_active:
 			breath_amp_pitch = 0.0
 			breath_amp_yaw = 0.0
-		_breath_pitch_offset = deg_to_rad(breath_amp_pitch * sin(_breath_timer * 1.2))
-		_breath_yaw_offset = deg_to_rad(breath_amp_yaw * sin(_breath_timer * 0.8))
-		if is_prone:
-			_breath_pitch_offset *= 0.3
-			_breath_yaw_offset *= 0.3
-		elif is_crouching:
-			_breath_pitch_offset *= 0.5
-			_breath_yaw_offset *= 0.5
+		var stance_mult := 0.12 if is_prone else (0.28 if (is_crouching or is_sitting) else 1.0)
+		_breath_pitch_offset = deg_to_rad(breath_amp_pitch * sin(_breath_timer * 1.2)) * stance_mult
+		_breath_yaw_offset = deg_to_rad(breath_amp_yaw * sin(_breath_timer * 0.8)) * stance_mult
 	_crosshair_check_timer += delta
 	if _crosshair_check_timer >= 0.5:
 		_crosshair_check_timer = 0.0
@@ -1974,10 +2008,16 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 			return
 	_capture_mouse()
 	var has_rifle := _has_rifle_equipped()
+	var has_bow := _has_bow_equipped()
+	var has_throwable := _has_throwable_weapon_equipped()
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		if has_rifle:
 			_fire_button_held = true
 			_shoot_rifle()
+		elif has_bow:
+			_shoot_bow()
+		elif has_throwable and _is_aiming:
+			_throw_aimed_weapon()
 		else:
 			_melee_attack()
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
@@ -1989,7 +2029,7 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 			_interact()
 		elif rmb_target != null and _right_click_interact(rmb_target):
 			pass
-		elif has_rifle and not _is_aiming:
+		elif (has_rifle or has_bow or has_throwable) and not _is_aiming:
 			_toggle_aim()
 		else:
 			_quick_use_held_item()
@@ -2145,7 +2185,10 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 		if not prev_name.is_empty() and prev_name != item_name:
 			var prev_color := get_current_clothing_color(prev_name)
 			set_meta("last_dropped_camo", clothing_has_camo(prev_name))
+			var prev_init := _initializing
+			_initializing = true
 			unequip_clothing(prev_name)
+			_initializing = prev_init
 			# Remove old clothing from inventory and drop it on the ground
 			if inventory != null:
 				for i in range(inventory.items.size()):
@@ -3435,6 +3478,7 @@ func _drop_excess_items(count: int) -> void:
 func _recalculate_warmth() -> void:
 	if stats == null:
 		return
+	var prev_warmth: float = stats.warmth_bonus
 	var total := 0.0
 	for slot in _equipped_slots:
 		var item_name: String = str(_equipped_slots[slot])
@@ -3443,6 +3487,10 @@ func _recalculate_warmth() -> void:
 			if str(_equipped_pelt.get(item_name, "")) == "oso":
 				total += 0.10
 	stats.warmth_bonus = total
+	if not _initializing and total < prev_warmth:
+		var lost_warmth := prev_warmth - total
+		var cooling_drop := clampf(lost_warmth * 0.55, 0.04, 1.0)
+		stats.body_temperature = maxf(34.0, stats.body_temperature - cooling_drop)
 	stats.changed.emit()
 
 func _recalculate_heat_protection() -> void:
@@ -4418,6 +4466,9 @@ func _update_barefoot(delta: float) -> void:
 		if feet_item != null:
 			feet_cover_wet = float(feet_item.wetness)
 	var feet_chill := 1.0 if barefoot else feet_cover_wet * 0.65
+	var cur_main := get_tree().current_scene if is_inside_tree() and get_tree() != null else null
+	if cur_main != null and cur_main.has_method("_is_near_pelt_lined_shelter") and bool(cur_main._is_near_pelt_lined_shelter(global_position)):
+		feet_chill = 0.0
 	if feet_chill > 0.0 and _is_on_walkable_ground() and not is_in_water:
 		var ambient := _ambient_temperature()
 		if ambient < FEET_COLD_AMBIENT:
@@ -4931,6 +4982,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	# Cooperative feed gesture (GiveFood.glb) — loaded for puppets too so the
 	# giver plays the same synced clip on every client.
 	_load_give_food_animation()
+	_load_bow_animations()
 	if third_person_animation_player.has_animation("external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION):
 		_rifle_sit_animation = "external/" + THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		var rifle_sit_anim := third_person_animation_player.get_animation(_rifle_sit_animation)
@@ -5768,6 +5820,10 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 				target_animation = third_person_interact_animation
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
+		"bow_shoot":
+			target_animation = _bow_shoot_animation
+			if target_animation.is_empty():
+				target_animation = third_person_attack_animation
 		"interact", "chop":
 			target_animation = third_person_attack_animation
 			if target_animation.is_empty():
@@ -6191,7 +6247,7 @@ func get_held_item():
 
 func has_axe_in_hand() -> bool:
 	var item = get_held_item()
-	return item != null and str(item.item_name) == "Hacha" and (not item.has_method("is_broken") or not item.is_broken())
+	return item != null and (str(item.item_name) in ["Hacha", "Hacha de piedra"] or str(item.item_type) == "tool_axe") and (not item.has_method("is_broken") or not item.is_broken())
 
 #endregion
 
@@ -7198,8 +7254,12 @@ func _sync_third_person_equipment(held_item) -> void:
 	var held_name := str(held_item.item_name)
 	# Older saves can retain Hacha with the generic "tool" type. Resolve by
 	# name before the generic tool/flashlight fallback so it always gets the axe.
-	if held_name == "Hacha":
+	if held_name in ["Hacha", "Hacha de piedra"]:
 		_build_third_person_axe()
+		_clear_rifle_attachment()
+		return
+	if held_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+		_build_third_person_primitive(held_name)
 		_clear_rifle_attachment()
 		return
 	if flashlight.visible and str(held_item.item_type) == "tool" and held_name in ["Linterna", "Flashlight"]:
@@ -7365,6 +7425,7 @@ func _build_held_clothing(item_name: String) -> void:
 			path = str(GameConst.PELT_HEADDRESS.get(held_pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
 		"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
 		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
+		"Guantes de piel": path = "res://assets/characters/adapted/pickup_soldier_hands.glb"
 		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		"Botas de piel": path = "res://assets/characters/adapted/pickup_military_boots.glb"
 		_:
@@ -7481,7 +7542,7 @@ func _is_back_only_item(item) -> bool:
 	if item == null:
 		return false
 	var item_type := str(item.item_type)
-	return item_type == "weapon_rifle" or item_type == "tool_fishing" or item_type == "tool_spear" or str(item.item_name) == "Palo afilado"
+	return item_type == "weapon_rifle" or item_type == "weapon_bow" or item_type == "tool_fishing" or item_type == "tool_spear" or str(item.item_name) in ["Palo afilado", "Lanza", "Lanza de hueso"]
 
 func receive_pickup_item(item) -> bool:
 	if item == null or inventory == null:
@@ -7554,14 +7615,14 @@ func can_store_item_on_back(item) -> bool:
 	if item == null or inventory == null or _find_free_back_slot() < 0:
 		return false
 	var item_type := str(item.item_type)
-	if item_type == "weapon_rifle":
+	if item_type == "weapon_rifle" or item_type == "weapon_bow":
 		return true
 	# Una caña hecha con cuerda ya lleva su propio cordel y se puede colgar.
 	if item_type == "tool_fishing":
 		return str(item.item_name) in ["Caña de pescar", "Caña simple"] or inventory.has_item_name("Cuerda")
-	# El palo afilado necesita una cuerda disponible para sujetarlo a la espalda.
-	if item_type == "tool_spear" or str(item.item_name) == "Palo afilado":
-		return inventory.has_item_name("Cuerda")
+	# El palo afilado o lanza necesita una cuerda disponible para sujetarlo a la espalda.
+	if item_type == "tool_spear" or str(item.item_name) in ["Palo afilado", "Lanza", "Lanza de hueso"]:
+		return str(item.item_name) == "Lanza de hueso" or inventory.has_item_name("Cuerda")
 	return false
 
 func get_back_item_data(slot: int) -> Dictionary:
@@ -7737,13 +7798,23 @@ func _build_stored_back_visual(slot: int) -> void:
 		return
 	var path := ""
 	var item_type := str(data.get("type", ""))
-	if item_type == "weapon_rifle":
-		path = _rifle_model_path_for(str(data.get("name", "")))
-	elif item_type == "tool_fishing":
-		path = ROD_MODEL_PATH
+	var item_name := str(data.get("name", ""))
+	var visual: Node3D = null
+	if item_type == "weapon_bow":
+		var bpath := REINFORCED_BOW_MODEL if item_name == "Arco reforzado" else WOODEN_BOW_MODEL
+		visual = _load_external_node3d(bpath)
+		if visual == null:
+			visual = MaterialFactory.build_primitive_item_mesh(item_name)
+	elif item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		visual = MaterialFactory.build_primitive_item_mesh(item_name)
 	else:
-		path = REAL_WOOD_STICK_MODEL
-	var visual := _load_external_node3d(path)
+		if item_type == "weapon_rifle":
+			path = _rifle_model_path_for(item_name)
+		elif item_type == "tool_fishing":
+			path = ROD_MODEL_PATH
+		else:
+			path = REAL_WOOD_STICK_MODEL
+		visual = _load_external_node3d(path)
 	if visual == null:
 		return
 	var container := Node3D.new()
@@ -9624,6 +9695,28 @@ func _build_third_person_resource(item_name: String) -> void:
 func _build_third_person_seed_bag() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, "res://assets/models/props/farming/farm_seed_pouch.glb", "HeldSeeds", Vector3(0, -0.07, -0.03), Vector3.ZERO, Vector3.ONE)
 
+func _build_third_person_primitive(item_name: String) -> void:
+	if third_person_hand_item_root == null:
+		return
+	var glb_path := ""
+	match item_name:
+		"Arco de madera": glb_path = WOODEN_BOW_MODEL
+		"Arco reforzado": glb_path = REINFORCED_BOW_MODEL
+		"Flecha de madera": glb_path = ARROW_WOOD_MODEL
+		"Flecha de piedra": glb_path = ARROW_STONE_MODEL
+		"Flecha de hueso": glb_path = ARROW_BONE_MODEL
+	var prim: Node3D = null
+	if not glb_path.is_empty():
+		prim = _load_external_node3d(glb_path)
+	if prim == null:
+		prim = MaterialFactory.build_primitive_item_mesh(item_name)
+	prim.name = "HeldPrimitive"
+	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		prim.rotation_degrees = Vector3(85.0, 0.0, 0.0)
+	elif item_name in ["Arco de madera", "Arco reforzado"]:
+		prim.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+	third_person_hand_item_root.add_child(prim)
+
 # Bundle de ropa: sin modelo 3P diferenciado, usa pack genérico
 func _build_third_person_clothing_bundle() -> void:
 	_build_third_person_pack()
@@ -9888,15 +9981,17 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		var fatigue_mult := 1.0
 		if stats != null:
 			fatigue_mult = 1.0 + (1.0 - clamp(stats.energy / 100.0, 0.0, 1.0)) * 1.5
+		var pos_stance_mult := 0.12 if is_prone else (0.28 if (is_crouching or is_sitting) else 1.0)
+		var pos_rifle_mult := 1.0 if _held_is_m4() else 0.35
 		if not is_moving:
-			breath_sway_x = sin(_breath_timer * 0.8) * 0.02 * fatigue_mult
-			breath_sway_y = sin(_breath_timer * 1.2) * 0.015 * fatigue_mult
+			breath_sway_x = sin(_breath_timer * 0.8) * 0.02 * fatigue_mult * pos_stance_mult * pos_rifle_mult
+			breath_sway_y = sin(_breath_timer * 1.2) * 0.015 * fatigue_mult * pos_stance_mult * pos_rifle_mult
 			if _breath_hold_active:
 				breath_sway_x = 0.0
 				breath_sway_y = 0.0
 		else:
 			# Weapon sway when moving while aiming: more intense bob
-			var move_sway: float = 0.02 * _walk_intensity
+			var move_sway: float = 0.02 * _walk_intensity * pos_stance_mult * pos_rifle_mult
 			breath_sway_x = sin(_walk_bob * 0.5) * move_sway
 			breath_sway_y = abs(sin(_walk_bob)) * move_sway * 0.7
 			if not is_on_floor():
@@ -10167,6 +10262,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_idle_animation
 			elif third_person_has_real_idle:
 				target_animation = third_person_idle_animation
+		elif _has_bow_equipped() and _is_aiming and not moving and not _bow_aim_idle_animation.is_empty():
+			target_animation = _bow_aim_idle_animation
 		elif moving:
 			if low_health:
 				target_animation = third_person_low_health_animation
@@ -10625,7 +10722,7 @@ func _right_click_interact(target) -> bool:
 		return false
 	var best_pos := -1
 	var best_tag := ""
-	for tag in ["[F]", "[C]", "[M]", "[K]"]:
+	for tag in ["[F]", "[C]", "[M]", "[N]", "[K]"]:
 		var tag_pos := prompt.find(tag)
 		if tag_pos >= 0 and (best_pos < 0 or tag_pos < best_pos):
 			best_pos = tag_pos
@@ -10640,6 +10737,8 @@ func _right_click_interact(target) -> bool:
 				_collect()
 		"[M]":
 			_eat_action()
+		"[N]":
+			_light_action()
 		"[K]":
 			_open_pointed_container(target)
 		_:
@@ -11370,6 +11469,56 @@ func _load_give_food_animation() -> void:
 	if third_person_animation_player.has_animation("give/" + THIRD_PERSON_EXTERNAL_GIVE_ANIMATION):
 		third_person_give_animation = "give/" + THIRD_PERSON_EXTERNAL_GIVE_ANIMATION
 
+func _load_bow_animations() -> void:
+	if third_person_animation_player == null:
+		return
+	var skel := _find_skeleton(third_person_model)
+	if skel == null:
+		return
+	var bow_lib := AnimationLibrary.new()
+	var clips := {
+		THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION: [BOW_SHOOT_ANIMATION_GLB, Animation.LOOP_NONE],
+		THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION: [BOW_AIM_IDLE_ANIMATION_GLB, Animation.LOOP_LINEAR],
+	}
+	for anim_key in clips:
+		var glb_path: String = clips[anim_key][0]
+		var loop_mode: int = clips[anim_key][1]
+		if not ResourceLoader.exists(glb_path):
+			continue
+		var loaded = load(glb_path)
+		if not (loaded is PackedScene):
+			continue
+		var instance = (loaded as PackedScene).instantiate()
+		if not (instance is Node3D):
+			if instance != null:
+				instance.queue_free()
+			continue
+		var src_skeleton := _find_skeleton(instance)
+		var src_anim_player := _find_animation_player(instance)
+		var best_anim: Animation = null
+		var best_length := 0.0
+		if src_anim_player != null:
+			for src_anim_name in src_anim_player.get_animation_list():
+				var candidate: Animation = src_anim_player.get_animation(src_anim_name)
+				if candidate != null and candidate.length > best_length:
+					best_length = candidate.length
+					best_anim = candidate
+		if best_anim != null:
+			var copied := best_anim.duplicate(true)
+			copied.loop_mode = loop_mode
+			copied.step = 0.0166667
+			_retarget_animation_to_character_skeleton(copied)
+			_retarget_rotation_tracks_with_source(copied, skel, src_skeleton)
+			_remove_non_hips_position_tracks(copied, false, 0.0)
+			bow_lib.add_animation(anim_key, copied)
+		instance.queue_free()
+	if bow_lib.get_animation_list().size() > 0:
+		third_person_animation_player.add_animation_library("bow", bow_lib)
+	if third_person_animation_player.has_animation("bow/" + THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION):
+		_bow_shoot_animation = "bow/" + THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
+	if third_person_animation_player.has_animation("bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION):
+		_bow_aim_idle_animation = "bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
+
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
 		return
@@ -12029,8 +12178,23 @@ func _melee_attack() -> void:
 				base_damage = 60.0
 				energy_cost = 4.0
 				is_knife = true
+				if held.item_name == "Lanza":
+					base_damage = 75.0
+					attack_range = 3.6
+				elif held.item_name == "Lanza de hueso":
+					base_damage = 85.0
+					attack_range = 3.6
+				elif held.item_name == "Cuchillo de piedra":
+					base_damage = 45.0
+				elif held.item_name == "Cuchillo de hueso":
+					base_damage = 52.0
+			"tool_spear":
+				base_damage = 50.0
+				energy_cost = 5.0
+				attack_range = 3.5
+				is_knife = true
 			"tool_axe":
-				base_damage = 65.0
+				base_damage = 55.0 if held.item_name == "Hacha de piedra" else 65.0
 				energy_cost = 10.0
 				attack_range = 3.5
 			"tool":
@@ -12239,12 +12403,12 @@ func _rifle_weapon_scale() -> float:
 func _current_spread_deg() -> float:
 	# Misma regla que _shoot_rifle: mas precision quieto/agachado/tumbado/apuntando
 	var spread_deg := 0.6
-	if is_crouching:
-		spread_deg = 0.25
+	if is_crouching or is_sitting:
+		spread_deg = 0.20
 	if is_prone:
-		spread_deg = 0.12
+		spread_deg = 0.08
 	if _is_aiming:
-		spread_deg = .010 if is_prone else (.016 if is_crouching else .025)
+		spread_deg = .006 if is_prone else (.012 if (is_crouching or is_sitting) else .025)
 		if _breath_hold_active: spread_deg *= .7
 	if _held_is_m4():
 		spread_deg *= M4_SPREAD_MULT
@@ -12293,6 +12457,12 @@ func _update_breath_hold(delta: float, shift_pressed: bool) -> void:
 			_breath_hold_recover = 4.0
 
 func _update_scope_zoom() -> void:
+	if _has_bow_equipped() or _has_throwable_weapon_equipped():
+		var p_mag := 1.45 if _has_bow_equipped() else 1.25
+		if camera != null:
+			camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(_camera_fov) * 0.5) / p_mag))
+		mouse_sensitivity = 0.0025 / p_mag
+		return
 	var mags := _rifle_scope_mags()
 	_scope_zoom_index = clampi(_scope_zoom_index, 0, mags.size() - 1)
 	var magnification: float = mags[_scope_zoom_index]
@@ -12304,13 +12474,20 @@ func _update_scope_zoom() -> void:
 func _toggle_aim() -> void:
 	_is_aiming = not _is_aiming
 	if _is_aiming:
-		_create_scope_overlay()
+		if _has_rifle_equipped():
+			_create_scope_overlay()
 		_update_scope_zoom()
-		if third_person_model != null:
+		if third_person_model != null and _has_rifle_equipped():
 			third_person_model.visible = false
 		_breath_hold_active = false
 		_breath_hold_timer = 0.0
 		_breath_hold_recover = 0.0
+		if _has_bow_equipped():
+			var ac := _count_inventory_arrows()
+			notice.emit("Apuntando con arco (%d flechas). Clic izq: disparar." % ac if ac > 0 else "No tienes flechas en el inventario.")
+		elif _has_throwable_weapon_equipped():
+			var h_it = get_held_item()
+			notice.emit("Apuntando con %s. Clic izq: lanzar." % (str(h_it.item_name) if h_it != null else "arma"))
 	else:
 		_remove_scope_overlay()
 		if camera != null:
@@ -13310,6 +13487,215 @@ func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3
 				target = target.get_parent()
 			_spawn_bullet_impact(point, normal, collider))
 
+func _has_bow_equipped() -> bool:
+	var held = get_held_item()
+	return held != null and (str(held.item_type) == "weapon_bow" or str(held.item_name) in ["Arco de madera", "Arco reforzado"])
+
+func _has_throwable_weapon_equipped() -> bool:
+	var held = get_held_item()
+	return held != null and (str(held.item_type) in ["tool_spear", "weapon_bola"] or str(held.item_name) in ["Palo afilado", "Lanza", "Lanza de hueso", "Boleadoras"])
+
+func _count_inventory_arrows() -> int:
+	if inventory == null:
+		return 0
+	var total := 0
+	for it in inventory.items:
+		if it != null and (str(it.item_type) == "ammo_arrow" or str(it.item_name) in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso"]):
+			total += int(it.quantity)
+	return total
+
+func _consume_best_arrow() -> String:
+	if inventory == null:
+		return ""
+	for pref in ["Flecha de hueso", "Flecha de piedra", "Flecha de madera"]:
+		if inventory.has_item_name(pref, 1):
+			inventory.consume_item_name(pref, 1)
+			inventory.changed.emit()
+			return pref
+	for i in range(inventory.items.size()):
+		var it = inventory.items[i]
+		if it != null and str(it.item_type) == "ammo_arrow" and int(it.quantity) > 0:
+			var aname := str(it.item_name)
+			inventory.remove_index(i, 1)
+			inventory.changed.emit()
+			return aname
+	return ""
+
+func _shoot_bow() -> void:
+	var held = get_held_item()
+	if is_dead or camera == null or held == null or not _has_bow_equipped():
+		return
+	if held.has_method("is_broken") and held.is_broken():
+		notice.emit("Tu %s está roto." % str(held.item_name))
+		return
+	if _shoot_cooldown > 0.0:
+		return
+	if stats.energy < 3.5:
+		notice.emit("Estás demasiado cansado para tensar el arco.")
+		return
+	var arrow_name := _consume_best_arrow()
+	if arrow_name.is_empty():
+		notice.emit("No tienes flechas en el inventario.")
+		return
+	_shoot_cooldown = 0.9
+	stats.energy = maxf(0.0, stats.energy - 3.5)
+	stats.changed.emit()
+	if held.has_method("reduce_durability"):
+		held.reduce_durability(2.0)
+	play_action_animation("bow_shoot", 1.15)
+	_schedule_melee_swing_sound(0.35)
+	var is_reinf := str(held.item_name) == "Arco reforzado"
+	var arrow_speed := 95.0 if is_reinf else 75.0
+	var base_dmg := 125.0
+	if arrow_name == "Flecha de piedra":
+		base_dmg = 175.0
+	elif arrow_name == "Flecha de hueso":
+		base_dmg = 215.0
+	if is_reinf:
+		base_dmg *= 1.18
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
+	var cam_ray_origin := camera.project_ray_origin(aim_point)
+	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
+	var shot_origin := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0) + cam_ray_dir * 0.45
+	var exclude_arr: Array[RID] = [self.get_rid()]
+	_collect_child_collision_rids(self, exclude_arr)
+	var space_state := get_world_3d().direct_space_state
+	var converge_dist := 35.0
+	if space_state != null:
+		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
+		if not sight_hit.is_empty():
+			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
+			if hit_d > 2.0:
+				converge_dist = clampf(hit_d, 3.0, 120.0)
+	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
+	var flight_t := minf(shot_origin.distance_to(zero_target), 60.0) / arrow_speed
+	zero_target.y += 0.5 * 9.81 * flight_t * flight_t
+	var aim_dir := (zero_target - shot_origin).normalized()
+	if aim_dir.length_squared() < 0.5:
+		aim_dir = cam_ray_dir
+	_launch_primitive_projectile(shot_origin, aim_dir, arrow_speed, 140.0, exclude_arr, base_dmg, arrow_name, "ammo_arrow", 0.06, 3.0, false)
+	var main := get_tree().current_scene
+	if main != null and main.has_method("_sync_local_player_inventory"):
+		main.call_deferred("_sync_local_player_inventory")
+
+func _throw_aimed_weapon() -> void:
+	var held = get_held_item()
+	if is_dead or camera == null or held == null or not _has_throwable_weapon_equipped():
+		return
+	if _shoot_cooldown > 0.0:
+		return
+	if stats.energy < 6.0:
+		notice.emit("Estás demasiado cansado para lanzar.")
+		return
+	var item_name := str(held.item_name)
+	var item_type := str(held.item_type)
+	var item_weight := float(held.weight)
+	var item_use := float(held.use_value)
+	var item_dur := float(held.durability)
+	var item_max_dur := float(held.max_durability)
+	set_meta("last_dropped_durability", maxf(0.0, item_dur - 4.0))
+	set_meta("last_dropped_max_durability", item_max_dur)
+	var idx: int = inventory.items.find(held) if inventory != null else -1
+	if idx < 0 and not _held_item_external:
+		return
+	_held_item_reference = null
+	_held_item_external = false
+	held_index = -1
+	_held_selection_revision += 1
+	if idx >= 0:
+		inventory.remove_index(idx, 1)
+	_cancel_aim()
+	_sync_held_item()
+	_shoot_cooldown = 0.8
+	stats.energy = maxf(0.0, stats.energy - 6.0)
+	stats.changed.emit()
+	play_action_animation("attack", 0.65)
+	_schedule_melee_swing_sound(0.05)
+	var is_bola := item_type == "weapon_bola" or item_name == "Boleadoras"
+	var proj_speed := 32.0 if is_bola else 38.0
+	var base_dmg := 35.0 if is_bola else (110.0 if item_name == "Palo afilado" else (165.0 if item_name == "Lanza" else 210.0))
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5
+	var cam_ray_origin := camera.project_ray_origin(aim_point)
+	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
+	var shot_origin := global_position + Vector3(0, 1.0 if is_crouching else 1.42, 0) + cam_ray_dir * 0.5
+	var exclude_arr: Array[RID] = [self.get_rid()]
+	_collect_child_collision_rids(self, exclude_arr)
+	var aim_dir := (cam_ray_dir + Vector3(0, 0.06, 0)).normalized()
+	_launch_primitive_projectile(shot_origin, aim_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
+	notice.emit("Lanzas %s." % item_name)
+	var main := get_tree().current_scene
+	if main != null and main.has_method("_sync_local_player_inventory"):
+		main.call_deferred("_sync_local_player_inventory")
+
+func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool) -> void:
+	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
+		return
+	var projectile := preload("res://scripts/RifleProjectile.gd").new()
+	projectile.velocity = direction.normalized() * speed
+	projectile.wind_velocity = _wind_dir * _wind_strength * 0.35
+	projectile.max_distance = max_dist
+	projectile.excluded = excluded.duplicate()
+	var vis: Node3D = null
+	if item_type == "ammo_arrow":
+		var apath := ARROW_WOOD_MODEL
+		if item_name == "Flecha de piedra":
+			apath = ARROW_STONE_MODEL
+		elif item_name == "Flecha de hueso":
+			apath = ARROW_BONE_MODEL
+		vis = _load_external_node3d(apath)
+	if vis == null:
+		vis = MaterialFactory.build_primitive_item_mesh(item_name)
+		vis.rotation_degrees.x = -90.0 if item_type != "ammo_arrow" else 0.0
+	projectile.add_child(vis)
+	get_tree().current_scene.add_child(projectile)
+	projectile.global_position = origin
+	projectile.look_at(origin + direction.normalized(), Vector3.UP)
+	projectile.impact.connect(func(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3):
+		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola)
+	)
+
+func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool) -> void:
+	var is_headshot := false
+	var target_node: Node = null
+	if collider is Node3D:
+		var node: Node3D = collider as Node3D
+		if node.name == "HeadHitbox":
+			is_headshot = true
+		var walked: Node = node
+		while walked != null:
+			if walked == self:
+				break
+			if walked.has_method("take_damage") and _is_rifle_damage_target(walked):
+				target_node = walked
+				break
+			walked = walked.get_parent()
+		if target_node == null and node.is_in_group("net_player_proxy"):
+			target_node = node
+	if target_node != null:
+		var dmg := base_damage * (2.2 if is_headshot else 1.0) * exp(-0.002 * hit_dist)
+		if is_bola and target_node is Node3D:
+			target_node.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")
+		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy"):
+			var pvp_dmg := (18.0 if is_bola else (75.0 if is_headshot else 42.0))
+			if target_node.has_method("take_damage"):
+				_apply_rifle_target_damage(target_node, pvp_dmg)
+		else:
+			_apply_rifle_target_damage(target_node, dmg)
+		_spawn_blood_splatter(hit_pos, 1.4 if is_headshot else 1.0)
+		_hit_marker(bool(target_node.get("_is_dead")) or bool(target_node.get("is_dead")))
+	else:
+		_spawn_bullet_impact(hit_pos, hit_normal, collider)
+	var can_recover := true
+	if item_type == "ammo_arrow":
+		can_recover = randf() < 0.75
+	if can_recover:
+		var drop_pos := hit_pos + hit_normal * 0.08
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("_get_exact_ground_y"):
+			drop_pos.y = float(scene.call("_get_exact_ground_y", drop_pos.x, drop_pos.z, hit_pos.y + 2.0)) + 0.06
+		item_dropped.emit(item_name, item_type, item_weight, 1, item_use, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+
 func _load_wav_stream(path: String) -> AudioStream:
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
@@ -13507,8 +13893,13 @@ func _eat_action() -> void:
 
 func _light_action() -> void:
 	var target = _get_interaction_target()
-	if target != null and target is WorldAction and target.action_type == "light_campfire":
-		target.interact(self)
+	if target != null and target is WorldAction:
+		if target.action_type == "light_campfire":
+			target.interact(self)
+		elif target.action_type == "shelter":
+			var main := get_tree().current_scene
+			if main != null and main.has_method("handle_shelter_dismantle"):
+				main.handle_shelter_dismantle(target, self)
 
 #endregion
 

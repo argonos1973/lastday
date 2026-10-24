@@ -550,6 +550,9 @@ func _process_body(delta: float) -> void:
 		speed = result["speed"]
 	# Variación natural: cada animal tiene su propio ritmo y no camina en línea recta
 	speed *= _speed_jitter
+	var bola_until := float(get_meta("bola_slow_until", 0.0))
+	if bola_until > 0.0 and Time.get_unix_time_from_system() < bola_until:
+		speed *= 0.25
 	if _state == "patrol" and _prey_flee_timer <= 0.0:
 		_wander_timer -= delta
 		if _wander_timer <= 0.0:
@@ -1555,8 +1558,9 @@ func interact(player: Node) -> void:
 		timer.wait_time = 5.0
 		timer.one_shot = true
 		timer.timeout.connect(func():
+			_grant_primitive_gut_parts(player_ref)
 			if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
-				player_ref.notice.emit("Destripar al %s: +%d carne cruda y piel." % [an_ref, meat_qty])
+				player_ref.notice.emit("Destripar al %s: +%d carne cruda, piel, huesos y tendones." % [an_ref, meat_qty])
 			_remove_corpse()
 		)
 		add_child(timer)
@@ -1578,8 +1582,9 @@ func interact(player: Node) -> void:
 	timer.one_shot = true
 	timer.timeout.connect(func():
 		_spawn_gut_pickups()
+		_grant_primitive_gut_parts(player_ref)
 		if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
-			player_ref.notice.emit("Destripar al %s: +%d carne cruda y piel." % [an_ref, meat_qty])
+			player_ref.notice.emit("Destripar al %s: +%d carne cruda, piel, huesos y tendones." % [an_ref, meat_qty])
 		_remove_corpse()
 	)
 	add_child(timer)
@@ -1632,9 +1637,39 @@ func _player_has_knife(player: Node) -> bool:
 	if inventory == null or not ("items" in inventory):
 		return false
 	for item in inventory.items:
-		if item != null and (item.item_type == "weapon" or item.item_name == "Hacha"):
+		if item != null and (item.item_type in ["weapon", "tool_axe"] or item.item_name in ["Hacha", "Hacha de piedra", "Piedra afilada"]) and not (item.has_method("is_broken") and item.is_broken()):
 			return true
 	return false
+
+func _bone_count() -> int:
+	match animal_type:
+		"bear": return 3
+		"deer": return 2
+		"fox": return 1
+		_: return 2
+
+func _sinew_count() -> int:
+	match animal_type:
+		"bear", "deer": return 2
+		_: return 1
+
+func _grant_primitive_gut_parts(player: Node) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var inventory = player.get("inventory")
+	if inventory == null or not inventory.has_method("add_item"):
+		return
+	var ItemScript = load("res://scripts/Item.gd")
+	var bones = ItemScript.create("Hueso", "resource", 0.18, _bone_count(), 0.0)
+	var sinew = ItemScript.create("Tendón", "resource", 0.06, _sinew_count(), 0.0)
+	var scene := get_tree().current_scene if is_inside_tree() else null
+	if not inventory.add_item(bones) and scene != null and scene.has_method("_spawn_ground_pickup"):
+		scene.call("_spawn_ground_pickup", "Hueso", "resource", global_position + Vector3(-0.22, 0.06, -0.15), 0.18, _bone_count(), 0.0, "gut_bone_%d" % Time.get_ticks_msec())
+	if not inventory.add_item(sinew) and scene != null and scene.has_method("_spawn_ground_pickup"):
+		scene.call("_spawn_ground_pickup", "Tendón", "resource", global_position + Vector3(0.22, 0.06, 0.15), 0.06, _sinew_count(), 0.0, "gut_sinew_%d" % Time.get_ticks_msec())
+	inventory.changed.emit()
+	if scene != null and scene.has_method("_sync_local_player_inventory"):
+		scene.call_deferred("_sync_local_player_inventory")
 
 func _player_has_backpack(player: Node) -> bool:
 	if player == null:

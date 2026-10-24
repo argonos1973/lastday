@@ -1782,6 +1782,10 @@ func _update_real_clock() -> void:
 					hand_str += "\nCargador: %d/%d · Chaleco: %d carg. (%d balas) [R]" % [mag_cur, mag_max, mags_left, res_rounds]
 				else:
 					hand_str += "\nChaleco táctico: %d cargadores (%d balas)" % [mags_left, res_rounds]
+			elif held_item != null and str(held_item.item_type) == "weapon_bow" and player.has_method("_count_inventory_arrows"):
+				hand_str += "\nFlechas: %d (Clic der: apuntar · Clic izq: disparar)" % int(player._count_inventory_arrows())
+			elif held_item != null and player.has_method("_has_throwable_weapon_equipped") and bool(player._has_throwable_weapon_equipped()):
+				hand_str += "\nClic der + izq: lanzar a distancia"
 		hand_stats_label.text = hand_str
 
 func _build_status_panel() -> void:
@@ -2440,10 +2444,10 @@ func _build_center_messages() -> void:
 	prompt_label.anchor_top = 0.5
 	prompt_label.anchor_right = 0.5
 	prompt_label.anchor_bottom = 0.5
-	prompt_label.offset_left = -250
+	prompt_label.offset_left = -320
 	prompt_label.offset_top = 8
-	prompt_label.offset_right = 250
-	prompt_label.offset_bottom = 48
+	prompt_label.offset_right = 320
+	prompt_label.offset_bottom = 128
 	prompt_label.add_theme_font_size_override("font_size", 18)
 	prompt_label.add_theme_color_override("font_color", Color(0.94, 0.92, 0.82))
 	prompt_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.86))
@@ -3127,7 +3131,7 @@ func _show_context_menu(slot_index: int, slot_rect: Rect2) -> void:
 	if has_rag_recipe:
 		var has_knife := false
 		for _inv_i in player.inventory.items:
-			if _inv_i.item_name == "Cuchillo" or _inv_i.item_name == "Hacha":
+			if str(_inv_i.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra"]:
 				has_knife = true
 				break
 		if has_knife:

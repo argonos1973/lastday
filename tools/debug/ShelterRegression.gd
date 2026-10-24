@@ -38,7 +38,18 @@ func run() -> void:
 	check(world._apply_shelter_lining_state("test"), "A built shelter accepts its hide lining")
 	check(world.get_node_or_null("PlayerShelter_test_PeltLining") != null, "Hide lining has a persistent visual node")
 	check(bool(world._built_shelters[0].get("pelt_lined", false)), "Hide lining is stored with shelter world state")
+	check(world._is_near_pelt_lined_shelter(Vector3(0.5, 0.0, 0.5)), "Standing inside lined shelter counts as pelt-lined")
 	check(world._apply_shelter_camo_state("test", true), "A built shelter accepts its camouflage net")
+	check(world._is_near_camo_covered_shelter(Vector3(0.5, 0.0, 0.5)), "Standing inside camo-covered shelter counts as camo-covered")
+	var sh_action = world.world_actions_by_id.get("test")
+	if sh_action != null:
+		var prompt_txt := str(sh_action.get_interaction_text())
+		check(prompt_txt.contains("\n"), "Shelter prompt uses multiple lines instead of a single crowded line")
+		check(prompt_txt.contains("[F]") and prompt_txt.contains("[C]") and prompt_txt.contains("[N]") and prompt_txt.contains("[K]"), "Shelter options use distinct keys [F], [C], [N], [K]")
+	check(world._apply_shelter_lining_state("test", false), "Hide lining can be removed from the shelter floor")
+	check(world.get_node_or_null("PlayerShelter_test_PeltLining") == null, "Removing hide lining frees its visual node")
+	check(not bool(world._built_shelters[0].get("pelt_lined", false)), "Removing hide lining updates shelter world state")
+	check(world._apply_shelter_lining_state("test", true), "Hide lining can be re-applied after removal")
 	var camo_node := world.get_node_or_null("PlayerShelter_test_CamoNet") as Node3D
 	check(camo_node != null, "Camo net has a persistent visual node over the shelter")
 	if camo_node != null:

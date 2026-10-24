@@ -11,14 +11,79 @@ const RECIPES := [
 		"label": "Afilar palo con cuchillo/hacha"
 	},
 	{
+		"inputs": { "Piedra": 2 },
+		"output": { "name": "Piedra afilada", "type": "resource", "weight": 0.25, "use_value": 0.0, "quantity": 1, "durability": 45.0, "max_durability": 45.0 },
+		"label": "Golpear 2 piedras para lascar una piedra afilada"
+	},
+	{
+		"inputs": { "Palo": 1, "Piedra afilada": 1, "Cuerda": 1 },
+		"output": { "name": "Cuchillo de piedra", "type": "weapon", "weight": 0.3, "use_value": 10.0, "durability": 60.0, "max_durability": 60.0 },
+		"label": "Atar piedra afilada a un palo para crear cuchillo de piedra"
+	},
+	{
+		"inputs": { "Palo": 1, "Hueso": 1, "Cuerda": 1 },
+		"output": { "name": "Cuchillo de hueso", "type": "weapon", "weight": 0.25, "use_value": 12.0, "durability": 80.0, "max_durability": 80.0 },
+		"label": "Tallar hueso y atarlo para crear cuchillo de hueso"
+	},
+	{
+		"inputs": { "Palo": 1, "Piedra": 1, "Cuerda": 1 },
+		"output": { "name": "Hacha de piedra", "type": "tool_axe", "weight": 1.1, "use_value": 0.0, "durability": 65.0, "max_durability": 65.0 },
+		"label": "Atar piedra a un palo para fabricar hacha de piedra"
+	},
+	{
 		"inputs": { "Palo afilado": 1, "Cuerda": 1 },
 		"output": { "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.4, "use_value": 0.0, "durability": 3.0, "max_durability": 3.0 },
 		"label": "Unir cuerda y palo afilado para crear una caña (3 usos)"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Piedra": 1 },
-		"output": { "name": "Lanza", "type": "weapon", "weight": 0.8, "use_value": 15.0 },
+		"output": { "name": "Lanza", "type": "weapon", "weight": 0.8, "use_value": 15.0, "durability": 80.0, "max_durability": 80.0 },
 		"label": "Crear lanza con punta de piedra"
+	},
+	{
+		"inputs": { "Palo afilado": 1, "Hueso": 1, "Cuerda": 1 },
+		"output": { "name": "Lanza de hueso", "type": "weapon", "weight": 0.75, "use_value": 20.0, "durability": 110.0, "max_durability": 110.0 },
+		"label": "Crear lanza de caza con punta de hueso"
+	},
+	{
+		"inputs": { "Palo": 2, "Cuerda": 1, "Cuchillo": 1 },
+		"output": { "name": "Arco de madera", "type": "weapon_bow", "weight": 0.9, "use_value": 0.0, "durability": 120.0, "max_durability": 120.0 },
+		"label": "Tallar arco de madera con cuerda"
+	},
+	{
+		"inputs": { "Palo": 2, "Tendón": 2, "Hueso": 1, "Cuchillo": 1 },
+		"output": { "name": "Arco reforzado", "type": "weapon_bow", "weight": 1.1, "use_value": 0.0, "durability": 180.0, "max_durability": 180.0 },
+		"label": "Fabricar arco reforzado con hueso y tendones"
+	},
+	{
+		"inputs": { "Palo": 1, "Pluma": 2, "Cuchillo": 1 },
+		"output": { "name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.05, "use_value": 3.0, "quantity": 3 },
+		"label": "Tallar 3 flechas de madera con plumas"
+	},
+	{
+		"inputs": { "Palo": 1, "Piedra": 1, "Pluma": 2, "Cuchillo": 1 },
+		"output": { "name": "Flecha de piedra", "type": "ammo_arrow", "weight": 0.06, "use_value": 3.0, "quantity": 3 },
+		"label": "Fabricar 3 flechas con punta de piedra"
+	},
+	{
+		"inputs": { "Palo": 1, "Hueso": 1, "Pluma": 2, "Cuchillo": 1 },
+		"output": { "name": "Flecha de hueso", "type": "ammo_arrow", "weight": 0.06, "use_value": 3.0, "quantity": 3 },
+		"label": "Fabricar 3 flechas con punta de hueso"
+	},
+	{
+		"inputs": { "Cuerda": 1, "Piedra": 3 },
+		"output": { "name": "Boleadoras", "type": "weapon_bola", "weight": 0.65, "use_value": 0.0, "quantity": 1 },
+		"label": "Atar 3 piedras con cuerda para hacer boleadoras"
+	},
+	{
+		"inputs": { "Tendón": 1 },
+		"output": { "name": "Cuerda", "type": "resource", "weight": 0.1, "use_value": 0.0, "quantity": 1 },
+		"label": "Trenzar tendón seco para hacer una cuerda resistente"
+	},
+	{
+		"inputs": { "Carne cocinada": 1, "Palo": 1, "Cuchillo": 1 },
+		"output": { "name": "Carne seca", "type": "food", "weight": 0.25, "use_value": 30.0, "quantity": 1 },
+		"label": "Cortar y curar carne cocinada en tiras de carne seca (no caduca rápido)"
 	},
 	{
 		"inputs": { "Palo": 1, "Cuerda": 1 },
@@ -84,6 +149,11 @@ const RECIPES := [
 		"inputs": { "ANY_PELT": 2, "Cuchillo": 1 },
 		"output": { "name": "Botas de piel", "type": "clothing", "weight": 1.0, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
 		"label": "Fabricar botas de piel"
+	},
+	{
+		"inputs": { "ANY_PELT": 1, "Cuchillo": 1 },
+		"output": { "name": "Guantes de piel", "type": "clothing", "weight": 0.35, "use_value": 0.0, "durability": 300.0, "max_durability": 300.0 },
+		"label": "Coser unos guantes de piel"
 	},
 	{
 		"inputs": { "ANY_PELT": 3, "Cuchillo": 1 },
@@ -196,7 +266,7 @@ const RECIPES := [
 # entries for them, and this guard keeps menus/prompts consistent everywhere.
 static func is_rag_exempt(item_name: String) -> bool:
 	var n := str(item_name)
-	return n == "Zapatillas" or n.begins_with("Botas") or n.contains("Casco") or n.contains("Sombrero") or n.begins_with("Gorro") or n.begins_with("Tocado")
+	return n == "Zapatillas" or n.begins_with("Botas") or n.contains("Casco") or n.contains("Sombrero") or n.begins_with("Gorro") or n.begins_with("Tocado") or n == "Guantes de piel"
 
 # Returns all recipes that can be crafted with the given inventory items
 static func get_available_recipes(inventory_items: Array) -> Array:
@@ -498,11 +568,13 @@ static func _pelt_output(out: Dictionary, pelt_species: String) -> Dictionary:
 	return downgraded
 
 static func _is_tool(item_name: String) -> bool:
-	return item_name in ["Cuchillo", "Hacha", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]
+	return item_name in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]
 
 # Returns true if 'have' can substitute for 'needed' in a recipe (e.g. Hacha for Cuchillo)
 static func _is_substitute(needed: String, have: String) -> bool:
-	if needed == "Cuchillo" and have == "Hacha":
+	if needed == "Cuchillo" and have in ["Hacha", "Hacha de piedra", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]:
+		return true
+	if needed == "Hacha" and have == "Hacha de piedra":
 		return true
 	return false
 

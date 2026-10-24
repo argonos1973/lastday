@@ -20,6 +20,7 @@ func _initialize() -> void:
 		"Chaqueta de piel": {"Piel de oso": 4},
 		"Pantalones de piel": {"Piel de ciervo": 3},
 		"Botas de piel": {"Piel de zorro": 2},
+		"Guantes de piel": {"Piel de lobo": 1},
 		"Gorro de piel": {"Piel de ave": 2, "Trapos": 1},
 		"Tocado de piel animal": {"Piel de lobo": 3},
 	}
@@ -27,6 +28,7 @@ func _initialize() -> void:
 		"Chaqueta de piel": "oso",
 		"Pantalones de piel": "ciervo",
 		"Botas de piel": "zorro",
+		"Guantes de piel": "lobo",
 		"Gorro de piel": "ave",
 		"Tocado de piel animal": "lobo",
 	}
@@ -102,6 +104,63 @@ func _initialize() -> void:
 		check(str(bird_item.get_meta("pelt_species", "")) == "ave",
 			"bird gorro keeps species ave (got %s)" % str(bird_item.get_meta("pelt_species", "")))
 	bird.free()
+	# --- Supervivencia primitiva de largo plazo (sin balas ni cuchillos industriales) ---
+	var prim_inv = InventoryScript.new()
+	prim_inv.max_slots = 30
+	prim_inv.max_weight = 50.0
+	prim_inv.add_item(ItemScript.create("Piedra", "resource", 0.45, 2, 0.0))
+	var flake_recipe: Dictionary = {}
+	for candidate in Crafting.RECIPES:
+		if str(candidate.output.name) == "Piedra afilada":
+			flake_recipe = candidate
+			break
+	check(Crafting.craft(flake_recipe, prim_inv) and prim_inv.has_item_name("Piedra afilada"), "2 Piedras craft Piedra afilada without any metal knife")
+	# Piedra afilada substitutes for Cuchillo in pelt/bow/arrow recipes
+	prim_inv.add_item(ItemScript.create("Piel de lobo", "resource", 0.65, 1, 0.0))
+	var gloves_recipe: Dictionary = {}
+	for candidate in Crafting.RECIPES:
+		if str(candidate.output.name) == "Guantes de piel":
+			gloves_recipe = candidate
+			break
+	check(Crafting.craft(gloves_recipe, prim_inv) and prim_inv.has_item_name("Guantes de piel"), "Piedra afilada substitutes for Cuchillo in pelt recipes")
+	# Tendón crafts into Cuerda, then Arco reforzado + Flecha de hueso
+	prim_inv.add_item(ItemScript.create("Tendón", "resource", 0.06, 3, 0.0))
+	var sinew_cord_recipe: Dictionary = {}
+	for candidate in Crafting.RECIPES:
+		if str(candidate.output.name) == "Cuerda" and candidate.inputs.has("Tendón"):
+			sinew_cord_recipe = candidate
+			break
+	check(Crafting.craft(sinew_cord_recipe, prim_inv) and prim_inv.has_item_name("Cuerda"), "Tendón crafts into Cuerda")
+	prim_inv.add_item(ItemScript.create("Palo", "resource", 0.15, 3, 0.0))
+	prim_inv.add_item(ItemScript.create("Hueso", "resource", 0.18, 2, 0.0))
+	prim_inv.add_item(ItemScript.create("Pluma", "resource", 0.02, 2, 0.0))
+	var bow_recipe: Dictionary = {}
+	var arrow_recipe: Dictionary = {}
+	for candidate in Crafting.RECIPES:
+		if str(candidate.output.name) == "Arco reforzado":
+			bow_recipe = candidate
+		elif str(candidate.output.name) == "Flecha de hueso":
+			arrow_recipe = candidate
+	check(Crafting.craft(bow_recipe, prim_inv) and prim_inv.has_item_name("Arco reforzado"), "Arco reforzado crafts from Palo + Tendón + Hueso")
+	check(Crafting.craft(arrow_recipe, prim_inv) and prim_inv.has_item_name("Flecha de hueso", 3), "Flecha de hueso crafts x3 from Palo + Hueso + Pluma")
+	prim_inv.free()
+	# Blender-authored GLBs for bows, arrows and bow shoot/aim animations load cleanly
+	for glb_p in [
+		"res://assets/models/weapons/wooden_bow.glb",
+		"res://assets/models/weapons/reinforced_bow.glb",
+		"res://assets/models/weapons/arrow_wood.glb",
+		"res://assets/models/weapons/arrow_stone.glb",
+		"res://assets/models/weapons/arrow_bone.glb",
+		"res://assets/animations/BowShoot.glb",
+		"res://assets/animations/BowAimIdle.glb",
+	]:
+		var sc = load(glb_p)
+		check(sc is PackedScene, "%s loads as PackedScene" % glb_p)
+		if sc is PackedScene and glb_p.contains("Bow"):
+			var inst: Node = (sc as PackedScene).instantiate()
+			var ap_list := inst.find_children("*", "AnimationPlayer", true, false)
+			check(not ap_list.is_empty() and (ap_list[0] as AnimationPlayer).get_animation_list().size() > 0, "%s contains an exported animation clip" % glb_p)
+			inst.free()
 	if failures == 0:
 		print("PASS: pelts from all animal types unlock recipes and craft wearable gear")
 	quit(1 if failures else 0)

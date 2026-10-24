@@ -73,6 +73,11 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 			var rag := MaterialFactory.build_rag_mesh()
 			_model_root.add_child(rag)
 			_frame_camera(rag, 0.85)
+		elif not proc_kind.is_empty():
+			var prim := MaterialFactory.build_primitive_item_mesh(proc_kind)
+			_model_root.add_child(prim)
+			prim.rotation_degrees = Vector3(24.0, -32.0, 0.0)
+			_frame_camera(prim, 0.85)
 		return
 	_model_root.add_child(inst)
 	if is_log_model:

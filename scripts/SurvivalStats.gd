@@ -100,11 +100,12 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# Ambient temperature effect: cool air starts exchanging heat below 22°C.
 	if ambient_temperature < 22.0:
 		target_temperature -= (22.0 - ambient_temperature) * (0.08 / (1.0 + protection))
-	# Hot ambient: above 28°C starts heating the body, clothing retains heat
-	if ambient_temperature > 28.0:
-		var heat_retention: float = clampf(1.0 + heat_retention_bonus, 0.3, 2.5)
+	# Hot ambient: above 26°C starts heating the body; clothing retains body heat
+	# so undressing helps cool down in warm weather and lowers heat stress.
+	if ambient_temperature > 26.0:
+		var heat_retention: float = clampf(0.75 + heat_retention_bonus + warmth_bonus * 0.25, 0.3, 2.5)
 		var heat_reduction: float = 1.0 - clamp(heat_protection_bonus, 0.0, 0.8)
-		target_temperature += (ambient_temperature - 28.0) * 0.18 * heat_retention * heat_reduction
+		target_temperature += (ambient_temperature - 26.0) * 0.16 * heat_retention * heat_reduction
 	# Gameplay cooling curve: wet clothing loses more heat in cooler air.
 	if wetness > 0.05:
 		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.09, 0.0, 3.5)

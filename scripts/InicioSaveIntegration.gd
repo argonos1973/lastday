@@ -337,7 +337,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		_add_preview_backpack(model)
 	# Add gloves
 	if not hands_item.is_empty():
-		_add_preview_gloves(model, hands_item)
+		_add_preview_gloves(model, hands_item, str(pelt_species.get(hands_item, "")))
 	# Add hat
 	if not head_item.is_empty() and not is_autumn_hat:
 		_add_preview_hat(model, head_item, str(pelt_species.get(head_item, "")))
@@ -346,10 +346,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	if held_item_name == "Cuchillo":
 		_add_preview_knife(model)
 
-const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Pantalones de piel":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
+const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Guantes de piel":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Pantalones de piel":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
 const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Botas de piel":["Body_feet"],"Pantalones militares":["Body_legs"],"Pantalones de piel":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Chaqueta de piel":["Body_arms"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
 const _DEF_CLOTH := {"Camiseta":"Tops","Pantalones":"Bottoms","Zapatillas":"Shoes"}
-const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Pantalones militares":"soldier_legs","Pantalones de piel":"soldier_legs"}
+const _SURV_CLOTH := {"Botas survival":"cloth_feet","Botas militares":"military_boots","Guantes survival":"cloth_hands","Guantes militares":"cloth_hands","Guantes de piel":"cloth_hands","Pantalones militares":"soldier_legs","Pantalones de piel":"soldier_legs"}
 
 static func _apply_equipment_overrides(meshes: Array, items: Array) -> void:
 	var hide: Array = []
@@ -573,7 +573,7 @@ static func _add_preview_knife(model: Node3D) -> void:
 	knife.position += Vector3(0.10, 0.0, -0.10)
 	_bind_preview_bone(model, knife, ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"])
 
-static func _add_preview_gloves(model: Node3D, item_name: String) -> void:
+static func _add_preview_gloves(model: Node3D, item_name: String, pelt_species: String = "") -> void:
 	# Load player_with_clothes.glb to extract cloth_hands mesh
 	var pwc_packed := load(GameConst.PLAYER_MODEL)
 	if pwc_packed == null or not pwc_packed is PackedScene:
@@ -609,6 +609,11 @@ static func _add_preview_gloves(model: Node3D, item_name: String) -> void:
 	# Free the rest of pwc
 	pwc.queue_free()
 	# Apply glove material
+	if item_name == "Guantes de piel":
+		var fur_mat := MaterialFactory.pelt_fur_material(pelt_species) if not pelt_species.is_empty() else null
+		if fur_mat != null:
+			cloth_hands_mi.material_override = fur_mat
+			return
 	var is_military := item_name.find("militar") >= 0
 	var glove_color := Color(0.2, 0.2, 0.2) if is_military else Color(0.35, 0.25, 0.15)
 	cloth_hands_mi.material_override = MaterialFactory.make_clothing_material("gloves", glove_color)

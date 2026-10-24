@@ -297,6 +297,8 @@ func item_text(item, qty_override: int = -1, show_held_tag: bool = true) -> Stri
 	elif item.item_name == "Chaleco táctico" and player.has_method("get_rifle_info"):
 		var ri2: Dictionary = player.get_rifle_info()
 		extra_ammo = "\n%d cargadores de fusil (%d balas)" % [int(ri2.get("magazines_left", 0)), int(ri2.get("reserve", 0))]
+	elif item.item_type == "weapon_bow" and player.has_method("_count_inventory_arrows"):
+		extra_ammo = "\nFlechas en inventario: %d" % int(player._count_inventory_arrows())
 	return "%s%s\nx%d · %.2f kg · %d%%%s" % [state, item.item_name, shown_q, item.weight * float(shown_q), item.durability_pct() * 100, extra_ammo]
 
 func matches_filter(item) -> bool:
@@ -401,7 +403,7 @@ func add_item_thumbnail(parent: Control, item) -> void:
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
+		thumbnail.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else str(item.item_name))
 		thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 		thumbnail.resized.connect(func(): thumbnail._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE)
 	, CONNECT_ONE_SHOT)
@@ -731,6 +733,13 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 			if item.item_type == "ammo":
 				add_action("Cargar en el fusil", func():
 					player._use_inventory_index(player.inventory.items.find(item)))
+			if (item.item_type in ["weapon", "tool_axe"] or str(item.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Lanza", "Lanza de hueso"]) and float(item.durability) < float(item.max_durability) and player.inventory.has_item_name("Piedra", 1):
+				add_action("Afilar con piedra (+40% durabilidad)", func():
+					if player.inventory.consume_item_name("Piedra", 1):
+						item.durability = minf(float(item.max_durability), float(item.durability) + float(item.max_durability) * 0.40)
+						player.inventory.changed.emit()
+						player.notice.emit("Afilas %s con una piedra." % str(item.item_name))
+						request_refresh(true))
 			if item.item_type in ["food", "water", "medical"]:
 				add_action("Comer" if item.item_type == "food" else ("Beber" if item.item_type == "water" else "Aplicar"), func():
 					var index: int = player.inventory.items.find(item)

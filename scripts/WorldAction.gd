@@ -302,17 +302,31 @@ func get_interaction_text(_player = null) -> String:
 		"shelter":
 			var stash_n: int = (get_meta("contents", []) as Array).size()
 			var stash_tag := " (%d)" % stash_n if stash_n > 0 else ""
-			var camo_tag := ""
+			var lines: Array[String] = []
 			if bool(get_meta("camo_covered", false)):
-				camo_tag = "Camuflado (Quitar tela - [F]) | "
+				lines.append("[F] Quitar tela de camuflaje (+frío)")
 			elif _player != null:
 				var pinv = _player.get("inventory")
 				var pheld = _player.get_held_item() if _player.has_method("get_held_item") else null
 				var has_cnet: bool = (pheld != null and str(pheld.item_name) == "Tela de camuflaje") or (pinv != null and pinv.has_method("has_item_name") and bool(pinv.has_item_name("Tela de camuflaje")))
 				if has_cnet:
-					camo_tag = "Cubrir con tela de camuflaje - [F] | "
-			var lining_tag := "Revestido con piel | " if bool(get_meta("pelt_lined", false)) else "Forrar con 4 pieles - [F] (si tienes pieles) | "
-			return "%s%sDesmontar - [F] (recuperar 11 palos) | Objetos%s - [K]" % [camo_tag, lining_tag, stash_tag]
+					lines.append("[F] Cubrir con tela de camuflaje (+frío)")
+			if bool(get_meta("pelt_lined", false)):
+				lines.append("[C] Quitar pieles del suelo (+frío)")
+			elif _player != null:
+				var pinv2 = _player.get("inventory")
+				var pelt_count := 0
+				if pinv2 != null and "items" in pinv2:
+					for pit in pinv2.items:
+						if pit != null and str(pit.item_name).begins_with("Piel de "):
+							pelt_count += int(pit.quantity)
+				if pelt_count >= 4:
+					lines.append("[C] Forrar suelo con 4 pieles (+frío)")
+				else:
+					lines.append("[C] Forrar suelo con 4 pieles (%d/4)" % pelt_count)
+			lines.append("[N] Desmontar refugio (11 palos)")
+			lines.append("[K] Objetos%s" % stash_tag)
+			return "\n".join(PackedStringArray(lines))
 	return "%s - [F]" % display_name
 
 func to_dict() -> Dictionary:
@@ -519,10 +533,7 @@ func _player_has_axe(player) -> bool:
 		return false
 	if held.item_type in ["tool_axe", "axe_tool"]:
 		return true
-	if held.item_type == "tool" and held.item_name == "Hacha":
-		return true
-	# Fallback by name (matches PlayerController.has_axe_in_hand)
-	if str(held.item_name) == "Hacha":
+	if str(held.item_name) in ["Hacha", "Hacha de piedra"]:
 		return true
 	return false
 
@@ -536,7 +547,7 @@ func _player_has_blade(player) -> bool:
 		return true
 	if held.item_type in ["tool_axe", "axe_tool"]:
 		return true
-	if held.item_type == "tool" and held.item_name == "Hacha":
+	if str(held.item_name) in ["Hacha", "Hacha de piedra", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]:
 		return true
 	return false
 
@@ -545,7 +556,7 @@ func _player_has_knife(player) -> bool:
 		return false
 	if player.has_method("get_held_item"):
 		var held = player.get_held_item()
-		if held != null and (held.item_name == "Cuchillo" or held.item_name == "Hacha"):
+		if held != null and str(held.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra"]:
 			return true
 	return false
 

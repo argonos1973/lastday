@@ -792,3 +792,176 @@ static func apply_realistic_shelter_materials(root: Node) -> void:
 					lm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 					_mat_cache[lkey] = lm
 				mi.set_surface_override_material(s, _mat_cache[lkey])
+
+static func build_primitive_item_mesh(item_name: String) -> Node3D:
+	var root := Node3D.new()
+	root.name = "PrimitiveVisual"
+	var wood_mat := StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.42, 0.28, 0.15)
+	wood_mat.roughness = 0.88
+	var bone_mat := StandardMaterial3D.new()
+	bone_mat.albedo_color = Color(0.86, 0.83, 0.75)
+	bone_mat.roughness = 0.72
+	var stone_mat := StandardMaterial3D.new()
+	stone_mat.albedo_color = Color(0.38, 0.39, 0.41)
+	stone_mat.roughness = 0.90
+	var cord_mat := StandardMaterial3D.new()
+	cord_mat.albedo_color = Color(0.70, 0.62, 0.45)
+	cord_mat.roughness = 0.85
+	var feather_mat := StandardMaterial3D.new()
+	feather_mat.albedo_color = Color(0.78, 0.76, 0.72)
+	feather_mat.roughness = 0.80
+	feather_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	match item_name:
+		"Arco de madera", "Arco reforzado":
+			var is_reinf := item_name == "Arco reforzado"
+			var segs := 8
+			for i in range(segs):
+				var t0 := -0.52 + float(i) / float(segs) * 1.04
+				var t1 := -0.52 + float(i + 1) / float(segs) * 1.04
+				var tm := (t0 + t1) * 0.5
+				var z_curve := (0.27 - tm * tm) * 0.75
+				var seg := MeshInstance3D.new()
+				var cyl := CylinderMesh.new()
+				cyl.top_radius = 0.014 - absf(tm) * 0.012
+				cyl.bottom_radius = 0.016 - absf(tm) * 0.012
+				cyl.height = 0.145
+				seg.mesh = cyl
+				seg.position = Vector3(0.0, tm, -z_curve)
+				seg.rotation.x = -tm * 0.65
+				seg.material_override = bone_mat if (is_reinf and (i == 0 or i == segs - 1 or i == 3 or i == 4)) else wood_mat
+				root.add_child(seg)
+			var string_mi := MeshInstance3D.new()
+			var scyl := CylinderMesh.new()
+			scyl.top_radius = 0.0025
+			scyl.bottom_radius = 0.0025
+			scyl.height = 1.02
+			string_mi.mesh = scyl
+			string_mi.position = Vector3(0.0, 0.0, 0.01)
+			string_mi.material_override = cord_mat
+			root.add_child(string_mi)
+		"Flecha de madera", "Flecha de piedra", "Flecha de hueso":
+			var shaft := MeshInstance3D.new()
+			var scyl := CylinderMesh.new()
+			scyl.top_radius = 0.0045
+			scyl.bottom_radius = 0.0045
+			scyl.height = 0.68
+			shaft.mesh = scyl
+			shaft.rotation_degrees.x = 90.0
+			shaft.material_override = wood_mat
+			root.add_child(shaft)
+			var tip := MeshInstance3D.new()
+			var tip_cyl := CylinderMesh.new()
+			tip_cyl.top_radius = 0.001
+			tip_cyl.bottom_radius = 0.011
+			tip_cyl.height = 0.065
+			tip.mesh = tip_cyl
+			tip.position = Vector3(0.0, 0.0, -0.36)
+			tip.rotation_degrees.x = -90.0
+			tip.material_override = bone_mat if item_name == "Flecha de hueso" else (stone_mat if item_name == "Flecha de piedra" else wood_mat)
+			root.add_child(tip)
+			for f_ang in [0.0, 120.0, 240.0]:
+				var van := MeshInstance3D.new()
+				var box := BoxMesh.new()
+				box.size = Vector3(0.002, 0.022, 0.085)
+				van.mesh = box
+				van.position = Vector3(0.0, 0.0, 0.28)
+				van.rotation_degrees.z = f_ang
+				van.material_override = feather_mat
+				root.add_child(van)
+		"Lanza", "Lanza de hueso", "Palo afilado":
+			var shaft := MeshInstance3D.new()
+			var scyl := CylinderMesh.new()
+			scyl.top_radius = 0.016
+			scyl.bottom_radius = 0.018
+			scyl.height = 1.65
+			shaft.mesh = scyl
+			shaft.material_override = wood_mat
+			root.add_child(shaft)
+			var tip := MeshInstance3D.new()
+			var tip_cyl := CylinderMesh.new()
+			tip_cyl.top_radius = 0.002
+			tip_cyl.bottom_radius = 0.024
+			tip_cyl.height = 0.18
+			tip.mesh = tip_cyl
+			tip.position = Vector3(0.0, 0.90, 0.0)
+			tip.material_override = bone_mat if item_name == "Lanza de hueso" else (stone_mat if item_name == "Lanza" else wood_mat)
+			root.add_child(tip)
+		"Boleadoras":
+			for idx in range(3):
+				var ang := TAU * float(idx) / 3.0
+				var dir := Vector3(cos(ang), 0.0, sin(ang))
+				var cord := MeshInstance3D.new()
+				var ccyl := CylinderMesh.new()
+				ccyl.top_radius = 0.004
+				ccyl.bottom_radius = 0.004
+				ccyl.height = 0.22
+				cord.mesh = ccyl
+				cord.position = dir * 0.11
+				cord.rotation.z = PI * 0.5
+				cord.rotation.y = -ang
+				cord.material_override = cord_mat
+				root.add_child(cord)
+				var ball := MeshInstance3D.new()
+				var sph := SphereMesh.new()
+				sph.radius = 0.042
+				sph.height = 0.084
+				ball.mesh = sph
+				ball.position = dir * 0.22
+				ball.material_override = stone_mat
+				root.add_child(ball)
+		"Hueso":
+			var shaft := MeshInstance3D.new()
+			var bcyl := CylinderMesh.new()
+			bcyl.top_radius = 0.016
+			bcyl.bottom_radius = 0.016
+			bcyl.height = 0.28
+			shaft.mesh = bcyl
+			shaft.rotation_degrees.z = 90.0
+			shaft.material_override = bone_mat
+			root.add_child(shaft)
+			for sx in [-0.14, 0.14]:
+				for sy in [-0.012, 0.012]:
+					var knob := MeshInstance3D.new()
+					var ksph := SphereMesh.new()
+					ksph.radius = 0.022
+					ksph.height = 0.044
+					knob.mesh = ksph
+					knob.position = Vector3(sx, sy, 0.0)
+					knob.material_override = bone_mat
+					root.add_child(knob)
+		"Tendón":
+			var loop := MeshInstance3D.new()
+			var tor := TorusMesh.new()
+			tor.inner_radius = 0.055
+			tor.outer_radius = 0.075
+			loop.mesh = tor
+			loop.material_override = cord_mat
+			root.add_child(loop)
+		"Pluma":
+			var quill := MeshInstance3D.new()
+			var qbox := BoxMesh.new()
+			qbox.size = Vector3(0.05, 0.004, 0.22)
+			quill.mesh = qbox
+			quill.material_override = feather_mat
+			root.add_child(quill)
+		"Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
+			var handle := MeshInstance3D.new()
+			var hcyl := CylinderMesh.new()
+			hcyl.top_radius = 0.012
+			hcyl.bottom_radius = 0.014
+			hcyl.height = 0.11
+			handle.mesh = hcyl
+			handle.position = Vector3(0.0, -0.05, 0.0)
+			handle.material_override = wood_mat
+			if item_name != "Piedra afilada":
+				root.add_child(handle)
+			var blade := MeshInstance3D.new()
+			var prism := PrismMesh.new()
+			prism.size = Vector3(0.038, 0.14, 0.012)
+			blade.mesh = prism
+			blade.position = Vector3(0.0, 0.06, 0.0)
+			blade.material_override = bone_mat if item_name == "Cuchillo de hueso" else stone_mat
+			root.add_child(blade)
+	return root
