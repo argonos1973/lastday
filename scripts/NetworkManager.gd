@@ -1747,9 +1747,13 @@ func receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: Packed
 
 # Each accepted message represents one projectile, never an inventory drop.
 @rpc("any_peer", "reliable")
-func primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float) -> void:
+func primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float, wind: Vector3 = Vector3.ZERO) -> void:
 	var sender := multiplayer.get_remote_sender_id()
+	if is_host and sender == 0:
+		sender = get_my_id()
 	if not _accepts_world_sender(sender) or (is_host and shooter_id != sender):
+		return
+	if not wind.is_finite() or wind.length() > 100.0:
 		return
 	if not origin.is_finite() or not direction.is_finite() or direction.length_squared() < 0.001 or not is_finite(speed):
 		return
@@ -1761,11 +1765,11 @@ func primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_n
 	if scene == null:
 		return
 	if is_host:
-		if not scene._is_shooter_valid(shooter_id) or not scene._sender_within(shooter_id, origin, 5.0):
+		if not scene._is_shooter_valid(shooter_id) or (shooter_id != get_my_id() and not scene._sender_within(shooter_id, origin, 5.0)):
 			return
 		if peer != null:
 			for pid in players.keys():
 				if pid != shooter_id and pid != get_my_id() and peer_alive(pid):
-					primitive_shot.rpc_id(pid, shooter_id, origin, direction, item_name, speed)
+					primitive_shot.rpc_id(pid, shooter_id, origin, direction, item_name, speed, wind)
 	if scene.has_method("_net_primitive_shot"):
-		scene._net_primitive_shot(shooter_id, origin, direction, item_name, speed)
+		scene._net_primitive_shot(shooter_id, origin, direction, item_name, speed, wind)

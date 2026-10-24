@@ -13627,12 +13627,12 @@ func _throw_aimed_weapon() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
-func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false) -> void:
+func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false, remote_wind: Vector3 = Vector3.ZERO) -> void:
 	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
 		return
 	var projectile := preload("res://scripts/RifleProjectile.gd").new()
 	projectile.velocity = direction.normalized() * speed
-	projectile.wind_velocity = _wind_dir * _wind_strength * 0.35
+	projectile.wind_velocity = remote_wind if visual_only else _wind_dir * _wind_strength * 0.35
 	projectile.max_distance = max_dist
 	projectile.excluded = excluded.duplicate()
 	var vis: Node3D = null
@@ -13654,7 +13654,10 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 		return
 	var network := get_node_or_null("/root/NetworkManager")
 	if network != null and network.is_connected:
-		network.primitive_shot.rpc_id(1, network.get_my_id(), origin, direction, item_name, speed)
+		if network.is_host:
+			network.primitive_shot(network.get_my_id(), origin, direction, item_name, speed, projectile.wind_velocity)
+		else:
+			network.primitive_shot.rpc_id(1, network.get_my_id(), origin, direction, item_name, speed, projectile.wind_velocity)
 	projectile.expired.connect(func(pos: Vector3):
 		_recover_primitive_item(pos, Vector3.UP, item_name, item_type, item_weight, item_use))
 	projectile.impact.connect(func(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3):

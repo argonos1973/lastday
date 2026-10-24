@@ -20,6 +20,7 @@ OUT="${1:-build/dist/index.html}"
 # VERSION_OVERRIDE lets the page badge name the version of the published
 # binaries even when HEAD already has newer non-exported commits.
 VERSION="${VERSION_OVERRIDE:-$(git rev-parse --short HEAD)}"
+mkdir -p build/tmp "$(dirname "$OUT")"
 TMP="$(mktemp build/tmp/cambios.XXXXXX.html)"
 trap 'rm -f "$TMP"' EXIT
 
@@ -50,7 +51,7 @@ html_escape() {
 	echo '  <section class="bloque" id="cambios">'
 	echo '    <h3>Cambios por versión</h3>'
 	echo '    <ul class="verlist">'
-	git log --pretty=format:'%h|%ad|%s' --date=format:'%d/%m/%y' -15 | while IFS='|' read -r h d s; do
+	git log --pretty=tformat:'%h|%ad|%s' --date=format:'%d/%m/%y' -15 | while IFS='|' read -r h d s; do
 		txt="$(lookup_es "$h")"
 		[ -n "$txt" ] || txt="$s"
 		printf '      <li><b>v%s</b><span class="vdate">%s</span><span class="vsub">%s</span></li>\n' \

@@ -3995,7 +3995,8 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			var part: Array = parts[i]
 			var ppos := base_pos + Vector3(-0.3, 0.0, 0.3 + i * 0.2)
 			ppos.y = (base_pos.y if is_ded_srv else _get_exact_ground_y(ppos.x, ppos.z, base_pos.y + 0.5)) + 0.06
-			var part_id := "gut_part_%s_%d" % [real_name, i]
+			_drop_seq += 1
+			var part_id := "gut_part_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 			_spawn_ground_pickup(part[0], "resource", ppos, part[1], part[2], 0.0, part_id)
 			meat_drops.append({"id": part_id, "name": part[0], "type": "resource", "pos": [ppos.x, ppos.y, ppos.z], "weight": part[1], "qty": part[2], "use": 0.0})
 	# Remove the animal from server
@@ -19297,11 +19298,11 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 		return "Hay un obstáculo en el área del refugio"
 	return ""
 
-func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float) -> void:
+func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float, wind: Vector3 = Vector3.ZERO) -> void:
 	var actor = remote_players.get(shooter_id)
 	if not is_instance_valid(actor):
 		return
 	var excluded: Array[RID] = [actor.get_rid()]
 	actor._collect_child_collision_rids(actor, excluded)
 	var arrow := item_name.begins_with("Flecha")
-	actor._launch_primitive_projectile(origin, direction, speed, 140.0 if arrow else 65.0, excluded, 0.0, item_name, "ammo_arrow" if arrow else "weapon", 0.0, 0.0, item_name == "Boleadoras", true)
+	actor._launch_primitive_projectile(origin, direction, speed, 140.0 if arrow else 65.0, excluded, 0.0, item_name, "ammo_arrow" if arrow else "weapon", 0.0, 0.0, item_name == "Boleadoras", true, wind)
