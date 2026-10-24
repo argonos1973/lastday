@@ -695,6 +695,16 @@ var _throw_charging := false
 var _throw_charge_time := 0.0
 var _throw_anim_frozen := false
 const THROW_MAX_CHARGE_TIME := 1.2
+# Lanzado apuntado (lanzas/bolas): mismo gesto que el lanzado con G — el
+# wind-up de AttackExternal se congela mientras se apunta y el proyectil
+# sale cuando el brazo llega al punto de suelta.
+var _throw_aim_hold := false
+var _throw_aim_frozen := false
+var _throw_release_item = null
+var _throw_release_timer := 0.0
+var _throw_release_origin := Vector3.ZERO
+var _throw_release_dir := Vector3.FORWARD
+const THROW_RELEASE_DELAY := 0.30
 const THROW_ANIM_FREEZE_TIME := 0.4
 const THROW_MIN_FORCE := 4.0
 const THROW_MAX_FORCE := 22.0
@@ -1651,6 +1661,23 @@ func _process(delta: float) -> void:
 			_throw_anim_frozen = true
 			if third_person_animation_player != null:
 				third_person_animation_player.speed_scale = 0.0
+	# Wind-up congelado al apuntar con arrojadizas (mismo gesto que G).
+	if _throw_aim_hold:
+		if _is_aiming and not is_dead and _has_throwable_weapon_equipped():
+			third_person_action_timer = 0.8
+			if not _throw_aim_frozen and third_person_animation_player != null and third_person_animation_player.current_animation == third_person_attack_animation and third_person_animation_player.current_animation_position >= THROW_ANIM_FREEZE_TIME:
+				_throw_aim_frozen = true
+				third_person_animation_player.speed_scale = 0.0
+		else:
+			_throw_aim_hold = false
+			_throw_aim_frozen = false
+			if not _throw_charging and third_person_animation_player != null:
+				third_person_animation_player.speed_scale = 1.0
+	# La lanza sale cuando el brazo llega al punto de suelta del swing.
+	if _throw_release_timer > 0.0:
+		_throw_release_timer -= delta
+		if _throw_release_timer <= 0.0:
+			_finish_aimed_throw()
 	# Tick spoilage for perishable food in inventory
 	if inventory != null and not is_dead:
 		var _any_spoiled := false
@@ -12624,7 +12651,16 @@ func _toggle_aim() -> void:
 		elif _has_throwable_weapon_equipped():
 			var h_it = get_held_item()
 			notice.emit("Apuntando con %s. Clic izq: lanzar." % (str(h_it.item_name) if h_it != null else "arma"))
+			# Mismo gesto que al cargar con G: wind-up de ataque que queda
+			# congelado hasta el clic de lanzamiento.
+			_throw_aim_hold = true
+			_throw_aim_frozen = false
+			_start_throw_animation()
 	else:
+		_throw_aim_hold = false
+		_throw_aim_frozen = false
+		if not _throw_charging and third_person_animation_player != null:
+			third_person_animation_player.speed_scale = 1.0
 		_remove_scope_overlay()
 		if camera != null:
 			camera.fov = _camera_fov
@@ -12638,6 +12674,10 @@ func _cancel_aim() -> void:
 		return
 	_is_aiming = false
 	_breath_hold_active = false
+	_throw_aim_hold = false
+	_throw_aim_frozen = false
+	if not _throw_charging and third_person_animation_player != null:
+		third_person_animation_player.speed_scale = 1.0
 	_remove_scope_overlay()
 	if camera != null:
 		camera.fov = _camera_fov
@@ -13732,19 +13772,45 @@ func _throw_aimed_weapon() -> void:
 	var held = get_held_item()
 	if is_dead or camera == null or held == null or not _has_throwable_weapon_equipped():
 		return
-	if _shoot_cooldown > 0.0:
+	if _shoot_cooldown > 0.0 or _throw_release_item != null:
 		return
 	if stats.energy < 6.0:
 		notice.emit("Estás demasiado cansado para lanzar.")
+		return
+	set_meta("last_dropped_durability", maxf(0.0, float(held.durability) - 4.0))
+	set_meta("last_dropped_max_durability", float(held.max_durability))
+	# Capturar la dirección en el clic; la lanza sale del brazo cuando el
+	# swing llega al punto de suelta, igual que al soltar la tecla G.
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5
+	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
+	_throw_release_origin = global_position + Vector3(0, 1.0 if is_crouching else 1.42, 0) + cam_ray_dir * 0.5
+	_throw_release_dir = (cam_ray_dir + Vector3(0, 0.06, 0)).normalized()
+	_throw_release_item = held
+	_throw_release_timer = THROW_RELEASE_DELAY
+	_throw_aim_hold = false
+	_throw_aim_frozen = false
+	_cancel_aim()
+	_shoot_cooldown = 0.8
+	stats.energy = maxf(0.0, stats.energy - 6.0)
+	stats.changed.emit()
+	# Reanudar el wind-up congelado en vez de reiniciar el clip desde cero.
+	if third_person_animation_player != null:
+		third_person_animation_player.speed_scale = 1.0
+		third_person_action_animation = third_person_attack_animation
+		third_person_action_timer = 0.85
+	else:
+		play_action_animation("attack", 0.65)
+	_schedule_melee_swing_sound(0.28)
+
+func _finish_aimed_throw() -> void:
+	var held = _throw_release_item
+	_throw_release_item = null
+	if held == null or camera == null or is_dead or get_held_item() != held:
 		return
 	var item_name := str(held.item_name)
 	var item_type := str(held.item_type)
 	var item_weight := float(held.weight)
 	var item_use := float(held.use_value)
-	var item_dur := float(held.durability)
-	var item_max_dur := float(held.max_durability)
-	set_meta("last_dropped_durability", maxf(0.0, item_dur - 4.0))
-	set_meta("last_dropped_max_durability", item_max_dur)
 	var idx: int = inventory.items.find(held) if inventory != null else -1
 	if idx < 0 and not _held_item_external:
 		return
@@ -13754,24 +13820,13 @@ func _throw_aimed_weapon() -> void:
 	_held_selection_revision += 1
 	if idx >= 0:
 		inventory.remove_index(idx, 1)
-	_cancel_aim()
 	_sync_held_item()
-	_shoot_cooldown = 0.8
-	stats.energy = maxf(0.0, stats.energy - 6.0)
-	stats.changed.emit()
-	play_action_animation("attack", 0.65)
-	_schedule_melee_swing_sound(0.05)
 	var is_bola := item_type == "weapon_bola" or item_name == "Boleadoras"
 	var proj_speed := 32.0 if is_bola else 38.0
 	var base_dmg := 35.0 if is_bola else (110.0 if item_name == "Palo afilado" else (165.0 if item_name == "Lanza" else 210.0))
-	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5
-	var cam_ray_origin := camera.project_ray_origin(aim_point)
-	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
-	var shot_origin := global_position + Vector3(0, 1.0 if is_crouching else 1.42, 0) + cam_ray_dir * 0.5
 	var exclude_arr: Array[RID] = [self.get_rid()]
 	_collect_child_collision_rids(self, exclude_arr)
-	var aim_dir := (cam_ray_dir + Vector3(0, 0.06, 0)).normalized()
-	_launch_primitive_projectile(shot_origin, aim_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
+	_launch_primitive_projectile(_throw_release_origin, _throw_release_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
 	notice.emit("Lanzas %s." % item_name)
 	var main := get_tree().current_scene
 	if main != null and main.has_method("_sync_local_player_inventory"):
