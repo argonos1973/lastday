@@ -6199,7 +6199,13 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			return ["res://assets/models/weapons/arrow_stone.glb"]
 		"Flecha de hueso":
 			return ["res://assets/models/weapons/arrow_bone.glb"]
-	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+		"Cuerda":
+			return ["res://assets/models/props/rope_coil.glb"]
+		"Hueso":
+			return ["res://assets/models/props/animal_bone.glb"]
+		"Tendón":
+			return ["res://assets/models/props/animal_sinew.glb"]
+	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 		return []
 	# Harvested and bush-dropped seeds share the pouch model across item types.
 	if item_name == "Semillas":
@@ -6379,6 +6385,10 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 		"resource":
 			if item_name.begins_with("Piel de "):
 				return 0.65
+			if item_name in ["Hueso", "Tendón"]:
+				return 0.85
+			if item_name == "Cuerda":
+				return 0.95
 			if item_name == "Tronco":
 				return 0.85
 			if item_name == "Palo":
@@ -9842,12 +9852,65 @@ func _create_house_loot() -> void:
 		wt_mag["pos"] = Vector3(water_tower_origin.x + 0.8 + 0.5 * wtmi, wt_floor_y, water_tower_origin.z - 1.8)
 		wt_mag["floor_y"] = wt_floor_y
 		_create_pickup_item(wt_mag)
+	# Arcos y flechas en las casas del pueblo y en las viviendas de la ciudad —
+	# usan bow_rng independiente para no alterar la secuencia de _world_rng.
+	var bow_rng := RandomNumberGenerator.new()
+	bow_rng.seed = _stable_loot_seed("bow_arrows_loot_v1")
+	var bow_templates := [
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 0.9, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/wooden_bow.glb"], "scale": 0.95, "rot": Vector3(90, 35, 0), "flat": true, "color": Color.TRANSPARENT},
+		{"name": "Arco reforzado", "type": "weapon_bow", "weight": 1.1, "qty": 1, "use": 0.0, "paths": ["res://assets/models/weapons/reinforced_bow.glb"], "scale": 0.95, "rot": Vector3(90, 125, 0), "flat": true, "color": Color.TRANSPARENT},
+	]
+	var arrow_templates := [
+		{"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.08, "qty": 5, "use": 0.0, "paths": ["res://assets/models/weapons/arrow_wood.glb"], "scale": 1.15, "rot": Vector3(0, 40, 0), "flat": true, "color": Color.TRANSPARENT},
+		{"name": "Flecha de piedra", "type": "ammo_arrow", "weight": 0.09, "qty": 5, "use": 0.0, "paths": ["res://assets/models/weapons/arrow_stone.glb"], "scale": 1.15, "rot": Vector3(0, 110, 0), "flat": true, "color": Color.TRANSPARENT},
+		{"name": "Flecha de hueso", "type": "ammo_arrow", "weight": 0.09, "qty": 5, "use": 0.0, "paths": ["res://assets/models/weapons/arrow_bone.glb"], "scale": 1.15, "rot": Vector3(0, 195, 0), "flat": true, "color": Color.TRANSPARENT},
+	]
+	for hd_i in range(house_loot_data.size()):
+		var hd: Dictionary = house_loot_data[hd_i]
+		var h_origin: Vector3 = hd["origin"]
+		var h_half_w: float = float(hd["w"]) * 0.5
+		var h_half_d: float = float(hd["d"]) * 0.5
+		var h_aabbs: Array = _collect_house_furniture_aabbs(str(hd.get("label", "")))
+		if hd_i % 2 == 0:
+			var b_tmpl: Dictionary = bow_templates[1 if hd_i == 6 else (bow_rng.randi() % bow_templates.size())].duplicate()
+			b_tmpl["pos"] = _find_pos_inside_house_avoiding(h_origin, h_half_w, h_half_d, h_aabbs, bow_rng)
+			b_tmpl["rot"] = Vector3(90.0, bow_rng.randf_range(0.0, 360.0), 0.0)
+			b_tmpl["id"] = "house_loot_bow_%d" % hd_i
+			_create_pickup_item(b_tmpl)
+		var a_tmpl: Dictionary = arrow_templates[bow_rng.randi() % arrow_templates.size()].duplicate()
+		a_tmpl["pos"] = _find_pos_inside_house_avoiding(h_origin, h_half_w, h_half_d, h_aabbs, bow_rng)
+		a_tmpl["rot"] = Vector3(0.0, bow_rng.randf_range(0.0, 360.0), 0.0)
+		a_tmpl["id"] = "house_loot_arrow_%d" % hd_i
+		_create_pickup_item(a_tmpl)
+	for b_idx in range(CityExpansion.BLOCK.BUILDINGS.size()):
+		var cdef: Dictionary = CityExpansion.BLOCK.BUILDINGS[b_idx]
+		var cb_pos: Vector3 = city_center + cdef["position"]
+		var cb_yaw: float = float(cdef["yaw"])
+		var c_floors: Array = cdef.get("loot_floor_values", [])
+		if b_idx % 2 == 0:
+			var cb_tmpl: Dictionary = bow_templates[bow_rng.randi() % bow_templates.size()].duplicate()
+			var bow_fy: float = float(c_floors[0]) if c_floors.size() > 2 else 0.06
+			cb_tmpl["pos"] = _find_pos_inside_city_building(cb_pos, cb_yaw, bow_fy, cdef, bow_rng)
+			cb_tmpl["rot"] = Vector3(90.0, bow_rng.randf_range(0.0, 360.0), 0.0)
+			if bow_fy > 1.0 or c_floors.size() > 2:
+				cb_tmpl["floor_y"] = bow_fy
+			cb_tmpl["id"] = "city_loot_bow_%d" % b_idx
+			_create_pickup_item(cb_tmpl)
+		var ca_tmpl: Dictionary = arrow_templates[bow_rng.randi() % arrow_templates.size()].duplicate()
+		var arr_fy: float = float(c_floors[bow_rng.randi() % c_floors.size()]) if c_floors.size() > 2 else (0.06 if (b_idx % 2 == 1) else 4.22)
+		ca_tmpl["pos"] = _find_pos_inside_city_building(cb_pos, cb_yaw, arr_fy, cdef, bow_rng)
+		ca_tmpl["rot"] = Vector3(0.0, bow_rng.randf_range(0.0, 360.0), 0.0)
+		if arr_fy > 1.0 or c_floors.size() > 2:
+			ca_tmpl["floor_y"] = arr_fy
+		ca_tmpl["id"] = "city_loot_arrow_%d" % b_idx
+		_create_pickup_item(ca_tmpl)
 
-func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float) -> Vector3:
+func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float, rng: RandomNumberGenerator = null) -> Vector3:
+	var r: RandomNumberGenerator = rng if rng != null else _world_rng
 	var pos := Vector3(
-		origin.x + _world_rng.randf_range(-half_w + 1.0, half_w - 1.0),
+		origin.x + r.randf_range(-half_w + 1.0, half_w - 1.0),
 		0.06,
-		origin.z + _world_rng.randf_range(-half_d + 1.0, half_d - 1.0)
+		origin.z + r.randf_range(-half_d + 1.0, half_d - 1.0)
 	)
 	return pos
 
@@ -9863,10 +9926,10 @@ func _collect_house_furniture_aabbs(house_label: String) -> Array:
 			aabbs.append(NodeUtils.compute_node_world_aabb(node as Node3D))
 	return aabbs
 
-func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: float, furniture_aabbs: Array) -> Vector3:
+func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: float, furniture_aabbs: Array, rng: RandomNumberGenerator = null) -> Vector3:
 	var pad := 0.6
 	for _attempt in range(20):
-		var pos := _find_pos_inside_house(origin, half_w, half_d)
+		var pos := _find_pos_inside_house(origin, half_w, half_d, rng)
 		var blocked := false
 		for aabb in furniture_aabbs:
 			var box: AABB = aabb
@@ -9876,9 +9939,10 @@ func _find_pos_inside_house_avoiding(origin: Vector3, half_w: float, half_d: flo
 				break
 		if not blocked:
 			return pos
-	return _find_pos_inside_house(origin, half_w, half_d)
+	return _find_pos_inside_house(origin, half_w, half_d, rng)
 
-func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float, definition: Dictionary = {}) -> Vector3:
+func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float, definition: Dictionary = {}, rng: RandomNumberGenerator = null) -> Vector3:
+	var r_gen: RandomNumberGenerator = rng if rng != null else _world_rng
 	# Building-local frame: the stairwell opening (local x>2.4) is off-limits
 	# upstairs, and downstairs keeps clear of the stair run and the door swing.
 	# Bulky furniture footprints are rejected too — a drop inside a wardrobe or
@@ -9893,8 +9957,8 @@ func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float,
 		for _attempt in range(40):
 			# The stair shaft is on the west side; loot is placed in the clear
 			# east rooms, with a walkable lane from each landing kept open.
-			var lx := _world_rng.randf_range(-1.65,5.15)
-			var lz := _world_rng.randf_range(-4.45,4.45)
+			var lx := r_gen.randf_range(-1.65,5.15)
+			var lz := r_gen.randf_range(-4.45,4.45)
 			if level == 0:
 				if lx > 1.0 and lx < 4.2 and lz > 1.9: continue # shop counter
 				if lx > 4.0 and lz < -3.8: continue # cabinet and rear counter
@@ -9905,8 +9969,8 @@ func _find_pos_inside_city_building(origin: Vector3, yaw: float, floor_y: float,
 		return origin + Vector3(.0, floor_y, 0.0).rotated(Vector3.UP, yaw)
 	var rects: Array = CityExpansion.BLOCK.LOOT_BLOCK_RECTS[0] if floor_y < 1.0 else CityExpansion.BLOCK.LOOT_BLOCK_RECTS[1]
 	for _attempt in range(25):
-		var lx := _world_rng.randf_range(-5.0, 5.0)
-		var lz := _world_rng.randf_range(-5.0, 5.0)
+		var lx := r_gen.randf_range(-5.0, 5.0)
+		var lz := r_gen.randf_range(-5.0, 5.0)
 		if floor_y > 1.0:
 			if lx > 2.4:
 				continue
@@ -10428,6 +10492,14 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 			rag.position = pos + Vector3(0, 0.02, 0)
 			rag.rotation_degrees.y = randf_range(0, 360)
 			add_child(rag)
+		elif item_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+			var prim := MaterialFactory.build_primitive_item_mesh(item_name)
+			prim.name = visual_name
+			prim.position = pos + Vector3(0, 0.04, 0)
+			prim.rotation_degrees.y = randf_range(0, 360)
+			if item_name in ["Arco de madera", "Arco reforzado", "Lanza", "Lanza de hueso", "Palo afilado"]:
+				prim.rotation_degrees.x = 90.0
+			add_child(prim)
 		else:
 			_create_visual_cylinder(visual_name, pos + Vector3(0, 0.1, 0), 0.12, 0.5, Color(0.25, 0.15, 0.06), Vector3(90, randf_range(0, 180), 0))
 	_mark_world_action_visual(visual_name)

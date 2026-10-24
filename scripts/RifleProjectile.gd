@@ -7,6 +7,11 @@ var wind_velocity := Vector3.ZERO
 var max_distance := 150.0
 var excluded: Array[RID] = []
 var traveled := 0.0
+# Per-ammo ballistics: light fletched shafts bleed speed much faster than
+# bullets and weathercock into the velocity vector along the arc.
+var drag_coeff := 0.12
+var align_flight := false
+var launch_speed := 0.0
 
 func _physics_process(delta: float) -> void:
 	if is_queued_for_deletion(): return
@@ -14,7 +19,7 @@ func _physics_process(delta: float) -> void:
 	while remaining > 0.000001:
 		var step := minf(remaining, 1.0 / 240.0)
 		remaining -= step
-		var acceleration := Vector3(0, -9.81, 0) - (velocity - wind_velocity) * 0.12
+		var acceleration := Vector3(0, -9.81, 0) - (velocity - wind_velocity) * drag_coeff
 		var displacement := velocity * step + acceleration * (0.5 * step * step)
 		velocity += acceleration * step
 		displacement = displacement.limit_length(max_distance - traveled)
@@ -53,6 +58,12 @@ func _physics_process(delta: float) -> void:
 			return
 		global_position += displacement
 		traveled += displacement.length()
+		# Fletching stabilizes the shaft: the nose tracks the velocity vector,
+		# so a spent arrow visibly tips down along the falling arc.
+		if align_flight and velocity.length_squared() > 9.0:
+			var fwd := velocity.normalized()
+			var up_ref := Vector3.UP if absf(fwd.y) < 0.97 else Vector3.FORWARD
+			look_at(global_position + fwd, up_ref)
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
 			expired.emit(global_position)
 			queue_free()

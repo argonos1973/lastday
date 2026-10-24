@@ -59,7 +59,9 @@ var crosshair_dot: ColorRect
 var crosshair_ring_h: ColorRect
 var crosshair_ring_v: ColorRect
 var _crosshair_rifle_mode := false
+var _crosshair_bow_aim_mode := false
 var _xh_segs: Array = []       # 4 segmentos de cruceta dinamica (t,b,l,r)
+var _bow_drop_pins: Array = [] # 3 pines de caida balistica al apuntar con arco
 var _xh_gap := 6.0             # separacion actual en pixeles
 var _hit_marker_a: ColorRect
 var _hit_marker_b: ColorRect
@@ -2416,6 +2418,30 @@ func _build_center_messages() -> void:
 		_xh_segs.append(seg)
 	_layout_crosshair_segments()
 
+	# Pines de caída balística para el arco cuando se apunta (20m, 35m, 50m)
+	var pin_offsets := [
+		[15.0, 5.0],
+		[29.0, 3.5],
+		[45.0, 2.2],
+	]
+	for p_cfg in pin_offsets:
+		var py: float = p_cfg[0]
+		var half_w: float = p_cfg[1]
+		var pin := ColorRect.new()
+		pin.anchor_left = 0.5
+		pin.anchor_top = 0.5
+		pin.anchor_right = 0.5
+		pin.anchor_bottom = 0.5
+		pin.offset_left = -half_w
+		pin.offset_right = half_w
+		pin.offset_top = py - 1.0
+		pin.offset_bottom = py + 1.0
+		pin.color = Color(0.98, 0.86, 0.45, 0.88)
+		pin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pin.visible = false
+		root.add_child(pin)
+		_bow_drop_pins.append(pin)
+
 	# Hit marker: dos barras formando una X en el centro
 	for i in range(2):
 		var bar := ColorRect.new()
@@ -3438,14 +3464,30 @@ func set_crosshair_rifle(active: bool) -> void:
 	_crosshair_rifle_mode = active
 	_update_equipment_labels()
 	if crosshair_dot == null or crosshair_ring_h == null or crosshair_ring_v == null:
-		pass # print("DEBUG CROSSHAIR RIFLE: null nodes dot=", crosshair_dot, " h=", crosshair_ring_h, " v=", crosshair_ring_v)
 		return
-	crosshair_dot.visible = not active
-	# Modo rifle: 4 segmentos dinamicos en vez de la cruz fija
+	crosshair_dot.visible = (not active) or _crosshair_bow_aim_mode
+	# Modo rifle / arco apuntando: 4 segmentos dinamicos
 	crosshair_ring_h.visible = false
 	crosshair_ring_v.visible = false
 	for seg in _xh_segs:
-		seg.visible = active
+		seg.visible = active or _crosshair_bow_aim_mode
+	for pin in _bow_drop_pins:
+		pin.visible = _crosshair_bow_aim_mode
+
+func set_crosshair_bow_aim(active: bool, show_drop_pins: bool = true) -> void:
+	_crosshair_bow_aim_mode = active
+	if crosshair_dot != null:
+		crosshair_dot.visible = true if active else (not _crosshair_rifle_mode)
+		crosshair_dot.offset_left = -2.5 if active else -2.0
+		crosshair_dot.offset_top = -2.5 if active else -2.0
+		crosshair_dot.offset_right = 2.5 if active else 2.0
+		crosshair_dot.offset_bottom = 2.5 if active else 2.0
+		crosshair_dot.color = Color(1.0, 0.90, 0.42, 0.98) if active else Color(0.96, 0.94, 0.84, 0.92)
+	for seg in _xh_segs:
+		seg.visible = active or _crosshair_rifle_mode
+		seg.color = Color(0.98, 0.92, 0.68, 0.94) if active else Color(0.96, 0.94, 0.84, 0.9)
+	for pin in _bow_drop_pins:
+		pin.visible = active and show_drop_pins
 
 func set_crosshair_spread(gap_px: float) -> void:
 	# gap_px es la distancia del centro a cada segmento, en pixeles

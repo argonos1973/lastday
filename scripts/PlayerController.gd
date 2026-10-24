@@ -469,6 +469,9 @@ const REINFORCED_BOW_MODEL := "res://assets/models/weapons/reinforced_bow.glb"
 const ARROW_WOOD_MODEL := "res://assets/models/weapons/arrow_wood.glb"
 const ARROW_STONE_MODEL := "res://assets/models/weapons/arrow_stone.glb"
 const ARROW_BONE_MODEL := "res://assets/models/weapons/arrow_bone.glb"
+const ROPE_COIL_MODEL := "res://assets/models/props/rope_coil.glb"
+const ANIMAL_BONE_MODEL := "res://assets/models/props/animal_bone.glb"
+const ANIMAL_SINEW_MODEL := "res://assets/models/props/animal_sinew.glb"
 # Swing timers: the clip's contact frame, and the lead so the whoosh peaks
 # just before impact instead of firing at click time.
 const MELEE_PUNCH_IMPACT_DELAY := 0.95
@@ -1027,10 +1030,15 @@ func setup_as_puppet() -> void:
 			_bind_backpack_socket()
 			_hand_skeleton = _spine_skeleton
 			_hand_bone_idx = -1
+			_left_hand_bone_idx = -1
 			if _hand_skeleton != null:
 				for bone_name in ["mixamorig:RightHand", "mixamorig:LeftHand", "mixamorig_RightHand", "mixamorig_LeftHand", "RightHand", "LeftHand"]:
 					_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
 					if _hand_bone_idx != -1:
+						break
+				for bone_name in ["mixamorig:LeftHand", "mixamorig_LeftHand", "LeftHand"]:
+					_left_hand_bone_idx = _hand_skeleton.find_bone(bone_name)
+					if _left_hand_bone_idx != -1:
 						break
 			_head_skeleton = _spine_skeleton
 			_head_bone_idx = -1
@@ -1505,7 +1513,7 @@ func _update_puppet_held_item(item_name: String) -> void:
 			_build_third_person_fishing_rod()
 		"Palo afilado", "Lanza", "Lanza de hueso":
 			_build_third_person_primitive(item_name)
-		"Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
+		"Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
 			_build_third_person_primitive(item_name)
 		"Hacha de piedra":
 			_build_third_person_axe()
@@ -4048,10 +4056,49 @@ func _update_hand_socket() -> void:
 		return
 	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(third_person_hand_item_root):
 		return
-	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
 	var skel_global := _hand_skeleton.global_transform
-	var bone_world := skel_global * bone_pose
 	var local_to_model := third_person_model.global_transform.affine_inverse()
+	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
+	if holding_bow and _left_hand_bone_idx >= 0:
+		var l_world := skel_global * _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
+		var l_local := local_to_model * l_world
+		var r_world := skel_global * _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
+		var r_local := local_to_model * r_world
+		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+		var bow_drawing: bool = _is_aiming or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
+		var prim_node := third_person_hand_item_root.get_node_or_null("HeldPrimitive") as Node3D
+		if bow_drawing:
+			var draw_vec := l_local.origin - r_local.origin
+			var draw_dist := draw_vec.length()
+			var fwd_dir := (draw_vec / draw_dist) if draw_dist > 0.04 else Vector3(0.0, 0.0, 1.0)
+			if not is_puppet and is_instance_valid(camera):
+				var cam_fwd_model := (local_to_model.basis * (-camera.global_basis.z)).normalized()
+				fwd_dir = Vector3(fwd_dir.x, lerpf(fwd_dir.y, cam_fwd_model.y, 0.85), fwd_dir.z).normalized()
+			var up_hint := Vector3(0.14, 1.0, 0.0).normalized()
+			var right_dir := fwd_dir.cross(up_hint).normalized()
+			if right_dir.length_squared() < 0.001:
+				right_dir = Vector3(1.0, 0.0, 0.0)
+			var up_dir := right_dir.cross(fwd_dir).normalized()
+			# Bow local -Z points forward along the arrow; +Z points directly to the right hand
+			var bow_basis := Basis(right_dir, up_dir, -fwd_dir)
+			third_person_hand_item_root.position = l_local.origin
+			third_person_hand_item_root.basis = bow_basis
+			if prim_node != null:
+				prim_node.rotation_degrees = Vector3.ZERO
+				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z)
+				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
+				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, true)
+			return
+		else:
+			third_person_hand_item_root.position = l_local.origin
+			var l_euler := l_local.basis.orthonormalized().get_euler()
+			third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(l_euler.x), rad_to_deg(l_euler.y), rad_to_deg(l_euler.z))
+			if prim_node != null:
+				prim_node.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+				_update_bow_draw_visuals(prim_node, 0.24, false)
+			return
+	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
+	var bone_world := skel_global * bone_pose
 	var bone_local := local_to_model * bone_world
 	var rod_offset := Vector3.ZERO
 	if _rod_socket_active and third_person_animation_player != null:
@@ -4063,6 +4110,55 @@ func _update_hand_socket() -> void:
 		third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset + rod_offset
 	var euler := bone_local.basis.orthonormalized().get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool) -> void:
+	var static_str := prim_node.find_child("BowString", true, false) as Node3D
+	var top_seg := prim_node.get_node_or_null("BowDrawStringTop") as MeshInstance3D
+	var bot_seg := prim_node.get_node_or_null("BowDrawStringBot") as MeshInstance3D
+	var nocked_arrow := prim_node.get_node_or_null("BowNockedArrow") as Node3D
+	if not active:
+		if static_str != null: static_str.visible = true
+		if top_seg != null: top_seg.visible = false
+		if bot_seg != null: bot_seg.visible = false
+		if nocked_arrow != null: nocked_arrow.visible = false
+		return
+	# Since +Z of prim_node points directly from the left hand (0,0,0) to the
+	# right hand, the right hand string anchor is at (0, 0, draw_dist).
+	var pull_z := clampf(draw_dist, 0.26, 1.45)
+	var nock_pt := Vector3(0.0, 0.0, pull_z)
+	var is_recurve: bool = prim_node.find_child("BoneSiyah_1", true, false) != null
+	var tip_z := 0.341 if is_recurve else 0.246
+	var top_tip := Vector3(0.0, 0.608, tip_z)
+	var bot_tip := Vector3(0.0, -0.608, tip_z)
+	if static_str != null:
+		static_str.visible = false
+	for seg_pair in [[top_seg, top_tip], [bot_seg, bot_tip]]:
+		var seg: MeshInstance3D = seg_pair[0]
+		var tip: Vector3 = seg_pair[1]
+		if seg == null:
+			continue
+		seg.visible = true
+		var span := nock_pt - tip
+		var seg_len := maxf(0.01, span.length())
+		var cyl := seg.mesh as CylinderMesh
+		if cyl != null:
+			cyl.height = seg_len
+		seg.position = (tip + nock_pt) * 0.5
+		var y_axis := span / seg_len
+		var x_axis := Vector3(1.0, 0.0, 0.0)
+		var z_axis := x_axis.cross(y_axis).normalized()
+		seg.basis = Basis(x_axis, y_axis, z_axis)
+	if nocked_arrow != null:
+		var has_arrows: bool = is_puppet or _count_inventory_arrows() > 0
+		nocked_arrow.visible = has_arrows
+		if has_arrows:
+			# Arrow GLB has fletching at -Z (-0.36) and arrowhead at +Z (+0.42), total length ~0.78.
+			# Scale along Z so the arrow spans from the right-hand nock_pt (+pull_z)
+			# past the left-hand bow grip (0,0,0) with the stone arrowhead in front.
+			var z_scale := maxf(1.0, (pull_z + 0.14) / 0.72)
+			nocked_arrow.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+			nocked_arrow.scale = Vector3(1.15, 1.15, z_scale)
+			nocked_arrow.position = Vector3(0.012, 0.015, pull_z - 0.34 * z_scale)
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
@@ -7258,7 +7354,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_build_third_person_axe()
 		_clear_rifle_attachment()
 		return
-	if held_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
+	if held_name in ["Arco de madera", "Arco reforzado", "Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras", "Cuerda", "Hueso", "Tendón", "Pluma", "Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso"]:
 		_build_third_person_primitive(held_name)
 		_clear_rifle_attachment()
 		return
@@ -9705,6 +9801,9 @@ func _build_third_person_primitive(item_name: String) -> void:
 		"Flecha de madera": glb_path = ARROW_WOOD_MODEL
 		"Flecha de piedra": glb_path = ARROW_STONE_MODEL
 		"Flecha de hueso": glb_path = ARROW_BONE_MODEL
+		"Cuerda": glb_path = ROPE_COIL_MODEL
+		"Hueso": glb_path = ANIMAL_BONE_MODEL
+		"Tendón": glb_path = ANIMAL_SINEW_MODEL
 	var prim: Node3D = null
 	if not glb_path.is_empty():
 		prim = _load_external_node3d(glb_path)
@@ -9715,6 +9814,26 @@ func _build_third_person_primitive(item_name: String) -> void:
 		prim.rotation_degrees = Vector3(85.0, 0.0, 0.0)
 	elif item_name in ["Arco de madera", "Arco reforzado"]:
 		prim.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+		var str_mat := StandardMaterial3D.new()
+		str_mat.albedo_color = Color(0.80, 0.74, 0.58)
+		str_mat.roughness = 0.72
+		for seg_name in ["BowDrawStringTop", "BowDrawStringBot"]:
+			var seg := MeshInstance3D.new()
+			seg.name = seg_name
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.0024
+			cyl.bottom_radius = 0.0024
+			cyl.height = 0.62
+			cyl.radial_segments = 8
+			seg.mesh = cyl
+			seg.material_override = str_mat
+			seg.visible = false
+			prim.add_child(seg)
+		var nocked := _load_external_node3d(ARROW_STONE_MODEL)
+		if nocked != null:
+			nocked.name = "BowNockedArrow"
+			nocked.visible = false
+			prim.add_child(nocked)
 	third_person_hand_item_root.add_child(prim)
 
 # Bundle de ropa: sin modelo 3P diferenciado, usa pack genérico
@@ -9997,8 +10116,15 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 			if not is_on_floor():
 				breath_sway_x *= 2.0
 				breath_sway_y *= 2.0
-		# Position the camera at the player's eye level, slightly forward
-		target_position = Vector3(aim_side + breath_sway_x, aim_height + breath_sway_y + _water_sink, 0.15)
+		# Position the camera: first-person eye level for scoped rifles,
+		# or third-person over-the-shoulder archer view for bows/throwables
+		# so the player clearly sees the bow draw animation and arrow.
+		if _has_bow_equipped() or _has_throwable_weapon_equipped():
+			var bow_cam_z := minf(desired_z, 1.75)
+			var bow_cam_y := (1.25 if is_crouching else 1.72) + breath_sway_y + _water_sink
+			target_position = Vector3(0.55 + breath_sway_x, bow_cam_y, bow_cam_z)
+		else:
+			target_position = Vector3(aim_side + breath_sway_x, aim_height + breath_sway_y + _water_sink, 0.15)
 		if not _debug_cam_active:
 			camera.position = camera.position.lerp(target_position, delta * 18.0)
 			# Use _pitch for vertical aim control (mouse up/down)
@@ -12422,10 +12548,19 @@ func _update_crosshair_spread(delta: float) -> void:
 	if is_puppet:
 		return
 	_crosshair_bloom = maxf(0.0, _crosshair_bloom - delta * 90.0)
-	if not _rifle_in_hands or _is_aiming:
-		return
 	var main := get_tree().current_scene
 	if main == null or main.get("hud") == null or not main.hud.has_method("set_crosshair_spread"):
+		return
+	var is_bow_or_throw := _has_bow_equipped() or _has_throwable_weapon_equipped()
+	if main.hud.has_method("set_crosshair_bow_aim"):
+		main.hud.set_crosshair_bow_aim(_is_aiming and is_bow_or_throw, _has_bow_equipped())
+	if _is_aiming and is_bow_or_throw:
+		var move_extra := 6.0 if is_moving else 0.0
+		var stance_mult := 0.55 if (is_crouching or is_sitting or is_prone) else 1.0
+		var bow_gap := (5.5 + move_extra) * stance_mult + _crosshair_bloom
+		main.hud.set_crosshair_spread(bow_gap)
+		return
+	if not _rifle_in_hands or _is_aiming:
 		return
 	var fov_y := deg_to_rad(camera.fov) if camera != null else deg_to_rad(55.0)
 	var vp_h := get_viewport().get_visible_rect().size.y
@@ -12483,6 +12618,7 @@ func _toggle_aim() -> void:
 		_breath_hold_timer = 0.0
 		_breath_hold_recover = 0.0
 		if _has_bow_equipped():
+			play_action_animation("bow_shoot", 0.52)
 			var ac := _count_inventory_arrows()
 			notice.emit("Apuntando con arco (%d flechas). Clic izq: disparar." % ac if ac > 0 else "No tienes flechas en el inventario.")
 		elif _has_throwable_weapon_equipped():
@@ -13538,6 +13674,7 @@ func _shoot_bow() -> void:
 		notice.emit("No tienes flechas en el inventario.")
 		return
 	_shoot_cooldown = 0.9
+	_crosshair_bloom = minf(_crosshair_bloom + 18.0, 42.0)
 	stats.energy = maxf(0.0, stats.energy - 3.5)
 	stats.changed.emit()
 	if held.has_method("reduce_durability"):
@@ -13568,7 +13705,15 @@ func _shoot_bow() -> void:
 			if hit_d > 2.0:
 				converge_dist = clampf(hit_d, 3.0, 120.0)
 	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
-	var flight_t := minf(shot_origin.distance_to(zero_target), 60.0) / arrow_speed
+	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
+	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
+	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —
+	# without this correction the compensated aim lands low past ~35 m.
+	var arrow_drag := _primitive_projectile_drag("ammo_arrow", arrow_name)
+	var flight_t := aim_dist / arrow_speed
+	var drag_arg := 1.0 - aim_dist * arrow_drag / arrow_speed
+	if arrow_drag > 0.001 and drag_arg > 0.05:
+		flight_t = -log(drag_arg) / arrow_drag
 	zero_target.y += 0.5 * 9.81 * flight_t * flight_t
 	var aim_dir := (zero_target - shot_origin).normalized()
 	if aim_dir.length_squared() < 0.5:
@@ -13627,6 +13772,24 @@ func _throw_aimed_weapon() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
+# Exponential drag per thrown/shot projectile: light fletched arrows shed
+# speed fast, heavy spears keep it, bolas tumble and stall quickest.
+func _primitive_projectile_drag(item_type: String, item_name: String) -> float:
+	match item_name:
+		"Flecha de madera":
+			return 0.34
+		"Flecha de piedra":
+			return 0.28
+		"Flecha de hueso":
+			return 0.26
+		"Lanza", "Lanza de hueso":
+			return 0.20
+		"Palo afilado":
+			return 0.26
+		"Boleadoras":
+			return 0.40
+	return 0.30 if item_type == "ammo_arrow" else 0.24
+
 func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false, remote_wind: Vector3 = Vector3.ZERO) -> void:
 	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
 		return
@@ -13635,6 +13798,9 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.wind_velocity = remote_wind if visual_only else _wind_dir * _wind_strength * 0.35
 	projectile.max_distance = max_dist
 	projectile.excluded = excluded.duplicate()
+	projectile.drag_coeff = _primitive_projectile_drag(item_type, item_name)
+	projectile.launch_speed = speed
+	projectile.align_flight = item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
 	var vis: Node3D = null
 	if item_type == "ammo_arrow":
 		var apath := ARROW_WOOD_MODEL
@@ -13643,6 +13809,10 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 		elif item_name == "Flecha de hueso":
 			apath = ARROW_BONE_MODEL
 		vis = _load_external_node3d(apath)
+		if vis != null:
+			# GLB shafts are modeled head-at-+Z; projectile forward is -Z, so
+			# flip the visual or the arrow flies fletching-first.
+			vis.rotation_degrees.y = 180.0
 	if vis == null:
 		vis = MaterialFactory.build_primitive_item_mesh(item_name)
 		vis.rotation_degrees.x = -90.0 if item_type != "ammo_arrow" else 0.0
@@ -13661,10 +13831,13 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.expired.connect(func(pos: Vector3):
 		_recover_primitive_item(pos, Vector3.UP, item_name, item_type, item_weight, item_use))
 	projectile.impact.connect(func(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3):
-		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola)
+		# Wounding power scales with the speed the shaft still carries: heavy
+		# drag makes long shots land softer instead of using a fixed falloff.
+		var energy := clampf(projectile.velocity.length() / maxf(speed, 1.0), 0.45, 1.0)
+		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola, energy)
 	)
 
-func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool) -> void:
+func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, energy_mult: float = 1.0) -> void:
 	var is_headshot := false
 	var target_node: Node = null
 	if collider is Node3D:
@@ -13682,7 +13855,7 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		if target_node == null and node.is_in_group("net_player_proxy"):
 			target_node = node
 	if target_node != null:
-		var dmg := base_damage * (2.2 if is_headshot else 1.0) * exp(-0.002 * hit_dist)
+		var dmg := base_damage * (2.2 if is_headshot else 1.0) * energy_mult
 		if is_bola and target_node is Node3D:
 			target_node.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
 			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")

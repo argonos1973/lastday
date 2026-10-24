@@ -35,10 +35,10 @@ func _ready() -> void:
 	_viewport.add_child(_model_root)
 
 func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vector3 = Vector3.ZERO, frame_zoom: float = 1.0, only_mesh_name: String = "", tint: Color = Color(0, 0, 0, 0), camo: Color = Color(0, 0, 0, 0), pelt_species: String = "", proc_kind: String = "") -> void:
-	for child in _model_root.get_children():
-		child.queue_free()
 	if _model_root == null:
 		return
+	for child in _model_root.get_children():
+		child.queue_free()
 	var inst: Node3D = null
 	var is_log_model := false
 	var is_olive_field_jacket := false
