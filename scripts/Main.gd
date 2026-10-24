@@ -3637,7 +3637,7 @@ func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 
 			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
 	return true
 
-func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0) -> void:
+func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0, bola: bool = false) -> void:
 	if not is_finite(amount) or amount <= 0.0:
 		return
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
@@ -3652,6 +3652,13 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 		var reach := 8.0 if from_knife else PlayerController.RIFLE_RANGE + 20.0
 		if not _sender_within(sender_id, animal.global_position, reach):
 			return
+	if bola:
+		if from_knife or not animal is WildlifeController or animal._is_dead:
+			return
+		if sender_id != 0 and sender_id != net.get_my_id() and not _sender_within(sender_id, animal.global_position, 70.0):
+			return
+		amount = minf(amount, 35.0)
+		animal.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
 	var attacker_proxy: Node3D = null
 	if sender_id != 0:
 		if server_proxies.has(sender_id):
@@ -3978,6 +3985,19 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 		var hid := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 		_spawn_ground_pickup(hide_name, "resource", hpos, 0.65, hide_qty, 0.0, hid)
 		meat_drops.append({"id": hid, "name": hide_name, "type": "resource", "pos": [hpos.x, hpos.y, hpos.z], "weight": 0.65, "qty": hide_qty, "use": 0.0})
+		# Parts share the server's once-only corpse claim and pickup IDs.
+		var parts: Array = []
+		if animal is BirdController:
+			parts = [["Pluma", 0.02, 3]]
+		elif animal is WildlifeController:
+			parts = [["Hueso", 0.18, animal._bone_count()], ["Tendón", 0.06, animal._sinew_count()]]
+		for i in parts.size():
+			var part: Array = parts[i]
+			var ppos := base_pos + Vector3(-0.3, 0.0, 0.3 + i * 0.2)
+			ppos.y = (base_pos.y if is_ded_srv else _get_exact_ground_y(ppos.x, ppos.z, base_pos.y + 0.5)) + 0.06
+			var part_id := "gut_part_%s_%d" % [real_name, i]
+			_spawn_ground_pickup(part[0], "resource", ppos, part[1], part[2], 0.0, part_id)
+			meat_drops.append({"id": part_id, "name": part[0], "type": "resource", "pos": [ppos.x, ppos.y, ppos.z], "weight": part[1], "qty": part[2], "use": 0.0})
 	# Remove the animal from server
 	if animal.has_method("_remove_corpse"):
 		animal._remove_corpse()
@@ -6070,10 +6090,12 @@ func _track_dropped_item(entry: Dictionary) -> void:
 	_dropped_items.append(entry)
 
 func _net_item_dropped(drop_id: String, item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color = Color(0, 0, 0, 0), sender_id: int = 0, contents: Array = [], wetness: float = 0.0, camo: bool = false, pelt: String = "", lit: bool = false, durability: float = 0.0) -> bool:
-	# Host: a client can only drop near itself and with a sane payload —
-	# otherwise arbitrary items could be spawned anywhere on the map.
+	# Host: a client can only drop near itself (or within bow/javelin flight range
+	# for recoverable projectiles) and with a sane payload — otherwise arbitrary
+	# items could be spawned anywhere on the map.
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
-		if drop_id.is_empty() or item_name.is_empty() or item_name.length() > 80 or not _sender_within(sender_id, pos, 12.0):
+		var max_drop_reach := 145.0 if (item_type in ["ammo_arrow", "weapon_bola", "tool_spear"] or item_name in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras"]) else 12.0
+		if drop_id.is_empty() or item_name.is_empty() or item_name.length() > 80 or not _sender_within(sender_id, pos, max_drop_reach):
 			return false
 	if _depleted_action_ids.has(drop_id):
 		return false
@@ -10907,11 +10929,18 @@ func _execute_world_action(action, actor) -> void:
 			var hide_id := "gut_hide_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
 			_spawn_ground_pickup(hide_name, "resource", hide_pos, 0.65, hide_qty, 0.0, hide_id)
 			gut_spawns.append({"id": hide_id, "name": hide_name, "type": "resource", "pos": hide_pos, "weight": 0.65, "qty": hide_qty, "use": 0.0})
-			if actor != null and actor.get("inventory") != null:
-				actor.inventory.add_item(ItemScript.create("Hueso", "resource", 0.18, bone_qty, 0.0))
-				actor.inventory.add_item(ItemScript.create("Tendón", "resource", 0.06, sinew_qty, 0.0))
-				actor.inventory.changed.emit()
-				call_deferred("_sync_local_player_inventory")
+			var bone_pos := animal_pos + Vector3(-0.25, 0.0, 0.22)
+			bone_pos.y = _get_exact_ground_y(bone_pos.x, bone_pos.z, animal_pos.y + 0.5) + 0.06
+			_drop_seq += 1
+			var bone_id := "gut_bone_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
+			_spawn_ground_pickup("Hueso", "resource", bone_pos, 0.18, bone_qty, 0.0, bone_id)
+			gut_spawns.append({"id": bone_id, "name": "Hueso", "type": "resource", "pos": bone_pos, "weight": 0.18, "qty": bone_qty, "use": 0.0})
+			var sinew_pos := animal_pos + Vector3(-0.25, 0.0, -0.22)
+			sinew_pos.y = _get_exact_ground_y(sinew_pos.x, sinew_pos.z, animal_pos.y + 0.5) + 0.06
+			_drop_seq += 1
+			var sinew_id := "gut_sinew_%d_%d" % [Time.get_ticks_msec(), _drop_seq]
+			_spawn_ground_pickup("Tendón", "resource", sinew_pos, 0.06, sinew_qty, 0.0, sinew_id)
+			gut_spawns.append({"id": sinew_id, "name": "Tendón", "type": "resource", "pos": sinew_pos, "weight": 0.06, "qty": sinew_qty, "use": 0.0})
 			actor.notice.emit("Destripas %s: +%d carne, %d piel, %d hueso y %d tendón." % [an_lower, meat_qty, hide_qty, bone_qty, sinew_qty])
 			if held_g != null and held_g.has_method("reduce_durability"):
 				held_g.reduce_durability(6.0)
@@ -19267,3 +19296,12 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 				continue
 		return "Hay un obstáculo en el área del refugio"
 	return ""
+
+func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float) -> void:
+	var actor = remote_players.get(shooter_id)
+	if not is_instance_valid(actor):
+		return
+	var excluded: Array[RID] = [actor.get_rid()]
+	actor._collect_child_collision_rids(actor, excluded)
+	var arrow := item_name.begins_with("Flecha")
+	actor._launch_primitive_projectile(origin, direction, speed, 140.0 if arrow else 65.0, excluded, 0.0, item_name, "ammo_arrow" if arrow else "weapon", 0.0, 0.0, item_name == "Boleadoras", true)

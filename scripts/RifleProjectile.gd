@@ -1,6 +1,7 @@
 extends Node3D
 ## Game ballistics: finite flight time, gravity and drag. Swept segments stop at cover.
 signal impact(collider, position: Vector3, distance: float, normal: Vector3)
+signal expired(position: Vector3)
 var velocity := Vector3.ZERO
 var wind_velocity := Vector3.ZERO
 var max_distance := 150.0
@@ -53,6 +54,7 @@ func _physics_process(delta: float) -> void:
 		global_position += displacement
 		traveled += displacement.length()
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
+			expired.emit(global_position)
 			queue_free()
 			return
 

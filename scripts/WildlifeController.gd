@@ -1558,7 +1558,6 @@ func interact(player: Node) -> void:
 		timer.wait_time = 5.0
 		timer.one_shot = true
 		timer.timeout.connect(func():
-			_grant_primitive_gut_parts(player_ref)
 			if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
 				player_ref.notice.emit("Destripar al %s: +%d carne cruda, piel, huesos y tendones." % [an_ref, meat_qty])
 			_remove_corpse()
@@ -1582,7 +1581,6 @@ func interact(player: Node) -> void:
 	timer.one_shot = true
 	timer.timeout.connect(func():
 		_spawn_gut_pickups()
-		_grant_primitive_gut_parts(player_ref)
 		if player_ref != null and is_instance_valid(player_ref) and player_ref.has_signal("notice"):
 			player_ref.notice.emit("Destripar al %s: +%d carne cruda, piel, huesos y tendones." % [an_ref, meat_qty])
 		_remove_corpse()
@@ -1653,24 +1651,6 @@ func _sinew_count() -> int:
 		"bear", "deer": return 2
 		_: return 1
 
-func _grant_primitive_gut_parts(player: Node) -> void:
-	if player == null or not is_instance_valid(player):
-		return
-	var inventory = player.get("inventory")
-	if inventory == null or not inventory.has_method("add_item"):
-		return
-	var ItemScript = load("res://scripts/Item.gd")
-	var bones = ItemScript.create("Hueso", "resource", 0.18, _bone_count(), 0.0)
-	var sinew = ItemScript.create("Tendón", "resource", 0.06, _sinew_count(), 0.0)
-	var scene := get_tree().current_scene if is_inside_tree() else null
-	if not inventory.add_item(bones) and scene != null and scene.has_method("_spawn_ground_pickup"):
-		scene.call("_spawn_ground_pickup", "Hueso", "resource", global_position + Vector3(-0.22, 0.06, -0.15), 0.18, _bone_count(), 0.0, "gut_bone_%d" % Time.get_ticks_msec())
-	if not inventory.add_item(sinew) and scene != null and scene.has_method("_spawn_ground_pickup"):
-		scene.call("_spawn_ground_pickup", "Tendón", "resource", global_position + Vector3(0.22, 0.06, 0.15), 0.06, _sinew_count(), 0.0, "gut_sinew_%d" % Time.get_ticks_msec())
-	inventory.changed.emit()
-	if scene != null and scene.has_method("_sync_local_player_inventory"):
-		scene.call_deferred("_sync_local_player_inventory")
-
 func _player_has_backpack(player: Node) -> bool:
 	if player == null:
 		return false
@@ -1708,6 +1688,8 @@ func _spawn_gut_pickups() -> void:
 	hide_pos.y = drop_y
 	if scene.has_method("_spawn_ground_pickup"):
 		scene.call("_spawn_ground_pickup", _hide_name(), "resource", hide_pos, 0.65, _hide_count(), 0.0, "gut_hide_%d" % Time.get_ticks_msec())
+		scene.call("_spawn_ground_pickup", "Hueso", "resource", base_pos + Vector3(-0.22, drop_y - base_pos.y, -0.15), 0.18, _bone_count(), 0.0, "gut_bone_%d" % Time.get_ticks_msec())
+		scene.call("_spawn_ground_pickup", "Tendón", "resource", base_pos + Vector3(0.22, drop_y - base_pos.y, 0.15), 0.06, _sinew_count(), 0.0, "gut_sinew_%d" % Time.get_ticks_msec())
 
 # When a wolf eats a corpse, spawn only leftover meat (wolf consumed most of it)
 func _spawn_partial_pickups() -> void:

@@ -1013,13 +1013,13 @@ func damage_player(target_peer_id: int, amount: float, weapon: String = "melee")
 
 # Client tells server to damage an animal
 @rpc("any_peer", "reliable")
-func damage_animal(animal_name: String, amount: float, from_knife: bool) -> void:
+func damage_animal(animal_name: String, amount: float, from_knife: bool, bola: bool = false) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_client_request(sender):
 		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_damage_animal"):
-		scene._net_damage_animal(animal_name, amount, from_knife, sender)
+		scene._net_damage_animal(animal_name, amount, from_knife, sender, bola)
 
 # Server broadcasts animal hit to all clients so they play pain sound on puppets
 @rpc("authority", "reliable")
@@ -1744,3 +1744,28 @@ func receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: Packed
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_receive_voice_packet"):
 		scene._net_receive_voice_packet(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)
+
+# Each accepted message represents one projectile, never an inventory drop.
+@rpc("any_peer", "reliable")
+func primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_world_sender(sender) or (is_host and shooter_id != sender):
+		return
+	if not origin.is_finite() or not direction.is_finite() or direction.length_squared() < 0.001 or not is_finite(speed):
+		return
+	if not item_name in ["Flecha de madera", "Flecha de piedra", "Flecha de hueso", "Lanza", "Lanza de hueso", "Palo afilado", "Boleadoras"]:
+		return
+	if speed < 1.0 or speed > 95.0:
+		return
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	if is_host:
+		if not scene._is_shooter_valid(shooter_id) or not scene._sender_within(shooter_id, origin, 5.0):
+			return
+		if peer != null:
+			for pid in players.keys():
+				if pid != shooter_id and pid != get_my_id() and peer_alive(pid):
+					primitive_shot.rpc_id(pid, shooter_id, origin, direction, item_name, speed)
+	if scene.has_method("_net_primitive_shot"):
+		scene._net_primitive_shot(shooter_id, origin, direction, item_name, speed)

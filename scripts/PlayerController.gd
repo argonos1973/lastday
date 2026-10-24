@@ -13627,7 +13627,7 @@ func _throw_aimed_weapon() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
-func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool) -> void:
+func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false) -> void:
 	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
 		return
 	var projectile := preload("res://scripts/RifleProjectile.gd").new()
@@ -13650,6 +13650,13 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	get_tree().current_scene.add_child(projectile)
 	projectile.global_position = origin
 	projectile.look_at(origin + direction.normalized(), Vector3.UP)
+	if visual_only:
+		return
+	var network := get_node_or_null("/root/NetworkManager")
+	if network != null and network.is_connected:
+		network.primitive_shot.rpc_id(1, network.get_my_id(), origin, direction, item_name, speed)
+	projectile.expired.connect(func(pos: Vector3):
+		_recover_primitive_item(pos, Vector3.UP, item_name, item_type, item_weight, item_use))
 	projectile.impact.connect(func(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3):
 		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola)
 	)
@@ -13680,12 +13687,19 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 			var pvp_dmg := (18.0 if is_bola else (75.0 if is_headshot else 42.0))
 			if target_node.has_method("take_damage"):
 				_apply_rifle_target_damage(target_node, pvp_dmg)
+		elif is_bola and target_node is WildlifeController and target_node.is_puppet:
+			var network := get_node_or_null("/root/NetworkManager")
+			if network != null and network.is_connected:
+				network.damage_animal.rpc_id(1, target_node.name, dmg, false, true)
 		else:
 			_apply_rifle_target_damage(target_node, dmg)
 		_spawn_blood_splatter(hit_pos, 1.4 if is_headshot else 1.0)
 		_hit_marker(bool(target_node.get("_is_dead")) or bool(target_node.get("is_dead")))
 	else:
 		_spawn_bullet_impact(hit_pos, hit_normal, collider)
+	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use)
+
+func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float) -> void:
 	var can_recover := true
 	if item_type == "ammo_arrow":
 		can_recover = randf() < 0.75

@@ -952,18 +952,6 @@ func _has_butchering_tool(player: Node) -> bool:
 			return true
 	return false
 
-func _grant_primitive_bird_parts(player: Node) -> void:
-	if not is_instance_valid(player):
-		return
-	var inv = player.get("inventory")
-	if inv == null or not inv.has_method("add_item"):
-		return
-	var ItemScript = load("res://scripts/Item.gd")
-	var feathers = ItemScript.create("Pluma", "resource", 0.02, 3, 0.0)
-	if not inv.add_item(feathers) and get_tree().current_scene != null and get_tree().current_scene.has_method("_spawn_ground_pickup"):
-		get_tree().current_scene._spawn_ground_pickup("Pluma", "resource", global_position + Vector3(-0.18, 0.0, 0.14), 0.02, 3, 0.0, "bird_feathers_%d" % Time.get_ticks_msec())
-	inv.changed.emit()
-
 func get_interaction_text(player = null) -> String:
 	if not _landed or _gutted:
 		return ""
@@ -982,9 +970,6 @@ func interact(player: Node) -> void:
 			net_scene._play_actor_action(player, "plant", 3.0)
 			if net_scene.get("hud") != null and net_scene.hud.has_method("show_countdown"):
 				net_scene.hud.show_countdown("Desplumando ave", 3.0)
-		_grant_primitive_bird_parts(player)
-		if net_scene != null and net_scene.has_method("_sync_local_player_inventory"):
-			net_scene.call_deferred("_sync_local_player_inventory")
 		if is_puppet:
 			net_node.gut_animal.rpc_id(1, name, false)
 		else:
@@ -1000,10 +985,10 @@ func interact(player: Node) -> void:
 		return
 	_gutted = true
 	_butchering = false
-	_grant_primitive_bird_parts(player)
 	if scene.has_method("_spawn_ground_pickup"):
 		scene._spawn_ground_pickup("Carne cruda de ave", "food", global_position, 0.3, 1, 15.0, "bird_meat_%d" % get_instance_id(), "bird_meat_raw")
 		scene._spawn_ground_pickup("Piel de ave", "resource", global_position + Vector3(0.18, 0.0, 0.12), 0.65, 1, 0.0, "bird_hide_%d" % get_instance_id())
+		scene._spawn_ground_pickup("Pluma", "resource", global_position + Vector3(-0.18, 0.0, 0.14), 0.02, 3, 0.0, "bird_feathers_%d" % get_instance_id())
 	queue_free()
 
 func puppet_apply(pos: Vector3, yaw: float, dead: bool, gutted: bool, landed: bool) -> void:
