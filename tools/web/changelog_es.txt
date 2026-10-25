@@ -2,7 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
-NEW_HASH|El desplegable de resolución solo ofrece las que caben en tu pantalla, y el panel de opciones se cierra al clickar fuera de él
+fd402e3|El desplegable de resolución solo ofrece las que caben en tu pantalla, y el panel de opciones se cierra al clickar fuera de él
 280af77|Los paneles del menú de inicio se anclan por su borde inferior real: al cambiar de resolución ninguno se sale de la ventana ni queda cortado
 f76d223|La espera durante la generación del mundo ya no se corta por tiempo: el cliente sondea el estado del servidor mientras carga, y la ventana ya no se puede redimensionar ni maximizar
 6a9da13|La pantalla de carga y el menú ya no se descuadran al cambiar a pantalla completa: el fondo, los tips y el "Generando" siguen el tamaño real de la ventana
