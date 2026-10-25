@@ -252,19 +252,8 @@ func _ready() -> void:
 	btn_official.pressed.connect(_on_join_official)
 	vbox.add_child(btn_official)
 
-	var btn_options := Button.new()
-	btn_options.text = "  Opciones de rendimiento"
-	btn_options.custom_minimum_size = Vector2(240, 44)
-	btn_options.add_theme_font_size_override("font_size", 17)
-	btn_options.add_theme_stylebox_override("normal", btn_style)
-	btn_options.add_theme_stylebox_override("hover", btn_hover)
-	btn_options.add_theme_stylebox_override("pressed", btn_pressed)
-	btn_options.pressed.connect(func():
-		if _options_panel != null:
-			_options_panel.visible = not _options_panel.visible)
-	vbox.add_child(btn_options)
-	_btn_options = btn_options
-	_build_options_panel(left_panel.position)
+	# "Opciones de rendimiento" ya no vive en el menu principal: es un
+	# boton de engranaje en la esquina inferior izquierda (ver abajo).
 
 	# IP input (hidden initially)
 	_ip_edit = LineEdit.new()
@@ -430,6 +419,33 @@ func _ready() -> void:
 
 	_update_char_view()
 
+	# Engranaje de opciones de rendimiento: esquina inferior izquierda,
+	# anclado — sigue la ventana solo, sin relayout. El panel se abre
+	# justo encima del boton.
+	var gear := Button.new()
+	gear.text = "  ⚙  "
+	gear.tooltip_text = "Opciones de rendimiento"
+	gear.add_theme_font_size_override("font_size", 22)
+	gear.add_theme_stylebox_override("normal", btn_style)
+	gear.add_theme_stylebox_override("hover", btn_hover)
+	gear.add_theme_stylebox_override("pressed", btn_pressed)
+	gear.anchors_preset = Control.PRESET_BOTTOM_LEFT
+	gear.anchor_left = 0.0
+	gear.anchor_top = 1.0
+	gear.anchor_right = 0.0
+	gear.anchor_bottom = 1.0
+	gear.offset_left = 16.0
+	gear.offset_right = 16.0
+	gear.offset_top = -64.0
+	gear.offset_bottom = -16.0
+	gear.pressed.connect(func():
+		if _options_panel != null:
+			_options_panel.visible = not _options_panel.visible)
+	add_child(gear)
+	_btn_options = gear
+
+	_build_options_panel()
+
 	# Posición inicial con la misma fórmula que los re-layouts (anclado
 	# por el borde inferior con la altura real de cada panel). La llamada
 	# diferida cubre el resize asíncrono que apply_window() dispara antes
@@ -437,14 +453,13 @@ func _ready() -> void:
 	_relayout_menu()
 	call_deferred("_relayout_menu")
 
-# Panel lateral de opciones de rendimiento: se abre a la izquierda del menú
-# sin moverlo. Pantalla/resolucion/escala/vsync aplican al instante; sombras
-# y detalles se leen al entrar en partida.
-func _build_options_panel(menu_pos: Vector2) -> void:
+# Panel de opciones de rendimiento: se abre encima del engranaje de la
+# esquina inferior izquierda. Pantalla/resolucion/escala/vsync aplican al
+# instante; sombras y detalles se leen al entrar en partida.
+func _build_options_panel() -> void:
 	_options_panel = PanelContainer.new()
 	_options_panel.visible = false
 	_options_panel.custom_minimum_size = Vector2(292, 0)
-	_options_panel.position = Vector2(maxf(8.0, menu_pos.x - 322.0), menu_pos.y)
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.08, 0.08, 0.12, 0.92)
 	bg.border_width_left = 2
@@ -567,7 +582,7 @@ func _relayout_menu() -> void:
 	if _options_panel != null:
 		var oh := _options_panel.get_combined_minimum_size().y
 		_options_panel.position = Vector2(
-			maxf(8.0, menu_x - 322.0), maxf(8.0, screen.y - oh - 24.0))
+			16.0, maxf(8.0, screen.y - oh - 80.0))
 	if _name_panel != null and _name_panel.visible:
 		var pw := _name_panel.custom_minimum_size.x
 		_name_panel.position = Vector2(screen.x * 0.5 - pw * 0.5, screen.y * 0.5 - 90)
