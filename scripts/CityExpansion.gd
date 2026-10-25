@@ -46,11 +46,18 @@ static func create(world: Node3D, server: bool) -> Node3D:
  district.name="SouthernCity"
  district.position=CENTER
  world.add_child(district)
- # Four buildings stay resident for collisions, saving and the existing door RPCs.
+ # Buildings stay resident for collisions, saving and the existing door RPCs.
  # The prototype's distance unload is intentionally disabled in the main world.
  district.set_process(false)
+ var interiors: Node3D = null
+ if not server:
+  interiors = preload("res://scripts/CityInteriorStreaming.gd").new()
+  interiors.name = "CityInteriorStreaming"
+  district.add_child(interiors)
  for i in range(BLOCK.BUILDINGS.size()):
   var building:Node3D=district.load_building(i)
+  if interiors != null:
+   interiors.register_interior(building.get_node("Interior"))
   var door:Door=building.get_node(str(BLOCK.BUILDINGS[i].id)+"_door")
   var footprint:Vector2=BLOCK.BUILDINGS[i].get("footprint",Vector2(6,6))
   var index:int=world._register_wildlife_blocker(building.global_position,maxf(footprint.x,footprint.y)+3.0)

@@ -2,6 +2,7 @@ extends Control
 
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
 const SaveIntegration = preload("res://scripts/InicioSaveIntegration.gd")
+const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
 
 var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
@@ -27,6 +28,7 @@ var _btn_prev: Button = null
 var _btn_next: Button = null
 var _btn_enter: Button = null
 var _name_panel: PanelContainer = null
+var _options_panel: PanelContainer = null
 var _name_edit: LineEdit = null
 var _name_request_pending := false
 # El servidor reivindico un personaje vivo: el selector queda bloqueado sobre
@@ -94,7 +96,9 @@ func _ready() -> void:
 		else:
 			pass # print("[CLIENT] Error al conectar a %s" % ip)
 		return
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	# Preferencias de video guardadas: pantalla/vsync/escala aplican al arrancar.
+	GraphicsSettings.apply_window()
+	GraphicsSettings.apply_render_scale(get_viewport())
 	# Forzar ventana al frente (necesario en macOS al lanzar desde terminal)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, false)
@@ -243,6 +247,19 @@ func _ready() -> void:
 	btn_official.add_theme_stylebox_override("pressed", btn_pressed)
 	btn_official.pressed.connect(_on_join_official)
 	vbox.add_child(btn_official)
+
+	var btn_options := Button.new()
+	btn_options.text = "  Opciones de rendimiento"
+	btn_options.custom_minimum_size = Vector2(240, 44)
+	btn_options.add_theme_font_size_override("font_size", 17)
+	btn_options.add_theme_stylebox_override("normal", btn_style)
+	btn_options.add_theme_stylebox_override("hover", btn_hover)
+	btn_options.add_theme_stylebox_override("pressed", btn_pressed)
+	btn_options.pressed.connect(func():
+		if _options_panel != null:
+			_options_panel.visible = not _options_panel.visible)
+	vbox.add_child(btn_options)
+	_build_options_panel(left_panel.position)
 
 	# IP input (hidden initially)
 	_ip_edit = LineEdit.new()
@@ -403,6 +420,106 @@ func _ready() -> void:
 	_btn_next = next_btn
 
 	_update_char_view()
+
+# Panel lateral de opciones de rendimiento: se abre a la izquierda del menú
+# sin moverlo. Pantalla/resolucion/escala/vsync aplican al instante; sombras
+# y detalles se leen al entrar en partida.
+func _build_options_panel(menu_pos: Vector2) -> void:
+	_options_panel = PanelContainer.new()
+	_options_panel.visible = false
+	_options_panel.custom_minimum_size = Vector2(292, 0)
+	_options_panel.position = Vector2(maxf(8.0, menu_pos.x - 322.0), menu_pos.y)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.08, 0.12, 0.92)
+	bg.border_width_left = 2
+	bg.border_width_right = 2
+	bg.border_width_top = 2
+	bg.border_width_bottom = 2
+	bg.border_color = Color(0.2, 0.2, 0.3, 0.8)
+	bg.corner_radius_top_left = 12
+	bg.corner_radius_top_right = 12
+	bg.corner_radius_bottom_left = 12
+	bg.corner_radius_bottom_right = 12
+	bg.content_margin_left = 18
+	bg.content_margin_right = 18
+	bg.content_margin_top = 14
+	bg.content_margin_bottom = 14
+	_options_panel.add_theme_stylebox_override("panel", bg)
+	add_child(_options_panel)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	_options_panel.add_child(box)
+
+	var title := Label.new()
+	title.text = "RENDIMIENTO"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
+	box.add_child(title)
+
+	var screen_options := OptionButton.new()
+	screen_options.add_item("Pantalla: ventana")
+	screen_options.add_item("Pantalla: completa")
+	screen_options.select(1 if GraphicsSettings.fullscreen() else 0)
+	screen_options.tooltip_text = "Ventana o pantalla completa. Aplica al instante."
+	box.add_child(screen_options)
+
+	var res_options := OptionButton.new()
+	for label in GraphicsSettings.RESOLUTION_LABELS:
+		res_options.add_item(label)
+	res_options.select(GraphicsSettings.resolution_index())
+	res_options.disabled = GraphicsSettings.fullscreen()
+	res_options.tooltip_text = "Resolucion de la ventana (modo ventana)."
+	box.add_child(res_options)
+
+	screen_options.item_selected.connect(func(index: int):
+		GraphicsSettings.save_fullscreen(index == 1)
+		GraphicsSettings.apply_window()
+		res_options.disabled = index == 1)
+	res_options.item_selected.connect(func(index: int):
+		GraphicsSettings.save_resolution_index(index)
+		GraphicsSettings.apply_window())
+
+	var scale_options := OptionButton.new()
+	for i in range(GraphicsSettings.RENDER_SCALE_LABELS.size()):
+		scale_options.add_item("Escala de render: %s" % GraphicsSettings.RENDER_SCALE_LABELS[i])
+	scale_options.select(GraphicsSettings.render_scale_index())
+	scale_options.tooltip_text = "Resolucion interna del 3D. Menos escala = mas FPS."
+	scale_options.item_selected.connect(func(index: int):
+		GraphicsSettings.save_render_scale_index(index)
+		GraphicsSettings.apply_render_scale(get_viewport()))
+	box.add_child(scale_options)
+
+	var shadow_options := OptionButton.new()
+	shadow_options.add_item("Sombras: bajas")
+	shadow_options.add_item("Sombras: equilibradas")
+	shadow_options.add_item("Sombras: altas")
+	shadow_options.select(preload("res://scripts/ShadowQuality.gd").selected())
+	shadow_options.tooltip_text = "Calidad de sombras para la próxima partida. Conserva las sombras cercanas."
+	shadow_options.item_selected.connect(func(index: int):
+		var result := preload("res://scripts/ShadowQuality.gd").save_selection(index)
+		if result != OK:
+			push_warning("No se pudo guardar la calidad de sombras: %s" % error_string(result)))
+	box.add_child(shadow_options)
+
+	var detail_options := OptionButton.new()
+	for label in GraphicsSettings.DETAIL_LABELS:
+		detail_options.add_item(label)
+	detail_options.select(GraphicsSettings.detail_index())
+	detail_options.tooltip_text = "Distancia de dibujado de bosque y hierba. Aplica al instante."
+	detail_options.item_selected.connect(func(index: int):
+		GraphicsSettings.save_detail_index(index))
+	box.add_child(detail_options)
+
+	var vsync_check := CheckButton.new()
+	vsync_check.text = "VSync"
+	vsync_check.button_pressed = GraphicsSettings.vsync()
+	vsync_check.tooltip_text = "Sincroniza con el monitor: quita el tearing, añade algo de latencia."
+	vsync_check.toggled.connect(func(on: bool):
+		GraphicsSettings.save_vsync(on)
+		GraphicsSettings.apply_window())
+	box.add_child(vsync_check)
 
 func _process(_delta: float) -> void:
 	if _started:

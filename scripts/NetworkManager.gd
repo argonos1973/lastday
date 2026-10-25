@@ -423,7 +423,9 @@ func _process(_delta: float) -> void:
 	if not is_host and multiplayer.has_multiplayer_peer():
 		if peer is WebSocketMultiplayerPeer and not _ws_hb_armed:
 			var wcl := peer as WebSocketMultiplayerPeer
-			for pid in wcl.get_peers():
+			# La lista de peers vive en la API de alto nivel: el peer WS solo
+			# expone get_peer(id), no get_peers().
+			for pid in multiplayer.get_peers():
 				var c = wcl.get_peer(pid)
 				if c != null and c.get_ready_state() == WebSocketPeer.STATE_OPEN:
 					c.heartbeat_interval = 15.0

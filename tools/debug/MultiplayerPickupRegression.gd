@@ -52,7 +52,7 @@ func probe(label: String) -> ProbeNet:
 	n.name = "NetworkManager"
 	scope.add_child(n)
 	n.client_id = "pickup_regression_" + label
-	n.join_game("127.0.0.1")
+	n.join_game("ws://127.0.0.1:19081" if OS.get_cmdline_user_args().has("--websocket") else "127.0.0.1")
 	return n
 
 func _initialize() -> void: call_deferred("run")
@@ -62,6 +62,14 @@ func run() -> void:
 		check(false, "test port available")
 		quit(1)
 		return
+	if OS.get_cmdline_user_args().has("--websocket"):
+		server.peer.close()
+		var ws := WebSocketMultiplayerPeer.new()
+		ws.outbound_buffer_size = 4 * 1024 * 1024
+		ws.inbound_buffer_size = 1024 * 1024
+		check(ws.create_server(19081, "127.0.0.1") == OK, "isolated WebSocket listener")
+		server.peer = ws
+		server.multiplayer.multiplayer_peer = ws
 	var main := TestMain.new()
 	root.add_child(main)
 	current_scene = main
@@ -71,12 +79,27 @@ func run() -> void:
 	await create_timer(0.6).timeout
 	var aid := a.multiplayer.get_unique_id()
 	var bid := b.multiplayer.get_unique_id()
-	check(server.players.has(aid) and server.players.has(bid), "two real ENet clients registered")
+	check(server.players.has(aid) and server.players.has(bid), "two real clients registered")
 	for id in [aid, bid]:
 		var proxy := Node3D.new()
 		main.add_child(proxy)
 		proxy.set_meta("saved_inventory", [])
 		main.server_proxies[id] = proxy
+	if OS.get_cmdline_user_args().has("--websocket"):
+		check(server.can_send_snapshot(aid), "healthy WebSocket accepts snapshots")
+		# Stop polling the receiver while filling the OS/TCP buffers. Production
+		# must stop adding poses before the WebSocket's 4 MB queue is exhausted.
+		multiplayer_poll = false
+		for generation in 256:
+			if not server.can_send_snapshot(aid): break
+			server.sync_animals.rpc_id(aid, {"_gen":generation,"_total":1,"deer_test":{"t":"deer","x":1.0,"padding":"x".repeat(80000)}})
+		check((server.peer as WebSocketMultiplayerPeer).get_peer(aid).get_current_outbound_buffered_amount() < 200000, "snapshot backlog stays bounded")
+		check(not server.can_send_snapshot(aid), "queued wildlife snapshot applies backpressure")
+		check(server.can_send_snapshot(bid), "slow client does not block healthy client")
+		multiplayer_poll = true
+		await create_timer(.6).timeout
+		check(server.can_send_snapshot(aid), "snapshots resume after buffer drains")
+		check(a.animals.has("deer_test"), "wildlife snapshot reaches WebSocket client")
 	main._dropped_items.append({"id":"skin", "name":"Tocado de oso", "type":"clothing", "qty":1, "pos":Vector3.ZERO, "pelt":"bear"})
 	a.request_pickup_claim.rpc_id(1, "skin")
 	b.request_pickup_claim.rpc_id(1, "skin")

@@ -1,5 +1,9 @@
 extends Node3D
 
+const ShadowQuality = preload("res://scripts/ShadowQuality.gd")
+const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
+var _shadow_quality: int = ShadowQuality.selected()
+
 const PlayerControllerScript = preload("res://scripts/PlayerController.gd")
 const MilitaryJackets = preload("res://scripts/MilitaryJackets.gd")
 const AutumnClothes = preload("res://scripts/AutumnClothes.gd")
@@ -644,6 +648,8 @@ func _create_loading_overlay() -> void:
 func _ready() -> void:
 	# Get NetworkManager first to decide if we need visuals
 	net = get_node("/root/NetworkManager")
+	if net == null or not net.is_dedicated_server:
+		GraphicsSettings.apply_render_scale(get_viewport())
 	if net != null and net.is_dedicated_server:
 		seed(GameConst.WORLD_SEED)
 		_world_rng.seed = GameConst.WORLD_SEED
@@ -1907,7 +1913,7 @@ func _update_shadow_proximity() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	const SHADOW_RADIUS := 6.0
+	var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].local
 	if _light_cache_dirty:
 		_cached_omni_lights = get_tree().get_nodes_in_group("omni_lights")
 		_cached_area_lights = get_tree().get_nodes_in_group("area_lights")
@@ -1916,12 +1922,12 @@ func _update_shadow_proximity() -> void:
 		if is_instance_valid(light) and light is OmniLight3D:
 			var ol: OmniLight3D = light
 			var dist: float = ppos.distance_to(ol.global_position)
-			ol.shadow_enabled = dist < SHADOW_RADIUS
+			ol.shadow_enabled = dist < shadow_radius + (1.5 if ol.shadow_enabled else 0.0)
 	for light in _cached_area_lights:
 		if is_instance_valid(light) and light is AreaLight3D:
 			var al: AreaLight3D = light
 			var dist: float = ppos.distance_to(al.global_position)
-			al.shadow_enabled = dist < SHADOW_RADIUS
+			al.shadow_enabled = dist < shadow_radius + (1.5 if al.shadow_enabled else 0.0)
 
 # Guardado de partida: pendiente de implementar (actualmente no persiste)
 func save_current_game() -> void:
@@ -2162,7 +2168,7 @@ func _create_environment() -> void:
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.rotation_degrees = Vector3(-45, -25, 0)
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 85.0
+	ShadowQuality.apply(sun, get_viewport(), _shadow_quality)
 	sun.directional_shadow_blend_splits = true
 	sun.shadow_normal_bias = 0.8
 	add_child(sun)
@@ -16615,13 +16621,16 @@ func _update_forest_visibility() -> void:
 		var dist := ppos.distance_to(Vector3(center.x, ppos.y, center.z))
 		# Show batch if any tree could be within visible radius
 		var should_show := false
+		var detail_scale := GraphicsSettings.detail_factor()
 		if node.visible:
-			should_show = dist < (FOREST_MM_HIDE_RADIUS + vis_bonus + batch_radius)
+			should_show = dist < (FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus + batch_radius)
 		else:
-			should_show = dist < (FOREST_MM_VISIBLE_RADIUS + vis_bonus + batch_radius)
+			should_show = dist < (FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
-		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if dist < 65.0 + batch_radius else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest
+		var shadow_margin := 5.0 if node.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON else 0.0
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if dist < shadow_radius + shadow_margin + batch_radius else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _create_forest_collision(positions: Array) -> void:
 	# Register tree positions in a spatial grid for on-demand collision creation
@@ -17429,10 +17438,11 @@ func _update_grass_visibility() -> void:
 		var batch_radius: float = _grass_batch_radii[i] if i < _grass_batch_radii.size() else 0.0
 		var dist: float = ppos.distance_to(Vector3(center.x, ppos.y, center.z))
 		var should_show: bool = false
+		var detail := GraphicsSettings.detail_factor()
 		if node.visible:
-			should_show = dist < (GRASS_HIDE_RADIUS + batch_radius)
+			should_show = dist < (GRASS_HIDE_RADIUS * detail + batch_radius)
 		else:
-			should_show = dist < (GRASS_VISIBLE_RADIUS + batch_radius)
+			should_show = dist < (GRASS_VISIBLE_RADIUS * detail + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
 		if should_show:
