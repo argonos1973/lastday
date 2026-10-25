@@ -351,6 +351,7 @@ var _ws_dead_peer_scan := 0.0
 # sacar al jugador al menú en vez de dejarle en un mundo fantasma.
 var _ws_hb_armed := false
 var _last_inbound_ms := 0
+var _joined_ms := 0
 
 func _process(_delta: float) -> void:
 	water_world_time += _delta
@@ -404,12 +405,19 @@ func _process(_delta: float) -> void:
 				if c != null and c.get_ready_state() == WebSocketPeer.STATE_OPEN:
 					c.heartbeat_interval = 15.0
 					_ws_hb_armed = true
-		if is_connected and _last_inbound_ms > 0 \
-				and Time.get_ticks_msec() - _last_inbound_ms > 30000:
-			print("[NET] >30s sin datos del servidor — stream muerto, cerrando")
-			_last_inbound_ms = 0
-			close_connection()
-			connection_failed.emit()
+		if is_connected and _joined_ms > 0:
+			# Antes del primer dato la espera puede ser larga (el servidor
+			# genera el mundo ~2 min): 120 s de gracia. Con flujo ya
+			# establecido, >30 s de silencio = stream muerto.
+			var since_ms := Time.get_ticks_msec() - \
+				(_last_inbound_ms if _last_inbound_ms > 0 else _joined_ms)
+			var limit_ms := 30000 if _last_inbound_ms > 0 else 120000
+			if since_ms > limit_ms:
+				print("[NET] >", limit_ms / 1000, "s sin datos del servidor — cerrando")
+				_last_inbound_ms = 0
+				_joined_ms = 0
+				close_connection()
+				connection_failed.emit()
 	if is_host:
 		# Listen for probe packets from clients doing active scan
 		if _probe_listener != null:
@@ -482,7 +490,8 @@ func join_game(ip: String, password: String = "") -> bool:
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
-	_last_inbound_ms = Time.get_ticks_msec()
+	_last_inbound_ms = 0
+	_joined_ms = Time.get_ticks_msec()
 	_ws_hb_armed = false
 	return true
 
@@ -509,6 +518,7 @@ func close_connection() -> void:
 	_ws_congested_since.clear()
 	_ws_hb_armed = false
 	_last_inbound_ms = 0
+	_joined_ms = 0
 	authoritative_weather.clear()
 	_weather_source_peer = 0
 	if peer != null:
