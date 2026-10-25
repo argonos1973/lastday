@@ -4196,18 +4196,20 @@ func _update_hand_socket() -> void:
 			third_person_hand_item_root.position = l_local.origin
 			third_person_hand_item_root.basis = bow_basis
 			if prim_node != null:
+				prim_node.scale = Vector3.ONE * 1.38
 				prim_node.rotation_degrees = Vector3.ZERO
-				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z)
+				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z * prim_node.scale.z)
 				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
 				var released := cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY
 				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
 			return
 		else:
-			third_person_hand_item_root.position = l_local.origin
+			third_person_hand_item_root.position = l_local.origin + Vector3(0.12, 0.04, 0.06)
 			var l_euler := l_local.basis.orthonormalized().get_euler()
 			third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(l_euler.x), rad_to_deg(l_euler.y), rad_to_deg(l_euler.z))
 			if prim_node != null:
-				prim_node.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+				prim_node.scale = Vector3.ONE * 1.42
+				prim_node.rotation_degrees = Vector3(18.0, 22.0, -16.0)
 				_update_bow_draw_visuals(prim_node, 0.24, false)
 			return
 	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
@@ -4296,10 +4298,10 @@ func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool)
 			# arrowhead at -Z (-0.425). Scale and position so the fletching sits
 			# on the drawn string nock_pt (+pull_z) and the arrowhead projects
 			# well past the left-hand fingertips (-Z) clearly visible to the camera.
-			var z_scale := maxf(1.48, (pull_z + 0.44) / 0.72)
+			var z_scale := maxf(1.22, (pull_z + 0.38) / 0.68)
 			nocked_arrow.rotation_degrees = Vector3.ZERO
-			nocked_arrow.scale = Vector3(2.45, 2.45, z_scale)
-			nocked_arrow.position = Vector3(-0.018, 0.030, pull_z - 0.36 * z_scale)
+			nocked_arrow.scale = Vector3(1.95, 1.95, z_scale)
+			nocked_arrow.position = Vector3(-0.022, 0.038, pull_z - 0.44 * z_scale)
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
@@ -4378,10 +4380,20 @@ func _sync_posed_attachments(model: Node3D, skel: Skeleton3D) -> void:
 	if _hand_bone_idx >= 0 and third_person_hand_item_root != null:
 		var hand := model.get_node_or_null(String(third_person_hand_item_root.name)) as Node3D
 		if hand != null:
-			var hand_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_hand_bone_idx)
-			hand.position = hand_local.origin + _hand_socket_offset
-			var hand_euler := hand_local.basis.orthonormalized().get_euler()
-			hand.rotation_degrees = Vector3(rad_to_deg(hand_euler.x), rad_to_deg(hand_euler.y), rad_to_deg(hand_euler.z))
+			if _has_bow_equipped() and _left_hand_bone_idx >= 0:
+				var lhand_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_left_hand_bone_idx)
+				hand.position = lhand_local.origin + Vector3(0.12, 0.04, 0.06)
+				var lhand_euler := lhand_local.basis.orthonormalized().get_euler()
+				hand.rotation_degrees = Vector3(rad_to_deg(lhand_euler.x), rad_to_deg(lhand_euler.y), rad_to_deg(lhand_euler.z))
+				var pnode := hand.find_child("HeldPrimitive", true, false) as Node3D
+				if pnode != null:
+					pnode.scale = Vector3.ONE * 1.42
+					pnode.rotation_degrees = Vector3(18.0, 22.0, -16.0)
+			else:
+				var hand_local := local_to_model * skel.global_transform * skel.get_bone_global_pose(_hand_bone_idx)
+				hand.position = hand_local.origin + _hand_socket_offset
+				var hand_euler := hand_local.basis.orthonormalized().get_euler()
+				hand.rotation_degrees = Vector3(rad_to_deg(hand_euler.x), rad_to_deg(hand_euler.y), rad_to_deg(hand_euler.z))
 	if _left_hand_bone_idx >= 0 and _torch_hand_root != null:
 		var torch := model.get_node_or_null(String(_torch_hand_root.name)) as Node3D
 		if torch != null:
@@ -6456,9 +6468,12 @@ func _legacy_held_back_item(item_name: String):
 	elif item_name.findn("caña") >= 0 or item_name.findn("cana") >= 0:
 		back_type = "tool_fishing"
 		weight = 1.2
-	elif item_name == "Palo afilado":
+	elif item_name == "Palo afilado" or item_name in ["Lanza", "Lanza de hueso"]:
 		back_type = "tool_spear"
 		weight = 0.8
+	elif item_name in ["Arco de madera", "Arco reforzado"]:
+		back_type = "weapon_bow"
+		weight = 1.1 if item_name == "Arco reforzado" else 0.9
 	if back_type.is_empty():
 		return null
 	return ItemScript.create(item_name, back_type, weight, 1, 0.0)
@@ -6636,6 +6651,8 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 		var clothing_name := str(_equipped_slots[slot])
 		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
 			unequip_clothing(clothing_name)
+	if (str(out.get("type", "")) == "weapon_bow" or str(out.get("name", "")) in ["Arco de madera", "Arco reforzado"]) and _find_free_back_slot() >= 0:
+		_store_inventory_item_type_on_back("weapon_bow", "el arco")
 	inventory.changed.emit()
 	# Determine animation and duration based on recipe type
 	var craft_anim := "forage"
@@ -7784,7 +7801,7 @@ func _is_back_only_item(item) -> bool:
 func receive_pickup_item(item) -> bool:
 	if item == null or inventory == null:
 		return false
-	if str(item.item_type) == "weapon_rifle" and int(item.quantity) == 1:
+	if (str(item.item_type) in ["weapon_rifle", "weapon_bow"] or str(item.item_name) in ["Arco de madera", "Arco reforzado"]) and int(item.quantity) == 1:
 		var slot := _find_free_back_slot()
 		if slot >= 0:
 			_stored_back_items[slot] = _back_data_from_item(item)
@@ -7923,7 +7940,7 @@ func use_back_item(slot: int = -1) -> bool:
 	notice.emit("Usas %s desde el hombro %s." % [item.item_name, _back_shoulder_label(slot)])
 	return true
 
-func store_held_on_back() -> bool:
+func store_held_on_back(preferred_slot: int = -1) -> bool:
 	if not can_store_held_on_back():
 		if _back_slot_count() >= 2:
 			notice.emit("No hay un hombro libre para guardar ese objeto.")
@@ -7933,7 +7950,7 @@ func store_held_on_back() -> bool:
 	var item = get_held_item()
 	if item == null:
 		return false
-	var slot := _find_free_back_slot()
+	var slot := preferred_slot if (preferred_slot >= 0 and preferred_slot < _stored_back_items.size() and not _is_back_slot_occupied(preferred_slot)) else _find_free_back_slot()
 	if slot < 0:
 		notice.emit("No hay un hombro libre para guardar ese objeto.")
 		return false
@@ -8066,6 +8083,8 @@ func _build_stored_back_visual(slot: int) -> void:
 		visual.basis = r_basis
 	elif item_type == "tool_fishing":
 		visual.quaternion = _stored_rod_upright_rotation(visual)
+	elif item_type == "weapon_bow" or item_name in ["Arco de madera", "Arco reforzado"]:
+		visual.rotation_degrees = Vector3(0.0, 90.0, -20.0 if slot == BACK_SLOT_LEFT else 20.0)
 	else:
 		visual.rotation_degrees = Vector3.ZERO
 	container.add_child(visual)
@@ -8074,7 +8093,7 @@ func _build_stored_back_visual(slot: int) -> void:
 	var bounds := _hierarchy_local_aabb(container)
 	var extent := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
 	if extent > 0.00001:
-		var target_extent := 1.45 if (item_type == "weapon_rifle" and str(data.get("name", "")) == M4_NAME) else 1.65
+		var target_extent := 1.45 if (item_type == "weapon_rifle" and str(data.get("name", "")) == M4_NAME) else (1.35 if (item_type == "weapon_bow" or item_name in ["Arco de madera", "Arco reforzado"]) else 1.65)
 		var fit_scale := target_extent / extent
 		visual.scale = Vector3.ONE * fit_scale
 		visual.position = -bounds.get_center() * fit_scale
@@ -10268,10 +10287,15 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		# so the player clearly sees the bow draw animation and arrow.
 		if _has_bow_equipped() or _has_throwable_weapon_equipped():
 			var bow_cam_z := minf(desired_z, 1.42)
-			var pivot_y := (0.82 if is_crouching else 1.22) + breath_sway_y + _water_sink
+			var base_pivot_y := 1.15 if is_crouching else 1.68
+			if is_instance_valid(_hand_skeleton) and _spine_bone_idx >= 0:
+				var live_spine_y := (_hand_skeleton.global_transform * _hand_skeleton.get_bone_global_pose(_spine_bone_idx).origin).y - global_position.y
+				if is_finite(live_spine_y) and live_spine_y > 0.4:
+					base_pivot_y = clampf(live_spine_y, 0.75, 1.85)
+			var pivot_y := base_pivot_y + breath_sway_y + _water_sink
 			var shoulder_pivot := Vector3(0.46 + breath_sway_x, pivot_y, 0.0)
 			var orbit_pitch := clampf(_pitch, deg_to_rad(-65.0), deg_to_rad(65.0))
-			var boom_offset := Vector3(0.0, 0.42, bow_cam_z).rotated(Vector3.RIGHT, orbit_pitch)
+			var boom_offset := Vector3(0.0, 0.48, bow_cam_z).rotated(Vector3.RIGHT, orbit_pitch)
 			target_position = shoulder_pivot + boom_offset
 			target_position.y = maxf(target_position.y, 0.28 + _water_sink)
 		else:
@@ -13911,16 +13935,17 @@ func _finish_bow_shot() -> void:
 	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
 	var exclude_arr: Array[RID] = [self.get_rid()]
 	_collect_child_collision_rids(self, exclude_arr)
-	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir)
 	var space_state := get_world_3d().direct_space_state
 	var converge_dist := 35.0
+	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
 	if space_state != null:
 		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
 		if not sight_hit.is_empty():
 			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
-			if hit_d > 2.0:
-				converge_dist = clampf(hit_d, 3.0, 120.0)
-	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
+			if hit_d > 0.25:
+				converge_dist = clampf(hit_d, 0.35, 120.0)
+				zero_target = sight_hit.position
+	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
 	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
 	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
 	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —
@@ -14018,20 +14043,32 @@ func _finish_aimed_throw() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
-func _bow_release_origin(excluded: Array[RID], cam_ray_dir: Vector3) -> Vector3:
+func _bow_release_origin(excluded: Array[RID], cam_ray_dir: Vector3, target_pt: Vector3 = Vector3.INF) -> Vector3:
 	var body := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0)
 	var fallback := body + cam_ray_dir * 0.45
 	var grip := fallback
 	if is_instance_valid(third_person_hand_item_root) and is_instance_valid(_hand_skeleton):
 		_hand_skeleton.force_update_all_bone_transforms()
 		_update_hand_socket()
-		grip = third_person_hand_item_root.global_position + cam_ray_dir * 0.12
+		grip = third_person_hand_item_root.global_position
+		body = Vector3(global_position.x, grip.y, global_position.z)
+	if target_pt.is_finite():
+		var body_to_target := body.distance_to(target_pt)
+		var body_to_grip := body.distance_to(grip)
+		if body_to_target < body_to_grip + 0.35:
+			grip = body.lerp(grip, clampf((body_to_target - 0.25) / maxf(body_to_grip, 0.01), 0.0, 1.0))
 	if grip.distance_squared_to(body) > 0.0001 and get_world_3d() != null:
-		var query := PhysicsRayQueryParameters3D.create(body, grip, 1, excluded)
+		var query := PhysicsRayQueryParameters3D.create(body, grip, 5, excluded)
 		query.hit_from_inside = true
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		var world := get_tree().current_scene
+		if world != null and world.has_method("raycast_distant_props"):
+			var end_pt: Vector3 = hit.position if not hit.is_empty() else grip
+			var distant: Dictionary = world.raycast_distant_props(body, end_pt)
+			if not distant.is_empty():
+				hit = distant
 		if not hit.is_empty():
-			return hit.position + hit.normal * 0.03
+			return hit.position - (grip - body).normalized() * 0.12
 	return grip
 
 func _spear_release_origin(excluded: Array[RID]) -> Vector3:
@@ -14191,7 +14228,34 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		_hit_marker(bool(target_node.get("_is_dead")) or bool(target_node.get("is_dead")))
 	else:
 		_spawn_bullet_impact(hit_pos, hit_normal, collider)
+	if not is_bola:
+		_play_arrow_stick_sound(hit_pos, hit_dist, target_node != null)
 	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state, flight_dir, target_node, collider)
+
+func _play_arrow_stick_sound(hit_pos: Vector3, hit_dist: float, hit_flesh: bool) -> void:
+	if _impact_audio_player == null:
+		_impact_audio_player = _make_action_sound_player("PunchImpactSound")
+	var stream_path := "res://assets/audio/punch_impact.wav" if hit_flesh else "res://assets/external/audio/footstep_wood_01.wav"
+	var stream := _load_wav_stream(stream_path)
+	if stream == null:
+		stream = _load_wav_stream("res://assets/audio/punch_impact.wav")
+	if stream != null:
+		_impact_audio_player.stream = stream
+		_impact_audio_player.volume_db = clampf(5.5 - hit_dist * 0.14, -10.0, 5.5)
+		_impact_audio_player.pitch_scale = randf_range(1.18, 1.38) if not hit_flesh else randf_range(0.92, 1.08)
+		_impact_audio_player.play()
+	var scene := get_tree().current_scene
+	if scene != null and stream != null:
+		var p3d := AudioStreamPlayer3D.new()
+		p3d.stream = stream
+		p3d.unit_size = 14.0
+		p3d.max_distance = 55.0
+		p3d.volume_db = 4.0
+		p3d.pitch_scale = randf_range(1.22, 1.42)
+		scene.add_child(p3d)
+		p3d.global_position = hit_pos
+		p3d.finished.connect(p3d.queue_free)
+		p3d.play()
 
 func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float, recovered_state: Dictionary = {}, flight_dir: Vector3 = Vector3.ZERO, target_node: Node = null, collider = null) -> void:
 	var drop_pos := hit_pos + hit_normal * 0.08
@@ -14241,8 +14305,17 @@ func _embed_stuck_projectile_visual(hit_pos: Vector3, fdir: Vector3, item_name: 
 	var attach_parent: Node3D = null
 	if target_node is Node3D and is_instance_valid(target_node):
 		attach_parent = target_node as Node3D
-	elif collider is Node3D and is_instance_valid(collider) and not (collider is StaticBody3D):
-		attach_parent = collider as Node3D
+	elif collider is Node3D and is_instance_valid(collider):
+		var col_node := collider as Node3D
+		if col_node is Door or col_node.is_in_group("doors"):
+			attach_parent = col_node
+		elif not (col_node is StaticBody3D) and col_node != scene and (String(col_node.name).begins_with("ChoppableTree_") or String(col_node.name).begins_with("StuckTarget")):
+			attach_parent = col_node
+		elif col_node is StaticBody3D and String(col_node.name).ends_with("_Collision"):
+			var vis_tree_name := String(col_node.name).trim_suffix("_Collision")
+			var vis_tree := scene.get_node_or_null(NodePath(vis_tree_name)) as Node3D
+			if vis_tree != null and String(vis_tree.name).begins_with("ChoppableTree_"):
+				attach_parent = vis_tree
 	if attach_parent != null and pickup_node.get_parent() != attach_parent:
 		if pickup_node.get_parent() != null:
 			pickup_node.get_parent().remove_child(pickup_node)
@@ -14256,10 +14329,9 @@ func _embed_stuck_projectile_visual(hit_pos: Vector3, fdir: Vector3, item_name: 
 				fallback_scene.add_child(node_ref)
 				node_ref.global_transform = xform
 		, CONNECT_ONE_SHOT)
-	pickup_node.scale = Vector3.ONE
-	pickup_node.global_position = hit_pos
 	var up_ref := Vector3.UP if absf(fdir.y) < 0.97 else Vector3.FORWARD
-	pickup_node.look_at(hit_pos + fdir, up_ref)
+	var world_basis := Basis.looking_at(fdir, up_ref)
+	pickup_node.global_transform = Transform3D(world_basis, hit_pos)
 
 func _load_wav_stream(path: String) -> AudioStream:
 	var stream: AudioStream = null

@@ -60,6 +60,47 @@ func run() -> void:
 		quit()
 		return
 	DirAccess.make_dir_recursive_absolute("res://build/tmp")
+	# Real local PlayerController test (with _ready and _physics_process on a floor)
+	actor.visible = false
+	var floor_body := StaticBody3D.new()
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(20.0, 1.0, 20.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	root.add_child(floor_body)
+	var real_p := preload("res://scripts/PlayerController.gd").new()
+	root.add_child(real_p)
+	var r_bow = ItemData.create("Arco reforzado", "weapon_bow", 0.9, 1, 0.0)
+	var r_arrow = ItemData.create("Flecha de piedra", "ammo_arrow", 0.08, 6, 0.0)
+	real_p.receive_pickup_item(r_bow)
+	real_p.inventory.add_item(r_arrow)
+	real_p.camera.make_current()
+	for f in range(20):
+		await physics_frame
+		await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/real_player_shoulder_bow.png")
+	print("Saved res://build/tmp/real_player_shoulder_bow.png shoulder0=", real_p.get_back_item_data(0))
+	real_p.use_back_item(0)
+	for f in range(20):
+		await physics_frame
+		await process_frame
+	await RenderingServer.frame_post_draw
+	print("REAL_CARRY anim=", real_p.third_person_animation_player.current_animation, " sock=", real_p.third_person_hand_item_root.global_position, " cam=", real_p.camera.global_position, " aabb=", preload("res://scripts/NodeUtils.gd").compute_node_world_aabb(real_p.third_person_hand_item_root))
+	root.get_texture().get_image().save_png("res://build/tmp/real_player_carry_bow.png")
+	real_p._toggle_aim()
+	for f in range(30):
+		await physics_frame
+		await process_frame
+	await RenderingServer.frame_post_draw
+	print("REAL_AIM anim=", real_p.third_person_animation_player.current_animation, " sock=", real_p.third_person_hand_item_root.global_position, " cam=", real_p.camera.global_position, " aabb=", preload("res://scripts/NodeUtils.gd").compute_node_world_aabb(real_p.third_person_hand_item_root))
+	root.get_texture().get_image().save_png("res://build/tmp/real_player_aim_bow.png")
+	real_p.queue_free()
+	floor_body.queue_free()
+	actor.visible = true
+	camera.make_current()
 
 	for clip_info in [
 		["aim", actor._bow_aim_idle_animation, 0.5],

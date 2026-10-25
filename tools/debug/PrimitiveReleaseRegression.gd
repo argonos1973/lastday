@@ -113,6 +113,17 @@ func run():
 	actor._embed_stuck_projectile_visual(impact_pt, impact_dir, "Flecha de piedra", "ammo_arrow", null, target_wall)
 	var stuck_nodes := get_nodes_in_group("world_action_visual")
 	check(not stuck_nodes.is_empty() and (stuck_nodes.back() as Node3D).global_position.distance_to(impact_pt) < 0.01, "Stuck arrow embeds at exact impact position")
+	var door_node := preload("res://scripts/Door.gd").new()
+	world.add_child(door_node)
+	door_node.setup("Puerta", Vector3(0.9, 2.0, 0.08), Color(0.4, 0.25, 0.12), -90.0)
+	var door_hit := Vector3(0.45, 1.1, 0.0)
+	actor._embed_stuck_projectile_visual(door_hit, Vector3(0.0, -0.1, -1.0).normalized(), "Flecha de hueso", "ammo_arrow", null, door_node)
+	var door_arrow := door_node.get_child(door_node.get_child_count() - 1) as Node3D
+	check(door_arrow != null and door_arrow.global_position.distance_to(door_hit) < 0.01, "Arrow embeds into Door collider")
+	door_node.rotation_degrees.y = -90.0
+	check(door_arrow.global_position.distance_to(door_hit) > 0.3, "Arrow stuck in Door swings with the door when opened")
+	var shoulder_bow = ItemData.create("Arco de madera", "weapon_bow", 0.9, 1, 0)
+	check(actor.receive_pickup_item(shoulder_bow) and actor.get_back_item_data(0).get("name") == "Arco de madera", "Picked up bow is stored on free shoulder like rifles")
 	current_scene = null
 	world.free()
 	print("PRIMITIVE_RELEASE_ERRORS=", errors)

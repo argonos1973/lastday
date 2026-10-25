@@ -16603,7 +16603,7 @@ func _tree_grid_key(pos: Vector3) -> Vector2i:
 func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 	var seg := to_pos - from_pos
 	var total_len := seg.length()
-	if total_len < 0.05:
+	if total_len < 0.0005:
 		return {}
 	var best_t := 1.0
 	var best_hit: Dictionary = {}
@@ -16635,7 +16635,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 					if _depleted_action_ids.has("fell_tree_%d" % int(entry.id)):
 						continue
 					var tpos: Vector3 = entry.pos
-					var r := 0.28
+					var r := 0.42
 					if a2d > 1e-6:
 						var rx := ox - tpos.x
 						var rz := oz - tpos.z
@@ -16644,7 +16644,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 						var disc := b * b - 4.0 * a2d * c
 						if disc >= 0.0:
 							var t := (-b - sqrt(disc)) / (2.0 * a2d)
-							if t > 0.002 and t < best_t:
+							if t >= 0.0 and t < best_t:
 								var hp := from_pos + seg * t
 								if hp.y >= tpos.y - 0.1 and hp.y <= tpos.y + 6.8:
 									best_t = t
@@ -16663,7 +16663,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 					continue
 				for fpos in _forest_collision_grid[fkey]:
 					var fp: Vector3 = fpos
-					var r2 := 0.28
+					var r2 := 0.42
 					if a2d > 1e-6:
 						var rx2 := ox - fp.x
 						var rz2 := oz - fp.z
@@ -16672,7 +16672,7 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 						var disc2 := b2 * b2 - 4.0 * a2d * c2
 						if disc2 >= 0.0:
 							var t2 := (-b2 - sqrt(disc2)) / (2.0 * a2d)
-							if t2 > 0.002 and t2 < best_t:
+							if t2 >= 0.0 and t2 < best_t:
 								var hp2 := from_pos + seg * t2
 								if hp2.y >= fp.y - 0.1 and hp2.y <= fp.y + 6.0:
 									best_t = t2

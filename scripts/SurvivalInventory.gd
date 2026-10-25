@@ -245,7 +245,12 @@ func refresh() -> void:
 		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equip:" + slot))
 	for slot in range(2):
 		var data: Dictionary = player.get_back_item_data(slot)
-		button(equipment, "Hombro %d · %s" % [slot + 1, data.get("name", "Vacío")], func(): player.use_back_item(slot); request_refresh(true))
+		button(equipment, "Hombro %d · %s" % [slot + 1, data.get("name", "Vacío")], func():
+			if str(data.get("name", "")).is_empty() and player.can_store_held_on_back():
+				player.store_held_on_back(slot)
+			else:
+				player.use_back_item(slot)
+			request_refresh(true))
 	var containers := Cargo.compartments(player)
 	var groups := Cargo.arrange(player.inventory.items, containers)
 	if groups.has("overflow"):
@@ -573,7 +578,7 @@ func can_transfer(data: Dictionary, destination: String, target: Dictionary) -> 
 		var slot := destination.trim_prefix("equip:")
 		return (item.item_type == "backpack" and slot == "backpack") or (item.item_type == "clothing" and player.CLOTHING_SLOTS.get(item.item_name, "") == slot)
 	if destination == "equipment":
-		return item.item_type == "backpack" or (item.item_type == "clothing" and player.CLOTHING_SLOTS.has(item.item_name))
+		return item.item_type == "backpack" or (item.item_type == "clothing" and player.CLOTHING_SLOTS.has(item.item_name)) or player.can_store_item_on_back(item)
 	if destination in ["ground", "hands"]:
 		return true
 	if bool(data.get("from_hands", false)) and destination in Cargo.compartments(player).map(func(c): return c.id):
@@ -645,12 +650,19 @@ func collect(action) -> void:
 	request_refresh(true)
 
 func equip(item) -> void:
+	if player.get_held_item() == item and player.can_store_held_on_back():
+		player.store_held_on_back()
+		request_refresh(true)
+		return
 	if not player.inventory.items.has(item):
 		return
 	if item.item_type == "clothing":
 		player.equip_clothing(item.item_name, item.get_meta("clothing_color", Color(0, 0, 0, 0)), item)
 	elif item.item_type == "backpack":
 		player.equip_backpack(item.item_name)
+	elif player.can_store_item_on_back(item):
+		player._select_held_item(player.inventory.items.find(item))
+		player.store_held_on_back()
 	request_refresh(true)
 
 func activate(data: Dictionary) -> void:
@@ -703,6 +715,8 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 					add_action("Recargar fusil [R]", func():
 						hud.toggle_inventory()
 						player._reload_rifle())
+				if player.can_store_held_on_back():
+					add_action("Colgar en la espalda", func(): player.store_held_on_back(); request_refresh(true))
 				add_action("Guardar en inventario", func(): player._store_held_item())
 				add_action("Soltar", func(): player._drop_held_item())
 		else:
