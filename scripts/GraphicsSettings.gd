@@ -65,6 +65,10 @@ static func save_vsync(v: bool) -> void:
 
 # Ventana/pantalla completa/resolucion: aplica al instante y al arrancar.
 static func apply_window() -> void:
+	# El layout del menu y de la pantalla de carga se calcula para el
+	# tamano elegido en Opciones: no permitir redimensionar ni maximizar
+	# a mano (RESIZE_DISABLED tambien deshabilita el boton de maximizar).
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_RESIZE_DISABLED, true)
 	if fullscreen():
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	else:

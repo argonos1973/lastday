@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+NEW_HASH|La espera durante la generación del mundo ya no se corta por tiempo: el cliente sondea el estado del servidor mientras carga, y la ventana ya no se puede redimensionar ni maximizar
 6a9da13|La pantalla de carga y el menú ya no se descuadran al cambiar a pantalla completa: el fondo, los tips y el "Generando" siguen el tamaño real de la ventana
 bc2cdbe|Menú "Opciones de rendimiento" en el inicio (pantalla completa/ventana, resolución, escala de render, sombras, detalles, vsync), streaming de interiores de ciudad por distancia y calidad de sombras con tres presets
 d1c4be9|El alijo del refugio apila los objetos iguales (media de durabilidad, peor deterioro) y las transferencias son de uno en uno en ambas direcciones

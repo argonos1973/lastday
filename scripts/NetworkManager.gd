@@ -431,18 +431,22 @@ func _process(_delta: float) -> void:
 					c.heartbeat_interval = 15.0
 					_ws_hb_armed = true
 		if is_connected:
-			# Mientras no llega el sync_world_state el cliente consulta el
-			# flag del servidor cada 10 s — cada respuesta refresca el
-			# contador de silencio, así que solo se corta si el servidor
-			# deja de responder del todo, nunca por tiempo de espera.
-			if _joined_ms > 0 and not _world_state_seen \
+			# Hasta que el mundo local está construido (join + sync +
+			# generación propia, que puede tardar minutos) el cliente
+			# consulta el flag del servidor cada 10 s — cada respuesta
+			# refresca el contador de silencio, así que solo se corta si el
+			# servidor deja de responder del todo, nunca por tiempo de
+			# espera ni por lo que tarde la generación local.
+			var scene := get_tree().current_scene
+			var world_built: bool = scene != null and scene.get("player") != null
+			if _joined_ms > 0 and not world_built \
 					and Time.get_ticks_msec() - _status_probe_ms > 10000:
 				_status_probe_ms = Time.get_ticks_msec()
 				request_world_status.rpc_id(1)
 			if _joined_ms > 0:
 				var since_ms := Time.get_ticks_msec() - \
 					(_last_inbound_ms if _last_inbound_ms > 0 else _joined_ms)
-				var limit_ms := 30000 if _world_state_seen else 120000
+				var limit_ms := 30000 if world_built else 120000
 				if since_ms > limit_ms:
 					print("[NET] >", limit_ms / 1000, "s sin datos del servidor — cerrando")
 					_last_inbound_ms = 0
