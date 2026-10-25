@@ -276,6 +276,7 @@ func _send_weather_state_to(pid: int) -> void:
 func sync_water_clock(seconds: float) -> void:
 	if is_host or not is_finite(seconds) or seconds < 0.0:
 		return
+	_last_inbound_ms = Time.get_ticks_msec()
 	water_world_time = seconds
 
 static func accepts_player_state(host: bool, sender: int, player_id: int) -> bool:
@@ -344,6 +345,12 @@ func snapshot_recipients() -> Array[int]:
 	return recipients
 
 var _ws_dead_peer_scan := 0.0
+# Cliente WS: heartbeat armado al conectar y marca del último dato entrante.
+# El TCP puede quedar vivo aunque el stream real haya muerto en el túnel —
+# entonces el reloj de agua (que llega cada 2 s) deja de entrar y hay que
+# sacar al jugador al menú en vez de dejarle en un mundo fantasma.
+var _ws_hb_armed := false
+var _last_inbound_ms := 0
 
 func _process(_delta: float) -> void:
 	water_world_time += _delta
@@ -386,6 +393,23 @@ func _process(_delta: float) -> void:
 				if closed or stalled:
 					print("[NET] Disconnect stalled WebSocket peer ", pid, " queued=", conn.get_current_outbound_buffered_amount())
 					wsp.disconnect_peer(pid)
+	# Cliente WS: armar el heartbeat (el socket aparece tras el handshake) y
+	# detectar el stream muerto que el TCP no revela — más de 20 s sin el
+	# water clock del servidor = conexión fantasma.
+	if not is_host and peer is WebSocketMultiplayerPeer:
+		var wcl := peer as WebSocketMultiplayerPeer
+		if not _ws_hb_armed:
+			for pid in wcl.get_peers():
+				var c = wcl.get_peer(pid)
+				if c != null and c.get_ready_state() == WebSocketPeer.STATE_OPEN:
+					c.heartbeat_interval = 15.0
+					_ws_hb_armed = true
+		if is_connected and _last_inbound_ms > 0 \
+				and Time.get_ticks_msec() - _last_inbound_ms > 30000:
+			print("[NET] >30s sin datos del servidor — stream muerto, cerrando")
+			_last_inbound_ms = 0
+			close_connection()
+			connection_failed.emit()
 	if is_host:
 		# Listen for probe packets from clients doing active scan
 		if _probe_listener != null:
@@ -458,6 +482,8 @@ func join_game(ip: String, password: String = "") -> bool:
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
+	_last_inbound_ms = Time.get_ticks_msec()
+	_ws_hb_armed = false
 	return true
 
 func close_connection() -> void:
@@ -480,6 +506,9 @@ func close_connection() -> void:
 	_animals_gen = -1
 	water_world_time = 0.0
 	_water_clock_timer = 0.0
+	_ws_congested_since.clear()
+	_ws_hb_armed = false
+	_last_inbound_ms = 0
 	authoritative_weather.clear()
 	_weather_source_peer = 0
 	if peer != null:
@@ -500,6 +529,12 @@ func _on_peer_connected(id: int) -> void:
 		var enet_peer := (peer as ENetMultiplayerPeer).get_peer(id)
 		if enet_peer != null:
 			enet_peer.set_timeout(120000, 120000, 180000)
+	# Ping WS periódico por conexión aceptada: mantiene viva la ruta
+	# NAT/edge del cliente y delata sockets muertos en segundos, no minutos.
+	if is_host and peer is WebSocketMultiplayerPeer:
+		var ws_conn = (peer as WebSocketMultiplayerPeer).get_peer(id)
+		if ws_conn != null:
+			ws_conn.heartbeat_interval = 15.0
 	if is_host:
 		_kick_if_unregistered(id)
 	# Don't send player list here — wait for _register_player so client_id is processed
