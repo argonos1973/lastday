@@ -272,6 +272,22 @@ func _send_weather_state_to(pid: int) -> void:
 		return
 	_sync_weather_state.rpc_id(pid, authoritative_weather)
 
+# Consulta del flag "mundo listo": el cliente la repite cada ~10 s mientras
+# espera el estado del mundo — cada respuesta prueba que el servidor vive.
+@rpc("any_peer", "reliable")
+func request_world_status() -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not is_host or sender <= 1:
+		return
+	world_status.rpc_id(sender, world_ready)
+
+@rpc("authority", "reliable")
+func world_status(ready: bool) -> void:
+	if is_host:
+		return
+	_last_inbound_ms = Time.get_ticks_msec()
+	world_status_received.emit(ready)
+
 @rpc("authority", "unreliable_ordered")
 func sync_water_clock(seconds: float) -> void:
 	if is_host or not is_finite(seconds) or seconds < 0.0:
@@ -352,6 +368,13 @@ var _ws_dead_peer_scan := 0.0
 var _ws_hb_armed := false
 var _last_inbound_ms := 0
 var _joined_ms := 0
+var _status_probe_ms := 0
+var _world_state_seen := false
+# Flag "mundo listo": el servidor lo levanta al terminar la generación; el
+# cliente lo consulta para saber si debe seguir esperando o ya puede recibir
+# el estado del mundo — sin cortar por tiempo mientras el servidor responda.
+var world_ready := false
+signal world_status_received(ready: bool)
 
 func _process(_delta: float) -> void:
 	water_world_time += _delta
@@ -394,30 +417,36 @@ func _process(_delta: float) -> void:
 				if closed or stalled:
 					print("[NET] Disconnect stalled WebSocket peer ", pid, " queued=", conn.get_current_outbound_buffered_amount())
 					wsp.disconnect_peer(pid)
-	# Cliente WS: armar el heartbeat (el socket aparece tras el handshake) y
-	# detectar el stream muerto que el TCP no revela — más de 20 s sin el
-	# water clock del servidor = conexión fantasma.
-	if not is_host and peer is WebSocketMultiplayerPeer:
-		var wcl := peer as WebSocketMultiplayerPeer
-		if not _ws_hb_armed:
+	# Cliente: heartbeat en WS (el socket aparece tras el handshake), sondeo
+	# del flag "mundo listo" hasta que llega el primer dato, y detección del
+	# stream muerto que el TCP no revela.
+	if not is_host and multiplayer.has_multiplayer_peer():
+		if peer is WebSocketMultiplayerPeer and not _ws_hb_armed:
+			var wcl := peer as WebSocketMultiplayerPeer
 			for pid in wcl.get_peers():
 				var c = wcl.get_peer(pid)
 				if c != null and c.get_ready_state() == WebSocketPeer.STATE_OPEN:
 					c.heartbeat_interval = 15.0
 					_ws_hb_armed = true
-		if is_connected and _joined_ms > 0:
-			# Antes del primer dato la espera puede ser larga (el servidor
-			# genera el mundo ~2 min): 120 s de gracia. Con flujo ya
-			# establecido, >30 s de silencio = stream muerto.
-			var since_ms := Time.get_ticks_msec() - \
-				(_last_inbound_ms if _last_inbound_ms > 0 else _joined_ms)
-			var limit_ms := 30000 if _last_inbound_ms > 0 else 120000
-			if since_ms > limit_ms:
-				print("[NET] >", limit_ms / 1000, "s sin datos del servidor — cerrando")
-				_last_inbound_ms = 0
-				_joined_ms = 0
-				close_connection()
-				connection_failed.emit()
+		if is_connected:
+			# Mientras no llega el sync_world_state el cliente consulta el
+			# flag del servidor cada 10 s — cada respuesta refresca el
+			# contador de silencio, así que solo se corta si el servidor
+			# deja de responder del todo, nunca por tiempo de espera.
+			if _joined_ms > 0 and not _world_state_seen \
+					and Time.get_ticks_msec() - _status_probe_ms > 10000:
+				_status_probe_ms = Time.get_ticks_msec()
+				request_world_status.rpc_id(1)
+			if _joined_ms > 0:
+				var since_ms := Time.get_ticks_msec() - \
+					(_last_inbound_ms if _last_inbound_ms > 0 else _joined_ms)
+				var limit_ms := 30000 if _world_state_seen else 120000
+				if since_ms > limit_ms:
+					print("[NET] >", limit_ms / 1000, "s sin datos del servidor — cerrando")
+					_last_inbound_ms = 0
+					_joined_ms = 0
+					close_connection()
+					connection_failed.emit()
 	if is_host:
 		# Listen for probe packets from clients doing active scan
 		if _probe_listener != null:
@@ -492,6 +521,8 @@ func join_game(ip: String, password: String = "") -> bool:
 	is_host = false
 	_last_inbound_ms = 0
 	_joined_ms = Time.get_ticks_msec()
+	_status_probe_ms = 0
+	_world_state_seen = false
 	_ws_hb_armed = false
 	return true
 
@@ -519,6 +550,9 @@ func close_connection() -> void:
 	_ws_hb_armed = false
 	_last_inbound_ms = 0
 	_joined_ms = 0
+	_status_probe_ms = 0
+	_world_state_seen = false
+	world_ready = false
 	authoritative_weather.clear()
 	_weather_source_peer = 0
 	if peer != null:
@@ -1465,6 +1499,7 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 # Server sends world state to a newly connected client
 @rpc("authority", "reliable")
 func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array, planted_crops: Array = []) -> void:
+	_world_state_seen = true
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_sync_world_state") and scene.get("player") != null:
 		scene._net_sync_world_state(depleted_ids, dropped_items, campfires, lit_campfires, open_doors, shelters, planted_crops)

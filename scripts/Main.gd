@@ -3403,8 +3403,16 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.inventory.changed.emit()
 
 # Called by RPC from client on server to damage a real animal
+# Peers que pidieron el estado del mundo antes de que terminara la
+# generación: se les sirve en cuanto net.world_ready pasa a true.
+var _pending_world_state: Array = []
+
 func _send_world_state_to_client(peer_id: int) -> void:
 	if net == null:
+		return
+	if net.is_host and not net.world_ready:
+		if not _pending_world_state.has(peer_id):
+			_pending_world_state.append(peer_id)
 		return
 	if net.is_host and (not net.players.has(peer_id) or net.players[peer_id].get("offline", false)):
 		return
@@ -6745,6 +6753,14 @@ func _create_map() -> void:
 			_set_loading_phase("Generando fauna...")
 		await _create_wildlife()
 		await get_tree().process_frame
+		# Generación terminada: levanta el flag que consultan los clientes y
+		# sirve el estado del mundo a quienes conectaron durante la espera.
+		if net != null:
+			net.world_ready = true
+			for pid in _pending_world_state:
+				if _peer_can_receive(pid):
+					_send_world_state_to_client(pid)
+			_pending_world_state.clear()
 	if not is_server:
 		await _flush_grass_batches()
 		await get_tree().process_frame
