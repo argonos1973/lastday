@@ -702,9 +702,15 @@ var _throw_aim_hold := false
 var _throw_aim_frozen := false
 var _throw_release_item = null
 var _throw_release_timer := 0.0
-var _throw_release_origin := Vector3.ZERO
-var _throw_release_dir := Vector3.FORWARD
-const THROW_RELEASE_DELAY := 0.30
+var _throw_release_revision := -1
+var _throw_release_target := Vector3.ZERO
+# AttackExternal swings forward at 0.82s, after its 0.40s wind-up.
+const THROW_RELEASE_DELAY := 0.42
+const BOW_RELEASE_DELAY := 22.0 / 30.0
+const BOW_SHOT_DURATION := 1.2
+var _bow_release_item = null
+var _bow_release_timer := 0.0
+var _bow_release_revision := -1
 const THROW_ANIM_FREEZE_TIME := 0.4
 const THROW_MIN_FORCE := 4.0
 const THROW_MAX_FORCE := 22.0
@@ -1673,11 +1679,7 @@ func _process(delta: float) -> void:
 			_throw_aim_frozen = false
 			if not _throw_charging and third_person_animation_player != null:
 				third_person_animation_player.speed_scale = 1.0
-	# La lanza sale cuando el brazo llega al punto de suelta del swing.
-	if _throw_release_timer > 0.0:
-		_throw_release_timer -= delta
-		if _throw_release_timer <= 0.0:
-			_finish_aimed_throw()
+	_tick_primitive_releases(delta)
 	# Tick spoilage for perishable food in inventory
 	if inventory != null and not is_dead:
 		var _any_spoiled := false
@@ -4114,7 +4116,8 @@ func _update_hand_socket() -> void:
 				prim_node.rotation_degrees = Vector3.ZERO
 				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z)
 				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
-				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, true)
+				var released := cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY
+				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
 			return
 		else:
 			third_person_hand_item_root.position = l_local.origin
@@ -4137,6 +4140,24 @@ func _update_hand_socket() -> void:
 		third_person_hand_item_root.position = bone_local.origin + _hand_socket_offset + rod_offset
 	var euler := bone_local.basis.orthonormalized().get_euler()
 	third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+	var held = get_held_item()
+	var held_name := str(held.item_name) if held != null else _puppet_held
+	if held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		var spear := third_person_hand_item_root.get_node_or_null("HeldPrimitive") as Node3D
+		if spear != null:
+			if _throw_aim_hold or _throw_release_item != null or (is_puppet and _is_aiming):
+				var forward := -global_basis.z
+				if _throw_release_item != null:
+					forward = (_throw_release_target - third_person_hand_item_root.global_position).normalized()
+				elif not is_puppet and is_instance_valid(camera):
+					forward = -camera.global_basis.z
+				if forward.length_squared() > 0.001:
+					var up := Vector3.UP if absf(forward.y) < 0.97 else Vector3.FORWARD
+					var orientation := Basis.looking_at(forward, up) * Basis(Vector3.RIGHT, -PI * 0.5)
+					spear.basis = third_person_hand_item_root.global_basis.orthonormalized().inverse() * orientation
+			else:
+				spear.rotation_degrees = Vector3(85, 0, 0)
 
 func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool) -> void:
 	var static_str := prim_node.find_child("BowString", true, false) as Node3D
@@ -10273,6 +10294,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.seek(third_person_action_start_offset, true)
 			if third_person_action_animation == _rod_fish_start_animation or third_person_action_animation == _rod_fish_end_animation or third_person_action_animation == _rod_cast_animation:
 				third_person_animation_player.speed_scale = _rod_action_speed_scale
+			elif _throw_aim_hold and _throw_aim_frozen:
+				third_person_animation_player.speed_scale = 0.0
 			elif _throw_charging:
 				# Lanzamiento cargado: 1.0 los primeros 0.4s, luego congelar
 				if _throw_charge_time < THROW_ANIM_FREEZE_TIME:
@@ -13704,23 +13727,56 @@ func _shoot_bow() -> void:
 	if held.has_method("is_broken") and held.is_broken():
 		notice.emit("Tu %s está roto." % str(held.item_name))
 		return
-	if _shoot_cooldown > 0.0:
+	if _shoot_cooldown > 0.0 or _bow_release_item != null:
 		return
 	if stats.energy < 3.5:
 		notice.emit("Estás demasiado cansado para tensar el arco.")
+		return
+	if _count_inventory_arrows() <= 0:
+		notice.emit("No tienes flechas en el inventario.")
+		return
+	_bow_release_item = held
+	_bow_release_revision = _held_selection_revision
+	_bow_release_timer = BOW_RELEASE_DELAY
+	_shoot_cooldown = BOW_SHOT_DURATION
+	play_action_animation("bow_shoot", BOW_SHOT_DURATION)
+
+func _tick_primitive_releases(delta: float) -> void:
+	if _bow_release_item != null:
+		if is_dead or get_held_item() != _bow_release_item or _held_selection_revision != _bow_release_revision:
+			_bow_release_item = null
+			_bow_release_timer = 0.0
+		else:
+			_bow_release_timer -= delta
+			if _bow_release_timer <= 0.0:
+				_finish_bow_shot()
+	if _throw_release_item != null:
+		if is_dead or get_held_item() != _throw_release_item or _held_selection_revision != _throw_release_revision:
+			_throw_release_item = null
+			_throw_release_timer = 0.0
+		else:
+			_throw_release_timer -= delta
+			if _throw_release_timer <= 0.0:
+				_finish_aimed_throw()
+
+func _finish_bow_shot() -> void:
+	var held = _bow_release_item
+	_bow_release_item = null
+	_bow_release_timer = 0.0
+	if held == null or is_dead or camera == null or get_held_item() != held or _held_selection_revision != _bow_release_revision or stats.energy < 3.5:
+		return
+	if held.has_method("is_broken") and held.is_broken():
 		return
 	var arrow_name := _consume_best_arrow()
 	if arrow_name.is_empty():
 		notice.emit("No tienes flechas en el inventario.")
 		return
-	_shoot_cooldown = 0.9
 	_crosshair_bloom = minf(_crosshair_bloom + 18.0, 42.0)
 	stats.energy = maxf(0.0, stats.energy - 3.5)
 	stats.changed.emit()
 	if held.has_method("reduce_durability"):
 		held.reduce_durability(2.0)
-	play_action_animation("bow_shoot", 1.15)
-	_schedule_melee_swing_sound(0.35)
+	_schedule_melee_swing_sound(0.0)
 	var is_reinf := str(held.item_name) == "Arco reforzado"
 	var arrow_speed := 95.0 if is_reinf else 75.0
 	var base_dmg := 125.0
@@ -13772,41 +13828,49 @@ func _throw_aimed_weapon() -> void:
 	var held = get_held_item()
 	if is_dead or camera == null or held == null or not _has_throwable_weapon_equipped():
 		return
-	if _shoot_cooldown > 0.0 or _throw_release_item != null:
+	if _shoot_cooldown > 0.0 or _throw_release_item != null or _throw_charging:
 		return
 	if stats.energy < 6.0:
 		notice.emit("Estás demasiado cansado para lanzar.")
 		return
-	set_meta("last_dropped_durability", maxf(0.0, float(held.durability) - 4.0))
-	set_meta("last_dropped_max_durability", float(held.max_durability))
 	# Capturar la dirección en el clic; la lanza sale del brazo cuando el
 	# swing llega al punto de suelta, igual que al soltar la tecla G.
 	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5
 	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
-	_throw_release_origin = global_position + Vector3(0, 1.0 if is_crouching else 1.42, 0) + cam_ray_dir * 0.5
-	_throw_release_dir = (cam_ray_dir + Vector3(0, 0.06, 0)).normalized()
+	_throw_release_revision = _held_selection_revision
+	var cam_origin := camera.project_ray_origin(aim_point)
+	var excluded: Array[RID] = [get_rid()]
+	_collect_child_collision_rids(self, excluded)
+	var target_hit := _rifle_sight_hit(cam_origin, cam_ray_dir, excluded)
+	_throw_release_target = target_hit.position if not target_hit.is_empty() else cam_origin + cam_ray_dir * 35.0
 	_throw_release_item = held
 	_throw_release_timer = THROW_RELEASE_DELAY
 	_throw_aim_hold = false
 	_throw_aim_frozen = false
 	_cancel_aim()
 	_shoot_cooldown = 0.8
-	stats.energy = maxf(0.0, stats.energy - 6.0)
-	stats.changed.emit()
 	# Reanudar el wind-up congelado en vez de reiniciar el clip desde cero.
 	if third_person_animation_player != null:
+		if third_person_animation_player.current_animation != third_person_attack_animation:
+			_start_throw_animation()
+		third_person_animation_player.seek(THROW_ANIM_FREEZE_TIME, true)
 		third_person_animation_player.speed_scale = 1.0
 		third_person_action_animation = third_person_attack_animation
 		third_person_action_timer = 0.85
 	else:
 		play_action_animation("attack", 0.65)
-	_schedule_melee_swing_sound(0.28)
+	_schedule_melee_swing_sound(THROW_RELEASE_DELAY)
 
 func _finish_aimed_throw() -> void:
 	var held = _throw_release_item
 	_throw_release_item = null
-	if held == null or camera == null or is_dead or get_held_item() != held:
+	_throw_release_timer = 0.0
+	if held == null or camera == null or is_dead or get_held_item() != held or _held_selection_revision != _throw_release_revision:
 		return
+	if stats.energy < 6.0 or (held.has_method("is_broken") and held.is_broken()):
+		return
+	set_meta("last_dropped_durability", maxf(0.0, float(held.durability) - 4.0))
+	set_meta("last_dropped_max_durability", float(held.max_durability))
 	var item_name := str(held.item_name)
 	var item_type := str(held.item_type)
 	var item_weight := float(held.weight)
@@ -13814,6 +13878,12 @@ func _finish_aimed_throw() -> void:
 	var idx: int = inventory.items.find(held) if inventory != null else -1
 	if idx < 0 and not _held_item_external:
 		return
+	var exclude_arr: Array[RID] = [self.get_rid()]
+	_collect_child_collision_rids(self, exclude_arr)
+	# Read the animated grip BEFORE clearing/rebuilding the held visual.
+	var release_origin := _spear_release_origin(exclude_arr)
+	stats.energy = maxf(0.0, stats.energy - 6.0)
+	stats.changed.emit()
 	_held_item_reference = null
 	_held_item_external = false
 	held_index = -1
@@ -13824,13 +13894,30 @@ func _finish_aimed_throw() -> void:
 	var is_bola := item_type == "weapon_bola" or item_name == "Boleadoras"
 	var proj_speed := 32.0 if is_bola else 38.0
 	var base_dmg := 35.0 if is_bola else (110.0 if item_name == "Palo afilado" else (165.0 if item_name == "Lanza" else 210.0))
-	var exclude_arr: Array[RID] = [self.get_rid()]
-	_collect_child_collision_rids(self, exclude_arr)
-	_launch_primitive_projectile(_throw_release_origin, _throw_release_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
+	var throw_dir := (_throw_release_target - release_origin).normalized()
+	if throw_dir.length_squared() < 0.001:
+		throw_dir = -camera.global_basis.z
+	_launch_primitive_projectile(release_origin, throw_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
 	notice.emit("Lanzas %s." % item_name)
 	var main := get_tree().current_scene
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
+
+func _spear_release_origin(excluded: Array[RID]) -> Vector3:
+	var body := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0)
+	var grip := body
+	if is_instance_valid(third_person_hand_item_root) and is_instance_valid(_hand_skeleton):
+		_hand_skeleton.force_update_all_bone_transforms()
+		_update_hand_socket()
+		grip = third_person_hand_item_root.global_position
+	# An animated hand beyond a wall must not spawn a projectile through it.
+	if grip.distance_squared_to(body) > 0.0001:
+		var query := PhysicsRayQueryParameters3D.create(body, grip, 1, excluded)
+		query.hit_from_inside = true
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if not hit.is_empty():
+			return hit.position + hit.normal * 0.03
+	return grip
 
 # Exponential drag per thrown/shot projectile: light fletched arrows shed
 # speed fast, heavy spears keep it, bolas tumble and stall quickest.
@@ -13884,7 +13971,7 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.add_child(vis)
 	get_tree().current_scene.add_child(projectile)
 	projectile.global_position = origin
-	projectile.look_at(origin + direction.normalized(), Vector3.UP)
+	projectile.look_at(origin + direction.normalized(), Vector3.UP if absf(direction.normalized().y) < 0.97 else Vector3.FORWARD)
 	if visual_only:
 		return
 	var network := get_node_or_null("/root/NetworkManager")
@@ -13893,16 +13980,22 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 			network.primitive_shot(network.get_my_id(), origin, direction, item_name, speed, projectile.wind_velocity)
 		else:
 			network.primitive_shot.rpc_id(1, network.get_my_id(), origin, direction, item_name, speed, projectile.wind_velocity)
+	var recovered_state: Dictionary = {}
+	if item_type != "ammo_arrow":
+		for key in ["last_dropped_durability", "last_dropped_max_durability"]:
+			if has_meta(key):
+				recovered_state[key] = get_meta(key)
+				remove_meta(key)
 	projectile.expired.connect(func(pos: Vector3):
-		_recover_primitive_item(pos, Vector3.UP, item_name, item_type, item_weight, item_use))
+		_recover_primitive_item(pos, Vector3.UP, item_name, item_type, item_weight, item_use, recovered_state))
 	projectile.impact.connect(func(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3):
 		# Wounding power scales with the speed the shaft still carries: heavy
 		# drag makes long shots land softer instead of using a fixed falloff.
 		var energy := clampf(projectile.velocity.length() / maxf(speed, 1.0), 0.45, 1.0)
-		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola, energy)
+		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola, energy, recovered_state)
 	)
 
-func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, energy_mult: float = 1.0) -> void:
+func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, energy_mult: float = 1.0, recovered_state: Dictionary = {}) -> void:
 	var is_headshot := false
 	var target_node: Node = null
 	if collider is Node3D:
@@ -13938,9 +14031,9 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		_hit_marker(bool(target_node.get("_is_dead")) or bool(target_node.get("is_dead")))
 	else:
 		_spawn_bullet_impact(hit_pos, hit_normal, collider)
-	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use)
+	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state)
 
-func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float) -> void:
+func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float, recovered_state: Dictionary = {}) -> void:
 	var can_recover := true
 	if item_type == "ammo_arrow":
 		can_recover = randf() < 0.75
@@ -13949,6 +14042,12 @@ func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: S
 		var scene := get_tree().current_scene
 		if scene != null and scene.has_method("_get_exact_ground_y"):
 			drop_pos.y = float(scene.call("_get_exact_ground_y", drop_pos.x, drop_pos.z, hit_pos.y + 2.0)) + 0.06
+		# Drop handlers consume these synchronously; each projectile owns its state.
+		for key in ["last_dropped_durability", "last_dropped_max_durability"]:
+			if recovered_state.has(key):
+				set_meta(key, recovered_state[key])
+			elif has_meta(key):
+				remove_meta(key)
 		item_dropped.emit(item_name, item_type, item_weight, 1, item_use, drop_pos, Color(0, 0, 0, 0), false, 0.0)
 
 func _load_wav_stream(path: String) -> AudioStream:

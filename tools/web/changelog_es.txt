@@ -9,6 +9,7 @@ f091e15|Arcos, flechas, lanzas arrojadizas, boleadoras y guantes de piel; opcion
 4caba7c|La cámara en tercera persona entra dentro del refugio construido
 cbae6d4|Limpieza de la raíz del proyecto: fuentes de assets movidas a assets_src
 eb65a78|Ignoradas las fuentes descargadas de barricada y torre de vigilancia
+6a0f643|El lanzado de lanzas y boleadoras usa el gesto de lanzar con G: brazo cargado al apuntar y suelta sincronizada
 08443e9|Flecha improvisada sin plumas ni piedra (menos daño y alcance) y guía web de armas/crafteo con gráficos
 42e5d7c|Retícula de arquero, balística realista de flechas y arcos/flechas como loot en las casas
 b588bb5|Disparos primitivos del anfitrión, IDs únicos de despojo y sincronización del viento

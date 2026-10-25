@@ -92,6 +92,19 @@ func run():
 	check(projectile.impact.get_connections().is_empty(), "Remote visual cannot apply duplicate damage")
 	projectile._physics_process(0.1)
 	check(recovered == 1, "Remote visual cannot duplicate recovered loot")
+	var recovered_durabilities: Array = []
+	shooter.item_dropped.connect(func(_n,_t,_w,_q,_u,_p,_c,_b,_s):
+		recovered_durabilities.append(shooter.get_meta("last_dropped_durability", -1)))
+	var in_flight: Array = []
+	for durability in [16.0, 72.0]:
+		shooter.set_meta("last_dropped_durability", durability)
+		shooter.set_meta("last_dropped_max_durability", 100.0)
+		shooter._launch_primitive_projectile(Vector3(0,100,0), Vector3.FORWARD, 28, .1, [], 0, "Lanza", "tool_spear", 1, 0, false)
+		in_flight.append(arena.get_child(arena.get_child_count()-1))
+		check(not shooter.has_meta("last_dropped_durability"), "Flight captures durability instead of leaking it to other drops")
+	in_flight[1]._physics_process(.1)
+	in_flight[0]._physics_process(.1)
+	check(recovered_durabilities == [72.0,16.0], "Concurrent spears retain individual durability regardless of landing order")
 	current_scene = null
 	arena.queue_free()
 	world.queue_free()
