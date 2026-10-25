@@ -92,6 +92,27 @@ func run():
 	actor._throw_aim_frozen = false
 	actor._update_third_person_animation(false,.016)
 	check(actor.third_person_animation_player.speed_scale == 1, "Release resumes animation")
+	actor.third_person_hand_item_root = Node3D.new()
+	actor.third_person_model.add_child(actor.third_person_hand_item_root)
+	var bow_item = ItemData.create("Arco reforzado", "weapon_bow", 0.9, 1, 0)
+	actor.test_item = bow_item
+	actor._build_third_person_primitive("Arco reforzado")
+	actor._fit_held_prop_to_palm(bow_item)
+	var held_prim := actor.third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
+	check(held_prim != null and held_prim.get_parent() == actor.third_person_hand_item_root, "Bow HeldPrimitive is not wrapped or shrunk by palm fitter")
+	actor._update_bow_draw_visuals(held_prim, 0.65, true)
+	var nocked := held_prim.get_node_or_null("BowNockedArrow") as Node3D
+	check(nocked != null and nocked.visible, "Nocked arrow becomes visible on bow draw")
+	var flight_vis := actor._build_arrow_or_spear_visual("Flecha de piedra", "ammo_arrow", true)
+	check(flight_vis.get_node_or_null("ArrowFlightStreak") != null, "Flying arrow includes visible flight streak")
+	flight_vis.free()
+	var target_wall := Node3D.new()
+	world.add_child(target_wall)
+	var impact_pt := Vector3(3.0, 1.5, -6.0)
+	var impact_dir := Vector3(0.2, -0.3, -0.9).normalized()
+	actor._embed_stuck_projectile_visual(impact_pt, impact_dir, "Flecha de piedra", "ammo_arrow", null, target_wall)
+	var stuck_nodes := get_nodes_in_group("world_action_visual")
+	check(not stuck_nodes.is_empty() and (stuck_nodes.back() as Node3D).global_position.distance_to(impact_pt) < 0.01, "Stuck arrow embeds at exact impact position")
 	current_scene = null
 	world.free()
 	print("PRIMITIVE_RELEASE_ERRORS=", errors)

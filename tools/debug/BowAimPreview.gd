@@ -26,8 +26,11 @@ func run() -> void:
 	var arrow_item = ItemData.create("Flecha de piedra", "ammo_arrow", 0.08, 6, 0.0)
 	actor.inventory.add_item(bow_item)
 	actor.inventory.add_item(arrow_item)
-	actor._puppet_held = "Arco reforzado"
-	actor._update_puppet_held_item("Arco reforzado")
+	actor.is_puppet = false
+	actor._held_item_reference = bow_item
+	actor._held_item_external = true
+	actor._sync_third_person_equipment(bow_item)
+	actor._fit_held_prop_to_palm(bow_item)
 	actor._is_aiming = true
 
 	var ap: AnimationPlayer = actor.third_person_animation_player
@@ -242,9 +245,16 @@ func run() -> void:
 		actor.third_person_model.position.y = actor._compute_skeleton_ground_target_y()
 		actor._update_hand_socket()
 		await process_frame
-	camera.fov = 42.0
-	camera.global_position = actor.global_position + Vector3(0.55, 1.72, 1.75)
-	camera.look_at(actor.global_position + Vector3(0.0, 1.58, -6.5), Vector3.UP)
+	camera.fov = 45.0
+	actor._pitch = 0.0
+	camera.global_position = actor.global_position + Vector3(0.46, 1.64, 1.42)
+	camera.global_rotation = Vector3.ZERO
+	actor.camera = camera
+	for i in range(4):
+		skel.force_update_all_bone_transforms()
+		actor.third_person_model.position.y = actor._compute_skeleton_ground_target_y()
+		actor._update_hand_socket()
+		await process_frame
 
 	var aim_hud := preload("res://scripts/HUD.gd").new()
 	root.add_child(aim_hud)
@@ -260,6 +270,45 @@ func run() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://build/tmp/bow_aim_crosshair_preview.png")
 	print("Saved res://build/tmp/bow_aim_crosshair_preview.png")
+
+	# 4b) Aiming at the SKY (+42 deg pitch): side view + real orbiting aiming camera view
+	actor._pitch = deg_to_rad(42.0)
+	camera.global_rotation = Vector3(actor._pitch, 0.0, 0.0)
+	for i in range(6):
+		skel.force_update_all_bone_transforms()
+		actor.third_person_model.position.y = actor._compute_skeleton_ground_target_y()
+		actor._update_hand_socket()
+		await process_frame
+	var sky_pivot := actor.global_position + Vector3(0.46, 1.22, 0.0)
+	camera.global_position = sky_pivot + Vector3(0.0, 0.42, 1.42).rotated(Vector3.RIGHT, actor._pitch)
+	camera.global_rotation = Vector3(actor._pitch, 0.0, 0.0)
+	for f in range(8):
+		await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/bow_aim_sky_camera.png")
+	print("Saved res://build/tmp/bow_aim_sky_camera.png")
+
+	aim_hud.visible = false
+	camera.global_position = actor.global_position + Vector3(2.35, 1.55, -0.15)
+	camera.look_at(actor.global_position + Vector3(0.0, 1.55, -0.25), Vector3.UP)
+	# Keep actor._pitch at +42 deg while rendering from side camera
+	actor.camera = null
+	for i in range(4):
+		skel.force_update_all_bone_transforms()
+		actor.third_person_model.position.y = actor._compute_skeleton_ground_target_y()
+		actor._update_hand_socket()
+		await process_frame
+	for f in range(6):
+		await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/bow_aim_sky_side.png")
+	print("Saved res://build/tmp/bow_aim_sky_side.png")
+	actor._pitch = 0.0
+	for i in range(4):
+		skel.force_update_all_bone_transforms()
+		actor.third_person_model.position.y = actor._compute_skeleton_ground_target_y()
+		actor._update_hand_socket()
+		await process_frame
 
 	# 5) Arrow GLB lineup close-up: wood / stone / bone side by side
 	aim_hud.visible = false
@@ -360,5 +409,33 @@ func run() -> void:
 		root.get_texture().get_image().save_png("res://build/tmp/arrow_flight_arc_preview.png")
 		print("Saved res://build/tmp/arrow_flight_arc_preview.png v=", proj.velocity)
 		proj.queue_free()
+
+	# 8) Stuck arrows ("flechas clavadas") embedded in ground, wooden post/wall, and animal body
+	current_scene = stage
+	stage.visible = true
+	stage.position = Vector3.ZERO
+	var post := MeshInstance3D.new()
+	var post_cyl := CylinderMesh.new()
+	post_cyl.top_radius = 0.16
+	post_cyl.bottom_radius = 0.18
+	post_cyl.height = 1.6
+	post.mesh = post_cyl
+	var bark_mat := StandardMaterial3D.new()
+	bark_mat.albedo_color = Color(0.32, 0.21, 0.12)
+	bark_mat.roughness = 0.92
+	post.material_override = bark_mat
+	post.position = Vector3(0.55, 0.80, -0.20)
+	stage.add_child(post)
+	actor._embed_stuck_projectile_visual(Vector3(0.41, 0.92, -0.12), Vector3(0.82, -0.18, -0.54).normalized(), "Flecha de piedra", "ammo_arrow", null, post)
+	actor._embed_stuck_projectile_visual(Vector3(-0.28, 0.30, -0.18), Vector3(0.25, -0.58, -0.77).normalized(), "Flecha de hueso", "ammo_arrow", stage, stage)
+	actor._embed_stuck_projectile_visual(Vector3(0.10, 0.02, 0.25), Vector3(0.10, -0.76, -0.64).normalized(), "Flecha de madera", "ammo_arrow", null, ground)
+	camera.fov = 40.0
+	camera.global_position = Vector3(-0.35, 1.15, 1.45)
+	camera.look_at(Vector3(0.12, 0.42, -0.12), Vector3.UP)
+	for f in range(10):
+		await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/bow_stuck_arrows_preview.png")
+	print("Saved res://build/tmp/bow_stuck_arrows_preview.png")
 
 	quit()

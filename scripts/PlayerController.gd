@@ -711,6 +711,8 @@ const BOW_SHOT_DURATION := 1.2
 var _bow_release_item = null
 var _bow_release_timer := 0.0
 var _bow_release_revision := -1
+var _aim_pitch_saved_rotations: Dictionary = {}
+var _applying_aim_pitch := false
 const THROW_ANIM_FREEZE_TIME := 0.4
 const THROW_MIN_FORCE := 4.0
 const THROW_MAX_FORCE := 22.0
@@ -3958,7 +3960,12 @@ func _fit_held_prop_to_palm(item) -> void:
 	if item == null or third_person_hand_item_root == null:
 		return
 	# These actions carry their own authored hand/weapon animation.
-	if str(item.item_type) in ["weapon_rifle", "tool_fishing", "tool_torch"]:
+	if str(item.item_type) in ["weapon_rifle", "weapon_bow", "tool_fishing", "tool_torch"] or str(item.item_name) in ["Arco de madera", "Arco reforzado"]:
+		return
+	if str(item.item_type) == "tool_spear" or str(item.item_name) in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		_generic_hand_grip = true
+		_hand_grip_curl = 1.0
+		_hand_grip_adjustment = Vector3.ZERO
 		return
 	if third_person_hand_item_root.get_child_count() == 0:
 		return
@@ -4080,11 +4087,88 @@ func _bind_headwear_socket_signal() -> void:
 func _on_head_skeleton_updated() -> void:
 	_update_head_worn_items()
 
+func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
+	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
+	if target_skel == null or not is_instance_valid(target_skel) or _aim_pitch_saved_rotations.is_empty():
+		_aim_pitch_saved_rotations.clear()
+		return
+	for b_idx in _aim_pitch_saved_rotations:
+		target_skel.set_bone_pose_rotation(int(b_idx), _aim_pitch_saved_rotations[b_idx] as Quaternion)
+	_aim_pitch_saved_rotations.clear()
+	target_skel.force_update_all_bone_transforms()
+
+func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
+	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
+	if _applying_aim_pitch or target_skel == null or not is_instance_valid(target_skel):
+		return
+	_applying_aim_pitch = true
+	_restore_aim_pitch_pose(target_skel)
+	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
+	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation]))
+	var throw_active: bool = _throw_aim_hold or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming)
+	if not bow_active and not throw_active:
+		_applying_aim_pitch = false
+		return
+	var aim_pitch := _pitch
+	if not is_puppet and is_instance_valid(camera):
+		aim_pitch = camera.rotation.x
+	aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
+	var aim_yaw := deg_to_rad(-16.0) if bow_active else 0.0
+	if absf(aim_pitch) < 0.001 and absf(aim_yaw) < 0.001:
+		_applying_aim_pitch = false
+		return
+	var skel_inv_basis := target_skel.global_transform.basis.orthonormalized().inverse()
+	var skel_right := (skel_inv_basis * global_basis.x.normalized()).normalized()
+	var skel_up := (skel_inv_basis * global_basis.y.normalized()).normalized()
+	if skel_right.length_squared() < 0.001:
+		skel_right = Vector3.LEFT
+	if skel_up.length_squared() < 0.001:
+		skel_up = Vector3.UP
+	var weights := [["Spine", 0.28, 0.55], ["Spine1", 0.36, 0.45], ["Spine2", 0.36, 0.0]]
+	for entry in weights:
+		var b_idx := -1
+		for prefix in ["mixamorig:", "mixamorig_", ""]:
+			b_idx = target_skel.find_bone(prefix + String(entry[0]))
+			if b_idx >= 0:
+				break
+		if b_idx < 0:
+			continue
+		_aim_pitch_saved_rotations[b_idx] = target_skel.get_bone_pose_rotation(b_idx)
+	if _aim_pitch_saved_rotations.is_empty():
+		_applying_aim_pitch = false
+		return
+	for entry in weights:
+		var b_idx := -1
+		for prefix in ["mixamorig:", "mixamorig_", ""]:
+			b_idx = target_skel.find_bone(prefix + String(entry[0]))
+			if b_idx >= 0:
+				break
+		if b_idx < 0:
+			continue
+		var step_pitch: float = aim_pitch * float(entry[1])
+		var step_yaw: float = aim_yaw * float(entry[2])
+		var g_basis := target_skel.get_bone_global_pose(b_idx).basis.orthonormalized()
+		var g_inv := g_basis.inverse()
+		var cur_q := target_skel.get_bone_pose_rotation(b_idx)
+		if absf(step_yaw) > 0.0005:
+			var local_up := (g_inv * skel_up).normalized()
+			if local_up.length_squared() > 0.001:
+				cur_q = (cur_q * Quaternion(local_up, step_yaw)).normalized()
+		if absf(step_pitch) > 0.0005:
+			var local_right := (g_inv * skel_right).normalized()
+			if local_right.length_squared() > 0.001:
+				cur_q = (cur_q * Quaternion(local_right, step_pitch)).normalized()
+		target_skel.set_bone_pose_rotation(b_idx, cur_q)
+		target_skel.force_update_all_bone_transforms()
+	_applying_aim_pitch = false
+
 func _update_hand_socket() -> void:
 	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
 		return
 	if not is_instance_valid(_hand_skeleton) or not is_instance_valid(third_person_hand_item_root):
 		return
+	_apply_aim_pitch_pose(_hand_skeleton)
 	var skel_global := _hand_skeleton.global_transform
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
@@ -4094,20 +4178,19 @@ func _update_hand_socket() -> void:
 		var r_world := skel_global * _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
 		var r_local := local_to_model * r_world
 		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
-		var bow_drawing: bool = _is_aiming or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
-		var prim_node := third_person_hand_item_root.get_node_or_null("HeldPrimitive") as Node3D
+		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
+		var prim_node := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if bow_drawing:
 			var draw_vec := l_local.origin - r_local.origin
 			var draw_dist := draw_vec.length()
 			var fwd_dir := (draw_vec / draw_dist) if draw_dist > 0.04 else Vector3(0.0, 0.0, 1.0)
-			if not is_puppet and is_instance_valid(camera):
-				var cam_fwd_model := (local_to_model.basis * (-camera.global_basis.z)).normalized()
-				fwd_dir = Vector3(fwd_dir.x, lerpf(fwd_dir.y, cam_fwd_model.y, 0.85), fwd_dir.z).normalized()
-			var up_hint := Vector3(0.14, 1.0, 0.0).normalized()
-			var right_dir := fwd_dir.cross(up_hint).normalized()
-			if right_dir.length_squared() < 0.001:
-				right_dir = Vector3(1.0, 0.0, 0.0)
-			var up_dir := right_dir.cross(fwd_dir).normalized()
+			# Keep right_hint near model -X (player right) so pitching up to the sky
+			# or down to the ground never hits gimbal lock with the vertical axis.
+			var right_hint := Vector3(-1.0, 0.22, 0.0).normalized()
+			var up_dir := right_hint.cross(fwd_dir).normalized()
+			if up_dir.length_squared() < 0.001:
+				up_dir = Vector3(0.0, 1.0, 0.0)
+			var right_dir := fwd_dir.cross(up_dir).normalized()
 			# Bow local -Z points forward along the arrow; +Z points directly to the right hand
 			var bow_basis := Basis(right_dir, up_dir, -fwd_dir)
 			third_person_hand_item_root.position = l_local.origin
@@ -4144,7 +4227,7 @@ func _update_hand_socket() -> void:
 	var held = get_held_item()
 	var held_name := str(held.item_name) if held != null else _puppet_held
 	if held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
-		var spear := third_person_hand_item_root.get_node_or_null("HeldPrimitive") as Node3D
+		var spear := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if spear != null:
 			if _throw_aim_hold or _throw_release_item != null or (is_puppet and _is_aiming):
 				var forward := -global_basis.z
@@ -4200,13 +4283,23 @@ func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool)
 		var has_arrows: bool = is_puppet or _count_inventory_arrows() > 0
 		nocked_arrow.visible = has_arrows
 		if has_arrows:
-			# Arrow GLB has fletching at -Z (-0.36) and arrowhead at +Z (+0.42), total length ~0.78.
-			# Scale along Z so the arrow spans from the right-hand nock_pt (+pull_z)
-			# past the left-hand bow grip (0,0,0) with the stone arrowhead in front.
-			var z_scale := maxf(1.0, (pull_z + 0.14) / 0.72)
-			nocked_arrow.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-			nocked_arrow.scale = Vector3(1.15, 1.15, z_scale)
-			nocked_arrow.position = Vector3(0.012, 0.015, pull_z - 0.34 * z_scale)
+			var desired_arrow := _peek_best_arrow_name() if not is_puppet else "Flecha de piedra"
+			if not desired_arrow.is_empty() and str(nocked_arrow.get_meta("arrow_kind", "")) != desired_arrow:
+				for ch in nocked_arrow.get_children():
+					nocked_arrow.remove_child(ch)
+					ch.queue_free()
+				var arrow_vis := _build_arrow_or_spear_visual(desired_arrow, "ammo_arrow", false)
+				if arrow_vis != null:
+					nocked_arrow.add_child(arrow_vis)
+				nocked_arrow.set_meta("arrow_kind", desired_arrow)
+			# _build_arrow_or_spear_visual places fletching at +Z (+0.36) and
+			# arrowhead at -Z (-0.425). Scale and position so the fletching sits
+			# on the drawn string nock_pt (+pull_z) and the arrowhead projects
+			# well past the left-hand fingertips (-Z) clearly visible to the camera.
+			var z_scale := maxf(1.48, (pull_z + 0.44) / 0.72)
+			nocked_arrow.rotation_degrees = Vector3.ZERO
+			nocked_arrow.scale = Vector3(2.45, 2.45, z_scale)
+			nocked_arrow.position = Vector3(-0.018, 0.030, pull_z - 0.36 * z_scale)
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
@@ -9863,25 +9956,31 @@ func _build_third_person_primitive(item_name: String) -> void:
 	elif item_name in ["Arco de madera", "Arco reforzado"]:
 		prim.rotation_degrees = Vector3(0.0, 90.0, 0.0)
 		var str_mat := StandardMaterial3D.new()
-		str_mat.albedo_color = Color(0.80, 0.74, 0.58)
-		str_mat.roughness = 0.72
+		str_mat.albedo_color = Color(0.88, 0.82, 0.66)
+		str_mat.roughness = 0.68
 		for seg_name in ["BowDrawStringTop", "BowDrawStringBot"]:
 			var seg := MeshInstance3D.new()
 			seg.name = seg_name
 			var cyl := CylinderMesh.new()
-			cyl.top_radius = 0.0024
-			cyl.bottom_radius = 0.0024
+			cyl.top_radius = 0.0036
+			cyl.bottom_radius = 0.0036
 			cyl.height = 0.62
 			cyl.radial_segments = 8
 			seg.mesh = cyl
 			seg.material_override = str_mat
 			seg.visible = false
 			prim.add_child(seg)
-		var nocked := _load_external_node3d(ARROW_STONE_MODEL)
-		if nocked != null:
-			nocked.name = "BowNockedArrow"
-			nocked.visible = false
-			prim.add_child(nocked)
+		var nocked := Node3D.new()
+		nocked.name = "BowNockedArrow"
+		nocked.visible = false
+		var init_arrow_name := _peek_best_arrow_name()
+		if init_arrow_name.is_empty():
+			init_arrow_name = "Flecha de piedra"
+		var init_arrow_vis := _build_arrow_or_spear_visual(init_arrow_name, "ammo_arrow", false)
+		if init_arrow_vis != null:
+			nocked.add_child(init_arrow_vis)
+		nocked.set_meta("arrow_kind", init_arrow_name)
+		prim.add_child(nocked)
 	third_person_hand_item_root.add_child(prim)
 
 # Bundle de ropa: sin modelo 3P diferenciado, usa pack genérico
@@ -10168,9 +10267,13 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 		# or third-person over-the-shoulder archer view for bows/throwables
 		# so the player clearly sees the bow draw animation and arrow.
 		if _has_bow_equipped() or _has_throwable_weapon_equipped():
-			var bow_cam_z := minf(desired_z, 1.75)
-			var bow_cam_y := (1.25 if is_crouching else 1.72) + breath_sway_y + _water_sink
-			target_position = Vector3(0.55 + breath_sway_x, bow_cam_y, bow_cam_z)
+			var bow_cam_z := minf(desired_z, 1.42)
+			var pivot_y := (0.82 if is_crouching else 1.22) + breath_sway_y + _water_sink
+			var shoulder_pivot := Vector3(0.46 + breath_sway_x, pivot_y, 0.0)
+			var orbit_pitch := clampf(_pitch, deg_to_rad(-65.0), deg_to_rad(65.0))
+			var boom_offset := Vector3(0.0, 0.42, bow_cam_z).rotated(Vector3.RIGHT, orbit_pitch)
+			target_position = shoulder_pivot + boom_offset
+			target_position.y = maxf(target_position.y, 0.28 + _water_sink)
 		else:
 			target_position = Vector3(aim_side + breath_sway_x, aim_height + breath_sway_y + _water_sink, 0.15)
 		if not _debug_cam_active:
@@ -10203,6 +10306,7 @@ func _compute_skeleton_ground_target_y(bob: float = 0.0) -> float:
 	if skel == null:
 		return target_y
 	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+	_restore_aim_pitch_pose(skel)
 	skel.force_update_all_bone_transforms()
 	_prev_anim_name = cur_anim
 	_bone_update_pending = false
@@ -10438,7 +10542,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_idle_animation
 			elif third_person_has_real_idle:
 				target_animation = third_person_idle_animation
-		elif _has_bow_equipped() and _is_aiming and not moving and not _bow_aim_idle_animation.is_empty():
+		elif _has_bow_equipped() and _is_aiming and not _bow_aim_idle_animation.is_empty():
 			target_animation = _bow_aim_idle_animation
 		elif moving:
 			if low_health:
@@ -13703,6 +13807,17 @@ func _count_inventory_arrows() -> int:
 			total += int(it.quantity)
 	return total
 
+func _peek_best_arrow_name() -> String:
+	if inventory == null:
+		return ""
+	for pref in ["Flecha de hueso", "Flecha de piedra", "Flecha de madera", "Flecha improvisada"]:
+		if inventory.has_item_name(pref, 1):
+			return pref
+	for it in inventory.items:
+		if it != null and str(it.item_type) == "ammo_arrow" and int(it.quantity) > 0:
+			return str(it.item_name)
+	return ""
+
 func _consume_best_arrow() -> String:
 	if inventory == null:
 		return ""
@@ -13794,9 +13909,9 @@ func _finish_bow_shot() -> void:
 	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
 	var cam_ray_origin := camera.project_ray_origin(aim_point)
 	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
-	var shot_origin := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0) + cam_ray_dir * 0.45
 	var exclude_arr: Array[RID] = [self.get_rid()]
 	_collect_child_collision_rids(self, exclude_arr)
+	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir)
 	var space_state := get_world_3d().direct_space_state
 	var converge_dist := 35.0
 	if space_state != null:
@@ -13903,6 +14018,22 @@ func _finish_aimed_throw() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
+func _bow_release_origin(excluded: Array[RID], cam_ray_dir: Vector3) -> Vector3:
+	var body := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0)
+	var fallback := body + cam_ray_dir * 0.45
+	var grip := fallback
+	if is_instance_valid(third_person_hand_item_root) and is_instance_valid(_hand_skeleton):
+		_hand_skeleton.force_update_all_bone_transforms()
+		_update_hand_socket()
+		grip = third_person_hand_item_root.global_position + cam_ray_dir * 0.12
+	if grip.distance_squared_to(body) > 0.0001 and get_world_3d() != null:
+		var query := PhysicsRayQueryParameters3D.create(body, grip, 1, excluded)
+		query.hit_from_inside = true
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if not hit.is_empty():
+			return hit.position + hit.normal * 0.03
+	return grip
+
 func _spear_release_origin(excluded: Array[RID]) -> Vector3:
 	var body := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0)
 	var grip := body
@@ -13939,17 +14070,9 @@ func _primitive_projectile_drag(item_type: String, item_name: String) -> float:
 			return 0.40
 	return 0.30 if item_type == "ammo_arrow" else 0.24
 
-func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false, remote_wind: Vector3 = Vector3.ZERO) -> void:
-	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
-		return
-	var projectile := preload("res://scripts/RifleProjectile.gd").new()
-	projectile.velocity = direction.normalized() * speed
-	projectile.wind_velocity = remote_wind if visual_only else _wind_dir * _wind_strength * 0.35
-	projectile.max_distance = max_dist
-	projectile.excluded = excluded.duplicate()
-	projectile.drag_coeff = _primitive_projectile_drag(item_type, item_name)
-	projectile.launch_speed = speed
-	projectile.align_flight = item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
+func _build_arrow_or_spear_visual(item_name: String, item_type: String, for_flight: bool = false) -> Node3D:
+	var wrapper := Node3D.new()
+	wrapper.name = "ProjectileVisual"
 	var vis: Node3D = null
 	if item_type == "ammo_arrow":
 		var apath := ""
@@ -13968,6 +14091,40 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	if vis == null:
 		vis = MaterialFactory.build_primitive_item_mesh(item_name)
 		vis.rotation_degrees.x = -90.0 if item_type != "ammo_arrow" else 0.0
+	wrapper.add_child(vis)
+	if for_flight and item_type == "ammo_arrow":
+		vis.scale = Vector3(2.4, 2.4, 1.40)
+		var wake := MeshInstance3D.new()
+		wake.name = "ArrowFlightStreak"
+		var wcyl := CylinderMesh.new()
+		wcyl.top_radius = 0.005
+		wcyl.bottom_radius = 0.022
+		wcyl.height = 1.65
+		wcyl.radial_segments = 8
+		wake.mesh = wcyl
+		wake.rotation_degrees.x = 90.0
+		wake.position = Vector3(0.0, 0.0, 1.15)
+		var wmat := StandardMaterial3D.new()
+		wmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		wmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		wmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		wmat.albedo_color = Color(0.96, 0.94, 0.84, 0.42)
+		wake.material_override = wmat
+		wrapper.add_child(wake)
+	return wrapper
+
+func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: float, max_dist: float, excluded: Array[RID], base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, visual_only: bool = false, remote_wind: Vector3 = Vector3.ZERO) -> void:
+	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
+		return
+	var projectile := preload("res://scripts/RifleProjectile.gd").new()
+	projectile.velocity = direction.normalized() * speed
+	projectile.wind_velocity = remote_wind if visual_only else _wind_dir * _wind_strength * 0.35
+	projectile.max_distance = max_dist
+	projectile.excluded = excluded.duplicate()
+	projectile.drag_coeff = _primitive_projectile_drag(item_type, item_name)
+	projectile.launch_speed = speed
+	projectile.align_flight = item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
+	var vis := _build_arrow_or_spear_visual(item_name, item_type, true)
 	projectile.add_child(vis)
 	get_tree().current_scene.add_child(projectile)
 	projectile.global_position = origin
@@ -13992,10 +14149,13 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 		# Wounding power scales with the speed the shaft still carries: heavy
 		# drag makes long shots land softer instead of using a fixed falloff.
 		var energy := clampf(projectile.velocity.length() / maxf(speed, 1.0), 0.45, 1.0)
-		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola, energy, recovered_state)
+		var flight_dir := projectile.velocity.normalized()
+		if flight_dir.length_squared() < 0.001:
+			flight_dir = direction.normalized()
+		_on_primitive_projectile_impact(collider, hit_pos, hit_dist, hit_normal, base_damage, item_name, item_type, item_weight, item_use, is_bola, energy, recovered_state, flight_dir)
 	)
 
-func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, energy_mult: float = 1.0, recovered_state: Dictionary = {}) -> void:
+func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3, base_damage: float, item_name: String, item_type: String, item_weight: float, item_use: float, is_bola: bool, energy_mult: float = 1.0, recovered_state: Dictionary = {}, flight_dir: Vector3 = Vector3.ZERO) -> void:
 	var is_headshot := false
 	var target_node: Node = null
 	if collider is Node3D:
@@ -14031,24 +14191,75 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		_hit_marker(bool(target_node.get("_is_dead")) or bool(target_node.get("is_dead")))
 	else:
 		_spawn_bullet_impact(hit_pos, hit_normal, collider)
-	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state)
+	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state, flight_dir, target_node, collider)
 
-func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float, recovered_state: Dictionary = {}) -> void:
-	var can_recover := true
+func _recover_primitive_item(hit_pos: Vector3, hit_normal: Vector3, item_name: String, item_type: String, item_weight: float, item_use: float, recovered_state: Dictionary = {}, flight_dir: Vector3 = Vector3.ZERO, target_node: Node = null, collider = null) -> void:
+	var drop_pos := hit_pos + hit_normal * 0.08
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_get_exact_ground_y"):
+		drop_pos.y = float(scene.call("_get_exact_ground_y", drop_pos.x, drop_pos.z, hit_pos.y + 2.0)) + 0.06
+	# Drop handlers consume these synchronously; each projectile owns its state.
+	for key in ["last_dropped_durability", "last_dropped_max_durability"]:
+		if recovered_state.has(key):
+			set_meta(key, recovered_state[key])
+		elif has_meta(key):
+			remove_meta(key)
+	item_dropped.emit(item_name, item_type, item_weight, 1, item_use, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+	if flight_dir.length_squared() > 0.001 and (item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]):
+		_embed_stuck_projectile_visual(hit_pos, flight_dir.normalized(), item_name, item_type, target_node, collider)
+
+func _embed_stuck_projectile_visual(hit_pos: Vector3, fdir: Vector3, item_name: String, item_type: String, target_node: Node = null, collider = null) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var pickup_node: Node3D = null
+	var dropped_list = scene.get("_dropped_items")
+	if dropped_list is Array and not (dropped_list as Array).is_empty():
+		var last_entry = (dropped_list as Array).back()
+		if last_entry is Dictionary and str(last_entry.get("name", "")) == item_name:
+			var pid := "Pickup_" + str(last_entry.get("id", ""))
+			pickup_node = scene.get_node_or_null(NodePath(pid)) as Node3D
+	if pickup_node == null:
+		pickup_node = Node3D.new()
+		pickup_node.name = "StuckProjectile_%d" % [Time.get_ticks_usec() % 1000000]
+		pickup_node.add_to_group("world_action_visual")
+		scene.add_child(pickup_node)
+	else:
+		for ch in pickup_node.get_children():
+			pickup_node.remove_child(ch)
+			ch.queue_free()
+	var shaft_vis := _build_arrow_or_spear_visual(item_name, item_type, false)
 	if item_type == "ammo_arrow":
-		can_recover = randf() < 0.75
-	if can_recover:
-		var drop_pos := hit_pos + hit_normal * 0.08
-		var scene := get_tree().current_scene
-		if scene != null and scene.has_method("_get_exact_ground_y"):
-			drop_pos.y = float(scene.call("_get_exact_ground_y", drop_pos.x, drop_pos.z, hit_pos.y + 2.0)) + 0.06
-		# Drop handlers consume these synchronously; each projectile owns its state.
-		for key in ["last_dropped_durability", "last_dropped_max_durability"]:
-			if recovered_state.has(key):
-				set_meta(key, recovered_state[key])
-			elif has_meta(key):
-				remove_meta(key)
-		item_dropped.emit(item_name, item_type, item_weight, 1, item_use, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+		shaft_vis.scale = Vector3(2.15, 2.15, 1.35)
+		# Tip is at -0.425 * 1.35 = -0.57m; shifting +0.43m buries 14 cm of
+		# arrowhead inside the hit surface and leaves ~78 cm of shaft + feathers sticking out.
+		shaft_vis.position = Vector3(0.0, 0.0, 0.43)
+	else:
+		shaft_vis.scale = Vector3(1.25, 1.25, 1.15)
+		shaft_vis.position = Vector3(0.0, 0.0, 0.72)
+	pickup_node.add_child(shaft_vis)
+	var attach_parent: Node3D = null
+	if target_node is Node3D and is_instance_valid(target_node):
+		attach_parent = target_node as Node3D
+	elif collider is Node3D and is_instance_valid(collider) and not (collider is StaticBody3D):
+		attach_parent = collider as Node3D
+	if attach_parent != null and pickup_node.get_parent() != attach_parent:
+		if pickup_node.get_parent() != null:
+			pickup_node.get_parent().remove_child(pickup_node)
+		attach_parent.add_child(pickup_node)
+		var fallback_scene := scene
+		var node_ref := pickup_node
+		attach_parent.tree_exiting.connect(func():
+			if is_instance_valid(node_ref) and is_instance_valid(fallback_scene) and node_ref.is_inside_tree():
+				var xform := node_ref.global_transform
+				node_ref.get_parent().remove_child(node_ref)
+				fallback_scene.add_child(node_ref)
+				node_ref.global_transform = xform
+		, CONNECT_ONE_SHOT)
+	pickup_node.scale = Vector3.ONE
+	pickup_node.global_position = hit_pos
+	var up_ref := Vector3.UP if absf(fdir.y) < 0.97 else Vector3.FORWARD
+	pickup_node.look_at(hit_pos + fdir, up_ref)
 
 func _load_wav_stream(path: String) -> AudioStream:
 	var stream: AudioStream = null

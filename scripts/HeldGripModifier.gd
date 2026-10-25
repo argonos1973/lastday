@@ -33,5 +33,6 @@ func _process_modification() -> void:
 			var rest := skeleton.get_bone_rest(index).basis.get_rotation_quaternion()
 			var target := rest * Quaternion(axis, deg_to_rad(angle * controller._hand_grip_curl))
 			skeleton.set_bone_pose_rotation(index, target)
+	controller._apply_aim_pitch_pose(skeleton)
 	# Read the final animated wrist, so props don't trail behind it by one frame.
 	controller._update_hand_socket()
