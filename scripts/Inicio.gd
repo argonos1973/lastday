@@ -571,14 +571,20 @@ func _relayout_menu() -> void:
 	var screen: Vector2 = get_viewport().get_visible_rect().size
 	var total_w := 280.0 + 340.0 + 40.0
 	var menu_x := screen.x * 0.5 - total_w * 0.5
+	var mh := 0.0
+	var ch := 0.0
 	if _menu_panel != null:
-		var mh := _menu_panel.get_combined_minimum_size().y
-		_menu_panel.position = Vector2(
-			menu_x, maxf(8.0, screen.y - mh - 24.0))
+		mh = _menu_panel.get_combined_minimum_size().y
 	if _char_panel_node != null:
-		var ch := _char_panel_node.get_combined_minimum_size().y
-		_char_panel_node.position = Vector2(
-			menu_x + 320.0, maxf(8.0, screen.y - ch - 24.0))
+		ch = _char_panel_node.get_combined_minimum_size().y
+	# Menú y preview comparten el borde SUPERIOR: el menú sube a la
+	# altura del preview en vez de quedar hundido en el fondo. Se usa la
+	# altura del panel más alto para que ninguno se salga por abajo.
+	var tops := maxf(8.0, screen.y - maxf(mh, ch) - 24.0)
+	if _menu_panel != null:
+		_menu_panel.position = Vector2(menu_x, tops)
+	if _char_panel_node != null:
+		_char_panel_node.position = Vector2(menu_x + 320.0, tops)
 	if _options_panel != null:
 		var oh := _options_panel.get_combined_minimum_size().y
 		_options_panel.position = Vector2(
