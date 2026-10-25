@@ -111,6 +111,11 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 	if _public_server:
 		# Solo cloudflared (mismo host) alcanza este socket — sin UDP ni LAN.
 		var ws := WebSocketMultiplayerPeer.new()
+		# El burst de sync_world_state supera los 64 KB por defecto: al desbordar
+		# el buffer de salida el socket queda roto y los replies (pickup_claim,
+		# syncs) se pierden en silencio. 4 MB da margen de sobra por conexión.
+		ws.outbound_buffer_size = 4 * 1024 * 1024
+		ws.inbound_buffer_size = 1024 * 1024
 		err = ws.create_server(WS_PORT, WS_BIND)
 		bind_port = WS_PORT
 		if err == OK:
@@ -303,7 +308,20 @@ func peer_alive(pid: int) -> bool:
 		return false
 	# get_peers() es genérico (ENet y WS) y no escupe errores al consultar un
 	# id ya desconectado — get_peer() lo hace.
-	return multiplayer.get_peers().has(pid)
+	if not multiplayer.get_peers().has(pid):
+		return false
+	# Un WebSocket medio muerto (TCP abierto pero WS cerrado) sigue listado en
+	# get_peers() hasta que TCP expira — durante minutos sus reservas de pickup
+	# bloquean al resto y los broadcasts lanzan errores a cada send. El
+	# ready_state del socket lo delata de inmediato.
+	if peer is WebSocketMultiplayerPeer:
+		var conn = (peer as WebSocketMultiplayerPeer).get_peer(pid)
+		if conn != null and conn.has_method("get_ready_state") \
+				and conn.get_ready_state() != WebSocketPeer.STATE_OPEN:
+			return false
+	return true
+
+var _ws_dead_peer_scan := 0.0
 
 func _process(_delta: float) -> void:
 	water_world_time += _delta
@@ -322,6 +340,21 @@ func _process(_delta: float) -> void:
 			elif _dedicated_bind_retries <= 0:
 				push_error("[SERVER] El puerto %d sigue ocupado — cerrando esta instancia" % GameConst.GAME_PORT)
 				get_tree().quit()
+	# Watchdog de peers zombie WebSocket: si el socket quedó medio muerto sin
+	# que peer_disconnected se emitiera (TCP medio abierto, corte sin close
+	# frame), el peer seguiría "vivo" para siempre — aparcando su cuerpo mal,
+	# reteniendo sus reservas de pickup y recibiendo sends que solo producen
+	# errores. Forzar disconnect_peer hace correr la limpieza normal.
+	if is_host and is_dedicated_server and peer is WebSocketMultiplayerPeer:
+		_ws_dead_peer_scan += _delta
+		if _ws_dead_peer_scan >= 3.0:
+			_ws_dead_peer_scan = 0.0
+			var wsp := peer as WebSocketMultiplayerPeer
+			for pid in multiplayer.get_peers():
+				var conn = wsp.get_peer(pid)
+				if conn != null and conn.has_method("get_ready_state") \
+						and conn.get_ready_state() in [WebSocketPeer.STATE_CLOSING, WebSocketPeer.STATE_CLOSED]:
+					wsp.disconnect_peer(pid)
 				return
 	if is_host:
 		# Listen for probe packets from clients doing active scan
@@ -374,6 +407,10 @@ func join_game(ip: String, password: String = "") -> bool:
 	var err := OK
 	if target.begins_with("ws://") or target.begins_with("wss://"):
 		var ws := WebSocketMultiplayerPeer.new()
+		# Mismo motivo que en el servidor: syncs grandes no deben desbordar el
+		# buffer de salida y corromper la conexión a mitad de sesión.
+		ws.outbound_buffer_size = 4 * 1024 * 1024
+		ws.inbound_buffer_size = 4 * 1024 * 1024
 		if target.begins_with("wss://"):
 			err = ws.create_client(target, TLSOptions.client())
 		else:

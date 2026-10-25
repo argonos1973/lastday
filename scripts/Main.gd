@@ -10867,13 +10867,21 @@ func _acquire_world_pickup(action, actor = null) -> bool:
 	var deadline := Time.get_ticks_msec() + 5000
 	while _pickup_replies.get(id) == null and net.is_connected and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
+	var got_reply: bool = _pickup_replies.get(id) != null
 	var accepted: bool = _pickup_replies.get(id) == true
 	_pickup_replies.erase(id)
 	if not accepted or not is_instance_valid(action) or _depleted_action_ids.has(id):
 		if net.is_connected:
 			net.release_pickup_claim.rpc_id(1, id)
 		if not accepted and net.is_connected:
-			_notify_claim_denied(action, actor)
+			if not got_reply:
+				# El request llegó pero la respuesta no volvió (o al revés): con
+				# el socket medio roto esto rechazaba TODO fingiendo que otro
+				# jugador usaba cada objeto.
+				if actor != null and is_instance_valid(actor):
+					actor.notice.emit("Sin respuesta del servidor — revisa tu conexión.")
+			else:
+				_notify_claim_denied(action, actor)
 		return false
 	_local_pickup_claim = id
 	return true
