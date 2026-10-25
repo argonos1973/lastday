@@ -584,22 +584,13 @@ func _create_loading_overlay() -> void:
 	_loading_overlay.name = "LoadingOverlay"
 	_loading_overlay.layer = 100
 	_loading_phase = -1
-	# Use the actual window size, not the viewport visible rect
-	# which may differ on retina/hidpi displays
-	var win := get_window()
-	var vp_size := Vector2(1280, 720)
-	if win != null:
-		vp_size = win.get_size()
-	var scale_factor: float = vp_size.x / 1280.0
-	if scale_factor < 0.5:
-		scale_factor = 0.5
-	elif scale_factor > 3.0:
-		scale_factor = 3.0
+	# Layout por anchors (FULL_RECT): sigue al viewport si la ventana cambia
+	# de tamaño — pantalla completa aplicada desde el menú no descuadra nada.
+	var scale_factor := _loading_scale_factor()
 	# Root Control with explicit size so children layout correctly
 	var root := Control.new()
 	root.name = "LoadingRoot"
-	root.position = Vector2.ZERO
-	root.size = vp_size
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_loading_overlay.add_child(root)
 	# Background image
 	_loading_bg = TextureRect.new()
@@ -607,20 +598,17 @@ func _create_loading_overlay() -> void:
 	_loading_bg.texture = _LOADING_TEX_0
 	_loading_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_loading_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	_loading_bg.position = Vector2.ZERO
-	_loading_bg.size = vp_size
+	_loading_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(_loading_bg)
 	# Semi-transparent dark overlay so text is readable
 	var _loading_rect := ColorRect.new()
 	_loading_rect.color = Color(0.0, 0.0, 0.0, 0.45)
-	_loading_rect.position = Vector2.ZERO
-	_loading_rect.size = vp_size
+	_loading_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(_loading_rect)
 	# Loading text (centered)
 	_loading_label = Label.new()
 	_loading_label.text = "Generando mundo..."
-	_loading_label.position = Vector2.ZERO
-	_loading_label.size = vp_size
+	_loading_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_loading_label.add_theme_font_size_override("font_size", int(36 * scale_factor))
@@ -632,8 +620,11 @@ func _create_loading_overlay() -> void:
 	_loading_tip_label = Label.new()
 	_loading_tip_label.name = "LoadingTip"
 	var tip_h := int(50 * scale_factor)
-	_loading_tip_label.position = Vector2(0, vp_size.y - tip_h)
-	_loading_tip_label.size = Vector2(vp_size.x, tip_h)
+	_loading_tip_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_loading_tip_label.offset_top = -tip_h
+	_loading_tip_label.offset_bottom = 0
+	_loading_tip_label.offset_left = 0
+	_loading_tip_label.offset_right = 0
 	_loading_tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_tip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_loading_tip_label.add_theme_font_size_override("font_size", int(16 * scale_factor))
@@ -643,6 +634,30 @@ func _create_loading_overlay() -> void:
 	_loading_tip_label.text = _get_next_tip()
 	root.add_child(_loading_tip_label)
 	add_child(_loading_overlay)
+	var win := get_window()
+	if win != null and not win.size_changed.is_connected(_on_loading_window_resized):
+		win.size_changed.connect(_on_loading_window_resized)
+
+func _loading_scale_factor() -> float:
+	var w := 1280.0
+	var win := get_window()
+	if win != null:
+		w = float(win.get_size().x)
+	return clampf(w / 1280.0, 0.5, 3.0)
+
+# Reescala solo la tipografía cuando la ventana cambia (el layout ya sigue
+# por anchors).
+func _on_loading_window_resized() -> void:
+	if not is_instance_valid(_loading_overlay):
+		return
+	var scale_factor := _loading_scale_factor()
+	if is_instance_valid(_loading_label):
+		_loading_label.add_theme_font_size_override("font_size", int(36 * scale_factor))
+		_loading_label.add_theme_constant_override("font_shadow_offset", int(2 * scale_factor))
+	if is_instance_valid(_loading_tip_label):
+		_loading_tip_label.offset_top = -int(50 * scale_factor)
+		_loading_tip_label.add_theme_font_size_override("font_size", int(16 * scale_factor))
+		_loading_tip_label.add_theme_constant_override("font_shadow_offset", int(1 * scale_factor))
 
 #region INICIALIZACIÓN Y CICLO DE VIDA
 func _ready() -> void:

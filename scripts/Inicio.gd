@@ -29,6 +29,8 @@ var _btn_next: Button = null
 var _btn_enter: Button = null
 var _name_panel: PanelContainer = null
 var _options_panel: PanelContainer = null
+var _menu_panel: PanelContainer = null
+var _char_panel_node: PanelContainer = null
 var _name_edit: LineEdit = null
 var _name_request_pending := false
 # El servidor reivindico un personaje vivo: el selector queda bloqueado sobre
@@ -181,6 +183,7 @@ func _ready() -> void:
 	left_bg.content_margin_bottom = 20
 	left_panel.add_theme_stylebox_override("panel", left_bg)
 	add_child(left_panel)
+	_menu_panel = left_panel
 
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -339,6 +342,10 @@ func _ready() -> void:
 	char_bg.content_margin_bottom = 16
 	char_panel.add_theme_stylebox_override("panel", char_bg)
 	add_child(char_panel)
+	_char_panel_node = char_panel
+	var win := get_window()
+	if win != null and not win.size_changed.is_connected(_relayout_menu):
+		win.size_changed.connect(_relayout_menu)
 
 	var char_vbox := VBoxContainer.new()
 	char_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -520,6 +527,23 @@ func _build_options_panel(menu_pos: Vector2) -> void:
 		GraphicsSettings.save_vsync(on)
 		GraphicsSettings.apply_window())
 	box.add_child(vsync_check)
+
+# Los paneles se posicionan en píxeles: al cambiar el tamaño de la ventana
+# (p.ej. pantalla completa) hay que recolocarlos.
+func _relayout_menu() -> void:
+	# Misma convención que _ready: el rect visible del viewport (píxeles de
+	# render) — win.get_size() daría puntos y rompería en HiDPI.
+	var screen: Vector2 = get_viewport().get_visible_rect().size
+	var total_w := 280.0 + 340.0 + 40.0
+	if _menu_panel != null:
+		_menu_panel.position = Vector2(screen.x * 0.5 - total_w * 0.5, screen.y - 440)
+	if _char_panel_node != null:
+		_char_panel_node.position = Vector2(screen.x * 0.5 - total_w * 0.5 + 320.0, screen.y - 440)
+	if _options_panel != null and _menu_panel != null:
+		_options_panel.position = Vector2(maxf(8.0, _menu_panel.position.x - 322.0), _menu_panel.position.y)
+	if _name_panel != null and _name_panel.visible:
+		var pw := _name_panel.custom_minimum_size.x
+		_name_panel.position = Vector2(screen.x * 0.5 - pw * 0.5, screen.y * 0.5 - 90)
 
 func _process(_delta: float) -> void:
 	if _started:
