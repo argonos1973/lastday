@@ -30,3 +30,5 @@ dcef68f|Miras de hierro 3D del M4, dar de comer y beber a otros jugadores y leñ
 b7a1d5f|Techo más alto en la cabina de la torre militar y red de camuflaje woodland
 2489e3d|Artefactos temporales y previews redirigidos a build/tmp
 1619de0|Lanzas, boleadoras y flechas salen en el frame de suelta de la animación: la flecha viaja encajada durante la tensión y los proyectiles parten de la mano real hacia el punto de mira
+934f377|Historial de cambios en castellano para los frames de suelta sincronizados
+b4d1a16|Flecha encajada visible en el arco al apuntar, inclinación vertical del arquero al apuntar al cielo o al suelo, estela de disparo y flechas clavadas donde impactan
