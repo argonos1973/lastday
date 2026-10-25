@@ -29,6 +29,7 @@ var _btn_next: Button = null
 var _btn_enter: Button = null
 var _name_panel: PanelContainer = null
 var _options_panel: PanelContainer = null
+var _btn_options: Button = null
 var _menu_panel: PanelContainer = null
 var _char_panel_node: PanelContainer = null
 var _name_edit: LineEdit = null
@@ -262,6 +263,7 @@ func _ready() -> void:
 		if _options_panel != null:
 			_options_panel.visible = not _options_panel.visible)
 	vbox.add_child(btn_options)
+	_btn_options = btn_options
 	_build_options_panel(left_panel.position)
 
 	# IP input (hidden initially)
@@ -479,20 +481,28 @@ func _build_options_panel(menu_pos: Vector2) -> void:
 	screen_options.tooltip_text = "Ventana o pantalla completa. Aplica al instante."
 	box.add_child(screen_options)
 
+	# Solo se ofrecen las resoluciones que caben en esta pantalla — cada
+	# entrada del desplegable guarda su indice real en RESOLUTIONS.
 	var res_options := OptionButton.new()
-	for label in GraphicsSettings.RESOLUTION_LABELS:
-		res_options.add_item(label)
-	res_options.select(GraphicsSettings.resolution_index())
+	var supported_res := GraphicsSettings.supported_resolution_indexes()
+	var cur_res := GraphicsSettings.resolution_index()
+	for i in range(supported_res.size()):
+		var ri: int = supported_res[i]
+		res_options.add_item(GraphicsSettings.RESOLUTION_LABELS[ri])
+		res_options.set_item_metadata(i, ri)
+		if ri == cur_res:
+			res_options.select(i)
 	res_options.disabled = GraphicsSettings.fullscreen()
-	res_options.tooltip_text = "Resolucion de la ventana (modo ventana)."
+	res_options.tooltip_text = "Resolucion de la ventana (modo ventana). Solo las que caben en esta pantalla."
 	box.add_child(res_options)
 
 	screen_options.item_selected.connect(func(index: int):
 		GraphicsSettings.save_fullscreen(index == 1)
 		GraphicsSettings.apply_window()
 		res_options.disabled = index == 1)
-	res_options.item_selected.connect(func(index: int):
-		GraphicsSettings.save_resolution_index(index)
+	res_options.item_selected.connect(func(pos: int):
+		GraphicsSettings.save_resolution_index(
+			int(res_options.get_item_metadata(pos)))
 		GraphicsSettings.apply_window())
 
 	var scale_options := OptionButton.new()
@@ -561,6 +571,28 @@ func _relayout_menu() -> void:
 	if _name_panel != null and _name_panel.visible:
 		var pw := _name_panel.custom_minimum_size.x
 		_name_panel.position = Vector2(screen.x * 0.5 - pw * 0.5, screen.y * 0.5 - 90)
+
+# Con el panel de opciones abierto, un click/toque en cualquier otro sitio
+# lo cierra. El propio panel y su boton quedan fuera: el boton ya hace
+# toggle por su cuenta.
+func _input(event: InputEvent) -> void:
+	if _options_panel == null or not _options_panel.visible:
+		return
+	var p := Vector2.ZERO
+	if event is InputEventMouseButton and event.pressed:
+		p = event.position
+	elif event is InputEventScreenTouch and event.pressed:
+		p = event.position
+	else:
+		return
+	if _options_panel.get_global_rect().has_point(p):
+		return
+	if _btn_options != null and _btn_options.get_global_rect().has_point(p):
+		return
+	_options_panel.visible = false
+	# El click solo cierra el panel: no debe activar el control que haya
+	# debajo del cursor.
+	get_viewport().set_input_as_handled()
 
 func _process(_delta: float) -> void:
 	if _started:

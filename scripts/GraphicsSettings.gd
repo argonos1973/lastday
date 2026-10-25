@@ -31,8 +31,36 @@ static func fullscreen() -> bool:
 static func save_fullscreen(v: bool) -> void:
 	_write("fullscreen", v)
 
+# Indices de RESOLUTIONS que caben en el area usable de la pantalla
+# actual (sin barra de tareas/dock). Una ventana mayor que el monitor no
+# se ajusta — esas resoluciones no se ofrecen ni se aplican. En headless
+# se devuelven todas.
+static func supported_resolution_indexes() -> Array[int]:
+	var out: Array[int] = []
+	if DisplayServer.get_name() == "headless":
+		for i in range(RESOLUTIONS.size()):
+			out.append(i)
+		return out
+	var scr := DisplayServer.window_get_current_screen()
+	if scr < 0:
+		scr = DisplayServer.get_primary_screen()
+	var usable: Vector2i = DisplayServer.screen_get_usable_rect(scr).size
+	for i in range(RESOLUTIONS.size()):
+		var r: Vector2i = RESOLUTIONS[i]
+		if r.x <= usable.x and r.y <= usable.y:
+			out.append(i)
+	if out.is_empty():
+		out.append(0)
+	return out
+
 static func resolution_index() -> int:
-	return clampi(int(_read(_config(), "resolution", 2)), 0, RESOLUTIONS.size() - 1)
+	var idx := clampi(int(_read(_config(), "resolution", 2)), 0, RESOLUTIONS.size() - 1)
+	# Si la guardada no cabe en esta pantalla, se usa la mayor que si
+	# quepa — nunca se abre una ventana mayor que el monitor.
+	var supported := supported_resolution_indexes()
+	if not supported.has(idx):
+		idx = supported[supported.size() - 1]
+	return idx
 
 static func save_resolution_index(i: int) -> void:
 	_write("resolution", clampi(i, 0, RESOLUTIONS.size() - 1))
