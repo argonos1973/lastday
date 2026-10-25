@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+NEW_HASH|La pantalla de arranque del juego usa la misma imagen y el mismo fondo oscuro que el menú principal
 ef5c6e3|El menú principal sube a la misma altura que el panel de selección de personaje: ambos comparten el borde superior
 217f47c|Las opciones de rendimiento salen del menú principal: ahora hay un botón de engranaje en la esquina inferior izquierda y el panel se abre encima de él
 fd402e3|El desplegable de resolución solo ofrece las que caben en tu pantalla, y el panel de opciones se cierra al clickar fuera de él
