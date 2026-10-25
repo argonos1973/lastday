@@ -5601,6 +5601,41 @@ func _backpack_drop_pos(drop_id: String, action) -> Vector3:
 				return Vector3(float(sp[0]), float(sp[1]), float(sp[2]))
 	return Vector3.INF
 
+# ¿El dict entrante se fusionaría con alguna entrada del alijo? Misma regla
+# que el inventario: can_stack_with sobre los Items reconstruidos.
+func _stash_can_merge(contents: Array, item_dict: Dictionary) -> bool:
+	var ni = ItemScript.from_dict(item_dict)
+	if ni == null:
+		return false
+	for entry in contents:
+		if not entry is Dictionary:
+			continue
+		var ei = ItemScript.from_dict(entry)
+		if ei != null and ei.can_stack_with(ni):
+			return true
+	return false
+
+# Funde la unidad entrante en la primera pila compatible (media de
+# durabilidad, máx. spoilage) o la añade como entrada nueva. Devuelve true
+# cuando se fundió sin ocupar hueco.
+func _stash_merge_or_append(contents: Array, item_dict: Dictionary) -> bool:
+	var ni = ItemScript.from_dict(item_dict)
+	if ni != null:
+		for i in range(contents.size()):
+			if not contents[i] is Dictionary:
+				continue
+			var ei = ItemScript.from_dict(contents[i])
+			if ei != null and ei.can_stack_with(ni):
+				var total: int = ei.quantity + ni.quantity
+				ei.durability = (ei.durability * ei.quantity + ni.durability * ni.quantity) / total
+				ei.quantity = total
+				if ei.is_perishable() and ni.spoilage > ei.spoilage:
+					ei.spoilage = ni.spoilage
+				contents[i] = ei.to_dict()
+				return true
+	contents.append(item_dict)
+	return false
+
 func _broadcast_backpack_contents(drop_id: String, contents: Array) -> void:
 	if net == null or not net.is_host or net.peer == null:
 		return
@@ -5631,7 +5666,12 @@ func _backpack_take(item_index: int) -> void:
 	var cd = contents[item_index]
 	if not cd is Dictionary:
 		return
-	var item = ItemScript.from_dict(cd)
+	# Sacar de uno en uno: una pila entera podría superar el peso máximo.
+	var one: Dictionary = cd.duplicate(true)
+	one["quantity"] = 1
+	one["stack_separated"] = false
+	one["cargo_location"] = ""
+	var item = ItemScript.from_dict(one)
 	if item == null:
 		return
 	if player == null or player.inventory == null or not player.inventory.add_item(item):
@@ -5639,7 +5679,11 @@ func _backpack_take(item_index: int) -> void:
 			player.notice.emit("No tienes espacio para sacarlo.")
 		return
 	contents = contents.duplicate(true)
-	contents.remove_at(item_index)
+	var rem := int(contents[item_index].get("quantity", 1)) - 1
+	if rem <= 0:
+		contents.remove_at(item_index)
+	else:
+		contents[item_index]["quantity"] = rem
 	action.set_meta("contents", contents)
 	_set_backpack_entry_contents(drop_id, contents)
 	_save_world_change_silent()
@@ -5662,18 +5706,25 @@ func _backpack_store(inv_index: int) -> void:
 		return
 	var cur_contents: Array = action.get_meta("contents", [])
 	var max_cap := _stash_capacity_for(action)
-	if cur_contents.size() >= max_cap:
+	# Transferencia de uno en uno: solo sale una unidad de la pila. Las marcas
+	# de bolsillo (stack_separated/cargo_location) se limpian — en el alijo
+	# solo impedirían acumular.
+	var single = item.duplicate_stack()
+	single.quantity = 1
+	single.stack_separated = false
+	single.cargo_location = ""
+	var cd: Dictionary = single.to_dict()
+	var drop_id := str(action.action_id)
+	if cur_contents.size() >= max_cap and not _stash_can_merge(cur_contents, cd):
 		player.notice.emit("El %s está lleno (%d/%d objetos)." % [("refugio" if str(action.action_type) == "shelter" else "contenedor"), cur_contents.size(), max_cap])
 		return
-	var cd: Dictionary = item.to_dict()
-	var drop_id := str(action.action_id)
 	if net != null and net.is_connected and not net.is_host:
-		player.inventory.remove_index(inv_index, int(item.quantity))
+		player.inventory.remove_index(inv_index, 1)
 		net.backpack_store.rpc_id(1, drop_id, cd)
 		return
-	player.inventory.remove_index(inv_index, int(item.quantity))
+	player.inventory.remove_index(inv_index, 1)
 	var contents: Array = (action.get_meta("contents", []) as Array).duplicate(true)
-	contents.append(cd)
+	_stash_merge_or_append(contents, cd)
 	action.set_meta("contents", contents)
 	_set_backpack_entry_contents(drop_id, contents)
 	_save_world_change_silent()
@@ -5711,7 +5762,16 @@ func _net_backpack_take(sender_id: int, drop_id: String, item_index: int, expect
 	var cd = contents[item_index]
 	if not cd is Dictionary:
 		return
-	contents.remove_at(item_index)
+	# Sacar de uno en uno: la pila solo pierde una unidad.
+	var one: Dictionary = cd.duplicate(true)
+	one["quantity"] = 1
+	one["stack_separated"] = false
+	one["cargo_location"] = ""
+	var rem := int(cd.get("quantity", 1)) - 1
+	if rem <= 0:
+		contents.remove_at(item_index)
+	else:
+		contents[item_index]["quantity"] = rem
 	if action != null and is_instance_valid(action):
 		action.set_meta("contents", contents)
 	_set_backpack_entry_contents(drop_id, contents)
@@ -5719,11 +5779,11 @@ func _net_backpack_take(sender_id: int, drop_id: String, item_index: int, expect
 		var sp := _server_proxy_for_sender(sender_id)
 		if sp != null and sp.has_meta("saved_inventory"):
 			var sinv: Array = sp.get_meta("saved_inventory", []).duplicate(true)
-			sinv.append(cd.duplicate(true))
+			sinv.append(one.duplicate(true))
 			sp.set_meta("saved_inventory", sinv)
 	_save_world_change_silent()
 	_broadcast_backpack_contents(drop_id, contents)
-	net.backpack_give.rpc_id(sender_id, cd)
+	net.backpack_give.rpc_id(sender_id, one)
 
 # Host: un cliente mete un objeto en la mochila.
 func _net_backpack_store(sender_id: int, drop_id: String, item_dict: Dictionary) -> void:
@@ -5752,13 +5812,13 @@ func _net_backpack_store(sender_id: int, drop_id: String, item_dict: Dictionary)
 				is_shelter_entry = true
 				break
 	var max_cap := SHELTER_STASH_CAPACITY if is_shelter_entry else _stash_capacity_for(action)
-	if contents.size() >= max_cap:
+	if contents.size() >= max_cap and not _stash_can_merge(contents, item_dict):
 		if net != null and net.peer != null and net.peer_alive(sender_id):
 			net.backpack_give.rpc_id(sender_id, item_dict)
 		return
 	if sender_id != 0 and sender_id != net.get_my_id():
 		_saved_inventory_remove(sender_id, nm, str(item_dict.get("type", "")), clampi(int(item_dict.get("quantity", 1)), 1, 999))
-	contents.append(item_dict)
+	_stash_merge_or_append(contents, item_dict)
 	if action != null and is_instance_valid(action):
 		action.set_meta("contents", contents)
 	_set_backpack_entry_contents(drop_id, contents)
