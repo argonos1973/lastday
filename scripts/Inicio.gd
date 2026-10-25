@@ -428,6 +428,13 @@ func _ready() -> void:
 
 	_update_char_view()
 
+	# Posición inicial con la misma fórmula que los re-layouts (anclado
+	# por el borde inferior con la altura real de cada panel). La llamada
+	# diferida cubre el resize asíncrono que apply_window() dispara antes
+	# de que exista la conexión a size_changed.
+	_relayout_menu()
+	call_deferred("_relayout_menu")
+
 # Panel lateral de opciones de rendimiento: se abre a la izquierda del menú
 # sin moverlo. Pantalla/resolucion/escala/vsync aplican al instante; sombras
 # y detalles se leen al entrar en partida.
@@ -529,18 +536,28 @@ func _build_options_panel(menu_pos: Vector2) -> void:
 	box.add_child(vsync_check)
 
 # Los paneles se posicionan en píxeles: al cambiar el tamaño de la ventana
-# (p.ej. pantalla completa) hay que recolocarlos.
+# (p.ej. pantalla completa) hay que recolocarlos. Se anclan por el borde
+# INFERIOR con la altura real del panel — si se usa la posición del borde
+# superior con un margen fijo, un panel más alto que ese margen se sale
+# por abajo de la ventana en resoluciones bajas.
 func _relayout_menu() -> void:
 	# Misma convención que _ready: el rect visible del viewport (píxeles de
 	# render) — win.get_size() daría puntos y rompería en HiDPI.
 	var screen: Vector2 = get_viewport().get_visible_rect().size
 	var total_w := 280.0 + 340.0 + 40.0
+	var menu_x := screen.x * 0.5 - total_w * 0.5
 	if _menu_panel != null:
-		_menu_panel.position = Vector2(screen.x * 0.5 - total_w * 0.5, screen.y - 440)
+		var mh := _menu_panel.get_combined_minimum_size().y
+		_menu_panel.position = Vector2(
+			menu_x, maxf(8.0, screen.y - mh - 24.0))
 	if _char_panel_node != null:
-		_char_panel_node.position = Vector2(screen.x * 0.5 - total_w * 0.5 + 320.0, screen.y - 440)
-	if _options_panel != null and _menu_panel != null:
-		_options_panel.position = Vector2(maxf(8.0, _menu_panel.position.x - 322.0), _menu_panel.position.y)
+		var ch := _char_panel_node.get_combined_minimum_size().y
+		_char_panel_node.position = Vector2(
+			menu_x + 320.0, maxf(8.0, screen.y - ch - 24.0))
+	if _options_panel != null:
+		var oh := _options_panel.get_combined_minimum_size().y
+		_options_panel.position = Vector2(
+			maxf(8.0, menu_x - 322.0), maxf(8.0, screen.y - oh - 24.0))
 	if _name_panel != null and _name_panel.visible:
 		var pw := _name_panel.custom_minimum_size.x
 		_name_panel.position = Vector2(screen.x * 0.5 - pw * 0.5, screen.y * 0.5 - 90)
