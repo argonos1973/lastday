@@ -4905,6 +4905,7 @@ func _broadcast_animals() -> void:
 			"fm": str(animal.get("_follow_mode"))
 		}
 	net.animals = data
+	var recipients: Array[int] = net.snapshot_recipients()
 	_bear_reliable_sync_timer += 0.10
 	if _bear_reliable_sync_timer >= 1.0:
 		_bear_reliable_sync_timer = fmod(_bear_reliable_sync_timer, 1.0)
@@ -4912,7 +4913,8 @@ func _broadcast_animals() -> void:
 		for aid in data.keys():
 			if str(data[aid].get("t", "")) == "bear":
 				bear_snapshot[aid] = data[aid]
-		net.sync_bear_animals.rpc(bear_snapshot)
+		for pid in recipients:
+			net.sync_bear_animals.rpc_id(pid, bear_snapshot)
 	_animal_debug_timer += 1
 	if _animal_debug_timer >= 50:
 		_animal_debug_timer = 0
@@ -4936,12 +4938,14 @@ func _broadcast_animals() -> void:
 		if var_to_bytes(chunk).size() > 900:
 			chunk["_gen"] = _animal_broadcast_gen
 			chunk["_total"] = keys.size()
-			net.sync_animals.rpc(chunk)
+			for pid in recipients:
+				net.sync_animals.rpc_id(pid, chunk)
 			chunk = {}
 	if not chunk.is_empty() or keys.is_empty():
 		chunk["_gen"] = _animal_broadcast_gen
 		chunk["_total"] = keys.size()
-		net.sync_animals.rpc(chunk)
+		for pid in recipients:
+			net.sync_animals.rpc_id(pid, chunk)
 
 # Client: spawn/update visual-only puppet animals from server data
 func _update_puppet_animals() -> void:

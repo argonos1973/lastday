@@ -316,10 +316,32 @@ func peer_alive(pid: int) -> bool:
 	# ready_state del socket lo delata de inmediato.
 	if peer is WebSocketMultiplayerPeer:
 		var conn = (peer as WebSocketMultiplayerPeer).get_peer(pid)
-		if conn != null and conn.has_method("get_ready_state") \
-				and conn.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		# Peer listado sin socket (o socket no OPEN) = peer muerto aunque
+		# get_peers() lo siga incluyendo.
+		if conn == null or not conn.has_method("get_ready_state") \
+				or conn.get_ready_state() != WebSocketPeer.STATE_OPEN:
 			return false
 	return true
+
+# Transient snapshots must never fill the reliable WebSocket queue. Dropping
+# an old pose is safe; dropping a pickup reply or world transaction is not.
+const SNAPSHOT_QUEUE_LIMIT := 64 * 1024
+var _ws_congested_since: Dictionary = {}
+
+func can_send_snapshot(pid: int) -> bool:
+	if not peer_alive(pid):
+		return false
+	if peer is WebSocketMultiplayerPeer:
+		var socket := (peer as WebSocketMultiplayerPeer).get_peer(pid)
+		return socket != null and socket.get_current_outbound_buffered_amount() < SNAPSHOT_QUEUE_LIMIT
+	return true
+
+func snapshot_recipients() -> Array[int]:
+	var recipients: Array[int] = []
+	for pid in multiplayer.get_peers():
+		if players.has(pid) and not players[pid].get("offline", false) and can_send_snapshot(pid):
+			recipients.append(pid)
+	return recipients
 
 var _ws_dead_peer_scan := 0.0
 
@@ -329,7 +351,8 @@ func _process(_delta: float) -> void:
 		_water_clock_timer += _delta
 		if _water_clock_timer >= 2.0:
 			_water_clock_timer = 0.0
-			sync_water_clock.rpc(water_world_time)
+			for pid in snapshot_recipients():
+				sync_water_clock.rpc_id(pid, water_world_time)
 	if _dedicated_bind_retries > 0:
 		_dedicated_bind_wait += _delta
 		if _dedicated_bind_wait >= 1.0:
@@ -340,22 +363,29 @@ func _process(_delta: float) -> void:
 			elif _dedicated_bind_retries <= 0:
 				push_error("[SERVER] El puerto %d sigue ocupado — cerrando esta instancia" % GameConst.GAME_PORT)
 				get_tree().quit()
-	# Watchdog de peers zombie WebSocket: si el socket quedó medio muerto sin
-	# que peer_disconnected se emitiera (TCP medio abierto, corte sin close
-	# frame), el peer seguiría "vivo" para siempre — aparcando su cuerpo mal,
-	# reteniendo sus reservas de pickup y recibiendo sends que solo producen
-	# errores. Forzar disconnect_peer hace correr la limpieza normal.
+	# A socket may remain OPEN while its receiver stops draining TCP. Bound
+	# this condition as well as closed sockets, without disconnecting healthy peers.
 	if is_host and is_dedicated_server and peer is WebSocketMultiplayerPeer:
 		_ws_dead_peer_scan += _delta
 		if _ws_dead_peer_scan >= 3.0:
 			_ws_dead_peer_scan = 0.0
 			var wsp := peer as WebSocketMultiplayerPeer
 			for pid in multiplayer.get_peers():
-				var conn = wsp.get_peer(pid)
-				if conn != null and conn.has_method("get_ready_state") \
-						and conn.get_ready_state() in [WebSocketPeer.STATE_CLOSING, WebSocketPeer.STATE_CLOSED]:
+				var conn := wsp.get_peer(pid)
+				if conn == null:
+					print("[NET] Peer ", pid, " sin socket en get_peer — desconectando")
 					wsp.disconnect_peer(pid)
-				return
+					continue
+				var closed := conn.get_ready_state() in [WebSocketPeer.STATE_CLOSING, WebSocketPeer.STATE_CLOSED]
+				var congested := conn.get_current_outbound_buffered_amount() >= SNAPSHOT_QUEUE_LIMIT
+				if congested and not _ws_congested_since.has(pid):
+					_ws_congested_since[pid] = Time.get_ticks_msec()
+				elif not congested:
+					_ws_congested_since.erase(pid)
+				var stalled := congested and Time.get_ticks_msec() - int(_ws_congested_since.get(pid, 0)) > 30000
+				if closed or stalled:
+					print("[NET] Disconnect stalled WebSocket peer ", pid, " queued=", conn.get_current_outbound_buffered_amount())
+					wsp.disconnect_peer(pid)
 	if is_host:
 		# Listen for probe packets from clients doing active scan
 		if _probe_listener != null:
@@ -485,6 +515,7 @@ func _kick_if_unregistered(id: int) -> void:
 		p.disconnect_peer(id)
 
 func _on_peer_disconnected(id: int) -> void:
+	_ws_congested_since.erase(id)
 	if is_host and id == _weather_source_peer:
 		_weather_source_peer = 0
 	if is_host:
@@ -806,7 +837,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				if players[pid].get("offline", false):
 					continue
 				# Skip peers that are not actually connected
-				if not peer_alive(pid):
+				if not can_send_snapshot(pid):
 					continue
 				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on, clothing_colors)
 
