@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+e7fc7c6|La M4 en reposo queda pegada a la mano: la empuñadura se re-ancla al nudillo real del dedo corazon, tanto en el juego como en el retrato del inventario
 db33069|Las puertas usan los sonidos MP3 reales de apertura y cierre; al apuntar con la lanza y andar el personaje usa la animacion de caminar apuntando como con el arco; la lanza se agarra y orienta bien en todas las poses (quieto, andar, correr, agachado, apuntar, estocada y lanzamiento), tambien en otros jugadores; los clips de reposo de los animales ya no se aceleran por la red
 280e0cf|Las puertas se oyen mucho mejor; los lobos ya no se deslizan con las patas quietas; nueva animacion de caminar apuntando con el arco; lanzas con agarre y punteria corregidos y carga con G
 069b894|Los ciervos te oyen segun como te mueves y salen galopando en manada al disparar o espantar a uno; los zorros huyen en zigzag y carronean; los lobos se reunen al aullar y flanquean en pinza; los osos investigan disparos; corregido el desvio del arco al apuntar
