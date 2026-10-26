@@ -51,3 +51,4 @@ df3f50f|El arco se ve en la mano y al apuntar, se guarda en los hombros libres c
 33f3a67|La camara queda confinada dentro del refugio de ramas, soltar carga ya no suelta el arma del hombro y cambiar de equipamiento conserva las armas del hombro
 0afb2e2|Las puertas suenan al abrirse y cerrarse, tambien cuando lo hace otro jugador
 8c2f8ed|Sonidos de puerta sincronizados con la animacion (sin silencio inicial)
+8d99f08|Lobo domesticado: entra en casas con puerta abierta si el dueno esta dentro, defiende de lobos y osos, ladrido agudo propio, come carne de la caza y cruza rios
