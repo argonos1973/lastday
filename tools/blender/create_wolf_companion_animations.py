@@ -1,5 +1,5 @@
 """Add seated, lying and standing rest loops to the existing wolf rig."""
-import bpy, math
+import bpy, math, json, struct
 from mathutils import Vector, Matrix
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
@@ -87,6 +87,20 @@ bpy.context.scene.render.fps=30
 bpy.context.scene.frame_start=1;bpy.context.scene.frame_end=121
 bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'tools/blender/sources/wolf_companion.blend'))
 bpy.ops.export_scene.gltf(filepath=str(ROOT/'assets/models/animals/wolf_companion.glb'),export_format='GLB',export_animations=True,export_animation_mode='NLA_TRACKS')
+# Blender 4.2 maps the legacy CLIP flag to blended export. Enforce glTF
+# MASK explicitly, retaining the binary buffers and all animation offsets.
+output = ROOT/'assets/models/animals/wolf_companion.glb'
+data = output.read_bytes()
+json_len, chunk_type = struct.unpack_from('<II', data, 12)
+assert chunk_type == 0x4E4F534A
+payload = json.loads(data[20:20+json_len])
+for material in payload.get('materials', []):
+ material['alphaMode'] = 'MASK'
+ material['alphaCutoff'] = .35
+encoded = json.dumps(payload, separators=(',', ':')).encode()
+encoded += b' ' * (-len(encoded) % 4)
+tail = data[20+json_len:]
+output.write_bytes(struct.pack('<III', 0x46546C67, 2, 20+len(encoded)+len(tail)) + struct.pack('<II', len(encoded), chunk_type) + encoded + tail)
 # Studio previews of the actual deformed mesh, with no auxiliary skeletons.
 for t in a.animation_data.nla_tracks:t.mute=True
 scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=16

@@ -51,6 +51,14 @@ const WATER_OBJECT_SPLASH_PATHS := [
 const WATER_FOOTSTEP_SPLASH_PATHS := [
 	"res://andarporagua.mp3"
 ]
+const DOOR_OPEN_PATHS := [
+	"res://abrirpuerta.mp3"
+]
+const DOOR_CLOSE_PATHS := [
+	"res://cerrarpuerta.mp3"
+]
+const DOOR_OPEN_START_SECONDS := 2.45
+const DOOR_CLOSE_START_SECONDS := 1.95
 const WATER_FOOTSTEP_START_SECONDS := 4.0
 const WATER_OBJECT_START_SECONDS := 2.0
 const WATER_OBJECT_END_SECONDS := 5.0
@@ -76,6 +84,7 @@ var campfire_player: AudioStreamPlayer3D
 var footstep_player: AudioStreamPlayer3D
 var water_object_splash_player: AudioStreamPlayer3D
 var water_footstep_player: AudioStreamPlayer3D
+var door_player: AudioStreamPlayer3D
 var action_player: AudioStreamPlayer3D
 var animal_call_player: AudioStreamPlayer3D
 var forest_player: AudioStreamPlayer
@@ -87,6 +96,8 @@ var road_steps: Array = []
 var wood_steps: Array = []
 var water_object_splashes: Array = []
 var water_footstep_splashes: Array = []
+var door_open_sounds: Array = []
+var door_close_sounds: Array = []
 var _water_object_sound_token := 0
 var chop_sounds: Array = []
 var deer_calls: Array = []
@@ -188,6 +199,14 @@ func _create_players() -> void:
 	water_footstep_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(water_footstep_player)
 
+	door_player = AudioStreamPlayer3D.new()
+	door_player.name = "DoorSounds"
+	door_player.unit_size = 9.0
+	door_player.max_distance = 35.0
+	door_player.volume_db = 10.0
+	door_player.max_db = 6.0
+	add_child(door_player)
+
 	walk_loop_player = AudioStreamPlayer3D.new()
 	walk_loop_player.name = "WalkLoop"
 	walk_loop_player.unit_size = 6.0
@@ -243,6 +262,8 @@ func _load_audio() -> void:
 	wood_steps = _load_streams(FOOTSTEP_WOOD_PATHS)
 	water_object_splashes = _load_streams(WATER_OBJECT_SPLASH_PATHS)
 	water_footstep_splashes = _load_streams(WATER_FOOTSTEP_SPLASH_PATHS)
+	door_open_sounds = _load_streams(DOOR_OPEN_PATHS)
+	door_close_sounds = _load_streams(DOOR_CLOSE_PATHS)
 	for stream in water_footstep_splashes:
 		if stream is AudioStreamMP3:
 			# The water-walking recording has an intro before the useful loop.
@@ -623,6 +644,12 @@ func stop_water_step() -> void:
 	if water_footstep_player != null:
 		water_footstep_player.stop()
 
+func play_door(pos: Vector3, opening: bool) -> void:
+	var streams: Array = door_open_sounds if opening else door_close_sounds
+	var offset := DOOR_OPEN_START_SECONDS if opening else DOOR_CLOSE_START_SECONDS
+	var vol := 12.0 if opening else 9.0
+	_play_one_shot_at(door_player, streams, pos, vol, randf_range(0.95, 1.05), offset)
+
 ## Compatibility entry point used by older water ripple code.
 func play_sfx(effect: String, pos: Vector3 = Vector3.ZERO) -> void:
 	if effect == "water_splash":
@@ -653,7 +680,7 @@ func play_chop_loop_at(pos: Vector3, duration: float) -> void:
 	if _chop_token == my_token and action_player != null:
 		action_player.stop()
 
-func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float) -> void:
+func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float, start_seconds := 0.0) -> void:
 	if player_node == null:
 		print("[AUDIO] _play_one_shot_at: player_node is null")
 		return
@@ -669,7 +696,7 @@ func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Ve
 	player_node.volume_db = volume
 	player_node.pitch_scale = pitch
 	player_node.stream = stream
-	player_node.play()
+	player_node.play(start_seconds)
 
 func _update_footsteps(delta: float) -> void:
 	# Water footsteps use input timing instead of the previous frame's velocity.

@@ -18,6 +18,9 @@ func run() -> void:
  wolf._play_animation_by_name("idle")
  assert(wolf.current_anim_keyword == "eat")
  assert(wolf._animation_player.speed_scale == 1)
+ wolf._animation_player.speed_scale = 2.5
+ wolf._play_animation_by_name("eat")
+ assert(wolf._animation_player.speed_scale == 1, "Repeated rest requests must reset locomotion speed")
  var clip := wolf._animation_player.get_animation(wolf._animation_player.current_animation)
  assert(clip.length >= 3.9 and clip.loop_mode == Animation.LOOP_LINEAR)
  wolf.is_puppet = true

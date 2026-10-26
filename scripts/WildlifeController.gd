@@ -2835,6 +2835,9 @@ func _play_animation_by_name(keyword: String) -> void:
 	current_anim_keyword = lower_keyword
 	if _animation_player == null:
 		return
+	# Rest clips keep their authored cadence even after a network speed update.
+	if lower_keyword in ["idle", "sit", "lie", "eat"]:
+		_animation_player.speed_scale = 1.0
 	var current := _animation_player.current_animation
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0 and (lower_keyword != "run" or current.to_lower().find("frighten") < 0):
 		if not _animation_player.is_playing():

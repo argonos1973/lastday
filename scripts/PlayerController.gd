@@ -1660,28 +1660,36 @@ func _process(delta: float) -> void:
 				_throw_charging = true
 				_throw_charge_time = 0.0
 				_throw_anim_frozen = false
-				# Iniciar animación de ataque al empezar a cargar (wind-up)
-				_start_throw_animation()
+				var h_nm := str(held.item_name)
+				if not (h_nm in ["Lanza", "Lanza de hueso", "Palo afilado"] and not _bow_aim_idle_animation.is_empty()):
+					# Iniciar animación de ataque al empezar a cargar (wind-up)
+					_start_throw_animation()
 			else:
 				_g_holding = false
 	if _throw_charging:
 		_throw_charge_time = min(_throw_charge_time + delta, THROW_MAX_CHARGE_TIME)
 		var pct := int((_throw_charge_time / THROW_MAX_CHARGE_TIME) * 100.0)
 		notice.emit("Cargando lanzamiento... %d%%" % pct)
-		# Mantener el timer de la animación vivo mientras se carga
-		third_person_action_timer = 0.8
-		# Congelar la animación a los 0.4s mientras se sigue cargando
-		if _throw_charge_time >= THROW_ANIM_FREEZE_TIME and not _throw_anim_frozen:
-			_throw_anim_frozen = true
-			if third_person_animation_player != null:
-				third_person_animation_player.speed_scale = 0.0
+		var ch_it = get_held_item()
+		var ch_spear := ch_it != null and str(ch_it.item_name) in ["Lanza", "Lanza de hueso", "Palo afilado"] and not _bow_aim_idle_animation.is_empty()
+		if not ch_spear:
+			# Mantener el timer de la animación vivo mientras se carga
+			third_person_action_timer = 0.8
+			# Congelar la animación a los 0.4s mientras se sigue cargando
+			if _throw_charge_time >= THROW_ANIM_FREEZE_TIME and not _throw_anim_frozen:
+				_throw_anim_frozen = true
+				if third_person_animation_player != null:
+					third_person_animation_player.speed_scale = 0.0
 	# Wind-up congelado al apuntar con arrojadizas (mismo gesto que G).
 	if _throw_aim_hold:
 		if _is_aiming and not is_dead and _has_throwable_weapon_equipped():
-			third_person_action_timer = 0.8
-			if not _throw_aim_frozen and third_person_animation_player != null and third_person_animation_player.current_animation == third_person_attack_animation and third_person_animation_player.current_animation_position >= THROW_ANIM_FREEZE_TIME:
-				_throw_aim_frozen = true
-				third_person_animation_player.speed_scale = 0.0
+			var h_it = get_held_item()
+			var is_spear_pose := h_it != null and str(h_it.item_name) in ["Lanza", "Lanza de hueso", "Palo afilado"] and not _bow_aim_idle_animation.is_empty()
+			if not is_spear_pose:
+				third_person_action_timer = 0.8
+				if not _throw_aim_frozen and third_person_animation_player != null and third_person_animation_player.current_animation == third_person_attack_animation and third_person_animation_player.current_animation_position >= THROW_ANIM_FREEZE_TIME:
+					_throw_aim_frozen = true
+					third_person_animation_player.speed_scale = 0.0
 		else:
 			_throw_aim_hold = false
 			_throw_aim_frozen = false
@@ -4098,13 +4106,31 @@ func _on_head_skeleton_updated() -> void:
 func _on_third_person_mixer_applied() -> void:
 	_aim_pitch_saved_rotations.clear()
 
+var _spear_world_dir := Vector3(0.0, 0.0, -1.0)
+var _spear_grip_shift := 0.20
+
+func _find_spear_bone(skel: Skeleton3D, bare_name: String) -> int:
+	for prefix in ["mixamorig:", "mixamorig_", ""]:
+		var idx := skel.find_bone(prefix + bare_name)
+		if idx >= 0:
+			return idx
+	return -1
+
+func _save_bone_pose_once(skel: Skeleton3D, b_idx: int) -> void:
+	if b_idx >= 0 and not _aim_pitch_saved_rotations.has(b_idx):
+		_aim_pitch_saved_rotations[b_idx] = skel.get_bone_pose(b_idx)
+
 func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
 	if target_skel == null or not is_instance_valid(target_skel) or _aim_pitch_saved_rotations.is_empty():
 		_aim_pitch_saved_rotations.clear()
 		return
 	for b_idx in _aim_pitch_saved_rotations:
-		target_skel.set_bone_pose_rotation(int(b_idx), _aim_pitch_saved_rotations[b_idx] as Quaternion)
+		var val = _aim_pitch_saved_rotations[b_idx]
+		if val is Transform3D:
+			target_skel.set_bone_pose(int(b_idx), val)
+		elif val is Quaternion:
+			target_skel.set_bone_pose_rotation(int(b_idx), val)
 	_aim_pitch_saved_rotations.clear()
 	target_skel.force_update_all_bone_transforms()
 
@@ -4115,67 +4141,246 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	_applying_aim_pitch = true
 	_restore_aim_pitch_pose(target_skel)
 	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+	if cur_anim.is_empty() and third_person_animation_player != null:
+		cur_anim = third_person_animation_player.assigned_animation
+	var held = get_held_item()
+	var held_name := str(held.item_name) if held != null else _puppet_held
+	var holding_spear: bool = held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
 	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation]))
-	var throw_active: bool = _throw_aim_hold or _throw_charging or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming)
-	if not bow_active and not throw_active:
+	var throw_active: bool = _throw_aim_hold or _throw_charging or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming) or (is_puppet and holding_spear and _is_aiming)
+	if not bow_active and not throw_active and not holding_spear:
 		_applying_aim_pitch = false
 		return
-	var aim_pitch := _pitch
-	if not is_puppet and is_instance_valid(camera):
-		aim_pitch = camera.rotation.x
-	var walking_bow := bow_active and not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation
-	if bow_active:
-		aim_pitch += deg_to_rad(2.2 if walking_bow else 4.0)
-	aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
-	var aim_yaw := deg_to_rad(-8.6 if walking_bow else -5.4) if bow_active else 0.0
-	if absf(aim_pitch) < 0.001 and absf(aim_yaw) < 0.001:
-		_applying_aim_pitch = false
-		return
-	var skel_inv_basis := target_skel.global_transform.basis.orthonormalized().inverse()
-	var skel_right := (skel_inv_basis * global_basis.x.normalized()).normalized()
-	var skel_up := (skel_inv_basis * global_basis.y.normalized()).normalized()
-	if skel_right.length_squared() < 0.001:
-		skel_right = Vector3.LEFT
-	if skel_up.length_squared() < 0.001:
-		skel_up = Vector3.UP
-	var weights := [["Spine", 0.28, 0.55], ["Spine1", 0.36, 0.45], ["Spine2", 0.36, 0.0]]
-	for entry in weights:
-		var b_idx := -1
-		for prefix in ["mixamorig:", "mixamorig_", ""]:
-			b_idx = target_skel.find_bone(prefix + String(entry[0]))
-			if b_idx >= 0:
-				break
-		if b_idx < 0:
-			continue
-		_aim_pitch_saved_rotations[b_idx] = target_skel.get_bone_pose_rotation(b_idx)
-	if _aim_pitch_saved_rotations.is_empty():
-		_applying_aim_pitch = false
-		return
-	for entry in weights:
-		var b_idx := -1
-		for prefix in ["mixamorig:", "mixamorig_", ""]:
-			b_idx = target_skel.find_bone(prefix + String(entry[0]))
-			if b_idx >= 0:
-				break
-		if b_idx < 0:
-			continue
-		var step_pitch: float = aim_pitch * float(entry[1])
-		var step_yaw: float = aim_yaw * float(entry[2])
-		var g_basis := target_skel.get_bone_global_pose(b_idx).basis.orthonormalized()
-		var g_inv := g_basis.inverse()
-		var cur_q := target_skel.get_bone_pose_rotation(b_idx)
-		if absf(step_yaw) > 0.0005:
-			var local_up := (g_inv * skel_up).normalized()
-			if local_up.length_squared() > 0.001:
-				cur_q = (cur_q * Quaternion(local_up, step_yaw)).normalized()
-		if absf(step_pitch) > 0.0005:
-			var local_right := (g_inv * skel_right).normalized()
-			if local_right.length_squared() > 0.001:
-				cur_q = (cur_q * Quaternion(local_right, step_pitch)).normalized()
-		target_skel.set_bone_pose_rotation(b_idx, cur_q)
-		target_skel.force_update_all_bone_transforms()
+	if bow_active or throw_active:
+		if holding_spear and throw_active:
+			for s_entry in [
+				["Spine", Quaternion(0.019316, -0.063729, 0.032559, 0.997249)],
+				["Spine1", Quaternion(0.030418, -0.077473, -0.004973, 0.996518)],
+				["Spine2", Quaternion(-0.012315, -0.071555, 0.001948, 0.997359)],
+			]:
+				var sb_idx := _find_spear_bone(target_skel, String(s_entry[0]))
+				if sb_idx >= 0:
+					_save_bone_pose_once(target_skel, sb_idx)
+					target_skel.set_bone_pose_rotation(sb_idx, (s_entry[1] as Quaternion).normalized())
+			target_skel.force_update_all_bone_transforms()
+		var aim_pitch := _pitch
+		if not is_puppet and is_instance_valid(camera):
+			aim_pitch = camera.rotation.x
+		var walking_bow := bow_active and not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation
+		if bow_active:
+			aim_pitch += deg_to_rad(2.2 if walking_bow else 4.0)
+		aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
+		var aim_yaw := deg_to_rad(-8.6 if walking_bow else -5.4) if bow_active else 0.0
+		if absf(aim_pitch) >= 0.001 or absf(aim_yaw) >= 0.001:
+			var skel_inv_basis := target_skel.global_transform.basis.orthonormalized().inverse()
+			var skel_right := (skel_inv_basis * global_basis.x.normalized()).normalized()
+			var skel_up := (skel_inv_basis * global_basis.y.normalized()).normalized()
+			if skel_right.length_squared() < 0.001:
+				skel_right = Vector3.LEFT
+			if skel_up.length_squared() < 0.001:
+				skel_up = Vector3.UP
+			var weights := [["Spine", 0.28, 0.55], ["Spine1", 0.36, 0.45], ["Spine2", 0.36, 0.0]]
+			for entry in weights:
+				var b_idx := _find_spear_bone(target_skel, String(entry[0]))
+				_save_bone_pose_once(target_skel, b_idx)
+			for entry in weights:
+				var b_idx := _find_spear_bone(target_skel, String(entry[0]))
+				if b_idx < 0:
+					continue
+				var step_pitch: float = aim_pitch * float(entry[1])
+				var step_yaw: float = aim_yaw * float(entry[2])
+				var g_basis := target_skel.get_bone_global_pose(b_idx).basis.orthonormalized()
+				var g_inv := g_basis.inverse()
+				var cur_q := target_skel.get_bone_pose_rotation(b_idx)
+				if absf(step_yaw) > 0.0005:
+					var local_up := (g_inv * skel_up).normalized()
+					if local_up.length_squared() > 0.001:
+						cur_q = (cur_q * Quaternion(local_up, step_yaw)).normalized()
+				if absf(step_pitch) > 0.0005:
+					var local_right := (g_inv * skel_right).normalized()
+					if local_right.length_squared() > 0.001:
+						cur_q = (cur_q * Quaternion(local_right, step_pitch)).normalized()
+				target_skel.set_bone_pose_rotation(b_idx, cur_q)
+				target_skel.force_update_all_bone_transforms()
+	if holding_spear:
+		_pose_spear_in_hand(target_skel, cur_anim, throw_active)
 	_applying_aim_pitch = false
+
+func _pose_spear_arm_orthogonal(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int, upper_dir_w: Vector3, raw_lower_dir_w: Vector3, spear_dir_w: Vector3, is_left: bool = false) -> void:
+	var w2s := skel.global_transform.basis.orthonormalized().inverse()
+	var upper_s := (w2s * upper_dir_w).normalized()
+	var spear_s := (w2s * spear_dir_w).normalized()
+	var lower_s := (w2s * raw_lower_dir_w).slide(spear_s).normalized()
+	if lower_s.length_squared() < 0.01:
+		lower_s = (w2s * Vector3.UP).slide(spear_s).normalized()
+
+	var ua_pose := skel.get_bone_global_pose(ua_idx)
+	var fa_pose := skel.get_bone_global_pose(fa_idx)
+	var h_pose := skel.get_bone_global_pose(hand_idx)
+	var root_pos := ua_pose.origin
+	var len1 := root_pos.distance_to(fa_pose.origin)
+	var new_mid := root_pos + upper_s * len1
+	var hinge := upper_s.cross(lower_s).normalized()
+	if hinge.length_squared() < 0.05:
+		hinge = upper_s.cross(spear_s).normalized()
+	if not is_left:
+		hinge = -hinge
+
+	var ua_rest := skel.get_bone_global_rest(ua_idx)
+	var fa_rest := skel.get_bone_global_rest(fa_idx)
+	var h_rest := skel.get_bone_global_rest(hand_idx)
+	var ua_rest_dir := (fa_rest.origin - ua_rest.origin).normalized()
+	var ua_rest_hinge := ua_rest.basis.z.slide(ua_rest_dir).normalized()
+	if ua_rest_hinge.length_squared() < 0.25:
+		ua_rest_hinge = ua_rest.basis.y.slide(ua_rest_dir).normalized()
+	var ua_rot := _anatomical_frame(upper_s, hinge) * _anatomical_frame(ua_rest_dir, ua_rest_hinge).inverse()
+	var ua_scale := ua_pose.basis.get_scale()
+	skel.set_bone_global_pose(ua_idx, Transform3D((ua_rot * ua_rest.basis).orthonormalized().scaled_local(ua_scale), root_pos))
+
+	var fa_rest_dir := (h_rest.origin - fa_rest.origin).normalized()
+	var rig := _grip_rig_for(skel, hand_idx, is_left)
+	var rest_grip_s := (h_rest.basis * (rig.get("frame", Basis.IDENTITY) as Basis).z).slide(fa_rest_dir).normalized()
+	var desired_grip_s := spear_s.slide(lower_s).normalized()
+	if desired_grip_s.length_squared() < 0.05 or rest_grip_s.length_squared() < 0.05:
+		desired_grip_s = hinge
+		rest_grip_s = fa_rest.basis.z.slide(fa_rest_dir).normalized()
+	var fa_rot := _anatomical_frame(lower_s, desired_grip_s) * _anatomical_frame(fa_rest_dir, rest_grip_s).inverse()
+	var fa_scale := fa_pose.basis.get_scale()
+	skel.set_bone_global_pose(fa_idx, Transform3D((fa_rot * fa_rest.basis).orthonormalized().scaled_local(fa_scale), new_mid))
+
+	# Keep the hand at its exact rest pose relative to the forearm so the wrist
+	# mesh seam never separates, and curl the fingers around the spear shaft.
+	skel.set_bone_pose(hand_idx, skel.get_bone_rest(hand_idx))
+	if not is_left:
+		_close_bow_fingers(hand_idx, false)
+	skel.force_update_all_bone_transforms()
+
+func _pose_spear_in_hand(target_skel: Skeleton3D, cur_anim: String, throw_active: bool) -> void:
+	var rua_idx := _find_spear_bone(target_skel, "RightArm")
+	var rfa_idx := _find_spear_bone(target_skel, "RightForeArm")
+	var rh_idx := _hand_bone_idx if _hand_bone_idx >= 0 else _find_spear_bone(target_skel, "RightHand")
+	if rua_idx < 0 or rfa_idx < 0 or rh_idx < 0:
+		return
+	var rsh_idx := _find_spear_bone(target_skel, "RightShoulder")
+	var lsh_idx := _find_spear_bone(target_skel, "LeftShoulder")
+	var lua_idx := _find_spear_bone(target_skel, "LeftArm")
+	var lfa_idx := _find_spear_bone(target_skel, "LeftForeArm")
+	var lh_idx := _left_hand_bone_idx if _left_hand_bone_idx >= 0 else _find_spear_bone(target_skel, "LeftHand")
+	var neck_idx := _find_spear_bone(target_skel, "Neck")
+	var head_idx := _find_spear_bone(target_skel, "Head")
+	for b_idx in [rsh_idx, rua_idx, rfa_idx, rh_idx, lsh_idx, lua_idx, lfa_idx, lh_idx, neck_idx, head_idx]:
+		_save_bone_pose_once(target_skel, b_idx)
+	var r_rig := _grip_rig_for(target_skel, rh_idx, false)
+	for entry in r_rig.get("fingers", []):
+		_save_bone_pose_once(target_skel, int(entry[0]))
+
+	var fwd_w := -global_basis.z.normalized()
+	var right_w := global_basis.x.normalized()
+	var up_w := global_basis.y.normalized()
+	var skel_xf := target_skel.global_transform
+
+	var anim_r_sh_w := skel_xf * target_skel.get_bone_global_pose(rua_idx).origin
+	var anim_r_el_w := skel_xf * target_skel.get_bone_global_pose(rfa_idx).origin
+	var anim_r_hd_w := skel_xf * target_skel.get_bone_global_pose(rh_idx).origin
+	var arm_len := maxf(0.35, anim_r_el_w.distance_to(anim_r_sh_w) + anim_r_hd_w.distance_to(anim_r_el_w))
+	var swing_z := clampf((anim_r_hd_w - anim_r_sh_w).dot(fwd_w) / arm_len, -0.45, 0.45)
+	var anim_upper_dir_w := (anim_r_el_w - anim_r_sh_w).normalized()
+	if anim_upper_dir_w.length_squared() < 0.01:
+		anim_upper_dir_w = (right_w * 0.25 - up_w * 0.95).normalized()
+
+	var melee_spear := (third_person_action_timer > 0.0 or (not third_person_attack_animation.is_empty() and cur_anim == third_person_attack_animation)) and not throw_active and not third_person_attack_animation.is_empty() and cur_anim == third_person_attack_animation
+
+	var upper_dir_w := anim_upper_dir_w
+	var raw_lower_dir_w := (-up_w * 0.70 + fwd_w * 0.68 - right_w * 0.12).normalized()
+
+	if throw_active:
+		for b_idx in [rsh_idx, neck_idx, head_idx]:
+			if b_idx >= 0:
+				target_skel.set_bone_pose_rotation(b_idx, target_skel.get_bone_rest(b_idx).basis.get_rotation_quaternion())
+		# Natural left-arm balance pose (no forearm twist) + relaxed left fingers
+		if lsh_idx >= 0:
+			target_skel.set_bone_pose_rotation(lsh_idx, Quaternion(-0.428714, -0.505678, 0.534021, -0.524705).normalized())
+		if lua_idx >= 0:
+			target_skel.set_bone_pose_rotation(lua_idx, Quaternion(0.237960, -0.076982, -0.101600, 0.962874).normalized())
+		if lfa_idx >= 0:
+			target_skel.set_bone_pose_rotation(lfa_idx, Quaternion(0.108647, 0.256170, 0.160228, 0.947048).normalized())
+		if lh_idx >= 0:
+			target_skel.set_bone_pose_rotation(lh_idx, Quaternion(0.103306, -0.141735, 0.049686, 0.983245).normalized())
+			var l_rig := _grip_rig_for(target_skel, lh_idx, true)
+			for entry in l_rig.get("fingers", []):
+				var fb_idx := int(entry[0])
+				_save_bone_pose_once(target_skel, fb_idx)
+				target_skel.set_bone_pose_rotation(fb_idx, target_skel.get_bone_rest(fb_idx).basis.get_rotation_quaternion())
+		target_skel.force_update_all_bone_transforms()
+		var aim_fwd_w := (-camera.global_basis.z if (not is_puppet and is_instance_valid(camera)) else (-global_basis.z).rotated(right_w, _pitch)).normalized()
+		if _throw_release_item != null:
+			var r_sh_now := skel_xf * target_skel.get_bone_global_pose(rua_idx).origin
+			var to_tgt := _throw_release_target - (r_sh_now + right_w * 0.18 + up_w * 0.10)
+			if to_tgt.length_squared() > 0.01:
+				aim_fwd_w = to_tgt.normalized()
+		_spear_world_dir = aim_fwd_w
+		_spear_grip_shift = 0.28
+		if _throw_release_item != null:
+			var p := clampf(1.0 - _throw_release_timer / maxf(0.01, THROW_RELEASE_DELAY), 0.0, 1.0)
+			upper_dir_w = (right_w * lerpf(0.72, 0.38, p) - up_w * lerpf(0.38, 0.20, p) + aim_fwd_w * lerpf(-0.48, 0.76, p)).normalized()
+			raw_lower_dir_w = (up_w * lerpf(0.84, 0.42, p) + right_w * 0.24 + aim_fwd_w * lerpf(0.26, 0.86, p)).normalized()
+		else:
+			var walk_bob := swing_z * 0.08 if (not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation) else 0.0
+			upper_dir_w = (right_w * 0.72 - up_w * (0.38 - walk_bob) - aim_fwd_w * 0.48).normalized()
+			raw_lower_dir_w = (up_w * 0.84 + right_w * 0.24 + aim_fwd_w * 0.26).normalized()
+	elif melee_spear:
+		for sname in ["Spine", "Spine1", "Spine2"]:
+			var sb := _find_spear_bone(target_skel, sname)
+			if sb >= 0:
+				_save_bone_pose_once(target_skel, sb)
+				target_skel.set_bone_pose_rotation(sb, target_skel.get_bone_rest(sb).basis.get_rotation_quaternion())
+		for b_idx in [rsh_idx, neck_idx, head_idx]:
+			if b_idx >= 0:
+				target_skel.set_bone_pose_rotation(b_idx, target_skel.get_bone_rest(b_idx).basis.get_rotation_quaternion())
+		if lsh_idx >= 0:
+			target_skel.set_bone_pose_rotation(lsh_idx, Quaternion(-0.428714, -0.505678, 0.534021, -0.524705).normalized())
+		if lua_idx >= 0:
+			target_skel.set_bone_pose_rotation(lua_idx, Quaternion(0.237960, -0.076982, -0.101600, 0.962874).normalized())
+		if lfa_idx >= 0:
+			target_skel.set_bone_pose_rotation(lfa_idx, Quaternion(0.108647, 0.256170, 0.160228, 0.947048).normalized())
+		if lh_idx >= 0:
+			target_skel.set_bone_pose_rotation(lh_idx, Quaternion(0.103306, -0.141735, 0.049686, 0.983245).normalized())
+		target_skel.force_update_all_bone_transforms()
+		var anim_t := third_person_animation_player.current_animation_position if third_person_animation_player != null else 0.48
+		var strike_phase := clampf((anim_t - 0.18) / 0.35, 0.0, 1.0)
+		var pitch_rad := deg_to_rad(lerpf(12.0, 3.0, strike_phase))
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.02).normalized()
+		_spear_grip_shift = lerpf(0.24, 0.44, strike_phase)
+		upper_dir_w = (right_w * lerpf(0.45, 0.28, strike_phase) - up_w * lerpf(0.78, 0.58, strike_phase) + fwd_w * lerpf(-0.42, 0.42, strike_phase)).normalized()
+		raw_lower_dir_w = (up_w * 0.18 + right_w * 0.08 + fwd_w * 0.96).normalized()
+	elif is_crouching or (not cur_anim.is_empty() and cur_anim in [third_person_sneak_animation, third_person_sneak_walk_animation]):
+		if rsh_idx >= 0:
+			target_skel.set_bone_pose_rotation(rsh_idx, target_skel.get_bone_rest(rsh_idx).basis.get_rotation_quaternion())
+			target_skel.force_update_all_bone_transforms()
+		var pitch_rad := deg_to_rad(16.0) + swing_z * 0.12
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		_spear_grip_shift = 0.22
+		upper_dir_w = (right_w * 0.26 - up_w * 0.92 + fwd_w * (-0.18 + swing_z * 0.35)).normalized()
+		raw_lower_dir_w = (-up_w * 0.68 + fwd_w * 0.70 - right_w * 0.15).normalized()
+	elif is_sprinting or (not third_person_run_animation.is_empty() and cur_anim == third_person_run_animation):
+		if rsh_idx >= 0:
+			target_skel.set_bone_pose_rotation(rsh_idx, target_skel.get_bone_rest(rsh_idx).basis.get_rotation_quaternion())
+			target_skel.force_update_all_bone_transforms()
+		var pitch_rad := deg_to_rad(20.0) + swing_z * 0.18
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		_spear_grip_shift = 0.20
+		upper_dir_w = (right_w * 0.24 - up_w * 0.92 + fwd_w * (-0.16 + swing_z * 0.45)).normalized()
+		raw_lower_dir_w = (-up_w * 0.65 + fwd_w * 0.72 - right_w * 0.15).normalized()
+	else:
+		var is_walk := not third_person_walk_animation.is_empty() and cur_anim == third_person_walk_animation
+		var pitch_rad := deg_to_rad(24.0 if is_walk else 28.0) + swing_z * 0.16
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		_spear_grip_shift = 0.20
+		upper_dir_w = (anim_upper_dir_w * 0.55 + (right_w * 0.20 - up_w * 0.96 - fwd_w * 0.12) * 0.45).normalized()
+		raw_lower_dir_w = (-up_w * 0.72 + fwd_w * 0.66 - right_w * 0.14).normalized()
+
+	_pose_spear_arm_orthogonal(target_skel, rua_idx, rfa_idx, rh_idx, upper_dir_w, raw_lower_dir_w, _spear_world_dir, false)
 
 func _close_bow_fingers(hand_idx: int, left: bool) -> Vector3:
 	var rig := _grip_rig_for(_hand_skeleton, hand_idx, left)
@@ -4269,22 +4474,16 @@ func _update_hand_socket() -> void:
 	if held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
 		var spear := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if spear != null:
-			spear.scale = Vector3(1.22, 1.48, 1.22)
-			if _throw_aim_hold or _throw_charging or _throw_release_item != null or (is_puppet and _is_aiming):
-				var forward := -global_basis.z
-				if _throw_release_item != null:
-					forward = (_throw_release_target - third_person_hand_item_root.global_position).normalized()
-				elif not is_puppet and is_instance_valid(camera):
-					forward = -camera.global_basis.z
-				if forward.length_squared() > 0.001:
-					var up := Vector3.UP if absf(forward.y) < 0.97 else Vector3.FORWARD
-					var orientation := Basis.looking_at(forward, up) * Basis(Vector3.RIGHT, -PI * 0.5)
-					var local_orient := third_person_hand_item_root.global_basis.orthonormalized().inverse() * orientation
-					spear.basis = local_orient.scaled(spear.scale)
-					spear.position = local_orient * Vector3(0.0, 0.38, 0.0)
-			else:
-				spear.position = Vector3.ZERO
-				spear.rotation_degrees = Vector3(85, 0, 0)
+			var spear_scale := Vector3(1.22, 1.48, 1.22)
+			spear.scale = Vector3.ONE
+			var dir_w := _spear_world_dir
+			if dir_w.length_squared() < 0.001:
+				dir_w = -global_basis.z
+			var up_ref := Vector3.UP if absf(dir_w.y) < 0.97 else Vector3.FORWARD
+			var world_orient := Basis.looking_at(dir_w, up_ref) * Basis(Vector3.RIGHT, -PI * 0.5)
+			var local_orient := third_person_hand_item_root.global_basis.orthonormalized().inverse() * world_orient
+			spear.basis = local_orient.scaled_local(spear_scale)
+			spear.position = local_orient * Vector3(0.0, _spear_grip_shift, 0.0)
 
 func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool) -> void:
 	var static_str := prim_node.find_child("BowString", true, false) as Node3D
@@ -10463,11 +10662,14 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.play(third_person_jump_down_animation, 0.1)
 				third_person_animation_player.speed_scale = 1.0
 				return
-		if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
+		var throw_aim_walking := (_throw_aim_hold or _throw_charging or (_has_throwable_weapon_equipped() and _is_aiming)) and moving and not _bow_aim_walk_animation.is_empty()
+		if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty() and not throw_aim_walking:
 			third_person_action_timer = max(0.0, third_person_action_timer - delta)
 			if third_person_animation_player.current_animation != third_person_action_animation:
 				third_person_animation_player.play(third_person_action_animation, 0.08)
-				if third_person_action_start_offset > 0.0:
+				if _throw_aim_hold and _throw_aim_frozen:
+					third_person_animation_player.seek(THROW_ANIM_FREEZE_TIME, true)
+				elif third_person_action_start_offset > 0.0:
 					third_person_animation_player.seek(third_person_action_start_offset, true)
 			if third_person_action_animation == _rod_fish_start_animation or third_person_action_animation == _rod_fish_end_animation or third_person_action_animation == _rod_cast_animation:
 				third_person_animation_player.speed_scale = _rod_action_speed_scale
@@ -10615,7 +10817,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_idle_animation
 			elif third_person_has_real_idle:
 				target_animation = third_person_idle_animation
-		elif _has_bow_equipped() and _is_aiming and not _bow_aim_idle_animation.is_empty():
+		elif (_has_bow_equipped() or _has_throwable_weapon_equipped()) and (_is_aiming or _throw_charging) and not _bow_aim_idle_animation.is_empty():
 			if moving and not _bow_aim_walk_animation.is_empty():
 				target_animation = _bow_aim_walk_animation
 			else:
@@ -12856,12 +13058,15 @@ func _toggle_aim() -> void:
 			notice.emit("Apuntando con arco (%d flechas). Clic izq: disparar." % ac if ac > 0 else "No tienes flechas en el inventario.")
 		elif _has_throwable_weapon_equipped():
 			var h_it = get_held_item()
-			notice.emit("Apuntando con %s. Clic izq: lanzar." % (str(h_it.item_name) if h_it != null else "arma"))
-			# Mismo gesto que al cargar con G: wind-up de ataque que queda
-			# congelado hasta el clic de lanzamiento.
+			var h_nm := str(h_it.item_name) if h_it != null else "arma"
+			notice.emit("Apuntando con %s. Clic izq: lanzar." % h_nm)
 			_throw_aim_hold = true
 			_throw_aim_frozen = false
-			_start_throw_animation()
+			if h_nm in ["Lanza", "Lanza de hueso", "Palo afilado"] and not _bow_aim_idle_animation.is_empty():
+				third_person_action_timer = 0.0
+				third_person_action_animation = ""
+			else:
+				_start_throw_animation()
 	else:
 		_throw_aim_hold = false
 		_throw_aim_frozen = false

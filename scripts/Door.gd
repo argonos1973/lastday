@@ -39,6 +39,11 @@ func setup(label: String, size: Vector3, color: Color, open_angle: float, model_
 
 var _door_audio: AudioStreamPlayer3D
 
+const DOOR_OPEN_SOUND := "res://abrirpuerta.mp3"
+const DOOR_CLOSE_SOUND := "res://cerrarpuerta.mp3"
+const DOOR_OPEN_START_SECONDS := 2.45
+const DOOR_CLOSE_START_SECONDS := 1.95
+
 func set_open(value: bool, audible := true) -> void:
 	if is_open == value:
 		return
@@ -54,12 +59,13 @@ func set_open(value: bool, audible := true) -> void:
 			_door_audio = AudioStreamPlayer3D.new()
 			_door_audio.position = Vector3(0.4, 1.1, 0)
 			_door_audio.max_distance = 35.0
-			_door_audio.unit_size = 8.5
-			_door_audio.volume_db = 8.0
+			_door_audio.unit_size = 9.0
 			_door_audio.max_db = 6.0
 			add_child(_door_audio)
-		_door_audio.stream = load("res://assets/audio/doors/door_open.wav" if is_open else "res://assets/audio/doors/door_close.wav")
-		_door_audio.play()
+		_door_audio.stream = load(DOOR_OPEN_SOUND if is_open else DOOR_CLOSE_SOUND)
+		_door_audio.volume_db = 12.0 if is_open else 9.0
+		_door_audio.pitch_scale = randf_range(0.95, 1.05)
+		_door_audio.play(DOOR_OPEN_START_SECONDS if is_open else DOOR_CLOSE_START_SECONDS)
 
 func interact(player) -> void:
 	set_open(not is_open)
