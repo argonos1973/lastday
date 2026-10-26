@@ -3664,6 +3664,8 @@ func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 
 			door._tween.set_trans(Tween.TRANS_SINE)
 			door._tween.set_ease(Tween.EASE_OUT)
 			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
+			if audio_system != null and audio_system.has_method("play_door"):
+				audio_system.play_door(door.global_position, is_open)
 	return true
 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0, bola: bool = false) -> void:

@@ -47,6 +47,10 @@ func interact(player) -> void:
 	_tween.set_ease(Tween.EASE_OUT)
 	_tween.tween_property(self, "rotation_degrees:y", target_yaw, 0.28)
 	player.notice.emit("Puerta abierta." if is_open else "Puerta cerrada.")
+	if player != null and player.has_meta("audio_system"):
+		var audio = player.get_meta("audio_system")
+		if audio != null and audio.has_method("play_door"):
+			audio.play_door(global_position, is_open)
 	# Sync door state to other clients via server
 	var net = get_node_or_null("/root/NetworkManager")
 	if net != null and net.is_connected and not net.is_host:
