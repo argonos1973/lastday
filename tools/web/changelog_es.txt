@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+1954fe9|El lobo domesticado entra y sale de las casas por la puerta abierta (tambien en el servidor), te ayuda al atacar lobos y osos, come carne y se cura, no muere de hambre mientras estas desconectado, se sienta y se tumba; las puertas suenan con un crujido propio al abrirse y cerrarse en todos los jugadores
 6f3b851|La pantalla de arranque del juego usa la misma imagen y el mismo fondo oscuro que el menú principal
 ef5c6e3|El menú principal sube a la misma altura que el panel de selección de personaje: ambos comparten el borde superior
 217f47c|Las opciones de rendimiento salen del menú principal: ahora hay un botón de engranaje en la esquina inferior izquierda y el panel se abre encima de él
