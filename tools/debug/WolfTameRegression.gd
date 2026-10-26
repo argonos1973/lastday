@@ -26,6 +26,14 @@ class TestWorld extends Node3D:
 		cleared_wolves.append(feeder_id)
 
 class ServerWorld extends "res://scripts/Main.gd":
+	var nav_wildlife_calls := 0
+	var nav_wolf_calls := 0
+	func find_path_wildlife(_start: Vector3, goal: Vector3) -> Array:
+		nav_wildlife_calls += 1
+		return [goal]
+	func find_path_wolf(_start: Vector3, goal: Vector3) -> Array:
+		nav_wolf_calls += 1
+		return [goal]
 	func _ready() -> void:
 		set_process(false)
 		set_physics_process(false)
@@ -287,6 +295,7 @@ func run() -> void:
 	await test_meat_in_hand()
 	await test_multi_wolf_offering()
 	await test_server_persistence()
+	await test_tamed_wolf_world_rules()
 	if failures == 0:
 		print("WolfTameRegression: ALL PASS")
 	quit(1 if failures else 0)
@@ -655,5 +664,160 @@ func stuck_meat_setup(world: TestWorld, player: TestPlayer) -> void:
 	var near_meat := spawn_meat(world, wolfD.global_position + Vector3(5, 0, 0), "local")
 	wolfD._consume_meat_pickup(near_meat)
 	check(int(wolfD._tame_progress.get("local", 0)) == 1, "Feeder near the bait (not the wolf) still gains trust")
-	player.global_position = Vector3(10, 0, 0)
+	# Liberar el mundo: los cebos quedan en el grupo global wolf_meat_pickups y
+	# contaminarian los tests siguientes.
+	world.free()
+
+# Carne de caza (sin dropped_by, como la que suelta el destripado): el lobo
+# domesticado la come como mantenimiento.
+func spawn_gut_meat(world: Node, pos: Vector3) -> WorldAction:
+	_meat_count += 1
+	var a := WorldAction.new()
+	a.setup("gut_meat_test_%d" % _meat_count, "wolf_meat_raw", "Carne cruda de ciervo", Vector3(0.6, 0.5, 0.6), Color(0.4, 0.1, 0.1), false, false)
+	a.position = pos
+	world.add_child(a)
+	return a
+
+# Reglas de mundo del lobo domesticado: entra en casas con la puerta abierta
+# cuando el dueno esta dentro, defiende de lobos y osos, sonido agudo propio,
+# come carne de la caza del dueno y cruza rios (los lagos no).
+func test_tamed_wolf_world_rules() -> void:
+	var world := ServerWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player := TestPlayer.new()
+	player.name = "Player"
+	player.position = Vector3(1, 0, -1)
+	world.add_child(player)
+
+	# --- Casa con puerta: bounds [-5,5]x[-4.5,4.5], puerta al sur (z+4.5) ---
+	var door := Door.new()
+	door.name = "HouseDoor_1"
+	door.is_open = true
+	door.position = Vector3(0, 0, 4.5)
+	world.add_child(door)
+	var bidx := world._register_wildlife_blocker(Vector3(0, 0, 0), 8.0)
+	world.wildlife_blockers[bidx]["door"] = door
+	world.wildlife_blockers[bidx]["house_bounds"] = Rect2(-5, -4.5, 10, 9)
+
+	var tamed := make_wolf(world, Vector3(0, 0, 14))
+	tamed.tamed_to = "local"
+	tamed._cached_wildlife = []
+
+	# Puerta abierta + dueno dentro: vano e interior transitables, muro no.
+	check(world.is_tamed_wolf_allowed_at(Vector3(0, 0, 5.0), tamed), "Doorway corridor is passable with the door open")
+	check(world.is_tamed_wolf_allowed_at(Vector3(2, 0, 0), tamed), "Interior is allowed while the owner is inside")
+	check(not world.is_tamed_wolf_allowed_at(Vector3(4.6, 0, 2), tamed), "Wall band stays blocked even for the tamed wolf")
+	# Dueno fuera + lobo fuera: el interior sigue vetado (entra solo si el
+	# dueno esta dentro o el propio lobo ya esta dentro).
+	player.global_position = Vector3(40, 0, 0)
+	check(not world.is_tamed_wolf_allowed_at(Vector3(2, 0, 0), tamed), "Interior stays blocked while the owner is outside")
+	check(world.is_tamed_wolf_allowed_at(Vector3(0, 0, 5.0), tamed), "Corridor stays open regardless")
+	# Lobo ya dentro: puede moverse por el interior para salir.
+	tamed.global_position = Vector3(1, 0, 0)
+	check(world.is_tamed_wolf_allowed_at(Vector3(2, 0, 0), tamed), "Wolf already inside may move through the interior")
+	# Puerta cerrada: todo bloqueado salvo que este dentro.
+	door.is_open = false
+	check(not world.is_tamed_wolf_allowed_at(Vector3(0, 0, 5.0), tamed), "Closed door blocks the corridor")
+	check(not world.is_tamed_wolf_allowed_at(Vector3(2, 0, 0), tamed), "Closed door keeps the interior blocked")
+	door.is_open = true
+
+	# --- Objetivo de entrada: el vano de la puerta hasta pisar dentro ---
+	player.global_position = Vector3(1, 0, -1)
+	tamed.global_position = Vector3(0, 0, 14)
+	var house := world.tamed_wolf_house_target(tamed, player)
+	check(not house.is_empty() and not bool(house.get("inside", true)), "Outside wolf gets a door entry target")
+	check((house.get("door_pos", Vector3.ZERO) as Vector3).distance_to(door.global_position) < 0.1, "Entry target is the door position")
+	var res := tamed._wolf_ai(0.05)
+	check(bool(res.get("handled", false)) and (res["target"] as Vector3).distance_to(door.global_position) < 0.1, "Tamed AI routes to the doorway while the owner is inside")
+	tamed.global_position = Vector3(0, 0, 2.0)
+	house = world.tamed_wolf_house_target(tamed, player)
+	check(bool(house.get("inside", false)), "Wolf inside the footprint counts as inside")
+	res = tamed._wolf_ai(0.05)
+	check(tamed._house_direct_goal, "Inside the house the wolf steers directly to the owner")
+	check((res["target"] as Vector3).distance_to(player.global_position) < 3.0, "Inside follow target stays at the owner")
+	player.global_position = Vector3(40, 0, 0)
+	check(world.tamed_wolf_house_target(tamed, player).is_empty(), "No house override once the owner leaves")
+	res = tamed._wolf_ai(0.05)
+	check(not tamed._house_direct_goal, "Direct-goal flag clears when the owner is outside")
+
+	# --- Defensa: lobos y osos que persiguen al dueno son enemigos ---
+	player.global_position = tamed.global_position + Vector3(2, 0, 0)
+	tamed.global_position = player.global_position + Vector3(2, 0, 0)
+	var bear := make_wolf(world, player.global_position + Vector3(10, 0, 0))
+	bear.animal_type = "bear"
+	bear._player = player
+	bear._chase_target = player
+	bear._state = "chase_player"
+	tamed._wolf_foe = null
+	tamed._cached_wildlife = [bear]
+	tamed._wolf_ai(0.05)
+	check(tamed._wolf_foe == bear, "Tamed wolf intercepts a bear chasing its owner")
+	# Un oso que muerde al lobo domesticado tambien recibe respuesta.
+	tamed._wolf_foe = null
+	tamed.take_damage(5.0, false, bear)
+	check(tamed._wolf_foe == bear, "A bear biting the tamed wolf is fought back")
+	# Pero un lobo salvaje NO pelea con osos (huye, como siempre).
+	var wild := make_wolf(world, Vector3(0, 0, 60))
+	wild.take_damage(5.0, false, bear)
+	check(wild._wolf_foe == null, "Wild wolves still refuse to fight bears")
+
+	# --- Rio y lago: el domesticado cruza rios, el lago sigue vetado ---
+	world.river_segments_data = [
+		{"center": Vector3(100, 0, 0), "size": Vector2(30.0, 8.0), "yaw": 0.0},
+		{"center": Vector3(200, 0, 0), "size": Vector2(80.0, 40.0), "yaw": 0.0},
+	]
+	check(tamed._is_position_allowed(Vector3(100, 0, 0)), "Tamed wolf may step into the river")
+	check(not wild._is_position_allowed(Vector3(100, 0, 0)), "Wild wolf still avoids the river band")
+	check(not tamed._is_position_allowed(Vector3(200, 0, 0)), "The lake stays blocked for the tamed wolf")
+	# Rutas: el domesticado usa el nav de presas (rios transitables).
+	var w0 := world.nav_wildlife_calls
+	var w1 := world.nav_wolf_calls
+	tamed._request_path(Vector3.ZERO, Vector3(10, 0, 0))
+	check(world.nav_wildlife_calls == w0 + 1 and world.nav_wolf_calls == w1, "Tamed wolf routes through the prey nav (river-crossable)")
+	wild._request_path(Vector3.ZERO, Vector3(10, 0, 0))
+	check(world.nav_wolf_calls == w1 + 1, "Wild wolves keep using the wolf nav")
+
+	# --- Carne de la caza: pickups de destripado (sin dropped_by) a 35 m ---
+	tamed._wolf_foe = null
+	tamed._threat_player = null
+	tamed._cached_wildlife = []
+	tamed._wolf_hunger = 20.0
+	player.global_position = tamed.global_position + Vector3(3, 0, 0)
+	var gut := spawn_gut_meat(world, tamed.global_position + Vector3(35, 0, 0))
+	check(gut.is_in_group("wolf_meat_pickups"), "Gut meat joins the wolf meat group")
+	res = tamed._wolf_ai(0.05)
+	check(tamed._claimed_meat == gut or (res["target"] as Vector3) == gut.global_position, "Tamed wolf goes for hunt leftovers 35m away")
+	# Carne que solto el propio dueno tambien vale; la de otro jugador, no.
+	var own := spawn_meat(world, tamed.global_position + Vector3(30, 0, 0), "local")
+	var other := spawn_meat(world, tamed.global_position + Vector3(28, 0, 0), "7")
+	var found := tamed._find_nearest_meat_pickup()
+	check(found == gut or found == own or found == other, "Meat lookup returns a valid piece")
+	check(found != other, "Another player's bait is never eaten by the tamed wolf")
+
+	# --- Sonido distintivo: pitch agudo y sin aullido 2D ---
+	var pw := WildlifeController.new()
+	pw.animal_type = "wolf"
+	pw.tamed_to = "local"
+	pw.set_process(false)
+	world.add_child(pw)
+	pw._play_wolf_sound("growl")
+	check(pw._wolf_audio_player != null and pw._wolf_audio_player.pitch_scale > 1.2, "Tamed wolf sounds are pitched up")
+	var pw2 := WildlifeController.new()
+	pw2.animal_type = "wolf"
+	pw2.set_process(false)
+	world.add_child(pw2)
+	pw2._play_wolf_sound("growl")
+	check(pw2._wolf_audio_player != null and pw2._wolf_audio_player.pitch_scale <= 1.2, "Wild wolf keeps normal pitch")
+	var pw3 := WildlifeController.new()
+	pw3.animal_type = "wolf"
+	pw3.tamed_to = "local"
+	pw3.set_process(false)
+	world.add_child(pw3)
+	pw3._play_wolf_sound("howl")
+	check(pw3._wolf_howl_2d_player == null and pw3._wolf_audio_player != null, "Tamed wolf barks instead of howling")
+	pw2._wolf_howl_2d_player = null
+	player.global_position = pw2.global_position + Vector3(10, 0, 0)
+	pw2._play_wolf_sound("howl")
+	check(pw2._wolf_howl_2d_player != null, "Wild wolf still howls")
 	world.free()

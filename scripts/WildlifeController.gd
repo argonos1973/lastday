@@ -125,6 +125,7 @@ var _tame_progress := {}          # feeder_id -> nº de comidas
 var _follow_mode := "follow"      # "follow" | "stay" (solo con tamed_to != "")
 var _stay_pos := Vector3.ZERO
 var _wolf_foe: Node3D = null      # lobo enemigo en combate canino
+var _house_direct_goal := false   # domesticado dentro de casa: guiado directo al dueño
 var _foe_timer := 0.0
 var _threat_player: Node3D = null # jugador que dañó al dueño (o al que el dueño atacó)
 var _threat_timer := 0.0
@@ -590,6 +591,10 @@ func _process_body(delta: float) -> void:
 	var move_target: Vector3 = global_position
 	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0 and _direct_route_allowed(chase_live.global_position):
 		move_target = chase_live.global_position
+	elif _house_direct_goal and animal_type == "wolf":
+		# Dentro de la casa el interior no es celda de nav: se avanza a paso
+		# libre — is_tamed_wolf_allowed_at ya permite el interior con el dueno.
+		move_target = target
 	elif _current_path.size() > 0 and _path_index < _current_path.size():
 		var waypoint: Vector3 = _current_path[_path_index]
 		var to_waypoint: Vector3 = waypoint - global_position
@@ -2224,6 +2229,7 @@ func _release_owner_record() -> void:
 # persecución normal de _wolf_ai se encargue del ataque (reutiliza distancias,
 # protecciones de techo/refugio y el daño a proxies ya existentes).
 func _tamed_ai(delta: float) -> Dictionary:
+	_house_direct_goal = false
 	var owner := _resolve_owner()
 	if _threat_player != null and is_instance_valid(_threat_player):
 		_player = _threat_player
@@ -2233,10 +2239,11 @@ func _tamed_ai(delta: float) -> Dictionary:
 		_state = "guard"
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
-	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento)
+	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento),
+	# incluida la que suelta el dueno al destripar ciervos, osos y demas caza.
 	if _wolf_hunger < _wolf_hunger_threshold:
 		var meat := _find_nearest_meat_pickup()
-		if meat != null and global_position.distance_to(meat.global_position) < 25.0:
+		if meat != null and global_position.distance_to(meat.global_position) < 45.0:
 			return _seek_meat_pickup(meat)
 	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
 	var owner_dead := bool(owner.get_meta("proxy_dead", false))
@@ -2279,6 +2286,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 		_snap_to_terrain()
 		_current_path.clear()
 		_path_index = 0
+	# Si el dueno esta dentro de una casa con la puerta abierta, entrar por el
+	# vano: el objetivo es el umbral hasta que el lobo pisa el interior.
+	var house := _tamed_house_override(owner)
+	if not house.is_empty():
+		if bool(house.get("inside", false)):
+			_house_direct_goal = true
+		else:
+			var door_pos: Vector3 = house["door_pos"]
+			var dd := global_position.distance_to(door_pos)
+			_play_animation_by_name("run" if dd > 9.0 else "trot")
+			return {"handled": true, "target": door_pos, "speed": move_speed * (3.2 if dd > 26.0 else (2.1 if dd > 9.0 else 1.4))}
 	var to_wolf := global_position - owner.global_position
 	to_wolf.y = 0.0
 	var off := to_wolf.normalized() * 2.6 if to_wolf.length() > 0.05 else Vector3(2.6, 0.0, 0.0)
@@ -2292,6 +2310,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 		anim = "trot"
 	_play_animation_by_name(anim)
 	return {"handled": true, "target": owner.global_position + off, "speed": spd}
+
+# Consulta a Main si el dueno esta dentro de una casa con la puerta abierta:
+# {} si no, {"inside": false, "door_pos"} para ir al vano, {"inside": true}
+# cuando el lobo ya esta dentro y puede guiarse directo hacia el dueno.
+func _tamed_house_override(owner: Node3D) -> Dictionary:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("tamed_wolf_house_target"):
+		var r = scene.call("tamed_wolf_house_target", self, owner)
+		if r is Dictionary:
+			return r
+	return {}
 
 # Un lobo salvaje u oso que persiga/ataque al dueño se convierte en enemigo del domesticado
 func _find_wolf_threatening(owner: Node3D) -> Node3D:
@@ -2327,10 +2356,12 @@ func _note_attack(attacker: Node) -> void:
 		return
 	if attacker is WildlifeController:
 		var w := attacker as WildlifeController
-		if w.animal_type == "wolf" and not w._is_dead and w.tamed_to != tamed_to:
-			# Devuelve el mordisco: combate lobo-vs-lobo
-			_wolf_foe = w
-			_foe_timer = 20.0
+		# Devuelve el mordisco: combate contra lobos rivales y, si es
+		# domesticado, tambien contra osos que lo ataquen (defensa).
+		if (w.animal_type == "wolf" or w.animal_type == "bear") and not w._is_dead and w.tamed_to != tamed_to:
+			if w.animal_type == "wolf" or not tamed_to.is_empty():
+				_wolf_foe = w
+				_foe_timer = 20.0
 		return
 	var key := _feeder_key(attacker)
 	if key.is_empty():
@@ -2581,7 +2612,10 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	var is_bear := animal_type == "bear"
-	if sound_type == "howl" and not is_bear:
+	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
+	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.
+	var tamed := animal_type == "wolf" and not tamed_to.is_empty()
+	if sound_type == "howl" and not is_bear and not tamed:
 		var player_node_h := get_tree().current_scene.get_node_or_null("Player")
 		var dist_h := 999.0
 		if player_node_h != null and player_node_h is Node3D:
@@ -2653,7 +2687,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
 	else:
 		_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" or sound_type == "bite" else -4.0
-		_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15)
+		_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15) * (1.45 if tamed else 1.0)
 	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:
@@ -3010,6 +3044,8 @@ func _is_position_allowed(pos: Vector3) -> bool:
 
 func _is_position_allowed_impl(pos: Vector3) -> bool:
 	var scene := get_tree().current_scene
+	if animal_type == "wolf" and not tamed_to.is_empty() and scene != null and scene.has_method("is_tamed_wolf_allowed_at"):
+		return bool(scene.call("is_tamed_wolf_allowed_at", pos, self))
 	if (animal_type == "wolf" or animal_type == "bear") and scene != null and scene.has_method("is_wolf_allowed_at"):
 		return bool(scene.call("is_wolf_allowed_at", pos))
 	if scene != null and scene.has_method("is_wildlife_allowed_at"):
@@ -3180,6 +3216,10 @@ func _request_path(start: Vector3, goal: Vector3) -> Array:
 
 func _request_path_impl(start: Vector3, goal: Vector3) -> Array:
 	var scene := get_tree().current_scene
+	if animal_type == "wolf" and not tamed_to.is_empty() and scene != null and scene.has_method("find_path_wildlife"):
+		# El nav de presas deja los rios transitables y tambien abre los vanos
+		# de puerta: el domesticado puede cruzar el agua siguiendo a su dueno.
+		return scene.call("find_path_wildlife", start, goal) as Array
 	if (animal_type == "wolf" or animal_type == "bear") and scene != null and scene.has_method("find_path_wolf"):
 		return scene.call("find_path_wolf", start, goal) as Array
 	if scene != null and scene.has_method("find_path_wildlife"):

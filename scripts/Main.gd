@@ -15711,6 +15711,81 @@ func is_wildlife_allowed_at(pos: Vector3) -> bool:
 		return false
 	return true
 
+# Movimiento del lobo domesticado: puede cruzar rios y entrar en casas con la
+# puerta abierta cuando el dueno esta dentro; lagos y muros siguen vedados.
+func is_tamed_wolf_allowed_at(pos: Vector3, animal: Node = null) -> bool:
+	if _is_near_lake(pos, 1.2):
+		return false
+	var p := Vector2(pos.x, pos.z)
+	var cell := Vector2i(floori(pos.x / _BLOCKER_CELL), floori(pos.z / _BLOCKER_CELL))
+	for idx in _blocker_grid.get(cell, []):
+		var blocker: Dictionary = wildlife_blockers[idx]
+		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var door = blocker.get("door", null)
+		var door_is_open := _check_door_open(door, blocker)
+		if blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			var expanded_bounds := bounds.grow(3.5)
+			if expanded_bounds.has_point(p):
+				if door_is_open and _tamed_house_pos_ok(p, bounds, blocker_pos, blocker, animal):
+					continue
+				return false
+			continue
+		var radius := float(blocker.get("radius", 1.8))
+		if p.distance_to(Vector2(blocker_pos.x, blocker_pos.z)) <= radius:
+			if door_is_open:
+				var local_x := pos.x - blocker_pos.x
+				var local_z := pos.z - blocker_pos.z
+				if abs(local_x) <= 3.0 and local_z >= -5.5 and local_z <= 10.0:
+					continue
+			return false
+	return true
+
+# Posiciones transitables para el lobo domesticado dentro del bloqueo de una
+# casa con la puerta abierta: el vano siempre; el interior solo si el lobo ya
+# esta dentro o su dueno esta dentro de esa misma casa.
+func _tamed_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocker: Dictionary, animal: Node) -> bool:
+	if blocker.get("barn_door_always_open", false) == true:
+		if _is_in_barn_doorway_passage(Vector3(p.x, 0.0, p.y), blocker):
+			return true
+	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
+		return true
+	if not bounds.grow(-0.4).has_point(p):
+		return false
+	if animal != null and is_instance_valid(animal) and animal is Node3D:
+		if bounds.has_point(Vector2(animal.global_position.x, animal.global_position.z)):
+			return true
+		if animal.has_method("_resolve_owner"):
+			var owner = animal.call("_resolve_owner")
+			if owner != null and is_instance_valid(owner) and owner is Node3D and bounds.has_point(Vector2(owner.global_position.x, owner.global_position.z)):
+				return true
+	return false
+
+# Objetivo de entrada para el lobo domesticado cuando su dueno esta dentro de
+# una casa con la puerta abierta. {} si no aplica; {"inside": false,
+# "door_pos"} para rutar al umbral; {"inside": true} ya dentro.
+func tamed_wolf_house_target(animal: Node, owner: Node) -> Dictionary:
+	if animal == null or owner == null or not (animal is Node3D) or not is_instance_valid(owner) or not (owner is Node3D):
+		return {}
+	var p2o := Vector2(owner.global_position.x, owner.global_position.z)
+	var p2w := Vector2(animal.global_position.x, animal.global_position.z)
+	for blocker in wildlife_blockers:
+		if not blocker.has("house_bounds"):
+			continue
+		var bounds: Rect2 = blocker["house_bounds"]
+		if not bounds.has_point(p2o):
+			continue
+		if not _check_door_open(blocker.get("door", null), blocker):
+			continue
+		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		if bounds.grow(0.3).has_point(p2w) or _is_in_doorway_passage(animal.global_position, blocker_pos) or _is_in_barn_doorway_passage(animal.global_position, blocker):
+			return {"inside": true}
+		var door = blocker.get("door", null)
+		if door != null and is_instance_valid(door) and door is Node3D:
+			return {"inside": false, "door_pos": (door as Node3D).global_position}
+		return {}
+	return {}
+
 func _wildlife_water_obstacles() -> Array:
 	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)
 
