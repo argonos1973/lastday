@@ -53,9 +53,10 @@ func set_open(value: bool, audible := true) -> void:
 		if not is_instance_valid(_door_audio):
 			_door_audio = AudioStreamPlayer3D.new()
 			_door_audio.position = Vector3(0.4, 1.1, 0)
-			_door_audio.max_distance = 22.0
-			_door_audio.unit_size = 3.0
-			_door_audio.volume_db = -3.0
+			_door_audio.max_distance = 35.0
+			_door_audio.unit_size = 8.5
+			_door_audio.volume_db = 8.0
+			_door_audio.max_db = 6.0
 			add_child(_door_audio)
 		_door_audio.stream = load("res://assets/audio/doors/door_open.wav" if is_open else "res://assets/audio/doors/door_close.wav")
 		_door_audio.play()

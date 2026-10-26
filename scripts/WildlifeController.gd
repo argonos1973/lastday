@@ -66,6 +66,7 @@ var _network_motion = preload("res://scripts/AnimalNetworkMotion.gd").new()
 var _observer_check_timer := 0.0
 var _near_network_observer := false
 var current_anim_keyword := "walk"
+var _puppet_desired_anim := "walk"
 var _tamed_rest_time := 0.0
 var _hit_flash_timer := 0.0
 var _gutted := false
@@ -181,6 +182,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		return
 	_network_motion.push(self, pos, rot_y)
 	if not dead:
+		_puppet_desired_anim = anim.to_lower()
 		_play_animation_by_name(anim)
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
@@ -364,8 +366,10 @@ func _escape_if_trapped_impl(delta: float) -> bool:
 	_current_path.clear()
 	_path_recalc_timer = 0.0
 	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * 6.0)
+	_play_animation_by_name("trot")
 	_walk_time += delta * move_speed * 5.0
 	_animate_legs(delta)
+	_update_animation_speed(move_speed * 2.2)
 	return true
 
 func _exit_tree() -> void:
@@ -398,8 +402,17 @@ func _process_body(delta: float) -> void:
 		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	if is_puppet:
 		if not _is_dead:
+			var prev_puppet_pos := global_position
 			_network_motion.advance(self, delta)
 			_update_water_depth(delta)
+			if delta > 0.0001 and _network_motion.samples.size() > 1:
+				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
+				var vis_spd := puppet_moved_xz / delta
+				if vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat"]:
+					_play_animation_by_name("trot" if vis_spd > move_speed * 1.45 else "walk")
+					_update_animation_speed(vis_spd)
+				elif vis_spd <= 0.12 and not _puppet_desired_anim.is_empty() and current_anim_keyword != _puppet_desired_anim:
+					_play_animation_by_name(_puppet_desired_anim)
 		if (animal_type == "wolf" or animal_type == "bear") and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
@@ -488,6 +501,7 @@ func _process_body(delta: float) -> void:
 	if _unstuck_timer > 0.0:
 		_unstuck_timer -= delta
 		var burst_speed := move_speed * 1.6
+		_play_animation_by_name("trot")
 		_move_towards(global_position + _unstuck_dir * 6.0, burst_speed, delta, 8.0)
 		_walk_time += delta * burst_speed * 4.8
 		_animate_legs(delta)
@@ -532,6 +546,13 @@ func _process_body(delta: float) -> void:
 				if scene != null and scene.has_method("_note_wildlife_death"):
 					scene._note_wildlife_death(animal_type, global_position)
 		if _wolf_eating_timer > 0.0:
+			if animal_type == "wolf":
+				_play_animation_by_name("eat")
+				if is_instance_valid(_wolf_eating_target):
+					var toward_food := _wolf_eating_target.global_position - global_position
+					toward_food.y = 0.0
+					if toward_food.length_squared() > 0.01:
+						rotation.y = lerp_angle(rotation.y, atan2(toward_food.x, toward_food.z), minf(1.0, delta * 5.0))
 			_wolf_eating_timer -= delta
 			var satiation_cap := 60.0 if animal_type == "wolf" else 85.0
 			_wolf_hunger = min(satiation_cap, _wolf_hunger + delta * 5.0)
@@ -606,7 +627,7 @@ func _process_body(delta: float) -> void:
 	var chase_live: Node3D = _chase_target if (_chase_target != null and is_instance_valid(_chase_target) and (_state == "chase_prey" or _state == "chase_player" or _state == "fight_wolf")) else null
 	var to_target := target - global_position
 	to_target.y = 0.0
-	if to_target.length() < 1.6 and chase_live == null and _prey_flee_timer <= 0.0 and not (_state in ["follow", "guard", "fight_wolf", "seek_corpse", "flee"]):
+	if to_target.length() < 1.6 and chase_live == null and _prey_flee_timer <= 0.0 and not (_state in ["follow", "guard", "fight_wolf", "seek_corpse", "flee", "wary", "wary_torch"]):
 		target_index = (target_index + 1) % patrol_points.size()
 		_current_path.clear()
 		_path_index = 0
@@ -617,11 +638,13 @@ func _process_body(delta: float) -> void:
 			_idle_timer = randf_range(1.5, 4.0)
 			_idle_cooldown = randf_range(8.0, 18.0)
 		return
+	if _current_path.is_empty() and speed > 0.0 and to_target.length() > 0.15:
+		_path_recalc_timer = 0.0
 	_path_recalc_timer -= delta
 	if _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state == "flee") else 1.2
+		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse"]) else 1.2
 	var move_target: Vector3 = global_position
 	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0 and _direct_route_allowed(chase_live.global_position):
 		move_target = chase_live.global_position
@@ -641,13 +664,19 @@ func _process_body(delta: float) -> void:
 				move_target = _current_path[_path_index]
 		else:
 			move_target = waypoint
+	if move_target.distance_to(global_position) < 0.1 and speed > 0.0 and to_target.length() > 0.12:
+		if _direct_route_allowed(target) or (to_target.length() < 4.5 and _is_position_allowed(global_position + to_target.normalized() * minf(0.55, to_target.length()))):
+			move_target = target
 	_route_waiting = move_target.distance_to(global_position) < 0.1 or speed <= 0.0
 	if _route_waiting:
 		_play_animation_by_name("idle")
 	else:
 		var turn_spd := 9.0 if (_prey_flee_timer > 0.0 or _state == "flee") else 6.0
 		_move_towards(move_target, speed, delta, turn_spd)
-	if global_position.distance_to(_last_position) > 0.01:
+	var moved_xz := Vector2(global_position.x - _last_position.x, global_position.z - _last_position.z).length()
+	if moved_xz > 0.004:
+		if current_anim_keyword in ["idle", "sit", "lie", "eat"]:
+			_play_animation_by_name("trot" if speed > move_speed * 1.45 else "walk")
 		_walk_time += delta * speed * 4.8
 		_animate_legs(delta)
 		_update_animation_speed(speed)
@@ -784,10 +813,11 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if _state == "chase_player" or _chase_target == bait_holder:
 				_chase_target = null
 				_chase_stuck_time = 0.0
-				_state = "patrol"
 				_current_path.clear()
 				_path_index = 0
+				_path_recalc_timer = 0.0
 				_chase_cooldown = 3.0
+			_state = "wary"
 			var bait_dist := global_position.distance_to(bait_holder.global_position)
 			if bait_dist > 14.0:
 				_play_animation_by_name("walk")
@@ -2795,6 +2825,8 @@ func _find_nearest_animal(kind: String) -> Node3D:
 
 func _play_animation_by_name(keyword: String) -> void:
 	var lower_keyword := keyword.to_lower()
+	if lower_keyword == "idle" and animal_type == "wolf" and _wolf_eating_timer > 0.0:
+		lower_keyword = "eat"
 	if lower_keyword == "idle" and animal_type == "wolf" and not tamed_to.is_empty() and not is_puppet and _state in ["follow", "guard"] and _threat_player == null:
 		if _tamed_rest_time >= 12.0 and _follow_mode == "stay":
 			lower_keyword = "lie"
@@ -2804,14 +2836,16 @@ func _play_animation_by_name(keyword: String) -> void:
 	if _animation_player == null:
 		return
 	var current := _animation_player.current_animation
-	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0:
+	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0 and (lower_keyword != "run" or current.to_lower().find("frighten") < 0):
+		if not _animation_player.is_playing():
+			_animation_player.play(current)
 		return
 	var best := ""
 	var candidates := [lower_keyword]
 	if lower_keyword == "gallop":
-		candidates = ["gallop", "run", "trot", "walk"]
+		candidates = ["gallop", "a_runfast", "run", "trot", "walk"]
 	elif lower_keyword == "run":
-		candidates = ["run", "gallop", "trot", "walk"]
+		candidates = ["a_runfast", "a_runslow", "run", "gallop", "trot", "walk"]
 	elif lower_keyword == "trot":
 		candidates = ["trot", "walk", "run"]
 	var anim_list := _animation_player.get_animation_list()
@@ -2829,7 +2863,7 @@ func _play_animation_by_name(keyword: String) -> void:
 	if best.is_empty():
 		return
 	if current != best:
-		var resting := lower_keyword in ["idle", "sit", "lie"]
+		var resting := lower_keyword in ["idle", "sit", "lie", "eat"]
 		if resting:
 			_animation_player.speed_scale = 1.0
 		_animation_player.play(best, 0.65 if lower_keyword in ["sit", "lie"] else 0.2)

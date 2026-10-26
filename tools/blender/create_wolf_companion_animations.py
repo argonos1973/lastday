@@ -6,6 +6,10 @@ ROOT=Path(__file__).resolve().parents[2]
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=str(ROOT/'assets/external/wolf/WolfAnimated.glb'))
 a=next(o for o in bpy.data.objects if o.type=='ARMATURE')
+# Fur cutouts need depth writes in Godot; alpha blending sorts the entire
+# animated mesh as one transparent object and exposes inner mouth surfaces.
+for mat in bpy.data.materials:
+ mat.blend_method='CLIP';mat.alpha_threshold=.35
 for o in list(bpy.data.objects):
  if o.type=='MESH' and not any(m.type=='ARMATURE' for m in o.modifiers): bpy.data.objects.remove(o,do_unlink=True)
 for track in a.animation_data.nla_tracks: track.mute=True
@@ -29,6 +33,20 @@ def ik(n1,n2,n3,goal,pole):
 def pose(kind,breath):
  for p in a.pose.bones:p.matrix_basis.identity()
  update()
+ if kind=='eat':
+  # Keep the hind feet planted; lower the shoulders and flex the neck toward food.
+  p=a.pose.bones['Spine1']
+  p.matrix=Matrix.Translation(rest['Spine1'].translation)@Matrix.Rotation(math.radians(23+breath),4,'X')@rest['Spine1'].to_3x3().to_4x4();update()
+  for side,sign in [('L',1),('R',-1)]:
+   front='LegF'+side
+   ik(front+'1',front+'2',front+'3',(sign*13,-52,17),(sign*15,-20,28))
+   aim(front+'3',front+'Ankle',(sign*13,-56,5))
+   p=a.pose.bones[front+'Ankle'];p.matrix=Matrix.Translation(p.matrix.translation)@rest[front+'Ankle'].to_3x3().to_4x4();update()
+  p=a.pose.bones['Neck1'];origin=p.matrix.translation.copy()
+  p.matrix=Matrix.Translation(origin)@Matrix.Rotation(math.radians(57+breath*3),4,'X')@rest['Neck1'].to_3x3().to_4x4();update()
+  p=a.pose.bones['Jaw'];g=p.matrix.copy()
+  p.matrix=Matrix.Translation(g.translation)@Matrix.Rotation(math.radians(4+7*(breath+1)/2),4,'X')@g.to_3x3().to_4x4();update()
+  return
  if kind=='idle':
   p=a.pose.bones['Chest'];p.scale.y=1+breath*.006;update();return
  tilt=math.radians(-36) if kind=='sit' else math.radians(-3)
@@ -54,10 +72,10 @@ def pose(kind,breath):
  if kind=='sit':
   p=a.pose.bones['Neck1'];p.matrix=Matrix.Translation(p.matrix.translation)@rest['Neck1'].to_3x3().to_4x4();update()
 new=[]
-for kind in ['idle','sit','lie']:
+for kind in ['idle','sit','lie','eat']:
  action=bpy.data.actions.new('Wolf_'+kind);a.animation_data.action=action
- for frame in [1,31,61,91,121]:
-  bpy.context.scene.frame_set(frame);pose(kind,math.sin((frame-1)/120*math.tau))
+ for frame in (list(range(1,122,5)) if kind=='eat' else [1,31,61,91,121]):
+  bpy.context.scene.frame_set(frame);pose(kind,math.sin((frame-1)/120*math.tau*(6 if kind=='eat' else 1)))
   for p in a.pose.bones:
    p.rotation_mode='QUATERNION'
    for prop in ['location','rotation_quaternion','scale']:p.keyframe_insert(prop,frame=frame,group=p.name)
@@ -80,7 +98,7 @@ bpy.ops.object.light_add(type='AREA',location=(2,-3,5));bpy.context.object.data.
 bpy.ops.object.light_add(type='AREA',location=(-3,1,3));bpy.context.object.data.energy=350;bpy.context.object.data.size=3
 bpy.ops.object.camera_add(location=(3.0,-3.5,1.9));cam=bpy.context.object;scene.camera=cam
 cam.rotation_euler=(Vector((0,-.3,.5))-cam.location).to_track_quat('-Z','Y').to_euler();cam.data.type='ORTHO';cam.data.ortho_scale=2.8
-for kind,action in zip(['idle','sit','lie'],new):
+for kind,action in zip(['idle','sit','lie','eat'],new):
  a.animation_data.action=action;scene.frame_set(31);update()
  scene.render.filepath=str(ROOT/f'build/tmp/wolf_{kind}.png');bpy.ops.render.render(write_still=True)
 print('WOLF_COMPANION_DONE')

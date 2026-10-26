@@ -17,7 +17,9 @@ from mathutils import Quaternion
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_FBX = ROOT / "assets_src" / "Standing Aim Idle 01.fbx"
+SOURCE_WALK_FBX = ROOT / "assets_src" / "Standing Aim Walk Forward.fbx"
 OUT_AIM = ROOT / "assets" / "animations" / "BowAimIdle.glb"
+OUT_AIM_WALK = ROOT / "assets" / "animations" / "BowAimWalk.glb"
 OUT_SHOOT = ROOT / "assets" / "animations" / "BowShoot.glb"
 
 
@@ -28,11 +30,11 @@ def smoothstep(edge0: float, edge1: float, x: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-def load_clean_armature():
+def load_clean_armature(fbx_path: Path = SOURCE_FBX):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    if not SOURCE_FBX.exists():
-        raise FileNotFoundError(f"Missing source FBX: {SOURCE_FBX}")
-    bpy.ops.import_scene.fbx(filepath=str(SOURCE_FBX))
+    if not fbx_path.exists():
+        raise FileNotFoundError(f"Missing source FBX: {fbx_path}")
+    bpy.ops.import_scene.fbx(filepath=str(fbx_path))
     for obj in list(bpy.data.objects):
         if obj.type != "ARMATURE":
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -43,7 +45,7 @@ def load_clean_armature():
 
 
 def export_aim_idle() -> None:
-    arm = load_clean_armature()
+    arm = load_clean_armature(SOURCE_FBX)
     scn = bpy.context.scene
     act = arm.animation_data.action
     act.name = "BowAimIdle"
@@ -59,6 +61,40 @@ def export_aim_idle() -> None:
         export_animation_mode="ACTIVE_ACTIONS",
     )
     print(f"Exported {OUT_AIM} ({f_end - f_start + 1} frames)")
+
+
+def export_aim_walk() -> None:
+    if not SOURCE_WALK_FBX.exists():
+        print(f"Skipping walk export, missing {SOURCE_WALK_FBX}")
+        return
+    arm = load_clean_armature(SOURCE_WALK_FBX)
+    scn = bpy.context.scene
+    act = arm.animation_data.action
+    act.name = "BowAimWalk"
+    f_start, f_end = int(round(act.frame_range[0])), int(round(act.frame_range[1]))
+    # Strip horizontal (X/Z) root motion from mixamorig:Hips so the character walks in place.
+    hips_pb = arm.pose.bones.get("mixamorig:Hips")
+    if hips_pb is not None:
+        scn.frame_set(f_start)
+        bpy.context.view_layer.update()
+        base_loc = hips_pb.location.copy()
+        for f in range(f_start, f_end + 1):
+            scn.frame_set(f)
+            bpy.context.view_layer.update()
+            hips_pb.location.x = base_loc.x
+            hips_pb.location.z = base_loc.z
+            hips_pb.keyframe_insert("location", frame=f)
+    scn.frame_start = f_start
+    scn.frame_end = f_end
+    OUT_AIM_WALK.parent.mkdir(parents=True, exist_ok=True)
+    bpy.ops.export_scene.gltf(
+        filepath=str(OUT_AIM_WALK),
+        export_format="GLB",
+        export_animations=True,
+        export_frame_range=True,
+        export_animation_mode="ACTIVE_ACTIONS",
+    )
+    print(f"Exported {OUT_AIM_WALK} ({f_end - f_start + 1} frames)")
 
 
 def export_bow_shoot() -> None:
@@ -149,6 +185,7 @@ def export_bow_shoot() -> None:
 
 def main() -> int:
     export_aim_idle()
+    export_aim_walk()
     export_bow_shoot()
     return 0
 

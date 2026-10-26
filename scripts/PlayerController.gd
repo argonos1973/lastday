@@ -462,8 +462,10 @@ const SHOT_ANIMATION_GLB := "res://assets/animations/RecibirDisparo.glb"
 const GIVE_FOOD_ANIMATION_GLB := "res://assets/animations/GiveFood.glb"
 const BOW_SHOOT_ANIMATION_GLB := "res://assets/animations/BowShoot.glb"
 const BOW_AIM_IDLE_ANIMATION_GLB := "res://assets/animations/BowAimIdle.glb"
+const BOW_AIM_WALK_ANIMATION_GLB := "res://assets/animations/BowAimWalk.glb"
 const THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION := "BowShootExternal"
 const THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION := "BowAimIdleExternal"
+const THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION := "BowAimWalkExternal"
 const WOODEN_BOW_MODEL := "res://assets/models/weapons/wooden_bow.glb"
 const REINFORCED_BOW_MODEL := "res://assets/models/weapons/reinforced_bow.glb"
 const ARROW_WOOD_MODEL := "res://assets/models/weapons/arrow_wood.glb"
@@ -658,6 +660,7 @@ var _rifle_sit_fire_animation := ""
 var _rifle_prone_fire_animation := ""
 var _bow_shoot_animation := ""
 var _bow_aim_idle_animation := ""
+var _bow_aim_walk_animation := ""
 var _torch_idle_animation := ""
 var _torch_walk_animation := ""
 var _torch_run_animation := ""
@@ -1635,7 +1638,10 @@ func _process(delta: float) -> void:
 			_throw_anim_frozen = false
 			if third_person_animation_player != null:
 				third_person_animation_player.speed_scale = 1.0
-			_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
+			if _has_throwable_weapon_equipped():
+				_throw_aimed_weapon()
+			else:
+				_throw_held_item(clamp(_throw_charge_time / THROW_MAX_CHARGE_TIME, 0.15, 1.0))
 		elif _g_hold_time < HOLD_THRESHOLD:
 			_drop_held_item()
 	# Carga de lanzamiento (mantener G) y guardar (mantener F)
@@ -3838,8 +3844,8 @@ func _physics_process(delta: float) -> void:
 	elif _is_aiming and (_has_bow_equipped() or _has_throwable_weapon_equipped()):
 		speed = minf(speed, crouch_speed * 0.95)
 		is_sprinting = false
-	# Lock movement while attacking
-	if third_person_action_timer > 0.0 and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
+	# Lock movement while attacking (but allow slow careful step while holding spear aim)
+	if third_person_action_timer > 0.0 and not _throw_aim_hold and not _throw_charging and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
 		direction = Vector3.ZERO
 		speed = 0.0
 		is_sprinting = false
@@ -4110,18 +4116,19 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	_restore_aim_pitch_pose(target_skel)
 	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
-	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation]))
-	var throw_active: bool = _throw_aim_hold or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming)
+	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation]))
+	var throw_active: bool = _throw_aim_hold or _throw_charging or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming)
 	if not bow_active and not throw_active:
 		_applying_aim_pitch = false
 		return
 	var aim_pitch := _pitch
 	if not is_puppet and is_instance_valid(camera):
 		aim_pitch = camera.rotation.x
+	var walking_bow := bow_active and not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation
 	if bow_active:
-		aim_pitch += deg_to_rad(4.0)
+		aim_pitch += deg_to_rad(2.2 if walking_bow else 4.0)
 	aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
-	var aim_yaw := deg_to_rad(-5.4) if bow_active else 0.0
+	var aim_yaw := deg_to_rad(-8.6 if walking_bow else -5.4) if bow_active else 0.0
 	if absf(aim_pitch) < 0.001 and absf(aim_yaw) < 0.001:
 		_applying_aim_pitch = false
 		return
@@ -4193,7 +4200,7 @@ func _update_hand_socket() -> void:
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
 	if holding_bow and _left_hand_bone_idx >= 0:
 		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
-		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
+		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation])
 		var l_world := skel_global * _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
 		var knuckle_off := _close_bow_fingers(_left_hand_bone_idx, true)
 		if not bow_drawing:
@@ -4262,7 +4269,8 @@ func _update_hand_socket() -> void:
 	if held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
 		var spear := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if spear != null:
-			if _throw_aim_hold or _throw_release_item != null or (is_puppet and _is_aiming):
+			spear.scale = Vector3(1.22, 1.48, 1.22)
+			if _throw_aim_hold or _throw_charging or _throw_release_item != null or (is_puppet and _is_aiming):
 				var forward := -global_basis.z
 				if _throw_release_item != null:
 					forward = (_throw_release_target - third_person_hand_item_root.global_position).normalized()
@@ -4271,8 +4279,11 @@ func _update_hand_socket() -> void:
 				if forward.length_squared() > 0.001:
 					var up := Vector3.UP if absf(forward.y) < 0.97 else Vector3.FORWARD
 					var orientation := Basis.looking_at(forward, up) * Basis(Vector3.RIGHT, -PI * 0.5)
-					spear.basis = third_person_hand_item_root.global_basis.orthonormalized().inverse() * orientation
+					var local_orient := third_person_hand_item_root.global_basis.orthonormalized().inverse() * orientation
+					spear.basis = local_orient.scaled(spear.scale)
+					spear.position = local_orient * Vector3(0.0, 0.38, 0.0)
 			else:
+				spear.position = Vector3.ZERO
 				spear.rotation_degrees = Vector3(85, 0, 0)
 
 func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool) -> void:
@@ -10605,7 +10616,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			elif third_person_has_real_idle:
 				target_animation = third_person_idle_animation
 		elif _has_bow_equipped() and _is_aiming and not _bow_aim_idle_animation.is_empty():
-			target_animation = _bow_aim_idle_animation
+			if moving and not _bow_aim_walk_animation.is_empty():
+				target_animation = _bow_aim_walk_animation
+			else:
+				target_animation = _bow_aim_idle_animation
 		elif moving:
 			if low_health:
 				target_animation = third_person_low_health_animation
@@ -11821,6 +11835,7 @@ func _load_bow_animations() -> void:
 	var clips := {
 		THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION: [BOW_SHOOT_ANIMATION_GLB, Animation.LOOP_NONE],
 		THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION: [BOW_AIM_IDLE_ANIMATION_GLB, Animation.LOOP_LINEAR],
+		THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION: [BOW_AIM_WALK_ANIMATION_GLB, Animation.LOOP_LINEAR],
 	}
 	for anim_key in clips:
 		var glb_path: String = clips[anim_key][0]
@@ -11860,6 +11875,8 @@ func _load_bow_animations() -> void:
 		_bow_shoot_animation = "bow/" + THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
 	if third_person_animation_player.has_animation("bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION):
 		_bow_aim_idle_animation = "bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
+	if third_person_animation_player.has_animation("bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION):
+		_bow_aim_walk_animation = "bow/" + THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION
 
 func _load_torch_animations() -> void:
 	if _torch_animations_loaded:
@@ -14026,8 +14043,11 @@ func _throw_aimed_weapon() -> void:
 	var cam_origin := camera.project_ray_origin(aim_point)
 	var excluded: Array[RID] = [get_rid()]
 	_collect_child_collision_rids(self, excluded)
-	var target_hit := _rifle_sight_hit(cam_origin, cam_ray_dir, excluded)
-	_throw_release_target = target_hit.position if not target_hit.is_empty() else cam_origin + cam_ray_dir * 35.0
+	var hand_approx := global_position + Vector3(0.0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0.0)
+	var hand_along := maxf(0.0, (hand_approx - cam_origin).dot(cam_ray_dir))
+	var sight_start := cam_origin + cam_ray_dir * (hand_along + 0.35)
+	var target_hit := _rifle_sight_hit(sight_start, cam_ray_dir, excluded)
+	_throw_release_target = target_hit.position if (not target_hit.is_empty() and sight_start.distance_to(target_hit.position) > 1.8) else cam_origin + cam_ray_dir * 35.0
 	_throw_release_item = held
 	_throw_release_timer = THROW_RELEASE_DELAY
 	_throw_aim_hold = false
@@ -14079,7 +14099,15 @@ func _finish_aimed_throw() -> void:
 	var is_bola := item_type == "weapon_bola" or item_name == "Boleadoras"
 	var proj_speed := 32.0 if is_bola else 38.0
 	var base_dmg := 35.0 if is_bola else (110.0 if item_name == "Palo afilado" else (165.0 if item_name == "Lanza" else 210.0))
-	var throw_dir := (_throw_release_target - release_origin).normalized()
+	var aim_target := _throw_release_target
+	var aim_dist := minf(release_origin.distance_to(aim_target), 32.0)
+	var proj_drag := _primitive_projectile_drag(item_type, item_name)
+	var flight_t := aim_dist / proj_speed
+	var drag_arg := 1.0 - aim_dist * proj_drag / proj_speed
+	if proj_drag > 0.001 and drag_arg > 0.08:
+		flight_t = -log(drag_arg) / proj_drag
+	aim_target.y += 0.5 * 9.81 * flight_t * flight_t
+	var throw_dir := (aim_target - release_origin).normalized()
 	if throw_dir.length_squared() < 0.001:
 		throw_dir = -camera.global_basis.z
 	_launch_primitive_projectile(release_origin, throw_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
