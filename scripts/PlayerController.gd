@@ -4655,6 +4655,17 @@ func _sync_posed_attachments(model: Node3D, skel: Skeleton3D) -> void:
 # _update_rifle_ik; the duplicate keeps the stale world transform and the
 # weapon would render outside the portrait frame. Runs the same rest solve
 # against the posed duplicate skeleton. Returns true when a rifle was seated.
+func _seat_m4_idle_grip(skel: Skeleton3D, hand_idx: int, offset: Node3D) -> void:
+	# Anchor to the skinned knuckle instead of a fixed wrist offset: the idle
+	# clip moves the palm, and a cosmetic stock shift must not detach the grip.
+	var rig := _grip_rig_for(skel, hand_idx, false)
+	var middle := int(rig.get("middle", -1))
+	if middle < 0:
+		return
+	var contact: Vector3 = skel.global_transform * skel.get_bone_global_pose(middle) * (rig["middle_pivot"] as Vector3)
+	offset.global_position += contact - offset.global_transform * _rg_right_knuckle
+	offset.force_update_transform()
+
 func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 	if model == null or skel == null or not is_instance_valid(skel):
 		return false
@@ -4747,6 +4758,8 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 			weapon_offset.force_update_transform()
 		else:
 			rifle_root.global_position += barrel_dir * 0.40
+	if _mounted_rifle_is_m4:
+		_seat_m4_idle_grip(skel, rh_idx, weapon_offset)
 	return true
 
 #endregion
@@ -9222,6 +9235,9 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# While aiming the right-hand grip pivot above is authoritative. A later
 	# root translation would visibly detach the rifle from the palm.
 
+	if _mounted_rifle_is_m4 and not _is_aiming and not _is_firing:
+		_seat_m4_idle_grip(skel, rh_idx, _rifle_weapon_offset)
+
 	# Force update so the grip marker's global transform is current
 	_rifle_root.force_update_transform()
 	_rifle_left_hand_grip.force_update_transform()
@@ -9415,6 +9431,7 @@ func _grip_rig_for(skel: Skeleton3D, hand_idx: int, is_left: bool) -> Dictionary
 	var p_l := f_l.cross(t_l) if is_left else t_l.cross(f_l)
 	rig["frame"] = _anatomical_frame(f_l, p_l)
 	rig["knuckle"] = f_l + skel.get_bone_rest(middle1).basis * (skin_pivots.get(middle1, Vector3.ZERO) as Vector3)
+	rig["middle"] = middle1
 	rig["middle_pivot"] = skin_pivots.get(middle1, Vector3.ZERO)
 	rig["thumb"] = thumb1
 	rig["pivots"] = skin_pivots
