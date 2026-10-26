@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+069b894|Los ciervos te oyen segun como te mueves y salen galopando en manada al disparar o espantar a uno; los zorros huyen en zigzag y carronean; los lobos se reunen al aullar y flanquean en pinza; los osos investigan disparos; corregido el desvio del arco al apuntar
 1954fe9|El lobo domesticado entra y sale de las casas por la puerta abierta (tambien en el servidor), te ayuda al atacar lobos y osos, come carne y se cura, no muere de hambre mientras estas desconectado, se sienta y se tumba; las puertas suenan con un crujido propio al abrirse y cerrarse en todos los jugadores
 6f3b851|La pantalla de arranque del juego usa la misma imagen y el mismo fondo oscuro que el menú principal
 ef5c6e3|El menú principal sube a la misma altura que el panel de selección de personaje: ambos comparten el borde superior
