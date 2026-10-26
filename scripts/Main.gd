@@ -1095,6 +1095,10 @@ func _process(delta: float) -> void:
 		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
+		_door_cache_timer += delta
+		if _door_cache_timer >= 1.0:
+			_door_cache_timer = 0.0
+			_refresh_nav_door_caches()
 		# Periodic save: SIGTERM kills never reach NOTIFICATION_WM_CLOSE_REQUEST,
 		# so without this a killed server loses every change since the last save.
 		_server_save_timer += delta
@@ -1199,9 +1203,7 @@ func _process(delta: float) -> void:
 	_door_cache_timer += delta
 	if _door_cache_timer >= 1.0:
 		_door_cache_timer = 0.0
-		nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
-		if wolf_nav != null:
-			wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+		_refresh_nav_door_caches()
 	if not _pending_open_doors.is_empty():
 		_apply_pending_doors()
 	_water_night_timer += delta
@@ -3655,17 +3657,7 @@ func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 
 			door = d
 			break
 	if door != null:
-		if door.is_open != is_open:
-			door.is_open = is_open
-			var target_yaw: float = door.open_yaw if is_open else door.closed_yaw
-			if door._tween != null:
-				door._tween.kill()
-			door._tween = door.create_tween()
-			door._tween.set_trans(Tween.TRANS_SINE)
-			door._tween.set_ease(Tween.EASE_OUT)
-			door._tween.tween_property(door, "rotation_degrees:y", target_yaw, 0.28)
-			if audio_system != null and audio_system.has_method("play_door"):
-				audio_system.play_door(door.global_position, is_open)
+		door.set_open(is_open)
 	return true
 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0, bola: bool = false) -> void:
@@ -3705,6 +3697,8 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 		# pájaros conservan la firma de dos argumentos.
 		if animal is WildlifeController:
 			animal.take_damage(amount, from_knife, attacker_proxy)
+			if sender_id != 0 and (animal.animal_type == "wolf" or animal.animal_type == "bear") and not animal._is_dead and animal.tamed_to != str(sender_id):
+				_notify_tamed_wolf_assist(str(sender_id), animal)
 		else:
 			animal.take_damage(amount, from_knife)
 	# Server broadcasts hit to all clients so puppets play pain sound
@@ -7235,6 +7229,11 @@ func _register_server_house_blockers() -> void:
 		var half_d: float = hd["d"] * 0.5
 		var idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
 		wildlife_blockers[idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, hd["w"] + 0.6, hd["d"] + 1.0)
+		for h in _HOUSE_DOOR_LAYOUT:
+			if is_equal_approx(float(h[1]), origin.x) and is_equal_approx(float(h[2]), origin.z):
+				wildlife_blockers[idx]["door_name"] = String(h[0]) + " Door"
+				wildlife_blockers[idx]["door_pos"] = Vector3(float(h[1]) - 0.9, 0.0, float(h[2]) + float(h[3]) * 0.5)
+				break
 
 func _create_barn(origin: Vector3, name_suffix := "") -> void:
 	var barn_path := BARN_MODEL
@@ -15750,6 +15749,9 @@ func _tamed_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocke
 			return true
 	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
 		return true
+	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
+	if dpos.is_finite() and p.distance_to(Vector2(dpos.x, dpos.z)) <= 2.2:
+		return true
 	if not bounds.grow(-0.4).has_point(p):
 		return false
 	if animal != null and is_instance_valid(animal) and animal is Node3D:
@@ -15761,9 +15763,21 @@ func _tamed_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocke
 				return true
 	return false
 
-# Objetivo de entrada para el lobo domesticado cuando su dueno esta dentro de
-# una casa con la puerta abierta. {} si no aplica; {"inside": false,
-# "door_pos"} para rutar al umbral; {"inside": true} ya dentro.
+func _blocker_door_pos(blocker: Dictionary, blocker_pos: Vector3, bounds: Rect2) -> Vector3:
+	var door = blocker.get("door", null)
+	if door != null and is_instance_valid(door) and door is Node3D:
+		return (door as Node3D).global_position
+	if blocker.has("door_pos"):
+		return blocker["door_pos"]
+	if blocker.get("barn_door_always_open", false) == true:
+		return Vector3(float(blocker.get("front_door_x", blocker_pos.x)), 0.0, blocker_pos.z - bounds.size.y * 0.5)
+	return Vector3(blocker_pos.x - 0.9, 0.0, blocker_pos.z + bounds.size.y * 0.5 - 0.5)
+
+# Objetivo de entrada/salida para el lobo domesticado cuando una casa con la
+# puerta abierta se interpone entre el y su dueno. {} si no aplica;
+# {"inside": false, "door_pos"} para ir al umbral desde fuera; {"inside": true}
+# para caminar directo al dueno dentro; {"inside": true, "exit_pos"} para salir
+# por la puerta abierta cuando el dueno ya esta fuera.
 func tamed_wolf_house_target(animal: Node, owner: Node) -> Dictionary:
 	if animal == null or owner == null or not (animal is Node3D) or not is_instance_valid(owner) or not (owner is Node3D):
 		return {}
@@ -15773,18 +15787,47 @@ func tamed_wolf_house_target(animal: Node, owner: Node) -> Dictionary:
 		if not blocker.has("house_bounds"):
 			continue
 		var bounds: Rect2 = blocker["house_bounds"]
-		if not bounds.has_point(p2o):
+		var owner_in := bounds.has_point(p2o)
+		var wolf_in := bounds.grow(0.3).has_point(p2w)
+		if not owner_in and not wolf_in:
 			continue
 		if not _check_door_open(blocker.get("door", null), blocker):
 			continue
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
-		if bounds.grow(0.3).has_point(p2w) or _is_in_doorway_passage(animal.global_position, blocker_pos) or _is_in_barn_doorway_passage(animal.global_position, blocker):
-			return {"inside": true}
-		var door = blocker.get("door", null)
-		if door != null and is_instance_valid(door) and door is Node3D:
-			return {"inside": false, "door_pos": (door as Node3D).global_position}
-		return {}
+		var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
+		var in_passage := _is_in_doorway_passage(animal.global_position, blocker_pos) or _is_in_barn_doorway_passage(animal.global_position, blocker) or (dpos.is_finite() and p2w.distance_to(Vector2(dpos.x, dpos.z)) <= 1.8)
+		if owner_in:
+			if wolf_in or in_passage:
+				return {"inside": true}
+			if dpos.is_finite():
+				return {"inside": false, "door_pos": dpos}
+			return {}
+		# El lobo esta dentro pero el dueno ya salio: guiarlo al exterior del vano
+		if wolf_in and dpos.is_finite():
+			var out_dir := (Vector2(dpos.x, dpos.z) - bounds.get_center()).normalized()
+			if out_dir.length_squared() < 0.01:
+				out_dir = Vector2(0.0, 1.0)
+			var exit_pos := dpos + Vector3(out_dir.x * 2.0, 0.0, out_dir.y * 2.0)
+			return {"inside": true, "exit_pos": exit_pos}
 	return {}
+
+func _notify_tamed_wolf_assist(owner_id: String, foe: Node3D) -> void:
+	if owner_id.is_empty() or foe == null or not is_instance_valid(foe):
+		return
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if not is_instance_valid(w) or w == foe or not (w is Node3D):
+			continue
+		if w.get("animal_type") != "wolf" or w.get("is_puppet") or w.get("_is_dead"):
+			continue
+		if str(w.get("tamed_to")) == owner_id and w.has_method("notify_foe"):
+			w.notify_foe(foe, 20.0)
+
+func _refresh_nav_door_caches() -> void:
+	for blocker in wildlife_blockers:
+		blocker["door_open"] = _check_door_open(blocker.get("door", null), blocker)
+	nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+	if wolf_nav != null:
+		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 
 func _wildlife_water_obstacles() -> Array:
 	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)
@@ -15969,12 +16012,13 @@ func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 		var door = blocker.get("door", null)
 		var door_is_open := _check_door_open(door, blocker)
 		# When a house door is closed, push wolf toward house center if near bounds edge
-		if not door_is_open and blocker.has("house_bounds"):
-			var bounds: Rect2 = blocker["house_bounds"]
-			var expanded := bounds.grow(2.5)
-			if expanded.has_point(p) and not bounds.has_point(p):
-				var center := bounds.get_center()
-				push += Vector3(center.x - p.x, 0.0, center.y - p.y).normalized()
+		if blocker.has("house_bounds"):
+			if not door_is_open:
+				var bounds: Rect2 = blocker["house_bounds"]
+				var expanded := bounds.grow(2.5)
+				if expanded.has_point(p) and not bounds.has_point(p):
+					var center := bounds.get_center()
+					push += Vector3(center.x - p.x, 0.0, center.y - p.y).normalized()
 			continue
 		var radius := float(blocker.get("radius", 1.8)) + 2.1
 		var offset := p - Vector2(blocker_pos.x, blocker_pos.z)
@@ -16036,11 +16080,14 @@ func _check_door_open(door, blocker: Dictionary) -> bool:
 		return true
 	if door != null and is_instance_valid(door) and door.get("is_open") == true:
 		return true
-	# Fallback: check _server_door_states by door name
+	# Fallback: check _server_door_states by door name (or server-only door_name)
+	var door_name := ""
 	if door != null and is_instance_valid(door):
-		var door_name: String = door.name
-		if _server_door_states.has(door_name):
-			return bool(_server_door_states[door_name])
+		door_name = door.name
+	elif blocker.has("door_name"):
+		door_name = String(blocker["door_name"])
+	if not door_name.is_empty() and _server_door_states.has(door_name):
+		return bool(_server_door_states[door_name])
 	return false
 
 func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:

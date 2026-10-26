@@ -737,9 +737,25 @@ func test_tamed_wolf_world_rules() -> void:
 	check(tamed._house_direct_goal, "Inside the house the wolf steers directly to the owner")
 	check((res["target"] as Vector3).distance_to(player.global_position) < 3.0, "Inside follow target stays at the owner")
 	player.global_position = Vector3(40, 0, 0)
-	check(world.tamed_wolf_house_target(tamed, player).is_empty(), "No house override once the owner leaves")
+	house = world.tamed_wolf_house_target(tamed, player)
+	check(house.has("exit_pos"), "Wolf still inside while owner leaves gets an exit target through the open door")
 	res = tamed._wolf_ai(0.05)
-	check(not tamed._house_direct_goal, "Direct-goal flag clears when the owner is outside")
+	check(tamed._house_direct_goal and (res["target"] as Vector3).distance_to(house["exit_pos"]) < 0.1, "Inside wolf steers straight to the exit doorway")
+	tamed.global_position = Vector3(0, 0, 14)
+	check(world.tamed_wolf_house_target(tamed, player).is_empty(), "No house override once both wolf and owner are outside")
+	res = tamed._wolf_ai(0.05)
+	check(not tamed._house_direct_goal, "Direct-goal flag clears when both are outside")
+
+	# --- Servidor dedicado sin nodo Door: door_name + door_pos + _server_door_states ---
+	world.wildlife_blockers[bidx]["door"] = null
+	world.wildlife_blockers[bidx]["door_name"] = "Casa abandonada 1 Door"
+	world.wildlife_blockers[bidx]["door_pos"] = Vector3(0, 0, 4.5)
+	world._server_door_states["Casa abandonada 1 Door"] = true
+	player.global_position = Vector3(1, 0, -1)
+	check(world.is_tamed_wolf_allowed_at(Vector3(2, 0, 0), tamed), "Dedicated-server house blocker without Door node still opens via _server_door_states")
+	house = world.tamed_wolf_house_target(tamed, player)
+	check(not house.is_empty() and (house.get("door_pos", Vector3.ZERO) as Vector3).distance_to(Vector3(0, 0, 4.5)) < 0.1, "Dedicated-server house target resolves door_pos without a Door node")
+	world.wildlife_blockers[bidx]["door"] = door
 
 	# --- Defensa: lobos y osos que persiguen al dueno son enemigos ---
 	player.global_position = tamed.global_position + Vector3(2, 0, 0)
@@ -761,6 +777,11 @@ func test_tamed_wolf_world_rules() -> void:
 	var wild := make_wolf(world, Vector3(0, 0, 60))
 	wild.take_damage(5.0, false, bear)
 	check(wild._wolf_foe == null, "Wild wolves still refuse to fight bears")
+	# Si el dueno ataca a un oso o lobo salvaje, su lobo domesticado acude a ayudarle.
+	tamed._wolf_foe = null
+	tamed._follow_mode = "follow"
+	bear.take_damage(10.0, false, player)
+	check(tamed._wolf_foe == bear, "Tamed wolf assists when its owner attacks a bear")
 
 	# --- Rio y lago: el domesticado cruza rios, el lago sigue vetado ---
 	world.river_segments_data = [

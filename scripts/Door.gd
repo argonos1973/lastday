@@ -37,24 +37,38 @@ func setup(label: String, size: Vector3, color: Color, open_angle: float, model_
 	else:
 		_make_door(size, color)
 
-func interact(player) -> void:
-	is_open = not is_open
-	var target_yaw := open_yaw if is_open else closed_yaw
+var _door_audio: AudioStreamPlayer3D
+
+func set_open(value: bool, audible := true) -> void:
+	if is_open == value:
+		return
+	is_open = value
 	if _tween != null:
 		_tween.kill()
 	_tween = create_tween()
 	_tween.set_trans(Tween.TRANS_SINE)
 	_tween.set_ease(Tween.EASE_OUT)
-	_tween.tween_property(self, "rotation_degrees:y", target_yaw, 0.28)
+	_tween.tween_property(self, "rotation_degrees:y", open_yaw if is_open else closed_yaw, 0.28)
+	if audible and DisplayServer.get_name() != "headless":
+		if not is_instance_valid(_door_audio):
+			_door_audio = AudioStreamPlayer3D.new()
+			_door_audio.position = Vector3(0.4, 1.1, 0)
+			_door_audio.max_distance = 22.0
+			_door_audio.unit_size = 3.0
+			_door_audio.volume_db = -3.0
+			add_child(_door_audio)
+		_door_audio.stream = load("res://assets/audio/doors/door_open.wav" if is_open else "res://assets/audio/doors/door_close.wav")
+		_door_audio.play()
+
+func interact(player) -> void:
+	set_open(not is_open)
 	player.notice.emit("Puerta abierta." if is_open else "Puerta cerrada.")
-	if player != null and player.has_meta("audio_system"):
-		var audio = player.get_meta("audio_system")
-		if audio != null and audio.has_method("play_door"):
-			audio.play_door(global_position, is_open)
-	# Sync door state to other clients via server
 	var net = get_node_or_null("/root/NetworkManager")
-	if net != null and net.is_connected and not net.is_host:
-		net.door_state_changed.rpc(name, is_open)
+	if net != null and net.is_connected:
+		if net.is_host:
+			net.door_state_changed(name, is_open)
+		else:
+			net.door_state_changed.rpc_id(1, name, is_open)
 
 func get_interaction_text(_player = null) -> String:
 	return "[F] Cerrar puerta" if is_open else "[F] Abrir puerta"

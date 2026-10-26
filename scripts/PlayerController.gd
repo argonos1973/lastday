@@ -4162,6 +4162,18 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 		target_skel.force_update_all_bone_transforms()
 	_applying_aim_pitch = false
 
+func _close_bow_fingers(hand_idx: int, left: bool) -> Vector3:
+	var rig := _grip_rig_for(_hand_skeleton, hand_idx, left)
+	_grip_pivots_applied = true
+	for entry in rig.get("fingers", []):
+		var pose := _hand_skeleton.get_bone_pose(entry[0])
+		pose.basis = (entry[2] as Basis) * Basis(entry[1] as Vector3, entry[3] as float)
+		var rest := _hand_skeleton.get_bone_rest(entry[0])
+		var pivot: Vector3 = entry[4]
+		pose.origin = rest.origin + rest.basis * pivot - pose.basis * pivot
+		_hand_skeleton.set_bone_pose(entry[0], pose)
+	return (rig.get("knuckle", Vector3.ZERO) as Vector3) * 0.7
+
 func _update_hand_socket() -> void:
 	if _hand_skeleton == null or _hand_bone_idx < 0 or third_person_hand_item_root == null:
 		return
@@ -4173,6 +4185,7 @@ func _update_hand_socket() -> void:
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
 	if holding_bow and _left_hand_bone_idx >= 0:
 		var l_world := skel_global * _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
+		l_world.origin = l_world * _close_bow_fingers(_left_hand_bone_idx, true)
 		var l_local := local_to_model * l_world
 		var r_world := skel_global * _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
 		var r_local := local_to_model * r_world
@@ -4203,7 +4216,7 @@ func _update_hand_socket() -> void:
 				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
 			return
 		else:
-			third_person_hand_item_root.position = l_local.origin + Vector3(0.12, 0.04, 0.06)
+			third_person_hand_item_root.position = l_local.origin
 			var l_euler := l_local.basis.orthonormalized().get_euler()
 			third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(l_euler.x), rad_to_deg(l_euler.y), rad_to_deg(l_euler.z))
 			if prim_node != null:

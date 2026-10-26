@@ -303,9 +303,10 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 		var is_barn_always_open: bool = blocker.get("barn_door_always_open", false) == true
 		var door = blocker.get("door", null)
 		if not is_barn_always_open:
-			if door == null or not is_instance_valid(door):
-				continue
-			if door.get("is_open") != true:
+			var door_open: bool = blocker.get("door_open", false) == true
+			if not door_open and door != null and is_instance_valid(door):
+				door_open = door.get("is_open") == true
+			if not door_open:
 				continue
 		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
