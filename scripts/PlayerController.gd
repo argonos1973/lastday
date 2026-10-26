@@ -3784,9 +3784,8 @@ func _physics_process(delta: float) -> void:
 					sleep_character.position = sleep_character.position.lerp(Vector3(0.0, sleep_target_y, 0.0), delta * 10.0)
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
-			if get_meta("inside_built_shelter", false):
-				sleep_cam_pos = Vector3(0.6, 1.1, 1.9)
 			camera.position = camera.position.lerp(sleep_cam_pos, delta * 5.0)
+			_constrain_camera_to_shelter()
 			_pitch = lerp(_pitch, deg_to_rad(-12.0), delta * 5.0)
 			camera.rotation.x = _pitch
 		return
@@ -6932,10 +6931,15 @@ func drop_inventory_item(index: int) -> void:
 		if not packed.is_empty():
 			set_meta("pending_backpack_contents", packed)
 	item_dropped.emit(item_name, item_type, float(item.weight), drop_qty, float(item.use_value), drop_pos, drop_color, is_broken, float(item.spoilage))
-	if _held_item_reference != null and inventory.items.has(_held_item_reference):
+	# A weapon taken from a shoulder is owned by the hand, not inventory.
+	# Dropping unrelated cargo must never clear that external ownership.
+	if _held_item_external and _held_item_reference != null:
+		held_index = -1
+	elif _held_item_reference != null and inventory.items.has(_held_item_reference):
 		held_index = inventory.items.find(_held_item_reference)
 	else:
 		_held_item_reference = null
+		_held_item_external = false
 		held_index = -1
 	_sync_held_item()
 	notice.emit("Sueltas %s." % item_name)
@@ -10190,6 +10194,11 @@ func _apply_view_mode() -> void:
 		camera.rotation.z = 0.0
 		camera.fov = _camera_fov
 
+func _constrain_camera_to_shelter() -> void:
+	var world := get_parent()
+	if camera != null and world != null and world.has_method("constrain_shelter_camera"):
+		camera.global_position = world.constrain_shelter_camera(global_position, camera.global_position)
+
 func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	if camera == null:
 		return
@@ -10215,13 +10224,6 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
 	var desired_z := THIRD_PERSON_CAMERA_POS.z
-
-	# Built branch shelters have no colliders and their cone tops out below
-	# the camera ray height, so the boom would stay parked on the roof.
-	# Bring the camera inside the cone with the player instead.
-	if get_meta("inside_built_shelter", false):
-		third_height = minf(third_height, 1.5)
-		desired_z = minf(desired_z, 2.1)
 
 	# Camera collision: throttled to 10/s, caches exclude array
 	_cam_collision_timer += delta
@@ -10313,6 +10315,8 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 	if not _debug_cam_active:
 		camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
+	if not _debug_cam_active:
+		_constrain_camera_to_shelter()
 	_update_third_person_animation(moving, delta)
 
 #endregion

@@ -13814,6 +13814,28 @@ func _update_loot_wear() -> void:
 				net.item_picked_up.rpc(str(rid))
 		_save_world_change_silent()
 
+func constrain_shelter_camera(player_pos: Vector3, camera_pos: Vector3) -> Vector3:
+	# The leaf roof has no collision body. Match the Blender lean-to footprint
+	# and sloping roof instead of relying on a ray above it or a proximity sphere.
+	for shelter in _built_shelters:
+		var raw = shelter.get("pos", Vector3.ZERO)
+		var origin: Vector3 = raw if raw is Vector3 else Vector3(float(raw[0]), float(raw[1]), float(raw[2]))
+		var basis := Basis(Vector3.UP, float(shelter.get("yaw", 0.0)))
+		var local := basis.inverse() * (player_pos - origin) / SHELTER_SCALE
+		if absf(local.x) > 1.4 or local.z < -1.55 or local.z > 1.35 or local.y < -0.3 or local.y > 2.2:
+			continue
+		var player_roof := 0.22 + (local.z + 1.55) / 2.8 * 1.72
+		if local.y > player_roof + 0.15:
+			continue
+		var target := basis.inverse() * (camera_pos - origin) / SHELTER_SCALE
+		# Stay with the character regardless of camera yaw, including sleeping.
+		target.x = clampf(target.x, maxf(-1.3, local.x - 0.18), minf(1.3, local.x + 0.18))
+		target.z = clampf(target.z, maxf(-1.45, local.z - 0.18), minf(1.25, local.z + 0.18))
+		var roof_y := 0.22 + (target.z + 1.55) / 2.8 * 1.72
+		target.y = clampf(target.y, 0.08, maxf(0.08, roof_y - 0.2))
+		return origin + basis * (target * SHELTER_SCALE)
+	return camera_pos
+
 func _is_near_built_shelter(pos: Vector3, radius: float = 3.5) -> bool:
 	for sh in _built_shelters:
 		var sh_pos_raw = sh.get("pos", sh)

@@ -65,8 +65,13 @@ func _attach_visual(slot: String, item_name: String, visual: Node3D) -> bool:
 		equip_failed.emit(slot, "sin_socket_o_modelo")
 		return false
 	var socket := sockets[slot] as Node3D
-	for child in socket.get_children():
-		child.queue_free()
+	# A socket can also contain shoulder weapons. Only replace the visual
+	# owned by this equipment slot, never every child of the shared socket.
+	var previous = equipped_slots.get(slot, {}).get("visual", null)
+	if is_instance_valid(previous):
+		if previous.get_parent() != null:
+			previous.get_parent().remove_child(previous)
+		previous.queue_free()
 	visual.name = "%sEquipped" % item_name.replace(" ", "")
 	visual.position = socket_offsets.get(slot, Vector3.ZERO)
 	visual.rotation_degrees = socket_rotations.get(slot, Vector3.ZERO)
