@@ -57,6 +57,10 @@ const DOOR_OPEN_PATHS := [
 const DOOR_CLOSE_PATHS := [
 	"res://cerrarpuerta.mp3"
 ]
+# Los clips llevan ~2.5 s / ~2 s de silencio inicial: se arrancan justo antes
+# del golpe para sincronizarlos con el giro de la puerta.
+const DOOR_OPEN_START_SECONDS := 2.45
+const DOOR_CLOSE_START_SECONDS := 1.95
 const WATER_FOOTSTEP_START_SECONDS := 4.0
 const WATER_OBJECT_START_SECONDS := 2.0
 const WATER_OBJECT_END_SECONDS := 5.0
@@ -645,7 +649,8 @@ func stop_water_step() -> void:
 ## tree-chop loop on action_player — and the chop never cuts the door.
 func play_door(pos: Vector3, opening: bool) -> void:
 	var streams: Array = door_open_sounds if opening else door_close_sounds
-	_play_one_shot_at(door_player, streams, pos, 6.0, randf_range(0.94, 1.06))
+	var offset := DOOR_OPEN_START_SECONDS if opening else DOOR_CLOSE_START_SECONDS
+	_play_one_shot_at(door_player, streams, pos, 6.0, randf_range(0.94, 1.06), offset)
 
 ## Compatibility entry point used by older water ripple code.
 func play_sfx(effect: String, pos: Vector3 = Vector3.ZERO) -> void:
@@ -677,7 +682,7 @@ func play_chop_loop_at(pos: Vector3, duration: float) -> void:
 	if _chop_token == my_token and action_player != null:
 		action_player.stop()
 
-func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float) -> void:
+func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Vector3, volume: float, pitch: float, start_seconds := 0.0) -> void:
 	if player_node == null:
 		print("[AUDIO] _play_one_shot_at: player_node is null")
 		return
@@ -693,7 +698,7 @@ func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Ve
 	player_node.volume_db = volume
 	player_node.pitch_scale = pitch
 	player_node.stream = stream
-	player_node.play()
+	player_node.play(start_seconds)
 
 func _update_footsteps(delta: float) -> void:
 	# Water footsteps use input timing instead of the previous frame's velocity.
