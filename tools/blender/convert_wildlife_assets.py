@@ -23,6 +23,7 @@ ANIMALS = {
             "walk": ("a_walkmedium_f",),
             "trot": ("a_trotfast_f",),
             "run": ("a_runfast_f",),
+            "gallop": ("a_bouncingfast_f",),
         },
     },
     "fox": {

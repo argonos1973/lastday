@@ -3831,9 +3831,12 @@ func _physics_process(delta: float) -> void:
 	if carry > 0.85 or stats.get_thermal_stress() >= 0.85:
 		is_sprinting = false
 	var speed := crouch_speed if is_crouching else (sprint_speed * (1.0 - carry * 0.4) if is_sprinting else walk_speed * (1.0 - carry * 0.2))
-	# Reduce speed when aiming with rifle for careful movement
+	# Reduce speed when aiming with rifle or bow/throwable for careful movement
 	if _is_aiming and _has_rifle_equipped():
 		speed = crouch_speed * 0.8
+		is_sprinting = false
+	elif _is_aiming and (_has_bow_equipped() or _has_throwable_weapon_equipped()):
+		speed = minf(speed, crouch_speed * 0.95)
 		is_sprinting = false
 	# Lock movement while attacking
 	if third_person_action_timer > 0.0 and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
@@ -4086,6 +4089,9 @@ func _bind_headwear_socket_signal() -> void:
 func _on_head_skeleton_updated() -> void:
 	_update_head_worn_items()
 
+func _on_third_person_mixer_applied() -> void:
+	_aim_pitch_saved_rotations.clear()
+
 func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
 	if target_skel == null or not is_instance_valid(target_skel) or _aim_pitch_saved_rotations.is_empty():
@@ -4112,8 +4118,10 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var aim_pitch := _pitch
 	if not is_puppet and is_instance_valid(camera):
 		aim_pitch = camera.rotation.x
+	if bow_active:
+		aim_pitch += deg_to_rad(4.0)
 	aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
-	var aim_yaw := deg_to_rad(-16.0) if bow_active else 0.0
+	var aim_yaw := deg_to_rad(-5.4) if bow_active else 0.0
 	if absf(aim_pitch) < 0.001 and absf(aim_yaw) < 0.001:
 		_applying_aim_pitch = false
 		return
@@ -4184,18 +4192,30 @@ func _update_hand_socket() -> void:
 	var local_to_model := third_person_model.global_transform.affine_inverse()
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
 	if holding_bow and _left_hand_bone_idx >= 0:
+		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
 		var l_world := skel_global * _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
-		l_world.origin = l_world * _close_bow_fingers(_left_hand_bone_idx, true)
+		var knuckle_off := _close_bow_fingers(_left_hand_bone_idx, true)
+		if not bow_drawing:
+			l_world.origin = l_world * knuckle_off
 		var l_local := local_to_model * l_world
 		var r_world := skel_global * _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
 		var r_local := local_to_model * r_world
-		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
-		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_shoot_animation])
 		var prim_node := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if bow_drawing:
 			var draw_vec := l_local.origin - r_local.origin
 			var draw_dist := draw_vec.length()
-			var fwd_dir := (draw_vec / draw_dist) if draw_dist > 0.04 else Vector3(0.0, 0.0, 1.0)
+			var raw_pitch := camera.rotation.x if (not is_puppet and is_instance_valid(camera)) else _pitch
+			var ideal_fwd := Vector3(0.0, sin(raw_pitch), cos(raw_pitch)).normalized()
+			var fwd_dir := (draw_vec / draw_dist) if draw_dist > 0.04 else ideal_fwd
+			var released := cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY
+			if released or draw_dist < 0.28:
+				fwd_dir = ideal_fwd
+			elif fwd_dir.dot(ideal_fwd) < 0.996:
+				# Keep the bow aligned with the player's sight line during blend/nock
+				# transitions while preserving the hand-to-hand draw line at anchor.
+				var align_w := clampf((0.996 - fwd_dir.dot(ideal_fwd)) / 0.12, 0.35, 1.0)
+				fwd_dir = fwd_dir.slerp(ideal_fwd, align_w).normalized()
 			# Keep right_hint near model -X (player right) so pitching up to the sky
 			# or down to the ground never hits gimbal lock with the vertical axis.
 			var right_hint := Vector3(-1.0, 0.22, 0.0).normalized()
@@ -4212,7 +4232,6 @@ func _update_hand_socket() -> void:
 				prim_node.rotation_degrees = Vector3.ZERO
 				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z * prim_node.scale.z)
 				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
-				var released := cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY
 				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
 			return
 		else:
@@ -5054,6 +5073,8 @@ func _setup_third_person_animation(character: Node3D) -> void:
 		character.add_child(created)
 		created.root_node = created.get_path_to(character)
 		third_person_animation_player = created
+	if third_person_animation_player != null and not third_person_animation_player.mixer_applied.is_connected(_on_third_person_mixer_applied):
+		third_person_animation_player.mixer_applied.connect(_on_third_person_mixer_applied)
 	# Load pre-built AnimationLibrary and retarget each animation to the character skeleton
 	var debug_skel := _find_skeleton(character)
 	if debug_skel != null:
@@ -10412,8 +10433,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			third_person_action_start_offset = 0.0
 			_rod_socket_active = false
 	var base_rotation := Vector3(0.0, 180.0, 0.0) if character == third_person_model else Vector3.ZERO
-	var bob: float = abs(sin(_walk_bob)) * 0.08 * _walk_intensity if moving else 0.0
-	var sway: float = sin(_walk_bob) * 4.5 * _walk_intensity if moving else 0.0
+	var bob: float = abs(sin(_walk_bob)) * (0.02 if _is_aiming else 0.08) * _walk_intensity if moving else 0.0
+	var sway: float = sin(_walk_bob) * (0.6 if _is_aiming else 4.5) * _walk_intensity if moving else 0.0
 	var target_y := _compute_skeleton_ground_target_y(bob)
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
@@ -13318,6 +13339,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 		if node.has_method("apply_damage"):
 			node.apply_damage(damage)
 	# Non-living surface: dust puff, debris chips and a bullet hole decal
+	_alert_wildlife_near_point(hit_pos, 85.0)
 	_spawn_bullet_impact(hit_pos, hit_normal, collider)
 
 func _is_rifle_damage_target(node: Node) -> bool:
@@ -13955,14 +13977,20 @@ func _finish_bow_shot() -> void:
 	var space_state := get_world_3d().direct_space_state
 	var converge_dist := 35.0
 	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
-	if space_state != null:
-		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
-		if not sight_hit.is_empty():
-			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
-			if hit_d > 0.25:
-				converge_dist = clampf(hit_d, 0.35, 120.0)
-				zero_target = sight_hit.position
 	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
+	if space_state != null:
+		# Start the sight ray past the bow so obstacles between the third-person
+		# over-shoulder camera and the player's hand never deflect the arrow.
+		var bow_along_ray := maxf(0.0, (shot_origin - cam_ray_origin).dot(cam_ray_dir))
+		var sight_start := cam_ray_origin + cam_ray_dir * (bow_along_ray + 0.35)
+		var sight_hit := _rifle_sight_hit(sight_start, cam_ray_dir, exclude_arr)
+		if not sight_hit.is_empty():
+			var hit_d_from_bow := sight_start.distance_to(sight_hit.position)
+			if hit_d_from_bow > 2.2:
+				converge_dist = clampf(bow_along_ray + 0.35 + hit_d_from_bow, bow_along_ray + 4.5, 120.0)
+				zero_target = sight_hit.position
+			else:
+				zero_target = cam_ray_origin + cam_ray_dir * maxf(bow_along_ray + 4.5, 6.5)
 	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
 	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
 	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —
@@ -14185,6 +14213,7 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.look_at(origin + direction.normalized(), Vector3.UP if absf(direction.normalized().y) < 0.97 else Vector3.FORWARD)
 	if visual_only:
 		return
+	_alert_wildlife_along_shot(origin, direction.normalized(), minf(max_dist, 55.0), 22.0, 15.0)
 	var network := get_node_or_null("/root/NetworkManager")
 	if network != null and network.is_connected:
 		if network.is_host:
@@ -14247,7 +14276,33 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		_spawn_bullet_impact(hit_pos, hit_normal, collider)
 	if not is_bola:
 		_play_arrow_stick_sound(hit_pos, hit_dist, target_node != null)
+	_alert_wildlife_near_point(hit_pos, 36.0)
 	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state, flight_dir, target_node, collider)
+
+func _alert_wildlife_near_point(pos: Vector3, radius: float) -> void:
+	if not is_inside_tree():
+		return
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w != null and is_instance_valid(w) and w.has_method("flee_from_gunshot"):
+			w.flee_from_gunshot(pos, radius)
+
+func _alert_wildlife_along_shot(origin: Vector3, dir: Vector3, max_len: float, origin_radius: float, corridor_radius: float) -> void:
+	if not is_inside_tree() or dir.length_squared() < 0.001:
+		return
+	var ndir := dir.normalized()
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == null or not is_instance_valid(w) or not (w is Node3D) or not w.has_method("flee_from_gunshot"):
+			continue
+		var wpos := (w as Node3D).global_position
+		if wpos.distance_to(origin) <= origin_radius:
+			w.flee_from_gunshot(origin, origin_radius + 2.0)
+			continue
+		var rel := wpos - origin
+		var along := rel.dot(ndir)
+		if along > 0.0 and along <= max_len:
+			var closest := origin + ndir * along
+			if wpos.distance_to(closest) <= corridor_radius:
+				w.flee_from_gunshot(closest, corridor_radius + 4.0)
 
 func _play_arrow_stick_sound(hit_pos: Vector3, hit_dist: float, hit_flesh: bool) -> void:
 	if _impact_audio_player == null:

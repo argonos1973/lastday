@@ -39,6 +39,7 @@ class TestPlayer extends Node3D:
 	var is_prone := false
 	var is_crouching := false
 	var is_sprinting := false
+	var is_moving := false
 	var _torch_lit := false
 	func apply_damage(amount: float) -> void:
 		health -= amount
@@ -180,6 +181,65 @@ func _run() -> void:
 	bear.global_position = Vector3(80, 0, 0)
 	bear._wolf_ai(0.05)
 	check(bear._state == "retreat", "Uninjured bear stops chasing and retreats when player leaves its 115m territory")
+	bear.free()
+
+	# 6. Ciervos: detección por oído (sprint/caminar vs agachado/tumbado), animación gallop y huida en manada al disparar
+	var deer1 := TestPredator.new()
+	var deer2 := TestPredator.new()
+	world.add_child(deer1)
+	world.add_child(deer2)
+	deer1.setup("deer", [Vector3.ZERO, Vector3(10, 0, 0)])
+	deer2.setup("deer", [Vector3(14, 0, 0), Vector3(24, 0, 0)])
+	deer1._player = player
+	deer2._player = player
+	deer1._cached_wildlife = [deer1, deer2]
+	deer2._cached_wildlife = [deer1, deer2]
+
+	player.is_crouching = true
+	player.is_sprinting = false
+	player.is_moving = true
+	player.global_position = Vector3(18, 0, 0)
+	deer1.global_position = Vector3.ZERO
+	deer1._prey_flee_timer = 0.0
+	deer1._state = "patrol"
+	deer1._prey_ai(0.05)
+	check(deer1._state == "patrol", "Crouching hunter at 18m does not spook deer (crouch alert range 12m)")
+
+	player.is_crouching = false
+	player.is_moving = true
+	player.global_position = Vector3(23, 0, 0)
+	deer1._prey_ai(0.05)
+	check(deer1._state == "flee" and deer1.current_anim_keyword == "gallop", "Walking player at 23m is heard by deer and triggers gallop escape")
+	check(deer2._state == "flee" and deer2._prey_flee_timer > 0.0, "Spooked deer alerts nearby herd mate to flee together")
+
+	deer1._state = "patrol"
+	deer1._prey_flee_timer = 0.0
+	deer2._state = "patrol"
+	deer2._prey_flee_timer = 0.0
+	player.is_moving = false
+	player.is_sprinting = true
+	player.global_position = Vector3(34, 0, 0)
+	deer1._prey_ai(0.05)
+	check(deer1._state == "flee" and deer1.current_anim_keyword == "gallop", "Sprinting player at 34m is heard by deer from afar")
+	player.is_sprinting = false
+
+	# Disparar a un ciervo (incluso de lejos) hace huir al ciervo y a toda la manada cercana
+	deer1._state = "patrol"
+	deer1._prey_flee_timer = 0.0
+	deer2._state = "patrol"
+	deer2._prey_flee_timer = 0.0
+	player.global_position = Vector3(70, 0, 0)
+	deer1.take_damage(40.0, false, player)
+	check(deer1._state == "flee" and deer1._prey_flee_timer >= 11.0 and deer1.current_anim_keyword == "gallop", "Shot deer bolts immediately in gallop")
+	check(deer2._state == "flee" and deer2._prey_flee_timer >= 9.0, "Shooting one deer causes nearby herd deer to flee in panic")
+
+	var deer_scene: PackedScene = load("res://assets/models/wildlife/deer.glb")
+	var deer_inst := deer_scene.instantiate()
+	var deer_ap: AnimationPlayer = deer1._find_animation_player(deer_inst)
+	check(deer_ap != null and deer_ap.has_animation("gallop") and deer_ap.has_animation("run"), "deer.glb contains both the new gallop bounding animation and run animation")
+	deer_inst.free()
+	deer1.free()
+	deer2.free()
 
 	world.queue_free()
 	await process_frame

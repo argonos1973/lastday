@@ -3620,12 +3620,16 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
 			rp.play_rifle_shot_remote(origin, dir, wind)
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
-	# bears and birds flee running when they hear a gunshot.
+	# bears and birds flee running when they hear a gunshot or bullet impact zone.
+	var ndir := dir.normalized() if dir.length_squared() > 0.001 else Vector3.FORWARD
+	var mid_impact := origin + ndir * 65.0
 	for w in get_tree().get_nodes_in_group("wildlife"):
 		if w == null or not is_instance_valid(w):
 			continue
 		if w.has_method("flee_from_gunshot"):
 			w.flee_from_gunshot(origin, 120.0)
+			if w is Node3D and (w as Node3D).global_position.distance_to(origin) > 120.0 and (w as Node3D).global_position.distance_to(mid_impact) <= 75.0:
+				w.flee_from_gunshot(mid_impact, 75.0)
 
 # El servidor dedicado no instancia nodos Door — deriva la posición de la
 # puerta desde la tabla _HOUSE_DOOR_LAYOUT (bisagra del marco).
@@ -19630,6 +19634,22 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 	return ""
 
 func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float, wind: Vector3 = Vector3.ZERO) -> void:
+	# Alert server-authoritative wildlife near the archer/thrower and along the
+	# arrow/spear trajectory even on dedicated server (where remote_players has no mesh).
+	if direction.length_squared() > 0.001:
+		var ndir := direction.normalized()
+		for w in get_tree().get_nodes_in_group("wildlife"):
+			if w == null or not is_instance_valid(w) or not (w is Node3D) or not w.has_method("flee_from_gunshot"):
+				continue
+			var wpos := (w as Node3D).global_position
+			if wpos.distance_to(origin) <= 22.0:
+				w.flee_from_gunshot(origin, 24.0)
+				continue
+			var along := (wpos - origin).dot(ndir)
+			if along > 0.0 and along <= 60.0:
+				var closest := origin + ndir * along
+				if wpos.distance_to(closest) <= 15.0:
+					w.flee_from_gunshot(closest, 18.0)
 	var actor = remote_players.get(shooter_id)
 	if not is_instance_valid(actor):
 		return

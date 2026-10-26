@@ -209,10 +209,29 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 			_play_wolf_sound("attack")
 		else:
 			var critical_wound := animal_type == "wolf" and health > 0.0 and health <= max_health * 0.25
-			_prey_flee_timer = 14.0 if critical_wound else 8.0
-			if attacker is Node3D and is_instance_valid(attacker):
-				_flee_origin = (attacker as Node3D).global_position
+			_prey_flee_timer = 14.0 if critical_wound else (12.0 if (animal_type == "deer" or animal_type == "fox") else 8.0)
+			_flee_stamina = 0.0
+			_idle_timer = 0.0
+			_unstuck_timer = 0.0
+			_ai_lod_clock = 10.0
+			var threat_node: Node3D = attacker as Node3D if (attacker is Node3D and is_instance_valid(attacker)) else null
+			if threat_node == null and _player != null and is_instance_valid(_player):
+				threat_node = _player
+			if threat_node == null:
+				threat_node = _find_nearest_proxy()
+			if threat_node != null:
+				_flee_origin = threat_node.global_position
+				if animal_type == "wolf" and tamed_to.is_empty():
+					_player = threat_node
+			elif not _flee_origin.is_finite():
+				_flee_origin = global_position - global_transform.basis.z * 6.0
 			_chase_cooldown = 16.0 if critical_wound else 10.0
+			if animal_type == "deer" or animal_type == "fox":
+				_state = "flee"
+				_play_animation_by_name("gallop" if animal_type == "deer" else "run")
+				_alert_nearby_herd(_flee_origin, 42.0)
+			elif animal_type == "wolf" and tamed_to.is_empty() and threat_node != null:
+				_alert_nearby_pack(threat_node)
 		_current_path.clear()
 		_path_index = 0
 		_path_recalc_timer = 0.0
@@ -587,7 +606,7 @@ func _process_body(delta: float) -> void:
 	var chase_live: Node3D = _chase_target if (_chase_target != null and is_instance_valid(_chase_target) and (_state == "chase_prey" or _state == "chase_player" or _state == "fight_wolf")) else null
 	var to_target := target - global_position
 	to_target.y = 0.0
-	if to_target.length() < 1.6 and chase_live == null and not (_state in ["follow", "guard", "fight_wolf", "seek_corpse"]):
+	if to_target.length() < 1.6 and chase_live == null and _prey_flee_timer <= 0.0 and not (_state in ["follow", "guard", "fight_wolf", "seek_corpse", "flee"]):
 		target_index = (target_index + 1) % patrol_points.size()
 		_current_path.clear()
 		_path_index = 0
@@ -602,10 +621,12 @@ func _process_body(delta: float) -> void:
 	if _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 1.2
+		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state == "flee") else 1.2
 	var move_target: Vector3 = global_position
 	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0 and _direct_route_allowed(chase_live.global_position):
 		move_target = chase_live.global_position
+	elif (_prey_flee_timer > 0.0 or _state == "flee") and (animal_type == "deer" or animal_type == "fox") and _direct_route_allowed(target):
+		move_target = target
 	elif _house_direct_goal and animal_type == "wolf":
 		# Dentro de la casa el interior no es celda de nav: se avanza a paso
 		# libre — is_tamed_wolf_allowed_at ya permite el interior con el dueno.
@@ -624,20 +645,25 @@ func _process_body(delta: float) -> void:
 	if _route_waiting:
 		_play_animation_by_name("idle")
 	else:
-		_move_towards(move_target, speed, delta, 6.0)
+		var turn_spd := 9.0 if (_prey_flee_timer > 0.0 or _state == "flee") else 6.0
+		_move_towards(move_target, speed, delta, turn_spd)
 	if global_position.distance_to(_last_position) > 0.01:
 		_walk_time += delta * speed * 4.8
 		_animate_legs(delta)
 		_update_animation_speed(speed)
 
 func attract_to_noise(pos: Vector3, radius: float) -> void:
-	if _is_dead or animal_type != "wolf":
+	if _is_dead:
 		return
 	var dist := global_position.distance_to(pos)
 	if dist > radius:
 		return
-	_noise_attract_pos = pos
-	_noise_attract_timer = 15.0
+	if animal_type == "deer" or animal_type == "fox":
+		flee_from_gunshot(pos, minf(radius, 52.0))
+		return
+	if animal_type == "wolf" or (animal_type == "bear" and not _bear_beyond_territory(pos)):
+		_noise_attract_pos = pos
+		_noise_attract_timer = 15.0
 
 var _last_gunshot_ms := -1000
 var _last_gunshot_origin := Vector3.ZERO
@@ -660,18 +686,28 @@ func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 		_prey_flee_timer = 0.0
 		_chase_cooldown = 0.0
 		_idle_timer = 0.0
+		if not _bear_beyond_territory(pos):
+			_noise_attract_pos = pos
+			_noise_attract_timer = 14.0
 		_play_wolf_sound("growl")
 		return
-	_prey_flee_timer = 8.0
+	var is_prey := animal_type == "deer" or animal_type == "fox"
+	_prey_flee_timer = 11.0 if is_prey else 8.0
 	_flee_stamina = 0.0
 	_flee_origin = pos
 	_chase_cooldown = 10.0
 	_chase_target = null
 	_idle_timer = 0.0
-	_state = "patrol"
+	_unstuck_timer = 0.0
+	_ai_lod_clock = 10.0
+	_wander_offset = Vector3.ZERO
+	_state = "flee" if is_prey else "patrol"
 	_current_path.clear()
 	_path_index = 0
 	_path_recalc_timer = 0.0
+	if is_prey:
+		_play_animation_by_name("gallop" if animal_type == "deer" else "run")
+		_alert_nearby_herd(pos, 34.0)
 
 func _retreat_from_player() -> Dictionary:
 	var away := global_position - _player.global_position
@@ -710,6 +746,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 	if animal_type == "wolf" and is_hungry and _howl_timer <= 0.0:
 		_play_wolf_sound("howl")
 		_howl_timer = randf_range(10.0, 20.0)
+		if tamed_to.is_empty():
+			_rally_pack_on_howl()
 	# (Removed: non-hungry wolves flee — now they always attack if player is close)
 	# Flee from player when attacked or when gunshot heard nearby.
 	# Un lobo domesticado no huye de su amenaza designada: su trabajo es defender.
@@ -940,7 +978,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_chase_cooldown = 4.0
 				_play_animation_by_name("walk")
 				return {"target": patrol_points[target_index], "speed": move_speed}
-			_bear_warn_timer -= delta
+			var warn_decay := delta * (2.2 if ((_player.get("is_sprinting") == true or _player.get_meta("sprinting", false) == true) and dist_to_player < 28.0) else 1.0)
+			_bear_warn_timer -= warn_decay
 			if dist_to_player > 22.0 and _bear_warn_timer > 0.0 and health >= max_health * 0.99:
 				var to_intruder := _player.global_position - global_position
 				to_intruder.y = 0.0
@@ -1022,7 +1061,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						if local_net != null and local_net.is_host:
 							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)
 					if animal_type == "wolf" or animal_type == "bear":
-						_play_wolf_sound("bite")
+						_play_wolf_sound("attack" if animal_type == "bear" else "bite")
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
 				if away_dir.length_squared() < 0.0001:
@@ -1030,14 +1069,16 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					away_dir = away_dir.normalized()
 				if animal_type == "wolf":
+					_face_towards(_player.global_position, delta * 7.0)
 					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
 					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
 					speed = move_speed * 1.35
 					_play_animation_by_name("trot")
 				else:
-					_play_animation_by_name("run")
-					target = _player.global_position + away_dir * 2.5
-					speed = 0.0
+					_face_towards(_player.global_position, delta * 6.0)
+					_play_animation_by_name("walk" if flat_dist <= 2.8 else "run")
+					target = _player.global_position + away_dir * 2.2
+					speed = move_speed * 0.65 if flat_dist > 2.4 else 0.0
 				_chase_stuck_time = 0.0
 			else:
 				_play_animation_by_name("run")
@@ -1048,7 +1089,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 					if to_p.length() > 0.1:
 						var n_to_p := to_p.normalized()
 						var lat := Vector3(-n_to_p.z, 0.0, n_to_p.x) * _get_flank_sign()
-						target += lat * 2.8
+						var pincer_offset := clampf((dist_to_player - 4.0) * 0.35, 1.6, 3.8)
+						target += lat * pincer_offset
 			var sep := _compute_wolf_separation(3.5)
 			if sep.length() > 0.01:
 				target += sep
@@ -1358,15 +1400,87 @@ func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
 			return candidate
 	return Vector3(clamp(goal.x, -limit, limit), goal.y, clamp(goal.z, -limit, limit_z))
 
+func _rally_pack_on_howl() -> void:
+	for node in _cached_wildlife:
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var mate := node as WildlifeController
+		if mate.is_puppet or mate.animal_type != "wolf" or mate._is_dead or not mate.tamed_to.is_empty():
+			continue
+		if mate._state == "patrol" and mate._prey_flee_timer <= 0.0 and global_position.distance_to(mate.global_position) <= 48.0:
+			mate._noise_attract_pos = global_position
+			mate._noise_attract_timer = maxf(mate._noise_attract_timer, 10.0)
+
+func _alert_nearby_herd(threat_pos: Vector3, radius: float = 36.0) -> void:
+	if not is_inside_tree() or get_tree() == null:
+		return
+	var origin_pos := threat_pos if threat_pos.is_finite() else global_position
+	var list: Array = _cached_wildlife if not _cached_wildlife.is_empty() else get_tree().get_nodes_in_group("wildlife")
+	for node in list:
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var other := node as WildlifeController
+		if other.is_puppet or other._is_dead or (other.animal_type != "deer" and other.animal_type != "fox"):
+			continue
+		if global_position.distance_to(other.global_position) <= radius:
+			other._prey_flee_timer = maxf(other._prey_flee_timer, 9.5)
+			other._flee_stamina = 0.0
+			other._flee_origin = origin_pos
+			other._idle_timer = 0.0
+			other._unstuck_timer = 0.0
+			other._ai_lod_clock = 10.0
+			other._wander_offset = Vector3.ZERO
+			if other._state != "flee":
+				other._state = "flee"
+				other._current_path.clear()
+				other._path_index = 0
+				other._path_recalc_timer = 0.0
+				other._play_animation_by_name("gallop" if other.animal_type == "deer" else "run")
+
+func _effective_prey_alert_range(p: Node3D) -> float:
+	var base := _flee_distance()
+	if p == null or not is_instance_valid(p):
+		return base
+	var is_prone_flag: bool = (p.get("is_prone") == true) or (p.get_meta("prone", false) == true)
+	if is_prone_flag:
+		return 7.5 if animal_type == "deer" else 8.5
+	var is_crouch_flag: bool = (p.get("is_crouching") == true) or (p.get_meta("crouching", false) == true)
+	if is_crouch_flag:
+		return 12.0 if animal_type == "deer" else 13.0
+	var is_sprint_flag: bool = (p.get("is_sprinting") == true) or (p.get_meta("sprinting", false) == true)
+	if is_sprint_flag:
+		return 38.0 if animal_type == "deer" else 34.0
+	var is_moving_flag: bool = (p.get("is_moving") == true) or (p.get_meta("moving", false) == true)
+	if not is_moving_flag and ("velocity" in p):
+		var vel: Vector3 = p.get("velocity")
+		is_moving_flag = Vector2(vel.x, vel.z).length() > 0.35
+	if is_moving_flag:
+		return 26.0 if animal_type == "deer" else 24.0
+	return base
+
+func _prey_run_anim() -> String:
+	if animal_type == "deer":
+		return "gallop" if (_flee_stamina < 6.0 or _prey_flee_timer > 4.5) else "run"
+	return "run"
+
+func _apply_fox_zigzag(away: Vector3) -> Vector3:
+	if animal_type != "fox":
+		return away
+	var n := away.normalized()
+	var tang := Vector3(-n.z, 0.0, n.x)
+	var phase := _flee_stamina * 4.5 + float(get_instance_id() % 17)
+	return (n + tang * sin(phase) * 0.32).normalized()
+
 func _prey_ai(delta: float) -> Dictionary:
 	var target: Vector3
 	var speed: float = move_speed
-	var flee_dist := _flee_distance()
 	# Sprint completo solo los primeros ~10s de huida; luego la presa se agota
 	# y el lobo puede alcanzarla (caza realista: la presa es más rápida al
 	# arrancar, el depredador más resistente en distancia).
-	var flee_speed := move_speed * (2.4 if animal_type == "fox" else 2.6) * lerpf(1.0, 0.55, clampf((_flee_stamina - 10.0) / 6.0, 0.0, 1.0))
-	# Flee from wolves (larger distance if already fleeing)
+	var fatigue := lerpf(1.0, 0.55, clampf((_flee_stamina - 10.0) / 6.0, 0.0, 1.0))
+	var predator_flee_speed := move_speed * (2.4 if animal_type == "fox" else 2.6) * fatigue
+	var panic_flee_speed := move_speed * (2.85 if animal_type == "fox" else 3.15) * lerpf(1.0, 0.65, clampf((_flee_stamina - 10.0) / 6.0, 0.0, 1.0))
+	# Flee from wolves and bears (larger distance if already fleeing)
 	var nearest_predator := _find_nearest_animal("wolf")
 	var nearest_bear := _find_nearest_animal("bear")
 	if nearest_bear != null and is_instance_valid(nearest_bear) and (nearest_predator == null or global_position.distance_squared_to(nearest_bear.global_position) < global_position.distance_squared_to(nearest_predator.global_position)):
@@ -1381,10 +1495,16 @@ func _prey_ai(delta: float) -> Dictionary:
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
+			away = _apply_fox_zigzag(away)
+			if _state != "flee":
+				_state = "flee"
+				_current_path.clear()
+				_path_index = 0
+				_path_recalc_timer = 0.0
 			target = _clamp_flee_goal(global_position, away, 25.0)
-			speed = flee_speed
-			_prey_flee_timer = 5.0
-			_play_animation_by_name("gallop")
+			speed = predator_flee_speed
+			_prey_flee_timer = maxf(_prey_flee_timer, 5.0)
+			_play_animation_by_name(_prey_run_anim())
 			return {"target": target, "speed": speed}
 	# Gunshot or damage panic: flee directly away from the gunshot/threat origin
 	# even when the shooter is far beyond normal proximity detection.
@@ -1393,28 +1513,40 @@ func _prey_ai(delta: float) -> Dictionary:
 		away_shot.y = 0.0
 		if away_shot.length() < 0.01:
 			away_shot = Vector3.RIGHT
-		target = _clamp_flee_goal(global_position, away_shot, 35.0)
-		speed = flee_speed
-		_play_animation_by_name("gallop")
+		away_shot = _apply_fox_zigzag(away_shot)
+		_state = "flee"
+		target = _clamp_flee_goal(global_position, away_shot, 38.0)
+		speed = panic_flee_speed
+		_play_animation_by_name(_prey_run_anim())
 		return {"target": target, "speed": speed}
-	# Flee from player
+	# Flee from player (hearing footsteps/sprint or spotting player)
 	var flee_from: Node3D = _player
 	if flee_from == null or not is_instance_valid(flee_from):
-		# When fleeing from damage, find nearest proxy even if _player wasn't resolved
 		if _prey_flee_timer > 0.0:
 			flee_from = _find_nearest_proxy()
 	if flee_from != null and is_instance_valid(flee_from):
 		var dist_to_player := global_position.distance_to(flee_from.global_position)
-		var player_flee_dist := flee_dist + 10.0 if _prey_flee_timer > 0.0 else flee_dist
+		var alert_dist := _effective_prey_alert_range(flee_from)
+		var player_flee_dist := alert_dist + 12.0 if _prey_flee_timer > 0.0 else alert_dist
 		if dist_to_player < player_flee_dist:
 			var away := global_position - flee_from.global_position
 			away.y = 0.0
 			if away.length() < 0.01:
 				away = Vector3.RIGHT
-			target = _clamp_flee_goal(global_position, away, 20.0)
-			speed = flee_speed
-			_prey_flee_timer = 3.0
-			_play_animation_by_name("gallop")
+			away = _apply_fox_zigzag(away)
+			if _state != "flee":
+				_state = "flee"
+				_current_path.clear()
+				_path_index = 0
+				_path_recalc_timer = 0.0
+				_idle_timer = 0.0
+				if animal_type == "deer":
+					_alert_nearby_herd(flee_from.global_position, 32.0)
+			_flee_origin = flee_from.global_position
+			target = _clamp_flee_goal(global_position, away, 28.0)
+			speed = panic_flee_speed
+			_prey_flee_timer = maxf(_prey_flee_timer, 5.5)
+			_play_animation_by_name(_prey_run_anim())
 			return {"target": target, "speed": speed}
 	# Flee timer active but no threat nearby — run away from current position
 	if _prey_flee_timer > 0.0:
@@ -1422,10 +1554,26 @@ func _prey_ai(delta: float) -> Dictionary:
 		flee_dir.y = 0.0
 		if flee_dir.length() < 0.01:
 			flee_dir = Vector3.RIGHT
-		target = global_position + flee_dir.normalized() * 25.0
-		speed = flee_speed
-		_play_animation_by_name("gallop")
+		flee_dir = _apply_fox_zigzag(flee_dir)
+		_state = "flee"
+		target = _clamp_flee_goal(global_position, flee_dir, 28.0)
+		speed = panic_flee_speed
+		_play_animation_by_name(_prey_run_anim())
 		return {"target": target, "speed": speed}
+	# Opportunistic fox scavenging: when calm, foxes trot toward unclaimed wild carrion
+	if animal_type == "fox":
+		var scrap := _find_nearest_meat_pickup()
+		if scrap != null and not scrap.has_meta("dropped_by") and global_position.distance_to(scrap.global_position) < 20.0:
+			var d_scrap := _flat_distance_to(scrap.global_position)
+			if d_scrap < 1.8:
+				_consume_meat_pickup(scrap)
+				_play_animation_by_name("idle")
+				return {"target": global_position, "speed": 0.0}
+			_state = "patrol"
+			_play_animation_by_name("trot")
+			return {"target": scrap.global_position, "speed": move_speed * 1.65}
+	_state = "patrol"
+	_flee_origin = Vector3.INF
 	target = patrol_points[target_index]
 	speed = move_speed * 1.0
 	_play_animation_by_name("walk")
@@ -2659,13 +2807,24 @@ func _play_animation_by_name(keyword: String) -> void:
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0:
 		return
 	var best := ""
-	for animation_name in _animation_player.get_animation_list():
+	var candidates := [lower_keyword]
+	if lower_keyword == "gallop":
+		candidates = ["gallop", "run", "trot", "walk"]
+	elif lower_keyword == "run":
+		candidates = ["run", "gallop", "trot", "walk"]
+	elif lower_keyword == "trot":
+		candidates = ["trot", "walk", "run"]
+	var anim_list := _animation_player.get_animation_list()
+	for animation_name in anim_list:
 		var animation := _animation_player.get_animation(animation_name)
 		if animation != null:
 			animation.loop_mode = Animation.LOOP_LINEAR
-		var lower := animation_name.to_lower()
-		if lower.find(lower_keyword) >= 0:
-			best = animation_name
+	for cand_kw in candidates:
+		for animation_name in anim_list:
+			if animation_name.to_lower().find(cand_kw) >= 0:
+				best = animation_name
+				break
+		if not best.is_empty():
 			break
 	if best.is_empty():
 		return
