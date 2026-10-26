@@ -49,3 +49,4 @@ b7a1d5f|Techo más alto en la cabina de la torre militar y red de camuflaje wood
 b4d1a16|Flecha encajada visible en el arco al apuntar, inclinación vertical del arquero al apuntar al cielo o al suelo, estela de disparo y flechas clavadas donde impactan
 df3f50f|El arco se ve en la mano y al apuntar, se guarda en los hombros libres como los rifles y las flechas se clavan en puertas, arboles y animales con sonido de impacto
 33f3a67|La camara queda confinada dentro del refugio de ramas, soltar carga ya no suelta el arma del hombro y cambiar de equipamiento conserva las armas del hombro
+0afb2e2|Las puertas suenan al abrirse y cerrarse, tambien cuando lo hace otro jugador
