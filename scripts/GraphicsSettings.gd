@@ -12,9 +12,19 @@ const RENDER_SCALE_LABELS := ["100%", "75%", "50%"]
 const DETAIL_FACTORS := [0.6, 1.0, 1.35]
 const DETAIL_LABELS := ["Detalles: bajos", "Detalles: normales", "Detalles: altos"]
 
+static var _cached_config: ConfigFile = null
+static var _cached_file_saved: bool = false
+
+static func invalidate_cache() -> void:
+	_cached_config = null
+	_cached_file_saved = false
+
 static func _config() -> ConfigFile:
+	if _cached_config != null and (not _cached_file_saved or FileAccess.file_exists(CONFIG_PATH)):
+		return _cached_config
 	var c := ConfigFile.new()
-	c.load(CONFIG_PATH)
+	_cached_file_saved = c.load(CONFIG_PATH) == OK
+	_cached_config = c
 	return c
 
 static func _read(c: ConfigFile, key: String, fallback: Variant) -> Variant:
@@ -24,6 +34,8 @@ static func _write(key: String, value: Variant) -> void:
 	var c := _config()
 	c.set_value("graphics", key, value)
 	c.save(CONFIG_PATH)
+	_cached_config = c
+	_cached_file_saved = true
 
 static func fullscreen() -> bool:
 	return bool(_read(_config(), "fullscreen", false))
@@ -93,27 +105,33 @@ static func save_vsync(v: bool) -> void:
 
 # Ventana/pantalla completa/resolucion: aplica al instante y al arrancar.
 static func apply_window() -> void:
-	# El layout del menu y de la pantalla de carga se calcula para el
-	# tamano elegido en Opciones: no permitir redimensionar ni maximizar
-	# a mano (RESIZE_DISABLED tambien deshabilita el boton de maximizar).
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_RESIZE_DISABLED, true)
+	if DisplayServer.get_name() == "headless":
+		return
+	# Desbloquear temporalmente RESIZE_DISABLED antes de cambiar modo o tamano:
+	# en macOS/X11 una ventana no redimensionable puede ignorar FULLSCREEN o set_size.
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_RESIZE_DISABLED, false)
 	if fullscreen():
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	else:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 		var size: Vector2i = RESOLUTIONS[resolution_index()]
 		DisplayServer.window_set_size(size)
-		var screen := DisplayServer.screen_get_size()
+		var scr := DisplayServer.window_get_current_screen()
+		if scr < 0:
+			scr = DisplayServer.get_primary_screen()
+		var screen := DisplayServer.screen_get_size(scr)
 		DisplayServer.window_set_position((screen - size) / 2)
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_RESIZE_DISABLED, true)
 	DisplayServer.window_set_vsync_mode(
 		DisplayServer.VSYNC_ENABLED if vsync() else DisplayServer.VSYNC_DISABLED)
 
 # Escala de render: reduce la carga de GPU sin tocar el tamano de ventana.
 static func apply_render_scale(viewport: Viewport) -> void:
 	var s := render_scale()
-	if s < 0.999:
+	var method := str(ProjectSettings.get_setting("rendering/renderer/rendering_method", "gl_compatibility"))
+	if s < 0.999 and method == "forward_plus":
 		viewport.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
 		viewport.scaling_3d_scale = s
 	else:
 		viewport.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-		viewport.scaling_3d_scale = 1.0
+		viewport.scaling_3d_scale = s if s < 0.999 else 1.0

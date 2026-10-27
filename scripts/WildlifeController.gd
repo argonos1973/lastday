@@ -396,10 +396,6 @@ func _process_body(delta: float) -> void:
 	else:
 		_tamed_rest_time = 0.0
 	_update_tracks()
-	_wildlife_cache_timer += delta
-	if _wildlife_cache_timer >= 1.0:
-		_wildlife_cache_timer = 0.0
-		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	if is_puppet:
 		if not _is_dead:
 			var prev_puppet_pos := global_position
@@ -422,6 +418,10 @@ func _process_body(delta: float) -> void:
 			else:
 				_update_corpse_flies()
 		return
+	_wildlife_cache_timer += delta
+	if _wildlife_cache_timer >= 1.0:
+		_wildlife_cache_timer = 0.0
+		_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 	if _is_dead:
 		_rot_timer = max(0.0, _rot_timer - delta)
 		if _rot_timer <= 0.0:

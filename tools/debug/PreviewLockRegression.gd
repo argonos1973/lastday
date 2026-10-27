@@ -157,6 +157,19 @@ func _run() -> void:
 	_ok(str(ef.get("equipped_backpack", "")) == "Mochila pequena", "equipment fields carry backpack")
 	_ok(str(ef.get("held_item", "")) == "Cuchillo", "equipment fields carry held item")
 	_ok(int(ef.get("survival_seconds", 0)) == 1500, "equipment fields carry survival time")
+	for camo_pants in ["Pantalones camuflaje", "Pantalones camuflaje desert"]:
+		var camo_payload := payload.duplicate(true)
+		camo_payload["equipped_clothing"] = "Chaqueta camuflaje," + camo_pants + ",Botas militares"
+		inicio._on_server_character_locked(camo_payload)
+		var preview_model := inicio._char_preview_anchor.get_child(inicio._char_preview_anchor.get_child_count() - 1) as Node3D
+		var s_legs: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "soldier_legs")
+		var b_legs: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "Body_legs")
+		var d_legs: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "Desnudo_legs")
+		var dup_boots: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "military_boots_001")
+		_ok(s_legs != null and s_legs.visible, "%s shows soldier_legs in preview" % camo_pants)
+		_ok((b_legs == null or not b_legs.visible) and (d_legs == null or not d_legs.visible), "%s hides bare legs in preview" % camo_pants)
+		_ok(dup_boots == null or not dup_boots.visible, "%s hides duplicate military_boots_001 helper" % camo_pants)
+	inicio._on_server_character_locked(payload)
 
 	# Un payload sin colores reales (registro sin apariencia -> alpha 0) no
 	# debe pintar la tarjeta de negro: conserva los colores ya conocidos.

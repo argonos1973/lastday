@@ -3956,7 +3956,12 @@ var _hand_grip_curl := 1.0
 var _hand_grip_adjustment := Vector3.ZERO
 var _grip_modifier: SkeletonModifier3D
 
+var _cached_palm_length := -1.0
+var _cached_palm_skel: Skeleton3D = null
+
 func _palm_grip_offset() -> Vector3:
+	if _cached_palm_skel == _hand_skeleton and _cached_palm_length > 0.0:
+		return Vector3(0.0, _cached_palm_length * 0.92, _cached_palm_length * 0.28) + _hand_grip_adjustment
 	# Measure the actual imported rig rather than assuming centimetres/metres.
 	var middle := -1
 	for prefix in ["mixamorig:", "mixamorig_", ""]:
@@ -3969,6 +3974,8 @@ func _palm_grip_offset() -> Vector3:
 	var knuckle := wrist.affine_inverse() * _hand_skeleton.get_bone_global_rest(middle).origin
 	var model_basis := third_person_model.global_basis.inverse() * _hand_skeleton.global_basis * wrist.basis
 	var palm_length := (model_basis * knuckle).length()
+	_cached_palm_skel = _hand_skeleton
+	_cached_palm_length = palm_length
 	return Vector3(0.0, palm_length * 0.92, palm_length * 0.28) + _hand_grip_adjustment
 
 func _fit_held_prop_to_palm(item) -> void:
@@ -4108,12 +4115,21 @@ func _on_third_person_mixer_applied() -> void:
 
 var _spear_world_dir := Vector3(0.0, 0.0, -1.0)
 var _spear_grip_shift := 0.20
+var _spear_bone_cache: Dictionary = {}
+var _spear_bone_cache_skel: Skeleton3D = null
 
 func _find_spear_bone(skel: Skeleton3D, bare_name: String) -> int:
+	if _spear_bone_cache_skel != skel:
+		_spear_bone_cache.clear()
+		_spear_bone_cache_skel = skel
+	if _spear_bone_cache.has(bare_name):
+		return int(_spear_bone_cache[bare_name])
 	for prefix in ["mixamorig:", "mixamorig_", ""]:
 		var idx := skel.find_bone(prefix + bare_name)
 		if idx >= 0:
+			_spear_bone_cache[bare_name] = idx
 			return idx
+	_spear_bone_cache[bare_name] = -1
 	return -1
 
 func _save_bone_pose_once(skel: Skeleton3D, b_idx: int) -> void:
@@ -4358,27 +4374,30 @@ func _pose_spear_in_hand(target_skel: Skeleton3D, cur_anim: String, throw_active
 		if rsh_idx >= 0:
 			target_skel.set_bone_pose_rotation(rsh_idx, target_skel.get_bone_rest(rsh_idx).basis.get_rotation_quaternion())
 			target_skel.force_update_all_bone_transforms()
-		var pitch_rad := deg_to_rad(16.0) + swing_z * 0.12
-		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		var pitch_rad := deg_to_rad(18.0) + swing_z * 0.14
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) + right_w * 0.02).normalized()
 		_spear_grip_shift = 0.22
-		upper_dir_w = (right_w * 0.26 - up_w * 0.92 + fwd_w * (-0.18 + swing_z * 0.35)).normalized()
-		raw_lower_dir_w = (-up_w * 0.68 + fwd_w * 0.70 - right_w * 0.15).normalized()
+		upper_dir_w = (right_w * 0.34 - up_w * 0.90 + fwd_w * (-0.16 + swing_z * 0.35)).normalized()
+		raw_lower_dir_w = (-up_w * 0.74 + fwd_w * (0.62 + swing_z * 0.25) + right_w * 0.14).normalized()
 	elif is_sprinting or (not third_person_run_animation.is_empty() and cur_anim == third_person_run_animation):
 		if rsh_idx >= 0:
 			target_skel.set_bone_pose_rotation(rsh_idx, target_skel.get_bone_rest(rsh_idx).basis.get_rotation_quaternion())
 			target_skel.force_update_all_bone_transforms()
-		var pitch_rad := deg_to_rad(20.0) + swing_z * 0.18
-		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		var pitch_rad := deg_to_rad(24.0) + swing_z * 0.18
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) + right_w * 0.02).normalized()
 		_spear_grip_shift = 0.20
-		upper_dir_w = (right_w * 0.24 - up_w * 0.92 + fwd_w * (-0.16 + swing_z * 0.45)).normalized()
-		raw_lower_dir_w = (-up_w * 0.65 + fwd_w * 0.72 - right_w * 0.15).normalized()
+		upper_dir_w = (right_w * 0.34 - up_w * 0.90 + fwd_w * (-0.14 + swing_z * 0.45)).normalized()
+		raw_lower_dir_w = (-up_w * 0.70 + fwd_w * (0.66 + swing_z * 0.30) + right_w * 0.14).normalized()
 	else:
+		if rsh_idx >= 0:
+			target_skel.set_bone_pose_rotation(rsh_idx, target_skel.get_bone_rest(rsh_idx).basis.get_rotation_quaternion())
+			target_skel.force_update_all_bone_transforms()
 		var is_walk := not third_person_walk_animation.is_empty() and cur_anim == third_person_walk_animation
-		var pitch_rad := deg_to_rad(24.0 if is_walk else 28.0) + swing_z * 0.16
-		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) - right_w * 0.03).normalized()
+		var pitch_rad := deg_to_rad(32.0 if is_walk else 34.0) + swing_z * 0.20
+		_spear_world_dir = (fwd_w * cos(pitch_rad) + up_w * sin(pitch_rad) + right_w * 0.03).normalized()
 		_spear_grip_shift = 0.20
-		upper_dir_w = (anim_upper_dir_w * 0.55 + (right_w * 0.20 - up_w * 0.96 - fwd_w * 0.12) * 0.45).normalized()
-		raw_lower_dir_w = (-up_w * 0.72 + fwd_w * 0.66 - right_w * 0.14).normalized()
+		upper_dir_w = (anim_upper_dir_w * 0.50 + (right_w * 0.36 - up_w * 0.91 + fwd_w * (-0.08 + swing_z * 0.45)) * 0.50).normalized()
+		raw_lower_dir_w = (-up_w * 0.82 + fwd_w * (0.48 + swing_z * 0.38) + right_w * 0.18).normalized()
 
 	_pose_spear_arm_orthogonal(target_skel, rua_idx, rfa_idx, rh_idx, upper_dir_w, raw_lower_dir_w, _spear_world_dir, false)
 
@@ -4448,11 +4467,17 @@ func _update_hand_socket() -> void:
 			return
 		else:
 			third_person_hand_item_root.position = l_local.origin
-			var l_euler := l_local.basis.orthonormalized().get_euler()
-			third_person_hand_item_root.rotation_degrees = Vector3(rad_to_deg(l_euler.x), rad_to_deg(l_euler.y), rad_to_deg(l_euler.z))
+			var swing_z := clampf(l_local.origin.z, -0.35, 0.35)
+			var pitch_rad := deg_to_rad(18.0 - swing_z * 38.0)
+			# Model space: +X is player-left (outward from left hip), +Y is up, +Z is forward.
+			# Bow local +Y is limb-to-limb; +Z is grip-to-string.
+			var bow_y := Vector3(0.06, sin(pitch_rad), cos(pitch_rad)).normalized()
+			var bow_z := Vector3(0.52, -0.85, 0.0).slide(bow_y).normalized()
+			var bow_x := bow_y.cross(bow_z).normalized()
+			third_person_hand_item_root.basis = Basis(bow_x, bow_y, bow_z)
 			if prim_node != null:
 				prim_node.scale = Vector3.ONE * 1.42
-				prim_node.rotation_degrees = Vector3(18.0, 22.0, -16.0)
+				prim_node.rotation_degrees = Vector3.ZERO
 				_update_bow_draw_visuals(prim_node, 0.24, false)
 			return
 	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
@@ -14216,7 +14241,7 @@ func _finish_bow_shot() -> void:
 	var space_state := get_world_3d().direct_space_state
 	var converge_dist := 35.0
 	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
-	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
+	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir)
 	if space_state != null:
 		# Start the sight ray past the bow so obstacles between the third-person
 		# over-shoulder camera and the player's hand never deflect the arrow.
@@ -14229,6 +14254,7 @@ func _finish_bow_shot() -> void:
 			# A nearby hit is real cover/target, not something to aim through.
 			converge_dist = bow_along_ray + 0.35 + hit_d_from_bow
 			zero_target = sight_hit.position
+			shot_origin = _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
 	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
 	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
 	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —

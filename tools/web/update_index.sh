@@ -51,7 +51,10 @@ html_escape() {
 	echo '  <section class="bloque" id="cambios">'
 	echo '    <h3>Cambios por versión</h3>'
 	echo '    <ul class="verlist">'
-	git log --pretty=tformat:'%h|%ad|%s' --date=format:'%d/%m/%y' -15 | while IFS='|' read -r h d s; do
+	git log --pretty=tformat:'%h|%ad|%s' --date=format:'%d/%m/%y' -60 \
+		| grep -vE '\|(Changelog ES|Spanish changelog|Add Spanish changelog|Historial de cambios|AGENTS\.md:|Documenta que |Añade PrimitiveCarryPreview)' \
+		| awk 'NR <= 15' \
+		| while IFS='|' read -r h d s; do
 		txt="$(lookup_es "$h")"
 		[ -n "$txt" ] || txt="$s"
 		printf '      <li><b>v%s</b><span class="vdate">%s</span><span class="vsub">%s</span></li>\n' \

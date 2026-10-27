@@ -71,6 +71,11 @@ func run():
 	world.distant_hit = {"position":Vector3(.3,1.42,0),"normal":Vector3.LEFT}
 	origin = actor._spear_release_origin([actor.get_rid()])
 	check(origin.x < .3, "Spear respects distant batched cover")
+	var bow_origin := actor._bow_release_origin([actor.get_rid()], Vector3.RIGHT)
+	check(bow_origin.x < .3, "Bow respects distant batched cover")
+	world.distant_hit = {}
+	var close_bow_origin := actor._bow_release_origin([actor.get_rid()], Vector3.RIGHT, Vector3(.45, 1.42, 0))
+	check(close_bow_origin.x < .35, "Bow pulls release origin back when target_pt is close")
 	current_scene = null
 	world.free()
 	print("PRIMITIVE_COVER_ERRORS=", errors)

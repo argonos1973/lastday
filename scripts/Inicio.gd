@@ -608,6 +608,10 @@ func _input(event: InputEvent) -> void:
 		return
 	if _options_panel.get_global_rect().has_point(p):
 		return
+	for ob in _options_panel.find_children("*", "OptionButton", true, false):
+		var pop: PopupMenu = (ob as OptionButton).get_popup()
+		if pop != null and pop.visible:
+			return
 	if _btn_options != null and _btn_options.get_global_rect().has_point(p):
 		return
 	_options_panel.visible = false

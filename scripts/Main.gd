@@ -664,6 +664,7 @@ func _ready() -> void:
 	# Get NetworkManager first to decide if we need visuals
 	net = get_node("/root/NetworkManager")
 	if net == null or not net.is_dedicated_server:
+		_shadow_quality = ShadowQuality.selected()
 		GraphicsSettings.apply_render_scale(get_viewport())
 	if net != null and net.is_dedicated_server:
 		seed(GameConst.WORLD_SEED)
@@ -2186,7 +2187,6 @@ func _create_environment() -> void:
 	sun.rotation_degrees = Vector3(-45, -25, 0)
 	sun.shadow_enabled = true
 	ShadowQuality.apply(sun, get_viewport(), _shadow_quality)
-	sun.directional_shadow_blend_splits = true
 	sun.shadow_normal_bias = 0.8
 	add_child(sun)
 
@@ -16777,25 +16777,25 @@ func _update_forest_visibility() -> void:
 		return
 	var ppos: Vector3 = player.global_position
 	var vis_bonus := 320.0 if ppos.y > 2.5 else 0.0
+	var detail_scale := GraphicsSettings.detail_factor()
+	var hide_base := FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus
+	var show_base := FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus
+	var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest
 	for i in range(_forest_multimesh_nodes.size()):
 		var node: MultiMeshInstance3D = _forest_multimesh_nodes[i]
 		if not is_instance_valid(node):
 			continue
 		var center: Vector3 = _forest_multimesh_centers[i]
 		var batch_radius: float = _forest_multimesh_radii[i] if i < _forest_multimesh_radii.size() else 0.0
-		var dist := ppos.distance_to(Vector3(center.x, ppos.y, center.z))
+		var dist := Vector2(ppos.x - center.x, ppos.z - center.z).length()
 		# Show batch if any tree could be within visible radius
-		var should_show := false
-		var detail_scale := GraphicsSettings.detail_factor()
-		if node.visible:
-			should_show = dist < (FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus + batch_radius)
-		else:
-			should_show = dist < (FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus + batch_radius)
+		var should_show := dist < ((hide_base if node.visible else show_base) + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
-		var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest
 		var shadow_margin := 5.0 if node.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON else 0.0
-		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if dist < shadow_radius + shadow_margin + batch_radius else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var want_shadow := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (should_show and dist < shadow_radius + shadow_margin + batch_radius) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if node.cast_shadow != want_shadow:
+			node.cast_shadow = want_shadow
 
 func _create_forest_collision(positions: Array) -> void:
 	# Register tree positions in a spatial grid for on-demand collision creation
@@ -17594,6 +17594,9 @@ func _update_grass_visibility() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
+	var detail := GraphicsSettings.detail_factor()
+	var hide_base := GRASS_HIDE_RADIUS * detail
+	var show_base := GRASS_VISIBLE_RADIUS * detail
 	var any_visible := false
 	for i in range(_grass_batch_nodes.size()):
 		var node: MultiMeshInstance3D = _grass_batch_nodes[i]
@@ -17601,13 +17604,8 @@ func _update_grass_visibility() -> void:
 			continue
 		var center: Vector3 = _grass_batch_centers[i]
 		var batch_radius: float = _grass_batch_radii[i] if i < _grass_batch_radii.size() else 0.0
-		var dist: float = ppos.distance_to(Vector3(center.x, ppos.y, center.z))
-		var should_show: bool = false
-		var detail := GraphicsSettings.detail_factor()
-		if node.visible:
-			should_show = dist < (GRASS_HIDE_RADIUS * detail + batch_radius)
-		else:
-			should_show = dist < (GRASS_VISIBLE_RADIUS * detail + batch_radius)
+		var dist: float = Vector2(ppos.x - center.x, ppos.z - center.z).length()
+		var should_show: bool = dist < ((hide_base if node.visible else show_base) + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
 		if should_show:
