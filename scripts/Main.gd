@@ -2932,7 +2932,14 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			# pain grunt inside apply_damage so two voices do not overlap.
 			player._pain_sound_timer = 1.5
 		player.apply_damage(amount)
-		if weapon == "rifle" and player.has_method("_play_shot_reaction"):
+		if weapon == "bola":
+			player.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+			if player.has_method("_attach_bola_snare_visual"):
+				player._attach_bola_snare_visual(player, 6.0)
+			if player.has_method("_play_hit_reaction"):
+				player._play_hit_reaction(true)
+			player.notice.emit("¡Boleadoras! Te han trabado las piernas (6s, -%d HP)." % int(round(amount)))
+		elif weapon == "rifle" and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
 		elif weapon in ["melee", "wolf_bite", "bear_bite"] and player.has_method("_play_hit_reaction"):
 			player._play_hit_reaction(not weapon.ends_with("_bite"))
@@ -2949,6 +2956,10 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		if kind == "rifle":
 			player._spawn_blood_splatter(pos, 0.8)
 			player._play_shot_reaction()
+		elif kind == "bola":
+			player._spawn_blood_splatter(pos, 0.6)
+			if player.has_method("_attach_bola_snare_visual"):
+				player._attach_bola_snare_visual(player, 6.0)
 		elif kind in ["melee", "wolf_bite", "bear_bite"]:
 			player._spawn_blood_splatter(pos, 0.8)
 			player._play_hit_reaction(not kind.ends_with("_bite"))
@@ -2963,6 +2974,13 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 	if kind == "rifle":
 		rp._spawn_blood_splatter(pos, 0.8)
 		rp._play_shot_reaction()
+	elif kind == "bola":
+		rp._spawn_blood_splatter(pos, 0.6)
+		rp.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+		if rp.has_method("_attach_bola_snare_visual"):
+			rp._attach_bola_snare_visual(rp, 6.0)
+		if rp.has_method("_play_hit_reaction"):
+			rp._play_hit_reaction(true)
 	elif kind in ["melee", "wolf_bite", "bear_bite"]:
 		rp._spawn_blood_splatter(pos, 0.8)
 		rp._play_hit_reaction(not kind.ends_with("_bite"))
@@ -4128,12 +4146,15 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# _sender_within fails closed when the attacker has no proxy — a
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
-		if weapon == "rifle":
+		if weapon == "rifle" or weapon == "bola":
 			max_reach = PlayerController.RIFLE_RANGE + 20.0
 		elif weapon != "melee":
 			return
 		if not _sender_within(sender, proxy.global_position, max_reach):
 			return
+	if weapon == "bola":
+		proxy.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+		amount = minf(amount, 25.0)
 	if is_dead:
 		# A raced client-side death (its own notify_death flagged the proxy
 		# first) must not drop the melee cause: a validated melee hit on the

@@ -7227,7 +7227,7 @@ func _play_consumption_audio(drinking: bool, duration: float, serial: int) -> vo
 	_consumption_audio.attenuation_model = AudioStreamPlayer3D.ATTENUATION_DISABLED if not is_puppet else AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
 	_consumption_audio.volume_db = 8.0
 	_consumption_audio.max_db = 6.0
-	var paths := ["res://assets/audio/consumption/drink_01.mp3"] if drinking else ["res://assets/audio/consumption/eat_00.ogg", "res://assets/audio/consumption/eat_01.ogg", "res://assets/audio/consumption/eat_02.ogg"]
+	var paths := ["res://BEBER.mp3"] if drinking else ["res://assets/audio/consumption/eat_00.ogg", "res://assets/audio/consumption/eat_01.ogg", "res://assets/audio/consumption/eat_02.ogg"]
 	var first_stream := load(paths.pick_random()) as AudioStream
 	if first_stream != null and _action_serial == serial and not is_dead:
 		_consumption_audio.stream = first_stream
@@ -13816,11 +13816,20 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 func _is_rifle_damage_target(node: Node) -> bool:
 	return node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("net_player_proxy") or node.is_in_group("remote_player")
 
-func _apply_rifle_target_damage(target: Node, amount: float) -> void:
+func _apply_rifle_target_damage(target: Node, amount: float, weapon_kind: String = "rifle") -> void:
 	# Remote-player puppets report the weapon so the server can validate the
 	# shot distance per weapon type; NPCs use their own two-arg signature.
 	if target.is_in_group("remote_player"):
-		target.take_damage(amount, false, "rifle")
+		target.take_damage(amount, false, weapon_kind)
+	elif target.is_in_group("net_player_proxy"):
+		var peer_id: int = target.get_meta("peer_id", 0)
+		var scene_node := get_tree().current_scene if is_inside_tree() else null
+		if peer_id != 0 and scene_node != null and scene_node.has_method("_net_damage_player"):
+			var my_id := 1
+			var net_node := scene_node.get_node_or_null("/root/NetworkManager")
+			if net_node != null and net_node.has_method("get_my_id"):
+				my_id = net_node.get_my_id()
+			scene_node._net_damage_player(peer_id, amount, my_id, weapon_kind)
 	elif target is WildlifeController:
 		target.take_damage(amount, false, self)
 	else:
@@ -14756,8 +14765,7 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")
 		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy"):
 			var pvp_dmg := (18.0 if is_bola else (75.0 if is_headshot else 42.0))
-			if target_node.has_method("take_damage"):
-				_apply_rifle_target_damage(target_node, pvp_dmg)
+			_apply_rifle_target_damage(target_node, pvp_dmg, "bola" if is_bola else "rifle")
 		elif is_bola and target_node is WildlifeController and target_node.is_puppet:
 			var network := get_node_or_null("/root/NetworkManager")
 			if network != null and network.is_connected:
