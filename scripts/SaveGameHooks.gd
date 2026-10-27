@@ -204,6 +204,8 @@ static func collect_player_data(player: Node) -> Dictionary:
 		data["skin_color"] = _color_to_str(gsess.selected_skin_color)
 		data["top_camo"] = bool(gsess.get_meta("top_camo", false))
 		data["bottom_camo"] = bool(gsess.get_meta("bottom_camo", false))
+		if gsess.has_meta("hair_style"):
+			data["hair_style"] = str(gsess.get_meta("hair_style"))
 	return data
 
 static func collect_world_data(main: Node) -> Dictionary:
@@ -444,6 +446,10 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 			gsess.set_meta("top_camo", bool(data["top_camo"]))
 		if data.has("bottom_camo"):
 			gsess.set_meta("bottom_camo", bool(data["bottom_camo"]))
+		if data.has("hair_style"):
+			gsess.set_meta("hair_style", str(data["hair_style"]))
+		elif data.has("char_name"):
+			gsess.set_meta("hair_style", preload("res://scripts/CharacterGrooming.gd").style_for(str(data["char_name"])))
 	# Re-apply character colors on the player model BEFORE equipping saved clothing
 	if player.has_method("_apply_character_colors"):
 		player._apply_character_colors()

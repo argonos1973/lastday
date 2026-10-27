@@ -19,6 +19,7 @@ const PlayerEquipmentScript = preload("res://scripts/PlayerEquipment.gd")
 const PlayerHandsScript = preload("res://scripts/PlayerHands.gd")
 const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const RifleStrapScript = preload("res://scripts/RifleStrap.gd")
+const CharacterGrooming = preload("res://scripts/CharacterGrooming.gd")
 const REAL_BOTTLE_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/bottle.glb"
 const REAL_PLASTIC_BOTTLE_MODEL := "res://assets/models/props/plastic_water_bottle.glb"
 const REAL_WOOD_MODEL := "res://assets/external/kenney_survival_kit/Models/GLB format/resource-wood.glb"
@@ -1398,13 +1399,16 @@ func _apply_puppet_appearance() -> void:
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
 		_tint_mesh(bmi, _puppet_skin_color, 0.9)
-	# Apply hair color
+	# Apply hair color y peinado/barba del jugador remoto
 	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
 	_tint_mesh(hair_mi, _puppet_hair_color, 0.8)
 	# Apply skin to head/full body
 	_tint_mesh(_head_mesh, _puppet_skin_color, 0.9)
 	_tint_mesh(_full_body_mesh, _puppet_skin_color, 0.9)
 	_tint_mesh(_body_no_head_mesh, _puppet_skin_color, 0.9)
+	var p_style := CharacterGrooming.style_for(_puppet_char_name)
+	var p_stage := CharacterGrooming.stage_from_identity(_puppet_char_name, 0.0)
+	CharacterGrooming.apply(third_person_model, p_style, _puppet_hair_color, p_stage)
 
 
 func puppet_set_rifle(has_rifle: bool) -> void:
@@ -1650,6 +1654,7 @@ func _process(delta: float) -> void:
 		elif _g_hold_time < HOLD_THRESHOLD:
 			_drop_held_item()
 	# Carga de lanzamiento (mantener G) y guardar (mantener F)
+	_tick_beard_growth(delta)
 	if _f_holding:
 		_f_hold_time += delta
 		if _f_hold_time >= HOLD_THRESHOLD and not _f_hold_triggered:
@@ -1803,6 +1808,27 @@ func _process(delta: float) -> void:
 			camera.far = 2000.0
 	else:
 		_sync_camera_lens()
+	_tick_beard_growth(delta)
+
+var _beard_check_accum: float = 0.0
+
+func _tick_beard_growth(delta: float) -> void:
+	if is_puppet or stats == null or third_person_model == null:
+		return
+	_beard_check_accum += delta
+	if _beard_check_accum < 2.0:
+		return
+	_beard_check_accum = 0.0
+	var wanted_stage := CharacterGrooming.beard_stage(stats.survival_seconds)
+	if wanted_stage != _beard_stage:
+		var grew := wanted_stage > _beard_stage
+		_beard_stage = wanted_stage
+		CharacterGrooming.apply(third_person_model, _char_hair_style, _char_hair_color, _beard_stage)
+		if grew and wanted_stage > 0 and wanted_stage < CharacterGrooming.BEARD_LABELS.size():
+			notice.emit("Te ha crecido la barba (%s)." % CharacterGrooming.BEARD_LABELS[wanted_stage])
+		var scene := get_tree().current_scene if is_inside_tree() else null
+		if scene != null and scene.has_method("_send_character_appearance"):
+			scene._send_character_appearance()
 
 func _sync_camera_lens() -> void:
 	if camera == null:
@@ -2735,12 +2761,28 @@ func _apply_character_colors() -> void:
 	_char_shoes_color = shoes_color
 	_char_hair_color = hair_color
 	_char_skin_color = skin_color
+	var Grooming = preload("res://scripts/CharacterGrooming.gd")
+	var id_str := ""
+	if gs != null:
+		if gs.has_meta("hair_style") and not str(gs.get_meta("hair_style", "")).is_empty():
+			id_str = str(gs.get_meta("hair_style"))
+		elif gs.has_meta("char_name") and not str(gs.get_meta("char_name", "")).is_empty():
+			id_str = str(gs.get_meta("char_name"))
+		else:
+			id_str = str(gs.selected_character_id)
+	_char_hair_style = Grooming.style_for(id_str)
+	var surv_sec := maxf(0.0, (stats.survival_seconds if stats != null else 0.0) - _shaved_at_seconds)
+	_beard_stage = Grooming.beard_stage(surv_sec)
+	Grooming.apply(third_person_model, _char_hair_style, hair_color, _beard_stage)
 
 var _char_top_color: Color = Color(0.5, 0.5, 0.5)
 var _char_bottom_color: Color = Color(0.3, 0.3, 0.3)
 var _char_shoes_color: Color = Color(0.15, 0.15, 0.15)
 var _char_hair_color: Color = Color(0.2, 0.15, 0.1)
 var _char_skin_color: Color = Color(0.8, 0.7, 0.6)
+var _char_hair_style: String = "short"
+var _beard_stage: int = 0
+var _shaved_at_seconds: float = 0.0
 
 func _make_camo_texture(base_color: Color = Color(0.25, 0.3, 0.15)) -> Texture2D:
 	return MaterialFactory.make_camo_texture(base_color)
@@ -7247,6 +7289,26 @@ func _play_consumption_audio(drinking: bool, duration: float, serial: int) -> vo
 		await get_tree().create_timer(maxf(.05, pause)).timeout
 		remaining -= pause
 	if _action_serial == serial and not _is_consumption_audio_active():
+		_stop_consumption_audio()
+
+func _play_bottle_fill_audio(duration: float, serial: int) -> void:
+	if not is_instance_valid(_consumption_audio):
+		_consumption_audio = AudioStreamPlayer3D.new()
+		_consumption_audio.name = "ConsumptionAudio"
+		_consumption_audio.position = Vector3(0, 1.5, 0)
+		_consumption_audio.max_distance = 28.0
+		_consumption_audio.unit_size = 12.0
+		add_child(_consumption_audio)
+	_consumption_audio.attenuation_model = AudioStreamPlayer3D.ATTENUATION_DISABLED if not is_puppet else AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	_consumption_audio.volume_db = 8.0
+	_consumption_audio.max_db = 6.0
+	var stream := load("res://RELLENARBOTELLA.mp3") as AudioStream
+	if stream != null and _action_serial == serial and not is_dead:
+		_consumption_audio.stream = stream
+		_consumption_audio.pitch_scale = randf_range(.98, 1.02)
+		_consumption_audio.play()
+	await get_tree().create_timer(maxf(0.05, duration)).timeout
+	if _action_serial == serial:
 		_stop_consumption_audio()
 
 func _start_consumption(item, animation: String, duration: float) -> void:

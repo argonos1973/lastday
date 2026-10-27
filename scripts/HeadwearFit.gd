@@ -41,10 +41,11 @@ static func fit_face(model: Node3D, wrapper: Node3D, _item_name: String) -> bool
 	if wrapper.find_child("FaceFittedBind", true, false) == null:
 		return false
 	wrapper.transform = _head_frame(model, head, wrapper.get_parent() as Node3D)
-	for mesh in model.find_children("Hair", "MeshInstance3D", true, false):
-		if not mesh.has_meta("headwear_original_visible"):
-			mesh.set_meta("headwear_original_visible", mesh.visible)
-		mesh.visible = false
+	for mesh_name in ["Hair", "GrowingBeard"]:
+		for mesh in model.find_children(mesh_name, "MeshInstance3D", true, false):
+			if not mesh.has_meta("headwear_original_visible"):
+				mesh.set_meta("headwear_original_visible", mesh.visible)
+			mesh.visible = false
 	return true
 
 # Seats a headpiece whose GLB is authored with the scalp seat at the local
@@ -170,10 +171,11 @@ static func restore_hair(model: Node3D) -> void:
 # each effect separately lets the two stack: removing a hat over a balaclava
 # untucks the hair but keeps it hidden under the mask.
 static func restore_hair_visible(model: Node3D) -> void:
-	for hair in model.find_children("Hair", "MeshInstance3D", true, false):
-		if hair.has_meta("headwear_original_visible"):
-			hair.visible = bool(hair.get_meta("headwear_original_visible"))
-			hair.remove_meta("headwear_original_visible")
+	for mesh_name in ["Hair", "GrowingBeard"]:
+		for hair in model.find_children(mesh_name, "MeshInstance3D", true, false):
+			if hair.has_meta("headwear_original_visible"):
+				hair.visible = bool(hair.get_meta("headwear_original_visible"))
+				hair.remove_meta("headwear_original_visible")
 
 static func restore_hair_mesh(model: Node3D) -> void:
 	for hair in model.find_children("Hair", "MeshInstance3D", true, false):

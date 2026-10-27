@@ -3065,6 +3065,12 @@ func _send_character_appearance() -> void:
 	var char_name_str: String = gs.selected_character_id
 	if gs.has_meta("char_name"):
 		char_name_str = str(gs.get_meta("char_name"))
+	var Grooming = preload("res://scripts/CharacterGrooming.gd")
+	var h_style: String = str(gs.get_meta("hair_style", "")) if gs.has_meta("hair_style") else ""
+	if h_style.is_empty():
+		h_style = player._char_hair_style if (player != null and "_char_hair_style" in player) else Grooming.style_for(char_name_str)
+	var b_stage: int = player._beard_stage if (player != null and "_beard_stage" in player) else Grooming.beard_stage(player.stats.survival_seconds if (player != null and player.stats != null) else 0.0)
+	char_name_str = Grooming.encode_identity(char_name_str, h_style, b_stage)
 	var top_camo: bool = gs.has_meta("top_camo") and bool(gs.get_meta("top_camo", false))
 	var bottom_camo: bool = gs.has_meta("bottom_camo") and bool(gs.get_meta("bottom_camo", false))
 	net.sync_character_appearance.rpc(char_name_str, gs.selected_top_color, gs.selected_bottom_color, gs.selected_shoes_color, gs.selected_hair_color, gs.selected_skin_color, top_camo, bottom_camo)
@@ -3306,7 +3312,9 @@ func _apply_restored_appearance(char_name: String, top_color: Color, bottom_colo
 	gs.set_meta("top_camo", top_camo)
 	gs.set_meta("bottom_camo", bottom_camo)
 	if not char_name.is_empty():
-		gs.set_meta("char_name", char_name)
+		var Grooming = preload("res://scripts/CharacterGrooming.gd")
+		gs.set_meta("char_name", Grooming.base_name_from_identity(char_name))
+		gs.set_meta("hair_style", Grooming.style_for(char_name))
 	if player != null and is_instance_valid(player) and player.has_method("_apply_character_colors"):
 		player._apply_character_colors()
 	# Echo the canonical appearance so the live player entry and future saves
@@ -4859,8 +4867,8 @@ func _update_remote_players() -> void:
 		var remote_crouching: bool = data.get("crouching", false)
 		var remote_torch_lit: bool = data.get("torch_lit", false)
 		var remote_flashlight_on: bool = data.get("flashlight_on", false)
-		# Apply character appearance if available and not yet applied
-		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and not rp.get("_applied_appearance"):
+		# Apply character appearance if available and not yet applied (or if beard/hair changed)
+		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and (not rp.get("_applied_appearance") or str(rp.get("_puppet_char_name")) != str(data.get("char_name", ""))):
 			rp.puppet_apply_appearance(data.get("char_name", ""), data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
 		if rp.has_method("puppet_set_aiming"):
 			rp.puppet_set_aiming(remote_aiming)
@@ -11541,11 +11549,15 @@ func _execute_world_action(action, actor) -> void:
 					held_dw = null
 			if held_dw != null and held_dw.item_name == "Botella de plastico":
 				_play_actor_action(actor, "plant", 5.0)
+				if actor.has_method("_play_bottle_fill_audio"):
+					actor._play_bottle_fill_audio(5.0, int(actor.get("_action_serial")))
 				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				if not await _await_actor_action(actor, 5.0):
 					return
+				if actor.has_method("_stop_consumption_audio"):
+					actor._stop_consumption_audio()
 				# Remove empty bottle and add filled one
 				for i in range(actor.inventory.items.size()):
 					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
@@ -11563,11 +11575,15 @@ func _execute_world_action(action, actor) -> void:
 			# If holding a partially empty water bottle, refill it
 			if held_dw != null and (held_dw.item_name == "Botella de agua" or held_dw.item_name == "Botella de agua llena") and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
 				_play_actor_action(actor, "plant", 5.0)
+				if actor.has_method("_play_bottle_fill_audio"):
+					actor._play_bottle_fill_audio(5.0, int(actor.get("_action_serial")))
 				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
 				if not await _await_actor_action(actor, 5.0):
 					return
+				if actor.has_method("_stop_consumption_audio"):
+					actor._stop_consumption_audio()
 				held_dw.durability = float(held_dw.max_durability)
 				held_dw.item_name = "Botella de agua llena"
 				actor.inventory.changed.emit()

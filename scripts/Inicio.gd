@@ -49,13 +49,15 @@ var _prejoin_card_id := ""
 static var _auto_launch_consumed := false
 
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
+const CharacterGrooming = preload("res://scripts/CharacterGrooming.gd")
+var _btn_hair_style: Button = null
 var CHAR_CONFIGS := [
-	{"id": "remy", "name": "Remy", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
-	{"id": "laura", "name": "Luis", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
-	{"id": "marc", "name": "Marc", "top": Color(0.2, 0.5, 0.3), "bottom": Color(0.35, 0.3, 0.15), "shoes": Color(0.5, 0.25, 0.15), "hair": Color(0.75, 0.6, 0.3), "skin": Color(0.7, 0.58, 0.45)},
-	{"id": "elena", "name": "Edu", "top": Color(0.5, 0.45, 0.2), "bottom": Color(0.2, 0.2, 0.5), "shoes": Color(0.35, 0.15, 0.1), "hair": Color(0.65, 0.25, 0.1), "skin": Color(0.82, 0.68, 0.55)},
-	{"id": "soldado", "name": "Soldado", "top": "camo", "bottom": "camo", "shoes": Color(0.15, 0.12, 0.08), "hair": Color(0.05, 0.04, 0.03), "skin": Color(0.75, 0.62, 0.48)},
-	{"id": "dris", "name": "Dris", "top": Color(0.8, 0.7, 0.6), "bottom": Color(0.3, 0.3, 0.35), "shoes": Color(0.1, 0.1, 0.12), "hair": Color(0.02, 0.02, 0.02), "skin": Color(0.25, 0.18, 0.12)},
+	{"id": "remy", "name": "Remy", "hair_style": "short", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
+	{"id": "laura", "name": "Luis", "hair_style": "long", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
+	{"id": "marc", "name": "Marc", "hair_style": "medium", "top": Color(0.2, 0.5, 0.3), "bottom": Color(0.35, 0.3, 0.15), "shoes": Color(0.5, 0.25, 0.15), "hair": Color(0.75, 0.6, 0.3), "skin": Color(0.7, 0.58, 0.45)},
+	{"id": "elena", "name": "Edu", "hair_style": "ponytail", "top": Color(0.5, 0.45, 0.2), "bottom": Color(0.2, 0.2, 0.5), "shoes": Color(0.35, 0.15, 0.1), "hair": Color(0.65, 0.25, 0.1), "skin": Color(0.82, 0.68, 0.55)},
+	{"id": "soldado", "name": "Soldado", "hair_style": "buzz", "top": "camo", "bottom": "camo", "shoes": Color(0.15, 0.12, 0.08), "hair": Color(0.05, 0.04, 0.03), "skin": Color(0.75, 0.62, 0.48)},
+	{"id": "dris", "name": "Dris", "hair_style": "crop", "top": Color(0.8, 0.7, 0.6), "bottom": Color(0.3, 0.3, 0.35), "shoes": Color(0.1, 0.1, 0.12), "hair": Color(0.02, 0.02, 0.02), "skin": Color(0.25, 0.18, 0.12)},
 ]
 
 func _ready() -> void:
@@ -405,6 +407,17 @@ func _ready() -> void:
 	prev_btn.pressed.connect(_on_char_prev)
 	nav_hbox.add_child(prev_btn)
 	_btn_prev = prev_btn
+
+	var hair_btn := Button.new()
+	hair_btn.text = "Peinado: Clásico"
+	hair_btn.custom_minimum_size = Vector2(142, 40)
+	hair_btn.add_theme_font_size_override("font_size", 13)
+	hair_btn.add_theme_stylebox_override("normal", btn_style)
+	hair_btn.add_theme_stylebox_override("hover", btn_hover)
+	hair_btn.add_theme_stylebox_override("pressed", btn_pressed)
+	hair_btn.pressed.connect(_on_cycle_hair_style)
+	nav_hbox.add_child(hair_btn)
+	_btn_hair_style = hair_btn
 
 	var next_btn := Button.new()
 	next_btn.text = ">"
@@ -1151,7 +1164,10 @@ func _apply_char_selection() -> void:
 		gsess.selected_shoes_color = cfg["shoes"]
 		gsess.selected_hair_color = cfg["hair"]
 		gsess.selected_skin_color = cfg["skin"]
-		gsess.set_meta("char_name", cfg["name"])
+		var raw_name := String(cfg["name"])
+		gsess.set_meta("char_name", CharacterGrooming.base_name_from_identity(raw_name))
+		var hstyle := String(cfg.get("hair_style", CharacterGrooming.style_for(raw_name if not raw_name.is_empty() else String(cfg.get("id", "")))))
+		gsess.set_meta("hair_style", hstyle)
 		SaveIntegration.apply_saved_camo(gsess, cfg)
 
 # En modo join solo se elige personaje nuevo: las tarjetas guardadas
@@ -1213,11 +1229,26 @@ func _on_char_prev() -> void:
 			break
 	_update_char_view()
 
+func _on_cycle_hair_style() -> void:
+	if _mp_locked:
+		return
+	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
+	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
+	var cur := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
+	var idx := CharacterGrooming.STYLES.find(cur)
+	var next_style: String = CharacterGrooming.STYLES[(idx + 1) % CharacterGrooming.STYLES.size()]
+	cfg["hair_style"] = next_style
+	_update_char_view()
+
 func _update_char_view() -> void:
 	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
 	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
 	if _char_name_label != null:
 		_char_name_label.text = String(cfg.get("name", "?"))
+	if _btn_hair_style != null:
+		var st := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
+		_btn_hair_style.text = "Pelo: %s" % str(CharacterGrooming.STYLE_LABELS.get(st, st))
+		_btn_hair_style.disabled = _mp_locked or bool(cfg.get("is_saved", false))
 	SaveIntegration.update_saved_info(self, cfg)
 	if _char_preview_anchor == null:
 		return
@@ -1524,6 +1555,16 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false)
 		else:
 			mat.albedo_color = skin_color
 		mesh_inst.material_override = mat
+	var preview_style := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
+	var preview_stage := 0
+	if cfg.get("is_saved", false):
+		var saved_pd: Dictionary = SaveIntegration._saved_player_data(self, cfg)
+		preview_stage = CharacterGrooming.beard_stage(SaveIntegration._survival_seconds(saved_pd))
+		var saved_cn := str(saved_pd.get("char_name", cfg.get("name", "")))
+		if not saved_cn.is_empty():
+			preview_style = CharacterGrooming.style_for(saved_cn)
+			preview_stage = max(preview_stage, CharacterGrooming.stage_from_identity(saved_cn, SaveIntegration._survival_seconds(saved_pd)))
+	CharacterGrooming.apply(model, preview_style, hair_color, preview_stage)
 
 func _camo_material(camo_tex: Texture2D, kind: String, unit_scale: float = 1.0) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
