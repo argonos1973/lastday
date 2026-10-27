@@ -3866,6 +3866,16 @@ func _physics_process(delta: float) -> void:
 	speed *= stats.get_thermal_speed_multiplier()
 	# Cojera: las heridas en los pies reducen la velocidad (hasta -22%)
 	speed *= 1.0 - 0.22 * clampf((stats.feet_wound - 40.0) / 60.0, 0.0, 1.0)
+	# Boleadoras: traba las piernas durante 6 s al 25% de velocidad, fuerza postura agachada/trabada e impide esprintar o saltar
+	var bola_until := float(get_meta("bola_slow_until", 0.0))
+	if bola_until > 0.0 and Time.get_unix_time_from_system() < bola_until:
+		speed *= 0.25
+		is_sprinting = false
+		if not is_prone and not is_sitting:
+			is_crouching = true
+	if float(get_meta("bola_slow_until", 0.0)) > Time.get_unix_time_from_system():
+		is_sprinting = false
+		speed *= 0.25
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	if is_jumping:
@@ -4100,6 +4110,9 @@ func _on_head_skeleton_updated() -> void:
 
 func _on_third_person_mixer_applied() -> void:
 	_aim_pitch_saved_rotations.clear()
+	_m4_saved_left_arm_poses.clear()
+	if _has_rifle:
+		_update_rifle_visuals(0.0)
 
 var _spear_world_dir := Vector3(0.0, 0.0, -1.0)
 var _spear_grip_shift := 0.20
@@ -4668,6 +4681,81 @@ func _sync_posed_attachments(model: Node3D, skel: Skeleton3D) -> void:
 # _update_rifle_ik; the duplicate keeps the stale world transform and the
 # weapon would render outside the portrait frame. Runs the same rest solve
 # against the posed duplicate skeleton. Returns true when a rifle was seated.
+var _in_rifle_ik := false
+
+func _seat_m4_rest_pose(skel: Skeleton3D, char_basis: Basis, rh_idx: int, lh_idx: int, sh_idx: int, s: float, offset: Node3D, rifle_root: Node3D) -> void:
+	var char_right := char_basis.x.normalized()
+	var char_up := char_basis.y.normalized()
+	var char_fwd := (-char_basis.z).normalized()
+	var rh_anim := (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
+	var sh_pos := (skel.global_transform * skel.get_bone_global_pose(sh_idx)).origin
+	var barrel_dir: Vector3
+	var target_rk: Vector3
+	if is_prone:
+		barrel_dir = (char_fwd * 0.90 - char_right * 0.42 - char_up * 0.08).normalized()
+		target_rk = rh_anim + char_fwd * 0.06 - char_right * 0.04 + char_up * 0.03
+	else:
+		# Subir un ligero vaiven natural desde la mano animada sin dejar que
+		# animaciones con brazos abiertos (sneak/idle) saquen el M4 del pecho.
+		var rel_rh := rh_anim - sh_pos
+		var bob_y := clampf(rel_rh.dot(char_up) + 0.34, -0.04, 0.04)
+		var bob_fwd := clampf(rel_rh.dot(char_fwd) - 0.22, -0.03, 0.03)
+		var pitch_down := -0.26 if (is_sitting or is_crouching) else (-0.22 if is_sprinting else -0.34)
+		var fwd_weight := 0.62 if is_sprinting else 0.54
+		barrel_dir = (char_fwd * fwd_weight - char_right * 0.76 + char_up * pitch_down).normalized()
+		target_rk = sh_pos + char_right * 0.01 + char_up * (-0.30 + bob_y) + char_fwd * (0.28 + bob_fwd)
+	var v_local_dir := Vector3(0.0, 0.0, -1.0)
+	var axis := v_local_dir.cross(barrel_dir)
+	var angle := v_local_dir.angle_to(barrel_dir)
+	if axis.length_squared() < 0.0001:
+		axis = Vector3(1.0, 0.0, 0.0)
+		angle = PI if v_local_dir.dot(barrel_dir) < 0.0 else 0.0
+	var r := Basis(Quaternion(axis.normalized(), angle))
+	var desired_up := (char_up + char_fwd * 0.22).slide(barrel_dir).normalized()
+	var current_up := (r * Vector3.UP).slide(barrel_dir).normalized()
+	if desired_up.length_squared() > 0.001 and current_up.length_squared() > 0.001:
+		var fix_roll := current_up.signed_angle_to(desired_up, barrel_dir)
+		r = Basis(Quaternion(barrel_dir, fix_roll)) * r
+	var weapon_basis := r.scaled(Vector3.ONE * s)
+	rifle_root.position = Vector3.ZERO
+	offset.global_basis = weapon_basis
+	offset.global_position = target_rk - weapon_basis * _rg_right_knuckle
+	offset.force_update_transform()
+	rifle_root.force_update_transform()
+
+func _solve_m4_rest_arms(skel: Skeleton3D, wo_xf: Transform3D, save_poses: bool) -> void:
+	var rua := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightArm", skel))
+	var rfa := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightForeArm", skel))
+	var rh := skel.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skel))
+	var lua := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftArm", skel))
+	var lfa := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftForeArm", skel))
+	var lh := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftHand", skel))
+	if save_poses:
+		_m4_saved_left_arm_poses.clear()
+		for b in [lua, lfa, lh, rua, rfa, rh]:
+			if b >= 0:
+				_m4_saved_left_arm_poses.append([b, skel.get_bone_pose(b)])
+	var skel_inv := skel.global_transform.affine_inverse()
+	var w2s := skel_inv.basis * wo_xf.basis
+	if rh >= 0 and rua >= 0 and rfa >= 0:
+		_grip_hand(skel, rua, rfa, rh, false,
+			skel_inv * (wo_xf * _rg_right_knuckle), w2s * RIFLE_AIM_RIGHT_FINGERS, w2s * RIFLE_AIM_RIGHT_PALM, w2s * RIFLE_AIM_RIGHT_ELBOW)
+	if lh >= 0 and lua >= 0 and lfa >= 0:
+		_grip_hand(skel, lua, lfa, lh, true,
+			skel_inv * (wo_xf * _rg_left_knuckle), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, Vector3.ZERO)
+		var lrig := _grip_rig_for(skel, lh, true)
+		if lrig.has("thumb_child") and lrig["thumb_child"] >= 0:
+			var thumb: int = lrig["thumb"]
+			var thumb_pose := skel.get_bone_global_pose(thumb)
+			var pivot: Vector3 = lrig["pivots"].get(thumb, Vector3.ZERO)
+			var base := thumb_pose * pivot
+			var child: int = lrig["thumb_child"]
+			var tip := skel.get_bone_global_pose(child) * (lrig["pivots"].get(child, Vector3.ZERO) as Vector3)
+			var target: Vector3 = skel_inv * (wo_xf * _rg_left_thumb)
+			var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
+			var tbasis := Basis(turn) * thumb_pose.basis
+			skel.set_bone_global_pose(thumb, Transform3D(tbasis, base - tbasis * pivot))
+
 func _seat_m4_idle_grip(skel: Skeleton3D, hand_idx: int, offset: Node3D) -> void:
 	# Anchor to the skinned knuckle instead of a fixed wrist offset: the idle
 	# clip moves the palm, and a cosmetic stock shift must not detach the grip.
@@ -4700,27 +4788,30 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return false
 	var s := _rifle_weapon_scale() * skel.global_transform.basis.get_scale().x
+	var char_basis := model.global_basis.orthonormalized()
+	if _mounted_rifle_is_m4:
+		_seat_m4_rest_pose(skel, char_basis, rh_idx, lh_idx, sh_idx, s, weapon_offset, rifle_root)
+		_solve_m4_rest_arms(skel, weapon_offset.global_transform, false)
+		skel.force_update_all_bone_transforms()
+		_seat_m4_idle_grip(skel, rh_idx, weapon_offset)
+		_solve_m4_rest_arms(skel, weapon_offset.global_transform, false)
+		skel.force_update_all_bone_transforms()
+		return true
 	var rh_pos := (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
 	var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
 	var shoulder_pos := (skel.global_transform * skel.get_bone_global_pose(sh_idx)).origin
-	var char_basis := model.global_basis.orthonormalized()
-	var char_fwd := -char_basis.z
 	var raw_shoulder := shoulder_pos + char_basis.x * 0.06 + char_basis.z * 0.02 - char_basis.y * 0.08
-	if _mounted_rifle_is_m4:
-		lh_pos -= char_fwd * 0.10 + char_basis.y * 0.05
-		raw_shoulder += char_fwd * 0.25 - char_basis.x * 0.05 + char_basis.y * 0.08
 	var v_world_dir := (lh_pos - rh_pos).normalized()
 	var rg_local := right_grip.position
 	var lg_local := left_grip.position
-	var v_local_dir := Vector3(0.0, 0.0, -1.0) if _mounted_rifle_is_m4 else (lg_local - rg_local).normalized()
+	var v_local_dir := (lg_local - rg_local).normalized()
 	if v_world_dir.length_squared() < 0.0001 or v_local_dir.length_squared() < 0.0001:
 		return false
 	# Shift the left-hand marker along the handguard so its distance matches
 	# the animated hands, same as the live solve.
 	var target_len := (lh_pos - rh_pos).length() / s
-	if not _mounted_rifle_is_m4:
-		left_grip.position = rg_local + v_local_dir * target_len
-		lg_local = left_grip.position
+	left_grip.position = rg_local + v_local_dir * target_len
+	lg_local = left_grip.position
 	var axis := v_local_dir.cross(v_world_dir)
 	var angle := v_local_dir.angle_to(v_world_dir)
 	if axis.length_squared() < 0.0001:
@@ -4750,13 +4841,6 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 	var stock_aligned_perp := r0 * stock_perp
 	var roll := stock_aligned_perp.signed_angle_to(shoulder_perp, v_world_dir)
 	var r := Basis(Quaternion(v_world_dir, roll)) * r0
-	if _mounted_rifle_is_m4:
-		var barrel_axis := (r * Vector3(0.0, 0.0, -1.0)).normalized()
-		var desired_up := (char_basis.y - char_basis.z * 0.25).slide(barrel_axis).normalized()
-		var current_up := (r * Vector3.UP).slide(barrel_axis).normalized()
-		if desired_up.length_squared() > 0.001 and current_up.length_squared() > 0.001:
-			var fix_roll := current_up.signed_angle_to(desired_up, barrel_axis)
-			r = Basis(Quaternion(barrel_axis, fix_roll)) * r
 	var weapon_basis := r.scaled(Vector3.ONE * s)
 	rifle_root.position = Vector3.ZERO
 	weapon_offset.global_basis = weapon_basis
@@ -4765,14 +4849,7 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 	if muzzle_marker != null:
 		rifle_root.force_update_transform()
 		var barrel_dir := (muzzle_marker.global_position - stock_ref.global_position).normalized()
-		if _mounted_rifle_is_m4:
-			var up_dir := weapon_basis.y.normalized()
-			weapon_offset.global_position += barrel_dir * 0.095 - up_dir * 0.015 + char_fwd * 0.045
-			weapon_offset.force_update_transform()
-		else:
-			rifle_root.global_position += barrel_dir * 0.40
-	if _mounted_rifle_is_m4:
-		_seat_m4_idle_grip(skel, rh_idx, weapon_offset)
+		rifle_root.global_position += barrel_dir * 0.40
 	return true
 
 #endregion
@@ -7133,29 +7210,43 @@ func _stop_consumption_audio() -> void:
 	if is_instance_valid(_consumption_audio):
 		_consumption_audio.stop()
 
+func _is_consumption_audio_active() -> bool:
+	if _consumption_pending or _interact_busy:
+		return true
+	var main := get_tree().current_scene if get_tree() != null else null
+	return main != null and main.get("_drink_hold_actor") == self
+
 func _play_consumption_audio(drinking: bool, duration: float, serial: int) -> void:
 	if not is_instance_valid(_consumption_audio):
 		_consumption_audio = AudioStreamPlayer3D.new()
 		_consumption_audio.name = "ConsumptionAudio"
 		_consumption_audio.position = Vector3(0, 1.5, 0)
-		_consumption_audio.max_distance = 18.0
-		_consumption_audio.unit_size = 6.5
-		_consumption_audio.volume_db = 2.0
+		_consumption_audio.max_distance = 28.0
+		_consumption_audio.unit_size = 12.0
 		add_child(_consumption_audio)
+	_consumption_audio.attenuation_model = AudioStreamPlayer3D.ATTENUATION_DISABLED if not is_puppet else AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	_consumption_audio.volume_db = 8.0
+	_consumption_audio.max_db = 6.0
 	var paths := ["res://assets/audio/consumption/drink_01.mp3"] if drinking else ["res://assets/audio/consumption/eat_00.ogg", "res://assets/audio/consumption/eat_01.ogg", "res://assets/audio/consumption/eat_02.ogg"]
-	await get_tree().create_timer(minf(.25, duration * .15)).timeout
-	var remaining := duration - minf(.25, duration * .15)
-	while remaining > .05 and (_consumption_pending or _interact_busy) and _action_serial == serial and not is_dead:
+	var first_stream := load(paths.pick_random()) as AudioStream
+	if first_stream != null and _action_serial == serial and not is_dead:
+		_consumption_audio.stream = first_stream
+		_consumption_audio.pitch_scale = randf_range(.96, 1.04)
+		_consumption_audio.play()
+	var first_wait := minf(duration, (first_stream.get_length() if first_stream != null else 0.6) + 0.08)
+	await get_tree().create_timer(maxf(0.05, first_wait)).timeout
+	var remaining := duration - first_wait
+	while remaining > .05 and _is_consumption_audio_active() and _action_serial == serial and not is_dead:
 		var stream := load(paths.pick_random()) as AudioStream
 		if stream == null:
 			return
 		_consumption_audio.stream = stream
 		_consumption_audio.pitch_scale = randf_range(.96, 1.04)
 		_consumption_audio.play()
-		var pause := minf(remaining, stream.get_length() + .12)
+		var pause := minf(remaining, stream.get_length() + .10)
 		await get_tree().create_timer(maxf(.05, pause)).timeout
 		remaining -= pause
-	if _action_serial == serial:
+	if _action_serial == serial and not _is_consumption_audio_active():
 		_stop_consumption_audio()
 
 func _start_consumption(item, animation: String, duration: float) -> void:
@@ -9229,6 +9320,8 @@ func _update_rifle_visuals(delta: float) -> void:
 		_rifle_strap_update_accum = 0.0
 
 func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
+	if _in_rifle_ik:
+		return
 	# Rifle placed by the animation hands and right shoulder; IK disabled.
 	if _rifle_root == null or not is_instance_valid(_rifle_root):
 		return
@@ -9255,6 +9348,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var sh_idx := _find_bone_cached("sh_idx", shoulder_bone_name, skel)
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return
+	_in_rifle_ik = true
 	if not _m4_saved_left_arm_poses.is_empty():
 		for entry in _m4_saved_left_arm_poses:
 			skel.set_bone_pose(entry[0], entry[1])
@@ -9281,20 +9375,32 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if want_direct_aim and _try_place_rifle_aiming(skel, s):
 		_rifle_aim_pose_active = true
 		_register_rifle_ik(skel, lh_idx)
+		_in_rifle_ik = false
 		return
 	# This is a world-space solve. A later BoneAttachment update must not
 	# apply the hand rotation a second time after the rifle was aligned.
 	if not _rifle_weapon_offset.top_level:
 		_rifle_weapon_offset.set_as_top_level(true)
 
+	if _mounted_rifle_is_m4 and not _is_aiming and not _is_firing:
+		_register_rifle_ik(skel, lh_idx)
+		_seat_m4_rest_pose(skel, char_basis, rh_idx, lh_idx, sh_idx, s, _rifle_weapon_offset, _rifle_root)
+		_solve_m4_rest_arms(skel, _rifle_weapon_offset.global_transform, true)
+		_seat_m4_idle_grip(skel, rh_idx, _rifle_weapon_offset)
+		_solve_m4_rest_arms(skel, _rifle_weapon_offset.global_transform, false)
+		_rifle_root.force_update_transform()
+		_rifle_left_hand_grip.force_update_transform()
+		if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
+			_rifle_left_arm_ik.active = false
+			_rifle_left_arm_ik.influence = 0.0
+		_in_rifle_ik = false
+		return
+
 	var rg_local := _rifle_right_grip.position
 	var lg_local := _rifle_left_hand_grip.position
 	var stock_local := _rifle_stock_ref.position
 
 	if _mounted_rifle_is_m4:
-		# En reposo, orientamos el eje del M4 para que desde la mano derecha
-		# hacia atras (-v_world_dir) la culata suba por delante del chaleco
-		# tactico y por encima del antebrazo derecho, sin forzar los hombros.
 		var char_fwd := -char_basis.z
 		lh_pos -= char_fwd * 0.10 + char_basis.y * 0.05
 		raw_shoulder += char_fwd * 0.25 - char_basis.x * 0.05 + char_basis.y * 0.08
@@ -9302,6 +9408,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var v_world_dir := (lh_pos - rh_pos).normalized()
 	var v_local_dir := Vector3(0.0, 0.0, -1.0) if _mounted_rifle_is_m4 else (lg_local - rg_local).normalized()
 	if v_world_dir.length_squared() < 0.0001 or v_local_dir.length_squared() < 0.0001:
+		_in_rifle_ik = false
 		return
 
 	# Move the left hand marker along the handguard so its world distance matches the animated left hand
@@ -9350,15 +9457,6 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	var roll := stock_aligned_perp.signed_angle_to(shoulder_perp, v_world_dir)
 	var roll_q := Quaternion(v_world_dir, roll)
 	var r := Basis(roll_q) * r0
-	if _mounted_rifle_is_m4 and not _is_aiming and not _is_firing:
-		# Mantener el plano lateral del M4 vertical/frontal para que la pala de
-		# la culata (Butt_Stock) no gire hacia dentro del pecho ni del brazo.
-		var barrel_axis := (r * Vector3(0.0, 0.0, -1.0)).normalized()
-		var desired_up := (char_basis.y - char_basis.z * 0.25).slide(barrel_axis).normalized()
-		var current_up := (r * Vector3.UP).slide(barrel_axis).normalized()
-		if desired_up.length_squared() > 0.001 and current_up.length_squared() > 0.001:
-			var fix_roll := current_up.signed_angle_to(desired_up, barrel_axis)
-			r = Basis(Quaternion(barrel_axis, fix_roll)) * r
 
 	# Build the world transform for WeaponOffset
 	var weapon_basis := r.scaled(Vector3.ONE * s)
@@ -9378,19 +9476,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if not _is_aiming and not is_sitting and not is_prone and _rifle_muzzle != null and is_instance_valid(_rifle_muzzle) and _rifle_stock_ref != null and is_instance_valid(_rifle_stock_ref):
 		_rifle_root.force_update_transform()
 		var barrel_dir := (_rifle_muzzle.global_position - _rifle_stock_ref.global_position).normalized()
-		if _mounted_rifle_is_m4:
-			var up_dir := weapon_basis.y.normalized()
-			var char_fwd := -char_basis.z
-			_rifle_weapon_offset.global_position += barrel_dir * 0.095 - up_dir * 0.015 + char_fwd * 0.045
-			_rifle_weapon_offset.force_update_transform()
-		else:
-			_rifle_root.global_position += barrel_dir * 0.40
-
-	# While aiming the right-hand grip pivot above is authoritative. A later
-	# root translation would visibly detach the rifle from the palm.
-
-	if _mounted_rifle_is_m4 and not _is_aiming and not _is_firing:
-		_seat_m4_idle_grip(skel, rh_idx, _rifle_weapon_offset)
+		_rifle_root.global_position += barrel_dir * 0.40
 
 	# Force update so the grip marker's global transform is current
 	_rifle_root.force_update_transform()
@@ -9406,6 +9492,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 			_rifle_left_arm_ik.influence = 0.0
 
 	_register_rifle_ik(skel, lh_idx)
+	_in_rifle_ik = false
 
 func _register_rifle_ik(skel: Skeleton3D, lh_idx: int) -> void:
 	# Store references for the skeleton_updated callback
@@ -9737,34 +9824,11 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis, target_clamped))
 
 func _on_skeleton_updated() -> void:
-	if _ik_skel == null or not is_instance_valid(_ik_skel):
+	if _in_rifle_ik or _ik_skel == null or not is_instance_valid(_ik_skel):
 		return
 	if not _is_aiming and not _is_firing:
 		# Turn clips update the hands after _process. Refit to that final pose.
 		_update_rifle_ik(_ik_skel, 0.0)
-		if _mounted_rifle_is_m4 and _ik_lh_idx >= 0 and _ik_upper_arm_idx >= 0 and _ik_forearm_idx >= 0 and is_instance_valid(_rifle_root):
-			_m4_saved_left_arm_poses = [
-				[_ik_upper_arm_idx, _ik_skel.get_bone_pose(_ik_upper_arm_idx)],
-				[_ik_forearm_idx, _ik_skel.get_bone_pose(_ik_forearm_idx)],
-				[_ik_lh_idx, _ik_skel.get_bone_pose(_ik_lh_idx)],
-			]
-			var rf_xf := _rifle_root.global_transform
-			var skel_inv2 := _ik_skel.global_transform.affine_inverse()
-			var w2s2 := skel_inv2.basis * rf_xf.basis
-			_grip_hand(_ik_skel, _ik_upper_arm_idx, _ik_forearm_idx, _ik_lh_idx, true,
-				skel_inv2 * (rf_xf * _rg_left_knuckle), w2s2 * RIFLE_AIM_LEFT_FINGERS, w2s2 * RIFLE_AIM_LEFT_PALM, Vector3.ZERO)
-			var lrig := _grip_rig_for(_ik_skel, _ik_lh_idx, true)
-			if lrig.has("thumb_child") and lrig["thumb_child"] >= 0:
-				var thumb: int = lrig["thumb"]
-				var thumb_pose := _ik_skel.get_bone_global_pose(thumb)
-				var pivot: Vector3 = lrig["pivots"].get(thumb, Vector3.ZERO)
-				var base := thumb_pose * pivot
-				var child: int = lrig["thumb_child"]
-				var tip := _ik_skel.get_bone_global_pose(child) * (lrig["pivots"].get(child, Vector3.ZERO) as Vector3)
-				var target: Vector3 = skel_inv2 * (rf_xf * _rg_left_thumb)
-				var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
-				var tbasis := Basis(turn) * thumb_pose.basis
-				_ik_skel.set_bone_global_pose(thumb, Transform3D(tbasis, base - tbasis * pivot))
 		return
 	if _rifle_aim_pose_active:
 		if is_instance_valid(_rifle_weapon_offset):
@@ -10960,10 +11024,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					target_animation = _rifle_walk_animation
 				else:
 					target_animation = third_person_walk_animation
-			elif is_crouching and not third_person_sneak_animation.is_empty():
-				target_animation = third_person_sneak_animation
 			elif is_crouching and not _rifle_sit_animation.is_empty():
 				target_animation = _rifle_sit_animation
+			elif is_crouching and not third_person_sneak_animation.is_empty():
+				target_animation = third_person_sneak_animation
 			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
 				target_animation = _rifle_left_turn_animation
 			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
@@ -11048,6 +11112,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		else:
 			third_person_animation_player.speed_scale = 1.0 if is_sprinting else (0.55 if is_crouching else 1.0)
 		_turn_input = lerp(_turn_input, 0.0, delta * 7.0)
+		if _has_rifle:
+			_update_rifle_visuals(0.0)
 		return
 	var limb_swing: float = sin(_walk_bob) * 32.0 * _walk_intensity if moving else 0.0
 	if third_person_left_arm != null:
@@ -14594,9 +14660,11 @@ func _build_arrow_or_spear_visual(item_name: String, item_type: String, for_flig
 				vis.rotation_degrees.y = 180.0
 	if vis == null:
 		vis = MaterialFactory.build_primitive_item_mesh(item_name)
-		vis.rotation_degrees.x = -90.0 if item_type != "ammo_arrow" else 0.0
+		vis.rotation_degrees.x = -90.0 if (item_type != "ammo_arrow" and item_name != "Boleadoras") else 0.0
 	wrapper.add_child(vis)
-	if for_flight and item_type == "ammo_arrow":
+	if for_flight and item_name == "Boleadoras":
+		vis.scale = Vector3.ONE * 1.85
+	elif for_flight and item_type == "ammo_arrow":
 		vis.scale = Vector3(2.4, 2.4, 1.40)
 		var wake := MeshInstance3D.new()
 		wake.name = "ArrowFlightStreak"
@@ -14628,6 +14696,7 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	projectile.drag_coeff = _primitive_projectile_drag(item_type, item_name)
 	projectile.launch_speed = speed
 	projectile.align_flight = item_type == "ammo_arrow" or item_type == "tool_spear" or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
+	projectile.spin_speed = 22.0 if is_bola else 0.0
 	var vis := _build_arrow_or_spear_visual(item_name, item_type, true)
 	projectile.add_child(vis)
 	get_tree().current_scene.add_child(projectile)
@@ -14681,6 +14750,9 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		var dmg := base_damage * (2.2 if is_headshot else 1.0) * energy_mult
 		if is_bola and target_node is Node3D:
 			target_node.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+			if "is_crouching" in target_node and not bool(target_node.get("is_prone")) and not bool(target_node.get("is_sitting")):
+				target_node.set("is_crouching", true)
+			_attach_bola_snare_visual(target_node as Node3D, 6.0)
 			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")
 		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy"):
 			var pvp_dmg := (18.0 if is_bola else (75.0 if is_headshot else 42.0))
@@ -14700,6 +14772,35 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		_play_arrow_stick_sound(hit_pos, hit_dist, target_node != null)
 	_alert_wildlife_near_point(hit_pos, 36.0)
 	_recover_primitive_item(hit_pos, hit_normal, item_name, item_type, item_weight, item_use, recovered_state, flight_dir, target_node, collider)
+
+func _attach_bola_snare_visual(target: Node3D, duration: float = 6.0) -> void:
+	if target == null or not is_instance_valid(target):
+		return
+	var prev := target.get_node_or_null("BolaSnareWrap")
+	if prev != null:
+		prev.queue_free()
+	var wrap := Node3D.new()
+	wrap.name = "BolaSnareWrap"
+	var mesh_root := MaterialFactory.build_primitive_item_mesh("Boleadoras")
+	mesh_root.scale = Vector3(1.12, 0.95, 1.12)
+	wrap.add_child(mesh_root)
+	var ring_mi := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.16
+	torus.outer_radius = 0.175
+	ring_mi.mesh = torus
+	var cord_mat := StandardMaterial3D.new()
+	cord_mat.albedo_color = Color(0.54, 0.43, 0.27)
+	cord_mat.roughness = 0.92
+	ring_mi.material_override = cord_mat
+	wrap.add_child(ring_mi)
+	wrap.position = Vector3(0.0, 0.26, 0.0)
+	target.add_child(wrap)
+	if is_inside_tree():
+		get_tree().create_timer(duration).timeout.connect(func():
+			if is_instance_valid(wrap):
+				wrap.queue_free()
+		)
 
 func _alert_wildlife_near_point(pos: Vector3, radius: float) -> void:
 	if not is_inside_tree():

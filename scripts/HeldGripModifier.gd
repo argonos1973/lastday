@@ -37,3 +37,5 @@ func _process_modification() -> void:
 		controller._apply_aim_pitch_pose(skeleton)
 	# Read the final animated wrist, so props don't trail behind it by one frame.
 	controller._update_hand_socket()
+	if controller._has_rifle:
+		controller._update_rifle_visuals(0.0)

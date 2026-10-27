@@ -803,11 +803,16 @@ static func build_primitive_item_mesh(item_name: String) -> Node3D:
 	bone_mat.albedo_color = Color(0.86, 0.83, 0.75)
 	bone_mat.roughness = 0.72
 	var stone_mat := StandardMaterial3D.new()
-	stone_mat.albedo_color = Color(0.38, 0.39, 0.41)
-	stone_mat.roughness = 0.90
+	stone_mat.albedo_color = Color(0.56, 0.54, 0.50)
+	stone_mat.roughness = 0.92
+	if ResourceLoader.exists(POLY_ROCK_07_DIFF):
+		stone_mat.albedo_texture = load(POLY_ROCK_07_DIFF) as Texture2D
 	var cord_mat := StandardMaterial3D.new()
-	cord_mat.albedo_color = Color(0.70, 0.62, 0.45)
-	cord_mat.roughness = 0.85
+	cord_mat.albedo_color = Color(0.62, 0.50, 0.34)
+	cord_mat.roughness = 0.88
+	var wrap_mat := StandardMaterial3D.new()
+	wrap_mat.albedo_color = Color(0.36, 0.25, 0.14)
+	wrap_mat.roughness = 0.90
 	var feather_mat := StandardMaterial3D.new()
 	feather_mat.albedo_color = Color(0.78, 0.76, 0.72)
 	feather_mat.roughness = 0.80
@@ -911,28 +916,49 @@ static func build_primitive_item_mesh(item_name: String) -> Node3D:
 			tip.material_override = bone_mat if item_name == "Lanza de hueso" else (stone_mat if item_name == "Lanza" else wood_mat)
 			root.add_child(tip)
 		"Boleadoras":
+			var knot := MeshInstance3D.new()
+			var k_sph := SphereMesh.new()
+			k_sph.radius = 0.014
+			k_sph.height = 0.024
+			knot.mesh = k_sph
+			knot.material_override = wrap_mat
+			root.add_child(knot)
 			for idx in range(3):
 				var ang := TAU * float(idx) / 3.0
 				var dir := Vector3(cos(ang), 0.0, sin(ang))
 				var cord := MeshInstance3D.new()
 				var ccyl := CylinderMesh.new()
-				ccyl.top_radius = 0.004
-				ccyl.bottom_radius = 0.004
-				ccyl.height = 0.22
+				ccyl.top_radius = 0.0045
+				ccyl.bottom_radius = 0.0045
+				ccyl.height = 0.20
 				cord.mesh = ccyl
-				cord.position = dir * 0.11
+				cord.position = dir * 0.10
 				cord.rotation.z = PI * 0.5
 				cord.rotation.y = -ang
 				cord.material_override = cord_mat
 				root.add_child(cord)
 				var ball := MeshInstance3D.new()
 				var sph := SphereMesh.new()
-				sph.radius = 0.042
-				sph.height = 0.084
+				sph.radius = 0.038
+				sph.height = 0.068
+				sph.radial_segments = 12
+				sph.rings = 6
 				ball.mesh = sph
-				ball.position = dir * 0.22
+				ball.position = dir * 0.20
+				ball.scale = Vector3(1.18, 0.84, 0.96)
+				ball.rotation = Vector3(0.2 * float(idx), ang, 0.15)
 				ball.material_override = stone_mat
 				root.add_child(ball)
+				var strap := MeshInstance3D.new()
+				var storus := TorusMesh.new()
+				storus.inner_radius = 0.030
+				storus.outer_radius = 0.039
+				strap.mesh = storus
+				strap.position = dir * 0.20
+				strap.rotation.z = PI * 0.5
+				strap.rotation.y = -ang
+				strap.material_override = wrap_mat
+				root.add_child(strap)
 		"Hueso":
 			var shaft := MeshInstance3D.new()
 			var bcyl := CylinderMesh.new()

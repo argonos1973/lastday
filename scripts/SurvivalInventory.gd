@@ -702,11 +702,35 @@ func add_action(title: String, callback: Callable) -> void:
 	menu.add_item(title, actions.size())
 	actions.append(callback)
 
+func _add_recipe_actions_for(item_name: String, item_type: String) -> void:
+	if item_name.is_empty():
+		return
+	var ground_items: Array = []
+	if hud != null and hud.main_node != null and hud.main_node.has_method("get_nearby_ground_items"):
+		ground_items = hud.main_node.get_nearby_ground_items(player.global_position, 5.5)
+	var all_inv: Array = player.inventory.items.duplicate() if player.inventory != null else []
+	for t in player.get_ground_crafting_tools():
+		if t != null and not all_inv.has(t):
+			all_inv.append(t)
+	for recipe in Crafting.get_recipes_for_item(item_name, item_type):
+		if Crafting._can_craft(recipe, player.inventory.items):
+			add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe, false))
+		elif Crafting.can_craft_with_ground(recipe, all_inv, ground_items):
+			add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe, true))
+		elif item_type != "clothing":
+			add_action("Combinar: %s (%s)" % [Crafting.get_recipe_label(recipe), Crafting.get_recipe_inputs_text(recipe)], func(): hud.toggle_inventory(); player.craft_recipe(recipe, false))
+
 func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 	menu.clear()
 	actions.clear()
 	if data.has("world"):
-		add_action("Recoger", func(): collect(data.world))
+		var w_action = data.world
+		add_action("Recoger", func(): collect(w_action))
+		if is_instance_valid(w_action):
+			var w_name: String = {"wood": "Tronco", "stone": "Piedra"}.get(str(w_action.action_type), str(w_action.get_meta("item_name", "")))
+			var w_type: String = str(w_action.get_meta("item_type", "resource"))
+			if not w_name.is_empty():
+				_add_recipe_actions_for(w_name, w_type)
 	elif data.has("item"):
 		var item = data.item
 		if not player.inventory.items.has(item):
@@ -717,6 +741,7 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 						player._reload_rifle())
 				if player.can_store_held_on_back():
 					add_action("Colgar en la espalda", func(): player.store_held_on_back(); request_refresh(true))
+				_add_recipe_actions_for(str(item.item_name), str(item.item_type))
 				add_action("Guardar en inventario", func(): player._store_held_item())
 				add_action("Soltar", func(): player._drop_held_item())
 		else:
@@ -772,9 +797,7 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 							player._use_inventory_index(player.inventory.items.find(item))
 					else:
 						player._use_inventory_index(player.inventory.items.find(item)))
-			for recipe in Crafting.get_recipes_for_item(item.item_name, item.item_type):
-				if Crafting._can_craft(recipe, player.inventory.items):
-					add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe))
+			_add_recipe_actions_for(str(item.item_name), str(item.item_type))
 			add_action("Soltar una unidad", func():
 				var index: int = player.inventory.items.find(item)
 				if index >= 0:

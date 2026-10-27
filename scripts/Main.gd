@@ -1428,6 +1428,8 @@ func _tick_drink_hold(delta: float) -> void:
 			_drink_hold_actor.notice.emit("Bebes agua %s.%s" % [_drink_source, _r_river])
 		_stats.changed.emit()
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
+		if _drink_hold_actor.has_method("_play_consumption_audio"):
+			_drink_hold_actor._play_consumption_audio(true, 1.2, int(_drink_hold_actor.get("_action_serial")))
 
 func _tick_world_actions(delta: float) -> void:
 	# Rain moistens the soil: planted crops grow faster while it rains. The
@@ -8778,6 +8780,10 @@ func _create_survival_objectives() -> void:
 		_mark_world_action_visual(stone_visual_name)
 		var stone_action = _create_world_action("stone_%d" % i, "stone", "Piedras utiles", stone_pos, Vector3(1.2, 0.75, 1.1), Color(0.31, 0.30, 0.26), false, false)
 		stone_action.set_meta("visual_name", stone_visual_name)
+		stone_action.set_meta("item_name", "Piedra")
+		stone_action.set_meta("item_type", "resource")
+		stone_action.set_meta("item_weight", 0.45)
+		stone_action.set_meta("item_quantity", 3)
 		# Cover the pile with grass tufts so it blends into the river bank.
 		var tuft_rng := RandomNumberGenerator.new()
 		tuft_rng.seed = _stable_loot_seed("stone_grass_%d" % i)
@@ -9286,6 +9292,61 @@ func _create_mushrooms() -> void:
 		_create_mushroom_pickup("mushroom_%d" % mushroom_idx, Vector3(pos.x, spy + 0.02, pos.z))
 		mushroom_idx += 1
 		placed_positions.append(pos)
+	_create_stone_loot()
+
+func _create_stone_loot() -> void:
+	var stone_rng := RandomNumberGenerator.new()
+	stone_rng.seed = _stable_loot_seed("world_stone_loot_v1")
+	var fixed_spots := [
+		Vector3(14.0, 0.0, 9.0),
+		Vector3(-16.0, 0.0, -11.0),
+		Vector3(-28.0, 0.0, 12.0),
+		Vector3(26.0, 0.0, -14.0),
+		Vector3(38.0, 0.0, 112.0),
+		Vector3(-32.0, 0.0, -34.0),
+		Vector3(18.0, 0.0, 56.0),
+		Vector3(-42.0, 0.0, 24.0),
+	]
+	var stone_idx := 0
+	for spot in fixed_spots:
+		var gy := _get_exact_ground_y(spot.x, spot.z)
+		_create_pickup_item({
+			"id": "loose_stone_%d" % stone_idx,
+			"name": "Piedra",
+			"type": "resource",
+			"weight": 0.45,
+			"qty": 3,
+			"use": 0.0,
+			"paths": [SURVIVAL_TOOL_MODELS["stone"]],
+			"scale": 0.12,
+			"rot": Vector3(0.0, stone_rng.randf_range(0.0, 360.0), 0.0),
+			"pos": Vector3(spot.x, gy + 0.04, spot.z),
+			"color": Color(0.31, 0.30, 0.26)
+		})
+		stone_idx += 1
+	for _i in range(40):
+		if stone_idx >= 28:
+			break
+		var rx := stone_rng.randf_range(-240.0, 240.0)
+		var rz := stone_rng.randf_range(-240.0, 240.0)
+		var cand := Vector3(rx, 0.06, rz)
+		if _is_near_river(cand, 4.0) or _is_near_house(cand, 6.0) or _is_on_road(cand):
+			continue
+		var cgy := _get_exact_ground_y(cand.x, cand.z)
+		_create_pickup_item({
+			"id": "loose_stone_%d" % stone_idx,
+			"name": "Piedra",
+			"type": "resource",
+			"weight": 0.45,
+			"qty": 3,
+			"use": 0.0,
+			"paths": [SURVIVAL_TOOL_MODELS["stone"]],
+			"scale": 0.12,
+			"rot": Vector3(0.0, stone_rng.randf_range(0.0, 360.0), 0.0),
+			"pos": Vector3(cand.x, cgy + 0.04, cand.z),
+			"color": Color(0.31, 0.30, 0.26)
+		})
+		stone_idx += 1
 
 func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	if _depleted_action_ids.has(id):
@@ -11431,7 +11492,8 @@ func _execute_world_action(action, actor) -> void:
 			_net_notify_pickup(action)
 		"stone":
 			_play_actor_action(actor, "collect", 0.8)
-			if not actor.inventory.add_item(ItemScript.create("Piedra", "resource", 0.45, 2, 0.0)):
+			var stone_qty: int = maxi(1, int(action.get_meta("item_quantity", 3)))
+			if not actor.inventory.add_item(ItemScript.create("Piedra", "resource", 0.45, stone_qty, 0.0)):
 				return
 			actor.notice.emit("Recoges piedras utiles.")
 			_hide_action_visual(action)
@@ -11494,13 +11556,13 @@ func _execute_world_action(action, actor) -> void:
 				return
 			if _drink_hold_actor != null:
 				return
+			_drink_hold_actor = actor
+			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
+			_drink_hold_timer = 0.0
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)
 			if actor.has_method("_play_consumption_audio"):
 				actor.set("_interact_busy", true)
 				actor._play_consumption_audio(true, _DRINK_HOLD_TIME, int(actor.get("_action_serial")))
-			_drink_hold_actor = actor
-			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
-			_drink_hold_timer = 0.0
 			actor.notice.emit("Mantén E para beber...")
 		"light_campfire":
 			if action.get_meta("lit", false):
@@ -13316,6 +13378,14 @@ func _activate_boulder(entry: Dictionary) -> void:
 	var col_node := get_node_or_null(collision_name)
 	if col_node != null:
 		col_node.add_to_group("world_action_visual")
+	var stone_aid := "boulder_stone_%d" % boulder_id
+	if not _depleted_action_ids.has(stone_aid) and not world_actions_by_id.has(stone_aid):
+		var b_action = _create_world_action(stone_aid, "stone", "Piedras utiles", pos, Vector3(maxf(1.6, scale_value.x * 1.15), maxf(1.0, scale_value.y), maxf(1.6, scale_value.z * 1.15)), Color(0.31, 0.30, 0.26, 0.0), false, false)
+		if b_action != null:
+			b_action.set_meta("item_name", "Piedra")
+			b_action.set_meta("item_type", "resource")
+			b_action.set_meta("item_weight", 0.45)
+			b_action.set_meta("item_quantity", 3)
 	entry.active = true
 
 func _deactivate_boulder(entry: Dictionary) -> void:
@@ -13323,6 +13393,12 @@ func _deactivate_boulder(entry: Dictionary) -> void:
 	var col_node := get_node_or_null(collision_name)
 	if col_node != null:
 		col_node.queue_free()
+	var stone_aid := "boulder_stone_%d" % int(entry.id)
+	if world_actions_by_id.has(stone_aid):
+		var b_action = world_actions_by_id[stone_aid]
+		world_actions_by_id.erase(stone_aid)
+		if is_instance_valid(b_action):
+			b_action.queue_free()
 	entry.active = false
 
 func _create_polyhaven_boulder(pos: Vector3, scale_value: Vector3) -> void:
@@ -13666,7 +13742,7 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 5.5) -> Array:
 		if action.depleted and not action.repeatable:
 			continue
 		var atype: String = str(action.action_type)
-		if atype not in ["pickup_item", "eat_food", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds"]:
+		if atype not in ["pickup_item", "stone", "eat_food", "wolf_meat_raw", "bird_meat_raw", "axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "plant_seeds"]:
 			continue
 		if action.has_meta("no_pickup") and bool(action.get_meta("no_pickup")):
 			continue

@@ -81,6 +81,11 @@ const RECIPES := [
 		"label": "Atar 3 piedras con cuerda para hacer boleadoras"
 	},
 	{
+		"inputs": { "Trapos": 2, "Piedra": 3 },
+		"output": { "name": "Boleadoras", "type": "weapon_bola", "weight": 0.65, "use_value": 0.0, "quantity": 1 },
+		"label": "Atar 3 piedras con 2 trapos para hacer boleadoras"
+	},
+	{
 		"inputs": { "Tendón": 1 },
 		"output": { "name": "Cuerda", "type": "resource", "weight": 0.1, "use_value": 0.0, "quantity": 1 },
 		"label": "Trenzar tendón seco para hacer una cuerda resistente"
@@ -580,6 +585,8 @@ static func _is_substitute(needed: String, have: String) -> bool:
 	if needed == "Cuchillo" and have in ["Hacha", "Hacha de piedra", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]:
 		return true
 	if needed == "Hacha" and have == "Hacha de piedra":
+		return true
+	if needed == "Cuerda" and have == "Tendón":
 		return true
 	return false
 

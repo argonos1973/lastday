@@ -12,6 +12,7 @@ var traveled := 0.0
 var drag_coeff := 0.12
 var align_flight := false
 var launch_speed := 0.0
+var spin_speed := 0.0
 
 func _physics_process(delta: float) -> void:
 	if is_queued_for_deletion(): return
@@ -64,6 +65,8 @@ func _physics_process(delta: float) -> void:
 			var fwd := velocity.normalized()
 			var up_ref := Vector3.UP if absf(fwd.y) < 0.97 else Vector3.FORWARD
 			look_at(global_position + fwd, up_ref)
+		elif spin_speed != 0.0:
+			rotate_y(spin_speed * step)
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
 			expired.emit(global_position)
 			queue_free()

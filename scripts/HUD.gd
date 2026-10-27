@@ -1418,6 +1418,19 @@ func _sync_craft_visibility() -> void:
 	if _craft_hint != null:
 		_craft_hint.visible = _craft_hint_available and not craft_panel_visible and not inventory_visible and player != null and not player.is_dead and not player.is_sleeping
 
+func _get_player_craft_items() -> Array:
+	var result: Array = []
+	if player == null:
+		return result
+	if player.inventory != null:
+		for it in player.inventory.items:
+			if it != null and not result.has(it):
+				result.append(it)
+	for t in player.get_ground_crafting_tools():
+		if t != null and not result.has(t):
+			result.append(t)
+	return result
+
 func _update_craft_hint_state() -> void:
 	_craft_hint_available = false
 	if player == null:
@@ -1428,9 +1441,9 @@ func _update_craft_hint_state() -> void:
 	var ground_items: Array = main.get_nearby_ground_items(player.global_position, 3.0)
 	if ground_items.is_empty():
 		return
-	var tools: Array = player.get_ground_crafting_tools()
+	var all_inv: Array = _get_player_craft_items()
 	for recipe in CraftingSystemScript.RECIPES:
-		if CraftingSystemScript.can_craft_with_ground(recipe, tools, ground_items):
+		if CraftingSystemScript.can_craft_with_ground(recipe, all_inv, ground_items):
 			_craft_hint_available = true
 			return
 
@@ -1461,19 +1474,22 @@ func _update_craft_panel() -> void:
 	if main != null and main.has_method("get_nearby_ground_items"):
 		ground_items = main.get_nearby_ground_items(player.global_position, 5.5)
 	var tools: Array = player.get_ground_crafting_tools()
-	var inv_items: Array = player.inventory.items if player.inventory != null else []
+	var inv_items: Array = _get_player_craft_items()
 	for it in inv_items:
 		if it != null and CraftingSystemScript._is_tool(str(it.item_name)) and not it.is_broken() and not tools.has(it):
 			tools.append(it)
 	var totals := {}
 	for entry in ground_items:
 		totals[entry.name] = int(totals.get(entry.name, 0)) + int(entry.quantity)
+	for it in inv_items:
+		if it != null and not CraftingSystemScript._is_tool(str(it.item_name)) and str(it.item_type) not in ["clothing", "backpack"]:
+			totals[it.item_name] = int(totals.get(it.item_name, 0)) + int(it.quantity)
 	var material_names: Array = totals.keys()
 	material_names.sort()
 	var summary := PackedStringArray()
 	for item_name in material_names:
 		summary.append("%s ×%d" % [item_name, totals[item_name]])
-	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo cerca de ti."
+	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo ni en el inventario."
 	_craft_materials.tooltip_text = _craft_materials.text
 	_craft_tool.text = "Herramienta disponible: %s" % tools[0].item_name if not tools.is_empty() else "Sin herramienta en mano o inventario. Puedes usar una herramienta válida que esté en el suelo."
 	var recipes: Array = []
@@ -1486,9 +1502,14 @@ func _update_craft_panel() -> void:
 			for entry in ground_items:
 				if CraftingSystemScript._matches_ground_input(input_name, entry):
 					relevant = true
+			if not relevant:
+				for it in inv_items:
+					if it != null and str(it.item_type) != "clothing" and CraftingSystemScript._matches_input(input_name, it):
+						relevant = true
+						break
 		if not relevant and recipe.output.get("type", "") not in ["campfire", "shelter"]:
 			continue
-		var ready := CraftingSystemScript.can_craft_with_ground(recipe, tools, ground_items)
+		var ready := CraftingSystemScript.can_craft_with_ground(recipe, inv_items, ground_items)
 		recipes.append({"recipe": recipe, "ready": ready})
 		if ready:
 			ready_count += 1
@@ -1499,10 +1520,10 @@ func _update_craft_panel() -> void:
 		empty.add_theme_constant_override("separation", 12)
 		craft_panel_items.add_child(empty)
 		_craft_label(empty, "Prepara tu zona de trabajo", 22, Color(0.85, 0.88, 0.75))
-		_craft_label(empty, "Deja troncos, palos, trapos u otros materiales a tus pies y pulsa Actualizar materiales.", 16, Color(0.65, 0.73, 0.65))
-		_craft_label(empty, "Ejemplo: 2 troncos + 1 palo = Fogata · 11 palos = Refugio.", 14, Color(0.73, 0.80, 0.55))
+		_craft_label(empty, "Deja troncos, palos, piedras, trapos u otros materiales a tus pies o en tu inventario y pulsa Actualizar materiales.", 16, Color(0.65, 0.73, 0.65))
+		_craft_label(empty, "Ejemplo: 2 troncos + 1 palo = Fogata · 11 palos = Refugio · 3 piedras + 1 cuerda = Boleadoras.", 14, Color(0.73, 0.80, 0.55))
 	for entry in recipes:
-		_build_ground_recipe_card(entry.recipe, entry.ready, tools, ground_items)
+		_build_ground_recipe_card(entry.recipe, entry.ready, inv_items, ground_items)
 
 func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, ground_items: Array) -> void:
 	var card := PanelContainer.new()
