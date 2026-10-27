@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+e620152|Cualquier accion en curso (beber, comer, talar, destripar, cocinar, llenar botella, encender fuego, dormir, recargar o pescar) se puede interrumpir al instante pulsando cualquier tecla para huir o defenderte
 5b80995|Eliminados los tirones del cliente al entrar en el mundo y al moverse: pre-carga de visibilidad, colisiones, arboles y fauna bajo la pantalla de carga, activacion instantanea O(1) de arboles en el bosque y LOD de animacion en animales lejanos
 0140b8a|Mejorado el rendimiento del cliente (sin lecturas de disco por frame, escala de render 3D activa en compatibilidad, sombras bajas mas ligeras y menos carga de esqueleto/fauna remota); corregidos los desplegables de opciones y los pantalones de camuflaje en el preview de inicio; mejorado el porte de arco y lanza al caminar
 bea7620|Las flechas y lanzas ya no atraviesan arboles, rocas ni paredes cercanas: el proyectil aparece antes de la cobertura real y la mira apunta al obstaculo en vez de a traves de el
