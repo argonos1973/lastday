@@ -400,6 +400,24 @@ func _process_body(delta: float) -> void:
 		if not _is_dead:
 			var prev_puppet_pos := global_position
 			_network_motion.advance(self, delta)
+			var far_from_viewer := false
+			if DisplayServer.get_name() != "headless":
+				var sc := get_tree().current_scene
+				var lp = sc.get("player") if sc != null else null
+				if lp is Node3D and is_instance_valid(lp):
+					var ppos: Vector3 = (lp as Node3D).global_position
+					var d_sq := Vector2(global_position.x - ppos.x, global_position.z - ppos.z).length_squared()
+					far_from_viewer = d_sq > 175.0 * 175.0
+					if _visual_root != null and is_instance_valid(_visual_root):
+						var want_vis := d_sq < 240.0 * 240.0
+						if _visual_root.visible != want_vis:
+							_visual_root.visible = want_vis
+			if far_from_viewer:
+				if _animation_player != null and _animation_player.is_playing():
+					_animation_player.pause()
+				return
+			if _animation_player != null and not _animation_player.is_playing() and not _animation_player.current_animation.is_empty():
+				_animation_player.play()
 			_update_water_depth(delta)
 			if delta > 0.0001 and _network_motion.samples.size() > 1:
 				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
@@ -3629,7 +3647,7 @@ func _try_build_external_animal() -> bool:
 		# Normalize by bounding box so models authored in different units end up
 		# at a believable real-world height (deer ~1.5 m, fox ~0.55 m).
 		var target_height := species_height(animal_type)
-		_normalize_model_height(node, target_height)
+		_normalize_model_height(node, target_height, path)
 		node.visible = true
 		_visual_root = node
 		_animation_player = _find_animation_player(node)
@@ -3647,8 +3665,16 @@ static func species_height(kind: String) -> float:
 		"bear": return 1.65
 		_: return 0.55
 
-static func _normalize_model_height(node: Node3D, target_height: float) -> void:
-	var aabb := _baked_aabb_local(node)
+static var _cached_baked_aabb: Dictionary = {}
+
+static func _normalize_model_height(node: Node3D, target_height: float, cache_key: String = "") -> void:
+	var aabb: AABB
+	if not cache_key.is_empty() and _cached_baked_aabb.has(cache_key):
+		aabb = _cached_baked_aabb[cache_key]
+	else:
+		aabb = _baked_aabb_local(node)
+		if not cache_key.is_empty() and aabb.size.y > 0.001:
+			_cached_baked_aabb[cache_key] = aabb
 	if aabb.size.y <= 0.001:
 		return
 	var factor: float = target_height / aabb.size.y

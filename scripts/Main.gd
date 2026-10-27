@@ -778,6 +778,22 @@ func _ready() -> void:
 				gsess_init.selected_character_id = "saved"
 	# Post-load cleanup: remove tent rifle if player already has a rifle or it was already picked up
 	_cleanup_tent_rifle()
+	# Pre-calentar visibilidad, colisiones cercanas, árboles interactivos y
+	# animales sincronizados MIENTRAS la pantalla de carga sigue cubriendo la
+	# vista, para que el primer segundo al entrar al mundo no sufra tirones.
+	if net == null or not net.is_dedicated_server:
+		_update_forest_visibility()
+		_update_grass_visibility()
+		_update_shadow_proximity()
+		_update_tree_interactions(true)
+		_update_boulder_interactions()
+		_update_forest_collision(true)
+		if net != null and net.is_connected and not net.is_host:
+			_update_puppet_animals(true)
+		await get_tree().process_frame
+		if _scene_quitting: return
+		await get_tree().process_frame
+		if _scene_quitting: return
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()
@@ -4977,7 +4993,7 @@ func _broadcast_animals() -> void:
 			net.sync_animals.rpc_id(pid, chunk)
 
 # Client: spawn/update visual-only puppet animals from server data
-func _update_puppet_animals() -> void:
+func _update_puppet_animals(unlimited: bool = false) -> void:
 	if net == null:
 		return
 	if net.animals.is_empty():
@@ -4988,6 +5004,8 @@ func _update_puppet_animals() -> void:
 	for aid in _collected_animal_tombstones.keys():
 		if not net.animals.has(aid):
 			_collected_animal_tombstones.erase(aid)
+	var spawned_this_frame := 0
+	var throttle_spawns := not unlimited and DisplayServer.get_name() != "headless" and _loading_overlay == null
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
 		var kind := str(d.get("t", "deer"))
@@ -4998,6 +5016,9 @@ func _update_puppet_animals() -> void:
 		if _collected_animal_tombstones.has(aid):
 			continue
 		if not puppet_animals.has(aid):
+			if throttle_spawns and spawned_this_frame >= 6:
+				continue
+			spawned_this_frame += 1
 			if kind == "bird":
 				var bird_puppet = BirdControllerScript.new()
 				bird_puppet.is_puppet = true
@@ -16707,9 +16728,15 @@ func _spatial_instance_batches(transforms: Array, cell_size: float, batch_size: 
 			batches.append(indices.slice(start, mini(start + batch_size, indices.size())))
 	return batches
 
+var _tree_mm_slots: Dictionary = {}
+
+static func _tree_mm_slot_key(pos: Vector3) -> Vector2i:
+	return Vector2i(int(round(pos.x * 20.0)), int(round(pos.z * 20.0)))
+
 func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 	if _forest_tree_meshes.is_empty():
 		return
+	_tree_mm_slots.clear()
 	# Split each variant into spatial batches of ~500 to allow per-batch visibility culling
 	const BATCH_SIZE := 500
 	for variant_idx in range(_forest_tree_meshes.size()):
@@ -16734,6 +16761,10 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				var t: Transform3D = transforms[indices[j]]
 				multimesh.set_instance_transform(j, t)
 				center += t.origin
+				var skey := _tree_mm_slot_key(t.origin)
+				if not _tree_mm_slots.has(skey):
+					_tree_mm_slots[skey] = []
+				(_tree_mm_slots[skey] as Array).append([multimesh, j, t])
 			center /= float(count)
 			# Calculate batch radius (max distance from center to any tree)
 			var batch_radius := 0.0
@@ -16760,7 +16791,12 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				branch_multimesh.mesh = branch_mesh
 				branch_multimesh.instance_count = count
 				for j in range(count):
-					branch_multimesh.set_instance_transform(j, transforms[indices[j]])
+					var bt: Transform3D = transforms[indices[j]]
+					branch_multimesh.set_instance_transform(j, bt)
+					var bskey := _tree_mm_slot_key(bt.origin)
+					if not _tree_mm_slots.has(bskey):
+						_tree_mm_slots[bskey] = []
+					(_tree_mm_slots[bskey] as Array).append([branch_multimesh, j, bt])
 				var branch_mmi := MultiMeshInstance3D.new()
 				branch_mmi.name = "ForestMM_%d_%d_leaves" % [variant_idx, b]
 				branch_mmi.multimesh = branch_multimesh
@@ -16805,7 +16841,7 @@ func _create_forest_collision(positions: Array) -> void:
 			_forest_collision_grid[key] = []
 		(_forest_collision_grid[key] as Array).append(pos)
 
-func _update_forest_collision() -> void:
+func _update_forest_collision(unlimited: bool = false) -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
@@ -16819,7 +16855,7 @@ func _update_forest_collision() -> void:
 				needed_cells[key] = true
 	# Create missing collision bodies — limit per tick to avoid stutter
 	var created := 0
-	var create_limit := 8 if _forest_collision_active_cells.is_empty() else 3
+	var create_limit := 999 if unlimited else (8 if _forest_collision_active_cells.is_empty() else 3)
 	for key in needed_cells:
 		if created >= create_limit:
 			break
@@ -16979,12 +17015,14 @@ func _register_tree_in_grid(entry: Dictionary) -> void:
 	if entry.has("id"):
 		_tree_entries_by_id[int(entry.id)] = entry
 
-func _update_tree_interactions() -> void:
+func _update_tree_interactions(unlimited: bool = false) -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
 	var pc := _tree_grid_key(ppos)
 	var r := int(_tree_deactivation_radius / _tree_grid_cell_size) + 1
+	var activated_this_tick := 0
+	var act_limit := 999 if (unlimited or DisplayServer.get_name() == "headless") else 8
 	for gx in range(pc.x - r, pc.x + r + 1):
 		for gy in range(pc.y - r, pc.y + r + 1):
 			var key := Vector2i(gx, gy)
@@ -16993,7 +17031,9 @@ func _update_tree_interactions() -> void:
 			for entry in _tree_grid[key]:
 				var dist := Vector2(ppos.x - entry.pos.x, ppos.z - entry.pos.z).length()
 				if dist < _tree_activation_radius and not entry.active:
-					_activate_tree(entry)
+					if activated_this_tick < act_limit:
+						_activate_tree(entry)
+						activated_this_tick += 1
 				elif dist > _tree_deactivation_radius and entry.active:
 					_deactivate_tree(entry)
 	# Also check all tracked active trees — the grid scan above may miss trees
@@ -17054,6 +17094,20 @@ func _hide_multimesh_tree_at(pos: Vector3) -> void:
 	var pos_key := Vector3(pos.x, pos.y, pos.z)
 	if _hidden_tree_transforms.has(pos_key):
 		return
+	var skey := _tree_mm_slot_key(pos)
+	if _tree_mm_slots.has(skey):
+		var slots: Array = _tree_mm_slots[skey]
+		var found := false
+		for slot in slots:
+			var mm_slot: MultiMesh = slot[0]
+			var idx_slot: int = int(slot[1])
+			var orig_t: Transform3D = slot[2]
+			if is_instance_valid(mm_slot) and idx_slot < mm_slot.instance_count and orig_t.origin.distance_squared_to(pos) < 0.01:
+				_hidden_tree_transforms[pos_key] = orig_t
+				mm_slot.set_instance_transform(idx_slot, orig_t.scaled_local(Vector3(0.0001, 0.0001, 0.0001)))
+				found = true
+		if found:
+			return
 	for mmi in _forest_multimesh_nodes:
 		if not is_instance_valid(mmi):
 			continue
@@ -17074,6 +17128,20 @@ func _show_multimesh_tree_at(pos: Vector3) -> void:
 	if not _hidden_tree_transforms.has(pos_key):
 		return
 	var orig_transform: Transform3D = _hidden_tree_transforms[pos_key]
+	var skey := _tree_mm_slot_key(pos)
+	if _tree_mm_slots.has(skey):
+		var slots: Array = _tree_mm_slots[skey]
+		var restored := false
+		for slot in slots:
+			var mm_slot: MultiMesh = slot[0]
+			var idx_slot: int = int(slot[1])
+			var orig_t: Transform3D = slot[2]
+			if is_instance_valid(mm_slot) and idx_slot < mm_slot.instance_count and orig_t.origin.distance_squared_to(pos) < 0.01:
+				mm_slot.set_instance_transform(idx_slot, orig_t)
+				restored = true
+		if restored:
+			_hidden_tree_transforms.erase(pos_key)
+			return
 	for mmi in _forest_multimesh_nodes:
 		if not is_instance_valid(mmi):
 			continue
