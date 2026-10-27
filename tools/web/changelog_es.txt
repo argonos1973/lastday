@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+b915231|Sonido de beber usando BEBER.mp3 recortado sin silencios para que suene al instante en botella, inventario, rio y fuente; la M4 queda bien asentada con las dos manos en idle y todas las poses; Piedra como loot por todo el mapa (rocas y pilas dan x3) y boleadoras crafteables con 3 Piedras + Cuerda/Tendon/Trapos que giran en vuelo y traban las patas/piernas 6 s en animales y jugadores
 90090e1|Sonido de beber audible al instante en todas las vias (botella, inventario, rio y fuente); la M4 queda bien asentada con las dos manos en idle y todas las poses; Piedra como loot por todo el mapa (rocas y pilas dan x3) y boleadoras crafteables con 3 Piedras + Cuerda/Tendon/Trapos que giran en vuelo y enrollan las patas del objetivo trabandolo 6 s
 69d7492|Sonidos propios al comer y beber (en mano, del suelo y en el rio, deteniendose al cancelar) y flecha encajada claramente visible en 3a persona al apuntar con el arco
 e620152|Cualquier accion en curso (beber, comer, talar, destripar, cocinar, llenar botella, encender fuego, dormir, recargar o pescar) se puede interrumpir al instante pulsando cualquier tecla para huir o defenderte
