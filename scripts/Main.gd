@@ -1398,9 +1398,12 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 func _tick_drink_hold(delta: float) -> void:
 	if _drink_hold_actor == null:
 		return
-	if not Input.is_action_pressed("interact"):
+	if not is_instance_valid(_drink_hold_actor) or not Input.is_action_pressed("interact"):
+		var prev_actor = _drink_hold_actor
 		_drink_hold_actor = null
 		_drink_hold_timer = 0.0
+		if is_instance_valid(prev_actor) and prev_actor.has_method("cancel_active_action"):
+			prev_actor.cancel_active_action(false)
 		return
 	_drink_hold_timer += delta
 	if _drink_hold_timer >= 1.0:
@@ -11034,18 +11037,47 @@ func _release_world_pickup(_action) -> void:
 	else:
 		net.release_pickup_claim.rpc_id(1, id)
 
+func _await_actor_action(actor, duration: float) -> bool:
+	if actor == null or not is_instance_valid(actor):
+		return false
+	var start_serial: int = int(actor.get("_action_serial")) if "_action_serial" in actor else 0
+	var timer := get_tree().create_timer(maxf(duration, 0.01))
+	if actor.has_signal("action_cancelled"):
+		var done := [false]
+		var on_cancel := func():
+			if not done[0]:
+				done[0] = true
+				timer.time_left = 0.0
+		actor.action_cancelled.connect(on_cancel, CONNECT_ONE_SHOT)
+		await timer.timeout
+		done[0] = true
+		if is_instance_valid(actor) and actor.action_cancelled.is_connected(on_cancel):
+			actor.action_cancelled.disconnect(on_cancel)
+	else:
+		await timer.timeout
+	if _scene_quitting or not is_instance_valid(actor):
+		return false
+	if bool(actor.get("is_dead")):
+		return false
+	if "_action_serial" in actor and int(actor.get("_action_serial")) != start_serial:
+		return false
+	return true
+
 func handle_world_action(action, actor) -> void:
 	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
 	# destripar, construir) no deben solaparse por repeticion de tecla.
 	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
 		return
+	var start_serial := 0
 	if actor != null:
+		if actor.has_method("_mark_action_started"):
+			start_serial = int(actor._mark_action_started())
 		actor.set("_interact_busy", true)
 	var claimed := await _acquire_world_pickup(action, actor)
 	if claimed:
 		await _execute_world_action(action, actor)
 		_release_world_pickup(action)
-	if is_instance_valid(actor):
+	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
 		actor.set("_interact_busy", false)
 
 func _execute_world_action(action, actor) -> void:
@@ -11102,8 +11134,7 @@ func _execute_world_action(action, actor) -> void:
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
-			await get_tree().create_timer(5.0).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 5.0): return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			action.set_meta("gutted", true)
@@ -11230,10 +11261,11 @@ func _execute_world_action(action, actor) -> void:
 					actor.notice.emit("Cortando ropa para trapos... (3s)")
 					if hud != null:
 						hud.show_countdown("Cortando ropa", 3.0)
-					await get_tree().create_timer(3.0).timeout
-					if _scene_quitting: return
+					var cut_ok := await _await_actor_action(actor, 3.0)
 					if audio_system != null and audio_system.has_method("stop_chop"):
 						audio_system.stop_chop()
+					if not cut_ok or not is_instance_valid(action):
+						return
 					# Remove the clothing visual completely
 					_hide_action_visual(action)
 					var _clothing_vis: String = action.get_meta("visual_name", "") if action.has_meta("visual_name") else ""
@@ -11329,8 +11361,6 @@ func _execute_world_action(action, actor) -> void:
 			else:
 				_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
-			_hide_action_visual(action)
-			action.mark_depleted()
 			_play_actor_action(actor, "plant", 1.2)
 			if hud != null:
 				hud.show_countdown("Comiendo", 1.2)
@@ -11339,10 +11369,12 @@ func _execute_world_action(action, actor) -> void:
 			var food_spoilage := 0.0
 			if action.has_meta("item_spoilage"):
 				food_spoilage = float(action.get_meta("item_spoilage"))
-			await get_tree().create_timer(1.2).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 1.2):
+				return
 			if not is_instance_valid(action):
 				return
+			_hide_action_visual(action)
+			action.mark_depleted()
 			if food_spoilage >= 100.0 and actor.stats.has_method("get_sick"):
 				actor.stats.get_sick(80.0)
 				actor.notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
@@ -11427,8 +11459,8 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
-				await get_tree().create_timer(5.0).timeout
-				if _scene_quitting: return
+				if not await _await_actor_action(actor, 5.0):
+					return
 				# Remove empty bottle and add filled one
 				for i in range(actor.inventory.items.size()):
 					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
@@ -11449,8 +11481,8 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
-				await get_tree().create_timer(5.0).timeout
-				if _scene_quitting: return
+				if not await _await_actor_action(actor, 5.0):
+					return
 				held_dw.durability = float(held_dw.max_durability)
 				held_dw.item_name = "Botella de agua llena"
 				actor.inventory.changed.emit()
@@ -11475,19 +11507,21 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("Encendiendo fogata con cerillas...")
 				if hud != null:
 					hud.show_countdown("Encendiendo fogata", 1.5)
-				await get_tree().create_timer(1.5).timeout
-				if _scene_quitting: return
+				if not await _await_actor_action(actor, 1.5):
+					return
 				actor.inventory.consume_match_charge()
 				actor.inventory.changed.emit()
 			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
-				actor.inventory.consume_item_name("Palo", 2)
-				actor.inventory.changed.emit()
 				_play_actor_action(actor, "forage", 8.0)
 				actor.notice.emit("Frotando palos para encender fogata... (8s)")
 				if hud != null:
 					hud.show_countdown("Encendiendo fogata con palos", 8.0)
-				await get_tree().create_timer(8.0).timeout
-				if _scene_quitting: return
+				if not await _await_actor_action(actor, 8.0):
+					return
+				if not actor.inventory.has_item_name("Palo", 2):
+					return
+				actor.inventory.consume_item_name("Palo", 2)
+				actor.inventory.changed.emit()
 			else:
 				actor.notice.emit("Necesitas cerillas o 2 palos para encender la fogata.")
 				return
@@ -11530,9 +11564,11 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Cocinando en la fogata...")
 			if hud != null:
 				hud.show_countdown("Cocinando", 10.0)
-			await get_tree().create_timer(10.0).timeout
-			action.set_meta("cooking", false)
-			if _scene_quitting: return
+			var cook_ok := await _await_actor_action(actor, 10.0)
+			if is_instance_valid(action):
+				action.set_meta("cooking", false)
+			if not cook_ok:
+				return
 			# Revalidar: el jugador sigue teniendo el item ensartado en la mano?
 			var held_after = actor.get_held_item() if actor.has_method("get_held_item") else null
 			if held_after == null or held_after.item_name != raw_name:
@@ -11578,8 +11614,7 @@ func _execute_world_action(action, actor) -> void:
 			_play_actor_action(actor, "interact", 1.0)
 			if hud != null:
 				hud.show_countdown("Cazando", 1.0)
-			await get_tree().create_timer(1.0).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 1.0): return
 			if randf() < 0.48:
 				if actor.inventory.add_item(ItemScript.create("Carne cruda", "food", 0.75, 1, 30.0)):
 					actor.notice.emit("Sigues el rastro y consigues carne.")
@@ -11620,6 +11655,10 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Recolectando fruta...")
 			if hud != null:
 				hud.show_countdown("Recolectando fruta", 3.0)
+			if not await _await_actor_action(actor, 3.0):
+				return
+			if not is_instance_valid(action):
+				return
 			var fruit_name := str(action.get_meta("fruit_type_name", "Higo"))
 			var fruit_type := "food"
 			var fruit_weight := 0.15
@@ -11663,10 +11702,11 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Taland arbol... (10s)")
 			if hud != null:
 				hud.show_countdown("Talando arbol", 10.0)
-			await get_tree().create_timer(10.0).timeout
-			if _scene_quitting: return
+			var fell_ok := await _await_actor_action(actor, 10.0)
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not fell_ok or not is_instance_valid(action):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			_fall_tree_animation(action)
@@ -11717,10 +11757,11 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Cortando arbusto... (5s)")
 			if hud != null:
 				hud.show_countdown("Cortando arbusto", 5.0)
-			await get_tree().create_timer(5.0).timeout
-			if _scene_quitting: return
+			var bush_ok := await _await_actor_action(actor, 5.0)
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not bush_ok or not is_instance_valid(action):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			_shrink_bush_animation(action)
@@ -11770,8 +11811,8 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Plantando semillas... (4s)")
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 4.0)
-			await get_tree().create_timer(4.0).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 4.0):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			var planted_pos: Vector3 = action.position
@@ -11807,10 +11848,11 @@ func _execute_world_action(action, actor) -> void:
 			actor.notice.emit("Cortando tronco...")
 			if hud != null:
 				hud.show_countdown("Cortando tronco", 3.0)
-			await get_tree().create_timer(3.0).timeout
-			if _scene_quitting: return
+			var log_ok := await _await_actor_action(actor, 3.0)
 			if audio_system != null and audio_system.has_method("stop_chop"):
 				audio_system.stop_chop()
+			if not log_ok or not is_instance_valid(action):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			_hide_action_visual(action)
@@ -11865,9 +11907,11 @@ func _execute_world_action(action, actor) -> void:
 			_play_actor_action(actor, "interact", 3.0)
 			if hud != null:
 				hud.show_countdown("Construyendo cabana", 3.0)
-			await get_tree().create_timer(3.0).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 3.0):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
+				return
+			if not actor.inventory.has_item_name("Tronco", 6) or not actor.inventory.has_item_name("Piedra", 4):
 				return
 			actor.inventory.consume_item_name("Tronco", 6)
 			actor.inventory.consume_item_name("Piedra", 4)
@@ -11891,8 +11935,8 @@ func _execute_world_action(action, actor) -> void:
 				_play_actor_action(actor, "forage", 1.5)
 				if hud != null:
 					hud.show_countdown("Retirando tela de camuflaje", 1.5)
-				await get_tree().create_timer(1.5).timeout
-				if _scene_quitting or not is_instance_valid(action): return
+				if not await _await_actor_action(actor, 1.5) or not is_instance_valid(action):
+					return
 				if not _actor_still_reaches(action, actor, 15.0):
 					return
 				if not bool(action.get_meta("camo_covered", false)):
@@ -11922,8 +11966,8 @@ func _execute_world_action(action, actor) -> void:
 				_play_actor_action(actor, "forage", 1.8)
 				if hud != null:
 					hud.show_countdown("Cubriendo refugio con tela de camuflaje", 1.8)
-				await get_tree().create_timer(1.8).timeout
-				if _scene_quitting or not is_instance_valid(action): return
+				if not await _await_actor_action(actor, 1.8) or not is_instance_valid(action):
+					return
 				if not _actor_still_reaches(action, actor, 15.0):
 					return
 				if not _consume_player_camo_net(actor):
@@ -12036,11 +12080,12 @@ func _net_notify_pickup(action) -> void:
 func handle_world_action_collect(action, actor) -> void:
 	if actor == null or not is_instance_valid(actor) or actor.get("_interact_busy") == true:
 		return
+	var start_serial: int = actor._mark_action_started() if actor.has_method("_mark_action_started") else 0
 	actor.set("_interact_busy", true)
 	if await _acquire_world_pickup(action, actor):
 		await _execute_world_action_collect(action, actor)
 		_release_world_pickup(action)
-	if is_instance_valid(actor):
+	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
 		actor.set("_interact_busy", false)
 
 func _execute_world_action_collect(action, actor) -> void:
@@ -12176,8 +12221,8 @@ func _execute_world_action_collect(action, actor) -> void:
 				_play_actor_action(actor, "forage", 1.8)
 				if hud != null:
 					hud.show_countdown("Retirando pieles del suelo", 1.8)
-				await get_tree().create_timer(1.8).timeout
-				if _scene_quitting or not is_instance_valid(action): return
+				if not await _await_actor_action(actor, 1.8) or not is_instance_valid(action):
+					return
 				if not _actor_still_reaches(action, actor, 15.0):
 					return
 				if not bool(action.get_meta("pelt_lined", false)):
@@ -12209,8 +12254,8 @@ func _execute_world_action_collect(action, actor) -> void:
 			_play_actor_action(actor, "forage", 3.0)
 			if hud != null:
 				hud.show_countdown("Forrando refugio con piel", 3.0)
-			await get_tree().create_timer(3.0).timeout
-			if _scene_quitting or not is_instance_valid(action): return
+			if not await _await_actor_action(actor, 3.0) or not is_instance_valid(action):
+				return
 			if not _actor_still_reaches(action, actor, 15.0):
 				return
 			if not _consume_player_pelts(actor, 4):
@@ -12233,12 +12278,13 @@ func handle_shelter_dismantle(action, actor) -> void:
 		return
 	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
 		return
+	var start_serial: int = actor._mark_action_started() if (actor != null and actor.has_method("_mark_action_started")) else 0
 	if actor != null:
 		actor.set("_interact_busy", true)
 	if await _acquire_world_pickup(action, actor):
 		await _execute_shelter_dismantle(action, actor)
 		_release_world_pickup(action)
-	if is_instance_valid(actor):
+	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
 		actor.set("_interact_busy", false)
 
 func _execute_shelter_dismantle(action, actor) -> void:
@@ -12257,8 +12303,7 @@ func _execute_shelter_dismantle(action, actor) -> void:
 	_play_actor_action(actor, "forage", 3.0)
 	if hud != null:
 		hud.show_countdown("Desmontando refugio", 3.0)
-	await get_tree().create_timer(3.0).timeout
-	if _scene_quitting or not is_instance_valid(action):
+	if not await _await_actor_action(actor, 3.0) or not is_instance_valid(action):
 		return
 	if not _actor_still_reaches(action, actor, 15.0):
 		return
@@ -12304,12 +12349,13 @@ func handle_world_action_eat(action, actor) -> void:
 	# Mismo guard que handle_world_action: bloquear interacciones concurrentes
 	if actor != null and (not is_instance_valid(actor) or actor.get("_interact_busy") == true):
 		return
+	var start_serial: int = actor._mark_action_started() if (actor != null and actor.has_method("_mark_action_started")) else 0
 	if actor != null:
 		actor.set("_interact_busy", true)
 	if await _acquire_world_pickup(action, actor):
 		await _execute_world_action_eat(action, actor)
 		_release_world_pickup(action)
-	if is_instance_valid(actor):
+	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
 		actor.set("_interact_busy", false)
 
 func _execute_world_action_eat(action, actor) -> void:
@@ -12329,8 +12375,8 @@ func _execute_world_action_eat(action, actor) -> void:
 			var food_spoilage2 := 0.0
 			if action.has_meta("item_spoilage"):
 				food_spoilage2 = float(action.get_meta("item_spoilage"))
-			await get_tree().create_timer(1.2).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 1.2):
+				return
 			if not is_instance_valid(action):
 				return
 			if not _actor_still_reaches(action, actor, 5.0):
@@ -12420,8 +12466,8 @@ func _execute_world_action_eat(action, actor) -> void:
 				hud.show_countdown("Comiendo carne cruda", 3.0)
 			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
 			var raw_eaten_name := str(action.get_meta("item_name", "carne cruda"))
-			await get_tree().create_timer(3.0).timeout
-			if _scene_quitting: return
+			if not await _await_actor_action(actor, 3.0):
+				return
 			if not is_instance_valid(action):
 				return
 			if not _actor_still_reaches(action, actor, 5.0):
@@ -12458,9 +12504,11 @@ func _handle_farm_plot(action, actor) -> void:
 				_play_actor_action(actor, "plant", 2.0)
 				if hud != null:
 					hud.show_countdown("Regando", 2.0)
-				await get_tree().create_timer(2.0).timeout
-				action.remove_meta("farm_busy")
-				if _scene_quitting: return
+				var water_ok := await _await_actor_action(actor, 2.0)
+				if is_instance_valid(action):
+					action.remove_meta("farm_busy")
+				if not water_ok:
+					return
 				if not is_instance_valid(action) or action.action_state != "planted":
 					return
 				if not _actor_still_reaches(action, actor, 15.0):
@@ -12484,9 +12532,11 @@ func _handle_farm_plot(action, actor) -> void:
 			_play_actor_action(actor, "plant", 1.25)
 			if hud != null:
 				hud.show_countdown("Recolectando", 1.25)
-			await get_tree().create_timer(1.25).timeout
-			action.remove_meta("farm_busy")
-			if _scene_quitting: return
+			var ready_ok := await _await_actor_action(actor, 1.25)
+			if is_instance_valid(action):
+				action.remove_meta("farm_busy")
+			if not ready_ok:
+				return
 			if not is_instance_valid(action) or action.action_state != "ready":
 				return
 			if not _actor_still_reaches(action, actor, 15.0):
@@ -12504,9 +12554,11 @@ func _handle_farm_plot(action, actor) -> void:
 			_play_actor_action(actor, "plant", 1.25)
 			if hud != null:
 				hud.show_countdown("Limpiando bancal", 1.25)
-			await get_tree().create_timer(1.25).timeout
-			action.remove_meta("farm_busy")
-			if _scene_quitting: return
+			var rot_ok := await _await_actor_action(actor, 1.25)
+			if is_instance_valid(action):
+				action.remove_meta("farm_busy")
+			if not rot_ok:
+				return
 			if not is_instance_valid(action) or action.action_state != "rotten":
 				return
 			if not _actor_still_reaches(action, actor, 15.0):
@@ -12532,9 +12584,11 @@ func _handle_farm_plot(action, actor) -> void:
 			_play_actor_action(actor, "plant", 1.35)
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 1.35)
-			await get_tree().create_timer(1.35).timeout
-			action.remove_meta("farm_busy")
-			if _scene_quitting: return
+			var plant_ok := await _await_actor_action(actor, 1.35)
+			if is_instance_valid(action):
+				action.remove_meta("farm_busy")
+			if not plant_ok:
+				return
 			# Seeds are consumed only when the work actually completes — never
 			# on an interrupted or already-planted attempt.
 			if not is_instance_valid(action) or action.action_state != "empty":

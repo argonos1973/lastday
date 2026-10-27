@@ -981,6 +981,11 @@ var _rain_wetting := false
 var flashlight_charge := 0.0
 var held_index := 0
 var _consumption_pending := false
+signal action_cancelled
+var _action_serial := 0
+var _action_started_frame := -1
+var _active_consumption_timer: Timer = null
+var _local_action_pending := false
 var _held_item_reference = null
 var _held_item_external := false
 var equipped_clothing := ""
@@ -1848,6 +1853,15 @@ func _input(event: InputEvent) -> void:
 		return
 	if is_puppet or is_dead:
 		return
+	var _pressed_key_or_button: bool = (event is InputEventKey and event.pressed and not event.echo) \
+		or (event is InputEventMouseButton and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	if _pressed_key_or_button and not _is_chat_open() and is_performing_interruptible_action() and Engine.get_process_frames() != _action_started_frame:
+		var was_fishing_or_sleeping := _is_fishing or _is_fishing_idle or is_sleeping or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)
+		cancel_active_action(true)
+		if was_fishing_or_sleeping:
+			return
+		if event is InputEventKey and event.keycode in [KEY_F, KEY_C, KEY_M, KEY_D, KEY_E, KEY_ESCAPE, KEY_B, KEY_N, KEY_R]:
+			return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 	if is_instance_valid(rowing_boat):
@@ -1883,32 +1897,6 @@ func _input(event: InputEvent) -> void:
 		if not _boat_standing:
 			return
 		# De pie en la barca el resto de entradas corren como si estuviera en tierra.
-	# Abandon the fishing cast/idle-with-line state as soon as any key or mouse
-	# button is pressed, returning the player to the normal controllable pose.
-	var _pressed_key_or_button: bool = (event is InputEventKey and event.pressed and not event.echo) \
-		or (event is InputEventMouseButton and event.pressed)
-	if _pressed_key_or_button and (_is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation) or _is_fishing):
-		_is_fishing = false
-		_is_fishing_idle = false
-		third_person_action_animation = ""
-		third_person_action_timer = 0.0
-		third_person_action_start_offset = 0.0
-		_deactivate_rod_visual_overlay()
-		# Hide countdown and clear notice
-		var main := get_tree().current_scene
-		if main != null:
-			if main.get("hud") != null and main.hud.has_method("hide_countdown"):
-				main.hud.hide_countdown()
-		notice.emit("")
-		# Return to normal animation
-		if third_person_animation_player != null and not third_person_idle_animation.is_empty():
-			third_person_animation_player.play(third_person_idle_animation, 0.3)
-			third_person_animation_player.speed_scale = 1.0
-		# Store the fishing rod back into inventory
-		_store_held_item()
-		# Consume this input so it only cancels fishing and does not trigger
-		# other actions (store item, switch slot, etc.) with the same press.
-		return
 	if event is InputEventMouseButton and event.pressed:
 		_on_game_mouse_button_pressed(event)
 	elif event is InputEventMouseButton and not event.pressed:
@@ -6297,9 +6285,107 @@ func _smooth_loop_boundary(animation: Animation) -> void:
 					var blended := (cur as Vector3).lerp(first_scale, t)
 					animation.track_set_key_value(track_index, idx, blended)
 
+func _mark_action_started() -> int:
+	_action_serial += 1
+	_action_started_frame = Engine.get_process_frames()
+	return _action_serial
+
+func _await_local_action(duration: float) -> bool:
+	var start_serial := _mark_action_started()
+	_local_action_pending = true
+	var timer := get_tree().create_timer(maxf(duration, 0.01))
+	var done := [false]
+	var on_cancel := func():
+		if not done[0]:
+			done[0] = true
+			timer.time_left = 0.0
+	action_cancelled.connect(on_cancel, CONNECT_ONE_SHOT)
+	await timer.timeout
+	done[0] = true
+	if action_cancelled.is_connected(on_cancel):
+		action_cancelled.disconnect(on_cancel)
+	if _action_serial == start_serial:
+		_local_action_pending = false
+	if is_dead or _action_serial != start_serial:
+		return false
+	return true
+
+func is_performing_interruptible_action() -> bool:
+	if is_dead:
+		return false
+	if _consumption_pending or _interact_busy or _local_action_pending or is_sleeping or _is_fishing or _is_fishing_idle or _is_reloading:
+		return true
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main != null and main.get("_drink_hold_actor") == self:
+		return true
+	if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
+		if third_person_action_animation != third_person_hit_animation and third_person_action_animation != third_person_shot_animation and not _throw_aim_hold:
+			return true
+	return false
+
+func cancel_active_action(show_cancel_notice: bool = false) -> bool:
+	if not is_performing_interruptible_action():
+		return false
+	var was_fishing := _is_fishing or _is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)
+	var was_sleeping := is_sleeping
+	_action_serial += 1
+	_local_action_pending = false
+	_interact_busy = false
+	_is_reloading = false
+	_f_holding = false
+	_g_holding = false
+	_throw_charging = false
+	_throw_aim_hold = false
+	_throw_aim_frozen = false
+	if _active_consumption_timer != null and is_instance_valid(_active_consumption_timer):
+		_active_consumption_timer.stop()
+		_active_consumption_timer.queue_free()
+	_active_consumption_timer = null
+	if _consumption_pending:
+		_consumption_pending = false
+		_clear_third_person_drink_bottle_left_hand()
+		_sync_held_item()
+	if was_fishing:
+		_is_fishing = false
+		_is_fishing_idle = false
+		_fishing_session += 1
+		_deactivate_rod_visual_overlay()
+	if was_sleeping:
+		stop_sleep()
+	third_person_action_animation = ""
+	third_person_action_timer = 0.0
+	third_person_action_start_offset = 0.0
+	if third_person_animation_player != null:
+		third_person_animation_player.speed_scale = 1.0
+		if not third_person_idle_animation.is_empty():
+			third_person_animation_player.play(third_person_idle_animation, 0.15)
+	if was_fishing:
+		_store_held_item()
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main != null:
+		if main.get("_drink_hold_actor") == self:
+			main.set("_drink_hold_actor", null)
+			main.set("_drink_hold_timer", 0.0)
+		var aud = main.get("audio_system")
+		if aud != null and aud.has_method("stop_chop"):
+			aud.stop_chop()
+		var hud_node = main.get("hud")
+		if hud_node != null and hud_node.has_method("hide_countdown"):
+			hud_node.hide_countdown()
+	if show_cancel_notice:
+		if was_sleeping:
+			notice.emit("Has despertado.")
+		elif not was_fishing:
+			notice.emit("Acción cancelada.")
+		else:
+			notice.emit("")
+	action_cancelled.emit()
+	return true
+
 func play_action_animation(action_name: String, duration := 1.1) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
+	_action_started_frame = Engine.get_process_frames()
 	var target_animation := ""
 	var anim_start_offset := 0.0
 	match action_name:
@@ -6792,6 +6878,7 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 	if is_in_water:
 		notice.emit("No puedes dormir en el agua.")
 		return
+	_mark_action_started()
 	is_sleeping = true
 	_cancel_aim()
 	# Cancel fishing if in progress
@@ -6868,18 +6955,19 @@ func _craft_campfire() -> void:
 		else:
 			notice.emit("Necesitas 1 palo para craftear una fogata.")
 		return
-	inventory.consume_item_name("Tronco", 2)
-	inventory.consume_item_name("Palo", 1)
 	play_action_animation("plant", 2.0)
 	notice.emit("Crafteando fogata...")
 	# Show countdown via parent HUD
 	var parent_node := get_parent()
-	if parent_node != null and parent_node.has_node("HUD"):
-		var hud_node := parent_node.get_node("HUD")
-		if hud_node != null and hud_node.has_method("show_countdown"):
-			hud_node.show_countdown("Crafteando fogata", 2.0)
+	if parent_node != null and parent_node.get("hud") != null and parent_node.hud.has_method("show_countdown"):
+		parent_node.hud.show_countdown("Crafteando fogata", 2.0)
 	# Wait for animation then spawn campfire
-	await get_tree().create_timer(2.0).timeout
+	if not await _await_local_action(2.0):
+		return
+	if not inventory.has_item_name("Tronco", 2) or not inventory.has_item_name("Palo", 1):
+		return
+	inventory.consume_item_name("Tronco", 2)
+	inventory.consume_item_name("Palo", 1)
 	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
 	# Keep the player's height: _on_item_dropped raycasts down from pos.y+0.5,
 	# so a campfire crafted on a rooftop lands on the roof instead of being
@@ -6954,7 +7042,8 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 		if hud_node != null and hud_node.has_method("show_countdown"):
 			hud_node.show_countdown("Abriendo lata" if craft_anim == "plant" else "Crafteando", craft_duration)
 	if craft_anim == "plant":
-		await get_tree().create_timer(craft_duration).timeout
+		if not await _await_local_action(craft_duration):
+			return
 		notice.emit("Has abierto la lata. Ya puedes comerla.")
 		for _it in inventory.items:
 			if _it != null and _it.has_method("is_broken") and _it.is_broken():
@@ -7040,14 +7129,20 @@ func _eat_held_item() -> void:
 func _start_consumption(item, animation: String, duration: float) -> void:
 	if _consumption_pending or is_dead or stats == null:
 		return
+	var start_serial := _mark_action_started()
 	_consumption_pending = true
 	play_action_animation(animation, duration)
 	notice.emit("Bebiendo..." if animation == "drink" else "Comiendo...")
 	var timer := Timer.new()
 	timer.one_shot = true
 	timer.wait_time = maxf(duration, 0.01)
+	_active_consumption_timer = timer
 	timer.timeout.connect(func():
+		if _active_consumption_timer == timer:
+			_active_consumption_timer = null
 		timer.queue_free()
+		if _action_serial != start_serial or not _consumption_pending:
+			return
 		_consumption_pending = false
 		# Resolve by identity: sorting, moving or dropping cannot consume another item.
 		if not is_dead and inventory != null and stats != null:
@@ -10202,8 +10297,8 @@ func _clear_third_person_drink_bottle_left_hand() -> void:
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
 		return
 	for child in _drink_hand_root.get_children():
-		if child.name == "ThirdPersonDrinkBottleLeft":
-			child.queue_free()
+		_drink_hand_root.remove_child(child)
+		child.queue_free()
 
 func _build_third_person_drink_bottle() -> void:
 	_try_add_model_to_parent(third_person_hand_item_root, REAL_PLASTIC_BOTTLE_MODEL, "ThirdPersonDrinkBottle", Vector3(0, 0, -0.12), Vector3(180, 0, 0), Vector3.ONE * 0.5)
@@ -11713,14 +11808,17 @@ func _toggle_flashlight() -> void:
 			if not inventory.has_item_name("Palo", 2):
 				notice.emit("Necesitas cerillas o 2 palos para encender la antorcha.")
 				return
-			inventory.consume_item_name("Palo", 2)
-			inventory.changed.emit()
 			play_action_animation("forage", 8.0)
 			notice.emit("Frotando palos para encender antorcha... (8s)")
-			var _hud := get_parent().get_node_or_null("HUD")
+			var _hud = get_parent().get("hud") if get_parent() != null else null
 			if _hud != null and _hud.has_method("show_countdown"):
 				_hud.show_countdown("Encendiendo antorcha con palos", 8.0)
-			await get_tree().create_timer(8.0).timeout
+			if not await _await_local_action(8.0):
+				return
+			if not inventory.has_item_name("Palo", 2) or get_held_item() != held:
+				return
+			inventory.consume_item_name("Palo", 2)
+			inventory.changed.emit()
 			torch_light.visible = true
 			held = _split_torch_for_lighting(held)
 			held.set_meta("torch_lit", true)
@@ -13198,7 +13296,9 @@ func _reload_rifle() -> void:
 	_rifle_burst_revision += 1
 	var selection_revision := _held_selection_revision
 	notice.emit("Recargando fusil...")
-	await get_tree().create_timer(2.2).timeout
+	if not await _await_local_action(2.2):
+		_is_reloading = false
+		return
 	_is_reloading = false
 	if is_dead or get_held_item() != rifle or selection_revision != _held_selection_revision:
 		return
