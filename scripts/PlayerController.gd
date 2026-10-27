@@ -14225,11 +14225,10 @@ func _finish_bow_shot() -> void:
 		var sight_hit := _rifle_sight_hit(sight_start, cam_ray_dir, exclude_arr)
 		if not sight_hit.is_empty():
 			var hit_d_from_bow := sight_start.distance_to(sight_hit.position)
-			if hit_d_from_bow > 2.2:
-				converge_dist = clampf(bow_along_ray + 0.35 + hit_d_from_bow, bow_along_ray + 4.5, 120.0)
-				zero_target = sight_hit.position
-			else:
-				zero_target = cam_ray_origin + cam_ray_dir * maxf(bow_along_ray + 4.5, 6.5)
+			# The sight ray already excludes the actor and starts beyond the hand.
+			# A nearby hit is real cover/target, not something to aim through.
+			converge_dist = bow_along_ray + 0.35 + hit_d_from_bow
+			zero_target = sight_hit.position
 	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
 	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
 	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —
@@ -14269,7 +14268,7 @@ func _throw_aimed_weapon() -> void:
 	var hand_along := maxf(0.0, (hand_approx - cam_origin).dot(cam_ray_dir))
 	var sight_start := cam_origin + cam_ray_dir * (hand_along + 0.35)
 	var target_hit := _rifle_sight_hit(sight_start, cam_ray_dir, excluded)
-	_throw_release_target = target_hit.position if (not target_hit.is_empty() and sight_start.distance_to(target_hit.position) > 1.8) else cam_origin + cam_ray_dir * 35.0
+	_throw_release_target = target_hit.position if not target_hit.is_empty() else cam_origin + cam_ray_dir * 35.0
 	_throw_release_item = held
 	_throw_release_timer = THROW_RELEASE_DELAY
 	_throw_aim_hold = false
@@ -14375,11 +14374,17 @@ func _spear_release_origin(excluded: Array[RID]) -> Vector3:
 		grip = third_person_hand_item_root.global_position
 	# An animated hand beyond a wall must not spawn a projectile through it.
 	if grip.distance_squared_to(body) > 0.0001:
-		var query := PhysicsRayQueryParameters3D.create(body, grip, 1, excluded)
+		var query := PhysicsRayQueryParameters3D.create(body, grip, 5, excluded)
 		query.hit_from_inside = true
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		var world := get_tree().current_scene
+		if world != null and world.has_method("raycast_distant_props"):
+			var endpoint: Vector3 = hit.position if not hit.is_empty() else grip
+			var distant: Dictionary = world.raycast_distant_props(body, endpoint)
+			if not distant.is_empty():
+				hit = distant
 		if not hit.is_empty():
-			return hit.position + hit.normal * 0.03
+			return hit.position - (grip - body).normalized() * 0.12
 	return grip
 
 # Exponential drag per thrown/shot projectile: light fletched arrows shed
