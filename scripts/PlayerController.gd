@@ -4549,13 +4549,13 @@ func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool)
 					nocked_arrow.add_child(arrow_vis)
 				nocked_arrow.set_meta("arrow_kind", desired_arrow)
 			# _build_arrow_or_spear_visual places fletching at +Z (+0.36) and
-			# arrowhead at -Z (-0.425). Scale and position so the fletching sits
-			# on the drawn string nock_pt (+pull_z) and the arrowhead projects
-			# well past the left-hand fingertips (-Z) clearly visible to the camera.
-			var z_scale := maxf(1.22, (pull_z + 0.38) / 0.68)
+			# arrowhead at -Z (-0.425). Place on the camera (+X) side of the riser
+			# and project the shaft/head well ahead of the bow so the third-person
+			# over-shoulder camera sees the nocked arrow clearly around the arm.
+			var z_scale := maxf(1.62, (pull_z + 0.58) / 0.68)
 			nocked_arrow.rotation_degrees = Vector3.ZERO
-			nocked_arrow.scale = Vector3(1.95, 1.95, z_scale)
-			nocked_arrow.position = Vector3(-0.022, 0.038, pull_z - 0.44 * z_scale)
+			nocked_arrow.scale = Vector3(2.85, 2.85, z_scale)
+			nocked_arrow.position = Vector3(0.028, 0.042, pull_z - 0.35 * z_scale)
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
@@ -6319,7 +6319,7 @@ func is_performing_interruptible_action() -> bool:
 	if main != null and main.get("_drink_hold_actor") == self:
 		return true
 	if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
-		if third_person_action_animation != third_person_hit_animation and third_person_action_animation != third_person_shot_animation and not _throw_aim_hold:
+		if third_person_action_animation not in [third_person_hit_animation, third_person_shot_animation, _bow_shoot_animation, third_person_attack_animation, third_person_punch_animation] and not _throw_aim_hold:
 			return true
 	return false
 
@@ -6337,6 +6337,7 @@ func cancel_active_action(show_cancel_notice: bool = false) -> bool:
 	_throw_charging = false
 	_throw_aim_hold = false
 	_throw_aim_frozen = false
+	_stop_consumption_audio()
 	if _active_consumption_timer != null and is_instance_valid(_active_consumption_timer):
 		_active_consumption_timer.stop()
 		_active_consumption_timer.queue_free()
@@ -7126,12 +7127,44 @@ func _eat_held_item() -> void:
 		return
 	_start_consumption(item, "plant", 2.0)
 
+var _consumption_audio: AudioStreamPlayer3D
+
+func _stop_consumption_audio() -> void:
+	if is_instance_valid(_consumption_audio):
+		_consumption_audio.stop()
+
+func _play_consumption_audio(drinking: bool, duration: float, serial: int) -> void:
+	if not is_instance_valid(_consumption_audio):
+		_consumption_audio = AudioStreamPlayer3D.new()
+		_consumption_audio.name = "ConsumptionAudio"
+		_consumption_audio.position = Vector3(0, 1.5, 0)
+		_consumption_audio.max_distance = 18.0
+		_consumption_audio.unit_size = 6.5
+		_consumption_audio.volume_db = 2.0
+		add_child(_consumption_audio)
+	var paths := ["res://assets/audio/consumption/drink_01.mp3"] if drinking else ["res://assets/audio/consumption/eat_00.ogg", "res://assets/audio/consumption/eat_01.ogg", "res://assets/audio/consumption/eat_02.ogg"]
+	await get_tree().create_timer(minf(.25, duration * .15)).timeout
+	var remaining := duration - minf(.25, duration * .15)
+	while remaining > .05 and (_consumption_pending or _interact_busy) and _action_serial == serial and not is_dead:
+		var stream := load(paths.pick_random()) as AudioStream
+		if stream == null:
+			return
+		_consumption_audio.stream = stream
+		_consumption_audio.pitch_scale = randf_range(.96, 1.04)
+		_consumption_audio.play()
+		var pause := minf(remaining, stream.get_length() + .12)
+		await get_tree().create_timer(maxf(.05, pause)).timeout
+		remaining -= pause
+	if _action_serial == serial:
+		_stop_consumption_audio()
+
 func _start_consumption(item, animation: String, duration: float) -> void:
 	if _consumption_pending or is_dead or stats == null:
 		return
 	var start_serial := _mark_action_started()
 	_consumption_pending = true
 	play_action_animation(animation, duration)
+	_play_consumption_audio(animation == "drink", duration, start_serial)
 	notice.emit("Bebiendo..." if animation == "drink" else "Comiendo...")
 	var timer := Timer.new()
 	timer.one_shot = true
@@ -7144,6 +7177,7 @@ func _start_consumption(item, animation: String, duration: float) -> void:
 		if _action_serial != start_serial or not _consumption_pending:
 			return
 		_consumption_pending = false
+		_stop_consumption_audio()
 		# Resolve by identity: sorting, moving or dropping cannot consume another item.
 		if not is_dead and inventory != null and stats != null:
 			var index: int = inventory.items.find(item)
@@ -10676,9 +10710,10 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 				if is_finite(live_spine_y) and live_spine_y > 0.4:
 					base_pivot_y = clampf(live_spine_y, 0.75, 1.85)
 			var pivot_y := base_pivot_y + breath_sway_y + _water_sink
-			var shoulder_pivot := Vector3(0.46 + breath_sway_x, pivot_y, 0.0)
+			var side_x := 0.56 if _has_bow_equipped() else 0.46
+			var shoulder_pivot := Vector3(side_x + breath_sway_x, pivot_y, 0.0)
 			var orbit_pitch := clampf(_pitch, deg_to_rad(-65.0), deg_to_rad(65.0))
-			var boom_offset := Vector3(0.0, 0.48, bow_cam_z).rotated(Vector3.RIGHT, orbit_pitch)
+			var boom_offset := Vector3(0.0, 0.52 if _has_bow_equipped() else 0.48, bow_cam_z).rotated(Vector3.RIGHT, orbit_pitch)
 			target_position = shoulder_pivot + boom_offset
 			target_position.y = maxf(target_position.y, 0.28 + _water_sink)
 		else:
@@ -13193,7 +13228,13 @@ func _toggle_aim() -> void:
 		_breath_hold_timer = 0.0
 		_breath_hold_recover = 0.0
 		if _has_bow_equipped():
-			play_action_animation("bow_shoot", 0.52)
+			# Aiming is not a shot: the release clip hides the nocked arrow.
+			# Enter the drawn idle directly and let locomotion choose aim-walk.
+			if _bow_release_item == null and third_person_animation_player != null and not _bow_aim_idle_animation.is_empty():
+				third_person_action_timer = 0.0
+				third_person_action_animation = ""
+				third_person_animation_player.play(_bow_aim_idle_animation, 0.15)
+				third_person_animation_player.speed_scale = 1.0
 			var ac := _count_inventory_arrows()
 			notice.emit("Apuntando con arco (%d flechas). Clic izq: disparar." % ac if ac > 0 else "No tienes flechas en el inventario.")
 		elif _has_throwable_weapon_equipped():

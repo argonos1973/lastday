@@ -100,6 +100,14 @@ func run():
 	actor._fit_held_prop_to_palm(bow_item)
 	var held_prim := actor.third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 	check(held_prim != null and held_prim.get_parent() == actor.third_person_hand_item_root, "Bow HeldPrimitive is not wrapped or shrunk by palm fitter")
+	var aim_clip := Animation.new()
+	aim_clip.length = 1.0
+	lib.add_animation("bow_aim_test", aim_clip)
+	actor._bow_aim_idle_animation = "bow_aim_test"
+	actor._is_aiming = false
+	actor._toggle_aim()
+	check(actor.third_person_animation_player.current_animation == "bow_aim_test", "Aiming enters drawn idle, not the release animation")
+	check(actor._bow_release_item == null and actor.third_person_action_timer == 0, "Aiming does not trigger a shot or hide the nocked arrow")
 	actor._update_bow_draw_visuals(held_prim, 0.65, true)
 	var nocked := held_prim.get_node_or_null("BowNockedArrow") as Node3D
 	check(nocked != null and nocked.visible, "Nocked arrow becomes visible on bow draw")

@@ -11362,6 +11362,8 @@ func _execute_world_action(action, actor) -> void:
 				_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
 			_play_actor_action(actor, "plant", 1.2)
+			if actor.has_method("_play_consumption_audio"):
+				actor._play_consumption_audio(false, 1.2, int(actor.get("_action_serial")))
 			if hud != null:
 				hud.show_countdown("Comiendo", 1.2)
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
@@ -11493,6 +11495,9 @@ func _execute_world_action(action, actor) -> void:
 			if _drink_hold_actor != null:
 				return
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)
+			if actor.has_method("_play_consumption_audio"):
+				actor.set("_interact_busy", true)
+				actor._play_consumption_audio(true, _DRINK_HOLD_TIME, int(actor.get("_action_serial")))
 			_drink_hold_actor = actor
 			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
 			_drink_hold_timer = 0.0
@@ -12368,6 +12373,8 @@ func _execute_world_action_eat(action, actor) -> void:
 			# consume el ultimo trozo cuando la cantidad llega a cero.
 			var pile_partial: bool = not is_portioned_can and pile_qty > 1
 			_play_actor_action(actor, "plant", 1.2)
+			if actor.has_method("_play_consumption_audio"):
+				actor._play_consumption_audio(false, 1.2, int(actor.get("_action_serial")))
 			if hud != null:
 				hud.show_countdown("Comiendo", 1.2)
 			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
@@ -12462,6 +12469,8 @@ func _execute_world_action_eat(action, actor) -> void:
 					actor.die()
 		"wolf_meat_raw", "bird_meat_raw":
 			_play_actor_action(actor, "plant", 3.0)
+			if actor.has_method("_play_consumption_audio"):
+				actor._play_consumption_audio(false, 3.0, int(actor.get("_action_serial")))
 			if hud != null:
 				hud.show_countdown("Comiendo carne cruda", 3.0)
 			var raw_food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 15.0
