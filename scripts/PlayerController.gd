@@ -4232,7 +4232,7 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 					target_skel.set_bone_pose_rotation(sb_idx, (s_entry[1] as Quaternion).normalized())
 			target_skel.force_update_all_bone_transforms()
 		var aim_pitch := _pitch
-		if not is_puppet and is_instance_valid(camera):
+		if not is_puppet and is_instance_valid(camera) and not m4_active:
 			aim_pitch = camera.rotation.x
 		var walking_bow := bow_active and not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation
 		if bow_active:
@@ -9620,8 +9620,11 @@ func _m4_camera_ready() -> bool:
 func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	# The camera travels from third person to ADS. Its position must never
 	# drag the physical rifle away from the character during that transition.
+	# The shouldered M4 follows the character aim, not the camera: debug
+	# views (frontal/side/top) would otherwise point the rifle backwards
+	# through the body and bury both hands inside the chest.
 	var sight_dir := (-global_basis.z).rotated(global_basis.x.normalized(), _pitch).normalized()
-	if not is_puppet and is_instance_valid(camera):
+	if not is_puppet and is_instance_valid(camera) and (_is_aiming or _is_firing or not _mounted_rifle_is_m4):
 		sight_dir = -camera.global_basis.z.normalized()
 	var head_name := _resolve_bone_name_safe("mixamorig:Head", skel)
 	if head_name.is_empty():
