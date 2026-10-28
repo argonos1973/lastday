@@ -571,6 +571,9 @@ static func attach_swivels(barrel: Node3D, stock: Node3D, rifle: Node3D) -> void
 	var markers := [barrel, stock]
 	for i in 2:
 		var marker: Node3D = markers[i]
+		if is_m4:
+			marker.position = rifle.transform * targets[i]
+			continue
 		marker.position = (marker.get_parent() as Node3D).to_local(rifle.to_global(targets[i]))
 		var part := rifle.find_child(parts[i], true, false) as Node3D
 		snap_to_mesh(marker, part if part != null else rifle)

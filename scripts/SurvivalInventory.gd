@@ -473,7 +473,7 @@ func update_portrait() -> void:
 		portrait_ap = node as AnimationPlayer
 		break
 	if portrait_ap != null:
-		var idle_name := str(player.third_person_idle_animation)
+		var idle_name := str(player._rifle_idle_animation) if (player._has_rifle_equipped() and not str(player._rifle_idle_animation).is_empty()) else str(player.third_person_idle_animation)
 		if not idle_name.is_empty() and portrait_ap.has_animation(idle_name):
 			portrait_ap.play(idle_name)
 			portrait_ap.seek(0.4, true)

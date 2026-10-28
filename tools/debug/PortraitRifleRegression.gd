@@ -93,6 +93,7 @@ func _test_rifle(rifle_name: String) -> void:
 	# FIX: re-sentar como hace update_portrait.
 	var seated: bool = actor.pose_rifle_for_portrait(dup, dup_skel)
 	check(seated, "[%s] pose_rifle_for_portrait seats the rifle" % rifle_name)
+	dup_rh_pos = (dup_skel.global_transform * dup_skel.get_bone_global_pose(dup_rh)).origin
 	var grip_err := dup_rg.global_position.distance_to(dup_rh_pos)
 	check(grip_err < 0.60, "[%s] rifle grip sits on the portrait hand (err %.3f)" % [rifle_name, grip_err])
 	var center := _rifle_mesh_center(dup)

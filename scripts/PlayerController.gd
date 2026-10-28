@@ -4152,7 +4152,14 @@ func _on_head_skeleton_updated() -> void:
 
 func _on_third_person_mixer_applied() -> void:
 	_aim_pitch_saved_rotations.clear()
-	_m4_saved_left_arm_poses.clear()
+	if not _m4_saved_left_arm_poses.is_empty() and is_instance_valid(_ik_skel):
+		for entry in _m4_saved_left_arm_poses:
+			var b_idx: int = entry[0]
+			var rest := _ik_skel.get_bone_rest(b_idx)
+			_ik_skel.set_bone_pose_position(b_idx, rest.origin)
+			_ik_skel.set_bone_pose_scale(b_idx, rest.basis.get_scale())
+		_m4_saved_left_arm_poses.clear()
+	_restore_grip_origins()
 	if _has_rifle:
 		_update_rifle_visuals(0.0)
 
@@ -4766,12 +4773,19 @@ func _seat_m4_rest_pose(skel: Skeleton3D, char_basis: Basis, rh_idx: int, lh_idx
 	rifle_root.force_update_transform()
 
 func _solve_m4_rest_arms(skel: Skeleton3D, wo_xf: Transform3D, save_poses: bool) -> void:
+	var rsh := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightShoulder", skel))
 	var rua := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightArm", skel))
 	var rfa := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightForeArm", skel))
 	var rh := skel.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skel))
+	var lsh := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftShoulder", skel))
 	var lua := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftArm", skel))
 	var lfa := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftForeArm", skel))
 	var lh := skel.find_bone(_resolve_bone_name_safe("mixamorig:LeftHand", skel))
+	for b in [lsh, lua, lfa, lh, rsh, rua, rfa, rh]:
+		if b >= 0:
+			var rest_b := skel.get_bone_rest(b)
+			skel.set_bone_pose_position(b, rest_b.origin)
+			skel.set_bone_pose_scale(b, rest_b.basis.get_scale())
 	if save_poses:
 		_m4_saved_left_arm_poses.clear()
 		for b in [lua, lfa, lh, rua, rfa, rh]:
@@ -4795,7 +4809,7 @@ func _solve_m4_rest_arms(skel: Skeleton3D, wo_xf: Transform3D, save_poses: bool)
 			var tip := skel.get_bone_global_pose(child) * (lrig["pivots"].get(child, Vector3.ZERO) as Vector3)
 			var target: Vector3 = skel_inv * (wo_xf * _rg_left_thumb)
 			var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
-			var tbasis := Basis(turn) * thumb_pose.basis
+			var tbasis := (Basis(turn) * thumb_pose.basis).orthonormalized()
 			skel.set_bone_global_pose(thumb, Transform3D(tbasis, base - tbasis * pivot))
 
 func _seat_m4_idle_grip(skel: Skeleton3D, hand_idx: int, offset: Node3D) -> void:
@@ -4832,12 +4846,19 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 	var s := _rifle_weapon_scale() * skel.global_transform.basis.get_scale().x
 	var char_basis := model.global_basis.orthonormalized()
 	if _mounted_rifle_is_m4:
-		_seat_m4_rest_pose(skel, char_basis, rh_idx, lh_idx, sh_idx, s, weapon_offset, rifle_root)
+		var prev_rig_skel := _grip_rig_skel
+		var prev_rig := _grip_rig.duplicate()
+		var prev_pivots_applied := _grip_pivots_applied
+		var m4_char_basis := (model.global_basis * Basis(Vector3.UP, PI)).orthonormalized()
+		_seat_m4_rest_pose(skel, m4_char_basis, rh_idx, lh_idx, sh_idx, s, weapon_offset, rifle_root)
 		_solve_m4_rest_arms(skel, weapon_offset.global_transform, false)
 		skel.force_update_all_bone_transforms()
 		_seat_m4_idle_grip(skel, rh_idx, weapon_offset)
 		_solve_m4_rest_arms(skel, weapon_offset.global_transform, false)
 		skel.force_update_all_bone_transforms()
+		_grip_rig_skel = prev_rig_skel
+		_grip_rig = prev_rig
+		_grip_pivots_applied = prev_pivots_applied
 		return true
 	var rh_pos := (skel.global_transform * skel.get_bone_global_pose(rh_idx)).origin
 	var lh_pos := (skel.global_transform * skel.get_bone_global_pose(lh_idx)).origin
@@ -9440,6 +9461,14 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if want_direct_aim and _try_place_rifle_aiming(skel, s):
 		_rifle_aim_pose_active = true
 		_register_rifle_ik(skel, lh_idx)
+		_m4_saved_left_arm_poses.clear()
+		for b in [_ik_upper_arm_idx, _ik_forearm_idx, _ik_lh_idx, _ik_right_upper_arm_idx, _ik_right_forearm_idx, _ik_rh_idx]:
+			if b >= 0:
+				var rest_b := skel.get_bone_rest(b)
+				skel.set_bone_pose_position(b, rest_b.origin)
+				skel.set_bone_pose_scale(b, rest_b.basis.get_scale())
+				_m4_saved_left_arm_poses.append([b, skel.get_bone_pose(b)])
+		_solve_aim_arms()
 		_in_rifle_ik = false
 		return
 	# This is a world-space solve. A later BoneAttachment update must not
@@ -9549,7 +9578,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 
 	# Enable left arm IK when aiming so the left hand reaches the handguard
 	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
-		if _is_aiming:
+		if _is_aiming and not _mounted_rifle_is_m4:
 			_rifle_left_arm_ik.active = true
 			_rifle_left_arm_ik.influence = 1.0
 		else:
@@ -9650,7 +9679,7 @@ func _solve_aim_arms() -> void:
 			var tip := skel.get_bone_global_pose(child) * (rig["pivots"].get(child, Vector3.ZERO) as Vector3)
 			var target: Vector3 = skel_inv * (wo_xf * _rg_left_thumb)
 			var turn := Quaternion((tip - base).normalized(), (target - base).normalized())
-			var basis := Basis(turn) * thumb_pose.basis
+			var basis := (Basis(turn) * thumb_pose.basis).orthonormalized()
 			skel.set_bone_global_pose(thumb, Transform3D(basis, base - basis * pivot))
 	if _ik_rh_idx >= 0 and _ik_right_upper_arm_idx >= 0 and _ik_right_forearm_idx >= 0:
 		_grip_hand(skel, _ik_right_upper_arm_idx, _ik_right_forearm_idx, _ik_rh_idx, false,
@@ -9787,26 +9816,28 @@ func _grip_hand(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int, is_le
 	if not rig.has("frame"):
 		_solve_arm_chain(skel, ua_idx, fa_idx, hand_idx, knuckle_s)
 		return
-	var scale := skel.get_bone_global_pose(hand_idx).basis.get_scale()
-	var hand_basis: Basis = (_anatomical_frame(fingers_s, palm_s) * (rig["frame"] as Basis).inverse()).scaled_local(scale)
+	var scale := skel.get_bone_global_rest(hand_idx).basis.get_scale()
+	var hand_basis: Basis = (_anatomical_frame(fingers_s, palm_s) * (rig["frame"] as Basis).inverse()).orthonormalized().scaled_local(scale)
 	_solve_arm_chain(skel, ua_idx, fa_idx, hand_idx, knuckle_s - hand_basis * (rig["knuckle"] as Vector3), fingers_s, elbow_s)
 	# Pronation/supination: roll the forearm about its own axis to take most of
 	# the hand's twist, so the wrist skin never wrings like a candy wrapper.
 	var wrist_origin := skel.get_bone_global_pose(hand_idx).origin
 	var fa := skel.get_bone_global_pose(fa_idx)
+	var fa_scale := skel.get_bone_global_rest(fa_idx).basis.get_scale()
 	var hand_rest := skel.get_bone_rest(hand_idx)
 	var axis_l := hand_rest.origin.normalized()
 	var q := Quaternion((fa.basis.orthonormalized().inverse() * hand_basis.orthonormalized()) * hand_rest.basis.orthonormalized().inverse())
 	var twist := wrapf(2.0 * atan2(Vector3(q.x, q.y, q.z).dot(axis_l), q.w), -PI, PI)
 	var axis_s := (fa.basis * axis_l).normalized()
-	skel.set_bone_global_pose(fa_idx, Transform3D(Basis(axis_s, clampf(twist * RIFLE_AIM_FOREARM_TWIST, -0.12, 0.12)) * fa.basis, fa.origin))
+	var fa_twisted := (Basis(axis_s, clampf(twist * RIFLE_AIM_FOREARM_TWIST, -0.12, 0.12)) * fa.basis).orthonormalized().scaled_local(fa_scale)
+	skel.set_bone_global_pose(fa_idx, Transform3D(fa_twisted, fa.origin))
 	skel.set_bone_global_pose(hand_idx, Transform3D(hand_basis, wrist_origin))
 	# Absolute flexion from rest: the animated finger pose is replaced, so the
 	# result never stacks on an already-clenched animation fist.
 	_grip_pivots_applied = true
 	for entry in rig["fingers"]:
 		var pose := skel.get_bone_pose(entry[0])
-		pose.basis = (entry[2] as Basis) * Basis(entry[1] as Vector3, entry[3] as float)
+		pose.basis = ((entry[2] as Basis) * Basis(entry[1] as Vector3, entry[3] as float)).orthonormalized()
 		var rest := skel.get_bone_rest(entry[0])
 		var pivot: Vector3 = entry[4]
 		pose.origin = rest.origin + rest.basis * pivot - pose.basis * pivot
@@ -9821,8 +9852,11 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 	var root_pos := ua_pose.origin
 	var mid_pos := fa_pose.origin
 	var end_pos := h_pose.origin
-	var len1 := root_pos.distance_to(mid_pos)
-	var len2 := mid_pos.distance_to(end_pos)
+	var ua_grest := skel.get_bone_global_rest(ua_idx)
+	var fa_grest := skel.get_bone_global_rest(fa_idx)
+	var h_grest := skel.get_bone_global_rest(hand_idx)
+	var len1 := ua_grest.origin.distance_to(fa_grest.origin)
+	var len2 := fa_grest.origin.distance_to(h_grest.origin)
 	if len1 < 0.001 or len2 < 0.001:
 		return
 	var root_to_target := target_skel - root_pos
@@ -9883,10 +9917,11 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 		var desired_dir := upper_dir if bone == ua_idx else lower_dir
 		var rotation := _anatomical_frame(desired_dir, hinge) * _anatomical_frame(rest_dir, rest_hinge).inverse()
 		var basis := rotation * rest.basis
-		var current_scale := skel.get_bone_global_pose(bone).basis.get_scale()
+		var current_scale := rest.basis.get_scale()
 		basis = basis.orthonormalized().scaled_local(current_scale)
 		skel.set_bone_global_pose(bone, Transform3D(basis, root_pos if bone == ua_idx else new_mid))
-	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis, target_clamped))
+	var h_scale := h_grest.basis.get_scale()
+	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis.orthonormalized().scaled_local(h_scale), target_clamped))
 
 func _on_skeleton_updated() -> void:
 	if _in_rifle_ik or _ik_skel == null or not is_instance_valid(_ik_skel):
@@ -13265,7 +13300,7 @@ func _rifle_model_path_for(item_name: String) -> String:
 	return M4_MODEL if item_name == M4_NAME else REAL_RIFLE_MODEL
 
 func _rifle_weapon_scale() -> float:
-	return weapon_scale * M4_SCALE_FACTOR if (_mounted_rifle_is_m4 or _held_is_m4()) else weapon_scale
+	return weapon_scale * M4_SCALE_FACTOR if _mounted_rifle_is_m4 else weapon_scale
 
 func _current_spread_deg() -> float:
 	# Misma regla que _shoot_rifle: mas precision quieto/agachado/tumbado/apuntando
@@ -13531,7 +13566,7 @@ func get_rifle_info(weapon_name := "") -> Dictionary:
 			"range": RIFLE_RANGE,
 			"magnification": M4_SCOPE_MAGNIFICATIONS[0],
 			"zoom_fixed": true,
-			"iron_sights": true,
+			"iron_sights": false,
 			"zero_range": 100.0,
 			"scope_fov": camera.fov if camera != null else 40.0,
 		}
