@@ -3835,29 +3835,33 @@ func _physics_process(delta: float) -> void:
 			else:
 				velocity.y = 0.0
 			move_and_slide()
-		stats.do_sleep(delta)
+		stats.do_sleep(delta, is_sleeping_on_bed)
+		if stats.sleep >= stats.max_stat and stats.energy >= stats.max_stat:
+			stop_sleep()
+			notice.emit("Has dormido. Te sientes descansado.")
+			return
 		_update_backpack_socket()
 		_update_hand_socket()
 		_update_torch_hand_socket()
 		_update_drink_hand_socket()
 		_update_head_worn_items()
 		_update_interaction_prompt()
-		# Align sleeping model vertically so it stays on top of bed
+		# Align sleeping model vertically so it stays on top of bed/ground in meters
 		if third_person_model != null:
 			var sleep_character: Node3D = third_person_model
 			var sleep_skel := _find_skeleton(sleep_character)
 			if sleep_skel != null:
 				sleep_skel.force_update_all_bone_transforms()
-				var min_foot_model_y := 1000000.0
+				var min_bone_offset_y := 1000000.0
 				for i in range(sleep_skel.get_bone_count()):
 					var bn := sleep_skel.get_bone_name(i)
 					if bn.find("Foot") >= 0 or bn.find("Toe") >= 0 or bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0:
 						var bone_world := sleep_skel.global_transform * sleep_skel.get_bone_global_pose(i).origin
-						var bone_model := sleep_character.to_local(bone_world)
-						if bone_model.y < min_foot_model_y:
-							min_foot_model_y = bone_model.y
-				if min_foot_model_y < 999999.0:
-					var sleep_target_y := 0.086 - min_foot_model_y
+						var bone_offset_y := bone_world.y - sleep_character.global_position.y
+						if bone_offset_y < min_bone_offset_y:
+							min_bone_offset_y = bone_offset_y
+				if min_bone_offset_y < 999999.0:
+					var sleep_target_y := 0.086 - min_bone_offset_y
 					sleep_character.position = sleep_character.position.lerp(Vector3(0.0, sleep_target_y, 0.0), delta * 10.0)
 		if camera != null:
 			var sleep_cam_pos := Vector3(0.8, 1.2, 4.5)
@@ -4230,7 +4234,7 @@ func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 
 func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
-	if is_dead or _applying_aim_pitch or target_skel == null or not is_instance_valid(target_skel):
+	if is_dead or is_sleeping or _applying_aim_pitch or target_skel == null or not is_instance_valid(target_skel):
 		return
 	_applying_aim_pitch = true
 	_restore_aim_pitch_pose(target_skel)
@@ -7125,7 +7129,12 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 		return
 	_mark_action_started()
 	is_sleeping = true
+	is_sitting = false
+	is_prone = false
+	is_crouching = false
 	_cancel_aim()
+	_restore_aim_pitch_pose(_hand_skeleton)
+	_restore_grip_origins()
 	# Cancel fishing if in progress
 	if _is_fishing or _is_fishing_idle:
 		_is_fishing = false
@@ -7146,7 +7155,8 @@ func start_sleep(bed_pos: Vector3 = Vector3.ZERO, on_bed: bool = false) -> void:
 		is_sleeping_on_bed = true
 		_bed_sleep_position = bed_pos
 		global_position = bed_pos
-		_saved_collision_mask = collision_mask
+		if collision_mask != 0:
+			_saved_collision_mask = collision_mask
 		collision_mask = 0
 	_sync_held_item()
 	if third_person_animation_player != null and not third_person_sleep_animation.is_empty():
@@ -11180,7 +11190,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 				return
 		var target_animation := ""
-		var low_health: bool = stats != null and stats.health <= 30.0 and not third_person_low_health_animation.is_empty()
+		# Low health uses the DayZ-style progressive screen darkening/desaturation
+		# instead of forcing the slow low-health locomotion clip.
+		var low_health := false
 		# Update rifle equipped state: _rifle_in_hands is set by _sync_third_person_equipment
 		_has_rifle = _rifle_in_hands
 		# Torch locomotion: use torch-specific animations when holding torch

@@ -12025,21 +12025,24 @@ func _execute_world_action(action, actor) -> void:
 			else:
 				_play_actor_action(actor, "sleep", 8.0)
 			actor.notice.emit("Durmiendo... pulsa D para despertar.")
-			# Wait until sleep is full and health is full, or player wakes up
+			# Wait until sleep is full or player wakes up
 			var sleep_seconds := 0
 			while actor.stats.sleep < actor.stats.max_stat:
-				if actor.has_method("is_sleeping") and not actor.is_sleeping:
+				if not bool(actor.get("is_sleeping")):
 					break
 				sleep_seconds += 1
 				if sleep_seconds >= 120:
 					break
 				if hud != null:
-					hud.show_countdown("Durmiendo", float(sleep_seconds + 1))
+					var rem := maxf(1.0, (actor.stats.max_stat - actor.stats.sleep) / 5.0)
+					hud.show_countdown("Durmiendo", rem)
 				await get_tree().create_timer(1.0).timeout
 				if _scene_quitting: return
-			if actor.has_method("stop_sleep"):
+			var finished_sleep: bool = float(actor.stats.sleep) >= float(actor.stats.max_stat)
+			if actor.has_method("stop_sleep") and bool(actor.get("is_sleeping")):
 				actor.stop_sleep()
-			actor.notice.emit("Has dormido. Te sientes descansado.")
+			if finished_sleep:
+				actor.notice.emit("Has dormido. Te sientes descansado.")
 		"build_cabin":
 			if not actor.inventory.has_item_name("Tronco", 6) or not actor.inventory.has_item_name("Piedra", 4):
 				actor.notice.emit("Faltan materiales: 6 troncos y 4 piedra.")

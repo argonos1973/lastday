@@ -10,7 +10,10 @@ var player
 var day_cycle
 var main_node = null
 var _damage_overlay: ColorRect = null
+var _damage_shader_mat: ShaderMaterial = null
 var _damage_flash: float = 0.0
+var _low_health_pulse: float = 0.0
+var _sleep_fade: float = 0.0
 var _prev_health: float = 100.0
 
 var root: Control
@@ -2562,16 +2565,37 @@ func _on_stats_changed() -> void:
 	_stats_dirty = true
 
 func _update_damage_overlay(delta: float) -> void:
-	if _damage_overlay == null or player == null:
+	if _damage_overlay == null or player == null or player.stats == null:
 		return
-	_damage_flash = max(0.0, _damage_flash - delta * 1.5)
-	var health_ratio: float = float(player.stats.health) / float(player.stats.max_health)
-	var persistent_alpha: float = 0.0
-	if health_ratio < 0.5:
-		persistent_alpha = (0.5 - health_ratio) * 0.6
-	var flash_alpha := _damage_flash * 0.5
-	var total_alpha: float = clamp(persistent_alpha + flash_alpha, 0.0, 0.85)
-	_damage_overlay.color = Color(0.4, 0.0, 0.0, total_alpha)
+	_damage_flash = maxf(0.0, _damage_flash - delta * 1.6)
+	var health_ratio: float = clampf(float(player.stats.health) / maxf(1.0, float(player.stats.max_health)), 0.0, 1.0)
+	# DayZ-style progressive darkening + tunnel-vision vignette + desaturation as health drops.
+	# Starts subtly below 80% health and intensifies toward black as health nears 0%.
+	var severity: float = clampf((0.80 - health_ratio) / 0.80, 0.0, 1.0)
+	var pulse := 0.0
+	if severity > 0.35:
+		_low_health_pulse += delta * lerpf(2.2, 4.8, severity)
+		pulse = (0.5 + 0.5 * sin(_low_health_pulse)) * (severity - 0.35) * 0.22
+	var sleeping_now := bool(player.get("is_sleeping"))
+	_sleep_fade = move_toward(_sleep_fade, 0.55 if sleeping_now else 0.0, delta * 1.2)
+	var darkness := clampf(pow(severity, 1.15) * 0.78 + pulse + _sleep_fade, 0.0, 0.94)
+	var vignette := clampf(smoothstep(0.0, 1.0, severity) * 0.92 + _damage_flash * 0.35 + _sleep_fade * 0.5, 0.0, 0.98)
+	if _damage_shader_mat != null:
+		_damage_shader_mat.set_shader_parameter("darkness", darkness)
+		_damage_shader_mat.set_shader_parameter("vignette", vignette)
+		_damage_shader_mat.set_shader_parameter("hit_flash", _damage_flash)
+	_damage_overlay.color = Color(0.0, 0.0, 0.0, clampf(maxf(darkness, _damage_flash * 0.45), 0.0, 0.94))
+	if day_cycle != null and day_cycle.get("world_environment") != null:
+		var we: WorldEnvironment = day_cycle.world_environment
+		if we != null and we.environment != null:
+			var want_adj := severity > 0.01
+			we.environment.adjustment_enabled = want_adj
+			if want_adj:
+				we.environment.adjustment_saturation = lerpf(1.0, 0.08, smoothstep(0.0, 0.95, severity))
+				we.environment.adjustment_brightness = lerpf(1.0, 0.52, severity * severity)
+			else:
+				we.environment.adjustment_saturation = 1.0
+				we.environment.adjustment_brightness = 1.0
 
 func _update_inventory() -> void:
 	if survival_inventory != null:
@@ -2982,8 +3006,28 @@ func _build_damage_overlay() -> void:
 	_damage_overlay.offset_top = 0
 	_damage_overlay.offset_right = 0
 	_damage_overlay.offset_bottom = 0
-	_damage_overlay.color = Color(0.4, 0.0, 0.0, 0.0)
+	_damage_overlay.color = Color(0.0, 0.0, 0.0, 0.0)
 	_damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := Shader.new()
+	sh.code = """shader_type canvas_item;
+uniform float darkness : hint_range(0.0, 1.0) = 0.0;
+uniform float vignette : hint_range(0.0, 1.0) = 0.0;
+uniform float hit_flash : hint_range(0.0, 1.0) = 0.0;
+void fragment() {
+	vec2 uv = UV * 2.0 - 1.0;
+	uv.x *= 1.15;
+	float dist = length(uv);
+	float inner_r = mix(0.95, 0.22, vignette);
+	float outer_r = mix(1.45, 0.78, vignette);
+	float vig = smoothstep(inner_r, outer_r, dist) * vignette;
+	float alpha = clamp(max(darkness, vig) + darkness * vig * 0.35 + hit_flash * smoothstep(0.35, 1.25, dist) * 0.45, 0.0, 0.96);
+	vec3 tint = mix(vec3(0.0, 0.0, 0.0), vec3(0.18, 0.01, 0.01), hit_flash * smoothstep(0.4, 1.3, dist));
+	COLOR = vec4(tint, alpha);
+}
+"""
+	_damage_shader_mat = ShaderMaterial.new()
+	_damage_shader_mat.shader = sh
+	_damage_overlay.material = _damage_shader_mat
 	root.add_child(_damage_overlay)
 
 func _add_shadows_recursive(node: Node) -> void:

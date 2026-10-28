@@ -78,15 +78,17 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	if thirst < max_stat - 10.0:
 		overdrink_count = 0
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * (1.0 + carry_ratio * 8.0))
-	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time
-	var sleep_mult := sprint_multiplier
-	if energy < 30.0:
-		sleep_mult *= 1.5
-	if body_temperature > 37.5:
-		sleep_mult *= 1.4
-	if night:
-		sleep_mult *= 3.0
-	sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult * sleep_factor)
+	# Sleep decay increases with: low energy (fatigue), high body temp (heat), night time.
+	# Never drain sleep while the player is actively sleeping.
+	if not sleeping:
+		var sleep_mult := 1.25 if sprinting else 1.0
+		if energy < 30.0:
+			sleep_mult *= 1.5
+		if body_temperature > 37.5:
+			sleep_mult *= 1.4
+		if night:
+			sleep_mult *= 3.0
+		sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult)
 
 	# Wet clothes dry faster when it's warm, slower when cold
 	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
@@ -152,15 +154,16 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		health = max(0.0, health - 2.0 * delta)
 	if thirst <= 0.0:
 		health = max(0.0, health - 2.5 * delta)
-	# Dano por falta de sueño: transicion suave sin discontinuidad en sleep=0
-	# Cerca de 0 el dano se aproxima a 8.0/s; a 50 es ~0. La curva es continua.
-	if sleep <= 0.0:
-		health = max(0.0, health - 8.0 * delta)
-	elif sleep < 50.0:
-		# smoothstep(0, 50, sleep) => 0 en sleep=0, 1 en sleep=50
-		var t := smoothstep(0.0, 50.0, sleep)
-		var sleep_damage: float = lerp(8.0, 0.0, t)
-		health = max(0.0, health - sleep_damage * delta)
+	# Daño por agotamiento extremo de sueño: solo cuando no está durmiendo y el
+	# sueño cae por debajo del umbral crítico (<10%), de forma progresiva y
+	# moderada como el hambre/sed, en vez de drenar vida desde el 50%.
+	if not sleeping:
+		if sleep <= 0.0:
+			health = max(0.0, health - 1.5 * delta)
+		elif sleep < 10.0:
+			var t := smoothstep(0.0, 10.0, sleep)
+			var sleep_damage: float = lerp(1.5, 0.0, t)
+			health = max(0.0, health - sleep_damage * delta)
 	# Health damage starts when temp color changes from white (deviation >= 1.2°C).
 	# Cold drains at the same tiers as heat: mild thermal stress is survivable
 	# for minutes, deep hypothermia kills as fast as heat stroke.
@@ -182,12 +185,12 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# health > 0.0: regenerating before the death check below would resurrect
 	# a player killed by external damage (wolf hits) every tick, making them
 	# immortal at 0 HP while fed and rested.
-	if health > 0.0 and not sick and hunger > 0.0 and thirst > 0.0 and sleep > 50.0 and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
+	if health > 0.0 and not sick and hunger > 0.0 and thirst > 0.0 and (sleep > 20.0 or sleeping) and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2
-		if sleeping and on_bed:
-			regen_rate *= 2.0
+		if sleeping:
+			regen_rate *= (2.2 if on_bed else 1.5)
 		health = min(max_health, health + regen_rate * delta)
 	changed.emit()
 	if health <= 0.0 and not dead:
@@ -223,21 +226,27 @@ func get_thermal_state() -> String:
 func rest(hours: float) -> void:
 	if dead:
 		return
+	sleep = min(max_stat, sleep + 18.0 * hours)
 	energy = min(max_stat, energy + 16.0 * hours)
 	body_temperature = move_toward(body_temperature, 36.6, maxf(hours, 0.0) * 0.4)
 	hunger = max(0.0, hunger - 3.0 * hours)
 	thirst = max(0.0, thirst - 5.0 * hours)
+	if hunger > 0.0 and thirst > 0.0:
+		health = min(max_health, health + 5.0 * hours)
 	changed.emit()
 
-func do_sleep(hours: float) -> void:
+func do_sleep(hours: float, on_bed: bool = false) -> void:
 	if dead:
 		return
-	sleep = min(max_stat, sleep + 5.0 * hours)
-	energy = min(max_stat, energy + 3.0 * hours)
+	var sleep_gain := 7.0 if on_bed else 5.0
+	var energy_gain := 5.5 if on_bed else 3.8
+	sleep = min(max_stat, sleep + sleep_gain * hours)
+	energy = min(max_stat, energy + energy_gain * hours)
 	feet_wound = max(0.0, feet_wound - 30.0 * hours)
-	# Only heal during sleep if not starving or dehydrated
-	if sleep >= max_stat and hunger > 0.0 and thirst > 0.0:
-		health = min(max_stat, health + 8.0 * hours)
+	# Heal while sleeping if not starving or dehydrated (faster on a bed or at full rest)
+	if hunger > 0.0 and thirst > 0.0 and health > 0.0:
+		var heal_rate := (8.0 if sleep >= max_stat else (4.0 if on_bed else 2.2))
+		health = min(max_health, health + heal_rate * hours)
 	changed.emit()
 
 func get_survival_days() -> int:
