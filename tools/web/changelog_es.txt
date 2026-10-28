@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+fa8f1e2|Al apuntar con el M4 el punto de mira es el real del arma: el ojo mira a traves de una apertura trasera peep montada en el rail a la altura exacta de la punta del poste delantero del modelo, con la punta real del poste centrada en pantalla
 7b9cbcf|Corregida la deformacion de brazos/mangas al correr con el M4 y chaqueta/guantes de piel, el retrato 3D del inventario al llevar el M4 en mano y la mira al apuntar con clic derecho con el M4 (vista optica limpia como la del rifle)
 b084755|Piedra afilada y cuchillo de piedra con malla 3D de lasca tallada en mundo e inventario; el menu contextual del inventario solo muestra combinaciones que realmente puedes fabricar (incluyendo el objeto en mano); peinado propio fijo por personaje sin crecimiento de barba y mayor estabilidad de conexion WebSocket durante la carga del mundo
 277079f|Sonido dedicado al rellenar botellas de agua en el rio o fuente (RELLENARBOTELLA.mp3 sin silencios); 6 peinados distintos seleccionables en el menu de inicio (Rapado, Corto, Clasico, Raya atras, Coleta y Pelo largo) y barba que crece progresivamente en 5 fases con el tiempo sobrevivido
