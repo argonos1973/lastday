@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+0154424|Corregido el M4 encarado en las vistas de camara alternativas (frontal, lateral, cenital, aerea): el arma ya no se vuelca dentro del cuerpo ni entierra los brazos en el pecho — sigue la direccion de encare del personaje
 ee0bd33|El cliente Windows es un solo ejecutable con el pck embebido: ya no hace falta descomprimir el pck junto al exe para arrancar el juego
 37c0f42|El M4 encarado en tercera persona sigue el pitch de la camara sin abrir la mira: la culata queda en el bolsillo del hombro, el canon apunta donde mira la camara y el brazo de apoyo protacta el hombro para no soltarse del guardamanos
 48102ab|Alza trasera del M4 con el tambor de correccion de deriva a la derecha como en el arma real
