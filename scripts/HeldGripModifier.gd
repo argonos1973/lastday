@@ -21,6 +21,9 @@ func _process_modification() -> void:
 	var skeleton := get_skeleton()
 	if skeleton == null:
 		return
+	# SkeletonModifier3D restores the input pose after rendering. Cached overrides
+	# from an earlier invocation must never replace this frame's animation.
+	controller._aim_pitch_saved_rotations.clear()
 	if controller._generic_hand_grip or (controller._has_fishing_rod and not controller._is_fishing):
 		for joint in joints:
 			var index: int = joint.index
@@ -39,3 +42,5 @@ func _process_modification() -> void:
 	controller._update_hand_socket()
 	if controller._has_rifle:
 		controller._update_rifle_visuals(0.0)
+
+	controller._aim_pitch_saved_rotations.clear()

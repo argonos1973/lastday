@@ -1075,6 +1075,11 @@ func setup_as_puppet() -> void:
 					if _head_bone_idx != -1:
 						break
 			_bind_headwear_socket_signal()
+	if _hand_skeleton != null and not is_instance_valid(_grip_modifier):
+		_grip_modifier = preload("res://scripts/HeldGripModifier.gd").new()
+		_grip_modifier.name = "HeldGripModifier"
+		_grip_modifier.controller = self
+		_hand_skeleton.add_child(_grip_modifier)
 	# PvP: puppets are the only shootable representation of remote players —
 	# give them damage hitboxes so rifle rays connect and headshots register.
 	add_to_group("remote_player")
@@ -4320,7 +4325,7 @@ func _pose_spear_arm_orthogonal(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand
 	# mesh seam never separates, and curl the fingers around the spear shaft.
 	skel.set_bone_pose(hand_idx, skel.get_bone_rest(hand_idx))
 	if not is_left:
-		_close_bow_fingers(hand_idx, false)
+		_close_bow_fingers(hand_idx, false, skel)
 	skel.force_update_all_bone_transforms()
 
 func _pose_spear_in_hand(target_skel: Skeleton3D, cur_anim: String, throw_active: bool) -> void:
@@ -4450,18 +4455,31 @@ func _pose_spear_in_hand(target_skel: Skeleton3D, cur_anim: String, throw_active
 		upper_dir_w = (anim_upper_dir_w * 0.50 + (right_w * 0.36 - up_w * 0.91 + fwd_w * (-0.08 + swing_z * 0.45)) * 0.50).normalized()
 		raw_lower_dir_w = (-up_w * 0.82 + fwd_w * (0.48 + swing_z * 0.38) + right_w * 0.18).normalized()
 
-	_pose_spear_arm_orthogonal(target_skel, rua_idx, rfa_idx, rh_idx, upper_dir_w, raw_lower_dir_w, _spear_world_dir, false)
+	if throw_active:
+		var w2s := target_skel.global_basis.orthonormalized().inverse()
+		var aim_up := right_w.cross(_spear_world_dir).normalized()
+		var shoulder := skel_xf * target_skel.get_bone_global_pose(rua_idx).origin
+		var grip := shoulder + right_w * 0.22 + aim_up * 0.18 - _spear_world_dir * 0.12
+		if _throw_release_item != null:
+			var release_phase := clampf(1.0 - _throw_release_timer / maxf(0.01, THROW_RELEASE_DELAY), 0.0, 1.0)
+			grip += _spear_world_dir * release_phase * 0.42
+		_grip_hand(target_skel, rua_idx, rfa_idx, rh_idx, false,
+			skel_xf.affine_inverse() * grip, w2s * aim_up, w2s * right_w,
+			w2s * (right_w * 0.8 - aim_up * 0.3 - _spear_world_dir * 0.4))
+	else:
+		_pose_spear_arm_orthogonal(target_skel, rua_idx, rfa_idx, rh_idx, upper_dir_w, raw_lower_dir_w, _spear_world_dir, false)
 
-func _close_bow_fingers(hand_idx: int, left: bool) -> Vector3:
-	var rig := _grip_rig_for(_hand_skeleton, hand_idx, left)
+func _close_bow_fingers(hand_idx: int, left: bool, skel: Skeleton3D = null) -> Vector3:
+	var target := skel if skel != null else _hand_skeleton
+	var rig := _grip_rig_for(target, hand_idx, left)
 	_grip_pivots_applied = true
 	for entry in rig.get("fingers", []):
-		var pose := _hand_skeleton.get_bone_pose(entry[0])
+		var pose := target.get_bone_pose(entry[0])
 		pose.basis = (entry[2] as Basis) * Basis(entry[1] as Vector3, entry[3] as float)
-		var rest := _hand_skeleton.get_bone_rest(entry[0])
+		var rest := target.get_bone_rest(entry[0])
 		var pivot: Vector3 = entry[4]
 		pose.origin = rest.origin + rest.basis * pivot - pose.basis * pivot
-		_hand_skeleton.set_bone_pose(entry[0], pose)
+		target.set_bone_pose(entry[0], pose)
 	return (rig.get("knuckle", Vector3.ZERO) as Vector3) * 0.7
 
 func _update_hand_socket() -> void:
@@ -4550,6 +4568,9 @@ func _update_hand_socket() -> void:
 	if held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
 		var spear := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if spear != null:
+			# Remote equipment also needs the palm anchor; it bypasses local equip fitting.
+			var grip_rig := _grip_rig_for(_hand_skeleton, _hand_bone_idx, false)
+			third_person_hand_item_root.position = local_to_model * (bone_world * (grip_rig.get("knuckle", Vector3.ZERO) as Vector3))
 			var spear_scale := Vector3(1.22, 1.48, 1.22)
 			spear.scale = Vector3.ONE
 			var dir_w := _spear_world_dir
