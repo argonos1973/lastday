@@ -9221,8 +9221,8 @@ func _build_third_person_rifle(item_name := "") -> void:
 	if is_m4:
 		# Medidas del M4 en el espacio del modelo volteado 180° (bocacha -Z,
 		# culata +Z): guardamanos Front_Barrel en z≈-0.024, empuñadura Grip
-		# en z≈0.052, linea del rail superior en y≈0.054.
-		_rg_eye = Vector3(0.0025, 0.068, 0.032)
+		# en z≈0.052, linea del punto de mira real (Iron_Sight) en y≈0.0621.
+		_rg_eye = Vector3(0.0, 0.0621, 0.025)
 		_rg_right_knuckle = Vector3(0.0038, 0.0285, 0.0415)
 		_rg_left_knuckle = Vector3(0.0068, 0.0365, -0.022)
 		_rg_left_thumb = Vector3(-0.0065, 0.045, -0.018)
@@ -13566,7 +13566,7 @@ func get_rifle_info(weapon_name := "") -> Dictionary:
 			"range": RIFLE_RANGE,
 			"magnification": M4_SCOPE_MAGNIFICATIONS[0],
 			"zoom_fixed": true,
-			"iron_sights": false,
+			"iron_sights": true,
 			"zero_range": 100.0,
 			"scope_fov": camera.fov if camera != null else 40.0,
 		}

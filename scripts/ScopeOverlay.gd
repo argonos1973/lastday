@@ -193,6 +193,15 @@ func _ensure_ads_viewport() -> void:
 	root3d.name = "AdsRoot3D"
 	_ads_viewport.add_child(root3d)
 
+	var ads_env := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.88, 0.90, 0.95)
+	env.ambient_light_energy = 1.0
+	ads_env.environment = env
+	root3d.add_child(ads_env)
+
 	# Key + rim directional lights for realistic anodized gunmetal speculars
 	var key_light := DirectionalLight3D.new()
 	key_light.rotation_degrees = Vector3(-48.0, 28.0, 0.0)
@@ -205,6 +214,14 @@ func _ensure_ads_viewport() -> void:
 	rim_light.light_color = Color(0.75, 0.82, 0.95)
 	rim_light.light_energy = 0.75
 	root3d.add_child(rim_light)
+
+	# Soft fill from the shooter's side so the sights are readable
+	var fill_light := OmniLight3D.new()
+	fill_light.position = Vector3(0.0, 0.72, -0.55)
+	fill_light.light_color = Color(1.0, 0.98, 0.95)
+	fill_light.light_energy = 0.5
+	fill_light.omni_range = 1.6
+	root3d.add_child(fill_light)
 
 	_ads_gun_rig = Node3D.new()
 	_ads_gun_rig.name = "M4AdsRig"
@@ -225,23 +242,20 @@ func _ensure_ads_viewport() -> void:
 				var mi := node as MeshInstance3D
 				if "Bullets" in str(mi.name):
 					mi.visible = false
+				if mi.mesh != null:
+					for s_idx in range(mi.mesh.get_surface_count()):
+						var mat := mi.get_active_material(s_idx) as StandardMaterial3D
+						if mat != null and mat.metallic > 0.85:
+							var m_dup := mat.duplicate() as StandardMaterial3D
+							m_dup.metallic = 0.35
+							m_dup.roughness = 0.48
+							mi.set_surface_override_material(s_idx, m_dup)
 			gun_scale_root.add_child(m4_inst)
 
-	# Build a 3D tactical A2 rear aperture sight assembly mounted on the rear Picatinny rail
-	_build_3d_rear_sight(gun_scale_root)
-
-	# Glowing tritium / fiber-optic insert on the tip of the 3D A2 front sight post
-	var front_dot := MeshInstance3D.new()
-	var dot_sphere := SphereMesh.new()
-	dot_sphere.radius = 0.00020
-	dot_sphere.height = 0.00040
-	front_dot.mesh = dot_sphere
-	var dot_mat := StandardMaterial3D.new()
-	dot_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	dot_mat.albedo_color = Color(1.0, 0.20, 0.08, 1.0)
-	front_dot.material_override = dot_mat
-	front_dot.position = Vector3(0.0, 0.06265, 0.0432)
-	gun_scale_root.add_child(front_dot)
+	# Rear peep aperture on the rail's last slot, centered on the real sight
+	# line (same height as the real front post tip). The GLB has no rear
+	# sight mesh, so the aperture is built at the exact measured position.
+	_build_3d_rear_aperture(gun_scale_root)
 
 	# Warm muzzle flash light ahead of the front sight base
 	_ads_flash_light = OmniLight3D.new()
@@ -251,111 +265,97 @@ func _ensure_ads_viewport() -> void:
 	_ads_flash_light.omni_range = 3.0
 	gun_scale_root.add_child(_ads_flash_light)
 
-	# First-person camera aligned down the sight line so the tip of the 3D front
-	# sight post (0.0, 0.626, +0.432 in scaled coords) projects to the exact screen center.
+	# First-person camera ON the M4's real sight line: eye ~13 cm behind the
+	# rear aperture, looking straight through it to the tip of the real A2
+	# front post (Iron_Sight top vertex y=0.0621, z=0.0464 in model units,
+	# x10 here), so the real post tip projects to the exact screen center.
 	var cam := Camera3D.new()
 	cam.name = "AdsCamera3D"
-	cam.near = 0.03
+	cam.near = 0.02
 	cam.far = 20.0
-	cam.fov = 22.0
+	cam.fov = 18.0
 	root3d.add_child(cam)
-	var cam_pos := Vector3(0.0, 0.626, -0.70)
-	var target_pos := Vector3(0.0, 0.626, 0.432)
+	var cam_pos := Vector3(0.0, 0.621, -0.62)
+	var target_pos := Vector3(0.0, 0.621, 0.464)
 	cam.look_at_from_position(cam_pos, target_pos, Vector3.UP)
 
-func _build_3d_rear_sight(parent: Node3D) -> void:
-	var rear_scene := load("res://assets/models/weapons/m4_rear_sight.glb") as PackedScene
-	if rear_scene != null:
-		var rear_inst := rear_scene.instantiate() as Node3D
-		if rear_inst != null:
-			rear_inst.name = "RearSight3D"
-			parent.add_child(rear_inst)
-			return
+func _build_3d_rear_aperture(parent: Node3D) -> void:
+	# M4 carry-handle style rear aperture (peep sight) mounted on the last
+	# rail slot. Real M4 sight line is horizontal: rear aperture center sits
+	# at the exact height of the real front post tip (y=0.0621 model units).
+	# Large aperture = real 5 mm CQB aperture; all dims in model units (x10).
 	var rear := Node3D.new()
-	rear.name = "RearSight3D"
-	rear.position = Vector3(0.0, 0.0, -0.044)
+	rear.name = "RearAperture3D"
 	parent.add_child(rear)
 
 	var mat_body := StandardMaterial3D.new()
-	mat_body.albedo_color = Color(0.11, 0.115, 0.125)
-	mat_body.metallic = 0.78
-	mat_body.roughness = 0.38
+	mat_body.albedo_color = Color(0.16, 0.165, 0.175)
+	mat_body.metallic = 0.45
+	mat_body.roughness = 0.45
 
 	var mat_dark := StandardMaterial3D.new()
-	mat_dark.albedo_color = Color(0.06, 0.065, 0.07)
-	mat_dark.metallic = 0.65
-	mat_dark.roughness = 0.48
+	mat_dark.albedo_color = Color(0.10, 0.105, 0.11)
+	mat_dark.metallic = 0.35
+	mat_dark.roughness = 0.5
 
 	var mat_brass := StandardMaterial3D.new()
-	mat_brass.albedo_color = Color(0.22, 0.23, 0.24)
-	mat_brass.metallic = 0.85
-	mat_brass.roughness = 0.30
+	mat_brass.albedo_color = Color(0.30, 0.31, 0.32)
+	mat_brass.metallic = 0.75
+	mat_brass.roughness = 0.34
 
-	# Picatinny clamp base sitting on the upper receiver rail (y=0.0535..0.0575)
+	# Picatinny clamp base straddling the rail top (rail top y=0.055)
 	var base_mi := MeshInstance3D.new()
 	var base_box := BoxMesh.new()
-	base_box.size = Vector3(0.0110, 0.0042, 0.0140)
+	base_box.size = Vector3(0.0014, 0.0007, 0.0014)
 	base_mi.mesh = base_box
-	base_mi.position = Vector3(0.0, 0.0556, 0.0)
+	base_mi.position = Vector3(0.0, 0.0554, -0.043)
 	base_mi.material_override = mat_body
 	rear.add_child(base_mi)
 
-	# Protective sight ears (left & right forged aluminum wings flanking the peep ring)
-	for side in [-1.0, 1.0]:
-		var s: float = side
-		var ear_mi := MeshInstance3D.new()
-		var ear_box := BoxMesh.new()
-		ear_box.size = Vector3(0.0016, 0.0086, 0.0075)
-		ear_mi.mesh = ear_box
-		ear_mi.position = Vector3(s * 0.0048, 0.0614, 0.0005)
-		ear_mi.rotation_degrees = Vector3(0.0, 0.0, -s * 6.0)
-		ear_mi.material_override = mat_body
-		rear.add_child(ear_mi)
+	# Aperture housing stem rising from the base to the ring bottom
+	var stem_mi := MeshInstance3D.new()
+	var stem_box := BoxMesh.new()
+	stem_box.size = Vector3(0.0008, 0.0058, 0.0010)
+	stem_mi.mesh = stem_box
+	stem_mi.position = Vector3(0.0, 0.0586, -0.043)
+	stem_mi.material_override = mat_body
+	rear.add_child(stem_mi)
 
-	# Circular diopter peep ring centered on the sight line (y=0.06209)
+	# Peep ring: real ~5 mm large aperture centered on the sight line y=0.0621
 	var ring_mi := MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.0033
-	torus.outer_radius = 0.0043
+	torus.inner_radius = 0.00024
+	torus.outer_radius = 0.00042
 	torus.rings = 48
-	torus.ring_segments = 24
+	torus.ring_segments = 16
 	ring_mi.mesh = torus
-	ring_mi.position = Vector3(0.0, 0.06209, 0.0012)
+	ring_mi.position = Vector3(0.0, 0.0621, -0.043)
 	ring_mi.rotation_degrees = Vector3(90.0, 0.0, 0.0)
 	ring_mi.material_override = mat_dark
 	rear.add_child(ring_mi)
 
-	# Stem connecting the peep ring to the rail base
-	var stem_mi := MeshInstance3D.new()
-	var stem_box := BoxMesh.new()
-	stem_box.size = Vector3(0.0032, 0.0022, 0.0030)
-	stem_mi.mesh = stem_box
-	stem_mi.position = Vector3(0.0, 0.0576, 0.0012)
-	stem_mi.material_override = mat_dark
-	rear.add_child(stem_mi)
+	# Protective ears flanking the aperture (A2 rear sight wings)
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		var ear_mi := MeshInstance3D.new()
+		var ear_box := BoxMesh.new()
+		ear_box.size = Vector3(0.00022, 0.0019, 0.0010)
+		ear_mi.mesh = ear_box
+		ear_mi.position = Vector3(s * 0.00062, 0.0619, -0.043)
+		ear_mi.material_override = mat_body
+		rear.add_child(ear_mi)
 
-	# Knurled windage adjustment drum on the right side + locking nut on the left
+	# Windage drum on the right ear
 	var knob_mi := MeshInstance3D.new()
 	var knob_cyl := CylinderMesh.new()
-	knob_cyl.top_radius = 0.0021
-	knob_cyl.bottom_radius = 0.0021
-	knob_cyl.height = 0.0028
+	knob_cyl.top_radius = 0.00045
+	knob_cyl.bottom_radius = 0.00045
+	knob_cyl.height = 0.0005
 	knob_mi.mesh = knob_cyl
-	knob_mi.position = Vector3(0.0068, 0.0602, 0.0010)
+	knob_mi.position = Vector3(0.00105, 0.0610, -0.043)
 	knob_mi.rotation_degrees = Vector3(0.0, 0.0, 90.0)
 	knob_mi.material_override = mat_brass
 	rear.add_child(knob_mi)
-
-	var nut_mi := MeshInstance3D.new()
-	var nut_cyl := CylinderMesh.new()
-	nut_cyl.top_radius = 0.0016
-	nut_cyl.bottom_radius = 0.0016
-	nut_cyl.height = 0.0022
-	nut_mi.mesh = nut_cyl
-	nut_mi.position = Vector3(-0.0064, 0.0558, 0.0)
-	nut_mi.rotation_degrees = Vector3(0.0, 0.0, 90.0)
-	nut_mi.material_override = mat_brass
-	rear.add_child(nut_mi)
 
 func _draw_iron_sights(vp_size: Vector2, center: Vector2) -> void:
 	# Subtle edge vignette to focus the eye when aiming down sights while the
