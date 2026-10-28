@@ -50,7 +50,6 @@ static var _auto_launch_consumed := false
 
 const REMY_PREVIEW_SCENE := "res://assets/characters/Remy.glb"
 const CharacterGrooming = preload("res://scripts/CharacterGrooming.gd")
-var _btn_hair_style: Button = null
 var CHAR_CONFIGS := [
 	{"id": "remy", "name": "Remy", "hair_style": "short", "top": Color(0.3, 0.4, 0.6), "bottom": Color(0.15, 0.12, 0.1), "shoes": Color(0.6, 0.5, 0.2), "hair": Color(0.35, 0.22, 0.12), "skin": Color(0.85, 0.72, 0.58)},
 	{"id": "laura", "name": "Luis", "hair_style": "long", "top": Color(0.6, 0.2, 0.3), "bottom": Color(0.1, 0.15, 0.25), "shoes": Color(0.2, 0.2, 0.22), "hair": Color(0.08, 0.06, 0.04), "skin": Color(0.78, 0.65, 0.52)},
@@ -407,17 +406,6 @@ func _ready() -> void:
 	prev_btn.pressed.connect(_on_char_prev)
 	nav_hbox.add_child(prev_btn)
 	_btn_prev = prev_btn
-
-	var hair_btn := Button.new()
-	hair_btn.text = "Peinado: Clásico"
-	hair_btn.custom_minimum_size = Vector2(142, 40)
-	hair_btn.add_theme_font_size_override("font_size", 13)
-	hair_btn.add_theme_stylebox_override("normal", btn_style)
-	hair_btn.add_theme_stylebox_override("hover", btn_hover)
-	hair_btn.add_theme_stylebox_override("pressed", btn_pressed)
-	hair_btn.pressed.connect(_on_cycle_hair_style)
-	nav_hbox.add_child(hair_btn)
-	_btn_hair_style = hair_btn
 
 	var next_btn := Button.new()
 	next_btn.text = ">"
@@ -1053,9 +1041,13 @@ static func _payload_color(payload: Dictionary, key: String, existing: Variant, 
 	return default_color
 
 func _upsert_server_card(payload: Dictionary) -> int:
-	var char_name := str(payload.get("char_name", ""))
+	var raw_char_name := str(payload.get("char_name", ""))
+	var char_name := CharacterGrooming.base_name_from_identity(raw_char_name)
 	if char_name.is_empty() or char_name.begins_with("Jugador_"):
 		char_name = "Superviviente"
+	var h_style := str(payload.get("hair_style", ""))
+	if h_style.is_empty():
+		h_style = CharacterGrooming.style_for(raw_char_name if not raw_char_name.is_empty() else char_name)
 	# Fallbacks: colores de la tarjeta saved_server existente (ultimo estado
 	# conocido local) o los defaults si nunca hubo una.
 	var existing := {}
@@ -1066,6 +1058,7 @@ func _upsert_server_card(payload: Dictionary) -> int:
 	var cfg := {
 		"id": "saved_server",
 		"name": char_name,
+		"hair_style": h_style,
 		"top": _payload_color(payload, "top", existing.get("top"), Color(0.5, 0.5, 0.5)),
 		"bottom": _payload_color(payload, "bottom", existing.get("bottom"), Color(0.3, 0.3, 0.3)),
 		"shoes": _payload_color(payload, "shoes", existing.get("shoes"), Color(0.15, 0.15, 0.15)),
@@ -1229,26 +1222,11 @@ func _on_char_prev() -> void:
 			break
 	_update_char_view()
 
-func _on_cycle_hair_style() -> void:
-	if _mp_locked:
-		return
-	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
-	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
-	var cur := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
-	var idx := CharacterGrooming.STYLES.find(cur)
-	var next_style: String = CharacterGrooming.STYLES[(idx + 1) % CharacterGrooming.STYLES.size()]
-	cfg["hair_style"] = next_style
-	_update_char_view()
-
 func _update_char_view() -> void:
 	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
 	var cfg: Dictionary = CHAR_CONFIGS[_char_index]
 	if _char_name_label != null:
 		_char_name_label.text = String(cfg.get("name", "?"))
-	if _btn_hair_style != null:
-		var st := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
-		_btn_hair_style.text = "Pelo: %s" % str(CharacterGrooming.STYLE_LABELS.get(st, st))
-		_btn_hair_style.disabled = _mp_locked or bool(cfg.get("is_saved", false))
 	SaveIntegration.update_saved_info(self, cfg)
 	if _char_preview_anchor == null:
 		return
@@ -1560,9 +1538,13 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false)
 	if cfg.get("is_saved", false):
 		var saved_pd: Dictionary = SaveIntegration._saved_player_data(self, cfg)
 		preview_stage = CharacterGrooming.beard_stage(SaveIntegration._survival_seconds(saved_pd))
+		var saved_hs := str(saved_pd.get("hair_style", cfg.get("hair_style", "")))
 		var saved_cn := str(saved_pd.get("char_name", cfg.get("name", "")))
-		if not saved_cn.is_empty():
+		if not saved_hs.is_empty():
+			preview_style = CharacterGrooming.style_for(saved_hs)
+		elif not saved_cn.is_empty():
 			preview_style = CharacterGrooming.style_for(saved_cn)
+		if not saved_cn.is_empty():
 			preview_stage = max(preview_stage, CharacterGrooming.stage_from_identity(saved_cn, SaveIntegration._survival_seconds(saved_pd)))
 	CharacterGrooming.apply(model, preview_style, hair_color, preview_stage)
 

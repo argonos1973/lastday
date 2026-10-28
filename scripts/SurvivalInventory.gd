@@ -709,6 +709,9 @@ func _add_recipe_actions_for(item_name: String, item_type: String) -> void:
 	if hud != null and hud.main_node != null and hud.main_node.has_method("get_nearby_ground_items"):
 		ground_items = hud.main_node.get_nearby_ground_items(player.global_position, 5.5)
 	var all_inv: Array = player.inventory.items.duplicate() if player.inventory != null else []
+	var held_item = player.get_held_item() if player.has_method("get_held_item") else null
+	if held_item != null and not all_inv.has(held_item):
+		all_inv.append(held_item)
 	for t in player.get_ground_crafting_tools():
 		if t != null and not all_inv.has(t):
 			all_inv.append(t)
@@ -717,8 +720,6 @@ func _add_recipe_actions_for(item_name: String, item_type: String) -> void:
 			add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe, false))
 		elif Crafting.can_craft_with_ground(recipe, all_inv, ground_items):
 			add_action("Combinar: " + Crafting.get_recipe_label(recipe), func(): hud.toggle_inventory(); player.craft_recipe(recipe, true))
-		elif item_type != "clothing":
-			add_action("Combinar: %s (%s)" % [Crafting.get_recipe_label(recipe), Crafting.get_recipe_inputs_text(recipe)], func(): hud.toggle_inventory(); player.craft_recipe(recipe, false))
 
 func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 	menu.clear()

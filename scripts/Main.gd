@@ -752,15 +752,19 @@ func _ready() -> void:
 	SaveGameHooks.preload_saved_world_state(self)
 	await _create_map()
 	_create_player()
-	if net != null and net.is_host and not net.is_dedicated_server:
+	if net != null and net.is_connected and not net.is_dedicated_server:
 		_send_character_appearance()
 	if net == null or not net.is_dedicated_server:
+		await get_tree().process_frame
+		if _scene_quitting: return
 		_create_audio()
 		_create_hud()
 		_create_weather_particles()
 		# Cubre joins que llegaron durante la carga del mundo (sin HUD aun).
 		if net != null:
 			_on_player_list_updated()
+		await get_tree().process_frame
+		if _scene_quitting: return
 	_apply_pending_doors()
 	_apply_pending_restore()
 	SaveGameHooks.maybe_load_saved_game(self, player)
@@ -785,9 +789,13 @@ func _ready() -> void:
 		_update_forest_visibility()
 		_update_grass_visibility()
 		_update_shadow_proximity()
+		await get_tree().process_frame
+		if _scene_quitting: return
 		_update_tree_interactions(true)
 		_update_boulder_interactions()
 		_update_forest_collision(true)
+		await get_tree().process_frame
+		if _scene_quitting: return
 		if net != null and net.is_connected and not net.is_host:
 			_update_puppet_animals(true)
 		await get_tree().process_frame
@@ -2116,7 +2124,12 @@ func _collect_server_players() -> Dictionary:
 					break
 		if pid2 > 0 and net.players.has(pid2):
 			var npd: Dictionary = net.players[pid2]
-			pdata["char_name"] = str(npd.get("char_name", npd.get("name", "")))
+			var Grooming = preload("res://scripts/CharacterGrooming.gd")
+			pdata["char_name"] = Grooming.base_name_from_identity(str(npd.get("char_name", npd.get("name", ""))))
+			if npd.has("hair_style"):
+				pdata["hair_style"] = str(npd["hair_style"])
+			if npd.has("beard_stage"):
+				pdata["beard_stage"] = int(npd["beard_stage"])
 			for ck in ["top_color", "bottom_color", "shoes_color", "hair_color", "skin_color"]:
 				if npd.get(ck) is Color:
 					pdata[ck] = SaveGameHooks._color_to_str(npd[ck])
@@ -2651,7 +2664,13 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 	var payload: Dictionary = {}
 	var args := _saved_appearance_args(cid)
 	if not args.is_empty():
-		payload["char_name"] = args[0]
+		var Grooming = preload("res://scripts/CharacterGrooming.gd")
+		payload["char_name"] = Grooming.base_name_from_identity(str(args[0]))
+		var saved_for_style: Dictionary = _server_saved_players.get(cid, {})
+		if saved_for_style.has("hair_style"):
+			payload["hair_style"] = str(saved_for_style["hair_style"])
+		elif str(args[0]).contains("|"):
+			payload["hair_style"] = Grooming.style_for(str(args[0]))
 		# Records without synced colors parse to alpha=0 — sending them would
 		# paint the locked card (and the player via _send_character_appearance)
 		# pitch black. Only forward real colors; the client falls back to its
@@ -2711,7 +2730,12 @@ func _delayed_send_saved_appearance(peer_id: int, cid: String) -> void:
 	var args := _saved_appearance_args(cid)
 	if args.is_empty():
 		return
-	net.restore_character_appearance.rpc_id(peer_id, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7])
+	var Grooming = preload("res://scripts/CharacterGrooming.gd")
+	var saved: Dictionary = _server_saved_players.get(cid, {})
+	var wire_name := str(args[0])
+	if saved.has("hair_style") or saved.has("beard_stage"):
+		wire_name = Grooming.encode_identity(wire_name, str(saved.get("hair_style", "")), int(saved.get("beard_stage", 0)))
+	net.restore_character_appearance.rpc_id(peer_id, wire_name, args[1], args[2], args[3], args[4], args[5], args[6], args[7])
 
 func _delayed_send_new_player_state(peer_id: int) -> void:
 	_delayed_send_spawn_pos(peer_id, _get_random_spawn_pos())
@@ -3314,7 +3338,8 @@ func _apply_restored_appearance(char_name: String, top_color: Color, bottom_colo
 	if not char_name.is_empty():
 		var Grooming = preload("res://scripts/CharacterGrooming.gd")
 		gs.set_meta("char_name", Grooming.base_name_from_identity(char_name))
-		gs.set_meta("hair_style", Grooming.style_for(char_name))
+		if char_name.contains("|") or not gs.has_meta("hair_style") or str(gs.get_meta("hair_style", "")).is_empty():
+			gs.set_meta("hair_style", Grooming.style_for(char_name))
 	if player != null and is_instance_valid(player) and player.has_method("_apply_character_colors"):
 		player._apply_character_colors()
 	# Echo the canonical appearance so the live player entry and future saves
@@ -4868,8 +4893,12 @@ func _update_remote_players() -> void:
 		var remote_torch_lit: bool = data.get("torch_lit", false)
 		var remote_flashlight_on: bool = data.get("flashlight_on", false)
 		# Apply character appearance if available and not yet applied (or if beard/hair changed)
-		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and (not rp.get("_applied_appearance") or str(rp.get("_puppet_char_name")) != str(data.get("char_name", ""))):
-			rp.puppet_apply_appearance(data.get("char_name", ""), data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
+		var Grooming = preload("res://scripts/CharacterGrooming.gd")
+		var rp_char := str(data.get("char_name", ""))
+		if data.has("hair_style") or data.has("beard_stage"):
+			rp_char = Grooming.encode_identity(rp_char, str(data.get("hair_style", "")), int(data.get("beard_stage", 0)))
+		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and (not rp.get("_applied_appearance") or str(rp.get("_puppet_char_name")) != rp_char):
+			rp.puppet_apply_appearance(rp_char, data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
 		if rp.has_method("puppet_set_aiming"):
 			rp.puppet_set_aiming(remote_aiming)
 		if rp.has_method("puppet_set_rifle"):
@@ -4984,7 +5013,16 @@ func _broadcast_animals() -> void:
 			"fm": str(animal.get("_follow_mode"))
 		}
 	net.animals = data
-	var recipients: Array[int] = net.snapshot_recipients()
+	var all_recipients: Array[int] = net.snapshot_recipients()
+	_animal_debug_timer += 1
+	if _animal_debug_timer >= 50:
+		_animal_debug_timer = 0
+	var recipients: Array[int] = []
+	var is_ws: bool = net.peer is WebSocketMultiplayerPeer
+	for pid in all_recipients:
+		if is_ws and not bool(net.players.get(pid, {}).get("in_world", false)) and _animal_debug_timer != 0:
+			continue
+		recipients.append(pid)
 	_bear_reliable_sync_timer += 0.10
 	if _bear_reliable_sync_timer >= 1.0:
 		_bear_reliable_sync_timer = fmod(_bear_reliable_sync_timer, 1.0)
@@ -4994,9 +5032,6 @@ func _broadcast_animals() -> void:
 				bear_snapshot[aid] = data[aid]
 		for pid in recipients:
 			net.sync_bear_animals.rpc_id(pid, bear_snapshot)
-	_animal_debug_timer += 1
-	if _animal_debug_timer >= 50:
-		_animal_debug_timer = 0
 	# Split into chunks that stay under the UDP MTU (~1392 B). Each entry is
 	# roughly 110-140 bytes serialized; cap the serialized size, not the count,
 	# so big wildlife populations don't produce oversized unreliable packets.
@@ -5623,7 +5658,7 @@ func _add_stash_thumbnail(row: HBoxContainer, item) -> void:
 		var only_mesh := "shoes" if item.item_name == "Botas survival" else ""
 		if not only_mesh.is_empty():
 			colors.tint = Color(0.05, 0.05, 0.05)
-		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else "")
+		thumb.set_model(paths, scale_value, Vector3.ZERO, 1.0, only_mesh, colors.tint, colors.camo, str(colors.get("pelt", "")), "rag" if item.item_name == "Trapos" else str(item.item_name))
 		thumb._viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	, CONNECT_ONE_SHOT)
 	row.add_child(thumb)
@@ -6867,6 +6902,7 @@ func _create_map() -> void:
 		await get_tree().process_frame
 	CityExpansion.create(self, is_server)
 	if not is_server:
+		await get_tree().process_frame
 		await get_tree().physics_frame
 		await get_tree().physics_frame
 	_create_river_drink_zones()

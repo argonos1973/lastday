@@ -290,9 +290,11 @@ static func get_available_recipes(inventory_items: Array) -> Array:
 static func get_recipes_for_item(item_name: String, item_type: String = "") -> Array:
 	var result := []
 	for recipe in RECIPES:
+		if item_type != "clothing" and str(recipe.get("output", {}).get("name", "")) == "Trapos" and recipe["inputs"].has("Cuchillo"):
+			continue
 		if recipe["inputs"].has(item_name):
 			result.append(recipe)
-		else:
+		elif item_name != "Piedra afilada":
 			for input_name in recipe["inputs"]:
 				if input_name == "ANY_PELT" and _is_pelt_name(item_name):
 					result.append(recipe)

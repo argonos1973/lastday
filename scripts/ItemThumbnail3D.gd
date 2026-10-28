@@ -76,8 +76,12 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 		elif not proc_kind.is_empty():
 			var prim := MaterialFactory.build_primitive_item_mesh(proc_kind)
 			_model_root.add_child(prim)
-			prim.rotation_degrees = Vector3(24.0, -32.0, 0.0)
-			_frame_camera(prim, 0.85)
+			if proc_kind == "Piedra afilada":
+				prim.rotation_degrees = Vector3(-15.0, 38.0, -22.0)
+				_frame_camera(prim, 0.78)
+			else:
+				prim.rotation_degrees = Vector3(24.0, -32.0, 0.0)
+				_frame_camera(prim, 0.85)
 		return
 	_model_root.add_child(inst)
 	if is_log_model:

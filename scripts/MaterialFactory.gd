@@ -803,10 +803,16 @@ static func build_primitive_item_mesh(item_name: String) -> Node3D:
 	bone_mat.albedo_color = Color(0.86, 0.83, 0.75)
 	bone_mat.roughness = 0.72
 	var stone_mat := StandardMaterial3D.new()
-	stone_mat.albedo_color = Color(0.56, 0.54, 0.50)
+	stone_mat.albedo_color = Color(0.46, 0.45, 0.42)
 	stone_mat.roughness = 0.92
-	if ResourceLoader.exists(POLY_ROCK_07_DIFF):
-		stone_mat.albedo_texture = load(POLY_ROCK_07_DIFF) as Texture2D
+	var granite_diff_path := "res://assets/models/props/lake/lake_boulder_0_lake_granite.jpg"
+	var stone_tex: Texture2D = load_texture(granite_diff_path) as Texture2D
+	if stone_tex == null:
+		stone_tex = load_texture(POLY_ROCKY_TERRAIN_DIFF) as Texture2D
+	if stone_tex != null:
+		stone_mat.albedo_texture = stone_tex
+		stone_mat.uv1_scale = Vector3(0.45, 0.45, 0.45)
+		stone_mat.uv1_offset = Vector3(0.25, 0.25, 0.0)
 	var cord_mat := StandardMaterial3D.new()
 	cord_mat.albedo_color = Color(0.62, 0.50, 0.34)
 	cord_mat.roughness = 0.88
@@ -994,22 +1000,158 @@ static func build_primitive_item_mesh(item_name: String) -> Node3D:
 			quill.mesh = qbox
 			quill.material_override = feather_mat
 			root.add_child(quill)
-		"Piedra afilada", "Cuchillo de piedra", "Cuchillo de hueso":
+		"Piedra afilada":
+			stone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			var flint_edge_mat := StandardMaterial3D.new()
+			flint_edge_mat.albedo_color = Color(0.76, 0.75, 0.71)
+			flint_edge_mat.roughness = 0.58
+			flint_edge_mat.metallic = 0.10
+			flint_edge_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			if stone_tex != null:
+				flint_edge_mat.albedo_texture = stone_tex
+				flint_edge_mat.uv1_scale = Vector3(0.45, 0.45, 0.45)
+				flint_edge_mat.uv1_offset = Vector3(0.25, 0.25, 0.0)
+			var biface := MeshInstance3D.new()
+			biface.name = "KnappedStoneBiface"
+			biface.mesh = _build_knapped_stone_mesh(stone_mat, flint_edge_mat)
+			root.add_child(biface)
+		"Cuchillo de piedra", "Cuchillo de hueso":
 			var handle := MeshInstance3D.new()
 			var hcyl := CylinderMesh.new()
-			hcyl.top_radius = 0.012
-			hcyl.bottom_radius = 0.014
+			hcyl.top_radius = 0.013
+			hcyl.bottom_radius = 0.015
 			hcyl.height = 0.11
 			handle.mesh = hcyl
-			handle.position = Vector3(0.0, -0.05, 0.0)
+			handle.position = Vector3(0.0, -0.055, 0.0)
 			handle.material_override = wood_mat
-			if item_name != "Piedra afilada":
-				root.add_child(handle)
+			root.add_child(handle)
+			var lashing := MeshInstance3D.new()
+			var lcyl := CylinderMesh.new()
+			lcyl.top_radius = 0.0155
+			lcyl.bottom_radius = 0.0155
+			lcyl.height = 0.026
+			lashing.mesh = lcyl
+			lashing.position = Vector3(0.0, -0.004, 0.0)
+			lashing.material_override = wrap_mat
+			root.add_child(lashing)
 			var blade := MeshInstance3D.new()
-			var prism := PrismMesh.new()
-			prism.size = Vector3(0.038, 0.14, 0.012)
-			blade.mesh = prism
-			blade.position = Vector3(0.0, 0.06, 0.0)
-			blade.material_override = bone_mat if item_name == "Cuchillo de hueso" else stone_mat
+			if item_name == "Cuchillo de piedra":
+				stone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+				var flint_mat := StandardMaterial3D.new()
+				flint_mat.albedo_color = Color(0.76, 0.75, 0.71)
+				flint_mat.roughness = 0.60
+				flint_mat.metallic = 0.08
+				flint_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+				if stone_tex != null:
+					flint_mat.albedo_texture = stone_tex
+					flint_mat.uv1_scale = Vector3(0.45, 0.45, 0.45)
+					flint_mat.uv1_offset = Vector3(0.25, 0.25, 0.0)
+				blade.mesh = _build_knapped_stone_mesh(stone_mat, flint_mat, true)
+				blade.scale = Vector3(0.46, 0.95, 0.44)
+				blade.position = Vector3(0.0, 0.058, 0.0)
+			else:
+				var prism := PrismMesh.new()
+				prism.size = Vector3(0.038, 0.14, 0.012)
+				blade.mesh = prism
+				blade.position = Vector3(0.0, 0.06, 0.0)
+				blade.material_override = bone_mat
 			root.add_child(blade)
 	return root
+
+static func _build_knapped_stone_mesh(core_mat: Material, edge_mat: Material, tang_base: bool = false) -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	# Anillos de un bifaz/lasca de piedra tallada: talón redondeado para la palma
+	# (abajo, y=-0.064..0.0) y filo/punta lascada arriba (y=0.0..0.072).
+	var ring_y := [-0.056, -0.036, -0.006, 0.022, 0.048, 0.068]
+	var ring_rx := [0.016, 0.028, 0.042, 0.036, 0.022, 0.004] if tang_base else [0.024, 0.041, 0.046, 0.038, 0.023, 0.0035]
+	var ring_rz := [0.010, 0.016, 0.020, 0.014, 0.008, 0.0015] if tang_base else [0.016, 0.025, 0.024, 0.016, 0.008, 0.0015]
+	var ring_shift_x := [0.000, 0.000, 0.000, 0.002, 0.003, 0.001] if tang_base else [-0.001, -0.002, 0.000, 0.002, 0.003, 0.002]
+	var segs := 12
+	var rings := ring_y.size()
+	var ring_pts: Array = []
+	for r in range(rings):
+		var pts: Array[Vector3] = []
+		var y: float = ring_y[r]
+		var rx: float = ring_rx[r]
+		var rz: float = ring_rz[r]
+		var sx: float = ring_shift_x[r]
+		var edge_t := clampf(float(r - 1) / float(rings - 2), 0.0, 1.0)
+		for s in range(segs):
+			var a := TAU * float(s) / float(segs)
+			var ca := cos(a)
+			var sa := sin(a)
+			var facet := 1.0 + 0.04 * cos(a * 2.0 + float(r) * 0.9) - 0.03 * sin(a * 3.0 - float(r) * 0.6)
+			# Sección lenticular suave hacia los filos (+X / -X) en la mitad superior
+			var lens := 1.0 - 0.34 * edge_t * ca * ca
+			var px := sx + ca * rx * facet
+			var pz := sa * rz * facet * lens
+			pts.append(Vector3(px, y, pz))
+		ring_pts.append(pts)
+
+	var st_core := SurfaceTool.new()
+	st_core.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var st_edge := SurfaceTool.new()
+	st_edge.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	# Tapa inferior redondeada (talón de roca)
+	var bottom_center := Vector3(ring_shift_x[0], -0.062, 0.0)
+	for s in range(segs):
+		var sn := (s + 1) % segs
+		var p0: Vector3 = ring_pts[0][s]
+		var p1: Vector3 = ring_pts[0][sn]
+		var n := ((p0 + p1) * 0.5 - Vector3(ring_shift_x[0], -0.015, 0.0)).normalized()
+		st_core.set_normal(n)
+		st_core.set_uv(Vector2(0.5, 0.5)); st_core.add_vertex(bottom_center)
+		st_core.set_uv(Vector2(float(sn) / float(segs), 0.0)); st_core.add_vertex(p1)
+		st_core.set_uv(Vector2(float(s) / float(segs), 0.0)); st_core.add_vertex(p0)
+
+	# Bandas entre anillos: el núcleo/talón usa core_mat; el bisel cortante y punta usan edge_mat
+	for r in range(rings - 1):
+		var v0 := float(r) / float(rings - 1)
+		var v1 := float(r + 1) / float(rings - 1)
+		for s in range(segs):
+			var sn := (s + 1) % segs
+			var a_mid := TAU * (float(s) + 0.5) / float(segs)
+			var is_flaked_edge: bool = (r >= 3) or (r >= 2 and absf(cos(a_mid)) > 0.38) or (r >= 0 and cos(a_mid) > 0.52)
+			var st: SurfaceTool = st_edge if is_flaked_edge else st_core
+			var p00: Vector3 = ring_pts[r][s]
+			var p01: Vector3 = ring_pts[r][sn]
+			var p10: Vector3 = ring_pts[r + 1][s]
+			var p11: Vector3 = ring_pts[r + 1][sn]
+			var u0 := float(s) / float(segs)
+			var u1 := float(s + 1) / float(segs)
+			var n1 := (p10 - p00).cross(p01 - p00).normalized()
+			if n1.y < 0.18:
+				n1 = Vector3(n1.x, 0.18, n1.z).normalized()
+			st.set_normal(n1)
+			st.set_uv(Vector2(u0, v0)); st.add_vertex(p00)
+			st.set_uv(Vector2(u1, v0)); st.add_vertex(p01)
+			st.set_uv(Vector2(u0, v1)); st.add_vertex(p10)
+			var n2 := (p10 - p01).cross(p11 - p01).normalized()
+			if n2.y < 0.18:
+				n2 = Vector3(n2.x, 0.18, n2.z).normalized()
+			st.set_normal(n2)
+			st.set_uv(Vector2(u1, v0)); st.add_vertex(p01)
+			st.set_uv(Vector2(u1, v1)); st.add_vertex(p11)
+			st.set_uv(Vector2(u0, v1)); st.add_vertex(p10)
+
+	# Cierre de la punta superior
+	var tip_vertex := Vector3(0.002, 0.072, 0.0)
+	var top_ring: Array = ring_pts[rings - 1]
+	for s in range(segs):
+		var sn := (s + 1) % segs
+		var p0: Vector3 = top_ring[s]
+		var p1: Vector3 = top_ring[sn]
+		var n := (tip_vertex - p0).cross(p1 - p0).normalized()
+		st_edge.set_normal(n)
+		st_edge.set_uv(Vector2(float(s) / float(segs), 0.92)); st_edge.add_vertex(p0)
+		st_edge.set_uv(Vector2(float(sn) / float(segs), 0.92)); st_edge.add_vertex(p1)
+		st_edge.set_uv(Vector2(0.5, 1.0)); st_edge.add_vertex(tip_vertex)
+
+	st_core.commit(mesh)
+	if mesh.get_surface_count() > 0:
+		mesh.surface_set_material(0, core_mat)
+	st_edge.commit(mesh)
+	if mesh.get_surface_count() > 1:
+		mesh.surface_set_material(1, edge_mat)
+	return mesh

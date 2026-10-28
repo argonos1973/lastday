@@ -1654,7 +1654,6 @@ func _process(delta: float) -> void:
 		elif _g_hold_time < HOLD_THRESHOLD:
 			_drop_held_item()
 	# Carga de lanzamiento (mantener G) y guardar (mantener F)
-	_tick_beard_growth(delta)
 	if _f_holding:
 		_f_hold_time += delta
 		if _f_hold_time >= HOLD_THRESHOLD and not _f_hold_triggered:
@@ -1819,7 +1818,8 @@ func _tick_beard_growth(delta: float) -> void:
 	if _beard_check_accum < 2.0:
 		return
 	_beard_check_accum = 0.0
-	var wanted_stage := CharacterGrooming.beard_stage(stats.survival_seconds)
+	var surv_sec := maxf(0.0, stats.survival_seconds - _shaved_at_seconds)
+	var wanted_stage := CharacterGrooming.beard_stage(surv_sec)
 	if wanted_stage != _beard_stage:
 		var grew := wanted_stage > _beard_stage
 		_beard_stage = wanted_stage
@@ -6443,6 +6443,7 @@ func is_performing_interruptible_action() -> bool:
 	return false
 
 func cancel_active_action(show_cancel_notice: bool = false) -> bool:
+	_stop_consumption_audio()
 	if not is_performing_interruptible_action():
 		return false
 	var was_fishing := _is_fishing or _is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)
@@ -6603,6 +6604,7 @@ func _third_person_clip_start_offset(anim: String) -> float:
 	return 0.0
 
 func die(cause: String = "") -> void:
+	_stop_consumption_audio()
 	if is_dead:
 		# Already down (e.g. a local death raced the server's order): still honor a
 		# melee-death order so the corpse matches what the server broadcast.
@@ -6610,6 +6612,7 @@ func die(cause: String = "") -> void:
 			_apply_melee_death_visual()
 		return
 	is_dead = true
+	_action_serial += 1
 	# Si moría con el alijo abierto, ninguna tecla podía cerrarlo (todo el
 	# gate de _input exige !is_dead) — ciérralo aquí.
 	var death_scene := get_tree().current_scene

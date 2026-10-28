@@ -63,22 +63,22 @@ static func base_name_from_identity(identity: String) -> String:
 	return s
 
 static func encode_identity(base_name: String, style: String, stage: int) -> String:
-	var clean_base := base_name_from_identity(base_name)
+	var clean_base := base_name_from_identity(base_name).replace("|", "").replace(":", "").strip_edges()
 	if clean_base.is_empty():
 		clean_base = "Remy"
 	var clean_style := style_for(style if not style.is_empty() else clean_base)
 	return "%s|%s:%d" % [clean_base, clean_style, clampi(stage, 0, 4)]
 
 # Crecimiento progresivo de barba con el tiempo sobrevivido:
-# 0: < 10 min | 1: 10–25 min | 2: 25–50 min | 3: 50–90 min | 4: > 90 min
+# 0: < 1 h | 1: 1–3 h | 2: 3–6 h | 3: 6–12 h | 4: > 12 h
 static func beard_stage(seconds: float) -> int:
-	if seconds >= 5400.0:
+	if seconds >= 43200.0:
 		return 4
-	if seconds >= 3000.0:
+	if seconds >= 21600.0:
 		return 3
-	if seconds >= 1500.0:
+	if seconds >= 10800.0:
 		return 2
-	if seconds >= 600.0:
+	if seconds >= 3600.0:
 		return 1
 	return 0
 

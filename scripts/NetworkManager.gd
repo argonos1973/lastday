@@ -21,7 +21,7 @@ const MAX_PLAYERS := 4
 # Un peer conectado tiene esta ventana para completar _register_player; si no
 # lo hace (scan, peer fantasma) se expulsa — si no aguantaba para siempre,
 # ocupaba un slot de ENet y podía recibir estado del mundo.
-const REGISTRATION_TIMEOUT := 12.0
+const REGISTRATION_TIMEOUT := 30.0
 const SPAWN_POS := Vector3(8.0, 0.4, 2.5)
 # Servidor público: WebSocket local al que solo llega cloudflared.
 const WS_PORT := 8081
@@ -114,8 +114,10 @@ func start_dedicated_server(from_retry: bool = false) -> bool:
 		# El burst de sync_world_state supera los 64 KB por defecto: al desbordar
 		# el buffer de salida el socket queda roto y los replies (pickup_claim,
 		# syncs) se pierden en silencio. 4 MB da margen de sobra por conexión.
-		ws.outbound_buffer_size = 4 * 1024 * 1024
-		ws.inbound_buffer_size = 1024 * 1024
+		ws.outbound_buffer_size = 16 * 1024 * 1024
+		ws.inbound_buffer_size = 4 * 1024 * 1024
+		if "max_queued_packets" in ws:
+			ws.max_queued_packets = 32768
 		err = ws.create_server(WS_PORT, WS_BIND)
 		bind_port = WS_PORT
 		if err == OK:
@@ -342,7 +344,7 @@ func peer_alive(pid: int) -> bool:
 
 # Transient snapshots must never fill the reliable WebSocket queue. Dropping
 # an old pose is safe; dropping a pickup reply or world transaction is not.
-const SNAPSHOT_QUEUE_LIMIT := 64 * 1024
+const SNAPSHOT_QUEUE_LIMIT := 256 * 1024
 var _ws_congested_since: Dictionary = {}
 
 func can_send_snapshot(pid: int) -> bool:
@@ -370,6 +372,7 @@ var _last_inbound_ms := 0
 var _joined_ms := 0
 var _status_probe_ms := 0
 var _world_state_seen := false
+var _was_world_built := false
 # Flag "mundo listo": el servidor lo levanta al terminar la generación; el
 # cliente lo consulta para saber si debe seguir esperando o ya puede recibir
 # el estado del mundo — sin cortar por tiempo mientras el servidor responda.
@@ -413,7 +416,7 @@ func _process(_delta: float) -> void:
 					_ws_congested_since[pid] = Time.get_ticks_msec()
 				elif not congested:
 					_ws_congested_since.erase(pid)
-				var stalled := congested and Time.get_ticks_msec() - int(_ws_congested_since.get(pid, 0)) > 30000
+				var stalled := congested and Time.get_ticks_msec() - int(_ws_congested_since.get(pid, 0)) > 180000
 				if closed or stalled:
 					print("[NET] Disconnect stalled WebSocket peer ", pid, " queued=", conn.get_current_outbound_buffered_amount())
 					wsp.disconnect_peer(pid)
@@ -428,7 +431,7 @@ func _process(_delta: float) -> void:
 			for pid in multiplayer.get_peers():
 				var c = wcl.get_peer(pid)
 				if c != null and c.get_ready_state() == WebSocketPeer.STATE_OPEN:
-					c.heartbeat_interval = 15.0
+					c.heartbeat_interval = 60.0
 					_ws_hb_armed = true
 		if is_connected:
 			# Hasta que el mundo local está construido (join + sync +
@@ -438,7 +441,13 @@ func _process(_delta: float) -> void:
 			# servidor deja de responder del todo, nunca por tiempo de
 			# espera ni por lo que tarde la generación local.
 			var scene := get_tree().current_scene
-			var world_built: bool = scene != null and scene.get("player") != null
+			var world_built: bool = scene != null and scene.get("player") != null and scene.get("_loading_overlay") == null
+			# Si el frame acaba de sufrir un bloqueo local de carga o compilación
+			# de shaders (o acaba de terminar la pantalla de carga), reiniciamos
+			# el reloj de silencio para no confundir un tirón del PC con caída de red.
+			if _delta > 0.5 or (world_built and not _was_world_built):
+				_last_inbound_ms = Time.get_ticks_msec()
+			_was_world_built = world_built
 			if _joined_ms > 0 and not world_built \
 					and Time.get_ticks_msec() - _status_probe_ms > 10000:
 				_status_probe_ms = Time.get_ticks_msec()
@@ -446,7 +455,7 @@ func _process(_delta: float) -> void:
 			if _joined_ms > 0:
 				var since_ms := Time.get_ticks_msec() - \
 					(_last_inbound_ms if _last_inbound_ms > 0 else _joined_ms)
-				var limit_ms := 30000 if world_built else 120000
+				var limit_ms := 90000 if world_built else 240000
 				if since_ms > limit_ms:
 					print("[NET] >", limit_ms / 1000, "s sin datos del servidor — cerrando")
 					_last_inbound_ms = 0
@@ -506,8 +515,10 @@ func join_game(ip: String, password: String = "") -> bool:
 		var ws := WebSocketMultiplayerPeer.new()
 		# Mismo motivo que en el servidor: syncs grandes no deben desbordar el
 		# buffer de salida y corromper la conexión a mitad de sesión.
-		ws.outbound_buffer_size = 4 * 1024 * 1024
-		ws.inbound_buffer_size = 4 * 1024 * 1024
+		ws.outbound_buffer_size = 16 * 1024 * 1024
+		ws.inbound_buffer_size = 16 * 1024 * 1024
+		if "max_queued_packets" in ws:
+			ws.max_queued_packets = 32768
 		if target.begins_with("wss://"):
 			err = ws.create_client(target, TLSOptions.client())
 		else:
@@ -525,10 +536,11 @@ func join_game(ip: String, password: String = "") -> bool:
 		return false
 	multiplayer.multiplayer_peer = peer
 	is_host = false
-	_last_inbound_ms = 0
+	_last_inbound_ms = Time.get_ticks_msec()
 	_joined_ms = Time.get_ticks_msec()
 	_status_probe_ms = 0
 	_world_state_seen = false
+	_was_world_built = false
 	_ws_hb_armed = false
 	return true
 
@@ -558,6 +570,7 @@ func close_connection() -> void:
 	_joined_ms = 0
 	_status_probe_ms = 0
 	_world_state_seen = false
+	_was_world_built = false
 	world_ready = false
 	authoritative_weather.clear()
 	_weather_source_peer = 0
@@ -584,7 +597,7 @@ func _on_peer_connected(id: int) -> void:
 	if is_host and peer is WebSocketMultiplayerPeer:
 		var ws_conn = (peer as WebSocketMultiplayerPeer).get_peer(id)
 		if ws_conn != null:
-			ws_conn.heartbeat_interval = 15.0
+			ws_conn.heartbeat_interval = 60.0
 	if is_host:
 		_kick_if_unregistered(id)
 	# Don't send player list here — wait for _register_player so client_id is processed
@@ -663,7 +676,7 @@ func submit_player_name(new_name: String) -> void:
 	# jugador no puede renombrar un personaje vivo en mitad de sesión.
 	if not players[sender].get("needs_name", false):
 		return
-	new_name = new_name.strip_edges()
+	new_name = new_name.replace("|", "").replace(":", "").strip_edges()
 	if new_name.is_empty() or new_name.length() > 80:
 		return
 	players[sender].erase("needs_name")
@@ -691,7 +704,7 @@ func _reject_registration(sender: int, reason: String) -> void:
 @rpc("any_peer", "reliable")
 func _register_player(id: int, player_name: String, cid: String = "", pw: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	player_name = player_name.strip_edges()
+	player_name = player_name.replace("|", "").replace(":", "").strip_edges()
 	if player_name.is_empty():
 		player_name = "Jugador_%d" % sender
 	if not is_host or sender <= 1 or sender != id or cid.length() > 128 or player_name.length() > 80:
@@ -795,7 +808,11 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false), pdata.get("clothing_colors", []))
 			# Send character appearance if available
 			if pdata.has("top_color"):
-				sync_character_appearance_remote.rpc_id(id, pid, pdata.get("char_name", ""), pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
+				var Grooming = preload("res://scripts/CharacterGrooming.gd")
+				var wire_cn := str(pdata.get("char_name", ""))
+				if pdata.has("hair_style") or pdata.has("beard_stage"):
+					wire_cn = Grooming.encode_identity(wire_cn, str(pdata.get("hair_style", "")), int(pdata.get("beard_stage", 0)))
+				sync_character_appearance_remote.rpc_id(id, pid, wire_cn, pdata.get("top_color", Color(0.5,0.5,0.5)), pdata.get("bottom_color", Color(0.3,0.3,0.3)), pdata.get("shoes_color", Color(0.15,0.15,0.15)), pdata.get("hair_color", Color(0.2,0.15,0.1)), pdata.get("skin_color", Color(0.8,0.7,0.6)), pdata.get("top_camo", false), pdata.get("bottom_camo", false))
 		for gid in chat_groups.keys():
 			var ginfo: Dictionary = chat_groups[gid]
 			sync_chat_group.rpc_id(id, str(ginfo.get("id", gid)), str(ginfo.get("name", "Grupo")), ginfo.get("members", []), ginfo.get("member_names", []))
@@ -826,6 +843,7 @@ func _broadcast_player_list() -> void:
 
 @rpc("authority", "reliable")
 func _sync_player_list(list: Dictionary) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	for pid in list.keys():
 		pass
 	players = list
@@ -858,6 +876,9 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 		# otro recurso exclusivo liberan al ocupante cuando este valor envejece,
 		# aunque el transporte tarde o nunca declare la desconexión.
 		players[id]["last_seen"] = Time.get_ticks_msec()
+		players[id]["in_world"] = true
+	else:
+		_last_inbound_ms = Time.get_ticks_msec()
 	var boat_scene := get_tree().current_scene
 	if is_host and boat_scene != null and is_instance_valid(boat_scene.get("lake_rowboat")):
 		var boat = boat_scene.lake_rowboat
@@ -899,6 +920,8 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				held_item = ""
 				equipped_backpack = ""
 				clothing_colors = []
+	if not is_host:
+		_last_inbound_ms = Time.get_ticks_msec()
 	players[id]["pos"] = pos
 	players[id]["rot"] = rot
 	players[id]["anim"] = anim
@@ -940,6 +963,7 @@ var _has_buffered_appearance := false
 
 @rpc("authority", "reliable")
 func set_client_spawn_pos(pos: Vector3, _arg2: Variant = null, _arg3: Variant = null, _arg4: Variant = null, _arg5: Variant = null, _arg6: Variant = null, _arg7: Variant = null) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	var scene := get_tree().current_scene
 	# _arg2 carries "died while offline" so the client can warn that this is a
 	# fresh character, not a silent relocation.
@@ -956,12 +980,15 @@ func sync_player_inventory(items_data: Array, health: float, hunger: float, thir
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_client_request(sender) or not is_finite(health) or not is_finite(hunger) or not is_finite(thirst) or not is_finite(rot) or items_data.size() > 256 or extra.size() > 64:
 		return
+	if players.has(sender):
+		players[sender]["in_world"] = true
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_store_player_inventory"):
 		scene.call("_store_player_inventory", sender, items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
 
 @rpc("authority", "reliable")
 func restore_player_inventory(items_data: Array, health: float, hunger: float, thirst: float, equipped_clothing: String, equipped_backpack: String, held_item: String, held_idx: int, sleeping: bool, sitting: bool, rot: float, prone: bool = false, crouching: bool = false, extra: Dictionary = {}) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_inventory"):
 		scene.call("_apply_restored_inventory", items_data, health, hunger, thirst, equipped_clothing, equipped_backpack, held_item, held_idx, sleeping, sitting, rot, prone, crouching, extra)
@@ -1034,6 +1061,7 @@ var _animals_seen := {}
 
 @rpc("authority", "call_remote", "reliable", 2)
 func sync_bear_animals(data: Dictionary) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	# The ordinary wildlife stream is deliberately split into small UDP packets.
 	# Bears are rare and distant, so send their compact state on a reliable lane
 	# too; a lost chunk must never hide the only bear in a territory.
@@ -1049,6 +1077,7 @@ func sync_bear_animals(data: Dictionary) -> void:
 
 @rpc("authority", "call_remote", "unreliable_ordered", 2)
 func sync_animals(data: Dictionary) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	# Chunks carry "_gen"/"_total" so a broadcast split across packets is only
 	# pruned once every chunk arrived. Without this, animals deleted on the
 	# server lingered forever client-side.
@@ -1505,6 +1534,7 @@ func campfire_lit(action_id: String, fire_name: String, pos: Vector3) -> void:
 # Server sends world state to a newly connected client
 @rpc("authority", "reliable")
 func sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array, planted_crops: Array = []) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	_world_state_seen = true
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_sync_world_state") and scene.get("player") != null:
@@ -1632,11 +1662,21 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 		return
 	# El nombre lo fija el registro/submit_player_name y dura hasta la muerte:
 	# la apariencia periódica no puede renombrar un personaje vivo — se clampa
-	# al nombre que el servidor ya conoce.
-	var fixed_name := str(players[sender].get("name", ""))
+	# al nombre que el servidor ya conoce, pero conserva el peinado y la barba.
+	var Grooming = preload("res://scripts/CharacterGrooming.gd")
+	var has_groom_meta := char_name.contains("|") or char_name.contains(":")
+	var h_style: String = Grooming.style_for(char_name)
+	var b_stage: int = Grooming.stage_from_identity(char_name, 0.0)
+	var clean_name: String = Grooming.base_name_from_identity(char_name)
+	var fixed_name := Grooming.base_name_from_identity(str(players[sender].get("name", "")))
 	if sender != multiplayer.get_unique_id() and not players[sender].get("needs_name", false) and not fixed_name.is_empty() and not fixed_name.begins_with("Jugador_"):
-		char_name = fixed_name
-	players[sender]["char_name"] = char_name
+		clean_name = fixed_name
+	players[sender]["char_name"] = clean_name
+	players[sender]["in_world"] = true
+	if has_groom_meta or not players[sender].has("hair_style"):
+		players[sender]["hair_style"] = h_style
+	if has_groom_meta or not players[sender].has("beard_stage"):
+		players[sender]["beard_stage"] = b_stage
 	players[sender]["top_color"] = top_color
 	players[sender]["bottom_color"] = bottom_color
 	players[sender]["shoes_color"] = shoes_color
@@ -1644,6 +1684,7 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 	players[sender]["skin_color"] = skin_color
 	players[sender]["top_camo"] = top_camo
 	players[sender]["bottom_camo"] = bottom_camo
+	var wire_name: String = Grooming.encode_identity(clean_name, str(players[sender].get("hair_style", h_style)), int(players[sender].get("beard_stage", b_stage)))
 	# Relay to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
@@ -1652,13 +1693,14 @@ func sync_character_appearance(char_name: String, top_color: Color, bottom_color
 					continue
 				if not peer_alive(pid):
 					continue
-				sync_character_appearance_remote.rpc_id(pid, sender, char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
+				sync_character_appearance_remote.rpc_id(pid, sender, wire_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
 
 # Server sends the persisted character appearance back to its owner on
 # reconnect — the client_id's server character is fixed until it dies, so
 # whatever card was picked in Inicio gets overridden.
 @rpc("authority", "reliable")
 func restore_character_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_apply_restored_appearance"):
 		scene._apply_restored_appearance(char_name, top_color, bottom_color, shoes_color, hair_color, skin_color, top_camo, bottom_camo)
@@ -1671,14 +1713,23 @@ func restore_character_appearance(char_name: String, top_color: Color, bottom_co
 # Sent before the player-list broadcast so it lands before all_players_ready.
 @rpc("authority", "reliable")
 func notify_character_locked(payload: Dictionary) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
 	server_character_locked.emit(payload)
 
 # Server relays character appearance to a specific client
 @rpc("authority", "reliable")
 func sync_character_appearance_remote(peer_id: int, char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
+	_last_inbound_ms = Time.get_ticks_msec()
+	var Grooming = preload("res://scripts/CharacterGrooming.gd")
+	var has_groom_meta := char_name.contains("|") or char_name.contains(":")
+	var clean_name: String = Grooming.base_name_from_identity(char_name)
 	if not players.has(peer_id):
 		players[peer_id] = {"name": "Jugador_%d" % peer_id, "pos": SPAWN_POS, "rot": 0.0, "ready": true}
-	players[peer_id]["char_name"] = char_name
+	players[peer_id]["char_name"] = clean_name
+	if has_groom_meta or not players[peer_id].has("hair_style"):
+		players[peer_id]["hair_style"] = Grooming.style_for(char_name)
+	if has_groom_meta or not players[peer_id].has("beard_stage"):
+		players[peer_id]["beard_stage"] = Grooming.stage_from_identity(char_name, 0.0)
 	players[peer_id]["top_color"] = top_color
 	players[peer_id]["bottom_color"] = bottom_color
 	players[peer_id]["shoes_color"] = shoes_color
