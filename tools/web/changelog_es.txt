@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+37c0f42|El M4 encarado en tercera persona sigue el pitch de la camara sin abrir la mira: la culata queda en el bolsillo del hombro, el canon apunta donde mira la camara y el brazo de apoyo protacta el hombro para no soltarse del guardamanos
 48102ab|Alza trasera del M4 con el tambor de correccion de deriva a la derecha como en el arma real
 fa8f1e2|Al apuntar con el M4 el punto de mira es el real del arma: el ojo mira a traves de una apertura trasera peep montada en el rail a la altura exacta de la punta del poste delantero del modelo, con la punta real del poste centrada en pantalla
 7b9cbcf|Corregida la deformacion de brazos/mangas al correr con el M4 y chaqueta/guantes de piel, el retrato 3D del inventario al llevar el M4 en mano y la mira al apuntar con clic derecho con el M4 (vista optica limpia como la del rifle)
