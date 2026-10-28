@@ -477,6 +477,7 @@ func update_portrait() -> void:
 		if not idle_name.is_empty() and portrait_ap.has_animation(idle_name):
 			portrait_ap.play(idle_name)
 			portrait_ap.seek(0.4, true)
+			portrait_ap.pause()
 	# Los accesorios (sombrero, mochila, sockets de manos) duplican el
 	# transform que tenian al abrir el panel — con el personaje sentado
 	# salen desplazados del cuerpo idle. Recolocarlos sobre el esqueleto
@@ -773,7 +774,7 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 			if item.item_type == "ammo":
 				add_action("Cargar en el fusil", func():
 					player._use_inventory_index(player.inventory.items.find(item)))
-			if (item.item_type in ["weapon", "tool_axe"] or str(item.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Lanza", "Lanza de hueso"]) and float(item.durability) < float(item.max_durability) and player.inventory.has_item_name("Piedra", 1):
+			if (item.item_type in ["weapon", "tool_axe"] or str(item.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Lanza", "Lanza de hueso", "Palo afilado"]) and float(item.durability) < float(item.max_durability) and player.inventory.has_item_name("Piedra", 1):
 				add_action("Afilar con piedra (+40% durabilidad)", func():
 					if player.inventory.consume_item_name("Piedra", 1):
 						item.durability = minf(float(item.max_durability), float(item.durability) + float(item.max_durability) * 0.40)

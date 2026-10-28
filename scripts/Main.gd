@@ -4215,21 +4215,21 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# Drop loot immediately on server using saved inventory
 		_drop_player_loot(target_peer_id, proxy)
 		proxy.set_meta("death_broadcasted", true)
-		# The server knows the validated weapon — only melee kills play the
-		# beaten-death animation on the victim and on remote puppets.
+		# The server knows the validated weapon — broadcast death immediately so
+		# the victim and remote puppets play the death animation without freezing.
 		var death_cause := "melee" if weapon == "melee" else ""
-		proxy.set_meta("pvp_death_pending", true)
-		proxy.set_meta("pending_death_cause", death_cause)
-		# Let the hit reaction and its sound land before the corpse animation
-		# replaces it. Loot remains server-authoritative and drops immediately.
-		net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position, true)
-		_finish_pvp_death_after_impact(target_peer_id, proxy, death_cause)
+		if net.has_method("_broadcast_player_hit"):
+			net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position, true)
+		_broadcast_player_death(target_peer_id, proxy, death_cause)
+		if net.peer != null and net.peer_alive(target_peer_id):
+			net.force_death_to_client.rpc_id(target_peer_id, death_cause)
 	else:
 		# Send damage to the target client if still connected — melee hits also
 		# carry the weapon so the victim plays the head-hit flinch.
 		if net.peer != null and net.peer_alive(target_peer_id):
 			net.apply_damage_to_client.rpc_id(target_peer_id, amount, weapon)
-		net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position)
+		if net.has_method("_broadcast_player_hit"):
+			net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position)
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
 	# asiste el ataque (solo si el lobo está cerca del combate).
 	_notify_tamed_wolves_pvp(sender, target_peer_id, proxy, sender_proxy)

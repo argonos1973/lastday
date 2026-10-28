@@ -235,7 +235,12 @@ func is_broken() -> bool:
 	return durability <= 0.0
 
 func reduce_durability(amount: float) -> void:
-	durability = max(0.0, durability - amount)
+	var eff := amount
+	if item_name == "Palo afilado":
+		eff = amount * 3.5
+	elif not (item_type in ["food", "water", "tool_matches", "tool_torch"]):
+		eff = amount * 0.45
+	durability = max(0.0, durability - eff)
 
 func durability_pct() -> float:
 	if max_durability <= 0.0:

@@ -128,7 +128,7 @@ func _initialize() -> void:
 	var hips_model_y: float = model.to_local(skel.to_global(skel.get_bone_global_pose(hips_idx).origin)).y
 	check(hips_model_y < 0.8, "corpse hips land on the ground (y=%.2f)" % hips_model_y)
 
-	# --- Non-melee death keeps the procedural fall ---
+	# --- Non-melee death (arrows, spears, gunshots, etc.) also plays the real death clip ---
 	var natural: Node = _make_player()
 	await process_frame
 	natural.set_process(false)
@@ -141,12 +141,11 @@ func _initialize() -> void:
 	await process_frame
 	natural.die()
 	check(natural.is_dead, "generic death marks the player dead")
-	check(not natural._beaten_death, "generic death does not play the beaten clip")
-	check(not natural.third_person_animation_player.is_playing(), "generic death stops the animation player")
-	natural._update_death_pose(1.5)
-	check(natural_model.rotation_degrees.x < -10.0, "generic death still runs the procedural fall")
+	check(natural._beaten_death, "generic death plays the death clip instead of freezing")
+	check(natural.third_person_animation_player.current_animation == "melee_death/MeleeDeathExternal" and natural.third_person_animation_player.is_playing(),
+		"generic death runs the death animation")
 
-	# --- Remote puppet: dead_melee plays the clip, dead keeps the old pose ---
+	# --- Remote puppet: both dead_melee and dead play the death clip ---
 	var puppet: Node = _make_player()
 	await process_frame
 	puppet.set_process(false)
@@ -171,10 +170,11 @@ func _initialize() -> void:
 	_mount_model(plain_puppet)
 	await process_frame
 	plain_puppet.puppet_apply(Vector3.ZERO, 0.0, "dead")
-	check(plain_puppet.is_dead and not plain_puppet._beaten_death, "generic dead puppet keeps the procedural fall")
-	check(not plain_puppet.third_person_animation_player.is_playing(), "generic dead puppet stops its animation player")
+	check(plain_puppet.is_dead and plain_puppet._beaten_death, "generic dead puppet plays the death clip instead of freezing")
+	check(plain_puppet.third_person_animation_player.current_animation == "melee_death/MeleeDeathExternal",
+		"generic dead puppet runs the death animation")
 
-	# --- Raced packets: generic "dead" first, melee tag afterwards upgrades ---
+	# --- Raced packets: generic "dead" first, melee tag afterwards keeps death clip ---
 	var race_puppet: Node = _make_player()
 	await process_frame
 	race_puppet.set_process(false)
@@ -183,9 +183,9 @@ func _initialize() -> void:
 	_mount_model(race_puppet)
 	await process_frame
 	race_puppet.puppet_apply(Vector3.ZERO, 0.0, "dead")
-	check(race_puppet.is_dead and not race_puppet._beaten_death, "raced puppet starts procedural-dead")
+	check(race_puppet.is_dead and race_puppet._beaten_death, "raced puppet starts with death clip")
 	race_puppet.puppet_apply(Vector3.ZERO, 0.0, "dead_melee")
-	check(race_puppet._beaten_death, "late dead_melee upgrades the corpse to the beaten clip")
+	check(race_puppet._beaten_death, "late dead_melee keeps the death clip")
 	check(race_puppet.third_person_animation_player.current_animation == "melee_death/MeleeDeathExternal",
 		"upgraded corpse plays the melee death clip (got '%s')" % race_puppet.third_person_animation_player.current_animation)
 

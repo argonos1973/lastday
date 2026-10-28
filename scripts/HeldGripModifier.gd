@@ -16,7 +16,7 @@ func _ready() -> void:
 					break
 
 func _process_modification() -> void:
-	if not is_instance_valid(controller):
+	if not is_instance_valid(controller) or bool(controller.get("is_dead")):
 		return
 	var skeleton := get_skeleton()
 	if skeleton == null:
