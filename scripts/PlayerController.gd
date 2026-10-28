@@ -4215,10 +4215,11 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
 	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation]))
 	var throw_active: bool = _throw_aim_hold or _throw_charging or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming) or (is_puppet and holding_spear and _is_aiming)
-	if not bow_active and not throw_active and not holding_spear:
+	var m4_active := _m4_camera_ready() and not _is_aiming
+	if not bow_active and not throw_active and not holding_spear and not m4_active:
 		_applying_aim_pitch = false
 		return
-	if bow_active or throw_active:
+	if bow_active or throw_active or m4_active:
 		if holding_spear and throw_active:
 			for s_entry in [
 				["Spine", Quaternion(0.019316, -0.063729, 0.032559, 0.997249)],
@@ -4796,9 +4797,11 @@ func _solve_m4_rest_arms(skel: Skeleton3D, wo_xf: Transform3D, save_poses: bool)
 	if rh >= 0 and rua >= 0 and rfa >= 0:
 		_grip_hand(skel, rua, rfa, rh, false,
 			skel_inv * (wo_xf * _rg_right_knuckle), w2s * RIFLE_AIM_RIGHT_FINGERS, w2s * RIFLE_AIM_RIGHT_PALM, w2s * RIFLE_AIM_RIGHT_ELBOW)
+	# Turn clips raise the support elbow; use the weapon-relative down pole
+	# in rest poses too, instead of inheriting that animated bend plane.
 	if lh >= 0 and lua >= 0 and lfa >= 0:
 		_grip_hand(skel, lua, lfa, lh, true,
-			skel_inv * (wo_xf * _rg_left_knuckle), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, Vector3.ZERO)
+			skel_inv * (wo_xf * _rg_left_knuckle), w2s * RIFLE_AIM_LEFT_FINGERS, w2s * RIFLE_AIM_LEFT_PALM, w2s * RIFLE_AIM_LEFT_ELBOW)
 		var lrig := _grip_rig_for(skel, lh, true)
 		if lrig.has("thumb_child") and lrig["thumb_child"] >= 0:
 			var thumb: int = lrig["thumb"]
@@ -9435,6 +9438,8 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if rh_idx < 0 or lh_idx < 0 or sh_idx < 0:
 		return
 	_in_rifle_ik = true
+	if _mounted_rifle_is_m4:
+		_apply_aim_pitch_pose(skel)
 	if not _m4_saved_left_arm_poses.is_empty():
 		for entry in _m4_saved_left_arm_poses:
 			skel.set_bone_pose(entry[0], entry[1])
@@ -9454,7 +9459,7 @@ func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	# line through the eye, butt into the right-shoulder pocket, barrel along
 	# the aim direction — and both arms are IK'd onto it. WeaponOffset goes
 	# top-level so the IK'd hands cannot drag it back out of place.
-	var want_direct_aim := (_is_aiming or _is_firing) and not is_sitting and not is_prone
+	var want_direct_aim := (_is_aiming or _is_firing or _m4_camera_ready()) and not is_sitting and not is_prone
 	if not want_direct_aim and (_rifle_aim_pose_active or _rifle_weapon_offset.top_level):
 		_restore_grip_origins()
 	_rifle_aim_pose_active = false
@@ -9608,10 +9613,14 @@ func _register_rifle_ik(skel: Skeleton3D, lh_idx: int) -> void:
 		skel.skeleton_updated.connect(_on_skeleton_updated)
 		_ik_skeleton_connected = true
 
+func _m4_camera_ready() -> bool:
+	# Third-person camera aiming keeps the stock shouldered without opening ADS.
+	return _mounted_rifle_is_m4 and not is_sprinting and not is_sitting and not is_prone
+
 func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	# The camera travels from third person to ADS. Its position must never
 	# drag the physical rifle away from the character during that transition.
-	var sight_dir := -global_basis.z.normalized()
+	var sight_dir := (-global_basis.z).rotated(global_basis.x.normalized(), _pitch).normalized()
 	if not is_puppet and is_instance_valid(camera):
 		sight_dir = -camera.global_basis.z.normalized()
 	var head_name := _resolve_bone_name_safe("mixamorig:Head", skel)
@@ -9641,6 +9650,13 @@ func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	var by := bz.cross(bx).normalized()
 	var b := Basis(bx, by, bz).scaled(Vector3.ONE * s)
 	var o := eye - b * _rg_eye
+	if _m4_camera_ready() and not _is_aiming:
+		# Camera aim pivots about the shoulder; ADS keeps its separate eye relief.
+		var shoulder_idx := skel.find_bone(_resolve_bone_name_safe("mixamorig:RightShoulder", skel))
+		if shoulder_idx >= 0:
+			var shoulder := (skel.global_transform * skel.get_bone_global_pose(shoulder_idx)).origin
+			var pocket := shoulder + bx * 0.02 - by * 0.08 + bz * 0.04
+			o = pocket - b * _rifle_stock_ref.position
 	# Preserve the ocular eye line and 10 cm eye relief. A shoulder correction
 	# here would move the scope into the nose as the animation changes.
 	if not _rifle_weapon_offset.top_level:
@@ -9867,6 +9883,17 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 		root_to_target = (end_pos - root_pos).normalized()
 		if root_to_target.length_squared() < 0.5:
 			root_to_target = Vector3.DOWN
+	if dist > max_reach:
+		# Shoulder girdle protraction: the shoulder pad pushes the whole arm
+		# root toward the target (like shouldering a real rifle) so a hand a
+		# few cm past arm length still lands on the weapon. Capped so far
+		# targets cannot dislocate the shoulder.
+		var shift := root_to_target.normalized() * minf(dist - max_reach, len1 * 0.25)
+		root_pos += shift
+		mid_pos += shift
+		end_pos += shift
+		root_to_target = target_skel - root_pos
+		dist = root_to_target.length()
 	if dist > max_reach:
 		dist = max_reach
 	if dist < min_reach:
@@ -11132,6 +11159,8 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				target_animation = _rifle_left_turn_animation
 			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
 				target_animation = _rifle_right_turn_animation
+			elif _m4_camera_ready() and not _rifle_aim_idle_animation.is_empty():
+				target_animation = _rifle_aim_idle_animation
 			elif not _rifle_idle_animation.is_empty():
 				target_animation = _rifle_idle_animation
 			elif third_person_has_real_idle:

@@ -1,5 +1,5 @@
 extends SceneTree
-# Sample the full M4 rest clip while turning; both skinned knuckles must
+# Sample camera aiming without ADS while turning; both skinned knuckles must
 # stay on the weapon contacts. Uses an isolated actor without world/saves.
 
 const ItemData = preload("res://scripts/Item.gd")
@@ -78,6 +78,7 @@ func run() -> void:
 	for frame in 90:
 		player.advance(length / 90.0)
 		actor.rotation.y = frame * 0.07
+		actor._pitch = deg_to_rad(55.0 * sin(frame * TAU / 90.0))
 		actor._update_rifle_ik(skel, 1.0 / 30.0)
 		actor._on_skeleton_updated()
 		skel.force_update_all_bone_transforms()
@@ -92,8 +93,20 @@ func run() -> void:
 				errors += 1
 				push_error("%s idle grip frame %d gap %.4f" % [side, frame, gap])
 		var barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
-		if not barrel.is_finite() or barrel.y > 0.0:
+		var sight := (-actor.global_basis.z).rotated(actor.global_basis.x, actor._pitch).normalized()
+		if not barrel.is_finite() or barrel.dot(sight) < 0.999:
 			errors += 1
+			push_error("M4 must follow camera direction without ADS")
+		var sh := skel.find_bone("mixamorig_RightShoulder")
+		var shoulder: Vector3 = skel.global_transform * skel.get_bone_global_pose(sh).origin
+		var up := (-sight).cross(actor.global_basis.x).normalized()
+		var pocket := shoulder + actor.global_basis.x * 0.02 - up * 0.08 - sight * 0.04
+		if actor._rifle_stock_ref.global_position.distance_to(pocket) > 0.002:
+			errors += 1
+			push_error("M4 stock detached from shoulder")
+		if actor._is_aiming:
+			errors += 1
+			push_error("Camera posture must not enable ADS")
 	actor.queue_free()
 	await process_frame
 	print("M4_IDLE_GRIP errors=%d worst_gap=%.6fm" % [errors, worst])
