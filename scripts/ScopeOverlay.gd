@@ -265,7 +265,7 @@ func _ensure_ads_viewport() -> void:
 	_ads_flash_light.omni_range = 3.0
 	gun_scale_root.add_child(_ads_flash_light)
 
-	# First-person camera ON the M4's real sight line: eye ~13 cm behind the
+	# First-person camera ON the M4's real sight line: eye ~19 cm behind the
 	# rear aperture, looking straight through it to the tip of the real A2
 	# front post (Iron_Sight top vertex y=0.0621, z=0.0464 in model units,
 	# x10 here), so the real post tip projects to the exact screen center.
@@ -345,14 +345,14 @@ func _build_3d_rear_aperture(parent: Node3D) -> void:
 		ear_mi.material_override = mat_body
 		rear.add_child(ear_mi)
 
-	# Windage drum on the right ear
+	# Windage drum on the right ear (-x renders right: the camera faces +Z)
 	var knob_mi := MeshInstance3D.new()
 	var knob_cyl := CylinderMesh.new()
 	knob_cyl.top_radius = 0.00045
 	knob_cyl.bottom_radius = 0.00045
 	knob_cyl.height = 0.0005
 	knob_mi.mesh = knob_cyl
-	knob_mi.position = Vector3(0.00105, 0.0610, -0.043)
+	knob_mi.position = Vector3(-0.00105, 0.0610, -0.043)
 	knob_mi.rotation_degrees = Vector3(0.0, 0.0, 90.0)
 	knob_mi.material_override = mat_brass
 	rear.add_child(knob_mi)
