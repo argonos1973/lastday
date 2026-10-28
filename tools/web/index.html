@@ -215,6 +215,43 @@
     font-size: .9rem;
     margin: -30px 0 40px;
   }
+  .story {
+    max-width: 680px;
+    margin: 0 auto;
+  }
+  .story p {
+    color: var(--muted);
+    font-size: 1.02rem;
+    line-height: 1.85;
+    margin-bottom: 22px;
+    text-align: left;
+  }
+  .story p.lead::first-letter {
+    font-size: 3.4em;
+    float: left;
+    line-height: .78;
+    padding: 4px 10px 0 0;
+    color: var(--accent);
+  }
+  .story em { color: var(--text); font-style: italic; }
+  .story .orn {
+    display: block;
+    text-align: center;
+    color: var(--accent2);
+    letter-spacing: .9em;
+    text-indent: .9em;
+    margin: 2px 0 26px;
+    font-size: .85rem;
+  }
+  .story p.epi {
+    text-align: center;
+    font-size: 1.12rem;
+    color: var(--text);
+    font-style: italic;
+    margin: 8px 0 0;
+    line-height: 1.9;
+  }
+  .story p.epi b { color: var(--accent); font-weight: 600; }
   .ver b {
     color: var(--accent);
     font-family: ui-monospace, monospace;
@@ -393,6 +430,21 @@
   </div>
 
   <p class="ver">Versión actual: <b>v@VERSION@</b></p>
+
+  <section class="bloque" id="historia">
+    <h3>La historia</h3>
+    <div class="story">
+      <p class="lead">La mañana en que el mundo terminó no hubo llamas ni héroes. Solo silencio.</p>
+      <p>Los coches se quedaron parados en las carreteras. Las luces se apagaron una a una. Y las casas —con sus despensas, sus abrigos y los rifles olvidados en los desvanes— esperaron a unos dueños que nunca volvieron.</p>
+      <p>Tú llegaste después. Con lo puesto y nada más.</p>
+      <span class="orn">· · ·</span>
+      <p>En <em>Last Day</em> no hay milagros: lo que encuentras es todo lo que hay. El mundo es un inventario finito repartido entre quienes lo habitan. Cada lata abierta, cada mochila saqueada, cada cerilla gastada desaparece para siempre — para ti y para todos. Como en la vida real: cuando algo se acaba, se acaba.</p>
+      <p>Los primeros días son de recolección: palos caídos, piedras del río, trapos de una camisa vieja. Con las manos desnudas fabricarás lo imprescindible —un palo afilado, un cuchillo de piedra, una cuerda de tendones—. Después llegará la caza: el arco tensado con fibra improvisada, la lanza lanzada en el último segundo, la fogata que convierte la carne cruda en una noche más de vida. Y cuando las estanterías de la aldea queden desnudas para siempre, el mundo entrará en su segunda fase: la de quienes saben pescar, sembrar, curar y aguantar.</p>
+      <span class="orn">· · ·</span>
+      <p>Otros supervivientes caminan por este mismo mundo. Son tu mayor suerte o tu último error: cada recurso que consuman es uno que jamás volverás a ver, y cada cadáver es un alijo que alguien dejó atrás. De noche, los lobos cazan en manada; el frío no perdona la ropa mojada, y la vista se oscurece cuando la sangre se agota.</p>
+      <p class="epi">No hay rescate. No hay un final escrito.<br>Solo el amanecer de cada día y la misma pregunta:<br><b>¿Cuántos días más podrás sobrevivir con lo que queda?</b></p>
+    </div>
+  </section>
 
 <!-- CAMBIOS:BEGIN -->
   <section class="bloque" id="cambios">
