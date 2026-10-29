@@ -24,6 +24,8 @@ func _process_modification() -> void:
 	# SkeletonModifier3D restores the input pose after rendering. Cached overrides
 	# from an earlier invocation must never replace this frame's animation.
 	controller._aim_pitch_saved_rotations.clear()
+	controller._m4_saved_left_arm_poses.clear()
+	controller._processing_held_grip = true
 	if controller._generic_hand_grip or (controller._has_fishing_rod and not controller._is_fishing):
 		for joint in joints:
 			var index: int = joint.index
@@ -40,7 +42,9 @@ func _process_modification() -> void:
 		controller._apply_aim_pitch_pose(skeleton)
 	# Read the final animated wrist, so props don't trail behind it by one frame.
 	controller._update_hand_socket()
-	if controller._has_rifle:
+	if is_instance_valid(controller._rifle_weapon_offset):
 		controller._update_rifle_visuals(0.0)
 
 	controller._aim_pitch_saved_rotations.clear()
+	controller._m4_saved_left_arm_poses.clear()
+	controller._processing_held_grip = false

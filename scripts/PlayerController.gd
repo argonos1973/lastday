@@ -4040,6 +4040,7 @@ var _generic_hand_grip := false
 var _hand_grip_curl := 1.0
 var _hand_grip_adjustment := Vector3.ZERO
 var _grip_modifier: SkeletonModifier3D
+var _processing_held_grip := false
 
 var _cached_palm_length := -1.0
 var _cached_palm_skel: Skeleton3D = null
@@ -4242,6 +4243,10 @@ func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 
 func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
+	# Only the modifier may tilt the live M4 torso. Otherwise its input pose
+	# already contains pitch from _process and the rendered lean is doubled.
+	if _m4_pose_uses_modifier() and target_skel == _hand_skeleton and not _processing_held_grip:
+		return
 	if is_dead or is_sleeping or _applying_aim_pitch or target_skel == null or not is_instance_valid(target_skel):
 		return
 	_applying_aim_pitch = true
@@ -9527,15 +9532,17 @@ func _build_third_person_rifle(item_name := "") -> void:
 
 #region RIFLE: IK Y POSICIONAMIENTO (PlayerRifle)
 func _update_rifle_visuals(delta: float) -> void:
-	# Both local players and puppets need the solve that also registers the
-	# post-animation skeleton callback; the initial attachment is only a seed.
+	_rifle_strap_update_accum += delta
+	# The M4 and its sling must use the same final pose as the rendered skin.
+	# _process only advances the sling clock; the modifier consumes it.
+	if _m4_pose_uses_modifier() and not _processing_held_grip:
+		return
 	if is_instance_valid(_rifle_weapon_offset) and is_instance_valid(_rifle_bone_attachment):
 		var skel := _spine_skeleton if is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
 		if skel != null:
 			_update_rifle_ik(skel, delta)
 	# Keep the procedural sling at 30 Hz for either carry mode.
 	if is_instance_valid(_rifle_on_back_strap):
-		_rifle_strap_update_accum += delta
 		if _rifle_strap_system == null or _rifle_strap_update_accum >= (1.0 / 30.0):
 			var strap_delta := _rifle_strap_update_accum
 			_rifle_strap_update_accum = 0.0
@@ -9747,6 +9754,9 @@ func _register_rifle_ik(skel: Skeleton3D, lh_idx: int) -> void:
 	if not _ik_skeleton_connected and skel != null:
 		skel.skeleton_updated.connect(_on_skeleton_updated)
 		_ik_skeleton_connected = true
+
+func _m4_pose_uses_modifier() -> bool:
+	return _mounted_rifle_is_m4 and is_instance_valid(_grip_modifier) and _grip_modifier.active
 
 func _m4_camera_ready() -> bool:
 	# Third-person camera aiming keeps the stock shouldered without opening ADS.
@@ -10089,6 +10099,10 @@ func _solve_arm_chain(skel: Skeleton3D, ua_idx: int, fa_idx: int, hand_idx: int,
 	skel.set_bone_global_pose(hand_idx, Transform3D(h_pose.basis.orthonormalized().scaled_local(h_scale), target_clamped))
 
 func _on_skeleton_updated() -> void:
+	# The modifier has already solved the rendered M4 skin. Writing bones here
+	# mixes pre/post-modifier poses and moves the rigid weapon off the hands.
+	if _m4_pose_uses_modifier():
+		return
 	if _in_rifle_ik or _ik_skel == null or not is_instance_valid(_ik_skel):
 		return
 	if not _is_aiming and not _is_firing:
