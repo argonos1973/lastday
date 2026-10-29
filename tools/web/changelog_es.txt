@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+4939a00|La tecla K ya no abre la mochila o el refugio por proximidad: solo si miras directamente al contenedor; en caso contrario abre el panel de crafteo como corresponde
 f941b9c|Corregida la postura del M4: las manos ya no flotan junto al arma y el torso deja de doblarse en exceso al apuntar o mirar arriba/abajo; la correa del fusil sigue la misma pose que el personaje
 fe63351|Dormir en el refugio ahora espera a recuperar sueno Y energia (ya no despierta al instante); dormir ya no cura con enfermedad ni hipotermia; la ropa mojada aísla menos al ponerla; la ropa mojada de la mochila y del suelo se seca con el tiempo, y la tirada en el suelo se empapa bajo la lluvia
 3c08aaa|Sistema de sueno corregido (ya no drena vida al bajar del 50% ni mientras duermes; dormir cura salud progresivamente, mas rapido en cama, y despierta al estar descansado) y efecto visual tipo DayZ al bajar la salud (oscurecimiento progresivo con vineta de vision en tunel y perdida de color en lugar de la animacion lenta o el tinte rojo plano)
