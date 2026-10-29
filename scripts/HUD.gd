@@ -1342,7 +1342,7 @@ func _build_craft_panel() -> void:
 	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	close.pressed.connect(toggle_craft_panel)
 	heading.add_child(close)
-	_craft_label(vbox, "Usa los materiales a menos de 3 m. Lo fabricado se queda en el suelo; el inventario no se utiliza.", 12, Color(0.69, 0.75, 0.68))
+	_craft_label(vbox, "Puedes usar materiales del suelo (a menos de 5 m) y de tu inventario. Lo fabricado se queda en el suelo.", 12, Color(0.69, 0.75, 0.68))
 	var materials_box := PanelContainer.new()
 	materials_box.add_theme_stylebox_override("panel", _panel_style(Color(0.09, 0.12, 0.095), Color(0.20, 0.27, 0.19), 1))
 	vbox.add_child(materials_box)
@@ -1466,6 +1466,14 @@ func toggle_craft_panel() -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	_sync_craft_visibility()
 
+func _format_material_summary(totals: Dictionary) -> String:
+	var names: Array = totals.keys()
+	names.sort()
+	var parts := PackedStringArray()
+	for item_name in names:
+		parts.append("%s ×%d" % [item_name, totals[item_name]])
+	return "   ·   ".join(parts)
+
 func _update_craft_panel() -> void:
 	if craft_panel_items == null or player == null:
 		return
@@ -1481,18 +1489,23 @@ func _update_craft_panel() -> void:
 	for it in inv_items:
 		if it != null and CraftingSystemScript._is_tool(str(it.item_name)) and not it.is_broken() and not tools.has(it):
 			tools.append(it)
-	var totals := {}
+	var ground_totals := {}
 	for entry in ground_items:
-		totals[entry.name] = int(totals.get(entry.name, 0)) + int(entry.quantity)
+		ground_totals[entry.name] = int(ground_totals.get(entry.name, 0)) + int(entry.quantity)
+	var inv_totals := {}
 	for it in inv_items:
 		if it != null and not CraftingSystemScript._is_tool(str(it.item_name)) and str(it.item_type) not in ["clothing", "backpack"]:
-			totals[it.item_name] = int(totals.get(it.item_name, 0)) + int(it.quantity)
-	var material_names: Array = totals.keys()
-	material_names.sort()
-	var summary := PackedStringArray()
-	for item_name in material_names:
-		summary.append("%s ×%d" % [item_name, totals[item_name]])
-	_craft_materials.text = "   ·   ".join(summary) if not summary.is_empty() else "No hay materiales en el suelo ni en el inventario."
+			inv_totals[it.item_name] = int(inv_totals.get(it.item_name, 0)) + int(it.quantity)
+	var ground_summary := _format_material_summary(ground_totals)
+	var inv_summary := _format_material_summary(inv_totals)
+	if ground_summary.is_empty() and inv_summary.is_empty():
+		_craft_materials.text = "No hay materiales en el suelo ni en el inventario."
+	elif ground_summary.is_empty():
+		_craft_materials.text = "En el suelo: nada\nEn tu inventario: %s" % inv_summary
+	elif inv_summary.is_empty():
+		_craft_materials.text = "En el suelo: %s\nEn tu inventario: nada" % ground_summary
+	else:
+		_craft_materials.text = "En el suelo: %s\nEn tu inventario: %s" % [ground_summary, inv_summary]
 	_craft_materials.tooltip_text = _craft_materials.text
 	_craft_tool.text = "Herramienta disponible: %s" % tools[0].item_name if not tools.is_empty() else "Sin herramienta en mano o inventario. Puedes usar una herramienta válida que esté en el suelo."
 	var recipes: Array = []
@@ -1573,7 +1586,7 @@ func _build_ground_recipe_card(recipe: Dictionary, ready: bool, tools: Array, gr
 	button.disabled = not ready
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	button.set_meta("recipe", recipe)
-	button.tooltip_text = "El resultado se deja en el suelo. Las herramientas pierden durabilidad." if ready else "Acerca los materiales que faltan o equipa la herramienta. No se usa el inventario."
+	button.tooltip_text = "El resultado se deja en el suelo. Las herramientas pierden durabilidad." if ready else "Acerca los materiales que faltan en el suelo o en tu inventario, o equipa la herramienta."
 	button.pressed.connect(_on_craft_panel_recipe_pressed.bind(recipe))
 	row.add_child(button)
 
