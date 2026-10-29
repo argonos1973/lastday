@@ -13849,7 +13849,7 @@ func get_nearby_ground_items(player_pos: Vector3, radius: float = 5.5) -> Array:
 
 func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 	var ground_items := get_nearby_ground_items(actor.global_position)
-	var inv_items: Array = actor.inventory.items if (actor != null and actor.get("inventory") != null) else []
+	var inv_items: Array = actor.get_ground_crafting_tools() if (actor != null and actor.has_method("get_ground_crafting_tools")) else []
 	var plan := CraftingSystemScript.plan_ground_craft(recipe, actor.get_ground_crafting_tools(), ground_items, inv_items)
 	if plan.is_empty():
 		return false
