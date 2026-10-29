@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+3751afe|Panel de crafteo: los materiales ahora se muestran separados — 'En el suelo' y 'En tu inventario' — en lugar de una lista mezclada que parecia tirarlo todo al suelo
 50b0bef|Secado de ropa: la humedad residual de prendas tiradas y de la mochila ya desaparece del todo; desvestirse ya no calienta de golpe a un hipotermico; disparo a la cadera sale desde el cañon real y el fogonazo sigue al arma
 4939a00|La tecla K ya no abre la mochila o el refugio por proximidad: solo si miras directamente al contenedor; en caso contrario abre el panel de crafteo como corresponde
 f941b9c|Corregida la postura del M4: las manos ya no flotan junto al arma y el torso deja de doblarse en exceso al apuntar o mirar arriba/abajo; la correa del fusil sigue la misma pose que el personaje
