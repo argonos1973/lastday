@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+fe63351|Dormir en el refugio ahora espera a recuperar sueno Y energia (ya no despierta al instante); dormir ya no cura con enfermedad ni hipotermia; la ropa mojada aísla menos al ponerla; la ropa mojada de la mochila y del suelo se seca con el tiempo, y la tirada en el suelo se empapa bajo la lluvia
 3c08aaa|Sistema de sueno corregido (ya no drena vida al bajar del 50% ni mientras duermes; dormir cura salud progresivamente, mas rapido en cama, y despierta al estar descansado) y efecto visual tipo DayZ al bajar la salud (oscurecimiento progresivo con vineta de vision en tunel y perdida de color en lugar de la animacion lenta o el tinte rojo plano)
 767115e|Corregido el palo afilado y las lanzas en el preview del inventario, en la mano y al apuntar con clic derecho; el palo afilado se desgasta mucho mas rapido y el resto de armas mas lento; las flechas impactan en todo el torso de otros jugadores (no solo en la cabeza) y todas las muertes por flechas, lanzas o disparos reproducen la animacion completa de caida sin quedarse congeladas
 5aab67b|Los jugadores remotos comparten las poses de agarre IK del jugador local (HeldGripModifier en puppets); el brazo de lanzamiento de lanza se resuelve por IK con engatillado junto al hombro y avance real al soltar, y la lanza remota se ancla a la palma como el equipo local
