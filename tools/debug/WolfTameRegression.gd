@@ -218,7 +218,10 @@ func run() -> void:
 	wolf2.global_position = wild.global_position + Vector3(2, 0, 0)
 	wolf2._attack_cooldown = 0.0
 	var wild_hp_before := wild.health
+	wolf2.rotation.y = atan2((wild.global_position - wolf2.global_position).x, (wild.global_position - wolf2.global_position).z)
 	wolf2._wolf_ai(0.05)
+	check(wild.health == wild_hp_before, "Bite waits for animation contact")
+	wolf2._wolf_ai(0.3)
 	check(wild.health < wild_hp_before, "Tamed wolf bites the wild wolf in melee range")
 	check(wild._wolf_foe == wolf2, "Wild wolf retaliates against the tamed wolf")
 	# Mismo dueno -> sin fuego amigo
@@ -227,6 +230,29 @@ func run() -> void:
 	wolf2._wolf_foe = null
 	wolf3.take_damage(10.0, false, wolf2)
 	check(wolf3._wolf_foe != wolf2, "Wolves of the same owner do not fight each other")
+
+	wolf2._orders_cease = true
+	wolf2.apply_command("attack", wolf3)
+	check(wolf2._orders_cease, "Rejected attack preserves cease order")
+	wolf2._orders_cease = false
+	check(wolf2._wolf_foe != wolf3, "Attack command rejects same-owner wolves")
+	wolf2._attack_cooldown = 0.0
+	wolf2._wolf_foe = wild
+	wolf2._foe_timer = 20.0
+	wolf2._wolf_ai(0.05)
+	var hp_cease := wild.health
+	wolf2.apply_command("cease")
+	wolf2._wolf_ai(0.4)
+	check(wild.health == hp_cease and wolf2._animal_bite_target == null, "Cease cancels an in-flight bite")
+	wolf2._orders_cease = false
+	wolf2._wolf_foe = wild
+	wolf2._foe_timer = 20.0
+	var old_owner_pos := player.position
+	player.position = wolf2.position + Vector3(100, 0, 0)
+	wolf2._wolf_ai(0.05)
+	check(wolf2._wolf_foe == null, "Combat cannot bypass the owner-distance leash")
+	player.position = old_owner_pos
+	wolf2.position = wild.position + Vector3(2, 0, 0)
 
 	# --- 9. Defensa contra jugador hostil ---
 	var hostile := make_proxy(world, 9, wolf2.global_position + Vector3(8, 0, 0))

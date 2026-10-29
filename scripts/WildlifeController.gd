@@ -20,6 +20,9 @@ var _shore_escape_target: Variant = null
 var _debug_timer := 0.0
 var _attack_timer := 0.0
 var _attack_cooldown := 0.0
+var _animal_bite_target: Node3D = null
+var _animal_bite_elapsed := 0.0
+var _animal_bite_landed := false
 var _chase_target: Node3D = null
 var _state := "patrol"
 var _noise_attract_pos: Vector3 = Vector3.ZERO
@@ -915,24 +918,18 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if foe != null:
 				_wolf_foe = foe
 				_foe_timer = 20.0
+	if not tamed_to.is_empty() and _wolf_foe != null:
+		var combat_owner := _resolve_owner()
+		if _orders_cease or (is_instance_valid(combat_owner) and is_instance_valid(_wolf_foe) and _wolf_foe.global_position.distance_to(combat_owner.global_position) > 60.0):
+			_wolf_foe = null
 	if _wolf_foe != null:
 		if not is_instance_valid(_wolf_foe) or _wolf_foe.get("_is_dead") or _foe_timer <= 0.0 or global_position.distance_to(_wolf_foe.global_position) > 70.0:
 			_wolf_foe = null
 		else:
 			_state = "fight_wolf"
 			_chase_target = _wolf_foe
-			var foe_dist := global_position.distance_to(_wolf_foe.global_position)
-			var bite_range := 3.2 if not tamed_to.is_empty() else 3.0
-			var to_foe := _wolf_foe.global_position - global_position
-			to_foe.y = 0.0
-			if to_foe.length_squared() > 0.001:
-				rotation.y = lerp_angle(rotation.y, atan2(to_foe.x, to_foe.z), delta * 8.0)
-			if foe_dist <= bite_range and _attack_cooldown <= 0.0:
-				_attack_cooldown = 1.8 if not tamed_to.is_empty() else 2.5
-				_wolf_foe.take_damage(35.0 if not tamed_to.is_empty() else 25.0, false, self)
-				_play_wolf_sound("attack")
-			_play_animation_by_name("attack" if foe_dist <= bite_range else "run")
-			return {"target": _wolf_foe.global_position, "speed": 0.0 if foe_dist <= bite_range * 0.75 else move_speed * 3.4}
+			return _fight_animal(_wolf_foe, delta)
+	_animal_bite_target = null
 	# Lobo domesticado: seguir/guardar al dueño o defenderlo de una amenaza
 	_threat_timer = max(0.0, _threat_timer - delta)
 	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_timer <= 0.0 or _threat_player.get_meta("proxy_dead", false) or _threat_player.get("is_dead") == true):
@@ -2471,10 +2468,42 @@ func _release_owner_record() -> void:
 	if scene != null and scene.has_method("_clear_tamed_wolf_record"):
 		scene._clear_tamed_wolf_record(tamed_to)
 
-# IA del lobo domesticado. Devuelve {"handled": true, target, speed} si gestiona
-# el movimiento, o {"handled": false} tras asignar _player = amenaza para que la
-# persecución normal de _wolf_ai se encargue del ataque (reutiliza distancias,
-# protecciones de techo/refugio y el daño a proxies ya existentes).
+# Animal combat: one contact check per bite, using the existing attack clip.
+func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
+	var target := foe.global_position
+	var reach := 2.6 if animal_type == "bear" or str(foe.get("animal_type")) == "bear" else 2.1
+	_face_towards(target, minf(delta * 3.0, 1.0))
+	var close := global_position.distance_to(target) <= reach
+	if _animal_bite_target != foe:
+		_animal_bite_target = null
+	if _animal_bite_target == null and close and _attack_cooldown <= 0.0:
+		_animal_bite_target = foe
+		_animal_bite_elapsed = 0.0
+		_animal_bite_landed = false
+		_attack_cooldown = 2.8 if animal_type == "bear" else (1.8 if not tamed_to.is_empty() else 2.5)
+		_play_wolf_sound("attack")
+	if _animal_bite_target != null:
+		_animal_bite_elapsed += delta
+		if not _animal_bite_landed and _animal_bite_elapsed >= 0.30:
+			_animal_bite_landed = true
+			# Recheck contact at impact: escaping prey and walls stop a bite.
+			var facing := global_basis.z.normalized().dot((target - global_position).normalized()) > 0.5
+			if close and facing and _animal_bite_clear(target):
+				foe.take_damage(60.0 if animal_type == "bear" else (35.0 if not tamed_to.is_empty() else 25.0), false, self)
+		if _animal_bite_elapsed < 0.85:
+			_play_animation_by_name("attack")
+			if _animation_player != null:
+				_animation_player.speed_scale = 1.0
+			return {"target": target, "speed": 0.0}
+		_animal_bite_target = null
+	_play_animation_by_name("idle" if close else "run")
+	return {"target": target, "speed": 0.0 if close else move_speed * 3.4}
+
+func _animal_bite_clear(target: Vector3) -> bool:
+	var query := PhysicsRayQueryParameters3D.create(global_position + Vector3.UP * 0.7, target + Vector3.UP * 0.7, 5)
+	query.collide_with_areas = false
+	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
+
 func _tamed_ai(delta: float) -> Dictionary:
 	_house_direct_goal = false
 	var owner := _resolve_owner()
@@ -2503,8 +2532,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 				_play_wolf_sound("growl")
 				_warn_bark_timer = randf_range(7.0, 12.0)
 				break
+		if _warn_bark_timer <= 0.0:
+			_warn_bark_timer = 2.5
 	if _ordered_prey != null:
-		if not is_instance_valid(_ordered_prey) or _ordered_prey.get("_is_dead") == true or _ordered_prey.global_position.distance_to(owner_anchor) > 60.0:
+		var bound_anchor := _stay_pos if _follow_mode == "stay" else owner_anchor
+		if not is_instance_valid(_ordered_prey) or _ordered_prey.global_position.distance_to(bound_anchor) > 60.0:
+			_ordered_prey = null
+		elif _ordered_prey.get("_is_dead") == true:
+			# La caza propia se come aqui mismo: el cadaver no es un pickup suelto.
+			if _wolf_hunger < _wolf_hunger_threshold:
+				_wolf_eating_target = _ordered_prey
+				_wolf_eating_timer = 8.0
 			_ordered_prey = null
 		else:
 			var tp: Vector3 = _ordered_prey.global_position
@@ -2536,7 +2574,7 @@ func _tamed_ai(delta: float) -> Dictionary:
 		if meat != null and food_anchor.distance_to(meat.global_position) < food_radius:
 			return _seek_meat_pickup(meat)
 		# Caza solo si no hay carne cerca: ciervos/zorros al alcance del dueno.
-		if _follow_mode != "stay" or true:
+		if _follow_mode != "stay" and not _orders_cease:
 			var prey := _find_nearest_prey_for_hunt(food_anchor, food_radius)
 			if prey != null:
 				_ordered_prey = prey
@@ -2627,7 +2665,7 @@ func _tamed_ai(delta: float) -> Dictionary:
 	var follow_goal := _safe_follow_spot(owner.global_position, 2.4)
 	var spd := move_speed * 1.4
 	var anim := "walk"
-	var owner_sprinting: bool = owner.get("is_sprinting") == true
+	var owner_sprinting: bool = owner.get("is_sprinting") == true or owner.get_meta("sprinting", false) == true
 	if owner_sprinting and od > 3.5:
 		spd = move_speed * 3.4
 		anim = "run"
@@ -2800,9 +2838,10 @@ func _is_owner_actor(player: Node) -> bool:
 func apply_command(mode: String, target: Node = null) -> void:
 	# mode: "toggle" | "follow" | "stay" | "patrol" | "attack" | "cease"
 	if mode == "attack" and target != null and is_instance_valid(target) and target != self:
-		_orders_cease = false
 		if target is WildlifeController:
-			if str((target as WildlifeController).animal_type) == "wolf":
+			if target.get("_is_dead") == true or (not str(target.get("tamed_to")).is_empty() and str(target.get("tamed_to")) == tamed_to):
+				return
+			if str((target as WildlifeController).animal_type) in ["wolf", "bear"]:
 				_wolf_foe = target
 				_foe_timer = 20.0
 			else:
@@ -2813,10 +2852,12 @@ func apply_command(mode: String, target: Node = null) -> void:
 		else:
 			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
 			return
+		_orders_cease = false
 		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca!")
 		return
 	if mode == "cease":
 		_orders_cease = true
+		_animal_bite_target = null
 		_wolf_foe = null
 		_ordered_prey = null
 		_threat_player = null
@@ -3028,6 +3069,9 @@ func _play_animation_by_name(keyword: String) -> void:
 
 func _update_animation_speed(speed: float) -> void:
 	if _animation_player == null:
+		return
+	if current_anim_keyword == "attack":
+		_animation_player.speed_scale = 1.0
 		return
 	var ratio := speed / move_speed
 	_animation_player.speed_scale = clamp(ratio, 0.5, 2.5)
