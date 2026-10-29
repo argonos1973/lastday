@@ -127,6 +127,8 @@ var _tame_progress := {}          # feeder_id -> nº de comidas
 var _follow_mode := "follow"      # "follow" | "stay" | "patrol" (solo con tamed_to != "")
 var _ordered_prey: Node = null        # orden "atacar" sobre un animal (no lobo)
 var _orders_cease := false            # orden "no atacar": no enganchar amenazas solo
+var _warn_bark_timer := 0.0           # ladrido de aviso al ver amenazas cerca del dueno
+var _hunger_warned := false           # aviso "tu lobo tiene hambre" enviado al dueno
 var _stay_pos := Vector3.ZERO
 var _wolf_foe: Node3D = null      # lobo enemigo en combate canino
 var _house_direct_goal := false   # domesticado dentro de casa: guiado directo al dueño
@@ -1737,6 +1739,8 @@ func _tamed_status_text() -> String:
 		state_text = "comiendo"
 	elif _wolf_foe != null or _threat_player != null:
 		state_text = "defendiendo"
+	elif _ordered_prey != null:
+		state_text = "cazando"
 	elif _orders_cease:
 		state_text = "sin atacar"
 	elif _follow_mode == "patrol":
@@ -2474,14 +2478,33 @@ func _release_owner_record() -> void:
 func _tamed_ai(delta: float) -> Dictionary:
 	_house_direct_goal = false
 	var owner := _resolve_owner()
+	var owner_anchor: Vector3 = owner.global_position if owner != null else global_position
+	# Desenganche: no perseguir amenazas o presas lejos del dueno — vuelve a su lado.
+	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_player.global_position.distance_to(owner_anchor) > 55.0):
+		_threat_player = null
+	if _wolf_foe != null and (not is_instance_valid(_wolf_foe) or _wolf_foe.global_position.distance_to(owner_anchor) > 60.0):
+		_wolf_foe = null
 	if _orders_cease and _threat_player != null:
 		_threat_player = null
 	if _threat_player != null and is_instance_valid(_threat_player):
 		_player = _threat_player
 		return {"handled": false}
 	_player = null
+	# Aviso por ladridos: una amenaza (lobo u oso salvaje) ronda al dueno.
+	_warn_bark_timer = maxf(0.0, _warn_bark_timer - delta)
+	if owner != null and _warn_bark_timer <= 0.0:
+		for w in get_tree().get_nodes_in_group("wildlife"):
+			if w == self or not is_instance_valid(w) or w.get("_is_dead") == true:
+				continue
+			var wt := str(w.get("animal_type"))
+			if wt not in ["wolf", "bear"] or not str(w.get("tamed_to")).is_empty():
+				continue
+			if w.global_position.distance_to(owner_anchor) < 24.0:
+				_play_wolf_sound("growl")
+				_warn_bark_timer = randf_range(7.0, 12.0)
+				break
 	if _ordered_prey != null:
-		if not is_instance_valid(_ordered_prey) or bool(_ordered_prey.get("_is_dead")):
+		if not is_instance_valid(_ordered_prey) or _ordered_prey.get("_is_dead") == true or _ordered_prey.global_position.distance_to(owner_anchor) > 60.0:
 			_ordered_prey = null
 		else:
 			var tp: Vector3 = _ordered_prey.global_position
@@ -2504,11 +2527,21 @@ func _tamed_ai(delta: float) -> Dictionary:
 	# incluida la que suelta el dueno al destripar ciervos, osos y demas caza.
 	# En modo "stay" solo come piezas proximas a su puesto para no abandonarlo.
 	if _wolf_hunger < _wolf_hunger_threshold:
+		if not _hunger_warned and owner != null:
+			_hunger_warned = true
+			_notify_owner_msg(owner, "Tu lobo tiene hambre.")
 		var food_radius := 14.0 if _follow_mode == "stay" else 45.0
 		var food_anchor := _stay_pos if _follow_mode == "stay" else global_position
 		var meat := _find_nearest_meat_pickup()
 		if meat != null and food_anchor.distance_to(meat.global_position) < food_radius:
 			return _seek_meat_pickup(meat)
+		# Caza solo si no hay carne cerca: ciervos/zorros al alcance del dueno.
+		if _follow_mode != "stay" or true:
+			var prey := _find_nearest_prey_for_hunt(food_anchor, food_radius)
+			if prey != null:
+				_ordered_prey = prey
+	elif _wolf_hunger > _wolf_hunger_threshold + 12.0:
+		_hunger_warned = false
 	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
 	var owner_dead := bool(owner.get_meta("proxy_dead", false))
 	if not owner_dead and owner.name == "Player":
@@ -2576,6 +2609,11 @@ func _tamed_ai(delta: float) -> Dictionary:
 			return {"handled": true, "target": door_pos, "speed": move_speed * (3.2 if dd > 26.0 else (2.1 if dd > 9.0 else 1.4))}
 	var follow_stop := 4.2 if _tamed_rest_time >= 2.0 else 2.8
 	if od < follow_stop:
+		if od < 1.35:
+			# No estorbar en puertas/pasillos: echarse a un lado del dueno.
+			var aside := _safe_follow_spot(owner.global_position, 2.2)
+			_play_animation_by_name("walk")
+			return {"handled": true, "target": aside, "speed": move_speed * 1.2}
 		_face_towards(owner.global_position, delta)
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
@@ -2589,7 +2627,11 @@ func _tamed_ai(delta: float) -> Dictionary:
 	var follow_goal := _safe_follow_spot(owner.global_position, 2.4)
 	var spd := move_speed * 1.4
 	var anim := "walk"
-	if od > 26.0:
+	var owner_sprinting: bool = owner.get("is_sprinting") == true
+	if owner_sprinting and od > 3.5:
+		spd = move_speed * 3.4
+		anim = "run"
+	elif od > 26.0:
 		spd = move_speed * 3.2
 		anim = "run"
 	elif od > 9.0:
@@ -2597,6 +2639,22 @@ func _tamed_ai(delta: float) -> Dictionary:
 		anim = "trot"
 	_play_animation_by_name(anim)
 	return {"handled": true, "target": follow_goal, "speed": spd}
+
+func _find_nearest_prey_for_hunt(anchor: Vector3, radius: float) -> Node:
+	if get_tree() == null:
+		return null
+	var best: Node = null
+	var best_d := radius
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == self or not is_instance_valid(w) or w.get("_is_dead") == true or w.get("is_puppet") == true:
+			continue
+		if str(w.get("animal_type")) not in ["deer", "fox"]:
+			continue
+		var d: float = anchor.distance_to(w.global_position)
+		if d < best_d:
+			best_d = d
+			best = w
+	return best
 
 func _face_towards(pos: Vector3, delta: float) -> void:
 	var d := pos - global_position
