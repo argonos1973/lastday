@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+9a35d0d|Nueva animacion de ataque del lobo (embestida con mordisco) en peleas contra otros lobos, presas y el jugador; el lobo domesticado muestra su estado al mirarlo: vida, saciedad y si esta hambriento, comiendo o en guardia
 6b78c3d|Panel de crafteo: ahora solo cuenta los materiales que estan en el suelo — la herramienta puede ir en la mano; el inventario y la mochila ya no se usan ni se consumen
 3751afe|Panel de crafteo: los materiales ahora se muestran separados — 'En el suelo' y 'En tu inventario' — en lugar de una lista mezclada que parecia tirarlo todo al suelo
 50b0bef|Secado de ropa: la humedad residual de prendas tiradas y de la mochila ya desaparece del todo; desvestirse ya no calienta de golpe a un hipotermico; disparo a la cadera sale desde el cañon real y el fogonazo sigue al arma
