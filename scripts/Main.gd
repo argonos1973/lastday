@@ -12025,20 +12025,23 @@ func _execute_world_action(action, actor) -> void:
 			else:
 				_play_actor_action(actor, "sleep", 8.0)
 			actor.notice.emit("Durmiendo... pulsa D para despertar.")
-			# Wait until sleep is full or player wakes up
+			# Wait until sleep AND energy are full, or the player wakes up —
+			# matches the controller's auto-wake which expects both stats.
 			var sleep_seconds := 0
-			while actor.stats.sleep < actor.stats.max_stat:
+			while actor.stats.sleep < actor.stats.max_stat or actor.stats.energy < actor.stats.max_stat:
 				if not bool(actor.get("is_sleeping")):
 					break
 				sleep_seconds += 1
 				if sleep_seconds >= 120:
 					break
 				if hud != null:
-					var rem := maxf(1.0, (actor.stats.max_stat - actor.stats.sleep) / 5.0)
+					var rem: float = maxf(1.0, maxf(
+						(actor.stats.max_stat - actor.stats.sleep) / 5.0,
+						(actor.stats.max_stat - actor.stats.energy) / 3.8))
 					hud.show_countdown("Durmiendo", rem)
 				await get_tree().create_timer(1.0).timeout
 				if _scene_quitting: return
-			var finished_sleep: bool = float(actor.stats.sleep) >= float(actor.stats.max_stat)
+			var finished_sleep: bool = float(actor.stats.sleep) >= float(actor.stats.max_stat) and float(actor.stats.energy) >= float(actor.stats.max_stat)
 			if actor.has_method("stop_sleep") and bool(actor.get("is_sleeping")):
 				actor.stop_sleep()
 			if finished_sleep:
@@ -14008,21 +14011,24 @@ func _update_loot_wear() -> void:
 						if not _depleted_action_ids.has(entry_id):
 							_depleted_action_ids.append(entry_id)
 						continue
-		# Ropa mojada se seca con el tiempo en el suelo; bajo lluvia o nieve y
-		# sin cobijo la humedad se mantiene (la ropa no se seca mojandose).
+		# La ropa en el suelo también se empapa bajo lluvia o nieve sin cobijo;
+		# a cubierto o sin precipitación se va secando con el tiempo.
 		var wet: float = float(entry.get("wetness", 0.0))
-		if wet > 0.02:
-			var precip_now := float(_weather_target.get("rain", 0.0)) > 0.1 or float(_weather_target.get("snow", 0.0)) > 0.05
-			if not (precip_now and not _is_loot_sheltered(pos)):
-				wet = maxf(0.0, wet - LOOT_DRYING_PER_TICK)
-				entry["wetness"] = wet
-				var wet_node := get_node_or_null(NodePath("Pickup_" + entry_id_str))
-				if wet_node != null:
-					wet_node.set_meta("item_wetness", wet)
-				if world_actions_by_id.has(entry_id_str):
-					var wa_wet = world_actions_by_id[entry_id_str]
-					if wa_wet != null and is_instance_valid(wa_wet):
-						wa_wet.set_meta("item_wetness", wet)
+		var precip_now := float(_weather_target.get("rain", 0.0)) > 0.1 or float(_weather_target.get("snow", 0.0)) > 0.05
+		var wet_new := wet
+		if precip_now and not _is_loot_sheltered(pos):
+			wet_new = minf(1.0, wet + 0.06)
+		elif wet > 0.02:
+			wet_new = maxf(0.0, wet - LOOT_DRYING_PER_TICK)
+		if not is_equal_approx(wet_new, wet):
+			entry["wetness"] = wet_new
+			var wet_node := get_node_or_null(NodePath("Pickup_" + entry_id_str))
+			if wet_node != null:
+				wet_node.set_meta("item_wetness", wet_new)
+			if world_actions_by_id.has(entry_id_str):
+				var wa_wet = world_actions_by_id[entry_id_str]
+				if wa_wet != null and is_instance_valid(wa_wet):
+					wa_wet.set_meta("item_wetness", wet_new)
 		if bool(entry.get("static_loot", false)) or (not is_death_loot and _is_loot_sheltered(pos)):
 			continue
 		var wear: float = float(entry.get("wear", 0.0))

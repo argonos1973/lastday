@@ -169,5 +169,20 @@ func run() -> void:
 	shoes.wetness = 1.0
 	check(absf(player._effective_wetness() - 0.1) < 0.01, "Soaked shoes add the feet weight")
 
+	# ---- Wet clothing insulates less; pack items dry too ----
+	jacket.wetness = 0.0
+	player._recalculate_warmth(false)
+	var dry_warmth: float = player.stats.warmth_bonus
+	jacket.wetness = 1.0
+	player._recalculate_warmth(false)
+	check(player.stats.warmth_bonus < dry_warmth, "Soaked jacket insulates less than dry")
+	check(player.stats.warmth_bonus > 0.0, "Soaked jacket keeps some residual warmth")
+	var pack_item = ItemScript.create("Camiseta", "clothing", 0.3)
+	pack_item.wetness = 0.9
+	player.inventory.items.append(pack_item)
+	var pack_w0: float = pack_item.wetness
+	player.apply_warmth_drying(0.2)
+	check(pack_item.wetness < pack_w0, "Wet clothes in the backpack dry near fire")
+
 	print("RAIN_WETNESS_ERRORS=", errors)
 	quit(1 if errors > 0 else 0)

@@ -72,10 +72,11 @@ func run() -> void:
 	main._dropped_items[0]["wetness"] = 0.9
 	main._weather_target["rain"] = 5.0
 	main._update_loot_wear()
-	check(float(main._dropped_items[0].get("wetness", 0.0)) >= 0.89, "Exposed clothing does not dry while it rains")
+	var after_rain: float = float(main._dropped_items[0].get("wetness", 0.0))
+	check(after_rain >= 0.89, "Exposed clothing does not dry while it rains")
 	main._weather_target["rain"] = 0.0
 	main._update_loot_wear()
-	check(float(main._dropped_items[0].get("wetness", 0.0)) < 0.9, "Drying resumes once the rain stops")
+	check(float(main._dropped_items[0].get("wetness", 0.0)) < after_rain, "Drying resumes once the rain stops")
 	main.free()
 	swarm.free()
 	action.free()

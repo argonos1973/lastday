@@ -46,6 +46,22 @@ func run() -> void:
 		sleeper.do_sleep(1.0, true)
 	check(sleeper.sleep > 60.0, "Sleeping on bed must restore sleep without decay, got %f" % sleeper.sleep)
 	check(sleeper.health > 85.0, "Sleeping while fed must heal health, got %f" % sleeper.health)
+	# Sleeping must NOT heal while sick or hypothermic — same gates as tick regen.
+	var sick_sleeper := StatsScript.new()
+	_keep_alive(sick_sleeper)
+	sick_sleeper.sick = true
+	sick_sleeper.sick_timer = 999.0
+	sick_sleeper.health = 60.0
+	for i in range(10):
+		sick_sleeper.do_sleep(1.0, true)
+	check(sick_sleeper.health <= 60.0 + 0.001, "Sick sleeping must not heal, got %f" % sick_sleeper.health)
+	var cold_sleeper := StatsScript.new()
+	_keep_alive(cold_sleeper)
+	cold_sleeper.body_temperature = 34.0
+	cold_sleeper.health = 60.0
+	for i in range(10):
+		cold_sleeper.do_sleep(1.0, true)
+	check(cold_sleeper.health <= 60.0 + 0.001, "Hypothermic sleeping must not heal, got %f" % cold_sleeper.health)
 	if failures == 0:
 		print("PASS: sleep drains slower — day %.4f/s, night %.4f/s (3x day)" % [day_rate, night_rate])
 	quit(1 if failures else 0)

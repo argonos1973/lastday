@@ -3591,7 +3591,11 @@ func _drop_excess_items(count: int) -> void:
 		notice.emit("Se ha caido %d objeto(s) al perder capacidad." % dropped)
 		inventory.changed.emit()
 
-func _recalculate_warmth() -> void:
+# Fracción del abrigo que retiene una prenda empapada (la humedad colapsa el
+# aislamiento: una chaqueta calada apenas abriga).
+const WET_WARMTH_RETAIN := 0.45
+
+func _recalculate_warmth(undress_shock: bool = true) -> void:
 	if stats == null:
 		return
 	var prev_warmth: float = stats.warmth_bonus
@@ -3599,11 +3603,15 @@ func _recalculate_warmth() -> void:
 	for slot in _equipped_slots:
 		var item_name: String = str(_equipped_slots[slot])
 		if CLOTHING_WARMTH.has(item_name):
-			total += CLOTHING_WARMTH[item_name]
+			var w: float = float(CLOTHING_WARMTH[item_name])
 			if str(_equipped_pelt.get(item_name, "")) == "oso":
-				total += 0.10
+				w += 0.10
+			var worn = _equipped_item_for_slot(slot)
+			if worn != null:
+				w *= lerpf(1.0, WET_WARMTH_RETAIN, clampf(float(worn.wetness), 0.0, 1.0))
+			total += w
 	stats.warmth_bonus = total
-	if not _initializing and total < prev_warmth:
+	if undress_shock and not _initializing and total < prev_warmth:
 		var lost_warmth := prev_warmth - total
 		var cooling_drop := clampf(lost_warmth * 0.55, 0.04, 1.0)
 		stats.body_temperature = maxf(34.0, stats.body_temperature - cooling_drop)
@@ -5055,6 +5063,7 @@ func _update_water_state(delta: float) -> void:
 			_water_step_timer = clampf(0.95 / water_speed, 0.28, 0.65)
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		_soaked_each_equipped(delta * (0.38 + _water_depth * 0.55))
+		_recalculate_warmth(false)
 		stats.wetness = _effective_wetness()
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
 		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.013 * (0.5 + wetness + _water_depth))
@@ -5083,6 +5092,8 @@ func _update_water_state(delta: float) -> void:
 		var dry_rate: float = 0.0035 + max(0.0, (ambient - 10.0)) * 0.0007
 		wetness = max(0.0, wetness - delta * dry_rate)
 		_dry_each_equipped(delta * dry_rate)
+		_dry_inventory_items(delta * dry_rate * 0.4)
+		_recalculate_warmth(false)
 		stats.wetness = _effective_wetness()
 		if wetness > 0.05:
 			stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.005 * wetness)
@@ -5136,6 +5147,18 @@ func _dry_each_equipped(amount: float) -> void:
 		if item != null:
 			item.wetness = maxf(0.0, item.wetness - amount)
 
+func _dry_inventory_items(amount: float) -> void:
+	# La ropa guardada en la mochila también se seca poco a poco, más lento
+	# que la equipada al ir doblada dentro; sin ella quedaría mojada para siempre.
+	if inventory == null:
+		return
+	for it in inventory.items:
+		if it == null or float(it.wetness) <= 0.0:
+			continue
+		if str(it.get_meta("equipped_slot", "")) != "":
+			continue
+		it.wetness = maxf(0.0, float(it.wetness) - amount)
+
 func apply_precipitation_wetness(gain: float) -> void:
 	# La lluvia empapa la ropa equipada; la piel solo se moja donde queda
 	# descubierta (más un poco de traspaso bajo la ropa empapada).
@@ -5146,13 +5169,17 @@ func apply_precipitation_wetness(gain: float) -> void:
 			item.wetness = minf(1.0, item.wetness + gain)
 			covered += float(SLOT_WET_WEIGHT[slot])
 	wetness = minf(1.0, wetness + gain * ((1.0 - covered) + 0.2 * covered))
+	_recalculate_warmth(false)
 	if stats != null:
 		stats.wetness = _effective_wetness()
 
 func apply_warmth_drying(amount: float) -> void:
-	# Fuego/antorcha: seca la piel y la ropa equipada por igual.
+	# Fuego/antorcha: seca la piel y la ropa equipada por igual, y un poco la
+	# que va guardada en la mochila.
 	wetness = maxf(0.0, wetness - amount)
 	_dry_each_equipped(amount)
+	_dry_inventory_items(amount * 0.4)
+	_recalculate_warmth(false)
 	if stats != null:
 		stats.wetness = _effective_wetness()
 

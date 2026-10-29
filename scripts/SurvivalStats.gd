@@ -243,8 +243,9 @@ func do_sleep(hours: float, on_bed: bool = false) -> void:
 	sleep = min(max_stat, sleep + sleep_gain * hours)
 	energy = min(max_stat, energy + energy_gain * hours)
 	feet_wound = max(0.0, feet_wound - 30.0 * hours)
-	# Heal while sleeping if not starving or dehydrated (faster on a bed or at full rest)
-	if hunger > 0.0 and thirst > 0.0 and health > 0.0:
+	# Heal while sleeping under the same restrictions as passive regen: not
+	# sick, body temperature inside the safe band, fed and hydrated.
+	if hunger > 0.0 and thirst > 0.0 and health > 0.0 and not sick and body_temperature >= 35.4 and body_temperature < 37.8:
 		var heal_rate := (8.0 if sleep >= max_stat else (4.0 if on_bed else 2.2))
 		health = min(max_health, health + heal_rate * hours)
 	changed.emit()
