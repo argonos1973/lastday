@@ -1004,7 +1004,7 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_K and not player.is_sleeping:
 			if _loot_panel != null:
 				_close_loot_ui()
-			var k_target = player._get_interaction_target() if player.has_method("_get_interaction_target") else null
+			var k_target = player._get_aimed_interaction_target() if player.has_method("_get_aimed_interaction_target") else null
 			var k_is_shelter: bool = k_target != null and str(k_target.get("action_type", "")) == "shelter"
 			if _is_backpack_container(k_target) or k_is_shelter:
 				_toggle_backpack_ui(k_target)

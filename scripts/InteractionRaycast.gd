@@ -30,6 +30,18 @@ func get_interactable(player: Node3D, camera: Camera3D, screen_offset := Vector2
 	# Fallback: find nearest interactable within interaction distance
 	return _find_nearest_interactable(player)
 
+# Same camera-trace lookup as get_interactable but WITHOUT the proximity
+# fallback: callers that need "what is under the reticle" (e.g. the K container
+# key) must not steal focus from an object the player is not looking at.
+func get_aimed_interactable(player: Node3D, camera: Camera3D, screen_offset := Vector2.ZERO):
+	var collider: Object = _get_collider_from_camera(player, camera, screen_offset)
+	if collider == null:
+		return null
+	var target: Object = _find_interactable_owner(collider)
+	if target != null and _is_close_enough(player, target):
+		return target
+	return null
+
 func get_default_text(target, player = null) -> String:
 	if target != null and target.has_method("get_interaction_text"):
 		return str(target.call("get_interaction_text", player))

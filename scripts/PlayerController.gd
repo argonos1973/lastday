@@ -12078,6 +12078,11 @@ func _get_fishing_water_state() -> Dictionary:
 	result["point"] = water_point
 	return result
 
+func _get_aimed_interaction_target():
+	if raycast != null and raycast.has_method("get_aimed_interactable"):
+		return raycast.get_aimed_interactable(self, camera, _aim_screen_offset)
+	return null
+
 func _get_interaction_target():
 	if raycast != null and raycast.has_method("get_interactable"):
 		return raycast.get_interactable(self, camera, _aim_screen_offset)
