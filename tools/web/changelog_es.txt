@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+0f1d67e|Los lobos salvajes y los osos pelean contra tu lobo domesticado (el oso ahora tiene animacion de mordisco); tu lobo puede morir en combate y se recupera comiendo o descansando saciado — veras 'herido' en su estado
 3c32355|Tu lobo grune bajo para avisarte cuando un personaje ajeno se acerca — sin atacar, solo alerta
 c691fe9|El lobo muerde con animacion real al impacto, come lo que caza cuando tiene hambre, te sigue al esprintar y no ataca lobos domados por ti
 bbe85e0|Lobo domesticado mas listo: ladra avisando de lobos/osos cerca de ti, caza solo cuando tiene hambre (y avisa), corre contigo al esprintar, no estorba en puertas y deja de perseguir enemigos que huyen lejos
