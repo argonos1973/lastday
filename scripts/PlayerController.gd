@@ -3595,10 +3595,9 @@ func _drop_excess_items(count: int) -> void:
 # aislamiento: una chaqueta calada apenas abriga).
 const WET_WARMTH_RETAIN := 0.45
 
-func _recalculate_warmth(undress_shock: bool = true) -> void:
+func _recalculate_warmth(_undress_shock: bool = true) -> void:
 	if stats == null:
 		return
-	var prev_warmth: float = stats.warmth_bonus
 	var total := 0.0
 	for slot in _equipped_slots:
 		var item_name: String = str(_equipped_slots[slot])
@@ -3611,10 +3610,8 @@ func _recalculate_warmth(undress_shock: bool = true) -> void:
 				w *= lerpf(1.0, WET_WARMTH_RETAIN, clampf(float(worn.wetness), 0.0, 1.0))
 			total += w
 	stats.warmth_bonus = total
-	if undress_shock and not _initializing and total < prev_warmth:
-		var lost_warmth := prev_warmth - total
-		var cooling_drop := clampf(lost_warmth * 0.55, 0.04, 1.0)
-		stats.body_temperature = maxf(34.0, stats.body_temperature - cooling_drop)
+	# Equipment changes insulation; body temperature changes over time in tick.
+	# The old 34 C clamp warmed hypothermic players when they undressed.
 	stats.changed.emit()
 
 func _recalculate_heat_protection() -> void:
@@ -5031,6 +5028,10 @@ func pose_rifle_for_portrait(model: Node3D, skel: Skeleton3D) -> bool:
 
 #region ENTORNO (agua, temperatura)
 func _update_water_state(delta: float) -> void:
+	# Stored garments must dry even when skin and equipped clothes are dry,
+	# and remain protected from rain outside the pack.
+	var stored_dry_rate := 0.0035 + maxf(0.0, _ambient_temperature() - 10.0) * 0.0007
+	_dry_inventory_items(delta * stored_dry_rate * 0.4)
 	_water_step_timer = maxf(0.0, _water_step_timer - delta)
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
 	_water_query_timer += delta
@@ -5097,7 +5098,6 @@ func _update_water_state(delta: float) -> void:
 		var dry_rate: float = 0.0035 + max(0.0, (ambient - 10.0)) * 0.0007
 		wetness = max(0.0, wetness - delta * dry_rate)
 		_dry_each_equipped(delta * dry_rate)
-		_dry_inventory_items(delta * dry_rate * 0.4)
 		_recalculate_warmth(false)
 		stats.wetness = _effective_wetness()
 		if wetness > 0.05:
@@ -9769,7 +9769,7 @@ func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	# views (frontal/side/top) would otherwise point the rifle backwards
 	# through the body and bury both hands inside the chest.
 	var sight_dir := (-global_basis.z).rotated(global_basis.x.normalized(), _pitch).normalized()
-	if not is_puppet and is_instance_valid(camera) and (_is_aiming or _is_firing or not _mounted_rifle_is_m4):
+	if not is_puppet and is_instance_valid(camera) and _is_aiming and not (_frontal_camera or _side_camera or _left_camera or _rear_camera or _top_camera):
 		sight_dir = -camera.global_basis.z.normalized()
 	var head_name := _resolve_bone_name_safe("mixamorig:Head", skel)
 	if head_name.is_empty():
@@ -13896,15 +13896,11 @@ func _shoot_rifle() -> void:
 	var up := right.cross(aim_dir).normalized()
 	aim_dir = (aim_dir+right*cos(angle)*radius+up*sin(angle)*radius).normalized()
 	var shot_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
-	# La bala nace en la boca del cañón solo si su transform sigue la línea de
-	# puntería real — un WeaponOffset/top_level estaleado no debe desplazar el
-	# origen fuera del eje de mira ni desviar el tiro.
+	# Validate against the character, not the third-person camera several
+	# metres behind it. Camera distance previously forced a waist-level origin.
 	if is_instance_valid(_rifle_muzzle):
 		var muzzle_pos: Vector3 = _rifle_muzzle.global_position
-		var muzzle_off := muzzle_pos - cam_ray_origin
-		var muzzle_along := muzzle_off.dot(cam_ray_dir)
-		var muzzle_lateral := (muzzle_off - cam_ray_dir * muzzle_along).length()
-		if muzzle_pos.is_finite() and muzzle_along > -0.6 and muzzle_along < 3.5 and muzzle_lateral < 0.9:
+		if muzzle_pos.is_finite() and muzzle_pos.distance_to(global_position) < 3.5:
 			shot_origin = muzzle_pos
 	# Fixed 100 m optical zero in ADS; in third-person hip-fire, converge the
 	# muzzle onto whatever is under the crosshair ray so the 6.5 m camera
@@ -13952,10 +13948,7 @@ func _shoot_rifle() -> void:
 			var b_origin := global_position + Vector3(0, 0.3 if is_prone else (1.0 if is_crouching else 1.4), 0)
 			if is_instance_valid(_rifle_muzzle):
 				var b_muzzle_pos: Vector3 = _rifle_muzzle.global_position
-				var b_off := b_muzzle_pos - b_cam_orig
-				var b_along := b_off.dot(b_cam_dir)
-				var b_lateral := (b_off - b_cam_dir * b_along).length()
-				if b_muzzle_pos.is_finite() and b_along > -0.6 and b_along < 3.5 and b_lateral < 0.9:
+				if b_muzzle_pos.is_finite() and b_muzzle_pos.distance_to(global_position) < 3.5:
 					b_origin = b_muzzle_pos
 			var b_space := get_world_3d().direct_space_state
 			var b_conv := 100.0
@@ -14502,8 +14495,14 @@ func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
 		return
 	var flash_root := Node3D.new()
 	flash_root.name = "MuzzleFlash"
-	scene.add_child(flash_root)
-	flash_root.global_position = at_pos
+	var flash_direction := dir
+	if is_instance_valid(_rifle_muzzle):
+		_rifle_muzzle.add_child(flash_root)
+		flash_root.global_transform = Transform3D(Basis.IDENTITY, _rifle_muzzle.global_position)
+		flash_direction = -_rifle_muzzle.global_basis.z.normalized()
+	else:
+		scene.add_child(flash_root)
+		flash_root.global_position = at_pos
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.72, 0.3)
 	light.light_energy = 5.0
@@ -14516,7 +14515,7 @@ func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
 	particles.one_shot = true
 	particles.explosiveness = 1.0
 	var mat := ParticleProcessMaterial.new()
-	mat.direction = dir
+	mat.direction = flash_direction
 	mat.spread = 12.0
 	mat.initial_velocity_min = 6.0
 	mat.initial_velocity_max = 14.0
@@ -14539,10 +14538,16 @@ func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
 	particles.draw_pass_1 = quad
 	flash_root.add_child(particles)
 	particles.emitting = true
+	var light_ref := weakref(light)
+	var flash_ref := weakref(flash_root)
 	get_tree().create_timer(0.15).timeout.connect(func():
-		if is_instance_valid(light):
-			light.light_energy = 0.0)
-	get_tree().create_timer(0.4).timeout.connect(func(): flash_root.queue_free())
+		var live_light = light_ref.get_ref()
+		if live_light != null:
+			live_light.light_energy = 0.0)
+	get_tree().create_timer(0.4).timeout.connect(func():
+		var live_flash = flash_ref.get_ref()
+		if live_flash != null:
+			live_flash.queue_free())
 
 func _make_action_sound_player(player_name: String, unit_size: float = 6.0, max_distance: float = 45.0) -> Node:
 	var p: Node

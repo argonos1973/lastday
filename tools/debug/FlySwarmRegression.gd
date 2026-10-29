@@ -69,6 +69,9 @@ func run() -> void:
 	var dried: float = float(main._dropped_items[0].get("wetness", 0.0)) if main._dropped_items.size() > 0 else -1.0
 	check(dried <= 0.02, "Soaked ground clothing dries out over time (wetness=%.2f)" % dried)
 	check(wet_pickup.get_meta("item_wetness", -1.0) <= 0.02, "Dried pickup passes dry wetness to whoever picks it up")
+	main._dropped_items[0]["wetness"] = 0.01
+	main._update_loot_wear()
+	check(is_zero_approx(float(main._dropped_items[0]["wetness"])), "Residual ground humidity dries completely")
 	main._dropped_items[0]["wetness"] = 0.9
 	main._weather_target["rain"] = 5.0
 	main._update_loot_wear()

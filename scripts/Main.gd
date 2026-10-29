@@ -14018,7 +14018,7 @@ func _update_loot_wear() -> void:
 		var wet_new := wet
 		if precip_now and not _is_loot_sheltered(pos):
 			wet_new = minf(1.0, wet + 0.06)
-		elif wet > 0.02:
+		elif wet > 0.0:
 			wet_new = maxf(0.0, wet - LOOT_DRYING_PER_TICK)
 		if not is_equal_approx(wet_new, wet):
 			entry["wetness"] = wet_new

@@ -184,5 +184,18 @@ func run() -> void:
 	player.apply_warmth_drying(0.2)
 	check(pack_item.wetness < pack_w0, "Wet clothes in the backpack dry near fire")
 
+	# The dry-player early return must not strand wet clothes in the backpack.
+	player.wetness = 0.0
+	jacket.wetness = 0.0
+	shoes.wetness = 0.0
+	spare.wetness = 0.8
+	player._rain_wetting = true
+	player._update_water_state(1.0)
+	check(spare.wetness < 0.8, "Stored wet clothing dries even with dry skin during rain")
+	for temperature in [32.0, 36.6, 39.0]:
+		player.stats.body_temperature = temperature
+		player.stats.warmth_bonus = 9.0
+		player._recalculate_warmth()
+		check(is_equal_approx(player.stats.body_temperature, temperature), "Changing insulation cannot teleport body temperature")
 	print("RAIN_WETNESS_ERRORS=", errors)
 	quit(1 if errors > 0 else 0)

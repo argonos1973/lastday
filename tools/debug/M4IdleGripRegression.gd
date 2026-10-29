@@ -51,6 +51,14 @@ func run() -> void:
 	actor._rifle_in_hands = true
 	actor._has_rifle = true
 	actor._is_aiming = aiming
+	var hip_fire := "--hip-fire" in OS.get_cmdline_user_args()
+	if hip_fire:
+		actor.is_puppet = false
+		actor._is_firing = true
+		actor._frontal_camera = true
+		actor.camera = Camera3D.new()
+		actor.add_child(actor.camera)
+		actor.camera.rotation.y = PI
 	var player: AnimationPlayer = actor.third_person_animation_player
 	var anim: String = actor._rifle_aim_idle_animation if aiming else actor._rifle_idle_animation
 	if "--walk" in OS.get_cmdline_user_args():
@@ -123,6 +131,17 @@ func run() -> void:
 		if actor._is_aiming:
 			errors += 1
 			push_error("Camera posture must not enable ADS")
+	if hip_fire:
+		current_scene = actor
+		actor._spawn_muzzle_flash(Vector3(99, 99, 99), Vector3.BACK)
+		var flash := actor._rifle_muzzle.get_node_or_null("MuzzleFlash") as Node3D
+		if flash == null or flash.global_position.distance_to(actor._rifle_muzzle.global_position) > 0.001:
+			errors += 1
+			push_error("Flash must originate at visible muzzle, not collision-adjusted bullet origin")
+		actor.rotation.y += 0.5
+		if flash != null and flash.global_position.distance_to(actor._rifle_muzzle.global_position) > 0.001:
+			errors += 1
+			push_error("Flash must follow barrel during recoil/turn")
 	actor.queue_free()
 	actor.stats.free()
 	await process_frame
