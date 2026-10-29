@@ -212,9 +212,15 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 			_wolf_eating_target = null
 			_idle_timer = 0.0
 			if attacker is Node3D and is_instance_valid(attacker):
-				_player = attacker as Node3D
-				_chase_target = _player
-				_state = "chase_player"
+				# Contra otro animal (lobo) el combate va por _wolf_foe/_fight_animal —
+				# el path de jugador llama apply_damage y no le haria nada.
+				if attacker is WildlifeController:
+					_wolf_foe = attacker as WildlifeController
+					_foe_timer = 20.0
+				else:
+					_player = attacker as Node3D
+					_chase_target = _player
+					_state = "chase_player"
 			_play_wolf_sound("attack")
 		else:
 			var critical_wound := animal_type == "wolf" and health > 0.0 and health <= max_health * 0.25
@@ -910,6 +916,18 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_chase_cooldown = 5.0
 	# Combate lobo-vs-lobo: un enemigo canino tiene prioridad sobre todo lo demás
 	_foe_timer = max(0.0, _foe_timer - delta)
+	# Lobo salvaje: los domesticos son rivales — engancha a uno cercano si anda hostil
+	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
+		var hostile := is_hungry or _state in ["chase_player", "fight_wolf"] or _threat_player != null
+		if hostile:
+			for other in _cached_wildlife:
+				if other == self or not is_instance_valid(other) or not (other is WildlifeController):
+					continue
+				var ow := other as WildlifeController
+				if ow.animal_type == "wolf" and not ow._is_dead and not ow.tamed_to.is_empty() and global_position.distance_to(ow.global_position) < 14.0:
+					_wolf_foe = ow
+					_foe_timer = 20.0
+					break
 	# El lobo domesticado vigila si un lobo salvaje persigue a su dueño
 	if tamed_to != "" and _wolf_foe == null and not _orders_cease:
 		var owner_for_foe := _resolve_owner()
@@ -1322,8 +1340,7 @@ func _find_nearest_prey() -> Node3D:
 			# skipping tamed wolves and other bears.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
 				continue
-			if ats == "wolf" and not str(other.get("tamed_to")).is_empty():
-				continue
+
 			if home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
 				continue
 		else:
@@ -1730,7 +1747,9 @@ func _tamed_status_text() -> String:
 	var sat_pct := int(round(clampf(_wolf_hunger / 100.0, 0.0, 1.0) * 100.0))
 	parts.append("Saciedad %d%%" % sat_pct)
 	var state_text := ""
-	if _wolf_hunger < _wolf_hunger_threshold:
+	if health < max_health * 0.5:
+		state_text = "herido"
+	elif _wolf_hunger < _wolf_hunger_threshold:
 		state_text = "hambriento"
 	elif _wolf_eating_timer > 0.0:
 		state_text = "comiendo"
@@ -2800,7 +2819,7 @@ func _note_attack(attacker: Node) -> void:
 		var w := attacker as WildlifeController
 		# Devuelve el mordisco: combate contra lobos rivales y, si es
 		# domesticado, tambien contra osos que lo ataquen (defensa).
-		if (w.animal_type == "wolf" or w.animal_type == "bear") and not w._is_dead and w.tamed_to != tamed_to:
+		if (w.animal_type == "wolf" or w.animal_type == "bear") and not w._is_dead and (w.tamed_to.is_empty() or w.tamed_to != tamed_to):
 			if w.animal_type == "wolf" or not tamed_to.is_empty():
 				_wolf_foe = w
 				_foe_timer = 20.0

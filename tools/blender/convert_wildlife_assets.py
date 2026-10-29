@@ -42,6 +42,7 @@ ANIMALS = {
             "walk": ("a_walkmedium_f",),
             "trot": ("a_trotfast_f",),
             "run": ("a_runfast_f",),
+            "attack": ("a_bear_clackteeth_x3", "a_brownbear_clackteeth"),
         },
     },
 }
