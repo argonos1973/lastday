@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+d7d987a|Ordenes del lobo domesticado: al pulsar F sobre tu lobo se abre un menu — seguir, quieto, patrullar, dejar de atacar y atacar a un objetivo cercano (jugadores o animales)
 9a35d0d|Nueva animacion de ataque del lobo (embestida con mordisco) en peleas contra otros lobos, presas y el jugador; el lobo domesticado muestra su estado al mirarlo: vida, saciedad y si esta hambriento, comiendo o en guardia
 6b78c3d|Panel de crafteo: ahora solo cuenta los materiales que estan en el suelo — la herramienta puede ir en la mano; el inventario y la mochila ya no se usan ni se consumen
 3751afe|Panel de crafteo: los materiales ahora se muestran separados — 'En el suelo' y 'En tu inventario' — en lugar de una lista mezclada que parecia tirarlo todo al suelo
