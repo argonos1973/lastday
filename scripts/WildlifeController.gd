@@ -124,7 +124,9 @@ const TAME_FEED_RADIUS := 15.0    # quien alimenta debe seguir cerca al comer
 const TAME_GUARD_SECONDS := 60.0  # luto junto al cadáver del dueño antes de volverse salvaje
 var tamed_to := ""
 var _tame_progress := {}          # feeder_id -> nº de comidas
-var _follow_mode := "follow"      # "follow" | "stay" (solo con tamed_to != "")
+var _follow_mode := "follow"      # "follow" | "stay" | "patrol" (solo con tamed_to != "")
+var _ordered_prey: Node = null        # orden "atacar" sobre un animal (no lobo)
+var _orders_cease := false            # orden "no atacar": no enganchar amenazas solo
 var _stay_pos := Vector3.ZERO
 var _wolf_foe: Node3D = null      # lobo enemigo en combate canino
 var _house_direct_goal := false   # domesticado dentro de casa: guiado directo al dueño
@@ -904,7 +906,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 	# Combate lobo-vs-lobo: un enemigo canino tiene prioridad sobre todo lo demás
 	_foe_timer = max(0.0, _foe_timer - delta)
 	# El lobo domesticado vigila si un lobo salvaje persigue a su dueño
-	if tamed_to != "" and _wolf_foe == null:
+	if tamed_to != "" and _wolf_foe == null and not _orders_cease:
 		var owner_for_foe := _resolve_owner()
 		if owner_for_foe != null:
 			var foe := _find_wolf_threatening(owner_for_foe)
@@ -1735,6 +1737,10 @@ func _tamed_status_text() -> String:
 		state_text = "comiendo"
 	elif _wolf_foe != null or _threat_player != null:
 		state_text = "defendiendo"
+	elif _orders_cease:
+		state_text = "sin atacar"
+	elif _follow_mode == "patrol":
+		state_text = "patrullando"
 	elif _follow_mode == "stay":
 		state_text = "quieto"
 	if not state_text.is_empty():
@@ -1746,7 +1752,7 @@ func get_interaction_text(player = null) -> String:
 		if animal_type == "wolf" and tamed_to != "":
 			var status := _tamed_status_text()
 			if _is_owner_actor(player):
-				return "Lobo domesticado %s - [F] %s" % [status, ("Quieto" if _follow_mode == "follow" else "Seguir")]
+				return "Lobo domesticado %s - [F] Ordenes" % status
 			return "Lobo domesticado %s" % status
 		if animal_type == "wolf" and tamed_to.is_empty() and player != null:
 			var fkey := _feeder_key(player)
@@ -2468,10 +2474,28 @@ func _release_owner_record() -> void:
 func _tamed_ai(delta: float) -> Dictionary:
 	_house_direct_goal = false
 	var owner := _resolve_owner()
+	if _orders_cease and _threat_player != null:
+		_threat_player = null
 	if _threat_player != null and is_instance_valid(_threat_player):
 		_player = _threat_player
 		return {"handled": false}
 	_player = null
+	if _ordered_prey != null:
+		if not is_instance_valid(_ordered_prey) or bool(_ordered_prey.get("_is_dead")):
+			_ordered_prey = null
+		else:
+			var tp: Vector3 = _ordered_prey.global_position
+			var td := global_position.distance_to(tp)
+			_face_towards(tp, delta * 7.0)
+			if td <= 3.0:
+				if _attack_cooldown <= 0.0:
+					_attack_cooldown = 1.8
+					_ordered_prey.take_damage(35.0, false, self)
+					_play_wolf_sound("attack")
+				_play_animation_by_name("attack")
+				return {"handled": true, "target": tp, "speed": 0.0}
+			_play_animation_by_name("run")
+			return {"handled": true, "target": tp, "speed": move_speed * 3.2}
 	if owner == null:
 		_state = "guard"
 		_play_animation_by_name("idle")
@@ -2517,6 +2541,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 			_face_towards(owner.global_position, delta)
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
+	# "Patrullar": recorre sus puntos de patrulla alrededor de la zona marcada.
+	if _follow_mode == "patrol":
+		_state = "patrol"
+		if patrol_points.is_empty():
+			patrol_points = [_stay_pos]
+		var ptgt: Vector3 = patrol_points[target_index]
+		if global_position.distance_to(ptgt) < 1.8:
+			target_index = (target_index + 1) % patrol_points.size()
+			ptgt = patrol_points[target_index]
+		_play_animation_by_name("walk")
+		return {"handled": true, "target": ptgt, "speed": move_speed}
 	# Seguir al dueño con offset lateral (~2.6 m), histéresis de descanso y
 	# velocidad adaptada a la distancia.
 	_state = "follow"
@@ -2704,34 +2739,58 @@ func _is_owner_actor(player: Node) -> bool:
 		return str(net_node.get_my_id()) == tamed_to
 	return false
 
-func apply_command(mode: String) -> void:
-	# mode: "toggle" | "follow" | "stay"
+func apply_command(mode: String, target: Node = null) -> void:
+	# mode: "toggle" | "follow" | "stay" | "patrol" | "attack" | "cease"
+	if mode == "attack" and target != null and is_instance_valid(target) and target != self:
+		_orders_cease = false
+		if target is WildlifeController:
+			if str((target as WildlifeController).animal_type) == "wolf":
+				_wolf_foe = target
+				_foe_timer = 20.0
+			else:
+				_ordered_prey = target
+		elif target is Node3D and (target.is_in_group("net_player_proxy") or target.is_in_group("remote_player")):
+			_threat_player = target
+			_threat_timer = 25.0
+		else:
+			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
+			return
+		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca!")
+		return
+	if mode == "cease":
+		_orders_cease = true
+		_wolf_foe = null
+		_ordered_prey = null
+		_threat_player = null
+		_state = "follow" if _follow_mode == "follow" else "guard"
+		_notify_owner_msg(_resolve_owner(), "El lobo deja de atacar.")
+		return
 	if mode == "toggle":
 		_follow_mode = "stay" if _follow_mode == "follow" else "follow"
-	elif mode == "stay" or mode == "follow":
+	elif mode in ["stay", "follow", "patrol"]:
 		_follow_mode = mode
 	else:
 		return
-	if _follow_mode == "stay":
+	if _follow_mode in ["stay", "patrol"]:
 		_stay_pos = global_position
 	var owner := _resolve_owner()
-	_notify_owner_msg(owner, "El lobo guarda esta zona." if _follow_mode == "stay" else "El lobo te sigue.")
+	var msg := "El lobo te sigue."
+	if _follow_mode == "stay":
+		msg = "El lobo guarda esta zona."
+	elif _follow_mode == "patrol":
+		msg = "El lobo patrulla la zona."
+	_notify_owner_msg(owner, msg)
 
 func _interact_tamed(player: Node) -> void:
-	if is_puppet:
-		# Cliente: el servidor valida que el peer sea el dueño
-		if _is_owner_actor(player):
-			var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-			if net_node != null and net_node.has_method("command_wolf"):
-				net_node.command_wolf.rpc_id(1, name.replacen("Puppet_", ""), "toggle")
-		elif player != null and player.has_signal("notice"):
-			player.notice.emit("El lobo solo obedece a su dueño.")
-		return
 	if not _is_owner_actor(player):
 		if player != null and player.has_signal("notice"):
 			player.notice.emit("El lobo solo obedece a su dueño.")
 		return
-	apply_command("toggle")
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_show_wolf_orders"):
+		scene._show_wolf_orders(self)
+	else:
+		apply_command("toggle")
 
 #endregion
 

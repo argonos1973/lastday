@@ -1213,13 +1213,13 @@ func animal_hit(animal_name: String) -> void:
 # Cliente pide un comando a su lobo domesticado; el servidor valida que el peer
 # sea el dueño antes de obedecer.
 @rpc("any_peer", "reliable")
-func command_wolf(animal_name: String, mode: String) -> void:
+func command_wolf(animal_name: String, mode: String, target_name: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if not _accepts_client_request(sender):
 		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_command_wolf"):
-		scene._net_command_wolf(animal_name, mode, sender)
+		scene._net_command_wolf(animal_name, mode, sender, target_name)
 
 # Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
 # El servidor valida alcance (<4.5 m) y que ambos esten vivos, actualiza las

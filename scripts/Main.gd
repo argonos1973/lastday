@@ -1017,6 +1017,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_ESCAPE:
+			if _wolf_menu != null:
+				_close_wolf_orders()
+				get_viewport().set_input_as_handled()
+				return
 			if _backpack_panel != null:
 				_close_backpack_ui()
 				get_viewport().set_input_as_handled()
@@ -3785,7 +3789,7 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 					net.animal_hit.rpc_id(pid, real_name)
 
 # Comando de lobo domesticado desde un cliente: solo obedece a su dueño.
-func _net_command_wolf(animal_name: String, mode: String, sender: int = 0) -> void:
+func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, target_name: String = "") -> void:
 	if net == null or not net.is_host:
 		return
 	var real_name := animal_name.replacen("Puppet_", "")
@@ -3799,8 +3803,22 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0) -> vo
 		var proxy: Node3D = server_proxies[sender]
 		if proxy.global_position.distance_to(animal.global_position) > 12.0:
 			return
+	var target: Node = null
+	if mode == "attack" and not target_name.is_empty():
+		if target_name.begins_with("p:"):
+			var pid := int(target_name.substr(2))
+			if server_proxies.has(pid):
+				target = server_proxies[pid]
+			if target != null and (bool(target.get_meta("proxy_dead", false)) or bool(target.get("is_dead"))):
+				target = null
+		else:
+			target = get_node_or_null(target_name)
+			if target != null and (bool(target.get("_is_dead")) or str(target.get("animal_type")) == ""):
+				target = null
+		if target == null:
+			return
 	if animal.has_method("apply_command"):
-		animal.apply_command(mode)
+		animal.apply_command(mode, target)
 
 # Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
 func _net_feed_other_player(target_peer_id: int, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool, sender: int = 0) -> void:
@@ -5214,6 +5232,117 @@ func _on_player_died() -> void:
 
 var _loot_dead_peer_id := -1
 var _loot_items: Array = []
+# ---------- Menú de órdenes del lobo domesticado ----------
+
+var _wolf_menu: PanelContainer = null
+var _wolf_menu_wolf: Node = null
+
+func _show_wolf_orders(wolf: Node) -> void:
+	_close_wolf_orders()
+	_wolf_menu_wolf = wolf
+	_wolf_menu = PanelContainer.new()
+	_wolf_menu.custom_minimum_size = Vector2(320, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.05, 0.04, 0.96)
+	style.border_color = Color(0.72, 0.74, 0.40, 0.95)
+	style.set_border_width_all(2)
+	_wolf_menu.add_theme_stylebox_override("panel", style)
+	_wolf_menu.position = Vector2(280, 120)
+	_wolf_menu.z_index = 60
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_wolf_menu.add_child(vbox)
+	var title := Label.new()
+	title.text = "Lobo domesticado - Órdenes"
+	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
+	vbox.add_child(title)
+	for order in [["Seguir", "follow"], ["Quieto (guardar zona)", "stay"], ["Patrullar", "patrol"], ["Dejar de atacar", "cease"]]:
+		var btn := Button.new()
+		btn.text = order[0]
+		var m: String = order[1]
+		btn.pressed.connect(func(): _wolf_order_send(m))
+		vbox.add_child(btn)
+	# "Atacar": lista de objetivos válidos cercanos al dueño
+	var targets := _wolf_attack_targets()
+	if targets.is_empty():
+		var none := Label.new()
+		none.text = "Sin objetivos cerca para atacar."
+		none.add_theme_color_override("font_color", Color(0.6, 0.6, 0.55))
+		vbox.add_child(none)
+	else:
+		var att_lbl := Label.new()
+		att_lbl.text = "Atacar a:"
+		att_lbl.add_theme_font_size_override("font_size", 15)
+		att_lbl.add_theme_color_override("font_color", Color(0.82, 0.80, 0.72))
+		vbox.add_child(att_lbl)
+		for t in targets:
+			var tbtn := Button.new()
+			tbtn.text = "Atacar: " + str(t["label"])
+			var tname: String = t["id"]
+			tbtn.pressed.connect(func(): _wolf_order_send("attack", tname))
+			vbox.add_child(tbtn)
+	var close_btn := Button.new()
+	close_btn.text = "Cerrar [ESC]"
+	close_btn.pressed.connect(_close_wolf_orders)
+	vbox.add_child(close_btn)
+	hud.add_child(_wolf_menu)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _close_wolf_orders() -> void:
+	if _wolf_menu != null:
+		_wolf_menu.queue_free()
+		_wolf_menu = null
+	_wolf_menu_wolf = null
+	if player != null and not player.is_dead:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _wolf_order_send(mode: String, target_name: String = "") -> void:
+	var wolf: Node = _wolf_menu_wolf
+	_close_wolf_orders()
+	if wolf == null or not is_instance_valid(wolf):
+		return
+	var real_name: String = wolf.name.replacen("Puppet_", "")
+	if bool(wolf.get("is_puppet")):
+		if net != null and net.has_method("command_wolf"):
+			net.command_wolf.rpc_id(1, real_name, mode, target_name)
+	else:
+		var target: Node = null
+		if mode == "attack" and not target_name.is_empty():
+			if target_name.begins_with("p:"):
+				var pid := int(target_name.substr(2))
+				if remote_players.has(pid):
+					target = remote_players[pid]
+			else:
+				target = get_node_or_null("Puppet_" + target_name)
+		if wolf.has_method("apply_command"):
+			wolf.apply_command(mode, target)
+
+func _wolf_attack_targets() -> Array:
+	var result: Array = []
+	if player == null:
+		return result
+	var origin: Vector3 = player.global_position
+	for pid in remote_players.keys():
+		var rp = remote_players[pid]
+		if rp == null or not is_instance_valid(rp) or bool(rp.get("is_dead")) or bool(rp.get_meta("proxy_dead", false)):
+			continue
+		if rp.global_position.distance_to(origin) > 45.0:
+			continue
+		var label := str(rp.get("character_name"))
+		if label.is_empty() and net != null and net.players.has(pid):
+			label = str(net.players[pid].get("char_name", "superviviente"))
+		result.append({"label": label if not label.is_empty() else "jugador %d" % pid, "id": "p:%d" % pid})
+	for aid in puppet_animals.keys():
+		var p = puppet_animals[aid]
+		if p == null or not is_instance_valid(p) or bool(p.get("_is_dead")) or p == _wolf_menu_wolf:
+			continue
+		if p.global_position.distance_to(origin) > 45.0:
+			continue
+		var aname := str(aid).replacen("Puppet_", "")
+		result.append({"label": "%s (%s)" % [str(p.get("animal_type")).capitalize(), aname], "id": aname})
+	return result
+
 var _loot_panel: PanelContainer = null
 
 func _net_receive_loot(dead_peer_id: int, items_data: Array) -> void:
