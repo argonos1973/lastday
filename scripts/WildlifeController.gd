@@ -2533,6 +2533,20 @@ func _tamed_ai(delta: float) -> Dictionary:
 				_warn_bark_timer = randf_range(7.0, 12.0)
 				break
 		if _warn_bark_timer <= 0.0:
+			# Grunido flojo: un personaje ajeno se acerca — avisa, no ataca.
+			for grp in ["net_player_proxy", "remote_player"]:
+				for op in get_tree().get_nodes_in_group(grp):
+					if op == owner or not is_instance_valid(op):
+						continue
+					if op.get_meta("proxy_dead", false) or op.get("is_dead") == true:
+						continue
+					if op.global_position.distance_to(global_position) < 12.0:
+						_play_wolf_sound("growl_low")
+						_warn_bark_timer = randf_range(10.0, 18.0)
+						break
+				if _warn_bark_timer > 0.0:
+					break
+		if _warn_bark_timer <= 0.0:
 			_warn_bark_timer = 2.5
 	if _ordered_prey != null:
 		var bound_anchor := _stay_pos if _follow_mode == "stay" else owner_anchor
@@ -3149,7 +3163,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		return
 	var path := ""
 	match sound_type:
-		"growl", "howl":
+		"growl", "howl", "growl_low":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
@@ -3176,8 +3190,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0
 		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
 	else:
-		_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" or sound_type == "bite" else -4.0
-		_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15) * (1.45 if tamed else 1.0)
+		if sound_type == "growl_low":
+			_wolf_audio_player.volume_db = -14.0
+			_wolf_audio_player.pitch_scale = randf_range(0.6, 0.75) * (1.45 if tamed else 1.0)
+		else:
+			_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" or sound_type == "bite" else -4.0
+			_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15) * (1.45 if tamed else 1.0)
 	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:
