@@ -4994,6 +4994,7 @@ func _broadcast_animals() -> void:
 		var hunger_val = animal.get("_wolf_hunger")
 		var threshold_val = animal.get("_wolf_hunger_threshold")
 		var rot_val = animal.get("_rot_timer")
+		var hp_val = animal.get("health")
 		data[aid] = {
 			"t": str(animal.get("animal_type")),
 			"x": round(pos.x * 100.0) / 100.0,
@@ -5010,7 +5011,8 @@ func _broadcast_animals() -> void:
 			"landed": animal._landed if animal is BirdController else false,
 			"ht": round(float(threshold_val) * 10.0) / 10.0 if threshold_val != null else 0.0,
 			"tamed": str(animal.get("tamed_to")),
-			"fm": str(animal.get("_follow_mode"))
+			"fm": str(animal.get("_follow_mode")),
+			"hp": round(float(hp_val) * 10.0) / 10.0 if hp_val != null else 0.0
 		}
 	net.animals = data
 	var all_recipients: Array[int] = net.snapshot_recipients()
@@ -5117,6 +5119,8 @@ func _update_puppet_animals(unlimited: bool = false) -> void:
 				if p.animal_type == "wolf":
 					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
+					if d.has("hp") and not bool(d.get("d", false)):
+						p.health = float(d.get("hp", p.health))
 					p.tamed_to = str(d.get("tamed", ""))
 					p._follow_mode = str(d.get("fm", "follow"))
 	# Remove puppets that no longer exist on the server. Dead/gutted corpses get

@@ -71,6 +71,43 @@ def pose(kind,breath):
  # Keep the head alert and level in the seated loop.
  if kind=='sit':
   p=a.pose.bones['Neck1'];p.matrix=Matrix.Translation(p.matrix.translation)@rest['Neck1'].to_3x3().to_4x4();update()
+def _s(x):x=min(1,max(0,x));return x*x*(3-2*x)
+def pose_attack(t):
+ # Lunge-and-bite cycle: coil back with open jaws (0-0.35), throw forward and
+ # snap shut (0.35-0.55), recover to stance (0.55-1.0). Loops while in range.
+ for p in a.pose.bones:p.matrix_basis.identity()
+ update()
+ coil=_s(t/.35)
+ lun=_s((t-.35)/.20)
+ rec=_s((t-.55)/.45)
+ wind=coil*(1-lun)
+ fwd=lun*(1-rec)
+ jaw=min(1,max(0,wind-lun*1.6))
+ pel=rest['Pelvis'].translation.copy()
+ pel.y+=wind*7-fwd*9
+ pel.z-=wind*5
+ pel.x+=0
+ a.pose.bones['Pelvis'].matrix=Matrix.Translation(pel)@rest['Pelvis'].to_3x3().to_4x4();update()
+ p=a.pose.bones['Spine1']
+ p.matrix=Matrix.Translation(rest['Spine1'].translation)@Matrix.Rotation(math.radians(-6*wind+16*fwd),4,'X')@rest['Spine1'].to_3x3().to_4x4();update()
+ for side,sign in [('L',1),('R',-1)]:
+  front='LegF'+side;back='LegB'+side
+  wrist=(sign*13,-43-fwd*24,8+fwd*5)
+  ik(front+'1',front+'2',front+'3',wrist,(sign*14,-15,30))
+  aim(front+'3',front+'Ankle',(sign*13,-50-fwd*22,5))
+  p=a.pose.bones[front+'Ankle'];p.matrix=Matrix.Translation(p.matrix.translation)@rest[front+'Ankle'].to_3x3().to_4x4();update()
+  hock=(sign*16,36+wind*9,9-wind*4)
+  ik(back+'1',back+'2',back+'3',hock,(sign*20,-30,15))
+  aim(back+'3',back+'Ankle',(sign*16,18+fwd*8,5))
+  p=a.pose.bones[back+'Ankle'];p.matrix=Matrix.Translation(p.matrix.translation)@rest[back+'Ankle'].to_3x3().to_4x4();update()
+ p=a.pose.bones['Neck1'];o=p.matrix.translation.copy()
+ p.matrix=Matrix.Translation(o)@Matrix.Rotation(math.radians(-16*wind+34*fwd),4,'X')@rest['Neck1'].to_3x3().to_4x4();update()
+ p=a.pose.bones['Jaw'];g=p.matrix.copy()
+ p.matrix=Matrix.Translation(g.translation)@Matrix.Rotation(math.radians(30*jaw),4,'X')@g.to_3x3().to_4x4();update()
+ for i in range(1,4):
+  n='Tail'+str(i);child='Tail'+str(i+1);v=a.pose.bones[n].matrix.translation
+  aim(n,child,v+Vector((4+6*fwd,10,-6)))
+
 new=[]
 for kind in ['idle','sit','lie','eat']:
  action=bpy.data.actions.new('Wolf_'+kind);a.animation_data.action=action
@@ -82,6 +119,15 @@ for kind in ['idle','sit','lie','eat']:
  new.append(action)
  a.animation_data.action=None
  track=a.animation_data.nla_tracks.new();track.name=action.name;track.strips.new(action.name,1,action);track.mute=True
+action=bpy.data.actions.new('Wolf_attack');a.animation_data.action=action
+for frame in range(1,33):
+ bpy.context.scene.frame_set(frame);pose_attack((frame-1)/31.0)
+ for p in a.pose.bones:
+  p.rotation_mode='QUATERNION'
+  for prop in ['location','rotation_quaternion','scale']:p.keyframe_insert(prop,frame=frame,group=p.name)
+new.append(action)
+a.animation_data.action=None
+track=a.animation_data.nla_tracks.new();track.name='Wolf_attack';track.strips.new('Wolf_attack',1,action);track.mute=True
 for t in a.animation_data.nla_tracks:t.mute=False
 bpy.context.scene.render.fps=30
 bpy.context.scene.frame_start=1;bpy.context.scene.frame_end=121
@@ -112,7 +158,7 @@ bpy.ops.object.light_add(type='AREA',location=(2,-3,5));bpy.context.object.data.
 bpy.ops.object.light_add(type='AREA',location=(-3,1,3));bpy.context.object.data.energy=350;bpy.context.object.data.size=3
 bpy.ops.object.camera_add(location=(3.0,-3.5,1.9));cam=bpy.context.object;scene.camera=cam
 cam.rotation_euler=(Vector((0,-.3,.5))-cam.location).to_track_quat('-Z','Y').to_euler();cam.data.type='ORTHO';cam.data.ortho_scale=2.8
-for kind,action in zip(['idle','sit','lie','eat'],new):
- a.animation_data.action=action;scene.frame_set(31);update()
+for kind,action in zip(['idle','sit','lie','eat','attack'],new):
+ a.animation_data.action=action;scene.frame_set(14 if kind=='attack' else 31);update()
  scene.render.filepath=str(ROOT/f'build/tmp/wolf_{kind}.png');bpy.ops.render.render(write_still=True)
 print('WOLF_COMPANION_DONE')

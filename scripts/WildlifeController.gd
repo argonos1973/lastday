@@ -927,7 +927,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_attack_cooldown = 1.8 if not tamed_to.is_empty() else 2.5
 				_wolf_foe.take_damage(35.0 if not tamed_to.is_empty() else 25.0, false, self)
 				_play_wolf_sound("attack")
-			_play_animation_by_name("run")
+			_play_animation_by_name("attack" if foe_dist <= bite_range else "run")
 			return {"target": _wolf_foe.global_position, "speed": 0.0 if foe_dist <= bite_range * 0.75 else move_speed * 3.4}
 	# Lobo domesticado: seguir/guardar al dueño o defenderlo de una amenaza
 	_threat_timer = max(0.0, _threat_timer - delta)
@@ -1121,10 +1121,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
 					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
 					speed = move_speed * 1.35
-					_play_animation_by_name("trot")
+					_play_animation_by_name("attack" if flat_dist <= 4.2 else "trot")
 				else:
 					_face_towards(_player.global_position, delta * 6.0)
-					_play_animation_by_name("walk" if flat_dist <= 2.8 else "run")
+					_play_animation_by_name("attack" if flat_dist <= 2.8 else ("walk" if flat_dist <= 2.8 else "run"))
 					target = _player.global_position + away_dir * 2.2
 					speed = move_speed * 0.65 if flat_dist > 2.4 else 0.0
 				_chase_stuck_time = 0.0
@@ -1218,7 +1218,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						nearest_prey.take_damage(60.0 if animal_type == "bear" else 15.0, false, self)
 						if animal_type == "wolf" or animal_type == "bear":
 							_play_wolf_sound("attack")
-					_play_animation_by_name("run")
+					_play_animation_by_name("attack" if animal_type == "wolf" else "run")
 				else:
 					_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
@@ -1722,12 +1722,32 @@ func _corpse_item_name() -> String:
 		"bear": return "Oso muerto"
 		_: return "Animal muerto"
 
+func _tamed_status_text() -> String:
+	var parts := PackedStringArray()
+	var hp_pct := int(round(health / maxf(max_health, 1.0) * 100.0))
+	parts.append("Vida %d%%" % hp_pct)
+	var sat_pct := int(round(clampf(_wolf_hunger / 100.0, 0.0, 1.0) * 100.0))
+	parts.append("Saciedad %d%%" % sat_pct)
+	var state_text := ""
+	if _wolf_hunger < _wolf_hunger_threshold:
+		state_text = "hambriento"
+	elif _wolf_eating_timer > 0.0:
+		state_text = "comiendo"
+	elif _wolf_foe != null or _threat_player != null:
+		state_text = "defendiendo"
+	elif _follow_mode == "stay":
+		state_text = "quieto"
+	if not state_text.is_empty():
+		parts.append(state_text.capitalize())
+	return "(" + ", ".join(parts) + ")"
+
 func get_interaction_text(player = null) -> String:
 	if not _is_dead:
 		if animal_type == "wolf" and tamed_to != "":
+			var status := _tamed_status_text()
 			if _is_owner_actor(player):
-				return "Lobo domesticado - [F] %s" % ("Quieto" if _follow_mode == "follow" else "Seguir")
-			return "Lobo domesticado"
+				return "Lobo domesticado %s - [F] %s" % [status, ("Quieto" if _follow_mode == "follow" else "Seguir")]
+			return "Lobo domesticado %s" % status
 		if animal_type == "wolf" and tamed_to.is_empty() and player != null:
 			var fkey := _feeder_key(player)
 			var prog := int(_tame_progress.get(fkey, 0)) if not fkey.is_empty() else 0
