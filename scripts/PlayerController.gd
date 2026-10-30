@@ -4539,10 +4539,15 @@ func _update_hand_socket() -> void:
 		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation])
 		var l_world := skel_global * _hand_skeleton.get_bone_global_pose(_left_hand_bone_idx)
 		var knuckle_off := _close_bow_fingers(_left_hand_bone_idx, true)
-		if not bow_drawing:
+		if bow_drawing:
+			l_world.origin = l_world * _spear_palm_point(_hand_skeleton, _left_hand_bone_idx, true)
+		else:
 			l_world.origin = l_world * knuckle_off
 		var l_local := local_to_model * l_world
 		var r_world := skel_global * _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
+		if bow_drawing:
+			var r_knuckle := _close_bow_fingers(_hand_bone_idx, false)
+			r_world.origin = r_world * r_knuckle
 		var r_local := local_to_model * r_world
 		var prim_node := third_person_hand_item_root.find_child("HeldPrimitive", true, false) as Node3D
 		if bow_drawing:
@@ -4573,11 +4578,10 @@ func _update_hand_socket() -> void:
 			if prim_node != null:
 				prim_node.scale = Vector3.ONE * 1.38
 				prim_node.rotation_degrees = Vector3.ZERO
-				var grip_fwd_shift := 0.075
-				prim_node.position = Vector3(-0.010, -0.008, -grip_fwd_shift)
+				prim_node.position = Vector3.ZERO
 				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z * prim_node.scale.z)
 				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
-				_update_bow_draw_visuals(prim_node, (world_draw_dist / model_scale_z) + (grip_fwd_shift / prim_node.scale.z), not released)
+				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
 			return
 		else:
 			third_person_hand_item_root.position = l_local.origin
