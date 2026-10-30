@@ -20,6 +20,7 @@ func run():
  env.environment.ambient_light_energy = .75
  stage.add_child(env)
  var light := DirectionalLight3D.new()
+ light.shadow_enabled = true
  light.rotation_degrees = Vector3(-50,-35,0)
  stage.add_child(light)
  var ground := MeshInstance3D.new()
@@ -32,7 +33,7 @@ func run():
  stage.add_child(ground)
  var camera := Camera3D.new()
  camera.projection = Camera3D.PROJECTION_ORTHOGONAL
- camera.size = 6.0
+ camera.size = 4.8
  stage.add_child(camera)
  camera.position = Vector3(6,3.2,4.5)
  camera.look_at(Vector3(0,.8,0))

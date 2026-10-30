@@ -799,6 +799,33 @@ func test_tamed_wolf_world_rules() -> void:
 	tamed._wolf_foe = null
 	tamed.take_damage(5.0, false, bear)
 	check(tamed._wolf_foe == bear, "A bear biting the tamed wolf is fought back")
+	# The bear's combat bite waits for contact and applies damage once.
+	bear.global_position = tamed.global_position - Vector3(0, 0, 2.0)
+	bear.rotation.y = 0.0
+	bear._attack_cooldown = 0.0
+	bear._animal_bite_target = null
+	var before_bear_bite := tamed.health
+	bear._player = null
+	bear._wolf_foe = null
+	bear._state = "patrol"
+	bear._wolf_hunger = 20.0
+	bear._cached_wildlife = [tamed]
+	bear.patrol_points = [bear.position]
+	bear._wolf_ai(0.05)
+	check(bear._wolf_foe == tamed and bear.current_anim_keyword == "attack", "Hungry bear uses combat animation from its first attack on a wolf")
+	check(tamed.health == before_bear_bite, "Bear starts its animation before applying bite damage")
+	bear._fight_animal(tamed, 0.30)
+	check(is_equal_approx(tamed.health, before_bear_bite - 60.0), "Bear bite damages a tamed wolf at contact")
+	bear._fight_animal(tamed, 0.30)
+	check(is_equal_approx(tamed.health, before_bear_bite - 60.0), "Bear bite cannot apply damage twice")
+	bear._animal_bite_target = null
+	bear._attack_cooldown = 0.0
+	bear._fight_animal(tamed, 0.05)
+	var target_position := tamed.position
+	tamed.position += Vector3(0, 0, 8)
+	bear._fight_animal(tamed, 0.30)
+	check(is_equal_approx(tamed.health, before_bear_bite - 60.0), "Escaping the bear before contact avoids damage")
+	tamed.position = target_position
 	# Pero un lobo salvaje NO pelea con osos (huye, como siempre).
 	var wild := make_wolf(world, Vector3(0, 0, 60))
 	wild.take_damage(5.0, false, bear)

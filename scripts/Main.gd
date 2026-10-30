@@ -3799,10 +3799,11 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, targe
 	if str(animal.get("tamed_to")) != str(sender) or sender == 0:
 		return
 	# Debe estar cerca de su lobo para darle órdenes
-	if server_proxies.has(sender):
-		var proxy: Node3D = server_proxies[sender]
-		if proxy.global_position.distance_to(animal.global_position) > 12.0:
-			return
+	if not server_proxies.has(sender) or not is_instance_valid(server_proxies[sender]):
+		return
+	var proxy: Node3D = server_proxies[sender]
+	if proxy.get_meta("proxy_dead", false) or proxy.global_position.distance_to(animal.global_position) > 12.0:
+		return
 	var target: Node = null
 	if mode == "attack" and not target_name.is_empty():
 		if target_name.begins_with("p:"):
@@ -3815,7 +3816,7 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, targe
 			target = get_node_or_null(target_name)
 			if target != null and (bool(target.get("_is_dead")) or str(target.get("animal_type")) == ""):
 				target = null
-		if target == null:
+		if not (target is Node3D) or target == proxy or proxy.global_position.distance_to(target.global_position) > 45.0:
 			return
 	if animal.has_method("apply_command"):
 		animal.apply_command(mode, target)
@@ -5314,7 +5315,9 @@ func _wolf_order_send(mode: String, target_name: String = "") -> void:
 				if remote_players.has(pid):
 					target = remote_players[pid]
 			else:
-				target = get_node_or_null("Puppet_" + target_name)
+				target = get_node_or_null(target_name)
+				if target == null:
+					target = get_node_or_null("Puppet_" + target_name)
 		if wolf.has_method("apply_command"):
 			wolf.apply_command(mode, target)
 
@@ -5333,14 +5336,19 @@ func _wolf_attack_targets() -> Array:
 		if label.is_empty() and net != null and net.players.has(pid):
 			label = str(net.players[pid].get("char_name", "superviviente"))
 		result.append({"label": label if not label.is_empty() else "jugador %d" % pid, "id": "p:%d" % pid})
-	for aid in puppet_animals.keys():
-		var p = puppet_animals[aid]
-		if p == null or not is_instance_valid(p) or bool(p.get("_is_dead")) or p == _wolf_menu_wolf:
+	var candidates: Array = puppet_animals.values()
+	for animal in get_tree().get_nodes_in_group("wildlife"):
+		if not candidates.has(animal):
+			candidates.append(animal)
+	for p in candidates:
+		if not is_instance_valid(p) or not (p is WildlifeController) or p._is_dead or p == _wolf_menu_wolf:
+			continue
+		if is_instance_valid(_wolf_menu_wolf) and not p.tamed_to.is_empty() and p.tamed_to == str(_wolf_menu_wolf.get("tamed_to")):
 			continue
 		if p.global_position.distance_to(origin) > 45.0:
 			continue
-		var aname := str(aid).replacen("Puppet_", "")
-		result.append({"label": "%s (%s)" % [str(p.get("animal_type")).capitalize(), aname], "id": aname})
+		var aname := str(p.name).replacen("Puppet_", "")
+		result.append({"label": "%s (%s)" % [str(p.animal_type).capitalize(), aname], "id": aname})
 	return result
 
 var _loot_panel: PanelContainer = null

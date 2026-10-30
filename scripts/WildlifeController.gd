@@ -1226,6 +1226,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if nearest_prey != null and is_instance_valid(nearest_prey):
 			var dist_to_prey := global_position.distance_to(nearest_prey.global_position)
 			if dist_to_prey < 45.0:
+				# A wolf is a combat opponent from the first bite, including
+				# when the bear initiates the encounter while hunting.
+				if animal_type == "bear" and str(nearest_prey.get("animal_type")) == "wolf":
+					_wolf_foe = nearest_prey
+					_foe_timer = 20.0
+					_state = "fight_wolf"
+					_chase_target = nearest_prey
+					return _fight_animal(nearest_prey, delta)
 				_state = "chase_prey"
 				_chase_target = nearest_prey
 				target = nearest_prey.global_position
@@ -1337,7 +1345,7 @@ func _find_nearest_prey() -> Node3D:
 		var ats := str(at)
 		if animal_type == "bear":
 			# Bears can hunt wolves, foxes and deer inside their forest territory,
-			# skipping tamed wolves and other bears.
+			# including tamed wolves, but not other bears.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
 				continue
 
@@ -2509,7 +2517,14 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 			var facing := global_basis.z.normalized().dot((target - global_position).normalized()) > 0.5
 			if close and facing and _animal_bite_clear(target):
 				foe.take_damage(60.0 if animal_type == "bear" else (35.0 if not tamed_to.is_empty() else 25.0), false, self)
-		if _animal_bite_elapsed < 0.85:
+		# Finish the authored clip instead of cutting its recovery at 0.85 s.
+		var bite_duration := 1.1
+		if _animation_player != null:
+			for clip_name in _animation_player.get_animation_list():
+				if "attack" in clip_name.to_lower():
+					bite_duration = _animation_player.get_animation(clip_name).length
+					break
+		if _animal_bite_elapsed < bite_duration:
 			_play_animation_by_name("attack")
 			if _animation_player != null:
 				_animation_player.speed_scale = 1.0
@@ -2874,17 +2889,25 @@ func apply_command(mode: String, target: Node = null) -> void:
 		if target is WildlifeController:
 			if target.get("_is_dead") == true or (not str(target.get("tamed_to")).is_empty() and str(target.get("tamed_to")) == tamed_to):
 				return
+			_threat_player = null
+			_ordered_prey = null
+			_wolf_foe = null
 			if str((target as WildlifeController).animal_type) in ["wolf", "bear"]:
 				_wolf_foe = target
 				_foe_timer = 20.0
 			else:
 				_ordered_prey = target
 		elif target is Node3D and (target.is_in_group("net_player_proxy") or target.is_in_group("remote_player")):
+			if target == _resolve_owner() or target.get_meta("proxy_dead", false):
+				return
+			_wolf_foe = null
+			_ordered_prey = null
 			_threat_player = target
 			_threat_timer = 25.0
 		else:
 			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
 			return
+		_animal_bite_target = null
 		_orders_cease = false
 		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca!")
 		return
@@ -2903,8 +2926,25 @@ func apply_command(mode: String, target: Node = null) -> void:
 		_follow_mode = mode
 	else:
 		return
+	# A movement order cancels the previous hunt/attack. New threats may still
+	# trigger defence, unless the owner explicitly ordered cease fire.
+	_animal_bite_target = null
+	_wolf_foe = null
+	_ordered_prey = null
+	_threat_player = null
+	_chase_target = null
 	if _follow_mode in ["stay", "patrol"]:
 		_stay_pos = global_position
+	if _follow_mode == "patrol":
+		patrol_points.clear()
+		for offset in [Vector3(6, 0, 0), Vector3(0, 0, 6), Vector3(-6, 0, 0), Vector3(0, 0, -6)]:
+			var point: Vector3 = _stay_pos + offset
+			if _is_position_allowed(point):
+				patrol_points.append(point)
+		if patrol_points.is_empty():
+			patrol_points.append(_stay_pos)
+		target_index = 0
+		_path_recalc_timer = 0.0
 	var owner := _resolve_owner()
 	var msg := "El lobo te sigue."
 	if _follow_mode == "stay":
@@ -3131,7 +3171,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _net != null and _net.is_dedicated_server:
 		# Dedicated servers can't play audio: relay events to clients so each
 		# puppet plays the sound locally.
-		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "bite") and _net.is_connected:
+		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "growl_low" or sound_type == "bite") and _net.is_connected:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	var is_bear := animal_type == "bear"
