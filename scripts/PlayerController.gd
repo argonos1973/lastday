@@ -635,6 +635,7 @@ var _impact_audio_player = null
 var _shot_audio_player = null
 var _fall_audio_player = null
 var _unwell_audio_player = null
+var _whistle_audio_player = null
 var _pain_sound_timer := 0.0
 var _critical_sound_timer := 0.0
 var _was_critical := false
@@ -15328,6 +15329,19 @@ func _play_unwell_sound() -> void:
 	_unwell_audio_player.volume_db = 3.0
 	_unwell_audio_player.pitch_scale = randf_range(0.9, 1.1)
 	_unwell_audio_player.play()
+
+# Silbido del personaje (tecla X): 3D en proxies/puppets para que los demás lo
+# oigan a distancia, 2D para el jugador local. Alcanza ~95 m, como el lobo.
+func _play_whistle_sound() -> void:
+	if _whistle_audio_player == null:
+		_whistle_audio_player = _make_action_sound_player("WhistleSound", 14.0, 95.0)
+	var stream := _load_audio_stream("res://assets/audio/silbido.mp3")
+	if stream == null:
+		return
+	_whistle_audio_player.stream = stream
+	_whistle_audio_player.volume_db = 2.0
+	_whistle_audio_player.pitch_scale = randf_range(0.97, 1.03)
+	_whistle_audio_player.play()
 
 func _sync_condition_audio(condition: String) -> void:
 	var net_node := get_tree().root.get_node_or_null("NetworkManager")

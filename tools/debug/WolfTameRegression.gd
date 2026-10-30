@@ -322,9 +322,71 @@ func run() -> void:
 	await test_multi_wolf_offering()
 	await test_server_persistence()
 	await test_tamed_wolf_world_rules()
+	test_whistle_and_menu_hold()
 	if failures == 0:
 		print("WolfTameRegression: ALL PASS")
 	quit(1 if failures else 0)
+
+# Menú de órdenes (hold), silbido de llamada/agresivo y distancia al comer carne.
+func test_whistle_and_menu_hold() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player := TestPlayer.new()
+	player.name = "Player"
+	player.position = Vector3(10, 0, 0)
+	world.add_child(player)
+
+	# --- Hold con el menú de órdenes abierto ---
+	var wolf := make_wolf(world, Vector3(20, 0, 0))
+	wolf.tamed_to = "local"
+	wolf._follow_mode = "follow"
+	var free_res: Dictionary = wolf._tamed_ai(0.05)
+	check(float(free_res["speed"]) > 0.0, "Tamed wolf follows a distant owner")
+	wolf.apply_command("menu_hold")
+	check(wolf._menu_hold_until > Time.get_ticks_msec(), "menu_hold arms the hold window")
+	var held: Dictionary = wolf._tamed_ai(0.05)
+	check(bool(held.get("handled", false)) and float(held["speed"]) == 0.0, "Held wolf stays put while the orders menu is open")
+	wolf.apply_command("menu_free")
+	check(wolf._menu_hold_until == 0, "menu_free releases the hold")
+	var resumed: Dictionary = wolf._tamed_ai(0.05)
+	check(float(resumed["speed"]) > 0.0, "Freed wolf resumes moving")
+
+	# --- Un silbido: viene y sigue sin atacar a nada ---
+	var deer := make_wolf(world, Vector3(16, 0, 0))
+	deer.animal_type = "deer"
+	wolf._wolf_foe = deer
+	wolf.apply_command("whistle_recall")
+	check(wolf._follow_mode == "follow", "Whistle recall restores follow mode")
+	check(wolf._orders_cease, "Whistle recall is pacifist (no attacking)")
+	check(wolf._wolf_foe == null and wolf._ordered_prey == null and wolf._threat_player == null, "Whistle recall clears engagements")
+
+	# --- Doble silbido: fija el objetivo más cercano, nunca al dueño ni a los suyos ---
+	var pack_mate := make_wolf(world, Vector3(13, 0, 0))
+	pack_mate.tamed_to = "local"  # mismo dueño: no es objetivo
+	wolf.apply_command("whistle_aggro")
+	check(wolf._whistle_aggro_until > Time.get_ticks_msec(), "Double whistle arms the aggro window")
+	check(not wolf._orders_cease, "Aggro whistle clears pacifist mode")
+	wolf._tamed_ai(0.05)
+	check(wolf._ordered_prey == deer, "Aggro whistle picks the nearest wild animal, skipping the owner's other wolf")
+	var proxy9 := make_proxy(world, 9, Vector3(11, 0, 0))
+	wolf._ordered_prey = null
+	wolf._whistle_aggro_until = Time.get_ticks_msec() + 25000
+	deer.global_position = Vector3(60, 0, 0)
+	wolf._tamed_ai(0.05)
+	check(wolf._threat_player == proxy9, "Aggro whistle can target a nearby player proxy")
+
+	# --- Distancia al comer: camina hasta la pieza antes de animación de comer ---
+	var wolfE := make_wolf(world, Vector3(0, 0, 50))
+	wolfE._wolf_hunger = 20.0
+	var far_meat := spawn_meat(world, wolfE.global_position + Vector3(2.0, 0, 0), "")
+	var resE: Dictionary = wolfE._seek_meat_pickup(far_meat)
+	check(wolfE._state == "seek_corpse" and float(resE["speed"]) > 0.0, "Meat at 2.0 m: keeps walking instead of eating from afar")
+	var near_meat := spawn_meat(world, wolfE.global_position + Vector3(1.3, 0, 0), "")
+	wolfE._seek_meat_pickup(near_meat)
+	check(wolfE._state == "eating" and wolfE._wolf_eating_target == near_meat, "Meat at 1.3 m: eats right on top of the piece")
+
+	world.free()
 
 func test_feeding_priority() -> void:
 	var world := TestWorld.new()

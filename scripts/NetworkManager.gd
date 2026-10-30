@@ -1126,7 +1126,7 @@ func apply_damage_to_client(amount: float, weapon: String = "") -> void:
 @rpc("any_peer", "reliable")
 func player_condition_audio(condition: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	if not _accepts_client_request(sender) or (condition != "sick" and condition != "critical"):
+	if not _accepts_client_request(sender) or condition not in ["sick", "critical", "whistle"]:
 		return
 	_broadcast_player_condition_audio(sender, condition)
 
@@ -1140,7 +1140,7 @@ func _broadcast_player_condition_audio(peer_id: int, condition: String) -> void:
 
 @rpc("authority", "reliable")
 func player_condition_audio_event(peer_id: int, condition: String) -> void:
-	if condition != "sick" and condition != "critical":
+	if condition not in ["sick", "critical", "whistle"]:
 		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_condition_audio"):

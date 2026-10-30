@@ -1016,6 +1016,14 @@ func _input(event: InputEvent) -> void:
 			hud.toggle_players_list()
 			get_viewport().set_input_as_handled()
 			return
+		if event.keycode == KEY_X and not player.is_sleeping:
+			_whistle_to_wolf()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_O and not player.is_sleeping and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
+			_open_wolf_menu()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_ESCAPE:
 			if _wolf_menu != null:
 				_close_wolf_orders()
@@ -3021,6 +3029,8 @@ func _net_player_condition_audio(peer_id: int, condition: String) -> void:
 		return
 	if condition == "sick" or condition == "critical":
 		target._play_unwell_sound()
+	elif condition == "whistle" and target.has_method("_play_whistle_sound"):
+		target._play_whistle_sound()
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
@@ -3802,7 +3812,12 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, targe
 	if not server_proxies.has(sender) or not is_instance_valid(server_proxies[sender]):
 		return
 	var proxy: Node3D = server_proxies[sender]
-	if proxy.get_meta("proxy_dead", false) or proxy.global_position.distance_to(animal.global_position) > 12.0:
+	if proxy.get_meta("proxy_dead", false):
+		return
+	# El silbido y el hold del menú alcanzan más lejos; las órdenes normales
+	# se aceptan hasta 45 m (el menú contextual [O] no requiere apuntar).
+	var max_order_dist := 90.0 if mode in ["whistle_recall", "whistle_aggro", "menu_hold", "menu_free"] else 45.0
+	if proxy.global_position.distance_to(animal.global_position) > max_order_dist:
 		return
 	var target: Node = null
 	if mode == "attack" and not target_name.is_empty():
@@ -5245,6 +5260,9 @@ func _show_wolf_orders(wolf: Node) -> void:
 		return
 	_close_wolf_orders()
 	_wolf_menu_wolf = wolf
+	# Mientras el menú está abierto el lobo espera quieto: si sigue corriendo
+	# en modo seguir se aparta antes de poder elegir la orden.
+	_send_wolf_mode(wolf, "menu_hold")
 	_wolf_menu = PanelContainer.new()
 	_wolf_menu.custom_minimum_size = Vector2(320, 0)
 	var style := StyleBoxFlat.new()
@@ -5298,10 +5316,86 @@ func _close_wolf_orders() -> void:
 	if _wolf_menu != null:
 		_wolf_menu.queue_free()
 		_wolf_menu = null
+	_send_wolf_mode(_wolf_menu_wolf, "menu_free")
 	_wolf_menu_wolf = null
 	var any_panel_open: bool = (hud != null and (hud.inventory_visible or hud.craft_panel_visible)) or _backpack_panel != null or _loot_panel != null
 	if player != null and not player.is_dead and not any_panel_open:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+# Silbido (tecla X): una pulsación llama al lobo — viene y sigue sin atacar;
+# dos pulsaciones seguidas (<0.9 s) lo ponen en modo agresivo unos segundos.
+var _whistle_last_msec := -2000
+
+func _my_tamed_wolf() -> Node:
+	var my_net_id := ""
+	if net != null and net.peer != null and net.has_method("get_my_id"):
+		my_net_id = str(net.get_my_id())
+	var best: Node = null
+	var best_d := 1e9
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if not is_instance_valid(w) or not (w is WildlifeController) or bool(w.get("_is_dead")):
+			continue
+		var tamed := str(w.get("tamed_to"))
+		if tamed.is_empty():
+			continue
+		var mine := (tamed == "local" and not bool(w.get("is_puppet"))) or (not my_net_id.is_empty() and tamed == my_net_id)
+		if not mine:
+			continue
+		var d: float = w.global_position.distance_to(player.global_position)
+		if d < best_d:
+			best_d = d
+			best = w
+	return best
+
+# Menú de órdenes sin apuntar (tecla O): abre el panel sobre el lobo propio
+# más cercano; si ya está abierto lo cierra (contextual).
+func _open_wolf_menu() -> void:
+	if _wolf_menu != null:
+		_close_wolf_orders()
+		return
+	var wolf := _my_tamed_wolf()
+	if wolf == null:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("No tienes ningún lobo domesticado.")
+		return
+	if player.global_position.distance_to(wolf.global_position) > 45.0:
+		if player.has_signal("notice"):
+			player.notice.emit("El lobo está demasiado lejos — acércate o llámalo con el silbido [X].")
+		return
+	_show_wolf_orders(wolf)
+
+func _whistle_to_wolf() -> void:
+	# El personaje silba siempre, haya lobo o no; en red los demás lo oyen.
+	if player.has_method("_play_whistle_sound"):
+		player._play_whistle_sound()
+	if player.has_method("_sync_condition_audio"):
+		player._sync_condition_audio("whistle")
+	var now := Time.get_ticks_msec()
+	var double := now - _whistle_last_msec < 900
+	_whistle_last_msec = now
+	var wolf := _my_tamed_wolf()
+	if wolf == null:
+		if player != null and player.has_signal("notice"):
+			player.notice.emit("No tienes ningún lobo domesticado.")
+		return
+	if player.global_position.distance_to(wolf.global_position) > 90.0:
+		if player.has_signal("notice"):
+			player.notice.emit("El lobo está demasiado lejos para oír el silbido.")
+		return
+	_send_wolf_mode(wolf, "whistle_aggro" if double else "whistle_recall")
+	if player != null and player.has_signal("notice"):
+		player.notice.emit("¡Silbido doble! ¡El lobo ataca a lo que tenga cerca!" if double else "¡Silbido! El lobo viene a tu lado.")
+
+# Órdenes sin objetivo (hold/free del menú, silbido): puppet → RPC al servidor,
+# lobo real (SP/host) → apply_command directo, igual que _wolf_order_send.
+func _send_wolf_mode(wolf: Node, mode: String) -> void:
+	if wolf == null or not is_instance_valid(wolf):
+		return
+	if bool(wolf.get("is_puppet")):
+		if net != null and net.has_method("command_wolf"):
+			net.command_wolf.rpc_id(1, wolf.name.replacen("Puppet_", ""), mode)
+	elif wolf.has_method("apply_command"):
+		wolf.apply_command(mode)
 
 func _wolf_order_send(mode: String, target_name: String = "") -> void:
 	var wolf: Node = _wolf_menu_wolf

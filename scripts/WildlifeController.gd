@@ -142,6 +142,8 @@ var _foe_ignored: Node3D = null   # foe que gana la carrera — ignorado un rato
 var _foe_ignore_until := 0.0
 var _threat_player: Node3D = null # jugador que dañó al dueño (o al que el dueño atacó)
 var _threat_timer := 0.0
+var _menu_hold_until := 0           # ms: con el menú de órdenes abierto espera quieto
+var _whistle_aggro_until := 0       # ms: doble silbido = atacar lo que haya cerca
 var _owner_node: Node3D = null
 var _owner_client_id := ""
 var _owner_dead_timer := 0.0
@@ -1848,7 +1850,7 @@ func get_interaction_text(player = null) -> String:
 		if animal_type == "wolf" and tamed_to != "":
 			var status := _tamed_status_text()
 			if _is_owner_actor(player):
-				return "Lobo domesticado %s - [F] Ordenes" % status
+				return "Lobo domesticado %s - [F] Ordenes  [X] Silbido" % status
 			return "Lobo domesticado %s" % status
 		if animal_type == "wolf" and tamed_to.is_empty() and player != null:
 			var fkey := _feeder_key(player)
@@ -2199,7 +2201,7 @@ func _seek_meat_pickup(meat: Node3D) -> Dictionary:
 		_claimed_meat = meat
 		meat.set_meta("wolf_claim", self)
 		_offer_stall_msec = 0
-	if _flat_distance_to(meat.global_position) < 2.3:
+	if _flat_distance_to(meat.global_position) < 1.45:
 		_offer_stall_msec = 0
 		_wolf_eating_timer = 8.0
 		_wolf_eating_target = meat
@@ -2629,6 +2631,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 		_player = _threat_player
 		return {"handled": false}
 	_player = null
+	# Con el menú de órdenes abierto espera quieto: si se aparta corriendo el
+	# dueño no llega a elegir la orden (y en red la orden se valida a <12 m).
+	if _menu_hold_until > 0:
+		if Time.get_ticks_msec() >= _menu_hold_until:
+			_menu_hold_until = 0
+		else:
+			if owner != null:
+				_face_towards(owner.global_position, delta)
+			_state = "follow" if _follow_mode == "follow" else "guard"
+			_play_animation_by_name("idle")
+			return {"handled": true, "target": global_position, "speed": 0.0}
 	# Aviso por ladridos: una amenaza (lobo u oso salvaje) ronda al dueno.
 	_warn_bark_timer = maxf(0.0, _warn_bark_timer - delta)
 	if owner != null and _warn_bark_timer <= 0.0:
@@ -2691,6 +2704,26 @@ func _tamed_ai(delta: float) -> Dictionary:
 		_state = "guard"
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
+	# Doble silbido: durante unos segundos ataca a lo que tenga más cerca,
+	# animal o jugador (nunca a su dueño ni a lobos del mismo dueño).
+	if _whistle_aggro_until > 0:
+		if _orders_cease or _wolf_foe != null or _threat_player != null or Time.get_ticks_msec() >= _whistle_aggro_until:
+			_whistle_aggro_until = 0
+		elif _ordered_prey == null:
+			var prey := _find_whistle_prey(owner_anchor)
+			if prey is WildlifeController:
+				var ptype := str((prey as WildlifeController).animal_type)
+				if ptype == "wolf" or ptype == "bear":
+					_set_wolf_foe(prey)
+				else:
+					_ordered_prey = prey
+			elif prey != null:
+				_threat_player = prey
+				_threat_timer = 25.0
+			if prey != null:
+				# El combate/caza arranca al frame siguiente por la vía normal.
+				_play_animation_by_name("run")
+				return {"handled": true, "target": global_position, "speed": 0.0}
 	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento),
 	# incluida la que suelta el dueno al destripar ciervos, osos y demas caza.
 	# En modo "stay" solo come piezas proximas a su puesto para no abandonarlo.
@@ -2807,6 +2840,49 @@ func _tamed_ai(delta: float) -> Dictionary:
 		anim = "trot"
 	_play_animation_by_name(anim)
 	return {"handled": true, "target": follow_goal, "speed": spd}
+
+# Objetivo del doble silbido: lo más cercano al dueño o al propio lobo —
+# cualquier animal salvaje/ajeno y cualquier jugador que no sea el dueño.
+func _find_whistle_prey(anchor: Vector3) -> Node3D:
+	if get_tree() == null:
+		return null
+	var owner := _resolve_owner()
+	var best: Node3D = null
+	var best_d := 30.0
+	for w in get_tree().get_nodes_in_group("wildlife"):
+		if w == self or not is_instance_valid(w) or not (w is WildlifeController):
+			continue
+		var cw := w as WildlifeController
+		if cw.is_puppet or cw._is_dead:
+			continue
+		if str(cw.tamed_to) == tamed_to:
+			continue  # los animales del mismo dueño no son objetivo
+		var d := minf(cw.global_position.distance_to(anchor), cw.global_position.distance_to(global_position))
+		if d < best_d:
+			best_d = d
+			best = cw
+	var player_candidates: Array = []
+	for grp in ["net_player_proxy", "remote_player"]:
+		player_candidates.append_array(get_tree().get_nodes_in_group(grp))
+	var scene := get_tree().current_scene
+	if scene != null:
+		var lp := scene.get_node_or_null("Player")
+		if lp != null and not player_candidates.has(lp):
+			player_candidates.append(lp)
+	for op in player_candidates:
+		if not is_instance_valid(op) or not (op is Node3D) or op == owner:
+			continue
+		if _feeder_key(op) == tamed_to:
+			continue  # jamás a su dueño
+		if op.get_meta("proxy_dead", false) or op.get("is_dead") == true:
+			continue
+		if op.is_in_group("net_player_proxy") and (not op.get_meta("has_real_pos", false) or op.get_meta("disconnected", false)):
+			continue
+		var d := minf(op.global_position.distance_to(anchor), op.global_position.distance_to(global_position))
+		if d < best_d:
+			best_d = d
+			best = op as Node3D
+	return best
 
 func _find_nearest_prey_for_hunt(anchor: Vector3, radius: float) -> Node:
 	if get_tree() == null:
@@ -2989,6 +3065,45 @@ func _is_owner_actor(player: Node) -> bool:
 
 func apply_command(mode: String, target: Node = null) -> void:
 	# mode: "toggle" | "follow" | "stay" | "patrol" | "attack" | "cease"
+	#       | "menu_hold" | "menu_free" | "whistle_recall" | "whistle_aggro"
+	if mode == "menu_hold":
+		_menu_hold_until = Time.get_ticks_msec() + 45000
+		return
+	if mode == "menu_free":
+		_menu_hold_until = 0
+		return
+	if mode == "whistle_recall":
+		# Un silbido: viene al lado del dueño y le sigue sin atacar a nada.
+		_menu_hold_until = 0
+		_whistle_aggro_until = 0
+		_orders_cease = true
+		_animal_bite_target = null
+		_wolf_foe = null
+		_ordered_prey = null
+		_threat_player = null
+		_chase_target = null
+		_wolf_eating_timer = 0.0
+		_wolf_eating_target = null
+		_claimed_meat = null
+		_follow_mode = "follow"
+		_state = "follow"
+		_tamed_rest_time = 0.0
+		_play_wolf_sound("howl")
+		_notify_owner_msg(_resolve_owner(), "El lobo acude a tu silbido y te sigue sin atacar.")
+		return
+	if mode == "whistle_aggro":
+		# Dos silbidos seguidos: ataca a quien tenga cerca (animales y jugadores).
+		_menu_hold_until = 0
+		_orders_cease = false
+		_animal_bite_target = null
+		_wolf_foe = null
+		_ordered_prey = null
+		_threat_player = null
+		_chase_cooldown = 0.0
+		_whistle_aggro_until = Time.get_ticks_msec() + 25000
+		_play_wolf_sound("growl")
+		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca a quien tenga cerca!")
+		return
 	if mode == "attack":
 		if target == null or not is_instance_valid(target) or target == self:
 			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
