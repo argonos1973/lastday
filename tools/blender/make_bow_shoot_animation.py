@@ -10,10 +10,11 @@
 Run from the repo root:
   /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/make_bow_shoot_animation.py
 """
+import math
 import sys
 from pathlib import Path
 import bpy
-from mathutils import Quaternion
+from mathutils import Quaternion, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_FBX = ROOT / "assets_src" / "Standing Aim Idle 01.fbx"
@@ -44,12 +45,32 @@ def load_clean_armature(fbx_path: Path = SOURCE_FBX):
     return armatures[0]
 
 
+def level_bow_left_arm(arm, f_start: int, f_end: int) -> None:
+    """Raise LeftArm slightly (-6 deg local X, +4 deg local Z) so LeftHand sits
+    at the exact same height and line as RightHand's cheek anchor."""
+    pb_la = arm.pose.bones.get("mixamorig:LeftArm")
+    if pb_la is None:
+        return
+    scn = bpy.context.scene
+    corr = Quaternion((1.0, 0.0, 0.0), math.radians(-6.0)) @ Quaternion((0.0, 0.0, 1.0), math.radians(4.0))
+    samples = {}
+    for f in range(f_start, f_end + 1):
+        scn.frame_set(f)
+        bpy.context.view_layer.update()
+        samples[f] = (pb_la.rotation_quaternion.copy() @ corr).normalized()
+    for f, q in samples.items():
+        scn.frame_set(f)
+        pb_la.rotation_quaternion = q
+        pb_la.keyframe_insert("rotation_quaternion", frame=f)
+
+
 def export_aim_idle() -> None:
     arm = load_clean_armature(SOURCE_FBX)
     scn = bpy.context.scene
     act = arm.animation_data.action
     act.name = "BowAimIdle"
     f_start, f_end = int(round(act.frame_range[0])), int(round(act.frame_range[1]))
+    level_bow_left_arm(arm, f_start, f_end)
     scn.frame_start = f_start
     scn.frame_end = f_end
     OUT_AIM.parent.mkdir(parents=True, exist_ok=True)
@@ -72,6 +93,7 @@ def export_aim_walk() -> None:
     act = arm.animation_data.action
     act.name = "BowAimWalk"
     f_start, f_end = int(round(act.frame_range[0])), int(round(act.frame_range[1]))
+    level_bow_left_arm(arm, f_start, f_end)
     # Strip horizontal (X/Z) root motion from mixamorig:Hips so the character walks in place.
     hips_pb = arm.pose.bones.get("mixamorig:Hips")
     if hips_pb is not None:
@@ -101,6 +123,7 @@ def export_bow_shoot() -> None:
     arm = load_clean_armature()
     scn = bpy.context.scene
     total_frames = 36
+    level_bow_left_arm(arm, 1, total_frames)
 
     # Sample the base archer stance from Standing Aim Idle 01
     base_samples = []
@@ -116,11 +139,15 @@ def export_bow_shoot() -> None:
     arm.animation_data.action = new_act
 
     # Calibrated on Standing Aim Idle 01.fbx:
-    # - Nock pose: right hand forward near the bow grip (-Y direction)
+    # - Nock pose: right hand forward near the bowstring (-Y direction)
+    # - Mid-draw pose: IK-calibrated waypoint keeping RightHand on the straight
+    #   arrow line between bow and cheek instead of swinging laterally outward
     # - Anchor pose: the native Standing Aim Idle 01 cheek anchor
     # - Release pose: crisp backward follow-through after releasing the string
     q_ra_nock = Quaternion((0.2364, -0.5724, 0.1204, -0.7759)).normalized()
     q_rf_nock = Quaternion((0.9301, -0.0215, -0.3612, -0.0623)).normalized()
+    q_ra_mid = Quaternion((0.5428, 0.0690, 0.2379, -0.8025)).normalized()
+    q_rf_mid = Quaternion((0.6874, 0.0130, -0.0119, -0.7261)).normalized()
     q_ra_rel = Quaternion((0.9258, 0.1987, 0.1397, -0.2898)).normalized()
     q_rf_rel = Quaternion((0.3846, -0.0403, -0.0064, -0.9222)).normalized()
 
@@ -139,19 +166,31 @@ def export_bow_shoot() -> None:
         rf_anchor = sample["mixamorig:RightForeArm"][1]
 
         # Frame timeline (36 frames @ 30fps = 1.2s):
-        #  0..3  : reach to nock at bowstring
-        #  3..17 : draw bowstring steadily from bow to cheek anchor
+        #  0..3  : reach to nock at bowstring along straight mid-draw path
+        #  3..17 : draw bowstring steadily in a straight line to cheek anchor
         # 17..21 : hold full draw at anchor
         # 21..25 : release snap / follow-through
         # 25..35 : recover back to archer aim stance
         if f_idx <= 3:
             w_nock = smoothstep(0.0, 3.0, float(f_idx))
-            pb_ra.rotation_quaternion = ra_anchor.slerp(q_ra_nock, w_nock)
-            pb_rf.rotation_quaternion = rf_anchor.slerp(q_rf_nock, w_nock)
+            if w_nock < 0.5:
+                t2 = w_nock * 2.0
+                pb_ra.rotation_quaternion = ra_anchor.slerp(q_ra_mid, t2)
+                pb_rf.rotation_quaternion = rf_anchor.slerp(q_rf_mid, t2)
+            else:
+                t2 = (w_nock - 0.5) * 2.0
+                pb_ra.rotation_quaternion = q_ra_mid.slerp(q_ra_nock, t2)
+                pb_rf.rotation_quaternion = q_rf_mid.slerp(q_rf_nock, t2)
         elif f_idx <= 17:
             draw_t = smoothstep(3.0, 17.0, float(f_idx))
-            pb_ra.rotation_quaternion = q_ra_nock.slerp(ra_anchor, draw_t)
-            pb_rf.rotation_quaternion = q_rf_nock.slerp(rf_anchor, draw_t)
+            if draw_t < 0.5:
+                t2 = draw_t * 2.0
+                pb_ra.rotation_quaternion = q_ra_nock.slerp(q_ra_mid, t2)
+                pb_rf.rotation_quaternion = q_rf_nock.slerp(q_rf_mid, t2)
+            else:
+                t2 = (draw_t - 0.5) * 2.0
+                pb_ra.rotation_quaternion = q_ra_mid.slerp(ra_anchor, t2)
+                pb_rf.rotation_quaternion = q_rf_mid.slerp(rf_anchor, t2)
         elif f_idx <= 21:
             pb_ra.rotation_quaternion = ra_anchor
             pb_rf.rotation_quaternion = rf_anchor

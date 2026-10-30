@@ -21,9 +21,9 @@ func _process_modification() -> void:
 	var skeleton := get_skeleton()
 	if skeleton == null:
 		return
-	# SkeletonModifier3D restores the input pose after rendering. Cached overrides
-	# from an earlier invocation must never replace this frame's animation.
-	controller._aim_pitch_saved_rotations.clear()
+	# Undo any pose written by _physics_process/_process before this modifier
+	# runs so pitch/finger rotations never accumulate across frames.
+	controller._restore_aim_pitch_pose(skeleton)
 	controller._m4_saved_left_arm_poses.clear()
 	controller._processing_held_grip = true
 	if controller._generic_hand_grip or (controller._has_fishing_rod and not controller._is_fishing):

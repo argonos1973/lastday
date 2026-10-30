@@ -1789,7 +1789,7 @@ func _process(delta: float) -> void:
 	if _crosshair_check_timer >= 0.5:
 		_crosshair_check_timer = 0.0
 		var main := get_tree().current_scene
-		if main != null and main.hud != null:
+		if main != null and main.get("hud") != null:
 			_update_crosshair(_has_rifle_equipped())
 	_update_crosshair_spread(delta)
 	_update_rifle_visuals(delta)
@@ -4240,9 +4240,10 @@ func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 
 func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
-	# Only the modifier may tilt the live M4 torso. Otherwise its input pose
-	# already contains pitch from _process and the rendered lean is doubled.
-	if _m4_pose_uses_modifier() and target_skel == _hand_skeleton and not _processing_held_grip:
+	# When HeldGripModifier is active on a rendered viewport, only the modifier
+	# may tilt the torso; otherwise _physics_process writes into the base pose
+	# before the modifier runs and the lean accumulates every frame.
+	if DisplayServer.get_name() != "headless" and target_skel == _hand_skeleton and is_instance_valid(_grip_modifier) and _grip_modifier.active and not _processing_held_grip:
 		return
 	if is_dead or is_sleeping or _applying_aim_pitch or target_skel == null or not is_instance_valid(target_skel):
 		return
@@ -4273,9 +4274,7 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 		if not is_puppet and is_instance_valid(camera) and not m4_active:
 			aim_pitch = camera.rotation.x
 		var walking_bow := bow_active and not _bow_aim_walk_animation.is_empty() and cur_anim == _bow_aim_walk_animation
-		if bow_active:
-			aim_pitch += deg_to_rad(2.2 if walking_bow else 4.0)
-		elif holding_spear and throw_active:
+		if holding_spear and throw_active:
 			aim_pitch *= 0.45
 		aim_pitch = clampf(aim_pitch, deg_to_rad(-72.0), deg_to_rad(72.0))
 		var aim_yaw := deg_to_rad(-8.6 if walking_bow else -5.4) if bow_active else 0.0
@@ -4503,9 +4502,12 @@ func _spear_palm_point(skel: Skeleton3D, hand_idx: int, left: bool = false) -> V
 func _close_bow_fingers(hand_idx: int, left: bool, skel: Skeleton3D = null, tight_spear: bool = false) -> Vector3:
 	var target := skel if skel != null else _hand_skeleton
 	var rig := _grip_rig_for(target, hand_idx, left)
+	if DisplayServer.get_name() != "headless" and target == _hand_skeleton and is_instance_valid(_grip_modifier) and _grip_modifier.active and not _processing_held_grip:
+		return (rig.get("knuckle", Vector3.ZERO) as Vector3) * 0.7
 	_grip_pivots_applied = true
 	for entry in rig.get("fingers", []):
 		var b_idx: int = entry[0]
+		_save_bone_pose_once(target, b_idx)
 		var b_name := target.get_bone_name(b_idx)
 		var angle_rad: float = entry[3]
 		if tight_spear:
@@ -4549,7 +4551,7 @@ func _update_hand_socket() -> void:
 			var raw_pitch := camera.rotation.x if (not is_puppet and is_instance_valid(camera)) else _pitch
 			var ideal_fwd := Vector3(0.0, sin(raw_pitch), cos(raw_pitch)).normalized()
 			var fwd_dir := (draw_vec / draw_dist) if draw_dist > 0.04 else ideal_fwd
-			var released := cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY
+			var released := (cur_anim == _bow_shoot_animation and third_person_animation_player.current_animation_position >= BOW_RELEASE_DELAY) or (_bow_release_item == null and _shoot_cooldown > 0.0)
 			if released or draw_dist < 0.28:
 				fwd_dir = ideal_fwd
 			elif fwd_dir.dot(ideal_fwd) < 0.996:
@@ -4571,9 +4573,11 @@ func _update_hand_socket() -> void:
 			if prim_node != null:
 				prim_node.scale = Vector3.ONE * 1.38
 				prim_node.rotation_degrees = Vector3.ZERO
+				var grip_fwd_shift := 0.075
+				prim_node.position = Vector3(-0.010, -0.008, -grip_fwd_shift)
 				var model_scale_z := maxf(0.01, third_person_model.global_transform.basis.get_scale().z * prim_node.scale.z)
 				var world_draw_dist := l_world.origin.distance_to(r_world.origin)
-				_update_bow_draw_visuals(prim_node, world_draw_dist / model_scale_z, not released)
+				_update_bow_draw_visuals(prim_node, (world_draw_dist / model_scale_z) + (grip_fwd_shift / prim_node.scale.z), not released)
 			return
 		else:
 			third_person_hand_item_root.position = l_local.origin
@@ -4588,6 +4592,7 @@ func _update_hand_socket() -> void:
 			if prim_node != null:
 				prim_node.scale = Vector3.ONE * 1.42
 				prim_node.rotation_degrees = Vector3.ZERO
+				prim_node.position = Vector3.ZERO
 				_update_bow_draw_visuals(prim_node, 0.24, false)
 			return
 	var bone_pose := _hand_skeleton.get_bone_global_pose(_hand_bone_idx)
@@ -4674,13 +4679,12 @@ func _update_bow_draw_visuals(prim_node: Node3D, draw_dist: float, active: bool)
 					nocked_arrow.add_child(arrow_vis)
 				nocked_arrow.set_meta("arrow_kind", desired_arrow)
 			# _build_arrow_or_spear_visual places fletching at +Z (+0.36) and
-			# arrowhead at -Z (-0.425). Place on the camera (+X) side of the riser
-			# and project the shaft/head well ahead of the bow so the third-person
-			# over-shoulder camera sees the nocked arrow clearly around the arm.
-			var z_scale := maxf(1.62, (pull_z + 0.58) / 0.68)
+			# arrowhead base at -0.31 (tip at -0.425). Keep the nock on the string
+			# at pull_z and project ~15 cm of shaft + head past the front of the bow.
+			var z_scale := maxf(1.25, (pull_z + 0.16) / 0.66)
 			nocked_arrow.rotation_degrees = Vector3.ZERO
-			nocked_arrow.scale = Vector3(2.85, 2.85, z_scale)
-			nocked_arrow.position = Vector3(0.028, 0.042, pull_z - 0.35 * z_scale)
+			nocked_arrow.scale = Vector3(1.85, 1.85, z_scale)
+			nocked_arrow.position = Vector3(0.026, 0.028, pull_z - 0.35 * z_scale)
 
 func _update_torch_hand_socket() -> void:
 	if _hand_skeleton == null or _left_hand_bone_idx < 0:
@@ -13534,14 +13538,17 @@ func _update_crosshair_spread(delta: float) -> void:
 	var vp_h := get_viewport().get_visible_rect().size.y
 	var px_per_rad: float = (vp_h * 0.5) / tan(fov_y * 0.5)
 	var gap := tan(deg_to_rad(_current_spread_deg())) * px_per_rad + _crosshair_bloom
-	main.hud.set_crosshair_spread(gap)
+	var main_hud = main.get("hud") if main != null else null
+	if main_hud != null:
+		main_hud.set_crosshair_spread(gap)
 
 func _update_crosshair(is_rifle: bool) -> void:
 	if is_puppet:
 		return
 	var main := get_tree().current_scene
-	if main != null and main.hud != null and main.hud.has_method("set_crosshair_rifle"):
-		main.hud.set_crosshair_rifle(is_rifle)
+	var main_hud = main.get("hud") if main != null else null
+	if main_hud != null and main_hud.has_method("set_crosshair_rifle"):
+		main_hud.set_crosshair_rifle(is_rifle)
 
 func _update_breath_hold(delta: float, shift_pressed: bool) -> void:
 	var just_pressed := shift_pressed and not _breath_shift_pressed
@@ -14716,16 +14723,45 @@ func _tick_primitive_releases(delta: float) -> void:
 
 func _finish_bow_shot() -> void:
 	var held = _bow_release_item
-	_bow_release_item = null
 	_bow_release_timer = 0.0
 	if held == null or is_dead or camera == null or get_held_item() != held or _held_selection_revision != _bow_release_revision or stats.energy < 3.5:
+		_bow_release_item = null
 		return
 	if held.has_method("is_broken") and held.is_broken():
+		_bow_release_item = null
 		return
-	var arrow_name := _consume_best_arrow()
+	var arrow_name := _peek_best_arrow_name()
 	if arrow_name.is_empty():
+		_bow_release_item = null
 		notice.emit("No tienes flechas en el inventario.")
 		return
+	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
+	var cam_ray_origin := camera.project_ray_origin(aim_point)
+	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
+	var exclude_arr: Array[RID] = [self.get_rid()]
+	_collect_child_collision_rids(self, exclude_arr)
+	var space_state := get_world_3d().direct_space_state
+	var converge_dist := 35.0
+	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
+	# Read bow release origin BEFORE consuming the arrow from inventory:
+	# _consume_best_arrow() emits inventory.changed -> _sync_held_item(), which
+	# rebuilds third_person_hand_item_root and would clobber the live bow pose.
+	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir)
+	if space_state != null:
+		# Start the sight ray past the bow so obstacles between the third-person
+		# over-shoulder camera and the player's hand never deflect the arrow.
+		var bow_along_ray := maxf(0.0, (shot_origin - cam_ray_origin).dot(cam_ray_dir))
+		var sight_start := cam_ray_origin + cam_ray_dir * (bow_along_ray + 0.35)
+		var sight_hit := _rifle_sight_hit(sight_start, cam_ray_dir, exclude_arr)
+		if not sight_hit.is_empty():
+			var hit_d_from_bow := sight_start.distance_to(sight_hit.position)
+			# The sight ray already excludes the actor and starts beyond the hand.
+			# A nearby hit is real cover/target, not something to aim through.
+			converge_dist = bow_along_ray + 0.35 + hit_d_from_bow
+			zero_target = sight_hit.position
+			shot_origin = _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
+	_bow_release_item = null
+	_consume_best_arrow()
 	_crosshair_bloom = minf(_crosshair_bloom + 18.0, 42.0)
 	stats.energy = maxf(0.0, stats.energy - 3.5)
 	stats.changed.emit()
@@ -14746,28 +14782,6 @@ func _finish_bow_shot() -> void:
 		arrow_speed *= 0.80
 	if is_reinf:
 		base_dmg *= 1.18
-	var aim_point := camera.get_viewport().get_visible_rect().size * 0.5 + (Vector2.ZERO if _is_aiming else _aim_screen_offset)
-	var cam_ray_origin := camera.project_ray_origin(aim_point)
-	var cam_ray_dir := camera.project_ray_normal(aim_point).normalized()
-	var exclude_arr: Array[RID] = [self.get_rid()]
-	_collect_child_collision_rids(self, exclude_arr)
-	var space_state := get_world_3d().direct_space_state
-	var converge_dist := 35.0
-	var zero_target := cam_ray_origin + cam_ray_dir * converge_dist
-	var shot_origin := _bow_release_origin(exclude_arr, cam_ray_dir)
-	if space_state != null:
-		# Start the sight ray past the bow so obstacles between the third-person
-		# over-shoulder camera and the player's hand never deflect the arrow.
-		var bow_along_ray := maxf(0.0, (shot_origin - cam_ray_origin).dot(cam_ray_dir))
-		var sight_start := cam_ray_origin + cam_ray_dir * (bow_along_ray + 0.35)
-		var sight_hit := _rifle_sight_hit(sight_start, cam_ray_dir, exclude_arr)
-		if not sight_hit.is_empty():
-			var hit_d_from_bow := sight_start.distance_to(sight_hit.position)
-			# The sight ray already excludes the actor and starts beyond the hand.
-			# A nearby hit is real cover/target, not something to aim through.
-			converge_dist = bow_along_ray + 0.35 + hit_d_from_bow
-			zero_target = sight_hit.position
-			shot_origin = _bow_release_origin(exclude_arr, cam_ray_dir, zero_target)
 	var aim_dist := minf(shot_origin.distance_to(zero_target), 60.0)
 	# Time of flight under exponential drag: x(t) = v0/k·(1-e^-kt), so
 	# t = -ln(1 - x·k/v0)/k. Arrows arrive later than the vacuum estimate —
@@ -14879,18 +14893,29 @@ func _finish_aimed_throw() -> void:
 
 func _bow_release_origin(excluded: Array[RID], cam_ray_dir: Vector3, target_pt: Vector3 = Vector3.INF) -> Vector3:
 	var body := global_position + Vector3(0, 0.35 if is_prone else (1.0 if is_crouching else 1.42), 0)
-	var fallback := body + cam_ray_dir * 0.45
+	var fwd_flat := Vector3(cam_ray_dir.x, 0.0, cam_ray_dir.z)
+	if fwd_flat.length_squared() < 0.001:
+		fwd_flat = -global_basis.z
+	fwd_flat = fwd_flat.normalized()
+	var fallback := body + cam_ray_dir * 0.55
 	var grip := fallback
 	if is_instance_valid(third_person_hand_item_root) and is_instance_valid(_hand_skeleton):
-		_hand_skeleton.force_update_all_bone_transforms()
-		_update_hand_socket()
-		grip = third_person_hand_item_root.global_position
+		if DisplayServer.get_name() == "headless" or not (is_instance_valid(_grip_modifier) and _grip_modifier.active):
+			_hand_skeleton.force_update_all_bone_transforms()
+			_update_hand_socket()
+		var bow_fwd := -third_person_hand_item_root.global_basis.z.normalized()
+		if bow_fwd.length_squared() < 0.001:
+			bow_fwd = cam_ray_dir
+		grip = third_person_hand_item_root.global_position + bow_fwd * 0.08
 		body = Vector3(global_position.x, grip.y, global_position.z)
+		# Never allow a non-drawn or stale socket behind the torso to spawn the arrow from the back
+		if (grip - body).dot(fwd_flat) < 0.20:
+			grip = body + cam_ray_dir * 0.55
 	if target_pt.is_finite():
 		var body_to_target := body.distance_to(target_pt)
 		var body_to_grip := body.distance_to(grip)
 		if body_to_target < body_to_grip + 0.35:
-			grip = body.lerp(grip, clampf((body_to_target - 0.25) / maxf(body_to_grip, 0.01), 0.0, 1.0))
+			grip = body.lerp(grip, clampf((body_to_target - 0.25) / maxf(body_to_grip, 0.01), 0.25, 1.0))
 	if grip.distance_squared_to(body) > 0.0001 and get_world_3d() != null:
 		var query := PhysicsRayQueryParameters3D.create(body, grip, 5, excluded)
 		query.hit_from_inside = true
@@ -14902,7 +14927,9 @@ func _bow_release_origin(excluded: Array[RID], cam_ray_dir: Vector3, target_pt: 
 			if not distant.is_empty():
 				hit = distant
 		if not hit.is_empty():
-			return hit.position - (grip - body).normalized() * 0.12
+			var dir_bg := (grip - body).normalized()
+			var safe_dist := maxf(0.22, body.distance_to(hit.position) - 0.12)
+			return body + dir_bg * safe_dist
 	return grip
 
 func _spear_release_origin(excluded: Array[RID]) -> Vector3:
@@ -14972,22 +14999,26 @@ func _build_arrow_or_spear_visual(item_name: String, item_type: String, for_flig
 	if for_flight and item_name == "Boleadoras":
 		vis.scale = Vector3.ONE * 1.85
 	elif for_flight and item_type == "ammo_arrow":
-		vis.scale = Vector3(2.4, 2.4, 1.40)
+		vis.scale = Vector3(1.35, 1.35, 0.95)
+		# Place the fletching at the projectile origin (the bow riser) and extend
+		# the shaft/head forward along -Z so no part of the arrow or streak ever
+		# protrudes backward behind the archer's hand or body on release.
+		vis.position = Vector3(0.0, 0.0, -0.34)
 		var wake := MeshInstance3D.new()
 		wake.name = "ArrowFlightStreak"
 		var wcyl := CylinderMesh.new()
-		wcyl.top_radius = 0.005
-		wcyl.bottom_radius = 0.022
-		wcyl.height = 1.65
+		wcyl.top_radius = 0.003
+		wcyl.bottom_radius = 0.010
+		wcyl.height = 0.48
 		wcyl.radial_segments = 8
 		wake.mesh = wcyl
 		wake.rotation_degrees.x = 90.0
-		wake.position = Vector3(0.0, 0.0, 1.15)
+		wake.position = Vector3(0.0, 0.0, -0.24)
 		var wmat := StandardMaterial3D.new()
 		wmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		wmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		wmat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		wmat.albedo_color = Color(0.96, 0.94, 0.84, 0.42)
+		wmat.albedo_color = Color(0.96, 0.94, 0.84, 0.34)
 		wake.material_override = wmat
 		wrapper.add_child(wake)
 	return wrapper

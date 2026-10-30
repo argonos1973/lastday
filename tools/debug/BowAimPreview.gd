@@ -70,6 +70,7 @@ func run() -> void:
 	floor_col.position = Vector3(0.0, -0.5, 0.0)
 	floor_body.add_child(floor_col)
 	root.add_child(floor_body)
+	current_scene = floor_body
 	var real_p := preload("res://scripts/PlayerController.gd").new()
 	root.add_child(real_p)
 	var r_bow = ItemData.create("Arco reforzado", "weapon_bow", 0.9, 1, 0.0)
@@ -97,6 +98,24 @@ func run() -> void:
 	await RenderingServer.frame_post_draw
 	print("REAL_AIM anim=", real_p.third_person_animation_player.current_animation, " sock=", real_p.third_person_hand_item_root.global_position, " cam=", real_p.camera.global_position, " aabb=", preload("res://scripts/NodeUtils.gd").compute_node_world_aabb(real_p.third_person_hand_item_root))
 	root.get_texture().get_image().save_png("res://build/tmp/real_player_aim_bow.png")
+	# Trigger an actual bow shot on real_p and capture the frame right as the arrow projectile leaves the bow
+	real_p._shoot_bow()
+	while real_p._bow_release_item != null:
+		real_p._tick_primitive_releases(0.05)
+	var spawned_arrow: Node3D = null
+	for ch in floor_body.get_children():
+		if "velocity" in ch:
+			spawned_arrow = ch as Node3D
+			spawned_arrow.set_physics_process(false)
+			print("SPAWNED_ARROW origin=", spawned_arrow.global_position, " player_pos=", real_p.global_position, " bow_pos=", real_p.third_person_hand_item_root.global_position)
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/real_player_shot_release.png")
+	camera.global_position = real_p.global_position + Vector3(2.1, 1.85, -1.1)
+	camera.look_at(real_p.global_position + Vector3(0.2, 1.85, -1.35), Vector3.UP)
+	camera.make_current()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/real_player_shot_release_side.png")
 	real_p.queue_free()
 	floor_body.queue_free()
 	actor.visible = true
