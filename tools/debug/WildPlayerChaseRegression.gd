@@ -175,6 +175,12 @@ func run() -> void:
 	check(not (pack_wolf_b._player is WildlifeController), "Pack alert from bear hit must not poison packmates' _player with the bear")
 	check(pack_bear._find_nearest_prey() == null, "Hungry bear ignores wild wolves as hunting prey")
 
+	# Un lobo que evita a un oso antes de ver al jugador NO debe quedar con
+	# _prey_flee_timer ni _chase_cooldown activos cuando luego aparece el jugador.
+	pack_wolf_b.position = Vector3(310, 0, 0) # a 10 m del oso (320,0,0), sin jugador aún
+	sim(pack_wolf_b, 0.3)
+	check(pack_wolf_b._prey_flee_timer == 0.0 and pack_wolf_b._chase_cooldown == 0.0, "Avoiding a bear does not stamp _prey_flee_timer or _chase_cooldown on the wolf")
+
 	# Ahora se conecta un jugador (proxy del servidor) cerca de ellos:
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_2"

@@ -146,6 +146,7 @@ var _owner_node: Node3D = null
 var _owner_client_id := ""
 var _owner_dead_timer := 0.0
 var _bear_warn_timer := 0.0
+var _bear_avoid_timer := 0.0
 var _flank_sign := 0.0
 
 # Cache de grupo wildlife para evitar get_nodes_in_group cada frame
@@ -466,6 +467,10 @@ func _process_body(delta: float) -> void:
 		return
 	if patrol_points.size() < 2:
 		return
+	if not _dedicated_checked:
+		_dedicated_checked = true
+		var _nm := get_node_or_null("/root/NetworkManager")
+		_is_dedicated = _nm != null and _nm.is_dedicated_server
 	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy") or not _is_valid_player_target(_player) or _is_dedicated:
 		_resolve_player_timer += delta
 		if _resolve_player_timer >= 0.5:
@@ -484,10 +489,6 @@ func _process_body(delta: float) -> void:
 					break
 	# ---- LOD de IA por distancia al jugador ----
 	var dist_to_player := 0.0
-	if not _dedicated_checked:
-		_dedicated_checked = true
-		var _nm := get_node_or_null("/root/NetworkManager")
-		_is_dedicated = _nm != null and _nm.is_dedicated_server
 	if not _near_network_observer and _is_dedicated and (_player == null or not is_instance_valid(_player)):
 		# Dedicated server with no observer anywhere near: keep the world alive
 		# at the far-LOD rate instead of burning a full-rate tick per frame.
@@ -589,8 +590,10 @@ func _process_body(delta: float) -> void:
 					if toward_food.length_squared() > 0.01:
 						rotation.y = lerp_angle(rotation.y, atan2(toward_food.x, toward_food.z), minf(1.0, delta * 5.0))
 			_wolf_eating_timer -= delta
-			var satiation_cap := 60.0 if animal_type == "wolf" else 85.0
+			var satiation_cap := (100.0 if not tamed_to.is_empty() else 60.0) if animal_type == "wolf" else 85.0
 			_wolf_hunger = min(satiation_cap, _wolf_hunger + delta * 5.0)
+			if not tamed_to.is_empty() and _wolf_hunger >= _wolf_hunger_threshold:
+				_hunger_warned = false
 			if not tamed_to.is_empty() and health < max_health:
 				health = min(max_health, health + delta * 8.0)
 			var is_meat_pickup_target := _wolf_eating_target != null and is_instance_valid(_wolf_eating_target) and ("action_type" in _wolf_eating_target) and _is_meat_action(_wolf_eating_target)
@@ -960,11 +963,15 @@ func _wolf_ai(delta: float) -> Dictionary:
 		# con otro animal (especialmente si el otro animal es salvaje o está más lejos).
 		var yield_to_player := false
 		if not foe_dead and tamed_to.is_empty() and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
-			var p_dist := global_position.distance_to(_player.global_position)
+			var p_pos := _player.global_position
+			var p_dist := global_position.distance_to(p_pos)
 			var f_dist := global_position.distance_to(_wolf_foe.global_position)
 			var foe_is_wild: bool = str(_wolf_foe.get("tamed_to")).is_empty()
 			if (foe_is_wild and p_dist < _effective_player_sight_range(_player)) or (p_dist < 18.0 and p_dist + 2.0 < f_dist):
-				yield_to_player = true
+				var sc := get_tree().current_scene
+				var p_protected: bool = absf(p_pos.y - global_position.y) >= 1.8 or _is_near_lit_campfire(p_pos, 10.0) or (sc != null and sc.has_method("_is_pos_wolf_protected") and sc._is_pos_wolf_protected(p_pos))
+				if not p_protected:
+					yield_to_player = true
 		if foe_dead or foe_far or _foe_timer <= 0.0 or foe_futile or yield_to_player:
 			if foe_futile or yield_to_player:
 				_foe_ignored = _wolf_foe
@@ -1000,23 +1007,29 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_chase_target = null
 				return _shadow_offering(shadow, delta)
 	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
-		var nearby_bear := _find_nearest_live_bear(18.0)
+		_bear_avoid_timer = maxf(0.0, _bear_avoid_timer - delta)
+		var bear_check_r := 25.0 if _bear_avoid_timer > 0.0 else 18.0
+		var nearby_bear := _find_nearest_live_bear(bear_check_r)
 		if nearby_bear != null:
 			var bear_d := global_position.distance_to(nearby_bear.global_position)
-			var player_closer := _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and global_position.distance_to(_player.global_position) + 3.0 < bear_d and bear_d > 10.0
-			if not player_closer:
+			var can_chase_p: bool = _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0 and global_position.distance_to(_player.global_position) < _effective_player_sight_range(_player)
+			var player_priority: bool = can_chase_p and (bear_d > 8.0 or global_position.distance_to(_player.global_position) < bear_d)
+			if player_priority:
+				_bear_avoid_timer = 0.0
+			else:
 				var away_bear := global_position - nearby_bear.global_position
 				away_bear.y = 0.0
 				if away_bear.length_squared() < 0.0001:
 					away_bear = Vector3.RIGHT
-				_prey_flee_timer = maxf(_prey_flee_timer, 3.5)
-				_flee_origin = nearby_bear.global_position
-				if patrol_points.size() > 1:
+				if _bear_avoid_timer <= 0.0 and patrol_points.size() > 1:
 					target_index = (target_index + 1) % patrol_points.size()
+				_bear_avoid_timer = maxf(_bear_avoid_timer, 2.5)
 				_state = "patrol"
 				_chase_target = null
 				_play_animation_by_name("run")
 				return {"target": _clamp_flee_goal(global_position, away_bear, 28.0), "speed": move_speed * 2.6}
+		else:
+			_bear_avoid_timer = 0.0
 	# Priority 0: chase player (highest priority)
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
@@ -1345,14 +1358,14 @@ func _find_nearest_proxy() -> Node3D:
 	for p in get_tree().get_nodes_in_group("net_player_proxy"):
 		if not is_instance_valid(p) or not (p is Node3D):
 			continue
-		if p.get_meta("proxy_dead", false):
+		if p.get_meta("proxy_dead", false) or not p.get_meta("has_real_pos", false):
 			continue
 		var d_sq: float = global_position.distance_squared_to((p as Node3D).global_position)
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
 			nearest = p as Node3D
 	# Also check "Player" node on non-server scenes
-	if nearest == null:
+	if nearest == null and not _is_dedicated:
 		var scene := get_tree().current_scene
 		if scene != null:
 			var player_node := scene.get_node_or_null("Player")
@@ -1455,13 +1468,13 @@ func _bear_beyond_territory(target_pos: Vector3) -> bool:
 func _is_valid_player_target(node: Node) -> bool:
 	if node == null or not is_instance_valid(node) or not (node is Node3D):
 		return false
-	if node is WildlifeController or node.is_in_group("wildlife"):
+	if node is WildlifeController or node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("remote_player"):
 		return false
 	if node.is_in_group("net_player_proxy"):
 		return true
 	if _is_dedicated:
 		return false
-	return node.name == "Player" or node.has_method("apply_damage")
+	return node.name == "Player" or (node.has_method("apply_damage") and not bool(node.get("is_puppet")))
 
 func _alert_nearby_pack(target_node: Node3D) -> void:
 	if not _is_valid_player_target(target_node):
@@ -2496,6 +2509,8 @@ func _tame(feeder_id: String, feeder: Node3D) -> void:
 	_chase_target = null
 	_wolf_foe = null
 	_threat_player = null
+	_wolf_hunger = maxf(_wolf_hunger, 90.0)
+	_hunger_warned = false
 	_owner_node = feeder
 	_owner_client_id = str(feeder.get_meta("client_id", ""))
 	_owner_dead_timer = 0.0
@@ -2623,6 +2638,8 @@ func _tamed_ai(delta: float) -> Dictionary:
 						continue
 					if op.get_meta("proxy_dead", false) or op.get("is_dead") == true:
 						continue
+					if grp == "net_player_proxy" and (not op.get_meta("has_real_pos", false) or op.get_meta("disconnected", false)):
+						continue
 					if op.global_position.distance_to(global_position) < 12.0:
 						_play_wolf_sound("growl_low")
 						_warn_bark_timer = randf_range(10.0, 18.0)
@@ -2635,13 +2652,17 @@ func _tamed_ai(delta: float) -> Dictionary:
 		var bound_anchor := _stay_pos if _follow_mode == "stay" else owner_anchor
 		if not is_instance_valid(_ordered_prey) or _ordered_prey.global_position.distance_to(bound_anchor) > 60.0:
 			_ordered_prey = null
+			_chase_target = null
 		elif _ordered_prey.get("_is_dead") == true:
 			# La caza propia se come aqui mismo: el cadaver no es un pickup suelto.
 			if _wolf_hunger < _wolf_hunger_threshold:
 				_wolf_eating_target = _ordered_prey
 				_wolf_eating_timer = 8.0
 			_ordered_prey = null
+			_chase_target = null
 		else:
+			_state = "chase_prey"
+			_chase_target = _ordered_prey as Node3D
 			var tp: Vector3 = _ordered_prey.global_position
 			var td := global_position.distance_to(tp)
 			_face_towards(tp, delta * 7.0)
@@ -2675,7 +2696,7 @@ func _tamed_ai(delta: float) -> Dictionary:
 			var prey := _find_nearest_prey_for_hunt(food_anchor, food_radius)
 			if prey != null:
 				_ordered_prey = prey
-	elif _wolf_hunger > _wolf_hunger_threshold + 12.0:
+	else:
 		_hunger_warned = false
 	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
 	var owner_dead := bool(owner.get_meta("proxy_dead", false))
@@ -3828,10 +3849,13 @@ func _resolve_player_impl() -> void:
 			if d < nearest_dist:
 				nearest_dist = d
 				nearest = p as Node3D
-		_player = nearest
+		if nearest != null or _is_dedicated:
+			_player = nearest
+			if _wolf_ai_debug_timer <= 0.0:
+				_wolf_ai_debug_timer = 5.0
+			return
 		if _wolf_ai_debug_timer <= 0.0:
 			_wolf_ai_debug_timer = 5.0
-		return
 	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
 	if _player != null and _tame_progress.has("local"):
