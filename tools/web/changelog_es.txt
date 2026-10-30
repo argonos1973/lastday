@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+bc2f534|Combate animal refinado: el mordisco dura lo que dura la animacion, el oso entra directo a pelear con lobos, y no puedes ordenar atacar a tu propio lobo ni a ti mismo
 0f1d67e|Los lobos salvajes y los osos pelean contra tu lobo domesticado (el oso ahora tiene animacion de mordisco); tu lobo puede morir en combate y se recupera comiendo o descansando saciado — veras 'herido' en su estado
 3c32355|Tu lobo grune bajo para avisarte cuando un personaje ajeno se acerca — sin atacar, solo alerta
 c691fe9|El lobo muerde con animacion real al impacto, come lo que caza cuando tiene hambre, te sigue al esprintar y no ataca lobos domados por ti
