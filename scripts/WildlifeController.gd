@@ -220,7 +220,7 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				# el path de jugador llama apply_damage y no le haria nada.
 				if attacker is WildlifeController:
 					_set_wolf_foe(attacker as WildlifeController)
-				else:
+				elif _is_valid_player_target(attacker):
 					_player = attacker as Node3D
 					_chase_target = _player
 					_state = "chase_player"
@@ -237,9 +237,10 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				threat_node = _player
 			if threat_node == null:
 				threat_node = _find_nearest_proxy()
+			var threat_is_player := _is_valid_player_target(threat_node)
 			if threat_node != null:
 				_flee_origin = threat_node.global_position
-				if animal_type == "wolf" and tamed_to.is_empty():
+				if animal_type == "wolf" and tamed_to.is_empty() and threat_is_player:
 					_player = threat_node
 			elif not _flee_origin.is_finite():
 				_flee_origin = global_position - global_transform.basis.z * 6.0
@@ -248,7 +249,7 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				_state = "flee"
 				_play_animation_by_name("gallop" if animal_type == "deer" else "run")
 				_alert_nearby_herd(_flee_origin, 42.0)
-			elif animal_type == "wolf" and tamed_to.is_empty() and threat_node != null:
+			elif animal_type == "wolf" and tamed_to.is_empty() and threat_is_player:
 				_alert_nearby_pack(threat_node)
 		_current_path.clear()
 		_path_index = 0
@@ -465,7 +466,7 @@ func _process_body(delta: float) -> void:
 		return
 	if patrol_points.size() < 2:
 		return
-	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy"):
+	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy") or not _is_valid_player_target(_player) or _is_dedicated:
 		_resolve_player_timer += delta
 		if _resolve_player_timer >= 0.5:
 			_resolve_player_timer = 0.0
@@ -796,7 +797,6 @@ func _retreat_from_player() -> Dictionary:
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
-	_dbg_predator_gate()
 	# Suelta la reclamación si el cebo desapareció o el lobo ya va a por otra
 	# cosa: así otro animal puede tomar la pieza enseguida.
 	if _claimed_meat != null and (not is_instance_valid(_claimed_meat) or _claimed_meat.get("depleted") or (_state != "seek_corpse" and _state != "eating")):
@@ -956,8 +956,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 		# El foe gana la carrera (no se le alcanza a morder): soltarlo y no
 		# volver a fijarlo un rato — así el animal vuelve a su presa real.
 		var foe_futile: bool = not foe_dead and _foe_hits == 0 and (_foe_engaged > 12.0 or _foe_timer <= 0.0 or foe_far)
-		if foe_dead or foe_far or _foe_timer <= 0.0 or foe_futile:
-			if foe_futile:
+		# Un depredador salvaje prioriza a un jugador cercano sobre una pelea
+		# con otro animal (especialmente si el otro animal es salvaje o está más lejos).
+		var yield_to_player := false
+		if not foe_dead and tamed_to.is_empty() and _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
+			var p_dist := global_position.distance_to(_player.global_position)
+			var f_dist := global_position.distance_to(_wolf_foe.global_position)
+			var foe_is_wild: bool = str(_wolf_foe.get("tamed_to")).is_empty()
+			if (foe_is_wild and p_dist < _effective_player_sight_range(_player)) or (p_dist < 18.0 and p_dist + 2.0 < f_dist):
+				yield_to_player = true
+		if foe_dead or foe_far or _foe_timer <= 0.0 or foe_futile or yield_to_player:
+			if foe_futile or yield_to_player:
 				_foe_ignored = _wolf_foe
 				_foe_ignore_until = Time.get_unix_time_from_system() + 18.0
 			_wolf_foe = null
@@ -991,16 +1000,23 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_chase_target = null
 				return _shadow_offering(shadow, delta)
 	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
-		var nearby_bear := _find_nearest_live_bear(22.0)
+		var nearby_bear := _find_nearest_live_bear(18.0)
 		if nearby_bear != null:
-			var away_bear := global_position - nearby_bear.global_position
-			away_bear.y = 0.0
-			if away_bear.length_squared() < 0.0001:
-				away_bear = Vector3.RIGHT
-			_state = "patrol"
-			_chase_target = null
-			_play_animation_by_name("run")
-			return {"target": _clamp_flee_goal(global_position, away_bear, 28.0), "speed": move_speed * 2.6}
+			var bear_d := global_position.distance_to(nearby_bear.global_position)
+			var player_closer := _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and global_position.distance_to(_player.global_position) + 3.0 < bear_d and bear_d > 10.0
+			if not player_closer:
+				var away_bear := global_position - nearby_bear.global_position
+				away_bear.y = 0.0
+				if away_bear.length_squared() < 0.0001:
+					away_bear = Vector3.RIGHT
+				_prey_flee_timer = maxf(_prey_flee_timer, 3.5)
+				_flee_origin = nearby_bear.global_position
+				if patrol_points.size() > 1:
+					target_index = (target_index + 1) % patrol_points.size()
+				_state = "patrol"
+				_chase_target = null
+				_play_animation_by_name("run")
+				return {"target": _clamp_flee_goal(global_position, away_bear, 28.0), "speed": move_speed * 2.6}
 	# Priority 0: chase player (highest priority)
 	if _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0:
 		var dist_to_player := global_position.distance_to(_player.global_position)
@@ -1323,36 +1339,6 @@ func _find_nearest_corpse() -> Node3D:
 				nearest = meat
 	return nearest
 
-# Debug temporal: depredador cerca de un jugador que no ataca — imprime qué
-# puerta lo bloquea (protección, refugio, techo, reach, cooldown, target).
-func _dbg_predator_gate() -> void:
-	if _wolf_ai_debug_timer > 0.0:
-		return
-	if animal_type != "wolf" and animal_type != "bear":
-		return
-	var near_p: Node3D = _player
-	if near_p == null or not is_instance_valid(near_p):
-		near_p = _find_nearest_proxy()
-	if near_p == null or not is_instance_valid(near_p):
-		return
-	var dist := global_position.distance_to(near_p.global_position)
-	if dist > 25.0 or _state == "chase_player" or _state == "fight_wolf":
-		return
-	_wolf_ai_debug_timer = 8.0
-	var scene := get_tree().current_scene
-	var roofed: bool = scene != null and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected(near_p.global_position)
-	var camp: bool = _is_near_lit_campfire(near_p.global_position, 10.0)
-	print("[wolfdbg] %s %s d=%.1f state=%s sel=%s pmeta prot=%.1f shelter=%s dead=%s realpos=%s roofed=%s camp=%s cd=%.1f reach=%s foe=%s thr=%s" % [
-		animal_type, name, dist, _state,
-		_player == near_p,
-		float(near_p.get_meta("protection_timer", 0.0)),
-		str(near_p.get_meta("in_built_shelter", false)),
-		str(near_p.get_meta("proxy_dead", false)),
-		str(near_p.get_meta("has_real_pos", "?")),
-		roofed, camp, _chase_cooldown, _can_reach_player(),
-		_wolf_foe != null, _threat_player != null
-	])
-
 func _find_nearest_proxy() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := 99999.0 * 99999.0
@@ -1391,9 +1377,12 @@ func _find_nearest_prey() -> Node3D:
 			continue
 		var ats := str(at)
 		if animal_type == "bear":
-			# Bears can hunt wolves, foxes and deer inside their forest territory,
-			# including tamed wolves, but not other bears.
+			# Bears hunt deer, foxes and tamed wolves inside their forest territory;
+			# wild wolves already flee bears and chasing a wild pack locks the bear
+			# into an endless pursuit loop.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
+				continue
+			if ats == "wolf" and str(other.get("tamed_to")).is_empty():
 				continue
 			if _foe_temporarily_ignored(other):
 				continue
@@ -1463,8 +1452,19 @@ func _bear_beyond_territory(target_pos: Vector3) -> bool:
 	var max_leash := 115.0 if health >= max_health * 0.99 else 160.0
 	return Vector2(target_pos.x - home.x, target_pos.z - home.z).length_squared() > max_leash * max_leash
 
+func _is_valid_player_target(node: Node) -> bool:
+	if node == null or not is_instance_valid(node) or not (node is Node3D):
+		return false
+	if node is WildlifeController or node.is_in_group("wildlife"):
+		return false
+	if node.is_in_group("net_player_proxy"):
+		return true
+	if _is_dedicated:
+		return false
+	return node.name == "Player" or node.has_method("apply_damage")
+
 func _alert_nearby_pack(target_node: Node3D) -> void:
-	if target_node == null or not is_instance_valid(target_node):
+	if not _is_valid_player_target(target_node):
 		return
 	for node in _cached_wildlife:
 		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
@@ -3785,8 +3785,8 @@ func _resolve_player_impl() -> void:
 		return
 	if _player != null and is_instance_valid(_player):
 		# Check if player moved too far or became invalid
-		if _player.is_in_group("net_player_proxy"):
-			# Re-evaluate: find nearest proxy each time
+		if _player.is_in_group("net_player_proxy") or not _is_valid_player_target(_player):
+			# Re-evaluate: find nearest proxy each time (and drop non-player nodes)
 			_player = null
 		elif _tame_progress.has(_feeder_key(_player)):
 			# Empezó a alimentarlo a media persecución: deja de ser presa
@@ -3798,7 +3798,7 @@ func _resolve_player_impl() -> void:
 		return
 	# On server: find nearest net_player_proxy (skip protected ones)
 	var proxies := get_tree().get_nodes_in_group("net_player_proxy")
-	if not proxies.is_empty():
+	if not proxies.is_empty() or _is_dedicated:
 		var nearest: Node3D = null
 		var nearest_dist := 99999.0
 		for p in proxies:
@@ -3828,14 +3828,10 @@ func _resolve_player_impl() -> void:
 			if d < nearest_dist:
 				nearest_dist = d
 				nearest = p as Node3D
-		if nearest != null:
-			_player = nearest
-			if _wolf_ai_debug_timer <= 0.0:
-				_wolf_ai_debug_timer = 5.0
-			return
-		else:
-			if _wolf_ai_debug_timer <= 0.0:
-				_wolf_ai_debug_timer = 5.0
+		_player = nearest
+		if _wolf_ai_debug_timer <= 0.0:
+			_wolf_ai_debug_timer = 5.0
+		return
 	# On client/single: find Player node
 	_player = scene.get_node_or_null("Player") as Node3D
 	if _player != null and _tame_progress.has("local"):

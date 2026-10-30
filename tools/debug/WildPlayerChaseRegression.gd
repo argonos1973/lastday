@@ -157,6 +157,49 @@ func run() -> void:
 		sim(wolf3, 3.0)
 		check(wolf3._player == player3 or wolf3._state == "chase_player", "After dropping the futile foe the wolf hunts the player (state %s)" % wolf3._state)
 
+	# --- Oso + manada de lobos salvajes: un golpe oso->lobo jamás debe secuestrar
+	# _player con un WildlifeController ni impedir que ambos ataquen al jugador ---
+	world.remove_child(player3)
+	player3.queue_free()
+	var pack_bear := make_animal(world, Vector3(320, 0, 0), "bear")
+	pack_bear._wolf_hunger = 30.0
+	var pack_wolf_a := make_animal(world, Vector3(300, 0, 0), "wolf")
+	var pack_wolf_b := make_animal(world, Vector3(296, 0, 0), "wolf")
+	var pack_list: Array = [pack_bear, pack_wolf_a, pack_wolf_b]
+	pack_bear._cached_wildlife = pack_list
+	pack_wolf_a._cached_wildlife = pack_list
+	pack_wolf_b._cached_wildlife = pack_list
+	# El oso muerde a pack_wolf_a antes de que haya jugador conectado:
+	pack_wolf_a.take_damage(60.0, false, pack_bear)
+	check(not (pack_wolf_a._player is WildlifeController), "Wolf hit by bear must not set _player to the bear")
+	check(not (pack_wolf_b._player is WildlifeController), "Pack alert from bear hit must not poison packmates' _player with the bear")
+	check(pack_bear._find_nearest_prey() == null, "Hungry bear ignores wild wolves as hunting prey")
+
+	# Ahora se conecta un jugador (proxy del servidor) cerca de ellos:
+	var proxy := Node3D.new()
+	proxy.name = "ServerProxy_2"
+	proxy.position = Vector3(292, 0, 0)
+	proxy.set_meta("peer_id", 2)
+	proxy.set_meta("protection_timer", 0.0)
+	proxy.set_meta("has_real_pos", true)
+	proxy.set_meta("disconnected", false)
+	proxy.set_meta("reconnecting", false)
+	proxy.set_meta("proxy_health", 100.0)
+	proxy.set_meta("proxy_dead", false)
+	world.add_child(proxy)
+	proxy.add_to_group("net_player_proxy")
+
+	pack_wolf_b._resolve_player()
+	pack_bear.position = Vector3(278, 0, 0)
+	pack_bear.patrol_points = [Vector3(278, 0, 0), Vector3(282, 0, 0)]
+	pack_bear._resolve_player()
+	check(pack_wolf_b._player == proxy, "Wild wolf selects connected server proxy after bear encounter")
+	check(pack_bear._player == proxy, "Wild bear selects connected server proxy")
+	sim(pack_wolf_b, 2.0)
+	sim(pack_bear, 2.0)
+	check(pack_wolf_b._state == "chase_player", "Wild wolf chases player even with a bear 20m away when player is closer (got %s)" % pack_wolf_b._state)
+	check(pack_bear._state in ["chase_player", "bear_warn"], "Wild bear engages player instead of chasing wild wolves (got %s)" % pack_bear._state)
+
 	if failures == 0:
 		print("WildPlayerChaseRegression: ALL PASS")
 	else:
