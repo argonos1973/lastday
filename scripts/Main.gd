@@ -3170,7 +3170,7 @@ func _clothing_colors_from_items(equipped_clothing: String, items_data: Array) -
 		for entry in items_data:
 			if entry is Dictionary and str(entry.get("name", "")) == name:
 				var a: Variant = entry.get("clothing_color")
-				if a is Array and (a as Array).size() >= 3:
+				if a is Array and (a as Array).size() >= 3 and PlayerController.clothing_accepts_color(name):
 					var arr: Array = a
 					col = Color(float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3]) if arr.size() > 3 else 1.0)
 				break
@@ -3273,7 +3273,7 @@ func _saved_inventory_add(sender_id: int, action_id: String) -> void:
 				item_dict["max_durability"] = float(entry.get("max_durability", 100.0))
 			if entry.has("spoilage"):
 				item_dict["spoilage"] = float(entry.get("spoilage", 0.0))
-			if entry.has("color"):
+			if entry.has("color") and PlayerController.clothing_accepts_color(str(item_dict.get("name", ""))):
 				item_dict["clothing_color"] = entry["color"]
 			item_dict["clothing_camo"] = bool(entry.get("camo", false))
 			if entry.has("pelt"):
@@ -4343,11 +4343,17 @@ func _clothing_drop_color(item_name: String, pdata: Dictionary, item: Dictionary
 	# dead player's real colors: prefer the item's own stored clothing_color,
 	# then the victim's appearance from the server record. Without this every
 	# client would tint the drop with its own local player colors.
+	# Texture-driven garments never tint: their stored clothing_color is stray
+	# metadata, not a dye — honoring it would erase the authored texture.
+	if not PlayerController.clothing_accepts_color(item_name):
+		return Color(0, 0, 0, 0)
 	var saved_col = item.get("clothing_color", null)
 	if saved_col is Color and (saved_col as Color).a > 0.0:
 		return saved_col
 	if saved_col is Array and saved_col.size() >= 3:
-		return Color(float(saved_col[0]), float(saved_col[1]), float(saved_col[2]))
+		# Item.to_dict stores [r,g,b,a] — keep the alpha or a transparent
+		# [0,0,0,0] resurrects as opaque and tints the pickup/inventory item.
+		return Color(float(saved_col[0]), float(saved_col[1]), float(saved_col[2]), float(saved_col[3]) if saved_col.size() > 3 else 1.0)
 	var key := ""
 	match item_name:
 		"Camiseta": key = "top_color"
@@ -4361,7 +4367,7 @@ func _clothing_drop_color(item_name: String, pdata: Dictionary, item: Dictionary
 	if v is String:
 		return SaveGameHooks._str_to_color(v)
 	if v is Array and v.size() >= 3:
-		return Color(float(v[0]), float(v[1]), float(v[2]))
+		return Color(float(v[0]), float(v[1]), float(v[2]), float(v[3]) if v.size() > 3 else 1.0)
 	return Color(0, 0, 0, 0)
 
 func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
@@ -6510,7 +6516,7 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		action.set_meta("item_wetness", wetness)
 	if broken:
 		action.set_meta("no_pickup", true)
-	if color.a > 0.0:
+	if color.a > 0.0 and (item_type != "clothing" or PlayerController.clothing_accepts_color(item_name)):
 		action.set_meta("item_color", color)
 
 func _track_dropped_item(entry: Dictionary) -> void:
@@ -11050,7 +11056,7 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	action.set_meta("item_use_value", use_value)
 	if wetness > 0.001:
 		action.set_meta("item_wetness", wetness)
-	if color.a > 0.0:
+	if color.a > 0.0 and (item_type != "clothing" or PlayerController.clothing_accepts_color(item_name)):
 		action.set_meta("item_color", color)
 	# Persist the pickup so it survives save/load and syncs to new clients
 	if net == null or not net.is_connected or net.is_host or net.is_dedicated_server:
@@ -11612,7 +11618,7 @@ func _execute_world_action(action, actor) -> void:
 				int(action.get_meta("item_quantity", 1)),
 				float(action.get_meta("item_use_value", 0.0))
 			)
-			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
+			if str(item.item_type) == "clothing" and action.has_meta("item_color") and PlayerController.clothing_accepts_color(str(item.item_name)):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if item.item_type == "clothing":
 				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
@@ -12542,7 +12548,7 @@ func _execute_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity")),
 				float(action.get_meta("item_use_value"))
 			)
-			if str(eat_item.item_type) == "clothing" and action.has_meta("item_color"):
+			if str(eat_item.item_type) == "clothing" and action.has_meta("item_color") and PlayerController.clothing_accepts_color(str(eat_item.item_name)):
 				eat_item.set_meta("clothing_color", action.get_meta("item_color"))
 			if eat_item.item_type == "clothing":
 				eat_item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))
@@ -12564,7 +12570,7 @@ func _execute_world_action_collect(action, actor) -> void:
 				int(action.get_meta("item_quantity", 1)),
 				float(action.get_meta("item_use_value", 0.0))
 			)
-			if str(item.item_type) == "clothing" and action.has_meta("item_color"):
+			if str(item.item_type) == "clothing" and action.has_meta("item_color") and PlayerController.clothing_accepts_color(str(item.item_name)):
 				item.set_meta("clothing_color", action.get_meta("item_color"))
 			if item.item_type == "clothing":
 				item.set_meta("clothing_camo", bool(action.get_meta("item_camo", false)))

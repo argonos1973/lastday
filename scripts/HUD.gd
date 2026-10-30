@@ -2805,7 +2805,7 @@ func _create_inventory_slot(index: int, item) -> void:
 	box.add_child(label)
 
 func _item_thumbnail_color(item) -> Color:
-	if str(item.item_type) == "clothing" and item.has_meta("clothing_color"):
+	if str(item.item_type) == "clothing" and item.has_meta("clothing_color") and PlayerController.clothing_accepts_color(str(item.item_name)):
 		var c: Color = item.get_meta("clothing_color")
 		if c.a > 0.0:
 			return c
@@ -2866,7 +2866,7 @@ func _clothing_thumbnail_colors(item) -> Dictionary:
 	# Field jackets keep their authored materials on the character too.
 	if MilitaryJacketsScript.VARIANTS.has(iname):
 		return result
-	if item.has_meta("clothing_color"):
+	if item.has_meta("clothing_color") and PlayerController.clothing_accepts_color(iname):
 		var c: Color = item.get_meta("clothing_color")
 		if c.a > 0.0:
 			result["tint"] = c

@@ -144,10 +144,10 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var inv: Array = pd.get("inventory", [])
 	for inv_item in inv:
 		var iname := str(inv_item.get("name", ""))
-		if inv_item.has("clothing_color"):
+		if inv_item.has("clothing_color") and PlayerController.clothing_accepts_color(iname):
 			var cc = inv_item["clothing_color"]
 			if cc is Array and cc.size() >= 3:
-				inv_colors[iname] = Color(float(cc[0]), float(cc[1]), float(cc[2]))
+				inv_colors[iname] = Color(float(cc[0]), float(cc[1]), float(cc[2]), float(cc[3]) if cc.size() > 3 else 1.0)
 		if bool(inv_item.get("clothing_camo", false)):
 			inv_camo[iname] = true
 	# Determine what's equipped in each slot

@@ -2232,8 +2232,27 @@ func _on_inventory_changed() -> void:
 
 
 #region ROPA Y APARIENCIA (PlayerAppearance)
+# A garment only accepts a flat clothing_color when its look is tint-driven:
+# the character-creator clothes, survival entries with tint/camo, and the
+# generic soldier/cloth meshes that have no authored texture. Texture-driven
+# garments (Pasamontañas, field/autumn jackets, helmets, hats, vests...) must
+# never take clothing_color — corrupted save metadata (a death-loot array can
+# revive transparent as opaque) would otherwise erase their texture both on
+# the body and in thumbnails.
+static func clothing_accepts_color(item_name: String) -> bool:
+	if item_name in ["Camiseta", "Pantalones", "Zapatillas"]:
+		return true
+	var cfg: Dictionary = SURVIVAL_CLOTHING.get(item_name, {})
+	if cfg.has("tint") or cfg.has("camo"):
+		return true
+	var mesh_name := str(cfg.get("mesh", ""))
+	if mesh_name.begins_with("soldier_") or mesh_name in ["cloth_hands", "cloth_feet", "military_boots"]:
+		return true
+	var vcfg: Dictionary = CLOTHING_VISUALS.get(item_name, {})
+	return vcfg.has("tint")
+
 func get_current_clothing_color(item_name: String, slot := "") -> Color:
-	if inventory != null:
+	if inventory != null and clothing_accepts_color(item_name):
 		# Prefer the item bound to the slot (equipped_slot meta) — a same-named
 		# packed copy could carry a different loot color.
 		if not slot.is_empty():
@@ -2266,6 +2285,11 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
 		slot = CLOTHING_SLOTS[item_name]
+	if not clothing_accepts_color(item_name):
+		# Texture-driven garment: a stray clothing_color (e.g. resurrected
+		# opaque by death-loot serialization) must never reach the worn
+		# meshes — it would replace the authored texture with a flat material.
+		clothing_color = Color(0, 0, 0, 0)
 	# The crafted garment keeps the hide of the animal it was made from:
 	# "Chaqueta de piel" sewn from wolf pelts wears the wolf's fur. The species
 	# travels on the item's `pelt_species` meta (craft → save → drop → puppet).
@@ -3252,7 +3276,7 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 		var pelt_sp := str(_equipped_pelt.get(item_name, _active_pelt_species))
 		var pelt_mat := _pelt_fur_material(pelt_sp) if (item_name in GameConst.PELT_FUR_ITEMS and item_name != "Tocado de piel animal" and not pelt_sp.is_empty()) else null
 		var tint: Color = cfg["tint"] if cfg.has("tint") else Color(0, 0, 0, 0)
-		var base_col := loot_color if loot_color.a > 0.0 else tint
+		var base_col := loot_color if loot_color.a > 0.0 and clothing_accepts_color(item_name) else tint
 		if pelt_mat != null or base_col.a > 0.0:
 			var meshes: Array = []
 			_collect_mesh_instances(node, meshes)
