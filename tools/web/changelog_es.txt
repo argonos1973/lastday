@@ -96,3 +96,4 @@ df3f50f|El arco se ve en la mano y al apuntar, se guarda en los hombros libres c
 0afb2e2|Las puertas suenan al abrirse y cerrarse, tambien cuando lo hace otro jugador
 8c2f8ed|Sonidos de puerta sincronizados con la animacion (sin silencio inicial)
 8d99f08|Lobo domesticado: entra en casas con puerta abierta si el dueno esta dentro, defiende de lobos y osos, ladrido agudo propio, come carne de la caza y cruza rios
+919ebb8|Lobo domesticado: menu de ordenes con la tecla O sin apuntarle (el lobo espera quieto mientras esta abierto), silbido con X (1x viene y sigue sin atacar, 2x ataca lo que tenga cerca) y la carne la come pegado a la pieza
