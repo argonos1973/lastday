@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+295a8c4|Corregido el disparo del arco (la flecha sale desde la ventana del arco hacia delante y no desde detras del personaje), ajustado el tamano real de la flecha colocada en el arco y mejorada la animacion de apuntado y tensado en Blender
 283ff23|Nueva animacion de ataque del oso creada en Blender (embestida y zarpazo con la pata delantera derecha sincronizados con el impacto)
 ffb1d3a|Corregida la IA de lobos y osos salvajes para que nunca ignoren al jugador tras encuentros entre animales, defensa del lobo domesticado al guardar zona lejos del dueno y saciedad completa al comer
 32ab650|Corregido el bloqueo de persecucion tras esquivar a un oso y el tope de saciedad del lobo domesticado al comer
