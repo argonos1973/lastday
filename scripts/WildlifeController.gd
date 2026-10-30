@@ -796,6 +796,7 @@ func _retreat_from_player() -> Dictionary:
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
+	_dbg_predator_gate()
 	# Suelta la reclamación si el cebo desapareció o el lobo ya va a por otra
 	# cosa: así otro animal puede tomar la pieza enseguida.
 	if _claimed_meat != null and (not is_instance_valid(_claimed_meat) or _claimed_meat.get("depleted") or (_state != "seek_corpse" and _state != "eating")):
@@ -1321,6 +1322,36 @@ func _find_nearest_corpse() -> Node3D:
 				nearest_dist_sq = d_sq
 				nearest = meat
 	return nearest
+
+# Debug temporal: depredador cerca de un jugador que no ataca — imprime qué
+# puerta lo bloquea (protección, refugio, techo, reach, cooldown, target).
+func _dbg_predator_gate() -> void:
+	if _wolf_ai_debug_timer > 0.0:
+		return
+	if animal_type != "wolf" and animal_type != "bear":
+		return
+	var near_p: Node3D = _player
+	if near_p == null or not is_instance_valid(near_p):
+		near_p = _find_nearest_proxy()
+	if near_p == null or not is_instance_valid(near_p):
+		return
+	var dist := global_position.distance_to(near_p.global_position)
+	if dist > 25.0 or _state == "chase_player" or _state == "fight_wolf":
+		return
+	_wolf_ai_debug_timer = 8.0
+	var scene := get_tree().current_scene
+	var roofed: bool = scene != null and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected(near_p.global_position)
+	var camp: bool = _is_near_lit_campfire(near_p.global_position, 10.0)
+	print("[wolfdbg] %s %s d=%.1f state=%s sel=%s pmeta prot=%.1f shelter=%s dead=%s realpos=%s roofed=%s camp=%s cd=%.1f reach=%s foe=%s thr=%s" % [
+		animal_type, name, dist, _state,
+		_player == near_p,
+		float(near_p.get_meta("protection_timer", 0.0)),
+		str(near_p.get_meta("in_built_shelter", false)),
+		str(near_p.get_meta("proxy_dead", false)),
+		str(near_p.get_meta("has_real_pos", "?")),
+		roofed, camp, _chase_cooldown, _can_reach_player(),
+		_wolf_foe != null, _threat_player != null
+	])
 
 func _find_nearest_proxy() -> Node3D:
 	var nearest: Node3D = null
