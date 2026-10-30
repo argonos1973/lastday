@@ -136,6 +136,10 @@ var _stay_pos := Vector3.ZERO
 var _wolf_foe: Node3D = null      # lobo enemigo en combate canino
 var _house_direct_goal := false   # domesticado dentro de casa: guiado directo al dueño
 var _foe_timer := 0.0
+var _foe_engaged := 0.0           # segundos persiguiendo al foe actual sin resolver
+var _foe_hits := 0                # mordiscos conectados contra el foe actual
+var _foe_ignored: Node3D = null   # foe que gana la carrera — ignorado un rato
+var _foe_ignore_until := 0.0
 var _threat_player: Node3D = null # jugador que dañó al dueño (o al que el dueño atacó)
 var _threat_timer := 0.0
 var _owner_node: Node3D = null
@@ -215,8 +219,7 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 				# Contra otro animal (lobo) el combate va por _wolf_foe/_fight_animal —
 				# el path de jugador llama apply_damage y no le haria nada.
 				if attacker is WildlifeController:
-					_wolf_foe = attacker as WildlifeController
-					_foe_timer = 20.0
+					_set_wolf_foe(attacker as WildlifeController)
 				else:
 					_player = attacker as Node3D
 					_chase_target = _player
@@ -916,17 +919,23 @@ func _wolf_ai(delta: float) -> Dictionary:
 		_chase_cooldown = 5.0
 	# Combate lobo-vs-lobo: un enemigo canino tiene prioridad sobre todo lo demás
 	_foe_timer = max(0.0, _foe_timer - delta)
-	# Lobo salvaje: los domesticos son rivales — engancha a uno cercano si anda hostil
+	# Lobo salvaje: los domesticos son rivales — engancha a uno cercano si anda hostil,
+	# pero solo cuando es el objetivo mas proximo (un jugador cerca manda primero).
 	if animal_type == "wolf" and tamed_to.is_empty() and _wolf_foe == null:
 		var hostile := is_hungry or _state in ["chase_player", "fight_wolf"] or _threat_player != null
 		if hostile:
+			var player_dist := 99999.0
+			if _player != null and is_instance_valid(_player):
+				player_dist = global_position.distance_to(_player.global_position)
 			for other in _cached_wildlife:
 				if other == self or not is_instance_valid(other) or not (other is WildlifeController):
 					continue
 				var ow := other as WildlifeController
-				if ow.animal_type == "wolf" and not ow._is_dead and not ow.tamed_to.is_empty() and global_position.distance_to(ow.global_position) < 14.0:
-					_wolf_foe = ow
-					_foe_timer = 20.0
+				if ow.animal_type != "wolf" or ow._is_dead or ow.tamed_to.is_empty() or _foe_temporarily_ignored(ow):
+					continue
+				var foe_dist := global_position.distance_to(ow.global_position)
+				if foe_dist < 14.0 and (player_dist > 14.0 or foe_dist < player_dist):
+					_set_wolf_foe(ow)
 					break
 	# El lobo domesticado vigila si un lobo salvaje persigue a su dueño
 	if tamed_to != "" and _wolf_foe == null and not _orders_cease:
@@ -934,14 +943,22 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if owner_for_foe != null:
 			var foe := _find_wolf_threatening(owner_for_foe)
 			if foe != null:
-				_wolf_foe = foe
-				_foe_timer = 20.0
+				_set_wolf_foe(foe)
 	if not tamed_to.is_empty() and _wolf_foe != null:
 		var combat_owner := _resolve_owner()
 		if _orders_cease or (is_instance_valid(combat_owner) and is_instance_valid(_wolf_foe) and _wolf_foe.global_position.distance_to(combat_owner.global_position) > 60.0):
 			_wolf_foe = null
 	if _wolf_foe != null:
-		if not is_instance_valid(_wolf_foe) or _wolf_foe.get("_is_dead") or _foe_timer <= 0.0 or global_position.distance_to(_wolf_foe.global_position) > 70.0:
+		_foe_engaged += delta
+		var foe_dead: bool = not is_instance_valid(_wolf_foe) or _wolf_foe.get("_is_dead") == true
+		var foe_far: bool = not foe_dead and global_position.distance_to(_wolf_foe.global_position) > 70.0
+		# El foe gana la carrera (no se le alcanza a morder): soltarlo y no
+		# volver a fijarlo un rato — así el animal vuelve a su presa real.
+		var foe_futile: bool = not foe_dead and _foe_hits == 0 and (_foe_engaged > 12.0 or _foe_timer <= 0.0 or foe_far)
+		if foe_dead or foe_far or _foe_timer <= 0.0 or foe_futile:
+			if foe_futile:
+				_foe_ignored = _wolf_foe
+				_foe_ignore_until = Time.get_unix_time_from_system() + 18.0
 			_wolf_foe = null
 		else:
 			_state = "fight_wolf"
@@ -1229,8 +1246,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				# A wolf is a combat opponent from the first bite, including
 				# when the bear initiates the encounter while hunting.
 				if animal_type == "bear" and str(nearest_prey.get("animal_type")) == "wolf":
-					_wolf_foe = nearest_prey
-					_foe_timer = 20.0
+					_set_wolf_foe(nearest_prey)
 					_state = "fight_wolf"
 					_chase_target = nearest_prey
 					return _fight_animal(nearest_prey, delta)
@@ -1348,7 +1364,8 @@ func _find_nearest_prey() -> Node3D:
 			# including tamed wolves, but not other bears.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
 				continue
-
+			if _foe_temporarily_ignored(other):
+				continue
 			if home_anchor.distance_squared_to(other.global_position) > 85.0 * 85.0:
 				continue
 		else:
@@ -2498,7 +2515,7 @@ func _release_owner_record() -> void:
 # Animal combat: one contact check per bite, using the existing attack clip.
 func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 	var target := foe.global_position
-	var reach := 2.6 if animal_type == "bear" or str(foe.get("animal_type")) == "bear" else 2.1
+	var reach := 3.2 if animal_type == "bear" or str(foe.get("animal_type")) == "bear" else 2.6
 	_face_towards(target, minf(delta * 3.0, 1.0))
 	var close := global_position.distance_to(target) <= reach
 	if _animal_bite_target != foe:
@@ -2517,6 +2534,7 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 			var facing := global_basis.z.normalized().dot((target - global_position).normalized()) > 0.5
 			if close and facing and _animal_bite_clear(target):
 				foe.take_damage(60.0 if animal_type == "bear" else (35.0 if not tamed_to.is_empty() else 25.0), false, self)
+				_foe_hits += 1
 		# Finish the authored clip instead of cutting its recovery at 0.85 s.
 		var bite_duration := 1.1
 		if _animation_player != null:
@@ -2772,6 +2790,25 @@ func _tamed_house_override(owner: Node3D) -> Dictionary:
 
 # Un lobo salvaje u oso que persiga/ataque al dueño (o aceche muy cerca) se
 # convierte en enemigo del domesticado; elige el más cercano al dueño.
+# Asigna el enemigo canino y reinicia su ciclo de combate.
+func _set_wolf_foe(foe: Node3D, duration: float = 20.0) -> void:
+	_wolf_foe = foe
+	_foe_timer = duration
+	_foe_engaged = 0.0
+	_foe_hits = 0
+	_animal_bite_target = null
+	if _foe_ignored == foe:
+		_foe_ignored = null
+
+# Un foe que nos gana la carrera se ignora un rato para no perseguirlo eternamente.
+func _foe_temporarily_ignored(foe: Node) -> bool:
+	if _foe_ignored == null:
+		return false
+	if not is_instance_valid(_foe_ignored) or Time.get_unix_time_from_system() >= _foe_ignore_until:
+		_foe_ignored = null
+		return false
+	return _foe_ignored == foe
+
 func _find_wolf_threatening(owner: Node3D) -> Node3D:
 	if global_position.distance_to(owner.global_position) >= 50.0:
 		return null
@@ -2786,7 +2823,7 @@ func _find_wolf_threatening(owner: Node3D) -> Node3D:
 		if w.animal_type == "wolf" and not w.tamed_to.is_empty() and w.tamed_to == tamed_to:
 			continue  # lobos del mismo dueño no se atacan
 		var d_owner := w.global_position.distance_to(owner.global_position)
-		var targeting_owner := w._player == owner or w._chase_target == owner
+		var targeting_owner := w._player == owner or w._chase_target == owner or w._wolf_foe == self
 		var hostile_close := w.tamed_to.is_empty() and ((w._state in ["chase_player", "bear_warn"] and d_owner < 16.0) or d_owner < 9.5)
 		if not targeting_owner and not hostile_close:
 			continue
@@ -2809,8 +2846,7 @@ func notify_foe(foe: Node3D, duration: float = 20.0) -> void:
 		return
 	if global_position.distance_to(fw.global_position) > 55.0:
 		return
-	_wolf_foe = fw
-	_foe_timer = duration
+	_set_wolf_foe(fw, duration)
 	_tamed_rest_time = 0.0
 	_prey_flee_timer = 0.0
 
@@ -2836,8 +2872,7 @@ func _note_attack(attacker: Node) -> void:
 		# domesticado, tambien contra osos que lo ataquen (defensa).
 		if (w.animal_type == "wolf" or w.animal_type == "bear") and not w._is_dead and (w.tamed_to.is_empty() or w.tamed_to != tamed_to):
 			if w.animal_type == "wolf" or not tamed_to.is_empty():
-				_wolf_foe = w
-				_foe_timer = 20.0
+				_set_wolf_foe(w)
 		return
 	var key := _feeder_key(attacker)
 	if key.is_empty():
@@ -2893,8 +2928,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 			_ordered_prey = null
 			_wolf_foe = null
 			if str((target as WildlifeController).animal_type) in ["wolf", "bear"]:
-				_wolf_foe = target
-				_foe_timer = 20.0
+				_set_wolf_foe(target)
 			else:
 				_ordered_prey = target
 		elif target is Node3D and (target.is_in_group("net_player_proxy") or target.is_in_group("remote_player")):
@@ -2908,6 +2942,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
 			return
 		_animal_bite_target = null
+		_foe_ignored = null
 		_orders_cease = false
 		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca!")
 		return
