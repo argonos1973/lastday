@@ -27,6 +27,19 @@ func get_stored_count() -> int:
 func add_item(item) -> bool:
 	if item == null or item.quantity <= 0:
 		return false
+	if str(item.get_meta("equipped_slot", "")).is_empty():
+		var parent := get_parent()
+		if parent != null and "_equipped_slots" in parent and parent._equipped_slots is Dictionary:
+			for slot_key in parent._equipped_slots.keys():
+				if str(parent._equipped_slots[slot_key]) == str(item.item_name):
+					var already_bound := false
+					for ex in items:
+						if ex != null and str(ex.get_meta("equipped_slot", "")) == str(slot_key):
+							already_bound = true
+							break
+					if not already_bound:
+						item.set_meta("equipped_slot", str(slot_key))
+					break
 	var is_equip := is_equipment_item(item)
 	if not is_equip and get_total_weight() + item.weight * item.quantity > max_weight:
 		item_used.emit("Demasiado peso.")

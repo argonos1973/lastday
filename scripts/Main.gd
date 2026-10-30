@@ -3817,7 +3817,7 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, targe
 			if target != null and (bool(target.get("_is_dead")) or str(target.get("animal_type")) == ""):
 				target = null
 		if not (target is Node3D) or target == proxy or proxy.global_position.distance_to(target.global_position) > 45.0:
-			return
+			target = null
 	if animal.has_method("apply_command"):
 		animal.apply_command(mode, target)
 
@@ -5239,6 +5239,10 @@ var _wolf_menu: PanelContainer = null
 var _wolf_menu_wolf: Node = null
 
 func _show_wolf_orders(wolf: Node) -> void:
+	if hud == null:
+		if wolf != null and is_instance_valid(wolf) and wolf.has_method("apply_command"):
+			wolf.apply_command("toggle")
+		return
 	_close_wolf_orders()
 	_wolf_menu_wolf = wolf
 	_wolf_menu = PanelContainer.new()
@@ -5295,7 +5299,8 @@ func _close_wolf_orders() -> void:
 		_wolf_menu.queue_free()
 		_wolf_menu = null
 	_wolf_menu_wolf = null
-	if player != null and not player.is_dead:
+	var any_panel_open: bool = (hud != null and (hud.inventory_visible or hud.craft_panel_visible)) or _backpack_panel != null or _loot_panel != null
+	if player != null and not player.is_dead and not any_panel_open:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _wolf_order_send(mode: String, target_name: String = "") -> void:
@@ -5340,6 +5345,8 @@ func _wolf_attack_targets() -> Array:
 	for animal in get_tree().get_nodes_in_group("wildlife"):
 		if not candidates.has(animal):
 			candidates.append(animal)
+	var seen_animals := {}
+	var species_es := {"wolf": "Lobo", "bear": "Oso", "deer": "Ciervo", "fox": "Zorro"}
 	for p in candidates:
 		if not is_instance_valid(p) or not (p is WildlifeController) or p._is_dead or p == _wolf_menu_wolf:
 			continue
@@ -5348,7 +5355,11 @@ func _wolf_attack_targets() -> Array:
 		if p.global_position.distance_to(origin) > 45.0:
 			continue
 		var aname := str(p.name).replacen("Puppet_", "")
-		result.append({"label": "%s (%s)" % [str(p.animal_type).capitalize(), aname], "id": aname})
+		if seen_animals.has(aname):
+			continue
+		seen_animals[aname] = true
+		var sp_label: String = species_es.get(str(p.animal_type), str(p.animal_type).capitalize())
+		result.append({"label": "%s (%s)" % [sp_label, aname], "id": aname})
 	return result
 
 var _loot_panel: PanelContainer = null

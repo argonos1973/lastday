@@ -81,6 +81,10 @@ func _inv_has(player, item_name: String) -> bool:
 	for item in player.inventory.items:
 		if item != null and item.item_name == item_name:
 			return true
+	if "_stored_back_items" in player:
+		for entry in player._stored_back_items:
+			if entry is Dictionary and str(entry.get("name", "")) == item_name:
+				return true
 	return false
 
 func run() -> void:

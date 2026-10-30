@@ -279,6 +279,18 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 	var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if net_node != null and net_node.peer != null:
 		net_node.damage_animal.rpc_id(1, name, amount, from_knife)
+	if from_knife:
+		health = max(0.0, health - amount)
+		_hit_flash_timer = 0.3
+		_spawn_blood_splatter()
+		_play_pain_sound()
+		if health <= 0.0:
+			_is_dead = true
+			_hit_flash_timer = 2.0
+			_rot_timer = 300.0
+			if _animation_player != null:
+				_animation_player.stop()
+			_lie_corpse_flat()
 
 func setup(kind: String, points: Array) -> void:
 	animal_type = kind
@@ -471,7 +483,7 @@ func _process_body(delta: float) -> void:
 		_dedicated_checked = true
 		var _nm := get_node_or_null("/root/NetworkManager")
 		_is_dedicated = _nm != null and _nm.is_dedicated_server
-	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy") or not _is_valid_player_target(_player) or _is_dedicated:
+	if _player == null or not is_instance_valid(_player) or _player.is_in_group("net_player_proxy") or not _is_valid_player_target(_player):
 		_resolve_player_timer += delta
 		if _resolve_player_timer >= 0.5:
 			_resolve_player_timer = 0.0
@@ -950,7 +962,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 				_set_wolf_foe(foe)
 	if not tamed_to.is_empty() and _wolf_foe != null:
 		var combat_owner := _resolve_owner()
-		if _orders_cease or (is_instance_valid(combat_owner) and is_instance_valid(_wolf_foe) and _wolf_foe.global_position.distance_to(combat_owner.global_position) > 60.0):
+		var foe_leash: Vector3 = _stay_pos if _follow_mode in ["stay", "patrol"] else (combat_owner.global_position if is_instance_valid(combat_owner) else global_position)
+		if _orders_cease or ((is_instance_valid(combat_owner) or _follow_mode in ["stay", "patrol"]) and is_instance_valid(_wolf_foe) and _wolf_foe.global_position.distance_to(foe_leash) > 60.0):
 			_wolf_foe = null
 	if _wolf_foe != null:
 		_foe_engaged += delta
@@ -1013,7 +1026,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if nearby_bear != null:
 			var bear_d := global_position.distance_to(nearby_bear.global_position)
 			var can_chase_p: bool = _player != null and is_instance_valid(_player) and _chase_cooldown <= 0.0 and not _player.get_meta("proxy_dead", false) and not _player.get_meta("in_built_shelter", false) and _player.get_meta("protection_timer", 0.0) <= 0.0 and global_position.distance_to(_player.global_position) < _effective_player_sight_range(_player)
-			var player_priority: bool = can_chase_p and (bear_d > 8.0 or global_position.distance_to(_player.global_position) < bear_d)
+			var player_priority: bool = can_chase_p and bear_d > 12.0 and global_position.distance_to(_player.global_position) < bear_d
 			if player_priority:
 				_bear_avoid_timer = 0.0
 			else:
@@ -1273,9 +1286,10 @@ func _wolf_ai(delta: float) -> Dictionary:
 		if nearest_prey != null and is_instance_valid(nearest_prey):
 			var dist_to_prey := global_position.distance_to(nearest_prey.global_position)
 			if dist_to_prey < 45.0:
-				# A wolf is a combat opponent from the first bite, including
-				# when the bear initiates the encounter while hunting.
-				if animal_type == "bear" and str(nearest_prey.get("animal_type")) == "wolf":
+				# A tamed wolf is a combat opponent from the first bite; wild
+				# wolves stay on the Priority 3 chase_prey path so Priority 0
+				# (chase_player) always overrides hunting wild wolves.
+				if animal_type == "bear" and str(nearest_prey.get("animal_type")) == "wolf" and not str(nearest_prey.get("tamed_to")).is_empty():
 					_set_wolf_foe(nearest_prey)
 					_state = "fight_wolf"
 					_chase_target = nearest_prey
@@ -1390,12 +1404,9 @@ func _find_nearest_prey() -> Node3D:
 			continue
 		var ats := str(at)
 		if animal_type == "bear":
-			# Bears hunt deer, foxes and tamed wolves inside their forest territory;
-			# wild wolves already flee bears and chasing a wild pack locks the bear
-			# into an endless pursuit loop.
+			# Bears can hunt wolves, foxes and deer inside their forest territory,
+			# including tamed wolves, but not other bears.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
-				continue
-			if ats == "wolf" and str(other.get("tamed_to")).is_empty():
 				continue
 			if _foe_temporarily_ignored(other):
 				continue
@@ -1468,13 +1479,9 @@ func _bear_beyond_territory(target_pos: Vector3) -> bool:
 func _is_valid_player_target(node: Node) -> bool:
 	if node == null or not is_instance_valid(node) or not (node is Node3D):
 		return false
-	if node is WildlifeController or node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("remote_player"):
+	if node is WildlifeController or node.is_in_group("wildlife") or node.is_in_group("npc"):
 		return false
-	if node.is_in_group("net_player_proxy"):
-		return true
-	if _is_dedicated:
-		return false
-	return node.name == "Player" or (node.has_method("apply_damage") and not bool(node.get("is_puppet")))
+	return true
 
 func _alert_nearby_pack(target_node: Node3D) -> void:
 	if not _is_valid_player_target(target_node):
@@ -2577,7 +2584,11 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 		if not _animal_bite_landed and _animal_bite_elapsed >= 0.30:
 			_animal_bite_landed = true
 			# Recheck contact at impact: escaping prey and walls stop a bite.
-			var facing := global_basis.z.normalized().dot((target - global_position).normalized()) > 0.5
+			var to_foe := target - global_position
+			to_foe.y = 0.0
+			var fwd := global_basis.z
+			fwd.y = 0.0
+			var facing := to_foe.length() < 0.25 or (fwd.length() > 0.01 and fwd.normalized().dot(to_foe.normalized()) > 0.45)
 			if close and facing and _animal_bite_clear(target):
 				foe.take_damage(60.0 if animal_type == "bear" else (35.0 if not tamed_to.is_empty() else 25.0), false, self)
 				_foe_hits += 1
@@ -2606,10 +2617,11 @@ func _tamed_ai(delta: float) -> Dictionary:
 	_house_direct_goal = false
 	var owner := _resolve_owner()
 	var owner_anchor: Vector3 = owner.global_position if owner != null else global_position
-	# Desenganche: no perseguir amenazas o presas lejos del dueno — vuelve a su lado.
-	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_player.global_position.distance_to(owner_anchor) > 55.0):
+	var leash_anchor: Vector3 = _stay_pos if _follow_mode in ["stay", "patrol"] else owner_anchor
+	# Desenganche: no perseguir amenazas o presas lejos del dueno/puesto — vuelve a su lado.
+	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_player.global_position.distance_to(leash_anchor) > 55.0):
 		_threat_player = null
-	if _wolf_foe != null and (not is_instance_valid(_wolf_foe) or _wolf_foe.global_position.distance_to(owner_anchor) > 60.0):
+	if _wolf_foe != null and (not is_instance_valid(_wolf_foe) or _wolf_foe.global_position.distance_to(leash_anchor) > 60.0):
 		_wolf_foe = null
 	if _orders_cease and _threat_player != null:
 		_threat_player = null
@@ -2733,9 +2745,9 @@ func _tamed_ai(delta: float) -> Dictionary:
 	# "Patrullar": recorre sus puntos de patrulla alrededor de la zona marcada.
 	if _follow_mode == "patrol":
 		_state = "patrol"
-		if patrol_points.is_empty():
-			patrol_points = [_stay_pos]
-		var ptgt: Vector3 = patrol_points[target_index]
+		if patrol_points.size() < 2:
+			patrol_points = [_stay_pos, _stay_pos + Vector3(2.0, 0.0, 0.0)]
+		var ptgt: Vector3 = patrol_points[target_index % patrol_points.size()]
 		if global_position.distance_to(ptgt) < 1.8:
 			target_index = (target_index + 1) % patrol_points.size()
 			ptgt = patrol_points[target_index]
@@ -2862,7 +2874,9 @@ func _foe_temporarily_ignored(foe: Node) -> bool:
 	return _foe_ignored == foe
 
 func _find_wolf_threatening(owner: Node3D) -> Node3D:
-	if global_position.distance_to(owner.global_position) >= 50.0:
+	var owner_near := global_position.distance_to(owner.global_position) < 50.0
+	var guarding_post := _follow_mode in ["stay", "patrol"]
+	if not owner_near and not guarding_post:
 		return null
 	var best: Node3D = null
 	var best_d := 9999.0
@@ -2875,12 +2889,15 @@ func _find_wolf_threatening(owner: Node3D) -> Node3D:
 		if w.animal_type == "wolf" and not w.tamed_to.is_empty() and w.tamed_to == tamed_to:
 			continue  # lobos del mismo dueño no se atacan
 		var d_owner := w.global_position.distance_to(owner.global_position)
-		var targeting_owner := w._player == owner or w._chase_target == owner or w._wolf_foe == self
-		var hostile_close := w.tamed_to.is_empty() and ((w._state in ["chase_player", "bear_warn"] and d_owner < 16.0) or d_owner < 9.5)
-		if not targeting_owner and not hostile_close:
+		var d_self := w.global_position.distance_to(global_position)
+		var targeting_self := w._wolf_foe == self and d_self < 35.0
+		var targeting_owner := owner_near and (w._player == owner or w._chase_target == owner)
+		var hostile_close := w.tamed_to.is_empty() and ((owner_near and ((w._state in ["chase_player", "bear_warn"] and d_owner < 16.0) or d_owner < 9.5)) or (guarding_post and d_self < 9.5))
+		if not targeting_self and not targeting_owner and not hostile_close:
 			continue
-		if d_owner < best_d:
-			best_d = d_owner
+		var score_d := minf(d_owner if owner_near else 9999.0, d_self)
+		if score_d < best_d:
+			best_d = score_d
 			best = w
 	return best
 
@@ -2972,7 +2989,10 @@ func _is_owner_actor(player: Node) -> bool:
 
 func apply_command(mode: String, target: Node = null) -> void:
 	# mode: "toggle" | "follow" | "stay" | "patrol" | "attack" | "cease"
-	if mode == "attack" and target != null and is_instance_valid(target) and target != self:
+	if mode == "attack":
+		if target == null or not is_instance_valid(target) or target == self:
+			_notify_owner_msg(_resolve_owner(), "El lobo no tiene objetivo válido.")
+			return
 		if target is WildlifeController:
 			if target.get("_is_dead") == true or (not str(target.get("tamed_to")).is_empty() and str(target.get("tamed_to")) == tamed_to):
 				return
@@ -2984,7 +3004,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 			else:
 				_ordered_prey = target
 		elif target is Node3D and (target.is_in_group("net_player_proxy") or target.is_in_group("remote_player")):
-			if target == _resolve_owner() or target.get_meta("proxy_dead", false):
+			if target == _resolve_owner() or target.get_meta("proxy_dead", false) or target.get("is_dead") == true:
 				return
 			_wolf_foe = null
 			_ordered_prey = null
@@ -2995,6 +3015,8 @@ func apply_command(mode: String, target: Node = null) -> void:
 			return
 		_animal_bite_target = null
 		_foe_ignored = null
+		_chase_cooldown = 0.0
+		_prey_flee_timer = 0.0
 		_orders_cease = false
 		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca!")
 		return
@@ -3013,8 +3035,8 @@ func apply_command(mode: String, target: Node = null) -> void:
 		_follow_mode = mode
 	else:
 		return
-	# A movement order cancels the previous hunt/attack. New threats may still
-	# trigger defence, unless the owner explicitly ordered cease fire.
+	# A movement order cancels the previous hunt/attack and re-enables normal defence.
+	_orders_cease = false
 	_animal_bite_target = null
 	_wolf_foe = null
 	_ordered_prey = null
@@ -3030,6 +3052,8 @@ func apply_command(mode: String, target: Node = null) -> void:
 				patrol_points.append(point)
 		if patrol_points.is_empty():
 			patrol_points.append(_stay_pos)
+		if patrol_points.size() < 2:
+			patrol_points.append(_stay_pos + Vector3(2.0, 0.0, 0.0))
 		target_index = 0
 		_path_recalc_timer = 0.0
 	var owner := _resolve_owner()

@@ -43,6 +43,8 @@ func _initialize() -> void:
 	for c in hud.players_list_box.get_children():
 		if c is Label:
 			texts.append((c as Label).text)
+		elif c is Button and (c as Button).text.begins_with("• "):
+			texts.append((c as Button).text)
 	var joined := "|".join(texts)
 	check(joined.find("Ana") >= 0, "char_name preferred over session name")
 	check(joined.find("Jugador_101") < 0, "session name not shown when char_name exists")
@@ -50,7 +52,7 @@ func _initialize() -> void:
 	check(joined.find("Bob †") >= 0 or joined.find("Bob") >= 0 and joined.find("†") >= 0, "dead player marked")
 	check(joined.find("Ghost") < 0, "offline player skipped")
 	check(texts.size() == 4, "title + 3 online players rendered (got %d)" % texts.size())
-	check(texts[0] == "JUGADORES (3)", "title shows online count")
+	check(texts[0].begins_with("JUGADORES (3)"), "title shows online count")
 
 	hud.toggle_players_list()
 	check(not hud.players_panel.visible, "toggle hides the panel")

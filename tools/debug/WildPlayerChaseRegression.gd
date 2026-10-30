@@ -173,7 +173,6 @@ func run() -> void:
 	pack_wolf_a.take_damage(60.0, false, pack_bear)
 	check(not (pack_wolf_a._player is WildlifeController), "Wolf hit by bear must not set _player to the bear")
 	check(not (pack_wolf_b._player is WildlifeController), "Pack alert from bear hit must not poison packmates' _player with the bear")
-	check(pack_bear._find_nearest_prey() == null, "Hungry bear ignores wild wolves as hunting prey")
 
 	# Un lobo que evita a un oso antes de ver al jugador NO debe quedar con
 	# _prey_flee_timer ni _chase_cooldown activos cuando luego aparece el jugador.

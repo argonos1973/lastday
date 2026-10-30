@@ -6769,6 +6769,10 @@ func die(cause: String = "") -> void:
 	var death_scene := get_tree().current_scene
 	if death_scene != null and death_scene.has_method("_close_backpack_ui") and death_scene.get("_backpack_panel") != null:
 		death_scene._close_backpack_ui()
+	if death_scene != null and death_scene.has_method("_close_wolf_orders") and death_scene.get("_wolf_menu") != null:
+		death_scene._close_wolf_orders()
+	if death_scene != null and death_scene.has_method("_close_loot_ui") and death_scene.get("_loot_panel") != null:
+		death_scene._close_loot_ui()
 	_is_aiming = false
 	_breath_hold_active = false
 	_remove_scope_overlay()
