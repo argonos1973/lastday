@@ -2,6 +2,11 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+283ff23|Nueva animacion de ataque del oso creada en Blender (embestida y zarpazo con la pata delantera derecha sincronizados con el impacto)
+ffb1d3a|Corregida la IA de lobos y osos salvajes para que nunca ignoren al jugador tras encuentros entre animales, defensa del lobo domesticado al guardar zona lejos del dueno y saciedad completa al comer
+32ab650|Corregido el bloqueo de persecucion tras esquivar a un oso y el tope de saciedad del lobo domesticado al comer
+450831a|Corregido el bug por el que lobos y osos salvajes iban arriba y abajo sin atacar al personaje tras morder un oso a un lobo salvaje
+2f0de34|Los animales salvajes sueltan persecuciones imposibles contra lobos y vuelven a por el jugador; mayor alcance de mordisco en combate animal
 bc2f534|Combate animal refinado: el mordisco dura lo que dura la animacion, el oso entra directo a pelear con lobos, y no puedes ordenar atacar a tu propio lobo ni a ti mismo
 0f1d67e|Los lobos salvajes y los osos pelean contra tu lobo domesticado (el oso ahora tiene animacion de mordisco); tu lobo puede morir en combate y se recupera comiendo o descansando saciado — veras 'herido' en su estado
 3c32355|Tu lobo grune bajo para avisarte cuando un personaje ajeno se acerca — sin atacar, solo alerta
