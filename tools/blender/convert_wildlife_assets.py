@@ -10,6 +10,8 @@ The original source folders at the project root are left untouched.
 import bpy
 import os
 import sys
+import math
+from mathutils import Vector, Quaternion
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -48,6 +50,46 @@ ANIMALS = {
 }
 
 
+def make_bear_attack(armature, idle):
+    """Authored 1.2 s lunge and right-paw strike, returning to the idle pose.
+
+    The source pack only has teeth-chattering, not a combat strike. Keep the
+    root stationary (navigation owns it) and animate shoulders/neck/jaw/paw.
+    Peak contact is frame 10, matching WildlifeController's 0.30 s bite.
+    """
+    armature.animation_data_create()
+    for track in armature.animation_data.nla_tracks:
+        track.mute = True
+    armature.animation_data.action = idle
+    bpy.context.scene.frame_set(int(idle.frame_range[0]))
+    base = {p.name: (p.location.copy(), p.rotation_quaternion.copy(), p.scale.copy())
+            for p in armature.pose.bones}
+    armature.animation_data.action = None
+    attack = bpy.data.actions.new("bear_combat_attack")
+    armature.animation_data.action = attack
+    keys = [(1, 0.0), (6, -0.22), (10, 1.0), (14, 0.85), (23, 0.15), (37, 0.0)]
+    angles = {"Chest": 4, "Neck1": 12, "Neck2": 9, "Head": 15,
+              "Jaw": 25, "LegFR1": -38, "LegFR2": 24, "LegFR3": -8}
+    for frame, strength in keys:
+        for bone in armature.pose.bones:
+            loc, rot, scale = base[bone.name]
+            bone.rotation_mode = "QUATERNION"
+            bone.location, bone.rotation_quaternion, bone.scale = loc, rot, scale
+            if bone.name in angles:
+                axis = bone.bone.matrix_local.to_quaternion().inverted() @ Vector((1, 0, 0))
+                bone.rotation_quaternion = rot @ Quaternion(axis, math.radians(angles[bone.name]) * strength)
+            if bone.name == "Neck1":
+                bone.location = loc + bone.bone.matrix_local.to_quaternion().inverted() @ Vector((0, -8 * strength, 0))
+            for prop in ("location", "rotation_quaternion", "scale"):
+                bone.keyframe_insert(prop, frame=frame, group=bone.name)
+    for fc in attack.fcurves:
+        for key in fc.keyframe_points:
+            key.interpolation = "BEZIER"
+            key.handle_left_type = key.handle_right_type = "AUTO_CLAMPED"
+    armature.animation_data.action = None
+    return attack
+
+
 def import_and_export(kind: str) -> None:
     spec = ANIMALS[kind]
     if not os.path.isfile(spec["source"]):
@@ -75,6 +117,9 @@ def import_and_export(kind: str) -> None:
             raise RuntimeError(f"{kind}: no source action found for {exported_name}: {suffixes}")
         # Prefer the specifically named first variant and keep one cycle only.
         selected[exported_name] = matches[0]
+
+    if kind == "bear":
+        selected["attack"] = make_bear_attack(armature, selected["idle"])
 
     for action in all_actions:
         if action not in selected.values():
@@ -117,6 +162,9 @@ def import_and_export(kind: str) -> None:
     bpy.context.view_layer.objects.active = armature
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     output_path = os.path.join(OUTPUT_DIR, f"{kind}.glb")
+    if kind == "bear":
+        os.makedirs(os.path.join(ROOT, "build", "tmp"), exist_ok=True)
+        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "build", "tmp", "bear_attack_authored.blend"))
     bpy.ops.export_scene.gltf(
         filepath=output_path,
         export_format="GLB",
