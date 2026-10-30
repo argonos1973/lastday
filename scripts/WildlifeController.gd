@@ -3380,7 +3380,8 @@ func _update_wolf_sounds(delta: float) -> void:
 	_growl_timer -= delta
 	var is_hungry := _wolf_hunger < _wolf_hunger_threshold
 	if is_hungry and _howl_timer <= 0.0:
-		_play_wolf_sound("howl")
+		# El domesticado hambriento quejido en vez de aullar como el salvaje.
+		_play_wolf_sound("hungry" if (animal_type == "wolf" and not tamed_to.is_empty()) else "howl")
 		_howl_timer = randf_range(20.0, 45.0)
 	if _growl_timer <= 0.0:
 		if is_puppet:
@@ -3397,7 +3398,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _net != null and _net.is_dedicated_server:
 		# Dedicated servers can't play audio: relay events to clients so each
 		# puppet plays the sound locally.
-		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "growl_low" or sound_type == "bite") and _net.is_connected:
+		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "growl_low" or sound_type == "bite" or sound_type == "hungry") and _net.is_connected:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	var is_bear := animal_type == "bear"
@@ -3454,6 +3455,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"bite":
 			path = "res://assets/audio/mordedura.mp3"
+		"hungry":
+			path = "res://assets/audio/quejidohambrelobo.mp3"
 		_:
 			return
 	var stream: AudioStream = null
@@ -3475,7 +3478,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0
 		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
 	else:
-		if sound_type == "growl_low":
+		if sound_type == "hungry":
+			# Quejido de hambre: el mp3 ya suena a quejido — sin el tono agudo
+			# que se aplica al ladrido del domesticado.
+			_wolf_audio_player.volume_db = -2.0
+			_wolf_audio_player.pitch_scale = randf_range(0.95, 1.05)
+		elif sound_type == "growl_low":
 			_wolf_audio_player.volume_db = -14.0
 			_wolf_audio_player.pitch_scale = randf_range(0.6, 0.75) * (1.45 if tamed else 1.0)
 		else:
