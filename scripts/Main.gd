@@ -2098,6 +2098,11 @@ func _load_server_world_state() -> void:
 		campfire_fire_timers[fire_name] = now_ms + maxi(int(saved_cf_timers[fire_name]), 0)
 	_pending_dead_wildlife.append_array(world_data.get("dead_wildlife", []))
 	_apply_pending_dead_wildlife()
+	# Tamed wolves keep their bond across a keep_world restart: the recreated
+	# wild wolf (same deterministic name) gets tamed_to/_owner_client_id back
+	# and _restore_tamed_wolf rebinds it to the owner's new peer id on join.
+	_pending_tamed_wildlife.append_array(world_data.get("tamed_wildlife", []))
+	_apply_pending_tamed_wildlife()
 	if is_instance_valid(lake_rowboat):
 		lake_rowboat.restore_state(world_data.get("rowboat", {}), null)
 
