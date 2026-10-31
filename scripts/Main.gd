@@ -9615,13 +9615,42 @@ func _apply_pending_tamed_wildlife() -> void:
 		return
 	for tw in _pending_tamed_wildlife:
 		var tw_name := str(tw.get("name", ""))
+		var applied := false
 		for node in get_tree().get_nodes_in_group("wildlife"):
 			if node == null or not is_instance_valid(node):
 				continue
 			if node.name == tw_name and str(node.get("tamed_to")) == "":
 				SaveGameHooks._apply_tamed_wildlife_entry(node, tw)
+				applied = true
 				break
+		if not applied and not tw_name.is_empty():
+			# Un nombre de respawn no vuelve a existir tras un arranque limpio:
+			# se genera un lobo nuevo en la posición guardada conservando el
+			# nombre registrado para que _restore_tamed_wolf lo re-vincule.
+			var wolf := _respawn_tamed_wolf(tw_name, tw)
+			if wolf != null:
+				SaveGameHooks._apply_tamed_wildlife_entry(wolf, tw)
 	_pending_tamed_wildlife.clear()
+
+func _respawn_tamed_wolf(tw_name: String, tw: Dictionary) -> WildlifeController:
+	var pos_raw = tw.get("pos", null)
+	var pos: Vector3
+	if pos_raw is Array and pos_raw.size() >= 3:
+		pos = Vector3(float(pos_raw[0]), float(pos_raw[1]), float(pos_raw[2]))
+	elif pos_raw is Vector3:
+		pos = pos_raw
+	else:
+		return null
+	var wolf := _create_wildlife_animal("wolf", [pos, pos + Vector3(3.0, 0.0, 3.0)])
+	if wolf == null:
+		return null
+	wolf.name = tw_name
+	# Si el nombre restaurado lleva un id mayor que el contador actual, se
+	# salta para que ningún respawn futuro genere un nombre duplicado.
+	var us := tw_name.rfind("_")
+	if us >= 0 and tw_name.substr(us + 1).is_valid_int():
+		_animal_id_counter = maxi(_animal_id_counter, int(tw_name.substr(us + 1)) + 1)
+	return wolf
 
 #endregion
 
