@@ -125,6 +125,7 @@ const AI_LOD_CULL := 200.0  # Distancia: sin IA (solo actualiza rot_timer de cad
 const TAME_FEEDINGS := 3          # comidas válidas para domesticar
 const TAME_FEED_RADIUS := 15.0    # quien alimenta debe seguir cerca al comer
 const TAME_GUARD_SECONDS := 60.0  # luto junto al cadáver del dueño antes de volverse salvaje
+const OFFLINE_HUNGER_DRAIN := 0.001  # hambre/s con dueño ausente (~22 h de 100→20)
 var tamed_to := ""
 var _tame_progress := {}          # feeder_id -> nº de comidas
 var _follow_mode := "follow"      # "follow" | "stay" | "patrol" (solo con tamed_to != "")
@@ -574,9 +575,12 @@ func _process_body(delta: float) -> void:
 			var hunger_floor := 0.0
 			if not tamed_to.is_empty():
 				var own_h := _resolve_owner()
-				if own_h != null and bool(own_h.get_meta("disconnected", false)):
-					# No dejar morir de inanicion al lobo mientras guarda el cuerpo offline
+				if own_h == null or bool(own_h.get_meta("disconnected", false)):
+					# Dueño ausente (desconectado o aún sin proxy tras reinicio):
+					# el lobo guarda su sitio y gasta poquísima comida, con suelo
+					# para que jamás muera de inanición esperando.
 					hunger_floor = 20.0
+					drain = OFFLINE_HUNGER_DRAIN
 				elif _wolf_hunger >= 50.0 and _wolf_foe == null and _threat_player == null and health < max_health:
 					health = min(max_health, health + delta * 1.5)
 			_wolf_hunger = max(hunger_floor, _wolf_hunger - delta * drain)
