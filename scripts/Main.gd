@@ -1056,6 +1056,8 @@ func _process(delta: float) -> void:
 	if _cinematic_active:
 		_process_cinematic(delta)
 		return
+	if _wolf_menu != null:
+		_update_wolf_menu_stats()
 	if _grass_any_visible:
 		_wind_time += delta
 		if grass_batch_material is ShaderMaterial:
@@ -5258,6 +5260,9 @@ var _loot_items: Array = []
 
 var _wolf_menu: PanelContainer = null
 var _wolf_menu_wolf: Node = null
+var _wolf_hp_bar: ProgressBar = null
+var _wolf_food_bar: ProgressBar = null
+var _wolf_status_label: Label = null
 
 func _show_wolf_orders(wolf: Node) -> void:
 	if hud == null:
@@ -5286,6 +5291,32 @@ func _show_wolf_orders(wolf: Node) -> void:
 	title.add_theme_font_size_override("font_size", 17)
 	title.add_theme_color_override("font_color", Color(0.85, 0.82, 0.5))
 	vbox.add_child(title)
+	# Estado del lobo: barras de salud y comida + línea de orden/actividad,
+	# refrescadas cada frame desde _process mientras el menú siga abierto.
+	for row_def in [["Salud", Color(0.30, 0.62, 0.25)], ["Comida", Color(0.72, 0.55, 0.20)]]:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		vbox.add_child(row)
+		var lbl := Label.new()
+		lbl.text = row_def[0]
+		lbl.custom_minimum_size = Vector2(58, 0)
+		lbl.add_theme_font_size_override("font_size", 13)
+		lbl.add_theme_color_override("font_color", Color(0.78, 0.80, 0.68))
+		row.add_child(lbl)
+		var bar := _wolf_stat_bar(row_def[1])
+		row.add_child(bar)
+		if row_def[0] == "Salud":
+			_wolf_hp_bar = bar
+		else:
+			_wolf_food_bar = bar
+	_wolf_status_label = Label.new()
+	_wolf_status_label.add_theme_font_size_override("font_size", 13)
+	_wolf_status_label.add_theme_color_override("font_color", Color(0.78, 0.82, 0.68))
+	_wolf_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_wolf_status_label)
+	_update_wolf_menu_stats()
+	var sep := HSeparator.new()
+	vbox.add_child(sep)
 	for order in [["Seguir", "follow"], ["Quieto (guardar zona)", "stay"], ["Patrullar", "patrol"], ["Dejar de atacar", "cease"]]:
 		var btn := Button.new()
 		btn.text = order[0]
@@ -5322,11 +5353,77 @@ func _close_wolf_orders() -> void:
 	if _wolf_menu != null:
 		_wolf_menu.queue_free()
 		_wolf_menu = null
+	_wolf_hp_bar = null
+	_wolf_food_bar = null
+	_wolf_status_label = null
 	_send_wolf_mode(_wolf_menu_wolf, "menu_free")
 	_wolf_menu_wolf = null
 	var any_panel_open: bool = (hud != null and (hud.inventory_visible or hud.craft_panel_visible)) or _backpack_panel != null or _loot_panel != null
 	if player != null and not player.is_dead and not any_panel_open:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _wolf_stat_bar(fill_color: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(0, 15)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.max_value = 100.0
+	bar.show_percentage = true
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.10, 0.08, 0.95)
+	bg.set_corner_radius_all(3)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = fill_color
+	fill.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
+
+func _update_wolf_menu_stats() -> void:
+	var wolf := _wolf_menu_wolf
+	if _wolf_menu == null or wolf == null or not is_instance_valid(wolf):
+		return
+	var hp := float(wolf.get("health"))
+	var hp_max := maxf(1.0, float(wolf.get("max_health")))
+	var hp_pct := hp / hp_max * 100.0
+	var food := clampf(float(wolf.get("_wolf_hunger")), 0.0, 100.0)
+	if is_instance_valid(_wolf_hp_bar):
+		_wolf_hp_bar.value = hp_pct
+		# Verde->rojo según la vida restante.
+		var fill := _wolf_hp_bar.get_theme_stylebox("fill") as StyleBoxFlat
+		if fill != null:
+			fill.bg_color = Color(0.72, 0.20, 0.14).lerp(Color(0.30, 0.62, 0.25), clampf(hp_pct, 0.0, 100.0) / 100.0)
+	if is_instance_valid(_wolf_food_bar):
+		_wolf_food_bar.value = food
+	if is_instance_valid(_wolf_status_label):
+		_wolf_status_label.text = _wolf_status_text(wolf)
+
+func _wolf_status_text(wolf: Node) -> String:
+	var mode_es: String = {"follow": "siguiéndote", "stay": "quieto en la zona", "patrol": "patrullando"}.get(str(wolf.get("_follow_mode")), "")
+	var st: String = str(wolf.get("_state"))
+	# El puppet remoto no corre la IA: su actividad se lee del anim sincronizado.
+	if bool(wolf.get("is_puppet")) or st.is_empty() or st == "patrol":
+		st = str(wolf.get("current_anim_keyword"))
+	var act_es: String = {
+		"follow": "acompañándote", "guard": "guardando la zona", "patrol": "patrullando",
+		"chase_prey": "cazando presa", "chase_player": "persiguiendo a alguien",
+		"fight_wolf": "peleando", "eating": "comiendo", "eat": "comiendo",
+		"investigate": "investigando", "seek_corpse": "buscando comida",
+		"wary": "receloso", "wary_torch": "receloso", "flee": "huyendo",
+		"retreat": "retirándose", "bear_warn": "intimidando",
+		"attack": "atacando", "bite": "mordiendo", "walk": "caminando",
+		"trot": "trotando", "run": "corriendo", "sit": "sentado",
+		"lie": "tumbado", "idle": "en espera", "dead": "muerto", "growl": "gruñendo",
+	}.get(st, "")
+	var parts: Array = []
+	if not mode_es.is_empty():
+		parts.append("Orden: " + mode_es)
+	if not act_es.is_empty() and act_es != mode_es:
+		parts.append(act_es)
+	if player != null and is_instance_valid(player):
+		parts.append("a %d m" % int(player.global_position.distance_to(wolf.global_position)))
+	if float(wolf.get("_wolf_hunger")) < float(wolf.get("_wolf_hunger_threshold")):
+		parts.append("¡hambriento!")
+	return " · ".join(parts)
 
 # Silbido (tecla X): una pulsación llama al lobo — viene y sigue sin atacar;
 # dos pulsaciones seguidas (<0.9 s) lo ponen en modo agresivo unos segundos.
