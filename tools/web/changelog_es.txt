@@ -99,3 +99,4 @@ df3f50f|El arco se ve en la mano y al apuntar, se guarda en los hombros libres c
 919ebb8|Lobo domesticado: menu de ordenes con la tecla O sin apuntarle (el lobo espera quieto mientras esta abierto), silbido con X (1x viene y sigue sin atacar, 2x ataca lo que tenga cerca) y la carne la come pegado a la pieza
 20c2c18|Quejido de hambre del lobo domesticado en vez del aullido salvaje
 10f95f2|Pasamontañas y ropa texturizada ya no se quedan en blanco al recogerla del loot del cadaver (corregido el color plano que tapaba la tela)
+edc403c|El menu del lobo muestra sus stats en vivo: barras de Salud y Comida, orden actual, actividad, distancia y aviso de hambre
