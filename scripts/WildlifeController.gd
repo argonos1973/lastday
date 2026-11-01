@@ -209,6 +209,8 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 		# Real animal — apply damage directly
 		if _is_dead:
 			return
+		if attacker is WildlifeController and _is_tamed_owner_offline():
+			return
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
 		if animal_type == "bear":
@@ -581,7 +583,7 @@ func _process_body(delta: float) -> void:
 					# para que jamás muera de inanición esperando.
 					hunger_floor = 20.0
 					drain = OFFLINE_HUNGER_DRAIN
-				elif _wolf_hunger >= 50.0 and _wolf_foe == null and _threat_player == null and health < max_health:
+				if _wolf_hunger >= (20.0 if hunger_floor > 0.0 else 50.0) and _wolf_foe == null and _threat_player == null and health < max_health:
 					health = min(max_health, health + delta * 1.5)
 			_wolf_hunger = max(hunger_floor, _wolf_hunger - delta * drain)
 		if _wolf_hunger <= 0.0:
@@ -953,7 +955,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 				if other == self or not is_instance_valid(other) or not (other is WildlifeController):
 					continue
 				var ow := other as WildlifeController
-				if ow.animal_type != "wolf" or ow._is_dead or ow.tamed_to.is_empty() or _foe_temporarily_ignored(ow):
+				if ow.animal_type != "wolf" or ow._is_dead or ow.tamed_to.is_empty() or ow._is_tamed_owner_offline() or _foe_temporarily_ignored(ow):
 					continue
 				var foe_dist := global_position.distance_to(ow.global_position)
 				if foe_dist < 14.0 and (player_dist > 14.0 or foe_dist < player_dist):
@@ -1413,6 +1415,8 @@ func _find_nearest_prey() -> Node3D:
 			# Bears can hunt wolves, foxes and deer inside their forest territory,
 			# including tamed wolves, but not other bears.
 			if ats != "wolf" and ats != "deer" and ats != "fox":
+				continue
+			if other is WildlifeController and (other as WildlifeController)._is_tamed_owner_offline():
 				continue
 			if _foe_temporarily_ignored(other):
 				continue
@@ -2319,6 +2323,19 @@ func _find_feeder_node(feeder_id: String) -> Node3D:
 							dead_match = pr
 					else:
 						return pr
+	if feeder_id == tamed_to and not _owner_client_id.is_empty():
+		for pr in get_tree().get_nodes_in_group("net_player_proxy"):
+			if str(pr.get_meta("client_id", "")) == _owner_client_id and not pr.get_meta("proxy_dead", false):
+				return pr
+		if scene != null:
+			if "server_proxies" in scene:
+				for pr in scene.server_proxies.values():
+					if pr != null and str(pr.get_meta("client_id", "")) == _owner_client_id and not pr.get_meta("proxy_dead", false):
+						return pr
+			if "proxy_by_client_id" in scene and scene.proxy_by_client_id.has(_owner_client_id):
+				var by_cid: Node3D = scene.proxy_by_client_id[_owner_client_id]
+				if by_cid != null and is_instance_valid(by_cid) and not by_cid.get_meta("proxy_dead", false):
+					return by_cid
 	return dead_match
 
 func _nearest_feeder_in_range(radius: float) -> Node3D:
@@ -2464,10 +2481,20 @@ func _shadow_offering(offering: Node3D, delta: float) -> Dictionary:
 	return {"target": global_position, "speed": 0.0}
 
 func _resolve_owner() -> Node3D:
-	if _owner_node != null and is_instance_valid(_owner_node):
-		return _owner_node
-	_owner_node = _find_feeder_node(tamed_to)
+	if _owner_node == null or not is_instance_valid(_owner_node) or _owner_node.get_meta("proxy_dead", false):
+		_owner_node = _find_feeder_node(tamed_to)
+	if _owner_node != null and is_instance_valid(_owner_node) and not _owner_node.get_meta("proxy_dead", false) and not tamed_to.is_empty() and tamed_to != "local":
+		var cur_pid := int(_owner_node.get_meta("peer_id", 0))
+		var cur_cid := str(_owner_node.get_meta("client_id", ""))
+		if cur_pid > 0 and str(cur_pid) != tamed_to and (_owner_client_id.is_empty() or cur_cid == _owner_client_id):
+			tamed_to = str(cur_pid)
 	return _owner_node
+
+func _is_tamed_owner_offline() -> bool:
+	if tamed_to.is_empty() or tamed_to == "local":
+		return false
+	var own := _resolve_owner()
+	return own == null or bool(own.get_meta("disconnected", false))
 
 func _can_feed_from(feeder: Node3D) -> bool:
 	return is_instance_valid(feeder) and not feeder.is_queued_for_deletion() and not feeder.get_meta("proxy_dead", false) and not feeder.get_meta("disconnected", false) and feeder.get("is_dead") != true
@@ -2584,6 +2611,7 @@ func _release_owner_record() -> void:
 	# que una reconexión no resucite el vínculo sobre un cadáver.
 	if tamed_to.is_empty():
 		return
+	print("[WOLF] %s died: releasing owner=%s client_id=%s" % [name, tamed_to, _owner_client_id])
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_clear_tamed_wolf_record"):
 		scene._clear_tamed_wolf_record(tamed_to)
@@ -2971,6 +2999,8 @@ func _foe_temporarily_ignored(foe: Node) -> bool:
 	return _foe_ignored == foe
 
 func _find_wolf_threatening(owner: Node3D) -> Node3D:
+	if bool(owner.get_meta("disconnected", false)):
+		return null
 	var owner_near := global_position.distance_to(owner.global_position) < 50.0
 	var guarding_post := _follow_mode in ["stay", "patrol"]
 	if not owner_near and not guarding_post:

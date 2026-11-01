@@ -604,6 +604,11 @@ func test_server_persistence() -> void:
 	world.server_proxies.erase(7)
 	world.proxy_by_client_id["wolf_owner"] = owner
 	owner.set_meta("disconnected", true)
+	var wild_attacker := make_wolf(world, Vector3(2, 0, 0))
+	var hp_before := wolf.health
+	wolf.take_damage(120.0, false, wild_attacker)
+	check(wolf.health == hp_before and not wolf._is_dead, "Wild predators cannot kill a tamed wolf while its owner is offline")
+	wild_attacker.free()
 	net.players.erase(7)
 	net.players[9] = {"client_id": "wolf_owner"}
 	wolf._owner_node = null
@@ -612,6 +617,10 @@ func test_server_persistence() -> void:
 	check(wolf.tamed_to == "9", "Actual reconnect rebinds the wolf to the new peer")
 	check(wolf._resolve_owner() == owner, "Reconnected wolf resolves the correct owner proxy")
 	check(wolf._follow_mode == "stay" and wolf._stay_pos == stay_pos, "Reconnect preserves the stay command and position")
+	wolf.tamed_to = "7"
+	wolf._owner_node = null
+	world._restore_tamed_wolf(9, "")
+	check(wolf.tamed_to == "9", "Reconnect rebinds wolf by persistent _owner_client_id even if wolf_name is empty")
 	world._net_command_wolf(wolf.name, "follow", 11)
 	check(wolf._follow_mode == "stay", "Another player cannot command the reconnected wolf")
 	world._net_command_wolf(wolf.name, "follow", 9)

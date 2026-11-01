@@ -3976,16 +3976,28 @@ func _cid_belongs_to_peer(cid: String, pid: int) -> bool:
 
 # Re-vincula al lobo con su dueño tras reconectar (misma sesión de servidor).
 func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
-	if net == null or not net.is_host or wolf_name.is_empty():
+	if net == null or not net.is_host:
 		return
 	var owner: Node3D = server_proxies.get(pid)
 	if not is_instance_valid(owner) or owner.get_meta("proxy_dead", false):
 		return
-	var w := get_node_or_null(wolf_name) as WildlifeController
-	if w == null or w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty():
-		return
 	var cid := str(owner.get_meta("client_id", ""))
-	if cid.is_empty() or (w._owner_client_id != cid and not (w._owner_client_id.is_empty() and w._owner_node == owner)):
+	if cid.is_empty():
+		return
+	var w := get_node_or_null(wolf_name) as WildlifeController if not wolf_name.is_empty() else null
+	if w != null and (w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty()):
+		w = null
+	if w != null and w._owner_client_id != cid and not (w._owner_client_id.is_empty() and w._owner_node == owner):
+		w = null
+	if w == null:
+		for node in get_tree().get_nodes_in_group("wildlife"):
+			var cand := node as WildlifeController
+			if cand == null or cand.animal_type != "wolf" or cand.is_puppet or cand._is_dead or cand.tamed_to.is_empty():
+				continue
+			if cand._owner_client_id == cid:
+				w = cand
+				break
+	if w == null:
 		return
 	w.tamed_to = str(pid)
 	w._owner_client_id = cid
