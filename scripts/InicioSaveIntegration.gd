@@ -150,27 +150,34 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 				inv_colors[iname] = Color(float(cc[0]), float(cc[1]), float(cc[2]), float(cc[3]) if cc.size() > 3 else 1.0)
 		if bool(inv_item.get("clothing_camo", false)):
 			inv_camo[iname] = true
-	# Determine what's equipped in each slot
+	# Determine what's equipped in each slot. CLOTHING_SLOTS is authoritative:
+	# balaclava rides "face" and helmet "head" so both show like in-game.
 	var torso_item := ""
 	var legs_item := ""
 	var feet_item := ""
 	var hands_item := ""
 	var head_item := ""
+	var face_item := ""
 	var has_vest := false
 	for it in equipped_items:
 		var n := str(it).strip_edges()
-		if n == "Chaleco táctico":
-			has_vest = true
-		elif n == "Camiseta" or n.find("Chaqueta") >= 0:
-			torso_item = n
-		elif n == "Pantalones" or n.find("Pantalones") >= 0:
-			legs_item = n
-		elif n == "Zapatillas" or n.find("Botas") >= 0:
-			feet_item = n
-		elif n.find("Guantes") >= 0:
-			hands_item = n
-		elif n.find("Sombrero") >= 0 or n.find("Gorro") >= 0 or n.find("Gorra") >= 0 or n.find("Casco") >= 0 or n.find("Tocado") >= 0 or n.find("Pasamontañas") >= 0:
-			head_item = n
+		var slot := str(PlayerController.CLOTHING_SLOTS.get(n, ""))
+		if slot.is_empty():
+			if n == "Chaleco táctico": slot = "chaleco"
+			elif n == "Camiseta" or n.find("Chaqueta") >= 0: slot = "torso"
+			elif n == "Pantalones" or n.find("Pantalones") >= 0: slot = "legs"
+			elif n == "Zapatillas" or n.find("Botas") >= 0: slot = "feet"
+			elif n.find("Guantes") >= 0: slot = "hands"
+			elif n.find("Sombrero") >= 0 or n.find("Gorro") >= 0 or n.find("Gorra") >= 0 or n.find("Casco") >= 0 or n.find("Tocado") >= 0: slot = "head"
+			elif n.find("Pasamontañas") >= 0: slot = "face"
+		match slot:
+			"chaleco": has_vest = true
+			"torso": torso_item = n
+			"legs": legs_item = n
+			"feet": feet_item = n
+			"hands": hands_item = n
+			"face": face_item = n
+			"head": head_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
 	var has_feet := not feet_item.is_empty()
@@ -349,13 +356,14 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Add gloves
 	if not hands_item.is_empty():
 		_add_preview_gloves(model, hands_item, str(pelt_species.get(hands_item, "")))
-	# Add hat
+	# Add hat — face garment first so a helmet sits over the balaclava,
+	# exactly like in-game (they ride different CLOTHING_SLOTS).
+	if not face_item.is_empty():
+		_add_preview_hat(model, face_item, str(pelt_species.get(face_item, "")))
 	if not head_item.is_empty() and not is_autumn_hat:
 		_add_preview_hat(model, head_item, str(pelt_species.get(head_item, "")))
 	# Add held item (weapon/tool in hand)
-	var held_item_name := str(pd.get("held_item", ""))
-	if held_item_name == "Cuchillo":
-		_add_preview_knife(model)
+	_add_preview_held(model, str(pd.get("held_item", "")))
 
 const _SKIN_HIDES := {"Pantalones":["Desnudo_legs"],"Zapatillas":["Desnudo_feet"],"Botas survival":["Desnudo_feet"],"Botas militares":["Desnudo_feet"],"Guantes survival":["Desnudo_hands"],"Guantes militares":["Desnudo_hands"],"Guantes de piel":["Desnudo_hands"],"Pantalones militares":["Desnudo_legs"],"Pantalones militares azules":["Desnudo_legs"],"Pantalones militares negros II":["Desnudo_legs"],"Pantalones camuflaje":["Desnudo_legs"],"Pantalones camuflaje desert":["Desnudo_legs"],"Pantalones de piel":["Desnudo_legs"],"Chaqueta militar":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar azul":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar negra II":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje":["Desnudo_torso","Desnudo_arms"],"Chaqueta camuflaje desert":["Desnudo_torso","Desnudo_arms"],"Chaqueta militar digital":["Desnudo_torso","Desnudo_arms"],"Chaqueta de otoño":["Desnudo_torso","Desnudo_arms"],"Pantalones cargo con rodilleras":["Desnudo_legs"],"Pantalones de senderismo":["Desnudo_legs"],"Botas de montaña":["Desnudo_feet"]}
 const _BODY_HIDES := {"Zapatillas":["Body_feet"],"Botas survival":["Body_feet"],"Botas militares":["Body_feet"],"Botas de piel":["Body_feet"],"Pantalones militares":["Body_legs"],"Pantalones militares azules":["Body_legs"],"Pantalones militares negros II":["Body_legs"],"Pantalones camuflaje":["Body_legs"],"Pantalones camuflaje desert":["Body_legs"],"Pantalones de piel":["Body_legs"],"Chaqueta militar digital":["Body_arms","Body_torso"],"Chaqueta de otoño":["Body_arms","Body_torso"],"Chaqueta de piel":["Body_arms"],"Pantalones cargo con rodilleras":["Body_legs"],"Pantalones de senderismo":["Body_legs"],"Botas de montaña":["Body_feet"]}
@@ -586,6 +594,67 @@ static func _add_preview_knife(model: Node3D) -> void:
 	knife.scale = Vector3.ONE * 0.55
 	knife.position += Vector3(0.10, 0.0, -0.10)
 	_bind_preview_bone(model, knife, ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"])
+
+# Held item in the preview: bound to the hand bone like _add_preview_knife.
+# rot = item euler degrees in bone space — long props (bow/rifle/axe/rod)
+# need X-90 so they stand upright in the palm; scale turns GLB metres into
+# the skeleton's centimetre units.
+const _PREVIEW_HELD := {
+	"Arco de madera": {"path": "res://assets/models/weapons/wooden_bow.glb", "left": true, "rot": Vector3(-90, 0, 0)},
+	"Arco reforzado": {"path": "res://assets/models/weapons/reinforced_bow.glb", "left": true, "rot": Vector3(-90, 0, 0)},
+	"Fusil de asalto": {"path": "res://assets/models/weapons/m4_carbine_rifle.glb", "rot": Vector3(-90, 0, 0), "scale": 490.0},
+	"Rifle francotirador": {"path": "res://assets/models/weapons/modern_sniper_rifle__free_lowpoly.glb", "rot": Vector3(-90, 0, 0), "scale": 490.0},
+	"Hacha": {"path": "res://assets/models/props/simple_axe.glb", "rot": Vector3(-90, 0, 0)},
+	"Antorcha": {"path": "res://assets/animations/torch_stick.glb", "left": true, "rot": Vector3(-90, 0, 0)},
+	"Caña de pescar": {"path": "res://assets/models/props/cana_de_pescar.glb", "rot": Vector3(-90, 0, 0)},
+	"Lanza": {"rot": Vector3(-90, 0, 0)},
+	"Lanza de hueso": {"rot": Vector3(-90, 0, 0)},
+	"Palo afilado": {"rot": Vector3(-90, 0, 0)},
+}
+
+static func _add_preview_held(model: Node3D, item_name: String) -> void:
+	if item_name.is_empty():
+		return
+	if item_name == "Cuchillo":
+		_add_preview_knife(model)
+		return
+	var cfg: Dictionary = _PREVIEW_HELD.get(item_name, {})
+	if cfg.is_empty():
+		return
+	var node: Node3D = null
+	if item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		var prim := MaterialFactory.build_primitive_item_mesh(item_name)
+		if prim != null:
+			node = Node3D.new()
+			node.add_child(prim)
+	else:
+		var packed := load(str(cfg["path"]))
+		if packed != null and packed is PackedScene:
+			node = (packed as PackedScene).instantiate() as Node3D
+	if node == null:
+		return
+	node.name = "PreviewHeld"
+	var skel := _find_skeleton(model)
+	if skel == null:
+		node.queue_free()
+		return
+	var bone_names: Array = ["mixamorig:LeftHand", "mixamorig_LeftHand", "LeftHand"] if bool(cfg.get("left", false)) else ["mixamorig:RightHand", "mixamorig_RightHand", "RightHand"]
+	var bone_idx := -1
+	for bn in bone_names:
+		bone_idx = skel.find_bone(bn)
+		if bone_idx != -1:
+			break
+	if bone_idx == -1:
+		node.queue_free()
+		return
+	skel.add_child(node)
+	# Anchor at the bone rest pose with the item's grip rotation; the scale
+	# turns the GLB's metres into the skeleton's centimetre units.
+	var rot_v: Vector3 = cfg.get("rot", Vector3.ZERO)
+	var grip := Transform3D(Basis.from_euler(Vector3(deg_to_rad(rot_v.x), deg_to_rad(rot_v.y), deg_to_rad(rot_v.z))), Vector3.ZERO)
+	node.transform = skel.get_bone_global_rest(bone_idx) * grip
+	node.scale = Vector3.ONE * float(cfg.get("scale", 100.0))
+	_bind_preview_bone(model, node, bone_names)
 
 static func _add_preview_gloves(model: Node3D, item_name: String, pelt_species: String = "") -> void:
 	# Load player_with_clothes.glb to extract cloth_hands mesh
