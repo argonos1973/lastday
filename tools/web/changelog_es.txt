@@ -105,3 +105,5 @@ eb804f6|El lobo domesticado apenas gasta comida con el dueno desconectado: aguan
 7ab5a1e|El lobo domesticado reaparece en su posicion guardada si su nombre original ya no existe tras un reinicio
 11682a3|El lobo domesticado ya no es devorado por animales salvajes mientras su dueno esta desconectado, sigue curandose y se re-vincula automaticamente al volver a entrar aunque el peer cambie
 5dcd9c4|El lago mantiene un reflejo de espejo moderado con ondas suaves, degradado de color de orilla a profundidad y una fina linea de olas en la orilla: aspecto de agua real sin perder el espejismo
+90e6c34|Inicio: la tarjeta del personaje del servidor muestra su equipo real (casco+pasamontanas a la vez, objeto en mano).
+dc3313c|Lobos: animaciones de pelea realistas — embestida con mordisco y tiron, amenaza agazapada entre ataques y sacudida de matanza al cazar.
