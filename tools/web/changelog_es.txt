@@ -103,3 +103,5 @@ edc403c|El menu del lobo muestra sus stats en vivo: barras de Salud y Comida, or
 eb804f6|El lobo domesticado apenas gasta comida con el dueno desconectado: aguanta casi un dia entero y ya no muere de inanicion esperandote
 6b7bc63|Los lobos domesticados sobreviven a los reinicios del servidor con la partida guardada
 7ab5a1e|El lobo domesticado reaparece en su posicion guardada si su nombre original ya no existe tras un reinicio
+11682a3|El lobo domesticado ya no es devorado por animales salvajes mientras su dueno esta desconectado, sigue curandose y se re-vincula automaticamente al volver a entrar aunque el peer cambie
+5dcd9c4|El lago mantiene un reflejo de espejo moderado con ondas suaves, degradado de color de orilla a profundidad y una fina linea de olas en la orilla: aspecto de agua real sin perder el espejismo
