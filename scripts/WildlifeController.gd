@@ -1313,7 +1313,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						nearest_prey.take_damage(60.0 if animal_type == "bear" else 15.0, false, self)
 						if animal_type == "wolf" or animal_type == "bear":
 							_play_wolf_sound("attack")
-					_play_animation_by_name("attack" if animal_type == "wolf" else "run")
+					_play_animation_by_name("shake" if animal_type == "wolf" else "run")
 				else:
 					_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
@@ -2656,7 +2656,7 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 				_animation_player.speed_scale = 1.0
 			return {"target": target, "speed": 0.0}
 		_animal_bite_target = null
-	_play_animation_by_name("idle" if close else "run")
+	_play_animation_by_name("threaten" if close else "run")
 	return {"target": target, "speed": 0.0 if close else move_speed * 3.4}
 
 func _animal_bite_clear(target: Vector3) -> bool:
@@ -2745,7 +2745,7 @@ func _tamed_ai(delta: float) -> Dictionary:
 					_attack_cooldown = 1.8
 					_ordered_prey.take_damage(35.0, false, self)
 					_play_wolf_sound("attack")
-				_play_animation_by_name("attack")
+				_play_animation_by_name("shake")
 				return {"handled": true, "target": tp, "speed": 0.0}
 			_play_animation_by_name("run")
 			return {"handled": true, "target": tp, "speed": move_speed * 3.2}
@@ -3381,8 +3381,9 @@ func _play_animation_by_name(keyword: String) -> void:
 	current_anim_keyword = lower_keyword
 	if _animation_player == null:
 		return
-	# Rest clips keep their authored cadence even after a network speed update.
-	if lower_keyword in ["idle", "sit", "lie", "eat"]:
+	# Rest and fight clips keep their authored cadence even after a network
+	# speed update.
+	if lower_keyword in ["idle", "sit", "lie", "eat", "threaten", "shake"]:
 		_animation_player.speed_scale = 1.0
 	var current := _animation_player.current_animation
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0 and (lower_keyword != "run" or current.to_lower().find("frighten") < 0):
@@ -3397,6 +3398,10 @@ func _play_animation_by_name(keyword: String) -> void:
 		candidates = ["a_runfast", "a_runslow", "run", "gallop", "trot", "walk"]
 	elif lower_keyword == "trot":
 		candidates = ["trot", "walk", "run"]
+	elif lower_keyword == "threaten":
+		candidates = ["threaten", "idle"]
+	elif lower_keyword == "shake":
+		candidates = ["shake", "attack"]
 	var anim_list := _animation_player.get_animation_list()
 	for animation_name in anim_list:
 		var animation := _animation_player.get_animation(animation_name)
@@ -3420,7 +3425,7 @@ func _play_animation_by_name(keyword: String) -> void:
 func _update_animation_speed(speed: float) -> void:
 	if _animation_player == null:
 		return
-	if current_anim_keyword == "attack":
+	if current_anim_keyword in ["attack", "threaten", "shake"]:
 		_animation_player.speed_scale = 1.0
 		return
 	var ratio := speed / move_speed
