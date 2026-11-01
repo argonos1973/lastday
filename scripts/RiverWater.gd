@@ -36,7 +36,7 @@ func _ready() -> void:
 		_reflection.mesh_lod_threshold = 8.0
 		_reflection.box_projection = false
 		_reflection.enable_shadows = false
-		_reflection.intensity = 1.0
+		_reflection.intensity = 0.58
 		_reflection.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
 		_reflection.update_mode = ReflectionProbe.UPDATE_ONCE
 		add_child(_reflection)
@@ -49,15 +49,15 @@ func _ready() -> void:
 		_captured_cloud_darkness = _cloud_darkness
 		if _material is ShaderMaterial:
 			_material.set_shader_parameter("use_foam", false)
-			_material.set_shader_parameter("normal_scale", 0.045)
-			_material.set_shader_parameter("roughness_scale", 0.045)
-			_material.set_shader_parameter("water_color", Color(0.018, 0.055, 0.065))
+			_material.set_shader_parameter("normal_scale", 0.11)
+			_material.set_shader_parameter("roughness_scale", 0.09)
+			_material.set_shader_parameter("water_color", Color(0.024, 0.068, 0.075))
 	if _material is ShaderMaterial:
 		var direction := global_basis.x.normalized()
 		_material.set_shader_parameter("current_direction", Vector2(direction.x, direction.z))
 		_material.set_shader_parameter("use_river_flow", not _is_lake)
-		_material.set_shader_parameter("wave_height", .008 if _is_lake else .045)
-		_material.set_shader_parameter("beers_law", 1.1 if _is_lake else 1.0)
+		_material.set_shader_parameter("wave_height", .015 if _is_lake else .045)
+		_material.set_shader_parameter("beers_law", 1.0 if _is_lake else 1.0)
 		if not _is_lake:
 			_material.set_shader_parameter("normal_scale", 0.34)
 			_material.set_shader_parameter("roughness_scale", 0.16)
@@ -112,4 +112,4 @@ func _update_mirror() -> void:
 	var day_amount: float = 1.0 - _night_amount
 	var mirror_col: Color = Color(0.02, 0.03, 0.05).lerp(Color(0.62, 0.78, 0.97), day_amount)
 	mat.set_shader_parameter("mirror_color", mirror_col)
-	mat.set_shader_parameter("mirror_strength", 0.85 if _is_lake else 0.35)
+	mat.set_shader_parameter("mirror_strength", 0.50 if _is_lake else 0.35)

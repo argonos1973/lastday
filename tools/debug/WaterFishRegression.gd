@@ -126,8 +126,8 @@ func run() -> void:
         water.set_is_lake(is_lake)
         root.add_child(water)
         var material := water.material_override as ShaderMaterial
-        check(is_equal_approx(material.get_shader_parameter("normal_scale"),.045 if is_lake else .34),"calm lake normals without changing river flow")
-        check(is_equal_approx(material.get_shader_parameter("roughness_scale"),.045 if is_lake else .16),"lake reflection roughness stays separate from rivers")
+        check(is_equal_approx(material.get_shader_parameter("normal_scale"),.11 if is_lake else .34),"calm lake normals without changing river flow")
+        check(is_equal_approx(material.get_shader_parameter("roughness_scale"),.09 if is_lake else .16),"lake reflection roughness stays separate from rivers")
         check(material.get_shader_parameter("use_foam") == not is_lake,"lake is foam-free and river keeps foam")
         if is_lake:
             check(water._reflection.update_mode == ReflectionProbe.UPDATE_ONCE,"lake reflections remain cached")
