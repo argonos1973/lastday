@@ -2291,19 +2291,35 @@ func _find_feeder_node(feeder_id: String) -> Node3D:
 	var pid := int(feeder_id)
 	if pid == 0:
 		return null
+	# Un peer_id puede tener varios nodos (proxy vivo + cadaver aparcado que
+	# quedo en proxy_by_client_id): el vivo siempre gana — resolver el cadaver
+	# disparaba el luto y el lobo se volvia salvaje con el dueno vivo.
+	var dead_match: Node3D = null
 	for pr in get_tree().get_nodes_in_group("net_player_proxy"):
 		if int(pr.get_meta("peer_id", -1)) == pid:
-			return pr
-	# El proxy desconectado sale del grupo pero sigue existiendo (cadáver/loot)
-	if scene != null and "server_proxies" in scene:
-		for pr in scene.server_proxies.values():
-			if pr != null and int(pr.get_meta("peer_id", -1)) == pid:
+			if pr.get_meta("proxy_dead", false):
+				if dead_match == null:
+					dead_match = pr
+			else:
 				return pr
+	if scene != null:
+		if "server_proxies" in scene:
+			for pr in scene.server_proxies.values():
+				if pr != null and int(pr.get_meta("peer_id", -1)) == pid:
+					if pr.get_meta("proxy_dead", false):
+						if dead_match == null:
+							dead_match = pr
+					else:
+						return pr
 		if "proxy_by_client_id" in scene:
 			for pr in scene.proxy_by_client_id.values():
 				if pr != null and int(pr.get_meta("peer_id", -1)) == pid:
-					return pr
-	return null
+					if pr.get_meta("proxy_dead", false):
+						if dead_match == null:
+							dead_match = pr
+					else:
+						return pr
+	return dead_match
 
 func _nearest_feeder_in_range(radius: float) -> Node3D:
 	var best: Node3D = null
@@ -2546,6 +2562,7 @@ func _owner_has_wolf(feeder_id: String) -> bool:
 
 func _go_wild() -> void:
 	var old_owner := tamed_to
+	print("[WOLF] %s turns wild: owner=%s owner_node=%s dead_timer=%.1f" % [name, old_owner, str(_owner_node), _owner_dead_timer])
 	tamed_to = ""
 	_follow_mode = "follow"
 	_threat_player = null
