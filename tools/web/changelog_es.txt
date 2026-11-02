@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+1da9e19|La carretera de montaña enlaza ahora con la principal, que muere en el desvío y queda reforestada al norte, con arcenes de hierba; la base militar de la cima tiene botín (tiendas, pie de torre, torre de vigilancia y nido del piso 6) y la torre de comunicaciones luce texturas reales, antenas de panel, canales de cable y caseta de servicio
 15c6bef|La mano izquierda cierra ahora los dedos alrededor de la empunadura del arco y la mano derecha agarra el vertice de la cuerda y el culatin de la flecha al apuntar y disparar
 295a8c4|Corregido el disparo del arco (la flecha sale desde la ventana del arco hacia delante y no desde detras del personaje), ajustado el tamano real de la flecha colocada en el arco y mejorada la animacion de apuntado y tensado en Blender
 283ff23|Nueva animacion de ataque del oso creada en Blender (embestida y zarpazo con la pata delantera derecha sincronizados con el impacto)
