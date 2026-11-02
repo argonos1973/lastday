@@ -33,6 +33,7 @@ const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 
 const MAP_EXTENT := 500.0 # Legacy generation area: preserve existing density and spawn positions.
 const CityExpansion = preload("res://scripts/CityExpansion.gd")
+const HighMountainZone = preload("res://scripts/HighMountainZone.gd")
 
 var player
 var hud
@@ -172,6 +173,7 @@ var _cached_leafy_material: Material = null
 var _mountain_shared_material: Material = null
 var _forest_rock_meshes: Array[ArrayMesh] = []
 var _generated_hills: Array = []
+var _high_mountain_ready := false
 # Spatial index for _generated_hills: Vector2i cell -> Array of hill indices.
 # Hills are static once generated; bucketing turns _get_ground_height's
 # per-call full scan (with trig per hill) into a single cell lookup.
@@ -7163,6 +7165,7 @@ func _create_npc() -> void:
 func _create_map() -> void:
 	var _tm := Time.get_ticks_msec()
 	_generated_hills.clear()
+	_high_mountain_ready = false
 	_hill_grid.clear()
 	_road_segments = _generate_road_segments() # Reserve the real route before generating relief.
 	river_segments_data = _default_river_segments()
@@ -7277,6 +7280,7 @@ func _create_map() -> void:
 		_create_survival_objectives()
 		await get_tree().process_frame
 	CityExpansion.create(self, is_server)
+	HighMountainZone.create(self, is_server)
 	if not is_server:
 		await get_tree().process_frame
 		await get_tree().physics_frame
@@ -10513,6 +10517,40 @@ func _create_house_loot() -> void:
 		wt_mag["pos"] = Vector3(water_tower_origin.x + 0.8 + 0.5 * wtmi, wt_floor_y, water_tower_origin.z - 1.8)
 		wt_mag["floor_y"] = wt_floor_y
 		_create_pickup_item(wt_mag)
+	# Loot fijo en la Base Militar de Alta Montaña y pisos de la Torre Green Mountain (sin consumir RNG)
+	var hm_base := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
+	var hm_yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
+	var hm_tower := hm_base + HighMountainZone.COMMS_TOWER_OFFSET.rotated(Vector3.UP, hm_yaw)
+	var hm_top_y := HighMountainZone.SUMMIT_HEIGHT + 52.08
+	var hm_m4: Dictionary = m4_template.duplicate()
+	hm_m4["id"] = "summit_comms_top_m4"
+	hm_m4["pos"] = Vector3(hm_tower.x - 1.8, hm_top_y, hm_tower.z)
+	hm_m4["floor_y"] = hm_top_y
+	_create_pickup_item(hm_m4)
+	for hm_i in range(3):
+		var hm_mag: Dictionary = m4_mag_template.duplicate()
+		hm_mag["id"] = "summit_comms_top_m4mag_%d" % hm_i
+		hm_mag["pos"] = Vector3(hm_tower.x - 2.2 + 0.45 * hm_i, hm_top_y, hm_tower.z + 0.6)
+		hm_mag["floor_y"] = hm_top_y
+		_create_pickup_item(hm_mag)
+	for deck_idx in range(3):
+		var dy_local: float = [14.08, 19.58, 25.08][deck_idx]
+		var band_y := HighMountainZone.SUMMIT_HEIGHT + dy_local
+		var band_loot := {
+			"id": "summit_comms_deck_bandage_%d" % deck_idx,
+			"name": "Venda",
+			"type": "medical",
+			"weight": 0.12,
+			"qty": 1,
+			"use": 24.0,
+			"paths": ["res://assets/models/props/bandage_roll.glb"],
+			"scale": 1.0,
+			"rot": Vector3.ZERO,
+			"color": Color.TRANSPARENT,
+			"pos": Vector3(hm_tower.x + 4.8, band_y, hm_tower.z),
+			"floor_y": band_y,
+		}
+		_create_pickup_item(band_loot)
 	# Arcos y flechas en las casas del pueblo y en las viviendas de la ciudad —
 	# usan bow_rng independiente para no alterar la secuencia de _world_rng.
 	var bow_rng := RandomNumberGenerator.new()
@@ -16928,6 +16966,8 @@ func _get_ground_height(pos: Vector3) -> float:
 			var h: float = hill.pos.y + hill.height * pow(1.0 - pct, 0.85)
 			if h > max_h:
 				max_h = h
+	if _high_mountain_ready:
+		max_h = maxf(max_h, HighMountainZone.ground_height_at(pos))
 	return max_h
 
 func _create_ground_clutter() -> void:
@@ -17168,7 +17208,7 @@ func _create_forest() -> void:
 		for _g in range(1):
 			var gpos := pos + Vector3(forest_rng.randf_range(-1.5, 1.5), 0.0, forest_rng.randf_range(-1.5, 1.5))
 			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
-			if not _can_place_ground_vegetation(gpos):
+			if _can_place_ground_vegetation(gpos):
 				_queue_grass_instance(gpos, forest_rng.randf_range(0.25, 0.55), forest_rng.randf_range(0.35, 0.65), base_color.lerp(color_var, forest_rng.randf()))
 				
 		if i % 300 == 0:
@@ -17181,6 +17221,7 @@ func _create_forest() -> void:
 	_append_city_avenue_trees(batch_transforms, all_tree_positions)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
+	_build_forest_understory_multimeshes(all_tree_positions)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
@@ -17320,15 +17361,19 @@ func _scatter_forest_grass(pos: Vector3) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(pos) ^ 0xF04E57
 	var patch := 0.5 + 0.5 * sin(pos.x * 0.055 + sin(pos.z * 0.08) * 2.0)
-	for i in range(2 + int(patch * 5.0)):
+	var count := 3 + int(patch * 6.0)
+	for i in range(count):
 		var angle := rng.randf_range(0, TAU)
-		var distance := rng.randf_range(1.1, 3.8)
+		var distance := rng.randf_range(0.75, 3.8)
 		var point := pos + Vector3(cos(angle), 0, sin(angle)) * distance
 		if not _can_place_ground_vegetation(point):
 			continue
 		point.y = _get_exact_ground_y(point.x, point.z) + 0.008
-		var color := Color(0.19, 0.29, 0.095).lerp(Color(0.36, 0.38, 0.16), rng.randf())
-		_queue_grass_instance(point, rng.randf_range(0.18, 0.46), rng.randf_range(0.26, 0.55), color)
+		var color := Color(0.18, 0.30, 0.09).lerp(Color(0.35, 0.42, 0.16), rng.randf())
+		if i == 0 and patch > 0.55:
+			_queue_tall_grass_instance(point, rng.randf_range(0.32, 0.58), color.darkened(0.08))
+		else:
+			_queue_grass_instance(point, rng.randf_range(0.20, 0.50), rng.randf_range(0.28, 0.58), color)
 
 func _hide_depleted_forest_trees() -> void:
 	if _depleted_action_ids.is_empty():
@@ -17432,13 +17477,124 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				_forest_multimesh_centers.append(center)
 				_forest_multimesh_radii.append(batch_radius)
 
+func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
+	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
+		return
+	var u_rng := RandomNumberGenerator.new()
+	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
+	var fern_mesh: ArrayMesh = null
+	var fern_mat: Material = null
+	var fern_node: Node3D = _load_gltf_scene_from_file(POLY_MODEL_DIR + "fern_02/fern_02_1k.gltf")
+	if fern_node != null:
+		var fmeshes: Array = []
+		NodeUtils.collect_mesh_instances(fern_node, fmeshes)
+		for fm in fmeshes:
+			var fmi := fm as MeshInstance3D
+			if fmi.mesh is ArrayMesh:
+				fern_mesh = (fmi.mesh as ArrayMesh).duplicate()
+				if fern_mesh.get_surface_count() > 0:
+					var smat := fern_mesh.surface_get_material(0)
+					if smat is StandardMaterial3D:
+						var dup := (smat as StandardMaterial3D).duplicate()
+						dup.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+						dup.alpha_scissor_threshold = 0.35
+						dup.cull_mode = BaseMaterial3D.CULL_DISABLED
+						fern_mat = MaterialFactory.make_forest_foliage_material(dup)
+				break
+		fern_node.queue_free()
+	var rock_mesh: ArrayMesh = _get_forest_rock_mesh(Vector3.ZERO)
+	var rock_mat: Material = MaterialFactory.make_forest_rock_material(Vector3(0.76, 0.86, 0.70))
+	var fern_xforms: Array = []
+	var rock_xforms: Array = []
+	for tpos: Vector3 in tree_positions:
+		var hval := u_rng.randf()
+		if hval < 0.22 and fern_mesh != null:
+			var fcount := 1 + (u_rng.randi() % 2)
+			for _fi in range(fcount):
+				var ang := u_rng.randf_range(0.0, TAU)
+				var dist := u_rng.randf_range(0.55, 1.85)
+				var fpos := tpos + Vector3(cos(ang) * dist, 0.0, sin(ang) * dist)
+				if not _can_place_ground_vegetation(fpos):
+					continue
+				fpos.y = _get_exact_ground_y(fpos.x, fpos.z)
+				var fscale := u_rng.randf_range(0.85, 1.45)
+				var fbasis := Basis(Vector3.UP, u_rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * fscale)
+				fern_xforms.append(Transform3D(fbasis, fpos))
+		elif hval > 0.90 and rock_mesh != null:
+			var rang := u_rng.randf_range(0.0, TAU)
+			var rdist := u_rng.randf_range(0.65, 2.10)
+			var rpos := tpos + Vector3(cos(rang) * rdist, 0.0, sin(rang) * rdist)
+			if not _can_place_ground_vegetation(rpos):
+				continue
+			var rscale := u_rng.randf_range(0.28, 0.72)
+			rpos.y = _get_exact_ground_y(rpos.x, rpos.z) + 0.08 * rscale
+			var rbasis := Basis.from_euler(Vector3(u_rng.randf_range(-0.18, 0.18), u_rng.randf_range(0.0, TAU), u_rng.randf_range(-0.18, 0.18))).scaled(Vector3(rscale * 1.15, rscale * 0.78, rscale))
+			rock_xforms.append(Transform3D(rbasis, rpos))
+	if not fern_xforms.is_empty() and fern_mesh != null:
+		var fbatches := _spatial_instance_batches(fern_xforms, 64.0, 500)
+		for b in range(fbatches.size()):
+			var idxs: Array = fbatches[b]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = fern_mesh
+			mm.instance_count = idxs.size()
+			var c := Vector3.ZERO
+			for j in range(idxs.size()):
+				var xf: Transform3D = fern_xforms[idxs[j]]
+				mm.set_instance_transform(j, xf)
+				c += xf.origin
+			c /= float(idxs.size())
+			var rad := 0.0
+			for j in range(idxs.size()):
+				rad = maxf(rad, c.distance_to((fern_xforms[idxs[j]] as Transform3D).origin))
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "ForestFernsMM_%d" % b
+			mmi.multimesh = mm
+			if fern_mat != null:
+				mmi.material_override = fern_mat
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = 95.0
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			add_child(mmi)
+			_forest_multimesh_nodes.append(mmi)
+			_forest_multimesh_centers.append(c)
+			_forest_multimesh_radii.append(rad)
+	if not rock_xforms.is_empty() and rock_mesh != null:
+		var rbatches := _spatial_instance_batches(rock_xforms, 64.0, 400)
+		for b in range(rbatches.size()):
+			var idxs: Array = rbatches[b]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = rock_mesh
+			mm.instance_count = idxs.size()
+			var c := Vector3.ZERO
+			for j in range(idxs.size()):
+				var xf: Transform3D = rock_xforms[idxs[j]]
+				mm.set_instance_transform(j, xf)
+				c += xf.origin
+			c /= float(idxs.size())
+			var rad := 0.0
+			for j in range(idxs.size()):
+				rad = maxf(rad, c.distance_to((rock_xforms[idxs[j]] as Transform3D).origin))
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "ForestMossRocksMM_%d" % b
+			mmi.multimesh = mm
+			mmi.material_override = rock_mat
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = 115.0
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			add_child(mmi)
+			_forest_multimesh_nodes.append(mmi)
+			_forest_multimesh_centers.append(c)
+			_forest_multimesh_radii.append(rad)
+
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():
 		return
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	var vis_bonus := 320.0 if ppos.y > 2.5 else 0.0
+	var vis_bonus := 680.0 if ppos.y > 25.0 else (320.0 if ppos.y > 2.5 else 0.0)
 	var detail_scale := GraphicsSettings.detail_factor()
 	var hide_base := FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus
 	var show_base := FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus

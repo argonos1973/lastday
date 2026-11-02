@@ -577,6 +577,11 @@ var third_person_stairs_animation := ""
 var _stairs_last_position := Vector3.ZERO
 var _stairs_position_valid := false
 var _stairs_grace := 0.0
+var third_person_ladder_animation := ""
+var is_climbing_ladder := false
+var _active_ladder: Node3D = null
+var _ladder_climb_speed := 0.0
+var _ladder_grace := 0.0
 var third_person_run_animation := ""
 var third_person_sneak_animation := ""
 var third_person_sneak_walk_animation := ""
@@ -3986,6 +3991,16 @@ func _physics_process(delta: float) -> void:
 	if float(get_meta("bola_slow_until", 0.0)) > Time.get_unix_time_from_system():
 		is_sprinting = false
 		speed *= 0.25
+	if _update_ladder_climb_physics(input_dir, delta):
+		_update_walk_motion(delta, absf(_ladder_climb_speed) * 0.35)
+		_update_rod_visual_overlay()
+		_update_backpack_socket()
+		_update_hand_socket()
+		_update_torch_hand_socket()
+		_update_drink_hand_socket()
+		_update_head_worn_items()
+		_update_third_person_animation(absf(_ladder_climb_speed) > 0.05, delta)
+		return
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	if is_jumping:
@@ -5279,7 +5294,7 @@ func _update_barefoot(delta: float) -> void:
 		if stats.feet_wound < FEET_WOUND_THRESHOLD:
 			_feet_wounded_notice = false
 	# Las heridas sangrantes gotean sangre al suelo mientras siguen abiertas.
-	if float(stats.get("bleeding", 0.0)) > 0.0:
+	if float(stats.get("bleeding") if stats.get("bleeding") != null else 0.0) > 0.0:
 		_bleed_drip_timer -= delta
 		if _bleed_drip_timer <= 0.0:
 			_bleed_drip_timer = 2.4
@@ -5666,6 +5681,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	third_person_animation_player.add_animation_library("external", lib)
 	# Load torch-specific animations from FBX files
 	third_person_stairs_animation = preload("res://scripts/StairAnimation.gd").install(self)
+	third_person_ladder_animation = preload("res://scripts/LadderClimbAnimation.gd").install(self)
 	_load_torch_animations()
 	# Pre-cache the fishing rod pose and animations at startup so fishing starts instantly.
 	if not is_puppet:
@@ -11182,7 +11198,8 @@ func _update_puppet_ground_alignment(delta: float) -> void:
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), minf(1.0, delta * 14.0))
 
 func _update_third_person_animation(moving: bool, delta: float) -> void:
-	var climbing_stairs := _update_stair_motion(moving, delta)
+	var climbing_ladder := _update_ladder_motion(moving, delta)
+	var climbing_stairs := false if climbing_ladder else _update_stair_motion(moving, delta)
 	if is_instance_valid(rowing_boat) and not _boat_standing:
 		return
 	var character: Node3D = third_person_model if third_person_model != null else body_mesh
@@ -11208,6 +11225,12 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
+		if climbing_ladder and not third_person_ladder_animation.is_empty():
+			if third_person_animation_player.current_animation != third_person_ladder_animation:
+				third_person_animation_player.play(third_person_ladder_animation, 0.12)
+			_loop_third_person_animation(third_person_ladder_animation)
+			third_person_animation_player.speed_scale = 1.15 if moving else 0.0
+			return
 		if is_jumping and not third_person_jump_animation.is_empty():
 			_jump_animation_timer = max(0.0, _jump_animation_timer - delta)
 			if third_person_animation_player.current_animation != third_person_jump_animation:
@@ -15560,3 +15583,113 @@ func _update_stair_motion(moving: bool, delta: float) -> bool:
 		if not hit.is_empty() and hit.collider.is_in_group("stair_surface"):
 			_stairs_grace=.16
 	return _stairs_grace>0.0
+
+func _find_nearby_ladder(pos: Vector3) -> Node3D:
+	var tree := get_tree()
+	if tree == null:
+		return null
+	var best: Node3D = null
+	var best_d2 := 1.45 * 1.45
+	for node in tree.get_nodes_in_group("ladder_volume"):
+		if not (node is Node3D) or not is_instance_valid(node):
+			continue
+		var ln := node as Node3D
+		var y0 := float(ln.get_meta("ladder_bottom_y", ln.global_position.y - 5.0))
+		var y1 := float(ln.get_meta("ladder_top_y", ln.global_position.y + 5.0))
+		if pos.y < y0 - 0.65 or pos.y > y1 + 1.25:
+			continue
+		var cxz: Vector2 = ln.get_meta("ladder_center_xz", Vector2(ln.global_position.x, ln.global_position.z))
+		var d2 := Vector2(pos.x, pos.z).distance_squared_to(cxz)
+		if d2 < best_d2:
+			best_d2 = d2
+			best = ln
+	return best
+
+func _update_ladder_climb_physics(input_dir: Vector2, delta: float) -> bool:
+	if is_dead or is_sleeping or is_puppet:
+		is_climbing_ladder = false
+		_active_ladder = null
+		_ladder_climb_speed = 0.0
+		return false
+	if not is_climbing_ladder or not is_instance_valid(_active_ladder):
+		var cand := _find_nearby_ladder(global_position)
+		if cand == null:
+			is_climbing_ladder = false
+			_active_ladder = null
+			_ladder_climb_speed = 0.0
+			return false
+		var y0 := float(cand.get_meta("ladder_bottom_y", 0.0))
+		var y1 := float(cand.get_meta("ladder_top_y", 10.0))
+		var cxz: Vector2 = cand.get_meta("ladder_center_xz", Vector2(cand.global_position.x, cand.global_position.z))
+		var horiz_dist := Vector2(global_position.x, global_position.z).distance_to(cxz)
+		var wants_up := input_dir.y < -0.15 and global_position.y < y1 - 0.15
+		var wants_down := input_dir.y > 0.15 and global_position.y > y0 + 0.35
+		if horiz_dist <= 1.25 and (wants_up or wants_down):
+			is_climbing_ladder = true
+			_active_ladder = cand
+		else:
+			return false
+
+	var lad := _active_ladder
+	var y_bot := float(lad.get_meta("ladder_bottom_y", 0.0))
+	var y_top := float(lad.get_meta("ladder_top_y", 10.0))
+	var center_xz: Vector2 = lad.get_meta("ladder_center_xz", Vector2(lad.global_position.x, lad.global_position.z))
+	var inward: Vector2 = lad.get_meta("ladder_inward_dir", Vector2(0.0, -1.0))
+
+	# Allow stepping off sideways at a landing or jumping off with Space
+	if absf(input_dir.x) > 0.65 and absf(input_dir.y) < 0.25 and (absf(global_position.y - y_bot) < 0.65 or absf(global_position.y - y_top) < 0.65):
+		is_climbing_ladder = false
+		_active_ladder = null
+		_ladder_climb_speed = 0.0
+		return false
+
+	is_jumping = false
+	_jump_apex = false
+	_is_falling_from_height = false
+	_fall_height = global_position.y
+	_max_fall_height = global_position.y
+	is_crouching = false
+
+	var climb_input := -input_dir.y # W = +1 (up), S = -1 (down)
+	var base_climb_spd := 4.4 if Input.is_key_pressed(KEY_SHIFT) else 3.2
+	_ladder_climb_speed = climb_input * base_climb_spd if absf(climb_input) > 0.1 else 0.0
+	is_moving = absf(_ladder_climb_speed) > 0.05
+
+	# Smoothly keep player centered on the ladder rungs and facing the ladder
+	global_position.x = lerpf(global_position.x, center_xz.x, minf(1.0, delta * 12.0))
+	global_position.z = lerpf(global_position.z, center_xz.y, minf(1.0, delta * 12.0))
+	global_position.y += _ladder_climb_speed * delta
+	velocity = Vector3.ZERO
+	if inward.length_squared() > 0.01:
+		var target_yaw := atan2(-inward.x, -inward.y)
+		rotation.y = lerp_angle(rotation.y, target_yaw, minf(1.0, delta * 10.0))
+
+	# Reach top deck -> step onto the walkable ring platform
+	if _ladder_climb_speed > 0.0 and global_position.y >= y_top + 0.06:
+		global_position.y = y_top + 0.08
+		# Step slightly tangent/outward onto the solid deck next to the hatch
+		var tangent := Vector2(-inward.y, inward.x).normalized()
+		global_position.x = center_xz.x + tangent.x * 1.05 - inward.x * 0.45
+		global_position.z = center_xz.y + tangent.y * 1.05 - inward.y * 0.45
+		is_climbing_ladder = false
+		_active_ladder = null
+		_ladder_climb_speed = 0.0
+	elif _ladder_climb_speed < 0.0 and global_position.y <= y_bot + 0.05:
+		global_position.y = y_bot + 0.06
+		global_position.x = center_xz.x - inward.x * 0.55
+		global_position.z = center_xz.y - inward.y * 0.55
+		is_climbing_ladder = false
+		_active_ladder = null
+		_ladder_climb_speed = 0.0
+	return true
+
+func _update_ladder_motion(moving: bool, delta: float) -> bool:
+	if is_climbing_ladder:
+		_ladder_grace = 0.20
+		return true
+	_ladder_grace = maxf(0.0, _ladder_grace - delta)
+	if is_puppet and moving:
+		var near_lad := _find_nearby_ladder(global_position)
+		if near_lad != null:
+			_ladder_grace = 0.20
+	return _ladder_grace > 0.0
