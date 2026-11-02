@@ -18,6 +18,13 @@ var _prev_health: float = 100.0
 
 var root: Control
 var status_panel: PanelContainer
+var _status_grid: GridContainer = null
+var _stats_toggle_btn: Button = null
+var _stats_collapsed: bool = false
+var clock_panel: PanelContainer = null
+var _clock_details_row: HBoxContainer = null
+var _clock_toggle_btn: Button = null
+var _clock_collapsed: bool = false
 var inventory_panel: PanelContainer
 var survival_inventory: PanelContainer
 var craft_panel: PanelContainer = null
@@ -249,8 +256,8 @@ func _build_players_panel() -> void:
 	var is_mp: bool = net != null and net.has_method("join_game") and (net.get("is_connected") or net.get("peer") != null)
 	# Tiny hint below the clock panel — multiplayer only.
 	players_hint = Label.new()
-	players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat  ·  [V] Micro"
-	players_hint.position = Vector2(20, 158)
+	players_hint.text = "[P] Jugadores  ·  [T / Enter] Chat  ·  [V] Micro  ·  [Y] Info  ·  [U] Stats"
+	players_hint.position = Vector2(20, 54)
 	players_hint.add_theme_font_size_override("font_size", 12)
 	players_hint.add_theme_color_override("font_color", Color(0.6, 0.62, 0.55, 0.8))
 	players_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -258,7 +265,7 @@ func _build_players_panel() -> void:
 	root.add_child(players_hint)
 
 	voice_status_panel = PanelContainer.new()
-	voice_status_panel.position = Vector2(18, 174)
+	voice_status_panel.position = Vector2(18, 72)
 	voice_status_panel.custom_minimum_size = Vector2(280, 30)
 	voice_status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	voice_status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.035, 0.045, 0.038, 0.88), Color(0.36, 0.43, 0.34, 0.72), 1))
@@ -280,7 +287,7 @@ func _build_players_panel() -> void:
 
 	players_panel = PanelContainer.new()
 	players_panel.offset_left = 18
-	players_panel.offset_top = 216
+	players_panel.offset_top = 110
 	players_panel.anchor_left = 0.0
 	players_panel.anchor_top = 0.0
 	players_panel.anchor_right = 0.0
@@ -1625,48 +1632,96 @@ func _build_ui() -> void:
 	_build_chat_panel()
 	_add_shadows_recursive(root)
 
-func _build_real_clock_panel() -> void:
-	var panel := PanelContainer.new()
-	panel.offset_left = 18
-	panel.offset_top = 18
-	panel.offset_right = 250
-	panel.offset_bottom = 154
-	panel.anchor_left = 0.0
-	panel.anchor_top = 0.0
-	panel.anchor_right = 0.0
-	panel.anchor_bottom = 0.0
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.07, 0.06, 0.88), Color(0.45, 0.48, 0.42, 0.7), 1))
-	root.add_child(panel)
+func _make_hud_toggle_button(initial_text: String, on_press: Callable) -> Button:
+	var btn := Button.new()
+	btn.text = initial_text
+	btn.flat = false
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.custom_minimum_size = Vector2(24, 20)
+	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	btn.add_theme_font_size_override("font_size", 10)
+	btn.add_theme_color_override("font_color", Color(0.82, 0.86, 0.74))
+	var st := _panel_style(Color(0.11, 0.14, 0.10, 0.95), Color(0.45, 0.52, 0.39, 0.85), 1)
+	st.set_corner_radius_all(4)
+	st.content_margin_left = 5
+	st.content_margin_right = 5
+	st.content_margin_top = 1
+	st.content_margin_bottom = 1
+	btn.add_theme_stylebox_override("normal", st)
+	btn.add_theme_stylebox_override("hover", st)
+	btn.add_theme_stylebox_override("pressed", st)
+	btn.pressed.connect(on_press)
+	return btn
 
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 2)
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(box)
+func _make_inline_sep() -> Label:
+	var sep := Label.new()
+	sep.text = "·"
+	sep.add_theme_font_size_override("font_size", 13)
+	sep.add_theme_color_override("font_color", Color(0.50, 0.55, 0.45, 0.85))
+	sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return sep
+
+func _build_real_clock_panel() -> void:
+	clock_panel = PanelContainer.new()
+	clock_panel.position = Vector2(18, 14)
+	clock_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	var cstyle := _panel_style(Color(0.045, 0.055, 0.045, 0.90), Color(0.45, 0.48, 0.42, 0.72), 1)
+	cstyle.set_corner_radius_all(6)
+	cstyle.content_margin_left = 7
+	cstyle.content_margin_right = 9
+	cstyle.content_margin_top = 4
+	cstyle.content_margin_bottom = 4
+	clock_panel.add_theme_stylebox_override("panel", cstyle)
+	root.add_child(clock_panel)
+
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 7)
+	bar.mouse_filter = Control.MOUSE_FILTER_PASS
+	clock_panel.add_child(bar)
+
+	_clock_toggle_btn = _make_hud_toggle_button("[-]", Callable(self, "toggle_clock_panel"))
+	_clock_toggle_btn.tooltip_text = "Ocultar / mostrar barra de información [Y]"
+	bar.add_child(_clock_toggle_btn)
+
+	_clock_details_row = HBoxContainer.new()
+	_clock_details_row.add_theme_constant_override("separation", 7)
+	_clock_details_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(_clock_details_row)
 
 	real_clock_label = Label.new()
-	real_clock_label.add_theme_font_size_override("font_size", 20)
+	real_clock_label.add_theme_font_size_override("font_size", 13)
 	real_clock_label.add_theme_color_override("font_color", Color(0.95, 0.96, 0.90))
 	real_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(real_clock_label)
+	_clock_details_row.add_child(real_clock_label)
+	_clock_details_row.add_child(_make_inline_sep())
 
 	survival_label = Label.new()
-	survival_label.add_theme_font_size_override("font_size", 13)
-	survival_label.add_theme_color_override("font_color", Color(0.72, 0.68, 0.42))
+	survival_label.add_theme_font_size_override("font_size", 12)
+	survival_label.add_theme_color_override("font_color", Color(0.78, 0.73, 0.45))
 	survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(survival_label)
+	_clock_details_row.add_child(survival_label)
+	_clock_details_row.add_child(_make_inline_sep())
 
 	temp_label = Label.new()
-	temp_label.add_theme_font_size_override("font_size", 14)
-	temp_label.add_theme_color_override("font_color", Color(0.70, 0.74, 0.68))
+	temp_label.add_theme_font_size_override("font_size", 12)
+	temp_label.add_theme_color_override("font_color", Color(0.72, 0.77, 0.70))
 	temp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(temp_label)
+	_clock_details_row.add_child(temp_label)
+	_clock_details_row.add_child(_make_inline_sep())
 
 	hand_stats_label = Label.new()
-	hand_stats_label.add_theme_font_size_override("font_size", 13)
-	hand_stats_label.add_theme_color_override("font_color", Color(0.82, 0.78, 0.58))
+	hand_stats_label.add_theme_font_size_override("font_size", 12)
+	hand_stats_label.add_theme_color_override("font_color", Color(0.84, 0.80, 0.60))
 	hand_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(hand_stats_label)
+	_clock_details_row.add_child(hand_stats_label)
+
+	var key_hint := Label.new()
+	key_hint.text = "[Y]"
+	key_hint.add_theme_font_size_override("font_size", 10)
+	key_hint.add_theme_color_override("font_color", Color(0.56, 0.61, 0.50, 0.85))
+	key_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_clock_details_row.add_child(key_hint)
 
 	_weather_http = HTTPRequest.new()
 	_weather_http.timeout = 10.0
@@ -1783,25 +1838,45 @@ func _weather_code_to_desc(code: int) -> String:
 	if code in [96, 99]: return "Tormenta con granizo"
 	return "Nublado"
 
+func toggle_clock_panel() -> void:
+	_clock_collapsed = not _clock_collapsed
+	if _clock_details_row != null:
+		_clock_details_row.visible = not _clock_collapsed
+	if _clock_toggle_btn != null:
+		_clock_toggle_btn.text = "[+] Hora / Clima [Y]" if _clock_collapsed else "[-]"
+	if clock_panel != null:
+		clock_panel.size = Vector2.ZERO
+		clock_panel.reset_size()
+
+func toggle_status_panel() -> void:
+	_stats_collapsed = not _stats_collapsed
+	if _status_grid != null:
+		_status_grid.visible = not _stats_collapsed
+	if _stats_toggle_btn != null:
+		_stats_toggle_btn.text = "[+] Stats [U]" if _stats_collapsed else "[-]"
+	if status_panel != null:
+		status_panel.offset_right = status_panel.offset_left
+		status_panel.reset_size()
+
 func _update_real_clock() -> void:
 	if real_clock_label == null or player == null or player.stats == null or day_cycle == null:
 		return
 	var day_num: int = player.stats.get_survival_days() + 1 if player.stats.has_method("get_survival_days") else 1
-	real_clock_label.text = "DIA %d - %s" % [day_num, day_cycle.get_hour_text()]
+	real_clock_label.text = "DIA %d · %s" % [day_num, day_cycle.get_hour_text()]
 	if survival_label != null:
 		var survival_seconds: float = player.stats.survival_seconds if "survival_seconds" in player.stats else 0.0
 		var total_seconds: int = int(survival_seconds)
 		var hrs: int = total_seconds / 3600
 		var mins: int = (total_seconds / 60) % 60
 		var secs: int = total_seconds % 60
-		survival_label.text = "Supervivencia: %02d:%02d:%02d" % [hrs, mins, secs]
+		survival_label.text = "Sup: %02d:%02d:%02d" % [hrs, mins, secs]
 	if temp_label != null:
 		var ambient: float = _real_temp_parsed if _real_temp_parsed != -999.0 else day_cycle.get_ambient_temperature()
-		var weather_text := " | " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
-		temp_label.text = "Ambiente: %.0f°C%s\nCuerpo: %.1f°C · %s" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
+		var weather_text := " " + _real_weather_desc if not _real_weather_desc.is_empty() else ""
+		temp_label.text = "Amb: %.0f°C%s · Cuerpo: %.1f°C (%s)" % [ambient, weather_text, player.stats.body_temperature, player.stats.get_thermal_state()]
 	if hand_stats_label != null:
 		var held_item = player.get_held_item() if player.has_method("get_held_item") else null
-		var hand_str := "Mano: %s" % (str(held_item.item_name) if held_item != null else "vacia")
+		var hand_str := "Mano: %s" % (str(held_item.item_name) if held_item != null else "vacía")
 		if player.has_method("get_rifle_info"):
 			var has_rifle: bool = held_item != null and str(held_item.item_type) == "weapon_rifle"
 			var has_vest: bool = "_equipped_slots" in player and str(player._equipped_slots.get("chaleco", "")) == "Chaleco táctico"
@@ -1812,69 +1887,66 @@ func _update_real_clock() -> void:
 				var res_rounds: int = int(ri.get("reserve", 0))
 				var mags_left: int = int(ri.get("magazines_left", int(ceil(float(res_rounds) / float(maxi(1, mag_max))))))
 				if has_rifle:
-					hand_str += "\nCargador: %d/%d · Chaleco: %d carg. (%d balas) [R]" % [mag_cur, mag_max, mags_left, res_rounds]
+					hand_str += " · Carg: %d/%d · Chaleco: %d (%d) [R]" % [mag_cur, mag_max, mags_left, res_rounds]
 				else:
-					hand_str += "\nChaleco táctico: %d cargadores (%d balas)" % [mags_left, res_rounds]
+					hand_str += " · Chaleco: %d carg. (%d)" % [mags_left, res_rounds]
 			elif held_item != null and str(held_item.item_type) == "weapon_bow" and player.has_method("_count_inventory_arrows"):
-				hand_str += "\nFlechas: %d (Clic der: apuntar · Clic izq: disparar)" % int(player._count_inventory_arrows())
-			elif held_item != null and player.has_method("_has_throwable_weapon_equipped") and bool(player._has_throwable_weapon_equipped()):
-				hand_str += "\nClic der + izq: lanzar a distancia"
+				hand_str += " · Flechas: %d" % int(player._count_inventory_arrows())
 		hand_stats_label.text = hand_str
 
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
-	status_panel.offset_left = 18
-	status_panel.offset_top = -205
-	status_panel.offset_right = 360
-	status_panel.offset_bottom = -16
 	status_panel.anchor_left = 0.0
 	status_panel.anchor_top = 1.0
 	status_panel.anchor_right = 0.0
 	status_panel.anchor_bottom = 1.0
-	status_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_panel.offset_left = 18
+	status_panel.offset_top = -58
+	status_panel.offset_right = 18
+	status_panel.offset_bottom = -14
+	status_panel.grow_horizontal = Control.GROW_DIRECTION_END
+	status_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	status_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	var frame := _panel_style(Color(0.035, 0.045, 0.038, 0.91), Color(0.43, 0.48, 0.38, 0.78), 1)
-	frame.set_corner_radius_all(7)
-	frame.content_margin_left = 9
-	frame.content_margin_right = 9
-	frame.content_margin_top = 7
-	frame.content_margin_bottom = 7
+	frame.set_corner_radius_all(6)
+	frame.content_margin_left = 7
+	frame.content_margin_right = 8
+	frame.content_margin_top = 4
+	frame.content_margin_bottom = 4
 	status_panel.add_theme_stylebox_override("panel", frame)
 	root.add_child(status_panel)
 
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 5)
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_panel.add_child(content)
-	var heading := HBoxContainer.new()
-	heading.add_theme_constant_override("separation", 8)
-	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_child(heading)
-	var title := Label.new()
-	title.text = "ESTADO DEL PERSONAJE"
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_theme_font_size_override("font_size", 10)
-	title.add_theme_color_override("font_color", Color(0.72, 0.77, 0.63))
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	heading.add_child(title)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 5)
+	line.mouse_filter = Control.MOUSE_FILTER_PASS
+	status_panel.add_child(line)
+
+	_stats_toggle_btn = _make_hud_toggle_button("[-]", Callable(self, "toggle_status_panel"))
+	_stats_toggle_btn.tooltip_text = "Ocultar / mostrar barra de stats [U]"
+	line.add_child(_stats_toggle_btn)
+
 	var sick_badge := PanelContainer.new()
 	sick_badge.visible = false
+	sick_badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sick_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sick_badge.add_theme_stylebox_override("panel", _panel_style(Color(0.25, 0.055, 0.04, 0.96), Color(0.9, 0.22, 0.12), 1))
-	heading.add_child(sick_badge)
+	line.add_child(sick_badge)
 	var sick_text := Label.new()
-	sick_text.text = "!  ENFERMO"
+	sick_text.text = "! ENFERMO"
 	sick_text.add_theme_font_size_override("font_size", 9)
 	sick_text.add_theme_color_override("font_color", Color(1.0, 0.69, 0.55))
 	sick_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sick_badge.add_child(sick_text)
 	status_icons["sick"] = {"panel": sick_badge, "wrapper": sick_badge, "icon": null}
+
 	var bleed_badge := PanelContainer.new()
 	bleed_badge.visible = false
+	bleed_badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bleed_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bleed_badge.add_theme_stylebox_override("panel", _panel_style(Color(0.30, 0.02, 0.02, 0.96), Color(0.95, 0.10, 0.08), 1))
-	heading.add_child(bleed_badge)
+	line.add_child(bleed_badge)
 	var bleed_text := Label.new()
-	bleed_text.text = "!  SANGRANDO"
+	bleed_text.text = "! SANGRANDO"
 	bleed_text.add_theme_font_size_override("font_size", 9)
 	bleed_text.add_theme_color_override("font_color", Color(1.0, 0.62, 0.55))
 	bleed_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1882,11 +1954,12 @@ func _build_status_panel() -> void:
 	status_icons["bleeding"] = {"panel": bleed_badge, "wrapper": bleed_badge, "icon": null}
 
 	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 5)
-	grid.add_theme_constant_override("v_separation", 4)
+	grid.columns = 7
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 0)
 	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_child(grid)
+	line.add_child(grid)
+	_status_grid = grid
 	_add_vital_icon(grid, "health", "heart", "SALUD")
 	_add_vital_icon(grid, "blood", "blood", "SANGRE")
 	_add_vital_icon(grid, "hunger", "apple", "HAMBRE")
@@ -1894,26 +1967,27 @@ func _build_status_panel() -> void:
 	_add_vital_icon(grid, "temp", "thermometer", "CUERPO")
 	_add_vital_icon(grid, "energy", "bolt", "ENERGÍA")
 	_add_vital_icon(grid, "sleep", "bed", "SUEÑO")
+	status_panel.reset_size()
 
 func _add_vital_icon(parent: GridContainer, key: String, shape: String, label_text: String) -> void:
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(102, 43)
+	card.custom_minimum_size = Vector2(90, 36)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var neutral := Color(0.35, 0.39, 0.32)
 	var card_style := _panel_style(Color(0.075, 0.09, 0.07, 0.96), neutral.darkened(0.45), 1)
 	card_style.set_corner_radius_all(5)
-	card_style.content_margin_left = 5
-	card_style.content_margin_right = 5
-	card_style.content_margin_top = 3
-	card_style.content_margin_bottom = 3
+	card_style.content_margin_left = 4
+	card_style.content_margin_right = 4
+	card_style.content_margin_top = 2
+	card_style.content_margin_bottom = 2
 	card.add_theme_stylebox_override("panel", card_style)
 	parent.add_child(card)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 5)
+	row.add_theme_constant_override("separation", 4)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(row)
 	var icon := HudIconScript.new()
-	icon.custom_minimum_size = Vector2(25, 25)
+	icon.custom_minimum_size = Vector2(20, 20)
 	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_shape(shape)
@@ -1926,18 +2000,18 @@ func _add_vital_icon(parent: GridContainer, key: String, shape: String, label_te
 	row.add_child(details)
 	var label := Label.new()
 	label.text = label_text
-	label.add_theme_font_size_override("font_size", 9)
+	label.add_theme_font_size_override("font_size", 8)
 	label.add_theme_color_override("font_color", Color(0.64, 0.69, 0.59))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	details.add_child(label)
 	var state_hint := Label.new()
 	state_hint.text = ""
-	state_hint.add_theme_font_size_override("font_size", 9)
+	state_hint.add_theme_font_size_override("font_size", 8)
 	state_hint.add_theme_color_override("font_color", Color(0.73, 0.76, 0.68))
 	state_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	details.add_child(state_hint)
 	var bar_bg := Control.new()
-	bar_bg.custom_minimum_size = Vector2(58, 6)
+	bar_bg.custom_minimum_size = Vector2(52, 5)
 	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_bg.clip_contents = true
@@ -1950,7 +2024,7 @@ func _add_vital_icon(parent: GridContainer, key: String, shape: String, label_te
 	var bar_fill := ColorRect.new()
 	bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_fill.color = Color(0.55, 0.68, 0.39)
-	bar_fill.size = Vector2(70, 6)
+	bar_fill.size = Vector2(56, 5)
 	bar_bg.add_child(bar_fill)
 	status_icons[key] = {"panel": card, "icon": icon, "wrapper": card, "bar_fill": bar_fill, "bar_bg": bar_bg, "value": state_hint}
 
@@ -2011,7 +2085,7 @@ func _set_vital_bar(key: String, ratio: float) -> void:
 	bar_fill.color = _tier_bar_color(ratio)
 	var max_w: float = bar_bg.size.x
 	if max_w <= 0.0:
-		max_w = 70.0
+		max_w = 52.0
 	bar_fill.size.x = max_w * clamp(ratio, 0.0, 1.0)
 
 func _set_vital_bar_color(key: String, color: Color) -> void:
@@ -2024,7 +2098,7 @@ func _set_vital_bar_color(key: String, color: Color) -> void:
 	bar_fill.color = color
 	var max_w: float = bar_bg.size.x
 	if max_w <= 0.0:
-		max_w = 70.0
+		max_w = 52.0
 	bar_fill.size.x = max_w
 
 func _set_vital_bar_tinted(key: String, color: Color, ratio: float) -> void:
@@ -2032,7 +2106,7 @@ func _set_vital_bar_tinted(key: String, color: Color, ratio: float) -> void:
 		return
 	var bar_fill: ColorRect = status_icons[key]["bar_fill"]
 	var bar_bg: Control = status_icons[key]["bar_bg"]
-	var max_w: float = bar_bg.size.x if bar_bg.size.x > 0.0 else 70.0
+	var max_w: float = bar_bg.size.x if bar_bg.size.x > 0.0 else 52.0
 	bar_fill.color = color
 	bar_fill.size.x = max_w * clampf(ratio, 0.0, 1.0)
 

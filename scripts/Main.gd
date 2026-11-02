@@ -1016,6 +1016,14 @@ func _input(event: InputEvent) -> void:
 			hud.toggle_players_list()
 			get_viewport().set_input_as_handled()
 			return
+		if event.keycode == KEY_U and hud.has_method("toggle_status_panel"):
+			hud.toggle_status_panel()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_Y and hud.has_method("toggle_clock_panel"):
+			hud.toggle_clock_panel()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_X and not player.is_sleeping:
 			_whistle_to_wolf()
 			get_viewport().set_input_as_handled()
