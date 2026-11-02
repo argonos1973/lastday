@@ -55,8 +55,8 @@ func _run() -> void:
 	check(hm_node != null, "HighMountainZone instanciado")
 	var road_mi := hm_node.get_node_or_null("HighMountainRoad") as MeshInstance3D if hm_node != null else null
 	check(road_mi != null and road_mi.mesh != null, "Carretera HighMountainRoad instanciada hasta la cima")
-	check(HighMountainZone.on_road(Vector3(9.0, 0.0, -200.0), 0.5), "Carretera arranca sobre la calzada principal Norte-Sur en (9, -200)")
-	check(HighMountainZone.on_road(Vector3(0.0, 0.0, -220.0), 0.5), "Curva de desvio hacia el Oeste pasando por (0, -220)")
+	check(HighMountainZone.on_road(Vector3(9.0, 0.0, -205.0), 0.5), "Carretera arranca sobre la calzada principal Norte-Sur en (9, -205)")
+	check(HighMountainZone.on_road(Vector3(1.0, 0.0, -220.0), 0.5), "Curva de desvio hacia el Oeste pasando por (1, -220)")
 	check(HighMountainZone.on_road(Vector3(-348.0, 0.0, -258.0), 0.5), "Carretera bordea la ladera Sur de la montaña (-348, -258)")
 	check(HighMountainZone.on_road(Vector3(-468.0, 0.0, -346.0), 0.5), "Carretera bordea la ladera Oeste de la montaña (-468, -346)")
 	check(HighMountainZone.on_road(Vector3(-380.0, 0.0, -448.0), 0.5), "Carretera bordea la ladera Norte de la montaña (-380, -448)")

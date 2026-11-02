@@ -7336,7 +7336,6 @@ func _road_waypoints() -> Array:
 	# Tributary south runs near x=8-20 from z=70 to z=385.
 	# Road curves west to avoid those areas.
 	return [
-		Vector3(9, 0, -208),
 		Vector3(9, 0, -200),
 		Vector3(9, 0, -120),
 		Vector3(9, 0, -80),
@@ -7404,7 +7403,7 @@ func _south_road_end() -> float:
 
 func _is_on_road(pos: Vector3) -> bool:
 	if CityExpansion.on_road(pos, 0.0, _south_road_end()): return true
-	if _high_mountain_ready and HighMountainZone.on_road(pos, 0.0): return true
+	if HighMountainZone.on_road(pos, 0.0): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -7423,7 +7422,7 @@ func _is_on_road(pos: Vector3) -> bool:
 
 func _is_near_road(pos: Vector3, margin: float) -> bool:
 	if CityExpansion.on_road(pos, margin, _south_road_end()): return true
-	if _high_mountain_ready and HighMountainZone.on_road(pos, margin): return true
+	if HighMountainZone.on_road(pos, margin): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -17256,21 +17255,23 @@ func _append_city_avenue_trees(batches: Array, positions: Array) -> void:
 
 func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 	# Bosque nuevo donde antes corría la carretera Norte-Sur hasta el borde del
-	# mundo: la calzada termina ahora en el desvío de la montaña (z=-208) y el
-	# corredor x≈9, z=[-495,-226] queda completamente arbolado.
+	# mundo: la calzada termina ahora en el desvío de la montaña (z=-206) y el
+	# corredor x≈9, z=[-495,-204] queda completamente cerrado de bosque y hierba.
 	if _forest_tree_meshes.is_empty():
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = GameConst.WORLD_SEED ^ 0x4E524652 # "NRF" — stream propio, no altera el RNG del mundo
-	for i in range(240):
-		var z := rng.randf_range(-494.0, -222.0)
-		var x := rng.randf_range(-3.0, 21.0) + sin(z * 0.028) * 4.0
+	var grass_base := Color(0.20, 0.34, 0.12)
+	var grass_var := Color(0.34, 0.46, 0.16)
+	for i in range(420):
+		var z := rng.randf_range(-495.0, -204.0)
+		var x := rng.randf_range(-8.0, 26.0)
 		var pos := Vector3(x, 0.0, z)
 		if get_river_depth_at(pos) > 0.0:
 			continue
 		if not _can_place_ground_vegetation(pos, 2.0):
 			continue
-		if _high_mountain_ready and HighMountainZone.on_road(pos, 3.0):
+		if HighMountainZone.on_road(pos, 5.8) or HighMountainZone.blocks_vegetation(pos):
 			continue
 		# Separación mínima frente a otros árboles usando la rejilla espacial
 		var kc := _tree_grid_key(pos)
@@ -17281,7 +17282,7 @@ func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 				if not _tree_grid.has(ckey):
 					continue
 				for entry: Dictionary in _tree_grid[ckey]:
-					if Vector2(entry.pos.x - pos.x, entry.pos.z - pos.z).length_squared() < 2.9 * 2.9:
+					if Vector2(entry.pos.x - pos.x, entry.pos.z - pos.z).length_squared() < 2.7 * 2.7:
 						too_close = true
 						break
 				if too_close:
@@ -17293,7 +17294,7 @@ func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 		pos.y = _get_exact_ground_y(x, z)
 		var variant := _pick_forest_tree_variant(rng)
 		var entry: Dictionary = _forest_tree_meshes[variant]
-		var tree_scale := rng.randf_range(0.8, 1.4)
+		var tree_scale := rng.randf_range(0.85, 1.45)
 		var base_height: float = entry.get("height", 5.0)
 		if base_height * tree_scale < 1.0:
 			tree_scale = 1.0 / maxf(0.01, base_height)
@@ -17303,6 +17304,15 @@ func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 		positions.append(pos)
 		var tree_id := absi(int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663)
 		_register_tree_in_grid({"pos": pos, "id": tree_id, "visual_name": "Tree_%d" % tree_id, "active": false, "multimesh": true, "variant_idx": variant, "mm_transform": transform})
+		for _g in range(4):
+			var gpos := pos + Vector3(rng.randf_range(-2.4, 2.4), 0.0, rng.randf_range(-2.4, 2.4))
+			if HighMountainZone.on_road(gpos, 1.0):
+				continue
+			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.015
+			var gh := rng.randf_range(0.22, 0.48)
+			var gr := rng.randf_range(0.28, 0.56)
+			var gc := grass_base.lerp(grass_var, rng.randf()).darkened(rng.randf_range(0.0, 0.12))
+			_queue_grass_instance(gpos, gh, gr, gc)
 
 func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator) -> void:
 	# Scattered woodland south of the old map edge, thinning out near the city.

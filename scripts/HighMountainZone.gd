@@ -29,9 +29,10 @@ const ASPHALT_HALF_W := 3.5
 # por sus laderas Sur -> Oeste -> Norte -> Este hasta entrar por la puerta Sureste
 # de la Base Militar (-356, -356, cota +56 m).
 const MOUNTAIN_ROAD_WAYPOINTS_3D := [
-	Vector3(9.0, 0.0, -196.0),
-	Vector3(7.5, 0.0, -212.0),
-	Vector3(-10.0, 0.0, -226.0),
+	Vector3(9.0, 0.0, -192.0),
+	Vector3(9.0, 0.0, -204.0),
+	Vector3(2.5, 0.0, -218.0),
+	Vector3(-14.0, 0.0, -228.0),
 	Vector3(-46.0, 0.0, -232.0),
 	Vector3(-95.0, 0.0, -238.0),
 	Vector3(-155.0, 0.0, -248.0),
@@ -250,7 +251,7 @@ static func _adapt_forest_to_mountain(world: Node3D) -> void:
 		for i in range(entries.size() - 1, -1, -1):
 			var entry: Dictionary = entries[i]
 			var pos: Vector3 = entry.get("pos", Vector3.ZERO)
-			if pos.x > 16.0 or pos.z > -208.0:
+			if pos.x > 16.0 or pos.z > -188.0:
 				continue
 			var skey: Vector2i = world._tree_mm_slot_key(pos)
 			if blocks_vegetation(pos):
@@ -274,7 +275,7 @@ static func _adapt_forest_to_mountain(world: Node3D) -> void:
 			var pts: Array = col_grid[ckey]
 			for j in range(pts.size() - 1, -1, -1):
 				var p: Vector3 = pts[j]
-				if p.x <= 16.0 and p.z <= -208.0:
+				if p.x <= 16.0 and p.z <= -188.0:
 					if blocks_vegetation(p):
 						pts.remove_at(j)
 					elif p.x < -210.0 and p.z < -210.0:
@@ -327,7 +328,10 @@ static func _build_mountain_road_mesh(world: Node3D, parent: Node3D) -> void:
 			var local_w := -half_w + tw * road_w
 			var p2 := cur + across * local_w
 			var edge_lip := smoothstep(0.75, 1.0, absf(tw * 2.0 - 1.0))
-			var deck_lift := lerpf(0.14, 0.04, edge_lip)
+			var slope_blend := clampf(cur3.y / 1.5, 0.0, 1.0)
+			var flat_lift := lerpf(0.042, 0.006, edge_lip * 0.85)
+			var mtn_lift := lerpf(0.14, 0.04, edge_lip)
+			var deck_lift := lerpf(flat_lift, mtn_lift, slope_blend)
 			var terrain_y: float = float(world._get_exact_ground_y(p2.x, p2.y))
 			var base_y: float = maxf(terrain_y, cur3.y) if (p2.x < -235.0 and p2.y < -240.0) else terrain_y
 			var gy: float = base_y + deck_lift

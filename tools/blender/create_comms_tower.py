@@ -440,16 +440,14 @@ top_beacon.data.materials.append(beacon_red)
 # ---------------------------------------------------------------------------
 def panel_antenna(name, y, ang_deg, tilt_deg=0.0):
 	# Antena de panel rectangular como las que montan las torres GSM reales:
-	# brazo de soporte + panel blanco 0.62 x 2.05 m inclinado ligeramente hacia abajo.
+	# brazo de soporte + panel blanco 0.62 x 2.05 m pegado al extremo de los brazos.
 	a = math.radians(ang_deg)
 	nx, nz = math.sin(a), math.cos(a)
-	tx, tz = math.cos(a), -math.sin(a)
 	r_wall = shaft_radius(y)
-	arm_out = r_wall + 0.85
-	rod(name + '_ArmA', (nx * (r_wall - 0.05), y + 0.95, nz * (r_wall - 0.05)), (nx * arm_out, y + 0.95, nz * arm_out), 0.07, steel_galv)
-	rod(name + '_ArmB', (nx * (r_wall - 0.05), y - 0.95, nz * (r_wall - 0.05)), (nx * arm_out, y - 0.95, nz * arm_out), 0.07, steel_galv)
-	p = box(name, (nx * (arm_out + 0.10), y, nz * (arm_out + 0.10)), (0.62, 2.05, 0.16), dish_white, solid=False, yaw=a)
-	p.rotation_euler = (p.rotation_euler.x, p.rotation_euler.y + math.radians(tilt_deg), p.rotation_euler.z)
+	arm_out = r_wall + 0.72
+	rod(name + '_ArmA', (nx * (r_wall - 0.05), y + 0.75, nz * (r_wall - 0.05)), (nx * arm_out, y + 0.75, nz * arm_out), 0.055, steel_galv)
+	rod(name + '_ArmB', (nx * (r_wall - 0.05), y - 0.75, nz * (r_wall - 0.05)), (nx * arm_out, y - 0.75, nz * arm_out), 0.055, steel_galv)
+	box(name, (nx * (arm_out + 0.06), y, nz * (arm_out + 0.06)), (0.58, 2.05, 0.16), dish_white, solid=False, yaw=a)
 
 # Tres sectores de antenas de panel en el fuste rojo/blanco (y~44-50 m) y en la jaula superior
 for pa_i, (py, pa) in enumerate([(44.5, 30.0), (44.5, 150.0), (44.5, 270.0),
