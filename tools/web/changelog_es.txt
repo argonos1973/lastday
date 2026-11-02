@@ -108,3 +108,4 @@ eb804f6|El lobo domesticado apenas gasta comida con el dueno desconectado: aguan
 90e6c34|Inicio: la tarjeta del personaje del servidor muestra su equipo real (casco+pasamontanas a la vez, objeto en mano).
 dc3313c|Lobos: animaciones de pelea realistas — embestida con mordisco y tiron, amenaza agazapada entre ataques y sacudida de matanza al cazar.
 d01c151|Sangrado estilo DayZ: los mordiscos de lobos/osos y las armas blancas abren heridas que drenan vida hasta vendarlas (3 trapos = 1 venda, nuevo modelo de rollo, indicador SANGRANDO en el HUD).
+2ef7c68|Barra de SANGRE en el panel de stats: los mordiscos y golpes drenan la barra de Sangre (y al vaciarse baja Salud) y tras vendarse se regenera estando alimentado e hidratado.
