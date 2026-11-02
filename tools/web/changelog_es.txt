@@ -110,3 +110,4 @@ dc3313c|Lobos: animaciones de pelea realistas — embestida con mordisco y tiron
 d01c151|Sangrado estilo DayZ: los mordiscos de lobos/osos y las armas blancas abren heridas que drenan vida hasta vendarlas (3 trapos = 1 venda, nuevo modelo de rollo, indicador SANGRANDO en el HUD).
 2ef7c68|Barra de SANGRE en el panel de stats: los mordiscos y golpes drenan la barra de Sangre (y al vaciarse baja Salud) y tras vendarse se regenera estando alimentado e hidratado.
 42ab45b|HUD en una sola linea: tanto los stats (abajo) como la barra de dia/hora, tiempo de supervivencia, clima y mano (arriba) ocupan una unica fila horizontal y se pueden ocultar o mostrar con [U] / [Y] o el boton [-]/[+].
+46017ac|Nueva cordillera de Montanas Altas en el Noroeste con base militar en la cima, Torre de Comunicaciones estilo DayZ Green Mountain (68 m, 6 pisos circulares y escaleras de mano con nueva animacion de trepar) y mejoras visuales de bosques.
