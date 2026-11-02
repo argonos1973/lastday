@@ -22,6 +22,8 @@ func _draw() -> void:
 			_draw_apple(c, s)
 		"drop":
 			_draw_drop(c, s)
+		"blood":
+			_draw_blood(c, s)
 		"thermometer":
 			_draw_thermometer(c, s)
 		"bolt":
@@ -137,6 +139,26 @@ func _draw_drop(c: Vector2, s: Vector2) -> void:
 	var right := drop_center + Vector2(r * 0.92, -r * 0.38)
 	var tri := PackedVector2Array([tip, left, right])
 	draw_colored_polygon(tri, icon_color)
+
+func _draw_blood(c: Vector2, s: Vector2) -> void:
+	var r: float = min(s.x, s.y) * 0.22
+	if r < 1.0:
+		return
+	var blood_tint := Color(0.92, 0.20, 0.18)
+	var drop_center := Vector2(c.x - r * 0.22, c.y + r * 0.30)
+	draw_circle(drop_center, r, blood_tint)
+	var tip := Vector2(drop_center.x, c.y - r * 1.15)
+	var left := drop_center + Vector2(-r * 0.92, -r * 0.38)
+	var right := drop_center + Vector2(r * 0.92, -r * 0.38)
+	draw_colored_polygon(PackedVector2Array([tip, left, right]), blood_tint)
+	var sr: float = r * 0.52
+	var sc := Vector2(c.x + r * 0.85, c.y - r * 0.15)
+	draw_circle(sc, sr, blood_tint)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(sc.x, sc.y - sr * 1.45),
+		sc + Vector2(-sr * 0.9, -sr * 0.35),
+		sc + Vector2(sr * 0.9, -sr * 0.35)
+	]), blood_tint)
 
 func _draw_thermometer(c: Vector2, s: Vector2) -> void:
 	var w: float = s.x * 0.16

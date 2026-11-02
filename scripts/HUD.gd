@@ -1824,7 +1824,7 @@ func _update_real_clock() -> void:
 func _build_status_panel() -> void:
 	status_panel = PanelContainer.new()
 	status_panel.offset_left = 18
-	status_panel.offset_top = -158
+	status_panel.offset_top = -205
 	status_panel.offset_right = 360
 	status_panel.offset_bottom = -16
 	status_panel.anchor_left = 0.0
@@ -1888,6 +1888,7 @@ func _build_status_panel() -> void:
 	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(grid)
 	_add_vital_icon(grid, "health", "heart", "SALUD")
+	_add_vital_icon(grid, "blood", "blood", "SANGRE")
 	_add_vital_icon(grid, "hunger", "apple", "HAMBRE")
 	_add_vital_icon(grid, "thirst", "drop", "SED")
 	_add_vital_icon(grid, "temp", "thermometer", "CUERPO")
@@ -2040,6 +2041,10 @@ func _update_status_icons() -> void:
 		return
 	var stats = player.stats
 	var health_ratio: float = float(stats.health) / float(stats.max_health)
+	var blood_val: float = float(stats.get("blood")) if stats.get("blood") != null else float(stats.max_stat)
+	var blood_ratio: float = clampf(blood_val / float(stats.max_stat), 0.0, 1.0)
+	var bleed_sev: float = float(stats.get("bleeding")) if stats.get("bleeding") != null else 0.0
+	var is_bleeding: bool = bleed_sev > 0.0
 	var hunger_ratio: float = float(stats.hunger) / float(stats.max_stat)
 	var thirst_ratio: float = float(stats.thirst) / float(stats.max_stat)
 	var temp_ratio: float = clamp((stats.body_temperature - 33.0) / 7.0, 0.0, 1.0)
@@ -2047,6 +2052,10 @@ func _update_status_icons() -> void:
 	var energy_ratio: float = float(stats.energy) / float(stats.max_stat)
 	var sleep_ratio: float = float(stats.sleep) / float(stats.max_stat)
 	_set_vital_icon_color("health", _tier_color(health_ratio))
+	if is_bleeding:
+		_set_vital_icon_color("blood", Color(0.88, 0.12, 0.10))
+	else:
+		_set_vital_icon_color("blood", _tier_color(blood_ratio))
 	var hunger_overfull: bool = int(stats.overeat_count) > 0
 	var thirst_overfull: bool = int(stats.overdrink_count) > 0
 	if hunger_overfull:
@@ -2064,9 +2073,13 @@ func _update_status_icons() -> void:
 		status_icons["sick"]["wrapper"].visible = bool(stats.sick)
 		_set_vital_icon_color("sick", Color(0.80, 0.12, 0.10))
 	if status_icons.has("bleeding"):
-		status_icons["bleeding"]["wrapper"].visible = float(stats.get("bleeding", 0.0)) > 0.0
+		status_icons["bleeding"]["wrapper"].visible = is_bleeding
 	# Update level bars
 	_set_vital_bar("health", health_ratio)
+	if is_bleeding:
+		_set_vital_bar_tinted("blood", Color(0.90, 0.14, 0.12), blood_ratio)
+	else:
+		_set_vital_bar("blood", blood_ratio)
 	if hunger_overfull:
 		_set_vital_bar_color("hunger", _overfull_bar_color(int(stats.overeat_count)))
 	else:
@@ -2080,6 +2093,11 @@ func _update_status_icons() -> void:
 	_set_vital_bar("energy", energy_ratio)
 	_set_vital_bar("sleep", sleep_ratio)
 	_set_vital_value("health", _vital_state(health_ratio))
+	if is_bleeding:
+		var cuts: int = maxi(1, int(round(bleed_sev)))
+		_set_vital_value("blood", ("SANGRANDO x%d" % cuts) if cuts > 1 else "SANGRANDO")
+	else:
+		_set_vital_value("blood", _vital_state(blood_ratio))
 	_set_vital_value("hunger", _vital_state(hunger_ratio))
 	_set_vital_value("thirst", _vital_state(thirst_ratio))
 	_set_vital_value("temp", _temperature_state(stats.body_temperature))

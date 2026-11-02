@@ -12,8 +12,10 @@ var thirst := 70.0
 var energy := 85.0
 var sleep := 100.0
 var body_temperature := 36.6
-# Heridas sangrantes estilo DayZ: cada mordisco/golpe apila severidad y la
-# sangre drena salud hasta usar una venda (no coagula solo).
+# Nivel de sangre (0-100) y heridas sangrantes estilo DayZ: cada mordisco/golpe
+# apila severidad; mientras sangras baja la barra de Sangre (no coagula solo) y
+# al vaciarse drena Salud. Vendado y bien alimentado/hidratado regenera Sangre.
+var blood := 100.0
 var bleeding := 0.0
 var warmth_bonus := 0.0
 var heat_protection_bonus := 0.0
@@ -185,12 +187,21 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			sick = false
 		health = max(0.0, health - 1.0 * delta)
 	if bleeding > 0.0:
-		health = max(0.0, health - bleeding * 0.45 * delta)
+		blood = max(0.0, blood - bleeding * 0.45 * delta)
+	elif blood < max_stat and not sick and hunger > 40.0 and thirst > 40.0 and body_temperature >= 35.4 and body_temperature < 37.8:
+		var blood_regen: float = 0.45
+		if hunger > 60.0 and thirst > 60.0:
+			blood_regen = 0.9
+		if sleeping:
+			blood_regen *= (2.0 if on_bed else 1.5)
+		blood = min(max_stat, blood + blood_regen * delta)
+	if blood <= 0.0:
+		health = max(0.0, health - maxf(2.0, bleeding * 0.8) * delta)
 	# Passive slow health regen when not suffering any critical condition.
 	# health > 0.0: regenerating before the death check below would resurrect
 	# a player killed by external damage (wolf hits) every tick, making them
 	# immortal at 0 HP while fed and rested.
-	if health > 0.0 and not sick and bleeding <= 0.0 and hunger > 0.0 and thirst > 0.0 and (sleep > 20.0 or sleeping) and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
+	if health > 0.0 and not sick and bleeding <= 0.0 and blood >= 50.0 and hunger > 0.0 and thirst > 0.0 and (sleep > 20.0 or sleeping) and body_temperature >= 35.4 and body_temperature < 37.8 and health < max_health:
 		var regen_rate: float = 0.5
 		if hunger > 60.0 and thirst > 60.0:
 			regen_rate = 1.2
@@ -264,8 +275,11 @@ func do_sleep(hours: float, on_bed: bool = false) -> void:
 	# Heal while sleeping under the same restrictions as passive regen: not
 	# sick, body temperature inside the safe band, fed and hydrated.
 	if hunger > 0.0 and thirst > 0.0 and health > 0.0 and not sick and bleeding <= 0.0 and body_temperature >= 35.4 and body_temperature < 37.8:
-		var heal_rate := (8.0 if sleep >= max_stat else (4.0 if on_bed else 2.2))
-		health = min(max_health, health + heal_rate * hours)
+		var blood_sleep_gain := (10.0 if on_bed else 6.5)
+		blood = min(max_stat, blood + blood_sleep_gain * hours)
+		if blood >= 50.0:
+			var heal_rate := (8.0 if sleep >= max_stat else (4.0 if on_bed else 2.2))
+			health = min(max_health, health + heal_rate * hours)
 	changed.emit()
 
 func get_survival_days() -> int:
@@ -302,6 +316,7 @@ func equip_heat_protection(value: float) -> void:
 func to_dict() -> Dictionary:
 	return {
 		"health": health,
+		"blood": blood,
 		"bleeding": bleeding,
 		"hunger": hunger,
 		"thirst": thirst,
@@ -324,6 +339,7 @@ func to_dict() -> Dictionary:
 
 func from_dict(data: Dictionary) -> void:
 	health = float(data.get("health", health))
+	blood = clampf(float(data.get("blood", blood)), 0.0, max_stat)
 	bleeding = clampf(float(data.get("bleeding", bleeding)), 0.0, 5.0)
 	hunger = float(data.get("hunger", hunger))
 	thirst = float(data.get("thirst", thirst))
