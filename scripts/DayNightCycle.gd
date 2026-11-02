@@ -70,7 +70,10 @@ func get_cold_factor() -> float:
 
 func get_ambient_temperature() -> float:
 	var day_amount: float = get_day_amount()
-	return lerp(2.0, 35.0, day_amount)
+	# Curva térmica templada realista (6 °C de noche .. 18-19 °C al mediodía),
+	# evitando el antiguo tope de 35 °C cuando Open-Meteo no está disponible.
+	var noon_warmth := maxf(0.0, cos((time_of_day - 15.0) * PI / 12.0))
+	return lerpf(6.0, 16.0, day_amount) + 3.0 * day_amount * noon_warmth
 
 func get_hour_text() -> String:
 	var hour := int(floor(time_of_day))

@@ -7406,6 +7406,7 @@ func _south_road_end() -> float:
 
 func _is_on_road(pos: Vector3) -> bool:
 	if CityExpansion.on_road(pos, 0.0, _south_road_end()): return true
+	if _high_mountain_ready and HighMountainZone.on_road(pos, 0.0): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -7424,6 +7425,7 @@ func _is_on_road(pos: Vector3) -> bool:
 
 func _is_near_road(pos: Vector3, margin: float) -> bool:
 	if CityExpansion.on_road(pos, margin, _south_road_end()): return true
+	if _high_mountain_ready and HighMountainZone.on_road(pos, margin): return true
 	if _road_segments.is_empty():
 		return false
 	for seg in _road_segments:
@@ -17482,111 +17484,42 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 		return
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
-	var fern_mesh: ArrayMesh = null
-	var fern_mat: Material = null
-	var fern_node: Node3D = _load_gltf_scene_from_file(POLY_MODEL_DIR + "fern_02/fern_02_1k.gltf")
-	if fern_node != null:
-		var fmeshes: Array = []
-		NodeUtils.collect_mesh_instances(fern_node, fmeshes)
-		for fm in fmeshes:
-			var fmi := fm as MeshInstance3D
-			if fmi.mesh is ArrayMesh:
-				fern_mesh = (fmi.mesh as ArrayMesh).duplicate()
-				if fern_mesh.get_surface_count() > 0:
-					var smat := fern_mesh.surface_get_material(0)
-					if smat is StandardMaterial3D:
-						var dup := (smat as StandardMaterial3D).duplicate()
-						dup.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-						dup.alpha_scissor_threshold = 0.35
-						dup.cull_mode = BaseMaterial3D.CULL_DISABLED
-						fern_mat = MaterialFactory.make_forest_foliage_material(dup)
-				break
-		fern_node.queue_free()
 	var rock_mesh: ArrayMesh = _get_forest_rock_mesh(Vector3.ZERO)
 	var rock_mat: Material = MaterialFactory.make_forest_rock_material(Vector3(0.76, 0.86, 0.70))
-	var fern_xforms: Array = []
 	var rock_xforms: Array = []
 	for tpos: Vector3 in tree_positions:
 		var hval := u_rng.randf()
-		if hval < 0.22 and fern_mesh != null:
-			var fcount := 1 + (u_rng.randi() % 2)
-			for _fi in range(fcount):
-				var ang := u_rng.randf_range(0.0, TAU)
-				var dist := u_rng.randf_range(0.55, 1.85)
-				var fpos := tpos + Vector3(cos(ang) * dist, 0.0, sin(ang) * dist)
-				if not _can_place_ground_vegetation(fpos):
-					continue
-				fpos.y = _get_exact_ground_y(fpos.x, fpos.z)
-				var fscale := u_rng.randf_range(0.85, 1.45)
-				var fbasis := Basis(Vector3.UP, u_rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * fscale)
-				fern_xforms.append(Transform3D(fbasis, fpos))
-		elif hval > 0.90 and rock_mesh != null:
+		if hval > 0.92 and rock_mesh != null:
 			var rang := u_rng.randf_range(0.0, TAU)
-			var rdist := u_rng.randf_range(0.65, 2.10)
+			var rdist := u_rng.randf_range(0.65, 2.05)
 			var rpos := tpos + Vector3(cos(rang) * rdist, 0.0, sin(rang) * rdist)
-			if not _can_place_ground_vegetation(rpos):
+			if HighMountainZone.on_road(rpos, 4.0) or HighMountainZone.blocks_vegetation(rpos):
 				continue
-			var rscale := u_rng.randf_range(0.28, 0.72)
-			rpos.y = _get_exact_ground_y(rpos.x, rpos.z) + 0.08 * rscale
+			var rscale := u_rng.randf_range(0.28, 0.68)
+			rpos.y = tpos.y + 0.06 * rscale
 			var rbasis := Basis.from_euler(Vector3(u_rng.randf_range(-0.18, 0.18), u_rng.randf_range(0.0, TAU), u_rng.randf_range(-0.18, 0.18))).scaled(Vector3(rscale * 1.15, rscale * 0.78, rscale))
 			rock_xforms.append(Transform3D(rbasis, rpos))
-	if not fern_xforms.is_empty() and fern_mesh != null:
-		var fbatches := _spatial_instance_batches(fern_xforms, 64.0, 500)
-		for b in range(fbatches.size()):
-			var idxs: Array = fbatches[b]
-			var mm := MultiMesh.new()
-			mm.transform_format = MultiMesh.TRANSFORM_3D
-			mm.mesh = fern_mesh
-			mm.instance_count = idxs.size()
-			var c := Vector3.ZERO
-			for j in range(idxs.size()):
-				var xf: Transform3D = fern_xforms[idxs[j]]
-				mm.set_instance_transform(j, xf)
-				c += xf.origin
-			c /= float(idxs.size())
-			var rad := 0.0
-			for j in range(idxs.size()):
-				rad = maxf(rad, c.distance_to((fern_xforms[idxs[j]] as Transform3D).origin))
-			var mmi := MultiMeshInstance3D.new()
-			mmi.name = "ForestFernsMM_%d" % b
-			mmi.multimesh = mm
-			if fern_mat != null:
-				mmi.material_override = fern_mat
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.visibility_range_end = 95.0
-			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
-			add_child(mmi)
-			_forest_multimesh_nodes.append(mmi)
-			_forest_multimesh_centers.append(c)
-			_forest_multimesh_radii.append(rad)
 	if not rock_xforms.is_empty() and rock_mesh != null:
-		var rbatches := _spatial_instance_batches(rock_xforms, 64.0, 400)
+		# Lotes de alcance corto (75 m) sin sombras dinámicas y fuera de _forest_multimesh_nodes
+		# para que _update_forest_visibility() nunca les active cast_shadow = ON.
+		var rbatches := _spatial_instance_batches(rock_xforms, 96.0, 450)
 		for b in range(rbatches.size()):
 			var idxs: Array = rbatches[b]
 			var mm := MultiMesh.new()
 			mm.transform_format = MultiMesh.TRANSFORM_3D
 			mm.mesh = rock_mesh
 			mm.instance_count = idxs.size()
-			var c := Vector3.ZERO
 			for j in range(idxs.size()):
-				var xf: Transform3D = rock_xforms[idxs[j]]
-				mm.set_instance_transform(j, xf)
-				c += xf.origin
-			c /= float(idxs.size())
-			var rad := 0.0
-			for j in range(idxs.size()):
-				rad = maxf(rad, c.distance_to((rock_xforms[idxs[j]] as Transform3D).origin))
+				mm.set_instance_transform(j, rock_xforms[idxs[j]])
 			var mmi := MultiMeshInstance3D.new()
 			mmi.name = "ForestMossRocksMM_%d" % b
 			mmi.multimesh = mm
 			mmi.material_override = rock_mat
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.visibility_range_end = 115.0
+			mmi.visibility_range_end = 75.0
+			mmi.visibility_range_end_margin = 8.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mmi)
-			_forest_multimesh_nodes.append(mmi)
-			_forest_multimesh_centers.append(c)
-			_forest_multimesh_radii.append(rad)
 
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():

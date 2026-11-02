@@ -4,23 +4,85 @@ class_name HighMountainZone
 # Centro de la meseta militar en la cumbre Noroeste y su cota (+56 m)
 const SUMMIT_CENTER := Vector2(-375.0, -375.0)
 const SUMMIT_HEIGHT := 56.0
-const PLATEAU_RADIUS := 36.0
-const MASSIF_OUTER_RADIUS := 132.0
+const PLATEAU_RADIUS := 38.0
+const MASSIF_OUTER_RADIUS := 142.0
 const BASE_YAW_DEG := 45.0 # Mira hacia el Sureste (+X, +Z, hacia el valle central)
 
 # Picos secundarios que rodean la cumbre por el Norte y Oeste formando la cordillera
 const PEAKS := [
-	{"pos": Vector2(-448.0, -432.0), "rx": 68.0, "rz": 58.0, "h": 78.0},
-	{"pos": Vector2(-362.0, -458.0), "rx": 64.0, "rz": 54.0, "h": 72.0},
-	{"pos": Vector2(-462.0, -345.0), "rx": 62.0, "rz": 56.0, "h": 70.0},
-	{"pos": Vector2(-292.0, -445.0), "rx": 56.0, "rz": 50.0, "h": 62.0},
-	{"pos": Vector2(-445.0, -268.0), "rx": 54.0, "rz": 50.0, "h": 58.0},
+	{"pos": Vector2(-462.0, -452.0), "rx": 64.0, "rz": 56.0, "h": 78.0},
+	{"pos": Vector2(-368.0, -474.0), "rx": 60.0, "rz": 50.0, "h": 72.0},
+	{"pos": Vector2(-478.0, -352.0), "rx": 58.0, "rz": 54.0, "h": 70.0},
+	{"pos": Vector2(-288.0, -458.0), "rx": 54.0, "rz": 48.0, "h": 62.0},
+	{"pos": Vector2(-458.0, -262.0), "rx": 52.0, "rz": 48.0, "h": 58.0},
 ]
 
-# Rampa/camino militar que sube desde el Sureste (-275, -275) hasta la puerta de la meseta (-349, -349)
-const ROAD_START := Vector2(-272.0, -272.0)
+const ROAD_START := Vector2(-252.0, -268.0)
 const ROAD_END := Vector2(-350.0, -350.0)
-const ROAD_HALF_W := 6.5
+const ROAD_HALF_W := 4.6
+const ASPHALT_HALF_W := 3.5
+
+# Puntos de control 3D (x, cota_y, z) de la carretera:
+# Sale de la carretera principal Norte-Sur en (9, -220), llega al pie de la montaña (-252, -268)
+# y sube RODEANDO la montaña en espiral por sus laderas Sur -> Oeste -> Norte -> Este
+# hasta entrar por la puerta Sureste de la Base Militar (-356, -356, cota +56 m).
+const MOUNTAIN_ROAD_WAYPOINTS_3D := [
+	Vector3(9.0, 0.0, -220.0),
+	Vector3(-58.0, 0.0, -230.0),
+	Vector3(-135.0, 0.0, -242.0),
+	Vector3(-202.0, 0.0, -256.0),
+	Vector3(-252.0, 0.8, -268.0),
+	Vector3(-296.0, 5.5, -266.0),
+	Vector3(-348.0, 11.5, -258.0),
+	Vector3(-402.0, 18.0, -268.0),
+	Vector3(-444.0, 24.5, -298.0),
+	Vector3(-468.0, 31.0, -346.0),
+	Vector3(-462.0, 37.0, -398.0),
+	Vector3(-430.0, 42.5, -438.0),
+	Vector3(-380.0, 47.0, -448.0),
+	Vector3(-334.0, 51.0, -430.0),
+	Vector3(-310.0, 54.0, -388.0),
+	Vector3(-322.0, 55.5, -348.0),
+	Vector3(-346.0, 56.0, -346.0),
+	Vector3(-356.0, 56.0, -356.0),
+]
+
+static var _cached_road_3d: PackedVector3Array = PackedVector3Array()
+
+
+static func _catmull_rom_3d(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
+	var t2 := t * t
+	var t3 := t2 * t
+	return 0.5 * (
+		(2.0 * p1)
+		+ (-p0 + p2) * t
+		+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+		+ (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+	)
+
+
+static func get_road_polyline_3d() -> PackedVector3Array:
+	if not _cached_road_3d.is_empty():
+		return _cached_road_3d
+	var pts := PackedVector3Array()
+	var n := MOUNTAIN_ROAD_WAYPOINTS_3D.size()
+	var subdiv := 8
+	for i in range(n - 1):
+		var p0: Vector3 = MOUNTAIN_ROAD_WAYPOINTS_3D[maxi(0, i - 1)]
+		var p1: Vector3 = MOUNTAIN_ROAD_WAYPOINTS_3D[i]
+		var p2: Vector3 = MOUNTAIN_ROAD_WAYPOINTS_3D[i + 1]
+		var p3: Vector3 = MOUNTAIN_ROAD_WAYPOINTS_3D[mini(n - 1, i + 2)]
+		for s in range(subdiv):
+			if i > 0 and s == 0:
+				continue
+			var t := float(s) / float(subdiv)
+			var q := _catmull_rom_3d(p0, p1, p2, p3, t)
+			q.y = clampf(q.y, 0.0, SUMMIT_HEIGHT)
+			pts.append(q)
+	pts.append(MOUNTAIN_ROAD_WAYPOINTS_3D[n - 1])
+	_cached_road_3d = pts
+	return _cached_road_3d
+
 
 const COMMS_TOWER_OFFSET := Vector3(0.0, 0.0, -10.5)
 const WATCH_TOWER_OFFSET := Vector3(13.5, 0.0, 11.5)
@@ -42,6 +104,50 @@ static func in_bounds_xz(x: float, z: float) -> bool:
 	return x < -210.0 and z < -210.0
 
 
+static func on_road(pos: Vector3, margin: float = 0.0) -> bool:
+	if pos.x > 16.0 + margin or pos.x < -485.0 - margin or pos.z > -212.0 + margin or pos.z < -465.0 - margin:
+		return false
+	var p := Vector2(pos.x, pos.z)
+	var r_max := ASPHALT_HALF_W + margin
+	var r_max2 := r_max * r_max
+	var pts := get_road_polyline_3d()
+	for i in range(pts.size() - 1):
+		var a3 := pts[i]
+		var b3 := pts[i + 1]
+		var a := Vector2(a3.x, a3.z)
+		var b := Vector2(b3.x, b3.z)
+		var ab := b - a
+		var len2 := ab.length_squared()
+		if len2 <= 0.001:
+			continue
+		var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+		if p.distance_squared_to(a + ab * t) <= r_max2:
+			return true
+	return false
+
+
+static func _closest_mountain_road_info(p: Vector2) -> Vector2:
+	# Devuelve Vector2(distancia_xz, cota_y_carretera) para los tramos de montaña (índice >= 24)
+	var pts := get_road_polyline_3d()
+	var best_d2 := 1e12
+	var best_y := 0.0
+	for i in range(24, pts.size() - 1):
+		var a3 := pts[i]
+		var b3 := pts[i + 1]
+		var a := Vector2(a3.x, a3.z)
+		var b := Vector2(b3.x, b3.z)
+		var ab := b - a
+		var len2 := ab.length_squared()
+		if len2 <= 0.001:
+			continue
+		var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+		var d2 := p.distance_squared_to(a + ab * t)
+		if d2 < best_d2:
+			best_d2 = d2
+			best_y = lerpf(a3.y, b3.y, t)
+	return Vector2(sqrt(best_d2), best_y)
+
+
 static func ground_height_at(pos: Vector3) -> float:
 	if pos.x >= -210.0 or pos.z >= -210.0:
 		return 0.0
@@ -49,7 +155,8 @@ static func ground_height_at(pos: Vector3) -> float:
 	var h := 0.0
 
 	# 1) Macizo principal con meseta plana en la cima (r <= PLATEAU_RADIUS)
-	var d_summit := p.distance_to(SUMMIT_CENTER)
+	var d_summit2 := p.distance_squared_to(SUMMIT_CENTER)
+	var d_summit := sqrt(d_summit2) if d_summit2 < (MASSIF_OUTER_RADIUS + 40.0) * (MASSIF_OUTER_RADIUS + 40.0) else 999.0
 	if d_summit <= PLATEAU_RADIUS:
 		h = SUMMIT_HEIGHT
 	elif d_summit < MASSIF_OUTER_RADIUS:
@@ -57,19 +164,7 @@ static func ground_height_at(pos: Vector3) -> float:
 		var smooth := 1.0 - (t * t * (3.0 - 2.0 * t))
 		h = SUMMIT_HEIGHT * pow(maxf(0.0, smooth), 1.05)
 
-	# 2) Rampa/camino militar de subida por la ladera Sureste (pendiente constante y suave)
-	var seg := ROAD_END - ROAD_START
-	var seg_len2 := seg.length_squared()
-	if seg_len2 > 0.01:
-		var u := clampf((p - ROAD_START).dot(seg) / seg_len2, 0.0, 1.0)
-		var closest := ROAD_START + seg * u
-		var dist_road := p.distance_to(closest)
-		if dist_road < ROAD_HALF_W + 10.0:
-			var road_h := SUMMIT_HEIGHT * smoothstep(0.0, 1.0, u)
-			var blend := 1.0 - smoothstep(ROAD_HALF_W, ROAD_HALF_W + 10.0, dist_road)
-			h = lerpf(h, maxf(h, road_h), blend)
-
-	# 3) Picos alpinos secundarios (solo fuera de la explanada de la base)
+	# 2) Picos alpinos secundarios (solo fuera de la explanada de la base)
 	if d_summit > PLATEAU_RADIUS + 4.0:
 		var dome_shield := clampf((d_summit - (PLATEAU_RADIUS + 4.0)) / 18.0, 0.0, 1.0)
 		for pk in PEAKS:
@@ -83,22 +178,40 @@ static func ground_height_at(pos: Vector3) -> float:
 				var pct := sqrt(d2)
 				var ph: float = float(pk["h"]) * pow(1.0 - pct, 0.82)
 				h = maxf(h, lerpf(SUMMIT_HEIGHT, ph, dome_shield))
+
+	# 3) Terraza/cornisa tallada alrededor de la montaña por donde sube la carretera serpenteante
+	if pos.x < -235.0 and pos.z < -240.0 and d_summit > 23.5:
+		var rinfo := _closest_mountain_road_info(p)
+		var dist_road := rinfo.x
+		var road_y := rinfo.y
+		var outer_blend_w := ROAD_HALF_W + 8.5
+		if dist_road < outer_blend_w:
+			var blend := 1.0 - smoothstep(ROAD_HALF_W, outer_blend_w, dist_road)
+			h = lerpf(h, road_y, blend)
 	return h
 
 
+static func _inside_military_base_compound(p: Vector2, margin: float = 1.5) -> bool:
+	var rel := p - SUMMIT_CENTER
+	var yaw := -deg_to_rad(BASE_YAW_DEG)
+	var c := cos(yaw)
+	var s := sin(yaw)
+	var lx := rel.x * c - rel.y * s
+	var lz := rel.x * s + rel.y * c
+	return absf(lx) <= 21.8 + margin and absf(lz) <= 21.8 + margin
+
+
 static func blocks_vegetation(pos: Vector3) -> bool:
+	if on_road(pos, 5.8):
+		return true
 	if pos.x >= -210.0 or pos.z >= -210.0:
 		return false
 	var p := Vector2(pos.x, pos.z)
-	# Despejar la explanada militar de la cima y el camino de subida
-	if p.distance_to(SUMMIT_CENTER) < PLATEAU_RADIUS + 5.0:
+	# Despejar únicamente el interior amurallado de la Base Militar (permitiendo árboles alrededor de la base)
+	if _inside_military_base_compound(p, 2.0):
 		return true
-	var seg := ROAD_END - ROAD_START
-	var u := clampf((p - ROAD_START).dot(seg) / seg.length_squared(), 0.0, 1.0)
-	if p.distance_to(ROAD_START + seg * u) < ROAD_HALF_W + 2.5:
-		return true
-	# Sin árboles en las cumbres nevadas muy altas (> 58 m)
-	if ground_height_at(pos) > 58.0:
+	# Sin árboles en las cumbres nevadas muy altas (> 59 m)
+	if ground_height_at(pos) > 59.0:
 		return true
 	return false
 
@@ -111,7 +224,9 @@ static func create(world: Node3D, server_only: bool = false) -> void:
 
 	if not server_only:
 		_build_mountain_terrain_mesh(world, root)
+		_build_mountain_road_mesh(world, root)
 		_adapt_forest_to_mountain(world)
+		_build_mountain_alpine_forest(world, root)
 
 	_build_summit_military_base(world, root, server_only)
 
@@ -127,34 +242,260 @@ static func _adapt_forest_to_mountain(world: Node3D) -> void:
 		for i in range(entries.size() - 1, -1, -1):
 			var entry: Dictionary = entries[i]
 			var pos: Vector3 = entry.get("pos", Vector3.ZERO)
-			if pos.x >= -210.0 or pos.z >= -210.0:
+			if pos.x > 16.0 or pos.z > -208.0:
 				continue
 			var skey: Vector2i = world._tree_mm_slot_key(pos)
 			if blocks_vegetation(pos):
 				world._hide_multimesh_tree_at(pos)
 				entries.remove_at(i)
 				continue
-			var hm_y := ground_height_at(pos)
-			if hm_y > pos.y + 0.2 and mm_slots.has(skey):
-				var new_pos := Vector3(pos.x, hm_y, pos.z)
-				entry["pos"] = new_pos
-				for slot in mm_slots[skey]:
-					var mm: MultiMesh = slot[0]
-					var idx: int = slot[1]
-					var xf: Transform3D = slot[2]
-					xf.origin.y = hm_y
-					mm.set_instance_transform(idx, xf)
-					slot[2] = xf
+			if pos.x < -210.0 and pos.z < -210.0:
+				var hm_y := ground_height_at(pos)
+				if hm_y > pos.y + 0.2 and mm_slots.has(skey):
+					var new_pos := Vector3(pos.x, hm_y, pos.z)
+					entry["pos"] = new_pos
+					for slot in mm_slots[skey]:
+						var mm: MultiMesh = slot[0]
+						var idx: int = slot[1]
+						var xf: Transform3D = slot[2]
+						xf.origin.y = hm_y
+						mm.set_instance_transform(idx, xf)
+						slot[2] = xf
 	if col_grid != null:
 		for ckey in col_grid.keys():
 			var pts: Array = col_grid[ckey]
 			for j in range(pts.size() - 1, -1, -1):
 				var p: Vector3 = pts[j]
-				if p.x < -210.0 and p.z < -210.0:
+				if p.x <= 16.0 and p.z <= -208.0:
 					if blocks_vegetation(p):
 						pts.remove_at(j)
-					else:
+					elif p.x < -210.0 and p.z < -210.0:
 						pts[j] = Vector3(p.x, maxf(p.y, ground_height_at(p)), p.z)
+
+
+static func _build_mountain_road_mesh(world: Node3D, parent: Node3D) -> void:
+	# Construye toda la carretera serpenteante en un único MeshInstance3D continuo (1 draw call)
+	# desde la carretera principal Norte-Sur (9, -220), rodeando la montaña hasta la Base Militar (-356, -356, y=+56 m).
+	var poly := get_road_polyline_3d()
+	var samples: Array[Vector3] = []
+	var step_len := 3.2
+	for i in range(poly.size() - 1):
+		var a: Vector3 = poly[i]
+		var b: Vector3 = poly[i + 1]
+		var dist := Vector2(a.x, a.z).distance_to(Vector2(b.x, b.z))
+		var n_steps := maxi(1, int(ceil(dist / step_len)))
+		for s in range(n_steps):
+			if i > 0 and s == 0:
+				continue
+			samples.append(a.lerp(b, float(s) / float(n_steps)))
+	samples.append(poly[poly.size() - 1])
+	if samples.size() < 2:
+		return
+
+	var grid_w := 6
+	var road_w := ASPHALT_HALF_W * 2.0
+	var half_w := ASPHALT_HALF_W
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var accum_u := 0.0
+
+	for i in range(samples.size()):
+		var cur3: Vector3 = samples[i]
+		var cur := Vector2(cur3.x, cur3.z)
+		if i > 0:
+			var prev3: Vector3 = samples[i - 1]
+			accum_u += cur.distance_to(Vector2(prev3.x, prev3.z))
+		var dir: Vector2
+		if i == 0:
+			dir = (Vector2(samples[1].x, samples[1].z) - cur).normalized()
+		elif i == samples.size() - 1:
+			dir = (cur - Vector2(samples[i - 1].x, samples[i - 1].z)).normalized()
+		else:
+			dir = (Vector2(samples[i + 1].x, samples[i + 1].z) - Vector2(samples[i - 1].x, samples[i - 1].z)).normalized()
+		var across := Vector2(-dir.y, dir.x)
+
+		for ix in range(grid_w + 1):
+			var tw := float(ix) / float(grid_w)
+			var local_w := -half_w + tw * road_w
+			var p2 := cur + across * local_w
+			var edge_lip := smoothstep(0.75, 1.0, absf(tw * 2.0 - 1.0))
+			var deck_lift := lerpf(0.14, 0.04, edge_lip)
+			var terrain_y: float = float(world._get_exact_ground_y(p2.x, p2.y))
+			var base_y: float = maxf(terrain_y, cur3.y) if (p2.x < -235.0 and p2.y < -240.0) else terrain_y
+			var gy: float = base_y + deck_lift
+			st.set_color(Color(0.0, 0.0, 0.0, 1.0))
+			st.set_uv(Vector2(p2.x, p2.y) * 0.5)
+			st.set_uv2(Vector2(tw * 2.0 - 1.0, accum_u))
+			st.add_vertex(Vector3(p2.x, gy, p2.y))
+
+	var row_verts := grid_w + 1
+	for i in range(samples.size() - 1):
+		for ix in range(grid_w):
+			var i00 := i * row_verts + ix
+			var i10 := i00 + 1
+			var i01 := (i + 1) * row_verts + ix
+			var i11 := i01 + 1
+			st.add_index(i00)
+			st.add_index(i01)
+			st.add_index(i10)
+			st.add_index(i10)
+			st.add_index(i01)
+			st.add_index(i11)
+
+	st.generate_normals()
+	var road_mi := MeshInstance3D.new()
+	road_mi.name = "HighMountainRoad"
+	road_mi.mesh = st.commit()
+	road_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var asphalt_mat := ShaderMaterial.new()
+	asphalt_mat.shader = preload("res://scripts/road_surface.gdshader")
+	var color_tex := load("res://assets/textures/dirt_road/Ground038_1K-JPG_Color.jpg")
+	if color_tex != null:
+		asphalt_mat.set_shader_parameter("aggregate", color_tex)
+	road_mi.material_override = asphalt_mat
+	parent.add_child(road_mi)
+
+
+static func _build_mountain_alpine_forest(world: Node3D, parent: Node3D) -> void:
+	var tree_meshes: Array = world.get("_forest_tree_meshes")
+	if (tree_meshes == null or tree_meshes.is_empty()) and world.has_method("_load_forest_tree_pack"):
+		world._load_forest_tree_pack()
+		tree_meshes = world.get("_forest_tree_meshes")
+	if tree_meshes == null or tree_meshes.is_empty():
+		return
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0x4D544E
+	var candidate_positions: Array[Vector3] = []
+
+	# 1) Pinos y abetos rodeando el exterior de la Base Militar en la meseta y corona superior
+	for i in range(95):
+		var ang := (float(i) / 95.0) * TAU + rng.randf_range(-0.03, 0.03)
+		var rad := rng.randf_range(26.5, 46.0)
+		var px := SUMMIT_CENTER.x + cos(ang) * rad
+		var pz := SUMMIT_CENTER.y + sin(ang) * rad
+		var cpos := Vector3(px, 0.0, pz)
+		if blocks_vegetation(cpos):
+			continue
+		cpos.y = float(world._get_exact_ground_y(px, pz))
+		candidate_positions.append(cpos)
+
+	# 2) Bosque alpino por todas las laderas de la montaña nueva (entre las vueltas de la carretera)
+	for i in range(420):
+		var ang := rng.randf_range(0.0, TAU)
+		var rad := rng.randf_range(46.0, 142.0)
+		var px := SUMMIT_CENTER.x + cos(ang) * rad
+		var pz := SUMMIT_CENTER.y + sin(ang) * rad
+		if px < -492.0 or pz < -492.0 or px > -212.0 or pz > -212.0:
+			continue
+		var cpos := Vector3(px, 0.0, pz)
+		if blocks_vegetation(cpos):
+			continue
+		cpos.y = float(world._get_exact_ground_y(px, pz))
+		if cpos.y < 1.5 or cpos.y > 58.0:
+			continue
+		candidate_positions.append(cpos)
+
+	# 3) Arboleda flanqueando el tramo de carretera de aproximación desde el valle hasta el pie del macizo
+	for i in range(70):
+		var t := rng.randf_range(0.08, 0.96)
+		var road_x := lerpf(9.0, -252.0, t)
+		var road_z := lerpf(-220.0, -268.0, t)
+		var side := -1.0 if (i % 2 == 0) else 1.0
+		var offset := rng.randf_range(8.5, 28.0) * side
+		var px := road_x + rng.randf_range(-4.0, 4.0)
+		var pz := road_z + offset
+		var cpos := Vector3(px, 0.0, pz)
+		if blocks_vegetation(cpos) or world._is_on_road(cpos):
+			continue
+		cpos.y = float(world._get_exact_ground_y(px, pz))
+		candidate_positions.append(cpos)
+
+	# Filtrar solapamientos entre árboles alpinos (mínimo 3.2 m de separación)
+	var accepted: Array[Vector3] = []
+	for cpos in candidate_positions:
+		var too_close := false
+		for prev in accepted:
+			if Vector2(cpos.x - prev.x, cpos.z - prev.z).length_squared() < 3.2 * 3.2:
+				too_close = true
+				break
+		if not too_close:
+			accepted.append(cpos)
+
+	if accepted.is_empty():
+		return
+
+	var variant_batches: Array = []
+	for _v in range(tree_meshes.size()):
+		variant_batches.append([])
+
+	var col_grid: Dictionary = world.get("_forest_collision_grid")
+	var col_cell_size: float = float(world.get("_forest_collision_grid_size")) if world.get("_forest_collision_grid_size") != null else 25.0
+
+	for pos in accepted:
+		var v_idx: int = int(world._pick_forest_tree_variant(rng))
+		var entry: Dictionary = tree_meshes[v_idx]
+		var tree_scale := rng.randf_range(0.88, 1.38)
+		var base_height: float = float(entry.get("height", 5.0))
+		if base_height * tree_scale < 1.0:
+			tree_scale = 1.0 / maxf(0.01, base_height)
+		var yaw_deg := rng.randf_range(0.0, 360.0)
+		var up_fix_deg: float = float(entry.get("up_fix_deg", -90.0))
+		var basis := Basis.from_euler(Vector3(deg_to_rad(up_fix_deg), 0.0, deg_to_rad(yaw_deg))).scaled(Vector3.ONE * tree_scale)
+		var xf := Transform3D(basis, pos)
+		(variant_batches[v_idx] as Array).append(xf)
+		if col_grid != null:
+			var ckey := Vector2i(int(floor(pos.x / col_cell_size)), int(floor(pos.z / col_cell_size)))
+			if not col_grid.has(ckey):
+				col_grid[ckey] = []
+			(col_grid[ckey] as Array).append(pos)
+
+	for v_idx in range(tree_meshes.size()):
+		var xforms: Array = variant_batches[v_idx]
+		if xforms.is_empty():
+			continue
+		var entry: Dictionary = tree_meshes[v_idx]
+		var src_mesh: ArrayMesh = entry.get("mesh", null)
+		if src_mesh == null:
+			continue
+		var count := xforms.size()
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_custom_data = true
+		mm.mesh = src_mesh
+		mm.instance_count = count
+		for j in range(count):
+			var t: Transform3D = xforms[j]
+			mm.set_instance_transform(j, t)
+			var h1 := fposmod(sin(t.origin.x * 12.9898 + t.origin.z * 78.233) * 43758.5453, 1.0)
+			var h2 := fposmod(sin(t.origin.x * 39.3467 + t.origin.z * 11.135) * 24634.6345, 1.0)
+			var h3 := fposmod(sin(t.origin.x * 73.156 + t.origin.z * 52.235) * 18456.321, 1.0)
+			mm.set_instance_custom_data(j, Color(h1, h2, h3, 1.0))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "MountainAlpineForestMM_%d" % v_idx
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		parent.add_child(mmi)
+
+		var branch_mesh: ArrayMesh = entry.get("branch_mesh", null)
+		if branch_mesh != null:
+			var bmm := MultiMesh.new()
+			bmm.transform_format = MultiMesh.TRANSFORM_3D
+			bmm.use_custom_data = true
+			bmm.mesh = branch_mesh
+			bmm.instance_count = count
+			for j in range(count):
+				var bt: Transform3D = xforms[j]
+				bmm.set_instance_transform(j, bt)
+				var h1 := fposmod(sin(bt.origin.x * 12.9898 + bt.origin.z * 78.233) * 43758.5453, 1.0)
+				var h2 := fposmod(sin(bt.origin.x * 39.3467 + bt.origin.z * 11.135) * 24634.6345, 1.0)
+				var h3 := fposmod(sin(bt.origin.x * 73.156 + bt.origin.z * 52.235) * 18456.321, 1.0)
+				bmm.set_instance_custom_data(j, Color(h1, h2, h3, 1.0))
+			var bmmi := MultiMeshInstance3D.new()
+			bmmi.name = "MountainAlpineForestMM_%d_leaves" % v_idx
+			bmmi.multimesh = bmm
+			bmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			parent.add_child(bmmi)
 
 
 static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
@@ -162,7 +503,7 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 	var x0 := -510.0
 	var z0 := -510.0
 	var span := 290.0
-	var steps := 72
+	var steps := 88
 	var step := span / float(steps)
 	var uv_scale := 1.0 / 1000.0
 
@@ -239,6 +580,7 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 		var snow_mi := MeshInstance3D.new()
 		snow_mi.name = "HighMountainSnowCaps"
 		snow_mi.mesh = st_snow.commit()
+		snow_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		snow_mi.material_override = MaterialFactory.make_material(Color(0.84, 0.87, 0.90), true)
 		parent.add_child(snow_mi)
 
@@ -356,7 +698,7 @@ static func _build_summit_military_base(world: Node3D, parent: Node3D, server_on
 				Vector3.ONE * 1.5,
 				Vector3(0.0, t_yaw, 0.0),
 				true,
-				SUMMIT_HEIGHT
+				0.0
 			)
 			var t_node := world.get_node_or_null(t_name) as Node3D
 			if t_node != null:
@@ -387,6 +729,8 @@ static func _spawn_green_mountain_comms_tower(world: Node3D, parent: Node3D, tow
 				if sb is StaticBody3D:
 					(sb as StaticBody3D).set_collision_layer_value(1, true)
 					(sb as StaticBody3D).set_collision_layer_value(3, true)
+		if mi.name.begins_with("Detail_"):
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if mi.name.begins_with("Collision_"):
 			mi.visible = false
 		elif server_only:
@@ -400,7 +744,7 @@ static func _spawn_green_mountain_comms_tower(world: Node3D, parent: Node3D, tow
 		var y1_local: float = float(entry[2])
 		var ang_deg: float = float(entry[3])
 		var r_shaft: float = float(entry[4])
-		var r_climb: float = r_shaft + 0.88
+		var r_climb: float = r_shaft + 0.74
 		var ang_local := deg_to_rad(ang_deg)
 		var local_offset := Vector3(sin(ang_local) * r_climb, 0.0, cos(ang_local) * r_climb)
 		var world_offset := local_offset.rotated(Vector3.UP, yaw_rad)

@@ -34,29 +34,51 @@ func _run() -> void:
 	root.add_child(world)
 	current_scene = world
 
-	# 1) Alturas analíticas de la cordillera, meseta y rampa
+	# 1) Alturas analíticas de la cordillera, meseta y carretera serpenteante que rodea la montaña
 	var summit_y := HighMountainZone.ground_height_at(Vector3(HighMountainZone.SUMMIT_CENTER.x, 0.0, HighMountainZone.SUMMIT_CENTER.y))
 	check(absf(summit_y - 56.0) < 0.05, "Meseta de la cima a +56.0 m (got %.2f)" % summit_y)
 	var peak0_pos: Vector2 = HighMountainZone.PEAKS[0]["pos"]
 	var peak0_y := HighMountainZone.ground_height_at(Vector3(peak0_pos.x, 0.0, peak0_pos.y))
 	check(peak0_y >= 75.0, "Pico alpino principal >= 75 m (got %.2f)" % peak0_y)
-	var mid_road := 0.5 * (HighMountainZone.ROAD_START + HighMountainZone.ROAD_END)
-	var road_y := HighMountainZone.ground_height_at(Vector3(mid_road.x, 0.0, mid_road.y))
-	check(road_y > 20.0 and road_y < 36.0, "Rampa de acceso sube progresivamente (got %.2f)" % road_y)
+	var south_flank_y := HighMountainZone.ground_height_at(Vector3(-348.0, 0.0, -258.0))
+	var west_flank_y := HighMountainZone.ground_height_at(Vector3(-468.0, 0.0, -346.0))
+	var north_flank_y := HighMountainZone.ground_height_at(Vector3(-380.0, 0.0, -448.0))
+	check(south_flank_y > 8.0 and west_flank_y > south_flank_y + 12.0 and north_flank_y > west_flank_y + 10.0,
+		"Carretera rodea la montaña subiendo progresivamente Sur(%.1fm)->Oeste(%.1fm)->Norte(%.1fm)" % [south_flank_y, west_flank_y, north_flank_y])
 
-	# 2) Instanciar la zona de alta montaña + base militar + torre Green Mountain
+	# 2) Instanciar la zona de alta montaña + base militar + torre Green Mountain + bosque alpino
 	HighMountainZone.create(world, false)
 	await physics_frame
 	await physics_frame
 
 	var hm_node := world.get_node_or_null("HighMountainZone")
 	check(hm_node != null, "HighMountainZone instanciado")
+	var road_mi := hm_node.get_node_or_null("HighMountainRoad") as MeshInstance3D if hm_node != null else null
+	check(road_mi != null and road_mi.mesh != null, "Carretera HighMountainRoad instanciada hasta la cima")
+	check(HighMountainZone.on_road(Vector3(9.0, 0.0, -220.0), 0.5), "Carretera conecta con la carretera principal Norte-Sur en (9, -220)")
+	check(HighMountainZone.on_road(Vector3(-348.0, 0.0, -258.0), 0.5), "Carretera bordea la ladera Sur de la montaña (-348, -258)")
+	check(HighMountainZone.on_road(Vector3(-468.0, 0.0, -346.0), 0.5), "Carretera bordea la ladera Oeste de la montaña (-468, -346)")
+	check(HighMountainZone.on_road(Vector3(-380.0, 0.0, -448.0), 0.5), "Carretera bordea la ladera Norte de la montaña (-380, -448)")
+	check(HighMountainZone.on_road(Vector3(-350.0, 56.0, -350.0), 0.5), "Carretera llega hasta la puerta de la Base Militar de la cima (-350, -350)")
+	var alpine_mms := hm_node.find_children("MountainAlpineForestMM_*", "MultiMeshInstance3D", false, false) if hm_node != null else []
+	var alpine_trees := 0
+	for m in alpine_mms:
+		if not str(m.name).ends_with("_leaves") and (m as MultiMeshInstance3D).multimesh != null:
+			alpine_trees += (m as MultiMeshInstance3D).multimesh.instance_count
+	check(alpine_trees >= 250, "Bosque alpino plantado en la montaña y alrededor de la base (%d árboles)" % alpine_trees)
 	var comms_tower := hm_node.get_node_or_null("GreenMountainCommsTower") as Node3D if hm_node != null else null
 	check(comms_tower != null, "GreenMountainCommsTower instanciada en la cima")
+	if comms_tower != null:
+		var tower_bodies := comms_tower.find_children("*", "StaticBody3D", true, false)
+		check(tower_bodies.size() <= 3, "Colisiones de la torre fusionadas eficientemente (%d StaticBody3D)" % tower_bodies.size())
 	var watch_tower := world.get_node_or_null("SummitMilitaryWatchTower") as Node3D
 	check(watch_tower != null, "Torre de vigilancia actual instanciada en la base de la cima")
 	var tent0 := world.get_node_or_null("SummitMilitaryTent_0") as Node3D
-	check(tent0 != null, "Tiendas militares instanciadas en la cima")
+	var tent1 := world.get_node_or_null("SummitMilitaryTent_1") as Node3D
+	check(tent0 != null and tent1 != null, "Tiendas militares instanciadas en la cima")
+	if tent0 != null and tent1 != null:
+		check(absf(tent0.global_position.y - HighMountainZone.SUMMIT_HEIGHT) < 4.0 and absf(tent1.global_position.y - HighMountainZone.SUMMIT_HEIGHT) < 4.0,
+			"Tiendas militares apoyadas en el suelo de la meseta (+56 m), sin flotar (y=%.2f, %.2f)" % [tent0.global_position.y, tent1.global_position.y])
 
 	# Verificar que la aguja supera los 65 m locales (> 120 m sobre el valle, edificio más alto del juego)
 	var detail_mesh := comms_tower.find_child("Detail_CommsTower", true, false) as MeshInstance3D if comms_tower != null else null

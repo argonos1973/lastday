@@ -1770,6 +1770,20 @@ func _fetch_weather() -> void:
 		_weather_loading = false
 		_weather_retry_timer = 15.0
 
+func _publish_current_weather_to_network() -> void:
+	var scene := get_tree().current_scene
+	var network = scene.get("net") if scene != null else null
+	if network != null and network.has_method("publish_weather_observation"):
+		network.call("publish_weather_observation", {
+			"weather_code": _real_weather_code,
+			"temperature": _real_temp_parsed,
+			"rain": _real_rain,
+			"snow": _real_snow,
+			"cloud_cover": _real_cloud_cover,
+			"wind_speed": _real_wind_speed,
+			"wind_direction": _real_wind_direction,
+		})
+
 func _on_weather_received(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_weather_loading = false
 	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
@@ -1801,20 +1815,36 @@ func _on_weather_received(result: int, response_code: int, _headers: PackedStrin
 				# The server selects the first registered publisher for this
 				# session and relays its observation, keeping every client on
 				# the same weather even when IP geolocation differs.
-				var scene := get_tree().current_scene
-				var network = scene.get("net") if scene != null else null
-				if network != null and network.has_method("publish_weather_observation"):
-					network.call("publish_weather_observation", {
-						"weather_code": _real_weather_code,
-						"temperature": _real_temp_parsed,
-						"rain": _real_rain,
-						"snow": _real_snow,
-						"cloud_cover": _real_cloud_cover,
-						"wind_speed": _real_wind_speed,
-						"wind_direction": _real_wind_direction,
-					})
+				_publish_current_weather_to_network()
 				_weather_retry_timer = 0.0
 				return
+		elif data is Dictionary and data.get("current_condition") is Array and not (data.current_condition as Array).is_empty():
+			var cc = (data.current_condition as Array)[0]
+			if cc is Dictionary and cc.has("temp_C"):
+				var t_val := float(str(cc.get("temp_C", "16")))
+				if is_finite(t_val):
+					_real_temp_parsed = t_val
+					_real_temp = "%.0f°C" % _real_temp_parsed
+					var precip := maxf(float(str(cc.get("precipMM", "0"))), 0.0)
+					var cloud := clampf(float(str(cc.get("cloudcover", "45"))) / 100.0, 0.0, 1.0)
+					_real_cloud_cover = cloud
+					_real_rain = precip if t_val > 1.0 else 0.0
+					_real_snow = precip if t_val <= 1.0 else 0.0
+					_real_weather_code = 61 if _real_rain > 0.2 else (71 if _real_snow > 0.1 else (3 if cloud > 0.75 else (2 if cloud > 0.35 else 0)))
+					_real_weather_desc = _weather_code_to_desc(_real_weather_code)
+					_real_wind_speed = maxf(float(str(cc.get("windspeedKmph", "8"))), 0.0)
+					_real_wind_direction = fposmod(float(str(cc.get("winddirDegree", "0"))), 360.0)
+					_publish_current_weather_to_network()
+					_weather_retry_timer = 0.0
+					return
+		# Si Open-Meteo responde {"error": true, "reason": "The service is overloaded"},
+		# probamos inmediatamente con wttr.in para tener la temperatura real sin esperar.
+		if data is Dictionary and bool(data.get("error", false)) and is_instance_valid(_weather_http) and not _weather_loading:
+			_weather_loading = true
+			var fallback_url := "https://wttr.in/%.2f,%.2f?format=j1" % [_geo_lat, _geo_lon]
+			if _weather_http.request(fallback_url, [], HTTPClient.METHOD_GET, "") == OK:
+				return
+			_weather_loading = false
 	# Keep the last complete observation when the service temporarily fails.
 	if _real_temp_parsed == -999.0:
 		_real_temp = "Sin datos"

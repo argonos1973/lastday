@@ -358,20 +358,17 @@ for f_idx, y0, y1, ang_deg in LADDER_FLIGHTS:
 			bz = cage_cz + math.cos(ba) * cage_r
 			rod('CageStrap_%d' % f_idx, (bx, cage_start, bz), (bx, cage_end, bz), 0.018, paint_white, verts=6)
 
-	# Volumen de colisión/interacción de la escalera de mano (Collision_Ladder_<idx>)
-	# El jugador trepa pegado al lado exterior (+normal) de los barrotes mirando hacia el centro (-normal).
-	h_len = (y1 - y0) + 0.6
-	cbox('Ladder_%d' % f_idx, (cx + nx * 0.18, y0 + h_len * 0.5, cz + nz * 0.18), (0.78, h_len, 0.55), yaw=ang)
-
 
 # ---------------------------------------------------------------------------
 # 5. PARABÓLICAS DE MICROONDAS, CASETAS DE RADIO Y AGUJA DE CORONACIÓN (52..68 m)
 # ---------------------------------------------------------------------------
-def add_drum_antenna(name, y, r_mount, ang_deg, drum_r=1.15):
+def add_drum_antenna(name, y, deck_y, r_mount, ang_deg, drum_r=1.15):
 	a = math.radians(ang_deg)
 	nx, nz = math.sin(a), math.cos(a)
 	px, pz = nx * r_mount, nz * r_mount
-	rod(name + '_Arm', (nx * (r_mount - 0.65), y, nz * (r_mount - 0.65)), (px, y, pz), 0.12, steel_dark)
+	r_wall = shaft_radius(y) - 0.12
+	rod(name + '_Arm', (nx * r_wall, y, nz * r_wall), (px, y, pz), 0.11, steel_dark)
+	rod(name + '_Post', (nx * (r_mount - 0.18), deck_y, nz * (r_mount - 0.18)), (nx * (r_mount - 0.18), y, nz * (r_mount - 0.18)), 0.08, steel_galv)
 	bpy.ops.mesh.primitive_cylinder_add(vertices=18, radius=drum_r, depth=0.52, location=v((px, y, pz)))
 	d = bpy.context.object
 	d.name = 'Detail_' + name
@@ -380,13 +377,13 @@ def add_drum_antenna(name, y, r_mount, ang_deg, drum_r=1.15):
 	d.data.materials.append(dish_white)
 
 
-# Tambores parabólicos en los platillos (como en las fotos 2, 3 y 4)
+# Tambores parabólicos en los platillos (anclados al fuste y al piso)
 for a_deg in (55, 135, 225, 305):
-	add_drum_antenna('Drum14_%d' % a_deg, 15.6, 6.25, a_deg, 1.15)
+	add_drum_antenna('Drum14_%d' % a_deg, 15.6, 14.0, 6.25, a_deg, 1.15)
 for a_deg in (15, 110, 195, 280):
-	add_drum_antenna('Drum20_%d' % a_deg, 21.1, 6.20, a_deg, 1.05)
+	add_drum_antenna('Drum20_%d' % a_deg, 21.1, 19.5, 6.20, a_deg, 1.05)
 for a_deg in (75, 165, 255):
-	add_drum_antenna('Drum25_%d' % a_deg, 26.5, 6.10, a_deg, 0.95)
+	add_drum_antenna('Drum25_%d' % a_deg, 26.5, 25.0, 6.10, a_deg, 0.95)
 
 # Casetas/armarios técnicos en los pisos para que el jugador se parapete o establezca
 for idx, dy, a_deg in [(1, 14.0, 180.0), (2, 19.5, 145.0), (3, 25.0, 210.0), (4, 31.0, 180.0)]:
@@ -394,33 +391,37 @@ for idx, dy, a_deg in [(1, 14.0, 180.0), (2, 19.5, 145.0), (3, 25.0, 210.0), (4,
 	r_cab = shaft_radius(dy) + 0.85
 	box('RelayCabinet_%d' % idx, (math.sin(a) * r_cab, dy + 0.95, math.cos(a) * r_cab), (1.35, 1.90, 0.85), olive_metal, solid=True, yaw=-a)
 
-# Jaula cilíndrica superior (y = 56.0 .. 61.5 m) y aguja roja/blanca hasta 68.0 m (fotos 1, 3, 4 y 5)
-cone_frustum('TopCapCore', 56.0, 56.5, 1.45, 1.55, steel_dark, segs=24, solid=True)
+# Jaula cilíndrica superior (y = 56.0 .. 61.2 m), mástil central continuo y aguja roja/blanca hasta 68.0 m
+cone_frustum('TopCapCore', 55.9, 56.5, 1.45, 1.55, steel_dark, segs=24, solid=True)
+cone_frustum('UpperCageCoreMast', 56.3, 61.3, 0.62, 0.42, paint_white, segs=20, solid=True)
+cone_frustum('UpperCageTopPlate', 61.05, 61.35, 1.42, 0.52, steel_dark, segs=24, solid=True)
 for c_i in range(12):
 	ca = (c_i / 12.0) * math.tau
 	cr = 1.38
 	rod('UpperCageCol_%d' % c_i, (math.sin(ca) * cr, 56.2, math.cos(ca) * cr), (math.sin(ca) * cr, 61.2, math.cos(ca) * cr), 0.055, steel_galv)
+	rod('UpperCageSpoke_%d' % c_i, (math.sin(ca) * 0.42, 61.18, math.cos(ca) * 0.42), (math.sin(ca) * cr, 61.18, math.cos(ca) * cr), 0.045, steel_galv)
 for ring_y in (57.4, 58.8, 60.2, 61.2):
 	torus_ring('UpperCageRing_%.1f' % ring_y, ring_y, 1.38, 0.05, steel_galv, segs=24)
 
-# Aguja final (y = 61.2 .. 68.0 m) a franjas rojas y blancas + baliza emisiva en la cúspide
+# Aguja final continua (y = 61.25 .. 67.85 m) a franjas rojas y blancas + baliza emisiva encastrada
 for sp_i in range(6):
-	ay0 = 61.2 + sp_i * 1.10
-	ay1 = ay0 + 1.10
+	ay0 = 61.25 + sp_i * 1.10
+	ay1 = ay0 + 1.12
 	sp_mat = paint_red if sp_i % 2 == 0 else paint_white
-	r_sp = max(0.08, 0.34 * (1.0 - sp_i * 0.12))
-	cone_frustum('SpireSeg_%d' % sp_i, ay0, ay1, r_sp, r_sp * 0.88, sp_mat, segs=14, solid=False)
+	r_sp0 = max(0.09, 0.38 * (1.0 - sp_i * 0.12))
+	r_sp1 = max(0.08, 0.38 * (1.0 - (sp_i + 1) * 0.12))
+	cone_frustum('SpireSeg_%d' % sp_i, ay0, ay1, r_sp0, r_sp1, sp_mat, segs=16, solid=False)
 
-bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=8, radius=0.28, location=v((0.0, 68.0, 0.0)))
+bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=8, radius=0.26, location=v((0.0, 67.90, 0.0)))
 top_beacon = bpy.context.object
 top_beacon.name = 'Detail_TopBeacon'
 bpy.ops.object.transform_apply(location=True, rotation=False, scale=True)
 top_beacon.data.materials.append(beacon_red)
 
 # ---------------------------------------------------------------------------
-# 6. UNIR GEOMETRÍA EN Solid_CommsTower Y Detail_CommsTower + EXPORTAR GLB
+# 6. UNIR GEOMETRÍA EN Solid_CommsTower, Detail_CommsTower Y Collision_CommsTower + EXPORTAR GLB
 # ---------------------------------------------------------------------------
-for prefix in ('Solid_', 'Detail_'):
+for prefix in ('Solid_', 'Detail_', 'Collision_'):
 	objs = [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.name.startswith(prefix)]
 	if not objs:
 		continue
