@@ -7336,9 +7336,7 @@ func _road_waypoints() -> Array:
 	# Tributary south runs near x=8-20 from z=70 to z=385.
 	# Road curves west to avoid those areas.
 	return [
-		Vector3(9, 0, -500),
-		Vector3(9, 0, -400),
-		Vector3(9, 0, -300),
+		Vector3(9, 0, -208),
 		Vector3(9, 0, -200),
 		Vector3(9, 0, -120),
 		Vector3(9, 0, -80),
@@ -10382,6 +10380,15 @@ func _create_house_loot() -> void:
 	ct2_food["pos"].y = city_tent2_ground_y + 0.06
 	ct2_food["id"] = "city_tent2_loot_food_0"
 	_create_pickup_item(ct2_food)
+	# Botín militar de la Base de la cima (montañas altas del Noroeste): tiendas,
+	# pie de la torre, torre de vigilancia y nido de francotirador del piso 6.
+	HighMountainZone.spawn_summit_base_loot(self, {
+		"m4": m4_template, "m4_mag": m4_mag_template,
+		"rifle": rifle_template, "mag": mag_template,
+		"vest": tent_loot_pool[18], "helmet": tent_loot_pool[14],
+		"backpack": tent_loot_pool[19], "pants": tent_loot_pool[3],
+		"jacket": tent_loot_pool[8], "food": tent_loot_pool[15],
+	})
 	# Water tower loot in the starting village (-43, 0, -48) and Clock Tower loot in the city (41, 0, 750)
 	var tower_rng := RandomNumberGenerator.new()
 	tower_rng.seed = _stable_loot_seed("towers_loot_v1")
@@ -17221,6 +17228,7 @@ func _create_forest() -> void:
 	_append_lake_forest(batch_transforms, all_tree_positions)
 	await _append_southern_growth(batch_transforms, all_tree_positions, forest_rng)
 	_append_city_avenue_trees(batch_transforms, all_tree_positions)
+	_append_northern_road_reforest(batch_transforms, all_tree_positions)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	_build_forest_understory_multimeshes(all_tree_positions)
@@ -17245,6 +17253,56 @@ func _append_city_avenue_trees(batches: Array, positions: Array) -> void:
 		positions.append(pos)
 		var tree_id := absi(int(round(pos.x))*73856093 ^ int(round(pos.z))*19349663)
 		_register_tree_in_grid({"pos":pos,"id":tree_id,"visual_name":"Tree_%d"%tree_id,"active":false,"multimesh":true,"variant_idx":variant,"mm_transform":transform})
+
+func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
+	# Bosque nuevo donde antes corría la carretera Norte-Sur hasta el borde del
+	# mundo: la calzada termina ahora en el desvío de la montaña (z=-208) y el
+	# corredor x≈9, z=[-495,-226] queda completamente arbolado.
+	if _forest_tree_meshes.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0x4E524652 # "NRF" — stream propio, no altera el RNG del mundo
+	for i in range(240):
+		var z := rng.randf_range(-494.0, -222.0)
+		var x := rng.randf_range(-3.0, 21.0) + sin(z * 0.028) * 4.0
+		var pos := Vector3(x, 0.0, z)
+		if get_river_depth_at(pos) > 0.0:
+			continue
+		if not _can_place_ground_vegetation(pos, 2.0):
+			continue
+		if _high_mountain_ready and HighMountainZone.on_road(pos, 3.0):
+			continue
+		# Separación mínima frente a otros árboles usando la rejilla espacial
+		var kc := _tree_grid_key(pos)
+		var too_close := false
+		for gx in range(kc.x - 1, kc.x + 2):
+			for gz in range(kc.y - 1, kc.y + 2):
+				var ckey := Vector2i(gx, gz)
+				if not _tree_grid.has(ckey):
+					continue
+				for entry: Dictionary in _tree_grid[ckey]:
+					if Vector2(entry.pos.x - pos.x, entry.pos.z - pos.z).length_squared() < 2.9 * 2.9:
+						too_close = true
+						break
+				if too_close:
+					break
+			if too_close:
+				break
+		if too_close:
+			continue
+		pos.y = _get_exact_ground_y(x, z)
+		var variant := _pick_forest_tree_variant(rng)
+		var entry: Dictionary = _forest_tree_meshes[variant]
+		var tree_scale := rng.randf_range(0.8, 1.4)
+		var base_height: float = entry.get("height", 5.0)
+		if base_height * tree_scale < 1.0:
+			tree_scale = 1.0 / maxf(0.01, base_height)
+		var basis := Basis.from_euler(Vector3(deg_to_rad(float(entry.get("up_fix_deg", -90.0))), 0.0, rng.randf() * TAU)).scaled(Vector3.ONE * tree_scale)
+		var transform := Transform3D(basis, pos)
+		batches[variant].append(transform)
+		positions.append(pos)
+		var tree_id := absi(int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663)
+		_register_tree_in_grid({"pos": pos, "id": tree_id, "visual_name": "Tree_%d" % tree_id, "active": false, "multimesh": true, "variant_idx": variant, "mm_transform": transform})
 
 func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator) -> void:
 	# Scattered woodland south of the old map edge, thinning out near the city.

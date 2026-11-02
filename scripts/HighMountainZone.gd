@@ -23,14 +23,19 @@ const ROAD_HALF_W := 4.6
 const ASPHALT_HALF_W := 3.5
 
 # Puntos de control 3D (x, cota_y, z) de la carretera:
-# Sale de la carretera principal Norte-Sur en (9, -220), llega al pie de la montaña (-252, -268)
-# y sube RODEANDO la montaña en espiral por sus laderas Sur -> Oeste -> Norte -> Este
-# hasta entrar por la puerta Sureste de la Base Militar (-356, -356, cota +56 m).
+# Arranca sobre la calzada de la carretera principal Norte-Sur (término en z=-208)
+# y se desvía hacia el Oeste con una curva amplia en (8, -212)->(-10, -226); cruza el
+# valle hasta el pie de la montaña (-252, -268) y sube RODEANDO la montaña en espiral
+# por sus laderas Sur -> Oeste -> Norte -> Este hasta entrar por la puerta Sureste
+# de la Base Militar (-356, -356, cota +56 m).
 const MOUNTAIN_ROAD_WAYPOINTS_3D := [
-	Vector3(9.0, 0.0, -220.0),
-	Vector3(-58.0, 0.0, -230.0),
-	Vector3(-135.0, 0.0, -242.0),
-	Vector3(-202.0, 0.0, -256.0),
+	Vector3(9.0, 0.0, -196.0),
+	Vector3(7.5, 0.0, -212.0),
+	Vector3(-10.0, 0.0, -226.0),
+	Vector3(-46.0, 0.0, -232.0),
+	Vector3(-95.0, 0.0, -238.0),
+	Vector3(-155.0, 0.0, -248.0),
+	Vector3(-205.0, 0.4, -259.0),
 	Vector3(-252.0, 0.8, -268.0),
 	Vector3(-296.0, 5.5, -266.0),
 	Vector3(-348.0, 11.5, -258.0),
@@ -105,7 +110,7 @@ static func in_bounds_xz(x: float, z: float) -> bool:
 
 
 static func on_road(pos: Vector3, margin: float = 0.0) -> bool:
-	if pos.x > 16.0 + margin or pos.x < -485.0 - margin or pos.z > -212.0 + margin or pos.z < -465.0 - margin:
+	if pos.x > 16.0 + margin or pos.x < -485.0 - margin or pos.z > -190.0 + margin or pos.z < -465.0 - margin:
 		return false
 	var p := Vector2(pos.x, pos.z)
 	var r_max := ASPHALT_HALF_W + margin
@@ -127,11 +132,13 @@ static func on_road(pos: Vector3, margin: float = 0.0) -> bool:
 
 
 static func _closest_mountain_road_info(p: Vector2) -> Vector2:
-	# Devuelve Vector2(distancia_xz, cota_y_carretera) para los tramos de montaña (índice >= 24)
+	# Devuelve Vector2(distancia_xz, cota_y_carretera). Se recorren todas las muestras:
+	# el tramo de aproximación por el valle tiene cota ~0 y solo resulta "el más cercano"
+	# junto al pie de la montaña, que es exactamente donde debe tallarse la cornisa baja.
 	var pts := get_road_polyline_3d()
 	var best_d2 := 1e12
 	var best_y := 0.0
-	for i in range(24, pts.size() - 1):
+	for i in range(pts.size() - 1):
 		var a3 := pts[i]
 		var b3 := pts[i + 1]
 		var a := Vector2(a3.x, a3.z)
@@ -210,7 +217,7 @@ static func blocks_vegetation(pos: Vector3) -> bool:
 	# Despejar únicamente el interior amurallado de la Base Militar (permitiendo árboles alrededor de la base)
 	if _inside_military_base_compound(p, 2.0):
 		return true
-	# Sin árboles en las cumbres nevadas muy altas (> 59 m)
+	# Sin árboles por encima del límite alpino de vegetación (> 59 m)
 	if ground_height_at(pos) > 59.0:
 		return true
 	return false
@@ -225,6 +232,7 @@ static func create(world: Node3D, server_only: bool = false) -> void:
 	if not server_only:
 		_build_mountain_terrain_mesh(world, root)
 		_build_mountain_road_mesh(world, root)
+		_build_mountain_road_verges(world)
 		_adapt_forest_to_mountain(world)
 		_build_mountain_alpine_forest(world, root)
 
@@ -275,7 +283,7 @@ static func _adapt_forest_to_mountain(world: Node3D) -> void:
 
 static func _build_mountain_road_mesh(world: Node3D, parent: Node3D) -> void:
 	# Construye toda la carretera serpenteante en un único MeshInstance3D continuo (1 draw call)
-	# desde la carretera principal Norte-Sur (9, -220), rodeando la montaña hasta la Base Militar (-356, -356, y=+56 m).
+	# desde la carretera principal Norte-Sur (9, -196), rodeando la montaña hasta la Base Militar (-356, -356, y=+56 m).
 	var poly := get_road_polyline_3d()
 	var samples: Array[Vector3] = []
 	var step_len := 3.2
@@ -354,6 +362,48 @@ static func _build_mountain_road_mesh(world: Node3D, parent: Node3D) -> void:
 		asphalt_mat.set_shader_parameter("aggregate", color_tex)
 	road_mi.material_override = asphalt_mat
 	parent.add_child(road_mi)
+
+
+static func _build_mountain_road_verges(world: Node3D) -> void:
+	# Márgenes de hierba como en el resto de carreteras (mismo patrón que _create_road):
+	# matojos densos pegados al asfalto que se abren hacia afuera perdiendo densidad.
+	var poly := get_road_polyline_3d()
+	if poly.size() < 2:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0x52445747 # "RDWG" — stream propio, no altera el RNG del mundo
+	var grass_base := Color(0.20, 0.34, 0.12)
+	var color_var := Color(0.34, 0.46, 0.16)
+	var grass_depth := 8.0
+	var tuft_spacing := 0.28
+	for i in range(poly.size() - 1):
+		var a3: Vector3 = poly[i]
+		var b3: Vector3 = poly[i + 1]
+		var seg2 := Vector2(b3.x - a3.x, b3.z - a3.z)
+		var seg_len := seg2.length()
+		if seg_len <= 0.05:
+			continue
+		var dir2 := seg2 / seg_len
+		var across := Vector2(-dir2.y, dir2.x)
+		var num_tufts := maxi(1, int(seg_len / tuft_spacing))
+		for side in [-1, 1]:
+			for t_i in range(num_tufts):
+				var t_along := (float(t_i) + 0.5) * tuft_spacing + rng.randf_range(-0.12, 0.12)
+				var along2 := dir2 * t_along
+				for _j in range(5):
+					var t: float = pow(rng.randf(), 1.5)
+					var side_f := float(side)
+					var edge_x := a3.x + along2.x + across.x * side_f * (ASPHALT_HALF_W - 0.1 + t * grass_depth)
+					var edge_z := a3.z + along2.y + across.y * side_f * (ASPHALT_HALF_W - 0.1 + t * grass_depth)
+					var gpos := Vector3(edge_x, 0.0, edge_z)
+					if world._is_on_road(gpos) or world._is_near_river(gpos, 2.0):
+						continue
+					gpos.y = float(world._get_exact_ground_y(edge_x, edge_z)) + 0.02
+					var density_fade := 1.0 - t
+					var h := rng.randf_range(0.15, 0.35) * density_fade
+					var r := rng.randf_range(0.18, 0.38)
+					var c := grass_base.lerp(color_var, rng.randf()).darkened(rng.randf_range(0.0, 0.12))
+					world._queue_grass_instance(gpos, h, r, c)
 
 
 static func _build_mountain_alpine_forest(world: Node3D, parent: Node3D) -> void:
@@ -509,9 +559,6 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 
 	var st_rock := SurfaceTool.new()
 	st_rock.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var st_snow := SurfaceTool.new()
-	st_snow.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var has_snow := false
 
 	for iz in range(steps):
 		var za := z0 + float(iz) * step
@@ -544,19 +591,6 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 			st_rock.set_uv(Vector2(vc.x * uv_scale + 0.5, vc.z * uv_scale + 0.5))
 			st_rock.add_vertex(vc)
 
-			# Capa de nieve alpina en las cumbres altas (> 59 m, fuera de la meseta)
-			var avg_y := 0.25 * (ya0 + yb0 + yc0 + yd0)
-			var d_plat := Vector2(0.5 * (xa + xb), 0.5 * (za + zb)).distance_to(SUMMIT_CENTER)
-			if avg_y > 58.5 and d_plat > PLATEAU_RADIUS + 6.0:
-				has_snow = true
-				var lift := Vector3(0.0, 0.08, 0.0)
-				st_snow.add_vertex(va + lift)
-				st_snow.add_vertex(vb + lift)
-				st_snow.add_vertex(vc + lift)
-				st_snow.add_vertex(vb + lift)
-				st_snow.add_vertex(vd + lift)
-				st_snow.add_vertex(vc + lift)
-
 	st_rock.generate_normals()
 	var rock_mesh := st_rock.commit()
 	var mi := MeshInstance3D.new()
@@ -575,14 +609,87 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 	mi.add_child(sb)
 	parent.add_child(mi)
 
-	if has_snow:
-		st_snow.generate_normals()
-		var snow_mi := MeshInstance3D.new()
-		snow_mi.name = "HighMountainSnowCaps"
-		snow_mi.mesh = st_snow.commit()
-		snow_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		snow_mi.material_override = MaterialFactory.make_material(Color(0.84, 0.87, 0.90), true)
-		parent.add_child(snow_mi)
+
+static func spawn_summit_base_loot(world: Node3D, tmpl: Dictionary) -> void:
+	# Loot militar de la cima: tiendas de la base, pie de la torre, plataforma de la
+	# torre de vigilancia y nido de francotirador del piso superior de la Green Mountain.
+	# Se llama desde _create_house_loot (cliente/host); IDs fijos, sin consumir RNG.
+	var yaw_rad := deg_to_rad(BASE_YAW_DEG)
+	var base_origin := Vector3(SUMMIT_CENTER.x, SUMMIT_HEIGHT, SUMMIT_CENTER.y)
+	var floor_y := SUMMIT_HEIGHT + 0.06
+
+	var tent_a := base_origin + TENT_A_OFFSET.rotated(Vector3.UP, yaw_rad)
+	var tent_a_yaw := deg_to_rad(BASE_YAW_DEG + 90.0)
+	var tent_b := base_origin + TENT_B_OFFSET.rotated(Vector3.UP, yaw_rad)
+	var tent_b_yaw := deg_to_rad(BASE_YAW_DEG - 90.0)
+	var ct := base_origin + COMMS_TOWER_OFFSET.rotated(Vector3.UP, yaw_rad)
+	var wt := base_origin + WATCH_TOWER_OFFSET.rotated(Vector3.UP, yaw_rad)
+
+	var put := func(id: String, key: String, pos: Vector3, fy: float) -> void:
+		var d: Dictionary = (tmpl[key] as Dictionary).duplicate()
+		d["id"] = id
+		# pos.y debe ser la cota absoluta del suelo: la acción y _dropped_items
+		# registran esta posición para alcance/interacción, no el nodo visual.
+		pos.y = fy
+		d["pos"] = pos
+		d["floor_y"] = fy
+		world._create_pickup_item(d)
+
+	# Tienda A (mirando al Noreste): francotirador + casco + pantalones + comida
+	var ta_spots := [
+		["summit_tentA_loot_rifle", "rifle", Vector3(1.1, 0.0, -2.0)],
+		["summit_tentA_loot_mag", "mag", Vector3(0.5, 0.0, -2.4)],
+		["summit_tentA_loot_helmet", "helmet", Vector3(-1.6, 0.0, 1.6)],
+		["summit_tentA_loot_pants", "pants", Vector3(1.5, 0.0, 1.4)],
+		["summit_tentA_loot_food", "food", Vector3(-0.9, 0.0, 0.4)],
+	]
+	for s in ta_spots:
+		put.call(s[0], s[1], tent_a + (s[2] as Vector3).rotated(Vector3.UP, tent_a_yaw), floor_y)
+
+	# Tienda B (mirando al Suroeste): M4 + 2 cargadores + chaleco + mochila + comida
+	var tb_spots := [
+		["summit_tentB_loot_m4", "m4", Vector3(1.2, 0.0, -2.2)],
+		["summit_tentB_loot_m4mag_0", "m4_mag", Vector3(0.4, 0.0, -2.5)],
+		["summit_tentB_loot_m4mag_1", "m4_mag", Vector3(1.0, 0.0, -2.5)],
+		["summit_tentB_loot_vest", "vest", Vector3(1.6, 0.0, -1.4)],
+		["summit_tentB_loot_pack", "backpack", Vector3(1.8, 0.0, 1.8)],
+		["summit_tentB_loot_food", "food", Vector3(-1.2, 0.0, 0.8)],
+	]
+	for s in tb_spots:
+		put.call(s[0], s[1], tent_b + (s[2] as Vector3).rotated(Vector3.UP, tent_b_yaw), floor_y)
+
+	# Pie de la torre junto a la puerta del búnker de entrada (local -X, +Z del fuste)
+	var tower_local := func(p: Vector3) -> Vector3:
+		return ct + p.rotated(Vector3.UP, yaw_rad)
+	var foot_spots := [
+		["summit_towerfoot_m4", "m4", Vector3(-7.1, 0.0, 3.4)],
+		["summit_towerfoot_m4mag", "m4_mag", Vector3(-6.6, 0.0, 2.6)],
+		["summit_towerfoot_jacket", "jacket", Vector3(-6.9, 0.0, 4.3)],
+	]
+	for s in foot_spots:
+		put.call(s[0], s[1], tower_local.call(s[2]), floor_y)
+
+	# Plataforma de la torre de vigilancia de la base (~9.4 m sobre la meseta)
+	var wt_top_y := 64.45
+	var wt_spots := [
+		["summit_watchtower_vest", "vest", Vector3(0.9, 0.0, 0.6)],
+		["summit_watchtower_food", "food", Vector3(-1.2, 0.0, -0.8)],
+	]
+	for s in wt_spots:
+		put.call(s[0], s[1], wt + (s[2] as Vector3).rotated(Vector3.UP, yaw_rad), wt_top_y)
+
+	# Nido de francotirador del piso superior (cubierta 6, +52 m local): rifle + 2 cargadores,
+	# en el lado opuesto a la escotilla de la escalera (hatch a 20° -> loot a ~200°)
+	var nest_y := SUMMIT_HEIGHT + 52.06
+	var nest_ang := deg_to_rad(200.0)
+	var nest_center := Vector3(sin(nest_ang) * 2.45, 0.0, cos(nest_ang) * 2.45)
+	var nest_spots := [
+		["summit_tower_nest_rifle", "rifle", nest_center],
+		["summit_tower_nest_mag_0", "mag", nest_center + Vector3(0.55, 0.0, 0.15)],
+		["summit_tower_nest_mag_1", "mag", nest_center + Vector3(0.15, 0.0, 0.55)],
+	]
+	for s in nest_spots:
+		put.call(s[0], s[1], tower_local.call(s[2]), nest_y)
 
 
 static func _build_summit_military_base(world: Node3D, parent: Node3D, server_only: bool) -> void:

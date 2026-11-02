@@ -27,7 +27,11 @@ def v(p):
 	return (p[0], -p[2], p[1])
 
 
-def mat(name, c, rough=0.84, metal=0.0, texture=None, tint=None, emit=None):
+CONCRETE_TEX = 'assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg'
+RUST_TEX = 'assets/external/textures/rusty_metal_03/rusty_metal_03_diff_4k.jpg'
+
+
+def mat(name, c, rough=0.84, metal=0.0, texture=None, tint=None, emit=None, tex_scale=1.0):
 	m = bpy.data.materials.new(name)
 	m.diffuse_color = (*c, 1.0)
 	m.use_nodes = True
@@ -51,19 +55,31 @@ def mat(name, c, rough=0.84, metal=0.0, texture=None, tint=None, emit=None):
 		im.pack()
 		t = m.node_tree.nodes.new('ShaderNodeTexImage')
 		t.image = im
+		if abs(tex_scale - 1.0) > 1e-4:
+			# KHR_texture_transform: Godot respeta uv_scale exportado por glTF
+			tc = m.node_tree.nodes.new('ShaderNodeTexCoord')
+			mp = m.node_tree.nodes.new('ShaderNodeMapping')
+			mp.inputs['Scale'].default_value = (tex_scale, tex_scale, tex_scale)
+			m.node_tree.links.new(tc.outputs['UV'], mp.inputs['Vector'])
+			m.node_tree.links.new(mp.outputs['Vector'], t.inputs['Vector'])
 		m.node_tree.links.new(t.outputs['Color'], p.inputs['Base Color'])
 	return m
 
 
-concrete_white = mat('GM_concrete_white', (0.80, 0.81, 0.79), rough=0.86)
-concrete_rib = mat('GM_concrete_rib', (0.72, 0.74, 0.72), rough=0.88)
+concrete_white = mat('GM_concrete_white', (0.80, 0.81, 0.79), rough=0.86,
+	texture=CONCRETE_TEX, tint=(1.72, 1.74, 1.68), tex_scale=4.0)
+concrete_rib = mat('GM_concrete_rib', (0.72, 0.74, 0.72), rough=0.88,
+	texture=CONCRETE_TEX, tint=(1.45, 1.48, 1.42), tex_scale=4.0)
 concrete_dark = mat('GM_concrete_dark', (0.44, 0.46, 0.44), rough=0.92,
-	texture='assets/external/textures/concrete_floor_02/concrete_floor_02_diff_4k.jpg')
+	texture=CONCRETE_TEX)
 paint_red = mat('GM_stripe_red', (0.68, 0.12, 0.09), rough=0.58, metal=0.25)
 paint_white = mat('GM_stripe_white', (0.86, 0.85, 0.82), rough=0.60, metal=0.20)
-steel_galv = mat('GM_steel_galv', (0.48, 0.51, 0.49), rough=0.56, metal=0.68)
-steel_dark = mat('GM_steel_dark', (0.18, 0.20, 0.19), rough=0.54, metal=0.72)
-olive_metal = mat('GM_olive_metal', (0.23, 0.28, 0.19), rough=0.74, metal=0.38)
+steel_galv = mat('GM_steel_galv', (0.48, 0.51, 0.49), rough=0.56, metal=0.68,
+	texture=RUST_TEX, tint=(1.55, 1.62, 1.55), tex_scale=2.5)
+steel_dark = mat('GM_steel_dark', (0.18, 0.20, 0.19), rough=0.54, metal=0.72,
+	texture=RUST_TEX, tint=(0.62, 0.68, 0.62), tex_scale=2.5)
+olive_metal = mat('GM_olive_metal', (0.23, 0.28, 0.19), rough=0.74, metal=0.38,
+	texture=RUST_TEX, tint=(0.55, 0.72, 0.42), tex_scale=2.0)
 dish_white = mat('GM_dish_white', (0.82, 0.83, 0.80), rough=0.48, metal=0.22)
 beacon_red = mat('GM_beacon_red', (1.0, 0.12, 0.08), rough=0.22, metal=0.0, emit=(1.0, 0.14, 0.06))
 
@@ -419,7 +435,69 @@ bpy.ops.object.transform_apply(location=True, rotation=False, scale=True)
 top_beacon.data.materials.append(beacon_red)
 
 # ---------------------------------------------------------------------------
-# 6. UNIR GEOMETRÍA EN Solid_CommsTower, Detail_CommsTower Y Collision_CommsTower + EXPORTAR GLB
+# 6. DETALLES "AUTORADOS" DE LA TORRE REAL: antenas de panel, canales de cable,
+#    caseta de servicio, puerta del búnker y balizas de altura media.
+# ---------------------------------------------------------------------------
+def panel_antenna(name, y, ang_deg, tilt_deg=0.0):
+	# Antena de panel rectangular como las que montan las torres GSM reales:
+	# brazo de soporte + panel blanco 0.62 x 2.05 m inclinado ligeramente hacia abajo.
+	a = math.radians(ang_deg)
+	nx, nz = math.sin(a), math.cos(a)
+	tx, tz = math.cos(a), -math.sin(a)
+	r_wall = shaft_radius(y)
+	arm_out = r_wall + 0.85
+	rod(name + '_ArmA', (nx * (r_wall - 0.05), y + 0.95, nz * (r_wall - 0.05)), (nx * arm_out, y + 0.95, nz * arm_out), 0.07, steel_galv)
+	rod(name + '_ArmB', (nx * (r_wall - 0.05), y - 0.95, nz * (r_wall - 0.05)), (nx * arm_out, y - 0.95, nz * arm_out), 0.07, steel_galv)
+	p = box(name, (nx * (arm_out + 0.10), y, nz * (arm_out + 0.10)), (0.62, 2.05, 0.16), dish_white, solid=False, yaw=a)
+	p.rotation_euler = (p.rotation_euler.x, p.rotation_euler.y + math.radians(tilt_deg), p.rotation_euler.z)
+
+# Tres sectores de antenas de panel en el fuste rojo/blanco (y~44-50 m) y en la jaula superior
+for pa_i, (py, pa) in enumerate([(44.5, 30.0), (44.5, 150.0), (44.5, 270.0),
+	(48.5, 90.0), (48.5, 210.0), (48.5, 330.0),
+	(57.6, 60.0), (57.6, 180.0), (57.6, 300.0)]):
+	panel_antenna('PanelAnt_%d' % pa_i, py, pa, tilt_deg=-4.0)
+
+# Canales verticales de cables/waveguide abrazando el fuste (dos caras opuestas)
+for ct_i, ca in enumerate([150.0, 330.0]):
+	ca_r = math.radians(ca)
+	cnx, cnz = math.sin(ca_r), math.cos(ca_r)
+	y_cur = 2.5
+	while y_cur < 51.5:
+		y_next = min(y_cur + 5.0, 51.5)
+		r0 = shaft_radius(y_cur) + 0.10
+		r1 = shaft_radius(y_next) + 0.10
+		cx0, cz0 = cnx * r0, cnz * r0
+		cx1, cz1 = cnx * r1, cnz * r1
+		seg = box('CableTray_%d_%d' % (ct_i, int(y_cur)),
+			((cx0 + cx1) * 0.5, (y_cur + y_next) * 0.5, (cz0 + cz1) * 0.5),
+			(0.34, y_next - y_cur + 0.15, 0.14), steel_dark, solid=False, yaw=ca_r)
+		y_cur = y_next
+
+# Caseta de servicio de la operadora junto a la base (lado Este del zócalo)
+box('ServiceShed', (5.9, 1.15, 3.4), (2.9, 2.3, 2.5), olive_metal, solid=True, yaw=0.0)
+box('ServiceShedDoor', (4.42, 0.95, 3.4), (0.10, 1.9, 0.9), steel_dark, solid=False, yaw=0.0)
+box('ServiceShedVent', (5.9, 2.15, 4.62), (0.9, 0.35, 0.08), steel_galv, solid=False, yaw=0.0)
+
+# Hoja de la puerta blindada del búnker de entrada
+box('EntryBunkerDoor', (-6.44, 1.12, 2.6), (0.10, 2.05, 1.15), steel_dark, solid=False, yaw=0.0)
+rod('EntryBunkerDoorBar', (-6.52, 1.12, 2.25), (-6.52, 1.12, 2.95), 0.03, steel_galv)
+
+# Balizas rojas de altura media (normativa aeronáutica) en el cuerpo blanco
+for b_i, (by, ba) in enumerate([(21.0, 200.0), (36.5, 20.0)]):
+	ba_r = math.radians(ba)
+	br = shaft_radius(by) + 0.35
+	bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.17,
+		location=v((math.sin(ba_r) * br, by, math.cos(ba_r) * br)))
+	mb = bpy.context.object
+	mb.name = 'Detail_MidBeacon_%d' % b_i
+	bpy.ops.object.transform_apply(location=True, rotation=False, scale=True)
+	mb.data.materials.append(beacon_red)
+	rod('MidBeaconPost_%d' % b_i,
+		(math.sin(ba_r) * (br - 0.30), by, math.cos(ba_r) * (br - 0.30)),
+		(math.sin(ba_r) * br, by, math.cos(ba_r) * br), 0.035, steel_galv)
+
+# ---------------------------------------------------------------------------
+# 7. UNIR GEOMETRÍA EN Solid_CommsTower, Detail_CommsTower Y Collision_CommsTower + EXPORTAR GLB
 # ---------------------------------------------------------------------------
 for prefix in ('Solid_', 'Detail_', 'Collision_'):
 	objs = [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.name.startswith(prefix)]
