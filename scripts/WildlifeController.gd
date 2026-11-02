@@ -1170,6 +1170,13 @@ func _wolf_ai(delta: float) -> Dictionary:
 							# saved_health is what a reconnect restores — server-
 							# applied damage must land there too.
 							_player.set_meta("saved_health", hp)
+							# La herida sangrante sobrevive a la reconexión en
+							# stats_extra: vuelven sangrando si no se vendan.
+							var ex: Dictionary = _player.get_meta("saved_extra", {}).duplicate(true)
+							var st: Dictionary = ex.get("stats_extra", {})
+							st["bleeding"] = minf(5.0, float(st.get("bleeding", 0.0)) + (1.5 if animal_type == "bear" else 1.0))
+							ex["stats_extra"] = st
+							_player.set_meta("saved_extra", ex)
 							if hp <= 0.0:
 								_player.set_meta("proxy_dead", true)
 								_player.remove_from_group("net_player_proxy")
@@ -1189,7 +1196,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 								net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage(), bite_kind)
 								net_node._broadcast_player_hit(peer_id, bite_kind, _player.global_position)
 					elif _player.has_method("apply_damage"):
-						_player.apply_damage(_predator_player_damage())
+						_player.apply_damage(_predator_player_damage(), "%s_bite" % animal_type)
 						if _player.has_method("_play_hit_reaction"):
 							_player._play_hit_reaction(false)
 						var local_net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")

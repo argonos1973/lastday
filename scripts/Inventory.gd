@@ -299,6 +299,8 @@ func use_index(index: int, stats) -> bool:
 			if stats.get("feet_wound") != null and float(stats.get("feet_wound")) > 0.0:
 				stats.set("feet_wound", 0.0)
 				_feet_msg = " Vendas las heridas de tus pies."
+			if stats.has_method("stop_bleeding") and stats.stop_bleeding():
+				_feet_msg += " Detienes la hemorragia."
 			item_used.emit("Venda usada." + _feet_msg + _fmt_restore(0.0, 0.0, 0.0, 0.0, _ohp, float(stats.health)))
 			remove_index(index)
 			return true

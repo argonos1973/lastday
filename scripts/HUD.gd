@@ -1868,6 +1868,18 @@ func _build_status_panel() -> void:
 	sick_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sick_badge.add_child(sick_text)
 	status_icons["sick"] = {"panel": sick_badge, "wrapper": sick_badge, "icon": null}
+	var bleed_badge := PanelContainer.new()
+	bleed_badge.visible = false
+	bleed_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bleed_badge.add_theme_stylebox_override("panel", _panel_style(Color(0.30, 0.02, 0.02, 0.96), Color(0.95, 0.10, 0.08), 1))
+	heading.add_child(bleed_badge)
+	var bleed_text := Label.new()
+	bleed_text.text = "!  SANGRANDO"
+	bleed_text.add_theme_font_size_override("font_size", 9)
+	bleed_text.add_theme_color_override("font_color", Color(1.0, 0.62, 0.55))
+	bleed_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bleed_badge.add_child(bleed_text)
+	status_icons["bleeding"] = {"panel": bleed_badge, "wrapper": bleed_badge, "icon": null}
 
 	var grid := GridContainer.new()
 	grid.columns = 3
@@ -2051,6 +2063,8 @@ func _update_status_icons() -> void:
 	if status_icons.has("sick"):
 		status_icons["sick"]["wrapper"].visible = bool(stats.sick)
 		_set_vital_icon_color("sick", Color(0.80, 0.12, 0.10))
+	if status_icons.has("bleeding"):
+		status_icons["bleeding"]["wrapper"].visible = float(stats.get("bleeding", 0.0)) > 0.0
 	# Update level bars
 	_set_vital_bar("health", health_ratio)
 	if hunger_overfull:

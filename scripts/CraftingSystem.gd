@@ -191,6 +191,11 @@ const RECIPES := [
 		"label": "Trenzar 2 trapos para hacer una cuerda"
 	},
 	{
+		"inputs": { "Trapos": 3 },
+		"output": { "name": "Venda", "type": "medical", "weight": 0.12, "use_value": 24.0, "quantity": 1 },
+		"label": "Enrollar 3 trapos para hacer una venda"
+	},
+	{
 		"inputs": { "Pantalones militares": 1, "Cuchillo": 1 },
 		"output": { "name": "Trapos", "type": "resource", "weight": 0.05, "use_value": 0.0, "quantity": 2 },
 		"label": "Cortar pantalones militares con cuchillo para hacer trapos"

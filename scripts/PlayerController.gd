@@ -976,6 +976,7 @@ var _feet_notice_timer := 0.0
 var _feet_cold_notice_timer := 0.0
 var _feet_emit_timer := 0.0
 var _feet_wounded_notice := false
+var _bleed_drip_timer := 0.0
 var in_shelter := false
 var is_in_water := false
 var wetness := 0.0
@@ -5277,6 +5278,12 @@ func _update_barefoot(delta: float) -> void:
 		stats.feet_wound = maxf(0.0, stats.feet_wound - recovery * delta)
 		if stats.feet_wound < FEET_WOUND_THRESHOLD:
 			_feet_wounded_notice = false
+	# Las heridas sangrantes gotean sangre al suelo mientras siguen abiertas.
+	if float(stats.get("bleeding", 0.0)) > 0.0:
+		_bleed_drip_timer -= delta
+		if _bleed_drip_timer <= 0.0:
+			_bleed_drip_timer = 2.4
+			_spawn_blood_splatter(global_position + Vector3(0, 0.06, 0), 0.4)
 	# Calzado mojado enfría los pies como ir descalzo, en proporción a su
 	# humedad (hasta un 65% del efecto); seco o mojado en charcos cuenta igual.
 	var feet_cover_wet := 0.0
@@ -13248,7 +13255,7 @@ func _land_after_fall() -> void:
 		notice.emit("Te has hecho dano al caer.")
 		_play_fall_damage_sound()
 
-func apply_damage(amount: float) -> void:
+func apply_damage(amount: float, cause: String = "") -> void:
 	if is_puppet or is_dead:
 		return
 	if is_sleeping:
@@ -13269,6 +13276,11 @@ func apply_damage(amount: float) -> void:
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
 		inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
+	# Mordiscos y armas blancas abren heridas sangrantes (DayZ): la sangre
+	# drena salud hasta vendarla — el daño del golpe es solo el principio.
+	if stats.has_method("apply_bleeding") and (cause == "melee" or cause.ends_with("_bite")):
+		stats.apply_bleeding(1.5 if cause == "bear_bite" else 1.0)
+		notice.emit("¡Estás sangrando! Usa una venda antes de desangrarte.")
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
 	_play_pain_sound()

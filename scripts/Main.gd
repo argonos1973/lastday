@@ -2974,7 +2974,7 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
 			# pain grunt inside apply_damage so two voices do not overlap.
 			player._pain_sound_timer = 1.5
-		player.apply_damage(amount)
+		player.apply_damage(amount, weapon)
 		if weapon == "bola":
 			player.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
 			if player.has_method("_attach_bola_snare_visual"):
@@ -6750,6 +6750,8 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			return ["res://assets/models/weapons/arrow_bone.glb"]
 		"Cuerda":
 			return ["res://assets/models/props/rope_coil.glb"]
+		"Venda":
+			return ["res://assets/models/props/bandage_roll.glb"]
 		"Hueso":
 			return ["res://assets/models/props/animal_bone.glb"]
 		"Tendón":
