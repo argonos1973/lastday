@@ -663,7 +663,10 @@ func _process_body(delta: float) -> void:
 		target = result["target"]
 		speed = result["speed"]
 	# Variación natural: cada animal tiene su propio ritmo y no camina en línea recta
-	speed *= _speed_jitter
+	if _state == "chase_prey" and _ordered_prey != null:
+		speed *= maxf(_speed_jitter, 1.0)
+	else:
+		speed *= _speed_jitter
 	var bola_until := float(get_meta("bola_slow_until", 0.0))
 	if bola_until > 0.0 and Time.get_unix_time_from_system() < bola_until:
 		speed *= 0.25
@@ -702,9 +705,10 @@ func _process_body(delta: float) -> void:
 	if _path_recalc_timer <= 0.0:
 		_current_path = _request_path(global_position, target)
 		_path_index = 0
-		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse"]) else 1.2
+		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse", "chase_prey", "chase_player", "fight_wolf"]) else 1.2
 	var move_target: Vector3 = global_position
-	if chase_live != null and global_position.distance_to(chase_live.global_position) < 15.0 and _direct_route_allowed(chase_live.global_position):
+	var direct_chase_dist := 35.0 if (_state == "chase_prey" and _ordered_prey != null) else 15.0
+	if chase_live != null and global_position.distance_to(chase_live.global_position) < direct_chase_dist and _direct_route_allowed(chase_live.global_position):
 		move_target = chase_live.global_position
 	elif (_prey_flee_timer > 0.0 or _state == "flee") and (animal_type == "deer" or animal_type == "fox") and _direct_route_allowed(target):
 		move_target = target
@@ -2330,7 +2334,7 @@ func _find_feeder_node(feeder_id: String) -> Node3D:
 							dead_match = pr
 					else:
 						return pr
-	if feeder_id == tamed_to and not _owner_client_id.is_empty():
+	if feeder_id == tamed_to and not _owner_client_id.is_empty() and _owner_dead_timer <= 0.0 and dead_match == null:
 		for pr in get_tree().get_nodes_in_group("net_player_proxy"):
 			if str(pr.get_meta("client_id", "")) == _owner_client_id and not pr.get_meta("proxy_dead", false):
 				return pr
@@ -2488,13 +2492,20 @@ func _shadow_offering(offering: Node3D, delta: float) -> Dictionary:
 	return {"target": global_position, "speed": 0.0}
 
 func _resolve_owner() -> Node3D:
-	if _owner_node == null or not is_instance_valid(_owner_node) or _owner_node.get_meta("proxy_dead", false):
+	var stale_node: bool = _owner_node == null or not is_instance_valid(_owner_node) or not _owner_node.is_inside_tree() or bool(_owner_node.get_meta("proxy_dead", false)) or bool(_owner_node.get_meta("disconnected", false))
+	if not stale_node and not tamed_to.is_empty() and tamed_to != "local":
+		if str(_owner_node.get_meta("peer_id", "")) != tamed_to:
+			stale_node = true
+	if stale_node:
 		_owner_node = _find_feeder_node(tamed_to)
 	if _owner_node != null and is_instance_valid(_owner_node) and not _owner_node.get_meta("proxy_dead", false) and not tamed_to.is_empty() and tamed_to != "local":
 		var cur_pid := int(_owner_node.get_meta("peer_id", 0))
 		var cur_cid := str(_owner_node.get_meta("client_id", ""))
 		if cur_pid > 0 and str(cur_pid) != tamed_to and (_owner_client_id.is_empty() or cur_cid == _owner_client_id):
 			tamed_to = str(cur_pid)
+			var scene := get_tree().current_scene if get_tree() != null else null
+			if scene != null and scene.has_method("_record_tamed_wolf"):
+				scene._record_tamed_wolf(tamed_to, name)
 	return _owner_node
 
 func _is_tamed_owner_offline() -> bool:
@@ -2729,9 +2740,32 @@ func _tamed_ai(delta: float) -> Dictionary:
 					break
 		if _warn_bark_timer <= 0.0:
 			_warn_bark_timer = 2.5
+	# Doble silbido: durante unos segundos ataca a lo que tenga más cerca,
+	# animal o jugador (nunca a su dueño ni a lobos del mismo dueño).
+	# Se evalúa antes de _ordered_prey para que la caza arranque en el mismo frame.
+	if _whistle_aggro_until > 0 and owner != null:
+		if _orders_cease or _wolf_foe != null or _threat_player != null or Time.get_ticks_msec() >= _whistle_aggro_until:
+			_whistle_aggro_until = 0
+		elif _ordered_prey == null:
+			var prey := _find_whistle_prey(owner_anchor)
+			if prey is WildlifeController:
+				var ptype := str((prey as WildlifeController).animal_type)
+				if ptype == "wolf" or ptype == "bear":
+					_set_wolf_foe(prey)
+					var foe_res := _fight_animal(prey, delta)
+					foe_res["handled"] = true
+					return foe_res
+				else:
+					_ordered_prey = prey
+			elif prey != null:
+				_threat_player = prey
+				_threat_timer = 25.0
+				_player = _threat_player
+				return {"handled": false}
 	if _ordered_prey != null:
 		var bound_anchor := _stay_pos if _follow_mode == "stay" else owner_anchor
-		if not is_instance_valid(_ordered_prey) or _ordered_prey.global_position.distance_to(bound_anchor) > 60.0:
+		var prey_dist_anchor := minf(_ordered_prey.global_position.distance_to(bound_anchor), _ordered_prey.global_position.distance_to(global_position)) if is_instance_valid(_ordered_prey) else 9999.0
+		if not is_instance_valid(_ordered_prey) or prey_dist_anchor > 100.0:
 			_ordered_prey = null
 			_chase_target = null
 		elif _ordered_prey.get("_is_dead") == true:
@@ -2755,31 +2789,15 @@ func _tamed_ai(delta: float) -> Dictionary:
 				_play_animation_by_name("shake")
 				return {"handled": true, "target": tp, "speed": 0.0}
 			_play_animation_by_name("run")
-			return {"handled": true, "target": tp, "speed": move_speed * 3.2}
+			return {"handled": true, "target": tp, "speed": move_speed * 3.45}
 	if owner == null:
+		if _owner_dead_timer > 0.0:
+			_go_wild()
+			_play_animation_by_name("walk")
+			return {"handled": true, "target": patrol_points[target_index], "speed": move_speed}
 		_state = "guard"
 		_play_animation_by_name("idle")
 		return {"handled": true, "target": global_position, "speed": 0.0}
-	# Doble silbido: durante unos segundos ataca a lo que tenga más cerca,
-	# animal o jugador (nunca a su dueño ni a lobos del mismo dueño).
-	if _whistle_aggro_until > 0:
-		if _orders_cease or _wolf_foe != null or _threat_player != null or Time.get_ticks_msec() >= _whistle_aggro_until:
-			_whistle_aggro_until = 0
-		elif _ordered_prey == null:
-			var prey := _find_whistle_prey(owner_anchor)
-			if prey is WildlifeController:
-				var ptype := str((prey as WildlifeController).animal_type)
-				if ptype == "wolf" or ptype == "bear":
-					_set_wolf_foe(prey)
-				else:
-					_ordered_prey = prey
-			elif prey != null:
-				_threat_player = prey
-				_threat_timer = 25.0
-			if prey != null:
-				# El combate/caza arranca al frame siguiente por la vía normal.
-				_play_animation_by_name("run")
-				return {"handled": true, "target": global_position, "speed": 0.0}
 	# Hambre: el lobo domesticado sigue comiendo carne cercana (mantenimiento),
 	# incluida la que suelta el dueno al destripar ciervos, osos y demas caza.
 	# En modo "stay" solo come piezas proximas a su puesto para no abandonarlo.
@@ -2799,11 +2817,16 @@ func _tamed_ai(delta: float) -> Dictionary:
 				_ordered_prey = prey
 	else:
 		_hunger_warned = false
-	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje
+	# Dueño muerto: guardia sobre el cuerpo un tiempo y luego vuelve a ser salvaje.
+	# Se borra _owner_client_id y el registro en cuanto muere para que al volver a
+	# entrar con un personaje nuevo jamás herede el lobo del personaje muerto.
 	var owner_dead := bool(owner.get_meta("proxy_dead", false))
 	if not owner_dead and owner.name == "Player":
 		owner_dead = bool(owner.get("is_dead"))
 	if owner_dead:
+		if not _owner_client_id.is_empty():
+			_release_owner_record()
+			_owner_client_id = ""
 		_state = "guard"
 		_owner_dead_timer += delta
 		if _owner_dead_timer >= TAME_GUARD_SECONDS:
@@ -2904,7 +2927,7 @@ func _find_whistle_prey(anchor: Vector3) -> Node3D:
 		return null
 	var owner := _resolve_owner()
 	var best: Node3D = null
-	var best_d := 30.0
+	var best_d := 65.0
 	for w in get_tree().get_nodes_in_group("wildlife"):
 		if w == self or not is_instance_valid(w) or not (w is WildlifeController):
 			continue
@@ -2914,14 +2937,18 @@ func _find_whistle_prey(anchor: Vector3) -> Node3D:
 		if str(cw.tamed_to) == tamed_to:
 			continue  # los animales del mismo dueño no son objetivo
 		var d := minf(cw.global_position.distance_to(anchor), cw.global_position.distance_to(global_position))
-		if d < best_d:
+		var max_r := 28.0 if (cw.animal_type == "wolf" or cw.animal_type == "bear") else 65.0
+		if d < max_r and d < best_d:
 			best_d = d
 			best = cw
+	if best != null:
+		return best
+	best_d = 35.0
 	var player_candidates: Array = []
 	for grp in ["net_player_proxy", "remote_player"]:
 		player_candidates.append_array(get_tree().get_nodes_in_group(grp))
 	var scene := get_tree().current_scene
-	if scene != null:
+	if scene != null and not _is_dedicated:
 		var lp := scene.get_node_or_null("Player")
 		if lp != null and not player_candidates.has(lp):
 			player_candidates.append(lp)
@@ -2930,7 +2957,11 @@ func _find_whistle_prey(anchor: Vector3) -> Node3D:
 			continue
 		if _feeder_key(op) == tamed_to:
 			continue  # jamás a su dueño
+		if not _owner_client_id.is_empty() and str(op.get_meta("client_id", "")) == _owner_client_id:
+			continue  # jamás a un proxy del propio dueño
 		if op.get_meta("proxy_dead", false) or op.get("is_dead") == true:
+			continue
+		if op.get_meta("protection_timer", 0.0) > 0.0 or op.get_meta("in_built_shelter", false):
 			continue
 		if op.is_in_group("net_player_proxy") and (not op.get_meta("has_real_pos", false) or op.get_meta("disconnected", false)):
 			continue
@@ -3157,7 +3188,18 @@ func apply_command(mode: String, target: Node = null) -> void:
 		_wolf_foe = null
 		_ordered_prey = null
 		_threat_player = null
+		_chase_target = null
+		_wolf_eating_timer = 0.0
+		_wolf_eating_target = null
+		_claimed_meat = null
 		_chase_cooldown = 0.0
+		_prey_flee_timer = 0.0
+		_idle_timer = 0.0
+		_tamed_rest_time = 0.0
+		_follow_mode = "follow"
+		_current_path.clear()
+		_path_index = 0
+		_path_recalc_timer = 0.0
 		_whistle_aggro_until = Time.get_ticks_msec() + 25000
 		_play_wolf_sound("growl")
 		_notify_owner_msg(_resolve_owner(), "¡El lobo ataca a quien tenga cerca!")

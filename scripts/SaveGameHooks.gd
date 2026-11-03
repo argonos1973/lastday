@@ -351,6 +351,8 @@ static func collect_world_data(main: Node) -> Dictionary:
 			continue
 		if node.animal_type != "wolf" or node.tamed_to.is_empty() or node._is_dead or node.is_puppet:
 			continue
+		if node._owner_dead_timer > 0.0 or (node._owner_node != null and is_instance_valid(node._owner_node) and bool(node._owner_node.get_meta("proxy_dead", false))):
+			continue
 		var stay_v = node.get("_stay_pos")
 		var stay: Vector3 = stay_v if stay_v is Vector3 else node.global_position
 		tamed_wildlife.append({

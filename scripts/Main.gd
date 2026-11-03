@@ -2824,16 +2824,20 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 		if was_dead:
 			# Death means a fresh start: free the corpse proxy and respawn as a
 			# new character with default gear. The loot stays in the world —
-			# nothing of the dead character follows the new one.
+			# nothing of the dead character follows the new one (including its tamed wolf).
+			var old_pid := int(existing.get_meta("peer_id", 0))
+			_release_dead_owner_wolves(old_pid, cid, existing, true)
 			existing.queue_free()
 			pending_client_ids[peer_id] = cid
-			# Set client_id on the freshly-created proxy so it persists for next disconnect
-			if server_proxies.has(peer_id):
-				server_proxies[peer_id].set_meta("client_id", cid)
+			if not server_proxies.has(peer_id):
+				_spawn_server_proxy(peer_id)
+			var spawn_pos := _get_random_spawn_pos()
+			server_proxies[peer_id].global_position = spawn_pos
+			server_proxies[peer_id].set_meta("client_id", cid)
 			# Drop the dead record's baseline so the merge can't refill the new
 			# character's record with the corpse's gear.
 			_server_saved_players.erase(cid)
-			call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
+			call_deferred("_delayed_send_spawn_pos", peer_id, spawn_pos, true)
 			return false
 		else:
 			# Remove the freshly-created proxy for this peer_id if it exists
@@ -2906,8 +2910,11 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 				# Dead record: fresh start. Erase the baseline so its fields
 				# can't merge back into the new character's record, and don't
 				# copy any saved_* metas onto the fresh proxy.
+				_release_dead_owner_wolves(0, cid, null, true)
 				_server_saved_players.erase(cid)
-				call_deferred("_delayed_send_spawn_pos", peer_id, _get_random_spawn_pos(), true)
+				var spawn_pos := _get_random_spawn_pos()
+				server_proxies[peer_id].global_position = spawn_pos
+				call_deferred("_delayed_send_spawn_pos", peer_id, spawn_pos, true)
 				return false
 			# Keep the entry: it is the merge baseline for future saves.
 			var proxy: Node3D = server_proxies[peer_id]
@@ -3984,6 +3991,37 @@ func _cid_belongs_to_peer(cid: String, pid: int) -> bool:
 	var proxy := _server_proxy_for_sender(pid)
 	return is_instance_valid(proxy) and str(proxy.get_meta("client_id", "")) == cid
 
+# Al morir un personaje, su lobo domesticado pierde el _owner_client_id de
+# inmediato (y borra saved_extra.tamed_wolf) para que al volver a entrar con un
+# personaje nuevo jamás herede el lobo del muerto. Si el cadáver ya se retira
+# (force_wild=true al respawnear), el lobo vuelve a ser salvaje en el acto.
+func _release_dead_owner_wolves(dead_pid: int, cid: String = "", corpse_proxy: Node3D = null, force_wild: bool = false) -> void:
+	if dead_pid != 0:
+		_clear_tamed_wolf_record(str(dead_pid))
+	if not cid.is_empty() and _server_saved_players.has(cid):
+		var rec: Dictionary = _server_saved_players[cid]
+		var rec_extra: Dictionary = rec.get("extra", {}).duplicate(true)
+		if rec_extra.has("tamed_wolf"):
+			rec_extra.erase("tamed_wolf")
+			rec["extra"] = rec_extra
+	if get_tree() == null:
+		return
+	var pid_str := str(dead_pid) if dead_pid != 0 else ""
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		var w := node as WildlifeController
+		if w == null or w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty():
+			continue
+		var matches_pid := not pid_str.is_empty() and w.tamed_to == pid_str
+		var matches_cid := not cid.is_empty() and w._owner_client_id == cid
+		var matches_node := corpse_proxy != null and w._owner_node == corpse_proxy
+		if not matches_pid and not matches_cid and not matches_node:
+			continue
+		w._owner_client_id = ""
+		if force_wild:
+			w._go_wild()
+		else:
+			w._owner_dead_timer = maxf(w._owner_dead_timer, 0.001)
+
 # Re-vincula al lobo con su dueño tras reconectar (misma sesión de servidor).
 func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
 	if net == null or not net.is_host:
@@ -3995,14 +4033,14 @@ func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
 	if cid.is_empty():
 		return
 	var w := get_node_or_null(wolf_name) as WildlifeController if not wolf_name.is_empty() else null
-	if w != null and (w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty()):
+	if w != null and (w.animal_type != "wolf" or w.is_puppet or w._is_dead or w.tamed_to.is_empty() or w._owner_dead_timer > 0.0):
 		w = null
 	if w != null and w._owner_client_id != cid and not (w._owner_client_id.is_empty() and w._owner_node == owner):
 		w = null
 	if w == null:
 		for node in get_tree().get_nodes_in_group("wildlife"):
 			var cand := node as WildlifeController
-			if cand == null or cand.animal_type != "wolf" or cand.is_puppet or cand._is_dead or cand.tamed_to.is_empty():
+			if cand == null or cand.animal_type != "wolf" or cand.is_puppet or cand._is_dead or cand.tamed_to.is_empty() or cand._owner_dead_timer > 0.0:
 				continue
 			if cand._owner_client_id == cid:
 				w = cand
@@ -4275,6 +4313,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
 		proxy.add_to_group("interactable")
+		_release_dead_owner_wolves(target_peer_id, str(proxy.get_meta("client_id", "")), proxy, false)
 		# Drop loot immediately on server using saved inventory
 		_drop_player_loot(target_peer_id, proxy)
 		proxy.set_meta("death_broadcasted", true)
@@ -4362,6 +4401,7 @@ func _net_player_died(peer_id: int, inventory_data: Array = [], death_pos: Vecto
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
 		proxy.add_to_group("interactable")
+	_release_dead_owner_wolves(peer_id, str(proxy.get_meta("client_id", "")), proxy, false)
 	_drop_player_loot(peer_id, proxy)
 	if not proxy.get_meta("death_broadcasted", false):
 		proxy.set_meta("death_broadcasted", true)
@@ -4763,6 +4803,7 @@ func _damage_offline_proxy(proxy: Node3D, amount: float) -> void:
 	proxy.remove_from_group("net_player_proxy")
 	proxy.add_to_group("interactable")
 	var dead_pid: int = proxy.get_meta("peer_id", 0)
+	_release_dead_owner_wolves(dead_pid, str(proxy.get_meta("client_id", "")), proxy, false)
 	_drop_player_loot(dead_pid, proxy)
 	proxy.set_meta("death_broadcasted", true)
 	_broadcast_player_death(dead_pid, proxy)
@@ -5501,7 +5542,7 @@ func _whistle_to_wolf() -> void:
 	if player.has_method("_sync_condition_audio"):
 		player._sync_condition_audio("whistle")
 	var now := Time.get_ticks_msec()
-	var double := now - _whistle_last_msec < 900
+	var double := now - _whistle_last_msec < 1300
 	_whistle_last_msec = now
 	var wolf := _my_tamed_wolf()
 	if wolf == null:

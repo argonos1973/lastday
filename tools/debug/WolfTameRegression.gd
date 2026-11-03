@@ -367,12 +367,18 @@ func test_whistle_and_menu_hold() -> void:
 	wolf.apply_command("whistle_aggro")
 	check(wolf._whistle_aggro_until > Time.get_ticks_msec(), "Double whistle arms the aggro window")
 	check(not wolf._orders_cease, "Aggro whistle clears pacifist mode")
-	wolf._tamed_ai(0.05)
-	check(wolf._ordered_prey == deer, "Aggro whistle picks the nearest wild animal, skipping the owner's other wolf")
+	var aggro_res: Dictionary = wolf._tamed_ai(0.05)
+	check(wolf._ordered_prey == deer and float(aggro_res.get("speed", 0.0)) > 0.0, "Aggro whistle picks the nearest wild animal and starts chasing immediately")
+	# Incluso si el ciervo está huyendo a ~48 m o el lobo estaba en 'stay', el doble silbido lo caza sin bloquearse
+	wolf.apply_command("stay")
+	deer.global_position = Vector3(58, 0, 0) # 48 m del dueño (10,0,0) y 38 m del lobo (20,0,0)
+	wolf.apply_command("whistle_aggro")
+	var far_deer_res: Dictionary = wolf._tamed_ai(0.05)
+	check(wolf._ordered_prey == deer and wolf._follow_mode == "follow" and float(far_deer_res.get("speed", 0.0)) > 0.0, "Aggro whistle from stay mode chases a fleeing deer at 48m without freezing")
 	var proxy9 := make_proxy(world, 9, Vector3(11, 0, 0))
 	wolf._ordered_prey = null
 	wolf._whistle_aggro_until = Time.get_ticks_msec() + 25000
-	deer.global_position = Vector3(60, 0, 0)
+	deer.global_position = Vector3(120, 0, 0)
 	wolf._tamed_ai(0.05)
 	check(wolf._threat_player == proxy9, "Aggro whistle can target a nearby player proxy")
 
@@ -631,6 +637,7 @@ func test_server_persistence() -> void:
 	for i in range(3):
 		second._register_feeding("9")
 	check(second.tamed_to.is_empty(), "Reconnect does not allow taming a second wolf")
+	second.free()
 
 	var other := make_proxy(world, 11, Vector3(3, 0, 0))
 	other.set_meta("client_id", "other_owner")
@@ -678,11 +685,37 @@ func test_server_persistence() -> void:
 	for i in range(3):
 		wolf._register_feeding("9")
 	check(wolf.tamed_to == "9", "The same owner can tame the released wolf again normally")
+	# Reconnected owner commands double whistle on a nearby deer: wolf chases and bites the deer
+	deer.global_position = owner.global_position + Vector3(32, 0, 0)
+	world._net_command_wolf(wolf.name, "whistle_aggro", 9)
+	var r_hunt: Dictionary = wolf._tamed_ai(0.05)
+	check(wolf._ordered_prey == deer and float(r_hunt.get("speed", 0.0)) > 0.0, "Reconnected owner's wolf attacks nearby deer on double whistle")
+	# Owner dies and rejoins as a fresh character with the same client_id before mourning ends:
+	# the new character must NOT inherit the dead character's tamed wolf.
+	var mortal_wolf := make_wolf(world, owner.global_position + Vector3(2, 0, 0))
 	wolf.take_damage(999.0, false, other)
 	check(not owner.get_meta("saved_extra", {}).has("tamed_wolf"), "Wolf death clears the real server proxy record")
 	check(not world._server_saved_players["wolf_owner"].get("extra", {}).has("tamed_wolf"), "Wolf death clears the real saved baseline")
 	world._restore_tamed_wolf(11, wolf.name)
 	check(wolf._is_dead and wolf.tamed_to != "11", "Restoration cannot revive or transfer a dead wolf")
+	for i in range(3):
+		mortal_wolf._register_feeding("9")
+	check(mortal_wolf.tamed_to == "9" and mortal_wolf._owner_client_id == "wolf_owner", "Second wolf tamed before owner death test")
+	world._net_player_died(9)
+	check(mortal_wolf._owner_client_id.is_empty(), "Owner death immediately clears _owner_client_id on the tamed wolf")
+	world.server_proxies.erase(9)
+	world.proxy_by_client_id["wolf_owner"] = owner
+	owner.set_meta("disconnected", true)
+	net.players.erase(9)
+	net.players[15] = {"client_id": "wolf_owner"}
+	var reclaimed_after_death := world._match_proxy_to_client(15, "wolf_owner")
+	await process_frame
+	mortal_wolf._tamed_ai(0.05)
+	check(not reclaimed_after_death and mortal_wolf.tamed_to == "", "Respawning after death turns the dead character's wolf wild instead of rebinding it to the new character")
+	if world.server_proxies.has(15) and is_instance_valid(world.server_proxies[15]):
+		world.server_proxies[15].free()
+		world.server_proxies.erase(15)
+	mortal_wolf.free()
 	world.free()
 	net.players.clear()
 	net.is_host = false
