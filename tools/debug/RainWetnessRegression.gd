@@ -19,6 +19,10 @@ class TestPlayer extends PlayerScript:
 		pass
 	func _find_skeleton(_n: Node) -> Skeleton3D:
 		return null
+	func _wear_survival_clothing(_n: String, _w: bool, _c: Color = Color(0, 0, 0, 0)) -> void:
+		pass
+	func _wear_clothing_visual(_n: String, _c: Color = Color(0, 0, 0, 0)) -> void:
+		pass
 
 var errors := 0
 
@@ -192,6 +196,38 @@ func run() -> void:
 	player._rain_wetting = true
 	player._update_water_state(1.0)
 	check(spare.wetness < 0.8, "Stored wet clothing dries even with dry skin during rain")
+	# ---- Same-name swap (wet -> dry): the dry garment takes over the slot ----
+	player._equipped_slots.erase("torso")
+	for it in player.inventory.items:
+		if it != null and it.has_meta("equipped_slot"):
+			it.remove_meta("equipped_slot")
+	player.wetness = 0.0
+	var dropped_log: Array = []
+	player.item_dropped.connect(func(n, _t, _w, _q, _uv, _pos, _c, _b, _sp): dropped_log.append([n, float(player.get_meta("last_dropped_wetness", 0.0))]))
+	var wet_jacket = ItemScript.create("Chaqueta militar", "clothing", 1.0)
+	wet_jacket.wetness = 0.9
+	player.inventory.items.append(wet_jacket)
+	player.equip_clothing("Chaqueta militar", Color(0, 0, 0, 0), wet_jacket)
+	check(player._equipped_item_for_slot("torso") == wet_jacket, "Wet jacket owns the torso slot")
+	check(player._effective_wetness() > 0.3, "Wet jacket drives effective wetness")
+	var dry_jacket = ItemScript.create("Chaqueta militar", "clothing", 1.0)
+	player.inventory.items.append(dry_jacket)
+	player.equip_clothing("Chaqueta militar", Color(0, 0, 0, 0), dry_jacket)
+	check(not player.inventory.items.has(wet_jacket), "Same-name swap drops the wet jacket")
+	check(dropped_log.size() == 1, "Same-name swap emits exactly one drop")
+	if dropped_log.size() == 1:
+		check(absf(dropped_log[0][1] - 0.9) < 0.01, "Dropped jacket keeps its own wetness")
+	check(player._equipped_item_for_slot("torso") == dry_jacket, "Dry jacket owns the torso slot")
+	check(str(wet_jacket.get_meta("equipped_slot", "")) == "", "Wet jacket loses the slot claim")
+	check(player._effective_wetness() < 0.01, "Dry garment reads dry effective wetness")
+	var stale = ItemScript.create("Chaqueta militar", "clothing", 1.0)
+	stale.wetness = 1.0
+	stale.set_meta("equipped_slot", "torso")
+	player.inventory.items.append(stale)
+	check(player._equipped_item_for_slot("torso") == dry_jacket, "Stale slot meta on a spare cannot hijack wetness")
+	check(player._effective_wetness() < 0.01, "Stale meta does not leak wetness")
+	stale.remove_meta("equipped_slot")
+
 	# ---- Pelt clothing: much warmer and water repellent ----
 	# Clear stale equipped_slot metas so each slot resolves to the pelt item.
 	jacket.set_meta("equipped_slot", "")

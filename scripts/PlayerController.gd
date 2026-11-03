@@ -2321,27 +2321,34 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 	_active_pelt_species = species
 	if item_name in GameConst.PELT_FUR_ITEMS:
 		_equipped_pelt[item_name] = species
-	# Unequip previous item in the same slot and drop it on the ground
-	if not slot.is_empty() and _equipped_slots.get(slot, "") != item_name:
+	# Unequip previous item in the same slot and drop it on the ground.
+	# Same-name swaps (wet jacket -> dry jacket) also count: the worn item is
+	# identified by its equipped_slot meta, not by comparing names — otherwise
+	# the wet garment keeps claiming the slot and the dry one "stays wet".
+	if not slot.is_empty():
 		var prev_name := str(_equipped_slots.get(slot, ""))
-		if not prev_name.is_empty() and prev_name != item_name:
+		var prev_item = _equipped_item_for_slot(slot) if not prev_name.is_empty() else null
+		var swap_same: bool = prev_name == item_name and source_item != null and prev_item != null and prev_item != source_item
+		if not prev_name.is_empty() and (prev_name != item_name or swap_same):
 			var prev_color := get_current_clothing_color(prev_name)
 			set_meta("last_dropped_camo", clothing_has_camo(prev_name))
 			var prev_init := _initializing
 			_initializing = true
 			unequip_clothing(prev_name)
 			_initializing = prev_init
+			if swap_same and item_name in GameConst.PELT_FUR_ITEMS:
+				# unequip borró la especie que este equip acaba de registrar
+				_equipped_pelt[item_name] = species
 			# Remove old clothing from inventory and drop it on the ground
-			if inventory != null:
-				for i in range(inventory.items.size()):
-					if str(inventory.items[i].item_name) == prev_name:
-						set_meta("last_dropped_wetness", float(inventory.items[i].wetness))
-						set_meta("last_dropped_pelt", str(inventory.items[i].get_meta("pelt_species", "")))
-						inventory.remove_index(i)
-						break
+			if inventory != null and prev_item != null:
+				var prev_idx: int = inventory.items.find(prev_item)
+				if prev_idx >= 0:
+					set_meta("last_dropped_wetness", float(prev_item.wetness))
+					set_meta("last_dropped_pelt", str(prev_item.get_meta("pelt_species", "")))
+					inventory.remove_index(prev_idx)
 			var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
 			drop_pos.y = global_position.y
-			item_dropped.emit(prev_name, "clothing", 0.5, 1, 0.1, drop_pos, prev_color, false, 0.0)
+			item_dropped.emit(prev_name, "clothing", float(prev_item.weight) if prev_item != null else 0.5, 1, float(prev_item.use_value) if prev_item != null else 0.1, drop_pos, prev_color, false, 0.0)
 	equipped_clothing = item_name
 	# Determine if all clothing slots will be equipped after this item
 	var equipped_check := _equipped_slots.duplicate()
@@ -2458,6 +2465,11 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 					item_ref = it
 					break
 		if item_ref != null:
+			# Un solo Item puede reclamar un slot: barre metadatos duplicados
+			# (p. ej. restos de una prenda mojada del mismo nombre).
+			for it in inventory.items:
+				if it != null and it != item_ref and str(it.get_meta("equipped_slot", "")) == slot:
+					it.remove_meta("equipped_slot")
 			item_ref.set_meta("equipped_slot", slot)
 			# Vestirse con la piel empapada traspasa algo de humedad a la ropa.
 			item_ref.wetness = maxf(float(item_ref.wetness), wetness * 0.35)
@@ -2553,7 +2565,6 @@ func unequip_clothing(item_name: String) -> void:
 			for it in inventory.items:
 				if it != null and str(it.item_name) == item_name and str(it.get_meta("equipped_slot", "")) == slot:
 					it.remove_meta("equipped_slot")
-					break
 		if stats != null:
 			stats.wetness = _effective_wetness()
 	if equipped_clothing == item_name:
@@ -5175,10 +5186,10 @@ const SLOT_WET_WEIGHT := {"torso": 0.35, "legs": 0.30, "feet": 0.10, "hands": 0.
 func _equipped_item_for_slot(slot: String):
 	if inventory == null:
 		return null
-	for it in inventory.items:
-		if it != null and str(it.get_meta("equipped_slot", "")) == slot:
-			return it
 	var equipped_name := str(_equipped_slots.get(slot, ""))
+	for it in inventory.items:
+		if it != null and str(it.get_meta("equipped_slot", "")) == slot and str(it.item_name) == equipped_name:
+			return it
 	if equipped_name.is_empty():
 		return null
 	for it in inventory.items:
