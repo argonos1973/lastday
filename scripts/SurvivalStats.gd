@@ -114,8 +114,10 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		var heat_reduction: float = 1.0 - clamp(heat_protection_bonus, 0.0, 0.8)
 		target_temperature += (ambient_temperature - 26.0) * 0.16 * heat_retention * heat_reduction
 	# Gameplay cooling curve: wet clothing loses more heat in cooler air.
+	# Mildly damp chill — soaked at ~18°C only reaches the mild damage tier;
+	# deep hypothermia needs genuinely cold air or full soak without shelter.
 	if wetness > 0.05:
-		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.09, 0.0, 3.5)
+		var wet_cooling: float = clampf((36.6 - ambient_temperature) * 0.05, 0.0, 2.0)
 		target_temperature -= wetness * wet_cooling * (1.0 - protection * 0.3)
 	# Wind increases heat loss in cool air, especially with wet clothing.
 	if not sheltered and ambient_temperature < 18.0:
