@@ -11332,9 +11332,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 				return
 		var target_animation := ""
-		# Low health uses the DayZ-style progressive screen darkening/desaturation
-		# instead of forcing the slow low-health locomotion clip.
-		var low_health := false
+		# Herido (salud <= 30), desangrándose o enfermo: locomoción de mal estado
+		# además del oscurecimiento/desaturación de pantalla estilo DayZ.
+		var low_health: bool = stats != null and (stats.health <= 30.0 or stats.bleeding > 0.0 or stats.sick) and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state: _rifle_in_hands is set by _sync_third_person_equipment
 		_has_rifle = _rifle_in_hands
 		# Torch locomotion: use torch-specific animations when holding torch
