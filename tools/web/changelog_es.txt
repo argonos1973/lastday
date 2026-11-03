@@ -2,6 +2,8 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+93e0b42|Al estar herido (salud baja), desangrandose o enfermo el personaje vuelve a moverse con la animacion de mal estado, ademas del oscurecimiento de pantalla
+1ab8e97|Corregido que al cambiar una prenda mojada por una seca del mismo tipo la seca apareciera mojada: la prenda quitada cae al suelo conservando su propia humedad
 a054170|La ropa de piel abriga mucho mas (aprox. un 60% mas por prenda y sin tope al llevar el conjunto completo) y repele buena parte del agua de lluvia y remojo; la piel de oso es aun mas calida e impermeable, y la piel mojada conserva mejor el calor que la tela mojada
 f14d33a|Corregido que el lobo domesticado se re-vinculara al nuevo personaje cuando su dueno moria y volvia a entrar antes de terminar el luto, y corregido el doble silbido para que cace y alcance ciervos cercanos sin bloquearse
 7b26c20|Corregido el bug por el que los arboles desaparecian al acercarse el personaje (y reaparecian al alejarse) cuando se activaban para poder talarlos
