@@ -543,7 +543,7 @@ signal item_dropped(item_name: String, item_type: String, item_weight: float, it
 @export var sprint_jump_force := 9.0
 @export var mouse_sensitivity := 0.0025
 @export var interaction_distance := 3.5
-@export var jump_stamina_cost := 15.0
+@export var jump_stamina_cost := 10.0
 @export var min_jump_stamina := 10.0
 
 static var _model_cache: Dictionary = {}
@@ -3985,7 +3985,7 @@ func _physics_process(delta: float) -> void:
 		speed = 0.0
 		is_sprinting = false
 	if is_sprinting:
-		stats.energy = max(0.0, stats.energy - (3.0 + carry * 9.0) * (1.0 + stats.get_thermal_stress()) * delta)
+		stats.energy = max(0.0, stats.energy - (2.0 + carry * 5.0) * (1.0 + stats.get_thermal_stress()) * delta)
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
