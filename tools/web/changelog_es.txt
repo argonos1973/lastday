@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+50d136a|El frio baja la temperatura corporal a la mitad de velocidad: la hipotermia tarda el doble en desarrollar (da tiempo a vestirse, refugiarse o encender fuego); calentarse sigue igual de rapido
 93e0b42|Al estar herido (salud baja), desangrandose o enfermo el personaje vuelve a moverse con la animacion de mal estado, ademas del oscurecimiento de pantalla
 1ab8e97|Corregido que al cambiar una prenda mojada por una seca del mismo tipo la seca apareciera mojada: la prenda quitada cae al suelo conservando su propia humedad
 a054170|La ropa de piel abriga mucho mas (aprox. un 60% mas por prenda y sin tope al llevar el conjunto completo) y repele buena parte del agua de lluvia y remojo; la piel de oso es aun mas calida e impermeable, y la piel mojada conserva mejor el calor que la tela mojada
