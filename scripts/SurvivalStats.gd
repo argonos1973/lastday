@@ -151,9 +151,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		if hot_food_temp_bonus <= 0.01:
 			hot_food_charges = 0
 	# React in seconds rather than taking several minutes to acknowledge a
-	# change in ambient conditions. The exchange rate stays slow enough that a
-	# cold snap gives the player minutes to find shelter instead of ~40 s.
-	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * 0.05))
+	# change in ambient conditions. Cooling runs at half the warming rate:
+	# hypothermia takes minutes to develop (time to dress, seek shelter or
+	# light a fire) while a fire still warms you at the old readable pace.
+	var exchange_rate := 0.05 if target_temperature >= body_temperature else 0.025
+	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * exchange_rate))
 
 	if hunger <= 0.0:
 		health = max(0.0, health - 2.0 * delta)
