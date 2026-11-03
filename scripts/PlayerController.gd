@@ -255,10 +255,10 @@ const CLOTHING_SLOTS := {
 # Warmth value per clothing item. Higher = warmer.
 # Short sleeves / shorts give little warmth; jackets and long pants give more.
 const CLOTHING_WARMTH := {
-	"Chaqueta de piel": 0.85,
-	"Pantalones de piel": 0.55,
-	"Botas de piel": 0.48,
-	"Guantes de piel": 0.28,
+	"Chaqueta de piel": 1.35,
+	"Pantalones de piel": 0.90,
+	"Botas de piel": 0.75,
+	"Guantes de piel": 0.45,
 	"Chaqueta de campaña verde": 0.32,
 	"Chaqueta de campaña azul": 0.32,
 	"Chaqueta de campaña arena": 0.32,
@@ -283,8 +283,8 @@ const CLOTHING_WARMTH := {
 	"Sombrero de pescador": 0.07,
 	"Pasamontañas": 0.34,
 	"Pasamontañas navideño": 0.34,
-	"Gorro de piel": 0.38,
-	"Tocado de piel animal": 0.45,
+	"Gorro de piel": 0.60,
+	"Tocado de piel animal": 0.70,
 	"Casco militar": 0.05,
 	"Chaqueta de cuadros": 0.45,
 	"Chaqueta de otoño": 0.42,
@@ -295,6 +295,17 @@ const CLOTHING_WARMTH := {
 	"Gorra militar": 0.08,
 	"Gorro de otoño": 0.08,
 	"Chaleco táctico": 0.10,
+}
+
+# Resistencia al agua por prenda (0-1): fracción de lluvia/empapado que repele.
+# La piel curtida repele el agua; la piel de oso añade +0.10 extra.
+const CLOTHING_WATER_RESIST := {
+	"Chaqueta de piel": 0.55,
+	"Pantalones de piel": 0.50,
+	"Botas de piel": 0.60,
+	"Guantes de piel": 0.45,
+	"Gorro de piel": 0.50,
+	"Tocado de piel animal": 0.40,
 }
 
 # Heat protection: reduces body temperature gain in hot environments.
@@ -3623,8 +3634,10 @@ func _drop_excess_items(count: int) -> void:
 		inventory.changed.emit()
 
 # Fracción del abrigo que retiene una prenda empapada (la humedad colapsa el
-# aislamiento: una chaqueta calada apenas abriga).
+# aislamiento: una chaqueta calada apenas abriga). La piel retiene más calor
+# aun mojada que la ropa de tela.
 const WET_WARMTH_RETAIN := 0.45
+const WET_WARMTH_RETAIN_PELT := 0.62
 
 func _recalculate_warmth(_undress_shock: bool = true) -> void:
 	if stats == null:
@@ -3635,10 +3648,10 @@ func _recalculate_warmth(_undress_shock: bool = true) -> void:
 		if CLOTHING_WARMTH.has(item_name):
 			var w: float = float(CLOTHING_WARMTH[item_name])
 			if str(_equipped_pelt.get(item_name, "")) == "oso":
-				w += 0.10
+				w += 0.15
 			var worn = _equipped_item_for_slot(slot)
 			if worn != null:
-				w *= lerpf(1.0, WET_WARMTH_RETAIN, clampf(float(worn.wetness), 0.0, 1.0))
+				w *= lerpf(1.0, WET_WARMTH_RETAIN_PELT if CLOTHING_WATER_RESIST.has(item_name) else WET_WARMTH_RETAIN, clampf(float(worn.wetness), 0.0, 1.0))
 			total += w
 	stats.warmth_bonus = total
 	# Equipment changes insulation; body temperature changes over time in tick.
@@ -5189,11 +5202,17 @@ func _any_equipped_wet() -> bool:
 			return true
 	return false
 
+func _water_resist_for(item_name: String) -> float:
+	var r := float(CLOTHING_WATER_RESIST.get(item_name, 0.0))
+	if r > 0.0 and str(_equipped_pelt.get(item_name, "")) == "oso":
+		r += 0.10
+	return clampf(r, 0.0, 0.85)
+
 func _soaked_each_equipped(amount: float) -> void:
 	for slot in SLOT_WET_WEIGHT:
 		var item = _equipped_item_for_slot(slot)
 		if item != null:
-			item.wetness = minf(1.0, item.wetness + amount)
+			item.wetness = minf(1.0, item.wetness + amount * (1.0 - _water_resist_for(str(item.item_name))))
 
 func _dry_each_equipped(amount: float) -> void:
 	for slot in SLOT_WET_WEIGHT:
@@ -5215,14 +5234,18 @@ func _dry_inventory_items(amount: float) -> void:
 
 func apply_precipitation_wetness(gain: float) -> void:
 	# La lluvia empapa la ropa equipada; la piel solo se moja donde queda
-	# descubierta (más un poco de traspaso bajo la ropa empapada).
+	# descubierta (más un poco de traspaso bajo la ropa empapada). Las prendas
+	# de piel repelen parte del agua y también dejan pasar menos a la piel.
 	var covered := 0.0
+	var covered_leaky := 0.0
 	for slot in SLOT_WET_WEIGHT:
 		var item = _equipped_item_for_slot(slot)
 		if item != null:
-			item.wetness = minf(1.0, item.wetness + gain)
+			var resist := _water_resist_for(str(item.item_name))
+			item.wetness = minf(1.0, item.wetness + gain * (1.0 - resist))
 			covered += float(SLOT_WET_WEIGHT[slot])
-	wetness = minf(1.0, wetness + gain * ((1.0 - covered) + 0.2 * covered))
+			covered_leaky += float(SLOT_WET_WEIGHT[slot]) * (1.0 - resist)
+	wetness = minf(1.0, wetness + gain * ((1.0 - covered) + 0.2 * covered_leaky))
 	_recalculate_warmth(false)
 	if stats != null:
 		stats.wetness = _effective_wetness()

@@ -99,7 +99,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004
 	wetness = max(0.0, wetness - delta * dry_rate)
 
-	var protection: float = clamp(warmth + warmth_bonus, 0.0, 1.5)
+	var protection: float = clamp(warmth + warmth_bonus, 0.0, 3.0)
 	# Outdoor equilibrium is lower than the sheltered core temperature. This
 	# makes a mild 21°C environment visibly affect the character instead of
 	# leaving the body fixed at 36.6-37°C until the weather becomes extreme.

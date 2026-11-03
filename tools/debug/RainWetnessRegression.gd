@@ -192,6 +192,60 @@ func run() -> void:
 	player._rain_wetting = true
 	player._update_water_state(1.0)
 	check(spare.wetness < 0.8, "Stored wet clothing dries even with dry skin during rain")
+	# ---- Pelt clothing: much warmer and water repellent ----
+	# Clear stale equipped_slot metas so each slot resolves to the pelt item.
+	jacket.set_meta("equipped_slot", "")
+	shoes.set_meta("equipped_slot", "")
+	var fur = ItemScript.create("Chaqueta de piel", "clothing", 1.8)
+	player.inventory.items.append(fur)
+	fur.set_meta("equipped_slot", "torso")
+	player._equipped_slots["torso"] = "Chaqueta de piel"
+	fur.wetness = 0.0
+	jacket.wetness = 0.0
+	player.wetness = 0.0
+	player.apply_precipitation_wetness(0.5)
+	check(fur.wetness < 0.25, "Pelt jacket repels most rain")
+	check(player.wetness < 0.32, "Skin under pelt stays drier in rain")
+	fur.wetness = 0.0
+	player._equipped_pelt["Chaqueta de piel"] = "oso"
+	player.apply_precipitation_wetness(0.5)
+	check(fur.wetness < 0.18, "Bear pelt is even more waterproof")
+	player._equipped_pelt.erase("Chaqueta de piel")
+
+	# Full pelt set exceeds the old 1.5 protection cap — it needed the raise.
+	fur.wetness = 0.0
+	var fw_parts := {"legs": "Pantalones de piel", "feet": "Botas de piel", "hands": "Guantes de piel", "head": "Gorro de piel"}
+	for fslot in fw_parts:
+		var fi = ItemScript.create(fw_parts[fslot], "clothing", 1.0)
+		player.inventory.items.append(fi)
+		fi.set_meta("equipped_slot", fslot)
+		player._equipped_slots[fslot] = fw_parts[fslot]
+	player._recalculate_warmth(false)
+	check(player.stats.warmth_bonus > 3.5, "Full pelt set insulates far beyond the old cap")
+	var pelt_warmth: float = player.stats.warmth_bonus
+	player._equipped_pelt["Chaqueta de piel"] = "oso"
+	player._recalculate_warmth(false)
+	check(player.stats.warmth_bonus > pelt_warmth, "Bear pelt adds extra warmth")
+	player._equipped_pelt.erase("Chaqueta de piel")
+	for fslot in fw_parts:
+		player._equipped_item_for_slot(fslot).wetness = 1.0
+	fur.wetness = 1.0
+	player._recalculate_warmth(false)
+	check(player.stats.warmth_bonus > 1.5, "Soaked pelt keeps more warmth than soaked cloth")
+
+	# Higher protection keeps the body warmer in the cold (clamp raised 1.5 -> 3.0).
+	var cold_fur := StatsScript.new()
+	world.add_child(cold_fur)
+	cold_fur.warmth_bonus = 3.0
+	for i in range(120):
+		cold_fur.tick(0.5, false, -5.0, false)
+	var cold_cloth := StatsScript.new()
+	world.add_child(cold_cloth)
+	cold_cloth.warmth_bonus = 1.5
+	for i in range(120):
+		cold_cloth.tick(0.5, false, -5.0, false)
+	check(cold_fur.body_temperature > cold_cloth.body_temperature + 0.2, "Pelt-grade protection keeps you warmer in the cold")
+
 	for temperature in [32.0, 36.6, 39.0]:
 		player.stats.body_temperature = temperature
 		player.stats.warmth_bonus = 9.0
