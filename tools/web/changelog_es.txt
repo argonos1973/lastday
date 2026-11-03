@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+85712a3|El frio drena la salud a la mitad de velocidad: hipotermia profunda -2/s (antes -4/s) y frio leve -0.5/s — el calor sigue igual de letal
 5a00029|Estar mojado enfria bastante menos: la humedad baja la temperatura corporal a la mitad de lo que bajaba — empapado a 18 grados solo llega a frio leve; la hipotermia grave exige frio de verdad o remojo sin refugio
 215ffcd|La ropa seca ya no sale humeda al vestirla salvo que la piel este realmente empapada (y aun asi queda solo ligeramente humeda y se seca en segundos)
 4d96919|La stamina dura bastante mas: el sprint gasta ~40% menos de energia y el salto pasa de 15 a 10 de coste — sin cambios en la regeneracion ni en el castigo por ir muy cargado
