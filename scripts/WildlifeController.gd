@@ -108,6 +108,7 @@ var _track_acc := 0.0
 var _track_side := 1.0
 
 static var _scene_cache := {}
+static var _audio_cache := {}
 static var _shared_sphere: SphereMesh = null
 static var _shared_cylinder: CylinderMesh = null
 
@@ -408,9 +409,9 @@ func _escape_if_trapped_impl(delta: float) -> bool:
 	return true
 
 func _exit_tree() -> void:
-	_scene_cache.clear()
-	_shared_sphere = null
-	_shared_cylinder = null
+	# Do not clear the static _scene_cache when a single animal dies mid-game —
+	# doing so forced the next spawned wildlife to hit disk/ResourceLoader again.
+	pass
 
 static var perf_usec := 0
 static var perf_parts := {}
@@ -3367,6 +3368,25 @@ func _spawn_local_blood_burst(at_pos: Vector3) -> void:
 	drops.emitting = true
 	drops.finished.connect(drops.queue_free)
 
+func _get_cached_audio_stream(path: String) -> AudioStream:
+	if _audio_cache.has(path):
+		return _audio_cache[path]
+	var stream: AudioStream = null
+	if ResourceLoader.exists(path):
+		stream = load(path)
+	if stream == null:
+		var disk_path := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(disk_path):
+			if path.get_extension().to_lower() == "mp3":
+				stream = AudioStreamMP3.load_from_file(disk_path)
+			else:
+				stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream is AudioStreamMP3:
+		(stream as AudioStreamMP3).loop = false
+	if stream != null:
+		_audio_cache[path] = stream
+	return stream
+
 func _play_pain_sound() -> void:
 	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_dedicated_server:
@@ -3383,13 +3403,7 @@ func _play_pain_sound() -> void:
 		_wolf_pain_player.name = "PainSound"
 		add_child(_wolf_pain_player)
 	var path := "res://assets/audio/loboherido.wav" if (animal_type == "wolf" or animal_type == "bear") else "res://assets/audio/animal_herido.wav"
-	var stream: AudioStream = null
-	if ResourceLoader.exists(path):
-		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
+	var stream := _get_cached_audio_stream(path)
 	if stream == null:
 		return
 	_wolf_pain_player.stop()
@@ -3524,17 +3538,9 @@ func _play_wolf_sound(sound_type: String) -> void:
 		if _wolf_howl_2d_player.playing:
 			return
 		var path := "res://assets/external/audio/downloaded/aullidos.mp3"
-		var stream: AudioStream = null
-		if ResourceLoader.exists(path):
-			stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-		if stream == null:
-			var disk_path := ProjectSettings.globalize_path(path)
-			if FileAccess.file_exists(disk_path):
-				stream = AudioStreamMP3.load_from_file(disk_path)
+		var stream := _get_cached_audio_stream(path)
 		if stream == null:
 			return
-		if stream is AudioStreamMP3:
-			(stream as AudioStreamMP3).loop = false
 		_wolf_howl_2d_player.stream = stream
 		var vol := -6.0 - (dist_h / 40.0) * 14.0
 		if player_node_h != null and player_node_h.has_meta("in_house") and player_node_h.get_meta("in_house", false):
@@ -3564,20 +3570,9 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/audio/quejidohambrelobo.mp3"
 		_:
 			return
-	var stream: AudioStream = null
-	if ResourceLoader.exists(path):
-		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			if path.get_extension().to_lower() == "mp3":
-				stream = AudioStreamMP3.load_from_file(disk_path)
-			else:
-				stream = AudioStreamWAV.load_from_file(disk_path)
+	var stream := _get_cached_audio_stream(path)
 	if stream == null:
 		return
-	if stream is AudioStreamMP3:
-		(stream as AudioStreamMP3).loop = false
 	_wolf_audio_player.stream = stream
 	if is_bear:
 		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0

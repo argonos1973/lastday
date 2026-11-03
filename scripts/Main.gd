@@ -230,6 +230,7 @@ func _wildlife_respawn_ready(species: String) -> bool:
 	var delay := BEAR_RESPAWN_DELAY if species == "bear" else WILDLIFE_RESPAWN_DELAY
 	return Time.get_unix_time_from_system() - float(_wildlife_death_time.get(species, -1e9)) >= delay
 var _server_save_timer := 0.0
+var _server_save_task := -1
 var _perf_probe := 0.0
 # Dedicated-server graceful shutdown: stdin console commands, stop-file poll
 # (tools/stop_server.sh touches it) and the OS close request.
@@ -893,6 +894,7 @@ func _exit_tree() -> void:
 	if net != null and net.is_connected and not net.is_dedicated_server:
 		if not _quit_final_sent:
 			_send_final_state()
+	_wait_pending_server_save()
 	for cached_scene in external_scene_cache.values():
 		if cached_scene is Node:
 			(cached_scene as Node).free()
@@ -2030,9 +2032,7 @@ func _save_world_change_silent() -> void:
 		return
 	var sgm = get_node_or_null("/root/SaveGameManager")
 	if sgm != null and player != null and is_instance_valid(player):
-		var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
-		if SaveGameHooksScript != null:
-			sgm.save_game(SaveGameHooksScript.collect_player_data(player), SaveGameHooksScript.collect_world_data(self))
+		sgm.save_game(SaveGameHooks.collect_player_data(player), SaveGameHooks.collect_world_data(self))
 
 const _SERVER_PLAYER_FIELDS := {
 	"inventory": "saved_inventory",
@@ -2051,12 +2051,14 @@ const _SERVER_PLAYER_FIELDS := {
 	"extra": "saved_extra",
 }
 
+func _wait_pending_server_save() -> void:
+	if _server_save_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_server_save_task)
+		_server_save_task = -1
+
 func _save_server_world() -> void:
 	var sgm = get_node_or_null("/root/SaveGameManager")
 	if sgm == null:
-		return
-	var SaveGameHooksScript = load("res://scripts/SaveGameHooks.gd")
-	if SaveGameHooksScript == null:
 		return
 	var players := _collect_server_players()
 	# _server_saved_players is a persistent baseline: entries are kept after a
@@ -2072,7 +2074,12 @@ func _save_server_world() -> void:
 				if not rec.has(k):
 					rec[k] = baseline[k]
 	_server_saved_players = players.duplicate(true)
-	sgm.save_server_game(SaveGameHooksScript.collect_world_data(self), players)
+	var world_data: Dictionary = SaveGameHooks.collect_world_data(self)
+	var players_snapshot: Dictionary = players.duplicate(true)
+	# Reclaim the previous finished task ID and dispatch the atomic JSON write
+	# on a worker with isolated snapshots so the main thread never stalls on I/O.
+	_wait_pending_server_save()
+	_server_save_task = WorkerThreadPool.add_task(sgm.save_server_game.bind(world_data, players_snapshot))
 
 # Dedicated server counterpart of apply_saved_world_data: restores the state the
 # server relays to clients (drop lists, campfires, doors, corpses, rowboat).
@@ -2578,6 +2585,7 @@ func _request_server_shutdown() -> void:
 	if _server_shutdown_started:
 		return
 	_server_shutdown_started = true
+	_wait_pending_server_save()
 	# The server world is per-session: on shutdown the save is deleted so no
 	# doors/drops/loot/player records ever reach the next boot. Mid-session
 	# autosaves still run (60 s timer + 'save' command) for in-session state.
@@ -8427,9 +8435,6 @@ func _create_barn_grass(origin: Vector3, half_w: float, half_d: float, ground_y:
 		_queue_grass_instance(pos, h, r, c)
 
 func _create_new_world_props() -> void:
-	var _dbg_file := FileAccess.open("user://scrap_car_debug.txt", FileAccess.WRITE)
-	if _dbg_file:
-		_dbg_file.store_line("=== _create_new_world_props START ===")
 	var space_state := get_world_3d().direct_space_state
 	# Abandoned junk car on the road (angled across road)
 	var car_s := Vector3.ONE * 2.0
@@ -8454,14 +8459,7 @@ func _create_new_world_props() -> void:
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
 	var scrap_rot := Vector3(0, -40, 0)
 	var scrap_ground_y := NodeUtils.raycast_ground_y(space_state, scrap_pos)
-	if _dbg_file:
-		_dbg_file.store_line("scrap_ground_y=" + str(scrap_ground_y) + " pos=" + str(scrap_pos) + " scale=" + str(scrap_s))
-		_dbg_file.close()
 	var scrap_ok := _try_instance_external_scene([SCRAP_BARRICADE_CAR_MODEL], "ScrapBarricadeCar", scrap_pos, scrap_s, scrap_rot, true, scrap_ground_y)
-	_dbg_file = FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE)
-	if _dbg_file:
-		_dbg_file.seek_end()
-		_dbg_file.store_line("scrap_ok=" + str(scrap_ok))
 	if scrap_ok:
 		var scrap_node := get_node_or_null("ScrapBarricadeCar")
 		var scrap_height := 2.5
@@ -8470,29 +8468,11 @@ func _create_new_world_props() -> void:
 			sn.force_update_transform()
 			sn.position.y += SCRAP_CAR_Y_CORRECTION
 			_disable_emission_recursive(sn)
-			if _dbg_file:
-				_dbg_file.store_line("final_pos=" + str(sn.global_position) + " ground_y=" + str(scrap_ground_y))
 			scrap_height = 1.0
-			if _dbg_file:
-				_dbg_file.store_line("height=" + str(scrap_height))
 		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(2.0, scrap_height, 4.0), float(scrap_rot.y))
 		var _sc := get_node_or_null("ScrapBarricadeCarCollision")
 		if _sc != null:
 			_sc.add_to_group("prop_collision")
-		if _dbg_file:
-			_dbg_file.store_line("=== MESH HIERARCHY DUMP ===")
-			var _meshes := []
-			NodeUtils.collect_mesh_instances(scrap_node, _meshes)
-			for _mi in _meshes:
-				var _mi3d := _mi as MeshInstance3D
-				if _mi3d and _mi3d.mesh:
-					_mi3d.force_update_transform()
-					var _aabb := _mi3d.get_aabb()
-					var _waabb := _mi3d.global_transform * _aabb
-					_dbg_file.store_line("  mesh=" + str(_mi3d.name) + " local_aabb=" + str(_aabb) + " world_aabb=" + str(_waabb) + " parent_path=" + str(_mi3d.get_parent().get_path()))
-	if _dbg_file:
-		_dbg_file.store_line("=== _create_new_world_props END ===")
-		_dbg_file.close()
 	var cont_s := Vector3.ONE * 1.0
 	var cont_positions := [
 		{"pos": Vector3(14.0, 0.0, -50.0), "rot": Vector3(0, 0, 0)},
@@ -19904,22 +19884,13 @@ func _snap_node_bottom_to_y(node: Node3D, ground_y: float) -> void:
 		node.force_update_transform()
 
 func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, scale_value: Vector3) -> void:
-	var _snap_dbg := FileAccess.open("user://scrap_car_debug.txt", FileAccess.READ_WRITE) if path.contains("scrap_barricade") else null
-	if _snap_dbg:
-		_snap_dbg.seek_end()
-		_snap_dbg.store_line("[SNAP] path=" + path + " ground_y=" + str(ground_y) + " scale=" + str(scale_value) + " node_pos=" + str(node.global_position))
 	if _snap_offset_cache.has(path):
 		var unit_offset: float = float(_snap_offset_cache[path])
 		node.global_position.y += ground_y - unit_offset * scale_value.y
-		if _snap_dbg:
-			_snap_dbg.store_line("[SNAP] cached unit_offset=" + str(unit_offset) + " new_pos_y=" + str(node.position.y))
-			_snap_dbg.close()
 		return
 	node.force_update_transform()
 	var meshes := []
 	NodeUtils.collect_mesh_instances(node, meshes)
-	if _snap_dbg:
-		_snap_dbg.store_line("[SNAP] mesh_count=" + str(meshes.size()))
 	var min_local_y := 1000000.0
 	for mesh_node in meshes:
 		var mesh_instance := mesh_node as MeshInstance3D
@@ -19930,19 +19901,10 @@ func _snap_node_bottom_to_y_cached(node: Node3D, ground_y: float, path: String, 
 		var world_aabb: AABB = mesh_instance.global_transform * local_aabb
 		var local_bottom := world_aabb.position.y - node.global_position.y
 		min_local_y = min(min_local_y, local_bottom)
-	if _snap_dbg:
-		_snap_dbg.store_line("[SNAP] min_local_y=" + str(min_local_y))
 	if min_local_y < 999999.0:
 		var unit_offset := min_local_y / scale_value.y
 		_snap_offset_cache[path] = unit_offset
 		node.global_position.y += ground_y - min_local_y
-		if _snap_dbg:
-			_snap_dbg.store_line("[SNAP] adjusted pos_y=" + str(node.position.y) + " unit_offset=" + str(unit_offset))
-			_snap_dbg.close()
-	else:
-		if _snap_dbg:
-			_snap_dbg.store_line("[SNAP] WARNING: no valid meshes found for " + path)
-			_snap_dbg.close()
 
 
 func _spawn_external(path: String, node_name: String, pos: Vector3, scale_value: Vector3, rot: Vector3, collision_size: Vector3 = Vector3.ZERO) -> bool:

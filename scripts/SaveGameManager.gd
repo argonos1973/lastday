@@ -81,14 +81,21 @@ func save_game(player_data: Dictionary, world_data: Dictionary) -> bool:
 	return true
 
 # Server world persistence — separate file, never touches the single-player save
+# Serializes worker-thread saves (Main posts the 60s autosave off the main
+# thread, so a disconnect save landing on top can never interleave writes).
+var _server_save_mutex := Mutex.new()
+
 func save_server_game(world_data: Dictionary, players_data: Dictionary) -> bool:
+	_server_save_mutex.lock()
 	var data := {
 		"version": SAVE_VERSION,
 		"timestamp": Time.get_unix_time_from_system(),
 		"world": world_data,
 		"players": players_data,
 	}
-	return _write_save_atomic(SERVER_TEMP_PATH, SERVER_SAVE_PATH, SERVER_BACKUP_PATH, data)
+	var ok := _write_save_atomic(SERVER_TEMP_PATH, SERVER_SAVE_PATH, SERVER_BACKUP_PATH, data)
+	_server_save_mutex.unlock()
+	return ok
 
 func has_server_save() -> bool:
 	return FileAccess.file_exists(SERVER_SAVE_PATH)

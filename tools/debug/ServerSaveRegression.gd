@@ -36,6 +36,14 @@ func check(ok: bool, message: String) -> void:
 		failures += 1
 		push_error(message)
 
+# _save_server_world posts the file write to WorkerThreadPool — wait for the
+# pending task so save assertions see the file synchronously.
+func _flush_save(world: Node) -> void:
+	var task: int = world.get("_server_save_task") if world.get("_server_save_task") != null else -1
+	if task >= 0:
+		WorkerThreadPool.wait_for_task_completion(task)
+		world.set("_server_save_task", -1)
+
 func _initialize() -> void:
 	call_deferred("run")
 
@@ -110,6 +118,7 @@ func run() -> void:
 	world._server_saved_players["cid_ghost"] = {"pos": [1.0, 0.4, 2.0], "inventory": [{"name": "Pan"}]}
 
 	world._save_world_change_silent()
+	_flush_save(world)
 	check(sgm.has_server_save(), "dedicated server writes server_savegame.json")
 	var ssave: Dictionary = sgm.load_server_game()
 	check(ssave.has("world"), "server save contains world data")
@@ -215,6 +224,7 @@ func run() -> void:
 	world.server_proxies[77] = bare
 	net.players[77] = {"client_id": "cid_race", "char_name": "RaceChar"}
 	world._save_world_change_silent()
+	_flush_save(world)
 	var merged: Dictionary = sgm.load_server_game().get("players", {}).get("cid_race", {})
 	check(not merged.is_empty(), "bare proxy still produces a player record")
 	check(merged.has("health") and float(merged.get("health")) == 66.0, "baseline fills health stripped from bare proxy")
@@ -355,6 +365,7 @@ func run() -> void:
 	world.add_child(host_player)
 	world.player = host_player
 	world._save_server_world()
+	_flush_save(world)
 	var hsave: Dictionary = sgm.load_server_game()
 	check(hsave.get("players", {}).has("host_cid"), "host saves own player under client_id")
 	check(_local_save_hash(sgm) == local_hash_before, "host save still leaves local savegame.json alone")

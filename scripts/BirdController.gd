@@ -65,7 +65,8 @@ var _has_fish := false
 var _fish_mesh: MeshInstance3D = null
 var _fish_eat_timer := 0.0
 var _animation_player: AnimationPlayer = null
-var _scene_cache: Dictionary = {}
+static var _scene_cache: Dictionary = {}
+static var _audio_cache: Dictionary = {}
 
 # Boids state
 var flock_id := 0
@@ -885,14 +886,17 @@ func _spawn_hit_feedback() -> void:
 		dist = global_position.distance_to((player_node as Node3D).global_position)
 	if dist > 18.0:
 		return
-	var stream: AudioStream = null
 	var path := "res://assets/audio/pajaro_herido.wav"
-	if ResourceLoader.exists(path):
-		stream = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	var stream: AudioStream = _audio_cache.get(path, null)
 	if stream == null:
-		var disk_path := ProjectSettings.globalize_path(path)
-		if FileAccess.file_exists(disk_path):
-			stream = AudioStreamWAV.load_from_file(disk_path)
+		if ResourceLoader.exists(path):
+			stream = load(path)
+		if stream == null:
+			var disk_path := ProjectSettings.globalize_path(path)
+			if FileAccess.file_exists(disk_path):
+				stream = AudioStreamWAV.load_from_file(disk_path)
+		if stream != null:
+			_audio_cache[path] = stream
 	if stream == null:
 		return
 	var player := AudioStreamPlayer3D.new()

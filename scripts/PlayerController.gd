@@ -547,6 +547,7 @@ signal item_dropped(item_name: String, item_type: String, item_weight: float, it
 @export var min_jump_stamina := 10.0
 
 static var _model_cache: Dictionary = {}
+static var _audio_cache: Dictionary = {}
 var stats
 var inventory
 var equipment
@@ -15368,6 +15369,8 @@ func _embed_stuck_projectile_visual(hit_pos: Vector3, fdir: Vector3, item_name: 
 	pickup_node.global_transform = Transform3D(world_basis, hit_pos)
 
 func _load_wav_stream(path: String) -> AudioStream:
+	if _audio_cache.has(path):
+		return _audio_cache[path]
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)
@@ -15375,9 +15378,13 @@ func _load_wav_stream(path: String) -> AudioStream:
 		var disk_path := ProjectSettings.globalize_path(path)
 		if FileAccess.file_exists(disk_path):
 			stream = AudioStreamWAV.load_from_file(disk_path)
+	if stream != null:
+		_audio_cache[path] = stream
 	return stream
 
 func _load_audio_stream(path: String) -> AudioStream:
+	if _audio_cache.has(path):
+		return _audio_cache[path]
 	var stream: AudioStream = null
 	if ResourceLoader.exists(path):
 		stream = load(path)
@@ -15390,6 +15397,8 @@ func _load_audio_stream(path: String) -> AudioStream:
 				stream = AudioStreamWAV.load_from_file(disk_path)
 	if stream is AudioStreamMP3:
 		(stream as AudioStreamMP3).loop = false
+	if stream != null:
+		_audio_cache[path] = stream
 	return stream
 
 func _play_shot_received_sound() -> void:

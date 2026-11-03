@@ -314,9 +314,11 @@ func _load_first_stream(paths: Array) -> AudioStream:
 
 func _load_stream_from_path(path: String) -> AudioStream:
 	if ResourceLoader.exists(path):
-		var loaded = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		# load() cachea: sin ella cada reproducción leía y decodificaba de disco.
+		# Duplicar evita que _make_loop mute la instancia compartida en ResourceLoader.
+		var loaded = load(path)
 		if loaded is AudioStream:
-			return loaded
+			return (loaded as AudioStream).duplicate()
 	var disk_path := ProjectSettings.globalize_path(path) if path.begins_with("res://") else path
 	if path.get_extension().to_lower() == "wav" and FileAccess.file_exists(disk_path):
 		var wav_stream := AudioStreamWAV.load_from_file(disk_path)
