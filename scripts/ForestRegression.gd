@@ -97,6 +97,11 @@ func run() -> void:
 	world._append_lake_forest(lake_batches, lake_positions)
 	check(lake_positions.size() > 100, "Lake forest uses existing tree assets")
 	check(world._tree_entries_by_id.size() == lake_positions.size(), "Lake trees registered for chopping and depletion")
+	var sample_entry: Dictionary = world._tree_entries_by_id.values()[0]
+	world._activate_tree(sample_entry)
+	var act_node := world.get_node_or_null(str(sample_entry.visual_name)) as Node3D
+	check(act_node != null and act_node.global_position.distance_to(sample_entry.pos) < 0.05, "Activated tree stays at its world position when player approaches")
+	world._deactivate_tree(sample_entry)
 	var tree_count := lake_positions.size()
 	world._append_lake_forest(lake_batches, lake_positions)
 	check(lake_positions.size() == tree_count, "Lake tree batching avoids existing trunks")

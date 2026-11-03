@@ -17848,7 +17848,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 	var mi := Node3D.new()
 	mi.name = visual_name
 	if src_transform != Transform3D.IDENTITY:
-		mi.global_transform = src_transform
+		mi.transform = src_transform
 	else:
 		var tree_scale := _tree_rng.randf_range(0.8, 1.4)
 		var up_fix_deg: float = entry.get("up_fix_deg", -90.0)
@@ -18001,6 +18001,7 @@ func _deactivate_tree(entry: Dictionary) -> void:
 			if not visual_name.is_empty():
 				var vis_node := get_node_or_null(visual_name)
 				if vis_node != null:
+					remove_child(vis_node)
 					vis_node.queue_free()
 			_show_multimesh_tree_at(entry.pos)
 	entry.active = false

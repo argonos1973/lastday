@@ -263,6 +263,10 @@ static func _adapt_forest_to_mountain(world: Node3D) -> void:
 				if hm_y > pos.y + 0.2 and mm_slots.has(skey):
 					var new_pos := Vector3(pos.x, hm_y, pos.z)
 					entry["pos"] = new_pos
+					if entry.has("mm_transform"):
+						var entry_xf: Transform3D = entry["mm_transform"]
+						entry_xf.origin.y = hm_y
+						entry["mm_transform"] = entry_xf
 					for slot in mm_slots[skey]:
 						var mm: MultiMesh = slot[0]
 						var idx: int = slot[1]
