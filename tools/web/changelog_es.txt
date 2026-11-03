@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+f14d33a|Corregido que el lobo domesticado se re-vinculara al nuevo personaje cuando su dueno moria y volvia a entrar antes de terminar el luto, y corregido el doble silbido para que cace y alcance ciervos cercanos sin bloquearse
 7b26c20|Corregido el bug por el que los arboles desaparecian al acercarse el personaje (y reaparecian al alejarse) cuando se activaban para poder talarlos
 5c8aae5|Curva del desvio a la montana continua y despejada de arboles, con el antiguo tramo norte cerrado de bosque y hierba desde el mismo desvio hasta el final del mapa
 1da9e19|La carretera de montaña enlaza ahora con la principal, que muere en el desvío y queda reforestada al norte, con arcenes de hierba; la base militar de la cima tiene botín (tiendas, pie de torre, torre de vigilancia y nido del piso 6) y la torre de comunicaciones luce texturas reales, antenas de panel, canales de cable y caseta de servicio
