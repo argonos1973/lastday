@@ -2471,8 +2471,10 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 				if it != null and it != item_ref and str(it.get_meta("equipped_slot", "")) == slot:
 					it.remove_meta("equipped_slot")
 			item_ref.set_meta("equipped_slot", slot)
-			# Vestirse con la piel empapada traspasa algo de humedad a la ropa.
-			item_ref.wetness = maxf(float(item_ref.wetness), wetness * 0.35)
+			# Vestirse con la piel empapada traspasa algo de humedad a la ropa:
+			# solo si la piel supera el 50% y como mucho ~20% (calcetines secos
+			# sobre pies empapados quedan apenas humedos, no mojados).
+			item_ref.wetness = maxf(float(item_ref.wetness), maxf(0.0, wetness - 0.5) * 0.4)
 			if stats != null:
 				stats.wetness = _effective_wetness()
 		# Equipping a tactical vest guarantees its 5 magazines (25 rounds) of

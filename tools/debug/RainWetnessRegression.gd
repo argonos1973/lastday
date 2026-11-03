@@ -117,7 +117,7 @@ func run() -> void:
 	player._equipped_slots["torso"] = "Chaqueta militar"
 	jacket.set_meta("equipped_slot", "torso")
 	# equip path traspasa algo de humedad de la piel a la prenda
-	jacket.wetness = maxf(jacket.wetness, player.wetness * 0.35)
+	jacket.wetness = maxf(jacket.wetness, maxf(0.0, player.wetness - 0.5) * 0.4)
 	player.stats.wetness = player._effective_wetness()
 	check(player.stats.wetness < 0.8, "Equipping a dry jacket lowers effective wetness")
 	check(player.stats.wetness > 0.3, "Wet skin under clothes still counts")
@@ -227,6 +227,19 @@ func run() -> void:
 	check(player._equipped_item_for_slot("torso") == dry_jacket, "Stale slot meta on a spare cannot hijack wetness")
 	check(player._effective_wetness() < 0.01, "Stale meta does not leak wetness")
 	stale.remove_meta("equipped_slot")
+
+	# Skin transfer only dampens fresh clothing when the skin is truly soaked.
+	player.wetness = 0.4
+	var damp_shoes = ItemScript.create("Zapatillas", "clothing", 0.4)
+	player.inventory.items.append(damp_shoes)
+	player.equip_clothing("Zapatillas", Color(0, 0, 0, 0), damp_shoes)
+	check(damp_shoes.wetness < 0.02, "Lightly wet skin does not dampen fresh shoes")
+	player.wetness = 1.0
+	var soaked_shoes = ItemScript.create("Zapatillas", "clothing", 0.4)
+	player.inventory.items.append(soaked_shoes)
+	player.equip_clothing("Zapatillas", Color(0, 0, 0, 0), soaked_shoes)
+	check(soaked_shoes.wetness > 0.15 and soaked_shoes.wetness < 0.25, "Soaked skin leaves fresh shoes only damp")
+	player.wetness = 0.0
 
 	# ---- Pelt clothing: much warmer and water repellent ----
 	# Clear stale equipped_slot metas so each slot resolves to the pelt item.
