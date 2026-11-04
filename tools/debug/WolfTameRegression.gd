@@ -67,6 +67,9 @@ class TestProxy extends Node3D:
 	var _puppet_held := ""
 
 class TestWolf extends WildlifeController:
+	var block_patrol := false
+	func _is_position_allowed(pos: Vector3) -> bool:
+		return false if block_patrol else super._is_position_allowed(pos)
 	func _play_wolf_sound(_kind: String) -> void:
 		pass
 	func _update_wolf_sounds(_delta: float) -> void:
@@ -253,6 +256,15 @@ func run() -> void:
 	check(wolf2._wolf_foe == null, "Combat cannot bypass the owner-distance leash")
 	player.position = old_owner_pos
 	wolf2.position = wild.position + Vector3(2, 0, 0)
+
+	var guard := make_wolf(world, player.global_position + Vector3(3, 0, 0))
+	guard.tamed_to = "local"
+	guard.block_patrol = true
+	guard.apply_command("patrol")
+	check(guard.patrol_points.size() >= 2 and guard.patrol_points.all(func(p): return p == guard.position), "Blocked patrol never invents a waypoint inside an obstacle")
+	var guard_result := guard._tamed_ai(0.05)
+	check(guard_result["speed"] == 0.0, "Patrol waits when there are no safe destinations")
+	guard.queue_free()
 
 	# --- 9. Defensa contra jugador hostil ---
 	var hostile := make_proxy(world, 9, wolf2.global_position + Vector3(8, 0, 0))

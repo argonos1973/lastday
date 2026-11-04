@@ -2859,11 +2859,14 @@ func _tamed_ai(delta: float) -> Dictionary:
 	if _follow_mode == "patrol":
 		_state = "patrol"
 		if patrol_points.size() < 2:
-			patrol_points = [_stay_pos, _stay_pos + Vector3(2.0, 0.0, 0.0)]
+			patrol_points = [_stay_pos, _stay_pos]
 		var ptgt: Vector3 = patrol_points[target_index % patrol_points.size()]
 		if global_position.distance_to(ptgt) < 1.8:
 			target_index = (target_index + 1) % patrol_points.size()
 			ptgt = patrol_points[target_index]
+		if global_position.distance_to(ptgt) < 1.8 and patrol_points.all(func(p): return p.distance_to(ptgt) < 0.01):
+			_play_animation_by_name("idle")
+			return {"handled": true, "target": global_position, "speed": 0.0}
 		_play_animation_by_name("walk")
 		return {"handled": true, "target": ptgt, "speed": move_speed}
 	# Seguir al dueño con offset lateral (~2.6 m), histéresis de descanso y
@@ -3269,7 +3272,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 		if patrol_points.is_empty():
 			patrol_points.append(_stay_pos)
 		if patrol_points.size() < 2:
-			patrol_points.append(_stay_pos + Vector3(2.0, 0.0, 0.0))
+			patrol_points.append(patrol_points[0])
 		target_index = 0
 		_path_recalc_timer = 0.0
 	var owner := _resolve_owner()

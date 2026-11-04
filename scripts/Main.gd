@@ -2074,7 +2074,7 @@ func _save_server_world() -> void:
 				if not rec.has(k):
 					rec[k] = baseline[k]
 	_server_saved_players = players.duplicate(true)
-	var world_data: Dictionary = SaveGameHooks.collect_world_data(self)
+	var world_data: Dictionary = SaveGameHooks.collect_world_data(self).duplicate(true)
 	var players_snapshot: Dictionary = players.duplicate(true)
 	# Reclaim the previous finished task ID and dispatch the atomic JSON write
 	# on a worker with isolated snapshots so the main thread never stalls on I/O.
