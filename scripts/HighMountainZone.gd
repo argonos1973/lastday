@@ -260,6 +260,7 @@ static func create(world: Node3D, server_only: bool = false) -> void:
 		_build_mountain_road_verges(world)
 		_adapt_forest_to_mountain(world)
 		_build_mountain_alpine_forest(world, root)
+		_build_mountain_rock_outcrops(world, root)
 
 	_build_summit_military_base(world, root, server_only)
 
@@ -580,58 +581,130 @@ static func _build_mountain_alpine_forest(world: Node3D, parent: Node3D) -> void
 			parent.add_child(bmmi)
 
 
-static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
-	# Malla de terreno continua para el macizo Noroeste (-510..-220 en X y Z)
+static func _sculpted_vertex_height_and_ao(x: float, z: float) -> Vector2:
+	var base_h := ground_height_at(Vector3(x, 0.0, z))
+	if base_h <= 0.05:
+		return Vector2(base_h, 0.90)
+	var p := Vector2(x, z)
+	var d_summit := p.distance_to(SUMMIT_CENTER)
+	var plateau_mask := clampf((d_summit - (PLATEAU_RADIUS + 3.2)) / 11.0, 0.0, 1.0)
+	var foot_mask := clampf((base_h - 1.4) / 5.5, 0.0, 1.0)
+	var road_mask := 1.0
+	var road_cut_ao := 0.0
+	if x < -235.0 and z < -240.0 and d_summit > 23.5:
+		var rinfo := _closest_mountain_road_info(p)
+		var dist_road := rinfo.x
+		road_mask = clampf((dist_road - (ROAD_HALF_W + 7.2)) / 6.5, 0.0, 1.0)
+		if dist_road > ROAD_HALF_W and dist_road < ROAD_HALF_W + 6.5:
+			road_cut_ao = (1.0 - absf(dist_road - (ROAD_HALF_W + 2.2)) / 4.3) * 0.18
+	var sculpt_mask := plateau_mask * foot_mask * road_mask
+	if sculpt_mask <= 0.001:
+		return Vector2(base_h, clampf(0.92 - road_cut_ao, 0.55, 1.0))
+
+	# Crestas radiales (arétes) y barrancos de erosión respecto al macizo y a los picos alpinos
+	var rel_m := p - SUMMIT_CENTER
+	var ang_m := atan2(rel_m.y, rel_m.x)
+	var ridge_wave := sin(ang_m * 7.0 + d_summit * 0.035) * 0.55 + cos(ang_m * 13.0 - d_summit * 0.05) * 0.45
+	# Plegado afilado: positivo = arista rocosa, negativo = canal/barranco
+	var sharp_ridge := (1.0 - absf(ridge_wave)) * 2.0 - 1.0
+	var gully := minf(0.0, ridge_wave + 0.15)
+
+	# Escarpes y contrafuertes propios de cada pico secundario
+	var peak_ridge := 0.0
+	for pk_i in range(PEAKS.size()):
+		var pk: Dictionary = PEAKS[pk_i]
+		var c: Vector2 = pk["pos"]
+		var rel_pk := p - c
+		var r_norm := Vector2(rel_pk.x / float(pk["rx"]), rel_pk.y / float(pk["rz"])).length()
+		if r_norm > 0.08 and r_norm < 1.05:
+			var ang_pk := atan2(rel_pk.y, rel_pk.x) + float(pk_i) * 1.17
+			var pk_arm := cos(ang_pk * 5.0 + r_norm * 2.4) * 0.6 + sin(ang_pk * 9.0 - r_norm * 3.1) * 0.4
+			var pk_sharp := 1.0 - absf(pk_arm)
+			var flank_env := sin(clampf(r_norm, 0.0, 1.0) * PI)
+			peak_ridge += (pk_sharp * 2.2 - 0.85) * flank_env
+
+	# Terrazas geológicas (rock ledges) en cotas medias y altas
+	var strata_step := sin(base_h * 0.58 + sin(x * 0.045 + z * 0.038) * 1.6)
+	var ledge := clampf(strata_step, -0.7, 0.85) * 0.55
+
+	# Detalle rocoso de frecuencia media para romper la suavidad cónica
+	var crag_noise := sin(x * 0.11 + z * 0.08) * cos(x * 0.07 - z * 0.12)
+
+	var alt_scale := clampf(base_h / 42.0, 0.30, 1.35)
+	var delta_h := (sharp_ridge * 1.15 + gully * 1.35 + peak_ridge * 1.10 + ledge + crag_noise * 0.65) * alt_scale * sculpt_mask
+	var final_h := maxf(0.05, base_h + delta_h)
+	var ao := clampf(0.88 + (sharp_ridge * 0.10 + peak_ridge * 0.07 + gully * 0.22) * sculpt_mask - road_cut_ao, 0.52, 1.05)
+	return Vector2(final_h, ao)
+
+
+static func _build_mountain_terrain_mesh(_world: Node3D, parent: Node3D) -> void:
+	# Malla de terreno indexada de alta resolución para el macizo Noroeste (-510..-220 en X y Z)
 	var x0 := -510.0
 	var z0 := -510.0
 	var span := 290.0
-	var steps := 88
+	var steps := 148
 	var step := span / float(steps)
 	var uv_scale := 1.0 / 1000.0
+	var cols := steps + 1
+
+	var heights := PackedFloat32Array()
+	var aos := PackedFloat32Array()
+	heights.resize(cols * cols)
+	aos.resize(cols * cols)
+	for iz in range(cols):
+		var z := z0 + float(iz) * step
+		var row_off := iz * cols
+		for ix in range(cols):
+			var x := x0 + float(ix) * step
+			var ha := _sculpted_vertex_height_and_ao(x, z)
+			heights[row_off + ix] = ha.x
+			aos[row_off + ix] = ha.y
 
 	var st_rock := SurfaceTool.new()
 	st_rock.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var vert_idx_map := PackedInt32Array()
+	vert_idx_map.resize(cols * cols)
+	vert_idx_map.fill(-1)
+	var next_v := 0
 
 	for iz in range(steps):
-		var za := z0 + float(iz) * step
-		var zb := za + step
+		var r0 := iz * cols
+		var r1 := (iz + 1) * cols
 		for ix in range(steps):
-			var xa := x0 + float(ix) * step
-			var xb := xa + step
-			var ya0 := ground_height_at(Vector3(xa, 0.0, za))
-			var yb0 := ground_height_at(Vector3(xb, 0.0, za))
-			var yc0 := ground_height_at(Vector3(xa, 0.0, zb))
-			var yd0 := ground_height_at(Vector3(xb, 0.0, zb))
-			if ya0 <= 0.05 and yb0 <= 0.05 and yc0 <= 0.05 and yd0 <= 0.05:
+			var i00 := r0 + ix
+			var i10 := r0 + ix + 1
+			var i01 := r1 + ix
+			var i11 := r1 + ix + 1
+			if heights[i00] <= 0.05 and heights[i10] <= 0.05 and heights[i01] <= 0.05 and heights[i11] <= 0.05:
 				continue
-			var va := Vector3(xa, ya0 - 0.15, za)
-			var vb := Vector3(xb, yb0 - 0.15, za)
-			var vc := Vector3(xa, yc0 - 0.15, zb)
-			var vd := Vector3(xb, yd0 - 0.15, zb)
-
-			st_rock.set_uv(Vector2(va.x * uv_scale + 0.5, va.z * uv_scale + 0.5))
-			st_rock.add_vertex(va)
-			st_rock.set_uv(Vector2(vb.x * uv_scale + 0.5, vb.z * uv_scale + 0.5))
-			st_rock.add_vertex(vb)
-			st_rock.set_uv(Vector2(vc.x * uv_scale + 0.5, vc.z * uv_scale + 0.5))
-			st_rock.add_vertex(vc)
-
-			st_rock.set_uv(Vector2(vb.x * uv_scale + 0.5, vb.z * uv_scale + 0.5))
-			st_rock.add_vertex(vb)
-			st_rock.set_uv(Vector2(vd.x * uv_scale + 0.5, vd.z * uv_scale + 0.5))
-			st_rock.add_vertex(vd)
-			st_rock.set_uv(Vector2(vc.x * uv_scale + 0.5, vc.z * uv_scale + 0.5))
-			st_rock.add_vertex(vc)
+			for g_idx in [i00, i10, i01, i11]:
+				if vert_idx_map[g_idx] == -1:
+					var vx := x0 + float(g_idx % cols) * step
+					var vz := z0 + float(g_idx / cols) * step
+					var vy := heights[g_idx] - 0.15
+					var vao := aos[g_idx]
+					st_rock.set_color(Color(vao, vao, vao, 1.0))
+					st_rock.set_uv(Vector2(vx * uv_scale + 0.5, vz * uv_scale + 0.5))
+					st_rock.add_vertex(Vector3(vx, vy, vz))
+					vert_idx_map[g_idx] = next_v
+					next_v += 1
+			var v00 := vert_idx_map[i00]
+			var v10 := vert_idx_map[i10]
+			var v01 := vert_idx_map[i01]
+			var v11 := vert_idx_map[i11]
+			st_rock.add_index(v00)
+			st_rock.add_index(v10)
+			st_rock.add_index(v01)
+			st_rock.add_index(v10)
+			st_rock.add_index(v11)
+			st_rock.add_index(v01)
 
 	st_rock.generate_normals()
 	var rock_mesh := st_rock.commit()
 	var mi := MeshInstance3D.new()
 	mi.name = "HighMountainMassif"
 	mi.mesh = rock_mesh
-	if world.get("_cached_leafy_material") != null:
-		mi.material_override = world.get("_cached_leafy_material")
-	else:
-		mi.material_override = MaterialFactory.make_forest_ground_material()
+	mi.material_override = MaterialFactory.make_mountain_terrain_material()
 	var sb := StaticBody3D.new()
 	sb.name = "HighMountainMassifCol"
 	sb.set_collision_layer_value(1, true)
@@ -640,6 +713,128 @@ static func _build_mountain_terrain_mesh(world: Node3D, parent: Node3D) -> void:
 	sb.add_child(cs)
 	mi.add_child(sb)
 	parent.add_child(mi)
+
+
+static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void:
+	# Afloramientos de roca granítica y escarpes en taludes de carretera, laderas empinadas y crestas alpinas
+	var outcrop_paths := [
+		GameConst.LAKE_DIR + "lake_outcrop_0.glb",
+		GameConst.LAKE_DIR + "lake_outcrop_1.glb",
+		GameConst.LAKE_DIR + "lake_outcrop_2.glb",
+		GameConst.LAKE_DIR + "lake_boulder_0.glb",
+		GameConst.LAKE_DIR + "lake_boulder_1.glb",
+		GameConst.LAKE_DIR + "lake_boulder_2.glb",
+	]
+	var meshes: Array[ArrayMesh] = []
+	var mtn_mat := MaterialFactory.make_mountain_terrain_material()
+	for p in outcrop_paths:
+		if not ResourceLoader.exists(p):
+			continue
+		var sc := load(p) as PackedScene
+		if sc == null:
+			continue
+		var inst := sc.instantiate()
+		var mis: Array = []
+		NodeUtils.collect_mesh_instances(inst, mis)
+		for mnode in mis:
+			var m := (mnode as MeshInstance3D).mesh as ArrayMesh
+			if m != null and m.get_surface_count() > 0:
+				var copy_m := m.duplicate() as ArrayMesh
+				for s_i in range(copy_m.get_surface_count()):
+					copy_m.surface_set_material(s_i, mtn_mat)
+				meshes.append(copy_m)
+				break
+		inst.free()
+	if meshes.is_empty():
+		return
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0x4D524F4B # "MROK" — stream aislado
+	var buckets: Array = []
+	for _i in range(meshes.size()):
+		buckets.append([])
+
+	# 1) Escarpes y peñascos flanqueando el talud de la carretera serpenteante (fuera de la calzada)
+	var poly := get_road_polyline_3d()
+	for i in range(6, poly.size() - 2, 2):
+		var cur3: Vector3 = poly[i]
+		if cur3.y < 3.5 or cur3.y > 54.0:
+			continue
+		var next3: Vector3 = poly[i + 1]
+		var dir2 := Vector2(next3.x - cur3.x, next3.z - cur3.z).normalized()
+		var across := Vector2(-dir2.y, dir2.x)
+		for side in [-1.0, 1.0]:
+			var side_f: float = float(side)
+			if rng.randf() < 0.42:
+				continue
+			var off_d := ASPHALT_HALF_W + rng.randf_range(2.8, 6.2)
+			var rx: float = cur3.x + across.x * side_f * off_d + rng.randf_range(-1.2, 1.2)
+			var rz: float = cur3.z + across.y * side_f * off_d + rng.randf_range(-1.2, 1.2)
+			var rpos := Vector3(rx, 0.0, rz)
+			if on_road(rpos, 2.2) or _inside_military_base_compound(Vector2(rx, rz), 4.0):
+				continue
+			var gy := _sculpted_vertex_height_and_ao(rx, rz).x
+			if gy < 2.0:
+				continue
+			# Solo colocar afloramientos grandes en el lado interior (más alto que la calzada) o rocas medianas en el borde
+			var is_uphill := gy >= cur3.y - 0.15
+			var m_idx: int = rng.randi_range(0, 2) if (is_uphill and meshes.size() >= 3) else rng.randi_range(0, meshes.size() - 1)
+			var sc_xz := rng.randf_range(1.6, 3.2) if is_uphill else rng.randf_range(0.85, 1.75)
+			var sc_y := sc_xz * rng.randf_range(0.75, 1.35)
+			var basis := Basis.from_euler(Vector3(
+				deg_to_rad(rng.randf_range(-12.0, 12.0)),
+				rng.randf_range(0.0, TAU),
+				deg_to_rad(rng.randf_range(-12.0, 12.0))
+			)).scaled(Vector3(sc_xz, sc_y, sc_xz))
+			buckets[m_idx].append(Transform3D(basis, Vector3(rx, gy - sc_y * 0.22, rz)))
+
+	# 2) Riscos alpinos, contrafuertes de granito y bloques en las laderas y cumbres de los picos
+	for _k in range(210):
+		var ang := rng.randf_range(0.0, TAU)
+		var rad := rng.randf_range(40.0, 138.0)
+		var px := SUMMIT_CENTER.x + cos(ang) * rad
+		var pz := SUMMIT_CENTER.y + sin(ang) * rad
+		if px < -502.0 or pz < -502.0 or px > -220.0 or pz > -220.0:
+			continue
+		var cpos := Vector3(px, 0.0, pz)
+		if on_road(cpos, 4.5) or _inside_military_base_compound(Vector2(px, pz), 5.0):
+			continue
+		var gy := _sculpted_vertex_height_and_ao(px, pz).x
+		if gy < 8.0:
+			continue
+		# Medir pendiente local para concentrar afloramientos en laderas empinadas y cumbres (> 52 m)
+		var gx := _sculpted_vertex_height_and_ao(px + 2.0, pz).x - gy
+		var gz := _sculpted_vertex_height_and_ao(px, pz + 2.0).x - gy
+		var slope := sqrt(gx * gx + gz * gz) / 2.0
+		if slope < 0.34 and gy < 52.0:
+			continue
+		var is_crag := slope > 0.55 or gy > 55.0
+		var m_idx: int = rng.randi_range(0, mini(2, meshes.size() - 1)) if is_crag else rng.randi_range(0, meshes.size() - 1)
+		var sc_xz := rng.randf_range(2.2, 4.8) if is_crag else rng.randf_range(1.1, 2.6)
+		var sc_y := sc_xz * rng.randf_range(0.85, 1.55)
+		var tilt_dir := atan2(gz, gx)
+		var basis := Basis.from_euler(Vector3(
+			deg_to_rad(rng.randf_range(-16.0, 16.0)),
+			tilt_dir + rng.randf_range(-0.6, 0.6),
+			deg_to_rad(rng.randf_range(-16.0, 16.0))
+		)).scaled(Vector3(sc_xz, sc_y, sc_xz))
+		buckets[m_idx].append(Transform3D(basis, Vector3(px, gy - sc_y * 0.28, pz)))
+
+	for b_i in range(meshes.size()):
+		var xforms: Array = buckets[b_i]
+		if xforms.is_empty():
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = meshes[b_i]
+		mm.instance_count = xforms.size()
+		for j in range(xforms.size()):
+			mm.set_instance_transform(j, xforms[j])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "MountainRockOutcropsMM_%d" % b_i
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		parent.add_child(mmi)
 
 
 static func spawn_summit_base_loot(world: Node3D, tmpl: Dictionary) -> void:

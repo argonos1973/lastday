@@ -30,23 +30,31 @@ void fragment() {
 	vec3 n = normalize(world_normal);
 	vec3 w = pow(abs(n), vec3(4.0));
 	w /= max(dot(w, vec3(1.0)), 0.001);
-	vec3 p = world_position * 0.65;
-	vec3 stone = texture(rock_albedo, p.zy).rgb * w.x;
-	stone += texture(rock_albedo, p.xz).rgb * w.y;
-	stone += texture(rock_albedo, p.xy).rgb * w.z;
-	float patches = texture(variation, world_position.xz * 0.16).r;
-	float damp = 1.0 - smoothstep(-0.65, 0.2, local_height);
-	ALBEDO = stone * tint * mix(vec3(0.90, 0.88, 0.82), vec3(0.68, 0.67, 0.62), patches * 0.5) * (1.0 - damp * 0.17);
-	float h = texture(rock_height, p.zy).r * w.x + texture(rock_height, p.xz).r * w.y + texture(rock_height, p.xy).r * w.z;
+	vec3 p = world_position * 0.55;
+	vec3 p_coarse = world_position * 0.16;
+	vec3 stone_fine = texture(rock_albedo, p.zy).rgb * w.x + texture(rock_albedo, p.xz).rgb * w.y + texture(rock_albedo, p.xy).rgb * w.z;
+	vec3 stone_coarse = texture(rock_albedo, p_coarse.zy).rgb * w.x + texture(rock_albedo, p_coarse.xz).rgb * w.y + texture(rock_albedo, p_coarse.xy).rgb * w.z;
+	vec3 stone = mix(stone_coarse, stone_fine, 0.58);
+	float patches = texture(variation, world_position.xz * 0.14).r;
+	float detail = texture(variation, world_position.xz * 0.42 + vec2(0.27)).r;
+	float strata = sin(world_position.y * 1.85 + patches * 4.2) * 0.5 + 0.5;
+	float damp = 1.0 - smoothstep(-0.65, 0.25, local_height);
+	vec3 rock_col = stone * tint * mix(vec3(0.92, 0.90, 0.85), vec3(0.64, 0.63, 0.59), patches * 0.55) * mix(0.86, 1.06, strata) * (1.0 - damp * 0.19);
+	// Musgo / liquen natural en caras superiores de rocas húmedas o sombreadas
+	float top_moss = smoothstep(0.62, 0.88, n.y) * smoothstep(0.46, 0.74, detail) * (1.0 - smoothstep(32.0, 52.0, world_position.y));
+	rock_col = mix(rock_col, rock_col * vec3(0.58, 0.78, 0.44), top_moss * 0.48);
+	ALBEDO = rock_col;
+	float h = (texture(rock_height, p.zy).r * w.x + texture(rock_height, p.xz).r * w.y + texture(rock_height, p.xy).r * w.z) * 0.65
+		+ (texture(rock_height, p_coarse.zy).r * w.x + texture(rock_height, p_coarse.xz).r * w.y + texture(rock_height, p_coarse.xy).r * w.z) * 0.35;
 	vec3 dpdx = dFdx(VERTEX);
 	vec3 dpdy = dFdy(VERTEX);
 	vec3 r1 = cross(dpdy, NORMAL);
 	vec3 r2 = cross(NORMAL, dpdx);
 	float determinant = dot(dpdx, r1);
 	vec3 gradient = sign(determinant) * (dFdx(h) * r1 + dFdy(h) * r2);
-	NORMAL = normalize(abs(determinant) * NORMAL - gradient * 0.055);
-	ROUGHNESS = 0.95;
-	SPECULAR = 0.2;
+	NORMAL = normalize(abs(determinant) * NORMAL - gradient * 0.068);
+	ROUGHNESS = mix(0.92, 0.78, damp * 0.6);
+	SPECULAR = 0.22;
 	if (shore_blend) {
 		vec2 offset = world_position.xz - shore_center;
 		vec2 local = vec2(dot(offset, vec2(cos(shore_yaw), -sin(shore_yaw))), dot(offset, vec2(sin(shore_yaw), cos(shore_yaw))));

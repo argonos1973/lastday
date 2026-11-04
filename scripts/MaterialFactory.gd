@@ -184,6 +184,23 @@ static func make_forest_ground_material() -> ShaderMaterial:
 	_mat_cache["forest_ground"] = material
 	return material
 
+static func make_mountain_terrain_material() -> ShaderMaterial:
+	if _mat_cache.has("mountain_terrain"):
+		return _mat_cache["mountain_terrain"]
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/mountain_rock.gdshader")
+	var base := "res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_"
+	material.set_shader_parameter("leaf_albedo", load_texture(base + "diffuse_2k.jpg"))
+	material.set_shader_parameter("leaf_normal", load_texture(base + "nor_gl_2k.jpg"))
+	material.set_shader_parameter("leaf_roughness", load_texture(base + "rough_2k.jpg"))
+	material.set_shader_parameter("soil_albedo", load_texture(POLY_ROCKY_TERRAIN_DIFF))
+	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCK_07_DIFF))
+	material.set_shader_parameter("granite_albedo", load_texture("res://assets/models/props/lake/lake_boulder_0_lake_granite.jpg"))
+	material.set_shader_parameter("rock_height", load_texture("res://assets/external/polyhaven/rocky_terrain_02/textures/rocky_terrain_02_disp_4k.png"))
+	material.set_shader_parameter("variation", forest_variation_texture())
+	_mat_cache["mountain_terrain"] = material
+	return material
+
 static func make_forest_rock_material(tint := Vector3(1.0, 1.0, 1.0)) -> ShaderMaterial:
 	var key := "forest_rock" if tint == Vector3.ONE else "forest_rock_%s" % tint
 	if _mat_cache.has(key):

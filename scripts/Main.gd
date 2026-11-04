@@ -15562,54 +15562,83 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	# collision body is built there.
 	if net != null and net.is_dedicated_server:
 		return
+	# Consumir exactamente las 6 * 18 lecturas históricas de _world_rng para no alterar
+	# ni un solo valor aleatorio del resto de la generación del mundo.
+	var local_seed := int(round(pos.x * 131.0)) ^ (int(round(pos.z * 257.0)) << 8) ^ int(round(height * 97.0))
+	for _r_legacy in range(6):
+		for _s_legacy in range(18):
+			var v_leg := _world_rng.randf_range(0.78, 1.18)
+			local_seed = (local_seed * 1664525 + int(v_leg * 10000.0)) & 0x7fffffff
+
+	var is_backdrop := node_name == "MountainPeak"
+	var is_big_mtn := height >= 9.5 or is_backdrop
+	var segments := 36 if is_big_mtn else 24
+	var rings := 14 if is_big_mtn else 8
+	var phase_a := float(local_seed % 628) * 0.01
+	var phase_b := float((local_seed / 628) % 628) * 0.01
+	var visual_height := height * (1.85 if is_backdrop else 1.0)
+
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var segments := 18
-	var rings := 5
-	var ring_points: Array = []
+	var uv_scale := 1.0 / (MAP_EXTENT * 2.0)
+	var yaw_rad := deg_to_rad(yaw)
+
 	for r in range(rings + 1):
 		var t := float(r) / float(rings)
-		var ring_radius_x := radius_x * (1.0 - t)
-		var ring_radius_z := radius_z * (1.0 - t)
-		var y := height * pow(t, 0.85)
-		var points := []
+		var base_radial := 1.0 - t
+		var y_base := visual_height * pow(t, 0.82 if is_big_mtn else 0.85)
+		var flank_env := sin(t * PI)
 		for s in range(segments):
 			var angle := TAU * float(s) / float(segments)
-			var noise := _world_rng.randf_range(0.78, 1.18)
-			var slope_cut := 1.0 - 0.18 * sin(angle * 3.0 + radius_x)
-			var x := cos(angle) * ring_radius_x * noise * slope_cut
-			var z := sin(angle) * ring_radius_z * noise
-			points.append(Vector3(x, y, z))
-		ring_points.append(points)
+			# Armónicos de aristas (arétes) y canales/barrancos (gullies)
+			var ridge_w := cos(angle * 4.0 + phase_a + t * 1.4) * 0.55 + sin(angle * 7.0 - phase_b - t * 1.9) * 0.45
+			var sharp_ridge := 1.0 - absf(ridge_w)
+			var gully := minf(0.0, ridge_w + 0.12)
+			var crag := sin(angle * 11.0 + t * 5.2 + phase_a) * 0.06
+			var radial_mod := 1.0
+			var y_mod := 0.0
+			var v_ao := 0.92
+			if is_backdrop:
+				radial_mod = (0.86 + sharp_ridge * 0.28 + crag) * (1.0 - 0.14 * sin(angle * 3.0 + radius_x))
+				y_mod = (sharp_ridge * 3.8 + gully * 4.2 + sin(y_base * 0.55 + angle * 2.0) * 0.85) * flank_env
+				v_ao = clampf(0.86 + sharp_ridge * 0.14 + gully * 0.24, 0.52, 1.05)
+			elif is_big_mtn:
+				radial_mod = (0.90 + sharp_ridge * 0.18 + crag * 0.6) * (1.0 - 0.12 * sin(angle * 3.0 + radius_x))
+				y_mod = (sharp_ridge * 1.45 + gully * 1.65 + sin(y_base * 0.65) * 0.42) * flank_env
+				v_ao = clampf(0.88 + sharp_ridge * 0.10 + gully * 0.18, 0.58, 1.04)
+			else:
+				radial_mod = 0.94 + sharp_ridge * 0.09 - 0.08 * sin(angle * 3.0 + radius_x)
+				y_mod = (sharp_ridge * 0.18 + gully * 0.20) * flank_env
+				v_ao = clampf(0.90 + sharp_ridge * 0.06 + gully * 0.08, 0.72, 1.02)
+
+			# En el anillo base (r == 0) clavamos y = -0.18 para asentar la falda sin huecos
+			var rx_cur := radius_x * base_radial * (radial_mod if r < rings else 0.0)
+			var rz_cur := radius_z * base_radial * (radial_mod if r < rings else 0.0)
+			var vx := cos(angle) * rx_cur
+			var vz := sin(angle) * rz_cur
+			var vy := -0.18 if r == 0 else maxf(0.0, y_base + y_mod)
+			var local_v := Vector3(vx, vy, vz)
+			var world_v := pos + local_v.rotated(Vector3.UP, yaw_rad)
+			st.set_color(Color(v_ao, v_ao, v_ao, 1.0))
+			st.set_uv(Vector2(world_v.x * uv_scale + 0.5, world_v.z * uv_scale + 0.5))
+			st.add_vertex(local_v)
+
 	for r in range(rings):
-		var current: Array = ring_points[r]
-		var next: Array = ring_points[r + 1]
+		var row0 := r * segments
+		var row1 := (r + 1) * segments
 		for s in range(segments):
-			var a: Vector3 = current[s]
-			var b: Vector3 = current[(s + 1) % segments]
-			var c: Vector3 = next[s]
-			var d: Vector3 = next[(s + 1) % segments]
-			
-			# Convertir vértice local a posición global para la proyección de textura UV
-			var world_a := pos + a.rotated(Vector3.UP, deg_to_rad(yaw))
-			var world_b := pos + b.rotated(Vector3.UP, deg_to_rad(yaw))
-			var world_c := pos + c.rotated(Vector3.UP, deg_to_rad(yaw))
-			var world_d := pos + d.rotated(Vector3.UP, deg_to_rad(yaw))
-			
-			var uv_scale := 1.0 / (MAP_EXTENT * 2.0)
-			st.set_uv(Vector2(world_a.x * uv_scale + 0.5, world_a.z * uv_scale + 0.5))
-			st.add_vertex(a)
-			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
-			st.add_vertex(b)
-			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
-			st.add_vertex(c)
-			
-			st.set_uv(Vector2(world_b.x * uv_scale + 0.5, world_b.z * uv_scale + 0.5))
-			st.add_vertex(b)
-			st.set_uv(Vector2(world_d.x * uv_scale + 0.5, world_d.z * uv_scale + 0.5))
-			st.add_vertex(d)
-			st.set_uv(Vector2(world_c.x * uv_scale + 0.5, world_c.z * uv_scale + 0.5))
-			st.add_vertex(c)
+			var s_next := (s + 1) % segments
+			var i00 := row0 + s
+			var i10 := row0 + s_next
+			var i01 := row1 + s
+			var i11 := row1 + s_next
+			st.add_index(i00)
+			st.add_index(i10)
+			st.add_index(i01)
+			st.add_index(i10)
+			st.add_index(i11)
+			st.add_index(i01)
+
 	st.generate_normals()
 	var mesh := st.commit()
 	var mesh_instance := MeshInstance3D.new()
@@ -15617,9 +15646,9 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = Vector3(0, yaw, 0)
 	mesh_instance.mesh = mesh
-	if not node_name.contains("SnowCap") and _cached_leafy_material != null:
+	if not node_name.contains("SnowCap"):
 		if _mountain_shared_material == null:
-			_mountain_shared_material = _cached_leafy_material
+			_mountain_shared_material = MaterialFactory.make_mountain_terrain_material()
 		mesh_instance.material_override = _mountain_shared_material
 	else:
 		mesh_instance.material_override = MaterialFactory.make_material(color, true)

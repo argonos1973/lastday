@@ -67,6 +67,14 @@ func _run() -> void:
 		if not str(m.name).ends_with("_leaves") and (m as MultiMeshInstance3D).multimesh != null:
 			alpine_trees += (m as MultiMeshInstance3D).multimesh.instance_count
 	check(alpine_trees >= 250, "Bosque alpino plantado en la montaña y alrededor de la base (%d árboles)" % alpine_trees)
+	var massif_mi := hm_node.get_node_or_null("HighMountainMassif") as MeshInstance3D if hm_node != null else null
+	check(massif_mi != null and massif_mi.material_override is ShaderMaterial, "HighMountainMassif usa ShaderMaterial PBR de montaña")
+	var outcrop_mms := hm_node.find_children("MountainRockOutcropsMM_*", "MultiMeshInstance3D", false, false) if hm_node != null else []
+	var outcrop_total := 0
+	for om in outcrop_mms:
+		if (om as MultiMeshInstance3D).multimesh != null:
+			outcrop_total += (om as MultiMeshInstance3D).multimesh.instance_count
+	check(outcrop_total >= 40, "Afloramientos rocosos y escarpes de granito instanciados en laderas y taludes (%d rocas)" % outcrop_total)
 	var comms_tower := hm_node.get_node_or_null("GreenMountainCommsTower") as Node3D if hm_node != null else null
 	check(comms_tower != null, "GreenMountainCommsTower instanciada en la cima")
 	if comms_tower != null:
