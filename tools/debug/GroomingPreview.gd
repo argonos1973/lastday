@@ -47,7 +47,7 @@ func run():
 	camera.position = center+Vector3(.35,.08,-1)
 	camera.look_at(center)
 	print("HEAD BOUNDS ",head.get_aabb())
-	for style in ["crop","short","medium","long"]:
+	for style in ["buzz","crop","short","medium","ponytail","long"]:
 		for stage in [0,1,2,3,4]:
 			preload("res://scripts/CharacterGrooming.gd").apply(actor.third_person_model,style,Color(.18,.10,.045),stage)
 			await process_frame

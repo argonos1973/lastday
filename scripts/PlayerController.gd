@@ -2837,9 +2837,7 @@ func _apply_character_colors() -> void:
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
 		_tint_mesh(bmi, skin_color, 0.9, -0.008)
-	# Apply hair color to Hair mesh if it exists in the model
-	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
-	_tint_mesh(hair_mi, hair_color, 0.8)
+	# CharacterGrooming below owns hair tint and strand opacity.
 	# Apply skin color to head mesh (face)
 	_tint_mesh(_head_mesh, skin_color, 0.9)
 	_tint_mesh(_full_body_mesh, skin_color, 0.9)

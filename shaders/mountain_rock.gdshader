@@ -54,12 +54,12 @@ void fragment() {
 
 	float exposed = smoothstep(0.47, .69, patches + detail * 0.16);
 	exposed = max(exposed * 0.8, 1.0 - smoothstep(0.50, 0.88, n.y));
-	vec3 needles_tint = mix(vec3(0.54, 0.70, 0.48), vec3(0.68, 0.80, 0.56), smoothstep(0.25, 0.75, patches));
+	vec3 needles_tint = mix(vec3(0.65, 0.70, 0.58), vec3(0.78, 0.80, 0.67), smoothstep(0.25, 0.75, patches));
 	vec3 forest_surface = mix(leaves * needles_tint, soil, exposed);
 	float moss = smoothstep(0.48, 0.72, detail) * (1.0 - exposed) * 0.58;
-	forest_surface = mix(forest_surface, forest_surface * vec3(0.56, 0.86, 0.40), moss);
-	float micro_ao = mix(0.72, 1.05, smoothstep(0.22, 0.78, detail));
-	forest_surface *= mix(0.74, 1.02, patches) * micro_ao;
+	forest_surface = mix(forest_surface, forest_surface * vec3(0.69, 0.79, 0.55), moss);
+	float micro_ao = mix(0.88, 1.03, smoothstep(0.22, 0.78, detail));
+	forest_surface *= mix(0.88, 1.04, patches) * micro_ao;
 
 	// 2) Roca granítica y pizarra de montaña (proyección triplanar multiescala)
 	vec3 rock_macro = triplanar_rgb(rock_albedo, world_position * 0.085, weights);
@@ -68,18 +68,20 @@ void fragment() {
 	vec3 rock_base = mix(rock_macro, rock_mid, 0.52);
 	rock_base = mix(rock_base, granite_fine, 0.36);
 
-	// Estratos geológicos, fisuras horizontales y escorrentías verticales en paredes
-	float strata_y = world_position.y * 0.52 + (macro_var - 0.5) * 6.5 + (patches - 0.5) * 2.4;
-	float strata_wave = sin(strata_y * 3.14159) * 0.5 + 0.5;
-	float strata_fine = sin(strata_y * 11.5 + detail * 4.2) * 0.5 + 0.5;
-	float ledge_crevice = smoothstep(0.82, 0.97, strata_fine) * (1.0 - smoothstep(0.62, 0.90, n.y));
-	vec3 strata_tint = mix(vec3(0.60, 0.59, 0.56), vec3(0.92, 0.90, 0.86), smoothstep(0.20, 0.80, strata_wave));
+	// Irregular weathered rock: avoid periodic sine bands wrapping every peak.
+	vec2 bedding_uv = vec2(dot(world_position.xz, vec2(0.017, 0.011)), world_position.y * 0.024);
+	bedding_uv += vec2(macro_var, patches) * 0.19;
+	float strata_wave = texture(variation, bedding_uv).r;
+	float fracture = triplanar_r(rock_height, world_position * 0.14 + vec3(2.9, 0.4, 1.3), weights);
+	float wall = 1.0 - smoothstep(0.58, 0.90, n.y);
+	float ledge_crevice = (1.0 - smoothstep(0.16, 0.32, fracture)) * wall;
+	vec3 strata_tint = mix(vec3(0.72, 0.75, 0.77), vec3(0.91, 0.87, 0.80), smoothstep(0.28, 0.76, strata_wave));
 	vec3 cliff_color = rock_base * strata_tint;
-	// Escorrentías oscuras verticales (humedad en canales de roca)
-	float seepage_noise = texture(variation, vec2((world_position.x - world_position.z) * 0.018, world_position.y * 0.006)).r;
-	float seepage = smoothstep(0.58, 0.80, seepage_noise) * (1.0 - smoothstep(0.55, 0.84, n.y));
-	cliff_color *= mix(1.0, 0.62, seepage * 0.65);
-	cliff_color *= mix(1.0, 0.48, ledge_crevice * 0.75);
+	float seepage_noise = texture(variation, vec2((world_position.x - world_position.z) * 0.021, world_position.y * 0.006)).r;
+	float seepage = smoothstep(0.57, 0.82, seepage_noise) * wall;
+	cliff_color *= mix(1.0, 0.78, seepage);
+	cliff_color *= mix(1.0, 0.78, ledge_crevice);
+	cliff_color *= mix(0.91, 1.08, macro_var);
 
 	// Liquen alpino en caras rocosas soleadas de media/alta montaña
 	float lichen_mask = smoothstep(0.58, 0.78, detail) * smoothstep(8.0, 28.0, world_position.y) * smoothstep(0.35, 0.75, n.y);
@@ -104,26 +106,27 @@ void fragment() {
 	vec3 mountain_col = mix(alpine_meadow, cliff_color, rock_weight);
 
 	// Oclusión de barrancos / concavidades codificada opcionalmente en COLOR.r (por defecto 1.0)
-	float valley_ao = mix(0.68, 1.06, clamp(vertex_ridge_ao, 0.0, 1.0));
+	float valley_ao = mix(0.78, 1.02, clamp(vertex_ridge_ao, 0.0, 1.0));
 	ALBEDO = mountain_col * valley_ao;
 
 	// 6) Relieve normal combinando hojarasca en llano y relieve pétreo triplanar en roca/montaña
 	float h_coarse = triplanar_r(rock_height, world_position * 0.22, weights);
 	float h_fine = triplanar_r(rock_height, world_position * 0.68 + vec3(0.41, 0.83, 0.19), weights);
-	float h_rock = mix(h_coarse, h_fine, 0.48) - ledge_crevice * 0.35 + strata_wave * 0.12;
+	float h_rock = mix(h_coarse, h_fine, 0.48) - ledge_crevice * 0.12 + strata_wave * 0.025;
 
 	vec3 dpdx = dFdx(VERTEX);
 	vec3 dpdy = dFdy(VERTEX);
 	vec3 r1 = cross(dpdy, NORMAL);
 	vec3 r2 = cross(NORMAL, dpdx);
 	float det = dot(dpdx, r1);
-	float bump_strength = mix(0.028, 0.085, rock_weight);
+	float distance_fade = 1.0 - smoothstep(55.0, 230.0, length(VERTEX));
+	float bump_strength = mix(0.018, 0.055, rock_weight) * mix(0.20, 1.0, distance_fade);
 	vec3 rock_gradient = sign(det) * (dFdx(h_rock) * r1 + dFdy(h_rock) * r2);
 	vec3 bumped_view_n = normalize(abs(det) * NORMAL - rock_gradient * bump_strength);
 
 	vec3 leaf_n = texture(leaf_normal, uv).xyz * 2.0 - 1.0;
 	vec3 relief_world = normalize(vec3(leaf_n.x * 0.68, max(leaf_n.z, 0.22), leaf_n.y * 0.68));
-	vec3 forest_view_n = normalize((VIEW_MATRIX * vec4(normalize(mix(n, relief_world, weights.y * (1.0 - exposed * 0.65))), 0.0)).xyz);
+	vec3 forest_view_n = normalize((VIEW_MATRIX * vec4(normalize(mix(n, relief_world, weights.y * (1.0 - exposed * 0.65) * distance_fade)), 0.0)).xyz);
 
 	NORMAL = normalize(mix(forest_view_n, bumped_view_n, clamp(rock_weight * 0.88 + foot_blend * 0.35, 0.0, 1.0)));
 

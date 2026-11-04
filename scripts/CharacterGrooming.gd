@@ -122,8 +122,26 @@ static func apply(model: Node3D, style: String, color: Color, stage: int) -> voi
 			tinted = hair_mat.duplicate() as StandardMaterial3D
 		else:
 			tinted = StandardMaterial3D.new()
-		tinted.albedo_color = color
-		tinted.roughness = 0.92
+		# The adapted FBX lost the strand opacity; the original atlas retains it.
+		if resolved_style != "buzz":
+			tinted.albedo_texture = preload("res://assets/characters/Remy_Remy_alpha_0.png")
+			tinted.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			tinted.alpha_scissor_threshold = 0.35
+		else:
+			# Buzz cut uses scalp UVs, not the strand atlas's cutout layout.
+			tinted.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			tinted.albedo_texture = _stubble_texture()
+			tinted.normal_enabled = false
+		# The atlas already contains brown pigment: avoid multiplying it to black.
+		tinted.albedo_color = Color(sqrt(color.r), sqrt(color.g), sqrt(color.b), 1.0)
+		# FBX gloss was imported into both metallic and roughness slots.
+		# A gloss value near zero must not turn hair into polished metal.
+		tinted.metallic = 0.0
+		tinted.metallic_texture = null
+		tinted.roughness_texture = null
+		tinted.roughness = 0.78
+		tinted.metallic_specular = 0.20
+		tinted.normal_scale = 0.35
 		hair.material_override = tinted
 
 	var beard := model.find_child("GrowingBeard", true, false) as MeshInstance3D
@@ -139,6 +157,23 @@ static func apply(model: Node3D, style: String, color: Color, stage: int) -> voi
 		return
 	beard.mesh = _build_beard_mesh(head.mesh, clamped_stage)
 	beard.material_override = _beard_material(color, clamped_stage)
+
+static var _stubble_atlas: Texture2D
+
+static func _stubble_texture() -> Texture2D:
+	if _stubble_atlas != null:
+		return _stubble_atlas
+	# Fine, isotropic stubble rather than long directional strands on scalp UVs.
+	var image := Image.create(256, 256, false, Image.FORMAT_RGB8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 71023
+	for y in range(256):
+		for x in range(256):
+			var value := rng.randf_range(0.32, 0.58)
+			image.set_pixel(x, y, Color(value, value, value))
+	image.generate_mipmaps()
+	_stubble_atlas = ImageTexture.create_from_image(image)
+	return _stubble_atlas
 
 static func _build_styled_hair_mesh(original: Mesh, head_mesh: Mesh, style: String) -> ArrayMesh:
 	if style == "buzz":
@@ -165,7 +200,7 @@ static func _build_styled_hair_mesh(original: Mesh, head_mesh: Mesh, style: Stri
 						v.y = lerpf(v.y, 3.58, 0.72 * front)
 						v.z -= 0.024 * front * (1.0 - h)
 					if v.y < 3.49:
-						v.y = lerpf(v.y, 3.49, 0.68)
+						v.y = lerpf(v.y, 3.49, 0.38)
 					v.x = cx + (v.x - cx) * lerpf(0.86, 0.95, h)
 					if back > 0.2 and v.y < 3.46:
 						v.y = lerpf(v.y, 3.46, 0.65)
@@ -205,6 +240,17 @@ static func _build_styled_hair_mesh(original: Mesh, head_mesh: Mesh, style: Stri
 		arrays[Mesh.ARRAY_VERTEX] = points
 		if not normals.is_empty():
 			arrays[Mesh.ARRAY_NORMAL] = normals
+		if style != "short":
+			# Deforming the hairstyle invalidates the imported normal/tangent basis.
+			# SurfaceTool preserves UVs and skin weights while rebuilding lighting.
+			var deformed := ArrayMesh.new()
+			deformed.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			var st := SurfaceTool.new()
+			st.create_from(deformed, 0)
+			st.generate_normals()
+			if arrays[Mesh.ARRAY_TEX_UV] != null:
+				st.generate_tangents()
+			arrays = st.commit_to_arrays()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		if mesh.get_surface_count() > surface:
 			mesh.surface_set_material(surface, original.surface_get_material(surface))
@@ -309,7 +355,7 @@ static func _append_ponytail_geometry(points: PackedVector3Array, normals: Packe
 
 	# Coleta tubular curvada desde la nuca alta (y=3.45, z=-0.20) hasta la espalda alta (y=3.06, z=-0.33)
 	var rings := 8
-	var sides := 8
+	var sides := 12
 	var base_idx := points.size()
 	for r in range(rings):
 		var t := float(r) / float(rings - 1)
@@ -318,8 +364,8 @@ static func _append_ponytail_geometry(points: PackedVector3Array, normals: Packe
 			lerpf(3.45, 3.06, pow(t, 1.08)),
 			lerpf(-0.20, -0.33, sin(t * PI * 0.65))
 		)
-		var radius := lerpf(0.048, 0.082, sin(t * PI * 0.78)) * (1.0 - 0.50 * pow(t, 2.2))
-		for s in range(sides):
+		var radius := lerpf(0.045, 0.065, sin(t * PI)) * (1.0 - 0.88 * pow(t, 2.2))
+		for s in range(sides + 1):
 			var ang := float(s) * TAU / float(sides)
 			var n := Vector3(cos(ang), 0.15, sin(ang)).normalized()
 			var p := center + Vector3(cos(ang) * radius * 1.15, 0.0, sin(ang) * radius * 0.95)
@@ -327,7 +373,8 @@ static func _append_ponytail_geometry(points: PackedVector3Array, normals: Packe
 			if not normals.is_empty():
 				normals.append(n)
 			if not uvs.is_empty():
-				uvs.append(Vector2(float(s) / float(sides), t))
+				# Stay inside one opaque strand island; the full atlas has gaps.
+				uvs.append(Vector2(lerpf(0.07, 0.18, float(s) / float(sides)), lerpf(0.12, 0.70, t)))
 			if not uv2s.is_empty():
 				uv2s.append(Vector2(float(s) / float(sides), t))
 			if not colors.is_empty():
@@ -341,11 +388,12 @@ static func _append_ponytail_geometry(points: PackedVector3Array, normals: Packe
 					weights.append(weights[ref_vi * bone_stride + b])
 	for r in range(rings - 1):
 		for s in range(sides):
-			var sn := (s + 1) % sides
-			var i00 := base_idx + r * sides + s
-			var i01 := base_idx + r * sides + sn
-			var i10 := base_idx + (r + 1) * sides + s
-			var i11 := base_idx + (r + 1) * sides + sn
+			var sn := s + 1
+			var stride := sides + 1
+			var i00 := base_idx + r * stride + s
+			var i01 := base_idx + r * stride + sn
+			var i10 := base_idx + (r + 1) * stride + s
+			var i11 := base_idx + (r + 1) * stride + sn
 			indices.append(i00); indices.append(i10); indices.append(i01)
 			indices.append(i01); indices.append(i10); indices.append(i11)
 	if not uvs.is_empty():
