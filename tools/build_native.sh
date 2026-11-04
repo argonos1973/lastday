@@ -32,7 +32,7 @@ fi
 	echo "[configuration]"
 	echo ""
 	echo 'entry_symbol = "lastday_nav_library_init"'
-	echo 'compatibility_minimum = "4.1"'
+	echo 'compatibility_minimum = "4.7"'
 	echo ""
 	echo "[libraries]"
 	echo ""
