@@ -7,7 +7,7 @@
 #
 # Usage: tools/install_native.sh <export path>
 #   macOS app  : tools/install_native.sh "build/macos/LastDay.app"
-#   Linux/Win  : tools/install_native.sh "build/linux" | "build/windows" | remote dir
+#   Linux/Win  : tools/install_native.sh "build/linux" | "build/windows"
 set -e
 cd "$(dirname "$0")/.."
 
@@ -23,7 +23,12 @@ if [ -d "$DEST/Contents/Resources" ]; then
 else
 	TARGET="$DEST/native/bin"
 	mkdir -p "$TARGET"
-	[ -f native/bin/liblastday_nav.so ] && cp native/bin/liblastday_nav.so "$TARGET/"
-	[ -f native/bin/lastday_nav.dll ] && cp native/bin/lastday_nav.dll "$TARGET/"
-	echo "installed native libs -> $TARGET"
+	# Ship only the library the platform's binary can dlopen.
+	if ls "$DEST"/*.exe >/dev/null 2>&1; then
+		cp native/bin/lastday_nav.dll "$TARGET/"
+		echo "installed lastday_nav.dll -> $TARGET"
+	else
+		cp native/bin/liblastday_nav.so "$TARGET/"
+		echo "installed liblastday_nav.so -> $TARGET"
+	fi
 fi

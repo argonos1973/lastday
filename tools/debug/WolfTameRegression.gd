@@ -404,6 +404,33 @@ func test_whistle_and_menu_hold() -> void:
 	wolfE._seek_meat_pickup(near_meat)
 	check(wolfE._state == "eating" and wolfE._wolf_eating_target == near_meat, "Meat at 1.3 m: eats right on top of the piece")
 
+	# --- Animación de pelea entre lobos (local y puppet cliente) + distintivo de lobo domesticado ---
+	var my_wolf := make_wolf(world, Vector3(0, 0, 0))
+	my_wolf.tamed_to = "local"
+	var rival_wolf := make_wolf(world, Vector3(1.8, 0, 0))
+	my_wolf.apply_command("attack", rival_wolf)
+	my_wolf._process(0.05)
+	check(my_wolf.current_anim_keyword == "attack", "Tamed wolf attacking another wolf plays attack animation instead of being overwritten by idle")
+	check(my_wolf._tamed_collar_node != null and my_wolf._tamed_collar_node.visible, "Tamed wolf displays its 3D collar")
+	check(my_wolf._tamed_label != null and my_wolf._tamed_label.visible and "TU LOBO" in my_wolf._tamed_label.text, "Tamed wolf displays the owner marker label")
+
+	var pup_tamed := TestWolf.new()
+	pup_tamed.position = Vector3(30, 0, 0)
+	world.add_child(pup_tamed)
+	pup_tamed.setup_puppet("wolf")
+	pup_tamed.tamed_to = "local"
+	var pup_wild := TestWolf.new()
+	pup_wild.position = Vector3(31.8, 0, 0)
+	world.add_child(pup_wild)
+	pup_wild.setup_puppet("wolf")
+	pup_tamed.puppet_apply(pup_tamed.position, 0.0, "idle", false, false)
+	pup_wild.puppet_apply(pup_wild.position, 0.0, "idle", false, false)
+	pup_tamed._process(0.05)
+	pup_wild._process(0.05)
+	check(pup_tamed.current_anim_keyword in ["attack", "threaten"] and pup_wild.current_anim_keyword in ["attack", "threaten"], "Client puppet wolves engaged in melee play attack/threaten animations even when server sends idle")
+	pup_tamed.puppet_apply(pup_tamed.position, 0.0, "idle", false, false)
+	check(pup_tamed.current_anim_keyword in ["attack", "threaten"], "Incoming idle snapshot does not cancel client puppet combat animation")
+
 	world.free()
 
 func test_feeding_priority() -> void:

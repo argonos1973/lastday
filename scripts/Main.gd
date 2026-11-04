@@ -5233,14 +5233,17 @@ func _update_puppet_animals(unlimited: bool = false) -> void:
 			if kind == "bird":
 				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), float(d.get("r", 0.0)), bool(d.get("d", false)), bool(d.get("g", false)), bool(d.get("landed", false)))
 			else:
-				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)), float(d.get("rt", -1.0)))
 				if p.animal_type == "wolf":
 					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
-					if d.has("hp") and not bool(d.get("d", false)):
-						p.health = float(d.get("hp", p.health))
 					p.tamed_to = str(d.get("tamed", ""))
 					p._follow_mode = str(d.get("fm", "follow"))
+				if d.has("hp") and not bool(d.get("d", false)):
+					var new_hp := float(d.get("hp", p.health))
+					if new_hp < p.health - 0.5 and p.has_method("notify_puppet_damaged"):
+						p.notify_puppet_damaged()
+					p.health = new_hp
+				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), d.get("r", 0.0), str(d.get("a", "walk")), bool(d.get("d", false)), bool(d.get("g", false)), float(d.get("rt", -1.0)))
 	# Remove puppets that no longer exist on the server. Dead/gutted corpses get
 	# a grace window: the gutted broadcast's cleanup arrives ~5 s after the
 	# server stopped sending the entry. Past that window an absent corpse is a
@@ -5571,6 +5574,8 @@ func _send_wolf_mode(wolf: Node, mode: String) -> void:
 	if wolf == null or not is_instance_valid(wolf):
 		return
 	if bool(wolf.get("is_puppet")):
+		if wolf.has_method("notify_puppet_order"):
+			wolf.notify_puppet_order(mode)
 		if net != null and net.has_method("command_wolf"):
 			net.command_wolf.rpc_id(1, wolf.name.replacen("Puppet_", ""), mode)
 	elif wolf.has_method("apply_command"):
@@ -5582,22 +5587,23 @@ func _wolf_order_send(mode: String, target_name: String = "") -> void:
 	if wolf == null or not is_instance_valid(wolf):
 		return
 	var real_name: String = wolf.name.replacen("Puppet_", "")
+	var target: Node = null
+	if mode == "attack" and not target_name.is_empty():
+		if target_name.begins_with("p:"):
+			var pid := int(target_name.substr(2))
+			if remote_players.has(pid):
+				target = remote_players[pid]
+		else:
+			target = get_node_or_null(target_name)
+			if target == null:
+				target = get_node_or_null("Puppet_" + target_name)
 	if bool(wolf.get("is_puppet")):
+		if wolf.has_method("notify_puppet_order"):
+			wolf.notify_puppet_order(mode, target)
 		if net != null and net.has_method("command_wolf"):
 			net.command_wolf.rpc_id(1, real_name, mode, target_name)
-	else:
-		var target: Node = null
-		if mode == "attack" and not target_name.is_empty():
-			if target_name.begins_with("p:"):
-				var pid := int(target_name.substr(2))
-				if remote_players.has(pid):
-					target = remote_players[pid]
-			else:
-				target = get_node_or_null(target_name)
-				if target == null:
-					target = get_node_or_null("Puppet_" + target_name)
-		if wolf.has_method("apply_command"):
-			wolf.apply_command(mode, target)
+	elif wolf.has_method("apply_command"):
+		wolf.apply_command(mode, target)
 
 func _wolf_attack_targets() -> Array:
 	var result: Array = []

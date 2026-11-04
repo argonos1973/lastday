@@ -70,6 +70,18 @@ var _observer_check_timer := 0.0
 var _near_network_observer := false
 var current_anim_keyword := "walk"
 var _puppet_desired_anim := "walk"
+var _puppet_attack_timer := 0.0
+var _puppet_bite_cooldown := 0.0
+var _puppet_combat_timer := 0.0
+var _puppet_combat_active := false
+var _puppet_combat_target: Node3D = null
+var _puppet_aggro_until := 0
+var _tamed_collar_node: Node3D = null
+var _tamed_collar_mat: StandardMaterial3D = null
+var _tamed_label: Label3D = null
+var _tamed_fur_state := 0
+static var _tamed_fur_mat_mine: StandardMaterial3D = null
+static var _tamed_fur_mat_other: StandardMaterial3D = null
 var _tamed_rest_time := 0.0
 var _hit_flash_timer := 0.0
 var _gutted := false
@@ -185,6 +197,9 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		_network_motion.push(self, pos, rot_y, true)
 		_is_dead = true
 		_gutted = gutted
+		_puppet_attack_timer = 0.0
+		_puppet_combat_active = false
+		_update_tamed_visuals()
 		# Without a corpse lifetime the next _process would free the body the
 		# same frame it arrived — mirror the server's 300s rot window, then keep
 		# tracking whatever the server reports so both sides drop it together.
@@ -199,7 +214,41 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 	_network_motion.push(self, pos, rot_y)
 	if not dead:
 		_puppet_desired_anim = anim.to_lower()
+		if _puppet_attack_timer > 0.0 or (_puppet_combat_active and _puppet_desired_anim in ["idle", "walk", "trot", "sit", "lie"]):
+			return
 		_play_animation_by_name(anim)
+
+func notify_puppet_damaged() -> void:
+	if _is_dead:
+		return
+	_hit_flash_timer = 0.28
+	_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
+	if get_tree() == null:
+		return
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var w := node as WildlifeController
+		if w._is_dead or (w.animal_type != "wolf" and w.animal_type != "bear"):
+			continue
+		if w.global_position.distance_to(global_position) <= 4.2:
+			w._puppet_combat_timer = maxf(w._puppet_combat_timer, 3.0)
+			if w._puppet_attack_timer <= 0.0:
+				w._puppet_attack_timer = 1.1
+				w._puppet_bite_cooldown = 1.55
+				w._play_animation_by_name("attack")
+
+func notify_puppet_order(mode: String, target: Node = null) -> void:
+	if mode == "attack" and target is Node3D and is_instance_valid(target):
+		_puppet_combat_target = target as Node3D
+		_puppet_combat_timer = maxf(_puppet_combat_timer, 20.0)
+	elif mode == "whistle_aggro":
+		_puppet_aggro_until = Time.get_ticks_msec() + 25000
+		_puppet_combat_timer = maxf(_puppet_combat_timer, 25.0)
+	elif mode in ["cease", "whistle_recall", "follow", "stay", "patrol", "toggle"]:
+		_puppet_combat_target = null
+		_puppet_aggro_until = 0
+		_puppet_combat_active = false
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void:
@@ -455,7 +504,9 @@ func _process_body(delta: float) -> void:
 			if _animation_player != null and not _animation_player.is_playing() and not _animation_player.current_animation.is_empty():
 				_animation_player.play()
 			_update_water_depth(delta)
-			if delta > 0.0001 and _network_motion.samples.size() > 1:
+			_update_puppet_combat(delta)
+			_update_tamed_visuals()
+			if not _puppet_combat_active and _puppet_attack_timer <= 0.0 and delta > 0.0001 and _network_motion.samples.size() > 1:
 				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
 				var vis_spd := puppet_moved_xz / delta
 				if vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat"]:
@@ -466,6 +517,7 @@ func _process_body(delta: float) -> void:
 		if (animal_type == "wolf" or animal_type == "bear") and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
+			_update_tamed_visuals()
 			_rot_timer = max(0.0, _rot_timer - delta)
 			if _rot_timer <= 0.0:
 				_remove_corpse()
@@ -731,11 +783,12 @@ func _process_body(delta: float) -> void:
 		if _direct_route_allowed(target) or (to_target.length() < 4.5 and _is_position_allowed(global_position + to_target.normalized() * minf(0.55, to_target.length()))):
 			move_target = target
 	_route_waiting = move_target.distance_to(global_position) < 0.1 or speed <= 0.0
-	if _route_waiting:
+	if _route_waiting and not (current_anim_keyword in ["attack", "threaten", "shake", "eat", "sit", "lie"]):
 		_play_animation_by_name("idle")
-	else:
+	elif not _route_waiting:
 		var turn_spd := 9.0 if (_prey_flee_timer > 0.0 or _state == "flee") else 6.0
 		_move_towards(move_target, speed, delta, turn_spd)
+	_update_tamed_visuals()
 	var moved_xz := Vector2(global_position.x - _last_position.x, global_position.z - _last_position.z).length()
 	if moved_xz > 0.004:
 		if current_anim_keyword in ["idle", "sit", "lie", "eat"]:
@@ -1325,7 +1378,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						nearest_prey.take_damage(60.0 if animal_type == "bear" else 15.0, false, self)
 						if animal_type == "wolf" or animal_type == "bear":
 							_play_wolf_sound("attack")
-					_play_animation_by_name("shake" if animal_type == "wolf" else "run")
+					_play_animation_by_name("attack" if animal_type == "wolf" else "run")
 				else:
 					_play_animation_by_name("trot")
 				return {"target": target, "speed": speed}
@@ -2639,7 +2692,7 @@ func _release_owner_record() -> void:
 func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 	var target := foe.global_position
 	var reach := 3.2 if animal_type == "bear" or str(foe.get("animal_type")) == "bear" else 2.6
-	_face_towards(target, minf(delta * 3.0, 1.0))
+	_face_towards(target, minf(delta * 7.0, 1.0))
 	var close := global_position.distance_to(target) <= reach
 	if _animal_bite_target != foe:
 		_animal_bite_target = null
@@ -2787,7 +2840,7 @@ func _tamed_ai(delta: float) -> Dictionary:
 					_attack_cooldown = 1.8
 					_ordered_prey.take_damage(35.0, false, self)
 					_play_wolf_sound("attack")
-				_play_animation_by_name("shake")
+				_play_animation_by_name("attack")
 				return {"handled": true, "target": tp, "speed": 0.0}
 			_play_animation_by_name("run")
 			return {"handled": true, "target": tp, "speed": move_speed * 3.45}
@@ -3294,6 +3347,245 @@ func _interact_tamed(player: Node) -> void:
 	else:
 		apply_command("toggle")
 
+func _is_local_owner() -> bool:
+	if tamed_to.is_empty():
+		return false
+	if tamed_to == "local":
+		return true
+	if get_tree() != null and get_tree().current_scene != null:
+		var net_node = get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+		if net_node != null and net_node.has_method("get_my_id"):
+			var my_id := int(net_node.get_my_id())
+			if my_id > 0 and str(my_id) == tamed_to:
+				return true
+	return false
+
+func _find_puppet_melee_foe() -> Node3D:
+	if get_tree() == null:
+		return null
+	if _puppet_combat_target != null:
+		if not is_instance_valid(_puppet_combat_target) or _puppet_combat_target.get("_is_dead") == true or _puppet_combat_target.get("is_dead") == true:
+			_puppet_combat_target = null
+		elif global_position.distance_to(_puppet_combat_target.global_position) <= 3.8:
+			return _puppet_combat_target
+	var reach := 3.8 if animal_type == "bear" else 3.4
+	var best: Node3D = null
+	var best_d := reach
+	var now_ms := Time.get_ticks_msec()
+	var aggro_active := _puppet_aggro_until > now_ms or _puppet_combat_timer > 0.0
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
+			continue
+		var other := node as WildlifeController
+		if other._is_dead:
+			continue
+		var d := global_position.distance_to(other.global_position)
+		var pair_reach := 3.8 if (animal_type == "bear" or other.animal_type == "bear") else reach
+		if d > pair_reach:
+			continue
+		var valid_foe := false
+		if not tamed_to.is_empty():
+			if other.animal_type in ["wolf", "bear"] and (other.tamed_to.is_empty() or other.tamed_to != tamed_to):
+				valid_foe = true
+			elif other.animal_type in ["deer", "fox"] and (aggro_active or d <= 2.8):
+				valid_foe = true
+		else:
+			if other.animal_type == "wolf" and not other.tamed_to.is_empty():
+				valid_foe = true
+			elif other.animal_type in ["wolf", "bear"] and (aggro_active or other._puppet_combat_timer > 0.0 or other._puppet_attack_timer > 0.0):
+				valid_foe = true
+		if valid_foe and d < best_d:
+			best_d = d
+			best = other
+	return best
+
+func _update_puppet_combat(delta: float) -> void:
+	if _is_dead or (animal_type != "wolf" and animal_type != "bear"):
+		_puppet_combat_active = false
+		_puppet_attack_timer = 0.0
+		return
+	_puppet_attack_timer = maxf(0.0, _puppet_attack_timer - delta)
+	_puppet_bite_cooldown = maxf(0.0, _puppet_bite_cooldown - delta)
+	_puppet_combat_timer = maxf(0.0, _puppet_combat_timer - delta)
+	var foe := _find_puppet_melee_foe()
+	if foe != null:
+		if not _puppet_combat_active and _puppet_bite_cooldown <= 0.0 and _puppet_attack_timer <= 0.0:
+			# Stagger the two combatants slightly so both wolves don't lunge on the exact same frame
+			if (get_instance_id() & 1) == 1 and foe is WildlifeController and (foe as WildlifeController)._puppet_attack_timer > 0.4:
+				_puppet_bite_cooldown = 0.35
+		_puppet_combat_active = true
+		_face_towards(foe.global_position, minf(delta * 8.5, 1.0))
+		if _puppet_attack_timer <= 0.0 and _puppet_bite_cooldown <= 0.0:
+			_puppet_attack_timer = 1.1
+			_puppet_bite_cooldown = 1.65
+		if _puppet_attack_timer > 0.0:
+			_play_animation_by_name("attack")
+		else:
+			_play_animation_by_name("threaten")
+		if _animation_player != null:
+			_animation_player.speed_scale = 1.0
+		return
+	_puppet_combat_active = false
+	if _puppet_attack_timer > 0.0:
+		_play_animation_by_name("attack")
+		if _animation_player != null:
+			_animation_player.speed_scale = 1.0
+
+func _ensure_tamed_visual_nodes() -> void:
+	if _tamed_collar_node == null or not is_instance_valid(_tamed_collar_node):
+		var skel: Skeleton3D = null
+		if _visual_root != null and is_instance_valid(_visual_root):
+			skel = _visual_root.find_child("Skeleton3D", true, false) as Skeleton3D
+			if skel == null:
+				for c in _visual_root.find_children("*", "Skeleton3D", true, false):
+					skel = c as Skeleton3D
+					break
+		_tamed_collar_mat = StandardMaterial3D.new()
+		_tamed_collar_mat.albedo_color = Color(0.88, 0.14, 0.12)
+		_tamed_collar_mat.roughness = 0.42
+		_tamed_collar_mat.emission_enabled = true
+		_tamed_collar_mat.emission = Color(0.42, 0.05, 0.04)
+		_tamed_collar_mat.emission_energy_multiplier = 0.65
+		var tag_mat := StandardMaterial3D.new()
+		tag_mat.albedo_color = Color(0.96, 0.80, 0.22)
+		tag_mat.metallic = 0.85
+		tag_mat.roughness = 0.25
+		tag_mat.emission_enabled = true
+		tag_mat.emission = Color(0.45, 0.35, 0.08)
+		var neck_idx := skel.find_bone("Neck2") if skel != null else -1
+		if neck_idx < 0 and skel != null:
+			neck_idx = skel.find_bone("Neck1")
+		if skel != null and neck_idx >= 0:
+			var attach := BoneAttachment3D.new()
+			attach.name = "TamedCollar"
+			attach.bone_idx = neck_idx
+			var ring_mi := MeshInstance3D.new()
+			ring_mi.name = "CollarBand"
+			var torus := TorusMesh.new()
+			torus.inner_radius = 9.2
+			torus.outer_radius = 12.8
+			torus.rings = 20
+			torus.ring_segments = 12
+			ring_mi.mesh = torus
+			ring_mi.scale = Vector3(0.92, 0.65, 1.05)
+			ring_mi.material_override = _tamed_collar_mat
+			attach.add_child(ring_mi)
+			var tag_mi := MeshInstance3D.new()
+			tag_mi.name = "CollarTag"
+			var tag_mesh := CylinderMesh.new()
+			tag_mesh.top_radius = 2.4
+			tag_mesh.bottom_radius = 2.4
+			tag_mesh.height = 0.8
+			tag_mi.mesh = tag_mesh
+			tag_mi.position = Vector3(0.0, -1.0, 12.6)
+			tag_mi.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+			tag_mi.material_override = tag_mat
+			attach.add_child(tag_mi)
+			skel.add_child(attach)
+			_tamed_collar_node = attach
+		else:
+			var fallback_collar := Node3D.new()
+			fallback_collar.name = "TamedCollar"
+			var ring_mi := MeshInstance3D.new()
+			ring_mi.name = "CollarBand"
+			var torus := TorusMesh.new()
+			torus.inner_radius = 0.11
+			torus.outer_radius = 0.155
+			ring_mi.mesh = torus
+			ring_mi.position = Vector3(0.0, 0.40, 0.30)
+			ring_mi.rotation_degrees = Vector3(68.0, 0.0, 0.0)
+			ring_mi.material_override = _tamed_collar_mat
+			fallback_collar.add_child(ring_mi)
+			add_child(fallback_collar)
+			_tamed_collar_node = fallback_collar
+	if _tamed_label == null or not is_instance_valid(_tamed_label):
+		var lbl := Label3D.new()
+		lbl.name = "TamedMarkerLabel"
+		lbl.position = Vector3(0.0, 1.38, 0.0)
+		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lbl.font_size = 42
+		lbl.outline_size = 10
+		lbl.outline_modulate = Color(0.02, 0.02, 0.02, 0.96)
+		lbl.modulate = Color(0.42, 0.98, 0.48)
+		lbl.visibility_range_end = 55.0
+		lbl.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		add_child(lbl)
+		_tamed_label = lbl
+
+func _apply_tamed_fur_tint(state: int) -> void:
+	if _tamed_fur_state == state:
+		return
+	_tamed_fur_state = state
+	if _visual_root == null or not is_instance_valid(_visual_root):
+		return
+	var meshes: Array = []
+	_collect_mesh_instances(_visual_root, meshes)
+	for m in meshes:
+		var mi := m as MeshInstance3D
+		if mi == null or mi.mesh == null or mi.mesh.get_surface_count() == 0:
+			continue
+		if mi.name == "CollarBand" or mi.name == "CollarTag":
+			continue
+		if state == 0:
+			mi.set_surface_override_material(0, null)
+		else:
+			var base_mat := mi.mesh.surface_get_material(0) as StandardMaterial3D
+			if base_mat == null:
+				continue
+			if state == 1:
+				if _tamed_fur_mat_mine == null:
+					_tamed_fur_mat_mine = base_mat.duplicate() as StandardMaterial3D
+					_tamed_fur_mat_mine.albedo_color = Color(1.26, 1.18, 1.04)
+				mi.set_surface_override_material(0, _tamed_fur_mat_mine)
+			else:
+				if _tamed_fur_mat_other == null:
+					_tamed_fur_mat_other = base_mat.duplicate() as StandardMaterial3D
+					_tamed_fur_mat_other.albedo_color = Color(1.06, 1.12, 1.22)
+				mi.set_surface_override_material(0, _tamed_fur_mat_other)
+
+func _update_tamed_visuals() -> void:
+	if animal_type != "wolf" or _is_dedicated:
+		return
+	if _is_dead or tamed_to.is_empty():
+		if _tamed_collar_node != null and is_instance_valid(_tamed_collar_node):
+			_tamed_collar_node.visible = false
+		if _tamed_label != null and is_instance_valid(_tamed_label):
+			_tamed_label.visible = false
+		if _tamed_fur_state != 0:
+			_apply_tamed_fur_tint(0)
+		return
+	_ensure_tamed_visual_nodes()
+	var is_mine := _is_local_owner()
+	_apply_tamed_fur_tint(1 if is_mine else 2)
+	if _tamed_collar_node != null and is_instance_valid(_tamed_collar_node):
+		_tamed_collar_node.visible = true
+	if _tamed_collar_mat != null:
+		if is_mine:
+			_tamed_collar_mat.albedo_color = Color(0.88, 0.14, 0.12)
+			_tamed_collar_mat.emission = Color(0.42, 0.05, 0.04)
+		else:
+			_tamed_collar_mat.albedo_color = Color(0.18, 0.45, 0.88)
+			_tamed_collar_mat.emission = Color(0.06, 0.16, 0.36)
+	if _tamed_label != null and is_instance_valid(_tamed_label):
+		_tamed_label.visible = true
+		var fighting := _wolf_foe != null or _ordered_prey != null or _threat_player != null or _puppet_combat_active or _puppet_attack_timer > 0.0 or current_anim_keyword in ["attack", "threaten"]
+		if is_mine:
+			if fighting:
+				_tamed_label.text = "▼ TU LOBO [Atacando]"
+				_tamed_label.modulate = Color(1.0, 0.65, 0.18)
+			elif _follow_mode == "stay":
+				_tamed_label.text = "▼ TU LOBO [Quieto]"
+				_tamed_label.modulate = Color(0.42, 0.98, 0.48)
+			elif _follow_mode == "patrol":
+				_tamed_label.text = "▼ TU LOBO [Patrulla]"
+				_tamed_label.modulate = Color(0.42, 0.98, 0.48)
+			else:
+				_tamed_label.text = "▼ TU LOBO"
+				_tamed_label.modulate = Color(0.42, 0.98, 0.48)
+		else:
+			_tamed_label.text = "▼ Lobo domesticado"
+			_tamed_label.modulate = Color(0.55, 0.82, 1.0)
+
 #endregion
 
 # Las moscas acuden al cabo de ~45 s muerto y desaparecen con el cadaver
@@ -3449,7 +3741,7 @@ func _play_animation_by_name(keyword: String) -> void:
 		return
 	# Rest and fight clips keep their authored cadence even after a network
 	# speed update.
-	if lower_keyword in ["idle", "sit", "lie", "eat", "threaten", "shake"]:
+	if lower_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten", "shake"]:
 		_animation_player.speed_scale = 1.0
 	var current := _animation_player.current_animation
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0 and (lower_keyword != "run" or current.to_lower().find("frighten") < 0):
@@ -3523,6 +3815,13 @@ func _play_wolf_sound(sound_type: String) -> void:
 		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "growl_low" or sound_type == "bite" or sound_type == "hungry") and _net.is_connected:
 			_net.animal_sound.rpc(name, sound_type)
 		return
+	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
+		_puppet_attack_timer = 1.15
+		_puppet_bite_cooldown = 1.65
+		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
+		_play_animation_by_name("attack")
+		if _animation_player != null:
+			_animation_player.speed_scale = 1.0
 	var is_bear := animal_type == "bear"
 	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
 	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.
