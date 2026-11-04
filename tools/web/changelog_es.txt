@@ -128,3 +128,4 @@ d01c151|Sangrado estilo DayZ: los mordiscos de lobos/osos y las armas blancas ab
 08dbe74|La carretera a la Torre Green Mountain ahora serpentea rodeando la montana en cornisa en vez de subir en rampa, la montana nueva y la base de la cima quedan cubiertas de bosque alpino (375 pinos), y se corrige la temperatura ambiente a 35 C (fallback realista + respaldo wttr.in) y las tiendas flotantes de la cima.
 2bfcede|Autosave del servidor sin compartir datos vivos; el lobo en patrulla ya no se queda empujando contra paredes
 e8c4251|Animacion de ataque en peleas entre lobos y distintivo visual del lobo domesticado (collar, pelaje claro y marcador TU LOBO)
+9b11cbd|Torre Green Mountain: desembarcos seguros en los 6 tramos de escalera, loot accesible, cobijo en tiendas de la cima y modelo mucho mas realista
