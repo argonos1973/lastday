@@ -7,3 +7,7 @@ compatibility_minimum = "4.1"
 
 macos.debug = "res://native/bin/liblastday_nav.dylib"
 macos.release = "res://native/bin/liblastday_nav.dylib"
+windows.debug.x86_64 = "res://native/bin/lastday_nav.dll"
+windows.release.x86_64 = "res://native/bin/lastday_nav.dll"
+linux.debug.x86_64 = "res://native/bin/liblastday_nav.so"
+linux.release.x86_64 = "res://native/bin/liblastday_nav.so"
