@@ -129,3 +129,4 @@ d01c151|Sangrado estilo DayZ: los mordiscos de lobos/osos y las armas blancas ab
 2bfcede|Autosave del servidor sin compartir datos vivos; el lobo en patrulla ya no se queda empujando contra paredes
 e8c4251|Animacion de ataque en peleas entre lobos y distintivo visual del lobo domesticado (collar, pelaje claro y marcador TU LOBO)
 9b11cbd|Torre Green Mountain: desembarcos seguros en los 6 tramos de escalera, loot accesible, cobijo en tiendas de la cima y modelo mucho mas realista
+7833b15|Graficos de montaña realistas: shader PBR triplanar con roca, estratos, nieve en cumbres, crestas esculpidas y afloramientos de granito
