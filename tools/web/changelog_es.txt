@@ -131,3 +131,4 @@ e8c4251|Animacion de ataque en peleas entre lobos y distintivo visual del lobo d
 9b11cbd|Torre Green Mountain: desembarcos seguros en los 6 tramos de escalera, loot accesible, cobijo en tiendas de la cima y modelo mucho mas realista
 7833b15|Graficos de montaña realistas: shader PBR triplanar con roca, estratos, nieve en cumbres, crestas esculpidas y afloramientos de granito
 bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su radio real y el terreno no invade la calzada
+3be640e|Pelo real: el cabello recupera la transparencia del atlas original (ya no se ve negro pulido), el rapado muestra stubble realista y la barba de crecimiento progresivo queda cubierta por regresion; montanas con roca desgastada sin bandas periodicas
