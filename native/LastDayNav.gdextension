@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "lastday_nav_library_init"
+compatibility_minimum = "4.1"
+
+[libraries]
+
+macos.debug = "res://native/bin/liblastday_nav.dylib"
+macos.release = "res://native/bin/liblastday_nav.dylib"

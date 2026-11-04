@@ -673,7 +673,7 @@ func _ready() -> void:
 		seed(GameConst.WORLD_SEED)
 		_world_rng.seed = GameConst.WORLD_SEED
 		_terrain_rng.seed = TERRAIN_SEED
-		nav = NavPathfindingScript.new()
+		nav = _new_nav_pathfinding()
 		world_streaming_mgr = WorldStreamingManager.new()
 		add_child(world_streaming_mgr)
 		world_streaming_mgr.setup(self)
@@ -726,7 +726,7 @@ func _ready() -> void:
 	seed(GameConst.WORLD_SEED)
 	_world_rng.seed = GameConst.WORLD_SEED
 	_terrain_rng.seed = TERRAIN_SEED
-	nav = NavPathfindingScript.new()
+	nav = _new_nav_pathfinding()
 	world_streaming_mgr = WorldStreamingManager.new()
 	add_child(world_streaming_mgr)
 	world_streaming_mgr.setup(self)
@@ -7347,7 +7347,7 @@ func _create_map() -> void:
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
 		nav.build(wildlife_blockers, _wildlife_water_obstacles())
-		wolf_nav = NavPathfinding.new()
+		wolf_nav = _new_nav_pathfinding()
 		wolf_nav.build(wildlife_blockers, river_segments_data)
 		await get_tree().process_frame
 		if _loading_label != null:
@@ -20007,6 +20007,13 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 				continue
 		migrated_inventory.append(raw_item)
 	player_data["inventory"] = migrated_inventory
+
+# Prefiere la extensión nativa LastDayNav (C) cuando está disponible; si la
+# librería no cargó, cae al NavPathfinding GDScript con la misma superficie.
+func _new_nav_pathfinding():
+	if ClassDB.class_exists("LastDayNav"):
+		return ClassDB.instantiate("LastDayNav")
+	return NavPathfindingScript.new()
 
 func find_path_wolf(start: Vector3, goal: Vector3) -> Array:
 	if wolf_nav == null:
