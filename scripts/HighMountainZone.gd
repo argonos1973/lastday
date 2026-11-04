@@ -96,13 +96,13 @@ const TENT_A_OFFSET := Vector3(-13.5, 0.0, 4.5)
 const TENT_B_OFFSET := Vector3(13.5, 0.0, -2.5)
 
 const LADDER_FLIGHTS_META := [
-	# (flight_idx, y_bottom_local, y_top_local, angle_deg, r_shaft_max)
-	[0,  0.0, 14.0,   0.0, 5.40],
-	[1, 14.0, 19.5,  38.0, 4.15],
-	[2, 19.5, 25.0, -32.0, 3.85],
-	[3, 25.0, 31.0,  28.0, 3.40],
-	[4, 31.0, 41.0, -25.0, 2.85],
-	[5, 41.0, 52.0,  20.0, 1.88],
+	# (flight_idx, y_bottom_local, y_top_local, angle_deg, r_shaft_max, r_top_walk, r_bot_walk, top_exit_deg_off, bot_exit_deg_off)
+	[0,  0.0, 14.0,   0.0, 4.85, 5.45, 6.45,  24.0,   0.0],
+	[1, 14.0, 19.5,  38.0, 4.15, 5.30, 5.45,  24.0,  22.0],
+	[2, 19.5, 25.0, -32.0, 3.85, 5.10, 5.30, -24.0, -22.0],
+	[3, 25.0, 31.0,  28.0, 3.40, 4.35, 5.10,  24.0,  22.0],
+	[4, 31.0, 41.0, -25.0, 2.45, 3.08, 4.35, -26.0, -22.0],
+	[5, 41.0, 52.0,  20.0, 1.88, 2.62, 3.08,  28.0,  24.0],
 ]
 
 
@@ -207,6 +207,30 @@ static func _inside_military_base_compound(p: Vector2, margin: float = 1.5) -> b
 	var lx := rel.x * c - rel.y * s
 	var lz := rel.x * s + rel.y * c
 	return absf(lx) <= 21.8 + margin and absf(lz) <= 21.8 + margin
+
+
+static func inside_summit_shelter(pos: Vector3) -> bool:
+	if pos.x >= -210.0 or pos.z >= -210.0:
+		return false
+	if absf(pos.y - SUMMIT_HEIGHT) > 4.2:
+		return false
+	var yaw_rad := deg_to_rad(BASE_YAW_DEG)
+	var base_origin := Vector3(SUMMIT_CENTER.x, SUMMIT_HEIGHT, SUMMIT_CENTER.y)
+	for t_i in range(2):
+		var t_off: Vector3 = TENT_A_OFFSET if t_i == 0 else TENT_B_OFFSET
+		var t_yaw: float = BASE_YAW_DEG + (90.0 if t_i == 0 else -90.0)
+		var t_pos := base_origin + t_off.rotated(Vector3.UP, yaw_rad)
+		var local_pos := (pos - t_pos).rotated(Vector3.UP, -deg_to_rad(t_yaw))
+		if absf(local_pos.x) < 4.0 and absf(local_pos.z) < 5.5:
+			return true
+	var ct_pos := base_origin + COMMS_TOWER_OFFSET.rotated(Vector3.UP, yaw_rad)
+	var tower_local := (pos - ct_pos).rotated(Vector3.UP, -yaw_rad)
+	# Entry bunker (-4.8, 1.6, 2.6) size (3.2, 3.2, 3.6) & service shed (5.9, 1.15, 3.4) size (2.9, 2.3, 2.5)
+	if absf(tower_local.x - (-4.8)) < 1.6 and absf(tower_local.z - 2.6) < 1.8 and tower_local.y <= 3.3:
+		return true
+	if absf(tower_local.x - 5.9) < 1.45 and absf(tower_local.z - 3.4) < 1.25 and tower_local.y <= 2.4:
+		return true
+	return false
 
 
 static func blocks_vegetation(pos: Vector3) -> bool:
@@ -818,6 +842,8 @@ static func _build_summit_military_base(world: Node3D, parent: Node3D, server_on
 			var t_node := world.get_node_or_null(t_name) as Node3D
 			if t_node != null:
 				world._build_military_tent_collision(t_node, t_name + "_Col", t_name + "_RoofCol")
+				if world.has_method("_add_tent_interior_light"):
+					world._add_tent_interior_light(t_node, t_name + "_Light")
 		world._register_wildlife_blocker(t_pos, 4.5)
 
 	# 4) Torre de Comunicaciones estilo DayZ Green Mountain (68 m de altura + 6 pisos + escaleras de mano)
@@ -859,11 +885,19 @@ static func _spawn_green_mountain_comms_tower(world: Node3D, parent: Node3D, tow
 		var y1_local: float = float(entry[2])
 		var ang_deg: float = float(entry[3])
 		var r_shaft: float = float(entry[4])
-		var r_climb: float = r_shaft + 0.74
+		var r_top_walk: float = float(entry[5])
+		var r_bot_walk: float = float(entry[6])
+		var top_deg_off: float = float(entry[7])
+		var bot_deg_off: float = float(entry[8])
+		var r_climb: float = r_shaft + 0.54
 		var ang_local := deg_to_rad(ang_deg)
 		var local_offset := Vector3(sin(ang_local) * r_climb, 0.0, cos(ang_local) * r_climb)
 		var world_offset := local_offset.rotated(Vector3.UP, yaw_rad)
 		var local_inward := Vector3(-sin(ang_local), 0.0, -cos(ang_local)).rotated(Vector3.UP, yaw_rad)
+		var top_ang := deg_to_rad(ang_deg + top_deg_off)
+		var top_local := Vector3(sin(top_ang) * r_top_walk, 0.0, cos(top_ang) * r_top_walk).rotated(Vector3.UP, yaw_rad)
+		var bot_ang := deg_to_rad(ang_deg + bot_deg_off)
+		var bot_local := Vector3(sin(bot_ang) * r_bot_walk, 0.0, cos(bot_ang) * r_bot_walk).rotated(Vector3.UP, yaw_rad)
 
 		var lnode := Node3D.new()
 		lnode.name = "CommsTowerLadderVolume_%d" % f_idx
@@ -872,6 +906,8 @@ static func _spawn_green_mountain_comms_tower(world: Node3D, parent: Node3D, tow
 		lnode.set_meta("ladder_top_y", tower_pos.y + y1_local)
 		lnode.set_meta("ladder_center_xz", Vector2(tower_pos.x + world_offset.x, tower_pos.z + world_offset.z))
 		lnode.set_meta("ladder_inward_dir", Vector2(local_inward.x, local_inward.z).normalized())
+		lnode.set_meta("ladder_top_exit_xz", Vector2(tower_pos.x + top_local.x, tower_pos.z + top_local.z))
+		lnode.set_meta("ladder_bottom_exit_xz", Vector2(tower_pos.x + bot_local.x, tower_pos.z + bot_local.z))
 		lnode.add_to_group("ladder_volume")
 		parent.add_child(lnode)
 

@@ -15667,11 +15667,14 @@ func _update_ladder_climb_physics(input_dir: Vector2, delta: float) -> bool:
 		var y1 := float(cand.get_meta("ladder_top_y", 10.0))
 		var cxz: Vector2 = cand.get_meta("ladder_center_xz", Vector2(cand.global_position.x, cand.global_position.z))
 		var horiz_dist := Vector2(global_position.x, global_position.z).distance_to(cxz)
-		var wants_up := input_dir.y < -0.15 and global_position.y < y1 - 0.15
-		var wants_down := input_dir.y > 0.15 and global_position.y > y0 + 0.35
+		var near_top := global_position.y >= y1 - 0.35
+		var wants_up := input_dir.y < -0.15 and not near_top
+		var wants_down := global_position.y > y0 + 0.35 and (input_dir.y > 0.15 or (near_top and input_dir.y < -0.15 and horiz_dist <= 1.15))
 		if horiz_dist <= 1.25 and (wants_up or wants_down):
 			is_climbing_ladder = true
 			_active_ladder = cand
+			if near_top and input_dir.y < -0.15:
+				global_position.y = y1 - 0.18
 		else:
 			return false
 
@@ -15712,17 +15715,26 @@ func _update_ladder_climb_physics(input_dir: Vector2, delta: float) -> bool:
 	# Reach top deck -> step onto the walkable ring platform
 	if _ladder_climb_speed > 0.0 and global_position.y >= y_top + 0.06:
 		global_position.y = y_top + 0.08
-		# Step slightly tangent/outward onto the solid deck next to the hatch
-		var tangent := Vector2(-inward.y, inward.x).normalized()
-		global_position.x = center_xz.x + tangent.x * 1.05 - inward.x * 0.45
-		global_position.z = center_xz.y + tangent.y * 1.05 - inward.y * 0.45
+		if lad.has_meta("ladder_top_exit_xz"):
+			var top_xz: Vector2 = lad.get_meta("ladder_top_exit_xz")
+			global_position.x = top_xz.x
+			global_position.z = top_xz.y
+		else:
+			var tangent := Vector2(-inward.y, inward.x).normalized()
+			global_position.x = center_xz.x + tangent.x * 1.05 - inward.x * 0.45
+			global_position.z = center_xz.y + tangent.y * 1.05 - inward.y * 0.45
 		is_climbing_ladder = false
 		_active_ladder = null
 		_ladder_climb_speed = 0.0
 	elif _ladder_climb_speed < 0.0 and global_position.y <= y_bot + 0.05:
 		global_position.y = y_bot + 0.06
-		global_position.x = center_xz.x - inward.x * 0.55
-		global_position.z = center_xz.y - inward.y * 0.55
+		if lad.has_meta("ladder_bottom_exit_xz"):
+			var bot_xz: Vector2 = lad.get_meta("ladder_bottom_exit_xz")
+			global_position.x = bot_xz.x
+			global_position.z = bot_xz.y
+		else:
+			global_position.x = center_xz.x - inward.x * 0.55
+			global_position.z = center_xz.y - inward.y * 0.55
 		is_climbing_ladder = false
 		_active_ladder = null
 		_ladder_climb_speed = 0.0

@@ -10557,17 +10557,23 @@ func _create_house_loot() -> void:
 	var hm_yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
 	var hm_tower := hm_base + HighMountainZone.COMMS_TOWER_OFFSET.rotated(Vector3.UP, hm_yaw)
 	var hm_top_y := HighMountainZone.SUMMIT_HEIGHT + 52.08
+	var hm_m4_ang := deg_to_rad(140.0)
+	var hm_m4_local := Vector3(sin(hm_m4_ang) * 2.40, 0.0, cos(hm_m4_ang) * 2.40).rotated(Vector3.UP, hm_yaw)
 	var hm_m4: Dictionary = m4_template.duplicate()
 	hm_m4["id"] = "summit_comms_top_m4"
-	hm_m4["pos"] = Vector3(hm_tower.x - 1.8, hm_top_y, hm_tower.z)
+	hm_m4["pos"] = Vector3(hm_tower.x + hm_m4_local.x, hm_top_y, hm_tower.z + hm_m4_local.z)
 	hm_m4["floor_y"] = hm_top_y
 	_create_pickup_item(hm_m4)
 	for hm_i in range(3):
+		var mag_ang := deg_to_rad(152.0 + 10.0 * float(hm_i))
+		var mag_local := Vector3(sin(mag_ang) * 2.40, 0.0, cos(mag_ang) * 2.40).rotated(Vector3.UP, hm_yaw)
 		var hm_mag: Dictionary = m4_mag_template.duplicate()
 		hm_mag["id"] = "summit_comms_top_m4mag_%d" % hm_i
-		hm_mag["pos"] = Vector3(hm_tower.x - 2.2 + 0.45 * hm_i, hm_top_y, hm_tower.z + 0.6)
+		hm_mag["pos"] = Vector3(hm_tower.x + mag_local.x, hm_top_y, hm_tower.z + mag_local.z)
 		hm_mag["floor_y"] = hm_top_y
 		_create_pickup_item(hm_mag)
+	var band_ang := deg_to_rad(-110.0)
+	var band_local := Vector3(sin(band_ang) * 5.15, 0.0, cos(band_ang) * 5.15).rotated(Vector3.UP, hm_yaw)
 	for deck_idx in range(3):
 		var dy_local: float = [14.08, 19.58, 25.08][deck_idx]
 		var band_y := HighMountainZone.SUMMIT_HEIGHT + dy_local
@@ -10582,7 +10588,7 @@ func _create_house_loot() -> void:
 			"scale": 1.0,
 			"rot": Vector3.ZERO,
 			"color": Color.TRANSPARENT,
-			"pos": Vector3(hm_tower.x + 4.8, band_y, hm_tower.z),
+			"pos": Vector3(hm_tower.x + band_local.x, band_y, hm_tower.z + band_local.z),
 			"floor_y": band_y,
 		}
 		_create_pickup_item(band_loot)
@@ -14244,6 +14250,7 @@ const HOUSE_DATA := [
 
 func _is_player_in_house(pos: Vector3) -> bool:
 	if CityExpansion.inside_building(pos): return true
+	if HighMountainZone.inside_summit_shelter(pos): return true
 	for hd in HOUSE_DATA:
 		var house_pos: Vector3 = hd["pos"]
 		var half_w: float = hd["w"] * 0.5

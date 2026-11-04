@@ -122,8 +122,8 @@ func _run() -> void:
 	var ap: AnimationPlayer = actor.third_person_animation_player
 	check(ap != null and ap.has_animation("ladder/climbing"), "Animación 'ladder/climbing' instalada en el personaje")
 
-	# Simular subida por el tramo 0 (0 -> 14 m) y por el tramo 5 (41 -> 52 m, cima)
-	for f_idx in [0, 5]:
+	# Simular subida por LOS 6 TRAMOS (0..5) y verificar que cada desembarco cae sobre suelo firme
+	for f_idx in range(6):
 		var lnode := hm_node.get_node_or_null("CommsTowerLadderVolume_%d" % f_idx) as Node3D
 		var cxz: Vector2 = lnode.get_meta("ladder_center_xz")
 		var y_bot: float = float(lnode.get_meta("ladder_bottom_y"))
@@ -134,13 +134,41 @@ func _run() -> void:
 		check(climbed and actor.is_climbing_ladder, "Engancha escalera de mano tramo %d al pulsar W" % f_idx)
 		actor._update_third_person_animation(true, 0.1)
 		check(ap.current_animation == "ladder/climbing", "Reproduce animación ladder/climbing en tramo %d" % f_idx)
-		# Subir hasta desembarcar en el piso superior
 		var guard := 0
 		while actor.is_climbing_ladder and guard < 250:
 			actor._update_ladder_climb_physics(Vector2(0.0, -1.0), 0.1)
 			guard += 1
 		check(not actor.is_climbing_ladder and absf(actor.global_position.y - (y_top + 0.08)) < 0.25,
 			"Desembarca en el piso superior del tramo %d a y=%.2f m" % [f_idx, actor.global_position.y])
+		var land_rq := PhysicsRayQueryParameters3D.create(
+			actor.global_position + Vector3(0.0, 0.8, 0.0),
+			actor.global_position - Vector3(0.0, 1.2, 0.0)
+		)
+		land_rq.collision_mask = 1
+		var land_hit := space.intersect_ray(land_rq)
+		check(not land_hit.is_empty() and absf((land_hit["position"] as Vector3).y - y_top) < 0.35,
+			"Punto de desembarco superior del tramo %d tiene suelo sólido debajo (evita caída al vacío)" % f_idx)
+
+	# Verificar enganche en escotilla superior al caminar de frente con W y bajada completa con S
+	var top_ladder := hm_node.get_node_or_null("CommsTowerLadderVolume_4") as Node3D
+	var top_cxz: Vector2 = top_ladder.get_meta("ladder_center_xz")
+	var top_y1: float = float(top_ladder.get_meta("ladder_top_y"))
+	var top_y0: float = float(top_ladder.get_meta("ladder_bottom_y"))
+	actor.global_position = Vector3(top_cxz.x, top_y1 + 0.08, top_cxz.y)
+	actor.is_climbing_ladder = false
+	var grabbed_top_w := actor._update_ladder_climb_physics(Vector2(0.0, -1.0), 0.05)
+	check(grabbed_top_w and actor.is_climbing_ladder, "Caminar con W hacia una escotilla superior engancha la escalera en vez de caer por el hueco")
+	var down_guard := 0
+	while actor.is_climbing_ladder and down_guard < 250:
+		actor._update_ladder_climb_physics(Vector2(0.0, 1.0), 0.1)
+		down_guard += 1
+	check(not actor.is_climbing_ladder and absf(actor.global_position.y - (top_y0 + 0.06)) < 0.25,
+		"Bajada con S desembarca en el piso inferior a y=%.2f m" % actor.global_position.y)
+
+	# 5) Verificar que las tiendas militares de la cima y el búnker dan cobijo (_is_player_in_house)
+	if tent0 != null and tent1 != null:
+		check(world._is_player_in_house(tent0.global_position + Vector3(0.0, 0.5, 0.0)), "Tienda militar 0 de la cima cuenta como cobijo interior")
+		check(world._is_player_in_house(tent1.global_position + Vector3(0.0, 0.5, 0.0)), "Tienda militar 1 de la cima cuenta como cobijo interior")
 
 	world.free()
 	print("HighMountainTowerRegression: %d failures" % failures)
