@@ -103,14 +103,6 @@ void fragment() {
 
 	vec3 mountain_col = mix(alpine_meadow, cliff_color, rock_weight);
 
-	// 5) Nieve y escarcha en las cumbres alpinas (> 57.5 m, por encima de la explanada militar de 56 m)
-	float north_bias = clamp(-n.z * 0.35, -0.15, 0.25);
-	float snow_alt = smoothstep(57.4, 65.0, world_position.y + (macro_var - 0.5) * 4.5 + (detail - 0.5) * 2.2 + north_bias * 5.0);
-	float snow_slope = smoothstep(0.38, 0.68, n.y + (detail - 0.5) * 0.14);
-	float snow_mask = clamp(snow_alt * snow_slope, 0.0, 1.0);
-	vec3 snow_col = mix(vec3(0.84, 0.88, 0.93), vec3(0.96, 0.97, 0.99), smoothstep(0.3, 0.8, detail));
-	mountain_col = mix(mountain_col, snow_col, snow_mask * 0.88);
-
 	// Oclusión de barrancos / concavidades codificada opcionalmente en COLOR.r (por defecto 1.0)
 	float valley_ao = mix(0.68, 1.06, clamp(vertex_ridge_ao, 0.0, 1.0));
 	ALBEDO = mountain_col * valley_ao;
@@ -125,7 +117,7 @@ void fragment() {
 	vec3 r1 = cross(dpdy, NORMAL);
 	vec3 r2 = cross(NORMAL, dpdx);
 	float det = dot(dpdx, r1);
-	float bump_strength = mix(0.028, 0.085, rock_weight) * (1.0 - snow_mask * 0.65);
+	float bump_strength = mix(0.028, 0.085, rock_weight);
 	vec3 rock_gradient = sign(det) * (dFdx(h_rock) * r1 + dFdy(h_rock) * r2);
 	vec3 bumped_view_n = normalize(abs(det) * NORMAL - rock_gradient * bump_strength);
 
@@ -137,6 +129,6 @@ void fragment() {
 
 	float base_rough = mix(clamp(texture(leaf_roughness, uv).r, 0.68, 0.96), 0.96, exposed);
 	float rock_rough = mix(0.88, 0.72, seepage * 0.6);
-	ROUGHNESS = mix(mix(base_rough, rock_rough, rock_weight), 0.52, snow_mask);
-	SPECULAR = mix(mix(0.20, 0.28, rock_weight), 0.42, snow_mask);
+	ROUGHNESS = mix(base_rough, rock_rough, rock_weight);
+	SPECULAR = mix(0.20, 0.28, rock_weight);
 }

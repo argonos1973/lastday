@@ -71,10 +71,18 @@ func _run() -> void:
 	check(massif_mi != null and massif_mi.material_override is ShaderMaterial, "HighMountainMassif usa ShaderMaterial PBR de montaña")
 	var outcrop_mms := hm_node.find_children("MountainRockOutcropsMM_*", "MultiMeshInstance3D", false, false) if hm_node != null else []
 	var outcrop_total := 0
+	var rocks_on_road := 0
 	for om in outcrop_mms:
-		if (om as MultiMeshInstance3D).multimesh != null:
-			outcrop_total += (om as MultiMeshInstance3D).multimesh.instance_count
-	check(outcrop_total >= 40, "Afloramientos rocosos y escarpes de granito instanciados en laderas y taludes (%d rocas)" % outcrop_total)
+		var omm := (om as MultiMeshInstance3D).multimesh
+		if omm == null:
+			continue
+		outcrop_total += omm.instance_count
+		for j in range(omm.instance_count):
+			var rock_origin := omm.get_instance_transform(j).origin
+			if HighMountainZone.on_road(rock_origin, 0.5):
+				rocks_on_road += 1
+	check(outcrop_total >= 25, "Afloramientos rocosos y escarpes de granito instanciados en laderas y taludes (%d rocas)" % outcrop_total)
+	check(rocks_on_road == 0, "Ninguna roca invade la calzada de la carretera de montaña (%d)" % rocks_on_road)
 	var comms_tower := hm_node.get_node_or_null("GreenMountainCommsTower") as Node3D if hm_node != null else null
 	check(comms_tower != null, "GreenMountainCommsTower instanciada en la cima")
 	if comms_tower != null:

@@ -594,7 +594,9 @@ static func _sculpted_vertex_height_and_ao(x: float, z: float) -> Vector2:
 	if x < -235.0 and z < -240.0 and d_summit > 23.5:
 		var rinfo := _closest_mountain_road_info(p)
 		var dist_road := rinfo.x
-		road_mask = clampf((dist_road - (ROAD_HALF_W + 7.2)) / 6.5, 0.0, 1.0)
+		# Margen amplio: el esculpido empieza a 14.1 m del eje y crece suave hasta 24 m,
+		# para que ninguna cresta o bloque visual invada la calzada serpenteante.
+		road_mask = clampf((dist_road - (ROAD_HALF_W + 9.5)) / 10.0, 0.0, 1.0)
 		if dist_road > ROAD_HALF_W and dist_road < ROAD_HALF_W + 6.5:
 			road_cut_ao = (1.0 - absf(dist_road - (ROAD_HALF_W + 2.2)) / 4.3) * 0.18
 	var sculpt_mask := plateau_mask * foot_mask * road_mask
@@ -726,6 +728,7 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 		GameConst.LAKE_DIR + "lake_boulder_2.glb",
 	]
 	var meshes: Array[ArrayMesh] = []
+	var mesh_rads: Array[float] = []
 	var mtn_mat := MaterialFactory.make_mountain_terrain_material()
 	for p in outcrop_paths:
 		if not ResourceLoader.exists(p):
@@ -743,6 +746,11 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 				for s_i in range(copy_m.get_surface_count()):
 					copy_m.surface_set_material(s_i, mtn_mat)
 				meshes.append(copy_m)
+				var aabb := copy_m.get_aabb()
+				# Radio horizontal máximo del mesh: los outcrops miden ~10 m de ancho
+				var rx_rad := maxf(absf(aabb.position.x), absf(aabb.end.x))
+				var rz_rad := maxf(absf(aabb.position.z), absf(aabb.end.z))
+				mesh_rads.append(maxf(rx_rad, rz_rad))
 				break
 		inst.free()
 	if meshes.is_empty():
@@ -767,11 +775,11 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 			var side_f: float = float(side)
 			if rng.randf() < 0.42:
 				continue
-			var off_d := ASPHALT_HALF_W + rng.randf_range(2.8, 6.2)
+			var off_d := ASPHALT_HALF_W + rng.randf_range(3.0, 10.5)
 			var rx: float = cur3.x + across.x * side_f * off_d + rng.randf_range(-1.2, 1.2)
 			var rz: float = cur3.z + across.y * side_f * off_d + rng.randf_range(-1.2, 1.2)
 			var rpos := Vector3(rx, 0.0, rz)
-			if on_road(rpos, 2.2) or _inside_military_base_compound(Vector2(rx, rz), 4.0):
+			if _inside_military_base_compound(Vector2(rx, rz), 4.0):
 				continue
 			var gy := _sculpted_vertex_height_and_ao(rx, rz).x
 			if gy < 2.0:
@@ -780,6 +788,10 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 			var is_uphill := gy >= cur3.y - 0.15
 			var m_idx: int = rng.randi_range(0, 2) if (is_uphill and meshes.size() >= 3) else rng.randi_range(0, meshes.size() - 1)
 			var sc_xz := rng.randf_range(1.6, 3.2) if is_uphill else rng.randf_range(0.85, 1.75)
+			# Rechazar si el radio real escalado de la roca llega a tocar la calzada (margen 1.2 m)
+			var rock_rad := mesh_rads[m_idx] * sc_xz
+			if on_road(rpos, rock_rad + 1.2):
+				continue
 			var sc_y := sc_xz * rng.randf_range(0.75, 1.35)
 			var basis := Basis.from_euler(Vector3(
 				deg_to_rad(rng.randf_range(-12.0, 12.0)),
@@ -811,6 +823,10 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 		var is_crag := slope > 0.55 or gy > 55.0
 		var m_idx: int = rng.randi_range(0, mini(2, meshes.size() - 1)) if is_crag else rng.randi_range(0, meshes.size() - 1)
 		var sc_xz := rng.randf_range(2.2, 4.8) if is_crag else rng.randf_range(1.1, 2.6)
+		# Ninguna roca alpina puede alcanzar la calzada con su radio escalado (margen 1.5 m)
+		var rock_rad := mesh_rads[m_idx] * sc_xz
+		if on_road(cpos, rock_rad + 1.5):
+			continue
 		var sc_y := sc_xz * rng.randf_range(0.85, 1.55)
 		var tilt_dir := atan2(gz, gx)
 		var basis := Basis.from_euler(Vector3(
