@@ -79,10 +79,10 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 	for tree: Vector3 in tree_positions:
 		# Stable per-tree samples keep quality settings from rearranging plants.
 		rng.seed = hash(tree) ^ 0xFE471
-		if rng.randf() > .38: continue
-		for i in range(3):
+		if rng.randf() > .56: continue
+		for i in range(4):
 			var angle := rng.randf_range(0,TAU)
-			var pos := tree + Vector3(cos(angle),0,sin(angle))*rng.randf_range(1.0,4.0)
+			var pos := tree + Vector3(cos(angle),0,sin(angle))*rng.randf_range(.8,5.5)
 			var variant := rng.randi_range(0,2)
 			var scale_value := rng.randf_range(.65,1.25)
 			var yaw := rng.randf_range(0,TAU)

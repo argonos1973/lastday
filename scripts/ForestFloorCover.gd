@@ -4,12 +4,16 @@ static func apply(world: Node3D, positions: Array) -> void:
 	var image := Image.create(512,704,false,Image.FORMAT_R8)
 	var minimum := Vector2(-world.MAP_EXTENT,-world.MAP_EXTENT)
 	var span := Vector2(world.MAP_EXTENT*2.0,world.MAP_EXTENT+preload("res://scripts/CityExpansion.gd").SOUTH_LIMIT)
+	var pixel_size := span / Vector2(512,704)
+	var radius_pixels := Vector2(11.0,11.0) / pixel_size
 	for pos: Vector3 in positions:
 		var center := (Vector2(pos.x,pos.z)-minimum)/span*Vector2(512,704)
-		for z in range(maxi(0,int(center.y)-4),mini(704,int(center.y)+5)):
-			for x in range(maxi(0,int(center.x)-4),mini(512,int(center.x)+5)):
-				var distance := ((Vector2(x+.5,z+.5)-center)*span/Vector2(512,704)).length()
-				var cover := 1.0-smoothstep(1.2,7.0,distance)
+		for z in range(maxi(0,floori(center.y-radius_pixels.y)),mini(704,ceili(center.y+radius_pixels.y))):
+			for x in range(maxi(0,floori(center.x-radius_pixels.x)),mini(512,ceili(center.x+radius_pixels.x))):
+				var distance_squared := ((Vector2(x+.5,z+.5)-center)*pixel_size).length_squared()
+				if distance_squared >= 121.0: continue
+				var distance := sqrt(distance_squared)
+				var cover := 1.0-smoothstep(1.6,11.0,distance)
 				if cover > image.get_pixel(x,z).r:
 					image.set_pixel(x,z,Color(cover,0,0))
 	var texture := ImageTexture.create_from_image(image)

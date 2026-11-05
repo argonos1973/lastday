@@ -17206,13 +17206,13 @@ func _queue_road_edge_grass() -> void:
 		var length := direction.length()
 		if length < .01: continue
 		var side := Vector3(-direction.z,0,direction.x).normalized()
-		var steps := maxi(1,ceili(length/.24))
+		var steps := maxi(1,ceili(length/.15))
 		for i in range(steps):
 			for sign_value in [-1.0,1.0]:
 				var t := (float(i)+rng.randf())/float(steps)
-				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.10,1.65))
+				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.14,2.35))
 				var height := rng.randf_range(.18,.34)
-				var radius := rng.randf_range(.24,.40)
+				var radius := rng.randf_range(.27,.46)
 				if rng.randf() > detail: continue
 				if not _can_place_ground_vegetation(pos,.8,true): continue
 				if HighMountainZone.blocks_vegetation(pos,-.22): continue
