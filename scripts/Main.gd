@@ -7372,6 +7372,10 @@ func _create_map() -> void:
 	CityExpansion.create(self, is_server)
 	HighMountainZone.create(self, is_server)
 	if not is_server:
+		# Wait until fruit trees, individual trees and terrain materials exist.
+		var floor_positions := _forest_floor_positions([])
+		await preload("res://scripts/ForestLeafLitter.gd").build(self, floor_positions)
+		preload("res://scripts/ForestFloorCover.gd").apply(self, floor_positions)
 		await get_tree().process_frame
 		await get_tree().physics_frame
 		await get_tree().physics_frame
@@ -17454,7 +17458,6 @@ func _create_forest() -> void:
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	await _build_forest_understory_multimeshes(all_tree_positions)
-	preload("res://scripts/ForestFloorCover.gd").apply(self, all_tree_positions)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
@@ -17771,11 +17774,25 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 				_forest_multimesh_centers.append(center)
 				_forest_multimesh_radii.append(batch_radius)
 
+func _forest_floor_positions(batched_positions: Array) -> Array:
+	var unique: Dictionary = {}
+	for pos: Vector3 in batched_positions:
+		unique[_tree_mm_slot_key(pos)] = pos
+	for entries: Array in _tree_grid.values():
+		for entry: Dictionary in entries:
+			var pos: Vector3 = entry.pos
+			unique[_tree_mm_slot_key(pos)] = pos
+	# Fruit and individually placed trees do not belong to forest MultiMeshes.
+	for node in get_children():
+		var node_name := str(node.name)
+		if node is Node3D and (node_name.begins_with("FruitTree_") or node_name.begins_with("ChoppableTree_")) and not node_name.ends_with("_Collision"):
+			unique[_tree_mm_slot_key(node.position)] = node.position
+	return unique.values()
+
 func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
 		return
 	await preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
-	await preload("res://scripts/ForestLeafLitter.gd").build(self, tree_positions)
 	preload("res://scripts/ForestDeadwood.gd").build(self, tree_positions)
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
