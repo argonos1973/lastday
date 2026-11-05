@@ -94,10 +94,18 @@ func _update_lighting() -> void:
 		return
 	var day_amount: float = get_day_amount()
 	var night_amount: float = 1.0 - day_amount
-	sun.rotation_degrees.x = lerp(35.0, -72.0, day_amount)
-	sun.light_color = Color(1.0, 0.68, 0.42).lerp(Color(1.0, 0.96, 0.90), smoothstep(0.1, 0.85, day_amount))
-	sun.light_energy = lerp(0.0, 1.5, day_amount) * (1.0 - weather_darkness)
-	sun.shadow_enabled = day_amount > 0.05
+	# Solar position follows the hour, not the daylight fade (which stays at
+	# 1 for most of the day). Dawn and dusk now cast opposite, long shadows.
+	var solar_phase := clampf((time_of_day - 5.5) / 16.0, 0.0, 1.0)
+	var elevation := sin(solar_phase * PI) * 68.0 - 4.0
+	var sun_height := smoothstep(0.0, 48.0, elevation)
+	var cloud := clampf(weather_cloud_cover, 0.0, 1.0)
+	var darkness := clampf(weather_darkness, 0.0, 1.0)
+	var golden_hour := (1.0 - smoothstep(4.0, 26.0, elevation)) * day_amount
+	sun.rotation_degrees = Vector3(-elevation, lerpf(-105.0, 75.0, solar_phase), 0.0)
+	sun.light_color = Color(1.0, 0.66, 0.39).lerp(Color(1.0, 0.96, 0.90), sun_height)
+	sun.light_energy = day_amount * lerpf(.30, 1.45, sun_height) * (1.0 - darkness)
+	sun.shadow_enabled = elevation > 0.0 and day_amount > 0.05
 	if star_field != null:
 		star_field.visible = night_amount > 0.85 and weather_cloud_cover < 0.75
 	if moon_field != null:
@@ -113,10 +121,10 @@ func _update_lighting() -> void:
 		var night_bg := Color(0.001, 0.001, 0.002)
 		world_environment.environment.background_color = night_bg.lerp(Color(0.56, 0.76, 0.96), day_amount)
 		var night_ambient := Color(0.18, 0.23, 0.32)
-		world_environment.environment.ambient_light_color = night_ambient.lerp(Color(0.86, 0.90, 0.92), day_amount)
-		world_environment.environment.ambient_light_energy = lerp(0.16 + moon_illum, 0.55, day_amount) * (1.0 - weather_darkness * 0.6) + lightning_intensity * 1.0
+		world_environment.environment.ambient_light_color = night_ambient.lerp(Color(.72,.81,.94).lerp(Color(.88,.89,.91),cloud), day_amount)
+		world_environment.environment.ambient_light_energy = lerp(0.16 + moon_illum, lerpf(.40,.53,cloud), day_amount) * (1.0 - darkness * 0.6) + lightning_intensity * 1.0
 		var night_fog := Color(0.002, 0.003, 0.004)
-		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74), day_amount)
+		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74).lerp(Color(.78,.61,.47), golden_hour*.35), day_amount)
 		# Weak aerial perspective in clear weather; storm/fog values still dominate.
 		var aerial_density := lerpf(.00004,.00025,day_amount)
 		world_environment.environment.fog_density = maxf(weather_fog_density,aerial_density)
@@ -134,7 +142,7 @@ func _update_lighting() -> void:
 			sm.set_shader_parameter("night_sky_brightness", 0.03)
 			sm.set_shader_parameter("sky_top_color", Color(0.0005, 0.0005, 0.001, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
 			sm.set_shader_parameter("sky_mid_color", Color(0.001, 0.002, 0.004, 1).lerp(Color(0.55, 0.75, 0.98, 1), day_amount))
-			sm.set_shader_parameter("sky_horizon_color", Color(0.004, 0.005, 0.007, 1).lerp(Color(0.78, 0.90, 1.0, 1), day_amount))
+			sm.set_shader_parameter("sky_horizon_color", Color(0.004, 0.005, 0.007, 1).lerp(Color(0.78, 0.90, 1.0, 1).lerp(Color(1.0,.69,.43),golden_hour*.45), day_amount))
 			sm.set_shader_parameter("sky_energy", lerp(0.02, 1.0, day_amount))
 			sm.set_shader_parameter("ground_bottom_color", Color(0.001, 0.001, 0.002, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
 			sm.set_shader_parameter("ground_horizon_color", Color(0.004, 0.004, 0.006, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))

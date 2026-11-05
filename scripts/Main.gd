@@ -2260,7 +2260,10 @@ func _create_environment() -> void:
 	environment.background_color = Color(0.2, 0.5, 0.9)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.86, 0.90, 0.92)
-	environment.ambient_light_energy = 0.55
+	environment.ambient_light_energy = 0.40
+	environment.tonemap_mode = Environment.TONE_MAPPER_REINHARDT
+	environment.tonemap_exposure = 1.0
+	environment.tonemap_white = 6.0
 	environment.fog_enabled = false
 	environment.fog_light_color = Color(0.78, 0.86, 0.90)
 	environment.fog_density = 0.0
@@ -16428,7 +16431,7 @@ func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8, short_grass
 		return false
 	if _is_in_house_doorway(pos):
 		return false
-	var on_road := _is_near_road(pos, -.10) if short_grass else _is_on_road(pos)
+	var on_road := _is_near_road(pos, -.22) if short_grass else _is_on_road(pos)
 	if on_road and not _is_inside_river_band(pos, 3.0):
 		return false
 	if river_margin >= 0.0:
@@ -17203,16 +17206,16 @@ func _queue_road_edge_grass() -> void:
 		var length := direction.length()
 		if length < .01: continue
 		var side := Vector3(-direction.z,0,direction.x).normalized()
-		var steps := maxi(1,ceili(length/.30))
+		var steps := maxi(1,ceili(length/.24))
 		for i in range(steps):
 			for sign_value in [-1.0,1.0]:
 				var t := (float(i)+rng.randf())/float(steps)
-				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.06,.32))
+				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.10,1.65))
 				var height := rng.randf_range(.18,.34)
-				var radius := rng.randf_range(.25,.43)
+				var radius := rng.randf_range(.24,.40)
 				if rng.randf() > detail: continue
 				if not _can_place_ground_vegetation(pos,.8,true): continue
-				if HighMountainZone.blocks_vegetation(pos,-.10): continue
+				if HighMountainZone.blocks_vegetation(pos,-.22): continue
 				pos.y = _get_exact_ground_y(pos.x,pos.z)+.008
 				_queue_grass_instance(pos,height,radius,Color(.23,.33,.13))
 
@@ -18664,9 +18667,9 @@ func _road_verge_growth(pos: Vector3) -> float:
 	# Includes city streets and the mountain switchbacks through _is_near_road.
 	if not _is_near_road(pos, 6.5):
 		return 1.0
-	if CityExpansion.on_road(pos, 1.5, _south_road_end()) or _is_near_road(pos, -.10):
+	if CityExpansion.on_road(pos, 0.0, _south_road_end()) or _is_near_road(pos, -.22):
 		return 0.0
-	var low := -.10
+	var low := -.22
 	var high := 6.5
 	for step in range(5):
 		var mid := (low + high) * .5
@@ -18675,7 +18678,7 @@ func _road_verge_growth(pos: Vector3) -> float:
 		else:
 			low = mid
 	var width := lerpf(1.2, 2.4, _ground_patch_density(pos))
-	return lerpf(.80, 1.0, smoothstep(0.0, width, (low + high)*.5 + .10))
+	return lerpf(.80, 1.0, smoothstep(0.0, width, (low + high)*.5 + .22))
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 	_ensure_grass_batches()

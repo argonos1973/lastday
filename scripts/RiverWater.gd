@@ -49,18 +49,19 @@ func _ready() -> void:
 		_captured_cloud_darkness = _cloud_darkness
 		if _material is ShaderMaterial:
 			_material.set_shader_parameter("use_foam", false)
-			_material.set_shader_parameter("normal_scale", 0.11)
-			_material.set_shader_parameter("roughness_scale", 0.09)
+			_material.set_shader_parameter("normal_scale", 0.24)
+			_material.set_shader_parameter("roughness_scale", 0.12)
 			_material.set_shader_parameter("water_color", Color(0.024, 0.068, 0.075))
 	if _material is ShaderMaterial:
 		var direction := global_basis.x.normalized()
 		_material.set_shader_parameter("current_direction", Vector2(direction.x, direction.z))
 		_material.set_shader_parameter("use_river_flow", not _is_lake)
-		_material.set_shader_parameter("wave_height", .015 if _is_lake else .045)
+		_material.set_shader_parameter("wave_height", .026 if _is_lake else .045)
+		_material.set_shader_parameter("flow_speed", .35 if _is_lake else .48)
 		_material.set_shader_parameter("beers_law", 1.0 if _is_lake else 1.0)
 		if not _is_lake:
-			_material.set_shader_parameter("normal_scale", 0.34)
-			_material.set_shader_parameter("roughness_scale", 0.16)
+			_material.set_shader_parameter("normal_scale", 0.48)
+			_material.set_shader_parameter("roughness_scale", 0.14)
 			_material.set_shader_parameter("water_color", Color(0.042, 0.088, 0.078))
 			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)
@@ -94,10 +95,11 @@ func request_reflection_refresh() -> void:
 	_reflection_dirty = true
 
 func set_night_amount(value: float, cloud_darkness := 0.0) -> void:
-	_cloud_darkness = clampf(cloud_darkness, 0.0, 1.0)
+	var next_cloud := clampf(cloud_darkness, 0.0, 1.0)
 	var next_amount := clampf(value, 0.0, 1.0)
-	if is_equal_approx(next_amount, _night_amount):
+	if is_equal_approx(next_amount, _night_amount) and is_equal_approx(next_cloud, _cloud_darkness):
 		return
+	_cloud_darkness = next_cloud
 	_night_amount = next_amount
 	if _material is ShaderMaterial:
 		(_material as ShaderMaterial).set_shader_parameter("night_amount", _night_amount)
@@ -111,5 +113,6 @@ func _update_mirror() -> void:
 	var mat := _material as ShaderMaterial
 	var day_amount: float = 1.0 - _night_amount
 	var mirror_col: Color = Color(0.02, 0.03, 0.05).lerp(Color(0.62, 0.78, 0.97), day_amount)
+	mirror_col = mirror_col.lerp(Color(.29,.32,.34) * day_amount + Color(.009,.012,.016) * (1.0-day_amount), _cloud_darkness)
 	mat.set_shader_parameter("mirror_color", mirror_col)
-	mat.set_shader_parameter("mirror_strength", 0.50 if _is_lake else 0.35)
+	mat.set_shader_parameter("mirror_strength", 0.38 if _is_lake else 0.35)

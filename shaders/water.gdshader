@@ -1,7 +1,7 @@
 shader_type spatial;
 // Do not write the water plane into the depth buffer: fish and the riverbed
 // must remain visible through the transparent surface.
-render_mode blend_mix, depth_draw_never, cull_disabled;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_schlick_ggx;
 
 uniform sampler2D water_noise_1 : repeat_enable, filter_linear_mipmap;
 uniform sampler2D water_noise_2 : repeat_enable, filter_linear_mipmap;
@@ -52,9 +52,18 @@ void fragment() {
     vec3 n2 = texture(water_noise_2,n2p - adv*.29+vec2(.37,.19)).rgb*2.0-1.0;
     vec3 n3 = texture(water_noise_1,p*1.35+vec2(TIME*.052,-TIME*.041)).rgb*2.0-1.0;
     vec3 broad = texture(water_noise_1,p*.17+vec2(-TIME*.027,TIME*.035)).rgb*2.0-1.0;
+    // Small cross-current ripples give the lake visible motion without making
+    // the whole surface look like parallel sine-wave stripes.
+    vec2 micro_flow = use_river_flow
+        ? vec2(flow_speed*flow_direction_multiplier*TIME*.21,-TIME*.035)
+        : vec2(TIME*.075,-TIME*.052);
+    vec3 micro = texture(water_noise_2,p*2.15+micro_flow).rgb*2.0-1.0;
     float distant = smoothstep(12.0,90.0,length(VERTEX));
-    float fade = use_river_flow ? .85 : .45;
-    vec2 slopes = (n1.xy+transpose(turn)*n2.xy*.65+n3.xy*.35)*(1.0-distant*fade)+broad.xy*(use_river_flow ? .40 : .68);
+    float fade = use_river_flow ? .72 : .30;
+    vec2 primary_slopes = use_river_flow
+        ? fdir * (n1.x + n2.x*.65) + fperp * (n1.y + n2.y*.65)
+        : n1.xy + transpose(turn)*n2.xy*.65;
+    vec2 slopes = (primary_slopes+n3.xy*.35+micro.xy*(use_river_flow ? .20 : .28))*(1.0-distant*fade)+broad.xy*(use_river_flow ? .34 : .50);
     vec3 ripple = normalize(vec3(slopes,1.0));
     // Procedural river/lake meshes have no tangent arrays. World-space
     // normals keep the animated ripples visible on those meshes as well.
@@ -72,7 +81,9 @@ void fragment() {
     vec3 tint = mix(water_color,night_water_color,night_amount);
     vec3 shallow_tint = tint * vec3(1.45, 1.55, 1.25);
     vec3 body_tint = use_river_flow ? tint : mix(shallow_tint, tint, absorption) * (1.0 + (n1.x + broad.y) * .05);
-    ALBEDO = mix(body_tint, mirror_color, fresnel * mirror_strength * (use_river_flow ? .65 : .48));
+    // Reflection probes and the sky supply the actual reflected light. Keep
+    // the colour fallback subtle so it does not paint a blue glow on the water.
+    ALBEDO = mix(body_tint, mirror_color, fresnel * mirror_strength * .12);
     // Sparse advected highlights make the current readable even in diffuse
     // lighting, where moving reflection normals alone are nearly invisible.
     vec2 drift = use_river_flow ? current_direction*flow_direction_multiplier*TIME*.48 : vec2(TIME*.11,TIME*.07);
@@ -81,13 +92,20 @@ void fragment() {
     float patch = texture(foam_texture,dp).r;
     float broken = texture(foam_texture,(p-drift*.73)*1.37+vec2(.21,.61)).r;
     float crests = smoothstep(.60,.82,patch)*smoothstep(.56,.78,broken);
-    ALBEDO = mix(ALBEDO,foam_color,crests*(use_river_flow ? .11 : .035));
+    ALBEDO = mix(ALBEDO,foam_color,crests*(use_river_flow ? .15 : .07));
     // Distant tiny ripples blend together instead of producing glittering aliasing.
-    ROUGHNESS = roughness_scale + smoothstep(18.0,85.0,length(VERTEX))*(use_river_flow ? .12 : .045);
+    // Filter unresolved wave normals into roughness: sun highlights broaden
+    // at distance rather than flickering as isolated white pixels.
+    vec3 dx_normal = dFdx(world_normal);
+    vec3 dy_normal = dFdy(world_normal);
+    float normal_variance = min(.12, (dot(dx_normal,dx_normal)+dot(dy_normal,dy_normal))*.5);
+    float base_roughness = roughness_scale + distant*(use_river_flow ? .10 : .06);
+    ROUGHNESS = clamp(sqrt(base_roughness*base_roughness+normal_variance), .08, .5);
     METALLIC = 0.0;
-    SPECULAR = use_river_flow ? .35 : .40;
+    // Water IOR ~1.33: dielectric normal-incidence reflectance is about 2%.
+    SPECULAR = .25;
     ALPHA = clamp(.12+absorption*(use_river_flow ? .57 : .74),.12,.88);
-    ALPHA = mix(ALPHA, .95, fresnel*mirror_strength*(use_river_flow ? 1.0 : .65));
+    ALPHA = mix(ALPHA, .98, fresnel);
     if (use_foam) {
         float contact = (1.0-smoothstep(.02,.16,edge_dist))*smoothstep(.001,.03,edge_dist);
         float flecks = smoothstep(.62,.82,texture(foam_texture,p*.9-flow*TIME*.12).r);
