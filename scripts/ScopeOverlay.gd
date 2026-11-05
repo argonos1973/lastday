@@ -124,7 +124,7 @@ func _process(_delta: float) -> void:
 		_scope_fov = float(ri.get("scope_fov", 15.0))
 		_magnification = float(ri.get("magnification",4.0))
 		_iron_sights = bool(ri.get("iron_sights", false))
-		var zoom_label := "%.0f× · Cero 100 m · Rueda: aumentos\n" % _magnification
+		var zoom_label := "%.0f× · Cero %d m · Rueda: aumentos · Alt+rueda: distancia\n" % [_magnification,int(ri.get("zero_range",100.0))]
 		if _iron_sights:
 			zoom_label = "Punto de mira · Cero 100 m\n"
 		elif bool(ri.get("zoom_fixed", false)):

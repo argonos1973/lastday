@@ -378,6 +378,7 @@ const RIFLE_RANGE := 600.0
 const RIFLE_MUZZLE_SPEED := 750.0
 const SCOPE_MAGNIFICATIONS := [4.0, 8.0, 12.0, 16.0]
 var _scope_zoom_index := 0
+var _rifle_zero_range := 100.0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
 const RIFLE_MAG_SIZE := 5
@@ -2154,7 +2155,10 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 			_quick_use_held_item()
 	elif event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		var direction := 1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1
-		if _is_aiming:
+		if _is_aiming and event.alt_pressed and _has_rifle_equipped() and not _held_is_m4():
+			_rifle_zero_range = clampf(_rifle_zero_range+direction*50.0,50.0,RIFLE_RANGE)
+			notice.emit("Mira calibrada a %d m" % int(_rifle_zero_range))
+		elif _is_aiming:
 			_scope_zoom_index = clampi(_scope_zoom_index + direction, 0, _rifle_scope_mags().size()-1)
 			_update_scope_zoom()
 		else:
@@ -13880,7 +13884,7 @@ func get_rifle_info(weapon_name := "") -> Dictionary:
 		"magnification": _rifle_scope_mags()[clampi(_scope_zoom_index, 0, _rifle_scope_mags().size() - 1)],
 		"zoom_fixed": false,
 		"iron_sights": false,
-		"zero_range": 100.0,
+		"zero_range": _rifle_zero_range,
 		"scope_fov": camera.fov if camera != null else 15.0,
 	}
 
@@ -14012,11 +14016,11 @@ func _shoot_rifle() -> void:
 		var muzzle_pos: Vector3 = _rifle_muzzle.global_position
 		if muzzle_pos.is_finite() and muzzle_pos.distance_to(global_position) < 3.5:
 			shot_origin = muzzle_pos
-	# Fixed 100 m optical zero in ADS; in third-person hip-fire, converge the
+	# Adjustable optical zero in ADS; in third-person hip-fire, converge the
 	# muzzle onto whatever is under the crosshair ray so the 6.5 m camera
 	# offset does not send close shots below the target.
 	var muzzle_speed := M4_MUZZLE_SPEED if _held_is_m4() else RIFLE_MUZZLE_SPEED
-	var converge_dist := 100.0
+	var converge_dist := _rifle_zero_range if _is_aiming and not is_m4_shot else 100.0
 	if not _is_aiming and space_state != null:
 		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
 		if not sight_hit.is_empty():
@@ -14024,9 +14028,9 @@ func _shoot_rifle() -> void:
 			if hit_d > 2.5:
 				converge_dist = clampf(hit_d, 3.0, RIFLE_RANGE)
 	var zero_target := cam_ray_origin + aim_dir * converge_dist
-	var drop_dist := minf(shot_origin.distance_to(zero_target), 100.0)
+	var drop_dist := minf(shot_origin.distance_to(zero_target), converge_dist if _is_aiming else 100.0)
 	var flight_time := -log(maxf(0.05, 1.0 - drop_dist * 0.12 / muzzle_speed)) / 0.12
-	zero_target.y += 0.5 * 9.81 * flight_time * flight_time
+	zero_target.y += 9.81 / 0.12 * (flight_time - drop_dist / muzzle_speed)
 	aim_dir = (zero_target - shot_origin).normalized()
 	if aim_dir.length_squared() < 0.5:
 		aim_dir = cam_ray_dir

@@ -130,6 +130,7 @@ var _ai_lod_clock := 0.0
 const AI_LOD_NEAR := 40.0   # Distancia: IA completa cada frame
 const AI_LOD_MID  := 80.0   # Distancia: IA cada 0.25s
 const AI_LOD_FAR  := 120.0  # Distancia: IA cada 1.0s, invisible después
+const OBSERVER_RANGE := 620.0 # Rifle range plus interpolation/reach margin.
 const AI_LOD_CULL := 200.0  # Distancia: sin IA (solo actualiza rot_timer de cadáver)
 
 # Domesticación de lobos. La autoridad es el servidor (o el mundo local en SP);
@@ -492,9 +493,12 @@ func _process_body(delta: float) -> void:
 				if lp is Node3D and is_instance_valid(lp):
 					var ppos: Vector3 = (lp as Node3D).global_position
 					var d_sq := Vector2(global_position.x - ppos.x, global_position.z - ppos.z).length_squared()
-					far_from_viewer = d_sq > 175.0 * 175.0
+					var scoped := bool(lp.get("_is_aiming")) if "_is_aiming" in lp else false
+					var animation_range := OBSERVER_RANGE if scoped else 175.0
+					var visible_range := OBSERVER_RANGE if scoped else 240.0
+					far_from_viewer = d_sq > animation_range * animation_range
 					if _visual_root != null and is_instance_valid(_visual_root):
-						var want_vis := d_sq < 240.0 * 240.0
+						var want_vis := d_sq < visible_range * visible_range
 						if _visual_root.visible != want_vis:
 							_visual_root.visible = want_vis
 			if far_from_viewer:
@@ -554,12 +558,16 @@ func _process_body(delta: float) -> void:
 		_near_network_observer = false
 		for observer in get_tree().get_nodes_in_group("net_player_proxy"):
 			if observer is Node3D and observer.get_meta("has_real_pos", false) and not observer.get_meta("disconnected", false):
-				if global_position.distance_to(observer.global_position) <= AI_LOD_FAR + 10.0:
+				if global_position.distance_to(observer.global_position) <= OBSERVER_RANGE:
 					_near_network_observer = true
 					break
+	# A scoped local observer also needs continuous simulation in single player.
+	var local_scene := get_tree().current_scene
+	var local_viewer = local_scene.get("player") if local_scene != null and "player" in local_scene else null
+	var scoped_local: bool = local_viewer is Node3D and "_is_aiming" in local_viewer and bool(local_viewer.get("_is_aiming")) and global_position.distance_to(local_viewer.global_position) <= OBSERVER_RANGE
 	# ---- LOD de IA por distancia al jugador ----
 	var dist_to_player := 0.0
-	if not _near_network_observer and _is_dedicated and (_player == null or not is_instance_valid(_player)):
+	if not _near_network_observer and not scoped_local and _is_dedicated and (_player == null or not is_instance_valid(_player)):
 		# Dedicated server with no observer anywhere near: keep the world alive
 		# at the far-LOD rate instead of burning a full-rate tick per frame.
 		_ai_lod_timer += delta
@@ -569,7 +577,7 @@ func _process_body(delta: float) -> void:
 		_ai_lod_clock = fmod(_ai_lod_clock, 1.0)
 		delta = _ai_lod_timer
 		_ai_lod_timer = 0.0
-	elif _player != null and is_instance_valid(_player) and not _near_network_observer:
+	elif _player != null and is_instance_valid(_player) and not _near_network_observer and not scoped_local:
 		dist_to_player = global_position.distance_to(_player.global_position)
 		# Animales fuera de rango de cull: solo cuenta rot_timer de cadáver (ya retorna antes si _is_dead)
 		if dist_to_player > AI_LOD_CULL and animal_type != "wolf" and animal_type != "bear":
