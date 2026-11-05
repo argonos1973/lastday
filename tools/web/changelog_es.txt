@@ -2,6 +2,13 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+ca937fb|Beber del rio, los lagos y la fuente de la plaza con una sola pulsacion de F: el personaje bebe unos 4 tragos y puedes cancelar moviendote; antes habia que mantener F pulsado y el aviso pedia E por error
+5088b08|Barra de progreso general en la pantalla de carga con fases detalladas (terreno, casas, vegetacion, bosque, ciudad, montana, hojarasca, fauna) y generacion del mundo sin bloqueos de pantalla
+ec49680|El bosque se planta unas 5 veces mas rapido: la carga del mundo baja de ~10 minutos a ~2
+bfd303b|Hojarasca 3D bajo todos los arboles del mapa: clusteres de hojas bajo cada arbol del bosque, los frutales y los urbanas incluidos
+2170454|Al salir con Shift+Q el personaje se queda sentado en el mundo para los demas jugadores (estilo DayZ), sin mostrar el aviso de sentarse
+3aa36a5|Engranaje de opciones pequeno y version del juego legible en la pantalla de inicio
+0a034c5|Boton JUGAR en pizarra translucido a tono con el fondo nocturno de lobos
 4156c9a|La navegacion de la fauna (rutas de lobos, ciervos y zorros al esquivar rios, lagos y casas) pasa a codigo C nativo: unas 12 veces mas rapido al calcular caminos y sin tirones; si la libreria no esta disponible se usa la implementacion anterior sin cambios
 89cdfd4|Sin accesos a disco durante la partida (adios tirones): los sonidos de animales, disparos, golpes y acciones se cargan una sola vez en memoria en vez de leerse y decodificarse en cada reproduccion; el autoguardado del servidor cada 60s ya no pausa el juego al escribir en un hilo aparte; y el cache de modelos de animales ya no se vacia al morir un animal (adios tirones): los sonidos de animales, disparos, golpes y acciones se cargan una sola vez en memoria en vez de leerse y decodificarse en cada reproduccion; el autoguardado del servidor cada 60s ya no pausa el juego al escribir en un hilo aparte; y el cache de modelos de animales ya no se vacia al morir un animal
 85712a3|El frio drena la salud a la mitad de velocidad: hipotermia profunda -2/s (antes -4/s) y frio leve -0.5/s — el calor sigue igual de letal
