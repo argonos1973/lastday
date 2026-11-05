@@ -136,3 +136,4 @@ bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su 
 - Corregidas las desconexiones del servidor: el cliente se congelaba varios segundos generando la vegetacion del mapa y el servidor lo expulsaba por inactividad. La generacion ahora cede frames y las consultas de carretera usan un indice espacial.
 - Menu de inicio renovado: un solo boton Jugar que conecta al servidor oficial y elige personaje con preview interactivo. El mundo solo arranca cuando el servidor confirma el registro.
 - Hojarasca 3D bajo los arboles y hierba mas densa pegada al borde de las carreteras.
+- Rifle de francotirador: Alt+rueda calibra el cero de 50 a 600 m y la compensacion de caida es exacta con la resistencia del aire. Los animales lejanos siguen moviendose mientras apuntas.
