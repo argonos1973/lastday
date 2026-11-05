@@ -73,11 +73,11 @@ func run() -> void:
 		var x := rng.randf_range(155,215)
 		var z := rng.randf_range(150,215)
 		rock_candidates.append(Vector3(x,world._get_exact_ground_y(x,z),z))
-	world._build_forest_understory_multimeshes(rock_candidates)
+	await world._build_forest_understory_multimeshes(rock_candidates)
 	for plant_batch in world.get_children():
 		if str(plant_batch.name).begins_with("ForestUnderstory_") or str(plant_batch.name).begins_with("ForestDeadwood_"):
 			plant_batch.free()
-	preload("res://scripts/ForestUnderstory.gd").build(world,trees)
+	await preload("res://scripts/ForestUnderstory.gd").build(world,trees)
 	preload("res://scripts/ForestDeadwood.gd").build(world,trees)
 	var errors := 0
 	var rocks := 0

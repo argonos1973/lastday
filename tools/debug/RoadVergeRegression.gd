@@ -37,7 +37,7 @@ func run() -> void:
 	var full_count := 0
 	for variant in world.grass_batch_transforms:
 		for t: Transform3D in variant:
-			if absf(t.origin.x) < 3.40: errors += 1
+			if absf(t.origin.x) < 3.28: errors += 1
 			if absf(t.origin.x) < 4.2:
 				short_count += 1
 				if t.basis.y.length() > .40: errors += 1

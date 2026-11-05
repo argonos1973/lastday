@@ -76,8 +76,12 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 	rng.seed = GameConst.WORLD_SEED ^ 0xFE471
 	var batches: Dictionary = {}
 	var quality := clampf(preload("res://scripts/GraphicsSettings.gd").detail_factor()/1.35,.3,1.0)
+	var slice_start := Time.get_ticks_usec()
 	for tree: Vector3 in tree_positions:
 		# Stable per-tree samples keep quality settings from rearranging plants.
+		if Time.get_ticks_usec() - slice_start >= 4000:
+			await world.get_tree().process_frame
+			slice_start = Time.get_ticks_usec()
 		rng.seed = hash(tree) ^ 0xFE471
 		if rng.randf() > .56: continue
 		for i in range(4):
@@ -99,6 +103,9 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = SHADER
 	for key: Vector3i in batches:
+		if Time.get_ticks_usec() - slice_start >= 4000:
+			await world.get_tree().process_frame
+			slice_start = Time.get_ticks_usec()
 		var transforms: Array = batches[key]
 		var node := MultiMeshInstance3D.new()
 		node.name = "ForestUnderstory_%s_%s_%s" % [key.x,key.y,key.z]

@@ -7404,7 +7404,11 @@ const ROAD_HALF_WIDTH := 5.0
 const ROAD_CENTER_X := 9.0
 const ROAD_START_Z := -500.0
 const ROAD_END_Z := 500.0
-var _road_segments: Array = [] # Cached road segments for _is_on_road
+# Replace this array when changing road geometry so the spatial index is invalidated.
+var _road_segments: Array = []:
+	set(value):
+		_road_segments = value
+		_road_cells_valid = false
 
 func _road_waypoints() -> Array:
 	# Curved road from south to north, avoiding river crossings.
@@ -7477,12 +7481,44 @@ func _south_road_end() -> float:
 	var last: Dictionary = _road_segments.back()
 	return float(last["center"].z) + float(last["size"].x) * 0.5
 
+var _road_cells: Dictionary = {}
+var _road_cells_valid := false
+const ROAD_CELL_SIZE := 20.0
+const ROAD_MAX_MARGIN := 8.0
+
+func _road_cell_index() -> Dictionary:
+	if _road_cells_valid:
+		return _road_cells
+	_road_cells.clear()
+	for si in range(_road_segments.size()):
+		var seg: Dictionary = _road_segments[si]
+		var c: Vector3 = seg["center"]
+		var hl: float = float(seg["size"].x)*.5 + ROAD_MAX_MARGIN
+		var hw: float = float(seg["size"].y)*.5 + ROAD_MAX_MARGIN
+		var rad := sqrt(hl*hl + hw*hw)
+		var min_c := Vector2i(((Vector2(c.x,c.z)-Vector2(rad,rad))/ROAD_CELL_SIZE).floor())
+		var max_c := Vector2i(((Vector2(c.x,c.z)+Vector2(rad,rad))/ROAD_CELL_SIZE).floor())
+		for cy in range(min_c.y, max_c.y+1):
+			for cx in range(min_c.x, max_c.x+1):
+				var key := Vector2i(cx,cy)
+				if not _road_cells.has(key): _road_cells[key] = []
+				_road_cells[key].append(si)
+	_road_cells_valid = true
+	return _road_cells
+
+func _candidate_road_segs(pos: Vector3, margin: float) -> Array:
+	# Any segment inside `margin` of pos must be indexed in pos's cell.
+	if margin > ROAD_MAX_MARGIN or _road_segments.is_empty():
+		return range(_road_segments.size())
+	var idx := _road_cell_index()
+	var cell := Vector2i((Vector2(pos.x,pos.z)/ROAD_CELL_SIZE).floor())
+	return idx.get(cell, [])
+
 func _is_on_road(pos: Vector3) -> bool:
 	if CityExpansion.on_road(pos, 0.0, _south_road_end()): return true
 	if HighMountainZone.on_road(pos, 0.0): return true
-	if _road_segments.is_empty():
-		return false
-	for seg in _road_segments:
+	for si: int in _candidate_road_segs(pos, 1.0):
+		var seg: Dictionary = _road_segments[si]
 		var center: Vector3 = seg["center"]
 		var yaw: float = deg_to_rad(float(seg["yaw"]))
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
@@ -7499,9 +7535,8 @@ func _is_on_road(pos: Vector3) -> bool:
 func _is_near_road(pos: Vector3, margin: float) -> bool:
 	if CityExpansion.on_road(pos, margin, _south_road_end()): return true
 	if HighMountainZone.on_road(pos, margin): return true
-	if _road_segments.is_empty():
-		return false
-	for seg in _road_segments:
+	for si: int in _candidate_road_segs(pos, margin):
+		var seg: Dictionary = _road_segments[si]
 		var center: Vector3 = seg["center"]
 		var yaw: float = deg_to_rad(float(seg["yaw"]))
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
@@ -17182,7 +17217,7 @@ func _create_grass_carpet() -> void:
 				_queue_natural_ground_patch(pos, .26, .38, Color(.24,.33,.13))
 		await get_tree().process_frame
 
-	_queue_road_edge_grass()
+	await _queue_road_edge_grass()
 
 
 func _queue_road_edge_grass() -> void:
@@ -17199,6 +17234,7 @@ func _queue_road_edge_grass() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = GameConst.WORLD_SEED ^ 0x45444745
 	var detail := clampf(GraphicsSettings.detail_factor()/1.35,.4,1.0)
+	var slice_start := Time.get_ticks_usec()
 	for path: Array in paths:
 		var a: Vector3 = path[0]
 		var b: Vector3 = path[1]
@@ -17208,6 +17244,9 @@ func _queue_road_edge_grass() -> void:
 		var side := Vector3(-direction.z,0,direction.x).normalized()
 		var steps := maxi(1,ceili(length/.15))
 		for i in range(steps):
+			if Time.get_ticks_usec() - slice_start >= 4000:
+				await get_tree().process_frame
+				slice_start = Time.get_ticks_usec()
 			for sign_value in [-1.0,1.0]:
 				var t := (float(i)+rng.randf())/float(steps)
 				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.14,2.35))
@@ -17400,7 +17439,7 @@ func _create_forest() -> void:
 	_append_northern_road_reforest(batch_transforms, all_tree_positions)
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
-	_build_forest_understory_multimeshes(all_tree_positions)
+	await _build_forest_understory_multimeshes(all_tree_positions)
 	preload("res://scripts/ForestFloorCover.gd").apply(self, all_tree_positions)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
@@ -17721,14 +17760,18 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
 		return
-	preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
+	await preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
 	preload("res://scripts/ForestDeadwood.gd").build(self, tree_positions)
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
 	_get_forest_rock_mesh(Vector3.ZERO) # Load the shared granite variants once.
 	var rock_mat: Material = MaterialFactory.make_forest_rock_material(Vector3(0.92, 0.94, 0.90))
 	var rock_variants: Dictionary = {}
+	var rock_tree_idx := 0
 	for tpos: Vector3 in tree_positions:
+		rock_tree_idx += 1
+		if rock_tree_idx % 600 == 0:
+			await get_tree().process_frame
 		var hval := u_rng.randf()
 		if hval > 0.92:
 			var rang := u_rng.randf_range(0.0, TAU)

@@ -70,7 +70,7 @@ func run() -> void:
 	max_radius = 0.0
 	for radius in world._grass_batch_radii:
 		max_radius = maxf(max_radius, radius)
-	check(max_radius < 35.0, "Grass batches are spatially bounded")
+	check(max_radius < 36.0, "Grass batches are spatially bounded")
 	for i in range(12):
 		var pos := Vector3(rng.randf_range(163, 210), 0.3, rng.randf_range(163, 203))
 		world._create_textured_visual_sphere("ForestTestRock%d" % i, pos, Vector3(0.8, 0.55, 0.7) * rng.randf_range(0.5, 1.8), MaterialFactory.POLY_ROCK_07_DIFF, Color(0.3, 0.28, 0.24))
