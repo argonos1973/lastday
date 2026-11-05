@@ -7439,7 +7439,7 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 					notice.emit("Tu Hacha se ha roto!")
 				break
 
-func _toggle_sit() -> void:
+func _toggle_sit(silent := false) -> void:
 	var has_rifle := _has_rifle_equipped()
 	if is_prone:
 		is_prone = false
@@ -7451,18 +7451,21 @@ func _toggle_sit() -> void:
 			third_person_animation_player.play(_rifle_getup_animation, 0.1)
 		elif not third_person_sit_animation.is_empty():
 			third_person_animation_player.play(third_person_sit_animation, 0.1)
-		notice.emit("Te levantas.")
+		if not silent:
+			notice.emit("Te levantas.")
 	elif is_sitting:
 		if has_rifle and not _rifle_prone_animation.is_empty():
 			is_prone = true
 			is_sitting = false
 			_sit_cooldown = 0.3
 			third_person_animation_player.play(_rifle_prone_animation, 0.1)
-			notice.emit("Te estiras. Pulsa S para levantarte.")
+			if not silent:
+				notice.emit("Te estiras. Pulsa S para levantarte.")
 		else:
 			is_sitting = false
 			_sit_cooldown = 0.3
-			notice.emit("Te levantas.")
+			if not silent:
+				notice.emit("Te levantas.")
 	else:
 		is_sitting = true
 		_sit_cooldown = 0.3
@@ -7470,7 +7473,8 @@ func _toggle_sit() -> void:
 			third_person_animation_player.play(_rifle_sit_animation, 0.1)
 		elif not third_person_sit_animation.is_empty():
 			third_person_animation_player.play(third_person_sit_animation, 0.1)
-		notice.emit("Te sientas. Pulsa S para tumbarte.")
+		if not silent:
+			notice.emit("Te sientas. Pulsa S para tumbarte.")
 
 func _eat_held_item() -> void:
 	if _consumption_pending or is_dead:

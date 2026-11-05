@@ -939,6 +939,19 @@ var _quit_countdown := 0.0
 var _quit_active := false
 var _quit_final_sent := false
 var _scene_quitting := false
+
+func _seat_player_for_logout() -> void:
+	# Shift+Q deja el cuerpo offline sentado: el final state se envia al
+	# final del countdown, asi que sentarse ahora hace que el proxy quede
+	# en posicion de sentado para los demas jugadores.
+	if player == null or not is_instance_valid(player):
+		return
+	if player.is_dead or player.is_sleeping or player.is_sitting or player.is_prone or player.is_crouching:
+		return
+	if is_instance_valid(player.rowing_boat) or player.is_in_water:
+		return
+	if player.has_method("_toggle_sit"):
+		player._toggle_sit(true)
 # True once this scene ran inside a multiplayer session. A client that loses
 # its server mid-game must never fall back to writing the local save.
 var _mp_session := false
@@ -952,6 +965,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_quit_active = true
 			_quit_countdown = 5.0
 			_quit_final_sent = false
+			_seat_player_for_logout()
 			if hud != null and hud.has_method("show_countdown"):
 				hud.show_countdown("Saliendo del juego (ESC para cancelar)", 5.0)
 		return
