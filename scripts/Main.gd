@@ -17141,11 +17141,56 @@ func _create_grass_carpet() -> void:
 			var h := _world_rng.randf_range(0.14, 0.36)
 			var r := _world_rng.randf_range(0.28, 0.52)
 			var c := base_color.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
-			_queue_grass_instance(pos, h, r, c)
+			_queue_natural_ground_patch(pos, h, r, c)
 		if cx % 20 == 0:
 			var _saved_rng_state := _world_rng.state
 			await get_tree().process_frame
 			_world_rng.state = _saved_rng_state
+
+	# The southern city extension is outside the original square map.
+	# Decoration has its own RNG so density/quality cannot move gameplay loot.
+	var south_rng := RandomNumberGenerator.new()
+	south_rng.seed = GameConst.WORLD_SEED ^ 0x617253
+	for z in range(int(coverage) + 2, int(CityExpansion.SOUTH_LIMIT) - 8, 6):
+		for x in range(-44, 64, 6):
+			var px := float(x) + south_rng.randf_range(-2.7, 2.7)
+			var pz := float(z) + south_rng.randf_range(-2.7, 2.7)
+			var pos := Vector3(px, _get_exact_ground_y(px, pz), pz)
+			if _can_place_ground_vegetation(pos):
+				_queue_natural_ground_patch(pos, .26, .38, Color(.24,.33,.13))
+		await get_tree().process_frame
+
+var _ground_patch_noise: FastNoiseLite
+
+func _ground_patch_density(pos: Vector3) -> float:
+	if _ground_patch_noise == null:
+		_ground_patch_noise = FastNoiseLite.new()
+		_ground_patch_noise.seed = GameConst.WORLD_SEED ^ 291
+		_ground_patch_noise.frequency = .09
+	return smoothstep(-.35, .4, _ground_patch_noise.get_noise_2d(pos.x, pos.z))
+
+func _queue_natural_ground_patch(center: Vector3, height: float, radius: float, color: Color) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(center) ^ 0x617253
+	var detail := clampf(GraphicsSettings.detail_factor(), .6, 1.35) / 1.35
+	# Fixed candidate set: lower qualities are subsets of higher qualities.
+	for i in range(6):
+		var angle := rng.randf_range(0.0, TAU)
+		var spread := sqrt(rng.randf()) * 2.3
+		var pos := center + Vector3(cos(angle),0,sin(angle))*spread
+		var density := _ground_patch_density(pos)
+		var density_sample := rng.randf()
+		var quality_sample := rng.randf()
+		var h := height * rng.randf_range(.65,1.2) * lerpf(.7,1.35,density)
+		var r := radius * rng.randf_range(.65,1.05)
+		if density_sample > lerpf(.12,.92,density) or quality_sample > detail:
+			continue
+		if not _can_place_ground_vegetation(pos):
+			continue
+		if HighMountainZone.on_road(pos, 1.0) or HighMountainZone.blocks_vegetation(pos):
+			continue
+		pos.y = _get_exact_ground_y(pos.x,pos.z) + .008
+		_queue_grass_instance(pos,h,r,color.lerp(Color(.32,.35,.17),density*.25))
 
 func _create_billboard_underbrush_fields() -> void:
 	var total_brushes := int(2 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
@@ -17493,7 +17538,7 @@ func _append_lake_forest(batch_transforms: Array, positions: Array) -> void:
 func _scatter_forest_grass(pos: Vector3) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(pos) ^ 0xF04E57
-	var patch := 0.5 + 0.5 * sin(pos.x * 0.055 + sin(pos.z * 0.08) * 2.0)
+	var patch := _ground_patch_density(pos)
 	var count := 3 + int(patch * 6.0)
 	for i in range(count):
 		var angle := rng.randf_range(0, TAU)
@@ -17613,24 +17658,29 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
 		return
+	preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
-	var rock_mesh: ArrayMesh = _get_forest_rock_mesh(Vector3.ZERO)
-	var rock_mat: Material = MaterialFactory.make_forest_rock_material(Vector3(0.76, 0.86, 0.70))
-	var rock_xforms: Array = []
+	_get_forest_rock_mesh(Vector3.ZERO) # Load the shared granite variants once.
+	var rock_mat: Material = MaterialFactory.make_forest_rock_material(Vector3(0.92, 0.94, 0.90))
+	var rock_variants: Dictionary = {}
 	for tpos: Vector3 in tree_positions:
 		var hval := u_rng.randf()
-		if hval > 0.92 and rock_mesh != null:
+		if hval > 0.92:
 			var rang := u_rng.randf_range(0.0, TAU)
 			var rdist := u_rng.randf_range(0.65, 2.05)
 			var rpos := tpos + Vector3(cos(rang) * rdist, 0.0, sin(rang) * rdist)
-			if HighMountainZone.on_road(rpos, 4.0) or HighMountainZone.blocks_vegetation(rpos):
+			if not _can_place_ground_vegetation(rpos) or HighMountainZone.on_road(rpos, 4.0) or HighMountainZone.blocks_vegetation(rpos):
 				continue
 			var rscale := u_rng.randf_range(0.28, 0.68)
-			rpos.y = tpos.y + 0.06 * rscale
+			rpos.y = _get_exact_ground_y(rpos.x, rpos.z) + 0.06 * rscale
 			var rbasis := Basis.from_euler(Vector3(u_rng.randf_range(-0.18, 0.18), u_rng.randf_range(0.0, TAU), u_rng.randf_range(-0.18, 0.18))).scaled(Vector3(rscale * 1.15, rscale * 0.78, rscale))
-			rock_xforms.append(Transform3D(rbasis, rpos))
-	if not rock_xforms.is_empty() and rock_mesh != null:
+			var rock_mesh := _get_forest_rock_mesh(rpos)
+			if not rock_variants.has(rock_mesh):
+				rock_variants[rock_mesh] = []
+			rock_variants[rock_mesh].append(Transform3D(rbasis, rpos))
+	for rock_mesh: ArrayMesh in rock_variants:
+		var rock_xforms: Array = rock_variants[rock_mesh]
 		# Lotes de alcance corto (75 m) sin sombras dinámicas y fuera de _forest_multimesh_nodes
 		# para que _update_forest_visibility() nunca les active cast_shadow = ON.
 		var rbatches := _spatial_instance_batches(rock_xforms, 96.0, 450)
@@ -17643,7 +17693,7 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 			for j in range(idxs.size()):
 				mm.set_instance_transform(j, rock_xforms[idxs[j]])
 			var mmi := MultiMeshInstance3D.new()
-			mmi.name = "ForestMossRocksMM_%d" % b
+			mmi.name = "ForestMossRocksMM_%d_%d" % [rock_variants.keys().find(rock_mesh), b]
 			mmi.multimesh = mm
 			mmi.material_override = rock_mat
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -18405,7 +18455,7 @@ func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
 		var spread := sqrt(rng.randf()) * 0.95
 		var base := Vector3(cos(angle) * spread, 0.0, sin(angle) * spread)
 		var blade_height := rng.randf_range(0.48, 1.2)
-		var blade_width := rng.randf_range(0.035, 0.085)
+		var blade_width := rng.randf_range(0.018, 0.042)
 		var lean := Vector3(cos(angle), 0, sin(angle)) * rng.randf_range(0.22, 0.68)
 		var right := Vector3(-sin(angle), 0, cos(angle)) * blade_width
 		var start_index := vertices.size()
@@ -18489,7 +18539,7 @@ void fragment() {
 	float patch = texture(albedo_tex, world_xz * 0.018).r;
 	float blade = mix(0.69, 1.12, smoothstep(0.0, 0.85, UV.y));
 	float vein = 0.90 + 0.10 * sin(UV.x * 3.14159);
-	vec3 dry_tint = mix(vec3(0.90, 1.0, 0.86), vec3(1.15, 1.02, 0.74), smoothstep(0.48, 0.7, patch));
+	vec3 dry_tint = mix(vec3(0.90, 1.0, 0.86), vec3(1.04, 1.0, 0.87), smoothstep(0.48, 0.7, patch));
 	ALBEDO = albedo_color.rgb * COLOR.rgb * dry_tint * blade * vein;
 	NORMAL = normalize((FRONT_FACING ? NORMAL : -NORMAL) + vec3(0.0, 0.18, 0.0));
 	ROUGHNESS = 0.94;

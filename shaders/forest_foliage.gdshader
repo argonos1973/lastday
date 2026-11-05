@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley;
 
-uniform sampler2D albedo_texture : source_color, filter_linear, repeat_enable;
+uniform sampler2D albedo_texture : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform vec4 albedo_tint : source_color = vec4(1.0);
 uniform vec3 uv_scale = vec3(1.0);
 uniform vec3 uv_offset = vec3(0.0);

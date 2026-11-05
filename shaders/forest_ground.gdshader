@@ -36,15 +36,16 @@ void fragment() {
 	soil *= vec3(0.65, 0.58, 0.47);
 	float exposed = smoothstep(0.47, 0.69, patches + detail * 0.16);
 	exposed = max(exposed * 0.8, 1.0 - smoothstep(0.50, 0.88, n.y));
-	vec3 needles_tint = mix(vec3(0.54, 0.70, 0.48), vec3(0.68, 0.80, 0.56), smoothstep(0.25, 0.75, patches));
+	vec3 needles_tint = mix(vec3(0.78, 0.78, 0.69), vec3(0.88, 0.87, 0.77), smoothstep(0.25, 0.75, patches));
 	vec3 surface = mix(leaves * needles_tint, soil, exposed);
 	float moss = smoothstep(0.48, 0.72, detail) * (1.0 - exposed) * 0.58;
-	surface = mix(surface, surface * vec3(0.56, 0.86, 0.40), moss);
+	surface = mix(surface, surface * vec3(0.68, 0.80, 0.56), moss);
 	// Micro-contraste de hojarasca y humedad en depresiones
 	float micro_ao = mix(0.72, 1.05, smoothstep(0.22, 0.78, detail));
 	ALBEDO = surface * mix(0.74, 1.02, patches) * micro_ao;
 	vec3 leaf_n = texture(leaf_normal, uv).xyz * 2.0 - 1.0;
-	vec3 relief = normalize(vec3(leaf_n.x * 0.68, max(leaf_n.z, 0.22), leaf_n.y * 0.68));
+	float relief_strength = mix(0.12, 0.48, 1.0 - smoothstep(12.0, 55.0, length(VERTEX)));
+	vec3 relief = normalize(vec3(leaf_n.x * relief_strength, max(leaf_n.z, 0.4), leaf_n.y * relief_strength));
 	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(mix(n, relief, weights.y * (1.0 - exposed * 0.65))), 0.0)).xyz);
 	ROUGHNESS = mix(clamp(texture(leaf_roughness, uv).r, 0.68, 0.96), 0.98, exposed);
 	SPECULAR = 0.20;

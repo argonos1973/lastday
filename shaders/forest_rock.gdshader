@@ -37,12 +37,14 @@ void fragment() {
 	vec3 stone = mix(stone_coarse, stone_fine, 0.58);
 	float patches = texture(variation, world_position.xz * 0.14).r;
 	float detail = texture(variation, world_position.xz * 0.42 + vec2(0.27)).r;
-	float strata = sin(world_position.y * 1.85 + patches * 4.2) * 0.5 + 0.5;
+	// Irregular mineral variation instead of repeating horizontal stripes.
+	float strata = texture(variation, vec2(world_position.y * .11 + patches * .19,
+		(world_position.x + world_position.z) * .047)).r;
 	float damp = 1.0 - smoothstep(-0.65, 0.25, local_height);
-	vec3 rock_col = stone * tint * mix(vec3(0.92, 0.90, 0.85), vec3(0.64, 0.63, 0.59), patches * 0.55) * mix(0.86, 1.06, strata) * (1.0 - damp * 0.19);
+	vec3 rock_col = stone * tint * mix(vec3(0.92, 0.90, 0.85), vec3(0.64, 0.63, 0.59), patches * 0.55) * mix(0.95, 1.04, strata) * (1.0 - damp * 0.19);
 	// Musgo / liquen natural en caras superiores de rocas húmedas o sombreadas
 	float top_moss = smoothstep(0.62, 0.88, n.y) * smoothstep(0.46, 0.74, detail) * (1.0 - smoothstep(32.0, 52.0, world_position.y));
-	rock_col = mix(rock_col, rock_col * vec3(0.58, 0.78, 0.44), top_moss * 0.48);
+	rock_col = mix(rock_col, rock_col * vec3(0.66, 0.76, 0.51), top_moss * 0.42);
 	ALBEDO = rock_col;
 	float h = (texture(rock_height, p.zy).r * w.x + texture(rock_height, p.xz).r * w.y + texture(rock_height, p.xy).r * w.z) * 0.65
 		+ (texture(rock_height, p_coarse.zy).r * w.x + texture(rock_height, p_coarse.xz).r * w.y + texture(rock_height, p_coarse.xy).r * w.z) * 0.35;
@@ -52,7 +54,7 @@ void fragment() {
 	vec3 r2 = cross(NORMAL, dpdx);
 	float determinant = dot(dpdx, r1);
 	vec3 gradient = sign(determinant) * (dFdx(h) * r1 + dFdy(h) * r2);
-	NORMAL = normalize(abs(determinant) * NORMAL - gradient * 0.068);
+	NORMAL = normalize(abs(determinant) * NORMAL - gradient * mix(0.018, 0.055, 1.0 - smoothstep(25.0, 75.0, length(VERTEX))));
 	ROUGHNESS = mix(0.92, 0.78, damp * 0.6);
 	SPECULAR = 0.22;
 	if (shore_blend) {
