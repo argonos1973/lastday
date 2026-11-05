@@ -257,11 +257,17 @@ static func create(world: Node3D, server_only: bool = false) -> void:
 
 	if not server_only:
 		_build_mountain_terrain_mesh(world, root)
+		await world.get_tree().process_frame
 		_build_mountain_road_mesh(world, root)
-		_build_mountain_road_verges(world)
+		await world.get_tree().process_frame
+		await _build_mountain_road_verges(world)
+		await world.get_tree().process_frame
 		_adapt_forest_to_mountain(world)
-		_build_mountain_alpine_forest(world, root)
+		await world.get_tree().process_frame
+		await _build_mountain_alpine_forest(world, root)
+		await world.get_tree().process_frame
 		_build_mountain_rock_outcrops(world, root)
+		await world.get_tree().process_frame
 
 	_build_summit_military_base(world, root, server_only)
 
@@ -422,6 +428,8 @@ static func _build_mountain_road_verges(world: Node3D) -> void:
 		var num_tufts := maxi(1, int(seg_len / tuft_spacing))
 		for side in [-1, 1]:
 			for t_i in range(num_tufts):
+				if t_i % 120 == 0:
+					await world.get_tree().process_frame
 				var t_along := (float(t_i) + 0.5) * tuft_spacing + rng.randf_range(-0.12, 0.12)
 				var along2 := dir2 * t_along
 				for _j in range(5):
@@ -516,7 +524,11 @@ static func _build_mountain_alpine_forest(world: Node3D, parent: Node3D) -> void
 	var col_grid: Dictionary = world.get("_forest_collision_grid")
 	var col_cell_size: float = float(world.get("_forest_collision_grid_size")) if world.get("_forest_collision_grid_size") != null else 25.0
 
+	var _ai := 0
 	for pos in accepted:
+		_ai += 1
+		if _ai % 100 == 0:
+			await world.get_tree().process_frame
 		var v_idx: int = int(world._pick_forest_tree_variant(rng))
 		var entry: Dictionary = tree_meshes[v_idx]
 		var tree_scale := rng.randf_range(0.88, 1.38)

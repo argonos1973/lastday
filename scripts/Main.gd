@@ -521,6 +521,9 @@ var _loading_overlay: CanvasLayer = null
 var _loading_label: Label = null
 var _loading_bg: TextureRect = null
 var _loading_tip_label: Label = null
+var _loading_bar: ProgressBar = null
+var _loading_bar_target := 0.0
+var _loading_bar_shown := 0.0
 var _loading_countdown: float = 0.0
 var _loading_phase := 0
 var _tip_pool: Array = []
@@ -636,6 +639,29 @@ func _create_loading_overlay() -> void:
 	_loading_tip_label.add_theme_constant_override("font_shadow_offset", int(1 * scale_factor))
 	_loading_tip_label.text = _get_next_tip()
 	root.add_child(_loading_tip_label)
+	# General progress bar below the phase text; eases toward the current
+	# phase target in _process_loading_countdown.
+	var bar_h := int(14 * scale_factor)
+	_loading_bar = ProgressBar.new()
+	_loading_bar.name = "LoadingBar"
+	_loading_bar.min_value = 0.0
+	_loading_bar.max_value = 100.0
+	_loading_bar.value = 0.0
+	_loading_bar.show_percentage = false
+	_loading_bar.set_anchors_preset(Control.PRESET_CENTER)
+	_loading_bar.offset_left = -int(260 * scale_factor)
+	_loading_bar.offset_right = int(260 * scale_factor)
+	_loading_bar.offset_top = int(44 * scale_factor)
+	_loading_bar.offset_bottom = int(44 * scale_factor) + bar_h
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.0, 0.0, 0.0, 0.55)
+	bar_bg.set_corner_radius_all(int(7 * scale_factor))
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color(0.85, 0.68, 0.35)
+	bar_fill.set_corner_radius_all(int(7 * scale_factor))
+	_loading_bar.add_theme_stylebox_override("background", bar_bg)
+	_loading_bar.add_theme_stylebox_override("fill", bar_fill)
+	root.add_child(_loading_bar)
 	add_child(_loading_overlay)
 	var win := get_window()
 	if win != null and not win.size_changed.is_connected(_on_loading_window_resized):
@@ -824,10 +850,29 @@ func _ready() -> void:
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
+	_loading_bar_target = 1.0
+
+# Cumulative progress targets per loading phase, weighted by measured
+# _create_map timings (~108 s total): terrain ~28 s, houses ~4 s,
+# vegetation ~9 s, forest ~5 s, city ~12 s, mountain ~10 s, litter ~12 s,
+# fauna+flush ~3 s.
+const _LOADING_PHASE_TARGET := {
+	"Generando mundo...": 0.0,
+	"Generando terreno...": 0.36,
+	"Construyendo casas...": 0.41,
+	"Generando vegetacion...": 0.53,
+	"Plantando bosque...": 0.59,
+	"Levantando la ciudad...": 0.75,
+	"Esculpindo la montaña...": 0.88,
+	"Plantando la hojarasca...": 0.96,
+	"Generando fauna...": 0.99,
+}
 
 func _set_loading_phase(text: String) -> void:
 	if _loading_label != null:
 		_loading_label.text = text
+	if _LOADING_PHASE_TARGET.has(text):
+		_loading_bar_target = _LOADING_PHASE_TARGET[text]
 	_loading_phase += 1
 	var img_idx := _loading_phase % _LOADING_TEXTURES.size()
 	if _loading_bg != null and img_idx < _LOADING_TEXTURES.size() and _LOADING_TEXTURES[img_idx] != null:
@@ -874,6 +919,9 @@ func _cleanup_tent_rifle() -> void:
 func _process_loading_countdown(delta: float) -> void:
 	if _loading_overlay == null:
 		return
+	if _loading_bar != null and is_instance_valid(_loading_bar):
+		_loading_bar_shown = lerpf(_loading_bar_shown, _loading_bar_target, minf(1.0, delta * 1.4))
+		_loading_bar.value = _loading_bar_shown * 100.0
 	if _loading_countdown <= 0.0:
 		return
 	_loading_countdown -= delta
@@ -883,6 +931,7 @@ func _process_loading_countdown(delta: float) -> void:
 		_loading_label = null
 		_loading_bg = null
 		_loading_tip_label = null
+		_loading_bar = null
 		_try_show_offline_death_notice()
 		return
 	var secs := ceili(_loading_countdown)
@@ -7369,13 +7418,27 @@ func _create_map() -> void:
 	if not is_server:
 		_create_survival_objectives()
 		await get_tree().process_frame
-	CityExpansion.create(self, is_server)
-	HighMountainZone.create(self, is_server)
+	var _gt := Time.get_ticks_msec()
+	if _loading_label != null:
+		_set_loading_phase("Levantando la ciudad...")
+	await CityExpansion.create(self, is_server)
+	print("[GEN] cityexp=", Time.get_ticks_msec()-_gt, "ms")
+	_gt = Time.get_ticks_msec()
+	if _loading_label != null:
+		_set_loading_phase("Esculpindo la montaña...")
+	await HighMountainZone.create(self, is_server)
+	print("[GEN] highmount=", Time.get_ticks_msec()-_gt, "ms")
 	if not is_server:
 		# Wait until fruit trees, individual trees and terrain materials exist.
 		var floor_positions := _forest_floor_positions([])
+		if _loading_label != null:
+			_set_loading_phase("Plantando la hojarasca...")
+		_gt = Time.get_ticks_msec()
 		await preload("res://scripts/ForestLeafLitter.gd").build(self, floor_positions)
+		print("[GEN] litter=", Time.get_ticks_msec()-_gt, "ms")
+		_gt = Time.get_ticks_msec()
 		preload("res://scripts/ForestFloorCover.gd").apply(self, floor_positions)
+		print("[GEN] floorcover=", Time.get_ticks_msec()-_gt, "ms")
 		await get_tree().process_frame
 		await get_tree().physics_frame
 		await get_tree().physics_frame
@@ -17299,7 +17362,7 @@ func _queue_road_edge_grass() -> void:
 		var side := Vector3(-direction.z,0,direction.x).normalized()
 		var steps := maxi(1,ceili(length/.10))
 		for i in range(steps):
-			if Time.get_ticks_usec() - slice_start >= 4000:
+			if Time.get_ticks_usec() - slice_start >= 30000:
 				await get_tree().process_frame
 				slice_start = Time.get_ticks_usec()
 			for sign_value in [-1.0,1.0]:

@@ -79,7 +79,7 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 	var slice_start := Time.get_ticks_usec()
 	for tree: Vector3 in tree_positions:
 		# Stable per-tree samples keep quality settings from rearranging plants.
-		if Time.get_ticks_usec() - slice_start >= 4000:
+		if Time.get_ticks_usec() - slice_start >= 30000:
 			await world.get_tree().process_frame
 			slice_start = Time.get_ticks_usec()
 		rng.seed = hash(tree) ^ 0xFE471
@@ -103,7 +103,7 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = SHADER
 	for key: Vector3i in batches:
-		if Time.get_ticks_usec() - slice_start >= 4000:
+		if Time.get_ticks_usec() - slice_start >= 30000:
 			await world.get_tree().process_frame
 			slice_start = Time.get_ticks_usec()
 		var transforms: Array = batches[key]

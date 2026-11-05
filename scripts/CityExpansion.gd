@@ -55,6 +55,8 @@ static func create(world: Node3D, server: bool) -> Node3D:
   interiors.name = "CityInteriorStreaming"
   district.add_child(interiors)
  for i in range(BLOCK.BUILDINGS.size()):
+  if i % 4 == 0:
+   await world.get_tree().process_frame
   var building:Node3D=district.load_building(i)
   if interiors != null:
    interiors.register_interior(building.get_node("Interior"))
@@ -63,7 +65,9 @@ static func create(world: Node3D, server: bool) -> Node3D:
   var index:int=world._register_wildlife_blocker(building.global_position,maxf(footprint.x,footprint.y)+3.0)
   world.wildlife_blockers[index]["door"]=door
   world.wildlife_blockers[index]["house_bounds"]=Rect2(Vector2(building.global_position.x-footprint.x,building.global_position.z-footprint.y),footprint*2.0)
+ await world.get_tree().process_frame
  preload("res://scripts/CityStreetscape.gd").create(world, server)
+ await world.get_tree().process_frame
  if server:
   district.visible=false
  else:
@@ -78,8 +82,9 @@ static func create(world: Node3D, server: bool) -> Node3D:
   var decay:=preload("res://scripts/CityDecay.gd").new()
   decay.position=CENTER
   world.add_child(decay)
-  _ford(world)
-  _road_grass(world)
+  await _ford(world)
+  await world.get_tree().process_frame
+  await _road_grass(world)
   # Cars and plaza are shared with dedicated-server collision setup.
  return district
 
@@ -165,6 +170,8 @@ static func _road_grass(world: Node3D) -> void:
   var z0: float = world._south_road_end()
   var num := int((640.0-z0)/tuft_spacing)
   for i in range(num):
+   if i % 400 == 0:
+    await world.get_tree().process_frame
    var z := z0+(i+0.5)*tuft_spacing+rng.randf_range(-0.12,0.12)
    for j in range(5):
     var t: float = pow(rng.randf(),1.5)
@@ -173,12 +180,14 @@ static func _road_grass(world: Node3D) -> void:
     pos.y = world._get_exact_ground_y(pos.x,pos.z)+0.02
     world._queue_grass_instance(pos,rng.randf_range(0.15,0.35)*(1.0-t),rng.randf_range(0.18,0.38),grass_base.lerp(color_var,rng.randf()).darkened(rng.randf_range(0.0,0.12)))
  # District streets: shallow tufts in the verge between pavement and facades.
- _verge_grass(world,rng,grass_base,color_var)
+ await _verge_grass(world,rng,grass_base,color_var)
 
 static func _verge_grass(world: Node3D, rng: RandomNumberGenerator, base: Color, varc: Color) -> void:
  var spacing := 0.25
  for xc in [0.0,64.0]: # avenues run along z, local z -40..136
   for i in range(int(176.0/spacing)):
+   if i % 200 == 0:
+    await world.get_tree().process_frame
    var lz := -40.0+(i+0.5)*spacing+rng.randf_range(-0.12,0.12)
    for side in [-1,1]:
     for j in range(3):
@@ -186,6 +195,8 @@ static func _verge_grass(world: Node3D, rng: RandomNumberGenerator, base: Color,
      _verge_tuft(world,rng,Vector3(CENTER.x+xc+side*(6.4+t*2.2),0.0,CENTER.z+lz),base,varc,t)
  for zc in [0.0,96.0]: # cross streets run along x, local x -40..104
   for i in range(int(144.0/spacing)):
+   if i % 200 == 0:
+    await world.get_tree().process_frame
    var lx := -40.0+(i+0.5)*spacing+rng.randf_range(-0.12,0.12)
    for side in [-1,1]:
     for j in range(3):

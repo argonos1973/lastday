@@ -47,7 +47,7 @@ func _run() -> void:
 		"Carretera rodea la montaña subiendo progresivamente Sur(%.1fm)->Oeste(%.1fm)->Norte(%.1fm)" % [south_flank_y, west_flank_y, north_flank_y])
 
 	# 2) Instanciar la zona de alta montaña + base militar + torre Green Mountain + bosque alpino
-	HighMountainZone.create(world, false)
+	await HighMountainZone.create(world, false)
 	await physics_frame
 	await physics_frame
 

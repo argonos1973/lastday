@@ -33,7 +33,7 @@ void fragment(){
 	var batches: Dictionary = {}
 	var slice_start := Time.get_ticks_usec()
 	for tree: Vector3 in trees:
-		if Time.get_ticks_usec()-slice_start >= 4000:
+		if Time.get_ticks_usec()-slice_start >= 30000:
 			await world.get_tree().process_frame
 			slice_start=Time.get_ticks_usec()
 		var rng := RandomNumberGenerator.new()
@@ -58,7 +58,7 @@ void fragment(){
 			if not batches.has(key): batches[key]=[]
 			batches[key].append([Transform3D(basis.scaled(Vector3.ONE*scale_value),pos),color])
 	for key: Vector2i in batches:
-		if Time.get_ticks_usec()-slice_start >= 4000:
+		if Time.get_ticks_usec()-slice_start >= 30000:
 			await world.get_tree().process_frame
 			slice_start=Time.get_ticks_usec()
 		var node := MultiMeshInstance3D.new()
