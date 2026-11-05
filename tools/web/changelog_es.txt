@@ -134,3 +134,5 @@ bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su 
 3be640e|Pelo real: el cabello recupera la transparencia del atlas original (ya no se ve negro pulido), el rapado muestra stubble realista y la barba de crecimiento progresivo queda cubierta por regresion; montanas con roca desgastada sin bandas periodicas
 85e24ad|Cubierta natural del bosque: sotobosque de helechos y arbustos bajo los arboles, hierba con parches de densidad organica y la extension sur de la ciudad tambien recibe vegetacion
 - Corregidas las desconexiones del servidor: el cliente se congelaba varios segundos generando la vegetacion del mapa y el servidor lo expulsaba por inactividad. La generacion ahora cede frames y las consultas de carretera usan un indice espacial.
+- Menu de inicio renovado: un solo boton Jugar que conecta al servidor oficial y elige personaje con preview interactivo. El mundo solo arranca cuando el servidor confirma el registro.
+- Hojarasca 3D bajo los arboles y hierba mas densa pegada al borde de las carreteras.
