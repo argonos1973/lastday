@@ -75,9 +75,10 @@ func run() -> void:
 		rock_candidates.append(Vector3(x,world._get_exact_ground_y(x,z),z))
 	await world._build_forest_understory_multimeshes(rock_candidates)
 	for plant_batch in world.get_children():
-		if str(plant_batch.name).begins_with("ForestUnderstory_") or str(plant_batch.name).begins_with("ForestDeadwood_"):
+		if str(plant_batch.name).begins_with("ForestUnderstory_") or str(plant_batch.name).begins_with("ForestDeadwood_") or str(plant_batch.name).begins_with("ForestLeafLitter_"):
 			plant_batch.free()
 	await preload("res://scripts/ForestUnderstory.gd").build(world,trees)
+	await preload("res://scripts/ForestLeafLitter.gd").build(world,trees)
 	preload("res://scripts/ForestDeadwood.gd").build(world,trees)
 	var errors := 0
 	var rocks := 0
@@ -167,6 +168,28 @@ func run() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://build/tmp/forest_understory_detail.png")
 	print("FOREST_NATURAL errors=",errors," trees=",trees.size()," tufts=",tufts," rocks=",rocks," rock_variants=",variants.size()," draw_calls=",RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
+	var leaf_count := 0
+	var leaf_focus := Vector3.ZERO
+	var leaf_distance := INF
+	for batch in world.get_children():
+		if not str(batch.name).begins_with("ForestLeafLitter_"): continue
+		for i in range(batch.multimesh.instance_count):
+			var pos: Vector3 = batch.position+batch.multimesh.get_instance_transform(i).origin
+			leaf_count += 1
+			if not world._can_place_ground_vegetation(pos) or absf(pos.y-world._get_exact_ground_y(pos.x,pos.z)-.012)>.002: errors += 1
+			if pos.distance_to(camera.position)<leaf_distance:
+				leaf_distance=pos.distance_to(camera.position)
+				leaf_focus=pos
+	if leaf_count == 0: errors += 1
+	# Ground inspection: hide crowns that otherwise intersect this close-up camera.
+	for tree_batch in world._forest_multimesh_nodes:
+		tree_batch.visible=false
+	camera.position=leaf_focus+Vector3(0,.8,1.0)
+	camera.look_at(leaf_focus)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://build/tmp/forest_leaf_litter.png")
+	print("LEAF_LITTER count=",leaf_count," errors=",errors)
 	world.queue_free()
 	await process_frame
 	quit(0 if errors == 0 else 1)

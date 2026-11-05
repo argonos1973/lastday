@@ -45,7 +45,7 @@ void fragment() {
 	vec3 surface = mix(leaves * needles_tint, soil, exposed);
 	float canopy = canopy_enabled ? texture(canopy_mask,(world_position.xz-canopy_minimum)/canopy_span).r : 0.0;
 	// Leaf litter accumulates under real crowns; clearings retain exposed soil.
-	surface = mix(surface,leaves*vec3(.66,.61,.49),canopy*.78);
+	surface = mix(surface,leaves*vec3(.95,.85,.67),canopy*.92);
 	float moss = smoothstep(0.48, 0.72, detail) * (1.0 - exposed) * 0.58;
 	surface = mix(surface, surface * vec3(0.68, 0.80, 0.56), moss);
 	// Micro-contraste de hojarasca y humedad en depresiones

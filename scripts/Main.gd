@@ -17242,15 +17242,15 @@ func _queue_road_edge_grass() -> void:
 		var length := direction.length()
 		if length < .01: continue
 		var side := Vector3(-direction.z,0,direction.x).normalized()
-		var steps := maxi(1,ceili(length/.15))
+		var steps := maxi(1,ceili(length/.10))
 		for i in range(steps):
 			if Time.get_ticks_usec() - slice_start >= 4000:
 				await get_tree().process_frame
 				slice_start = Time.get_ticks_usec()
 			for sign_value in [-1.0,1.0]:
 				var t := (float(i)+rng.randf())/float(steps)
-				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.14,2.35))
-				var height := rng.randf_range(.18,.34)
+				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+lerpf(-.18,1.8,pow(rng.randf(),1.7)))
+				var height := rng.randf_range(.23,.42)
 				var radius := rng.randf_range(.27,.46)
 				if rng.randf() > detail: continue
 				if not _can_place_ground_vegetation(pos,.8,true): continue
@@ -17761,6 +17761,7 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
 		return
 	await preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
+	await preload("res://scripts/ForestLeafLitter.gd").build(self, tree_positions)
 	preload("res://scripts/ForestDeadwood.gd").build(self, tree_positions)
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05

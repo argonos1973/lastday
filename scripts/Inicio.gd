@@ -4,6 +4,12 @@ const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
 const SaveIntegration = preload("res://scripts/InicioSaveIntegration.gd")
 const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
 
+var _online_menu := false
+var _play_requested := false
+var _joining := false
+var _session_ready := false
+var _btn_play: Button = null
+var _title_label: Label = null
 var _started: bool = false
 var _mode: String = ""  # "single", "host", "join"
 var _net = null
@@ -66,7 +72,8 @@ func _ready() -> void:
 		print("[SERVER] Build ", _build_version())
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
-	SaveIntegration.maybe_insert_saved_character(self)
+	if OS.get_cmdline_user_args().has("--auto-single") or OS.get_cmdline_user_args().has("--cinematic"):
+		SaveIntegration.maybe_insert_saved_character(self)
 	var args := OS.get_cmdline_user_args()
 	if not _auto_launch_consumed and args.has("--auto-single"):
 		_auto_launch_consumed = true
@@ -118,28 +125,28 @@ func _ready() -> void:
 	bg.anchor_bottom = 1.0
 	add_child(bg)
 
-	# Load inicio.png
+	# Wolf forest backdrop; keep title as crisp UI text.
 	var tex_rect := TextureRect.new()
 	var loaded := false
-	if ResourceLoader.exists("res://assets/textures/inicio.png"):
-		var tex = load("res://assets/textures/inicio.png")
+	if ResourceLoader.exists("res://assets/textures/inicio_lobos.png"):
+		var tex = load("res://assets/textures/inicio_lobos.png")
 		if tex is Texture2D:
 			tex_rect.texture = tex as Texture2D
 			loaded = true
 	if not loaded:
-		var abs_path := ProjectSettings.globalize_path("res://assets/textures/inicio.png")
+		var abs_path := ProjectSettings.globalize_path("res://assets/textures/inicio_lobos.png")
 		var img := Image.load_from_file(abs_path)
 		if img != null:
 			tex_rect.texture = ImageTexture.create_from_image(img)
 			loaded = true
 	if not loaded:
 		var img2 := Image.new()
-		var err := img2.load_png_from_buffer(FileAccess.get_file_as_bytes("res://assets/textures/inicio.png"))
+		var err := img2.load_png_from_buffer(FileAccess.get_file_as_bytes("res://assets/textures/inicio_lobos.png"))
 		if err == OK:
 			tex_rect.texture = ImageTexture.create_from_image(img2)
 			loaded = true
 	tex_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	tex_rect.anchors_preset = Control.PRESET_FULL_RECT
 	tex_rect.anchor_right = 1.0
 	tex_rect.anchor_bottom = 1.0
@@ -161,298 +168,142 @@ func _ready() -> void:
 	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(ver)
 
-	# --- Left panel: Main menu ---
-	var left_panel := PanelContainer.new()
-	var left_panel_w := 280
-	var char_panel_w := 340
-	var total_w := left_panel_w + char_panel_w + 40
-	left_panel.position = Vector2(screen_w * 0.5 - total_w * 0.5, screen_h - 440)
-	left_panel.custom_minimum_size = Vector2(left_panel_w, 0)
-	var left_bg := StyleBoxFlat.new()
-	left_bg.bg_color = Color(0.08, 0.08, 0.12, 0.85)
-	left_bg.border_width_left = 2
-	left_bg.border_width_right = 2
-	left_bg.border_width_top = 2
-	left_bg.border_width_bottom = 2
-	left_bg.border_color = Color(0.2, 0.2, 0.3, 0.8)
-	left_bg.corner_radius_top_left = 12
-	left_bg.corner_radius_top_right = 12
-	left_bg.corner_radius_bottom_left = 12
-	left_bg.corner_radius_bottom_right = 12
-	left_bg.content_margin_left = 20
-	left_bg.content_margin_right = 20
-	left_bg.content_margin_top = 20
-	left_bg.content_margin_bottom = 20
-	left_panel.add_theme_stylebox_override("panel", left_bg)
-	add_child(left_panel)
-	_menu_panel = left_panel
+	# A quiet, full-screen vignette keeps the landscape and title visible.
+	var shade := ColorRect.new()
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var shade_material := ShaderMaterial.new()
+	var shade_shader := Shader.new()
+	shade_shader.code = """shader_type canvas_item;
+void fragment(){
+ float bottom=smoothstep(.20,1.0,UV.y);
+ float sides=pow(abs(UV.x-.5)*2.0,1.5);
+ COLOR=vec4(.018,.026,.024,clamp(bottom*.24+sides*.06,0.0,.35));
+}"""
+	shade_material.shader = shade_shader
+	shade.material = shade_material
+	add_child(shade)
+	move_child(shade, ver.get_index())
+	var title := Label.new()
+	title.text = "LAST DAY"
+	title.position = Vector2(screen_w*.07,screen_h*.045)
+	title.add_theme_font_size_override("font_size",70)
+	title.add_theme_color_override("font_color",Color(.87,.9,.89))
+	title.add_theme_color_override("font_shadow_color",Color(0,0,0,.65))
+	title.add_theme_constant_override("shadow_offset_y",3)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(title)
+	_title_label = title
 
-	var vbox := VBoxContainer.new()
-	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", 14)
-	left_panel.add_child(vbox)
+	_menu_panel = PanelContainer.new()
+	_menu_panel.custom_minimum_size = Vector2(360,0)
+	_menu_panel.add_theme_stylebox_override("panel",StyleBoxEmpty.new())
+	add_child(_menu_panel)
+	var actions := VBoxContainer.new()
+	actions.add_theme_constant_override("separation",18)
+	_menu_panel.add_child(actions)
+	_btn_play = Button.new()
+	_btn_play.text = "JUGAR   →"
+	_btn_play.custom_minimum_size = Vector2(360,64)
+	_btn_play.add_theme_font_size_override("font_size",23)
+	_btn_play.add_theme_color_override("font_color",Color(.08,.11,.08))
+	_btn_play.add_theme_color_override("font_hover_color",Color(.05,.07,.04))
+	_btn_play.add_theme_stylebox_override("normal",_menu_button_style(Color(.72,.77,.54)))
+	_btn_play.add_theme_stylebox_override("hover",_menu_button_style(Color(.85,.89,.66)))
+	_btn_play.add_theme_stylebox_override("pressed",_menu_button_style(Color(.60,.66,.43)))
+	_btn_play.add_theme_stylebox_override("focus",_menu_button_style(Color(0,0,0,0),Color(.95,.95,.82)))
+	_btn_play.pressed.connect(_on_play)
+	actions.add_child(_btn_play)
+	_status_label = _menu_label(actions,"Conectando al servidor…",14,Color(.74,.79,.72))
+	_status_label.custom_minimum_size = Vector2(360,40)
+	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	var menu_title := Label.new()
-	menu_title.text = "MENU PRINCIPAL"
-	menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	menu_title.add_theme_font_size_override("font_size", 20)
-	menu_title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
-	vbox.add_child(menu_title)
-
-	var sep1 := HSeparator.new()
-	sep1.add_theme_constant_override("separation", 8)
-	vbox.add_child(sep1)
-
-	# --- Main buttons ---
-	var btn_single := Button.new()
-	btn_single.text = "  Un jugador"
-	btn_single.custom_minimum_size = Vector2(240, 48)
-	btn_single.add_theme_font_size_override("font_size", 18)
-	var btn_style := StyleBoxFlat.new()
-	btn_style.bg_color = Color(0.15, 0.2, 0.3, 0.9)
-	btn_style.border_color = Color(0.3, 0.4, 0.5)
-	btn_style.border_width_left = 1
-	btn_style.border_width_right = 1
-	btn_style.border_width_top = 1
-	btn_style.border_width_bottom = 1
-	btn_style.corner_radius_top_left = 8
-	btn_style.corner_radius_top_right = 8
-	btn_style.corner_radius_bottom_left = 8
-	btn_style.corner_radius_bottom_right = 8
-	btn_style.content_margin_left = 16
-	btn_style.content_margin_right = 16
-	btn_style.content_margin_top = 8
-	btn_style.content_margin_bottom = 8
-	btn_single.add_theme_stylebox_override("normal", btn_style)
-	var btn_hover := btn_style.duplicate() as StyleBoxFlat
-	btn_hover.bg_color = Color(0.2, 0.3, 0.45, 1.0)
-	btn_single.add_theme_stylebox_override("hover", btn_hover)
-	var btn_pressed := btn_style.duplicate() as StyleBoxFlat
-	btn_pressed.bg_color = Color(0.1, 0.15, 0.25, 1.0)
-	btn_single.add_theme_stylebox_override("pressed", btn_pressed)
-	btn_single.pressed.connect(_on_single_player)
-	vbox.add_child(btn_single)
-
-	var btn_join := Button.new()
-	btn_join.text = "  Conectar por IP"
-	btn_join.custom_minimum_size = Vector2(240, 48)
-	btn_join.add_theme_font_size_override("font_size", 18)
-	btn_join.add_theme_stylebox_override("normal", btn_style)
-	btn_join.add_theme_stylebox_override("hover", btn_hover)
-	btn_join.add_theme_stylebox_override("pressed", btn_pressed)
-	btn_join.pressed.connect(_on_show_join)
-	vbox.add_child(btn_join)
-
-	var btn_official := Button.new()
-	btn_official.text = "  Servidor oficial"
-	btn_official.custom_minimum_size = Vector2(240, 48)
-	btn_official.add_theme_font_size_override("font_size", 18)
-	btn_official.add_theme_stylebox_override("normal", btn_style)
-	btn_official.add_theme_stylebox_override("hover", btn_hover)
-	btn_official.add_theme_stylebox_override("pressed", btn_pressed)
-	btn_official.pressed.connect(_on_join_official)
-	vbox.add_child(btn_official)
-
-	# "Opciones de rendimiento" ya no vive en el menu principal: es un
-	# boton de engranaje en la esquina inferior izquierda (ver abajo).
-
-	# IP input (hidden initially)
-	_ip_edit = LineEdit.new()
-	_ip_edit.placeholder_text = "IP del host o wss://servidor"
-	_ip_edit.text = _load_saved_ip()
-	_ip_edit.custom_minimum_size = Vector2(240, 38)
-	_ip_edit.visible = false
-	_ip_edit.add_theme_font_size_override("font_size", 16)
-	var ip_style := StyleBoxFlat.new()
-	ip_style.bg_color = Color(0.05, 0.05, 0.08, 0.9)
-	ip_style.border_color = Color(0.3, 0.3, 0.4)
-	ip_style.border_width_left = 1
-	ip_style.border_width_right = 1
-	ip_style.border_width_top = 1
-	ip_style.border_width_bottom = 1
-	ip_style.corner_radius_top_left = 6
-	ip_style.corner_radius_top_right = 6
-	ip_style.corner_radius_bottom_left = 6
-	ip_style.corner_radius_bottom_right = 6
-	ip_style.content_margin_left = 10
-	ip_style.content_margin_right = 10
-	_ip_edit.add_theme_stylebox_override("normal", ip_style)
-	vbox.add_child(_ip_edit)
-
-	var btn_connect := Button.new()
-	btn_connect.text = "  Conectar"
-	btn_connect.custom_minimum_size = Vector2(240, 40)
-	btn_connect.add_theme_font_size_override("font_size", 16)
-	btn_connect.add_theme_stylebox_override("normal", btn_style)
-	btn_connect.add_theme_stylebox_override("hover", btn_hover)
-	btn_connect.add_theme_stylebox_override("pressed", btn_pressed)
-	btn_connect.visible = false
-	btn_connect.pressed.connect(_on_join)
-	vbox.add_child(btn_connect)
-	_btn_connect = btn_connect
-
-	# Status label
-	_status_label = Label.new()
-	_status_label.text = ""
-	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.add_theme_font_size_override("font_size", 15)
-	_status_label.add_theme_color_override("font_color", Color(0.95, 0.8, 0.3))
-	_status_label.custom_minimum_size = Vector2(240, 24)
-	vbox.add_child(_status_label)
-
-	# Boton "Entrar" para el personaje bloqueado del servidor: aparece solo
-	# cuando el servidor reclama un personaje vivo tras conectar.
-	_btn_enter = Button.new()
-	_btn_enter.text = "  Entrar"
-	_btn_enter.custom_minimum_size = Vector2(240, 44)
-	_btn_enter.add_theme_font_size_override("font_size", 17)
-	_btn_enter.add_theme_stylebox_override("normal", btn_style)
-	_btn_enter.add_theme_stylebox_override("hover", btn_hover)
-	_btn_enter.add_theme_stylebox_override("pressed", btn_pressed)
-	_btn_enter.visible = false
-	_btn_enter.pressed.connect(_on_enter_locked)
-	vbox.add_child(_btn_enter)
-
-	# --- Right panel: Character selection ---
-	var char_panel := PanelContainer.new()
-	char_panel.position = Vector2(screen_w * 0.5 - total_w * 0.5 + left_panel_w + 40, screen_h - 440)
-	char_panel.custom_minimum_size = Vector2(char_panel_w, 0)
-	var char_bg := StyleBoxFlat.new()
-	char_bg.bg_color = Color(0.08, 0.08, 0.12, 0.85)
-	char_bg.border_width_left = 2
-	char_bg.border_width_right = 2
-	char_bg.border_width_top = 2
-	char_bg.border_width_bottom = 2
-	char_bg.border_color = Color(0.2, 0.2, 0.3, 0.8)
-	char_bg.corner_radius_top_left = 12
-	char_bg.corner_radius_top_right = 12
-	char_bg.corner_radius_bottom_left = 12
-	char_bg.corner_radius_bottom_right = 12
-	char_bg.content_margin_left = 20
-	char_bg.content_margin_right = 20
-	char_bg.content_margin_top = 16
-	char_bg.content_margin_bottom = 16
-	char_panel.add_theme_stylebox_override("panel", char_bg)
-	add_child(char_panel)
-	_char_panel_node = char_panel
+	_char_panel_node = PanelContainer.new()
+	_char_panel_node.custom_minimum_size = Vector2(440,0)
+	_char_panel_node.add_theme_stylebox_override("panel",StyleBoxEmpty.new())
+	add_child(_char_panel_node)
+	var character := VBoxContainer.new()
+	character.add_theme_constant_override("separation",4)
+	_char_panel_node.add_child(character)
+	_char_title_label = _menu_label(character,"ELIGE TU SUPERVIVIENTE",13,Color(.72,.77,.67))
+	_char_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_char_name_label = _menu_label(character,"",32,Color(.94,.94,.87))
+	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var viewport_container := SubViewportContainer.new()
+	viewport_container.custom_minimum_size = Vector2(440,360)
+	viewport_container.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	viewport_container.mouse_default_cursor_shape = Control.CURSOR_DRAG
+	viewport_container.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseMotion and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
+			for model in _char_preview_anchor.get_children():
+				if model is Node3D: model.rotate_y(event.relative.x*.008))
+	character.add_child(viewport_container)
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(440,360)
+	viewport.transparent_bg = true
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport_container.add_child(viewport)
+	var light := DirectionalLight3D.new()
+	light.light_color = Color(1,.92,.80)
+	light.light_energy = 1.35
+	viewport.add_child(light)
+	light.look_at_from_position(Vector3(2,3,3),Vector3.ZERO)
+	var fill := DirectionalLight3D.new()
+	fill.light_color = Color(.68,.79,1)
+	fill.light_energy = .65
+	viewport.add_child(fill)
+	fill.look_at_from_position(Vector3(-2,1,2),Vector3.ZERO)
+	_char_preview_cam = Camera3D.new()
+	_char_preview_cam.fov = 42
+	viewport.add_child(_char_preview_cam)
+	_char_preview_anchor = Node3D.new()
+	viewport.add_child(_char_preview_anchor)
+	var nav := HBoxContainer.new()
+	nav.alignment = BoxContainer.ALIGNMENT_CENTER
+	nav.add_theme_constant_override("separation",18)
+	character.add_child(nav)
+	for direction in [-1,1]:
+		var button := Button.new()
+		button.text = "←" if direction<0 else "→"
+		button.custom_minimum_size = Vector2(56,40)
+		button.add_theme_font_size_override("font_size",22)
+		button.add_theme_stylebox_override("normal",_menu_button_style(Color(.07,.10,.09,.6),Color(.46,.52,.43,.6)))
+		button.add_theme_stylebox_override("hover",_menu_button_style(Color(.27,.33,.23,.85)))
+		if direction<0:
+			_btn_prev=button
+			button.pressed.connect(_on_char_prev)
+		else:
+			_btn_next=button
+			button.pressed.connect(_on_char_next)
+		nav.add_child(button)
+	_update_char_view()
 	var win := get_window()
 	if win != null and not win.size_changed.is_connected(_relayout_menu):
 		win.size_changed.connect(_relayout_menu)
-
-	var char_vbox := VBoxContainer.new()
-	char_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	char_vbox.add_theme_constant_override("separation", 8)
-	char_panel.add_child(char_vbox)
-
-	var char_title := Label.new()
-	char_title.text = "SELECCIONA PERSONAJE"
-	char_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	char_title.add_theme_font_size_override("font_size", 20)
-	char_title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
-	char_vbox.add_child(char_title)
-	_char_title_label = char_title
-
-	_char_name_label = Label.new()
-	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_char_name_label.add_theme_font_size_override("font_size", 22)
-	_char_name_label.add_theme_color_override("font_color", Color(1, 1, 1))
-	char_vbox.add_child(_char_name_label)
-
-	var viewport_container := SubViewportContainer.new()
-	viewport_container.custom_minimum_size = Vector2(220, 220)
-	viewport_container.stretch = false
-	viewport_container.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	char_vbox.add_child(viewport_container)
-
-	var viewport := SubViewport.new()
-	viewport.size = Vector2i(220, 220)
-	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	viewport.transparent_bg = true
-	viewport_container.add_child(viewport)
-
-	var light := DirectionalLight3D.new()
-	light.position = Vector3(2.0, 3.0, 2.0)
-	light.light_energy = 1.2
-	light.look_at_from_position(light.position, Vector3.ZERO)
-	viewport.add_child(light)
-
-	var fill_light := DirectionalLight3D.new()
-	fill_light.position = Vector3(-2.0, 2.0, -1.0)
-	fill_light.light_energy = 0.4
-	fill_light.look_at_from_position(fill_light.position, Vector3.ZERO)
-	viewport.add_child(fill_light)
-
-	_char_preview_cam = Camera3D.new()
-	_char_preview_cam.position = Vector3(0.0, 0.0, 2.5)
-	_char_preview_cam.fov = 35.0
-	viewport.add_child(_char_preview_cam)
-
-	_char_preview_anchor = Node3D.new()
-	_char_preview_anchor.name = "PreviewAnchor"
-	viewport.add_child(_char_preview_anchor)
-
-	var nav_hbox := HBoxContainer.new()
-	nav_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	nav_hbox.add_theme_constant_override("separation", 12)
-	char_vbox.add_child(nav_hbox)
-
-	var prev_btn := Button.new()
-	prev_btn.text = "<"
-	prev_btn.custom_minimum_size = Vector2(50, 40)
-	prev_btn.add_theme_font_size_override("font_size", 20)
-	prev_btn.add_theme_stylebox_override("normal", btn_style)
-	prev_btn.add_theme_stylebox_override("hover", btn_hover)
-	prev_btn.add_theme_stylebox_override("pressed", btn_pressed)
-	prev_btn.pressed.connect(_on_char_prev)
-	nav_hbox.add_child(prev_btn)
-	_btn_prev = prev_btn
-
-	var next_btn := Button.new()
-	next_btn.text = ">"
-	next_btn.custom_minimum_size = Vector2(50, 40)
-	next_btn.add_theme_font_size_override("font_size", 20)
-	next_btn.add_theme_stylebox_override("normal", btn_style)
-	next_btn.add_theme_stylebox_override("hover", btn_hover)
-	next_btn.add_theme_stylebox_override("pressed", btn_pressed)
-	next_btn.pressed.connect(_on_char_next)
-	nav_hbox.add_child(next_btn)
-	_btn_next = next_btn
-
-	_update_char_view()
-
-	# Engranaje de opciones de rendimiento: esquina inferior izquierda,
-	# anclado — sigue la ventana solo, sin relayout. El panel se abre
-	# justo encima del boton.
-	var gear := Button.new()
-	gear.text = "  ⚙  "
-	gear.tooltip_text = "Opciones de rendimiento"
-	gear.add_theme_font_size_override("font_size", 22)
-	gear.add_theme_stylebox_override("normal", btn_style)
-	gear.add_theme_stylebox_override("hover", btn_hover)
-	gear.add_theme_stylebox_override("pressed", btn_pressed)
-	gear.anchors_preset = Control.PRESET_BOTTOM_LEFT
-	gear.anchor_left = 0.0
-	gear.anchor_top = 1.0
-	gear.anchor_right = 0.0
-	gear.anchor_bottom = 1.0
-	gear.offset_left = 16.0
-	gear.offset_right = 16.0
-	gear.offset_top = -64.0
-	gear.offset_bottom = -16.0
-	gear.pressed.connect(func():
-		if _options_panel != null:
-			_options_panel.visible = not _options_panel.visible)
-	add_child(gear)
-	_btn_options = gear
-
-	_build_options_panel()
-
-	# Posición inicial con la misma fórmula que los re-layouts (anclado
-	# por el borde inferior con la altura real de cada panel). La llamada
-	# diferida cubre el resize asíncrono que apply_window() dispara antes
-	# de que exista la conexión a size_changed.
 	_relayout_menu()
 	call_deferred("_relayout_menu")
+	_online_menu = true
+	call_deferred("_connect_menu_server")
+
+func _menu_label(parent: Node, text: String, font_size: int, color: Color) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size",font_size)
+	label.add_theme_color_override("font_color",color)
+	parent.add_child(label)
+	return label
+
+func _menu_button_style(color: Color, border := Color(0,0,0,0)) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(3)
+	style.content_margin_left=16
+	style.content_margin_right=16
+	style.content_margin_top=8
+	style.content_margin_bottom=8
+	return style
 
 # Panel de opciones de rendimiento: se abre encima del engranaje de la
 # esquina inferior izquierda. Pantalla/resolucion/escala/vsync aplican al
@@ -570,22 +421,17 @@ func _relayout_menu() -> void:
 	# Misma convención que _ready: el rect visible del viewport (píxeles de
 	# render) — win.get_size() daría puntos y rompería en HiDPI.
 	var screen: Vector2 = get_viewport().get_visible_rect().size
-	var total_w := 280.0 + 340.0 + 40.0
-	var menu_x := screen.x * 0.5 - total_w * 0.5
-	var mh := 0.0
-	var ch := 0.0
+	var ui_scale := minf(1.0,minf(screen.x/1100.0,screen.y/760.0))
+	var margin := maxf(24.0,screen.x*.07)
+	if _title_label != null:
+		_title_label.scale = Vector2.ONE*ui_scale
+		_title_label.position = Vector2(margin,screen.y*.045)
 	if _menu_panel != null:
-		mh = _menu_panel.get_combined_minimum_size().y
+		_menu_panel.scale = Vector2.ONE*ui_scale
+		_menu_panel.position = Vector2(margin,screen.y-(_menu_panel.get_combined_minimum_size().y*ui_scale)-56*ui_scale)
 	if _char_panel_node != null:
-		ch = _char_panel_node.get_combined_minimum_size().y
-	# Menú y preview comparten el borde SUPERIOR: el menú sube a la
-	# altura del preview en vez de quedar hundido en el fondo. Se usa la
-	# altura del panel más alto para que ninguno se salga por abajo.
-	var tops := maxf(8.0, screen.y - maxf(mh, ch) - 24.0)
-	if _menu_panel != null:
-		_menu_panel.position = Vector2(menu_x, tops)
-	if _char_panel_node != null:
-		_char_panel_node.position = Vector2(menu_x + 320.0, tops)
+		_char_panel_node.scale = Vector2.ONE*ui_scale
+		_char_panel_node.position = Vector2(screen.x-margin-440*ui_scale,maxf(screen.y*.32,screen.y-(_char_panel_node.get_combined_minimum_size().y*ui_scale)-24*ui_scale))
 	if _options_panel != null:
 		var oh := _options_panel.get_combined_minimum_size().y
 		_options_panel.position = Vector2(
@@ -623,11 +469,6 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if _started:
 		return
-	# Rotate preview character
-	if _char_preview_anchor != null and _char_preview_anchor.get_child_count() > 0:
-		var model := _char_preview_anchor.get_child(0) as Node3D
-		if model != null:
-			model.rotation_degrees.y += 30.0 * _delta
 	# Passive: listen for broadcast from server
 	if _discovery != null:
 		var count := _discovery.get_available_packet_count()
@@ -754,6 +595,18 @@ func _on_show_join() -> void:
 		if _discovery.bind(GameConst.DISCOVERY_PORT) != OK:
 			_discovery = null
 
+func _connect_menu_server() -> void:
+	if not _started and not _joining:
+		_begin_join(NetworkManagerScript.OFFICIAL_SERVER_URL)
+
+func _on_play() -> void:
+	if _started: return
+	_play_requested = true
+	if _session_ready:
+		_maybe_start_game()
+	elif not _joining:
+		_connect_menu_server()
+
 func _on_join_official() -> void:
 	if _started:
 		return
@@ -774,12 +627,13 @@ func _begin_join(target: String) -> void:
 	# personaje vivo, la seleccion queda bloqueada a ese personaje; si pide
 	# nombre (personaje nuevo o muerto) se aplica la tarjeta elegida entonces.
 	_net = get_node("/root/NetworkManager")
-	_net.connection_succeeded.connect(_on_net_connected)
-	_net.connection_failed.connect(_on_net_failed)
-	_net.auth_rejected.connect(_on_auth_rejected)
-	_net.all_players_ready.connect(_on_net_ready)
-	_net.player_name_required.connect(_on_player_name_required)
-	_net.server_character_locked.connect(_on_server_character_locked)
+	for pair in [[_net.connection_succeeded, _on_net_connected],
+		[_net.connection_failed, _on_net_failed], [_net.auth_rejected, _on_auth_rejected],
+		[_net.all_players_ready, _on_net_ready], [_net.player_name_required, _on_player_name_required],
+		[_net.server_character_locked, _on_server_character_locked]]:
+		if not pair[0].is_connected(pair[1]): pair[0].connect(pair[1])
+	_joining = true
+	_session_ready = false
 	_name_request_pending = false
 	_set_picker_locked(false)
 	_rejected = false
@@ -790,13 +644,19 @@ func _begin_join(target: String) -> void:
 		_prejoin_card_id = str(CHAR_CONFIGS[_char_index].get("id", "")) if _char_index >= 0 and _char_index < CHAR_CONFIGS.size() else ""
 		_clamp_to_selectable_card()
 	else:
-		_status_label.text = "Error al conectar"
+		_joining = false
+		_status_label.text = "No se pudo conectar. Pulsa Jugar para reintentar."
 
 # El servidor pide el nombre solo cuando la conexion abre un personaje nuevo:
 # con un personaje vivo en el registro del servidor se entra directo con el
 # nombre guardado — solo se vuelve a preguntar al morir o reiniciar.
 func _on_player_name_required() -> void:
 	_name_request_pending = true
+	if _online_menu and not _play_requested:
+		# Registration already exists on the server. Keep this connection so a
+		# retry cannot reclaim its unnamed placeholder as an existing character.
+		_status_label.text = "Elige tu personaje y pulsa Jugar"
+		return
 	if not _started:
 		_prompt_player_name()
 
@@ -889,6 +749,9 @@ func _prompt_player_name() -> void:
 				_net.close_connection()
 				_net = null
 			_mode = ""
+			_joining = false
+			_session_ready = false
+			_play_requested = false
 			_exit_join_pick()
 			if _status_label != null:
 				_status_label.text = "Conexion cancelada")
@@ -917,8 +780,8 @@ func _on_name_confirmed() -> void:
 		gsess.set_meta("char_name", pname)
 	if _net != null:
 		_net.submit_player_name.rpc_id(1, pname)
-	if not _started:
-		_start_game()
+	# Wait for server registration to be accepted, not only the transport handshake.
+	_maybe_start_game()
 
 func _on_auth_rejected(reason: String) -> void:
 	_rejected = true
@@ -983,6 +846,8 @@ func _build_version() -> String:
 	return "dev"
 
 func _on_net_ready() -> void:
+	_session_ready = true
+	_joining = false
 	if _mode != "join" or _started:
 		return
 	if _status_label != null:
@@ -992,13 +857,19 @@ func _on_net_ready() -> void:
 func _maybe_start_game() -> void:
 	if _started or _mode != "join":
 		return
+	if _online_menu:
+		if not _play_requested:
+			if _status_label != null:
+				_status_label.text = "Elige tu personaje y pulsa Jugar" if _name_request_pending else ("Personaje recuperado · Listo para jugar" if _mp_locked else "Conectado · Listo para jugar")
+			return
+		if not _session_ready and not _name_request_pending: return
 	# Si el servidor pidio nombre (personaje nuevo) el mundo espera al prompt.
 	if _name_request_pending:
 		_prompt_player_name()
 		return
 	# Personaje reclamado: el picker ya muestra la tarjeta del servidor; el
 	# mundo arranca al pulsar Entrar para que se vea el equipo que lleva.
-	if _mp_locked:
+	if _mp_locked and not _online_menu:
 		if _btn_enter != null:
 			_btn_enter.visible = true
 		if _status_label != null:
@@ -1087,16 +958,23 @@ func _set_picker_locked(locked: bool) -> void:
 	_mp_locked = locked
 	if _btn_prev != null:
 		_btn_prev.disabled = locked
+		_btn_prev.visible = not locked
 	if _btn_next != null:
 		_btn_next.disabled = locked
+		_btn_next.visible = not locked
 	if _char_title_label != null:
-		_char_title_label.text = "PERSONAJE EN SERVIDOR" if locked else "SELECCIONA PERSONAJE"
+		_char_title_label.text = "TU SUPERVIVIENTE · SERVIDOR" if locked else "ELIGE TU SUPERVIVIENTE"
 	if not locked and _btn_enter != null:
 		_btn_enter.visible = false
 
 func _on_net_failed() -> void:
+	_joining = false
+	_session_ready = false
+	_play_requested = false
+	_name_request_pending = false
+	if _name_panel != null: _name_panel.hide()
 	if _status_label != null and not _rejected:
-		_status_label.text = "Fallo de conexion"
+		_status_label.text = "Servidor no disponible. Pulsa Jugar para reintentar."
 	_set_picker_locked(false)
 	_mode = ""
 	_exit_join_pick()
@@ -1241,7 +1119,7 @@ func _update_char_view() -> void:
 		if instance is Node3D:
 			var model := instance as Node3D
 			model.position = Vector3.ZERO
-			model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+			model.rotation_degrees = Vector3(0.0, -15.0, 0.0)
 			model.scale = Vector3.ONE
 			_char_preview_anchor.add_child(model)
 			if cfg.get("is_saved", false):
