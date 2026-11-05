@@ -247,7 +247,9 @@ var _house_chimneys: Array = []
 var game_over := false
 var _drink_hold_actor = null
 var _drink_hold_timer := 0.0
+var _drink_hold_sips := 0
 const _DRINK_HOLD_TIME := 1.5
+const _DRINK_CHANNEL_SIPS := 4
 
 # Player-built branch shelters (and their camo net/lining overlays) spawn 20%
 # larger than the authored model so a standing player and an interior camera
@@ -1512,17 +1514,17 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 
 func _tick_drink_hold(delta: float) -> void:
 	if _drink_hold_actor == null:
+		_drink_hold_sips = 0
 		return
-	if not is_instance_valid(_drink_hold_actor) or not Input.is_action_pressed("interact"):
-		var prev_actor = _drink_hold_actor
+	if not is_instance_valid(_drink_hold_actor):
 		_drink_hold_actor = null
 		_drink_hold_timer = 0.0
-		if is_instance_valid(prev_actor) and prev_actor.has_method("cancel_active_action"):
-			prev_actor.cancel_active_action(false)
+		_drink_hold_sips = 0
 		return
 	_drink_hold_timer += delta
 	if _drink_hold_timer >= 1.0:
 		_drink_hold_timer -= 1.0
+		_drink_hold_sips += 1
 		var _stats = _drink_hold_actor.stats
 		if _stats.thirst >= _stats.max_stat - 2.0:
 			_stats.overdrink_count += 1
@@ -1545,6 +1547,13 @@ func _tick_drink_hold(delta: float) -> void:
 		_play_actor_action(_drink_hold_actor, "plant", 1.2)
 		if _drink_hold_actor.has_method("_play_consumption_audio"):
 			_drink_hold_actor._play_consumption_audio(true, 1.2, int(_drink_hold_actor.get("_action_serial")))
+		if _drink_hold_sips >= _DRINK_CHANNEL_SIPS:
+			var _done_actor = _drink_hold_actor
+			_drink_hold_actor = null
+			_drink_hold_timer = 0.0
+			_drink_hold_sips = 0
+			if is_instance_valid(_done_actor) and _done_actor.has_method("cancel_active_action"):
+				_done_actor.cancel_active_action(false)
 
 func _tick_world_actions(delta: float) -> void:
 	# Rain moistens the soil: planted crops grow faster while it rains. The
@@ -12253,11 +12262,12 @@ func _execute_world_action(action, actor) -> void:
 			_drink_hold_actor = actor
 			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
 			_drink_hold_timer = 0.0
+			_drink_hold_sips = 0
 			_play_actor_action(actor, "plant", _DRINK_HOLD_TIME)
 			if actor.has_method("_play_consumption_audio"):
 				actor.set("_interact_busy", true)
 				actor._play_consumption_audio(true, _DRINK_HOLD_TIME, int(actor.get("_action_serial")))
-			actor.notice.emit("Mantén E para beber...")
+			actor.notice.emit("Bebiendo agua %s. Muévete para parar." % action.get_meta("drink_source", "del rio"))
 		"light_campfire":
 			if action.get_meta("lit", false):
 				actor.notice.emit("La fogata ya esta encendida.")
