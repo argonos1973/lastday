@@ -155,7 +155,10 @@ func _ready() -> void:
 	# --- Version stamp: commit hash de la build (abajo a la derecha) ---
 	var ver := Label.new()
 	ver.text = "v" + _build_version()
-	ver.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.45))
+	ver.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.75))
+	ver.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	ver.add_theme_constant_override("shadow_offset_x", 1)
+	ver.add_theme_constant_override("shadow_offset_y", 1)
 	ver.add_theme_font_size_override("font_size", 13)
 	ver.anchors_preset = Control.PRESET_BOTTOM_RIGHT
 	ver.anchor_left = 1.0
@@ -280,6 +283,8 @@ void fragment(){
 	var win := get_window()
 	if win != null and not win.size_changed.is_connected(_relayout_menu):
 		win.size_changed.connect(_relayout_menu)
+	_build_options_button()
+	_build_options_panel()
 	_relayout_menu()
 	call_deferred("_relayout_menu")
 	_online_menu = true
@@ -304,6 +309,31 @@ func _menu_button_style(color: Color, border := Color(0,0,0,0)) -> StyleBoxFlat:
 	style.content_margin_top=8
 	style.content_margin_bottom=8
 	return style
+
+# Engranaje pequeño de opciones de rendimiento: esquina inferior
+# izquierda; el panel se posiciona encima en _relayout_menu.
+func _build_options_button() -> void:
+	var gear := Button.new()
+	gear.text = "⚙"
+	gear.tooltip_text = "Opciones de rendimiento"
+	gear.custom_minimum_size = Vector2(34, 30)
+	gear.add_theme_font_size_override("font_size", 17)
+	gear.add_theme_color_override("font_color", Color(.82,.85,.83))
+	gear.add_theme_stylebox_override("normal", _menu_button_style(Color(.07,.12,.17,.7)))
+	gear.add_theme_stylebox_override("hover", _menu_button_style(Color(.16,.24,.30,.85)))
+	gear.add_theme_stylebox_override("pressed", _menu_button_style(Color(.05,.09,.13,.9)))
+	gear.anchors_preset = Control.PRESET_BOTTOM_LEFT
+	gear.anchor_top = 1.0
+	gear.anchor_bottom = 1.0
+	gear.offset_left = 14.0
+	gear.offset_right = 48.0
+	gear.offset_top = -44.0
+	gear.offset_bottom = -14.0
+	gear.pressed.connect(func():
+		if _options_panel != null:
+			_options_panel.visible = not _options_panel.visible)
+	add_child(gear)
+	_btn_options = gear
 
 # Panel de opciones de rendimiento: se abre encima del engranaje de la
 # esquina inferior izquierda. Pantalla/resolucion/escala/vsync aplican al
