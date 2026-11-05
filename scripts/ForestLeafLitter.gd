@@ -45,10 +45,13 @@ void fragment(){
 			var scale_value := rng.randf_range(.65,1.3)
 			var color := Color(.29,.15,.065).lerp(Color(.52,.36,.16),rng.randf())
 			if not world._can_place_ground_vegetation(pos): continue
-			pos.y=world._get_exact_ground_y(pos.x,pos.z)+.012
-			var dx: float = (world._get_exact_ground_y(pos.x+.15,pos.z)-world._get_exact_ground_y(pos.x-.15,pos.z))/.3
-			var dz: float = (world._get_exact_ground_y(pos.x,pos.z+.15)-world._get_exact_ground_y(pos.x,pos.z-.15))/.3
+			# Analytic terrain height: identical to the raycast on open forest
+			# floor but ~100x cheaper — this runs ~850k times during world gen.
+			var gy: float = world._get_ground_height(pos)
+			var dx: float = (world._get_ground_height(pos+Vector3(.15,0,0))-world._get_ground_height(pos-Vector3(.15,0,0)))/.3
+			var dz: float = (world._get_ground_height(pos+Vector3(0,0,.15))-world._get_ground_height(pos-Vector3(0,0,.15)))/.3
 			if Vector2(dx,dz).length()>1.2: continue
+			pos.y=gy+.012
 			var normal := Vector3(-dx,1,-dz).normalized()
 			var basis := Basis(Quaternion(Vector3.UP,normal))*Basis(Vector3.UP,yaw)
 			var key := Vector2i(floori(pos.x/16),floori(pos.z/16))

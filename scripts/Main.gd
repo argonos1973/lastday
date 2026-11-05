@@ -16503,8 +16503,45 @@ func _is_in_southern_band(pos: Vector3) -> bool:
 	# The CityExpansion strip: open pass + district footprint + its woods.
 	return pos.z > 440.0 and pos.z < CityExpansion.SOUTH_LIMIT - 8.0 and absf(pos.x - CityExpansion.CENTER.x) < 55.0
 
+var _river_cells: Dictionary = {}
+var _river_cells_valid := false
+var _river_cells_size := -1
+const RIVER_CELL_SIZE := 40.0
+const RIVER_MAX_MARGIN := 8.0
+
+func _river_cell_index() -> Dictionary:
+	if _river_cells_valid and river_segments_data.size() == _river_cells_size:
+		return _river_cells
+	_river_cells.clear()
+	for si in range(river_segments_data.size()):
+		var seg: Dictionary = river_segments_data[si]
+		var c: Vector3 = seg["center"]
+		# Pad past the largest band margin so any query margin <= RIVER_MAX_MARGIN
+		# is guaranteed to land in a cell the segment was indexed into.
+		var hx: float = float(seg["size"].x)*.5 + RIVER_MAX_MARGIN + 1.0
+		var hz: float = float(seg["size"].y)*.5 + RIVER_MAX_MARGIN + 1.0
+		var rad := sqrt(hx*hx + hz*hz)
+		var min_c := Vector2i(((Vector2(c.x,c.z)-Vector2(rad,rad))/RIVER_CELL_SIZE).floor())
+		var max_c := Vector2i(((Vector2(c.x,c.z)+Vector2(rad,rad))/RIVER_CELL_SIZE).floor())
+		for cy in range(min_c.y, max_c.y+1):
+			for cx in range(min_c.x, max_c.x+1):
+				var key := Vector2i(cx,cy)
+				if not _river_cells.has(key): _river_cells[key] = []
+				_river_cells[key].append(si)
+	_river_cells_valid = true
+	_river_cells_size = river_segments_data.size()
+	return _river_cells
+
+func _candidate_river_segs(pos: Vector3, margin: float) -> Array:
+	if margin > RIVER_MAX_MARGIN or river_segments_data.is_empty():
+		return range(river_segments_data.size())
+	var idx := _river_cell_index()
+	var cell := Vector2i((Vector2(pos.x,pos.z)/RIVER_CELL_SIZE).floor())
+	return idx.get(cell, [])
+
 func _is_inside_river_band(pos: Vector3, margin: float) -> bool:
-	for segment in river_segments_data:
+	for si: int in _candidate_river_segs(pos, margin):
+		var segment: Dictionary = river_segments_data[si]
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
 		var yaw: float = float(segment["yaw"])

@@ -8,6 +8,8 @@ class TestWorld extends "res://scripts/Main.gd":
 	func _save_world_change_silent() -> void: pass
 	func _get_exact_ground_y(x: float, z: float, _fallback := 0.0) -> float:
 		return x*.05 + z*.01
+	func _get_ground_height(pos: Vector3) -> float:
+		return pos.x*.05 + pos.z*.01
 	func _can_place_ground_vegetation(pos: Vector3, margin := .8, short_grass := false) -> bool:
 		# Artificial obstacle also exercises checking each offset, not its center.
 		return absf(pos.x-180.0) > 1.0 and super._can_place_ground_vegetation(pos,margin,short_grass)
