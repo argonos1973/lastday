@@ -8,9 +8,9 @@ class TestWorld extends "res://scripts/Main.gd":
 	func _save_world_change_silent() -> void: pass
 	func _get_exact_ground_y(x: float, z: float, _fallback := 0.0) -> float:
 		return x*.05 + z*.01
-	func _can_place_ground_vegetation(pos: Vector3, margin := .8) -> bool:
+	func _can_place_ground_vegetation(pos: Vector3, margin := .8, short_grass := false) -> bool:
 		# Artificial obstacle also exercises checking each offset, not its center.
-		return absf(pos.x-180.0) > 1.0 and super._can_place_ground_vegetation(pos,margin)
+		return absf(pos.x-180.0) > 1.0 and super._can_place_ground_vegetation(pos,margin,short_grass)
 	func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 		samples[pos] = [height,radius,color]
 
@@ -48,7 +48,7 @@ func run() -> void:
 	check(world._world_rng.state == state,"Decoration preserves gameplay RNG")
 	var valid := true
 	for pos: Vector3 in sets[2]:
-		valid = valid and world._can_place_ground_vegetation(pos) and absf(pos.y-world._get_exact_ground_y(pos.x,pos.z)-.008)<.001
+		valid = valid and world._can_place_ground_vegetation(pos,.8,true) and absf(pos.y-world._get_exact_ground_y(pos.x,pos.z)-.008)<.001
 	check(valid,"Every plant clears obstacles and follows terrain")
 	settings._cached_config.set_value("graphics","detail",1)
 	world.samples.clear()
@@ -57,7 +57,7 @@ func run() -> void:
 	valid = true
 	for pos: Vector3 in world.samples:
 		southern += int(pos.z > 500)
-		valid = valid and world._can_place_ground_vegetation(pos)
+		valid = valid and world._can_place_ground_vegetation(pos,.8,true)
 	check(southern > 0,"City southern extension receives ground cover")
 	check(valid,"Full-map placement respects exclusions")
 	print("GROUND_COVER count=",world.samples.size()," south=",southern," errors=",errors)

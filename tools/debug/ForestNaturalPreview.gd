@@ -10,7 +10,7 @@ class PreviewWorld extends "res://scripts/Main.gd":
 	func _save_world_change_silent() -> void: pass
 	func _get_exact_ground_y(x: float, z: float, _fallback: float = 0.0) -> float:
 		return 0.10 * (x - 180.0) + 1.3 * sin(z * 0.075) + 0.4 * sin(x * 0.17 + z * 0.09)
-	func _can_place_ground_vegetation(_pos: Vector3, _margin := 0.8) -> bool:
+	func _can_place_ground_vegetation(_pos: Vector3, _margin := 0.8, _short_grass := false) -> bool:
 		return true
 
 func _initialize() -> void: call_deferred("run")

@@ -5,7 +5,7 @@ class World extends Node3D:
 	var blocked := false
 	func get_river_depth_at(_pos: Vector3) -> float:
 		return 1.0 if blocked else 0.0
-	func _can_place_ground_vegetation(_pos: Vector3, _margin: float) -> bool:
+	func _can_place_ground_vegetation(_pos: Vector3, _margin: float, _short_grass := false) -> bool:
 		return true
 	func _get_ground_height(_pos: Vector3) -> float:
 		return 0.0

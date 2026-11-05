@@ -233,8 +233,9 @@ static func inside_summit_shelter(pos: Vector3) -> bool:
 	return false
 
 
-static func blocks_vegetation(pos: Vector3) -> bool:
-	if on_road(pos, 5.8):
+# Trees keep their broad clearance; low grass can reach the asphalt shoulder.
+static func blocks_vegetation(pos: Vector3, road_margin := 5.8) -> bool:
+	if on_road(pos, road_margin):
 		return true
 	if pos.x >= -210.0 or pos.z >= -210.0:
 		return false

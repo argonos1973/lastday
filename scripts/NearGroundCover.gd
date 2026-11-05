@@ -71,15 +71,15 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 		var yaw := rng.randf_range(0,TAU)
 		var density: float = world._ground_patch_density(pos)
 		if density_sample > lerpf(.18,.9,density) or quality_sample > clampf(quality/1.35,0.0,1.0): continue
-		if not world._can_place_ground_vegetation(pos): continue
-		if preload("res://scripts/HighMountainZone.gd").blocks_vegetation(pos): continue
+		if not world._can_place_ground_vegetation(pos, .8, true): continue
+		if preload("res://scripts/HighMountainZone.gd").blocks_vegetation(pos, -.10): continue
 		var verge: float = world._road_verge_growth(pos)
-		if verge <= 0.0 or density_sample > lerpf(.12,1.0,verge): continue
+		if verge <= 0.0 or density_sample > lerpf(.65,1.0,verge): continue
 		pos.y = world._get_exact_ground_y(pos.x,pos.z)+.008
 		var rock_cell := Vector2i((Vector2(pos.x,pos.z)/world.LAKE_ROCK_GRID).floor())
 		if float(rock_surface.get(rock_cell,-INF)) > pos.y+.04: continue
-		height *= lerpf(.22,1.0,verge)
-		radius *= lerpf(.16,1.0,verge)
+		height *= lerpf(.45,1.0,verge)
+		radius *= lerpf(.55,1.0,verge)
 		transforms.append(Transform3D(Basis(Vector3.UP,yaw).scaled(Vector3(radius,height,radius)),pos-origin))
 		colors.append(Color(.20,.29,.105).lerp(Color(.32,.35,.17),density*.6))
 	if int(job.next) < CANDIDATES_PER_CELL: return false

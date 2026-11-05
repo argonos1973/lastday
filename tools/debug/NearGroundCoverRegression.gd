@@ -28,7 +28,7 @@ func run() -> void:
 			var node = cover.chunks[key]
 			for i in range(node.multimesh.instance_count):
 				var pos: Vector3 = node.position + node.multimesh.get_instance_transform(i).origin
-				if not world._can_place_ground_vegetation(pos) or world._road_verge_growth(pos)<=0: errors += 1
+				if not world._can_place_ground_vegetation(pos, .8, true) or world._road_verge_growth(pos)<=0: errors += 1
 	for step in range(500):
 		cover.update_focus(Vector3(-160,0,230),1.0)
 		await process_frame

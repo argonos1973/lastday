@@ -16419,7 +16419,7 @@ func _is_in_house_doorway(pos: Vector3, margin := 4.0) -> bool:
 			return true
 	return false
 
-func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
+func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8, short_grass := false) -> bool:
 	if abs(pos.x) > MAP_EXTENT * 0.98 or (abs(pos.z) > MAP_EXTENT * 0.98 and not _is_in_southern_band(pos)):
 		return false
 	if CityExpansion.near_building(pos, 4.0):
@@ -16428,7 +16428,8 @@ func _can_place_ground_vegetation(pos: Vector3, river_margin := 0.8) -> bool:
 		return false
 	if _is_in_house_doorway(pos):
 		return false
-	if _is_on_road(pos) and not _is_inside_river_band(pos, 3.0):
+	var on_road := _is_near_road(pos, -.10) if short_grass else _is_on_road(pos)
+	if on_road and not _is_inside_river_band(pos, 3.0):
 		return false
 	if river_margin >= 0.0:
 		if _is_inside_river_band(pos, river_margin):
@@ -17178,6 +17179,44 @@ func _create_grass_carpet() -> void:
 				_queue_natural_ground_patch(pos, .26, .38, Color(.24,.33,.13))
 		await get_tree().process_frame
 
+	_queue_road_edge_grass()
+
+
+func _queue_road_edge_grass() -> void:
+	# Explicit edge samples: random field patches alone leave a visible bare strip.
+	# Independent RNG and existing batches keep loot/layout and draw-call policy intact.
+	var paths: Array = []
+	for i in range(_road_segments.size()-1):
+		var a: Vector3 = _road_segments[i].center
+		var b: Vector3 = _road_segments[i+1].center
+		paths.append([a,b,float(_road_segments[i].size.y)*.5])
+	var mountain := HighMountainZone.get_road_polyline_3d()
+	for i in range(mountain.size()-1):
+		paths.append([mountain[i],mountain[i+1],HighMountainZone.ASPHALT_HALF_W])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameConst.WORLD_SEED ^ 0x45444745
+	var detail := clampf(GraphicsSettings.detail_factor()/1.35,.4,1.0)
+	for path: Array in paths:
+		var a: Vector3 = path[0]
+		var b: Vector3 = path[1]
+		var direction := Vector3(b.x-a.x,0,b.z-a.z)
+		var length := direction.length()
+		if length < .01: continue
+		var side := Vector3(-direction.z,0,direction.x).normalized()
+		var steps := maxi(1,ceili(length/.30))
+		for i in range(steps):
+			for sign_value in [-1.0,1.0]:
+				var t := (float(i)+rng.randf())/float(steps)
+				var pos := a.lerp(b,t)+side*float(sign_value)*(float(path[2])+rng.randf_range(-.06,.32))
+				var height := rng.randf_range(.18,.34)
+				var radius := rng.randf_range(.25,.43)
+				if rng.randf() > detail: continue
+				if not _can_place_ground_vegetation(pos,.8,true): continue
+				if HighMountainZone.blocks_vegetation(pos,-.10): continue
+				pos.y = _get_exact_ground_y(pos.x,pos.z)+.008
+				_queue_grass_instance(pos,height,radius,Color(.23,.33,.13))
+
+
 var _ground_patch_noise: FastNoiseLite
 
 func _ground_patch_density(pos: Vector3) -> float:
@@ -17203,9 +17242,9 @@ func _queue_natural_ground_patch(center: Vector3, height: float, radius: float, 
 		var r := radius * rng.randf_range(.65,1.05)
 		if density_sample > lerpf(.12,.92,density) or quality_sample > detail:
 			continue
-		if not _can_place_ground_vegetation(pos):
+		if not _can_place_ground_vegetation(pos, .8, true):
 			continue
-		if HighMountainZone.on_road(pos, 1.0) or HighMountainZone.blocks_vegetation(pos):
+		if HighMountainZone.blocks_vegetation(pos, -.10):
 			continue
 		pos.y = _get_exact_ground_y(pos.x,pos.z) + .008
 		_queue_grass_instance(pos,h,r,color.lerp(Color(.32,.35,.17),density*.25))
@@ -18625,9 +18664,9 @@ func _road_verge_growth(pos: Vector3) -> float:
 	# Includes city streets and the mountain switchbacks through _is_near_road.
 	if not _is_near_road(pos, 6.5):
 		return 1.0
-	if _is_near_road(pos, 1.5):
+	if CityExpansion.on_road(pos, 1.5, _south_road_end()) or _is_near_road(pos, -.10):
 		return 0.0
-	var low := 1.5
+	var low := -.10
 	var high := 6.5
 	for step in range(5):
 		var mid := (low + high) * .5
@@ -18635,18 +18674,18 @@ func _road_verge_growth(pos: Vector3) -> float:
 			high = mid
 		else:
 			low = mid
-	var width := lerpf(2.4, 4.8, _ground_patch_density(pos))
-	return smoothstep(0.0, width, (low + high)*.5 - 1.5)
+	var width := lerpf(1.2, 2.4, _ground_patch_density(pos))
+	return lerpf(.80, 1.0, smoothstep(0.0, width, (low + high)*.5 + .10))
 
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 	_ensure_grass_batches()
 	var grass_rng := RandomNumberGenerator.new()
 	grass_rng.seed = hash(pos)
 	var verge := _road_verge_growth(pos)
-	if verge <= 0.0 or grass_rng.randf() > lerpf(.18, 1.0, verge):
+	if verge <= 0.0 or grass_rng.randf() > lerpf(.65, 1.0, verge):
 		return
-	height *= lerpf(.22, 1.0, verge)
-	radius *= lerpf(.16, 1.0, verge)
+	height *= lerpf(.45, 1.0, verge)
+	radius *= lerpf(.55, 1.0, verge)
 	color = color.lerp(Color(.30,.29,.17), (1.0-verge)*.38)
 	var variant := grass_rng.randi() % GRASS_BATCH_VARIANTS
 	var basis := Basis(Vector3.UP, grass_rng.randf_range(0.0, TAU)).scaled(Vector3(radius, height, radius))
