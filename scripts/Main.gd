@@ -1062,12 +1062,30 @@ func _input(event: InputEvent) -> void:
 		hud.toggle_inventory()
 		get_viewport().set_input_as_handled()
 
+var _near_ground_cover: Node3D
+
+func _update_near_ground_cover() -> void:
+	if net != null and net.is_dedicated_server:
+		return
+	if player == null or not is_instance_valid(player) or _grass_batch_nodes.is_empty():
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	if not is_instance_valid(_near_ground_cover):
+		_near_ground_cover = preload("res://scripts/NearGroundCover.gd").new()
+		_near_ground_cover.name = "NearGroundCover"
+		add_child(_near_ground_cover)
+		_near_ground_cover.setup(self)
+	_near_ground_cover.update_focus(camera.global_position, GraphicsSettings.detail_factor())
+
 func _process(delta: float) -> void:
 	if _scene_quitting:
 		return
 	if _cinematic_active:
 		_process_cinematic(delta)
 		return
+	_update_near_ground_cover()
 	if _wolf_menu != null:
 		_update_wolf_menu_stats()
 	if _grass_any_visible:
@@ -17298,7 +17316,9 @@ func _create_forest() -> void:
 		if not _forest_tree_meshes.is_empty():
 			var variant_idx := _pick_forest_tree_variant(forest_rng)
 			var entry: Dictionary = _forest_tree_meshes[variant_idx]
-			var tree_scale := forest_rng.randf_range(0.8, 1.4)
+			# Remap the same RNG draw: stable positions/IDs with young and mature sizes.
+			var age_sample := forest_rng.randf_range(0.0, 1.0)
+			var tree_scale := lerpf(.60, 1.45, pow(age_sample,.72))
 			var base_height: float = entry.get("height", 5.0)
 			var tree_height := base_height * tree_scale
 			if tree_height < 1.0:
@@ -17339,6 +17359,7 @@ func _create_forest() -> void:
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	_build_forest_understory_multimeshes(all_tree_positions)
+	preload("res://scripts/ForestFloorCover.gd").apply(self, all_tree_positions)
 	# Create collision bodies for all batched trees (simple trunk cylinders)
 	_create_forest_collision(all_tree_positions)
 	# Hide MultiMesh instances for trees that were already cut in a previous session
@@ -17659,6 +17680,7 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 	if tree_positions.is_empty() or (net != null and net.is_dedicated_server):
 		return
 	preload("res://scripts/ForestUnderstory.gd").build(self, tree_positions)
+	preload("res://scripts/ForestDeadwood.gd").build(self, tree_positions)
 	var u_rng := RandomNumberGenerator.new()
 	u_rng.seed = GameConst.WORLD_SEED ^ 0x570B05
 	_get_forest_rock_mesh(Vector3.ZERO) # Load the shared granite variants once.
@@ -17679,6 +17701,23 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 			if not rock_variants.has(rock_mesh):
 				rock_variants[rock_mesh] = []
 			rock_variants[rock_mesh].append(Transform3D(rbasis, rpos))
+			# Small fragments collect downhill from the exposed parent rock.
+			var gradient := Vector2(_get_exact_ground_y(rpos.x+1.0,rpos.z)-_get_exact_ground_y(rpos.x-1.0,rpos.z),
+				_get_exact_ground_y(rpos.x,rpos.z+1.0)-_get_exact_ground_y(rpos.x,rpos.z-1.0))*.5
+			if gradient.length() > .12:
+				var fragments := RandomNumberGenerator.new()
+				fragments.seed = hash(rpos)^0x570AE
+				var downhill := -gradient.normalized()
+				for fragment in range(3):
+					var spread := downhill*fragments.randf_range(.5,1.5) + Vector2(downhill.y,-downhill.x)*fragments.randf_range(-.65,.65)
+					var point := rpos+Vector3(spread.x,0,spread.y)
+					if not _can_place_ground_vegetation(point) or _road_verge_growth(point)<.9: continue
+					var size := fragments.randf_range(.10,.24)
+					point.y = _get_exact_ground_y(point.x,point.z)+.06*size
+					var basis := Basis(Vector3.UP,fragments.randf_range(0,TAU)).scaled(Vector3(size*1.15,size*.78,size))
+					var mesh := _get_forest_rock_mesh(point)
+					if not rock_variants.has(mesh): rock_variants[mesh]=[]
+					rock_variants[mesh].append(Transform3D(basis,point))
 	for rock_mesh: ArrayMesh in rock_variants:
 		var rock_xforms: Array = rock_variants[rock_mesh]
 		# Lotes de alcance corto (75 m) sin sombras dinámicas y fuera de _forest_multimesh_nodes
@@ -18456,23 +18495,27 @@ func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
 		var base := Vector3(cos(angle) * spread, 0.0, sin(angle) * spread)
 		var blade_height := rng.randf_range(0.48, 1.2)
 		var blade_width := rng.randf_range(0.018, 0.042)
-		var lean := Vector3(cos(angle), 0, sin(angle)) * rng.randf_range(0.22, 0.68)
+		var outward := Vector3(cos(angle), 0, sin(angle))
+		var lean := outward * rng.randf_range(0.32, 1.05)
 		var right := Vector3(-sin(angle), 0, cos(angle)) * blade_width
+		var droop := rng.randf_range(0.05, 0.42) * blade_height
+		var twist := rng.randf_range(-0.55, 0.55)
 		var start_index := vertices.size()
-		for segment in range(3):
-			var t := float(segment) / 3.0
-			var center := base + Vector3.UP * blade_height * t + lean * t * t
-			var width := right * (1.0 - t * 0.82)
+		# Four curved sections and a drooping tip instead of upright ribbons.
+		for segment in range(4):
+			var t := float(segment) / 4.0
+			var center := base + Vector3.UP * (blade_height * t - droop * pow(t, 3.0)) + lean * t * t
+			var width := right.rotated(outward, twist * t) * pow(1.0 - t, 0.72)
 			vertices.append(center - width)
 			vertices.append(center + width)
 			uvs.append(Vector2(0, t))
 			uvs.append(Vector2(1, t))
-		vertices.append(base + Vector3.UP * blade_height + lean)
+		vertices.append(base + Vector3.UP * (blade_height - droop) + lean)
 		uvs.append(Vector2(0.5, 1))
-		for segment in range(2):
+		for segment in range(3):
 			var j := start_index + segment * 2
 			indices.append_array(PackedInt32Array([j, j + 1, j + 2, j + 1, j + 3, j + 2]))
-		indices.append_array(PackedInt32Array([start_index + 4, start_index + 5, start_index + 6]))
+		indices.append_array(PackedInt32Array([start_index + 6, start_index + 7, start_index + 8]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
@@ -18541,7 +18584,7 @@ void fragment() {
 	float vein = 0.90 + 0.10 * sin(UV.x * 3.14159);
 	vec3 dry_tint = mix(vec3(0.90, 1.0, 0.86), vec3(1.04, 1.0, 0.87), smoothstep(0.48, 0.7, patch));
 	ALBEDO = albedo_color.rgb * COLOR.rgb * dry_tint * blade * vein;
-	NORMAL = normalize((FRONT_FACING ? NORMAL : -NORMAL) + vec3(0.0, 0.18, 0.0));
+	NORMAL = normalize((FRONT_FACING ? NORMAL : -NORMAL) + (VIEW_MATRIX * vec4(0.0, 0.18, 0.0, 0.0)).xyz);
 	ROUGHNESS = 0.94;
 	SPECULAR = 0.12;
 	BACKLIGHT = ALBEDO * 0.28 * UV.y;
@@ -18577,10 +18620,34 @@ func _update_grass_visibility() -> void:
 			any_visible = true
 	_grass_any_visible = any_visible
 
+func _road_verge_growth(pos: Vector3) -> float:
+	# Continuous, irregular transition outside the protected road/sidewalk edge.
+	# Includes city streets and the mountain switchbacks through _is_near_road.
+	if not _is_near_road(pos, 6.5):
+		return 1.0
+	if _is_near_road(pos, 1.5):
+		return 0.0
+	var low := 1.5
+	var high := 6.5
+	for step in range(5):
+		var mid := (low + high) * .5
+		if _is_near_road(pos, mid):
+			high = mid
+		else:
+			low = mid
+	var width := lerpf(2.4, 4.8, _ground_patch_density(pos))
+	return smoothstep(0.0, width, (low + high)*.5 - 1.5)
+
 func _queue_grass_instance(pos: Vector3, height: float, radius: float, color: Color) -> void:
 	_ensure_grass_batches()
 	var grass_rng := RandomNumberGenerator.new()
 	grass_rng.seed = hash(pos)
+	var verge := _road_verge_growth(pos)
+	if verge <= 0.0 or grass_rng.randf() > lerpf(.18, 1.0, verge):
+		return
+	height *= lerpf(.22, 1.0, verge)
+	radius *= lerpf(.16, 1.0, verge)
+	color = color.lerp(Color(.30,.29,.17), (1.0-verge)*.38)
 	var variant := grass_rng.randi() % GRASS_BATCH_VARIANTS
 	var basis := Basis(Vector3.UP, grass_rng.randf_range(0.0, TAU)).scaled(Vector3(radius, height, radius))
 	(grass_batch_transforms[variant] as Array).append(Transform3D(basis, pos))
@@ -18623,6 +18690,11 @@ func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) ->
 	var variant := _world_rng.randi() % _tall_grass_meshes.size()
 	var s := scale_val * _world_rng.randf_range(0.85, 1.15)
 	var basis := Basis(Vector3.UP, _world_rng.randf_range(0.0, TAU)).scaled(Vector3(s, s, s))
+	var verge := _road_verge_growth(pos)
+	if verge < .5:
+		_queue_grass_instance(pos, scale_val*.45, .24, color)
+		return
+	basis = basis.scaled(Vector3.ONE * lerpf(.45,1.0,verge))
 	(_tall_grass_transforms[variant] as Array).append(Transform3D(basis, pos))
 	(_tall_grass_colors[variant] as Array).append(color)
 
@@ -19288,7 +19360,7 @@ func _create_leafy_floor_ground() -> void:
 func _make_water_channel_mask() -> ImageTexture:
 	# Rasterize once; one texture lookup avoids looping over every river per pixel.
 	const RESOLUTION := 4096
-	var image := Image.create(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
+	var image := Image.create(RESOLUTION, RESOLUTION, false, Image.FORMAT_RG8)
 	var pixel_size := MAP_EXTENT * 2.0 / RESOLUTION
 	for segment in river_segments_data:
 		var center: Vector3 = segment.center
@@ -19296,7 +19368,7 @@ func _make_water_channel_mask() -> ImageTexture:
 		var angle := deg_to_rad(float(segment.yaw))
 		var forward := Vector2(cos(angle), -sin(angle))
 		var side := Vector2(sin(angle), cos(angle))
-		var radius := size.length() * .5
+		var radius := size.length() * .5 + 4.0
 		var min_x := clampi(int((center.x-radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
 		var max_x := clampi(int((center.x+radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
 		var min_z := clampi(int((center.z-radius+MAP_EXTENT)/pixel_size),0,RESOLUTION-1)
@@ -19309,8 +19381,11 @@ func _make_water_channel_mask() -> ImageTexture:
 				# (~0.8 m). Una máscara más estrecha dejaba franjas de terreno
 				# bajo el agua — las "rayas" paralelas al cauce.
 				var inside := local.length() < .425 if size.x >= 60.0 else absf(offset.dot(forward))<size.x*.5+1.5 and absf(offset.dot(side))<size.y*.5+1.1
-				if inside:
-					image.set_pixel(x,z,Color.WHITE)
+				var edge_distance := (local.length()-.425)*minf(size.x,size.y) if size.x>=60.0 else maxf(absf(offset.dot(forward))-size.x*.5-1.5,absf(offset.dot(side))-size.y*.5-1.1)
+				var damp := 1.0-smoothstep(0.0,3.5,edge_distance)
+				if inside or damp > 0.0:
+					var previous := image.get_pixel(x,z)
+					image.set_pixel(x,z,Color(maxf(previous.r,1.0 if inside else 0.0),maxf(previous.g,damp),0.0))
 	return ImageTexture.create_from_image(image)
 
 func _extract_texture_from_glb(path: String) -> Texture2D:

@@ -33,6 +33,11 @@ void fragment() {
 
 	float breakup_noise = fbm(UV * 1.85);
 	float fine_noise = erosion(UV * 11.5);
+	// Break only the outer gravel lip; keep the traffic surface and collision.
+	float worn_edge = .95 + breakup_noise * .045 + fine_noise * .015;
+	if (abs(across) > worn_edge) {
+		discard;
+	}
 
 	// Inside the river channel, dissolve the road edge organically into stones
 	// instead of leaving a straight polygon cut across the water.

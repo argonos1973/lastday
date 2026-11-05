@@ -51,6 +51,7 @@ func run() -> void:
 			var basis := Basis.from_euler(Vector3(-PI*.5,0,rng.randf_range(0,TAU))).scaled(Vector3.ONE*rng.randf_range(.75,1.35))
 			batches[variant].append(Transform3D(basis,pos))
 	world._flush_forest_multimeshes(batches)
+	preload("res://scripts/ForestFloorCover.gd").apply(world,trees)
 	var patches := FastNoiseLite.new()
 	patches.seed = 291
 	patches.frequency = .09
@@ -74,9 +75,10 @@ func run() -> void:
 		rock_candidates.append(Vector3(x,world._get_exact_ground_y(x,z),z))
 	world._build_forest_understory_multimeshes(rock_candidates)
 	for plant_batch in world.get_children():
-		if str(plant_batch.name).begins_with("ForestUnderstory_"):
+		if str(plant_batch.name).begins_with("ForestUnderstory_") or str(plant_batch.name).begins_with("ForestDeadwood_"):
 			plant_batch.free()
 	preload("res://scripts/ForestUnderstory.gd").build(world,trees)
+	preload("res://scripts/ForestDeadwood.gd").build(world,trees)
 	var errors := 0
 	var rocks := 0
 	var variants: Dictionary = {}
@@ -120,6 +122,13 @@ func run() -> void:
 	camera.look_at(Vector3(185,world._get_exact_ground_y(185,180)+1.5,180))
 	camera.fov = 72
 	camera.current = true
+	var near_cover := preload("res://scripts/NearGroundCover.gd").new()
+	world.add_child(near_cover)
+	near_cover.setup(world)
+	for i in range(500):
+		near_cover.update_focus(camera.global_position,1.0)
+		await process_frame
+		if near_cover.pending.is_empty(): break
 	for i in range(12): await process_frame
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://build/tmp/forest_natural_preview.png")
@@ -139,16 +148,20 @@ func run() -> void:
 	print("UNDERSTORY plants=",plant_count)
 	# Asset inspection in the clearing, using the same meshes and material.
 	nearest = Vector3(185,world._get_exact_ground_y(185,210),210)
-	for variant in range(2):
+	for variant in range(3):
 		var plant := MeshInstance3D.new()
-		plant.mesh = preload("res://scripts/ForestUnderstory.gd").mesh_for(variant == 1)
+		plant.mesh = preload("res://scripts/ForestUnderstory.gd").bramble_mesh() if variant == 2 else preload("res://scripts/ForestUnderstory.gd").mesh_for(variant == 1)
 		var mat := ShaderMaterial.new()
 		mat.shader = preload("res://shaders/forest_understory.gdshader")
 		plant.material_override = mat
-		plant.position = nearest + Vector3((float(variant)-.5)*1.0,0,0)
+		plant.position = nearest + Vector3((float(variant)-1.0)*1.0,0,0)
 		plant.position.y = world._get_exact_ground_y(plant.position.x,plant.position.z)+.005
 		world.add_child(plant)
-	camera.position = nearest + Vector3(0,1.5,2.1)
+	var wood := MeshInstance3D.new()
+	wood.mesh = preload("res://scripts/ForestDeadwood.gd").mesh()
+	wood.position = nearest + Vector3(0,.03,.7)
+	world.add_child(wood)
+	camera.position = nearest + Vector3(0,1.7,3.1)
 	camera.look_at(nearest+Vector3.UP*.2)
 	await process_frame
 	await RenderingServer.frame_post_draw

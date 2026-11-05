@@ -6,6 +6,11 @@ uniform sampler2D leaf_normal : hint_normal, filter_linear_mipmap_anisotropic, r
 uniform sampler2D leaf_roughness : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D soil_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D variation : filter_linear_mipmap, repeat_enable;
+uniform sampler2D rock_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform bool canopy_enabled = false;
+uniform sampler2D canopy_mask : filter_linear, repeat_disable;
+uniform vec2 canopy_minimum = vec2(-500.0);
+uniform vec2 canopy_span = vec2(1000.0,1400.0);
 uniform float leaf_scale = 0.45;
 uniform bool cut_water_channels = false;
 uniform sampler2D water_channel_mask : filter_nearest, repeat_disable;
@@ -38,15 +43,32 @@ void fragment() {
 	exposed = max(exposed * 0.8, 1.0 - smoothstep(0.50, 0.88, n.y));
 	vec3 needles_tint = mix(vec3(0.78, 0.78, 0.69), vec3(0.88, 0.87, 0.77), smoothstep(0.25, 0.75, patches));
 	vec3 surface = mix(leaves * needles_tint, soil, exposed);
+	float canopy = canopy_enabled ? texture(canopy_mask,(world_position.xz-canopy_minimum)/canopy_span).r : 0.0;
+	// Leaf litter accumulates under real crowns; clearings retain exposed soil.
+	surface = mix(surface,leaves*vec3(.66,.61,.49),canopy*.55);
 	float moss = smoothstep(0.48, 0.72, detail) * (1.0 - exposed) * 0.58;
 	surface = mix(surface, surface * vec3(0.68, 0.80, 0.56), moss);
 	// Micro-contraste de hojarasca y humedad en depresiones
 	float micro_ao = mix(0.72, 1.05, smoothstep(0.22, 0.78, detail));
-	ALBEDO = surface * mix(0.74, 1.02, patches) * micro_ao;
+	// Embedded bedrock follows the slope; no floating decorative boulders.
+	float bedrock = (1.0-smoothstep(.58,.86,n.y))*smoothstep(.25,.65,detail);
+	vec3 rock_p = world_position*.55;
+	vec3 rock = texture(rock_albedo,rock_p.zy).rgb*weights.x
+		+ texture(rock_albedo,rock_p.xz).rgb*weights.y
+		+ texture(rock_albedo,rock_p.xy).rgb*weights.z;
+	surface = mix(surface,rock*.85,bedrock);
+	float wet_bank = 0.0;
+	if (cut_water_channels) {
+		vec2 mask_uv = world_position.xz/(terrain_extent*2.0)+vec2(.5);
+		wet_bank = texture(water_channel_mask,mask_uv).g;
+		wet_bank *= .35 + detail*.45;
+	}
+	ALBEDO = surface * mix(0.74, 1.02, patches) * micro_ao * (1.0-wet_bank*.24);
 	vec3 leaf_n = texture(leaf_normal, uv).xyz * 2.0 - 1.0;
 	float relief_strength = mix(0.12, 0.48, 1.0 - smoothstep(12.0, 55.0, length(VERTEX)));
 	vec3 relief = normalize(vec3(leaf_n.x * relief_strength, max(leaf_n.z, 0.4), leaf_n.y * relief_strength));
-	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(mix(n, relief, weights.y * (1.0 - exposed * 0.65))), 0.0)).xyz);
+	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(mix(n, relief, weights.y * (1.0 - exposed * 0.65) * (1.0-bedrock))), 0.0)).xyz);
 	ROUGHNESS = mix(clamp(texture(leaf_roughness, uv).r, 0.68, 0.96), 0.98, exposed);
-	SPECULAR = 0.20;
+	ROUGHNESS = max(.65, ROUGHNESS-wet_bank*.18);
+	SPECULAR = mix(.20,.28,wet_bank);
 }

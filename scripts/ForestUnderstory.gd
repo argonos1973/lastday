@@ -29,6 +29,26 @@ static func mesh_for(broad: bool) -> ArrayMesh:
 	st.generate_normals()
 	return st.commit()
 
+static func bramble_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for branch in range(5):
+		var angle := float(branch)*2.39996
+		var direction := Vector3(cos(angle),0,sin(angle))
+		var side := Vector3(-sin(angle),0,cos(angle))
+		var previous := Vector3.ZERO
+		for j in range(1,9):
+			var t := float(j)/8.0
+			var center := direction*(.35+.22*sin(float(branch)))*t + Vector3.UP*(sin(t*PI*.72)*.85)
+			leaf(st,previous,center,side,.009,Color(.22,.18,.10))
+			previous = center
+			if j%2 == 0:
+				for sign_value in [-1.0,1.0]:
+					var tip: Vector3 = center + side*sign_value*.18 + direction*.10 + Vector3.UP*.04
+					leaf(st,center,tip,direction,.065,Color(.18,.29,.10))
+	st.generate_normals()
+	return st.commit()
+
 static func leaf(st: SurfaceTool, base: Vector3, tip: Vector3, side: Vector3, width: float, color: Color) -> void:
 	# Rounded outline and a raised midrib: avoid diamond-shaped flat leaves.
 	var steps := 6 if width > .04 else 3
@@ -38,8 +58,13 @@ static func leaf(st: SurfaceTool, base: Vector3, tip: Vector3, side: Vector3, wi
 		var widths := Vector2(pow(sin(t0*PI),.75),pow(sin(t1*PI),.75))*width
 		var c0 := base.lerp(tip,t0)
 		var c1 := base.lerp(tip,t1)
-		var points := [c0-side*widths.x,c0+Vector3.UP*widths.x*.22,c0+side*widths.x,
-			c1-side*widths.y,c1+Vector3.UP*widths.y*.22,c1+side*widths.y]
+		if width > .02:
+			# Unequal, slightly curled leaf halves avoid a rigid symmetric silhouette.
+			c0.y += width*(sin(t0*PI)*.25-t0*t0*.35)
+			c1.y += width*(sin(t1*PI)*.25-t1*t1*.35)
+		var asymmetry := 1.0 + .10*sin(base.x*17.0+base.y*23.0+base.z*11.0)
+		var points := [c0-side*widths.x*asymmetry,c0+Vector3.UP*widths.x*.22,c0+side*widths.x/asymmetry,
+			c1-side*widths.y*asymmetry,c1+Vector3.UP*widths.y*.22,c1+side*widths.y/asymmetry]
 		for tri in [[0,1,3],[1,4,3],[1,2,4],[2,5,4]]:
 			for index in tri:
 				st.set_color(color * (1.06 if index%3 == 1 else 1.0))
@@ -58,18 +83,19 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 		for i in range(3):
 			var angle := rng.randf_range(0,TAU)
 			var pos := tree + Vector3(cos(angle),0,sin(angle))*rng.randf_range(1.0,4.0)
-			var variant := rng.randi_range(0,1)
+			var variant := rng.randi_range(0,2)
 			var scale_value := rng.randf_range(.65,1.25)
 			var yaw := rng.randf_range(0,TAU)
 			var visible_sample := rng.randf()
 			if visible_sample > quality: continue
 			if not world._can_place_ground_vegetation(pos): continue
+			if world._road_verge_growth(pos) < .45: continue
 			if preload("res://scripts/HighMountainZone.gd").blocks_vegetation(pos) or preload("res://scripts/HighMountainZone.gd").on_road(pos,1.0): continue
 			pos.y = world._get_exact_ground_y(pos.x,pos.z) + .005
 			var key := Vector3i(floori(pos.x/24.0),floori(pos.z/24.0),variant)
 			if not batches.has(key): batches[key] = []
 			batches[key].append(Transform3D(Basis(Vector3.UP,yaw).scaled(Vector3.ONE*scale_value),pos))
-	var meshes := [mesh_for(false),mesh_for(true)]
+	var meshes := [mesh_for(false),mesh_for(true),bramble_mesh()]
 	var material := ShaderMaterial.new()
 	material.shader = SHADER
 	for key: Vector3i in batches:

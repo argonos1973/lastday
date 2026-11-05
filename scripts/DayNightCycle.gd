@@ -117,8 +117,10 @@ func _update_lighting() -> void:
 		world_environment.environment.ambient_light_energy = lerp(0.16 + moon_illum, 0.55, day_amount) * (1.0 - weather_darkness * 0.6) + lightning_intensity * 1.0
 		var night_fog := Color(0.002, 0.003, 0.004)
 		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74), day_amount)
-		world_environment.environment.fog_density = weather_fog_density
-		world_environment.environment.fog_enabled = weather_fog_density > 0.00005
+		# Weak aerial perspective in clear weather; storm/fog values still dominate.
+		var aerial_density := lerpf(.00004,.00025,day_amount)
+		world_environment.environment.fog_density = maxf(weather_fog_density,aerial_density)
+		world_environment.environment.fog_enabled = true
 		world_environment.environment.volumetric_fog_enabled = false
 		var sky := world_environment.environment.sky
 		if sky != null and sky.sky_material is ShaderMaterial:

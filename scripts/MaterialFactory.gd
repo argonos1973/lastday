@@ -175,6 +175,7 @@ static func make_forest_ground_material() -> ShaderMaterial:
 		return _mat_cache["forest_ground"]
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://shaders/forest_ground.gdshader")
+	material.set_shader_parameter("rock_albedo", load_texture(POLY_ROCK_07_DIFF))
 	var base := "res://assets/external/polyhaven/forest_leaves_02/textures/forest_leaves_02_"
 	material.set_shader_parameter("leaf_albedo", load_texture(base + "diffuse_2k.jpg"))
 	material.set_shader_parameter("leaf_normal", load_texture(base + "nor_gl_2k.jpg"))
