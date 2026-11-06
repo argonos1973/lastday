@@ -1656,7 +1656,9 @@ func add_looted_item(item_data: Dictionary) -> void:
 @rpc("any_peer", "reliable")
 func sync_character_appearance(char_name: String, top_color: Color, bottom_color: Color, shoes_color: Color, hair_color: Color, skin_color: Color, top_camo: bool, bottom_camo: bool) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	if not _accepts_client_request(sender) or char_name.length() > 80:
+	# El nombre codificado (base|estilo:fase) puede superar los 80 chars del
+	# nombre de registro — se acepta hasta 96 para no rechazar la apariencia.
+	if not _accepts_client_request(sender) or char_name.length() > 96:
 		return
 	if not players.has(sender):
 		return

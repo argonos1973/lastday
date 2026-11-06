@@ -4205,6 +4205,11 @@ func _fit_held_prop_to_palm(item) -> void:
 	if long_tool:
 		anchor[axis] = bounds.position[axis] + bounds.size[axis] * 0.22
 		anchor = _held_handle_center(pivot, axis, anchor, bounds.size[axis] * 0.10)
+	if str(item.item_name) == "Piedra afilada":
+		# Bifaz: los dos filos miran al frente/atrás de la palma y el talón
+		# redondeado queda dentro del puño en vez de la piedra entera.
+		pivot.rotate_object_local(Vector3.UP, PI * 0.5)
+		anchor = Vector3(bounds.get_center().x, bounds.position.y + bounds.size.y * 0.30, bounds.get_center().z)
 	pivot.position = -(pivot.basis * anchor)
 	# Bulky objects need a more open grasp than a narrow handle.
 	if item_type in ["clothing", "backpack"]:
