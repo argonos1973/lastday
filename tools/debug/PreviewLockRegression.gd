@@ -108,6 +108,7 @@ func _run() -> void:
 	root.add_child(inicio)
 	_ok(inicio._btn_prev != null and inicio._btn_next != null, "nav buttons exist")
 	_ok(not inicio._mp_locked, "picker starts unlocked")
+	var free_title := str(inicio._char_title_label.text)
 	var free_count: int = inicio.CHAR_CONFIGS.size()
 	inicio._char_index = 1
 	inicio._on_char_prev()
@@ -188,7 +189,7 @@ func _run() -> void:
 	inicio._set_picker_locked(false)
 	_ok(not inicio._mp_locked, "unlock releases the flag")
 	_ok(not inicio._btn_prev.disabled and not inicio._btn_next.disabled, "nav re-enabled")
-	_ok(str(inicio._char_title_label.text) == "SELECCIONA PERSONAJE", "title restored")
+	_ok(str(inicio._char_title_label.text) == free_title, "title restored")
 
 	# --- 7) Join pick: las tarjetas guardadas no son elegibles ---
 	# Añade una tarjeta de partida local junto a la saved_server ya insertada.

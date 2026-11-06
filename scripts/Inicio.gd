@@ -917,6 +917,10 @@ func _on_enter_locked() -> void:
 # bloquea las flechas. La apariencia/equipo vienen del servidor, no del save
 # local, asi el preview muestra exactamente lo que lleva puesto en juego.
 func _on_server_character_locked(payload: Dictionary) -> void:
+	var raw_cn := CharacterGrooming.base_name_from_identity(str(payload.get("char_name", ""))).strip_edges()
+	var has_gear := not str(payload.get("equipped_clothing", "")).is_empty() or not str(payload.get("equipped_backpack", "")).is_empty() or not str(payload.get("held_item", "")).is_empty() or not (payload.get("inventory", []) as Array).is_empty()
+	if (raw_cn.is_empty() or raw_cn.begins_with("Jugador_") or raw_cn.to_lower() == "superviviente") and not has_gear and not payload.has("top"):
+		return
 	_char_index = _upsert_server_card(payload)
 	_update_char_view()
 	# GameSession debe llevar el personaje del servidor: sync/restores lo usan.
@@ -942,20 +946,26 @@ static func _payload_color(payload: Dictionary, key: String, existing: Variant, 
 	return default_color
 
 func _upsert_server_card(payload: Dictionary) -> int:
-	var raw_char_name := str(payload.get("char_name", ""))
-	var char_name := CharacterGrooming.base_name_from_identity(raw_char_name)
-	if char_name.is_empty() or char_name.begins_with("Jugador_"):
-		char_name = "Superviviente"
-	var h_style := str(payload.get("hair_style", ""))
-	if h_style.is_empty():
-		h_style = CharacterGrooming.style_for(raw_char_name if not raw_char_name.is_empty() else char_name)
-	# Fallbacks: colores de la tarjeta saved_server existente (ultimo estado
-	# conocido local) o los defaults si nunca hubo una.
 	var existing := {}
 	for c in CHAR_CONFIGS:
 		if str(c.get("id", "")) == "saved_server":
 			existing = c
 			break
+	var raw_char_name := str(payload.get("char_name", ""))
+	var char_name := CharacterGrooming.base_name_from_identity(raw_char_name).strip_edges()
+	if char_name.is_empty() or char_name.begins_with("Jugador_") or char_name.to_lower() == "superviviente":
+		var ex_name := str(existing.get("name", "")).strip_edges()
+		if not ex_name.is_empty() and ex_name.to_lower() != "superviviente" and not ex_name.begins_with("Jugador_"):
+			char_name = ex_name
+		else:
+			char_name = "Remy"
+			for bc in CHAR_CONFIGS:
+				if not _is_mp_save_card(bc):
+					char_name = str(bc.get("name", "Remy"))
+					break
+	var h_style := str(payload.get("hair_style", ""))
+	if h_style.is_empty():
+		h_style = CharacterGrooming.style_for(raw_char_name if not raw_char_name.is_empty() else char_name)
 	var cfg := {
 		"id": "saved_server",
 		"name": char_name,

@@ -220,9 +220,12 @@ func get_saved_character_config() -> Dictionary:
 	var p := get_saved_player()
 	if p.is_empty():
 		return {}
+	var cn := str(p.get("char_name", "")).strip_edges()
+	if cn.is_empty() or cn.to_lower() == "superviviente" or cn.begins_with("Jugador_"):
+		cn = "Remy"
 	return {
 		"id": "saved",
-		"name": p.get("char_name", "Superviviente"),
+		"name": cn,
 		"top": _str_to_color(p.get("top_color", "0.5,0.5,0.5")),
 		"bottom": _str_to_color(p.get("bottom_color", "0.3,0.3,0.3")),
 		"shoes": _str_to_color(p.get("shoes_color", "0.15,0.15,0.15")),

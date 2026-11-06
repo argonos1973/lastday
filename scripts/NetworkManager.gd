@@ -682,6 +682,12 @@ func submit_player_name(new_name: String) -> void:
 	players[sender].erase("needs_name")
 	players[sender]["name"] = new_name
 	players[sender]["char_name"] = new_name
+	var cid_for_name := str(players[sender].get("client_id", ""))
+	var cur_scene := get_tree().current_scene
+	if not cid_for_name.is_empty() and cur_scene != null and "_server_saved_players" in cur_scene:
+		if not cur_scene._server_saved_players.has(cid_for_name):
+			cur_scene._server_saved_players[cid_for_name] = {}
+		cur_scene._server_saved_players[cid_for_name]["char_name"] = new_name
 	_broadcast_player_list()
 
 @rpc("authority", "reliable")
@@ -773,12 +779,12 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 				# real — hay que seguir pidiéndolo o queda "Jugador_N" para
 				# siempre.
 				var known_name := str(players[id].get("name", ""))
-				if known_name.is_empty() or known_name.begins_with("Jugador_"):
+				if known_name.is_empty() or known_name.begins_with("Jugador_") or known_name.to_lower() == "superviviente":
 					players[id]["needs_name"] = true
 					request_player_name.rpc_id(id)
-				# Bloquea la seleccion en el menu: el personaje del servidor es
-				# el que se inicio la partida y no puede cambiarse hasta morir.
-				if scene.has_method("_character_lock_payload"):
+				elif scene.has_method("_character_lock_payload"):
+					# Bloquea la seleccion en el menu: el personaje del servidor es
+					# el que se inicio la partida y no puede cambiarse hasta morir.
 					notify_character_locked.rpc_id(id, scene.call("_character_lock_payload", id, cid))
 			else:
 				# Personaje nuevo o respawn tras muerte: el servidor pide el

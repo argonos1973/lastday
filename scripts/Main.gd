@@ -2812,6 +2812,12 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 				payload[color_keys[i]] = c
 		payload["top_camo"] = args[6]
 		payload["bottom_camo"] = args[7]
+	if str(payload.get("char_name", "")).is_empty() and net != null and net.players.has(peer_id):
+		var Grooming = preload("res://scripts/CharacterGrooming.gd")
+		var pentry: Dictionary = net.players[peer_id]
+		var fallback_cn := str(pentry.get("char_name", pentry.get("name", ""))).strip_edges()
+		if not fallback_cn.is_empty() and not fallback_cn.begins_with("Jugador_") and fallback_cn.to_lower() != "superviviente":
+			payload["char_name"] = Grooming.base_name_from_identity(fallback_cn)
 	var clothing := ""
 	var backpack := ""
 	var held := ""
@@ -2958,6 +2964,8 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 			var saved_pos: Vector3 = existing.get_meta("saved_pos", existing.global_position)
 			call_deferred("_delayed_send_saved_appearance", peer_id, cid)
 			if bare_proxy:
+				if _saved_appearance_args(cid).is_empty() and not existing.get_meta("has_real_pos", false):
+					return false
 				_restore_tamed_wolf(peer_id, str(existing.get_meta("saved_extra", {}).get("tamed_wolf", "")))
 				call_deferred("_delayed_send_spawn_pos", peer_id, saved_pos)
 				return true
