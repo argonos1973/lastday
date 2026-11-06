@@ -14025,7 +14025,10 @@ func _shoot_rifle() -> void:
 	# offset does not send close shots below the target.
 	var muzzle_speed := M4_MUZZLE_SPEED if _held_is_m4() else RIFLE_MUZZLE_SPEED
 	var converge_dist := _rifle_zero_range if _is_aiming and not is_m4_shot else 100.0
-	if not _is_aiming and space_state != null:
+	# Scoped shots converge on whatever the crosshair actually touches, same
+	# as hip fire: a fixed zero left aimed shots dropping below targets past
+	# ~200 m. With no sight hit the manual zero (Alt+wheel) still applies.
+	if space_state != null:
 		var sight_hit := _rifle_sight_hit(cam_ray_origin, cam_ray_dir, exclude_arr)
 		if not sight_hit.is_empty():
 			var hit_d := cam_ray_origin.distance_to(sight_hit.position)
@@ -14070,7 +14073,7 @@ func _shoot_rifle() -> void:
 					b_origin = b_muzzle_pos
 			var b_space := get_world_3d().direct_space_state
 			var b_conv := 100.0
-			if not _is_aiming and b_space != null:
+			if b_space != null:
 				var b_sh := _rifle_sight_hit(b_cam_orig, b_cam_dir, exclude_arr)
 				if not b_sh.is_empty():
 					var b_hd := b_cam_orig.distance_to(b_sh.position)
