@@ -97,10 +97,8 @@ class TestWorld extends MainScript:
 		_create_world_details()
 		await get_tree().process_frame
 		ck("world_details")
-		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-		_add_collision_to_prop_group(get_node_or_null("QStreetLightA"))
-		_add_collision_to_prop_group(get_node_or_null("QStreetLightB"))
+		_spawn_roadside_street_light("QStreetLightA", -22.0, -1.0)
+		_spawn_roadside_street_light("QStreetLightB", 14.0, -1.0)
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 		ck("streetlights")
 		await _create_ground_clutter()

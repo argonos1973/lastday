@@ -7393,11 +7393,9 @@ func _create_map() -> void:
 		await get_tree().process_frame
 	_tm = Time.get_ticks_msec()
 	if not is_server:
-		# Light posts and power lines
-		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-		_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-		_add_collision_to_prop_group(get_node_or_null("QStreetLightA"))
-		_add_collision_to_prop_group(get_node_or_null("QStreetLightB"))
+		# Light posts and power lines placed on the actual road edges
+		_spawn_roadside_street_light("QStreetLightA", -22.0, -1.0)
+		_spawn_roadside_street_light("QStreetLightB", 14.0, -1.0)
 		_create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
 	_tm = Time.get_ticks_msec()
 	if not is_server:
@@ -7756,11 +7754,11 @@ func _create_road() -> void:
 		# The road is a thin overlay on walkable terrain, not a raised box.
 		# Matching ground collision avoids invisible kerbs at every segment.
 
-	# Utility poles along the road (placed every N segments)
+	# Utility poles along the road edges (never on the pavement or in water)
 	var pole_spacing := 40.0
 	var pole_scale := 9.0 / 49.45
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
-	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
+	var pole_scene: Variant = _load_single_telephone_pole_template(pole_path)
 	var poles_placed := 0
 	var accum_dist := 0.0
 	for si in range(_road_segments.size()):
@@ -7773,25 +7771,29 @@ func _create_road() -> void:
 		var yaw: float = deg_to_rad(float(seg["yaw"]))
 		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))
-		var streetlight_pos := center + across * (-4.0)
-		var light_y := _get_exact_ground_y(streetlight_pos.x, streetlight_pos.z)
+		var half_w: float = float(seg["size"].y) * 0.5
 		var light_yaw: float = rad_to_deg(atan2(across.x, across.z))
-		_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % poles_placed, Vector3(streetlight_pos.x, light_y, streetlight_pos.z), Vector3.ONE, Vector3(0, light_yaw, 0), Vector3(0.5, 4.0, 0.5))
-		var _lnode := get_node_or_null("RoadLight_%d" % poles_placed)
-		if _lnode != null:
-			_add_collision_to_prop_group(_lnode)
+		var streetlight_pos := _find_roadside_pole_spot(center, across, -1.0, half_w)
+		if is_finite(streetlight_pos.x):
+			var light_y := _get_exact_ground_y(streetlight_pos.x, streetlight_pos.z)
+			_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % poles_placed, Vector3(streetlight_pos.x, light_y, streetlight_pos.z), Vector3.ONE, Vector3(0, light_yaw, 0), Vector3(0.5, 4.0, 0.5))
+			var _lnode := get_node_or_null("RoadLight_%d" % poles_placed)
+			if _lnode != null:
+				_add_collision_to_prop_group(_lnode)
 		if pole_scene is Node3D:
-			var powerpole_pos := center + across * 4.0
-			var pole_y := _get_exact_ground_y(powerpole_pos.x, powerpole_pos.z)
-			var node := (pole_scene as Node3D).duplicate() as Node3D
-			node.name = "RoadTelephonePole_%d" % poles_placed
-			node.add_to_group("world_action_visual")
-			node.position = Vector3(powerpole_pos.x, 0.0, powerpole_pos.z)
-			node.scale = Vector3.ONE * pole_scale
-			node.rotation_degrees = Vector3(0, light_yaw + 180.0, 0)
-			add_child(node)
-			_snap_node_bottom_to_y_cached(node, pole_y, pole_path, Vector3.ONE * pole_scale)
-			_add_collision_to_prop_group(node)
+			var powerpole_pos := _find_roadside_pole_spot(center, across, 1.0, half_w)
+			if is_finite(powerpole_pos.x):
+				var pole_y := _get_exact_ground_y(powerpole_pos.x, powerpole_pos.z)
+				var node := (pole_scene as Node3D).duplicate(7) as Node3D
+				_strip_extra_telephone_poles(node)
+				node.name = "RoadTelephonePole_%d" % poles_placed
+				node.add_to_group("world_action_visual")
+				node.position = Vector3(powerpole_pos.x, 0.0, powerpole_pos.z)
+				node.scale = Vector3.ONE * pole_scale
+				node.rotation_degrees = Vector3(0, rad_to_deg(atan2(along.x, along.z)), 0)
+				add_child(node)
+				_snap_node_bottom_to_y_cached(node, pole_y, pole_path + "#single", Vector3.ONE * pole_scale)
+				_add_collision_to_prop_group(node)
 		poles_placed += 1
 	if pole_scene is Node3D:
 		pole_scene.free() # Temporary template; duplicates retain their own resources.
@@ -13805,8 +13807,8 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sende
 
 func _create_quaternius_environment_props() -> void:
 	_spawn_external(Q_ENV + "WaterTower.gltf", "QWaterTower", Vector3(-43, 0, -48), Vector3.ONE, Vector3.ZERO, Vector3(2.0, 7.0, 2.0))
-	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightA", Vector3(3.0, 0, -22), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
-	_spawn_external(Q_ENV + "StreetLights.gltf", "QStreetLightB", Vector3(3.0, 0, 14), Vector3.ONE, Vector3(0, 90, 0), Vector3(0.5, 4.0, 0.5))
+	_spawn_roadside_street_light("QStreetLightA", -22.0, -1.0)
+	_spawn_roadside_street_light("QStreetLightB", 14.0, -1.0)
 	_spawn_external(Q_ENV + "TrafficLight_1.gltf", "QTrafficLight", Vector3(13.0, 0, -5.0), Vector3.ONE, Vector3(0, 180, 0), Vector3(0.6, 3.5, 0.6))
 	_spawn_external(Q_ENV + "TownSign.gltf", "QTownSign", Vector3(14.8, 0, -28.5), Vector3.ONE, Vector3(0, 180, 0), Vector3(1.6, 1.8, 0.5))
 	_spawn_external(Q_ENV + "TrafficBarrier_1.gltf", "QBarrierA", Vector3(6.0, 0, -4.2), Vector3.ONE, Vector3(0, 18, 0), Vector3(2.2, 1.0, 0.6))
@@ -16444,24 +16446,122 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 	_create_visual_box("RoadCrack", pos, Vector3(_world_rng.randf_range(1.2, 2.7), 0.025, 0.08), Color(0.018, 0.018, 0.018), Vector3(0, yaw, 0))
 	_create_visual_box("RoadCrackBranch", pos + Vector3(_world_rng.randf_range(-0.4, 0.4), 0.01, _world_rng.randf_range(-0.4, 0.4)), Vector3(0.8, 0.025, 0.06), Color(0.015, 0.015, 0.015), Vector3(0, yaw + _world_rng.randf_range(35, 70), 0))
 
+func _strip_extra_telephone_poles(root: Node) -> void:
+	# telephone_pole_scene.glb packs 4 poles along a 12 m line (Circle_0,
+	# Circle_001_2, Circle_002_4, Circle_003_6) plus overhead wires
+	# (BézierCurve_*). Strip everything except the origin pole (Circle_0:
+	# Object_4/5/6) so each roadside instance places a single pole at its
+	# exact edge coordinate instead of flinging extra poles into the road/river.
+	root.scene_file_path = ""
+	var keep_meshes := {"Object_4": true, "Object_5": true, "Object_6": true}
+	var all_meshes: Array = []
+	NodeUtils.collect_mesh_instances(root, all_meshes)
+	for m in all_meshes:
+		var mi := m as MeshInstance3D
+		if mi != null and not keep_meshes.has(str(mi.name)):
+			var p := mi.get_parent()
+			if p != null:
+				p.remove_child(mi)
+			mi.free()
+
+func _load_single_telephone_pole_template(pole_path: String) -> Variant:
+	var scene: Variant = _load_gltf_scene_from_file(pole_path)
+	if scene is Node3D:
+		_strip_extra_telephone_poles(scene as Node3D)
+	return scene
+
+func _is_valid_roadside_pole_pos(pos: Vector3) -> bool:
+	if get_river_depth_at(pos) > 0.0 or _is_near_river(pos, 3.8):
+		return false
+	if CityExpansion.on_road(pos, 1.2, _south_road_end()):
+		return false
+	if HighMountainZone.on_road(pos, 1.2):
+		return false
+	if _is_in_house_doorway(pos, 4.5):
+		return false
+	for si: int in _candidate_road_segs(pos, 7.0):
+		var seg: Dictionary = _road_segments[si]
+		var center: Vector3 = seg["center"]
+		var yaw: float = deg_to_rad(float(seg["yaw"]))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var half_l: float = float(seg["size"].x) * 0.5
+		var off := pos - center
+		var la := clampf(off.dot(along), -half_l, half_l)
+		var closest := center + along * la
+		if Vector2(pos.x - closest.x, pos.z - closest.z).length() < 4.6:
+			return false
+	return true
+
+func _find_roadside_pole_spot(center: Vector3, across: Vector3, side: float, half_w: float) -> Vector3:
+	for extra in [1.7, 2.3, 2.9, 3.5]:
+		var extra_f: float = float(extra)
+		var cand: Vector3 = center + across * (side * (half_w + extra_f))
+		if _is_valid_roadside_pole_pos(cand):
+			return cand
+	return Vector3(INF, INF, INF)
+
+func _roadside_spot_near_z(target_z: float, side: float) -> Dictionary:
+	var best_idx := -1
+	var best_dz := INF
+	for si in range(_road_segments.size()):
+		var c: Vector3 = _road_segments[si]["center"]
+		var dz := absf(c.z - target_z)
+		if dz < best_dz:
+			best_dz = dz
+			best_idx = si
+	if best_idx < 0:
+		return {}
+	var seg: Dictionary = _road_segments[best_idx]
+	var center: Vector3 = seg["center"]
+	var yaw: float = deg_to_rad(float(seg["yaw"]))
+	var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+	var across := Vector3(sin(yaw), 0.0, cos(yaw))
+	var half_w: float = float(seg["size"].y) * 0.5
+	var pos := _find_roadside_pole_spot(center, across, side, half_w)
+	if not is_finite(pos.x):
+		return {}
+	var face_road_yaw := rad_to_deg(atan2(-side * across.x, -side * across.z))
+	var along_yaw := rad_to_deg(atan2(along.x, along.z))
+	return {"pos": pos, "face_yaw": face_road_yaw, "along_yaw": along_yaw}
+
+func _spawn_roadside_street_light(node_name: String, target_z: float, side: float) -> void:
+	var spot := _roadside_spot_near_z(target_z, side)
+	if spot.is_empty():
+		return
+	var p: Vector3 = spot["pos"]
+	var gy := _get_exact_ground_y(p.x, p.z)
+	var fy: float = float(spot["face_yaw"])
+	_spawn_external(Q_ENV + "StreetLights.gltf", node_name, Vector3(p.x, gy, p.z), Vector3.ONE, Vector3(0, fy, 0), Vector3(0.5, 4.0, 0.5))
+	var lnode := get_node_or_null(node_name)
+	if lnode != null:
+		_add_collision_to_prop_group(lnode)
+
 func _create_power_line(start: Vector3, end: Vector3) -> void:
 	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
 	var post_count := 3
 	var pole_scale := 9.0 / 49.45
-	var pole_scene: Variant = _load_gltf_scene_from_file(pole_path)
+	var pole_scene: Variant = _load_single_telephone_pole_template(pole_path)
 	if pole_scene is Node3D:
 		for i in range(post_count):
 			var t := float(i) / float(post_count - 1)
-			var pos := start.lerp(end, t)
-			var node := (pole_scene as Node3D).duplicate() as Node3D
+			var raw_pos := start.lerp(end, t)
+			var spot := _roadside_spot_near_z(raw_pos.z, 1.0)
+			if spot.is_empty():
+				continue
+			var pos: Vector3 = spot["pos"]
+			var pole_y := _get_exact_ground_y(pos.x, pos.z)
+			var along_yaw: float = float(spot["along_yaw"])
+			var node := (pole_scene as Node3D).duplicate(7) as Node3D
+			_strip_extra_telephone_poles(node)
 			node.name = "TelephonePoleGLB_%d" % i
 			node.add_to_group("world_action_visual")
 			node.position = Vector3(pos.x, 0.0, pos.z)
 			node.scale = Vector3.ONE * pole_scale
-			node.rotation_degrees = Vector3(0, 90, 0)
+			node.rotation_degrees = Vector3(0, along_yaw, 0)
 			add_child(node)
-			_snap_node_bottom_to_y_cached(node, pos.y, pole_path, Vector3.ONE * pole_scale)
+			_snap_node_bottom_to_y_cached(node, pole_y, pole_path + "#single", Vector3.ONE * pole_scale)
 			_add_collision_to_prop_group(node)
 		pole_scene.free()
 	_register_wildlife_blocker(center, 1.0)
