@@ -238,7 +238,7 @@ func _ensure_ads_viewport() -> void:
 		if m4_inst != null:
 			for node in m4_inst.find_children("*", "MeshInstance3D", true, false):
 				var mi := node as MeshInstance3D
-				if "Bullets" in str(mi.name) or "Iron_Sight" in str(mi.name):
+				if "Bullets" in str(mi.name) or "Iron_Sight" in str(mi.name) or "Reloader" in str(mi.name) or "Stock" in str(mi.name) or "Butt" in str(mi.name) or "Handle" in str(mi.name):
 					mi.visible = false
 				if mi.mesh != null:
 					for s_idx in range(mi.mesh.get_surface_count()):
@@ -284,10 +284,10 @@ func _ensure_ads_viewport() -> void:
 	cam.name = "AdsCamera3D"
 	cam.near = 0.02
 	cam.far = 20.0
-	cam.fov = 18.0
+	cam.fov = 26.0
 	root3d.add_child(cam)
-	var cam_pos := Vector3(0.0, 0.621, -0.555)
-	var target_pos := Vector3(0.0, 0.621, 0.445)
+	var cam_pos := Vector3(0.0, 0.582, -0.555)
+	var target_pos := Vector3(0.0, 0.582, 0.445)
 	cam.look_at_from_position(cam_pos, target_pos, Vector3.UP)
 
 func _draw_iron_sights(vp_size: Vector2, center: Vector2) -> void:

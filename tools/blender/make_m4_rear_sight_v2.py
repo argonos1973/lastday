@@ -12,7 +12,7 @@ REPO = "/Volumes/copia/lastday2"
 M4_GLB = os.path.join(REPO, "assets/models/weapons/m4_carbine_rifle.glb")
 OUT_GLB = os.path.join(REPO, "assets/models/weapons/m4_rear_sight.glb")
 
-SIGHT_LINE = 0.06210   # exact sight line height (Z in Blender, Y in Godot)
+SIGHT_LINE = 0.05820   # compact sight line height above rail (Z in Blender, Y in Godot)
 Y_REAR = 0.04300       # rear rail slot (+Y in Blender = -Z in Godot)
 Y_FRONT = -0.04450     # front sight station (-Y in Blender = +Z in Godot)
 
@@ -146,92 +146,82 @@ def add_machined_aperture_disc(name, r_in, r_out, y_center, half_thick, seg=96):
 # =========================================================================
 
 # 1a. Flat-faced Parkerized peep aperture disc + integral lower stem
-R_IN = 0.00058
-R_OUT = 0.00083
-add_machined_aperture_disc("RearPeepDisc", R_IN, R_OUT, Y_REAR, 0.00022, seg=96)
+R_IN = 0.00048
+R_OUT = 0.00067
+add_machined_aperture_disc("RearPeepDisc", R_IN, R_OUT, Y_REAR, 0.00018, seg=96)
 
 # Integral neck/stem seamlessly uniting the peep disc bottom to the cradle floor
 stem_profile = [
-    (-0.00036, 0.06035),
-    (0.00036, 0.06035),
-    (0.00028, 0.06090),
-    (0.00030, 0.06125),
-    (0.00034, 0.06152),
-    (-0.00034, 0.06152),
-    (-0.00030, 0.06125),
-    (-0.00028, 0.06090),
+    (-0.00028, 0.05685),
+    (0.00028, 0.05685),
+    (0.00023, 0.05725),
+    (0.00025, 0.05750),
+    (0.00028, 0.05770),
+    (-0.00028, 0.05770),
+    (-0.00025, 0.05750),
+    (-0.00023, 0.05725),
 ]
-extrude_profile_y("RearPeepStem", stem_profile, Y_REAR - 0.00018, Y_REAR + 0.00018, bevel_y=0.00004, uv_coord=(0.24, 0.24))
+extrude_profile_y("RearPeepStem", stem_profile, Y_REAR - 0.00015, Y_REAR + 0.00015, bevel_y=0.00003, uv_coord=(0.24, 0.24))
 
 # Secondary L-aperture folded forward in the cradle
 leaf_tab = [
-    (-0.00044, 0.06032),
-    (0.00044, 0.06032),
-    (0.00050, 0.06056),
-    (-0.00050, 0.06056),
+    (-0.00036, 0.05682),
+    (0.00036, 0.05682),
+    (0.00040, 0.05702),
+    (-0.00040, 0.05702),
 ]
-extrude_profile_y("RearFoldedLeaf", leaf_tab, Y_REAR - 0.00085, Y_REAR - 0.00012, bevel_y=0.00005, uv_coord=(0.22, 0.22))
+extrude_profile_y("RearFoldedLeaf", leaf_tab, Y_REAR - 0.00068, Y_REAR - 0.00010, bevel_y=0.00004, uv_coord=(0.22, 0.22))
 
 # 1b. Forged A2 protective ears (smoothly curved outer contour & rounded crest, open top)
 for side in (-1.0, 1.0):
     ear_profile = [
-        (side * 0.00105, 0.06045),
-        (side * 0.00168, 0.06045),
-        (side * 0.00174, 0.06095),
-        (side * 0.00175, 0.06145),
-        (side * 0.00171, 0.06195),
-        (side * 0.00164, 0.06238),
-        (side * 0.00155, 0.06272),
-        (side * 0.00145, 0.06296),
-        (side * 0.00135, 0.06310),
-        (side * 0.00125, 0.06316),
-        (side * 0.00116, 0.06314),
-        (side * 0.00109, 0.06304),
-        (side * 0.00105, 0.06286),
-        (side * 0.00106, 0.06170),
+        (side * 0.00086, 0.05690),
+        (side * 0.00138, 0.05690),
+        (side * 0.00143, 0.05730),
+        (side * 0.00144, 0.05772),
+        (side * 0.00140, 0.05814),
+        (side * 0.00134, 0.05850),
+        (side * 0.00126, 0.05878),
+        (side * 0.00118, 0.05896),
+        (side * 0.00110, 0.05906),
+        (side * 0.00102, 0.05904),
+        (side * 0.00095, 0.05895),
+        (side * 0.00088, 0.05878),
+        (side * 0.00088, 0.05785),
     ]
     if side < 0:
         ear_profile.reverse()
-    extrude_profile_y(f"RearEar_{'R' if side < 0 else 'L'}", ear_profile, Y_REAR - 0.00095, Y_REAR + 0.00055, bevel_y=0.00009, uv_coord=(0.30, 0.30))
+    extrude_profile_y(f"RearEar_{'R' if side < 0 else 'L'}", ear_profile, Y_REAR - 0.00080, Y_REAR + 0.00046, bevel_y=0.00008, uv_coord=(0.30, 0.30))
 
-# Cradle bridge + sculpted lower housing connecting the two ears under the ring
+# Compact cradle housing sitting directly on the Picatinny rail clamp
 cradle_profile = [
-    (-0.00168, 0.06052),
-    (-0.00105, 0.06052),
-    (-0.00080, 0.06038),
-    (0.00080, 0.06038),
-    (0.00105, 0.06052),
-    (0.00168, 0.06052),
-    (0.00160, 0.05960),
-    (0.00126, 0.05875),
-    (-0.00126, 0.05875),
-    (-0.00160, 0.05960),
+    (-0.00138, 0.05695),
+    (-0.00086, 0.05695),
+    (-0.00066, 0.05684),
+    (0.00066, 0.05684),
+    (0.00086, 0.05695),
+    (0.00138, 0.05695),
+    (0.00134, 0.05610),
+    (0.00116, 0.05555),
+    (-0.00116, 0.05555),
+    (-0.00134, 0.05610),
 ]
-extrude_profile_y("RearCradleHousing", cradle_profile, Y_REAR - 0.00105, Y_REAR + 0.00060, bevel_y=0.00009, uv_coord=(0.28, 0.28))
+extrude_profile_y("RearCradleHousing", cradle_profile, Y_REAR - 0.00088, Y_REAR + 0.00050, bevel_y=0.00008, uv_coord=(0.28, 0.28))
 
-# Elevation/base pedestal
-pedestal_profile = [
-    (-0.00128, 0.05880),
-    (0.00128, 0.05880),
-    (0.00148, 0.05660),
-    (-0.00148, 0.05660),
-]
-extrude_profile_y("RearPedestal", pedestal_profile, Y_REAR - 0.00130, Y_REAR + 0.00075, bevel_y=0.00009, uv_coord=(0.26, 0.26))
-
-# Picatinny rail clamp base
+# Low-profile Picatinny rail clamp base
 clamp_profile = [
-    (-0.00195, 0.05435),
-    (-0.00160, 0.05435),
-    (-0.00142, 0.05510),
-    (0.00142, 0.05510),
-    (0.00160, 0.05435),
-    (0.00195, 0.05435),
-    (0.00205, 0.05565),
-    (0.00162, 0.05668),
-    (-0.00162, 0.05668),
-    (-0.00205, 0.05565),
+    (-0.00162, 0.05445),
+    (-0.00134, 0.05445),
+    (-0.00118, 0.05495),
+    (0.00118, 0.05495),
+    (0.00134, 0.05445),
+    (0.00162, 0.05445),
+    (0.00170, 0.05520),
+    (0.00134, 0.05562),
+    (-0.00134, 0.05562),
+    (-0.00170, 0.05520),
 ]
-extrude_profile_y("RearPicatinnyClamp", clamp_profile, Y_REAR - 0.00210, Y_REAR + 0.00110, bevel_y=0.00010, uv_coord=(0.25, 0.25))
+extrude_profile_y("RearPicatinnyClamp", clamp_profile, Y_REAR - 0.00160, Y_REAR + 0.00085, bevel_y=0.00008, uv_coord=(0.25, 0.25))
 
 
 def add_knurled_cylinder(name, x0, x1, y_c, z_c, radius, ridges=22, uv_coord=(0.34, 0.34)):
@@ -252,72 +242,72 @@ def add_knurled_cylinder(name, x0, x1, y_c, z_c, radius, ridges=22, uv_coord=(0.
 
 
 # Windage knob on right ear (-X in Blender = right on screen)
-add_knurled_cylinder("WindageDrumRight", -0.00222, -0.00168, Y_REAR - 0.00015, 0.06095, 0.00048, ridges=22, uv_coord=(0.35, 0.35))
+add_knurled_cylinder("WindageDrumRight", -0.00182, -0.00138, Y_REAR - 0.00012, 0.05735, 0.00038, ridges=22, uv_coord=(0.35, 0.35))
 # Windage screw retention cap on left ear (+X in Blender = left on screen)
-add_knurled_cylinder("WindageCapLeft", 0.00168, 0.00192, Y_REAR - 0.00015, 0.06095, 0.00032, ridges=14, uv_coord=(0.32, 0.32))
+add_knurled_cylinder("WindageCapLeft", 0.00138, 0.00158, Y_REAR - 0.00012, 0.05735, 0.00025, ridges=14, uv_coord=(0.32, 0.32))
 # Tactical rail clamp thumbscrew on the left side of the Picatinny base
-add_knurled_cylinder("RailClampNut", 0.00195, 0.00270, Y_REAR - 0.00040, 0.05565, 0.00062, ridges=22, uv_coord=(0.34, 0.34))
+add_knurled_cylinder("RailClampNut", 0.00162, 0.00215, Y_REAR - 0.00030, 0.05505, 0.00042, ridges=22, uv_coord=(0.34, 0.34))
 
 
 # =========================================================================
 # 2. FRONT SIGHT ASSEMBLY (A2 front post + stepped base + protective wings)
 # =========================================================================
 
-# 2a. Central square A2 front sight post — tip sits at exact SIGHT_LINE
+# 2a. Central square A2 front sight post — slender, crisp tip at exact SIGHT_LINE
 post_profile = [
-    (-0.00028, 0.05950),
-    (0.00028, 0.05950),
-    (0.00022, SIGHT_LINE),
-    (-0.00022, SIGHT_LINE),
+    (-0.00011, 0.05675),
+    (0.00011, 0.05675),
+    (0.00008, SIGHT_LINE),
+    (-0.00008, SIGHT_LINE),
 ]
-extrude_profile_y("FrontSightPost", post_profile, Y_FRONT - 0.00035, Y_FRONT + 0.00035, bevel_y=0.00004, uv_coord=(0.20, 0.20))
+extrude_profile_y("FrontSightPost", post_profile, Y_FRONT - 0.00018, Y_FRONT + 0.00018, bevel_y=0.00003, uv_coord=(0.20, 0.20))
 
 # Stepped elevation detent flange at the base of the front post
 flange1_profile = [
-    (-0.00058, 0.05900),
-    (0.00058, 0.05900),
-    (0.00050, 0.05958),
-    (-0.00050, 0.05958),
+    (-0.00024, 0.05642),
+    (0.00024, 0.05642),
+    (0.00020, 0.05680),
+    (-0.00020, 0.05680),
 ]
-extrude_profile_y("FrontPostFlangeUpper", flange1_profile, Y_FRONT - 0.00055, Y_FRONT + 0.00055, bevel_y=0.00005, uv_coord=(0.24, 0.24))
+extrude_profile_y("FrontPostFlangeUpper", flange1_profile, Y_FRONT - 0.00026, Y_FRONT + 0.00026, bevel_y=0.00003, uv_coord=(0.24, 0.24))
 
 flange2_profile = [
-    (-0.00086, 0.05845),
-    (0.00086, 0.05845),
-    (0.00076, 0.05905),
-    (-0.00076, 0.05905),
+    (-0.00036, 0.05608),
+    (0.00036, 0.05608),
+    (0.00030, 0.05646),
+    (-0.00030, 0.05646),
 ]
-extrude_profile_y("FrontPostFlangeLower", flange2_profile, Y_FRONT - 0.00080, Y_FRONT + 0.00080, bevel_y=0.00006, uv_coord=(0.25, 0.25))
+extrude_profile_y("FrontPostFlangeLower", flange2_profile, Y_FRONT - 0.00036, Y_FRONT + 0.00036, bevel_y=0.00004, uv_coord=(0.25, 0.25))
 
 # 2b. Front sight A2 protective wings flanking the post with open air gap
 for side in (-1.0, 1.0):
     fwing_profile = [
-        (side * 0.00112, 0.05840),
-        (side * 0.00215, 0.05840),
-        (side * 0.00242, 0.05960),
-        (side * 0.00248, 0.06065),
-        (side * 0.00236, 0.06160),
-        (side * 0.00212, 0.06230),
-        (side * 0.00188, 0.06262),
-        (side * 0.00156, 0.06262),
-        (side * 0.00172, 0.06190),
-        (side * 0.00176, 0.06090),
-        (side * 0.00166, 0.05975),
+        (side * 0.00052, 0.05605),
+        (side * 0.00096, 0.05605),
+        (side * 0.00108, 0.05668),
+        (side * 0.00112, 0.05728),
+        (side * 0.00106, 0.05785),
+        (side * 0.00095, 0.05828),
+        (side * 0.00084, 0.05848),
+        (side * 0.00070, 0.05848),
+        (side * 0.00077, 0.05805),
+        (side * 0.00079, 0.05742),
+        (side * 0.00074, 0.05670),
     ]
     if side < 0:
         fwing_profile.reverse()
-    extrude_profile_y(f"FrontWing_{'R' if side < 0 else 'L'}", fwing_profile, Y_FRONT - 0.00180, Y_FRONT + 0.00140, bevel_y=0.00010, uv_coord=(0.28, 0.28))
+    extrude_profile_y(f"FrontWing_{'R' if side < 0 else 'L'}", fwing_profile, Y_FRONT - 0.00090, Y_FRONT + 0.00075, bevel_y=0.00006, uv_coord=(0.28, 0.28))
 
 # Front sight A-frame bridge + barrel collar
 fbase_profile = [
-    (-0.00215, 0.05850),
-    (0.00215, 0.05850),
-    (0.00245, 0.05520),
-    (0.00190, 0.04900),
-    (-0.00190, 0.04900),
-    (-0.00245, 0.05520),
+    (-0.00096, 0.05612),
+    (0.00096, 0.05612),
+    (0.00112, 0.05320),
+    (0.00092, 0.04940),
+    (-0.00092, 0.04940),
+    (-0.00112, 0.05320),
 ]
-extrude_profile_y("FrontSightAFrame", fbase_profile, Y_FRONT - 0.00280, Y_FRONT + 0.00220, bevel_y=0.00012, uv_coord=(0.27, 0.27))
+extrude_profile_y("FrontSightAFrame", fbase_profile, Y_FRONT - 0.00140, Y_FRONT + 0.00115, bevel_y=0.00008, uv_coord=(0.27, 0.27))
 
 # Join all parts into RearSightBody so the GLB has a single clean mesh
 bpy.ops.object.select_all(action='DESELECT')
