@@ -57,6 +57,8 @@ static func create(world: Node3D, server: bool) -> void:
  _fountain(world,server,plaza.position)
  _pavements(world,server)
  _urban_details(world,server)
+ if not server:
+  _telephone_poles(world)
  for i in range(CAR_POSITIONS.size()):
   var pos: Vector3=ORIGIN+CAR_POSITIONS[i]
   var name: String="DistrictParkedCar%d"%i
@@ -143,6 +145,105 @@ static func _urban_details(world: Node3D, server: bool) -> void:
   world._register_wildlife_blocker(pos,maxf((item[4] as Vector3).x,(item[4] as Vector3).z)*0.5+0.3)
   if not server:
    world._try_instance_external_scene([APOCALYPSE_KIT + str(item[0])],name,pos,item[2],Vector3(0,float(item[3]),0),true,0.0)
+
+static func _telephone_poles(world: Node3D) -> void:
+ var keep_out := _tele_keep_out_positions()
+ var south_end: float = world._south_road_end()
+ # Continue highway streetlights along the east edge (world x=14.2) of the
+ # approach road from the main road end into the city entrance (world z=640).
+ var approach_light_idx := 0
+ var lz := maxf(528.0, south_end + 28.0)
+ while lz <= 632.0:
+  var lpos := Vector3(ORIGIN.x + 5.2, 0.0, lz)
+  if world.get_river_depth_at(lpos) <= 0.0 and not world._is_near_river(lpos, 3.8):
+   var ly: float = world._get_exact_ground_y(lpos.x, lpos.z)
+   world._placed_roadside_lights.append(lpos)
+   world._spawn_external(APOCALYPSE_KIT + "StreetLights.gltf", "RoadLight_CityApproach_%d" % approach_light_idx, Vector3(lpos.x, ly, lpos.z), Vector3.ONE, Vector3(0.0, -90.0, 0.0), Vector3(0.5, 4.0, 0.5))
+   approach_light_idx += 1
+  lz += 35.0
+ # Avenue streetlights along the 4 N-S city avenues on the sidewalk opposite
+ # the telephone pole line, facing inward over the asphalt.
+ var ave_lights := [
+  [-40.0, 5.2, -90.0],
+  [0.0, 5.2, -90.0],
+  [64.0, 5.2, -90.0],
+  [104.0, -5.2, 90.0],
+ ]
+ var city_light_idx := 0
+ for cfg in ave_lights:
+  var lx: float = float(cfg[0]) + float(cfg[1])
+  var fyaw: float = float(cfg[2])
+  for az in [-22.0, 22.0, 58.0, 116.0]:
+   var cpos := ORIGIN + Vector3(lx, 0.0, float(az))
+   if not _valid_city_tele_spot(world, cpos, keep_out):
+    continue
+   var cy: float = world._get_exact_ground_y(cpos.x, cpos.z)
+   world._spawn_external(APOCALYPSE_KIT + "StreetLights.gltf", "CityAvenueLight_%d" % city_light_idx, Vector3(cpos.x, cy, cpos.z), Vector3.ONE, Vector3(0.0, fyaw, 0.0), Vector3(0.5, 4.0, 0.5))
+   city_light_idx += 1
+ # Continuous N-S telephone pole & wire lines along all 4 avenues (outer curb
+ # at 5.2 m from lane center, clear of intersections, cars and buildings).
+ var ave_tele_configs := [
+  [0.0, -5.2],
+  [-40.0, -5.2],
+  [64.0, -5.2],
+  [104.0, 5.2],
+ ]
+ var city_z_stops := [-31.0, -11.0, 11.0, 30.0, 49.0, 68.0, 86.0, 107.0, 127.0]
+ for street_i in range(ave_tele_configs.size()):
+  var cfg: Array = ave_tele_configs[street_i]
+  var ax: float = float(cfg[0])
+  var side_off: float = float(cfg[1])
+  var wx: float = ORIGIN.x + ax + side_off
+  var poles: Array[Node3D] = []
+  if ax == 0.0:
+   if not world._road_tele_poles.is_empty():
+    var last_road_pole: Node3D = world._road_tele_poles.back()
+    if last_road_pole != null and is_instance_valid(last_road_pole):
+     poles.append(last_road_pole)
+   var az := maxf(511.0, south_end + 18.0)
+   while az <= 628.0:
+    var apos := Vector3(wx, 0.0, az)
+    if world.get_river_depth_at(apos) <= 0.0 and not world._is_near_river(apos, 3.8):
+     world._placed_roadside_tele_poles.append(apos)
+     var anode: Node3D = world._spawn_telephone_pole("CityTelephonePole_%d_%d" % [street_i, poles.size()], apos, -90.0)
+     if anode != null:
+      poles.append(anode)
+    az += 19.0
+  for cz in city_z_stops:
+   var ppos := Vector3(wx, 0.0, ORIGIN.z + float(cz))
+   if not _valid_city_tele_spot(world, ppos, keep_out):
+    continue
+   var pnode: Node3D = world._spawn_telephone_pole("CityTelephonePole_%d_%d" % [street_i, poles.size()], ppos, -90.0)
+   if pnode != null:
+    poles.append(pnode)
+  if poles.size() >= 2:
+   world._build_telephone_wires(poles, "CityTelephoneWires_%d" % street_i)
+
+static func _valid_city_tele_spot(world: Node3D, pos: Vector3, keep_out: Array) -> bool:
+ if preload("res://scripts/CityExpansion.gd").on_road(pos, 1.2, world._south_road_end()):
+  return false
+ if world.get_river_depth_at(pos) > 0.0 or world._is_near_river(pos, 3.5):
+  return false
+ if preload("res://scripts/CityExpansion.gd").near_building(pos, 1.2):
+  return false
+ for kp in keep_out:
+  if Vector2(pos.x - kp.x, pos.z - kp.z).length_squared() < 12.25:
+   return false
+ return true
+
+static func _tele_keep_out_positions() -> Array:
+ var pts: Array = []
+ for off in STREET_LAMP_OFFSETS:
+  pts.append(ORIGIN + off)
+ pts.append(ORIGIN + Vector3(40, 0, 5.2))
+ for s in [Vector3(3.5, 0, -4.3), Vector3(67.5, 0, 91.7)]:
+  pts.append(ORIGIN + s)
+ for b in [Vector3(26, 0, 48), Vector3(38, 0, 48), Vector3(32, 0, 42), Vector3(32, 0, 54)]:
+  pts.append(ORIGIN + b)
+ pts.append(ORIGIN + Vector3(-35, 0, -34))
+ for c in CAR_POSITIONS:
+  pts.append(ORIGIN + c)
+ return pts
 
 static func _weather_prop(root: Node, tint: Color) -> void:
  if root == null:

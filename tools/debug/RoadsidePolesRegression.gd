@@ -40,26 +40,45 @@ func run() -> void:
 	world._spawn_roadside_street_light("QStreetLightA", -22.0, -1.0)
 	world._spawn_roadside_street_light("QStreetLightB", 14.0, -1.0)
 	world._create_power_line(Vector3(15, 0, -40), Vector3(15, 0, 40))
+	preload("res://scripts/CityStreetscape.gd")._telephone_poles(world)
 	await process_frame
 
 	var errors := 0
 	var light_count := 0
 	var tele_count := 0
+	var city_light_count := 0
+	var city_tele_count := 0
 	var light_positions: Array[Vector3] = []
 	var tele_positions: Array[Vector3] = []
+	var max_pole_top := 0.0
 	var extra_pole_meshes := ["Object_8", "Object_10", "Object_11", "Object_12", "Object_14", "Object_16", "Object_17", "Object_18", "Object_20", "Object_22", "Object_23", "Object_24", "Object_26", "Object_28"]
 
 	for c in world.get_children():
 		if not (c is Node3D):
 			continue
 		var nm := str(c.name)
-		var is_light := nm.begins_with("RoadLight_") or nm.begins_with("QStreetLight")
+		var is_city_light := nm.begins_with("RoadLight_CityApproach_") or nm.begins_with("CityAvenueLight_")
+		var is_city_tele := nm.begins_with("CityTelephonePole_")
+		var is_light := (nm.begins_with("RoadLight_") and not nm.begins_with("RoadLight_CityApproach_")) or nm.begins_with("QStreetLight")
 		var is_tele := nm.begins_with("RoadTelephonePole_") or nm.begins_with("TelephonePoleGLB_")
-		if not is_light and not is_tele:
+		if not is_light and not is_tele and not is_city_light and not is_city_tele:
 			continue
 		if nm.ends_with("Collision"):
 			continue
 		var p: Vector3 = (c as Node3D).global_position
+		if is_city_light or is_city_tele:
+			if is_city_light:
+				city_light_count += 1
+			else:
+				city_tele_count += 1
+			var city_gp := Vector3(p.x, 0.0, p.z)
+			if world.get_river_depth_at(city_gp) > 0.0 or world._is_near_river(city_gp, 3.0):
+				print("FAIL city pole in water: ", nm, " pos=", city_gp)
+				errors += 1
+			if preload("res://scripts/CityExpansion.gd").on_road(city_gp, 0.8, world._south_road_end()):
+				print("FAIL city pole on road: ", nm, " pos=", city_gp)
+				errors += 1
+			continue
 		if is_light:
 			light_count += 1
 			for prev in light_positions:
@@ -99,6 +118,8 @@ func run() -> void:
 				print("FAIL multi-pole mesh still present: ", nm, "/", mi.name)
 				errors += 1
 			var waabb: AABB = mi.global_transform * mi.get_aabb()
+			if is_tele:
+				max_pole_top = maxf(max_pole_top, waabb.end.y)
 			var mc := Vector3(waabb.get_center().x, 0.0, waabb.get_center().z)
 			if world.get_river_depth_at(mc) > 0.0 or world._is_near_river(mc, 2.0):
 				print("FAIL mesh in water: ", nm, "/", mi.name, " center=", mc)
@@ -111,10 +132,23 @@ func run() -> void:
 	if wires == null or wires.mesh == null or wires.mesh.get_surface_count() == 0:
 		print("FAIL missing RoadTelephoneWires mesh")
 		errors += 1
-	if light_count < 10 or tele_count < 22:
+	else:
+		var wire_top := (wires.global_transform * wires.get_aabb()).end.y
+		if wire_top > max_pole_top + 0.05 or max_pole_top < 6.8:
+			print("FAIL wire/pole height mismatch: wire_top=", wire_top, " max_pole_top=", max_pole_top)
+			errors += 1
+	var city_wire_runs := 0
+	for i in range(4):
+		var cw := world.get_node_or_null("CityTelephoneWires_%d" % i) as MeshInstance3D
+		if cw != null and cw.mesh != null and cw.mesh.get_surface_count() > 0:
+			city_wire_runs += 1
+	if city_wire_runs < 4 or city_tele_count < 36 or city_light_count < 16:
+		print("FAIL city utility coverage: city_lights=", city_light_count, " city_tele=", city_tele_count, " city_wires=", city_wire_runs)
+		errors += 1
+	if light_count < 10 or tele_count < 26:
 		print("FAIL too few poles placed: lights=", light_count, " tele=", tele_count)
 		errors += 1
 
-	print("ROADSIDE_POLES lights=%d tele=%d wires=%s errors=%d" % [light_count, tele_count, str(wires != null and wires.mesh != null), errors])
+	print("ROADSIDE_POLES lights=%d tele=%d city_lights=%d city_tele=%d city_wires=%d wires=%s errors=%d" % [light_count, tele_count, city_light_count, city_tele_count, city_wire_runs, str(wires != null and wires.mesh != null), errors])
 	world.free()
 	quit(1 if errors > 0 else 0)
