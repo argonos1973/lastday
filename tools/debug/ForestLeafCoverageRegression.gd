@@ -24,7 +24,7 @@ func run() -> void:
 	for node in world.get_children():
 		if not str(node.name).begins_with("ForestLeafLitter_"): continue
 		count+=node.multimesh.instance_count
-	if count!=2560 or world._world_rng.state!=rng_state: errors+=1
+	if count!=2880 or world._world_rng.state!=rng_state: errors+=1
 	print("LEAF_COVERAGE sources=",positions.size()," clusters=",count," leaves=",count*7," errors=",errors)
 	world.queue_free()
 	await process_frame
