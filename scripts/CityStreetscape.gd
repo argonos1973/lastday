@@ -57,8 +57,6 @@ static func create(world: Node3D, server: bool) -> void:
  _fountain(world,server,plaza.position)
  _pavements(world,server)
  _urban_details(world,server)
- if not server:
-  _telephone_poles(world)
  for i in range(CAR_POSITIONS.size()):
   var pos: Vector3=ORIGIN+CAR_POSITIONS[i]
   var name: String="DistrictParkedCar%d"%i
@@ -145,74 +143,6 @@ static func _urban_details(world: Node3D, server: bool) -> void:
   world._register_wildlife_blocker(pos,maxf((item[4] as Vector3).x,(item[4] as Vector3).z)*0.5+0.3)
   if not server:
    world._try_instance_external_scene([APOCALYPSE_KIT + str(item[0])],name,pos,item[2],Vector3(0,float(item[3]),0),true,0.0)
-
-# Telco poles line every district street the same way the main road does:
-# one run per carriageway on the sidewalk edge, crossarm perpendicular to
-# the street and catenary wires between consecutive poles. Client-only —
-# the dedicated server never renders props.
-const TELE_POLE_SPACING := 18.0
-const TELE_POLE_SIDE := 6.4
-
-static func _telephone_poles(world: Node3D) -> void:
- var keep_out := _tele_keep_out_positions()
- var south_z: float = world._south_road_end() + 4.0
- var street_i := 0
- # North-south avenues (local x = -40, 0, 64, 104 → world x = -31, 9, 73, 113).
- # The x=9 avenue is the main road continuation and starts at the road end.
- for wx in [-31.0, 9.0, 73.0, 113.0]:
-  var z0 := south_z if wx == 9.0 else 640.0
-  _street_tele_poles(world, Vector3(wx, 0.0, z0), Vector3(0.0, 0.0, 1.0), 0.0, 816.0 - z0, keep_out, street_i)
-  street_i += 1
- # East-west streets (local z = -40, 0, 96, 136 → world z = 640, 680, 776, 816).
- for wz in [640.0, 680.0, 776.0, 816.0]:
-  _street_tele_poles(world, Vector3(-31.0, 0.0, wz), Vector3(1.0, 0.0, 0.0), 0.0, 144.0, keep_out, street_i)
-  street_i += 1
-
-static func _street_tele_poles(world: Node3D, origin: Vector3, tangent: Vector3, from_s: float, to_s: float, keep_out: Array, street_i: int) -> void:
- var across := Vector3(-tangent.z, 0.0, tangent.x)
- var crossarm_yaw := rad_to_deg(atan2(across.x, across.z))
- var poles: Array[Node3D] = []
- var s := from_s + 7.0
- while s <= to_s - 5.0:
-  for side in [1.0, -1.0]:
-   var cand: Vector3 = origin + tangent * s + across * (side * TELE_POLE_SIDE)
-   if not _valid_city_tele_spot(world, cand, keep_out):
-    continue
-   var node: Node3D = world._spawn_telephone_pole("CityTelephonePole_%d_%d" % [street_i, poles.size()], cand, crossarm_yaw)
-   if node != null:
-    poles.append(node)
-    break
-  s += TELE_POLE_SPACING
- if poles.size() >= 2:
-  world._build_telephone_wires(poles, "CityTelephoneWires_%d" % street_i)
-
-static func _valid_city_tele_spot(world: Node3D, pos: Vector3, keep_out: Array) -> bool:
- # Off every carriageway (crossings included), dry land, outside building
- # footprints and clear of lamps, cars, bus stop, signals and benches.
- if preload("res://scripts/CityExpansion.gd").on_road(pos, 1.6, world._south_road_end()):
-  return false
- if world.get_river_depth_at(pos) > 0.0 or world._is_near_river(pos, 2.5):
-  return false
- if preload("res://scripts/CityExpansion.gd").near_building(pos, 1.2):
-  return false
- for kp in keep_out:
-  if Vector2(pos.x - kp.x, pos.z - kp.z).length_squared() < 16.0:
-   return false
- return true
-
-static func _tele_keep_out_positions() -> Array:
- var pts: Array = []
- for off in STREET_LAMP_OFFSETS:
-  pts.append(ORIGIN + off)
- pts.append(ORIGIN + Vector3(40, 0, 5.2)) # bus stop
- for s in [Vector3(3.5, 0, -4.3), Vector3(67.5, 0, 91.7)]:
-  pts.append(ORIGIN + s) # traffic signals
- for b in [Vector3(26, 0, 48), Vector3(38, 0, 48), Vector3(32, 0, 42), Vector3(32, 0, 54)]:
-  pts.append(ORIGIN + b) # plaza benches
- pts.append(ORIGIN + Vector3(-35, 0, -34)) # town sign
- for c in CAR_POSITIONS:
-  pts.append(ORIGIN + c) # parked cars
- return pts
 
 static func _weather_prop(root: Node, tint: Color) -> void:
  if root == null:
