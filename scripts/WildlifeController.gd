@@ -118,7 +118,7 @@ var _track_started := false
 var _track_anchor := Vector3.ZERO
 var _track_acc := 0.0
 var _track_side := 1.0
-var _anims_normalized := false
+var _anims_normalized_id := 0
 
 static var _scene_cache := {}
 static var _audio_cache := {}
@@ -3778,8 +3778,8 @@ func _play_animation_by_name(keyword: String) -> void:
 	elif lower_keyword == "shake":
 		candidates = ["shake", "attack"]
 	var anim_list := _animation_player.get_animation_list()
-	if not _anims_normalized:
-		_anims_normalized = true
+	if _anims_normalized_id != _animation_player.get_instance_id():
+		_anims_normalized_id = _animation_player.get_instance_id()
 		for animation_name in anim_list:
 			var animation := _animation_player.get_animation(animation_name)
 			if animation != null:
@@ -3835,7 +3835,9 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
-		_puppet_attack_timer = 1.15
+		# Mismo criterio que _update_puppet_combat: el timer iguala el cooldown
+		# para que el clip de ataque siga en bucle durante todo el intercambio.
+		_puppet_attack_timer = 1.65
 		_puppet_bite_cooldown = 1.65
 		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
 		_play_animation_by_name("attack")
