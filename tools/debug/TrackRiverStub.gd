@@ -12,3 +12,8 @@ func get_river_depth_at(_world_pos: Vector3) -> float:
 
 func _get_exact_ground_y(x: float, z: float) -> float:
 	return slope * (x + z)
+
+# Mismo terreno que _get_exact_ground_y pero por la vía analítica de Main.gd:
+# la huella calcula su normal con _get_ground_height cuando existe.
+func _get_ground_height(pos: Vector3) -> float:
+	return slope * (pos.x + pos.z)

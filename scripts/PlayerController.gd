@@ -14263,10 +14263,26 @@ func _spawn_bullet_tracer(from_pos: Vector3, dir: Vector3) -> void:
 	var t := get_tree().create_timer(0.09)
 	t.timeout.connect(func(): if is_instance_valid(tracer): tracer.queue_free())
 
+static var _blood_drops_ramp: GradientTexture1D = null
+static var _blood_mist_ramp: GradientTexture1D = null
+static var _blood_drops_mesh: QuadMesh = null
+static var _blood_mist_mesh: QuadMesh = null
+static var _blood_mist_scale: CurveTexture = null
+
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
 		return
+	if _blood_drops_ramp == null:
+		_blood_drops_ramp = _make_fade_ramp(0.03, 0.75)
+		_blood_mist_ramp = _make_fade_ramp(0.08, 0.5)
+		_blood_drops_mesh = _make_soft_mesh(Vector2(0.05, 0.05), Color.WHITE)
+		_blood_mist_mesh = _make_soft_mesh(Vector2(0.22, 0.22), Color.WHITE)
+		var mist_curve := Curve.new()
+		mist_curve.add_point(Vector2(0.0, 0.5))
+		mist_curve.add_point(Vector2(1.0, 1.8))
+		_blood_mist_scale = CurveTexture.new()
+		_blood_mist_scale.curve = mist_curve
 	var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0, 1.2, 0)
 	# Gotas: pequenas, rapidas, con gravedad fuerte
 	var drops := GPUParticles3D.new()
@@ -14287,9 +14303,9 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 	mat.color = Color(0.45, 0.01, 0.01, 1.0)
 	mat.hue_variation_min = -0.02
 	mat.hue_variation_max = 0.02
-	mat.color_ramp = _make_fade_ramp(0.03, 0.75)
+	mat.color_ramp = _blood_drops_ramp
 	drops.process_material = mat
-	drops.draw_pass_1 = _make_soft_mesh(Vector2(0.05, 0.05), Color.WHITE)
+	drops.draw_pass_1 = _blood_drops_mesh
 	scene.add_child(drops)
 	drops.global_position = pos
 	drops.emitting = true
@@ -14312,15 +14328,10 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 	mmat.scale_min = 0.4
 	mmat.scale_max = 0.9
 	mmat.color = Color(0.35, 0.0, 0.0, 0.55)
-	mmat.color_ramp = _make_fade_ramp(0.08, 0.5)
-	var mist_scale := CurveTexture.new()
-	var mist_curve := Curve.new()
-	mist_curve.add_point(Vector2(0.0, 0.5))
-	mist_curve.add_point(Vector2(1.0, 1.8))
-	mist_scale.curve = mist_curve
-	mmat.scale_curve = mist_scale
+	mmat.color_ramp = _blood_mist_ramp
+	mmat.scale_curve = _blood_mist_scale
 	mist.process_material = mmat
-	mist.draw_pass_1 = _make_soft_mesh(Vector2(0.22, 0.22), Color.WHITE)
+	mist.draw_pass_1 = _blood_mist_mesh
 	scene.add_child(mist)
 	mist.global_position = pos
 	mist.emitting = true

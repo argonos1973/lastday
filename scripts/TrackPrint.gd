@@ -11,19 +11,19 @@ const FADE_TIME := 90.0
 
 static var _tracks: Array = []
 static var _textures: Dictionary = {}
+static var _script: GDScript = null
+static var _meshes: Dictionary = {}
+static var _rim_meshes: Dictionary = {}
 
 var _age := 0.0
-var _base_alpha := 1.0
 
 static func tracks_enabled() -> bool:
 	return not OS.has_feature("dedicated_server")
 
-static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: float, normal: Vector3 = Vector3.UP) -> void:
-	if parent == null or not tracks_enabled():
-		return
-	var t: MeshInstance3D = (load("res://scripts/TrackPrint.gd") as GDScript).new()
-	t.name = "TrackPrint_" + kind
-	t.add_to_group("track_prints")
+static func _kind_assets(kind: String, size: float) -> Array:
+	var key := "%s|%.3f" % [kind, size]
+	if _meshes.has(key):
+		return [_meshes[key], _rim_meshes[key]]
 	var quad := QuadMesh.new()
 	quad.size = Vector2(size, size)
 	var m := StandardMaterial3D.new()
@@ -33,13 +33,8 @@ static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: fl
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	quad.material = m
-	t.mesh = quad
-	t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	t.set("_base_alpha", m.albedo_color.a)
 	# Halo de tierra removida bajo la depresión oscura para que la huella
 	# destaque también sobre el suelo oscuro de hojarasca del bosque.
-	var rim_mi := MeshInstance3D.new()
-	rim_mi.name = "TrackRim"
 	var rim_quad := QuadMesh.new()
 	rim_quad.size = Vector2(size * 1.14, size * 1.14)
 	var rim_mat := StandardMaterial3D.new()
@@ -49,6 +44,27 @@ static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: fl
 	rim_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	rim_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	rim_quad.material = rim_mat
+	_meshes[key] = quad
+	_rim_meshes[key] = rim_quad
+	return [quad, rim_quad]
+
+static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: float, normal: Vector3 = Vector3.UP) -> void:
+	if parent == null or not tracks_enabled():
+		return
+	if _script == null:
+		_script = load("res://scripts/TrackPrint.gd") as GDScript
+	var assets := _kind_assets(kind, size)
+	var quad: QuadMesh = assets[0]
+	var rim_quad: QuadMesh = assets[1]
+	var t: MeshInstance3D = _script.new()
+	t.name = "TrackPrint_" + kind
+	t.add_to_group("track_prints")
+	t.mesh = quad
+	t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Los meshes/materiales se comparten por kind: el fundido usa
+	# GeometryInstance3D.transparency por instancia, nunca muta el material.
+	var rim_mi := MeshInstance3D.new()
+	rim_mi.name = "TrackRim"
 	rim_mi.mesh = rim_quad
 	rim_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	rim_mi.position = Vector3(0.0, 0.0, -0.002)
@@ -78,18 +94,11 @@ func _process(delta: float) -> void:
 		queue_free()
 		return
 	if remain < FADE_TIME:
-		var m := (mesh as QuadMesh).material as StandardMaterial3D
-		if m != null:
-			var c := m.albedo_color
-			c.a = _base_alpha * (remain / FADE_TIME)
-			m.albedo_color = c
+		var fade := remain / FADE_TIME
+		transparency = 1.0 - fade
 		var rim := get_node_or_null("TrackRim") as MeshInstance3D
-		if rim != null and rim.mesh is QuadMesh:
-			var rm := (rim.mesh as QuadMesh).material as StandardMaterial3D
-			if rm != null:
-				var rc := rm.albedo_color
-				rc.a = 0.65 * (remain / FADE_TIME)
-				rm.albedo_color = rc
+		if rim != null:
+			rim.transparency = 1.0 - fade
 
 # --- Texturas procedurales (blanco con alpha; el tinte va en el material) ---
 

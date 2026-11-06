@@ -118,6 +118,7 @@ var _track_started := false
 var _track_anchor := Vector3.ZERO
 var _track_acc := 0.0
 var _track_side := 1.0
+var _anims_normalized := false
 
 static var _scene_cache := {}
 static var _audio_cache := {}
@@ -235,7 +236,7 @@ func notify_puppet_damaged() -> void:
 		if w.global_position.distance_to(global_position) <= 4.2:
 			w._puppet_combat_timer = maxf(w._puppet_combat_timer, 3.0)
 			if w._puppet_attack_timer <= 0.0:
-				w._puppet_attack_timer = 1.1
+				w._puppet_attack_timer = 1.55
 				w._puppet_bite_cooldown = 1.55
 				w._play_animation_by_name("attack")
 
@@ -509,6 +510,10 @@ func _process_body(delta: float) -> void:
 				_animation_player.play()
 			_update_water_depth(delta)
 			_update_puppet_combat(delta)
+			_wildlife_cache_timer += delta
+			if _wildlife_cache_timer >= 1.0:
+				_wildlife_cache_timer = 0.0
+				_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 			_update_tamed_visuals()
 			if not _puppet_combat_active and _puppet_attack_timer <= 0.0 and delta > 0.0001 and _network_motion.samples.size() > 1:
 				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
@@ -3381,7 +3386,8 @@ func _find_puppet_melee_foe() -> Node3D:
 	var best_d := reach
 	var now_ms := Time.get_ticks_msec()
 	var aggro_active := _puppet_aggro_until > now_ms or _puppet_combat_timer > 0.0
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	var list: Array = _cached_wildlife if not _cached_wildlife.is_empty() else get_tree().get_nodes_in_group("wildlife")
+	for node in list:
 		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
 			continue
 		var other := node as WildlifeController
@@ -3424,7 +3430,10 @@ func _update_puppet_combat(delta: float) -> void:
 		_puppet_combat_active = true
 		_face_towards(foe.global_position, minf(delta * 8.5, 1.0))
 		if _puppet_attack_timer <= 0.0 and _puppet_bite_cooldown <= 0.0:
-			_puppet_attack_timer = 1.1
+			# El timer de animación iguala el cooldown del mordisco: el clip de
+			# ataque sigue en bucle durante todo el intercambio en vez de
+			# alternar attack/threaten y reiniciar la pose cada medio segundo.
+			_puppet_attack_timer = 1.65
 			_puppet_bite_cooldown = 1.65
 		if _puppet_attack_timer > 0.0:
 			_play_animation_by_name("attack")
@@ -3769,10 +3778,12 @@ func _play_animation_by_name(keyword: String) -> void:
 	elif lower_keyword == "shake":
 		candidates = ["shake", "attack"]
 	var anim_list := _animation_player.get_animation_list()
-	for animation_name in anim_list:
-		var animation := _animation_player.get_animation(animation_name)
-		if animation != null:
-			animation.loop_mode = Animation.LOOP_LINEAR
+	if not _anims_normalized:
+		_anims_normalized = true
+		for animation_name in anim_list:
+			var animation := _animation_player.get_animation(animation_name)
+			if animation != null:
+				animation.loop_mode = Animation.LOOP_LINEAR
 	for cand_kw in candidates:
 		for animation_name in anim_list:
 			if animation_name.to_lower().find(cand_kw) >= 0:
@@ -4165,14 +4176,23 @@ func _update_tracks_impl() -> void:
 		if scene.has_method("get_river_depth_at") and float(scene.call("get_river_depth_at", pp)) > 0.02:
 			continue
 		var normal := Vector3.UP
+		var sample_radius := float(spec["size"]) * 0.5
+		if scene.has_method("_get_ground_height"):
+			# Normal analitico del terreno: 4 evaluaciones baratas en vez de 4
+		# raycasts de fisica por huella — las pezuñas no notan la diferencia.
+			var h0: float = scene.call("_get_ground_height", Vector3(pp.x - sample_radius, 0.0, pp.z))
+			var h1: float = scene.call("_get_ground_height", Vector3(pp.x + sample_radius, 0.0, pp.z))
+			var h2: float = scene.call("_get_ground_height", Vector3(pp.x, 0.0, pp.z - sample_radius))
+			var h3: float = scene.call("_get_ground_height", Vector3(pp.x, 0.0, pp.z + sample_radius))
+			normal = Vector3(h0 - h1, 2.0 * sample_radius, h2 - h3).normalized()
 		if scene.has_method("_get_exact_ground_y"):
 			pp.y = float(scene.call("_get_exact_ground_y", pp.x, pp.z))
-			var sample_radius := float(spec["size"]) * 0.5
-			var hx0 := float(scene.call("_get_exact_ground_y", pp.x - sample_radius, pp.z))
-			var hx1 := float(scene.call("_get_exact_ground_y", pp.x + sample_radius, pp.z))
-			var hz0 := float(scene.call("_get_exact_ground_y", pp.x, pp.z - sample_radius))
-			var hz1 := float(scene.call("_get_exact_ground_y", pp.x, pp.z + sample_radius))
-			normal = Vector3(hx0 - hx1, 2.0 * sample_radius, hz0 - hz1).normalized()
+			if not scene.has_method("_get_ground_height"):
+				var hx0 := float(scene.call("_get_exact_ground_y", pp.x - sample_radius, pp.z))
+				var hx1 := float(scene.call("_get_exact_ground_y", pp.x + sample_radius, pp.z))
+				var hz0 := float(scene.call("_get_exact_ground_y", pp.x, pp.z - sample_radius))
+				var hz1 := float(scene.call("_get_exact_ground_y", pp.x, pp.z + sample_radius))
+				normal = Vector3(hx0 - hx1, 2.0 * sample_radius, hz0 - hz1).normalized()
 			# A footprint must not bridge a vertical ledge or wall.
 			if normal.y < 0.55:
 				continue
@@ -4454,7 +4474,8 @@ func _can_reach_player() -> bool:
 
 func _compute_wolf_separation(radius: float) -> Vector3:
 	var push := Vector3.ZERO
-	for node in get_tree().get_nodes_in_group("wildlife"):
+	var list: Array = _cached_wildlife if not _cached_wildlife.is_empty() else get_tree().get_nodes_in_group("wildlife")
+	for node in list:
 		if not is_instance_valid(node) or node == self or not (node is Node3D):
 			continue
 		var other := node as Node3D
