@@ -157,6 +157,13 @@ static func _closest_mountain_road_info(p: Vector2) -> Vector2:
 
 
 static func ground_height_at(pos: Vector3) -> float:
+	# Altura REAL de la malla de colisión (base + detalle esculpido). Antes
+	# devolvía la base lisa: en laderas accidentadas los animales del servidor
+	# (que no pueden raycastear) flotaban o se hundían varios metros.
+	return _sculpted_vertex_height_and_ao(pos.x, pos.z).x
+
+
+static func _base_height_at(pos: Vector3) -> float:
 	if pos.x >= -210.0 or pos.z >= -210.0:
 		return 0.0
 	var p := Vector2(pos.x, pos.z)
@@ -595,7 +602,7 @@ static func _build_mountain_alpine_forest(world: Node3D, parent: Node3D) -> void
 
 
 static func _sculpted_vertex_height_and_ao(x: float, z: float) -> Vector2:
-	var base_h := ground_height_at(Vector3(x, 0.0, z))
+	var base_h := _base_height_at(Vector3(x, 0.0, z))
 	if base_h <= 0.05:
 		return Vector2(base_h, 0.90)
 	var p := Vector2(x, z)
@@ -864,6 +871,31 @@ static func _build_mountain_rock_outcrops(world: Node3D, parent: Node3D) -> void
 		mmi.multimesh = mm
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		parent.add_child(mmi)
+		_add_outcrop_collision(parent, meshes[b_i], xforms, b_i)
+
+
+static func _add_outcrop_collision(parent: Node3D, mesh: Mesh, transforms: Array, variant: int) -> void:
+	# MultiMesh is visual only. Bake the same transformed triangles into one
+	# static BVH per variant; no approximate boxes or non-uniform body scaling.
+	var source := mesh.get_faces()
+	var faces := PackedVector3Array()
+	faces.resize(source.size() * transforms.size())
+	var offset := 0
+	for placement: Transform3D in transforms:
+		for vertex: Vector3 in source:
+			faces[offset] = placement * vertex
+			offset += 1
+	var shape := ConcavePolygonShape3D.new()
+	shape.backface_collision = true
+	shape.set_faces(faces)
+	var body := StaticBody3D.new()
+	body.name = "MountainRockCollision_%d" % variant
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+	parent.add_child(body)
 
 
 static func spawn_summit_base_loot(world: Node3D, tmpl: Dictionary) -> void:

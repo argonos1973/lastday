@@ -14080,9 +14080,9 @@ func _shoot_rifle() -> void:
 					if b_hd > 2.5:
 						b_conv = clampf(b_hd, 3.0, RIFLE_RANGE)
 			var b_zero := b_cam_orig + b_aim * b_conv
-			var b_drop_d := minf(b_origin.distance_to(b_zero), 100.0)
+			var b_drop_d := minf(b_origin.distance_to(b_zero), b_conv if _is_aiming else 100.0)
 			var b_ft := -log(maxf(0.05, 1.0 - b_drop_d * 0.12 / M4_MUZZLE_SPEED)) / 0.12
-			b_zero.y += 0.5 * 9.81 * b_ft * b_ft
+			b_zero.y += 9.81 / 0.12 * (b_ft - b_drop_d / M4_MUZZLE_SPEED)
 			var b_dir := (b_zero - b_origin).normalized()
 			if b_dir.length_squared() < 0.5:
 				b_dir = b_cam_dir
