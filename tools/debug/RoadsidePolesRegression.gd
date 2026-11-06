@@ -45,6 +45,8 @@ func run() -> void:
 	var errors := 0
 	var light_count := 0
 	var tele_count := 0
+	var light_positions: Array[Vector3] = []
+	var tele_positions: Array[Vector3] = []
 	var extra_pole_meshes := ["Object_8", "Object_10", "Object_11", "Object_12", "Object_14", "Object_16", "Object_17", "Object_18", "Object_20", "Object_22", "Object_23", "Object_24", "Object_26", "Object_28"]
 
 	for c in world.get_children():
@@ -57,11 +59,24 @@ func run() -> void:
 			continue
 		if nm.ends_with("Collision"):
 			continue
+		var p: Vector3 = (c as Node3D).global_position
 		if is_light:
 			light_count += 1
+			for prev in light_positions:
+				if Vector2(p.x - prev.x, p.z - prev.z).length() < 12.0:
+					print("FAIL overlapping street lights: ", nm, " pos=", p, " prev=", prev)
+					errors += 1
+			light_positions.append(p)
 		if is_tele:
 			tele_count += 1
-		var p: Vector3 = (c as Node3D).global_position
+			for prev in tele_positions:
+				if Vector2(p.x - prev.x, p.z - prev.z).length() < 9.0:
+					print("FAIL overlapping tele poles: ", nm, " pos=", p, " prev=", prev)
+					errors += 1
+			tele_positions.append(p)
+		if p.y > 1.5:
+			print("FAIL floating pole: ", nm, " pos=", p)
+			errors += 1
 		var ground_p := Vector3(p.x, 0.0, p.z)
 		var r_depth := world.get_river_depth_at(ground_p)
 		var near_riv := world._is_near_river(ground_p, 3.5)
@@ -92,10 +107,14 @@ func run() -> void:
 				print("FAIL tele mesh on road: ", nm, "/", mi.name, " center=", mc)
 				errors += 1
 
-	if light_count < 10 or tele_count < 10:
+	var wires := world.get_node_or_null("RoadTelephoneWires") as MeshInstance3D
+	if wires == null or wires.mesh == null or wires.mesh.get_surface_count() == 0:
+		print("FAIL missing RoadTelephoneWires mesh")
+		errors += 1
+	if light_count < 10 or tele_count < 22:
 		print("FAIL too few poles placed: lights=", light_count, " tele=", tele_count)
 		errors += 1
 
-	print("ROADSIDE_POLES lights=%d tele=%d errors=%d" % [light_count, tele_count, errors])
+	print("ROADSIDE_POLES lights=%d tele=%d wires=%s errors=%d" % [light_count, tele_count, str(wires != null and wires.mesh != null), errors])
 	world.free()
 	quit(1 if errors > 0 else 0)

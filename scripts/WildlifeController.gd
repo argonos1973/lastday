@@ -765,17 +765,20 @@ func _process_body(delta: float) -> void:
 			_idle_timer = randf_range(1.5, 4.0)
 			_idle_cooldown = randf_range(8.0, 18.0)
 		return
-	if _current_path.is_empty() and speed > 0.0 and to_target.length() > 0.15:
-		_path_recalc_timer = 0.0
-	_path_recalc_timer -= delta
-	if _path_recalc_timer <= 0.0:
-		_current_path = _request_path(global_position, target)
-		_path_index = 0
-		_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse", "chase_prey", "chase_player", "fight_wolf"]) else 1.2
 	var move_target: Vector3 = global_position
 	var direct_chase_dist := 35.0 if (_state == "chase_prey" and _ordered_prey != null) else 15.0
-	if chase_live != null and global_position.distance_to(chase_live.global_position) < direct_chase_dist and _direct_route_allowed(chase_live.global_position):
-		move_target = chase_live.global_position
+	var direct_goal: Vector3 = target if _state == "chase_player" else (chase_live.global_position if chase_live != null else target)
+	var use_direct_chase := chase_live != null and global_position.distance_to(chase_live.global_position) < direct_chase_dist and _direct_route_allowed(direct_goal)
+	if not use_direct_chase:
+		if _current_path.is_empty() and speed > 0.0 and to_target.length() > 0.15:
+			_path_recalc_timer = 0.0
+		_path_recalc_timer -= delta
+		if _path_recalc_timer <= 0.0:
+			_current_path = _request_path(global_position, target)
+			_path_index = 0
+			_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse", "chase_prey", "chase_player", "fight_wolf"]) else 1.2
+	if use_direct_chase:
+		move_target = direct_goal
 	elif (_prey_flee_timer > 0.0 or _state == "flee") and (animal_type == "deer" or animal_type == "fox") and _direct_route_allowed(target):
 		move_target = target
 	elif _house_direct_goal and animal_type == "wolf":
@@ -4464,6 +4467,8 @@ func _can_reach_player() -> bool:
 	var height_diff := absf(_player.global_position.y - global_position.y)
 	if height_diff >= 1.8:
 		return false
+	if global_position.distance_to(_player.global_position) < 12.0 and _direct_route_allowed(_player.global_position):
+		return true
 	var scene := get_tree().current_scene
 	if scene == null or not scene.has_method("find_path_wildlife"):
 		return true

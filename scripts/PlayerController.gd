@@ -11341,9 +11341,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 				return
 		var target_animation := ""
-		# Herido (salud <= 30), desangrándose o enfermo: locomoción de mal estado
-		# además del oscurecimiento/desaturación de pantalla estilo DayZ.
-		var low_health: bool = stats != null and (stats.health <= 30.0 or stats.bleeding > 0.0 or stats.sick) and not third_person_low_health_animation.is_empty()
+		# Solo activar la pose lenta de agonía en salud crítica real (<= 20 HP) y
+		# sin bloquear nunca el sprint; antes se activaba con cualquier sangrado
+		# desde el primer mordisco de lobo/oso, dejando al personaje a cámara lenta.
+		var low_health: bool = stats != null and (stats.health <= 20.0 or stats.sick) and not is_sprinting and not third_person_low_health_animation.is_empty()
 		# Update rifle equipped state: _rifle_in_hands is set by _sync_third_person_equipment
 		_has_rifle = _rifle_in_hands
 		# Torch locomotion: use torch-specific animations when holding torch
@@ -13327,8 +13328,12 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	if is_sleeping:
 		stop_sleep()
 		notice.emit("Te han despertado!")
-	# Wolf attacks damage equipped clothing
+	# Wolf attacks damage equipped clothing. Only emit inventory.changed when a
+	# garment actually breaks: emitting on every bite triggered _sync_held_item()
+	# which destroyed and rebuilt the 3D held weapon, rifle sling, IK and backpack
+	# mid-combat, causing severe frame hitches.
 	if amount >= 10.0:
+		var any_broken := false
 		for item in inventory.items:
 			if item != null and item.item_type == "clothing" and item.has_method("reduce_durability"):
 				var is_equipped := false
@@ -13339,8 +13344,10 @@ func apply_damage(amount: float, cause: String = "") -> void:
 				if is_equipped:
 					item.reduce_durability(3.0)
 					if item.is_broken():
+						any_broken = true
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
-		inventory.changed.emit()
+		if any_broken:
+			inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
 	# Mordiscos y armas blancas abren heridas sangrantes (DayZ): la sangre
 	# drena salud hasta vendarla — el daño del golpe es solo el principio.
