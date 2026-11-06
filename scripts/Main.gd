@@ -7759,9 +7759,6 @@ func _create_road() -> void:
 	_placed_roadside_tele_poles.clear()
 	var light_spacing := 36.0
 	var tele_spacing := 18.0
-	var pole_scale := 9.0 / 49.45
-	var pole_path := "res://assets/external/telephone_pole_scene.glb"
-	var pole_scene: Variant = _load_single_telephone_pole_template(pole_path)
 	var lights_placed := 0
 	var tele_placed := 0
 	var light_accum := 36.0
@@ -7784,29 +7781,18 @@ func _create_road() -> void:
 				_spawn_external(Q_ENV + "StreetLights.gltf", "RoadLight_%d" % lights_placed, Vector3(streetlight_pos.x, light_y, streetlight_pos.z), Vector3.ONE, Vector3(0, light_yaw, 0), Vector3(0.5, 4.0, 0.5))
 				lights_placed += 1
 		tele_accum += 6.0
-		if tele_accum >= tele_spacing and pole_scene is Node3D:
-			var powerpole_pos := _find_roadside_pole_spot(center, across, 1.0, half_w, _placed_roadside_tele_poles, 12.0)
+		if tele_accum >= tele_spacing:
+			# Prefer the +across side but allow flipping to the far side where
+			# the river leaves the preferred edge unusable, so the line stays
+			# continuous instead of leaving long dry gaps.
+			var powerpole_pos := _find_roadside_pole_spot(center, across, 1.0, half_w, _placed_roadside_tele_poles, 12.0, true)
 			if is_finite(powerpole_pos.x):
 				tele_accum = 0.0
-				var pole_y := _get_exact_ground_y(powerpole_pos.x, powerpole_pos.z)
 				_placed_roadside_tele_poles.append(powerpole_pos)
-				var node := (pole_scene as Node3D).duplicate(7) as Node3D
-				_strip_extra_telephone_poles(node)
-				node.name = "RoadTelephonePole_%d" % tele_placed
-				node.add_to_group("world_action_visual")
-				node.position = Vector3(powerpole_pos.x, 0.0, powerpole_pos.z)
-				node.scale = Vector3.ONE * pole_scale
-				# Crossarm in telephone_pole_scene.glb spans local Z; aligning
-				# local Z with `across` sets the crossarm perpendicular to the
-				# road so the 4 insulator wires run parallel along the road edge.
-				node.rotation_degrees = Vector3(0, light_yaw, 0)
-				add_child(node)
-				_snap_node_bottom_to_y_cached(node, pole_y, pole_path + "#single", Vector3.ONE * pole_scale)
-				_add_collision_to_prop_group(node)
-				placed_tele_nodes.append(node)
-				tele_placed += 1
-	if pole_scene is Node3D:
-		pole_scene.free() # Temporary template; duplicates retain their own resources.
+				var node := _spawn_telephone_pole("RoadTelephonePole_%d" % tele_placed, powerpole_pos, light_yaw)
+				if node != null:
+					placed_tele_nodes.append(node)
+					tele_placed += 1
 	_build_telephone_wires(placed_tele_nodes)
 	# Procedural grass along both road edges — extends outward with decreasing density
 	var grass_depth := 8.0
@@ -16459,6 +16445,8 @@ func _create_road_crack(pos: Vector3, yaw: float) -> void:
 
 var _placed_roadside_lights: Array[Vector3] = []
 var _placed_roadside_tele_poles: Array[Vector3] = []
+const TELE_POLE_SCALE := 9.0 / 49.45
+var _tele_pole_template: Node3D = null
 
 func _strip_extra_telephone_poles(root: Node) -> void:
 	# telephone_pole_scene.glb packs 4 poles along a 12 m line (Circle_0,
@@ -16483,6 +16471,31 @@ func _load_single_telephone_pole_template(pole_path: String) -> Variant:
 	if scene is Node3D:
 		_strip_extra_telephone_poles(scene as Node3D)
 	return scene
+
+func _spawn_telephone_pole(pole_name: String, pos: Vector3, yaw_deg: float) -> Node3D:
+	# Single stripped pole (crossarm along local Z) snapped to terrain; shared
+	# template keeps every roadside/city instance cheap to duplicate.
+	var pole_path := "res://assets/external/telephone_pole_scene.glb"
+	if _tele_pole_template == null:
+		_tele_pole_template = _load_single_telephone_pole_template(pole_path) as Node3D
+	if _tele_pole_template == null:
+		return null
+	var node := _tele_pole_template.duplicate(7) as Node3D
+	if node == null:
+		return null
+	node.name = pole_name
+	node.add_to_group("world_action_visual")
+	node.position = Vector3(pos.x, 0.0, pos.z)
+	node.scale = Vector3.ONE * TELE_POLE_SCALE
+	# Crossarm in telephone_pole_scene.glb spans local Z; aligning local Z
+	# with the roadside `across` sets the crossarm perpendicular to the road
+	# so the 4 insulator wires run parallel along the edge.
+	node.rotation_degrees = Vector3(0, yaw_deg, 0)
+	add_child(node)
+	var ground_y := _get_exact_ground_y(pos.x, pos.z)
+	_snap_node_bottom_to_y_cached(node, ground_y, pole_path + "#single", Vector3.ONE * TELE_POLE_SCALE)
+	_add_collision_to_prop_group(node)
+	return node
 
 func _is_valid_roadside_pole_pos(pos: Vector3, existing: Array[Vector3] = [], min_spacing: float = 0.0) -> bool:
 	if get_river_depth_at(pos) > 0.0 or _is_near_river(pos, 3.8):
@@ -16512,15 +16525,20 @@ func _is_valid_roadside_pole_pos(pos: Vector3, existing: Array[Vector3] = [], mi
 			return false
 	return true
 
-func _find_roadside_pole_spot(center: Vector3, across: Vector3, side: float, half_w: float, existing: Array[Vector3] = [], min_spacing: float = 0.0) -> Vector3:
-	for extra in [1.7, 2.3, 2.9, 3.5]:
-		var extra_f: float = float(extra)
-		var cand: Vector3 = center + across * (side * (half_w + extra_f))
-		if _is_valid_roadside_pole_pos(cand, existing, min_spacing):
-			return cand
+func _find_roadside_pole_spot(center: Vector3, across: Vector3, side: float, half_w: float, existing: Array[Vector3] = [], min_spacing: float = 0.0, allow_flip: bool = false) -> Vector3:
+	# Try every offset on the preferred side first; only when the whole side
+	# is unusable (river, road edge, doorway) fall back to the far side so the
+	# line keeps a pole every ~spacing instead of leaving dry gaps.
+	var sides: Array = [side, -side] if allow_flip else [side]
+	for s in sides:
+		for extra in [1.7, 2.3, 2.9, 3.5]:
+			var extra_f: float = float(extra)
+			var cand: Vector3 = center + across * (s * (half_w + extra_f))
+			if _is_valid_roadside_pole_pos(cand, existing, min_spacing):
+				return cand
 	return Vector3(INF, INF, INF)
 
-func _roadside_spot_near_z(target_z: float, side: float, existing: Array[Vector3] = [], min_spacing: float = 0.0) -> Dictionary:
+func _roadside_spot_near_z(target_z: float, side: float, existing: Array[Vector3] = [], min_spacing: float = 0.0, allow_flip: bool = false) -> Dictionary:
 	# Rank segments by closeness to target_z and pick the first one that yields
 	# a valid, non-overlapping roadside spot.
 	var candidates: Array = []
@@ -16536,10 +16554,15 @@ func _roadside_spot_near_z(target_z: float, side: float, existing: Array[Vector3
 		var yaw: float = deg_to_rad(float(seg["yaw"]))
 		var across := Vector3(sin(yaw), 0.0, cos(yaw))
 		var half_w: float = float(seg["size"].y) * 0.5
-		var pos := _find_roadside_pole_spot(center, across, side, half_w, existing, min_spacing)
+		var pos := _find_roadside_pole_spot(center, across, side, half_w, existing, min_spacing, allow_flip)
 		if not is_finite(pos.x):
 			continue
-		var face_road_yaw := rad_to_deg(atan2(-side * across.x, -side * across.z))
+		# A flipped pole sits on the far side: lamps must face back across
+		# the carriageway, so derive the facing from the actual offset.
+		var used_side := side
+		if (pos - center).dot(across) * side < 0.0:
+			used_side = -side
+		var face_road_yaw := rad_to_deg(atan2(-used_side * across.x, -used_side * across.z))
 		var crossarm_yaw := rad_to_deg(atan2(across.x, across.z))
 		return {"pos": pos, "face_yaw": face_road_yaw, "crossarm_yaw": crossarm_yaw}
 	return {}
@@ -16555,37 +16578,25 @@ func _spawn_roadside_street_light(node_name: String, target_z: float, side: floa
 	_spawn_external(Q_ENV + "StreetLights.gltf", node_name, Vector3(p.x, gy, p.z), Vector3.ONE, Vector3(0, fy, 0), Vector3(0.5, 4.0, 0.5))
 
 func _create_power_line(start: Vector3, end: Vector3) -> void:
-	var pole_path := "res://assets/external/telephone_pole_scene.glb"
 	var center := start.lerp(end, 0.5)
 	var post_count := 3
-	var pole_scale := 9.0 / 49.45
-	var pole_scene: Variant = _load_single_telephone_pole_template(pole_path)
-	if pole_scene is Node3D:
-		for i in range(post_count):
-			var t := float(i) / float(post_count - 1)
-			var raw_pos := start.lerp(end, t)
-			var spot := _roadside_spot_near_z(raw_pos.z, 1.0, _placed_roadside_tele_poles, 10.0)
-			if spot.is_empty():
-				continue
-			var pos: Vector3 = spot["pos"]
-			var pole_y := _get_exact_ground_y(pos.x, pos.z)
-			var crossarm_yaw: float = float(spot["crossarm_yaw"])
-			_placed_roadside_tele_poles.append(pos)
-			var node := (pole_scene as Node3D).duplicate(7) as Node3D
-			_strip_extra_telephone_poles(node)
-			node.name = "TelephonePoleGLB_%d" % i
-			node.add_to_group("world_action_visual")
-			node.position = Vector3(pos.x, 0.0, pos.z)
-			node.scale = Vector3.ONE * pole_scale
-			node.rotation_degrees = Vector3(0, crossarm_yaw, 0)
-			add_child(node)
-			_snap_node_bottom_to_y_cached(node, pole_y, pole_path + "#single", Vector3.ONE * pole_scale)
-			_add_collision_to_prop_group(node)
-		pole_scene.free()
+	var line_poles: Array[Node3D] = []
+	for i in range(post_count):
+		var t := float(i) / float(post_count - 1)
+		var raw_pos := start.lerp(end, t)
+		var spot := _roadside_spot_near_z(raw_pos.z, 1.0, _placed_roadside_tele_poles, 10.0, true)
+		if spot.is_empty():
+			continue
+		var pos: Vector3 = spot["pos"]
+		_placed_roadside_tele_poles.append(pos)
+		var node := _spawn_telephone_pole("TelephonePoleGLB_%d" % i, pos, float(spot["crossarm_yaw"]))
+		if node != null:
+			line_poles.append(node)
+	_build_telephone_wires(line_poles, "PowerLineWires")
 	_register_wildlife_blocker(center, 1.0)
 
-func _build_telephone_wires(poles: Array[Node3D]) -> void:
-	var old_wires := get_node_or_null("RoadTelephoneWires")
+func _build_telephone_wires(poles: Array[Node3D], wire_name := "RoadTelephoneWires") -> void:
+	var old_wires := get_node_or_null(wire_name)
 	if old_wires != null:
 		remove_child(old_wires)
 		old_wires.free()
@@ -16593,8 +16604,15 @@ func _build_telephone_wires(poles: Array[Node3D]) -> void:
 		return
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	# 4 insulator pin positions along the crossarm in pole-local coordinates
-	var insulator_zs := [-6.85, -3.50, 3.40, 6.70]
+	# Insulator pin positions measured from telephone_pole_scene.glb wire
+	# endpoints (Object_28) in pole-root local units: the crossarm sits at
+	# y ~21.4-22.4 and the four conductors leave at these (x, y, z) points.
+	var wire_pins := [
+		Vector3(-0.10, 22.72, -2.90),
+		Vector3(-0.10, 21.85, -1.60),
+		Vector3(-0.10, 21.85, 1.60),
+		Vector3(-0.10, 22.20, 2.85),
+	]
 	var half_thick := 0.014
 	var subdivs := 10
 	var span_count := 0
@@ -16606,18 +16624,16 @@ func _build_telephone_wires(poles: Array[Node3D]) -> void:
 		pa.force_update_transform()
 		pb.force_update_transform()
 		var span_dist := Vector2(pa.global_position.x - pb.global_position.x, pa.global_position.z - pb.global_position.z).length()
-		if span_dist < 2.0 or span_dist > 34.0:
+		if span_dist < 2.0 or span_dist > 60.0:
 			continue
-		var sag := clampf(span_dist * 0.032, 0.30, 0.78)
+		var sag := clampf(span_dist * 0.032, 0.30, 1.50)
 		var span_dir := (pb.global_position - pa.global_position)
 		span_dir.y = 0.0
 		var side_vec := Vector3(-span_dir.z, 0.0, span_dir.x).normalized() * half_thick if span_dir.length_squared() > 0.001 else Vector3(half_thick, 0.0, 0.0)
 		var up_vec := Vector3(0.0, half_thick, 0.0)
-		for z_ins in insulator_zs:
-			var zf: float = float(z_ins)
-			var local_pin := Vector3(1.914, 42.20, zf)
-			var p0: Vector3 = pa.global_transform * local_pin
-			var p1: Vector3 = pb.global_transform * local_pin
+		for pin_local in wire_pins:
+			var p0: Vector3 = pa.global_transform * pin_local
+			var p1: Vector3 = pb.global_transform * pin_local
 			for s in range(subdivs):
 				var t0 := float(s) / float(subdivs)
 				var t1 := float(s + 1) / float(subdivs)
@@ -16640,7 +16656,7 @@ func _build_telephone_wires(poles: Array[Node3D]) -> void:
 		return
 	st.generate_normals()
 	var wire_mi := MeshInstance3D.new()
-	wire_mi.name = "RoadTelephoneWires"
+	wire_mi.name = wire_name
 	wire_mi.mesh = st.commit()
 	var wire_mat := StandardMaterial3D.new()
 	wire_mat.albedo_color = Color(0.055, 0.060, 0.068)
