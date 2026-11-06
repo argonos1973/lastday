@@ -178,7 +178,7 @@ func run() -> void:
 		for i in range(batch.multimesh.instance_count):
 			var pos: Vector3 = batch.position+batch.multimesh.get_instance_transform(i).origin
 			leaf_count += 1
-			if not world._can_place_ground_vegetation(pos) or absf(pos.y-world._get_exact_ground_y(pos.x,pos.z)-.012)>.002: errors += 1
+			if not world._can_place_ground_vegetation(pos) or absf(pos.y-world._get_exact_ground_y(pos.x,pos.z)-.018)>.002: errors += 1
 			if pos.distance_to(camera.position)<leaf_distance:
 				leaf_distance=pos.distance_to(camera.position)
 				leaf_focus=pos
