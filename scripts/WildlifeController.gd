@@ -20,6 +20,7 @@ var _shore_escape_target: Variant = null
 var _debug_timer := 0.0
 var _attack_timer := 0.0
 var _attack_cooldown := 0.0
+var _bite_anim_timer := 0.0
 var _animal_bite_target: Node3D = null
 var _animal_bite_elapsed := 0.0
 var _animal_bite_landed := false
@@ -515,14 +516,20 @@ func _process_body(delta: float) -> void:
 				_wildlife_cache_timer = 0.0
 				_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 			_update_tamed_visuals()
-			if not _puppet_combat_active and _puppet_attack_timer <= 0.0 and delta > 0.0001 and _network_motion.samples.size() > 1:
+			if not _puppet_combat_active and delta > 0.0001 and _network_motion.samples.size() > 1:
 				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
 				var vis_spd := puppet_moved_xz / delta
-				if vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat"]:
-					_play_animation_by_name("trot" if vis_spd > move_speed * 1.45 else "walk")
+				if vis_spd > 0.65 and _puppet_attack_timer <= 0.18:
+					_puppet_attack_timer = 0.0
+					var loco_clip := "run" if vis_spd > move_speed * 2.2 else ("trot" if vis_spd > move_speed * 1.15 else "walk")
+					_play_animation_by_name(loco_clip)
 					_update_animation_speed(vis_spd)
-				elif vis_spd <= 0.12 and not _puppet_desired_anim.is_empty() and current_anim_keyword != _puppet_desired_anim:
-					_play_animation_by_name(_puppet_desired_anim)
+				elif _puppet_attack_timer <= 0.0:
+					if vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten"]:
+						_play_animation_by_name("trot" if vis_spd > move_speed * 1.45 else "walk")
+						_update_animation_speed(vis_spd)
+					elif vis_spd <= 0.12 and not _puppet_desired_anim.is_empty() and current_anim_keyword != _puppet_desired_anim:
+						_play_animation_by_name(_puppet_desired_anim)
 		if (animal_type == "wolf" or animal_type == "bear") and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
@@ -627,6 +634,7 @@ func _process_body(delta: float) -> void:
 		_update_animation_speed(burst_speed)
 		return
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
+	_bite_anim_timer = maxf(0.0, _bite_anim_timer - delta)
 	_chase_cooldown = max(0.0, _chase_cooldown - delta)
 	_wolf_ai_debug_timer = max(0.0, _wolf_ai_debug_timer - delta)
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
@@ -807,8 +815,9 @@ func _process_body(delta: float) -> void:
 	_update_tamed_visuals()
 	var moved_xz := Vector2(global_position.x - _last_position.x, global_position.z - _last_position.z).length()
 	if moved_xz > 0.004:
-		if current_anim_keyword in ["idle", "sit", "lie", "eat"]:
-			_play_animation_by_name("trot" if speed > move_speed * 1.45 else "walk")
+		var allow_override := current_anim_keyword in ["idle", "sit", "lie", "eat"] or (_bite_anim_timer <= 0.0 and _animal_bite_target == null and current_anim_keyword in ["attack", "threaten"])
+		if allow_override:
+			_play_animation_by_name("run" if speed > move_speed * 2.2 else ("trot" if speed > move_speed * 1.25 else "walk"))
 		_walk_time += delta * speed * 4.8
 		_animate_legs(delta)
 		_update_animation_speed(speed)
@@ -1230,6 +1239,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
+					_bite_anim_timer = 0.52
 					_attack_timer = randf_range(5.0, 10.0)
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
@@ -1288,13 +1298,21 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_face_towards(_player.global_position, delta * 7.0)
 					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
 					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
-					speed = move_speed * 1.35
-					_play_animation_by_name("attack" if flat_dist <= 4.2 else "trot")
+					if _bite_anim_timer > 0.0 and flat_dist <= 2.9:
+						speed = move_speed * 0.25 if flat_dist > 2.2 else 0.0
+						_play_animation_by_name("attack")
+					else:
+						speed = move_speed * (1.85 if flat_dist > 3.1 else 1.35)
+						_play_animation_by_name("run" if flat_dist > 3.1 else "trot")
 				else:
 					_face_towards(_player.global_position, delta * 6.0)
-					_play_animation_by_name("attack" if flat_dist <= 2.8 else ("walk" if flat_dist <= 2.8 else "run"))
 					target = _player.global_position + away_dir * 2.2
-					speed = move_speed * 0.65 if flat_dist > 2.4 else 0.0
+					if _bite_anim_timer > 0.0 and flat_dist <= 2.9:
+						speed = 0.0
+						_play_animation_by_name("attack")
+					else:
+						speed = move_speed * 0.85 if flat_dist > 2.4 else 0.0
+						_play_animation_by_name("walk" if flat_dist > 2.4 else "threaten")
 				_chase_stuck_time = 0.0
 			else:
 				_play_animation_by_name("run")
@@ -3838,9 +3856,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
-		# Mismo criterio que _update_puppet_combat: el timer iguala el cooldown
-		# para que el clip de ataque siga en bucle durante todo el intercambio.
-		_puppet_attack_timer = 1.65
+		_puppet_attack_timer = 0.52
 		_puppet_bite_cooldown = 1.65
 		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
 		_play_animation_by_name("attack")

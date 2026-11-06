@@ -3790,57 +3790,58 @@ func _physics_process(delta: float) -> void:
 							notice.emit("%s se ha deteriorado y ya no sirve." % item.item_name)
 							_broken_indices.append(i)
 			# Drop and remove broken clothing from highest index to lowest
-			for idx in range(_broken_indices.size() - 1, -1, -1):
-				var i_broken: int = _broken_indices[idx]
-				var broken_item = inventory.items[i_broken]
-				var broken_name := str(broken_item.item_name)
-				unequip_clothing(broken_name)
-				var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
-				drop_pos.y = global_position.y
-				var drop_color := get_current_clothing_color(broken_name)
-				set_meta("last_dropped_pelt", str(broken_item.get_meta("pelt_species", "")))
-				item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true, 0.0)
-				inventory.remove_index(i_broken, 1)
-			# After losing clothing, capacity is reduced — drop items that no longer fit
-			_recalculate_carry_capacity()
-			while inventory.get_stored_count() > inventory.max_slots:
-				var drop_idx := -1
-				for k in range(inventory.items.size() - 1, -1, -1):
-					if not InventoryScript.is_equipment_item(inventory.items[k]):
-						drop_idx = k
+			if not _broken_indices.is_empty():
+				for idx in range(_broken_indices.size() - 1, -1, -1):
+					var i_broken: int = _broken_indices[idx]
+					var broken_item = inventory.items[i_broken]
+					var broken_name := str(broken_item.item_name)
+					unequip_clothing(broken_name)
+					var drop_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8)
+					drop_pos.y = global_position.y
+					var drop_color := get_current_clothing_color(broken_name)
+					set_meta("last_dropped_pelt", str(broken_item.get_meta("pelt_species", "")))
+					item_dropped.emit(broken_name, "clothing", float(broken_item.weight), 1, float(broken_item.use_value), drop_pos, drop_color, true, 0.0)
+					inventory.remove_index(i_broken, 1)
+				# After losing clothing, capacity is reduced — drop items that no longer fit
+				_recalculate_carry_capacity()
+				while inventory.get_stored_count() > inventory.max_slots:
+					var drop_idx := -1
+					for k in range(inventory.items.size() - 1, -1, -1):
+						if not InventoryScript.is_equipment_item(inventory.items[k]):
+							drop_idx = k
+							break
+					if drop_idx < 0:
 						break
-				if drop_idx < 0:
-					break
-				var overflow_item = inventory.items[drop_idx]
-				var overflow_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
-				overflow_pos.y = global_position.y
-				if overflow_item != null:
-					notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
-					set_meta("last_dropped_wetness", float(overflow_item.wetness))
-					set_meta("last_dropped_pelt", str(overflow_item.get_meta("pelt_species", "")))
-					item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
-				inventory.remove_index(drop_idx)
-			while inventory.get_total_weight() > inventory.max_weight and inventory.get_stored_count() > 0:
-				var drop_idx2 := -1
-				for k2 in range(inventory.items.size() - 1, -1, -1):
-					if not InventoryScript.is_equipment_item(inventory.items[k2]):
-						drop_idx2 = k2
+					var overflow_item = inventory.items[drop_idx]
+					var overflow_pos := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
+					overflow_pos.y = global_position.y
+					if overflow_item != null:
+						notice.emit("Has perdido %s al romperse la ropa." % overflow_item.item_name)
+						set_meta("last_dropped_wetness", float(overflow_item.wetness))
+						set_meta("last_dropped_pelt", str(overflow_item.get_meta("pelt_species", "")))
+						item_dropped.emit(str(overflow_item.item_name), str(overflow_item.item_type), float(overflow_item.weight), int(overflow_item.quantity), float(overflow_item.use_value), overflow_pos, Color(0, 0, 0, 0), false, float(overflow_item.spoilage))
+					inventory.remove_index(drop_idx)
+				while inventory.get_total_weight() > inventory.max_weight and inventory.get_stored_count() > 0:
+					var drop_idx2 := -1
+					for k2 in range(inventory.items.size() - 1, -1, -1):
+						if not InventoryScript.is_equipment_item(inventory.items[k2]):
+							drop_idx2 = k2
+							break
+					if drop_idx2 < 0:
 						break
-				if drop_idx2 < 0:
-					break
-				var overflow_item2 = inventory.items[drop_idx2]
-				var overflow_pos2 := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
-				overflow_pos2.y = global_position.y
-				if overflow_item2 != null:
-					notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
-					set_meta("last_dropped_wetness", float(overflow_item2.wetness))
-					set_meta("last_dropped_pelt", str(overflow_item2.get_meta("pelt_species", "")))
-					item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
-				inventory.items.remove_at(drop_idx2)
-			if held_index >= inventory.items.size():
-				held_index = max(0, inventory.items.size() - 1)
-			_sync_held_item()
-			inventory.changed.emit()
+					var overflow_item2 = inventory.items[drop_idx2]
+					var overflow_pos2 := global_position + (global_transform.basis * Vector3.FORWARD * 0.8) + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
+					overflow_pos2.y = global_position.y
+					if overflow_item2 != null:
+						notice.emit("Has perdido %s al romperse la ropa." % overflow_item2.item_name)
+						set_meta("last_dropped_wetness", float(overflow_item2.wetness))
+						set_meta("last_dropped_pelt", str(overflow_item2.get_meta("pelt_species", "")))
+						item_dropped.emit(str(overflow_item2.item_name), str(overflow_item2.item_type), float(overflow_item2.weight), int(overflow_item2.quantity), float(overflow_item2.use_value), overflow_pos2, Color(0, 0, 0, 0), false, float(overflow_item2.spoilage))
+					inventory.items.remove_at(drop_idx2)
+				if held_index >= inventory.items.size():
+					held_index = max(0, inventory.items.size() - 1)
+				_sync_held_item()
+				inventory.changed.emit()
 	if is_dead:
 		is_sprinting = false
 		is_crouching = false
@@ -3984,10 +3985,10 @@ func _physics_process(delta: float) -> void:
 	elif _is_aiming and (_has_bow_equipped() or _has_throwable_weapon_equipped()):
 		speed = minf(speed, crouch_speed * 0.95)
 		is_sprinting = false
-	# Lock movement while attacking (but allow slow careful step while holding spear aim)
+	# Keep footwork mobile while swinging so the player never feels rooted in place
+	# when defending against wolves or bears.
 	if third_person_action_timer > 0.0 and not _throw_aim_hold and not _throw_charging and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
-		direction = Vector3.ZERO
-		speed = 0.0
+		speed *= 0.85
 		is_sprinting = false
 	if is_sprinting:
 		stats.energy = max(0.0, stats.energy - (2.0 + carry * 5.0) * (1.0 + stats.get_thermal_stress()) * delta)
@@ -6921,15 +6922,17 @@ func _apply_melee_death_visual() -> void:
 func _play_hit_reaction(play_impact_sound: bool = true) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
+	if play_impact_sound:
+		_play_punch_impact_sound()
+	if is_moving or is_sprinting:
+		return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
 		return
 	# Route through the action-anim slot so the clip also travels in
 	# sync_player_state — remote puppets see the victim flinch too.
 	third_person_action_animation = third_person_hit_animation
-	third_person_action_timer = 0.55
+	third_person_action_timer = 0.28
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
-	if play_impact_sound:
-		_play_punch_impact_sound()
 
 func _play_shot_reaction() -> void:
 	if is_dead or third_person_animation_player == null:
@@ -11293,6 +11296,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.0
 				return
 		var throw_aim_walking := (_throw_aim_hold or _throw_charging or (_has_throwable_weapon_equipped() and _is_aiming)) and moving and not _bow_aim_walk_animation.is_empty()
+		var hit_flinch_walking := moving and (third_person_action_animation == third_person_hit_animation or third_person_action_animation == third_person_shot_animation)
+		if hit_flinch_walking:
+			third_person_action_timer = 0.0
+			third_person_action_animation = ""
 		if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty() and not throw_aim_walking:
 			third_person_action_timer = max(0.0, third_person_action_timer - delta)
 			if third_person_animation_player.current_animation != third_person_action_animation:
@@ -13347,8 +13354,9 @@ func apply_damage(amount: float, cause: String = "") -> void:
 						is_equipped = true
 						break
 				if is_equipped:
+					var was_broken: bool = item.is_broken()
 					item.reduce_durability(3.0)
-					if item.is_broken():
+					if not was_broken and item.is_broken():
 						any_broken = true
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
 		if any_broken:
@@ -14280,6 +14288,8 @@ static var _blood_mist_ramp: GradientTexture1D = null
 static var _blood_drops_mesh: QuadMesh = null
 static var _blood_mist_mesh: QuadMesh = null
 static var _blood_mist_scale: CurveTexture = null
+static var _blood_drops_mat: ParticleProcessMaterial = null
+static var _blood_mist_mat: ParticleProcessMaterial = null
 
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var scene := get_tree().current_scene
@@ -14295,6 +14305,31 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 		mist_curve.add_point(Vector2(1.0, 1.8))
 		_blood_mist_scale = CurveTexture.new()
 		_blood_mist_scale.curve = mist_curve
+		_blood_drops_mat = ParticleProcessMaterial.new()
+		_blood_drops_mat.direction = Vector3(0, 1, 0)
+		_blood_drops_mat.spread = 70.0
+		_blood_drops_mat.initial_velocity_min = 3.0
+		_blood_drops_mat.initial_velocity_max = 8.0
+		_blood_drops_mat.gravity = Vector3(0, -18.0, 0)
+		_blood_drops_mat.scale_min = 0.4
+		_blood_drops_mat.scale_max = 1.1
+		_blood_drops_mat.color = Color(0.45, 0.01, 0.01, 1.0)
+		_blood_drops_mat.hue_variation_min = -0.02
+		_blood_drops_mat.hue_variation_max = 0.02
+		_blood_drops_mat.color_ramp = _blood_drops_ramp
+		_blood_mist_mat = ParticleProcessMaterial.new()
+		_blood_mist_mat.direction = Vector3(0, 0.4, 0)
+		_blood_mist_mat.spread = 80.0
+		_blood_mist_mat.initial_velocity_min = 0.5
+		_blood_mist_mat.initial_velocity_max = 2.2
+		_blood_mist_mat.gravity = Vector3(0, -0.8, 0)
+		_blood_mist_mat.damping_min = 1.5
+		_blood_mist_mat.damping_max = 3.0
+		_blood_mist_mat.scale_min = 0.4
+		_blood_mist_mat.scale_max = 0.9
+		_blood_mist_mat.color = Color(0.35, 0.0, 0.0, 0.55)
+		_blood_mist_mat.color_ramp = _blood_mist_ramp
+		_blood_mist_mat.scale_curve = _blood_mist_scale
 	var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0, 1.2, 0)
 	# Gotas: pequenas, rapidas, con gravedad fuerte
 	var drops := GPUParticles3D.new()
@@ -14304,19 +14339,7 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 	drops.explosiveness = 1.0
 	drops.randomness = 0.9
 	drops.one_shot = true
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 70.0
-	mat.initial_velocity_min = 3.0 * strength
-	mat.initial_velocity_max = 8.0 * strength
-	mat.gravity = Vector3(0, -18.0, 0)
-	mat.scale_min = 0.4
-	mat.scale_max = 1.1
-	mat.color = Color(0.45, 0.01, 0.01, 1.0)
-	mat.hue_variation_min = -0.02
-	mat.hue_variation_max = 0.02
-	mat.color_ramp = _blood_drops_ramp
-	drops.process_material = mat
+	drops.process_material = _blood_drops_mat
 	drops.draw_pass_1 = _blood_drops_mesh
 	scene.add_child(drops)
 	drops.global_position = pos
@@ -14329,25 +14352,17 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 	mist.explosiveness = 0.8
 	mist.randomness = 1.0
 	mist.one_shot = true
-	var mmat := ParticleProcessMaterial.new()
-	mmat.direction = Vector3(0, 0.4, 0)
-	mmat.spread = 80.0
-	mmat.initial_velocity_min = 0.5
-	mmat.initial_velocity_max = 2.2
-	mmat.gravity = Vector3(0, -0.8, 0)
-	mmat.damping_min = 1.5
-	mmat.damping_max = 3.0
-	mmat.scale_min = 0.4
-	mmat.scale_max = 0.9
-	mmat.color = Color(0.35, 0.0, 0.0, 0.55)
-	mmat.color_ramp = _blood_mist_ramp
-	mmat.scale_curve = _blood_mist_scale
-	mist.process_material = mmat
+	mist.process_material = _blood_mist_mat
 	mist.draw_pass_1 = _blood_mist_mesh
 	scene.add_child(mist)
 	mist.global_position = pos
 	mist.emitting = true
-	get_tree().create_timer(2.0).timeout.connect(func(): drops.queue_free(); mist.queue_free())
+	get_tree().create_timer(2.0).timeout.connect(func():
+		if is_instance_valid(drops):
+			drops.queue_free()
+		if is_instance_valid(mist):
+			mist.queue_free()
+	)
 
 # --- Impactos en superficies no vivas ---
 static var _bullet_hole_texture: Texture2D = null
