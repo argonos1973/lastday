@@ -5,9 +5,9 @@
 #     Spanish descriptions from tools/web/changelog_es.txt (hash|texto) take
 #     precedence over the raw commit subject; unmapped commits show as-is.
 #   - substitutes @VERSION@ with the current short HEAD hash
-#   - substitutes @SIZE_MACOS@, @SIZE_WINDOWS@, @SIZE_LINUX@ with the sizes of
-#     build/dist/LastDay-macOS.zip, build/dist/LastDay-Windows.zip and
-#     build/dist/LastDay-Linux.x86_64 when they exist (falls back to "? GB")
+#   - substitutes @SIZE_MACOS@ and @SIZE_WINDOWS@ with the sizes of
+#     build/dist/LastDay-macOS.zip and build/dist/LastDay-Windows.zip
+#     when they exist (falls back to "? GB")
 #
 # Usage: tools/web/update_index.sh [output]
 #   tools/web/index.html is the tracked TEMPLATE (keeps @PLACEHOLDERS@);
@@ -78,7 +78,6 @@ awk -v block_file="$TMP" '
 	-e "s/@VERSION@/$VERSION/g" \
 	-e "s/@SIZE_MACOS@/$(size_gb build/dist/LastDay-macOS.zip)/g" \
 	-e "s/@SIZE_WINDOWS@/$(size_gb build/dist/LastDay-Windows.zip)/g" \
-	-e "s/@SIZE_LINUX@/$(size_gb build/dist/LastDay-Linux.x86_64)/g" \
 	> "$OUT.tmp"
 mv "$OUT.tmp" "$OUT"
 echo "index.html regenerated (v$VERSION) -> $OUT"

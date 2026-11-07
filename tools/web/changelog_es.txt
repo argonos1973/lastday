@@ -144,3 +144,6 @@ bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su 
 - Menu de inicio renovado: un solo boton Jugar que conecta al servidor oficial y elige personaje con preview interactivo. El mundo solo arranca cuando el servidor confirma el registro.
 - Hojarasca 3D bajo los arboles y hierba mas densa pegada al borde de las carreteras.
 - Rifle de francotirador: Alt+rueda calibra el cero de 50 a 600 m y la compensacion de caida es exacta con la resistencia del aire. Los animales lejanos siguen moviendose mientras apuntas.
+02703d3|Punto de mira del M4 mas proporcional al apuntar: la alza trasera ya no ocupa casi toda la pantalla
+572de72|Combate con lobos y osos mas fluido: el personaje ya no se queda clavado al defenderse o recibir mordiscos, y los lobos mueven las patas al perseguir en lugar de deslizarse en pose de ataque
+f454180|Eliminado el personaje generico "Superviviente": siempre se usa el personaje del servidor o uno de la pantalla de inicio
