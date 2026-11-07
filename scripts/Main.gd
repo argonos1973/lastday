@@ -10278,16 +10278,16 @@ func _create_house_loot() -> void:
 		{"name": "Chaqueta de campaña arena", "type": "clothing", "weight": 1.1, "qty": 1, "use": 0.25, "paths": [MilitaryJackets.pickup_path("Chaqueta de campaña arena")], "scale": 0.5, "rot": Vector3(90, 150, 0), "color": Color.WHITE},
 		# --- Standard green military ---
 		{"name": "Pantalones militares", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, -25, 0), "flat": false, "color": Color(0.12, 0.14, 0.10), "tint": Color(0.12, 0.14, 0.10)},
-		# --- Blue military variant A ---
-		{"name": "Pantalones militares azules", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 80, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
-		# --- Black military variant B ---
-		{"name": "Pantalones militares negros II", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
+		# --- Woodland camo military ---
+		{"name": "Pantalones camuflaje", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 80, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
+		# --- Desert camo military ---
+		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Camo military ---
 		{"name": "Pantalones camuflaje desert", "type": "clothing", "weight": 0.6, "qty": 1, "use": 0.14, "paths": ["res://assets/characters/adapted/pickup_soldier_legs.glb"], "scale": 0.8, "rot": Vector3(0, 100, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Military jackets ---
 		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.2, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, -40, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
 		{"name": "Chaqueta militar azul", "type": "clothing", "weight": 1.0, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 70, 0), "flat": false, "color": Color(0.02, 0.04, 0.08), "tint": Color(0.02, 0.04, 0.08)},
-		{"name": "Chaqueta militar negra II", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": false, "color": Color(0.02, 0.02, 0.03), "tint": Color(0.02, 0.02, 0.03)},
+		{"name": "Chaqueta camuflaje desert", "type": "clothing", "weight": 0.8, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 150, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		{"name": "Chaqueta camuflaje", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 110, 0), "flat": false, "color": Color(0.18, 0.22, 0.13), "tint": Color(0.18, 0.22, 0.13), "camo": true},
 		{"name": "Chaqueta camuflaje desert", "type": "clothing", "weight": 0.7, "qty": 1, "use": 0.16, "paths": ["res://assets/characters/adapted/pickup_soldier_torso.glb"], "scale": 0.8, "rot": Vector3(0, 200, 0), "flat": false, "color": Color(0.32, 0.28, 0.16), "tint": Color(0.32, 0.28, 0.16), "camo": true},
 		# --- Gloves ---
@@ -10429,9 +10429,9 @@ func _create_house_loot() -> void:
 		_create_pickup_item(rt_mag)
 	var remote_tent_loot := [
 		tent_loot_pool[3], # green pants
-		tent_loot_pool[4], # blue pants
-		tent_loot_pool[5], # black pants
-		tent_loot_pool[6], # camo pants
+		tent_loot_pool[4], # woodland camo pants
+		tent_loot_pool[5], # desert camo pants
+		tent_loot_pool[6], # desert camo pants
 		tent_loot_pool[12], # gloves
 		tent_loot_pool[14], # helmet
 		tent_loot_pool[15], # canned stew
