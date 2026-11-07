@@ -43,6 +43,14 @@ func _find_skel(n: Node) -> Skeleton3D:
 			return r
 	return null
 
+func _has_node_prefix(n: Node, prefix: String) -> bool:
+	if str(n.name).begins_with(prefix):
+		return true
+	for c in n.get_children():
+		if _has_node_prefix(c, prefix):
+			return true
+	return false
+
 func _run() -> void:
 	var InicioScript = load("res://scripts/Inicio.gd")
 	var inicio: Control = InicioScript.new()
@@ -171,6 +179,9 @@ func _run() -> void:
 		_ok((b_legs == null or not b_legs.visible) and (d_legs == null or not d_legs.visible), "%s hides bare legs in preview" % camo_pants)
 		_ok(dup_boots == null or not dup_boots.visible, "%s hides duplicate military_boots_001 helper" % camo_pants)
 	inicio._on_server_character_locked(payload)
+	var locked_preview_model := inicio._char_preview_anchor.get_child(inicio._char_preview_anchor.get_child_count() - 1) as Node3D
+	_ok(locked_preview_model != null and not _has_node_prefix(locked_preview_model, "PreviewKnife") and not _has_node_prefix(locked_preview_model, "PreviewHeld"),
+		"saved preview does not attach held items")
 
 	# Un payload sin colores reales (registro sin apariencia -> alpha 0) no
 	# debe pintar la tarjeta de negro: conserva los colores ya conocidos.
