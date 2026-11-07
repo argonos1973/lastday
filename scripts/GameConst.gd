@@ -33,6 +33,7 @@ const NPC_HOSTILE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/C
 const KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons/glTF/Knife.gltf"
 const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 const MILITARY_BACKPACK_MODEL := "res://assets/characters/adapted/military_backpack.glb"
+const BACKPACK_MODEL := "res://assets/characters/adapted/backpack_detailed.glb"
 const FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"
 const GARDEN_GLOVES_MODEL := "res://assets/external/polyhaven/garden_gloves_01/garden_gloves_01_1k.gltf"
 const WOLF_MODEL := "res://assets/models/animals/wolf_companion.glb"

@@ -349,10 +349,11 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if autumn_mesh != null:
 				autumn_mesh.visible = true
 	AutumnClothesScript.set_jacket_mask(model, is_autumn_jacket)
-	# Add backpack
+	# Add backpack — mismo modelo que en juego (_backpack_model_path):
+	# "Mochila militar" usa military_backpack.glb, el resto backpack_detailed.glb.
 	var backpack := str(pd.get("equipped_backpack", ""))
 	if not backpack.is_empty():
-		_add_preview_backpack(model)
+		_add_preview_backpack(model, backpack)
 	# Add gloves
 	if not hands_item.is_empty():
 		_add_preview_gloves(model, hands_item, str(pelt_species.get(hands_item, "")))
@@ -448,10 +449,10 @@ static func _collect_meshes(root: Node, result: Array) -> void:
 	for c in root.get_children():
 		_collect_meshes(c, result)
 
-const _BACKPACK_MODEL := "res://assets/external/realistic/root_glb/low_poly_game_ready_military_tactical_backpack.glb"
-
-static func _add_preview_backpack(model: Node3D) -> void:
-	var packed := load(_BACKPACK_MODEL)
+static func _add_preview_backpack(model: Node3D, backpack_name: String) -> void:
+	var is_military := backpack_name == "Mochila militar"
+	var model_path := GameConst.MILITARY_BACKPACK_MODEL if is_military else GameConst.BACKPACK_MODEL
+	var packed := load(model_path)
 	if packed == null or not packed is PackedScene:
 		return
 	var bp := (packed as PackedScene).instantiate() as Node3D
@@ -465,15 +466,18 @@ static func _add_preview_backpack(model: Node3D) -> void:
 	if raw_aabb.size.y <= 0.0001:
 		bp.queue_free()
 		return
-	# Use exact same scale as in-game: 1.3 / raw_aabb.size.y
-	var bp_scale := 1.3 / raw_aabb.size.y
+	# Use exact same scale as in-game: 1.15 militar / 1.3 el resto
+	var worn_height := 1.15 if is_military else 1.3
+	var bp_scale := worn_height / raw_aabb.size.y
 	bp.scale = Vector3.ONE * bp_scale
 	var center_offset := Vector3(
 		-(raw_aabb.position.x + raw_aabb.size.x * 0.5) * bp_scale,
 		-(raw_aabb.position.y + raw_aabb.size.y * 0.5) * bp_scale,
 		-(raw_aabb.position.z + raw_aabb.size.z * 0.5) * bp_scale
 	)
-	bp.position = center_offset + Vector3(0.0, 2.6, -0.15)
+	# En juego el socket militar baja 0.07 extra; en el espacio del preview
+	# el offset equivalente va sobre el mismo punto de anclaje.
+	bp.position = center_offset + Vector3(0.0, 2.6 - (0.07 if is_military else 0.0), -0.15)
 	_bind_preview_bone(model, bp, ["mixamorig:Spine2", "mixamorig:Spine1", "mixamorig:Spine", "mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"])
 
 const _MILITARY_TINTS := {
