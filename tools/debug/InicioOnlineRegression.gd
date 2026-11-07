@@ -62,6 +62,51 @@ func run() -> void:
 	menu._on_net_ready()
 	await create_timer(.4).timeout
 	check(menu.starts==2,"Accepted registration starts requested game")
+	# Estado periodico: en reposo el menu reconecta cada intervalo para pedir
+	# el estado del personaje; se pausa con join en curso, Play o prompt.
+	menu._started=false
+	menu._mode="join"
+	menu._play_requested=false
+	menu._name_request_pending=false
+	menu._joining=false
+	menu._net=FakeNet.new()
+	var joins_before: int = menu.joins
+	menu._tick_server_status(menu.SERVER_STATUS_INTERVAL)
+	check(menu.joins==joins_before+1,"Menu repolls server on status interval")
+	menu._joining=false
+	menu._play_requested=true
+	menu._tick_server_status(menu.SERVER_STATUS_INTERVAL)
+	check(menu.joins==joins_before+1,"Status poll pauses once Play is requested")
+	menu._play_requested=false
+	menu._name_request_pending=true
+	menu._tick_server_status(menu.SERVER_STATUS_INTERVAL)
+	check(menu.joins==joins_before+1,"Status poll pauses while name prompt pending")
+	menu._name_request_pending=false
+	# Un reclaim que murio hace que el servidor pida nombre: la tarjeta
+	# bloqueada se libera y el picker cae en una tarjeta elegible para join.
+	menu.CHAR_CONFIGS.push_front({"id":"saved_server","name":"Ana","hair_style":"short","top":Color(1,0,0),"bottom":Color(0,0,1),"shoes":Color(0.2,0.2,0.2),"hair":Color(0,0,0),"skin":Color(0.8,0.7,0.6),"is_saved":true,"is_server_save":true,"server_pd":{}})
+	menu._char_index=0
+	menu._mp_locked=true
+	menu._on_player_name_required()
+	check(not menu._mp_locked,"Dead reclaim unlocks the picker")
+	var server_card_left := false
+	for cfg in menu.CHAR_CONFIGS:
+		if str(cfg.get("id","")) == "saved_server":
+			server_card_left = true
+	check(not server_card_left,"Dead reclaim drops the server card")
+	check(menu._card_selectable(menu.CHAR_CONFIGS[menu._char_index]),"Picker lands on a joinable card")
+	menu._name_request_pending=false
+	# Una consulta de estado se cierra sola al resolverse: el menu no retiene
+	# la conexion ni el slot entre sondeos.
+	menu._status_poll=true
+	menu._mode="join"
+	menu._net=FakeNet.new()
+	var status_net = menu._net
+	menu._maybe_start_game()
+	check(status_net.closed and menu._net==null and not menu._status_poll,"Status poll releases the connection once resolved")
+	# El connection_failed rezagado del cierre local no deshace el estado.
+	menu._on_net_failed()
+	check(not menu._closing_status,"Late connection_failed from status close is swallowed")
 	menu.queue_free()
 	await process_frame
 	print("INICIO_ONLINE errors=",errors)

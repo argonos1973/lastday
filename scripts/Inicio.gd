@@ -25,6 +25,17 @@ var _scan_probe: PacketPeerUDP = null
 var _scanning := false
 var _scan_subnet := "192.168.0"
 
+# El servidor solo comunica el estado del personaje en el registro (reclaim o
+# peticion de nombre): el menu revalida equipo/supervivencia/muerte
+# reconectando cada pocos segundos mientras esta en reposo.
+const SERVER_STATUS_INTERVAL := 30.0
+var _status_timer := 0.0
+# El menu no mantiene sesion: cada consulta es una conexion transitoria que se
+# cierra al recibir el estado — entre consultas no ocupa slot ni deja al
+# personaje "vivo" en el mundo (queda aparcado offline, como al desconectar).
+var _status_poll := false
+var _closing_status := false
+
 var _char_index := 0
 var _char_name_label: Label = null
 var _char_title_label: Label = null
@@ -525,6 +536,19 @@ func _process(_delta: float) -> void:
 			_start_active_scan()
 	if _scanning:
 		_process_scan(_delta)
+	_tick_server_status(_delta)
+
+# Reconexion periodica del menu: cada intervalo repite el join para que el
+# servidor devuelva el estado actual del personaje. Se pausa mientras hay una
+# conexion en curso, el jugador pulso Jugar o el prompt de nombre esta abierto.
+func _tick_server_status(delta: float) -> void:
+	if not _online_menu or _started or _play_requested or _joining or _name_request_pending:
+		_status_timer = 0.0
+		return
+	_status_timer += delta
+	if _status_timer >= SERVER_STATUS_INTERVAL:
+		_status_timer = 0.0
+		_connect_menu_server()
 
 func _start_active_scan() -> void:
 	_scanning = true
@@ -653,6 +677,11 @@ func _on_join() -> void:
 	_begin_join(ip)
 
 func _begin_join(target: String) -> void:
+	# Refresh de estado (menu en reposo): no toca la seleccion — si la tarjeta
+	# bloqueada sigue viva el servidor la reenvia y se evita el parpadeo.
+	var status_refresh := _online_menu and not _play_requested
+	_status_poll = status_refresh
+	_closing_status = false
 	# La tarjeta elegida no se aplica todavia: si el servidor reclama un
 	# personaje vivo, la seleccion queda bloqueada a ese personaje; si pide
 	# nombre (personaje nuevo o muerto) se aplica la tarjeta elegida entonces.
@@ -665,14 +694,19 @@ func _begin_join(target: String) -> void:
 	_joining = true
 	_session_ready = false
 	_name_request_pending = false
-	_set_picker_locked(false)
+	_status_timer = 0.0
 	_rejected = false
 	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
 	if _net.join_game(target, pw):
-		_status_label.text = "Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando..."
+		_status_label.text = "Actualizando personaje..." if status_refresh else ("Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando...")
 		_mode = "join"
-		_prejoin_card_id = str(CHAR_CONFIGS[_char_index].get("id", "")) if _char_index >= 0 and _char_index < CHAR_CONFIGS.size() else ""
-		_clamp_to_selectable_card()
+		# Con un personaje bloqueado la tarjeta se mantiene durante la
+		# revalidacion: el servidor la confirma de nuevo o pide nombre (muerto)
+		# y entonces _release_locked_server_card la retira — sin parpadeo.
+		if not _mp_locked:
+			_prejoin_card_id = str(CHAR_CONFIGS[_char_index].get("id", "")) if _char_index >= 0 and _char_index < CHAR_CONFIGS.size() else ""
+			_set_picker_locked(false)
+			_clamp_to_selectable_card()
 	else:
 		_joining = false
 		_status_label.text = "No se pudo conectar. Pulsa Jugar para reintentar."
@@ -682,9 +716,13 @@ func _begin_join(target: String) -> void:
 # nombre guardado — solo se vuelve a preguntar al morir o reiniciar.
 func _on_player_name_required() -> void:
 	_name_request_pending = true
+	# El personaje que tenia bloqueado el picker ya no vive (murio o el mundo
+	# se reinicio): la tarjeta saved_server desaparece y se elige uno nuevo.
+	if _mp_locked:
+		_release_locked_server_card()
 	if _online_menu and not _play_requested:
-		# Registration already exists on the server. Keep this connection so a
-		# retry cannot reclaim its unnamed placeholder as an existing character.
+		# El placeholder sin nombre sigue pidiendo nombre en cada registro —
+		# la consulta puede cerrarse igualmente al resolverse.
 		_status_label.text = "Elige tu personaje y pulsa Jugar"
 		return
 	if not _started:
@@ -891,6 +929,10 @@ func _maybe_start_game() -> void:
 		if not _play_requested:
 			if _status_label != null:
 				_status_label.text = "Elige tu personaje y pulsa Jugar" if _name_request_pending else ("Personaje recuperado · Listo para jugar" if _mp_locked else "Conectado · Listo para jugar")
+			# Consulta de estado resuelta: se suelta la conexion — la tarjeta
+			# bloqueada (o la ausencia de ella) ya refleja al personaje real.
+			if _status_poll:
+				_close_status_connection()
 			return
 		if not _session_ready and not _name_request_pending: return
 	# Si el servidor pidio nombre (personaje nuevo) el mundo espera al prompt.
@@ -1007,7 +1049,25 @@ func _set_picker_locked(locked: bool) -> void:
 	if not locked and _btn_enter != null:
 		_btn_enter.visible = false
 
+# Cierre de una consulta de estado: no es un fallo — se traga el
+# connection_failed que el cierre local pueda generar y deja la tarjeta tal
+# como quedo (bloqueada si sigue viva, libre si pidio nombre).
+func _close_status_connection() -> void:
+	if _net == null:
+		return
+	_status_poll = false
+	_closing_status = true
+	_joining = false
+	_session_ready = false
+	_name_request_pending = false
+	var n = _net
+	_net = null
+	n.close_connection()
+
 func _on_net_failed() -> void:
+	if _closing_status:
+		_closing_status = false
+		return
 	_joining = false
 	_session_ready = false
 	_play_requested = false
@@ -1108,6 +1168,16 @@ func _restore_prejoin_card() -> void:
 			_char_index = i
 			break
 	_prejoin_card_id = ""
+
+# Un reclaim que pide nombre significa que el personaje bloqueado murio: se
+# retira saved_server y el picker cae en una tarjeta elegible para el join.
+func _release_locked_server_card() -> void:
+	_set_picker_locked(false)
+	for i in range(CHAR_CONFIGS.size() - 1, -1, -1):
+		if str(CHAR_CONFIGS[i].get("id", "")) == "saved_server":
+			CHAR_CONFIGS.remove_at(i)
+	_char_index = clampi(_char_index, 0, CHAR_CONFIGS.size() - 1)
+	_clamp_to_selectable_card()
 
 func _exit_join_pick() -> void:
 	# La tarjeta saved_server solo existe mientras el servidor la tiene
