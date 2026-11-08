@@ -1,6 +1,9 @@
 extends Node
 class_name SurvivorBotManager
 
+const CityExpansion = preload("res://scripts/CityExpansion.gd")
+const CityBlock = preload("res://scripts/CityBlock.gd")
+
 # Gestor de Supervivientes IA (bots con modelo, ropa, inventario y acciones reales):
 # - 2 cooperativos ("Elena", "Carlos") que pueden reclutarse al equipo del jugador ([F]),
 #   compartir fogata/refugio, recibir comida/agua, defender al compañero frente a lobos,
@@ -152,6 +155,12 @@ var world: Node = null
 var bots: Dictionary = {} # bot_id -> Dictionary state
 var _sync_accum := 0.0
 var _ai_accum := 0.0
+# Aprendizaje persistente por personaje: sobrevive a la muerte/respawn, asi el
+# superviviente "recuerda" donde murio, por que, que zonas ya exploro y que la
+# ropa de piel es la mejor equipacion.
+var _memory: Dictionary = {} # bot_id -> {deaths, last_death_pos, last_death_cause, visited, gear_learned, scarcity}
+var _poi_cache: Array = [] # puntos de interes del mundo (casas, tiendas, ciudad, zonas salvajes)
+var _poi_cache_built := false
 
 func setup(main_world: Node) -> void:
 	world = main_world
@@ -164,21 +173,36 @@ static func is_bot_peer_id(pid: int) -> bool:
 # local y = 0.025 (_compute_skeleton_ground_target_y alinea los huesos del pie
 # a 0.025 - min_foot_model_y). Colocando el origen del bot en ground_y - 0.025,
 # las suelas apoyan exactamente sobre el suelo igual que el jugador local.
-func _ground_y(x: float, z: float) -> float:
+func _ground_y(x: float, z: float, from_y: float = -INF) -> float:
+	var ty := 0.375
 	if world != null and world.has_method("_get_exact_ground_y"):
-		return world._get_exact_ground_y(x, z) - 0.025
-	return 0.375
+		ty = world._get_exact_ground_y(x, z) - 0.025
+	if from_y == -INF or not (world is Node3D):
+		return ty
+	# Escaleras, rampas y pisos transitables sobre el terreno: mismo sondeo
+	# hacia abajo que usa el jugador, para subir escaleras de casas y torres.
+	var w3d := (world as Node3D).get_world_3d()
+	if w3d == null or w3d.direct_space_state == null:
+		return ty
+	var q := PhysicsRayQueryParameters3D.create(Vector3(x, from_y + 0.55, z), Vector3(x, from_y - 0.55, z), 1)
+	var hit := w3d.direct_space_state.intersect_ray(q)
+	if not hit.is_empty():
+		var hy := float((hit["position"] as Vector3).y)
+		if hy > ty + 0.15 and hy <= from_y + 0.55:
+			return hy + 0.02
+	return ty
 
 # Terreno firme y seguro: tierra seca, sin carretera ni edificio, libre de
-# obstaculos/bloqueadores y con pendiente suave.
-func _is_flat_dry_pos(pos: Vector3) -> bool:
+# obstaculos/bloqueadores, con pendiente suave y lejos de zonas habitadas.
+# ignore_shelter_id permite a un bot validar su propia fogata junto a su refugio.
+func _is_flat_dry_pos(pos: Vector3, ignore_shelter_id: String = "") -> bool:
 	if world == null:
 		return false
 	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.02:
 		return false
 	if world.has_method("_is_water_drop_position") and world._is_water_drop_position(pos):
 		return false
-	if world.has_method("_is_on_road") and world._is_on_road(pos):
+	if _is_settled_area(pos, ignore_shelter_id):
 		return false
 	if world.has_method("_is_player_in_house") and world._is_player_in_house(pos):
 		return false
@@ -190,6 +214,36 @@ func _is_flat_dry_pos(pos: Vector3) -> bool:
 		if absf(sy - cy) > 0.85:
 			return false
 	return true
+
+# Zonas donde un superviviente sensato jamas planta su campamento: el pueblo
+# inicial (plaza y alrededores de las casas), calles y edificios de la ciudad,
+# la base militar, graneros y refugios ya construidos por otros.
+func _is_settled_area(pos: Vector3, ignore_shelter_id: String = "") -> bool:
+	if world == null:
+		return false
+	# Nucleo del pueblo inicial (casas y plaza alrededor del origen)
+	if Vector2(pos.x, pos.z).length() < 78.0:
+		return true
+	if world.has_method("_is_near_house") and world._is_near_house(pos, 16.0):
+		return true
+	if world.has_method("_is_near_road") and world._is_near_road(pos, 9.0):
+		return true
+	if CityExpansion.near_building(pos, 14.0) or CityExpansion.inside_building(pos):
+		return true
+	for key in ["_military_tent_pos", "_remote_tent_pos", "_city_tent_pos", "_city_tent2_pos"]:
+		var t = world.get(key)
+		if t is Vector3 and (t as Vector3) != Vector3.ZERO and Vector2(pos.x - (t as Vector3).x, pos.z - (t as Vector3).z).length() < 30.0:
+			return true
+	if Vector2(pos.x + 340.0, pos.z - 280.0).length() < 20.0: # granero remoto
+		return true
+	if "_built_shelters" in world:
+		for sh in world._built_shelters:
+			if not (sh is Dictionary) or str(sh.get("id", "")) == ignore_shelter_id:
+				continue
+			var sp = sh.get("pos", null)
+			if sp is Vector3 and Vector2(pos.x - (sp as Vector3).x, pos.z - (sp as Vector3).z).length() < 8.0:
+				return true
+	return false
 
 # Un campamento ademas necesita estar a >=35 m de cualquier otro campamento IA.
 func _is_valid_camp_pos(pos: Vector3) -> bool:
@@ -209,7 +263,7 @@ func _find_valid_camp_spot(preferred: Vector3, _near: Vector3) -> Vector3:
 	var best := preferred
 	var best_score := -1.0
 	var found := false
-	for radius in [0.0, 8.0, 16.0, 26.0, 40.0, 60.0]:
+	for radius in [0.0, 8.0, 16.0, 26.0, 40.0, 60.0, 90.0, 120.0]:
 		var steps := 8 if radius > 0.0 else 1
 		for i in range(steps):
 			var ang := TAU * float(i) / float(steps)
@@ -268,6 +322,42 @@ func spawn_all_bots() -> void:
 	if net != null and net.is_host and net.peer != null and net.has_method("_broadcast_player_list"):
 		net._broadcast_player_list()
 
+# Spawn aleatorio dentro de las mismas zonas de spawn que usan los jugadores
+# (_spawn_zones del mundo): zona al azar + offset +-3 m, evitando rios,
+# bloqueadores y quedar pegado a otro superviviente IA.
+func _random_bot_spawn(cfg: Dictionary) -> Vector3:
+	var fallback := Vector3(cfg.get("spawn", Vector3.ZERO))
+	var zones_v = world.get("_spawn_zones") if world != null else null
+	var zones: Array = zones_v if zones_v is Array else []
+	if zones.is_empty():
+		return _sanitize_ground_point(fallback)
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var best := _sanitize_ground_point(zones[rng.randi() % zones.size()])
+	var best_sep := -1.0
+	for i in range(16):
+		var zone: Vector3 = zones[rng.randi() % zones.size()]
+		var cand := Vector3(zone.x + rng.randf_range(-3.0, 3.0), 0.0, zone.z + rng.randf_range(-3.0, 3.0))
+		if world.has_method("_is_near_river") and world._is_near_river(cand, 30.0):
+			continue
+		if _is_pos_blocked(cand, 0.7):
+			continue
+		var sep := _min_dist_to_other_bots(cand)
+		if sep >= 40.0:
+			return _sanitize_ground_point(cand)
+		if sep > best_sep:
+			best_sep = sep
+			best = cand
+	return _sanitize_ground_point(best)
+
+func _min_dist_to_other_bots(pos: Vector3) -> float:
+	var sep := INF
+	for other_id in bots.keys():
+		var op = bots[other_id].get("pos", Vector3.INF)
+		if op is Vector3 and (op as Vector3) != Vector3.INF:
+			sep = minf(sep, Vector2(pos.x - (op as Vector3).x, pos.z - (op as Vector3).z).length())
+	return sep
+
 func _sanitize_ground_point(preferred: Vector3) -> Vector3:
 	var p := Vector3(preferred.x, _ground_y(preferred.x, preferred.z), preferred.z)
 	if not _is_pos_blocked(p, 0.7):
@@ -285,7 +375,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	var bot_id := int(cfg["bot_id"])
 	if bots.has(bot_id):
 		return
-	var spawn_pos: Vector3 = _sanitize_ground_point(cfg["spawn"])
+	var spawn_pos: Vector3 = _random_bot_spawn(cfg)
 	var patrol: Array = []
 	for pt in cfg.get("patrol", []):
 		patrol.append(_sanitize_ground_point(pt as Vector3))
@@ -400,8 +490,41 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"flinch_timer": 0.0,
 		"flinch_anim": "hit",
 		"avoid_sign": 1.0 if (bot_id % 2 == 1) else -1.0,
+		# Percepcion escalonada (~5 Hz): cada bot refresca sus sentidos en un
+		# instante distinto para no escanear fauna/botin/jugadores a 60 Hz.
+		"sense_t": fmod(float(bot_id) * 0.073, 0.21),
+		"_s_predator": null,
+		"_s_foe": null,
+		"_s_leader": null,
+		"_s_has_wolf": false,
+		"_s_tame_wolf": null,
+		"_s_loot": {},
+		"climb_route": [],
+		"climb_i": -1,
+		"climb_down": false,
+		"climb_dwell": 0.0,
+		"equip_mission": false,
+		"forced_eat": false,
+		"avoid_t": 0.0,
+		"_avoid": Vector3.ZERO,
+		# Exploracion e inercia de movimiento (flujo natural, sin tirones)
+		"explore_target": Vector3.INF,
+		"explore_dwell": 0.0,
+		"_speed": 0.0,
+		"_mdir": Vector3.ZERO,
+		"_last_move_t": -99.0,
 	}
 	bots[bot_id] = bot_state
+	# Enlazar la memoria persistente del personaje: si ya murio antes, conserva
+	# lo que aprendio (zonas visitadas, sitio/causa de muerte, ropa preferida).
+	var mem: Dictionary = _memory.get_or_add(bot_id, {
+		"deaths": 0, "last_death_pos": Vector3.INF, "last_death_cause": "",
+		"visited": [], "gear_learned": false, "scarcity": false,
+	})
+	bot_state["_mem"] = mem
+	# Prudencia aprendida: si murio por depredadores o inanicion, durante los
+	# primeros minutos de su nueva vida evita la zona donde cayo.
+	bot_state["caution_until"] = 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved"] else 0.0
 	_publish_bot_to_net_players(bot_state)
 	_sync_bot_appearance_to_clients(bot_state)
 	# Si estamos en singleplayer o host con render, crear su avatar visual inmediatamente
@@ -616,6 +739,23 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["anim"] = str(b.get("flinch_anim", "hit"))
 		return
 
+	# Refresco de sentidos a ~5 Hz escalonado entre bots. Un humano reacciona
+	# en ~0.2 s; escanear toda la fauna, jugadores y botin cada frame por bot
+	# era el mayor coste de la IA (get_nodes_in_group + distancias x3/frame).
+	b["sense_t"] = float(b.get("sense_t", 0.0)) - delta
+	if float(b["sense_t"]) <= 0.0:
+		b["sense_t"] = 0.21 + fmod(float(b["bot_id"]) * 0.037, 0.08)
+		b["_s_predator"] = _find_threatening_predator(b, 30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0)
+		b["_s_foe"] = _find_combat_foe(b)
+		b["_s_leader"] = _resolve_team_leader(b)
+		var has_wolf := _bot_has_tamed_wolf(b)
+		b["_s_has_wolf"] = has_wolf
+		b["_s_tame_wolf"] = null if has_wolf else _find_tameable_wolf(b, 20.0)
+		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
+		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
+			b["equip_mission"] = false
+
 	# Luz nocturna con antorcha (se apaga si se está ocultando en su refugio)
 	var is_night := _is_world_night()
 	var sh_pos: Vector3 = b["shelter_pos"]
@@ -626,20 +766,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	proxy.set_meta("in_built_shelter", sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 3.4)
 
 	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
-	var predator := _find_threatening_predator(b, 22.0)
+	var predator := _sensed_node(b, "_s_predator")
 	if predator != null:
 		_handle_predator_encounter(b, predator, delta)
 		return
 
 	# 2) Doma de lobos: si hay un lobo salvaje cerca (10..22 m), tenemos carne cruda y aún no tenemos lobo domado
-	if float(b["tame_cooldown"]) <= 0.0 and not _bot_has_tamed_wolf(b):
-		var wild_wolf := _find_tameable_wolf(b, 20.0)
+	if float(b["tame_cooldown"]) <= 0.0 and not bool(b.get("_s_has_wolf", false)):
+		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
 		if wild_wolf != null and _bot_has_raw_meat(proxy):
 			_perform_wolf_taming_step(b, wild_wolf, delta)
 			return
 
 	# 3) Combate contra enemigos humanos / otros bots de facción opuesta
-	var human_foe := _find_combat_foe(b)
+	var human_foe := _sensed_node(b, "_s_foe")
 	if human_foe != null:
 		# Herido grave (< 30 HP) o en huida: repliegue real. Con refugio va a
 		# ocultarse; sin refugio escapa en zigzag hasta perder la amenaza.
@@ -674,8 +814,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 4) Sed critica sin botellas: ir al rio/lago a beber (solo si no esta
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
-	var leader := _resolve_team_leader(b)
-	if float(b["thirst"]) < 32.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
+	var leader := _sensed_node(b, "_s_leader")
+	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
+	if float(b["thirst"]) < thirsty_line and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
 		if b["drink_at"] == Vector3.INF:
 			b["drink_at"] = _nearest_water_pos(proxy.global_position)
 		if b["drink_at"] != Vector3.INF:
@@ -701,7 +842,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	# 5) Saqueo oportuno de objetos cercanos (comida, armas, ropa mejor, materiales)
-	var loot_action := _find_nearby_valuable_loot(b, 28.0)
+	var loot_action: Dictionary = b.get("_s_loot", {})
 	if not loot_action.is_empty():
 		b["sitting"] = false
 		b["crouching"] = false
@@ -722,18 +863,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_bot_build_shelter(b, camp_pos)
 		return
 
-	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and _can_bot_build_campfire(proxy):
+	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
 		# La fogata tambien necesita suelo valido: junto al refugio pero nunca
-		# en agua, carretera o pendiente.
+		# en agua, carretera, pendiente ni zona habitada.
 		var fire_spot := Vector3.INF
 		for off in [Vector3(2.8, 0.0, 1.4), Vector3(-2.8, 0.0, 1.4), Vector3(0.0, 0.0, 3.2), Vector3(2.8, 0.0, -1.4), Vector3(0.0, 0.0, -3.2)]:
 			var cand: Vector3 = sh_pos + off
 			cand.y = _ground_y(cand.x, cand.z)
-			if _is_flat_dry_pos(cand):
+			if _is_flat_dry_pos(cand, str(b["shelter_id"])):
 				fire_spot = cand
 				break
 		if fire_spot != Vector3.INF:
 			_bot_build_and_light_campfire(b, fire_spot)
+		else:
+			# Sin sitio valido: no construye la fogata y sigue con su vida,
+			# en vez de quedar bloqueado intentandolo cada tick.
+			b["no_fire_spot"] = true
 		return
 
 	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio,
@@ -759,31 +904,155 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("saved_health", healed)
 		return
 
-	# 7) Patrulla activa por el mapa buscando suministros y cazando
+	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
+	# tiendas militares, ciudad, graneros, zonas salvajes) recordando los ya
+	# visitados entre vidas, y evitando la zona donde murio la ultima vez.
 	b["sitting"] = false
 	b["crouching"] = false
-	var patrol: Array = b["patrol"]
-	if patrol.is_empty():
+	b["caution_until"] = maxf(0.0, float(b.get("caution_until", 0.0)) - delta)
+	# Subida/bajada por escaleras siguiendo una ruta de peldaños (torres, pisos)
+	if (b.get("climb_route", []) as Array).size() >= 2:
+		_tick_bot_climb(b, delta)
+		return
+	var cur_target: Vector3 = b.get("explore_target", Vector3.INF)
+	var flat_t := 9999.0
+	if cur_target != Vector3.INF:
+		flat_t = Vector2(proxy.global_position.x - cur_target.x, proxy.global_position.z - cur_target.z).length()
+	if cur_target != Vector3.INF and flat_t < 4.0:
+		# Llegada: marca el sitio como visitado y para a saquear/mirar alrededor
+		_mark_poi_visited(b, cur_target)
+		b["explore_target"] = Vector3.INF
+		b["explore_dwell"] = randf_range(5.0, 12.0)
+		cur_target = Vector3.INF
+	if cur_target == Vector3.INF and float(b.get("explore_dwell", 0.0)) <= 0.0:
+		b["explore_target"] = _choose_explore_target(b)
+		cur_target = b["explore_target"]
+	if float(b.get("explore_dwell", 0.0)) > 0.0:
+		b["explore_dwell"] = float(b["explore_dwell"]) - delta
 		b["anim"] = "idle"
 		return
-	# Al llegar a un punto de patrulla, un humano se detiene un rato a mirar
-	# alrededor antes de seguir — no marcha en bucle sin descanso.
-	var dwell := float(b.get("patrol_dwell", 0.0))
-	if dwell > 0.0:
-		b["patrol_dwell"] = dwell - delta
-		b["anim"] = "idle"
+	if cur_target == Vector3.INF:
+		# Sin POIs en el mundo (tests): patrulla heredada del config
+		var patrol: Array = b["patrol"]
+		if patrol.is_empty():
+			b["anim"] = "idle"
+			return
+		var dwell := float(b.get("patrol_dwell", 0.0))
+		if dwell > 0.0:
+			b["patrol_dwell"] = dwell - delta
+			b["anim"] = "idle"
+			return
+		var p_idx := int(b["patrol_idx"]) % patrol.size()
+		var goal: Vector3 = patrol[p_idx]
+		if Vector2(proxy.global_position.x - goal.x, proxy.global_position.z - goal.z).length() < 2.6:
+			b["patrol_idx"] = (p_idx + 1) % patrol.size()
+			goal = patrol[int(b["patrol_idx"])]
+			b["patrol_dwell"] = randf_range(3.0, 9.0)
+		var move_item := "Antorcha" if bool(b["torch_lit"]) else _best_weapon_name(proxy)
+		b["held_item"] = move_item
+		b["has_rifle"] = move_item == "Fusil de asalto" or move_item == "Rifle francotirador"
+		proxy.set_meta("saved_held_item", move_item)
+		_move_bot_towards(b, goal, 3.4, delta, "walk")
 		return
-	var p_idx := int(b["patrol_idx"]) % patrol.size()
-	var goal: Vector3 = patrol[p_idx]
-	if Vector2(proxy.global_position.x - goal.x, proxy.global_position.z - goal.z).length() < 2.6:
-		b["patrol_idx"] = (p_idx + 1) % patrol.size()
-		goal = patrol[int(b["patrol_idx"])]
-		b["patrol_dwell"] = randf_range(3.0, 9.0)
 	var move_item := "Antorcha" if bool(b["torch_lit"]) else _best_weapon_name(proxy)
 	b["held_item"] = move_item
 	b["has_rifle"] = move_item == "Fusil de asalto" or move_item == "Rifle francotirador"
 	proxy.set_meta("saved_held_item", move_item)
-	_move_bot_towards(b, goal, 3.4, delta, "walk")
+	_move_bot_towards(b, cur_target, 3.5, delta, "walk")
+
+# Puntos de interes del mundo: lo mismo que un jugador iria a saquear.
+func _explore_pois() -> Array:
+	if _poi_cache_built:
+		return _poi_cache
+	if world == null:
+		return []
+	var hf = world.get("HOUSE_FOOTPRINTS")
+	if hf is Array:
+		for h in hf:
+			if h is Dictionary and h.get("origin") is Vector3:
+				_poi_cache.append({"pos": h["origin"], "kind": "house"})
+	for k in ["_military_tent_pos", "_remote_tent_pos", "_city_tent_pos", "_city_tent2_pos"]:
+		var t = world.get(k)
+		if t is Vector3 and (t as Vector3) != Vector3.ZERO:
+			_poi_cache.append({"pos": t, "kind": "military"})
+	for definition in CityBlock.BUILDINGS:
+		if definition.get("position") is Vector3:
+			_poi_cache.append({"pos": CityExpansion.CENTER + (definition["position"] as Vector3), "kind": "city"})
+	var zones = world.get("_spawn_zones")
+	if zones is Array:
+		for z in zones:
+			if z is Vector3:
+				_poi_cache.append({"pos": z, "kind": "wild"})
+	# La torre militar es un POI con altura: la ruta en caracol de sus
+	# escaleras la guarda el mundo en _watchtower_climb.
+	var wtc = world.get("_watchtower_climb")
+	if wtc is Array and wtc.size() >= 2:
+		_poi_cache.append({"pos": (wtc as Array).back(), "kind": "tower", "route": wtc})
+	_poi_cache_built = true
+	return _poi_cache
+
+func _poi_id(p: Dictionary) -> String:
+	var pp: Vector3 = p["pos"]
+	return "%s:%d:%d" % [str(p.get("kind", "?")), int(pp.x), int(pp.z)]
+
+func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	var visited: Array = mem.get("visited", [])
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		if Vector2(pos.x - pp.x, pos.z - pp.z).length() < 12.0:
+			var id := _poi_id(p)
+			if not visited.has(id):
+				visited.append(id)
+	mem["visited"] = visited
+	b["_visited"] = visited
+
+# Elige el siguiente destino de exploracion como haria un jugador: prefiere
+# sitios no visitados, acordes a su rol (el bandido tira a zonas militares y
+# ciudad), cercanos, y nunca el lugar donde murio la ultima vez.
+func _choose_explore_target(b: Dictionary) -> Vector3:
+	var pois := _explore_pois()
+	if pois.is_empty():
+		return Vector3.INF
+	var proxy: Node3D = b["proxy"]
+	var mem: Dictionary = b.get("_mem", {})
+	var visited: Array = mem.get("visited", [])
+	var death_pos: Vector3 = mem.get("last_death_pos", Vector3.INF)
+	var hostile := str(b["faction"]) == "hostile"
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var best := Vector3.INF
+	var best_score := -1e9
+	var best_p: Dictionary = {}
+	# Dos pasadas: primero solo sitios no visitados; si ya los vio todos, cualquiera.
+	for pass_i in range(2):
+		for p in pois:
+			var pp: Vector3 = p["pos"]
+			if pass_i == 0 and visited.has(_poi_id(p)):
+				continue
+			if death_pos != Vector3.INF and Vector2(pp.x - death_pos.x, pp.z - death_pos.z).length() < 70.0:
+				continue
+			var kind := str(p["kind"])
+			var w := 1.0
+			if hostile:
+				# El soldado monta guardia en la torre: la valora mucho.
+				w = 3.0 if kind == "tower" else (2.2 if kind in ["military", "city"] else 0.6)
+			else:
+				w = 0.4 if kind == "tower" else (1.6 if kind in ["house", "military"] else 1.0)
+			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
+			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 45.0)
+			if score > best_score:
+				best_score = score
+				best = pp
+				best_p = p
+		if best != Vector3.INF:
+			break
+	if str(best_p.get("kind", "")) == "tower" and best_p.get("route") is Array:
+		b["climb_route"] = best_p["route"]
+		b["climb_i"] = -1
+		b["climb_down"] = false
+		b["climb_dwell"] = 0.0
+	return best
 
 func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -803,8 +1072,14 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 				proxy.set_meta("saved_inventory", inv)
 				b["eat_cooldown"] = 8.0
 				break
-	# Comer si tiene hambre o necesita recuperar vida
-	if (float(b["hunger"]) < 60.0 or float(b["health"]) < 80.0) and float(b["eat_cooldown"]) <= 0.0:
+	# Comer si tiene hambre o necesita recuperar vida. Si ya murio de inanicion
+	# aprendio a no apurar: come antes de llegar al limite.
+	var hunger_line := 60.0 + (16.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
+	# Orden directa del líder "come": come la mejor comida aunque no tenga hambre
+	var force_eat := bool(b.get("forced_eat", false))
+	if force_eat:
+		b["forced_eat"] = false
+	if (force_eat or float(b["hunger"]) < hunger_line or float(b["health"]) < 80.0) and float(b["eat_cooldown"]) <= 0.0:
 		var desperate := float(b["hunger"]) < 28.0
 		for i in range(inv.size()):
 			var it = inv[i]
@@ -840,9 +1115,10 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			it["quantity"] = int(it.get("quantity", 1)) - 1
 			if int(it["quantity"]) <= 0:
 				inv.remove_at(i)
-			# Una botella llena deja la botella vacia reutilizable
-			if nm == "Botella de agua llena":
-				inv.append({"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
+			# Una botella llena deja la vacia reutilizable; un humano guarda un
+			# par para rellenar y tira el resto — sin tope la mochila se llena.
+			if nm == "Botella de agua llena" and _bot_item_count(proxy, "Botella de plastico") < 2:
+				_bot_add_inventory_item(inv, {"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
 			b["thirst"] = minf(100.0, float(b["thirst"]) + maxf(30.0, float(it.get("use_value", 40.0))))
 			proxy.set_meta("saved_inventory", inv)
 			proxy.set_meta("saved_thirst", float(b["thirst"]))
@@ -852,15 +1128,15 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	_auto_equip_best_gear(b)
 
 func _auto_equip_best_gear(b: Dictionary) -> void:
-	# Los supervivientes IA conservan siempre su ropa del preview de inicio
-	# (Camiseta, Pantalones y Zapatillas con sus colores/camuflaje del menu);
-	# solo equipan mochila si saquean una en el mundo.
+	# Como un jugador real: empiezan con la ropa de su preview de inicio y van
+	# mejorando cada pieza que saquean. Aprenden que la ropa de piel es la
+	# mejor (prioridad 6 en CLOTHING_PRIORITY) y se la quedan puesta.
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	if str(b["clothing"]) != "Camiseta,Pantalones,Zapatillas":
-		b["clothing"] = "Camiseta,Pantalones,Zapatillas"
-		proxy.set_meta("saved_clothing", "Camiseta,Pantalones,Zapatillas")
-	for it in inv:
+	var worn: Array = str(b["clothing"]).split(",")
+	var worn_changed := false
+	var to_remove: Array = []
+	for it in inv.duplicate():
 		if not (it is Dictionary):
 			continue
 		var nm := str(it.get("name", ""))
@@ -868,6 +1144,45 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 		if tp == "backpack" and (nm == "Mochila militar" or (nm == "Mochila pequena" and str(b["backpack"]).is_empty())):
 			b["backpack"] = nm
 			proxy.set_meta("saved_backpack", nm)
+		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm):
+			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
+			var cur := _worn_in_slot(worn, slot)
+			if int(CLOTHING_PRIORITY.get(nm, 0)) > int(CLOTHING_PRIORITY.get(cur, 0)):
+				worn = _swap_worn_slot(worn, slot, nm)
+				if not cur.is_empty():
+					_bot_add_inventory_item(inv, {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0})
+				it["quantity"] = int(it.get("quantity", 1)) - 1
+				if int(it["quantity"]) <= 0:
+					to_remove.append(it)
+				worn_changed = true
+				if nm.contains("piel"):
+					(b.get("_mem", {}) as Dictionary)["gear_learned"] = true
+	for it in to_remove:
+		inv.erase(it)
+	if worn_changed:
+		b["clothing"] = ",".join(worn)
+		proxy.set_meta("saved_clothing", b["clothing"])
+		proxy.set_meta("saved_inventory", inv)
+
+func _worn_in_slot(worn: Array, slot: String) -> String:
+	for nm in worn:
+		if str(PlayerController.CLOTHING_SLOTS.get(nm, "")) == slot:
+			return nm
+	return ""
+
+func _swap_worn_slot(worn: Array, slot: String, new_nm: String) -> Array:
+	var out: Array = []
+	var placed := false
+	for nm in worn:
+		if str(PlayerController.CLOTHING_SLOTS.get(nm, "")) == slot:
+			if not placed:
+				out.append(new_nm)
+				placed = true
+		else:
+			out.append(nm)
+	if not placed:
+		out.append(new_nm)
+	return out
 
 func _find_threatening_predator(b: Dictionary, max_dist: float) -> Node3D:
 	if world == null or world.get_tree() == null:
@@ -1026,7 +1341,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		return null
 	var proxy: Node3D = b["proxy"]
 	var aggro: Node3D = b.get("aggro_target")
-	if aggro != null and is_instance_valid(aggro) and not bool(aggro.get_meta("proxy_dead", false)) and not bool(aggro.get("is_dead")):
+	if aggro != null and is_instance_valid(aggro) and not bool(aggro.get_meta("proxy_dead", false)) and aggro.get("is_dead") != true:
 		if proxy.global_position.distance_to(aggro.global_position) < 60.0:
 			return aggro
 
@@ -1053,7 +1368,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 				best_d = d
 				best = p as Node3D
 		var local_p = world.get("player")
-		if local_p is Node3D and is_instance_valid(local_p) and not bool(local_p.get("is_dead")):
+		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
 			var in_sh_l := bool(local_p.get_meta("in_built_shelter", false))
 			var max_rl := 8.0 if in_sh_l else best_d
 			var dl := proxy.global_position.distance_to((local_p as Node3D).global_position)
@@ -1215,6 +1530,8 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 			b["aggro_target"] = attacker_node
 			b["aggro_timer"] = 30.0
 			_command_bot_wolf_against(b, attacker_node)
+	# Reescanear sentidos ya: reaccionar al agresor en el proximo tick, no en 0.2 s
+	b["sense_t"] = 0.0
 
 	# Reaccion visual sincronizada: el kind va directo a _net_player_hit_event,
 	# que ya distingue rifle (sangre + reaccion de disparo), melee, wolf_bite
@@ -1244,6 +1561,15 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
 	var bot_id := int(b["bot_id"])
+	# Aprendizaje persistente: recordar donde y por que murio para que su
+	# proxima vida no repita el error (zona peligrosa, necesidades, equipo).
+	var mem: Dictionary = _memory.get_or_add(bot_id, {})
+	mem["deaths"] = int(mem.get("deaths", 0)) + 1
+	mem["last_death_pos"] = proxy.global_position
+	mem["last_death_cause"] = death_kind
+	if death_kind == "starved":
+		mem["scarcity"] = true
+	mem["gear_learned"] = true # morir enseña: la buena equipacion importa
 	proxy.set_meta("proxy_dead", true)
 	proxy.remove_from_group("net_player_proxy")
 	proxy.add_to_group("interactable")
@@ -1265,12 +1591,16 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	_publish_bot_to_net_players(b)
 
 func _bot_has_drink(proxy: Node3D) -> bool:
+	return _bot_drink_count(proxy) > 0
+
+func _bot_drink_count(proxy: Node3D) -> int:
+	var total := 0
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary:
 			var nm := str(it.get("name", ""))
 			if str(it.get("type", "")) == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
-				return int(it.get("quantity", 1)) > 0
-	return false
+				total += int(it.get("quantity", 1))
+	return total
 
 func _respawn_bot(b: Dictionary) -> void:
 	var cfg: Dictionary = b["cfg"]
@@ -1293,7 +1623,7 @@ func _resolve_team_leader(b: Dictionary) -> Node3D:
 	if lid <= 0:
 		return null
 	var node := _find_actor_by_peer_id(lid)
-	if node == null or not is_instance_valid(node) or bool(node.get_meta("proxy_dead", false)) or bool(node.get_meta("disconnected", false)) or bool(node.get("is_dead")):
+	if node == null or not is_instance_valid(node) or bool(node.get_meta("proxy_dead", false)) or bool(node.get_meta("disconnected", false)) or node.get("is_dead") == true:
 		return null
 	return node
 
@@ -1369,7 +1699,50 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		_apply_local_avatar_metadata(b)
 		return "%s se ha unido a tu equipo (te sigue y te cubre)." % bname
 
-	# Ya está en el equipo de este jugador: ciclar orden (Sígueme -> Quieto -> Libre)
+	# Ya está en el equipo de este jugador: órdenes directas tipo menú de lobo
+	if mode == "follow" or mode == "stay":
+		b["follow_mode"] = mode
+		if mode == "stay":
+			b["stay_pos"] = proxy.global_position
+		b["sitting"] = false
+		proxy.set_meta("bot_follow_mode", mode)
+		_publish_bot_to_net_players(b)
+		_apply_local_avatar_metadata(b)
+		return "%s: '¡En marcha, te sigo!'" % bname if mode == "follow" else "%s: 'Me quedo vigilando esta posición.'" % bname
+	if mode == "eat":
+		var inv_eat: Array = proxy.get_meta("saved_inventory", [])
+		var has_food := false
+		for it in inv_eat:
+			if it is Dictionary and str(it.get("type", "")) == "food" and int(it.get("quantity", 1)) > 0:
+				has_food = true
+				break
+		if not has_food:
+			return "%s no tiene comida en la mochila." % bname
+		b["forced_eat"] = true
+		b["eat_cooldown"] = 0.0
+		return "%s: 'De acuerdo, como algo.'" % bname
+	if mode == "equip":
+		b["equip_mission"] = true
+		b["sense_t"] = 0.0
+		return "%s: 'Voy a recoger el mejor equipo que haya por aquí.'" % bname
+	if mode.begins_with("give:"):
+		var gname := mode.substr(5).get_slice("|", 0)
+		var gtype := mode.substr(5).get_slice("|", 1) if "|" in mode else "resource"
+		if gname.is_empty():
+			return ""
+		var inv_give: Array = proxy.get_meta("saved_inventory", [])
+		_bot_add_inventory_item(inv_give, {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0})
+		proxy.set_meta("saved_inventory", inv_give)
+		_auto_equip_best_gear(b)
+		var best_w2 := _best_weapon_name(proxy)
+		if not best_w2.is_empty() and not bool(b["torch_lit"]):
+			b["held_item"] = best_w2
+			proxy.set_meta("saved_held_item", best_w2)
+		_publish_bot_to_net_players(b)
+		_apply_local_avatar_metadata(b)
+		return "Le das %s a %s." % [gname, bname]
+
+	# Ciclar orden (Sígueme -> Quieto -> Libre)
 	if mode == "dismiss":
 		b["team_leader_id"] = 0
 		proxy.set_meta("team_leader_id", 0)
@@ -1417,6 +1790,7 @@ func notify_leader_combat(leader_id: int, target_node: Node3D) -> void:
 			b["aggro_timer"] = 25.0
 			b["follow_mode"] = "follow"
 			b["sitting"] = false
+			b["sense_t"] = 0.0
 
 func _command_bot_wolf_against(b: Dictionary, target: Node3D) -> void:
 	if world == null or world.get_tree() == null or target == null or not is_instance_valid(target):
@@ -1426,6 +1800,13 @@ func _command_bot_wolf_against(b: Dictionary, target: Node3D) -> void:
 		if is_instance_valid(w) and not bool(w.get("_is_dead")) and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
 			if w.has_method("notify_threat"):
 				w.notify_threat(target, 20.0)
+
+# Lee un nodo cacheado por el sentido escalonado descartando referencias muertas.
+func _sensed_node(b: Dictionary, key: String) -> Node3D:
+	var n = b.get(key, null)
+	if n != null and is_instance_valid(n):
+		return n as Node3D
+	return null
 
 func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	if world == null or not ("_dropped_items" in world):
@@ -1452,6 +1833,9 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		var tp := str(entry.get("type", ""))
 		if not _is_loot_desirable(b, nm, tp):
 			continue
+		# Orden "equip": solo armas, ropa y mochilas — comida y materiales no
+		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp):
+			continue
 		var pos := _loot_entry_pos(entry)
 		var d_sq := proxy.global_position.distance_squared_to(pos)
 		if d_sq < best_d_sq:
@@ -1460,15 +1844,107 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	return best
 
 func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
-	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "ammo", "medical", "food", "water", "tool_matches"]:
+	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "ammo", "medical", "food", "tool_matches"]:
 		return true
+	# Bebida: solo mientras le falte — sin tope el bot saquearia botellas
+	# sin fin y su mochila se llenaria de agua (bug de acumulacion en vivo)
+	if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
+		return _bot_drink_count(b["proxy"]) < 4
 	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje"] or nm.begins_with("Piel de "):
 		return true
 	if tp == "backpack" and nm == "Mochila militar" and str(b["backpack"]) != "Mochila militar":
 		return true
 	if tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm):
-		return int(CLOTHING_PRIORITY.get(nm, 0)) >= 4
+		var slot := str(PlayerController.CLOTHING_SLOTS[nm])
+		var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
+		var pr := int(CLOTHING_PRIORITY.get(nm, 0))
+		# Mejora real sobre lo que lleva puesto; y una vez aprendio, cualquier
+		# ropa decente (>=4) interesa como repuesto.
+		return pr > int(CLOTHING_PRIORITY.get(cur, 0)) or (bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4)
 	return false
+
+# Equipo vestible/usable: lo que la orden "equip" debe buscar en el suelo.
+func _is_gear_item(nm: String, tp: String) -> bool:
+	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "backpack", "clothing"]:
+		return true
+	return PlayerController.CLOTHING_SLOTS.has(nm) or nm.begins_with("Mochila")
+
+# Sube o baja una ruta de peldaños (torre militar, pisos): movimiento directo
+# entre waypoints, el sondeo de _ground_y lo pega a la rampa/piso real.
+func _tick_bot_climb(b: Dictionary, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	var route: Array = b["climb_route"]
+	var pos := proxy.global_position
+	var ci := int(b.get("climb_i", -1))
+	var step := 2.2 * delta
+	if ci < 0:
+		# La ruta ya no tiene destino de exploracion (p.ej. se abandono por
+		# atasco): soltar la escalada en vez de insistir para siempre.
+		if b.get("explore_target", Vector3.INF) == Vector3.INF:
+			b["climb_route"] = []
+			return
+		# Aproximacion al pie de la escalera: lejos usa la nav normal, ya cerca
+		# va directo para que el bloqueador de la torre no lo rechace.
+		var foot: Vector3 = route[0]
+		var dist := Vector2(foot.x - pos.x, foot.z - pos.z).length()
+		if dist > 8.0:
+			_move_bot_towards(b, foot, 3.4, delta, "walk")
+			return
+		if dist > 0.9:
+			var dir := Vector3(foot.x - pos.x, 0, foot.z - pos.z) / maxf(dist, 0.001)
+			var np0 := pos + dir * minf(3.0 * delta, dist)
+			np0.y = _ground_y(np0.x, np0.z, pos.y)
+			proxy.global_position = np0
+			b["rot"] = lerp_angle(float(b["rot"]), atan2(-dir.x, -dir.z), minf(1.0, delta * 8.0))
+			proxy.rotation.y = float(b["rot"])
+			b["anim"] = "walk"
+			b["_speed"] = 3.0
+			return
+		b["climb_i"] = 0
+		return
+	# En lo alto monta guardia un rato, como haria un vigia, y luego baja
+	var dwell := float(b.get("climb_dwell", 0.0))
+	if dwell > 0.0:
+		b["climb_dwell"] = dwell - delta
+		b["anim"] = "idle"
+		if float(b["climb_dwell"]) <= 0.0:
+			b["climb_down"] = true
+		return
+	var wp: Vector3 = route[clampi(ci, 0, route.size() - 1)]
+	var flat := Vector2(pos.x, pos.z).distance_to(Vector2(wp.x, wp.z))
+	var np := pos.move_toward(Vector3(wp.x, pos.y, wp.z), minf(step, flat))
+	var gy := _ground_y(np.x, np.z, pos.y)
+	# Si el sondeo quedo muy lejos de la cota esperada (salio de la rampa por el
+	# hueco), interpolar desde la altura actual hacia la cota del waypoint.
+	np.y = move_toward(pos.y, wp.y, step) if absf(gy - wp.y) > 1.5 else gy
+	proxy.global_position = np
+	proxy.set_meta("saved_pos", np)
+	var mv := np - pos
+	mv.y = 0.0
+	if mv.length() > 0.001:
+		b["rot"] = lerp_angle(float(b["rot"]), atan2(-mv.x, -mv.z), minf(1.0, delta * 8.0))
+		proxy.rotation.y = float(b["rot"])
+	b["anim"] = "walk"
+	b["_speed"] = 2.2
+	if flat > 0.55 or absf(np.y - wp.y) > 1.2:
+		return
+	if bool(b.get("climb_down", false)):
+		var ni := ci - 1
+		if ni < 0:
+			b["climb_i"] = -1
+			b["climb_down"] = false
+			b["climb_route"] = []
+			b["explore_target"] = Vector3.INF
+			b["explore_dwell"] = randf_range(2.0, 6.0)
+		else:
+			b["climb_i"] = ni
+		return
+	var ni2 := ci + 1
+	if ni2 >= route.size():
+		b["climb_dwell"] = randf_range(30.0, 75.0)
+		_mark_poi_visited(b, wp)
+	else:
+		b["climb_i"] = ni2
 
 func _loot_entry_pos(entry: Dictionary) -> Vector3:
 	var p = entry.get("pos", Vector3.ZERO)
@@ -1482,8 +1958,26 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
 		return
+	# La entrada viene de la cache de sentidos: otro bot pudo recogerla
+	# hace 0.2 s. Revalidar que sigue en el mundo antes de duplicar el item.
+	var still_there := false
+	if "_dropped_items" in world:
+		for e2 in world._dropped_items:
+			if e2 is Dictionary and str(e2.get("id", "")) == id:
+				still_there = true
+				break
+	if not still_there or ("_depleted_action_ids" in world and world._depleted_action_ids.has(id)):
+		b["_s_loot"] = {}
+		return
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
+	# Mochila llena: solo equipo — evita hinchar el inventario hasta la muerte
+	# (al morir suelta TODO al mundo y el servidor se llenaria de drops).
+	var enm := str(entry.get("name", ""))
+	var etp := str(entry.get("type", "resource"))
+	if inv.size() >= 60 and not _is_gear_item(enm, etp):
+		b["_s_loot"] = {}
+		return
 	var item_dict := {
 		"name": str(entry.get("name", "")),
 		"type": str(entry.get("type", "resource")),
@@ -1501,7 +1995,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 		proxy.set_meta("saved_held_item", best_w)
 
 	if world.has_method("_net_world_action_completed"):
-		world._net_world_action_completed(id, _loot_entry_pos(entry), 0)
+		world._net_world_action_completed(id, [], "", _loot_entry_pos(entry), 0)
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
@@ -1530,6 +2024,7 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 	var yaw := float(b["rot"])
 	b["shelter_id"] = sh_id
 	b["shelter_pos"] = pos
+	b["no_fire_spot"] = false
 	if world.has_method("_spawn_player_shelter_with_id"):
 		world._spawn_player_shelter_with_id(sh_id, pos, yaw, has_pelts, has_camo)
 	var net = world.get("net")
@@ -1615,6 +2110,13 @@ func _is_step_blocked(from_pos: Vector3, to_pos: Vector3) -> bool:
 func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	var cur := proxy.global_position
+	# Inercia como un jugador: tras una pausa >0.5 s arranca desde parado, sin
+	# saltos bruscos de velocidad ni giros instantaneos.
+	var now := float(Time.get_ticks_msec()) / 1000.0
+	if now - float(b.get("_last_move_t", -99.0)) > 0.5:
+		b["_speed"] = 0.0
+		b["_mdir"] = Vector3.ZERO
+	b["_last_move_t"] = now
 	var next_goal := goal
 	b["path_timer"] = float(b["path_timer"]) - delta
 	var flat_dist := Vector2(goal.x - cur.x, goal.z - cur.z).length()
@@ -1652,15 +2154,29 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 		b["anim"] = "idle"
 		return
 	var dir := to_next / d
-	# Sumar repulsion suave de bloqueadores cercanos para rodear muros/arboles/rocas con fluidez
+	# Sumar repulsion suave de bloqueadores cercanos para rodear muros/arboles/
+	# rocas con fluidez. El vector se cachea ~0.15 s por bot: recorrer toda la
+	# lista de bloqueadores a 60 Hz por bot era coste inutil.
 	if world != null and world.has_method("get_wildlife_avoidance_vector_at"):
-		var avoid_vec: Variant = world.get_wildlife_avoidance_vector_at(cur)
-		if avoid_vec is Vector3 and (avoid_vec as Vector3).length_squared() > 0.001:
-			var av := (avoid_vec as Vector3)
-			av.y = 0.0
+		b["avoid_t"] = float(b.get("avoid_t", 0.0)) - delta
+		if float(b["avoid_t"]) <= 0.0:
+			b["avoid_t"] = 0.15
+			b["_avoid"] = world.get_wildlife_avoidance_vector_at(cur)
+		var av: Vector3 = b.get("_avoid", Vector3.ZERO)
+		av.y = 0.0
+		if av.length_squared() > 0.001:
 			dir = (dir + av.normalized() * 0.55).normalized()
-	var step := minf(speed * delta, d)
-	var chosen_dir := dir
+	# Suavizado de rumbo y aceleracion: nada de avances a trompicones; el bot
+	# gira y acelera progresivamente como el CharacterBody del jugador.
+	var sm: Vector3 = b.get("_mdir", Vector3.ZERO)
+	sm = sm + (dir - sm) * minf(1.0, delta * 7.0)
+	if sm.length_squared() > 0.001:
+		sm = sm.normalized()
+	b["_mdir"] = sm
+	var spd := move_toward(float(b.get("_speed", 0.0)), speed, delta * 6.5)
+	b["_speed"] = spd
+	var step := minf(spd * delta, d)
+	var chosen_dir := sm if sm.length_squared() > 0.001 else dir
 	var new_pos := cur + chosen_dir * step
 	# Si el paso frontal choca contra un obstaculo/agua, tantear angulos libres
 	if _is_step_blocked(cur, new_pos) and not _is_pos_blocked(cur, 0.25):
@@ -1680,7 +2196,7 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 			b["avoid_sign"] = -sign_pref
 			b["path"] = []
 			b["path_timer"] = 0.0
-	new_pos.y = _ground_y(new_pos.x, new_pos.z)
+	new_pos.y = _ground_y(new_pos.x, new_pos.z, cur.y)
 	proxy.global_position = new_pos
 	proxy.set_meta("saved_pos", new_pos)
 	b["pos"] = new_pos
@@ -1710,6 +2226,11 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 			else:
 				b["stuck_count"] = 0
 				b["path"] = []
+				# Rendirse como un humano: si el destino es inalcanzable (casa
+				# cerrada, interior bloqueado), abandona el objetivo y sigue.
+				if b.get("explore_target", Vector3.INF) != Vector3.INF:
+					b["explore_target"] = Vector3.INF
+					b["explore_dwell"] = 0.0
 				var pat: Array = b.get("patrol", [])
 				if not pat.is_empty():
 					b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
@@ -1796,7 +2317,7 @@ func _bot_add_inventory_item(inv: Array, item_dict: Dictionary) -> void:
 	var nm := str(item_dict.get("name", ""))
 	var tp := str(item_dict.get("type", "resource"))
 	var qty := int(item_dict.get("quantity", 1))
-	if tp in ["food", "resource", "material", "medical", "ammo"]:
+	if tp in ["food", "resource", "material", "medical", "ammo", "water", "misc"]:
 		for it in inv:
 			if it is Dictionary and str(it.get("name", "")) == nm:
 				it["quantity"] = int(it.get("quantity", 1)) + qty

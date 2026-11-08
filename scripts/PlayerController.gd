@@ -11953,7 +11953,7 @@ func get_interaction_text(viewer = null) -> String:
 	elif leader_id == my_id:
 		var state_lbl := "Siguiéndote" if fmode == "follow" else "Vigilando posición"
 		var next_lbl := "Ordenar quedarse quieto" if fmode == "follow" else "Dejar libre / Sígueme"
-		return "%s [Equipo: %s] - [F] %s" % [bname, state_lbl, next_lbl]
+		return "%s [Equipo: %s] - [F] %s - [O] Órdenes" % [bname, state_lbl, next_lbl]
 	return "%s (En equipo con otro superviviente)" % bname
 
 func interact(_player: Node) -> void:

@@ -1100,7 +1100,8 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_O and not player.is_sleeping and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
-			_open_wolf_menu()
+			if not _try_open_bot_menu():
+				_open_wolf_menu()
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_ESCAPE:
@@ -5512,6 +5513,7 @@ var _loot_dead_peer_id := -1
 var _loot_items: Array = []
 # ---------- Menú de órdenes del lobo domesticado ----------
 
+var _watchtower_climb: Array = []
 var _wolf_menu: PanelContainer = null
 var _wolf_menu_wolf: Node = null
 var _wolf_hp_bar: ProgressBar = null
@@ -5706,6 +5708,100 @@ func _my_tamed_wolf() -> Node:
 
 # Menú de órdenes sin apuntar (tecla O): abre el panel sobre el lobo propio
 # más cercano; si ya está abierto lo cierra (contextual).
+# Menú de órdenes del superviviente aliado (mismo panel que el del lobo):
+# seguir/quedarse, equiparte con lo del suelo, comer, dar objeto en mano, libre.
+func _try_open_bot_menu() -> bool:
+	if player == null or not is_instance_valid(player) or player.is_dead:
+		return false
+	var my_id: int = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+	var best: Node3D = null
+	var best_d := 10.0
+	var pools: Array = [remote_players.values()]
+	if not server_proxies.is_empty():
+		pools.append(server_proxies.values())
+	for pool in pools:
+		for rp in pool:
+			if not (rp is Node3D) or not is_instance_valid(rp):
+				continue
+			if not bool(rp.get_meta("is_ai_bot", false)) or bool(rp.get_meta("proxy_dead", false)):
+				continue
+			if int(rp.get_meta("team_leader_id", 0)) != my_id:
+				continue
+			var d: float = player.global_position.distance_to((rp as Node3D).global_position)
+			if d < best_d:
+				best_d = d
+				best = rp as Node3D
+	if best == null:
+		return false
+	_open_bot_menu(best)
+	return true
+
+func _open_bot_menu(bot: Node3D) -> void:
+	if hud == null:
+		return
+	_close_wolf_orders()
+	_wolf_menu_wolf = null
+	var bot_id := int(bot.get_meta("bot_id", bot.get_meta("peer_id", 0)))
+	var bname := str(bot.get_meta("bot_name", "Superviviente"))
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(330, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.07, 0.05, 0.94)
+	style.set_corner_radius_all(6)
+	style.set_border_width_all(1)
+	style.border_color = Color(0.35, 0.45, 0.28)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.position = Vector2(280, 120)
+	panel.z_index = 60
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "%s — órdenes de equipo" % bname
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.9, 0.95, 0.75))
+	vbox.add_child(title)
+	var stats := Label.new()
+	var hp := int(bot.get_meta("proxy_health", bot.get_meta("saved_health", 100)))
+	stats.text = "Salud %d%%  ·  Hambre %d%%  ·  Sed %d%%" % [hp, int(bot.get_meta("saved_hunger", 100)), int(bot.get_meta("saved_thirst", 100))]
+	stats.add_theme_font_size_override("font_size", 13)
+	stats.add_theme_color_override("font_color", Color(0.78, 0.82, 0.68))
+	vbox.add_child(stats)
+	var sep := HSeparator.new()
+	vbox.add_child(sep)
+	for order in [["Seguirme", "follow"], ["Quedarse vigilando", "stay"], ["Equípate con lo mejor del suelo", "equip"], ["Come algo", "eat"], ["Dar objeto en mano", "give"], ["Dejar libre", "dismiss"]]:
+		var btn := Button.new()
+		btn.text = order[0]
+		var m: String = order[1]
+		btn.pressed.connect(func(): _bot_order_send(bot_id, m))
+		vbox.add_child(btn)
+	hud.add_child(panel)
+	_wolf_menu = panel
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _bot_order_send(bot_id: int, mode: String) -> void:
+	if mode == "give":
+		var held = player.get_held_item() if player != null else null
+		if held == null:
+			if player != null:
+				player.notice.emit("No llevas nada en la mano para darle.")
+			return
+		mode = "give:%s|%s" % [str(held.item_name), str(held.item_type)]
+		# El objeto sale de tu inventario y pasa a la mochila del superviviente
+		var idx: int = player.inventory.items.find(held)
+		if idx >= 0:
+			player.inventory.remove_index(idx, 1)
+		player._sync_held_item()
+		player.play_action_animation("give", 1.4)
+		if has_method("_sync_local_player_inventory"):
+			call_deferred("_sync_local_player_inventory")
+	if net != null and net.is_connected and not net.is_host and net.has_method("command_survivor_bot"):
+		net.command_survivor_bot.rpc_id(1, bot_id, mode)
+	else:
+		var my_id: int = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+		_net_command_survivor_bot(bot_id, mode, my_id)
+	_close_wolf_orders()
+
 func _open_wolf_menu() -> void:
 	if _wolf_menu != null:
 		_close_wolf_orders()
@@ -9106,6 +9202,12 @@ func _build_military_watchtower_collision(tower_pos: Vector3, tower_scale: Vecto
 	_watchtower_box(solid, Vector3(-1.84, 13.05, 1.25), Vector3(0.08, 4.10, 1.26))
 	_watchtower_box(solid, Vector3(-1.84, 14.68, 0.0), Vector3(0.08, 0.84, 1.24))
 	_watchtower_box(solid, Vector3(0.0, 15.05, 0.0), Vector3(3.76, 0.16, 3.76))
+	# Ruta en caracol para la IA: apoyos sobre las cinco rampas y la cubierta,
+	# en el mismo orden en que un jugador subiria la escalera.
+	var wps: Array = []
+	for lp in [Vector3(0.55, 1.10, -2.5), Vector3(-0.3, 1.12, -2.5), Vector3(-1.9, 2.01, -2.5), Vector3(-2.5, 2.02, -2.0), Vector3(-2.5, 4.25, 1.9), Vector3(-1.9, 4.25, 2.5), Vector3(1.9, 6.49, 2.5), Vector3(2.5, 6.5, 1.6), Vector3(2.5, 8.73, -1.68), Vector3(1.9, 8.73, -2.5), Vector3(-1.92, 10.99, -2.5), Vector3(0.0, 11.05, -0.4)]:
+		wps.append(rig.global_transform * lp)
+	_watchtower_climb = wps
 
 func _watchtower_box(body: StaticBody3D, center: Vector3, size: Vector3) -> void:
 	var cs := CollisionShape3D.new()

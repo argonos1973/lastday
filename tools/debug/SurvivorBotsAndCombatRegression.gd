@@ -63,6 +63,8 @@ class TestWorld extends "res://scripts/Main.gd":
 		return river_segs
 	func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		hit_events.append({"id": peer_id, "kind": kind, "pos": pos})
+	func _net_world_action_completed(_a: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+		return true
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -140,6 +142,17 @@ func run() -> void:
 	check(mgr.bots.has(901) and mgr.bots.has(902) and mgr.bots.has(903), "IDs 901, 902 y 903 registrados")
 	check(str(mgr.bots[901]["faction"]) == "friendly" and str(mgr.bots[902]["faction"]) == "friendly" and str(mgr.bots[903]["faction"]) == "hostile",
 		"2 aliados cooperativos y 1 bandido hostil")
+	# Cada superviviente aparece aleatoriamente en una de las zonas de spawn
+	# de jugadores (_spawn_zones del mundo), no en un punto fijo.
+	var zones: Array = world.get("_spawn_zones")
+	for bid in [901, 902, 903]:
+		var bp: Vector3 = mgr.bots[bid]["pos"]
+		var in_zone := false
+		for z in zones:
+			if Vector2(bp.x - (z as Vector3).x, bp.z - (z as Vector3).z).length() <= 4.5:
+				in_zone = true
+				break
+		check(in_zone, "Bot %d spawnea aleatoriamente dentro de una zona de spawn (%.0f,%.0f)" % [bid, bp.x, bp.z])
 
 	# --- 3) Construccion de refugio + camuflaje/pieles + fogata y antorcha nocturna ---
 	var kael: Dictionary = mgr.bots[903]
@@ -229,6 +242,13 @@ func run() -> void:
 	check(not world.road_rect.has_point(Vector2(bad_camp.x, bad_camp.z)),
 		"El punto de campamento elegido evita la carretera (%.0f,%.0f)" % [bad_camp.x, bad_camp.z])
 	world.road_rect = Rect2(200000.0, 200000.0, 4.0, 4.0)
+	# Un campamento preferido en medio del pueblo nunca se usa: el espiral lo
+	# reubica fuera del nucleo urbano (>=78 m del origen).
+	var village_camp: Vector3 = mgr._find_valid_camp_spot(Vector3(5.0, 0.0, 5.0), Vector3(5.0, 0.0, 5.0))
+	check(Vector2(village_camp.x, village_camp.z).length() >= 78.0,
+		"Campamento preferido dentro del pueblo se reubica fuera (dist=%.0f m)" % Vector2(village_camp.x, village_camp.z).length())
+	check(mgr._is_settled_area(Vector3(10.0, 0.0, 10.0)) and not mgr._is_settled_area(village_camp),
+		"_is_settled_area rechaza la plaza del pueblo y acepta el bosque encontrado")
 
 	# --- 8) Anti-atascos: caminando en llano durante >2s NO dispara falso atasco; en agua salta al siguiente ---
 	var carlos: Dictionary = mgr.bots[902]
@@ -294,6 +314,31 @@ func run() -> void:
 	check(bool(carlos_proxy.get_meta("proxy_dead", false)) and str(carlos["anim"]) == "dead",
 		"El superviviente muere de hambre/sed y queda como cadaver sincronizado")
 
+	# --- 10b) Aprendizaje persistente: recuerda la muerte y no repite el error ---
+	var mem902: Dictionary = mgr._memory.get(902, {})
+	check(int(mem902.get("deaths", 0)) == 1 and str(mem902.get("last_death_cause", "")) == "starved" and bool(mem902.get("scarcity", false)),
+		"La muerte por inanicion queda grabada en la memoria persistente del personaje")
+	mgr._respawn_bot(carlos)
+	var carlos2: Dictionary = mgr.bots[902]
+	check(carlos2 != null and bool((carlos2.get("_mem", {}) as Dictionary).get("scarcity", false)) and float(carlos2.get("caution_until", 0.0)) > 0.0,
+		"El respawn conserva el aprendizaje (scarcity + cautela temporal)")
+
+	# --- 10c) Aprende que la ropa de piel es la mejor equipacion ---
+	var e_inv2: Array = elena_proxy.get_meta("saved_inventory", [])
+	e_inv2.append({"name": "Chaqueta de piel", "type": "clothing", "weight": 1.4, "quantity": 1, "use_value": 0.0})
+	e_inv2.append({"name": "Pantalones de piel", "type": "clothing", "weight": 1.0, "quantity": 1, "use_value": 0.0})
+	elena_proxy.set_meta("saved_inventory", e_inv2)
+	mgr._auto_equip_best_gear(elena)
+	check(str(elena["clothing"]).contains("Chaqueta de piel") and str(elena["clothing"]).contains("Pantalones de piel"),
+		"El superviviente equipa la ropa de piel como mejor equipo (%s)" % str(elena["clothing"]))
+	check(bool((elena.get("_mem", {}) as Dictionary).get("gear_learned", false)),
+		"Aprende que la ropa de piel es la mejor (gear_learned)")
+
+	# --- 10d) Exploracion por puntos de interes del mundo ---
+	check(not mgr._explore_pois().is_empty(), "El mundo expone puntos de interes para explorar (%d)" % mgr._explore_pois().size())
+	var tgt: Vector3 = mgr._choose_explore_target(elena)
+	check(tgt != Vector3.INF, "Elige un destino de exploracion real (%.0f,%.0f)" % [tgt.x, tgt.z])
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")
@@ -308,6 +353,123 @@ func run() -> void:
 		kinds.append(str(ev["kind"]))
 	check("rifle" in kinds and "melee" in kinds and "wolf_bite" in kinds,
 		"Impactos de rifle/melee/mordisco emiten evento de reaccion sincronizado (%s)" % str(kinds))
+
+	# --- 12) Ordenes de equipo directas tipo lobo (menu [O]) ---
+	elena["team_leader_id"] = 1
+	elena["follow_mode"] = "stay"
+	var msg_follow: String = mgr.interact_with_bot(901, 1, "follow")
+	check(str(elena["follow_mode"]) == "follow", "Orden directa 'follow' pone al aliado a seguir (%s)" % msg_follow)
+	var msg_stay: String = mgr.interact_with_bot(901, 1, "stay")
+	check(str(elena["follow_mode"]) == "stay" and elena.get("stay_pos") is Vector3,
+		"Orden directa 'stay' fija guardia en la posicion actual (%s)" % msg_stay)
+	# El bandido hostil no acepta ordenes de equipo
+	var msg_k: String = mgr.interact_with_bot(903, 1, "follow")
+	check(str(msg_k).contains("hostil"), "El bandido hostil rechaza ordenes de equipo (%s)" % msg_k)
+
+	# --- 13) Dar objetos en mano: arma, ropa y mochila se equipan ---
+	var msg_gw: String = mgr.interact_with_bot(901, 1, "give:Fusil de asalto|weapon_rifle")
+	var e_inv3: Array = elena_proxy.get_meta("saved_inventory", [])
+	var has_rifle := false
+	for it3 in e_inv3:
+		if it3 is Dictionary and str(it3.get("name", "")) == "Fusil de asalto":
+			has_rifle = true
+	check(has_rifle and str(elena["held_item"]) == "Fusil de asalto",
+		"Dar un fusil en mano lo mete en su mochila y lo empuna (%s)" % msg_gw)
+	mgr.interact_with_bot(901, 1, "give:Mochila militar|backpack")
+	check(str(elena["backpack"]) == "Mochila militar",
+		"Dar una mochila militar se la equipa (%s)" % str(elena["backpack"]))
+	mgr.interact_with_bot(901, 1, "give:Guantes de piel|clothing")
+	check(str(elena["clothing"]).contains("Guantes de piel"),
+		"Dar ropa de piel se la pone como mejor equipo (%s)" % str(elena["clothing"]))
+
+	# --- 14) Orden "come": come de su mochila aunque no tenga mucha hambre ---
+	elena["hunger"] = 90.0
+	var e_inv4: Array = elena_proxy.get_meta("saved_inventory", [])
+	e_inv4.append({"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 0.0})
+	elena_proxy.set_meta("saved_inventory", e_inv4)
+	elena["eat_cooldown"] = 0.0
+	var msg_eat: String = mgr.interact_with_bot(901, 1, "eat")
+	check(bool(elena["forced_eat"]), "Orden 'come' marca al aliado para comer (%s)" % msg_eat)
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(float(elena["hunger"]) > 90.0, "El aliado come de su mochila al ordenarselo (hunger=%.0f)" % float(elena["hunger"]))
+	# Sin comida en la mochila, la orden lo dice claramente
+	elena_proxy.set_meta("saved_inventory", [])
+	check(str(mgr.interact_with_bot(901, 1, "eat")).contains("no tiene comida"),
+		"Orden 'come' sin comida informa de que la mochila esta vacia")
+
+	# --- 15) Orden "equip": solo recoge equipo (armas/ropa/mochila), no comida ---
+	world._dropped_items = [
+		{"id": "eq_food", "name": "Lata de fabada", "type": "food", "pos": elena_proxy.global_position + Vector3(1, 0, 0), "qty": 1, "weight": 0.5, "use": 0.0},
+		{"id": "eq_rifle", "name": "Rifle francotirador", "type": "weapon_rifle", "pos": elena_proxy.global_position + Vector3(2, 0, 0), "qty": 1, "weight": 3.5, "use": 0.0},
+	]
+	elena["equip_mission"] = true
+	var gear: Dictionary = mgr._find_nearby_valuable_loot(elena, 28.0)
+	check(str(gear.get("id", "")) == "eq_rifle",
+		"Orden 'equip' prioriza el arma del suelo e ignora la comida (%s)" % str(gear.get("id", "")))
+	elena["equip_mission"] = false
+	# Recogerla de verdad por la via normal de saqueo la mete en su inventario
+	mgr._collect_loot_entry(elena, gear)
+	var e_inv5: Array = elena_proxy.get_meta("saved_inventory", [])
+	var has_sr := false
+	for it5 in e_inv5:
+		if it5 is Dictionary and str(it5.get("name", "")) == "Rifle francotirador":
+			has_sr = true
+	check(has_sr, "El equipo recogido del suelo entra en la mochila del aliado")
+	world._dropped_items = []
+
+	# --- 16) Escaleras: sigue la ruta de peldaños de la torre hasta arriba y baja ---
+	var route: Array = []
+	for i in range(5):
+		route.append(Vector3(100.0 + i, 0.4 + i * 1.0, 100.0))
+	route.append(Vector3(105.0, 6.4, 105.0))
+	world._watchtower_climb = route
+	elena["team_leader_id"] = 0
+	elena["aggro_target"] = null
+	elena_proxy.global_position = Vector3(100.0, 0.375, 96.0)
+	elena["pos"] = elena_proxy.global_position
+	elena["climb_route"] = route
+	elena["climb_i"] = -1
+	elena["climb_down"] = false
+	elena["climb_dwell"] = 0.0
+	elena["explore_target"] = route.back()
+	var max_y := 0.0
+	for i in range(120):
+		mgr._tick_bot_climb(elena, 0.1)
+		max_y = maxf(max_y, elena_proxy.global_position.y)
+		if bool(elena["climb_down"]) or elena["climb_route"].is_empty():
+			break
+	check(max_y > 3.0, "El bot asciende por la ruta de peldaños de la torre (y max=%.2f)" % max_y)
+	check(float(elena["climb_dwell"]) > 0.0 or bool(elena["climb_down"]),
+		"Al llegar arriba monta guardia antes de bajar")
+	elena["climb_dwell"] = 0.01
+	for i in range(160):
+		mgr._tick_bot_climb(elena, 0.1)
+		if (elena["climb_route"] as Array).is_empty():
+			break
+	check((elena["climb_route"] as Array).is_empty() and absf(elena_proxy.global_position.y - 0.375) < 1.5,
+		"El bot baja la escalera completa y suelta la ruta al pie (y=%.2f)" % elena_proxy.global_position.y)
+	world._watchtower_climb = []
+
+	# --- 17) Botellas: se apilan, no se saquean de mas y las vacias no se acumulan ---
+	var inv_stack: Array = []
+	mgr._bot_add_inventory_item(inv_stack, {"name": "Botella de agua llena", "type": "water", "quantity": 1})
+	mgr._bot_add_inventory_item(inv_stack, {"name": "Botella de agua llena", "type": "water", "quantity": 1})
+	check(inv_stack.size() == 1 and int(inv_stack[0].get("quantity", 0)) == 2,
+		"Las botellas se apilan en una sola entrada de mochila (entradas=%d)" % inv_stack.size())
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 4, "use_value": 45.0},
+	])
+	for i in range(6):
+		elena["thirst"] = 10.0
+		elena["eat_cooldown"] = 0.0
+		mgr._maintain_bot_needs(elena, 0.1)
+	var empties := mgr._bot_item_count(elena_proxy, "Botella de plastico")
+	check(empties <= 2, "Las botellas vacias no se acumulan sin tope en la mochila (%d <= 2)" % empties)
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 5, "use_value": 45.0},
+	])
+	check(not mgr._is_loot_desirable(elena, "Botella de agua llena", "water"),
+		"Con bebida suficiente el bot deja de saquear botellas")
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
