@@ -4421,7 +4421,7 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon: String = "melee") -> void:
 	if not is_finite(amount) or amount <= 0.0:
 		return
-	if net == null or not net.is_host:
+	if net != null and net.is_connected and not net.is_host:
 		return
 	# Find target proxy: check active proxies first, then disconnected ones
 	var proxy: Node3D = null
@@ -5018,12 +5018,18 @@ func _process_pending_puppets() -> void:
 			avatar.third_person_ground_offset = player.third_person_ground_offset
 			if avatar.third_person_model != null:
 				avatar.third_person_model.position.y = player.third_person_ground_offset
-			# Apply pending appearance if available
+			# Apply pending appearance and clothing/held visuals immediately
 			var pid: int = avatar.get_meta("peer_id", -1)
 			if pid >= 0 and net != null and net.players.has(pid):
 				var pdata2: Dictionary = net.players[pid]
+				var Grooming = preload("res://scripts/CharacterGrooming.gd")
+				var wire_cn := str(pdata2.get("char_name", ""))
+				if pdata2.has("hair_style") or pdata2.has("beard_stage"):
+					wire_cn = Grooming.encode_identity(wire_cn, str(pdata2.get("hair_style", "")), int(pdata2.get("beard_stage", 0)))
 				if pdata2.has("top_color") and avatar.has_method("puppet_apply_appearance"):
-					avatar.puppet_apply_appearance(pdata2.get("char_name", ""), pdata2.get("top_color", Color(0.5,0.5,0.5)), pdata2.get("bottom_color", Color(0.3,0.3,0.3)), pdata2.get("shoes_color", Color(0.15,0.15,0.15)), pdata2.get("hair_color", Color(0.2,0.15,0.1)), pdata2.get("skin_color", Color(0.8,0.7,0.6)), pdata2.get("top_camo", false), pdata2.get("bottom_camo", false))
+					avatar.puppet_apply_appearance(wire_cn, pdata2.get("top_color", Color(0.5,0.5,0.5)), pdata2.get("bottom_color", Color(0.3,0.3,0.3)), pdata2.get("shoes_color", Color(0.15,0.15,0.15)), pdata2.get("hair_color", Color(0.2,0.15,0.1)), pdata2.get("skin_color", Color(0.8,0.7,0.6)), pdata2.get("top_camo", false), pdata2.get("bottom_camo", false))
+				if avatar.has_method("puppet_apply_visuals"):
+					avatar.puppet_apply_visuals(str(pdata2.get("equipped_clothing", "Camiseta,Pantalones,Zapatillas")), str(pdata2.get("held_item", "")), str(pdata2.get("equipped_backpack", "")), pdata2.get("clothing_colors", []))
 			ready.append(avatar)
 	for avatar in ready:
 		_pending_puppets.erase(avatar)
@@ -5162,6 +5168,8 @@ func _update_remote_players() -> void:
 			_spawn_remote_player(pid)
 			continue
 		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
+		if SurvivorBotManagerScript.is_bot_peer_id(int(pid)) or bool(data.get("is_ai_bot", false)):
+			target_pos.y = _get_exact_ground_y(target_pos.x, target_pos.z, target_pos.y + 3.0) - 0.025
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
 		var clothing: String = data.get("equipped_clothing", "")

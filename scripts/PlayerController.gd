@@ -1104,6 +1104,14 @@ func setup_as_puppet() -> void:
 	# give them damage hitboxes so rifle rays connect and headshots register.
 	add_to_group("remote_player")
 	_create_puppet_hitboxes()
+	# Reset cached puppet visual state so the first puppet_apply_visuals after
+	# model creation always equips clothing, held item, backpack and anim even
+	# if _update_remote_players ran while the puppet was in _pending_puppets.
+	_puppet_clothing = ""
+	_puppet_clothing_colors = []
+	_puppet_held = ""
+	_puppet_backpack = ""
+	_puppet_current_anim = ""
 	set_process(true)
 	set_process_input(false)
 	set_physics_process(false)
@@ -1234,6 +1242,14 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			third_person_animation_player.stop()
 		_puppet_current_anim = anim
 		return
+	# Do not let a 20 Hz locomotion/idle state snapshot cancel an active hit or
+	# shot reaction clip mid-flinch; clear _puppet_current_anim when the action
+	# timer ends so locomotion resumes seamlessly right after.
+	if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
+		var incoming_lower := anim.to_lower()
+		if not incoming_lower.contains("shot") and not incoming_lower.contains("hit") and not incoming_lower.contains("attack") and not incoming_lower.contains("punch"):
+			_update_puppet_ground_alignment(0.08)
+			return
 	if third_person_animation_player != null and anim != _puppet_current_anim:
 		var target := ""
 		# Try exact animation name first (both clients load same animations)
@@ -1309,6 +1325,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
 	if not is_puppet:
 		return
+	if third_person_model == null:
+		return
 	# If dead and naked swap not yet done, ensure pending is active
 	if is_dead and clothing.is_empty() and not _puppet_naked_pending:
 		if third_person_model != null and third_person_model.name != "NakedCorpse":
@@ -1362,6 +1380,8 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 		# Equip items in the new list
 		for ni in range(new_items.size()):
 			equip_clothing(new_items[ni], new_colors[ni], null, new_species[ni])
+		if _applied_appearance:
+			_apply_puppet_appearance()
 	# Update held item
 	if held_item != _puppet_held:
 		_puppet_held = held_item
@@ -1447,11 +1467,16 @@ func _apply_puppet_appearance() -> void:
 	var shoes_mi: MeshInstance3D = _find_mesh_in_third_person("Shoes")
 	if shoes_mi != null:
 		shoes_mi.material_override = MaterialFactory.make_clothing_material("shoes", _puppet_shoes_color)
-	# Apply skin color
+	# Apply skin color (shrink -8 mm like local player so skin never pokes through Tops/Bottoms)
+	_char_top_color = _puppet_top_color
+	_char_bottom_color = _puppet_bottom_color
+	_char_shoes_color = _puppet_shoes_color
+	_char_hair_color = _puppet_hair_color
+	_char_skin_color = _puppet_skin_color
 	for body_name in ["Desnudo_arms", "Desnudo_hands", "Desnudo_torso", "Desnudo_legs", "Desnudo_feet",
 			"Body_torso", "Body_arms", "Body_hands", "Body_legs", "Body_feet"]:
 		var bmi: MeshInstance3D = _find_mesh_in_third_person(body_name)
-		_tint_mesh(bmi, _puppet_skin_color, 0.9)
+		_tint_mesh(bmi, _puppet_skin_color, 0.9, -0.008)
 	# Apply hair color y peinado/barba del jugador remoto
 	var hair_mi: MeshInstance3D = _find_mesh_in_third_person("Hair")
 	_tint_mesh(hair_mi, _puppet_hair_color, 0.8)
@@ -1644,6 +1669,7 @@ func _process(delta: float) -> void:
 				third_person_action_animation = ""
 				third_person_action_start_offset = 0.0
 				_is_firing = false
+				_puppet_current_anim = ""
 		if not is_dead:
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
@@ -5512,17 +5538,12 @@ func _create_third_person_model() -> void:
 						var _def_color: Color = item.get_meta("clothing_color", Color(0, 0, 0, 0))
 						item.set_meta("clothing_camo", clothing_has_camo(str(item.item_name), item))
 						equip_clothing(str(item.item_name), _def_color, item)
-			else:
-				if is_clothing_model:
-					# Puppet: equip default clothing directly without inventory
-					equip_clothing("Camiseta")
-					equip_clothing("Pantalones")
-					equip_clothing("Zapatillas")
-				elif is_custom_character:
-					# Custom character puppet: equip default clothing
-					equip_clothing("Camiseta")
-					equip_clothing("Pantalones")
-					equip_clothing("Zapatillas")
+		else:
+			if is_clothing_model or is_custom_character:
+				# Puppet: equip default clothing directly without inventory
+				equip_clothing("Camiseta")
+				equip_clothing("Pantalones")
+				equip_clothing("Zapatillas")
 		if not is_puppet:
 			_create_third_person_item_slots()
 		else:
@@ -13350,6 +13371,10 @@ func _update_torch(delta: float) -> void:
 #region VIDA, DAÑO Y COMBATE
 func take_damage(amount: float, from_knife: bool = false, weapon: String = "melee") -> void:
 	if is_puppet:
+		if weapon == "rifle":
+			_play_shot_reaction()
+		else:
+			_play_hit_reaction(true)
 		var scene_node := get_tree().current_scene if is_inside_tree() else null
 		var net_node := scene_node.get_node_or_null("/root/NetworkManager") if scene_node != null else null
 		var peer_id: int = get_meta("peer_id", 0)
@@ -13628,32 +13653,38 @@ func _resolve_melee_strike(base_damage: float, is_knife: bool, attack_range: flo
 			else:
 				closest_target.take_damage(base_damage, is_knife)
 		elif closest_target.is_in_group("net_player_proxy"):
-			# Server proxy: apply damage directly on server
+			# Server proxy: route through _net_damage_player so AI bots and
+			# players get synchronized hit reactions, blood, aggro and death.
 			var peer_id: int = closest_target.get_meta("peer_id", 0)
-			var is_dead: bool = closest_target.get_meta("proxy_dead", false)
-			if not is_dead and peer_id != 0:
-				var hp: float = closest_target.get_meta("proxy_health", 100.0)
-				hp = max(0.0, hp - base_damage)
-				closest_target.set_meta("proxy_health", hp)
-				if hp <= 0.0:
-					closest_target.set_meta("proxy_dead", true)
-					closest_target.remove_from_group("net_player_proxy")
-					# Drop loot, broadcast death, and force death on client
-					var scene_node := get_tree().current_scene
-					if scene_node != null:
-						if scene_node.has_method("_drop_player_loot"):
-							scene_node._drop_player_loot(peer_id, closest_target)
-						if scene_node.has_method("_broadcast_player_death") and not closest_target.get_meta("death_broadcasted", false):
-							closest_target.set_meta("death_broadcasted", true)
-							scene_node._broadcast_player_death(peer_id, closest_target, "melee")
-					var net_node2 := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node2 != null and net_node2.peer != null and net_node2.peer_alive(peer_id):
-						net_node2.force_death_to_client.rpc_id(peer_id, "melee")
+			var is_proxy_dead: bool = closest_target.get_meta("proxy_dead", false)
+			if not is_proxy_dead and peer_id != 0:
+				var scene_node := get_tree().current_scene
+				if scene_node != null and scene_node.has_method("_net_damage_player"):
+					var my_id := 1
+					var net_node0 := scene_node.get_node_or_null("/root/NetworkManager")
+					if net_node0 != null and net_node0.has_method("get_my_id"):
+						my_id = net_node0.get_my_id()
+					scene_node._net_damage_player(peer_id, base_damage, my_id, "melee")
 				else:
-					# Send damage to the client if connected
-					var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-					if net_node != null and net_node.peer != null and net_node.peer_alive(peer_id):
-						net_node.apply_damage_to_client.rpc_id(peer_id, base_damage, "melee")
+					var hp: float = closest_target.get_meta("proxy_health", 100.0)
+					hp = max(0.0, hp - base_damage)
+					closest_target.set_meta("proxy_health", hp)
+					if hp <= 0.0:
+						closest_target.set_meta("proxy_dead", true)
+						closest_target.remove_from_group("net_player_proxy")
+						if scene_node != null:
+							if scene_node.has_method("_drop_player_loot"):
+								scene_node._drop_player_loot(peer_id, closest_target)
+							if scene_node.has_method("_broadcast_player_death") and not closest_target.get_meta("death_broadcasted", false):
+								closest_target.set_meta("death_broadcasted", true)
+								scene_node._broadcast_player_death(peer_id, closest_target, "melee")
+						var net_node2 := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+						if net_node2 != null and net_node2.peer != null and net_node2.peer_alive(peer_id):
+							net_node2.force_death_to_client.rpc_id(peer_id, "melee")
+					else:
+						var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+						if net_node != null and net_node.peer != null and net_node.peer_alive(peer_id):
+							net_node.apply_damage_to_client.rpc_id(peer_id, base_damage, "melee")
 		elif closest_target.has_method("apply_damage"):
 			closest_target.apply_damage(base_damage)
 		if held != null and held.has_method("reduce_durability"):
@@ -15743,6 +15774,8 @@ func clothing_has_camo(item_name: String, item = null) -> bool:
 		for candidate in inventory.items:
 			if candidate.item_name == item_name and candidate.has_meta("clothing_camo"):
 				return bool(candidate.get_meta("clothing_camo"))
+	if is_puppet and item_name in ["Camiseta", "Pantalones"]:
+		return _puppet_top_camo if item_name == "Camiseta" else _puppet_bottom_camo
 	var session := get_node_or_null("/root/GameSession")
 	if session != null and item_name in ["Camiseta", "Pantalones"]:
 		return bool(session.get_meta("top_camo" if item_name == "Camiseta" else "bottom_camo", false))
