@@ -1234,12 +1234,14 @@ func _update_char_view() -> void:
 			model.scale = Vector3.ONE
 			_char_preview_anchor.add_child(model)
 			if cfg.get("is_saved", false):
-				SaveIntegration.apply_saved_equipment_preview(model, cfg)
 				_apply_preview_colors(model, cfg)
+				SaveIntegration.apply_saved_equipment_preview(model, cfg)
+				_apply_preview_grooming(model, cfg)
 				_fit_char_preview(model, true)
 				_play_preview_animation(model)
 			else:
 				_apply_preview_colors(model, cfg, true)
+				_apply_preview_grooming(model, cfg)
 				_fit_char_preview(model, false)
 				_play_preview_animation(model)
 
@@ -1522,6 +1524,9 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false)
 		else:
 			mat.albedo_color = skin_color
 		mesh_inst.material_override = mat
+
+func _apply_preview_grooming(model: Node3D, cfg: Dictionary) -> void:
+	var hair_color: Color = cfg.get("hair", Color(0.2, 0.15, 0.1))
 	var preview_style := CharacterGrooming.style_for(str(cfg.get("hair_style", cfg.get("id", cfg.get("name", "")))))
 	var preview_stage := 0
 	if cfg.get("is_saved", false):

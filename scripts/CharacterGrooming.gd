@@ -417,9 +417,9 @@ static func _build_beard_mesh(head_mesh: Mesh, stage: int) -> ArrayMesh:
 	if mdt.create_from_surface(head_mesh, 0) != OK:
 		return mesh
 	var cx := 0.008
-	var out_push: float = [0.0, 0.0022, 0.0085, 0.019, 0.032][clampi(stage, 0, 4)]
-	var chin_drop: float = [0.0, 0.0, 0.020, 0.068, 0.145][clampi(stage, 0, 4)]
-	var jaw_flare: float = [0.0, 0.0, 0.005, 0.015, 0.028][clampi(stage, 0, 4)]
+	var out_push: float = [0.0, 0.0020, 0.0075, 0.0155, 0.025][clampi(stage, 0, 4)]
+	var chin_drop: float = [0.0, 0.0, 0.014, 0.044, 0.088][clampi(stage, 0, 4)]
+	var jaw_flare: float = [0.0, 0.0, 0.004, 0.011, 0.019][clampi(stage, 0, 4)]
 
 	var beard_faces := PackedInt32Array()
 	for fi in range(mdt.get_face_count()):
@@ -432,26 +432,16 @@ static func _build_beard_mesh(head_mesh: Mesh, stage: int) -> ArrayMesh:
 		var cy := (v0.y + v1.y + v2.y) / 3.0
 		var cz := (v0.z + v1.z + v2.z) / 3.0
 		var ax := absf((v0.x + v1.x + v2.x) / 3.0 - cx)
-		# Excluir cuello bajo, nariz/ojos y lóbulos de las orejas (ax > 0.142)
-		var min_y := 3.258 if stage == 1 else 3.242
-		if cy < min_y or cy > 3.445 or cz < 0.055 or ax > 0.142:
+		# Incluir la zona de mejillas, bigote y barbilla con margen suficiente
+		# para que el shader trace toda la silueta por pixel (sin cortes poligonales).
+		var min_y := 3.240 if stage == 1 else 3.224
+		if cy < min_y or cy > 3.458 or cz < 0.045 or ax > 0.148:
 			continue
 		# Descartar cavidad interna de la boca (dientes/lengua tienen cz < 0.198)
 		if ax < 0.052 and cy > 3.320 and cy < 3.382 and cz < 0.198:
 			continue
-		# Hueco de los labios (boca despejada; comisuras conectan bigote con barba)
-		if ax < 0.036 and cy > 3.334 and cy < 3.360:
-			continue
-		# Límite superior: bigote bajo la nariz (cy <= 3.384), mejillas en curva hacia las patillas
-		var upper_y := 3.384
-		if ax >= 0.038:
-			var side_t := clampf((ax - 0.038) / 0.095, 0.0, 1.0)
-			var cheek_low := 3.366 if stage == 1 else 3.372
-			var sideburn_top := 3.428 if stage == 1 else 3.442
-			upper_y = lerpf(cheek_low, sideburn_top, pow(side_t, 0.85))
-		if cy > upper_y:
-			continue
-		if ax < 0.066 and cy > 3.384:
+		# No incluir los poligonos del puente nasal (encima de 3.394 en el centro)
+		if ax < 0.070 and cy > 3.395:
 			continue
 		beard_faces.append(fi)
 
@@ -461,10 +451,12 @@ static func _build_beard_mesh(head_mesh: Mesh, stage: int) -> ArrayMesh:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
+	var uv2s := PackedVector2Array()
 	var bones := PackedInt32Array()
 	var weights := PackedFloat32Array()
 	var indices := PackedInt32Array()
 	var vmap := {}
+	var colors := PackedColorArray()
 	for fi in beard_faces:
 		for fv in range(3):
 			var ovi := mdt.get_face_vertex(fi, fv)
@@ -474,26 +466,28 @@ static func _build_beard_mesh(head_mesh: Mesh, stage: int) -> ArrayMesh:
 				var v := mdt.get_vertex(ovi)
 				var n := mdt.get_vertex_normal(ovi).normalized()
 				var ax := absf(v.x - cx)
-				# Suavizar el borde superior de la mejilla y el borde inferior del cuello
-				var side_t := clampf((ax - 0.045) / 0.088, 0.0, 1.0)
-				var target_upper := 3.384 if ax < 0.045 else lerpf(3.355, 3.440, pow(side_t, 0.85))
-				if v.y > target_upper:
-					v.y = lerpf(v.y, target_upper, 0.72)
-				var target_lower := 3.258 if stage == 1 else 3.245
-				if v.y < target_lower and v.z < 0.14:
-					v.y = lerpf(v.y, target_lower, 0.68)
-				var chin_w := clampf((3.335 - v.y) / 0.075, 0.0, 1.0) * clampf((v.z - 0.07) / 0.15, 0.0, 1.0)
-				var center_w := clampf(1.0 - ax / 0.115, 0.20, 1.0)
-				var mustache_w := 0.48 if (ax < 0.062 and v.y > 3.356) else 1.0
-				var edge_fade := clampf((target_upper - v.y) / 0.025, 0.25, 1.0)
-				var out_dir := Vector3(n.x * 0.85, minf(0.05, n.y * 0.35), maxf(0.35, n.z)).normalized()
-				var displaced := v + out_dir * (out_push * mustache_w * edge_fade * (0.65 + 0.65 * chin_w))
-				displaced.y -= chin_drop * chin_w * (0.50 + 0.50 * center_w)
-				displaced.z += chin_drop * 0.20 * chin_w * center_w
-				displaced.x += signf(v.x - cx) * jaw_flare * chin_w * (1.0 - center_w * 0.45)
+				var side_t := clampf((ax - 0.036) / 0.092, 0.0, 1.0)
+				var target_upper := 3.380 if ax < 0.038 else lerpf(3.358, 3.438, pow(side_t, 0.82))
+				var target_lower := 3.258 if stage == 1 else 3.244
+				var chin_w := pow(clampf((3.332 - v.y) / 0.072, 0.0, 1.0), 1.25) * clampf((v.z - 0.065) / 0.145, 0.0, 1.0)
+				# Silueta inferior ancha y redondeada (toda la mandibula baja, no solo el pico central)
+				var round_w := clampf(1.0 - pow(ax / 0.138, 2.6), 0.18, 1.0)
+				var mustache_w := 0.45 if (ax < 0.062 and v.y > 3.354) else 1.0
+				var edge_fade := clampf((target_upper - v.y + 0.010) / 0.032, 0.12, 1.0)
+				var out_dir := Vector3(n.x * 0.82, minf(0.04, n.y * 0.30), maxf(0.38, n.z)).normalized()
+				var displaced := v + out_dir * (out_push * mustache_w * edge_fade * (0.58 + 0.62 * chin_w))
+				displaced.y -= chin_drop * chin_w * (0.55 + 0.45 * round_w)
+				displaced.z += chin_drop * 0.16 * chin_w * round_w
+				displaced.x += signf(v.x - cx) * jaw_flare * chin_w * (0.65 + 0.35 * (1.0 - round_w))
+				var root_shade := lerpf(0.80, 1.0, clampf((target_upper - v.y) / 0.030, 0.0, 1.0)) * lerpf(1.0, 0.86, chin_w * 0.55)
 				verts.append(displaced)
 				normals.append(out_dir)
-				uvs.append(mdt.get_vertex_uv(ovi))
+				var theta := atan2(v.x - cx, maxf(0.04, v.z + 0.06))
+				uvs.append(Vector2(theta * 1.45 + 0.5, (3.445 - displaced.y) * 4.2))
+				# UV2 guarda la posicion anatomica en la cara (x centrado, y, z) para que
+				# el fragment shader trace el contorno curvo exacto por pixel.
+				uv2s.append(Vector2(v.x - cx, v.y))
+				colors.append(Color(root_shade, clampf((v.z - 0.05) / 0.22, 0.0, 1.0), clampf(chin_w, 0.0, 1.0), 1.0))
 				var bs: PackedInt32Array = mdt.get_vertex_bones(ovi)
 				var ws: PackedFloat32Array = mdt.get_vertex_weights(ovi)
 				for b in range(4):
@@ -502,41 +496,125 @@ static func _build_beard_mesh(head_mesh: Mesh, stage: int) -> ArrayMesh:
 					weights.append(ws[w] if w < ws.size() else 0.0)
 			indices.append(vmap[ovi])
 
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = normals
-	arr[Mesh.ARRAY_TEX_UV] = uvs
-	arr[Mesh.ARRAY_BONES] = bones
-	arr[Mesh.ARRAY_WEIGHTS] = weights
-	arr[Mesh.ARRAY_INDEX] = indices
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for idx in indices:
+		st.set_uv(uvs[idx])
+		st.set_uv2(uv2s[idx])
+		st.set_color(colors[idx])
+		var b4 := PackedInt32Array([bones[idx * 4], bones[idx * 4 + 1], bones[idx * 4 + 2], bones[idx * 4 + 3]])
+		var w4 := PackedFloat32Array([weights[idx * 4], weights[idx * 4 + 1], weights[idx * 4 + 2], weights[idx * 4 + 3]])
+		st.set_bones(b4)
+		st.set_weights(w4)
+		st.add_vertex(verts[idx])
+	st.generate_normals()
+	st.generate_tangents()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, st.commit_to_arrays())
 	return mesh
 
-static var _beard_tex_cache: ImageTexture = null
+static var _beard_shader_cache: Shader = null
 
-static func _beard_grain_texture() -> ImageTexture:
-	if _beard_tex_cache != null:
-		return _beard_tex_cache
-	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 918273
-	for y in range(64):
-		for x in range(64):
-			var streak := rng.randf_range(0.68, 1.0)
-			img.set_pixel(x, y, Color(streak, streak * 0.97, streak * 0.94, 1.0))
-	_beard_tex_cache = ImageTexture.create_from_image(img)
-	return _beard_tex_cache
+static func _beard_material(color: Color, stage: int) -> ShaderMaterial:
+	if _beard_shader_cache == null:
+		_beard_shader_cache = Shader.new()
+		_beard_shader_cache.code = """
+shader_type spatial;
+render_mode blend_mix, depth_prepass_alpha, cull_disabled, diffuse_burley, specular_schlick_ggx;
 
-static func _beard_material(color: Color, stage: int) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	var darken := 0.85 if stage == 1 else 0.92
-	var alpha := 0.48 if stage == 1 else (0.86 if stage == 2 else 1.0)
-	mat.albedo_color = Color(color.r * darken, color.g * darken, color.b * darken, alpha)
-	mat.albedo_texture = _beard_grain_texture()
-	mat.uv1_scale = Vector3(14.0, 14.0, 14.0)
-	mat.roughness = 0.95
-	if alpha < 0.99:
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+uniform vec3 hair_color : source_color = vec3(0.22, 0.14, 0.08);
+uniform float stage_density = 0.85;
+uniform float strand_freq = 72.0;
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+
+float noise2(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + vec2(1.0, 0.0));
+	float c = hash21(i + vec2(0.0, 1.0));
+	float d = hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+void fragment() {
+	float ax = abs(UV2.x);
+	float fy = UV2.y;
+
+	// 1) Linea anatomica de la mejilla y del bigote: curva concava natural desde
+	// la patilla hasta la comisura del bigote, con ligera ondulacion folicular
+	float strand_wave = (noise2(vec2(UV.x * strand_freq * 0.85, 2.7)) - 0.5) * 0.0045;
+	float cheek_t = clamp((ax - 0.032) / 0.095, 0.0, 1.0);
+	float cheek_curve = mix(3.354, 3.434, pow(cheek_t, 1.25)) + strand_wave;
+	float philtrum_dip = 0.0035 * exp(-pow(ax / 0.008, 2.0));
+	float mustache_top = 3.382 - philtrum_dip - 0.014 * smoothstep(0.014, 0.040, ax) + strand_wave * 0.5;
+	float must_blend = smoothstep(0.044, 0.024, ax);
+	float upper_line = mix(cheek_curve, mustache_top, must_blend);
+
+	// 2) Recorte eliptico amplio y suave sobre los labios (sin bigotes colgando dentro de la boca)
+	float lip_x = ax / 0.034;
+	float lip_y = (fy - 3.345) / 0.0145;
+	float lip_r = sqrt(lip_x * lip_x + lip_y * lip_y);
+	float mouth_mask = smoothstep(0.86, 1.26, lip_r);
+	float soul_gap = 1.0;
+	if (fy < 3.337 && fy > 3.321 && ax > 0.011 && ax < 0.028) {
+		float g = smoothstep(0.011, 0.019, ax) * smoothstep(0.028, 0.019, ax);
+		soul_gap = 1.0 - 0.60 * g * smoothstep(3.321, 3.330, fy) * smoothstep(3.337, 3.330, fy);
+	}
+
+	// 3) Transiciones amplias y difuminadas en mejilla, cuello y patillas
+	float top_fade = smoothstep(upper_line + 0.005, upper_line - 0.024, fy);
+	float neck_wave = strand_wave * (1.0 - COLOR.b * 0.6);
+	float neck_line = mix(3.250, 3.272, clamp(ax / 0.12, 0.0, 1.0)) + neck_wave;
+	float bot_fade = mix(smoothstep(neck_line - 0.005, neck_line + 0.024, fy), 1.0, COLOR.b * 0.85);
+	float side_fade = smoothstep(0.140, 0.114, ax);
+	float shape_mask = clamp(top_fade * bot_fade * side_fade * mouth_mask * soul_gap, 0.0, 1.0);
+
+	// 4) Hebras finas multicapa + foliculos
+	vec2 uv_fine = vec2(UV.x * strand_freq, UV.y * (strand_freq * 0.24));
+	vec2 uv_micro = vec2(UV.x * (strand_freq * 1.85), UV.y * (strand_freq * 0.42));
+	float s1 = noise2(uv_fine);
+	float s2 = noise2(uv_micro + vec2(11.7, 4.3));
+	float pore = noise2(UV * (strand_freq * 1.6) + vec2(3.1, 9.2));
+	float hairs = s1 * 0.42 + s2 * 0.38 + pore * 0.20;
+
+	// 5) Color natural acorde al pelo
+	vec3 dark_tone = hair_color * 0.72;
+	vec3 light_tone = min(vec3(1.0), hair_color * 1.10 + vec3(0.02, 0.015, 0.008));
+	vec3 col = mix(dark_tone, light_tone, smoothstep(0.22, 0.82, hairs));
+	col *= mix(0.84, 1.0, COLOR.r);
+
+	// 6) Degradado progresivo en los bordes + pelillos sueltos
+	float soft_outline = pow(shape_mask, 0.75);
+	float hair_modulation = mix(0.35 + 0.65 * smoothstep(0.25, 0.82, hairs), 0.90 + 0.10 * hairs, smoothstep(0.25, 0.75, shape_mask));
+	float alpha = clamp(soft_outline * hair_modulation * stage_density, 0.0, 1.0);
+
+	float dx = noise2(uv_micro + vec2(0.4, 0.0)) - s2;
+	float dy = noise2(uv_micro + vec2(0.0, 0.4)) - s2;
+	NORMAL_MAP = normalize(vec3(-dx * 0.55, -dy * 0.25, 1.0)) * 0.5 + 0.5;
+	NORMAL_MAP_DEPTH = 0.38;
+
+	ALBEDO = col;
+	ROUGHNESS = mix(0.86, 0.76, hairs);
+	SPECULAR = 0.20;
+	ALPHA = alpha;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = _beard_shader_cache
+	var base := Color(
+		clampf(pow(maxf(color.r, 0.02), 0.75) * 0.84, 0.04, 0.92),
+		clampf(pow(maxf(color.g, 0.015), 0.77) * 0.82, 0.03, 0.88),
+		clampf(pow(maxf(color.b, 0.01), 0.79) * 0.80, 0.02, 0.82)
+	)
+	var density: float = [0.0, 0.46, 0.82, 0.96, 1.0][clampi(stage, 0, 4)]
+	var freq: float = [72.0, 92.0, 78.0, 68.0, 62.0][clampi(stage, 0, 4)]
+	mat.set_shader_parameter("hair_color", Vector3(base.r, base.g, base.b))
+	mat.set_shader_parameter("stage_density", density)
+	mat.set_shader_parameter("strand_freq", freq)
 	return mat

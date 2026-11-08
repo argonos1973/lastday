@@ -181,6 +181,8 @@ func _run() -> void:
 		var d_legs: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "Desnudo_legs")
 		var dup_boots: MeshInstance3D = SaveInt._find_mesh_by_name(preview_model, "military_boots_001")
 		_ok(s_legs != null and s_legs.visible, "%s shows soldier_legs in preview" % camo_pants)
+		var s_legs_mat: StandardMaterial3D = s_legs.material_override as StandardMaterial3D if s_legs != null else null
+		_ok(s_legs_mat != null and s_legs_mat.albedo_texture != null, "%s keeps camo texture in preview (not overwritten by _apply_preview_colors)" % camo_pants)
 		_ok((b_legs == null or not b_legs.visible) and (d_legs == null or not d_legs.visible), "%s hides bare legs in preview" % camo_pants)
 		_ok(dup_boots == null or not dup_boots.visible, "%s hides duplicate military_boots_001 helper" % camo_pants)
 	inicio._on_server_character_locked(payload)
