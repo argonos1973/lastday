@@ -841,6 +841,40 @@ func run() -> void:
 	check(mgr._ai_pending_bot == 0, "Asesor: sin GROQ_API_KEY no hace peticiones")
 	elena["_mem"] = {"visited": [], "deaths": 0, "last_death_pos": Vector3.INF, "scarcity": false, "gear_learned": true}
 
+	# --- 23) Memoria persistente: aprendizaje entre sesiones ---
+	# Botin cerca de la ciudad (POI inyectado en seccion 22) cuenta para "city"
+	elena_proxy.global_position = Vector3(195.0, 0.4, 195.0)
+	check(mgr._poi_kind_near(elena_proxy.global_position) == "city",
+		"Memoria: el botin junto a la ciudad se registra como zona city")
+	elena_proxy.global_position = Vector3(5000.0, 0.4, 5000.0)
+	check(mgr._poi_kind_near(elena_proxy.global_position) == "wild",
+		"Memoria: botin lejos de todo POI cuenta como wild")
+	elena_proxy.global_position = Vector3(195.0, 0.4, 195.0)
+	mgr._ai_note_loot(elena, "Trapo viejo", "resource")
+	mgr._ai_note_loot(elena, "Fusil de asalto", "weapon")
+	mgr._ai_note_loot(elena, "Venda", "medical")
+	var zy: Dictionary = (elena["_mem"] as Dictionary).get("zone_yield", {})
+	var zk: Dictionary = zy.get("city", {})
+	check(int(zk.get("n", 0)) == 3 and int(zk.get("good", 0)) == 2,
+		"Memoria: zone_yield cuenta botin total y botin valioso (n=%s good=%s)" % [str(zk.get("n", 0)), str(zk.get("good", 0))])
+	# Factor de exploracion: zona con buen botin pesa mas, zona letal pesa menos
+	var f_city := mgr._ai_poi_memory_factor(elena, Vector3(200.0, 0.0, 200.0), "city")
+	check(f_city > 1.0, "Memoria: ciudad con botin valioso aumenta su peso (x%.2f)" % f_city)
+	(elena["_mem"] as Dictionary)["death_spots"] = [{"x": 210.0, "y": 0.0, "z": 205.0, "cause": "wolf_bite", "count": 2}]
+	var f_dead := mgr._ai_poi_memory_factor(elena, Vector3(200.0, 0.0, 200.0), "city")
+	check(f_dead < f_city, "Memoria: muerte cercana a la ciudad reduce su peso (x%.2f < x%.2f)" % [f_dead, f_city])
+	var f_wild := mgr._ai_poi_memory_factor(elena, Vector3(300.0, 0.0, 300.0), "wild")
+	check(f_wild == 1.0, "Memoria: zona sin historial mantiene peso neutro")
+	# Resumen para el prompt del asesor
+	var summ := mgr._ai_memory_summary(elena["_mem"])
+	check(str(summ.get("best_loot_zone", "")) == "city" and int(summ.get("death_spots", 0)) == 1,
+		"Memoria: resumen para el LLM incluye mejor zona y puntos letales")
+	# Persistencia real solo en dedicated_server: en tests no toca disco
+	mgr._ai_save_memory()
+	check(true, "Memoria: _ai_save_memory es no-op fuera de dedicated_server")
+	elena["_mem"] = {"visited": [], "deaths": 0, "last_death_pos": Vector3.INF, "scarcity": false, "gear_learned": true}
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

@@ -141,6 +141,9 @@ const AI_DECISION_SPREAD_SEC := 600.0
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
 const AI_MAX_CALLS_PER_DAY := 380
 const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
+const AI_MEMORY_PATH := "user://survivor_bot_memory.json"
+const AI_MEMORY_MAX_SPOTS := 10
+const AI_MEMORY_SAVE_SEC := 90.0
 const AI_SYSTEM_PROMPT := "You are a strategic advisor for a survival-game NPC. Output ONLY compact JSON, no prose: {\"action\":\"...\",\"poi_kind\":\"...\",\"reason\":\"...\"}. Actions: explore (wander/visit a place), scavenge (loot military or city sites), hunt (go to wild zones for food), return_home (go back to own camp or shelter), rest (stay at camp to recover), avoid_zone (steer clear of a poi_kind that was deadly or picked clean). poi_kind one of: house, military, city, wild, tower — include it only when relevant (hunt implies wild; scavenge implies military/city). reason: max 8 words."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
@@ -148,9 +151,11 @@ var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
 var _ai_calls_day := 0
 var _ai_day_key := -1
 var _ai_rr := 0
+var _mem_accum := 0.0
 
 func setup(main_world: Node) -> void:
 	world = main_world
+	_ai_load_memory()
 	spawn_all_bots()
 
 static func is_bot_peer_id(pid: int) -> bool:
@@ -627,6 +632,10 @@ func tick(delta: float) -> void:
 	for bot_id in bots.keys():
 		_tick_bot(bots[bot_id], delta)
 	_ai_tick(delta)
+	_mem_accum += delta
+	if _mem_accum >= AI_MEMORY_SAVE_SEC:
+		_mem_accum = 0.0
+		_ai_save_memory()
 	_sync_accum += delta
 	if _sync_accum >= 0.10:
 		_sync_accum = fmod(_sync_accum, 0.10)
@@ -1079,6 +1088,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				w = 0.4 if kind == "tower" else (1.6 if kind in ["house", "military"] else 1.0)
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
 			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 45.0)
+			score *= _ai_poi_memory_factor(b, pp, kind)
 			if score > best_score:
 				best_score = score
 				best = pp
@@ -1793,6 +1803,26 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	if death_kind == "starved":
 		mem["scarcity"] = true
 	mem["gear_learned"] = true # morir enseña: la buena equipacion importa
+	# Historial de puntos letales: muertes cercanas (<25 m) se agrupan y pesan
+	# en la eleccion de exploracion durante las proximas sesiones.
+	var spots: Array = mem.get("death_spots", [])
+	var dp := proxy.global_position
+	var merged := false
+	for s in spots:
+		if s is Dictionary:
+			var dx := dp.x - float(s.get("x", 0.0))
+			var dz := dp.z - float(s.get("z", 0.0))
+			if dx * dx + dz * dz < 625.0:
+				s["count"] = int(s.get("count", 1)) + 1
+				s["cause"] = death_kind
+				merged = true
+				break
+	if not merged:
+		spots.append({"x": dp.x, "y": dp.y, "z": dp.z, "cause": death_kind, "count": 1})
+	while spots.size() > AI_MEMORY_MAX_SPOTS:
+		spots.pop_front()
+	mem["death_spots"] = spots
+	_ai_save_memory()
 	proxy.set_meta("proxy_dead", true)
 	proxy.remove_from_group("net_player_proxy")
 	proxy.add_to_group("interactable")
@@ -2272,6 +2302,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	}
 	_bot_add_inventory_item(inv, item_dict)
 	proxy.set_meta("saved_inventory", inv)
+	_ai_note_loot(b, enm, etp)
 	_auto_equip_best_gear(b)
 	var best_w := _best_weapon_name(proxy)
 	if not best_w.is_empty() and not bool(b["torch_lit"]):
@@ -3038,6 +3069,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"items": (proxy.get_meta("saved_inventory", []) as Array).size(),
 		"has_shelter": b.get("shelter_pos", Vector3.INF) != Vector3.INF,
 		"last_plan": cur,
+		"memory": _ai_memory_summary(mem),
 	}
 	return JSON.stringify(state)
 
@@ -3131,3 +3163,125 @@ func _ai_active_directive(b: Dictionary) -> Dictionary:
 		b["ai_directive"] = {}
 		return {}
 	return d
+
+# ==================== MEMORIA PERSISTENTE ENTRE SESIONES ====================
+# Los bots recuerdan entre partidas (solo en el servidor dedicado, donde el
+# mundo se regenera en cada arranque): donde murieron y por que, que tipos de
+# zona dieron buen botin y cuales fueron letales. El archivo user:// queda
+# fuera del borrado de server_savegame.json, asi que sobrevive a los deploys.
+# La lista 'visited' NO se persiste: el mundo es nuevo en cada sesion y el
+# botin de las casas vuelve a aparecer.
+
+func _ai_memory_enabled() -> bool:
+	return OS.has_feature("dedicated_server")
+
+func _ai_load_memory() -> void:
+	if not _ai_memory_enabled() or not FileAccess.file_exists(AI_MEMORY_PATH):
+		return
+	var f := FileAccess.open(AI_MEMORY_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if not (parsed is Dictionary):
+		return
+	var bots_data = parsed.get("bots", {})
+	if not (bots_data is Dictionary):
+		return
+	for key in bots_data.keys():
+		var sd = bots_data[key]
+		if not (sd is Dictionary):
+			continue
+		var bid := int(key)
+		var mem: Dictionary = _memory.get_or_add(bid, {})
+		for field in ["deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "sessions"]:
+			if sd.has(field):
+				mem[field] = sd[field]
+		var lp = sd.get("last_death_pos")
+		if lp is Array and (lp as Array).size() >= 3:
+			mem["last_death_pos"] = Vector3(float(lp[0]), float(lp[1]), float(lp[2]))
+		else:
+			mem["last_death_pos"] = Vector3.INF
+		mem["visited"] = [] # mundo nuevo: nadie conserva el mapa de exploracion
+		mem["sessions"] = int(mem.get("sessions", 0)) + 1
+
+func _ai_save_memory() -> void:
+	if not _ai_memory_enabled():
+		return
+	var out := {"version": 1, "bots": {}}
+	for bid in _memory.keys():
+		var mem: Dictionary = _memory[bid]
+		var sd := {}
+		for field in ["deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "sessions"]:
+			if mem.has(field):
+				sd[field] = mem[field]
+		var lp = mem.get("last_death_pos", Vector3.INF)
+		sd["last_death_pos"] = [lp.x, lp.y, lp.z] if lp is Vector3 and lp != Vector3.INF else []
+		out["bots"][str(bid)] = sd
+	var f := FileAccess.open(AI_MEMORY_PATH, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(out))
+	f.close()
+
+# Registra que botin dio la zona donde se recogio (casa, militar, ciudad, salvaje).
+func _ai_note_loot(b: Dictionary, item_name: String, item_type: String) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	var proxy = b.get("proxy")
+	if mem.is_empty() or proxy == null or not is_instance_valid(proxy):
+		return
+	var kind := _poi_kind_near(proxy.global_position)
+	var zy: Dictionary = mem.get("zone_yield", {})
+	var zk: Dictionary = zy.get(kind, {"n": 0, "good": 0})
+	zk["n"] = int(zk.get("n", 0)) + 1
+	if _is_gear_item(item_name, item_type) or item_type.begins_with("weapon") or item_type == "medical":
+		zk["good"] = int(zk.get("good", 0)) + 1
+	zy[kind] = zk
+	mem["zone_yield"] = zy
+
+func _poi_kind_near(pos: Vector3) -> String:
+	var best := "wild"
+	var best_d := 20.0
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		var d := Vector2(pos.x - pp.x, pos.z - pp.z).length()
+		if d < best_d:
+			best_d = d
+			best = str(p.get("kind", "wild"))
+	return best
+
+# Factor 0.3-1.6 sobre el score de un POI segun lo aprendido: las zonas que
+# solian dar equipo pesan mas; las que ya fueron letales pesan menos.
+func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return 1.0
+	var factor := 1.0
+	var zy: Dictionary = mem.get("zone_yield", {})
+	var zk: Dictionary = zy.get(kind, {})
+	factor += minf(float(zk.get("good", 0)) * 0.06, 0.45)
+	for s in mem.get("death_spots", []):
+		if s is Dictionary:
+			var dx := pos.x - float(s.get("x", 0.0))
+			var dz := pos.z - float(s.get("z", 0.0))
+			if dx * dx + dz * dz < 2025.0:
+				factor *= 0.55
+				break
+	return clampf(factor, 0.3, 1.6)
+
+func _ai_memory_summary(mem: Dictionary) -> Dictionary:
+	var out := {"deaths": int(mem.get("deaths", 0))}
+	var zy: Dictionary = mem.get("zone_yield", {})
+	var best := ""
+	var best_good := -1
+	for k in zy.keys():
+		var g := int((zy[k] as Dictionary).get("good", 0))
+		if g > best_good:
+			best_good = g
+			best = str(k)
+	if best != "":
+		out["best_loot_zone"] = best
+	var spots: Array = mem.get("death_spots", [])
+	if not spots.is_empty():
+		out["death_spots"] = spots.size()
+	return out
