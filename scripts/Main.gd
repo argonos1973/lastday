@@ -21321,7 +21321,7 @@ func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, i
 				if wpos.distance_to(closest) <= 15.0:
 					w.flee_from_gunshot(closest, 18.0)
 	var actor = remote_players.get(shooter_id)
-	if not is_instance_valid(actor):
+	if not is_instance_valid(actor) or not actor.has_method("_launch_primitive_projectile"):
 		return
 	var excluded: Array[RID] = [actor.get_rid()]
 	actor._collect_child_collision_rids(actor, excluded)

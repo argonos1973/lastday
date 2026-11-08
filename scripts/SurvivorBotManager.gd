@@ -373,6 +373,17 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	proxy.set_meta("proxy_dead", false)
 
 	var inv_items: Array = (cfg.get("starting_items", []) as Array).duplicate(true)
+	# El arma inicial es equipo, no botin: vive en el inventario como cualquier
+	# arma saqueada para que combata y craftee con ella; saved_held_item marca
+	# el slot que lleva en la mano.
+	var start_weapon := str(cfg.get("starting_weapon", "Cuchillo"))
+	var wdur := 100.0
+	var wtype := "weapon"
+	match start_weapon:
+		"Fusil de asalto", "Rifle francotirador": wtype = "weapon_rifle"
+		"Hacha": wtype = "tool_axe"
+		"Cuchillo": wdur = 80.0
+	inv_items.append({"name": start_weapon, "type": wtype, "weight": 1.4, "quantity": 1, "use_value": 10.0, "durability": wdur, "max_durability": wdur})
 	var cloth_arr: Array = (cfg.get("starting_clothing", []) as Array).duplicate()
 	var cloth_str := ",".join(cloth_arr)
 	var bp_str := str(cfg.get("starting_backpack", "Mochila pequena"))
@@ -804,6 +815,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					b["drink_at"] = Vector3.INF
 					b["thirst"] = 100.0
 					proxy.set_meta("saved_thirst", 100.0)
+					# Ya en la orilla, rellena su botella vacia: el rio es la
+					# fuente y la botella solo la reserva que lleva encima.
+					var inv_w: Array = proxy.get_meta("saved_inventory", [])
+					for i in range(inv_w.size()):
+						var it_w = inv_w[i]
+						if it_w is Dictionary and str(it_w.get("name", "")) == "Botella de plastico" and int(it_w.get("quantity", 1)) > 0:
+							it_w["quantity"] = int(it_w.get("quantity", 1)) - 1
+							if int(it_w["quantity"]) <= 0:
+								inv_w.remove_at(i)
+							_bot_add_inventory_item(inv_w, {"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0})
+							proxy.set_meta("saved_inventory", inv_w)
+							break
 			return
 
 	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
@@ -864,6 +887,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_ensure_bot_campfire_lit(b)
 		if float(b["cook_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy):
 			_bot_cook_meat_at_fire(b)
+		# Solo craftea en el refugio si esta sano y no se esta ocultando de una
+		# amenaza: herido o escondido descansa/aguanta, no se pone a tallar.
+		if float(b["health"]) >= 70.0 and float(b["hide_timer"]) <= 0.0 and _bot_try_craft(b, delta):
+			return
 		b["sitting"] = true
 		b["crouching"] = str(b["faction"]) == "hostile"
 		b["anim"] = "sit"
@@ -872,6 +899,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["health"] = healed
 			proxy.set_meta("proxy_health", healed)
 			proxy.set_meta("saved_health", healed)
+		return
+
+	# 6b) Crafteo: sin urgencias, fabrica con los mismos RECIPES que un jugador
+	# (herramientas, armas, flechas, cuerda, ropa de piel, antorcha, comida...)
+	if _bot_try_craft(b, delta):
 		return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
@@ -1087,7 +1119,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 				inv.remove_at(i)
 			# Una botella llena deja la vacia reutilizable; un humano guarda un
 			# par para rellenar y tira el resto — sin tope la mochila se llena.
-			if nm == "Botella de agua llena" and _bot_item_count(proxy, "Botella de plastico") < 2:
+			if nm == "Botella de agua llena" and _bot_item_count(proxy, "Botella de plastico") < 1:
 				_bot_add_inventory_item(inv, {"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
 			b["thirst"] = minf(100.0, float(b["thirst"]) + maxf(30.0, float(it.get("use_value", 40.0))))
 			proxy.set_meta("saved_inventory", inv)
@@ -1365,23 +1397,28 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 # herido: puede seguir peleando a rango. Sin fusil o con el enemigo encima,
 # la huida siempre gana.
 func _has_combat_edge(b: Dictionary, foe: Node3D) -> bool:
-	if not bool(b["has_rifle"]):
-		return false
 	var proxy: Node3D = b["proxy"]
 	if float(b["health"]) < 20.0:
 		return false
-	return proxy.global_position.distance_to(foe.global_position) > 12.0
+	var dist := proxy.global_position.distance_to(foe.global_position)
+	if dist <= 12.0:
+		return false
+	if bool(b["has_rifle"]):
+		return true
+	# Arco con flechas o arrojadizas tambien permiten mantener distancia
+	if dist > 4.5:
+		var bow := _bot_best_bow(proxy)
+		if not bow.is_empty() and _bot_arrow_count(proxy) > 0:
+			return true
+		if not _bot_best_thrown_weapon(proxy).is_empty() or _bot_item_count(proxy, "Boleadoras") > 0:
+			return true
+	return false
 
 func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = false
-	var weapon := _best_weapon_name(proxy)
-	b["held_item"] = weapon
-	var is_rifle := weapon == "Fusil de asalto" or weapon == "Rifle francotirador"
-	b["has_rifle"] = is_rifle
-	proxy.set_meta("saved_held_item", weapon)
 
 	# Ordenar a su lobo domesticado que ataque también al objetivo
 	_command_bot_wolf_against(b, foe)
@@ -1394,7 +1431,16 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		b["rot"] = atan2(-to_foe.x, -to_foe.z)
 		proxy.rotation.y = float(b["rot"])
 
-	if is_rifle and dist > 3.5 and dist <= 48.0:
+	# Un superviviente usa el mismo arsenal que un jugador: elige el arma
+	# segun la distancia — fusil, arco con flechas, arrojadiza o cuerpo a cuerpo.
+	var pick := _pick_fight_weapon(b, dist)
+	var weapon := str(pick.get("name", "Cuchillo"))
+	var wkind := str(pick.get("kind", "melee"))
+	b["held_item"] = weapon
+	b["has_rifle"] = wkind == "rifle"
+	proxy.set_meta("saved_held_item", weapon)
+
+	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
 		b["is_aiming"] = true
 		# Combate como un jugador: si el enemigo esta demasiado lejos avanza;
 		# si esta en rango de tiro, no se queda quieto — zigzaguea lateralmente
@@ -1415,7 +1461,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			var dmg := 26.0 if weapon == "Fusil de asalto" else 48.0
 			_bot_fire_rifle_at(b, foe, dmg)
 		return
-	if is_rifle and dist > 48.0:
+	if wkind == "rifle" and dist > 48.0:
 		# Demasiado lejos para el fusil: acercarse corriendo en zigzag
 		b["strafe_timer"] = float(b["strafe_timer"]) + delta
 		if float(b["strafe_timer"]) > 1.8:
@@ -1426,13 +1472,61 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		_move_bot_towards(b, zig_goal, 4.6, delta, "run")
 		return
 
+	# Arco: consume una flecha por disparo, como un jugador. A distancia media
+	# se mueve en zigzag; de cerca cambia a melee porque el arco no sirve.
+	if wkind == "bow" and dist > 4.5 and dist <= 46.0:
+		b["is_aiming"] = true
+		if dist > 30.0:
+			_move_bot_towards(b, fpos, 4.0, delta, "run")
+		else:
+			b["strafe_timer"] = float(b["strafe_timer"]) + delta
+			if float(b["strafe_timer"]) > 1.5:
+				b["strafe_dir"] = -float(b["strafe_dir"])
+				b["strafe_timer"] = 0.0
+			var sideb := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.2, delta, "walk")
+			b["rot"] = atan2(-to_foe.x, -to_foe.z)
+			proxy.rotation.y = float(b["rot"])
+		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+			b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
+			_bot_fire_bow(b, foe, weapon)
+		return
+	if wkind == "bow" and dist > 46.0:
+		_move_bot_towards(b, fpos, 4.4, delta, "run")
+		return
+
+	# Arrojadizas (lanzas, palo afilado, boleadoras): un lanzamiento cada pocos
+	# segundos; el proyectil vuela de verdad en el servidor y se ve en clientes.
+	if wkind in ["thrown", "bola"] and dist > 4.5 and dist <= 38.0:
+		b["is_aiming"] = true
+		if dist > 26.0:
+			_move_bot_towards(b, fpos, 4.2, delta, "run")
+		else:
+			b["strafe_timer"] = float(b["strafe_timer"]) + delta
+			if float(b["strafe_timer"]) > 1.6:
+				b["strafe_dir"] = -float(b["strafe_dir"])
+				b["strafe_timer"] = 0.0
+			var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.4, delta, "walk")
+		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
+			_bot_fire_thrown(b, foe, weapon, wkind == "bola")
+		return
+	if wkind in ["thrown", "bola"] and dist > 38.0:
+		_move_bot_towards(b, fpos, 4.5, delta, "run")
+		return
+
 	b["is_aiming"] = false
 	var reach := 3.6
 	if dist <= reach:
 		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
 		if float(b["attack_cooldown"]) <= 0.0:
 			b["attack_cooldown"] = 0.68
-			_apply_bot_damage_to_target(b, foe, _weapon_melee_damage(weapon) * 0.45, "melee")
+			# A quemarropa usa su mejor arma cuerpo a cuerpo (o los punos)
+			var melee_w := _best_melee_weapon(proxy)
+			var melee_dmg := _weapon_melee_damage(melee_w) if _bot_item_count(proxy, melee_w) > 0 else 25.0
+			_apply_bot_damage_to_target(b, foe, melee_dmg * 0.45, "melee")
+			_reduce_bot_item_durability(proxy, melee_w, 1.5)
 	else:
 		_move_bot_towards(b, fpos, 4.7, delta, "run")
 
@@ -1456,6 +1550,129 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 			_bot_harvest_dead_animal(b, target)
 	else:
 		_apply_bot_damage_to_target(b, target, dmg, "rifle")
+
+# Daño base de cada flecha, igual que en el arco del jugador.
+func _bot_arrow_base_damage(arrow_name: String) -> float:
+	match arrow_name:
+		"Flecha de hueso": return 215.0
+		"Flecha de piedra": return 175.0
+		"Flecha improvisada": return 60.0
+		_: return 125.0 # Flecha de madera y cualquier otra
+
+func _bot_projectile_drag(item_name: String) -> float:
+	match item_name:
+		"Flecha improvisada": return 0.52
+		"Flecha de madera": return 0.34
+		"Flecha de piedra": return 0.28
+		"Flecha de hueso": return 0.26
+		"Lanza", "Lanza de hueso": return 0.20
+		"Palo afilado": return 0.26
+		"Boleadoras": return 0.40
+	return 0.30
+
+# El bot dispara con arco igual que un jugador: consume la mejor flecha,
+# gasta durabilidad del arco, lanza el proyectil real en el servidor y
+# avisa a los clientes para que vean la flecha volar.
+func _bot_fire_bow(b: Dictionary, foe: Node3D, bow_name: String) -> void:
+	var proxy: Node3D = b["proxy"]
+	var bot_id := int(b["bot_id"])
+	var arrow_name := _consume_bot_arrow(proxy)
+	if arrow_name.is_empty():
+		return
+	_reduce_bot_item_durability(proxy, bow_name, 2.0)
+	var origin := proxy.global_position + Vector3(0.0, 1.5, 0.0)
+	var aim_pos := foe.global_position + Vector3(0.0, 1.0, 0.0)
+	var dir := (aim_pos - origin).normalized()
+	# Pequeña dispersion como en el tiro humano
+	dir = (dir + Vector3(randf_range(-0.018, 0.018), randf_range(-0.012, 0.012), randf_range(-0.018, 0.018))).normalized()
+	var speed := 95.0 if bow_name == "Arco reforzado" else 75.0
+	var dmg := _bot_arrow_base_damage(arrow_name) * (1.18 if bow_name == "Arco reforzado" else 1.0)
+	_broadcast_bot_projectile(bot_id, origin, dir, arrow_name, speed)
+	# Alerta a la fauna cercana (el RPC devuelve limpio: el proxy no es un jugador)
+	if world.has_method("_net_primitive_shot"):
+		world._net_primitive_shot(bot_id, origin, dir, arrow_name, speed)
+	_bot_launch_projectile(b, origin, dir, arrow_name, speed, 140.0, dmg, false)
+
+# Lanzas, palo afilado y boleadoras: el arma no se consume (solo durabilidad),
+# como al recogerla del suelo tras el lanzamiento.
+func _bot_fire_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bool) -> void:
+	var proxy: Node3D = b["proxy"]
+	var bot_id := int(b["bot_id"])
+	_reduce_bot_item_durability(proxy, item_name, 3.0)
+	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
+	var aim_pos := foe.global_position + Vector3(0.0, 0.9, 0.0)
+	var dir := (aim_pos - origin).normalized()
+	dir = (dir + Vector3(randf_range(-0.015, 0.015), randf_range(-0.01, 0.01), randf_range(-0.015, 0.015))).normalized()
+	var speed := 55.0 if is_bola else 60.0
+	_broadcast_bot_projectile(bot_id, origin, dir, item_name, speed)
+	if world.has_method("_net_primitive_shot"):
+		world._net_primitive_shot(bot_id, origin, dir, item_name, speed)
+	_bot_launch_projectile(b, origin, dir, item_name, speed, 65.0, 65.0, is_bola)
+
+# Proyectil visual en los clientes: mismo RPC que usan los jugadores.
+func _broadcast_bot_projectile(bot_id: int, origin: Vector3, dir: Vector3, item_name: String, speed: float) -> void:
+	var world_n = world.get("net") if world != null else null
+	if world_n == null or not world_n.is_host or world_n.peer == null:
+		return
+	for pid in world_n.players.keys():
+		if pid != world_n.get_my_id() and not is_bot_peer_id(pid) and not world_n.players[pid].get("offline", false) and world_n.peer_alive(pid):
+			world_n.primitive_shot.rpc_id(pid, bot_id, origin, dir, item_name, speed, Vector3.ZERO)
+
+# Proyectil real en el servidor (autoritativo): vuela con fisica y al impactar
+# aplica el daño. Los clientes ven la copia visual del RPC anterior.
+func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_name: String, speed: float, max_dist: float, dmg_base: float, is_bola: bool) -> void:
+	if world == null or not (world is Node3D):
+		return
+	var proxy: Node3D = b["proxy"]
+	var projectile: Node3D = preload("res://scripts/RifleProjectile.gd").new()
+	projectile.velocity = dir.normalized() * speed
+	projectile.max_distance = max_dist
+	var excl: Array[RID] = []
+	if proxy is CollisionObject3D:
+		excl.append(proxy.get_rid())
+	projectile.excluded = excl
+	projectile.drag_coeff = _bot_projectile_drag(item_name)
+	projectile.launch_speed = speed
+	projectile.align_flight = item_name.begins_with("Flecha") or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
+	projectile.spin_speed = 22.0 if is_bola else 0.0
+	(world as Node3D).add_child(projectile)
+	projectile.global_position = origin
+	projectile.look_at(origin + dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.97 else Vector3.FORWARD)
+	var bot_ref: Dictionary = b
+	projectile.impact.connect(func(collider, hit_pos: Vector3, _dist: float, _normal: Vector3):
+		_on_bot_projectile_impact(bot_ref, projectile, collider, hit_pos, dmg_base, is_bola))
+
+func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_pos: Vector3, dmg_base: float, is_bola: bool) -> void:
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return
+	var target: Node = null
+	var is_headshot := false
+	var node := collider as Node
+	if node != null:
+		if node.name == "HeadHitbox":
+			is_headshot = true
+		var walked: Node = node
+		while walked != null:
+			if walked.is_in_group("wildlife") or walked.is_in_group("ai_survivor_bot") or walked.is_in_group("net_player_proxy") or (walked.has_method("take_damage") and walked.has_method("apply_damage")):
+				target = walked
+				break
+			walked = walked.get_parent()
+	if target == null:
+		return
+	# Energia residual del proyectil: igual que en el impacto del jugador
+	var energy := clampf(projectile.velocity.length() / maxf(projectile.launch_speed, 1.0), 0.45, 1.0)
+	var dmg := dmg_base * (2.2 if is_headshot else 1.0) * energy
+	if is_bola and target is Node3D:
+		target.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
+	if target is WildlifeController or target.is_in_group("wildlife"):
+		if target.has_method("take_damage"):
+			target.take_damage(dmg, false, proxy)
+		if bool(target.get("_is_dead")):
+			_bot_harvest_dead_animal(b, target)
+	else:
+		var wname := "rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee")
+		_apply_bot_damage_to_target(b, target, dmg, wname)
 
 func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, weapon: String) -> void:
 	if target == null or not is_instance_valid(target):
@@ -1569,6 +1786,17 @@ func _bot_drink_count(proxy: Node3D) -> int:
 		if it is Dictionary:
 			var nm := str(it.get("name", ""))
 			if str(it.get("type", "")) == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
+				total += int(it.get("quantity", 1))
+	return total
+
+# Recipientes para agua (llenos o vacios): un superviviente solo necesita una
+# cantimplora/botella como reserva — el rio es la fuente real y alli la rellena.
+func _bot_container_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary:
+			var nm := str(it.get("name", ""))
+			if str(it.get("type", "")) == "water" or nm.contains("agua") or nm.contains("Cantimplora") or nm == "Botella de plastico":
 				total += int(it.get("quantity", 1))
 	return total
 
@@ -1784,7 +2012,7 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var r_sq := radius * radius
 	var best := {}
-	var best_d_sq := r_sq
+	var best_score := -1.0
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
 	for entry in world._dropped_items:
 		if not (entry is Dictionary):
@@ -1808,19 +2036,57 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		var pos := _loot_entry_pos(entry)
 		var d_sq := proxy.global_position.distance_squared_to(pos)
-		if d_sq < best_d_sq:
-			best_d_sq = d_sq
+		if d_sq > r_sq:
+			continue
+		# Un superviviente prioriza: arma/medicina > comida > equipo > materiales
+		# > reserva de agua. La distancia solo desempata dentro de cada clase.
+		var score := _loot_priority(b, nm, tp) * 1000.0 - sqrt(d_sq)
+		if score > best_score:
+			best_score = score
 			best = entry
 	return best
 
-func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
-	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "ammo", "medical", "food", "tool_matches"]:
-		return true
-	# Bebida: solo mientras le falte — sin tope el bot saquearia botellas
-	# sin fin y su mochila se llenaria de agua (bug de acumulacion en vivo)
+# Peso de saqueo por clase: lo vital para sobrevivir y defenderse primero.
+func _loot_priority(b: Dictionary, nm: String, tp: String) -> float:
+	if tp == "medical":
+		return 6.0
+	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "ammo"]:
+		return 6.0
+	if tp == "ammo_arrow":
+		return 5.5 if not _bot_best_bow(b["proxy"]).is_empty() else 3.0
+	if tp == "food":
+		return 6.0 if float(b["hunger"]) < 55.0 else 3.5
+	if tp in ["tool_axe", "tool_spear"]:
+		# Sin arma de verdad, un hacha o lanza es su defensa principal
+		var has_ranged := not _best_weapon_name(b["proxy"]).is_empty()
+		return 3.5 if has_ranged else 6.0
+	if tp in ["tool_torch", "tool_matches"]:
+		return 4.5
+	if tp == "backpack" or tp == "clothing":
+		return 4.0
 	if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
-		return _bot_drink_count(b["proxy"]) < 4
-	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje"] or nm.begins_with("Piel de "):
+		# El rio da de beber gratis: la botella es solo una reserva movil.
+		return 4.0 if float(b["thirst"]) < 55.0 else 2.0
+	if nm == "Botella de plastico":
+		return 2.5
+	if nm in ["Hueso", "Tendon", "Pluma", "Trapos", "Tronco"]:
+		# Ingredientes de crafteo: el bot aprende a fabricar como un jugador
+		return 3.8
+	return 3.0 # materiales de campamento: palos, piedras, cuerda, pieles
+
+func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
+	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "ammo", "ammo_arrow", "medical", "food", "tool_matches"]:
+		return true
+	# Bebida: una sola reserva basta — el rio es la fuente real. Si ya lleva un
+	# recipiente vacio, solo coge una llena si tiene sed; si no, rellena en el rio.
+	if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
+		if _bot_drink_count(b["proxy"]) >= 1:
+			return false
+		return _bot_container_count(b["proxy"]) < 1 or float(b["thirst"]) < 55.0
+	# Botella vacia = recipiente para rellenar en el rio; solo si no tiene ninguno
+	if nm == "Botella de plastico":
+		return _bot_container_count(b["proxy"]) < 1
+	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje", "Hueso", "Tendon", "Pluma", "Trapos", "Tronco"] or nm.begins_with("Piel de "):
 		return true
 	if tp == "backpack" and nm == "Mochila militar" and str(b["backpack"]) != "Mochila militar":
 		return true
@@ -2255,20 +2521,100 @@ func _is_world_night() -> bool:
 
 func _best_weapon_name(proxy: Node3D) -> String:
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	var order := ["Fusil de asalto", "Rifle francotirador", "Lanza de hueso", "Lanza", "Hacha", "Cuchillo", "Palo afilado"]
+	var order := ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera",
+		"Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha", "Cuchillo de hueso",
+		"Cuchillo de piedra", "Cuchillo", "Palo afilado"]
 	for w in order:
 		for it in inv:
 			if it is Dictionary and str(it.get("name", "")) == w and int(it.get("quantity", 1)) > 0:
 				return w
 	return "Cuchillo"
 
+# Armas cuerpo a cuerpo por orden de letalidad (incluye las de crafteo).
+func _best_melee_weapon(proxy: Node3D) -> String:
+	var order := ["Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha",
+		"Cuchillo de hueso", "Cuchillo de piedra", "Cuchillo", "Palo afilado",
+		"Pico", "Martillo", "Azada", "Pala"]
+	for w in order:
+		if _bot_item_count(proxy, w) > 0:
+			return w
+	return "Cuchillo"
+
+func _bot_best_bow(proxy: Node3D) -> String:
+	if _bot_item_count(proxy, "Arco reforzado") > 0:
+		return "Arco reforzado"
+	if _bot_item_count(proxy, "Arco de madera") > 0:
+		return "Arco de madera"
+	return ""
+
+func _bot_arrow_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and (str(it.get("type", "")) == "ammo_arrow" or str(it.get("name", "")).begins_with("Flecha")):
+			total += int(it.get("quantity", 1))
+	return total
+
+func _consume_bot_arrow(proxy: Node3D) -> String:
+	for pref in ["Flecha de hueso", "Flecha de piedra", "Flecha de madera", "Flecha improvisada"]:
+		if _consume_bot_item(proxy, pref, 1):
+			return pref
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for i in range(inv.size() - 1, -1, -1):
+		var it = inv[i]
+		if it is Dictionary and (str(it.get("type", "")) == "ammo_arrow" or str(it.get("name", "")).begins_with("Flecha")) and int(it.get("quantity", 1)) > 0:
+			var nm := str(it.get("name", ""))
+			it["quantity"] = int(it.get("quantity", 1)) - 1
+			if int(it["quantity"]) <= 0:
+				inv.remove_at(i)
+			proxy.set_meta("saved_inventory", inv)
+			return nm
+	return ""
+
+func _bot_best_thrown_weapon(proxy: Node3D) -> String:
+	for w in ["Lanza de hueso", "Lanza", "Palo afilado"]:
+		if _bot_item_count(proxy, w) > 0:
+			return w
+	return ""
+
+# Elige el arma de combate segun distancia y equipo: fusil > arco (con
+# flechas) > arrojadiza > melee. Un humano hace lo mismo.
+func _pick_fight_weapon(b: Dictionary, dist: float) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	for w in ["Fusil de asalto", "Rifle francotirador"]:
+		if _bot_item_count(proxy, w) > 0:
+			return {"kind": "rifle", "name": w}
+	if dist > 4.5:
+		var bow := _bot_best_bow(proxy)
+		if not bow.is_empty() and _bot_arrow_count(proxy) > 0:
+			return {"kind": "bow", "name": bow}
+		var thrown := _bot_best_thrown_weapon(proxy)
+		if not thrown.is_empty():
+			return {"kind": "thrown", "name": thrown}
+		if _bot_item_count(proxy, "Boleadoras") > 0:
+			return {"kind": "bola", "name": "Boleadoras"}
+	return {"kind": "melee", "name": _best_melee_weapon(proxy)}
+
+func _reduce_bot_item_durability(proxy: Node3D, item_name: String, amount: float) -> void:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for it in inv:
+		if it is Dictionary and str(it.get("name", "")) == item_name:
+			it["durability"] = maxf(0.0, float(it.get("durability", 100.0)) - amount)
+	proxy.set_meta("saved_inventory", inv)
+
 func _weapon_melee_damage(weapon: String) -> float:
 	match weapon:
 		"Lanza de hueso": return 85.0
 		"Lanza": return 75.0
+		"Hacha de piedra": return 70.0
 		"Hacha": return 65.0
+		"Cuchillo de hueso": return 66.0
+		"Cuchillo de piedra": return 62.0
 		"Cuchillo": return 60.0
+		"Pico": return 55.0
 		"Palo afilado": return 50.0
+		"Martillo": return 48.0
+		"Azada": return 45.0
+		"Pala": return 42.0
 		_: return 35.0
 
 func _bot_has_item(proxy: Node3D, item_name: String) -> bool:
@@ -2278,6 +2624,10 @@ func _bot_item_count(proxy: Node3D, item_name: String) -> int:
 	var total := 0
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary and str(it.get("name", "")) == item_name:
+			# Herramientas/armas rotas ya no cuentan (max_durability distingue
+			# la durabilidad de arma de la "carga" de una botella de agua)
+			if it.has("max_durability") and float(it.get("durability", 100.0)) <= 0.0:
+				continue
 			total += int(it.get("quantity", 1))
 	return total
 
@@ -2322,3 +2672,175 @@ func _bot_add_inventory_item(inv: Array, item_dict: Dictionary) -> void:
 				it["quantity"] = int(it.get("quantity", 1)) + qty
 				return
 	inv.append(item_dict.duplicate(true))
+
+# ================= CRAFTEO =================
+# Los bots usan los mismos RECIPES que un jugador (CraftingSystem.RECIPES)
+# pero sobre su inventario serializado (saved_inventory: Array[Dictionary]).
+# Misma semantica: herramientas no se consumen (-3 durabilidad), ANY_PELT /
+# ANY_CLOTHING son comodines y _is_substitute cubre alternativas.
+
+func _bot_matches_input(input_name: String, it: Dictionary) -> bool:
+	if input_name == "ANY_CLOTHING":
+		return str(it.get("type", "")) == "clothing"
+	if input_name == "ANY_PELT":
+		return CraftingSystem._is_pelt_name(str(it.get("name", "")))
+	if CraftingSystem._is_tool(input_name) and float(it.get("durability", 100.0)) <= 0.0:
+		return false
+	var nm := str(it.get("name", ""))
+	return nm == input_name or CraftingSystem._is_substitute(input_name, nm)
+
+func _bot_count_input(inv: Array, input_name: String) -> int:
+	var have := 0
+	for it in inv:
+		if it is Dictionary and _bot_matches_input(input_name, it):
+			have += int(it.get("quantity", 1))
+	return have
+
+func _bot_can_craft(recipe: Dictionary, inv: Array) -> bool:
+	for input_name in recipe.get("inputs", {}):
+		if _bot_count_input(inv, input_name) < int(recipe["inputs"][input_name]):
+			return false
+	return true
+
+# Aplica la receta sobre saved_inventory: consume insumos (o desgasta
+# herramientas), produce la salida con especie de piel dominante y re-equipa.
+func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var consumed_pelts := {}
+	for input_name in recipe.get("inputs", {}):
+		var needed := int(recipe["inputs"][input_name])
+		for it in inv.duplicate():
+			if needed <= 0:
+				break
+			if not (it is Dictionary) or not _bot_matches_input(input_name, it):
+				continue
+			if CraftingSystem._is_tool(input_name):
+				it["durability"] = maxf(0.0, float(it.get("durability", 100.0)) - 3.0)
+				needed -= int(it.get("quantity", 1))
+			else:
+				var take := mini(needed, int(it.get("quantity", 1)))
+				it["quantity"] = int(it.get("quantity", 1)) - take
+				needed -= take
+				if input_name == "ANY_PELT":
+					var pnm := str(it.get("name", ""))
+					consumed_pelts[pnm] = int(consumed_pelts.get(pnm, 0)) + take
+				if int(it.get("quantity", 1)) <= 0:
+					inv.erase(it)
+	var out: Dictionary = (recipe.get("output", {}) as Dictionary).duplicate()
+	var pelt_species := CraftingSystem._dominant_species(consumed_pelts)
+	out = CraftingSystem._pelt_output(out, pelt_species)
+	var entry := {
+		"name": str(out.get("name", "")),
+		"type": str(out.get("type", "resource")),
+		"weight": float(out.get("weight", 0.5)),
+		"quantity": int(out.get("quantity", 1)),
+		"use_value": float(out.get("use_value", 0.0)),
+	}
+	if out.has("durability"):
+		entry["durability"] = float(out["durability"])
+		entry["max_durability"] = float(out.get("max_durability", out["durability"]))
+	if not pelt_species.is_empty():
+		entry["pelt_species"] = pelt_species
+	_bot_add_inventory_item(inv, entry)
+	proxy.set_meta("saved_inventory", inv)
+	_auto_equip_best_gear(b)
+	_publish_bot_to_net_players(b)
+
+# Prioridad de cada receta para el bot: -1 = no le interesa / no puede usarla.
+func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
+	var proxy: Node3D = b["proxy"]
+	var out: Dictionary = recipe.get("output", {})
+	var oname := str(out.get("name", ""))
+	var otype := str(out.get("type", ""))
+	# Fogata y refugio tienen su logica propia; la caña de pescar no se usa
+	if otype in ["campfire", "shelter"] or otype == "tool_fishing":
+		return -1.0
+	# Las latas ya se comen directamente, no hace falta abrirlas
+	if oname.ends_with(" abierta"):
+		return -1.0
+	# Equipo de un solo ejemplar que ya posee no se fabrica dos veces
+	var gear_types := ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "backpack"]
+	if otype in gear_types and _bot_item_count(proxy, oname) > 0:
+		return -1.0
+	if otype == "clothing":
+		if oname in str(b.get("clothing", "")).split(","):
+			return -1.0
+		if PlayerController.CLOTHING_SLOTS.has(oname):
+			var slot := str(PlayerController.CLOTHING_SLOTS[oname])
+			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
+			if int(CLOTHING_PRIORITY.get(oname, 0)) <= int(CLOTHING_PRIORITY.get(cur, 0)):
+				return -1.0
+		return 4.6
+	# Flechas: solo si tiene arco — si no son lastre en la mochila
+	if otype == "ammo_arrow" or oname.begins_with("Flecha"):
+		if _bot_best_bow(proxy).is_empty():
+			return -1.0
+		match oname:
+			"Flecha de hueso": return 6.6
+			"Flecha de piedra": return 6.4
+			"Flecha de madera": return 6.2
+			_: return 6.0
+	# Arcos: solo sin fusil (no se complica con dos sistemas a la vez)
+	var has_rifle := _bot_item_count(proxy, "Fusil de asalto") + _bot_item_count(proxy, "Rifle francotirador") > 0
+	if otype == "weapon_bow":
+		if has_rifle:
+			return -1.0
+		return 5.6 if oname == "Arco reforzado" else 5.0
+	if oname == "Boleadoras":
+		return 3.0 if has_rifle or not _bot_best_bow(proxy).is_empty() else 5.0
+	# Armas y herramienta: solo si mejoran lo que ya tiene en la mano
+	if otype in ["weapon", "tool_axe", "tool_spear"]:
+		if oname == "Palo afilado":
+			return 4.2 # habilita lanzas, espetones y es un arma floja
+		var cur := _weapon_melee_damage(_best_melee_weapon(proxy))
+		var nw := _weapon_melee_damage(oname)
+		var spear_bonus := 1.2 if oname in ["Lanza", "Lanza de hueso"] and _bot_best_thrown_weapon(proxy).is_empty() else 0.0
+		if nw <= cur * 1.03 and spear_bonus == 0.0:
+			return -1.0
+		return clampf(4.5 + (nw - cur) / 40.0 + spear_bonus, 0.0, 7.0)
+	if oname == "Cuerda":
+		return 6.8 if _bot_item_count(proxy, "Cuerda") < 1 else 2.0
+	if oname == "Piedra afilada":
+		return 4.3
+	if oname == "Antorcha":
+		return 5.6 if _is_world_night() and not bool(b.get("torch_lit", false)) else 2.2
+	if oname == "Venda":
+		return 5.2 if float(b.get("health", 100.0)) < 80.0 else 1.8
+	if otype == "food":
+		return 3.4
+	return 2.0
+
+# Llamado desde _tick_bot cuando el bot esta libre (sin urgencias): revisa
+# cada pocos segundos si puede fabricar algo util y "trabaja" un momento.
+func _bot_try_craft(b: Dictionary, delta: float) -> bool:
+	var st: Dictionary = b.get("_craft_state", {})
+	if not st.is_empty():
+		st["t"] = float(st.get("t", 0.0)) - delta
+		b["anim"] = "idle"
+		b["crouching"] = true
+		b["sitting"] = false
+		if float(st["t"]) <= 0.0:
+			b["_craft_state"] = {}
+			_bot_apply_craft(b, st.get("recipe", {}))
+		return true
+	b["_craft_check"] = float(b.get("_craft_check", 0.0)) - delta
+	if float(b["_craft_check"]) > 0.0:
+		return false
+	b["_craft_check"] = 7.0 + fmod(float(int(b["bot_id"])) * 1.7, 4.0)
+	var inv: Array = b["proxy"].get_meta("saved_inventory", [])
+	var best: Dictionary = {}
+	var best_score := 3.0
+	for recipe in CraftingSystem.RECIPES:
+		if not _bot_can_craft(recipe, inv):
+			continue
+		var score := _bot_recipe_score(b, recipe)
+		if score > best_score:
+			best_score = score
+			best = recipe
+	if best.is_empty():
+		return false
+	b["_craft_state"] = {"recipe": best, "t": 2.4}
+	b["anim"] = "idle"
+	b["crouching"] = true
+	return true

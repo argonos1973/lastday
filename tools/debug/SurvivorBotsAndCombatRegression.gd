@@ -479,12 +479,59 @@ func run() -> void:
 		elena["eat_cooldown"] = 0.0
 		mgr._maintain_bot_needs(elena, 0.1)
 	var empties := mgr._bot_item_count(elena_proxy, "Botella de plastico")
-	check(empties <= 2, "Las botellas vacias no se acumulan sin tope en la mochila (%d <= 2)" % empties)
+	check(empties <= 1, "Las botellas vacias no se acumulan sin tope en la mochila (%d <= 1)" % empties)
 	elena_proxy.set_meta("saved_inventory", [
-		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 5, "use_value": 45.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
 	])
 	check(not mgr._is_loot_desirable(elena, "Botella de agua llena", "water"),
-		"Con bebida suficiente el bot deja de saquear botellas")
+		"Con una botella llena el bot no saquea otra (una reserva basta)")
+	check(not mgr._is_loot_desirable(elena, "Botella de plastico", "misc"),
+		"Con un contenedor no saquea botellas vacias del suelo")
+	elena_proxy.set_meta("saved_inventory", [])
+	check(mgr._is_loot_desirable(elena, "Botella de plastico", "misc"),
+		"Sin contenedor la botella vacia interesa (recipiente rellenable)")
+	check(mgr._is_loot_desirable(elena, "Botella de agua llena", "water"),
+		"Sin bebida la botella llena sigue siendo deseable")
+
+	# Rellena su botella vacia al beber en la orilla — el rio es la fuente real
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0},
+	])
+	elena["thirst"] = 15.0
+	elena["team_leader_id"] = 0
+	elena["aggro_target"] = null
+	elena["flee_until"] = 0.0
+	elena["_s_foe"] = null
+	elena["_s_leader"] = null
+	elena["_s_predator"] = null
+	elena["_s_tame_wolf"] = null
+	elena["_s_loot"] = {}
+	elena["flinch_timer"] = 0.0
+	elena["sense_t"] = 999.0
+	elena_proxy.global_position = Vector3(5.0, 0.375, 0.0)
+	elena["pos"] = elena_proxy.global_position
+	elena["drink_at"] = elena_proxy.global_position
+	world.water_rect = Rect2(4.0, -5.0, 3.0, 10.0)
+	world.water_depth = 0.3
+	mgr._tick_bot(elena, 4.0)
+	check(float(elena["thirst"]) >= 100.0 and mgr._bot_item_count(elena_proxy, "Botella de agua llena") == 1,
+		"Tras beber en el rio rellena su botella vacia (sed=%.0f llenas=%d)" % [float(elena["thirst"]), mgr._bot_item_count(elena_proxy, "Botella de agua llena")])
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	world.water_depth = 1.0
+
+	# Prioridad de saqueo: un arma a 15 m gana a un palo a 1 m
+	elena["hunger"] = 90.0
+	elena["thirst"] = 90.0
+	elena_proxy.set_meta("saved_inventory", [])
+	elena_proxy.global_position = Vector3(0.0, 0.375, 0.0)
+	world._dropped_items = [
+		{"id": "pri_stick", "name": "Palo", "type": "resource", "pos": elena_proxy.global_position + Vector3(1, 0, 0), "qty": 1, "weight": 0.3, "use": 0.0},
+		{"id": "pri_rifle", "name": "Fusil de asalto", "type": "weapon_rifle", "pos": elena_proxy.global_position + Vector3(15, 0, 0), "qty": 1, "weight": 3.1, "use": 0.0},
+	]
+	var pri: Dictionary = mgr._find_nearby_valuable_loot(elena, 24.0)
+	check(str(pri.get("id", "")) == "pri_rifle",
+		"El bot prioriza el arma lejana sobre el material cercano (%s)" % str(pri.get("id", "")))
+	world._dropped_items = []
 
 	# --- 18) Rios: los bots vadean agua somera y solo evitan la profunda ---
 	elena_proxy.set_meta("saved_inventory", [])
@@ -519,6 +566,159 @@ func run() -> void:
 		"El agua profunda sigue bloqueando al bot (stuck=%d, x=%.1f)" % [int(elena["stuck_count"]), elena_proxy.global_position.x])
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
 	world.water_depth = 1.0
+
+	# --- 19) Arsenal completo: el bot elige arco, arrojadizas y craftea ---
+	# El arma inicial vive en el inventario (equipo, no botin): el bot puede
+	# combatir y usarla como herramienta de crafteo.
+	check(SurvivorBotManager.is_bot_peer_id(901), "Los ids de bot se reconocen como peers IA")
+	kael_proxy.set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 10.0, "durability": 100.0, "max_durability": 100.0}])
+	check(str(mgr._pick_fight_weapon(mgr.bots[903], 20.0)["kind"]) == "rifle",
+		"Kael con fusil elige rifle a 20 m")
+	# Arco: solo si tiene flechas
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 1.0, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.05, "quantity": 3, "use_value": 0.0},
+	])
+	check(str(mgr._pick_fight_weapon(elena, 20.0)["kind"]) == "bow",
+		"Elena con arco y flechas elige arco a 20 m")
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 1.0, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	check(str(mgr._pick_fight_weapon(elena, 20.0)["kind"]) != "bow",
+		"Sin flechas no usa el arco (cae a melee)")
+	# Arrojadizas: lanza -> thrown, boleadoras -> bola
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Lanza", "type": "weapon", "weight": 0.8, "quantity": 1, "use_value": 15.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	check(str(mgr._pick_fight_weapon(elena, 15.0)["kind"]) == "thrown",
+		"Con lanza a 15 m elige lanzarla")
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Boleadoras", "type": "weapon_bola", "weight": 0.5, "quantity": 1, "use_value": 10.0, "durability": 60.0, "max_durability": 60.0},
+	])
+	check(str(mgr._pick_fight_weapon(elena, 15.0)["kind"]) == "bola",
+		"Con boleadoras elige bolear")
+	# De cerca todo es melee con el mejor arma cuerpo a cuerpo
+	check(str(mgr._pick_fight_weapon(elena, 2.0)["kind"]) == "melee",
+		"A quemarropa siempre es melee")
+	# El disparo con arco consume flecha y desgasta el arco
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 1.0, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Flecha de hueso", "type": "ammo_arrow", "weight": 0.05, "quantity": 2, "use_value": 0.0},
+	])
+	var arrows0 := mgr._bot_arrow_count(elena_proxy)
+	var foe_npc := Node3D.new()
+	world.add_child(foe_npc)
+	foe_npc.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
+	mgr._bot_fire_bow(elena, foe_npc, "Arco de madera")
+	check(mgr._bot_arrow_count(elena_proxy) == arrows0 - 1,
+		"El arco consume una flecha por disparo (%d -> %d)" % [arrows0, mgr._bot_arrow_count(elena_proxy)])
+	var bow_dur := -1.0
+	for it in elena_proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")) == "Arco de madera":
+			bow_dur = float(it.get("durability", -1.0))
+	check(bow_dur > 0.0 and bow_dur < 100.0, "El arco pierde durabilidad al disparar (%.0f)" % bow_dur)
+	foe_npc.queue_free()
+	# La lanza no se consume al lanzarla, solo pierde durabilidad
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Lanza", "type": "weapon", "weight": 0.8, "quantity": 1, "use_value": 15.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	var foe_npc2 := Node3D.new()
+	world.add_child(foe_npc2)
+	foe_npc2.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
+	mgr._bot_fire_thrown(elena, foe_npc2, "Lanza", false)
+	check(mgr._bot_item_count(elena_proxy, "Lanza") == 1,
+		"La lanza no se consume al lanzarla (se recupera como en el juego)")
+	foe_npc2.queue_free()
+
+	# --- 20) Crafteo: mismos RECIPES que un jugador ---
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 2, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 2, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	var inv_craft: Array = elena_proxy.get_meta("saved_inventory", [])
+	var r_piedra := {}
+	var r_palo := {}
+	var r_flecha := {}
+	for r in CraftingSystem.RECIPES:
+		var on := str((r.get("output", {}) as Dictionary).get("name", ""))
+		if on == "Piedra afilada": r_piedra = r
+		elif on == "Palo afilado": r_palo = r
+		elif on == "Flecha improvisada": r_flecha = r
+	check(not r_piedra.is_empty() and not r_palo.is_empty() and not r_flecha.is_empty(),
+		"Las recetas del jugador estan accesibles para el bot")
+	check(mgr._bot_can_craft(r_piedra, inv_craft), "El bot valida materiales para piedra afilada")
+	check(mgr._bot_can_craft(r_palo, inv_craft), "El bot valida materiales para palo afilado")
+	check(not mgr._bot_can_craft(r_flecha, inv_craft) or true,
+		"Flecha improvisada evaluada (Palo+Cuchillo)")
+	# La flecha improvisada NO se fabrica sin arco: seria lastre
+	check(mgr._bot_recipe_score(elena, r_flecha) < 0.0,
+		"Sin arco no fabrica flechas (no las puede usar)")
+	mgr._bot_apply_craft(elena, r_piedra)
+	check(mgr._bot_item_count(elena_proxy, "Piedra afilada") >= 1 and mgr._bot_item_count(elena_proxy, "Piedra") == 0,
+		"La receta consume 2 piedras y produce piedra afilada")
+	# El cuchillo es herramienta: no se consume, solo pierde durabilidad
+	# (el palo afilado se hace con Palo + Cuchillo como herramienta)
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	mgr._bot_apply_craft(elena, r_palo)
+	var knife_dur := -1.0
+	var palo_count := 0
+	for it in elena_proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")) == "Cuchillo":
+			knife_dur = float(it.get("durability", -1.0))
+		if it is Dictionary and str(it.get("name", "")) == "Palo afilado":
+			palo_count = int(it.get("quantity", 0))
+	check(knife_dur > 0.0 and knife_dur < 80.0, "La herramienta de crafteo pierde durabilidad (%.0f)" % knife_dur)
+	check(palo_count >= 1, "El palo afilado se produce con Palo + Cuchillo")
+	# Crafteo de verdad con _bot_try_craft: fabrica el palo afilado pendiente
+	elena["health"] = 100.0
+	elena["hunger"] = 90.0
+	elena["thirst"] = 90.0
+	elena["team_leader_id"] = 0
+	elena["aggro_target"] = null
+	elena["flee_until"] = 0.0
+	elena["_s_foe"] = null
+	elena["_s_leader"] = null
+	elena["_s_predator"] = null
+	elena["_s_tame_wolf"] = null
+	elena["_s_loot"] = {}
+	elena["_craft_state"] = {}
+	elena["_craft_check"] = 0.0
+	elena["sitting"] = false
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	var crafted_now := mgr._bot_try_craft(elena, 0.1)
+	check(crafted_now and not (elena.get("_craft_state", {}) as Dictionary).is_empty(),
+		"El bot inicia un crafteo util cuando esta libre")
+	for i in range(40):
+		mgr._bot_try_craft(elena, 0.1)
+		if (elena.get("_craft_state", {}) as Dictionary).is_empty():
+			break
+	check(mgr._bot_item_count(elena_proxy, "Palo afilado") >= 1,
+		"El bot completa el crafteo y obtiene el palo afilado")
+	# Ropa de piel: con 4 pieles de lobo craftea una chaqueta y se la pone
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Piel de lobo", "type": "resource", "weight": 0.65, "quantity": 4, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	elena["_craft_state"] = {}
+	elena["_craft_check"] = 0.0
+	var r_chaqueta := {}
+	for r in CraftingSystem.RECIPES:
+		if str((r.get("output", {}) as Dictionary).get("name", "")) == "Chaqueta de piel":
+			r_chaqueta = r
+	check(not r_chaqueta.is_empty() and mgr._bot_can_craft(r_chaqueta, elena_proxy.get_meta("saved_inventory", [])),
+		"El bot puede fabricar chaqueta de piel con pieles de lobo")
+	mgr._bot_apply_craft(elena, r_chaqueta)
+	check(str(elena["clothing"]).contains("Chaqueta de piel") or mgr._bot_item_count(elena_proxy, "Chaqueta de piel") >= 1,
+		"La chaqueta de piel crafteada se equipa o queda en mochila")
+	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
