@@ -3553,7 +3553,6 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 		var fruit_use := 20.0 if fruit_name == "Naranja" else 12.0
 		var fruit_w := 0.20 if fruit_name == "Naranja" else 0.10
 		var net2 = world.get("net")
-		var placed := 0
 		for fi in range(2):
 			var fpos := pos + Vector3(randf_range(-1.8, 1.8), 0.0, randf_range(-1.8, 1.8))
 			fpos.y = _ground_y(fpos.x, fpos.z) + 0.06
@@ -3561,7 +3560,6 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 			if world.has_method("_is_water_drop_position") and world._is_water_drop_position(fpos):
 				continue
 			var drop_id := "fruit_%d_%d" % [Time.get_ticks_msec(), fi]
-			placed += 1
 			# Mismo camino que un drop de jugador: _net_item_dropped registra el
 			# objeto, crea su WorldAction y la visual en el servidor; luego se
 			# reenvia a cada cliente para que lo vea y pueda recogerlo.
