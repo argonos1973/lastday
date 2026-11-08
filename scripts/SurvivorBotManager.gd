@@ -144,7 +144,7 @@ const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
 const AI_MEMORY_PATH := "user://survivor_bot_memory.json"
 const AI_MEMORY_MAX_SPOTS := 10
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are a strategic advisor for a survival-game NPC. Output ONLY compact JSON, no prose: {\"action\":\"...\",\"poi_kind\":\"...\",\"reason\":\"...\"}. Actions: explore (wander/visit a place), scavenge (loot military or city sites), hunt (go to wild zones for food), return_home (go back to own camp or shelter), rest (stay at camp to recover), avoid_zone (steer clear of a poi_kind that was deadly or picked clean). poi_kind one of: house, military, city, wild, tower — include it only when relevant (hunt implies wild; scavenge implies military/city). reason: max 8 words."
+const AI_SYSTEM_PROMPT := "You are a strategic advisor for a survival-game NPC. Output ONLY compact JSON, no prose: {\"action\":\"...\",\"poi_kind\":\"...\",\"reason\":\"...\"}. Actions: explore (wander/visit a place), scavenge (loot military or city sites), hunt (go to wild zones for food), return_home (go back to own camp or shelter), rest (stay at camp to recover), avoid_zone (steer clear of a poi_kind that was deadly or picked clean), forage (seek edible mushrooms and fruit trees further away). poi_kind one of: house, military, city, wild, tower — include it only when relevant (hunt implies wild; scavenge implies military/city). reason: max 8 words."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -861,6 +861,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 							break
 			return
 
+	# 4b) Hambre sin comida comestible: forrajeo — setas (eat_food) y arboles
+	# frutales (pick_fruit), lo mismo que buscaria un jugador hambriento.
+	if _bot_try_forage(b, delta):
+		return
+
 	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
 	if leader != null:
 		_tick_teammate_behavior(b, leader, delta)
@@ -1134,17 +1139,56 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			if not (it is Dictionary):
 				continue
 			var nm := str(it.get("name", ""))
-			if str(it.get("type", "")) != "food" or nm == "Carne humana":
+			# Latas cerradas y pescado crudo no se pueden comer directamente:
+			# la lata hay que abrirla antes con cuchillo/hacha (receta de crafteo).
+			if str(it.get("type", "")) != "food" or nm == "Carne humana" or nm == "Pez crudo" \
+					or (nm.begins_with("Lata de ") and not nm.ends_with(" abierta")):
 				continue
 			# La carne cruda solo se come desesperado: un superviviente real la cocina
 			if nm.begins_with("Carne cruda") and not desperate:
 				continue
-			it["quantity"] = int(it.get("quantity", 1)) - 1
-			if int(it["quantity"]) <= 0:
-				inv.remove_at(i)
-			b["hunger"] = minf(100.0, float(b["hunger"]) + (12.0 if nm.begins_with("Carne cruda") else 35.0))
-			var new_hp := minf(100.0, float(b["health"]) + 14.0)
-			b["health"] = new_hp
+			var use_v := float(it.get("use_value", 18.0))
+			var gain_h := use_v
+			var gain_t := use_v * 0.20
+			var gain_hp := maxf(3.0, use_v * 0.35)
+			var is_can := false
+			var bite := 1.0
+			if nm.begins_with("Lata de ") and nm.ends_with(" abierta"):
+				# Latas abiertas: se comen por porciones del 50% restante,
+				# igual que en el inventario del jugador.
+				is_can = true
+				var dmax := float(it.get("max_durability", 100.0))
+				var dcur := float(it.get("durability", dmax))
+				var rem := clampf(dcur / dmax, 0.0, 1.0) if dmax > 0.0 else 0.0
+				if rem <= 0.0:
+					continue
+				bite = minf(0.5, rem)
+				gain_h = use_v * bite
+				gain_t = use_v * 0.15 * bite
+				gain_hp = maxf(3.0, use_v * 0.35 * bite)
+			elif nm == "Naranja":
+				gain_t = use_v * 0.80
+				gain_hp = maxf(2.0, use_v * 0.20)
+			elif nm == "Higo":
+				gain_t = use_v * 0.70
+				gain_hp = maxf(5.0, use_v * 0.50)
+			elif nm.begins_with("Carne cruda"):
+				gain_h = use_v * 0.4
+				gain_t = use_v * 0.10
+				gain_hp = 0.0
+			if is_can:
+				var dmax2 := float(it.get("max_durability", 100.0))
+				it["durability"] = float(it.get("durability", dmax2)) - dmax2 * bite
+				if float(it["durability"]) <= 0.0:
+					inv.remove_at(i)
+			else:
+				it["quantity"] = int(it.get("quantity", 1)) - 1
+				if int(it["quantity"]) <= 0:
+					inv.remove_at(i)
+			b["hunger"] = minf(100.0, float(b["hunger"]) + gain_h)
+			b["thirst"] = minf(100.0, float(b["thirst"]) + gain_t)
+			b["health"] = minf(100.0, float(b["health"]) + gain_hp)
+			var new_hp := minf(100.0, float(b["health"]))
 			proxy.set_meta("proxy_health", new_hp)
 			proxy.set_meta("saved_health", new_hp)
 			proxy.set_meta("saved_inventory", inv)
@@ -2140,8 +2184,32 @@ func _loot_priority(b: Dictionary, nm: String, tp: String) -> float:
 		return 3.8
 	return 3.0 # materiales de campamento: palos, piedras, cuerda, pieles
 
+# Cualquier filo que sirva de "Cuchillo" en las recetas (misma lista que
+# CraftingSystem._is_substitute) permite abrir latas.
+func _bot_has_can_opener(proxy: Node3D) -> bool:
+	for tool in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Piedra afilada"]:
+		if _bot_item_count(proxy, tool) > 0:
+			return true
+	return false
+
+# Comida en el suelo: solo si la necesita — con el estomago lleno no se
+# llenan los bolsillos de setas que otro puede aprovechar.
+func _bot_wants_food(b: Dictionary) -> bool:
+	if float(b["hunger"]) < 75.0 or float(b["health"]) < 80.0:
+		return true
+	# Sin reserva comestible: guardar algo aunque no tenga hambre urgente
+	return not _bot_has_edible_food(b["proxy"], float(b["hunger"]) < 28.0)
+
 func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
-	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "ammo", "ammo_arrow", "medical", "food", "tool_matches"]:
+	if tp == "food":
+		if not _bot_wants_food(b):
+			return false
+		# Latas cerradas: sin herramienta de corte son lastre puro; con ella
+		# son reserva de emergencia que el sabe abrir y comer.
+		if nm.begins_with("Lata de ") and not nm.ends_with(" abierta"):
+			return _bot_has_can_opener(b["proxy"]) or float(b["hunger"]) < 30.0
+		return true
+	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "ammo", "ammo_arrow", "medical", "tool_matches"]:
 		return true
 	# Bebida: una sola reserva basta — el rio es la fuente real. Si ya lleva un
 	# recipiente vacio, solo coge una llena si tiene sed; si no, rellena en el rio.
@@ -2866,9 +2934,15 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	# Fogata y refugio tienen su logica propia; la caña de pescar no se usa
 	if otype in ["campfire", "shelter"] or otype == "tool_fishing":
 		return -1.0
-	# Las latas ya se comen directamente, no hace falta abrirlas
+	# Latas: las cerradas no se comen — hay que abrirlas con cuchillo/hacha.
+	# Solo cuando tiene hambre real o salud baja, y sin acaparar abiertas.
 	if oname.ends_with(" abierta"):
-		return -1.0
+		if _bot_item_count(proxy, oname) > 0:
+			return 1.2
+		if _bot_item_count(proxy, oname.trim_suffix(" abierta")) < 1:
+			return -1.0
+		var need_food := float(b.get("hunger", 100.0)) < 72.0 or float(b.get("health", 100.0)) < 82.0
+		return 6.2 if need_food else 1.2
 	# Equipo de un solo ejemplar que ya posee no se fabrica dos veces
 	var gear_types := ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "backpack"]
 	if otype in gear_types and _bot_item_count(proxy, oname) > 0:
@@ -3124,6 +3198,8 @@ func _ai_parse_decision(text: String) -> Dictionary:
 			out["only_kinds"] = ["wild"]
 		"return_home", "rest":
 			out["mode"] = "pos"
+		"forage":
+			out["mode"] = "food"
 		"avoid_zone":
 			if not AI_POI_KINDS.has(kind):
 				return {}
@@ -3285,3 +3361,214 @@ func _ai_memory_summary(mem: Dictionary) -> Dictionary:
 	if not spots.is_empty():
 		out["death_spots"] = spots.size()
 	return out
+
+# ==================== FORRAJEO: SETAS Y FRUTA ====================
+# Con hambre y sin comida comestible en la mochila, el bot busca lo que un
+# jugador buscaria: setas (acciones eat_food, se comen al momento) y arboles
+# frutales (pick_fruit, 3 s de recolecta y la fruta cae al suelo como en el
+# juego del jugador). El asesor puede ampliar el radio con la accion "forage".
+
+func _bot_has_edible_food(proxy: Node3D, desperate: bool) -> bool:
+	for it in proxy.get_meta("saved_inventory", []):
+		if not (it is Dictionary):
+			continue
+		var nm := str(it.get("name", ""))
+		var tp := str(it.get("type", ""))
+		if tp != "food" or nm == "Carne humana" or nm == "Pez crudo":
+			continue
+		if nm.begins_with("Carne cruda") and not desperate:
+			continue
+		if nm.begins_with("Lata de ") and not nm.ends_with(" abierta"):
+			continue
+		if nm.ends_with(" abierta"):
+			var dmax := float(it.get("max_durability", 100.0))
+			var dcur := float(it.get("durability", dmax))
+			if dmax <= 0.0 or dcur <= 0.0:
+				continue
+		return true
+	return false
+
+func _bot_try_forage(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var hunger := float(b["hunger"])
+	var desperate := hunger < 24.0
+	var scarcity := bool(b.get("_mem", {}).get("scarcity", false))
+	var line := 58.0 + (14.0 if scarcity else 0.0)
+	var leader := _sensed_node(b, "_s_leader")
+	var allowed := hunger < line and (leader == null or desperate)
+	# De noche o oculto solo sale a comer si se esta muriendo de hambre:
+	# un superviviente precavido no abandona el refugio por un capricho.
+	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or _is_world_night()):
+		allowed = false
+	var st0: Dictionary = b.get("_forage", {})
+	if not allowed or _bot_has_edible_food(proxy, desperate):
+		if not st0.is_empty():
+			b["_forage"] = {}
+		return false
+	# Objetivo en curso: caminar hasta el, esperar el tiempo de la accion y rematar
+	var st: Dictionary = b.get("_forage", {})
+	if not st.is_empty():
+		var apos = st.get("pos")
+		if not (apos is Vector3) or (apos as Vector3) == Vector3.INF:
+			b["_forage"] = {}
+			return false
+		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
+		if flat > 2.0:
+			b["sitting"] = false
+			b["crouching"] = false
+			_move_bot_towards(b, apos, 4.8 if flat > 9.0 else 3.8, delta, "run" if flat > 9.0 else "walk")
+			return true
+		st["t"] = float(st.get("t", 0.0)) + delta
+		b["anim"] = "idle"
+		b["crouching"] = true
+		b["sitting"] = false
+		if float(st["t"]) >= float(st.get("t_need", 1.2)):
+			b["_forage"] = {}
+			_bot_forage_complete(b, st)
+		return true
+	# Escaneo con cadencia: iterar world_actions_by_id cada frame por bot era caro
+	b["_forage_scan"] = float(b.get("_forage_scan", 0.0)) - delta
+	if float(b["_forage_scan"]) > 0.0:
+		return false
+	b["_forage_scan"] = 1.2 + fmod(float(int(b["bot_id"])) * 0.31, 0.5)
+	var radius := 30.0
+	var d0 := _ai_active_directive(b)
+	if str(d0.get("mode", "")) == "food":
+		radius = 55.0
+	var target := _find_forage_target(b, radius)
+	if target.is_empty():
+		return false
+	b["_forage"] = target
+	return _bot_try_forage(b, 0.0)
+
+func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
+	if world == null or not ("world_actions_by_id" in world):
+		return {}
+	var proxy: Node3D = b["proxy"]
+	var best := {}
+	var best_d := radius
+	var now := Time.get_unix_time_from_system()
+	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
+	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
+	# Setas primero: se comen al momento, sin objetos al suelo ni esperas largas
+	for aid in world.world_actions_by_id.keys():
+		var a = world.world_actions_by_id[aid]
+		if a == null or not is_instance_valid(a):
+			continue
+		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
+			continue
+		var d := proxy.global_position.distance_to(a.global_position)
+		if d < best_d:
+			best_d = d
+			best = {"kind": "eat", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 1.2,
+				"use": float(a.get_meta("item_use_value", 12.0)), "name": str(a.get_meta("item_name", "comida"))}
+	# Frutales: solo si no hay setas al alcance (la fruta cae al suelo y hay que recogerla)
+	if best.is_empty():
+		for aid in world.world_actions_by_id.keys():
+			var a = world.world_actions_by_id[aid]
+			if a == null or not is_instance_valid(a):
+				continue
+			if str(a.get("action_type")) != "pick_fruit" or claims.has(aid) or depleted.has(aid):
+				continue
+			if now < float(a.get_meta("fruit_ready_time", 0.0)):
+				continue
+			var d2 := proxy.global_position.distance_to(a.global_position)
+			if d2 < best_d:
+				best_d = d2
+				best = {"kind": "fruit", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 3.0,
+					"fruit": str(a.get_meta("fruit_type_name", "Higo"))}
+	return best
+
+func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var kind := str(st.get("kind", ""))
+	var pos: Vector3 = st.get("pos", Vector3.INF)
+	var aid := str(st.get("id", ""))
+	if world == null or aid.is_empty():
+		return
+	var action = world.world_actions_by_id.get(aid)
+	if action == null or not is_instance_valid(action):
+		return
+	if kind == "eat":
+		# Revalidar: otro pudo comersela mientras caminaba
+		if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
+			return
+		var use := float(st.get("use", 12.0))
+		var ename := str(st.get("name", "comida"))
+		var thirst_mul := 0.2
+		# Latas abiertas en el suelo: una porcion del 50% por bocado; pilas de
+		# comida: una unidad cada vez. El resto de casos agota la accion entera.
+		var is_can := ename.begins_with("Lata de ") and ename.ends_with(" abierta")
+		var new_qty := -1
+		var new_dur := -1.0
+		var eat_scale := 1.0
+		if is_can:
+			thirst_mul = 0.15
+			var cmax := float(action.get_meta("item_max_durability", action.get_meta("item_durability", 100.0)))
+			var cdur := float(action.get_meta("item_durability", cmax))
+			if cdur <= 0.0:
+				return
+			var cbite := minf(cmax * 0.5, cdur)
+			eat_scale = cbite / cmax
+			new_dur = cdur - cbite
+			if new_dur <= 0.0:
+				new_qty = 0
+			else:
+				new_qty = int(action.get_meta("item_quantity", 1))
+		else:
+			var pqty := int(action.get_meta("item_quantity", 1))
+			if pqty > 1:
+				new_qty = pqty - 1
+				new_dur = float(action.get_meta("item_durability", 100.0))
+		b["hunger"] = minf(100.0, float(b["hunger"]) + use * eat_scale)
+		b["thirst"] = minf(100.0, float(b["thirst"]) + use * thirst_mul * eat_scale)
+		var hp := minf(100.0, float(b["health"]) + maxf(3.0, use * 0.35 * eat_scale))
+		b["health"] = hp
+		proxy.set_meta("proxy_health", hp)
+		proxy.set_meta("saved_health", hp)
+		proxy.set_meta("saved_hunger", float(b["hunger"]))
+		proxy.set_meta("saved_thirst", float(b["thirst"]))
+		b["eat_cooldown"] = 10.0
+		if new_qty < 0 or new_qty == 0:
+			if world.has_method("_net_world_action_completed"):
+				world._net_world_action_completed(aid, [], "", pos, 0)
+			var net = world.get("net")
+			if net != null and net.is_host and net.peer != null:
+				for pid in net.players.keys():
+					if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+						net.world_action_completed.rpc_id(pid, aid, [], "", pos)
+		else:
+			# Porcion o unidad parcial: la accion sigue en pie con menos contenido
+			if world.has_method("_apply_ground_craft_state"):
+				world._apply_ground_craft_state(aid, new_qty, maxf(new_dur, 0.0))
+			var gnet = world.get("net")
+			if gnet != null and gnet.is_host and gnet.peer != null:
+				gnet.ground_craft_state_changed.rpc(aid, new_qty, maxf(new_dur, 0.0))
+	elif kind == "fruit":
+		var now := Time.get_unix_time_from_system()
+		action.set_meta("fruit_ready_time", now + 300.0)
+		if "_pending_fruit_cooldowns" in world:
+			(world._pending_fruit_cooldowns as Dictionary)[aid] = now + 300.0
+		var fruit_name := str(st.get("fruit", "Higo"))
+		var fruit_use := 20.0 if fruit_name == "Naranja" else 12.0
+		var fruit_w := 0.20 if fruit_name == "Naranja" else 0.10
+		var net2 = world.get("net")
+		var placed := 0
+		for fi in range(2):
+			var fpos := pos + Vector3(randf_range(-1.8, 1.8), 0.0, randf_range(-1.8, 1.8))
+			fpos.y = _ground_y(fpos.x, fpos.z) + 0.06
+			# Fruta que cae al agua se pierde, igual que para el jugador
+			if world.has_method("_is_water_drop_position") and world._is_water_drop_position(fpos):
+				continue
+			var drop_id := "fruit_%d_%d" % [Time.get_ticks_msec(), fi]
+			placed += 1
+			# Mismo camino que un drop de jugador: _net_item_dropped registra el
+			# objeto, crea su WorldAction y la visual en el servidor; luego se
+			# reenvia a cada cliente para que lo vea y pueda recogerlo.
+			if world.has_method("_net_item_dropped"):
+				world._net_item_dropped(drop_id, fruit_name, "food", fruit_w, 1, fruit_use, fpos, Color(0, 0, 0, 0), 0)
+			if net2 != null and net2.is_host and net2.peer != null:
+				for pid in net2.players.keys():
+					if pid != net2.get_my_id() and not is_bot_peer_id(pid) and not net2.players[pid].get("offline", false) and net2.peer_alive(pid):
+						net2.item_dropped.rpc_id(pid, drop_id, fruit_name, "food", fruit_w, 1, fruit_use, fpos, Color(0, 0, 0, 0))
+		b["eat_cooldown"] = 4.0

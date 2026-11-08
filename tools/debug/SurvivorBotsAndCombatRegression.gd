@@ -64,7 +64,15 @@ class TestWorld extends "res://scripts/Main.gd":
 		return river_segs
 	func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		hit_events.append({"id": peer_id, "kind": kind, "pos": pos})
-	func _net_world_action_completed(_a: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+	func _net_world_action_completed(aid: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+		# Réplica mínima del camino dedicado: agotada + retirada del registro,
+		# sin visuals ni RPC — suficiente para que el forrajeo verifique consumo.
+		if not aid.is_empty() and not _depleted_action_ids.has(aid):
+			_depleted_action_ids.append(aid)
+		var act = world_actions_by_id.get(aid)
+		if act != null and is_instance_valid(act):
+			act.mark_depleted()
+			world_actions_by_id.erase(aid)
 		return true
 
 func _initialize() -> void:
@@ -400,7 +408,7 @@ func run() -> void:
 	# --- 14) Orden "come": come de su mochila aunque no tenga mucha hambre ---
 	elena["hunger"] = 90.0
 	var e_inv4: Array = elena_proxy.get_meta("saved_inventory", [])
-	e_inv4.append({"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 0.0})
+	e_inv4.append({"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0})
 	elena_proxy.set_meta("saved_inventory", e_inv4)
 	elena["eat_cooldown"] = 0.0
 	var msg_eat: String = mgr.interact_with_bot(901, 1, "eat")
@@ -874,6 +882,114 @@ func run() -> void:
 	check(true, "Memoria: _ai_save_memory es no-op fuera de dedicated_server")
 	elena["_mem"] = {"visited": [], "deaths": 0, "last_death_pos": Vector3.INF, "scarcity": false, "gear_learned": true}
 	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+
+	# --- 24) Forrajeo: setas, fruta y latas ---
+	world.world_actions_by_id.clear()
+	var seta := WorldActionScript.new()
+	seta.setup("test_seta_1", "eat_food", "Seta amanita", Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
+	seta.set_meta("item_name", "Seta amanita")
+	seta.set_meta("item_type", "food")
+	seta.set_meta("item_use_value", 12.0)
+	seta.set_meta("item_quantity", 1)
+	world.add_child(seta)
+	seta.global_position = elena_proxy.global_position + Vector3(10.0, 0.0, 0.0)
+	world.world_actions_by_id["test_seta_1"] = seta
+	var arbol := WorldActionScript.new()
+	arbol.setup("test_tree_1", "pick_fruit", "Naranjo", Vector3(1.3, 3.2, 1.3), Color(0.2, 0.12, 0.05), true, false)
+	arbol.set_meta("fruit_type_name", "Naranja")
+	arbol.set_meta("fruit_ready_time", 0.0)
+	world.add_child(arbol)
+	arbol.global_position = elena_proxy.global_position + Vector3(0.0, 0.0, 14.0)
+	world.world_actions_by_id["test_tree_1"] = arbol
+	# Hambre sin comida: localiza la seta (preferida sobre la fruta)
+	elena["_forage"] = {}
+	elena["_forage_scan"] = 0.0
+	elena["_s_leader"] = null
+	elena["hunger"] = 40.0
+	elena["health"] = 100.0
+	elena["thirst"] = 80.0
+	elena["hide_timer"] = 0.0
+	elena["eat_cooldown"] = 0.0
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	check(mgr._bot_try_forage(elena, 0.016), "Forrajeo: con hambre y sin comida busca setas")
+	var fst: Dictionary = elena.get("_forage", {})
+	check(str(fst.get("kind", "")) == "eat" and str(fst.get("id", "")) == "test_seta_1",
+		"Forrajeo: prefiere la seta sobre el arbol frutal")
+	# Llega y come: hambre sube y la accion queda agotada en el servidor
+	elena_proxy.global_position = seta.global_position
+	mgr._bot_try_forage(elena, 1.3)
+	check(float(elena["hunger"]) > 50.0, "Forrajeo: comer la seta repone hambre (hunger=%.0f)" % float(elena["hunger"]))
+	check((world._depleted_action_ids as Array).has("test_seta_1"),
+		"Forrajeo: la seta queda agotada para todo el mundo")
+	# Ahora la fruta: target pick_fruit, al completar caen 2 unidades y hay cooldown
+	elena["hunger"] = 40.0
+	elena["_forage"] = {}
+	elena["_forage_scan"] = 0.0
+	elena_proxy.global_position = arbol.global_position
+	mgr._bot_try_forage(elena, 0.016)
+	var ft: Dictionary = elena.get("_forage", {})
+	check(str(ft.get("kind", "")) == "fruit" and str(ft.get("id", "")) == "test_tree_1",
+		"Forrajeo: sin setas, va al arbol frutal")
+	var drops_before: int = (world._dropped_items as Array).size()
+	mgr._bot_try_forage(elena, 3.1)
+	check((world._dropped_items as Array).size() >= drops_before + 2,
+		"Forrajeo: la cosecha deja 2 frutas en el suelo")
+	check(float(arbol.get_meta("fruit_ready_time", 0.0)) > Time.get_unix_time_from_system(),
+		"Forrajeo: el arbol entra en cooldown de 5 minutos")
+	# Latas: la cerrada no se come, la abierta si; y se abren con Hacha tambien
+	elena["hunger"] = 40.0
+	elena["health"] = 100.0
+	elena["eat_cooldown"] = 0.0
+	elena["_forage"] = {}
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Lata de guiso", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0},
+	])
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(float(elena["hunger"]) < 45.0, "Lata: la cerrada NO se come directamente")
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(float(elena["hunger"]) > 50.0 and float(elena["hunger"]) < 65.0,
+		"Lata: la abierta se come por porciones (hunger=%.0f)" % float(elena["hunger"]))
+	elena["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(float(elena["hunger"]) > 70.0, "Lata: segunda porcion agota la lata (hunger=%.0f)" % float(elena["hunger"]))
+	var can_left := false
+	for it2 in elena_proxy.get_meta("saved_inventory", []):
+		if it2 is Dictionary and str(it2.get("name", "")) == "Lata de guiso abierta":
+			can_left = true
+	check(not can_left, "Lata: agotada se consume entera")
+	# Apertura con receta humana: Hacha sustituye al Cuchillo
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Lata de atun", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 18.0},
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.2, "quantity": 1, "use_value": 0.0, "durability": 90.0, "max_durability": 90.0},
+	])
+	elena["hunger"] = 40.0
+	var can_recipe := {}
+	for r in CraftingSystem.RECIPES:
+		if str((r.get("output", {}) as Dictionary).get("name", "")) == "Lata de atun abierta":
+			can_recipe = r
+	check(not can_recipe.is_empty() and mgr._bot_can_craft(can_recipe, elena_proxy.get_meta("saved_inventory", [])),
+		"Lata: se puede abrir con Hacha (sustituto del Cuchillo)")
+	check(mgr._bot_recipe_score(elena, can_recipe) > 3.0, "Lata: con hambre el bot quiere abrirla")
+	elena["hunger"] = 95.0
+	check(mgr._bot_recipe_score(elena, can_recipe) < 3.0, "Lata: sin hambre no se molesta en abrir")
+	# Saqueo: sin filo la lata cerrada no interesa; con filo si
+	elena["hunger"] = 40.0
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.5, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	check(not mgr._is_loot_desirable(elena, "Lata de guiso", "food"),
+		"Lata: sin herramienta de corte no la recoge")
+	elena_proxy.get_meta("saved_inventory", []).append({"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0})
+	check(mgr._is_loot_desirable(elena, "Lata de guiso", "food"),
+		"Lata: con cuchillo la lata cerrada si es botin util")
+	seta.queue_free()
+	arbol.queue_free()
+	world.world_actions_by_id.clear()
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
