@@ -101,6 +101,8 @@ func _is_close_enough(player: Node3D, target: Object) -> bool:
 			return flat_distance_squared <= 4.0
 		elif wa.action_type == "fell_bush":
 			return flat_distance_squared <= 2.25
+	if target is Node and bool((target as Node).get_meta("is_ai_bot", false)):
+		return flat_distance_squared <= 14.0
 	var reach_padding := 0.0
 	if target is CollisionObject3D:
 		for child in (target as Node).get_children():

@@ -34,9 +34,11 @@ const CraftingSystemScript = preload("res://scripts/CraftingSystem.gd")
 const MAP_EXTENT := 500.0 # Legacy generation area: preserve existing density and spawn positions.
 const CityExpansion = preload("res://scripts/CityExpansion.gd")
 const HighMountainZone = preload("res://scripts/HighMountainZone.gd")
+const SurvivorBotManagerScript = preload("res://scripts/SurvivorBotManager.gd")
 
 var player
 var hud
+var survivor_bot_mgr: Node = null
 # Toast "X se ha conectado": pids ya anunciados + si la primera lista se
 # sembro en silencio (los que ya estaban dentro no son "nuevas conexiones").
 var _announced_player_ids: Dictionary = {}
@@ -1215,6 +1217,8 @@ func _process(delta: float) -> void:
 				return
 		# Update proxy positions from client sync data
 		_update_server_proxies(delta)
+		if survivor_bot_mgr != null:
+			survivor_bot_mgr.tick(delta)
 		# Server broadcasts animal state to clients
 		_animal_sync_timer += delta
 		if _animal_sync_timer >= 0.10:
@@ -1356,6 +1360,22 @@ func _process(delta: float) -> void:
 	_tick_drink_hold(delta)
 	if not campfire_fire_timers.is_empty():
 		_tick_campfire_fires()
+	if survivor_bot_mgr != null:
+		survivor_bot_mgr.tick(delta)
+	elif net != null and net.is_connected and not net.is_host:
+		for pid in net.players.keys():
+			if SurvivorBotManagerScript.is_bot_peer_id(int(pid)) and remote_players.has(pid):
+				var rp_bot: Node3D = remote_players[pid]
+				if rp_bot != null and is_instance_valid(rp_bot):
+					var pdata_bot: Dictionary = net.players[pid]
+					rp_bot.set_meta("is_ai_bot", true)
+					rp_bot.set_meta("bot_id", int(pid))
+					rp_bot.set_meta("bot_name", str(pdata_bot.get("char_name", pdata_bot.get("name", "Superviviente"))))
+					rp_bot.set_meta("bot_faction", str(pdata_bot.get("bot_faction", "hostile" if int(pid) == 903 else "friendly")))
+					rp_bot.set_meta("team_leader_id", int(pdata_bot.get("team_leader_id", 0)))
+					rp_bot.set_meta("bot_follow_mode", str(pdata_bot.get("bot_follow_mode", "follow")))
+					if not rp_bot.is_in_group("interactable"):
+						rp_bot.add_to_group("interactable")
 	# Network sync
 	if net != null and net.is_connected:
 		_net_sync_timer += delta
@@ -2222,7 +2242,7 @@ func _collect_server_players() -> Dictionary:
 	proxies.append_array(proxy_by_client_id.values())
 	var seen := {}
 	for proxy in proxies:
-		if proxy == null or not is_instance_valid(proxy):
+		if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("is_ai_bot", false)):
 			continue
 		var cid: String = proxy.get_meta("client_id", "")
 		if cid.is_empty():
@@ -3930,6 +3950,8 @@ func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, se
 			animal.take_damage(amount, from_knife, attacker_proxy)
 			if sender_id != 0 and (animal.animal_type == "wolf" or animal.animal_type == "bear") and not animal._is_dead and animal.tamed_to != str(sender_id):
 				_notify_tamed_wolf_assist(str(sender_id), animal)
+				if survivor_bot_mgr != null:
+					survivor_bot_mgr.notify_leader_combat(sender_id, animal)
 		else:
 			animal.take_damage(amount, from_knife)
 	# Server broadcasts hit to all clients so puppets play pain sound
@@ -3977,6 +3999,23 @@ func _net_command_wolf(animal_name: String, mode: String, sender: int = 0, targe
 	if animal.has_method("apply_command"):
 		animal.apply_command(mode, target)
 
+func _net_command_survivor_bot(bot_id: int, mode: String = "toggle", sender: int = 0) -> void:
+	if survivor_bot_mgr == null:
+		return
+	var eff_sender := sender
+	if eff_sender <= 0:
+		eff_sender = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+	if net != null and net.is_host and eff_sender != net.get_my_id() and server_proxies.has(bot_id):
+		if not _sender_within(eff_sender, server_proxies[bot_id].global_position, 14.0):
+			return
+	var msg: String = str(survivor_bot_mgr.interact_with_bot(bot_id, eff_sender, mode))
+	if msg.is_empty():
+		return
+	if net != null and net.is_connected and net.is_host and eff_sender != net.get_my_id() and net.peer != null and net.peer_alive(eff_sender):
+		net.notice_to_client.rpc_id(eff_sender, msg)
+	elif player != null and is_instance_valid(player):
+		player.notice.emit(msg)
+
 # Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
 func _net_feed_other_player(target_peer_id: int, item_name: String, item_type: String, d_hunger: float, d_thirst: float, d_health: float, is_hot: bool, sender: int = 0) -> void:
 	if net == null or not net.is_host:
@@ -4020,6 +4059,16 @@ func _net_feed_other_player(target_peer_id: int, item_name: String, item_type: S
 			giver_name = cn
 	if target_peer_id == net.get_my_id():
 		_net_receive_fed_by_player(giver_name, item_name, item_type, dh, dt, dhp, is_hot)
+	elif survivor_bot_mgr != null and SurvivorBotManagerScript.is_bot_peer_id(target_peer_id):
+		if survivor_bot_mgr.bots.has(target_peer_id):
+			var b: Dictionary = survivor_bot_mgr.bots[target_peer_id]
+			b["hunger"] = new_hunger
+			b["thirst"] = new_thirst
+			b["health"] = new_hp
+			# Dar de comer/beber a un superviviente aliado lo recluta automáticamente si estaba libre
+			if str(b.get("faction", "")) == "friendly" and int(b.get("team_leader_id", 0)) == 0:
+				var eff_giver: int = sender if sender > 0 else int(net.get_my_id())
+				survivor_bot_mgr.interact_with_bot(target_peer_id, eff_giver, "toggle")
 	elif net.peer != null and net.peer_alive(target_peer_id):
 		net.receive_fed_by_player.rpc_id(target_peer_id, giver_name, item_name, item_type, dh, dt, dhp, is_hot)
 
@@ -4422,6 +4471,15 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
+	if survivor_bot_mgr != null and SurvivorBotManagerScript.is_bot_peer_id(target_peer_id):
+		survivor_bot_mgr.on_bot_damaged(target_peer_id, amount, sender, weapon)
+		if sender_proxy != null:
+			survivor_bot_mgr.notify_leader_combat(sender, proxy)
+		return
+	if survivor_bot_mgr != null:
+		if sender_proxy != null:
+			survivor_bot_mgr.notify_leader_combat(target_peer_id, sender_proxy)
+		survivor_bot_mgr.notify_leader_combat(sender, proxy)
 	proxy.set_meta("proxy_health", hp)
 	# saved_health is what a reconnect restores — server-applied damage must
 	# land there too or a quick disconnect heals the player for free.
@@ -4799,7 +4857,7 @@ func _update_server_proxies(delta: float) -> void:
 		return
 	# Update proxy positions from net.players data
 	for pid in net.players.keys():
-		if pid == net.get_my_id():
+		if pid == net.get_my_id() or SurvivorBotManagerScript.is_bot_peer_id(int(pid)) or bool(net.players[pid].get("is_ai_bot", false)):
 			continue
 		var data: Dictionary = net.players[pid]
 		if data.get("offline", false):
@@ -7485,6 +7543,11 @@ func _create_map() -> void:
 			_set_loading_phase("Generando fauna...")
 		await _create_wildlife()
 		await get_tree().process_frame
+		if survivor_bot_mgr == null:
+			survivor_bot_mgr = SurvivorBotManagerScript.new()
+			survivor_bot_mgr.name = "SurvivorBotManager"
+			add_child(survivor_bot_mgr)
+			survivor_bot_mgr.setup(self)
 		# Generación terminada: levanta el flag que consultan los clientes y
 		# sirve el estado del mundo a quienes conectaron durante la espera.
 		if net != null:

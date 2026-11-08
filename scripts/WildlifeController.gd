@@ -21,6 +21,8 @@ var _debug_timer := 0.0
 var _attack_timer := 0.0
 var _attack_cooldown := 0.0
 var _bite_anim_timer := 0.0
+var _stagger_timer := 0.0
+var _stagger_dir := Vector3.ZERO
 var _animal_bite_target: Node3D = null
 var _animal_bite_elapsed := 0.0
 var _animal_bite_landed := false
@@ -86,7 +88,7 @@ static var _tamed_fur_mat_other: StandardMaterial3D = null
 var _tamed_rest_time := 0.0
 var _hit_flash_timer := 0.0
 var _gutted := false
-var _corpse_body: StaticBody3D = null
+var _corpse_body: CollisionObject3D = null
 # Recuperación de atascos y movimiento natural
 var _stuck_escalation := 0
 var _unstuck_dir := Vector3.ZERO
@@ -266,6 +268,20 @@ func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void
 			return
 		health = max(0.0, health - amount)
 		_hit_flash_timer = 0.3
+		# Retroceso / aturdimiento breve (stagger) cuando recibe un golpe de
+		# jugador (cuerpo a cuerpo o disparo a bocajarro), para que se abra hueco
+		# y no siga mordiendo en el mismo instante en que lo golpeas.
+		if health > 0.0 and attacker is Node3D and is_instance_valid(attacker) and not (attacker is WildlifeController):
+			var away_hit := global_position - (attacker as Node3D).global_position
+			away_hit.y = 0.0
+			if away_hit.length_squared() < 0.0001:
+				away_hit = -global_transform.basis.z
+			away_hit = away_hit.normalized()
+			if from_knife or global_position.distance_to((attacker as Node3D).global_position) <= 5.5:
+				_stagger_dir = away_hit
+				_stagger_timer = 0.65 if animal_type == "bear" else 0.90
+				_attack_cooldown = maxf(_attack_cooldown, 1.35 if animal_type == "bear" else 1.55)
+				_bite_anim_timer = 0.0
 		if animal_type == "bear":
 			# Bears do not flee when shot: they roar and charge the attacker.
 			_prey_flee_timer = 0.0
@@ -635,9 +651,18 @@ func _process_body(delta: float) -> void:
 		return
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	_bite_anim_timer = maxf(0.0, _bite_anim_timer - delta)
+	_stagger_timer = maxf(0.0, _stagger_timer - delta)
 	_chase_cooldown = max(0.0, _chase_cooldown - delta)
 	_wolf_ai_debug_timer = max(0.0, _wolf_ai_debug_timer - delta)
 	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
+	if _stagger_timer > 0.0 and not _is_dead:
+		var back_speed := move_speed * (1.8 if animal_type == "bear" else 2.4)
+		_play_animation_by_name("trot")
+		_move_towards(global_position + _stagger_dir * 4.0, back_speed, delta, 10.0)
+		_walk_time += delta * back_speed * 4.8
+		_animate_legs(delta)
+		_update_animation_speed(back_speed)
+		return
 	if animal_type == "wolf" or animal_type == "bear":
 		_update_wolf_sounds(delta)
 		if animal_type == "bear":
@@ -1244,9 +1269,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
 						var is_disconnected: bool = _player.get_meta("disconnected", false)
+						var is_ai_bot: bool = _player.get_meta("is_ai_bot", false)
 						var is_proxy_dead: bool = _player.get_meta("proxy_dead", false)
 						if is_proxy_dead:
 							pass
+						elif is_ai_bot and peer_id != 0:
+							var scene_bot := get_tree().current_scene
+							if scene_bot != null and scene_bot.get("survivor_bot_mgr") != null:
+								scene_bot.survivor_bot_mgr.on_bot_damaged(peer_id, _predator_player_damage(), 0, "%s_bite" % animal_type)
 						elif is_disconnected and peer_id != 0:
 							var hp: float = _player.get_meta("proxy_health", 100.0)
 							hp = max(0.0, hp - _predator_player_damage())
@@ -1847,18 +1877,23 @@ func _lie_corpse_flat() -> void:
 	global_transform = Transform3D(basis, Vector3(global_position.x, corpse_y, global_position.z))
 	_visual_root.position = Vector3.ZERO
 	_visual_root.rotation_degrees = Vector3.ZERO
-	# Add collision body so the player can interact with the corpse
-	_corpse_body = StaticBody3D.new()
-	_corpse_body.name = "CorpseBody"
-	_corpse_body.collision_layer = 2
-	_corpse_body.collision_mask = 0
-	_corpse_body.add_to_group("prop_collision")
+	# Area3D (no StaticBody3D) para interactuar con el cadáver sin crear un
+	# bloque físico de 1.2x2.0 m que enganche los pies del jugador en combate.
+	if is_instance_valid(_corpse_body):
+		_corpse_body.queue_free()
+	var corpse_area := Area3D.new()
+	corpse_area.name = "CorpseBody"
+	corpse_area.collision_layer = 2
+	corpse_area.collision_mask = 0
+	corpse_area.monitorable = true
+	corpse_area.monitoring = false
 	var col_shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = Vector3(1.2, 0.4, 2.0)
 	col_shape.shape = box
-	_corpse_body.add_child(col_shape)
-	add_child(_corpse_body)
+	corpse_area.add_child(col_shape)
+	add_child(corpse_area)
+	_corpse_body = corpse_area
 	# Make interactable
 	add_to_group("interactable")
 

@@ -489,9 +489,9 @@ const ANIMAL_BONE_MODEL := "res://assets/models/props/animal_bone.glb"
 const ANIMAL_SINEW_MODEL := "res://assets/models/props/animal_sinew.glb"
 # Swing timers: the clip's contact frame, and the lead so the whoosh peaks
 # just before impact instead of firing at click time.
-const MELEE_PUNCH_IMPACT_DELAY := 0.95
-const MELEE_SWING_IMPACT_DELAY := 0.45
-const MELEE_SWING_SOUND_LEAD := 0.25
+const MELEE_PUNCH_IMPACT_DELAY := 0.32
+const MELEE_SWING_IMPACT_DELAY := 0.22
+const MELEE_SWING_SOUND_LEAD := 0.16
 const ROD_FISH_START_GLB := "res://assets/animations/inicio_pesca_2.glb"
 const ROD_WALK_GLB := ""
 const ROD_CAST_GLB := ""
@@ -2152,7 +2152,7 @@ func _on_game_mouse_button_pressed(event: InputEventMouseButton) -> void:
 		var rmb_target = _get_interaction_target()
 		if _nearby_rowboat() != null or (_can_fish_near_water and _has_fishing_rod_in_hand() and not _is_fishing) or _find_nearby_feedable_player() != null:
 			_interact()
-		elif rmb_target != null and _right_click_interact(rmb_target):
+		elif rmb_target != null and not ((has_rifle or has_bow or has_throwable) and _has_hostile_predator_nearby(14.0)) and _right_click_interact(rmb_target):
 			pass
 		elif (has_rifle or has_bow or has_throwable) and not _is_aiming:
 			_toggle_aim()
@@ -3999,8 +3999,7 @@ func _physics_process(delta: float) -> void:
 	# Keep footwork mobile while swinging so the player never feels rooted in place
 	# when defending against wolves or bears.
 	if third_person_action_timer > 0.0 and not _throw_aim_hold and not _throw_charging and (third_person_action_animation == third_person_attack_animation or third_person_action_animation == third_person_punch_animation):
-		speed *= 0.85
-		is_sprinting = false
+		speed *= 0.96
 	if is_sprinting:
 		stats.energy = max(0.0, stats.energy - (2.0 + carry * 5.0) * (1.0 + stats.get_thermal_stress()) * delta)
 		_stats_emit_timer += delta
@@ -11329,6 +11328,10 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					third_person_animation_player.speed_scale = 1.0
 				else:
 					third_person_animation_player.speed_scale = 0.0
+			elif third_person_action_animation == third_person_attack_animation:
+				third_person_animation_player.speed_scale = 1.45
+			elif third_person_action_animation == third_person_punch_animation:
+				third_person_animation_player.speed_scale = 1.65
 			else:
 				third_person_animation_player.speed_scale = 1.0
 			return
@@ -11909,11 +11912,45 @@ func _start_fishing_near_water() -> void:
 	# Store the fishing rod back into inventory after fishing ends
 	_store_held_item()
 
-func get_interaction_text(_player = null) -> String:
-	return ""
+func get_interaction_text(viewer = null) -> String:
+	if not is_puppet or is_dead or bool(get_meta("proxy_dead", false)):
+		return ""
+	if not bool(get_meta("is_ai_bot", false)):
+		return ""
+	var bname := str(get_meta("bot_name", "Superviviente"))
+	var faction := str(get_meta("bot_faction", "friendly"))
+	if faction == "hostile":
+		return "%s (Bandido hostil)" % bname
+	var my_id := 1
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main != null and main.get("net") != null and main.net.has_method("get_my_id"):
+		my_id = main.net.get_my_id()
+	var leader_id := int(get_meta("team_leader_id", 0))
+	var fmode := str(get_meta("bot_follow_mode", "follow"))
+	if leader_id == 0:
+		return "%s (Superviviente aliado) - [F] Formar equipo" % bname
+	elif leader_id == my_id:
+		var state_lbl := "Siguiéndote" if fmode == "follow" else "Vigilando posición"
+		var next_lbl := "Ordenar quedarse quieto" if fmode == "follow" else "Dejar libre / Sígueme"
+		return "%s [Equipo: %s] - [F] %s" % [bname, state_lbl, next_lbl]
+	return "%s (En equipo con otro superviviente)" % bname
 
 func interact(_player: Node) -> void:
-	pass
+	if not is_puppet or is_dead or not bool(get_meta("is_ai_bot", false)):
+		return
+	var bot_id := int(get_meta("bot_id", get_meta("peer_id", 0)))
+	if bot_id <= 0:
+		return
+	var main := get_tree().current_scene if get_tree() != null else null
+	if main == null:
+		return
+	var net_node = main.get("net")
+	if net_node != null and net_node.is_connected and not net_node.is_host:
+		if net_node.has_method("command_survivor_bot"):
+			net_node.command_survivor_bot.rpc_id(1, bot_id, "toggle")
+	elif main.has_method("_net_command_survivor_bot"):
+		var my_id: int = net_node.get_my_id() if (net_node != null and net_node.has_method("get_my_id")) else 1
+		main._net_command_survivor_bot(bot_id, "toggle", my_id)
 
 func _collect() -> void:
 	var target = _get_interaction_target()
@@ -13313,15 +13350,17 @@ func _update_torch(delta: float) -> void:
 #region VIDA, DAÑO Y COMBATE
 func take_damage(amount: float, from_knife: bool = false, weapon: String = "melee") -> void:
 	if is_puppet:
-		# Puppet: send damage to server via RPC — the server validates range
-		# per weapon type before applying it to the real player.
-		var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-		if net_node != null:
-			var peer_id: int = get_meta("peer_id", 0)
-			if peer_id != 0:
+		var scene_node := get_tree().current_scene if is_inside_tree() else null
+		var net_node := scene_node.get_node_or_null("/root/NetworkManager") if scene_node != null else null
+		var peer_id: int = get_meta("peer_id", 0)
+		if peer_id != 0:
+			if net_node != null and net_node.is_connected and not net_node.is_host:
 				net_node.damage_player.rpc_id(1, peer_id, amount, weapon)
-		# The server confirms the hit before blood, audio, or the flinch is shown;
-		# otherwise an out-of-range client could fake hit feedback for everyone.
+			elif scene_node != null and scene_node.has_method("_net_damage_player"):
+				var my_id: int = net_node.get_my_id() if (net_node != null and net_node.has_method("get_my_id")) else 1
+				scene_node._net_damage_player(peer_id, amount, my_id, weapon)
+			elif scene_node != null and scene_node.get("survivor_bot_mgr") != null:
+				scene_node.survivor_bot_mgr.on_bot_damaged(peer_id, amount, 1, weapon)
 		return
 	apply_damage(amount)
 
@@ -13373,6 +13412,23 @@ func apply_damage(amount: float, cause: String = "") -> void:
 		if any_broken:
 			inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
+	if cause == "melee" or cause.ends_with("_bite") or cause == "rifle":
+		if is_performing_interruptible_action():
+			cancel_active_action(false)
+		var dmg_scene := get_tree().current_scene if is_inside_tree() else null
+		if dmg_scene != null:
+			if dmg_scene.has_method("_close_backpack_ui") and dmg_scene.get("_backpack_panel") != null:
+				dmg_scene._close_backpack_ui()
+			if dmg_scene.has_method("_close_wolf_orders") and dmg_scene.get("_wolf_menu") != null:
+				dmg_scene._close_wolf_orders()
+			if dmg_scene.has_method("_close_loot_ui") and dmg_scene.get("_loot_panel") != null:
+				dmg_scene._close_loot_ui()
+			var dmg_hud = dmg_scene.get("hud")
+			if dmg_hud != null:
+				if dmg_hud.get("inventory_visible") == true and dmg_hud.has_method("toggle_inventory"):
+					dmg_hud.toggle_inventory()
+				if dmg_hud.get("craft_panel_visible") == true and dmg_hud.has_method("toggle_craft_panel"):
+					dmg_hud.toggle_craft_panel()
 	# Mordiscos y armas blancas abren heridas sangrantes (DayZ): la sangre
 	# drena salud hasta vendarla — el daño del golpe es solo el principio.
 	if stats.has_method("apply_bleeding") and (cause == "melee" or cause.ends_with("_bite")):
@@ -13395,18 +13451,18 @@ func _melee_attack() -> void:
 	var attack_anim_name := third_person_attack_animation
 	if held == null and not third_person_punch_animation.is_empty():
 		attack_anim_name = third_person_punch_animation
+	var is_punch_anim := not third_person_punch_animation.is_empty() and attack_anim_name == third_person_punch_animation
 	if not attack_anim_name.is_empty() and third_person_animation_player != null:
 		var atk_anim := third_person_animation_player.get_animation(attack_anim_name)
 		if atk_anim != null:
 			atk_anim.loop_mode = Animation.LOOP_NONE
 		third_person_action_animation = attack_anim_name
-		# The cross punch lands at ~0.95 s into its 2 s clip — give it enough
-		# action time for the strike to read before blending back.
-		third_person_action_timer = 0.8 if attack_anim_name == third_person_attack_animation else minf(1.15, atk_anim.length if atk_anim != null else 1.15)
-		third_person_animation_player.play(attack_anim_name, 0.08)
+		third_person_action_timer = 0.58 if is_punch_anim else 0.45
+		third_person_animation_player.play(attack_anim_name, 0.06)
+		third_person_animation_player.speed_scale = 1.65 if is_punch_anim else 1.45
 	var base_damage := 10.0  # bare fists
 	var energy_cost := 8.0
-	var attack_range := 3.0
+	var attack_range := 3.6
 	var is_knife := false
 	if held != null:
 		match held.item_type:
@@ -13414,12 +13470,13 @@ func _melee_attack() -> void:
 				base_damage = 60.0
 				energy_cost = 4.0
 				is_knife = true
+				attack_range = 3.8
 				if held.item_name == "Lanza":
 					base_damage = 75.0
-					attack_range = 3.6
+					attack_range = 4.4
 				elif held.item_name == "Lanza de hueso":
 					base_damage = 85.0
-					attack_range = 3.6
+					attack_range = 4.4
 				elif held.item_name == "Cuchillo de piedra":
 					base_damage = 45.0
 				elif held.item_name == "Cuchillo de hueso":
@@ -13427,17 +13484,17 @@ func _melee_attack() -> void:
 			"tool_spear":
 				base_damage = 50.0
 				energy_cost = 5.0
-				attack_range = 3.5
+				attack_range = 4.3
 				is_knife = true
 			"tool_axe":
 				base_damage = 55.0 if held.item_name == "Hacha de piedra" else 65.0
 				energy_cost = 10.0
-				attack_range = 3.5
+				attack_range = 4.0
 			"tool":
 				if held.item_name == "Hacha":
 					base_damage = 65.0
 					energy_cost = 10.0
-					attack_range = 3.5
+					attack_range = 4.0
 				elif held.item_name == "Pico":
 					base_damage = 20.0
 					energy_cost = 8.0
@@ -13459,12 +13516,30 @@ func _melee_attack() -> void:
 		return
 	stats.energy = max(0.0, stats.energy - energy_cost)
 	stats.changed.emit()
-	_attack_cooldown = 0.7 if is_knife else 1.0
-	var impact_delay := MELEE_PUNCH_IMPACT_DELAY if attack_anim_name == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY
+	_attack_cooldown = 0.42 if is_knife else 0.56
+	var impact_delay := MELEE_PUNCH_IMPACT_DELAY if is_punch_anim else MELEE_SWING_IMPACT_DELAY
 	_schedule_melee_swing_sound(impact_delay)
 	# Resolve the strike at the swing's contact frame so the damage, blood and
 	# victim flinch land when the arm actually reaches — not at click time.
 	get_tree().create_timer(impact_delay).timeout.connect(_resolve_melee_strike.bind(base_damage, is_knife, attack_range, held))
+
+func _has_hostile_predator_nearby(radius: float = 14.0) -> bool:
+	if not is_inside_tree():
+		return false
+	var r_sq := radius * radius
+	for node in get_tree().get_nodes_in_group("wildlife"):
+		if not (node is Node3D) or not is_instance_valid(node):
+			continue
+		if bool(node.get("_is_dead")):
+			continue
+		var at := str(node.get("animal_type"))
+		if at != "wolf" and at != "bear":
+			continue
+		if at == "wolf" and not str(node.get("tamed_to")).is_empty():
+			continue
+		if global_position.distance_squared_to((node as Node3D).global_position) <= r_sq:
+			return true
+	return false
 
 func _resolve_melee_strike(base_damage: float, is_knife: bool, attack_range: float, held) -> void:
 	if is_dead or not is_inside_tree():
@@ -13476,25 +13551,30 @@ func _resolve_melee_strike(base_damage: float, is_knife: bool, attack_range: flo
 	var fwd := -global_transform.basis.z.normalized()
 	fwd.y = 0.0
 	fwd = fwd.normalized()
-	# Check wildlife
+	# Check wildlife (con cono amplio y alcance cuerpo-a-hocico para lobos/osos que orbitan pegados)
+	var wild_reach := attack_range + 0.85
+	var wild_reach_sq := wild_reach * wild_reach
 	for node in get_tree().get_nodes_in_group("wildlife"):
 		if not (node is Node3D) or not is_instance_valid(node):
 			continue
 		var animal := node as Node3D
-		if animal == self:
+		if animal == self or bool(animal.get("_is_dead")):
 			continue
 		var d_sq := global_position.distance_squared_to(animal.global_position)
-		if d_sq > closest_dist_sq:
+		if d_sq > wild_reach_sq or d_sq > closest_dist_sq + 1.5:
 			continue
 		var dir := animal.global_position - global_position
 		dir.y = 0.0
 		if dir.length() > 0.001:
 			dir = dir.normalized()
-		if fwd.dot(dir) < 0.15:
+		# Si está encima (< 2.5 m) el golpe defensivo alcanza en casi 260°; a más distancia mantiene arco frontal amplio
+		var min_dot := -0.45 if d_sq <= 6.25 else -0.18
+		if fwd.dot(dir) < min_dot:
 			continue
-		closest_target = animal
-		closest_dist_sq = d_sq
-		closest_dist = sqrt(d_sq)
+		if closest_target == null or d_sq < closest_dist_sq:
+			closest_target = animal
+			closest_dist_sq = d_sq
+			closest_dist = sqrt(d_sq)
 	# Check NPCs (NPCController class)
 	for node in get_tree().get_nodes_in_group("npc"):
 		if not (node is Node3D) or not is_instance_valid(node):

@@ -738,9 +738,12 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			break
 	if _public_server:
 		# WebSocket no tiene el límite de pares de ENet — se aplica aquí.
+		# Los bots IA (901..909) no cuentan para el cupo de jugadores humanos.
 		var online := 0
 		for pid in players:
-			if not players[pid].get("offline", false):
+			if int(pid) >= 901 and int(pid) <= 909:
+				continue
+			if not players[pid].get("offline", false) and not bool(players[pid].get("is_ai_bot", false)):
 				online += 1
 		if online >= MAX_PLAYERS:
 			_reject_registration(sender, "full")
@@ -1226,6 +1229,15 @@ func command_wolf(animal_name: String, mode: String, target_name: String = "") -
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_command_wolf"):
 		scene._net_command_wolf(animal_name, mode, sender, target_name)
+
+@rpc("any_peer", "reliable")
+func command_survivor_bot(bot_id: int, mode: String = "toggle") -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if not _accepts_client_request(sender):
+		return
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_command_survivor_bot"):
+		scene._net_command_survivor_bot(bot_id, mode, sender)
 
 # Cooperativo: un jugador da de comer o de beber a otro jugador cercano.
 # El servidor valida alcance (<4.5 m) y que ambos esten vivos, actualiza las
