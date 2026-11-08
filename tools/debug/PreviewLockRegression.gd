@@ -133,7 +133,8 @@ func _run() -> void:
 		"equipped_backpack": "Mochila pequena",
 		"held_item": "Cuchillo",
 		"inventory": [],
-		"survival_seconds": 1500.0,
+		"survival_seconds": 86594.0,
+		"beard_stage": 4,
 	}
 	inicio._on_server_character_locked(payload)
 	_ok(inicio._mp_locked, "picker locked after server reclaim")
@@ -165,7 +166,11 @@ func _run() -> void:
 	var ef: Dictionary = SaveInt._equipment_fields(pd)
 	_ok(str(ef.get("equipped_backpack", "")) == "Mochila pequena", "equipment fields carry backpack")
 	_ok(str(ef.get("held_item", "")) == "Cuchillo", "equipment fields carry held item")
-	_ok(int(ef.get("survival_seconds", 0)) == 1500, "equipment fields carry survival time")
+	_ok(int(ef.get("survival_seconds", 0)) == 86594, "equipment fields carry survival time")
+	var initial_preview := inicio._char_preview_anchor.get_child(inicio._char_preview_anchor.get_child_count() - 1) as Node3D
+	var initial_beard := initial_preview.find_child("GrowingBeard", true, false) as MeshInstance3D if initial_preview != null else null
+	_ok(initial_beard != null and initial_beard.visible and initial_beard.mesh != null and initial_beard.mesh.get_surface_count() > 0,
+		"saved_server preview builds and shows GrowingBeard after HeadMesh is extracted")
 	for camo_pants in ["Pantalones camuflaje", "Pantalones camuflaje desert"]:
 		var camo_payload := payload.duplicate(true)
 		camo_payload["equipped_clothing"] = "Chaqueta camuflaje," + camo_pants + ",Botas militares"

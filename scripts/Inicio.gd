@@ -1026,6 +1026,7 @@ func _upsert_server_card(payload: Dictionary) -> int:
 			"backpack": str(payload.get("equipped_backpack", "")),
 			"held_item": str(payload.get("held_item", "")),
 			"inventory": payload.get("inventory", []),
+			"beard_stage": int(payload.get("beard_stage", 0)),
 			"extra": {"stats_extra": {"survival_seconds": float(payload.get("survival_seconds", 0.0))}},
 		},
 	}
@@ -1233,8 +1234,8 @@ func _update_char_view() -> void:
 			model.scale = Vector3.ONE
 			_char_preview_anchor.add_child(model)
 			if cfg.get("is_saved", false):
-				_apply_preview_colors(model, cfg)
 				SaveIntegration.apply_saved_equipment_preview(model, cfg)
+				_apply_preview_colors(model, cfg)
 				_fit_char_preview(model, true)
 				_play_preview_animation(model)
 			else:
@@ -1526,6 +1527,8 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false)
 	if cfg.get("is_saved", false):
 		var saved_pd: Dictionary = SaveIntegration._saved_player_data(self, cfg)
 		preview_stage = CharacterGrooming.beard_stage(SaveIntegration._survival_seconds(saved_pd))
+		if saved_pd.has("beard_stage"):
+			preview_stage = max(preview_stage, int(saved_pd["beard_stage"]))
 		var saved_hs := str(saved_pd.get("hair_style", cfg.get("hair_style", "")))
 		var saved_cn := str(saved_pd.get("char_name", cfg.get("name", "")))
 		if not saved_hs.is_empty():
@@ -1535,6 +1538,10 @@ func _apply_preview_colors(model: Node3D, cfg: Dictionary, meter_units := false)
 		if not saved_cn.is_empty():
 			preview_stage = max(preview_stage, CharacterGrooming.stage_from_identity(saved_cn, SaveIntegration._survival_seconds(saved_pd)))
 	CharacterGrooming.apply(model, preview_style, hair_color, preview_stage)
+	var beard_mi := model.find_child("GrowingBeard", true, false) as MeshInstance3D
+	if beard_mi != null and beard_mi.has_meta("headwear_original_visible"):
+		beard_mi.set_meta("headwear_original_visible", preview_stage > 0)
+		beard_mi.visible = false
 
 func _camo_material(camo_tex: Texture2D, kind: String, unit_scale: float = 1.0) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()

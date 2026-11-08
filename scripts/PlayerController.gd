@@ -1877,6 +1877,11 @@ func _tick_beard_growth(delta: float) -> void:
 		var grew := wanted_stage > _beard_stage
 		_beard_stage = wanted_stage
 		CharacterGrooming.apply(third_person_model, _char_hair_style, _char_hair_color, _beard_stage)
+		if _equipped_slots.get("face", "") in ["Pasamontañas", "Pasamontañas navideño"]:
+			var beard_mi := third_person_model.find_child("GrowingBeard", true, false) as MeshInstance3D
+			if beard_mi != null:
+				beard_mi.set_meta("headwear_original_visible", _beard_stage > 0)
+				beard_mi.visible = false
 		if grew and wanted_stage > 0 and wanted_stage < CharacterGrooming.BEARD_LABELS.size():
 			notice.emit("Te ha crecido la barba (%s)." % CharacterGrooming.BEARD_LABELS[wanted_stage])
 		var scene := get_tree().current_scene if is_inside_tree() else null
@@ -2863,8 +2868,14 @@ func _apply_character_colors() -> void:
 			id_str = str(gs.selected_character_id)
 	_char_hair_style = Grooming.style_for(id_str)
 	var surv_sec := maxf(0.0, (stats.survival_seconds if stats != null else 0.0) - _shaved_at_seconds)
-	_beard_stage = Grooming.beard_stage(surv_sec)
+	var gs_stage := int(gs.get_meta("beard_stage", 0)) if (gs != null and gs.has_meta("beard_stage") and _shaved_at_seconds <= 0.0) else 0
+	_beard_stage = maxi(Grooming.beard_stage(surv_sec), gs_stage)
 	Grooming.apply(third_person_model, _char_hair_style, hair_color, _beard_stage)
+	if _equipped_slots.get("face", "") in ["Pasamontañas", "Pasamontañas navideño"]:
+		var beard_mi := third_person_model.find_child("GrowingBeard", true, false) as MeshInstance3D
+		if beard_mi != null:
+			beard_mi.set_meta("headwear_original_visible", _beard_stage > 0)
+			beard_mi.visible = false
 
 var _char_top_color: Color = Color(0.5, 0.5, 0.5)
 var _char_bottom_color: Color = Color(0.3, 0.3, 0.3)

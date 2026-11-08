@@ -2823,6 +2823,7 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 	var held := ""
 	var inventory: Array = []
 	var survival_seconds := 0.0
+	var beard_stage := 0
 	# The live proxy just rebound to this peer is authoritative; the baseline
 	# record is the fallback for proxies that never synced equipment metas.
 	if server_proxies.has(peer_id):
@@ -2851,11 +2852,14 @@ func _character_lock_payload(peer_id: int, cid: String) -> Dictionary:
 		var saved_off := float(saved_ex.get("offline_since_unix", 0.0))
 		if saved_off > 0.0:
 			survival_seconds += maxf(0.0, Time.get_unix_time_from_system() - saved_off)
+	var Grooming2 = preload("res://scripts/CharacterGrooming.gd")
+	beard_stage = maxi(int(saved.get("beard_stage", 0)), Grooming2.beard_stage(survival_seconds))
 	payload["equipped_clothing"] = clothing
 	payload["equipped_backpack"] = backpack
 	payload["held_item"] = held
 	payload["inventory"] = inventory
 	payload["survival_seconds"] = survival_seconds
+	payload["beard_stage"] = beard_stage
 	return payload
 
 func _delayed_send_saved_appearance(peer_id: int, cid: String) -> void:
@@ -3487,6 +3491,8 @@ func _apply_restored_appearance(char_name: String, top_color: Color, bottom_colo
 		gs.set_meta("char_name", Grooming.base_name_from_identity(char_name))
 		if char_name.contains("|") or not gs.has_meta("hair_style") or str(gs.get_meta("hair_style", "")).is_empty():
 			gs.set_meta("hair_style", Grooming.style_for(char_name))
+		if char_name.contains(":"):
+			gs.set_meta("beard_stage", Grooming.stage_from_identity(char_name, 0.0))
 	if player != null and is_instance_valid(player) and player.has_method("_apply_character_colors"):
 		player._apply_character_colors()
 	# Echo the canonical appearance so the live player entry and future saves
@@ -3640,6 +3646,8 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 		player.is_crouching = true
 		player._update_crouch_collision()
 	player._initializing = was_initializing
+	if player.has_method("_apply_character_colors"):
+		player._apply_character_colors()
 	player.refresh_carry_capacity()
 	if player.inventory != null:
 		player.inventory.changed.emit()
