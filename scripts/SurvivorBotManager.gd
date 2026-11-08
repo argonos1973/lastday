@@ -2069,8 +2069,8 @@ func _loot_priority(b: Dictionary, nm: String, tp: String) -> float:
 		return 4.0 if float(b["thirst"]) < 55.0 else 2.0
 	if nm == "Botella de plastico":
 		return 2.5
-	if nm in ["Hueso", "Tendon", "Pluma", "Trapos", "Tronco"]:
-		# Ingredientes de crafteo: el bot aprende a fabricar como un jugador
+	if nm in ["Hueso", "Tendón", "Pluma", "Trapos", "Tronco"]:
+		# Ingredientes de crafteo: solo si una receta util los necesita ahora
 		return 3.8
 	return 3.0 # materiales de campamento: palos, piedras, cuerda, pieles
 
@@ -2086,17 +2086,30 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 	# Botella vacia = recipiente para rellenar en el rio; solo si no tiene ninguno
 	if nm == "Botella de plastico":
 		return _bot_container_count(b["proxy"]) < 1
-	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje", "Hueso", "Tendon", "Pluma", "Trapos", "Tronco"] or nm.begins_with("Piel de "):
-		return true
+	# Materiales base de campamento: stock modesto, no acaparar "por si acaso"
+	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje"]:
+		var caps := {"Palo": 8, "Piedra": 6, "Cuerda": 4, "Tela de camuflaje": 2}
+		return _bot_item_count(b["proxy"], nm) < int(caps.get(nm, 99))
+	# Ingredientes de crafteo: solo si una receta util los necesita ahora mismo
+	# (p.ej. Trapos solo si busca venda, cuerda, boleadoras o ropa de piel)
+	if nm in ["Hueso", "Tendón", "Pluma", "Trapos", "Tronco"]:
+		return _bot_wants_craft_input(b, nm)
+	# Pieles: para ropa de piel o forro; unas pocas bastan para empezar
+	if CraftingSystem._is_pelt_name(nm):
+		return _bot_wants_craft_input(b, "ANY_PELT") or _bot_pelt_count(b["proxy"]) < 4
 	if tp == "backpack" and nm == "Mochila militar" and str(b["backpack"]) != "Mochila militar":
 		return true
-	if tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm):
-		var slot := str(PlayerController.CLOTHING_SLOTS[nm])
-		var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
-		var pr := int(CLOTHING_PRIORITY.get(nm, 0))
-		# Mejora real sobre lo que lleva puesto; y una vez aprendio, cualquier
-		# ropa decente (>=4) interesa como repuesto.
-		return pr > int(CLOTHING_PRIORITY.get(cur, 0)) or (bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4)
+	if tp == "clothing":
+		# Ropa cortable (militar/camuflaje): interesa si el bot necesita trapos
+		if _bot_wants_craft_input(b, nm):
+			return true
+		if PlayerController.CLOTHING_SLOTS.has(nm):
+			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
+			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
+			var pr := int(CLOTHING_PRIORITY.get(nm, 0))
+			# Mejora real sobre lo que lleva puesto; y una vez aprendio, cualquier
+			# ropa decente (>=4) interesa como repuesto.
+			return pr > int(CLOTHING_PRIORITY.get(cur, 0)) or (bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4)
 	return false
 
 # Equipo vestible/usable: lo que la orden "equip" debe buscar en el suelo.
@@ -2679,6 +2692,36 @@ func _bot_add_inventory_item(inv: Array, item_dict: Dictionary) -> void:
 # Misma semantica: herramientas no se consumen (-3 durabilidad), ANY_PELT /
 # ANY_CLOTHING son comodines y _is_substitute cubre alternativas.
 
+# ¿Le hace falta este insumo al bot ahora? Cierto si existe una receta que lo
+# usa como input y cuyo resultado el bot querría fabricar en este momento.
+# Asi el bot no recoge ni fabrica "por si acaso": solo lo que necesita.
+func _bot_wants_craft_input(b: Dictionary, input_name: String) -> bool:
+	# Cache por bot: el escaneo de loot evalua muchos objetos por tick
+	var cache: Dictionary = b.get("_want_cache", {})
+	var now := Time.get_ticks_msec()
+	if int(cache.get("t", -999999)) < now - 1500:
+		cache = {"t": now, "set": {}}
+		b["_want_cache"] = cache
+	var set: Dictionary = cache["set"]
+	if set.has(input_name):
+		return bool(set[input_name])
+	var wanted := false
+	for r in CraftingSystem.RECIPES:
+		if not (r.get("inputs", {}) as Dictionary).has(input_name):
+			continue
+		if _bot_recipe_score(b, r) > 3.0:
+			wanted = true
+			break
+	set[input_name] = wanted
+	return wanted
+
+func _bot_pelt_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and CraftingSystem._is_pelt_name(str(it.get("name", ""))):
+			total += int(it.get("quantity", 1))
+	return total
+
 func _bot_matches_input(input_name: String, it: Dictionary) -> bool:
 	if input_name == "ANY_CLOTHING":
 		return str(it.get("type", "")) == "clothing"
@@ -2771,6 +2814,9 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
 			if int(CLOTHING_PRIORITY.get(oname, 0)) <= int(CLOTHING_PRIORITY.get(cur, 0)):
 				return -1.0
+		# Sin pieles suficientes no se ilusiona con ropa de piel que no puede hacer
+		if (recipe.get("inputs", {}) as Dictionary).has("ANY_PELT") and _bot_pelt_count(proxy) < 2:
+			return 1.5
 		return 4.6
 	# Flechas: solo si tiene arco — si no son lastre en la mochila
 	if otype == "ammo_arrow" or oname.begins_with("Flecha"):
@@ -2801,6 +2847,13 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		return clampf(4.5 + (nw - cur) / 40.0 + spear_bonus, 0.0, 7.0)
 	if oname == "Cuerda":
 		return 6.8 if _bot_item_count(proxy, "Cuerda") < 1 else 2.0
+	if oname == "Trapos":
+		# Cortar ropa a tiras solo cuando hacen falta: venda, cuerda,
+		# boleadoras o ropa de piel — nunca por acumular
+		return 5.5 if _bot_wants_craft_input(b, "Trapos") else 1.5
+	if oname == "Palo":
+		# Tronco -> 2 palos: habilitador cuando escasean las ramas
+		return 4.0 if _bot_item_count(proxy, "Palo") < 4 else 1.5
 	if oname == "Piedra afilada":
 		return 4.3
 	if oname == "Antorcha":

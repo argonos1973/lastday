@@ -720,6 +720,66 @@ func run() -> void:
 		"La chaqueta de piel crafteada se equipa o queda en mochila")
 	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
 
+	# --- 21) Loot por necesidad: no recoge por recoger ---
+	elena["health"] = 100.0
+	elena["_want_cache"] = {}
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 1, "use_value": 0.0},
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 1.0, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	check(not mgr._is_loot_desirable(elena, "Trapos", "resource"),
+		"Sano, con cuerda y arco: los trapos del suelo NO interesan")
+	check(mgr._is_loot_desirable(elena, "Pluma", "resource"),
+		"Con arco y sin flechas: las plumas interesan (para fabricarlas)")
+	check(mgr._is_loot_desirable(elena, "Hueso", "resource"),
+		"El cuchillo de hueso mejora su cuchillo: el hueso interesa")
+	# Con 8 palos no recoge mas palos
+	var palo_stack := []
+	for i in range(8):
+		palo_stack.append({"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0})
+	elena_proxy.set_meta("saved_inventory", palo_stack)
+	check(not mgr._is_loot_desirable(elena, "Palo", "resource"),
+		"Con 8 palos no sigue acumulando")
+	# Herido sin venda: los trapos y la ropa cortable SI interesan
+	elena["health"] = 55.0
+	elena["_want_cache"] = {}
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	check(mgr._is_loot_desirable(elena, "Trapos", "resource"),
+		"Herido sin venda: los trapos del suelo interesan")
+	check(mgr._is_loot_desirable(elena, "Chaqueta militar", "clothing"),
+		"Herido sin venda: la chaqueta militar cortable interesa")
+	# Cadena completa: corta 2 chaquetas -> trapos -> cuerda + venda -> se venda
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Chaqueta militar", "type": "clothing", "weight": 1.0, "quantity": 2, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	elena["health"] = 55.0
+	elena["team_leader_id"] = 0
+	elena["aggro_target"] = null
+	elena["flee_until"] = 0.0
+	elena["_s_foe"] = null
+	elena["_s_leader"] = null
+	elena["_s_predator"] = null
+	elena["_s_tame_wolf"] = null
+	elena["_s_loot"] = {}
+	elena["_craft_state"] = {}
+	elena["_craft_check"] = 0.0
+	elena["eat_cooldown"] = 0.0
+	elena["sitting"] = false
+	for i in range(900):
+		mgr._bot_try_craft(elena, 0.1)
+		if mgr._bot_item_count(elena_proxy, "Venda") >= 1:
+			break
+	check(mgr._bot_item_count(elena_proxy, "Venda") >= 1,
+		"La cadena ropa->trapos->venda funciona: el bot fabrica su venda")
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(float(elena["health"]) > 80.0,
+		"Herido, el bot usa la venda que fabrico (hp=%.0f)" % float(elena["health"]))
+	elena["health"] = 100.0
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
