@@ -41,6 +41,7 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 
 class TestWorld extends "res://scripts/Main.gd":
 	var water_rect := Rect2(100000.0, 100000.0, 4.0, 4.0) # lejos por defecto
+	var water_depth := 1.0
 	var road_rect := Rect2(200000.0, 200000.0, 4.0, 4.0)
 	var hit_events: Array = []
 	var river_segs: Array = []
@@ -54,7 +55,7 @@ class TestWorld extends "res://scripts/Main.gd":
 	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float:
 		return 0.4
 	func get_river_depth_at(pos: Vector3) -> float:
-		return 1.0 if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
+		return water_depth if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
 	func _is_on_road(pos: Vector3) -> bool:
 		return road_rect.has_point(Vector2(pos.x, pos.z))
 	func _is_player_in_house(_pos: Vector3) -> bool:
@@ -159,6 +160,20 @@ func run() -> void:
 	var kael_proxy: Node3D = kael["proxy"]
 	kael_proxy.global_position = kael["camp_spot"]
 	kael["pos"] = kael["camp_spot"]
+	# Nace sin inventario: estos materiales simulan lo saqueado/cazado para
+	# probar que sigue construyendo campamento cuando los consigue.
+	var k_inv: Array = kael_proxy.get_meta("saved_inventory", [])
+	for it in [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
+		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
+		{"name": "Piel de lobo", "type": "resource", "weight": 0.65, "quantity": 4, "use_value": 0.0},
+		{"name": "Tela de camuflaje", "type": "material", "weight": 0.8, "quantity": 1, "use_value": 0.0},
+		{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
+		{"name": "Cerillas", "type": "tool_matches", "weight": 0.1, "quantity": 1, "use_value": 0.0, "durability": 10.0, "max_durability": 10.0},
+	]:
+		k_inv.append(it)
+	kael_proxy.set_meta("saved_inventory", k_inv)
 	# Tick para construir refugio
 	mgr._tick_bot(kael, 0.2)
 	check(not str(kael["shelter_id"]).is_empty(), "Superviviente IA construye su propio refugio (%s)" % str(kael["shelter_id"]))
@@ -470,6 +485,40 @@ func run() -> void:
 	])
 	check(not mgr._is_loot_desirable(elena, "Botella de agua llena", "water"),
 		"Con bebida suficiente el bot deja de saquear botellas")
+
+	# --- 18) Rios: los bots vadean agua somera y solo evitan la profunda ---
+	elena_proxy.set_meta("saved_inventory", [])
+	var start_empty := true
+	for cfg in SurvivorBotManager.BOT_CONFIGS:
+		if not (cfg.get("starting_items", []) as Array).is_empty():
+			start_empty = false
+	check(start_empty, "Los bots nacen con el inventario vacio (starting_items=[])")
+	elena["team_leader_id"] = 0
+	elena["aggro_target"] = null
+	elena_proxy.global_position = Vector3(0.0, 0.375, 0.0)
+	elena["pos"] = elena_proxy.global_position
+	elena["path"] = []
+	elena["stuck_count"] = 0
+	# Rio somero (0.3 m) entre el bot y el objetivo: debe cruzar, no atascarse
+	world.water_rect = Rect2(4.0, -5.0, 2.0, 10.0)
+	world.water_depth = 0.3
+	var x0 := elena_proxy.global_position.x
+	for i in range(30):
+		mgr._move_bot_towards(elena, Vector3(12.0, 0.375, 0.0), 3.4, 0.1, "walk")
+	check(elena_proxy.global_position.x > x0 + 4.0,
+		"El bot vadea el rio somero y avanza (x=%.1f desde %.1f)" % [elena_proxy.global_position.x, x0])
+	# Rio profundo (1.0 m): sigue bloqueando y cuenta como atasco
+	elena_proxy.global_position = Vector3(0.0, 0.375, 0.0)
+	elena["path"] = []
+	elena["stuck_count"] = 0
+	world.water_rect = Rect2(4.0, -5.0, 3.0, 10.0)
+	world.water_depth = 1.0
+	for i in range(8):
+		mgr._move_bot_towards(elena, Vector3(12.0, 0.375, 0.0), 3.4, 0.1, "walk")
+	check(int(elena["stuck_count"]) > 0 or elena_proxy.global_position.x < 4.0,
+		"El agua profunda sigue bloqueando al bot (stuck=%d, x=%.1f)" % [int(elena["stuck_count"]), elena_proxy.global_position.x])
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	world.water_depth = 1.0
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

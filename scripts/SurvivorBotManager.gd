@@ -39,18 +39,7 @@ const BOT_CONFIGS := [
 		"starting_clothing": ["Camiseta", "Pantalones", "Zapatillas"],
 		"starting_backpack": "",
 		"starting_weapon": "Cuchillo",
-		"starting_items": [
-			{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "use_value": 0.0},
-			{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
-			{"name": "Cerillas", "type": "tool_matches", "weight": 0.1, "quantity": 1, "use_value": 0.0, "durability": 10.0, "max_durability": 10.0},
-			{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0},
-			{"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 28.0},
-			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
-			{"name": "Venda", "type": "medical", "weight": 0.1, "quantity": 2, "use_value": 30.0},
-			{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
-			{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
-			{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
-		],
+		"starting_items": [],
 	},
 	{
 		"bot_id": 902,
@@ -79,19 +68,7 @@ const BOT_CONFIGS := [
 		"starting_clothing": ["Camiseta", "Pantalones", "Zapatillas"],
 		"starting_backpack": "",
 		"starting_weapon": "Hacha",
-		"starting_items": [
-			{"name": "Hacha", "type": "tool_axe", "weight": 1.2, "quantity": 1, "use_value": 0.0},
-			{"name": "Lanza", "type": "weapon", "weight": 1.1, "quantity": 1, "use_value": 0.0},
-			{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
-			{"name": "Cerillas", "type": "tool_matches", "weight": 0.1, "quantity": 1, "use_value": 0.0, "durability": 10.0, "max_durability": 10.0},
-			{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0},
-			{"name": "Lata de guiso", "type": "food", "weight": 0.5, "quantity": 2, "use_value": 35.0},
-			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
-			{"name": "Venda", "type": "medical", "weight": 0.1, "quantity": 2, "use_value": 30.0},
-			{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
-			{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
-			{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
-		],
+		"starting_items": [],
 	},
 	{
 		"bot_id": 903,
@@ -120,19 +97,7 @@ const BOT_CONFIGS := [
 		"starting_clothing": ["Camiseta", "Pantalones", "Zapatillas"],
 		"starting_backpack": "",
 		"starting_weapon": "Fusil de asalto",
-		"starting_items": [
-			{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 0.0},
-			{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "use_value": 0.0},
-			{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
-			{"name": "Cerillas", "type": "tool_matches", "weight": 0.1, "quantity": 1, "use_value": 0.0, "durability": 10.0, "max_durability": 10.0},
-			{"name": "Carne cruda de lobo", "type": "food", "weight": 0.3, "quantity": 4, "use_value": 15.0},
-			{"name": "Lata de guiso", "type": "food", "weight": 0.5, "quantity": 2, "use_value": 35.0},
-			{"name": "Tela de camuflaje", "type": "material", "weight": 0.8, "quantity": 1, "use_value": 0.0},
-			{"name": "Piel de lobo", "type": "resource", "weight": 0.65, "quantity": 4, "use_value": 0.0},
-			{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
-			{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
-			{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
-		],
+		"starting_items": [],
 	},
 ]
 
@@ -821,7 +786,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["drink_at"] = _nearest_water_pos(proxy.global_position)
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
-			if d_water > 3.5:
+			# Con agua vadeable basta tener los pies mojados para beber; el centro
+			# del segmento puede quedar en zona profunda e inalcanzable.
+			var feet_wet := false
+			if world != null and world.has_method("get_river_depth_at"):
+				feet_wet = float(world.get_river_depth_at(proxy.global_position)) > 0.05
+			if d_water > 3.5 and not feet_wet:
 				_move_bot_towards(b, b["drink_at"], 4.6, delta, "run")
 			else:
 				# En la orilla: se agacha a beber unos segundos y repone su sed
@@ -2000,7 +1970,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
-				net.world_action_completed.rpc_id(pid, "", [], id, _loot_entry_pos(entry))
+				net.world_action_completed.rpc_id(pid, id, [], "", _loot_entry_pos(entry))
 
 func _can_bot_build_shelter(proxy: Node3D) -> bool:
 	return _bot_item_count(proxy, "Palo") >= 4 and _bot_item_count(proxy, "Cuerda") >= 1
@@ -2081,10 +2051,14 @@ func _bot_cook_meat_at_fire(b: Dictionary) -> void:
 		proxy.set_meta("saved_inventory", inv)
 		b["cook_cooldown"] = 18.0
 
+# Agua vadeable: un humano cruza rios someros (~hasta la cintura); solo el agua
+# profunda bloquea el paso.
+const WADE_DEPTH := 0.55
+
 func _is_pos_blocked(pos: Vector3, margin: float = 0.45) -> bool:
 	if world == null:
 		return false
-	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.02:
+	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > WADE_DEPTH:
 		return true
 	if world.has_method("_is_near_wildlife_blocker") and world._is_near_wildlife_blocker(pos, margin):
 		return true
@@ -2136,18 +2110,43 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 		b["path_idx"] = pidx
 		if pidx < path.size():
 			next_goal = path[pidx]
-	# Nunca caminar hacia el agua: si el siguiente punto esta dentro de un
-	# rio/lago, rodear o tras dos intentos saltar al siguiente punto de patrulla.
-	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(next_goal)) > 0.02 and float(world.get_river_depth_at(cur)) <= 0.02:
-		b["anim"] = "idle"
-		b["path"] = []
-		b["stuck_count"] = int(b["stuck_count"]) + 1
-		if int(b["stuck_count"]) >= 2:
-			b["stuck_count"] = 0
-			var pat: Array = b.get("patrol", [])
-			if not pat.is_empty():
-				b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
-		return
+	# Agua somera: vadeable (mas lento, como un humano). Agua profunda: solo se
+	# cruza si hay puente/piso encima; si no, rodear o abandonar el objetivo.
+	var depth_cur := 0.0
+	var depth_next := 0.0
+	var depth_ahead := 0.0
+	var ahead_xz := next_goal
+	if world != null and world.has_method("get_river_depth_at"):
+		depth_cur = float(world.get_river_depth_at(cur))
+		depth_next = float(world.get_river_depth_at(next_goal))
+		# La meta puede estar en tierra al otro lado del rio: sondear el tramo
+		# inmediato para no internarse en agua profunda tras un destino seco.
+		var flat_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
+		var look := minf(flat_next.length(), 1.4)
+		if look > 0.05:
+			var probe := cur + flat_next.normalized() * look
+			depth_ahead = float(world.get_river_depth_at(probe))
+			if depth_ahead > depth_next:
+				ahead_xz = probe
+	if maxf(depth_next, depth_ahead) > WADE_DEPTH and depth_cur <= WADE_DEPTH:
+		var surf_y := _ground_y(ahead_xz.x, ahead_xz.z, cur.y)
+		var ty := 0.375
+		if world.has_method("_get_exact_ground_y"):
+			ty = world._get_exact_ground_y(ahead_xz.x, ahead_xz.z) - 0.025
+		if surf_y - ty < 0.5:
+			b["anim"] = "idle"
+			b["path"] = []
+			b["stuck_count"] = int(b["stuck_count"]) + 1
+			if int(b["stuck_count"]) >= 2:
+				b["stuck_count"] = 0
+				# Rendirse con cualquier objetivo trans-rio, no solo patrullas:
+				# sin esto una meta de exploracion/saqueo aparcaba al bot en la orilla.
+				b["explore_target"] = Vector3.INF
+				b["explore_dwell"] = 0.0
+				var pat: Array = b.get("patrol", [])
+				if not pat.is_empty():
+					b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
+			return
 	var to_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
 	var d := to_next.length()
 	if d < 0.05:
@@ -2173,7 +2172,7 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 	if sm.length_squared() > 0.001:
 		sm = sm.normalized()
 	b["_mdir"] = sm
-	var spd := move_toward(float(b.get("_speed", 0.0)), speed, delta * 6.5)
+	var spd := move_toward(float(b.get("_speed", 0.0)), speed * (0.45 if depth_cur > 0.12 else 1.0), delta * 6.5)
 	b["_speed"] = spd
 	var step := minf(spd * delta, d)
 	var chosen_dir := sm if sm.length_squared() > 0.001 else dir
