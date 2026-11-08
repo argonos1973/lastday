@@ -780,6 +780,67 @@ func run() -> void:
 		"Herido, el bot usa la venda que fabrico (hp=%.0f)" % float(elena["health"]))
 	elena["health"] = 100.0
 
+	# --- 22) Asesor estrategico externo (validacion + directivas, sin HTTP) ---
+	var d_hunt := mgr._ai_parse_decision("{\"action\":\"hunt\",\"poi_kind\":\"wild\",\"reason\":\"need meat\"}")
+	check(str(d_hunt.get("mode", "")) == "poi" and (d_hunt.get("only_kinds", []) as Array) == ["wild"],
+		"Asesor: hunt dirige solo a zonas wild")
+	var d_scav := mgr._ai_parse_decision("{\"action\":\"scavenge\",\"reason\":\"loot\"}")
+	check((d_scav.get("only_kinds", []) as Array) == ["military", "city"],
+		"Asesor: scavenge sin poi_kind busca militar/ciudad")
+	var d_rest := mgr._ai_parse_decision("```json\n{\"action\":\"rest\",\"reason\":\"recover\"}\n```")
+	check(str(d_rest.get("mode", "")) == "pos", "Asesor: rest se traduce a destino pos (y acepta fences)")
+	var d_avoid := mgr._ai_parse_decision("{\"action\":\"avoid_zone\",\"poi_kind\":\"city\",\"reason\":\"picked clean\"}")
+	check(str(d_avoid.get("mode", "")) == "avoid" and (d_avoid.get("avoid_kinds", []) as Array) == ["city"],
+		"Asesor: avoid_zone filtra el tipo de zona")
+	check(mgr._ai_parse_decision("{\"action\":\"nuke\",\"poi_kind\":\"x\"}").is_empty(),
+		"Asesor: accion fuera de catalogo es rechazada")
+	check(mgr._ai_parse_decision("{\"action\":\"avoid_zone\"}").is_empty(),
+		"Asesor: avoid_zone sin poi_kind es rechazado")
+	check(mgr._ai_parse_decision("texto sin json").is_empty(),
+		"Asesor: respuesta no-JSON es rechazada")
+	# Aplicar return_home resuelve la posicion (campamento del bot)
+	elena["team_leader_id"] = 0
+	elena["ai_directive"] = {}
+	mgr._ai_apply_decision(901, "{\"action\":\"return_home\",\"reason\":\"low hp\"}")
+	var dir: Dictionary = elena.get("ai_directive", {})
+	check(str(dir.get("mode", "")) == "pos" and dir.get("pos") is Vector3,
+		"Asesor: return_home fija directiva pos al campamento")
+	check(float(dir.get("until", 0)) > Time.get_ticks_msec(),
+		"Asesor: la directiva lleva caducidad")
+	# POIs de prueba inyectados para verificar el filtrado
+	mgr._poi_cache = [
+		{"pos": Vector3(100.0, 0.0, 100.0), "kind": "house"},
+		{"pos": Vector3(200.0, 0.0, 200.0), "kind": "city"},
+		{"pos": Vector3(300.0, 0.0, 300.0), "kind": "wild"},
+		{"pos": Vector3(150.0, 0.0, 150.0), "kind": "military"},
+	]
+	mgr._poi_cache_built = true
+	elena["_mem"] = {"visited": [], "deaths": 0}
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+	elena["ai_directive"] = {"mode": "avoid", "avoid_kinds": ["city"], "until": Time.get_ticks_msec() + 60000, "reason": "test"}
+	var t_avoid: Vector3 = mgr._choose_explore_target(elena)
+	check(t_avoid != Vector3.INF and t_avoid.distance_to(Vector3(200.0, 0.0, 200.0)) > 0.5,
+		"Asesor: avoid_zone impide elegir la ciudad")
+	elena["ai_directive"] = {"mode": "poi", "only_kinds": ["wild"], "until": Time.get_ticks_msec() + 60000, "reason": "test"}
+	var t_hunt: Vector3 = mgr._choose_explore_target(elena)
+	check(t_hunt.distance_to(Vector3(300.0, 0.0, 300.0)) < 0.5,
+		"Asesor: hunt dirige la exploracion a la zona wild")
+	elena["ai_directive"] = {"mode": "pos", "pos": Vector3(50.0, 0.0, 50.0), "until": Time.get_ticks_msec() + 60000, "reason": "test"}
+	check(mgr._choose_explore_target(elena) == Vector3(50.0, 0.0, 50.0),
+		"Asesor: directiva pos devuelve el destino exacto")
+	elena["ai_directive"] = {"mode": "pos", "pos": Vector3(50.0, 0.0, 50.0), "until": Time.get_ticks_msec() - 1000, "reason": "test"}
+	var t_exp: Vector3 = mgr._choose_explore_target(elena)
+	check(t_exp != Vector3(50.0, 0.0, 50.0), "Asesor: directiva caducada se ignora")
+	# Elegibilidad: con ordenes de equipo el asesor no interfiere; sin API key no llama
+	elena["ai_directive"] = {}
+	elena["team_leader_id"] = 1
+	check(not mgr._ai_bot_eligible(elena), "Asesor: bot con ordenes de equipo no es elegible")
+	elena["team_leader_id"] = 0
+	check(mgr._ai_bot_eligible(elena), "Asesor: bot libre es elegible")
+	mgr._ai_tick(0.1)
+	check(mgr._ai_pending_bot == 0, "Asesor: sin GROQ_API_KEY no hace peticiones")
+	elena["_mem"] = {"visited": [], "deaths": 0, "last_death_pos": Vector3.INF, "scarcity": false, "gear_learned": true}
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

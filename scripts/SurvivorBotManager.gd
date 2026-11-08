@@ -127,6 +127,28 @@ var _memory: Dictionary = {} # bot_id -> {deaths, last_death_pos, last_death_cau
 var _poi_cache: Array = [] # puntos de interes del mundo (casas, tiendas, ciudad, zonas salvajes)
 var _poi_cache_built := false
 
+# --- Asesor estrategico externo (opcional) ---
+# Un LLM remoto (p.ej. Groq, endpoint compatible con OpenAI) decide CADA ~15-25
+# min que hacer a cada bot a nivel estrategico: a que zona ir, si volver a
+# casa, si descansar o que tipo de zona evitar. NUNCA toca supervivencia,
+# combate, crafteo ni ordenes: eso sigue siendo GDScript. Si no hay API key
+# (OS.get_environment("GROQ_API_KEY")), la API falla o la respuesta no valida,
+# los bots se comportan exactamente igual que sin asesor.
+const AI_ADVISOR_URL := "https://api.groq.com/openai/v1/chat/completions"
+const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
+const AI_DECISION_MIN_SEC := 900.0
+const AI_DECISION_SPREAD_SEC := 600.0
+const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
+const AI_MAX_CALLS_PER_DAY := 380
+const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
+const AI_SYSTEM_PROMPT := "You are a strategic advisor for a survival-game NPC. Output ONLY compact JSON, no prose: {\"action\":\"...\",\"poi_kind\":\"...\",\"reason\":\"...\"}. Actions: explore (wander/visit a place), scavenge (loot military or city sites), hunt (go to wild zones for food), return_home (go back to own camp or shelter), rest (stay at camp to recover), avoid_zone (steer clear of a poi_kind that was deadly or picked clean). poi_kind one of: house, military, city, wild, tower — include it only when relevant (hunt implies wild; scavenge implies military/city). reason: max 8 words."
+var _ai_http: HTTPRequest = null
+var _ai_pending_bot := 0
+var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
+var _ai_calls_day := 0
+var _ai_day_key := -1
+var _ai_rr := 0
+
 func setup(main_world: Node) -> void:
 	world = main_world
 	spawn_all_bots()
@@ -604,6 +626,7 @@ func tick(delta: float) -> void:
 		return
 	for bot_id in bots.keys():
 		_tick_bot(bots[bot_id], delta)
+	_ai_tick(delta)
 	_sync_accum += delta
 	if _sync_accum >= 0.10:
 		_sync_accum = fmod(_sync_accum, 0.10)
@@ -1013,6 +1036,15 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 # sitios no visitados, acordes a su rol (el bandido tira a zonas militares y
 # ciudad), cercanos, y nunca el lugar donde murio la ultima vez.
 func _choose_explore_target(b: Dictionary) -> Vector3:
+	# Directiva del asesor externo (si existe y no ha caducado): puede forzar un
+	# destino concreto (volver a casa/descansar) o filtrar los tipos de POI.
+	var directive := _ai_active_directive(b)
+	if not directive.is_empty() and str(directive.get("mode", "")) == "pos":
+		var dp = directive.get("pos")
+		if dp is Vector3 and (dp as Vector3) != Vector3.INF:
+			return dp
+	var only_kinds: Array = directive.get("only_kinds", []) if not directive.is_empty() else []
+	var avoid_kinds: Array = directive.get("avoid_kinds", []) if not directive.is_empty() else []
 	var pois := _explore_pois()
 	if pois.is_empty():
 		return Vector3.INF
@@ -1035,6 +1067,10 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if death_pos != Vector3.INF and Vector2(pp.x - death_pos.x, pp.z - death_pos.z).length() < 70.0:
 				continue
 			var kind := str(p["kind"])
+			if not only_kinds.is_empty() and not only_kinds.has(kind):
+				continue
+			if avoid_kinds.has(kind):
+				continue
 			var w := 1.0
 			if hostile:
 				# El soldado monta guardia en la torre: la valora mucho.
@@ -2897,3 +2933,201 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 	b["anim"] = "idle"
 	b["crouching"] = true
 	return true
+
+# ==================== ASESOR ESTRATEGICO EXTERNO ====================
+# Capa opcional sobre la IA scriptada: cada ~15-25 min por bot (round-robin,
+# nunca mas de una peticion en vuelo) se pregunta a una API compatible con
+# OpenAI (Groq por defecto) que hacer a nivel ESTRATEGICO. La respuesta solo
+# puede dirigir la exploracion (que tipo de zona visitar, volver a casa,
+# descansar, evitar una zona). Supervivencia, combate, crafteo, agua y ordenes
+# de equipo siguen siendo 100% GDScript: el asesor nunca los pisa.
+
+func _ai_ensure_http() -> void:
+	if _ai_http != null and is_instance_valid(_ai_http):
+		return
+	_ai_http = HTTPRequest.new()
+	_ai_http.timeout = 12.0
+	_ai_http.request_completed.connect(_ai_on_response)
+	add_child(_ai_http)
+
+func _ai_tick(_delta: float) -> void:
+	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
+	if key.is_empty() or bots.is_empty():
+		return
+	var day := int(Time.get_unix_time_from_system() / 86400.0)
+	if day != _ai_day_key:
+		_ai_day_key = day
+		_ai_calls_day = 0
+	if _ai_calls_day >= AI_MAX_CALLS_PER_DAY or _ai_pending_bot != 0:
+		return
+	_ai_ensure_http()
+	var now := Time.get_ticks_msec()
+	var ids: Array = bots.keys()
+	ids.sort()
+	for i in range(ids.size()):
+		_ai_rr = (_ai_rr + 1) % ids.size()
+		var bot_id: int = ids[_ai_rr]
+		var b: Dictionary = bots[bot_id]
+		if not _ai_bot_eligible(b):
+			continue
+		var next_at := int(_ai_next_at.get(bot_id, 0))
+		if next_at == 0:
+			# Primer intento escalonado tras el boot (~1.5-7 min segun bot)
+			_ai_next_at[bot_id] = now + (90 + _ai_rr * 150 + randi() % 120) * 1000
+			continue
+		if now < next_at:
+			continue
+		_ai_request_decision(key, bot_id, b)
+		return
+
+func _ai_bot_eligible(b: Dictionary) -> bool:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return false
+	if proxy.get_meta("proxy_dead", false):
+		return false
+	if int(b.get("team_leader_id", 0)) != 0:
+		return false # bajo ordenes del jugador: el asesor no interfiere
+	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
+		return false
+	var craft = b.get("_craft_state", {})
+	if craft is Dictionary and not (craft as Dictionary).is_empty():
+		return false
+	return true
+
+func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
+	_ai_pending_bot = bot_id
+	_ai_calls_day += 1
+	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_DECISION_MIN_SEC * 1000.0) + randi() % int(AI_DECISION_SPREAD_SEC * 1000.0)
+	var payload := {
+		"model": AI_ADVISOR_MODEL,
+		"temperature": 0.4,
+		"max_tokens": 140,
+		"response_format": {"type": "json_object"},
+		"messages": [
+			{"role": "system", "content": AI_SYSTEM_PROMPT},
+			{"role": "user", "content": _ai_build_prompt(b)},
+		],
+	}
+	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
+	if _ai_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
+		_ai_pending_bot = 0
+		print("[AI-ADV] peticion fallida para bot %d" % bot_id)
+
+func _ai_build_prompt(b: Dictionary) -> String:
+	var proxy: Node3D = b["proxy"]
+	var pos := proxy.global_position
+	var mem: Dictionary = b.get("_mem", {})
+	var visited: Array = mem.get("visited", [])
+	var cur := {}
+	var d = b.get("ai_directive", {})
+	if d is Dictionary and not (d as Dictionary).is_empty():
+		cur = {"mode": str(d.get("mode", "")), "reason": str(d.get("reason", ""))}
+	var state := {
+		"name": str(b["name"]),
+		"faction": str(b["faction"]),
+		"hp": int(float(b["health"])),
+		"hunger": int(float(b["hunger"])),
+		"thirst": int(float(b["thirst"])),
+		"weapon": str(b.get("held_item", "")),
+		"night": _is_world_night(),
+		"threat": _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null,
+		"pos": [int(pos.x), int(pos.z)],
+		"visited_pois": visited.size(),
+		"deaths": int(mem.get("deaths", 0)),
+		"items": (proxy.get_meta("saved_inventory", []) as Array).size(),
+		"has_shelter": b.get("shelter_pos", Vector3.INF) != Vector3.INF,
+		"last_plan": cur,
+	}
+	return JSON.stringify(state)
+
+func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var bot_id := _ai_pending_bot
+	_ai_pending_bot = 0
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200 or bot_id == 0 or not bots.has(bot_id):
+		return
+	var parsed = JSON.parse_string(body.get_string_from_utf8())
+	if not (parsed is Dictionary):
+		return
+	var choices = parsed.get("choices", [])
+	if not (choices is Array) or choices.is_empty():
+		return
+	var ch = choices[0]
+	if not (ch is Dictionary):
+		return
+	var msg = ch.get("message", {})
+	if not (msg is Dictionary):
+		return
+	var content = msg.get("content", "")
+	if content is String and not (content as String).is_empty():
+		_ai_apply_decision(bot_id, content)
+
+# Valida la respuesta del modelo contra el catalogo cerrado. Devuelve {} si no
+# es una decision ejecutable; nunca lanza errores con texto arbitrario.
+func _ai_parse_decision(text: String) -> Dictionary:
+	var t := text.strip_edges()
+	if t.begins_with("```"):
+		var first_nl := t.find("\n")
+		var last_fence := t.rfind("```")
+		if first_nl > 0 and last_fence > first_nl:
+			t = t.substr(first_nl + 1, last_fence - first_nl - 1).strip_edges()
+	if not t.begins_with("{"):
+		return {}
+	var parsed = JSON.parse_string(t)
+	if not (parsed is Dictionary):
+		return {}
+	var action := str(parsed.get("action", "")).to_lower().strip_edges()
+	var kind := str(parsed.get("poi_kind", "")).to_lower().strip_edges()
+	var reason := str(parsed.get("reason", "")).substr(0, 80)
+	var out := {"action": action, "reason": reason}
+	match action:
+		"explore":
+			out["mode"] = "poi"
+			out["only_kinds"] = [kind] if AI_POI_KINDS.has(kind) else []
+		"scavenge":
+			out["mode"] = "poi"
+			out["only_kinds"] = [kind] if AI_POI_KINDS.has(kind) and kind != "wild" and kind != "tower" else ["military", "city"]
+		"hunt":
+			out["mode"] = "poi"
+			out["only_kinds"] = ["wild"]
+		"return_home", "rest":
+			out["mode"] = "pos"
+		"avoid_zone":
+			if not AI_POI_KINDS.has(kind):
+				return {}
+			out["mode"] = "avoid"
+			out["avoid_kinds"] = [kind]
+		_:
+			return {}
+	return out
+
+func _ai_apply_decision(bot_id: int, content: String) -> void:
+	if not bots.has(bot_id):
+		return
+	var b: Dictionary = bots[bot_id]
+	var d := _ai_parse_decision(content)
+	if d.is_empty():
+		return
+	if str(d.get("mode", "")) == "pos":
+		var home: Vector3 = b.get("shelter_pos", Vector3.INF)
+		if str(d.get("action", "")) == "rest":
+			var camp: Vector3 = b.get("camp_spot", Vector3.INF)
+			if camp != Vector3.INF:
+				home = camp
+		elif home == Vector3.INF:
+			home = b.get("camp_spot", Vector3.INF)
+		if home == Vector3.INF:
+			return
+		d["pos"] = home
+	d["until"] = Time.get_ticks_msec() + AI_DIRECTIVE_TTL_MSEC
+	b["ai_directive"] = d
+	print("[AI-ADV] %s: %s (%s)" % [str(b.get("name", bot_id)), str(d.get("action", "?")), str(d.get("reason", ""))])
+
+func _ai_active_directive(b: Dictionary) -> Dictionary:
+	var d = b.get("ai_directive", {})
+	if not (d is Dictionary) or (d as Dictionary).is_empty():
+		return {}
+	if int((d as Dictionary).get("until", 0)) < Time.get_ticks_msec():
+		b["ai_directive"] = {}
+		return {}
+	return d
