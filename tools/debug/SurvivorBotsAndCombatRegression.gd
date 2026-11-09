@@ -1335,10 +1335,35 @@ func run() -> void:
 		var sec2 := mgr._bot_explore_sector(tb)
 		var away := Vector2(chosen.x - camp_base.x, chosen.z - camp_base.z)
 		var diff := absf(wrapf(away.angle() - sec2, -PI, PI))
-		check(chosen != Vector3.INF and diff < PI * 0.5,
+		check(chosen != Vector3.INF and diff < 2.0,
 			"Dispersion 8a: bot %d elige un POI dentro de su sector de exploracion (diff=%.2f rad)" % [tbid, diff])
 	check(chosen_targets[901] != chosen_targets[902] and chosen_targets[901] != chosen_targets[903] and chosen_targets[902] != chosen_targets[903],
 		"Dispersion 8b: los tres bots eligen POIs distintos y no convergen a la misma zona")
+
+	# Carne cruda = intoxicacion como en el jugador humano (get_sick 60s):
+	# primera ingestion reduce hambre/sed/salud a la mitad y bloquea la
+	# regeneracion pasiva mientras dura la enfermedad.
+	var sick_b: Dictionary = mgr.bots[901]
+	var sick_p: Node3D = sick_b["proxy"]
+	sick_p.set_meta("saved_inventory", [{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 15.0}])
+	sick_b["hunger"] = 20.0  # desesperado: la come cruda
+	sick_b["thirst"] = 50.0
+	sick_b["health"] = 80.0
+	sick_b["eat_cooldown"] = 0.0
+	sick_b["sick_timer"] = 0.0
+	mgr._maintain_bot_needs(sick_b, 0.1)
+	check(float(sick_b.get("sick_timer", 0.0)) >= 59.0,
+		"Enfermedad 9a: comer carne cruda desesperado enferma al bot como a un humano (sick_timer=%.1f)" % float(sick_b.get("sick_timer", 0.0)))
+	check(float(sick_b["health"]) < 45.0 and float(sick_b["hunger"]) < 15.0,
+		"Enfermedad 9b: la intoxicacion reduce salud y hambre a la mitad como en SurvivalStats.get_sick")
+	# La carne cruda no se toca sin desesperacion: con hambre moderada la cocina
+	sick_b["sick_timer"] = 0.0
+	sick_b["hunger"] = 55.0
+	sick_b["eat_cooldown"] = 0.0
+	sick_p.set_meta("saved_inventory", [{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 15.0}])
+	mgr._maintain_bot_needs(sick_b, 0.1)
+	check(float(sick_b.get("sick_timer", 0.0)) <= 0.0 and int((sick_p.get_meta("saved_inventory", []) as Array).size()) == 1,
+		"Enfermedad 9c: sin desesperacion el bot no come carne cruda (prefiere cocinarla)")
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

@@ -519,6 +519,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"shoot_cooldown": 0.0,
 		"tame_cooldown": 0.0,
 		"eat_cooldown": 0.0,
+		"sick_timer": 0.0,
 		"cook_cooldown": 0.0,
 		"camp_spot": camp_spot,
 		"shelter_id": "",
@@ -776,6 +777,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["shoot_cooldown"] = maxf(0.0, float(b["shoot_cooldown"]) - delta)
 	b["tame_cooldown"] = maxf(0.0, float(b["tame_cooldown"]) - delta)
 	b["eat_cooldown"] = maxf(0.0, float(b["eat_cooldown"]) - delta)
+	b["sick_timer"] = maxf(0.0, float(b.get("sick_timer", 0.0)) - delta)
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
@@ -1042,7 +1044,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["crouching"] = str(b["faction"]) == "hostile"
 		proxy.set_meta("crouching", bool(b["crouching"]))
 		b["anim"] = "sit"
-		if float(b["health"]) < 100.0:
+		if float(b["health"]) < 100.0 and float(b.get("sick_timer", 0.0)) <= 0.0:
 			var healed := minf(100.0, float(b["health"]) + delta * 1.8)
 			b["health"] = healed
 			proxy.set_meta("proxy_health", healed)
@@ -1231,7 +1233,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if known.has(pid):
 				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
-			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 45.0)
+			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 30.0)
 			# Dispersion territorial: cada bot tiene un sector de exploracion
 			# propio (determinista por bot_id) desde su campamento — asi los tres
 			# no orbitan el mismo pueblo. La curiosidad tira hacia POIs lejanos.
@@ -1242,7 +1244,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if away.length() > 30.0:
 				var sector := _bot_explore_sector(b)
 				var diff := absf(wrapf(away.angle() - sector, -PI, PI))
-				score += (1.0 - diff / PI) * (25.0 + curiosity * 60.0)
+				score += (1.0 - diff / PI) * (45.0 + curiosity * 60.0)
 				score += curiosity * minf(d, 320.0) * 0.35
 			# Anti-cluster: si un aliado ya va hacia esta zona, otro elige otra
 			for ob in bots.values():
@@ -1346,6 +1348,14 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			b["hunger"] = minf(100.0, float(b["hunger"]) + gain_h)
 			b["thirst"] = minf(100.0, float(b["thirst"]) + gain_t)
 			b["health"] = minf(100.0, float(b["health"]) + gain_hp)
+			# Carne cruda = intoxicacion como en el jugador (get_sick 60s:
+			# primera vez reduce hambre/sed/salud a la mitad, sin regen pasiva)
+			if nm.begins_with("Carne cruda"):
+				if float(b.get("sick_timer", 0.0)) <= 0.0:
+					b["hunger"] = float(b["hunger"]) * 0.5
+					b["thirst"] = float(b["thirst"]) * 0.5
+					b["health"] = float(b["health"]) * 0.5
+				b["sick_timer"] = maxf(float(b.get("sick_timer", 0.0)), 60.0)
 			var new_hp := minf(100.0, float(b["health"]))
 			proxy.set_meta("proxy_health", new_hp)
 			proxy.set_meta("saved_health", new_hp)
@@ -4875,6 +4885,7 @@ func get_full_web_status() -> Dictionary:
 		snap["clothing"] = str(b.get("clothing", ""))
 		snap["backpack"] = str(b.get("backpack", ""))
 		snap["torch_lit"] = bool(b.get("torch_lit", false))
+		snap["sick"] = float(b.get("sick_timer", 0.0)) > 0.0
 		snap["crouching"] = bool(b.get("crouching", false))
 		snap["sitting"] = bool(b.get("sitting", false))
 		snap["in_shelter"] = _is_bot_wolf_protected(b) if proxy != null and is_instance_valid(proxy) else false
