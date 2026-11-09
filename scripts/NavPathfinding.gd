@@ -20,7 +20,7 @@ func world_to_grid(pos: Vector3) -> Vector2i:
 func grid_to_world(cell: Vector2i) -> Vector3:
 	return Vector3(float(cell.x - _grid_size / 2) * _cell_size, 0.0, float(cell.y - _z_offset) * _cell_size)
 
-func build(blockers: Array, river_segments: Array) -> void:
+func build(blockers: Array, river_segments: Array, road_test: Callable = Callable()) -> void:
 	_grid.clear()
 	_door_open_cache.clear()
 	for blocker in blockers:
@@ -46,7 +46,7 @@ func build(blockers: Array, river_segments: Array) -> void:
 				var world_pos := grid_to_world(cell)
 				if Vector2(world_pos.x - blocker_pos.x, world_pos.z - blocker_pos.z).length() <= radius:
 					_grid[cell] = true
-	_block_river_cells(river_segments)
+	_block_river_cells(river_segments, road_test)
 	_search.region = Rect2i(0, 0, _grid_size, _grid_size_z)
 	_search.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 
@@ -155,7 +155,7 @@ func _reachable_goal(start: Vector2i, goal: Vector2i) -> Vector2i:
 				distance = candidate_distance
 	return nearest
 
-func _block_river_cells(river_segments: Array) -> void:
+func _block_river_cells(river_segments: Array, road_test: Callable = Callable()) -> void:
 	for segment in river_segments:
 		var size: Vector2 = segment["size"]
 		var center: Vector3 = segment["center"]
@@ -175,6 +175,11 @@ func _block_river_cells(river_segments: Array) -> void:
 				if size.x >= 60.0 and pow(local_along / half_length, 2) + pow(local_across / half_width, 2) > 1.0:
 					continue
 				var world_pos: Vector3 = center + along * local_along + across * local_across
+				# Los vados (_ford_depth_cap, FORD_DEPTH=0.45) estan donde una
+				# carretera cruza el rio: esas celdas son vadeables y quedan
+				# abiertas para que el pathing cruce por el vado.
+				if road_test.is_valid() and bool(road_test.call(world_pos)):
+					continue
 				var cell := world_to_grid(world_pos)
 				if cell.x >= 0 and cell.x < _grid_size and cell.y >= 0 and cell.y < _grid_size_z:
 					_grid[cell] = true

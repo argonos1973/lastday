@@ -55,6 +55,7 @@ var remote_players: Dictionary = {}  # peer_id -> Node3D (remote player avatar)
 var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for wildlife AI)
 var nav = null
 var wolf_nav = null
+var bot_nav = null
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
 var _server_saved_players: Dictionary = {}  # client_id -> saved player data (server save)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
@@ -7642,6 +7643,12 @@ func _create_map() -> void:
 		nav.build(wildlife_blockers, _wildlife_water_obstacles())
 		wolf_nav = _new_nav_pathfinding()
 		wolf_nav.build(wildlife_blockers, river_segments_data)
+		# Nav exclusiva de los bots: igual que la de fauna pero con los vados
+		# (_ford_depth_cap: carreteras que cruzan el rio quedan a 0.45 m) abiertos
+		# para que crucen por el vado en vez de quedarse en la orilla. Los lobos
+		# siguen sin poder entrar al rio, asi que su nav queda como estaba.
+		bot_nav = _new_nav_pathfinding()
+		bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_on_road"))
 		await get_tree().process_frame
 		if _loading_label != null:
 			_set_loading_phase("Generando fauna...")
@@ -17184,6 +17191,8 @@ func _refresh_nav_door_caches() -> void:
 	nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 	if wolf_nav != null:
 		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+	if bot_nav != null:
+		bot_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 
 func _wildlife_water_obstacles() -> Array:
 	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)

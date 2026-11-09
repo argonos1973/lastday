@@ -92,6 +92,27 @@ func run() -> void:
 		if wolf.position.distance_to(player.position) < 4.1:
 			break
 	check(wolf.position.distance_to(player.position) < 4.1, "Wolf resumes pursuit when the player returns to reachable land")
+	# Bot nav (road_test): una carretera que cruza el rio abre un vado en el grid
+	# — el pathing cruza por el corredor en vez de parar en la orilla.
+	var bot_nav := NavPathfinding.new()
+	var river_seg: Array = [{"center": Vector3.ZERO, "size": Vector2(1200, 12), "yaw": 0.0}]
+	bot_nav.build([], river_seg)
+	var blocked_path: Array = bot_nav.find_path(Vector3(0, 0, -20), Vector3(0, 0, 20))
+	check(not blocked_path.is_empty() and blocked_path.back().z < 0.0, "Sin vado el rio sigue siendo infranqueable")
+	bot_nav.build([], river_seg, func(p: Vector3) -> bool: return absf(p.x) < 3.0)
+	var ford_path: Array = bot_nav.find_path(Vector3(0, 0, -20), Vector3(0, 0, 20))
+	check(not ford_path.is_empty(), "El vado debe producir una ruta")
+	if not ford_path.is_empty():
+		check(ford_path.back().distance_to(Vector3(0, 0, 20)) < 3.0, "La ruta del vado alcanza la otra orilla")
+		var fp_prev := Vector3(0, 0, -20)
+		for fp in ford_path:
+			check(bot_nav._is_path_clear(fp_prev, fp), "La ruta del vado no pisa celdas bloqueadas")
+			fp_prev = fp
+		check(ford_path.back().z > 6.0, "El cruce termina al otro lado del rio")
+	# Un vado lejano igualmente conecta las orillas (detour hasta la carretera).
+	bot_nav.build([], river_seg, func(p: Vector3) -> bool: return absf(p.x - 200.0) < 3.0)
+	ford_path = bot_nav.find_path(Vector3(0, 0, -20), Vector3(0, 0, 20))
+	check(not ford_path.is_empty() and ford_path.back().z > 6.0, "Ruta desvia hasta el vado lejano y cruza")
 	# Door updates must also reach the native path search.
 	var door := Node3D.new()
 	world.add_child(door)

@@ -2512,15 +2512,19 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 		b["_mdir"] = Vector3.ZERO
 	b["_last_move_t"] = now
 	var next_goal := goal
+	var nav_guided := false
 	b["path_timer"] = float(b["path_timer"]) - delta
 	var flat_dist := Vector2(goal.x - cur.x, goal.z - cur.z).length()
 	var direct_blocked := _is_step_blocked(cur, cur + (goal - cur).normalized() * minf(flat_dist, 1.5)) if flat_dist > 0.2 else false
 	# Usar la malla de navegacion siempre que el objetivo este a >3.5 m o haya
 	# un obstaculo directo interpuesto.
-	if (flat_dist > 3.5 or direct_blocked) and world != null and world.get("wolf_nav") != null:
+	var bot_nav_ref = world.get("bot_nav") if world != null else null
+	if bot_nav_ref == null and world != null:
+		bot_nav_ref = world.get("wolf_nav")
+	if (flat_dist > 3.5 or direct_blocked) and bot_nav_ref != null:
 		var path: Array = b["path"]
 		if path.is_empty() or float(b["path_timer"]) <= 0.0:
-			b["path"] = world.wolf_nav.find_path(cur, goal)
+			b["path"] = bot_nav_ref.find_path(cur, goal)
 			b["path_idx"] = 0
 			b["path_timer"] = 1.8
 			path = b["path"]
@@ -2530,6 +2534,7 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 		b["path_idx"] = pidx
 		if pidx < path.size():
 			next_goal = path[pidx]
+			nav_guided = true
 	# Agua somera: vadeable (mas lento, como un humano). Agua profunda: solo se
 	# cruza si hay puente/piso encima; si no, rodear o abandonar el objetivo.
 	var depth_cur := 0.0
@@ -2548,7 +2553,11 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 			depth_ahead = float(world.get_river_depth_at(probe))
 			if depth_ahead > depth_next:
 				ahead_xz = probe
-	if maxf(depth_next, depth_ahead) > WADE_DEPTH and depth_cur <= WADE_DEPTH:
+	# El punto de nav ya viene validado por la malla (vados incluidos): el sondeo
+	# por delante solo manda en el tramo final directo, donde una meta seca al
+	# otro lado del rio podria internar al bot en agua profunda. Un probe que
+	# rozara agua profunda al borde del vado ya no frena el cruce.
+	if (depth_next > WADE_DEPTH or (not nav_guided and depth_ahead > WADE_DEPTH)) and depth_cur <= WADE_DEPTH:
 		var surf_y := _ground_y(ahead_xz.x, ahead_xz.z, cur.y)
 		var ty := 0.375
 		if world.has_method("_get_exact_ground_y"):
