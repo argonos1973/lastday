@@ -563,6 +563,11 @@ function renderBots(data) {
       ? inv.map(it => `<span class="item-tag">${esc(it.name)}${it.quantity > 1 ? ` ×${it.quantity}` : ""}</span>`).join("")
       : `<span class="empty-note">Mochila vacía</span>`;
 
+    const stash = b.shelter_stash || [];
+    let stashHtml = stash.length
+      ? stash.map(it => `<span class="item-tag">${esc(it.name)}${(it.quantity || it.qty || 1) > 1 ? ` ×${it.quantity || it.qty}` : ""}</span>`).join("")
+      : `<span class="empty-note">Sin objetos guardados en su refugio</span>`;
+
     let relHtml = rels.length
       ? `<table class="mini-table"><thead><tr><th>Actor</th><th>Trust</th><th>Hostil</th><th>Miedo</th><th>Ayuda/Atq</th></tr></thead><tbody>` +
         rels.map(r => `<tr>
@@ -670,6 +675,9 @@ function renderBots(data) {
       <div class="section-label">Ropa Equipada e Inventario (${inv.length})</div>
       <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
       <div class="pill-list">${invHtml}</div>
+
+      <div class="section-label">Alijo en Refugio Propio (${stash.length}/18)</div>
+      <div class="pill-list">${stashHtml}</div>
     </div>`;
   }
 

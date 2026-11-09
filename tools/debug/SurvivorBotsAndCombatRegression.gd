@@ -1485,6 +1485,59 @@ func run() -> void:
 	check(end_pos.y >= 54.0 and Vector2(end_pos.x - summit_goal.x, end_pos.z - summit_goal.z).length() < 4.5,
 		"SpawnReal 10i: el bot sube por la carretera en espiral hasta la Base Cima (pos=%s)" % str(end_pos))
 
+	# 10j: los bots roban objetos utiles de refugios ajenos
+	fresh_b["proxy"].global_position = Vector3(20.0, 0.4, 20.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["shelter_id"] = ""
+	fresh_b["shelter_pos"] = Vector3.INF
+	fresh_b["hunger"] = 40.0
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	world._built_shelters.append({
+		"id": "player_shelter_999",
+		"pos": Vector3(21.0, 0.4, 20.0),
+		"yaw": 0.0,
+		"contents": [
+			{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 0.0},
+			{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0},
+		],
+	})
+	var raid_cand := mgr._find_nearby_raidable_shelter(fresh_b, 30.0)
+	var stolen_n := mgr._bot_raid_shelter(fresh_b, raid_cand)
+	var fk_sh := mgr._find_shelter_dict("player_shelter_999")
+	check(stolen_n >= 2 and (fk_sh.get("contents", []) as Array).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Fusil de asalto") == 1,
+		"SpawnReal 10j: el bot roba armas y comida de un refugio ajeno (stolen=%d)" % stolen_n)
+
+	# 10k: el bot guarda su loot sobrante en su propio refugio y retira cuando tiene hambre
+	fresh_b["shelter_id"] = "bot_shelter_902"
+	fresh_b["shelter_pos"] = Vector3(20.0, 0.4, 20.0)
+	fresh_b["campfire_id"] = "bot_cf_902"
+	world._built_shelters.append({
+		"id": "bot_shelter_902",
+		"pos": Vector3(20.0, 0.4, 20.0),
+		"yaw": 0.0,
+		"contents": [],
+	})
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "use_value": 0.0},
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.2, "quantity": 1, "use_value": 0.0},
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 0.9, "quantity": 1, "use_value": 0.0},
+		{"name": "Lata de atun abierta", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 18.0},
+		{"name": "Piel de ciervo", "type": "resource", "weight": 0.6, "quantity": 2, "use_value": 0.0},
+	])
+	var stored_m := mgr._bot_sync_own_shelter_stash(fresh_b)
+	var own_contents := mgr._get_shelter_contents("bot_shelter_902")
+	check(stored_m >= 4 and own_contents.size() >= 3 and mgr._bot_item_count(fresh_b["proxy"], "Fusil de asalto") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Arco de madera") == 0,
+		"SpawnReal 10k: el bot guarda armas/comida/pieles sobrantes en su propio refugio y conserva su fusil (stash=%d)" % own_contents.size())
+	# Ahora simular que el bot vuelve hambriento y sin comida encima: retira del alijo propio
+	fresh_b["hunger"] = 30.0
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 0.0},
+	])
+	mgr._bot_sync_own_shelter_stash(fresh_b)
+	check(mgr._bot_item_count(fresh_b["proxy"], "Lata de atun abierta") >= 1,
+		"SpawnReal 10l: el bot retira comida de su propio refugio cuando tiene hambre")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

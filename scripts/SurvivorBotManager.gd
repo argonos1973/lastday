@@ -909,6 +909,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		_observe_nearby_world(b)
 		_try_share_allied_knowledge(b)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
@@ -1095,6 +1096,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, lpos, 4.4, delta, "run")
 		return
 
+	# 5a) Saqueo de refugios ajenos: si detecta un refugio de otro jugador/bot
+	# con objetos utiles en su alijo, se acerca y los roba como haria un humano.
+	var raid_sh: Dictionary = b.get("_s_raid_shelter", {})
+	if not raid_sh.is_empty():
+		b["_act"] = "raid_shelter"
+		b["sitting"] = false
+		b["crouching"] = false
+		var rpos := _shelter_entry_pos(raid_sh)
+		var d_raid := Vector2(proxy.global_position.x - rpos.x, proxy.global_position.z - rpos.z).length()
+		if d_raid <= 2.4:
+			_bot_raid_shelter(b, raid_sh)
+			b["_s_raid_shelter"] = {}
+		else:
+			_move_bot_towards(b, rpos, 4.4, delta, "run")
+		return
+
 	# 5b) Materiales de campamento: si faltan palos para el refugio/fogata y no
 	# hay drops a mano, el bot tala arbustos (fell_bush) igual que un jugador —
 	# filo en mano, 5 s de corte, 3 palos y semillas al suelo.
@@ -1137,6 +1154,23 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# escondiendo de un ataque, sentarse a "descansar" es suicidio — debe seguir
 	# buscando comida/agua fuera.
 	var starving_or_parched: bool = (float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 22.0 and not _bot_has_drink(proxy))
+	# 6a) Alijo en su propio refugio: si ya está junto a su refugio sincroniza
+	# (retira lo que necesite y guarda el sobrante); si necesita comida/agua/arma
+	# que tiene guardada allí o acumula >=3 objetos sobrantes, vuelve a su
+	# refugio para gestionar el alijo como un jugador humano.
+	if sh_pos != Vector3.INF and not str(b["shelter_id"]).is_empty():
+		var d_own_sh := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
+		if d_own_sh <= 2.6:
+			_bot_sync_own_shelter_stash(b)
+		var needs_from_stash := _own_shelter_has_needed_item(b) and d_own_sh < 110.0
+		var storable_n := _bot_count_storable_items(b)
+		var wants_stash_run := needs_from_stash or (not starving_or_parched and (storable_n >= 3 or (storable_n >= 1 and d_own_sh < 24.0)))
+		if wants_stash_run and d_own_sh > 2.4:
+			b["_act"] = "stash"
+			b["sitting"] = false
+			b["crouching"] = false
+			_move_bot_towards(b, sh_pos, 4.2, delta, "run" if d_own_sh > 12.0 else "walk")
+			return
 	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (not starving_or_parched and (is_night or float(b["health"]) < 65.0))
 	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, 85.0)
 	if rest_pos != Vector3.INF and wants_camp:
@@ -3314,6 +3348,354 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 					net.shelter_lined.rpc_id(pid, sh_id, true)
 				if has_camo:
 					net.shelter_camo_changed.rpc_id(pid, sh_id, true)
+	# Al terminar de levantar su refugio, guarda ya el botin sobrante.
+	_bot_sync_own_shelter_stash(b)
+
+func _shelter_entry_pos(sh: Dictionary) -> Vector3:
+	var p = sh.get("pos", Vector3.ZERO)
+	if p is Vector3:
+		return p
+	if p is Array and p.size() >= 3:
+		return Vector3(float(p[0]), float(p[1]), float(p[2]))
+	return Vector3.ZERO
+
+func _find_shelter_dict(sh_id: String) -> Dictionary:
+	if sh_id.is_empty() or world == null or not ("_built_shelters" in world):
+		return {}
+	for sh in world._built_shelters:
+		if sh is Dictionary and str(sh.get("id", "")) == sh_id:
+			return sh
+	return {}
+
+func _get_shelter_contents(sh_id: String) -> Array:
+	var sh := _find_shelter_dict(sh_id)
+	if sh.is_empty():
+		return []
+	var c = sh.get("contents", [])
+	return (c as Array).duplicate(true) if c is Array else []
+
+func _commit_shelter_contents(sh_id: String, contents: Array) -> void:
+	if sh_id.is_empty() or world == null:
+		return
+	var sh := _find_shelter_dict(sh_id)
+	if not sh.is_empty():
+		sh["contents"] = contents
+	if "world_actions_by_id" in world and world.world_actions_by_id.has(sh_id):
+		var act = world.world_actions_by_id[sh_id]
+		if act != null and is_instance_valid(act):
+			act.set_meta("contents", contents)
+	if world.has_method("_set_backpack_entry_contents"):
+		world._set_backpack_entry_contents(sh_id, contents)
+	if world.has_method("_broadcast_backpack_contents"):
+		world._broadcast_backpack_contents(sh_id, contents)
+	if world.has_method("_save_world_change_silent"):
+		world._save_world_change_silent()
+
+# Busca refugios ajenos cercanos que tengan objetos deseables en su alijo.
+func _find_nearby_raidable_shelter(b: Dictionary, radius: float) -> Dictionary:
+	if world == null or not ("_built_shelters" in world):
+		return {}
+	var proxy: Node3D = b["proxy"]
+	var own_id := str(b.get("shelter_id", ""))
+	var leader_id := int(b.get("team_leader_id", 0))
+	var leader_sh := "player_shelter_%d" % leader_id if leader_id > 0 else ""
+	var best: Dictionary = {}
+	var best_d := radius
+	for sh in world._built_shelters:
+		if not (sh is Dictionary):
+			continue
+		var sid := str(sh.get("id", ""))
+		if sid.is_empty() or sid == own_id or (not leader_sh.is_empty() and sid == leader_sh):
+			continue
+		var contents = sh.get("contents", [])
+		if not (contents is Array) or (contents as Array).is_empty():
+			continue
+		var spos := _shelter_entry_pos(sh)
+		if _is_goal_blacklisted(b, spos):
+			continue
+		var d := Vector2(proxy.global_position.x - spos.x, proxy.global_position.z - spos.z).length()
+		if d > best_d:
+			continue
+		var has_wanted := false
+		for cd in contents:
+			if cd is Dictionary and _is_loot_desirable(b, str(cd.get("name", "")), str(cd.get("type", "resource"))):
+				has_wanted = true
+				break
+		if has_wanted:
+			best_d = d
+			best = sh
+	return best
+
+# Roba los objetos utiles de un refugio ajeno y sincroniza el alijo con clientes.
+func _bot_raid_shelter(b: Dictionary, sh_entry: Dictionary) -> int:
+	var sid := str(sh_entry.get("id", ""))
+	var sh := _find_shelter_dict(sid)
+	if sh.is_empty():
+		return 0
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var contents: Array = (sh.get("contents", []) as Array).duplicate(true)
+	var stolen := 0
+	for i in range(contents.size() - 1, -1, -1):
+		if inv.size() >= 60:
+			break
+		var cd = contents[i]
+		if not (cd is Dictionary):
+			continue
+		var nm := str(cd.get("name", ""))
+		var tp := str(cd.get("type", "resource"))
+		var qty := maxi(1, int(cd.get("quantity", cd.get("qty", 1))))
+		var took_from_stack := 0
+		while qty > 0 and _is_loot_desirable(b, nm, tp):
+			var one: Dictionary = (cd as Dictionary).duplicate(true)
+			one["quantity"] = 1
+			_bot_add_inventory_item(inv, one)
+			proxy.set_meta("saved_inventory", inv)
+			qty -= 1
+			took_from_stack += 1
+			stolen += 1
+		if took_from_stack > 0:
+			if qty <= 0:
+				contents.remove_at(i)
+			else:
+				contents[i]["quantity"] = qty
+			_ai_note_loot(b, nm, tp)
+	if stolen > 0:
+		_commit_shelter_contents(sid, contents)
+		_auto_equip_best_gear(b)
+		var best_w := _best_weapon_name(proxy)
+		if not best_w.is_empty() and not bool(b["torch_lit"]):
+			b["held_item"] = best_w
+			b["has_rifle"] = best_w == "Fusil de asalto" or best_w == "Rifle francotirador"
+			proxy.set_meta("saved_held_item", best_w)
+		record_bot_event(int(b["bot_id"]), "raid_shelter", sid, "shelter", _shelter_entry_pos(sh), "stolen:%d" % stolen)
+	return stolen
+
+func _own_shelter_has_needed_item(b: Dictionary) -> bool:
+	var sid := str(b.get("shelter_id", ""))
+	var contents := _get_shelter_contents(sid)
+	if contents.is_empty():
+		return false
+	var proxy: Node3D = b["proxy"]
+	var need_food: bool = float(b["hunger"]) < 60.0 and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
+	var need_water: bool = float(b["thirst"]) < 60.0 and not _bot_has_drink(proxy)
+	var need_weapon: bool = _best_weapon_name(proxy).is_empty()
+	var need_med: bool = float(b["health"]) < 78.0 and _bot_item_count(proxy, "Venda") == 0
+	for cd in contents:
+		if not (cd is Dictionary):
+			continue
+		var nm := str(cd.get("name", ""))
+		var tp := str(cd.get("type", ""))
+		if need_food and tp == "food":
+			return true
+		if need_water and (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")):
+			return true
+		if need_weapon and tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"]:
+			return true
+		if need_med and nm == "Venda":
+			return true
+	return false
+
+# Calcula que entradas del inventario actual son sobrantes para guardar en el
+# refugio propio (conservando encima su mejor arma, su municion, 1 filo,
+# 1 comida de reserva, 1 bebida y 2 vendas).
+func _bot_count_storable_items(b: Dictionary) -> int:
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	if inv.is_empty():
+		return 0
+	var contents := _get_shelter_contents(str(b.get("shelter_id", "")))
+	if contents.size() >= 18:
+		return 0
+	var plan := _bot_partition_inventory_for_shelter(b, inv)
+	return (plan.get("store", []) as Array).size()
+
+func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	var best_w := _best_weapon_name(proxy)
+	var cutters := ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Piedra afilada"]
+	var kept_primary := false
+	var kept_cutter: bool = best_w in cutters
+	var kept_bola := false
+	var kept_torch := false
+	var kept_matches := false
+	var food_kept := 0
+	var drink_kept := 0
+	var med_kept := 0
+	var has_cf := not str(b.get("campfire_id", "")).is_empty() or bool(b.get("no_fire_spot", false))
+	var stick_cap := 2 if has_cf else 4
+	var stone_cap := 1 if has_cf else 2
+	var stick_kept := 0
+	var stone_kept := 0
+	var keep: Array = []
+	var store: Array = []
+	for raw_it in inv:
+		if not (raw_it is Dictionary):
+			continue
+		var it: Dictionary = (raw_it as Dictionary).duplicate(true)
+		var nm := str(it.get("name", ""))
+		var tp := str(it.get("type", "resource"))
+		var qty := maxi(1, int(it.get("quantity", 1)))
+		if tp == "backpack":
+			keep.append(it)
+			continue
+		if not best_w.is_empty() and nm == best_w and not kept_primary:
+			kept_primary = true
+			if qty > 1:
+				var k1 := it.duplicate(true); k1["quantity"] = 1; keep.append(k1)
+				var s1 := it.duplicate(true); s1["quantity"] = qty - 1; store.append(s1)
+			else:
+				keep.append(it)
+			continue
+		if nm in cutters and not kept_cutter:
+			kept_cutter = true
+			if qty > 1:
+				var kc := it.duplicate(true); kc["quantity"] = 1; keep.append(kc)
+				var sc := it.duplicate(true); sc["quantity"] = qty - 1; store.append(sc)
+			else:
+				keep.append(it)
+			continue
+		if nm == "Boleadoras" and not kept_bola:
+			kept_bola = true
+			keep.append(it)
+			continue
+		if nm == "Antorcha" and not kept_torch:
+			kept_torch = true
+			keep.append(it)
+			continue
+		if nm == "Cerillas" and not kept_matches:
+			kept_matches = true
+			keep.append(it)
+			continue
+		if tp in ["ammo", "ammo_arrow"]:
+			var keep_ammo := (best_w == "Fusil de asalto" and (nm == "Cargador de M4" or nm == "Balas 5.56")) \
+				or (best_w == "Rifle francotirador" and nm == "Cargador de fusil") \
+				or (best_w in ["Arco de madera", "Arco reforzado"] and tp == "ammo_arrow")
+			if keep_ammo:
+				keep.append(it)
+			else:
+				store.append(it)
+			continue
+		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear", "tool_hoe", "tool_shovel"]:
+			store.append(it)
+			continue
+		if tp == "food":
+			if food_kept < 1:
+				var take_k := mini(1 - food_kept, qty)
+				food_kept += take_k
+				var kf := it.duplicate(true); kf["quantity"] = take_k; keep.append(kf)
+				if qty - take_k > 0:
+					var sf := it.duplicate(true); sf["quantity"] = qty - take_k; store.append(sf)
+			else:
+				store.append(it)
+			continue
+		if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora") or nm == "Botella de plastico":
+			if drink_kept < 1:
+				drink_kept += 1
+				var kd := it.duplicate(true); kd["quantity"] = 1; keep.append(kd)
+				if qty > 1:
+					var sd := it.duplicate(true); sd["quantity"] = qty - 1; store.append(sd)
+			else:
+				store.append(it)
+			continue
+		if nm == "Venda" or tp == "medical":
+			if med_kept < 2:
+				var take_m := mini(2 - med_kept, qty)
+				med_kept += take_m
+				var km := it.duplicate(true); km["quantity"] = take_m; keep.append(km)
+				if qty - take_m > 0:
+					var sm := it.duplicate(true); sm["quantity"] = qty - take_m; store.append(sm)
+			else:
+				store.append(it)
+			continue
+		if nm == "Palo":
+			if stick_kept < stick_cap:
+				var take_st := mini(stick_cap - stick_kept, qty)
+				stick_kept += take_st
+				var kst := it.duplicate(true); kst["quantity"] = take_st; keep.append(kst)
+				if qty - take_st > 0:
+					var sst := it.duplicate(true); sst["quantity"] = qty - take_st; store.append(sst)
+			else:
+				store.append(it)
+			continue
+		if nm == "Piedra":
+			if stone_kept < stone_cap:
+				var take_sn := mini(stone_cap - stone_kept, qty)
+				stone_kept += take_sn
+				var ksn := it.duplicate(true); ksn["quantity"] = take_sn; keep.append(ksn)
+				if qty - take_sn > 0:
+					var ssn := it.duplicate(true); ssn["quantity"] = qty - take_sn; store.append(ssn)
+			else:
+				store.append(it)
+			continue
+		store.append(it)
+	return {"keep": keep, "store": store}
+
+# Retira lo que necesite de su propio refugio y guarda alli todo el loot sobrante.
+func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
+	var sid := str(b.get("shelter_id", ""))
+	if sid.is_empty():
+		return 0
+	var sh := _find_shelter_dict(sid)
+	if sh.is_empty():
+		return 0
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = (proxy.get_meta("saved_inventory", []) as Array).duplicate(true)
+	var contents: Array = (sh.get("contents", []) as Array).duplicate(true)
+	var changed := false
+	var moved := 0
+	# 1) Retirar del refugio propio si al bot le falta comida, bebida, arma o venda
+	for i in range(contents.size() - 1, -1, -1):
+		var cd = contents[i]
+		if not (cd is Dictionary):
+			continue
+		var nm := str(cd.get("name", ""))
+		var tp := str(cd.get("type", "resource"))
+		var want_withdraw := false
+		if tp == "food" and float(b["hunger"]) < 60.0 and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0):
+			want_withdraw = true
+		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and float(b["thirst"]) < 60.0 and not _bot_has_drink(proxy):
+			want_withdraw = true
+		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _best_weapon_name(proxy).is_empty():
+			want_withdraw = true
+		elif nm == "Venda" and _bot_item_count(proxy, "Venda") == 0:
+			want_withdraw = true
+		if want_withdraw:
+			var one: Dictionary = (cd as Dictionary).duplicate(true)
+			one["quantity"] = 1
+			_bot_add_inventory_item(inv, one)
+			proxy.set_meta("saved_inventory", inv)
+			var rem := int(cd.get("quantity", 1)) - 1
+			if rem <= 0:
+				contents.remove_at(i)
+			else:
+				contents[i]["quantity"] = rem
+			changed = true
+			moved += 1
+	# 2) Guardar en el refugio propio todo el botin sobrante (hasta 18 huecos)
+	var part := _bot_partition_inventory_for_shelter(b, inv)
+	var keep_inv: Array = part["keep"]
+	var to_store: Array = part["store"]
+	for st_item in to_store:
+		var sdict: Dictionary = st_item
+		if contents.size() < 18 or (world != null and world.has_method("_stash_can_merge") and world._stash_can_merge(contents, sdict)):
+			if world != null and world.has_method("_stash_merge_or_append"):
+				world._stash_merge_or_append(contents, sdict)
+			else:
+				_bot_add_inventory_item(contents, sdict)
+			changed = true
+			moved += int(sdict.get("quantity", 1))
+		else:
+			keep_inv.append(sdict)
+	if changed:
+		proxy.set_meta("saved_inventory", keep_inv)
+		_commit_shelter_contents(sid, contents)
+		_auto_equip_best_gear(b)
+		var best_w := _best_weapon_name(proxy)
+		b["held_item"] = best_w if not bool(b["torch_lit"]) else "Antorcha"
+		b["has_rifle"] = best_w == "Fusil de asalto" or best_w == "Rifle francotirador"
+		proxy.set_meta("saved_held_item", b["held_item"])
+	return moved
 
 func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -5245,6 +5627,7 @@ func get_full_web_status() -> Dictionary:
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
 		snap["inventory"] = (proxy.get_meta("saved_inventory", []) as Array) if proxy != null and is_instance_valid(proxy) else []
+		snap["shelter_stash"] = _get_shelter_contents(str(b.get("shelter_id", "")))
 		snap["known_locations"] = (mem.get("known_locations", {}) as Dictionary).values()
 		snap["deaths"] = int(mem.get("deaths", 0))
 		snap["last_death_cause"] = str(mem.get("last_death_cause", ""))
