@@ -323,6 +323,18 @@ function fmtHour(tod) {
   return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return `${d} d ${h} h`;
+  if (h > 0) return `${h} h ${m} m`;
+  if (m > 0) return `${m} m ${s} s`;
+  return `${s} s`;
+}
+
 function barColor(val) {
   if (val >= 65) return "#52d18a";
   if (val >= 35) return "#e5a93c";
@@ -370,7 +382,7 @@ function renderSummary(data) {
       ? `<span class="badge ok">Qwen p=${d.priority || 3}</span>`
       : `<span class="badge info">${esc(d.source || "Local")}</span>`;
     html += `<tr>
-      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)}</span></td>
+      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)}</span></td>
       <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
       <td>${esc(b.anim || "idle")} ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
       <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
@@ -525,8 +537,24 @@ function renderBots(data) {
           </div>
           <div class="bot-sub">ID ${b.bot_id} · Arma: <b>${esc(b.held_item || "Ninguna")}</b> · Mochila: ${esc(b.backpack || "Ninguna")}</div>
         </div>
-        <span class="badge info">${esc(b.anim || "idle")}</span>
+        <div style="text-align:right">
+          <div style="font-size:22px;font-weight:800;color:${col};line-height:1">⭐ ${b.score ?? 0}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">PUNTUACIÓN</div>
+          <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b></div>
+          <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)}</div>
+          <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")}</span>
+        </div>
       </div>
+
+      ${(() => {
+        const st = b.stats || {};
+        return `<div class="kv-grid" style="margin-bottom:4px">
+          <div class="kv-item"><b>Caza — presas</b>${st.kills_prey || 0}</div>
+          <div class="kv-item"><b>Caza — depredadores</b>${st.kills_predator || 0}</div>
+          <div class="kv-item"><b>Animales destripados</b>${st.animals_gutted || 0}</div>
+          <div class="kv-item"><b>Muertes</b>${b.deaths || 0}${b.last_death_cause ? ` (${esc(b.last_death_cause)})` : ""}</div>
+        </div>`;
+      })()}
 
       <div class="bar-row">
         <span>Salud</span>

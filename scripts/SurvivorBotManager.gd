@@ -532,6 +532,8 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"aggro_target": null,
 		"aggro_timer": 0.0,
 		"respawn_timer": 0.0,
+		"spawned_at_msec": Time.get_ticks_msec(),
+		"alive_flush_msec": Time.get_ticks_msec(),
 		"energy": 100.0,
 		"stuck_timer": 0.0,
 		"stuck_count": 0,
@@ -1522,6 +1524,7 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 				predator.take_damage(m_dmg, true, proxy)
 			# Si lo mata, valora si merece destriparlo (no recoge por recoger)
 			if bool(predator.get("_is_dead")):
+				_bot_credit_kill(b, predator)
 				_bot_start_gutting(b, predator)
 	else:
 		# Acorralado: cierra el último tramo para poder defenderse
@@ -1724,10 +1727,37 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 		_bot_add_inventory_item(inv, {"name": "Hueso", "type": "resource", "weight": 0.18, "quantity": part_qty, "use_value": 0.0})
 	proxy.set_meta("saved_inventory", inv)
 	animal.set("_gutted", true)
+	var hg_mem: Dictionary = _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
+	var hg_st: Dictionary = hg_mem.get("stats", {})
+	hg_st["animals_gutted"] = int(hg_st.get("animals_gutted", 0)) + 1
+	hg_mem["stats"] = hg_st
 	# collect_mode = true retira el cadáver y sincroniza animal_gutted sin
 	# duplicar otro juego de pieles/carne en el suelo.
 	if world != null and world.has_method("_net_gut_animal"):
 		world._net_gut_animal(animal.name, int(b["bot_id"]), true)
+
+# Acumula en mem.stats el tiempo vivo de la vida actual. Se llama al morir y
+# en cada guardado periodico; el resto sin volcar lo calcula la telemetria.
+func _bot_flush_alive_time(b: Dictionary) -> void:
+	var now := Time.get_ticks_msec()
+	var last := int(b.get("alive_flush_msec", now))
+	b["alive_flush_msec"] = now
+	if now <= last:
+		return
+	var fl_mem: Dictionary = _ensure_bot_memory(int(b.get("bot_id", 0)), b.get("cfg", {}))
+	var fl_st: Dictionary = fl_mem.get("stats", {})
+	fl_st["alive_total_sec"] = float(fl_st.get("alive_total_sec", 0.0)) + (now - last) / 1000.0
+	fl_mem["stats"] = fl_st
+
+func _bot_credit_kill(b: Dictionary, animal: Node3D) -> void:
+	var ck_mem: Dictionary = _ensure_bot_memory(int(b.get("bot_id", 0)), b.get("cfg", {}))
+	var ck_st: Dictionary = ck_mem.get("stats", {})
+	var kind := str(animal.get("animal_type"))
+	if kind == "wolf" or kind == "bear":
+		ck_st["kills_predator"] = int(ck_st.get("kills_predator", 0)) + 1
+	else:
+		ck_st["kills_prey"] = int(ck_st.get("kills_prey", 0)) + 1
+	ck_mem["stats"] = ck_st
 
 # ==================== CAZA DE PRESAS (CIERVOS / ZORROS) ====================
 # Así es como un humano consigue carne, pieles, hueso y tendón sin suicidarse
@@ -1886,6 +1916,7 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 			if prey.has_method("take_damage"):
 				prey.take_damage(m_dmg, true, proxy)
 			if bool(prey.get("_is_dead")):
+				_bot_credit_kill(b, prey)
 				_bot_start_gutting(b, prey)
 	elif stalk_crouch:
 		# Acecho agachado: reduce el radio de alerta de 26 m a 12 m
@@ -2197,6 +2228,7 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)
 		if bool(target.get("_is_dead")):
+			_bot_credit_kill(b, target)
 			_bot_start_gutting(b, target)
 	else:
 		_apply_bot_damage_to_target(b, target, dmg, "rifle")
@@ -2319,6 +2351,7 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)
 		if bool(target.get("_is_dead")):
+			_bot_credit_kill(b, target)
 			_bot_start_gutting(b, target)
 	else:
 		var wname := "rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee")
@@ -2411,6 +2444,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	# Aprendizaje persistente: recordar donde y por que murio para que su
 	# proxima vida no repita el error (zona peligrosa, necesidades, equipo).
 	var mem: Dictionary = _memory.get_or_add(bot_id, {})
+	_bot_flush_alive_time(b)
 	mem["deaths"] = int(mem.get("deaths", 0)) + 1
 	mem["last_death_pos"] = proxy.global_position
 	mem["last_death_cause"] = death_kind
@@ -3696,6 +3730,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 			p_dict[k] = clampf(float(p_dict.get(k, def_p[k])), 0.05, 0.98)
 	if not mem.has("deaths"):
 		mem["deaths"] = 0
+	if not mem.has("stats") or not (mem["stats"] is Dictionary):
+		mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0}
 	if not mem.has("last_death_pos"):
 		mem["last_death_pos"] = Vector3.INF
 	if not mem.has("last_death_cause"):
@@ -4563,7 +4599,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		var lp = sd.get("last_death_pos")
@@ -4580,12 +4616,17 @@ func _ai_load_memory() -> void:
 func _ai_save_memory() -> void:
 	if not _ai_memory_enabled():
 		return
+	for bid in bots.keys():
+		var b: Dictionary = bots[bid]
+		var bp: Node3D = b.get("proxy")
+		if bp != null and is_instance_valid(bp) and not bool(bp.get_meta("proxy_dead", false)):
+			_bot_flush_alive_time(b)
 	var out := {"version": 2, "bots": {}}
 	for bid in _memory.keys():
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -4821,6 +4862,26 @@ func get_full_web_status() -> Dictionary:
 		snap["known_locations"] = (mem.get("known_locations", {}) as Dictionary).values()
 		snap["deaths"] = int(mem.get("deaths", 0))
 		snap["last_death_cause"] = str(mem.get("last_death_cause", ""))
+		# Puntuacion y tiempo de vida: mem.stats acumula vidas anteriores y el
+		# tramo no volcado de la vida actual se calcula desde alive_flush_msec.
+		var now_ms := Time.get_ticks_msec()
+		var st: Dictionary = mem.get("stats", {})
+		var is_dead := bool(snap.get("dead", false))
+		var life_sec := maxf(0.0, (now_ms - int(b.get("spawned_at_msec", now_ms))) / 1000.0)
+		var unflushed := 0.0 if is_dead else maxf(0.0, (now_ms - int(b.get("alive_flush_msec", now_ms))) / 1000.0)
+		var alive_total := float(st.get("alive_total_sec", 0.0)) + unflushed
+		var score := int(round(
+			alive_total / 60.0 * 2.0
+			+ float(snap.get("known_locations_count", 0)) * 10.0
+			+ float(st.get("kills_prey", 0)) * 15.0
+			+ float(st.get("kills_predator", 0)) * 40.0
+			+ float(st.get("animals_gutted", 0)) * 5.0
+			- float(mem.get("deaths", 0)) * 75.0
+		))
+		snap["alive_seconds"] = int(life_sec)
+		snap["alive_total_seconds"] = int(alive_total)
+		snap["score"] = score
+		snap["stats"] = st
 		bots_out.append(snap)
 	return {
 		"timestamp": int(Time.get_unix_time_from_system()),
