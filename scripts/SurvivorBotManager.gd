@@ -192,6 +192,7 @@ var _ai_rr := 0
 var _mem_accum := 0.0
 var _ai_queue: Array = [] # [{bot_id, priority, reason, t}]
 var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
+var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
 var _ai_backoff_until_msec := 0
 var _ai_backoff_sec := 60.0
 var _ai_conn_status := "idle"
@@ -3986,7 +3987,8 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) + step * (0.35 + surv * 0.50), 0.0, 1.0), 0.001)
 			if not b.is_empty():
 				_evolve_personality(b, "player_attacked", step)
-				_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key)
+				if Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, -999999)) > 120000:
+					_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key)
 	var pos := Vector3.ZERO
 	if not b.is_empty() and b.get("proxy") != null and is_instance_valid(b["proxy"]):
 		pos = (b["proxy"] as Node3D).global_position
@@ -4254,6 +4256,7 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_pending_bot = bot_id
 	_ai_calls_day += 1
 	_ai_calls_total += 1
+	_ai_last_call_msec[bot_id] = Time.get_ticks_msec()
 	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_DECISION_MIN_SEC * 1000.0) + randi() % int(AI_DECISION_SPREAD_SEC * 1000.0)
 	var payload := {
