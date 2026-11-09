@@ -1326,6 +1326,11 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		_mark_poi_visited(b, et)
 		b["explore_target"] = Vector3.INF
 		b["explore_dwell"] = 0.0
+	var sl: Dictionary = b.get("_s_loot", {})
+	if not sl.is_empty():
+		var sl_pos := _loot_entry_pos(sl)
+		kept.append({"pos": sl_pos, "until": now_s + 240.0})
+		b["_s_loot"] = {}
 	b["_unreachable"] = kept
 	b["path"] = []
 	b["path_timer"] = 0.0
@@ -2977,6 +2982,10 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp):
 			continue
 		var pos := _loot_entry_pos(entry)
+		if absf(pos.y - proxy.global_position.y) > 2.4:
+			continue
+		if _is_goal_blacklisted(b, pos):
+			continue
 		var d_sq := proxy.global_position.distance_squared_to(pos)
 		if d_sq > r_sq:
 			continue
@@ -3356,21 +3365,24 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		if not dpos.is_finite():
 			continue
 		var is_open: bool = bool(world._check_door_open(door_obj, dblk)) if world.has_method("_check_door_open") else bool(dblk.get("door_open", false))
-		if is_open:
-			continue
 		var d_door := p_cur.distance_to(Vector2(dpos.x, dpos.z))
-		if d_door <= 4.8:
+		if not is_open and d_door <= 4.8:
 			if world.bot_try_open_door_at(dpos) or world.bot_try_open_door_at(cur):
 				b["path"] = []
 				b["path_timer"] = 0.0
-			return goal
+				is_open = true
 		if goal_in:
 			var hc := hb.get_center()
 			var out_dir := (Vector2(dpos.x, dpos.z) - hc).normalized()
 			if out_dir.length_squared() < 0.01:
 				out_dir = Vector2(0.0, 1.0)
-			return Vector3(dpos.x + out_dir.x * 3.8, cur.y, dpos.z + out_dir.y * 3.8)
-		return dpos
+			if not is_open:
+				return Vector3(dpos.x + out_dir.x * 3.8, cur.y, dpos.z + out_dir.y * 3.8)
+			if d_door > 5.0:
+				return Vector3(dpos.x + out_dir.x * 2.0, cur.y, dpos.z + out_dir.y * 2.0)
+			return goal
+		if not is_open or d_door > 4.2:
+			return dpos
 	return goal
 
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:

@@ -17286,10 +17286,12 @@ func _bot_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocker:
 	if blocker.get("barn_door_always_open", false) == true:
 		if _is_in_barn_doorway_passage(Vector3(p.x, 0.0, p.y), blocker):
 			return true
-	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
-		return true
+		return bounds.grow(-0.4).has_point(p)
 	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
-	if dpos.is_finite() and p.distance_to(Vector2(dpos.x, dpos.z)) <= 4.0:
+	if dpos.is_finite():
+		if p.distance_to(Vector2(dpos.x, dpos.z)) <= 4.4:
+			return true
+	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
 		return true
 	return bounds.grow(-0.4).has_point(p)
 
