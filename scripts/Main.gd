@@ -264,6 +264,11 @@ var sector_persistence_mgr: SectorPersistenceManager = null
 var _debug_overlay: CanvasLayer = null
 var _debug_label: Label = null
 var _debug_visible: bool = false
+var _bot_ai_debug_overlay: CanvasLayer = null
+var _bot_ai_debug_label: Label = null
+var _bot_ai_debug_visible: bool = false
+var _bot_ai_debug_poll: float = 0.0
+var _remote_bot_ai_debug_text: String = ""
 var _streaming_positions: Array[Vector3] = []
 
 const GRASS_BATCH_VARIANTS := 10
@@ -1014,6 +1019,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_0:
 		_toggle_debug_overlay()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_9 or event.keycode == KEY_F9):
+		_toggle_bot_ai_debug_overlay()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Q and event.shift_pressed:
 		if not _quit_active:
 			_quit_active = true
@@ -1185,6 +1193,8 @@ func _process(delta: float) -> void:
 
 	if _debug_visible and _debug_label != null:
 		_update_debug_overlay_text()
+	if _bot_ai_debug_visible:
+		_update_bot_ai_debug_text(delta)
 
 	if _loading_overlay != null:
 		_process_loading_countdown(delta)
@@ -2620,8 +2630,14 @@ func _stdin_command_loop() -> void:
 				call_deferred("_save_world_change_silent")
 			"status", "players":
 				call_deferred("_print_server_status")
+			"bots", "ai":
+				call_deferred("_print_bot_ai_debug")
 			"help", "?":
-				print("[SERVER] Comandos: 'status' | 'save' | 'quit'")
+				print("[SERVER] Comandos: 'status' | 'bots' | 'save' | 'quit'")
+
+func _print_bot_ai_debug() -> void:
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("get_ai_debug_report"):
+		print(survivor_bot_mgr.get_ai_debug_report())
 
 func _print_server_status() -> void:
 	if net == null:
@@ -4040,6 +4056,14 @@ func _net_command_survivor_bot(bot_id: int, mode: String = "toggle", sender: int
 	var eff_sender := sender
 	if eff_sender <= 0:
 		eff_sender = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+	if mode == "debug_report":
+		var rep := str(survivor_bot_mgr.get_ai_debug_report()) if survivor_bot_mgr.has_method("get_ai_debug_report") else ""
+		if not rep.is_empty():
+			if net != null and net.is_connected and net.is_host and eff_sender != net.get_my_id() and net.peer != null and net.peer_alive(eff_sender):
+				net.notice_to_client.rpc_id(eff_sender, "__BOT_AI_DEBUG__\n" + rep)
+			else:
+				_remote_bot_ai_debug_text = rep
+		return
 	if net != null and net.is_host and eff_sender != net.get_my_id() and server_proxies.has(bot_id):
 		if not _sender_within(eff_sender, server_proxies[bot_id].global_position, 14.0):
 			return
@@ -4100,9 +4124,11 @@ func _net_feed_other_player(target_peer_id: int, item_name: String, item_type: S
 			b["hunger"] = new_hunger
 			b["thirst"] = new_thirst
 			b["health"] = new_hp
+			var eff_giver: int = sender if sender > 0 else int(net.get_my_id())
+			if survivor_bot_mgr.has_method("on_bot_helped_by_player"):
+				survivor_bot_mgr.on_bot_helped_by_player(target_peer_id, eff_giver, "fed_" + item_name, clampf((dh + dt + dhp) / 80.0, 0.15, 0.65))
 			# Dar de comer/beber a un superviviente aliado lo recluta automáticamente si estaba libre
 			if str(b.get("faction", "")) == "friendly" and int(b.get("team_leader_id", 0)) == 0:
-				var eff_giver: int = sender if sender > 0 else int(net.get_my_id())
 				survivor_bot_mgr.interact_with_bot(target_peer_id, eff_giver, "toggle")
 	elif net.peer != null and net.peer_alive(target_peer_id):
 		net.receive_fed_by_player.rpc_id(target_peer_id, giver_name, item_name, item_type, dh, dt, dhp, is_hot)
@@ -4254,6 +4280,11 @@ func _restore_tamed_wolf(pid: int, wolf_name: String) -> void:
 	_record_tamed_wolf(str(pid), str(w.name))
 
 func _net_notice(text: String) -> void:
+	if text.begins_with("__BOT_AI_DEBUG__\n"):
+		_remote_bot_ai_debug_text = text.substr(17)
+		if _bot_ai_debug_label != null:
+			_bot_ai_debug_label.text = _remote_bot_ai_debug_text
+		return
 	if hud != null:
 		hud.show_notice(text)
 
@@ -7502,6 +7533,61 @@ func _update_debug_overlay_text() -> void:
 		text += "Pool de Sectores: %d\n" % stream_info.get("pool_size", 0)
 	
 	_debug_label.text = text
+
+func _create_bot_ai_debug_overlay() -> void:
+	if _bot_ai_debug_overlay != null:
+		return
+	_bot_ai_debug_overlay = CanvasLayer.new()
+	_bot_ai_debug_overlay.name = "BotAIDebugOverlay"
+	_bot_ai_debug_overlay.layer = 111
+	_bot_ai_debug_overlay.visible = false
+	var panel := PanelContainer.new()
+	panel.position = Vector2(20, 300)
+	panel.custom_minimum_size = Vector2(680, 310)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.06, 0.09, 0.90)
+	style.set_corner_radius_all(6)
+	style.set_border_width_all(1)
+	style.border_color = Color(0.32, 0.52, 0.42)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", style)
+	_bot_ai_debug_label = Label.new()
+	_bot_ai_debug_label.add_theme_font_size_override("font_size", 12)
+	_bot_ai_debug_label.add_theme_color_override("font_color", Color(0.75, 0.96, 0.84))
+	panel.add_child(_bot_ai_debug_label)
+	_bot_ai_debug_overlay.add_child(panel)
+	add_child(_bot_ai_debug_overlay)
+
+func _toggle_bot_ai_debug_overlay() -> void:
+	_create_bot_ai_debug_overlay()
+	_bot_ai_debug_visible = not _bot_ai_debug_visible
+	if _bot_ai_debug_overlay != null:
+		_bot_ai_debug_overlay.visible = _bot_ai_debug_visible
+	if _bot_ai_debug_visible:
+		_bot_ai_debug_poll = 0.0
+		_update_bot_ai_debug_text(0.0)
+
+func _update_bot_ai_debug_text(delta: float = 0.0) -> void:
+	if _bot_ai_debug_label == null:
+		return
+	if net != null and net.is_connected and not net.is_host:
+		_bot_ai_debug_poll -= delta
+		if _bot_ai_debug_poll <= 0.0:
+			_bot_ai_debug_poll = 2.0
+			if net.has_method("command_survivor_bot"):
+				net.command_survivor_bot.rpc_id(1, 901, "debug_report")
+		if not _remote_bot_ai_debug_text.is_empty():
+			_bot_ai_debug_label.text = _remote_bot_ai_debug_text
+		else:
+			_bot_ai_debug_label.text = "=== SISTEMA IA PERSISTENTE DE BOTS (TECLA 9 / F9) ===\nSolicitando estado de IA al servidor dedicado..."
+		return
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("get_ai_debug_report"):
+		_bot_ai_debug_label.text = survivor_bot_mgr.get_ai_debug_report()
+	else:
+		_bot_ai_debug_label.text = "=== SISTEMA IA PERSISTENTE DE BOTS ===\nSurvivorBotManager no inicializado."
 
 #endregion
 

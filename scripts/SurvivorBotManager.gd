@@ -40,6 +40,15 @@ const BOT_CONFIGS := [
 		"starting_backpack": "",
 		"starting_weapon": "Cuchillo",
 		"starting_items": [],
+		"personality": {
+			"bravery": 0.42,
+			"aggression": 0.20,
+			"curiosity": 0.85,
+			"sociability": 0.82,
+			"distrust": 0.25,
+			"cooperation": 0.88,
+			"survival_instinct": 0.86,
+		},
 	},
 	{
 		"bot_id": 902,
@@ -69,6 +78,15 @@ const BOT_CONFIGS := [
 		"starting_backpack": "",
 		"starting_weapon": "Hacha",
 		"starting_items": [],
+		"personality": {
+			"bravery": 0.78,
+			"aggression": 0.45,
+			"curiosity": 0.55,
+			"sociability": 0.70,
+			"distrust": 0.38,
+			"cooperation": 0.76,
+			"survival_instinct": 0.62,
+		},
 	},
 	{
 		"bot_id": 903,
@@ -98,6 +116,15 @@ const BOT_CONFIGS := [
 		"starting_backpack": "",
 		"starting_weapon": "Fusil de asalto",
 		"starting_items": [],
+		"personality": {
+			"bravery": 0.74,
+			"aggression": 0.86,
+			"curiosity": 0.64,
+			"sociability": 0.12,
+			"distrust": 0.92,
+			"cooperation": 0.10,
+			"survival_instinct": 0.78,
+		},
 	},
 ]
 
@@ -140,18 +167,38 @@ const AI_DECISION_MIN_SEC := 900.0
 const AI_DECISION_SPREAD_SEC := 600.0
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
 const AI_MAX_CALLS_PER_DAY := 380
+const AI_MAX_TOKENS_PER_DAY := 120000
 const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
+const AI_ALLOWED_ACTIONS := ["explore", "scavenge", "hunt", "return_home", "rest", "avoid_zone", "forage", "fortify_camp", "seek_ally"]
+const AI_PERSONALITY_TRAITS := ["bravery", "aggression", "curiosity", "sociability", "distrust", "cooperation", "survival_instinct"]
 const AI_MEMORY_PATH := "user://survivor_bot_memory.json"
 const AI_MEMORY_MAX_SPOTS := 10
+const AI_MEMORY_MAX_EVENTS := 28
+const AI_OBSERVE_RADIUS := 72.0
+const AI_SHARE_RADIUS := 14.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are a strategic advisor for a survival-game NPC. Output ONLY compact JSON, no prose: {\"action\":\"...\",\"poi_kind\":\"...\",\"reason\":\"...\"}. Actions: explore (wander/visit a place), scavenge (loot military or city sites), hunt (go to wild zones for food), return_home (go back to own camp or shelter), rest (stay at camp to recover), avoid_zone (steer clear of a poi_kind that was deadly or picked clean), forage (seek edible mushrooms and fruit trees further away). poi_kind one of: house, military, city, wild, tower — include it only when relevant (hunt implies wild; scavenge implies military/city). reason: max 8 words."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
 var _ai_calls_day := 0
+var _ai_calls_total := 0
+var _ai_tokens_day := 0
+var _ai_tokens_total := 0
+var _ai_cache_hits := 0
+var _ai_429_count := 0
 var _ai_day_key := -1
 var _ai_rr := 0
 var _mem_accum := 0.0
+var _ai_queue: Array = [] # [{bot_id, priority, reason, t}]
+var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
+var _ai_backoff_until_msec := 0
+var _ai_backoff_sec := 60.0
+var _ai_conn_status := "idle"
+var ai_max_calls_per_day := AI_MAX_CALLS_PER_DAY
+var ai_max_tokens_per_day := AI_MAX_TOKENS_PER_DAY
+var memory_path: String = AI_MEMORY_PATH
+var force_memory_io := false
 
 func setup(main_world: Node) -> void:
 	world = main_world
@@ -520,15 +567,21 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"_speed": 0.0,
 		"_mdir": Vector3.ZERO,
 		"_last_move_t": -99.0,
+		"current_goal": "survival_patrol",
 	}
 	bots[bot_id] = bot_state
-	# Enlazar la memoria persistente del personaje: si ya murio antes, conserva
-	# lo que aprendio (zonas visitadas, sitio/causa de muerte, ropa preferida).
-	var mem: Dictionary = _memory.get_or_add(bot_id, {
-		"deaths": 0, "last_death_pos": Vector3.INF, "last_death_cause": "",
-		"visited": [], "gear_learned": false, "scarcity": false,
-	})
+	# Enlazar la memoria persistente del personaje: identidad, personalidad
+	# evolutiva, recuerdos de eventos, ubicaciones conocidas (sin omnisciencia),
+	# relaciones sociales, estrategias y objetivos pendientes.
+	var mem: Dictionary = _ensure_bot_memory(bot_id, cfg)
 	bot_state["_mem"] = mem
+	bot_state["personality"] = (mem.get("personality", {}) as Dictionary)
+	# Al aparecer, el bot solo conoce su entorno inmediato y su patrulla inicial
+	_observe_nearby_world(bot_state)
+	for pt in patrol:
+		if pt is Vector3:
+			var pid := "patrol:%d:%d" % [int((pt as Vector3).x), int((pt as Vector3).z)]
+			observe_location(bot_id, pid, "wild", pt as Vector3, "observed")
 	# Prudencia aprendida: si murio por depredadores o inanicion, durante los
 	# primeros minutos de su nueva vida evita la zona donde cayo.
 	bot_state["caution_until"] = 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved"] else 0.0
@@ -767,6 +820,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		_observe_nearby_world(b)
+		_try_share_allied_knowledge(b)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
 			b["equip_mission"] = false
@@ -1082,21 +1137,24 @@ func _poi_id(p: Dictionary) -> String:
 func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 	var mem: Dictionary = b.get("_mem", {})
 	var visited: Array = mem.get("visited", [])
+	var bid := int(b.get("bot_id", 0))
 	for p in _explore_pois():
 		var pp: Vector3 = p["pos"]
 		if Vector2(pos.x - pp.x, pos.z - pp.z).length() < 12.0:
 			var id := _poi_id(p)
 			if not visited.has(id):
 				visited.append(id)
+			observe_location(bid, id, str(p.get("kind", "wild")), pp, "observed", true)
+			record_strategy_outcome(bid, "explore_" + str(p.get("kind", "wild")), true, 0.04)
 	mem["visited"] = visited
 	b["_visited"] = visited
 
 # Elige el siguiente destino de exploracion como haria un jugador: prefiere
-# sitios no visitados, acordes a su rol (el bandido tira a zonas militares y
-# ciudad), cercanos, y nunca el lugar donde murio la ultima vez.
+# sitios no visitados, acordes a su personalidad y rol, cercanos, y nunca el
+# lugar donde murio la ultima vez.
 func _choose_explore_target(b: Dictionary) -> Vector3:
 	# Directiva del asesor externo (si existe y no ha caducado): puede forzar un
-	# destino concreto (volver a casa/descansar) o filtrar los tipos de POI.
+	# destino concreto (volver a casa/descansar/conocido) o filtrar tipos de POI.
 	var directive := _ai_active_directive(b)
 	if not directive.is_empty() and str(directive.get("mode", "")) == "pos":
 		var dp = directive.get("pos")
@@ -1110,8 +1168,14 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	var proxy: Node3D = b["proxy"]
 	var mem: Dictionary = b.get("_mem", {})
 	var visited: Array = mem.get("visited", [])
+	var known: Dictionary = mem.get("known_locations", {})
+	var pers: Dictionary = _get_bot_personality(b)
 	var death_pos: Vector3 = mem.get("last_death_pos", Vector3.INF)
 	var hostile := str(b["faction"]) == "hostile"
+	var bravery := float(pers.get("bravery", 0.5))
+	var curiosity := float(pers.get("curiosity", 0.5))
+	var aggro_t := float(pers.get("aggression", 0.3))
+	var surv_t := float(pers.get("survival_instinct", 0.7))
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	var best := Vector3.INF
@@ -1121,7 +1185,8 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	for pass_i in range(2):
 		for p in pois:
 			var pp: Vector3 = p["pos"]
-			if pass_i == 0 and visited.has(_poi_id(p)):
+			var pid := _poi_id(p)
+			if pass_i == 0 and visited.has(pid):
 				continue
 			if death_pos != Vector3.INF and Vector2(pp.x - death_pos.x, pp.z - death_pos.z).length() < 70.0:
 				continue
@@ -1132,10 +1197,22 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				continue
 			var w := 1.0
 			if hostile:
-				# El soldado monta guardia en la torre: la valora mucho.
-				w = 3.0 if kind == "tower" else (2.2 if kind in ["military", "city"] else 0.6)
+				# El supervivista hostil pondera torre/militar/ciudad según agresividad y valentía
+				w = (2.4 + aggro_t * 0.8) if kind == "tower" else ((1.8 + bravery * 0.6) if kind in ["military", "city"] else 0.6)
 			else:
-				w = 0.4 if kind == "tower" else (1.6 if kind in ["house", "military"] else 1.0)
+				if kind == "tower":
+					w = 0.25 + bravery * 0.45
+				elif kind == "military":
+					w = 1.1 + bravery * 0.75
+				elif kind == "house":
+					w = 1.3 + surv_t * 0.45
+				elif kind == "wild":
+					w = 0.9 + curiosity * 0.55
+				else:
+					w = 0.85 + curiosity * 0.35
+			# Si ya conoce la ubicación por observación o comunicación aliada, tiene bono de certeza
+			if known.has(pid):
+				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
 			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 45.0)
 			score *= _ai_poi_memory_factor(b, pp, kind)
@@ -2270,6 +2347,16 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	proxy.set_meta("proxy_health", hp)
 	proxy.set_meta("saved_health", hp)
 
+	# Aprendizaje conductual por daño real: registrar riesgo en la zona y, si el
+	# atacante es un jugador/bot, actualizar relación social (desconfianza/hostilidad/miedo).
+	record_zone_hazard(bot_id, proxy.global_position, _poi_kind_near(proxy.global_position), clampf(amount / 45.0, 0.08, 0.65))
+	if attacker_id > 0:
+		var akey := _actor_persist_key(attacker_id)
+		var aname := _actor_display_name(attacker_id)
+		record_social_event(bot_id, akey, aname, "attack", clampf(amount / 35.0, 0.10, 0.80), "hit_" + weapon)
+	elif weapon in ["wolf_bite", "bear_bite"]:
+		_evolve_personality(b, "predator_hit", clampf(amount / 50.0, 0.1, 0.5))
+
 	# Si el atacante es un jugador o bot, responder a la agresión
 	var attacker_node := _find_actor_by_peer_id(attacker_id)
 	if attacker_node != null and attacker_node != proxy:
@@ -2340,6 +2427,9 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	while spots.size() > AI_MEMORY_MAX_SPOTS:
 		spots.pop_front()
 	mem["death_spots"] = spots
+	record_zone_hazard(bot_id, dp, _poi_kind_near(dp), 0.75)
+	record_bot_event(bot_id, "death", death_kind, _poi_kind_near(dp), dp, "died:" + death_kind)
+	_evolve_personality(b, "death", 0.6)
 	_ai_save_memory()
 	proxy.set_meta("proxy_dead", true)
 	proxy.remove_from_group("net_player_proxy")
@@ -2470,13 +2560,39 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 
 	var cur_leader := int(b.get("team_leader_id", 0))
 	var bname := str(b["name"])
+	var sender_key := _actor_persist_key(sender_id)
+	var sender_name := _actor_display_name(sender_id)
+	# Si el jugador le entrega un objeto, eso siempre suma confianza (incluso si
+	# antes había desconfianza), permitiendo reconciliarse con el bot.
+	if mode.begins_with("give:"):
+		var gname := mode.substr(5).get_slice("|", 0)
+		var gtype := mode.substr(5).get_slice("|", 1) if "|" in mode else "resource"
+		if gname.is_empty():
+			return ""
+		var inv_give: Array = proxy.get_meta("saved_inventory", [])
+		_bot_add_inventory_item(inv_give, {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0})
+		proxy.set_meta("saved_inventory", inv_give)
+		_auto_equip_best_gear(b)
+		var best_w2 := _best_weapon_name(proxy)
+		if not best_w2.is_empty() and not bool(b["torch_lit"]):
+			b["held_item"] = best_w2
+			proxy.set_meta("saved_held_item", best_w2)
+		record_social_event(bot_id, sender_key, sender_name, "help", 0.35, "gave_" + gname)
+		_publish_bot_to_net_players(b)
+		_apply_local_avatar_metadata(b)
+		return "Le das %s a %s." % [gname, bname]
+
 	if cur_leader == 0 or cur_leader != sender_id:
+		var rel := get_bot_relationship(bot_id, sender_key)
+		if float(rel.get("trust", 0.0)) < -0.35 or (float(rel.get("hostility", 0.0)) >= 0.65 and int(rel.get("attacked", 0)) >= 2):
+			return "%s desconfía de ti tras tus ataques y rehúsa formar equipo." % bname
 		b["team_leader_id"] = sender_id
 		b["follow_mode"] = "follow"
 		b["sitting"] = false
 		b["aggro_target"] = null
 		proxy.set_meta("team_leader_id", sender_id)
 		proxy.set_meta("bot_follow_mode", "follow")
+		record_social_event(bot_id, sender_key, sender_name, "ally", 0.15, "joined_team")
 		_publish_bot_to_net_players(b)
 		_apply_local_avatar_metadata(b)
 		return "%s se ha unido a tu equipo (te sigue y te cubre)." % bname
@@ -2507,22 +2623,6 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		b["equip_mission"] = true
 		b["sense_t"] = 0.0
 		return "%s: 'Voy a recoger el mejor equipo que haya por aquí.'" % bname
-	if mode.begins_with("give:"):
-		var gname := mode.substr(5).get_slice("|", 0)
-		var gtype := mode.substr(5).get_slice("|", 1) if "|" in mode else "resource"
-		if gname.is_empty():
-			return ""
-		var inv_give: Array = proxy.get_meta("saved_inventory", [])
-		_bot_add_inventory_item(inv_give, {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0})
-		proxy.set_meta("saved_inventory", inv_give)
-		_auto_equip_best_gear(b)
-		var best_w2 := _best_weapon_name(proxy)
-		if not best_w2.is_empty() and not bool(b["torch_lit"]):
-			b["held_item"] = best_w2
-			proxy.set_meta("saved_held_item", best_w2)
-		_publish_bot_to_net_players(b)
-		_apply_local_avatar_metadata(b)
-		return "Le das %s a %s." % [gname, bname]
 
 	# Ciclar orden (Sígueme -> Quieto -> Libre)
 	if mode == "dismiss":
@@ -3536,13 +3636,542 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 	b["crouching"] = true
 	return true
 
-# ==================== ASESOR ESTRATEGICO EXTERNO ====================
-# Capa opcional sobre la IA scriptada: cada ~15-25 min por bot (round-robin,
-# nunca mas de una peticion en vuelo) se pregunta a una API compatible con
-# OpenAI (Groq por defecto) que hacer a nivel ESTRATEGICO. La respuesta solo
-# puede dirigir la exploracion (que tipo de zona visitar, volver a casa,
-# descansar, evitar una zona). Supervivencia, combate, crafteo, agua y ordenes
-# de equipo siguen siendo 100% GDScript: el asesor nunca los pisa.
+# ==================== SISTEMA COGNITIVO, PERSONALIDAD Y ASESOR QWEN/GROQ ====================
+# Cada bot dispone de:
+# - Personalidad independiente (7 rasgos en [0.05..0.98]) que evoluciona por experiencias reales.
+# - Memoria persistente aislada por bot (sin omnisciencia): identidad, eventos, ubicaciones
+#   observadas o compartidas por aliados cercanos, relaciones sociales, estrategias y objetivos.
+# - Cola de prioridades para consultar Groq/Qwen exclusivamente desde el servidor, con deduplicación
+#   de situación, manejo de HTTP 429 (backoff exponencial), presupuesto de tokens y fallback local.
+
+func _default_personality_for_bot(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
+	var c := cfg
+	if c.is_empty():
+		for entry in BOT_CONFIGS:
+			if int(entry.get("bot_id", 0)) == bot_id:
+				c = entry
+				break
+	var base: Dictionary = (c.get("personality", {}) as Dictionary).duplicate(true)
+	var defaults := {
+		"bravery": 0.50,
+		"aggression": 0.30,
+		"curiosity": 0.60,
+		"sociability": 0.60,
+		"distrust": 0.35,
+		"cooperation": 0.65,
+		"survival_instinct": 0.75,
+	}
+	for k in AI_PERSONALITY_TRAITS:
+		if not base.has(k):
+			base[k] = defaults[k]
+		else:
+			base[k] = clampf(float(base[k]), 0.05, 0.98)
+	return base
+
+func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
+	if bots.has(bot_id) and bots[bot_id].get("_mem") is Dictionary and _memory.get(bot_id) != bots[bot_id]["_mem"]:
+		_memory[bot_id] = bots[bot_id]["_mem"]
+	var mem: Dictionary = _memory.get_or_add(bot_id, {})
+	if bots.has(bot_id):
+		bots[bot_id]["_mem"] = mem
+	var bname := str(cfg.get("name", "Bot_%d" % bot_id))
+	var bfaction := str(cfg.get("faction", "hostile" if bot_id == 903 else "friendly"))
+	if not mem.has("identity") or not (mem["identity"] is Dictionary):
+		mem["identity"] = {"bot_id": bot_id, "name": bname, "faction": bfaction}
+	if not mem.has("personality") or not (mem["personality"] is Dictionary):
+		mem["personality"] = _default_personality_for_bot(bot_id, cfg)
+	else:
+		var def_p := _default_personality_for_bot(bot_id, cfg)
+		var p_dict: Dictionary = mem["personality"]
+		for k in AI_PERSONALITY_TRAITS:
+			p_dict[k] = clampf(float(p_dict.get(k, def_p[k])), 0.05, 0.98)
+	if not mem.has("deaths"):
+		mem["deaths"] = 0
+	if not mem.has("last_death_pos"):
+		mem["last_death_pos"] = Vector3.INF
+	if not mem.has("last_death_cause"):
+		mem["last_death_cause"] = ""
+	if not mem.has("visited") or not (mem["visited"] is Array):
+		mem["visited"] = []
+	if not mem.has("gear_learned"):
+		mem["gear_learned"] = false
+	if not mem.has("scarcity"):
+		mem["scarcity"] = false
+	if not mem.has("zone_yield") or not (mem["zone_yield"] is Dictionary):
+		mem["zone_yield"] = {}
+	if not mem.has("death_spots") or not (mem["death_spots"] is Array):
+		mem["death_spots"] = []
+	if not mem.has("events") or not (mem["events"] is Array):
+		mem["events"] = []
+	if not mem.has("events_summary") or not (mem["events_summary"] is Dictionary):
+		mem["events_summary"] = {}
+	if not mem.has("known_locations") or not (mem["known_locations"] is Dictionary):
+		mem["known_locations"] = {}
+	if not mem.has("relationships") or not (mem["relationships"] is Dictionary):
+		mem["relationships"] = {}
+	if not mem.has("strategies") or not (mem["strategies"] is Dictionary):
+		mem["strategies"] = {}
+	if not mem.has("pending_goals") or not (mem["pending_goals"] is Array):
+		mem["pending_goals"] = []
+	if not mem.has("sessions"):
+		mem["sessions"] = 1
+	return mem
+
+func _get_bot_personality(b: Dictionary) -> Dictionary:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.has("personality") and mem["personality"] is Dictionary:
+		return mem["personality"]
+	var bid := int(b.get("bot_id", 901))
+	var p := _default_personality_for_bot(bid, b.get("cfg", {}))
+	mem["personality"] = p
+	b["personality"] = p
+	return p
+
+func _adjust_trait(p: Dictionary, trait_name: String, delta_v: float) -> void:
+	if not AI_PERSONALITY_TRAITS.has(trait_name):
+		return
+	p[trait_name] = snappedf(clampf(float(p.get(trait_name, 0.5)) + delta_v, 0.05, 0.98), 0.001)
+
+# Evolución gradual de la personalidad según experiencias verificadas.
+func _evolve_personality(b: Dictionary, event_kind: String, intensity: float = 0.25) -> void:
+	var p := _get_bot_personality(b)
+	var step := clampf(intensity, 0.05, 1.0) * 0.08
+	match event_kind:
+		"death":
+			_adjust_trait(p, "survival_instinct", step * 1.1)
+			_adjust_trait(p, "bravery", -step * 0.8)
+			_adjust_trait(p, "distrust", step * 0.6)
+		"predator_hit", "zone_hazard":
+			_adjust_trait(p, "survival_instinct", step * 0.7)
+			_adjust_trait(p, "bravery", -step * 0.45)
+		"player_attacked":
+			_adjust_trait(p, "distrust", step * 1.2)
+			_adjust_trait(p, "aggression", step * 0.65)
+			_adjust_trait(p, "sociability", -step * 0.75)
+			_adjust_trait(p, "cooperation", -step * 0.75)
+		"player_helped":
+			_adjust_trait(p, "sociability", step * 0.95)
+			_adjust_trait(p, "cooperation", step * 1.1)
+			_adjust_trait(p, "distrust", -step * 0.95)
+			_adjust_trait(p, "aggression", -step * 0.4)
+		"hunt_success", "kill_threat":
+			_adjust_trait(p, "bravery", step * 0.7)
+			_adjust_trait(p, "aggression", step * 0.35)
+		"good_loot", "poi_discovered":
+			_adjust_trait(p, "curiosity", step * 0.65)
+		"starving":
+			_adjust_trait(p, "survival_instinct", step * 0.85)
+	b["personality"] = p
+
+# Observación local: cada bot solo conoce las ubicaciones que ha visto dentro de
+# su radio de percepción o que otro bot aliado le ha comunicado en persona.
+func _observe_nearby_world(b: Dictionary) -> void:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return
+	var bid := int(b.get("bot_id", 0))
+	var pos: Vector3 = (proxy as Node3D).global_position
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		if Vector2(pos.x - pp.x, pos.z - pp.z).length() <= AI_OBSERVE_RADIUS:
+			observe_location(bid, _poi_id(p), str(p.get("kind", "wild")), pp, "observed")
+
+func observe_location(bot_id: int, loc_id: String, kind: String, pos: Vector3, source: String = "observed", mark_visit: bool = false) -> void:
+	if loc_id.is_empty():
+		return
+	var mem := _ensure_bot_memory(bot_id)
+	var known: Dictionary = mem["known_locations"]
+	var is_new := not known.has(loc_id)
+	var entry: Dictionary = known.get(loc_id, {
+		"id": loc_id,
+		"kind": kind,
+		"pos": [snappedf(pos.x, 0.1), snappedf(pos.y, 0.1), snappedf(pos.z, 0.1)],
+		"visits": 0,
+		"risk": 0.0,
+		"loot_score": 0.0,
+		"source": source,
+	})
+	if mark_visit:
+		entry["visits"] = int(entry.get("visits", 0)) + 1
+		entry["source"] = "observed"
+	known[loc_id] = entry
+	mem["known_locations"] = known
+	if is_new and bots.has(bot_id):
+		_evolve_personality(bots[bot_id], "poi_discovered", 0.18)
+
+func bot_knows_location(bot_id_or_dict, target: String) -> bool:
+	var t := target.strip_edges()
+	if t.is_empty():
+		return false
+	var mem: Dictionary = {}
+	if bot_id_or_dict is Dictionary:
+		mem = (bot_id_or_dict as Dictionary).get("_mem", {})
+	else:
+		mem = _memory.get(int(bot_id_or_dict), {})
+	var known: Dictionary = mem.get("known_locations", {})
+	if known.has(t):
+		return true
+	var tl := t.to_lower()
+	for k in known.keys():
+		if str(k).to_lower() == tl:
+			return true
+	return false
+
+func record_bot_event(bot_id: int, ev_type: String, actor: String, zone: String, pos: Vector3, detail: String = "") -> void:
+	var mem := _ensure_bot_memory(bot_id)
+	var events: Array = mem["events"]
+	events.append({
+		"t": int(Time.get_unix_time_from_system()),
+		"type": ev_type,
+		"actor": actor,
+		"zone": zone,
+		"pos": [int(pos.x), int(pos.y), int(pos.z)],
+		"detail": detail.substr(0, 64),
+	})
+	_ai_prune_and_summarize_memories(mem)
+
+func bot_knows_event(bot_id: int, ev_type: String, actor_or_zone: String = "") -> bool:
+	var mem: Dictionary = _memory.get(bot_id, {})
+	for ev in mem.get("events", []):
+		if not (ev is Dictionary):
+			continue
+		if str(ev.get("type", "")) != ev_type:
+			continue
+		if actor_or_zone.is_empty() or str(ev.get("actor", "")) == actor_or_zone or str(ev.get("zone", "")) == actor_or_zone or str(ev.get("detail", "")).contains(actor_or_zone):
+			return true
+	return false
+
+# Limita y resume recuerdos antiguos para acotar el contexto enviado a Qwen.
+func _ai_prune_and_summarize_memories(mem: Dictionary) -> void:
+	var events: Array = mem.get("events", [])
+	var summary: Dictionary = mem.get("events_summary", {})
+	while events.size() > AI_MEMORY_MAX_EVENTS:
+		var old_ev = events.pop_front()
+		if old_ev is Dictionary:
+			var k := "%s:%s" % [str(old_ev.get("type", "event")), str(old_ev.get("zone", "any"))]
+			summary[k] = int(summary.get(k, 0)) + 1
+	mem["events"] = events
+	mem["events_summary"] = summary
+
+# Comunicación entre bots aliados cercanos (<=14 m): comparten ubicaciones
+# conocidas y avisos de peligro. Un bot hostil o lejano jamás recibe estos datos.
+func _try_share_allied_knowledge(b: Dictionary) -> void:
+	if str(b.get("faction", "")) != "friendly":
+		return
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return
+	var bid := int(b["bot_id"])
+	var pos: Vector3 = (proxy as Node3D).global_position
+	for other_id in bots.keys():
+		var oid := int(other_id)
+		if oid == bid:
+			continue
+		var ob: Dictionary = bots[oid]
+		if str(ob.get("faction", "")) != "friendly":
+			continue
+		var op = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		if pos.distance_to((op as Node3D).global_position) <= AI_SHARE_RADIUS:
+			share_bot_knowledge(bid, oid)
+
+func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
+	if bot_id_a == bot_id_b:
+		return 0
+	var mem_a := _ensure_bot_memory(bot_id_a)
+	var mem_b := _ensure_bot_memory(bot_id_b)
+	if str(mem_a.get("identity", {}).get("faction", "")) != "friendly" or str(mem_b.get("identity", {}).get("faction", "")) != "friendly":
+		return 0
+	var shared_count := 0
+	var ka: Dictionary = mem_a.get("known_locations", {})
+	var kb: Dictionary = mem_b.get("known_locations", {})
+	for loc_id in ka.keys():
+		var entry: Dictionary = ka[loc_id]
+		if not kb.has(loc_id):
+			var copy := entry.duplicate(true)
+			copy["source"] = "shared"
+			kb[loc_id] = copy
+			shared_count += 1
+		else:
+			kb[loc_id]["risk"] = maxf(float(kb[loc_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+	for loc_id2 in kb.keys():
+		var entry2: Dictionary = kb[loc_id2]
+		if not ka.has(loc_id2):
+			var copy2 := entry2.duplicate(true)
+			copy2["source"] = "shared"
+			ka[loc_id2] = copy2
+			shared_count += 1
+		else:
+			ka[loc_id2]["risk"] = maxf(float(ka[loc_id2].get("risk", 0.0)), float(entry2.get("risk", 0.0)))
+	mem_a["known_locations"] = ka
+	mem_b["known_locations"] = kb
+	return shared_count
+
+func _actor_persist_key(peer_id: int) -> String:
+	if peer_id <= 0:
+		return "world"
+	if is_bot_peer_id(peer_id):
+		return "bot_%d" % peer_id
+	var node := _find_actor_by_peer_id(peer_id)
+	if node != null and is_instance_valid(node):
+		var cid := str(node.get_meta("client_id", "")).strip_edges()
+		if not cid.is_empty():
+			return cid
+	if world != null and world.get("net") != null and world.net.players.has(peer_id):
+		var pinfo: Dictionary = world.net.players[peer_id]
+		var nc := str(pinfo.get("client_id", pinfo.get("char_name", ""))).strip_edges()
+		if not nc.is_empty():
+			return nc
+	return "player_%d" % peer_id
+
+func _actor_display_name(peer_id: int) -> String:
+	if is_bot_peer_id(peer_id) and bots.has(peer_id):
+		return str(bots[peer_id].get("name", "Bot_%d" % peer_id))
+	var node := _find_actor_by_peer_id(peer_id)
+	if node != null and is_instance_valid(node):
+		var bn := str(node.get_meta("bot_name", node.get_meta("char_name", ""))).strip_edges()
+		if not bn.is_empty():
+			return bn
+	if world != null and world.get("net") != null and world.net.players.has(peer_id):
+		var cn := str(world.net.players[peer_id].get("char_name", world.net.players[peer_id].get("name", ""))).strip_edges()
+		if not cn.is_empty():
+			return cn
+	return "Player_%d" % peer_id
+
+func get_bot_relationship(bot_id: int, actor_key: String) -> Dictionary:
+	var mem := _ensure_bot_memory(bot_id)
+	var rels: Dictionary = mem.get("relationships", {})
+	if rels.has(actor_key) and rels[actor_key] is Dictionary:
+		return rels[actor_key]
+	return {"id": actor_key, "name": actor_key, "trust": 0.0, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}
+
+# Registra interacciones sociales reales (ayuda o ataque) con jugadores u otros bots.
+func record_social_event(bot_id: int, actor_key: String, actor_name: String, kind: String, intensity: float = 0.25, detail: String = "") -> void:
+	if actor_key.is_empty() or actor_key == "world":
+		return
+	var mem := _ensure_bot_memory(bot_id)
+	var b: Dictionary = bots.get(bot_id, {})
+	var pers: Dictionary = mem.get("personality", _default_personality_for_bot(bot_id))
+	var rels: Dictionary = mem["relationships"]
+	var base_trust := clampf((float(pers.get("sociability", 0.5)) - float(pers.get("distrust", 0.35))) * 0.25, -0.35, 0.35)
+	var rel: Dictionary = rels.get(actor_key, {
+		"id": actor_key,
+		"name": actor_name if not actor_name.is_empty() else actor_key,
+		"trust": base_trust,
+		"hostility": 0.65 if str(mem.get("identity", {}).get("faction", "")) == "hostile" else 0.0,
+		"fear": 0.0,
+		"helped": 0,
+		"attacked": 0,
+	})
+	if not actor_name.is_empty():
+		rel["name"] = actor_name
+	var step := clampf(intensity, 0.05, 1.0)
+	match kind:
+		"help", "ally":
+			rel["helped"] = int(rel.get("helped", 0)) + 1
+			var coop_mul := 0.75 + float(pers.get("cooperation", 0.6)) * 0.6
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + step * 0.75 * coop_mul, -1.0, 1.0), 0.001)
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) - step * 0.55, 0.0, 1.0), 0.001)
+			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) - step * 0.45, 0.0, 1.0), 0.001)
+			if not b.is_empty():
+				_evolve_personality(b, "player_helped", step)
+		"attack":
+			rel["attacked"] = int(rel.get("attacked", 0)) + 1
+			var dist_mul := 0.8 + float(pers.get("distrust", 0.4)) * 0.6
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) - step * 0.65 * dist_mul, -1.0, 1.0), 0.001)
+			var agg := float(pers.get("aggression", 0.35))
+			var surv := float(pers.get("survival_instinct", 0.7))
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * (0.45 + agg * 0.55), 0.0, 1.0), 0.001)
+			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) + step * (0.35 + surv * 0.50), 0.0, 1.0), 0.001)
+			if not b.is_empty():
+				_evolve_personality(b, "player_attacked", step)
+				_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key)
+	var pos := Vector3.ZERO
+	if not b.is_empty() and b.get("proxy") != null and is_instance_valid(b["proxy"]):
+		pos = (b["proxy"] as Node3D).global_position
+	rel["last_seen"] = [int(pos.x), int(pos.y), int(pos.z)]
+	rels[actor_key] = rel
+	mem["relationships"] = rels
+	record_bot_event(bot_id, "social_" + kind, actor_key, _poi_kind_near(pos), pos, detail if not detail.is_empty() else kind)
+
+func on_bot_helped_by_player(bot_id: int, giver_peer_id: int, detail: String = "helped", intensity: float = 0.35) -> void:
+	var akey := _actor_persist_key(giver_peer_id)
+	var aname := _actor_display_name(giver_peer_id)
+	record_social_event(bot_id, akey, aname, "help", intensity, detail)
+
+# Aprendizaje de riesgo por zona: aumenta el peligro percibido de la ubicación
+# conocida más cercana y registra la experiencia.
+func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float = 0.3) -> void:
+	var mem := _ensure_bot_memory(bot_id)
+	var known: Dictionary = mem["known_locations"]
+	var best_id := ""
+	var best_d := 65.0
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		var d := Vector2(pos.x - pp.x, pos.z - pp.z).length()
+		if d < best_d:
+			best_d = d
+			best_id = _poi_id(p)
+			kind = str(p.get("kind", kind))
+	if best_id.is_empty():
+		best_id = "%s:%d:%d" % [kind if not kind.is_empty() else "wild", int(pos.x), int(pos.z)]
+	observe_location(bot_id, best_id, kind if not kind.is_empty() else "wild", pos, "observed")
+	var loc: Dictionary = known.get(best_id, {})
+	loc["risk"] = snappedf(clampf(float(loc.get("risk", 0.0)) + clampf(severity, 0.05, 1.0), 0.0, 3.0), 0.01)
+	known[best_id] = loc
+	mem["known_locations"] = known
+	record_strategy_outcome(bot_id, "explore_" + kind, false, severity * 0.4)
+	if bots.has(bot_id):
+		_evolve_personality(bots[bot_id], "zone_hazard", severity)
+
+# Aprendizaje de estrategias exitosas y fallidas: ajusta preferencia en [0.15..2.0].
+func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weight_delta: float = 0.12) -> void:
+	if strategy.is_empty():
+		return
+	var mem := _ensure_bot_memory(bot_id)
+	var strats: Dictionary = mem["strategies"]
+	var st: Dictionary = strats.get(strategy, {"success": 0, "fail": 0, "preference": 1.0})
+	var step := clampf(weight_delta, 0.03, 0.5)
+	if success:
+		st["success"] = int(st.get("success", 0)) + 1
+		st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) + step, 0.15, 2.0), 0.01)
+	else:
+		st["fail"] = int(st.get("fail", 0)) + 1
+		st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) - step * 1.25, 0.15, 2.0), 0.01)
+	strats[strategy] = st
+	mem["strategies"] = strats
+
+# Motor conductual local diferenciado por personalidad, memoria y relaciones:
+# ante una situación idéntica, Elena (supervivencia/curiosidad), Carlos
+# (valentía/cooperación/fortificación) y Kael (agresividad/desconfianza/saqueo)
+# producen decisiones distintas y sirven también como fallback cuando Groq no está.
+func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dictionary:
+	var pers := _get_bot_personality(b)
+	var mem: Dictionary = b.get("_mem", {})
+	var strats: Dictionary = mem.get("strategies", {})
+	var hp := float(situation.get("hp", b.get("health", 100.0)))
+	var hunger := float(situation.get("hunger", b.get("hunger", 90.0)))
+	var thirst := float(situation.get("thirst", b.get("thirst", 90.0)))
+	var has_shelter := bool(situation.get("has_shelter", b.get("shelter_pos", Vector3.INF) != Vector3.INF or not str(b.get("shelter_id", "")).is_empty()))
+	var threat_present := bool(situation.get("threat", _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null))
+	var risky_zone := str(situation.get("risky_zone", ""))
+
+	var bravery := float(pers.get("bravery", 0.5))
+	var aggression := float(pers.get("aggression", 0.3))
+	var curiosity := float(pers.get("curiosity", 0.6))
+	var sociability := float(pers.get("sociability", 0.6))
+	var distrust := float(pers.get("distrust", 0.35))
+	var cooperation := float(pers.get("cooperation", 0.65))
+	var survival := float(pers.get("survival_instinct", 0.75))
+
+	var need_food := clampf((75.0 - hunger) / 55.0, 0.0, 1.4)
+	var need_heal := clampf((80.0 - hp) / 60.0, 0.0, 1.4)
+	var need_water := clampf((65.0 - thirst) / 50.0, 0.0, 1.4)
+
+	var scores := {
+		"forage": (need_food * 1.35 + need_water * 0.4 + survival * 1.15 + curiosity * 0.55 - bravery * 0.25 - aggression * 0.35) * float((strats.get("forage", {}) as Dictionary).get("preference", 1.0)),
+		"hunt": (need_food * 1.25 + bravery * 0.55 + aggression * 0.45 - distrust * 0.25) * float((strats.get("hunt", {}) as Dictionary).get("preference", 1.0)),
+		"fortify_camp": ((0.45 if not has_shelter else 0.15) + bravery * 1.05 + cooperation * 0.85 - curiosity * 0.55 - aggression * 0.35) * float((strats.get("fortify_camp", {}) as Dictionary).get("preference", 1.0)),
+		"scavenge": (aggression * 1.25 + distrust * 1.05 + bravery * 0.40 - cooperation * 0.55) * float((strats.get("scavenge", {}) as Dictionary).get("preference", 1.0)),
+		"explore": (curiosity * 1.10 + sociability * 0.35 - need_heal * 0.6 - distrust * 0.25) * float((strats.get("explore", {}) as Dictionary).get("preference", 1.0)),
+		"rest": (need_heal * 1.55 + survival * 0.70 - bravery * 0.35) * float((strats.get("rest", {}) as Dictionary).get("preference", 1.0)),
+		"seek_ally": (sociability * 0.95 + cooperation * 0.95 - distrust * 0.85 - aggression * 0.50) * (1.15 if threat_present else 0.75),
+	}
+	if threat_present and hp < 55.0 and survival > bravery:
+		scores["rest"] = float(scores["rest"]) + 0.9
+	if not risky_zone.is_empty():
+		scores["avoid_zone"] = survival * 1.1 + distrust * 0.5 + need_heal * 0.6
+
+	var best_act := "explore"
+	var best_sc := -999.0
+	for act in scores.keys():
+		var sc := float(scores[act])
+		if sc > best_sc:
+			best_sc = sc
+			best_act = str(act)
+
+	var target := "wild"
+	var goal := "adapt_and_survive"
+	var prio := clampi(int(round(best_sc * 2.0)), 1, 5)
+	match best_act:
+		"forage":
+			target = "wild"
+			goal = "secure_food_safely"
+		"hunt":
+			target = "wild"
+			goal = "hunt_prey_for_meat_and_pelts"
+		"fortify_camp":
+			target = "camp"
+			goal = "build_and_defend_camp"
+		"scavenge":
+			target = "military" if aggression >= 0.6 else "house"
+			goal = "dominate_high_tier_loot"
+		"rest":
+			target = "camp"
+			goal = "recover_health_in_refuge"
+		"seek_ally":
+			target = "ally"
+			goal = "regroup_with_trusted_ally"
+		"avoid_zone":
+			target = risky_zone if AI_POI_KINDS.has(risky_zone) else "city"
+			goal = "evade_known_danger_zone"
+		_:
+			target = "house" if survival >= bravery else "city"
+			goal = "explore_new_locations"
+
+	return {
+		"goal": goal,
+		"action": best_act,
+		"target": target,
+		"poi_kind": target if AI_POI_KINDS.has(target) else "",
+		"priority": prio,
+		"reason": "personality:%s(%.2f)" % [best_act, best_sc],
+	}
+
+# Autoridad exclusiva del servidor: un cliente conectado jamás consulta Groq.
+func _ai_can_query_remote() -> bool:
+	if world == null:
+		return true
+	var net = world.get("net")
+	if net != null and net.is_connected and not net.is_host:
+		return false
+	return true
+
+func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic") -> void:
+	var p := clampi(priority, 1, 5)
+	for item in _ai_queue:
+		if int((item as Dictionary).get("bot_id", 0)) == bot_id:
+			if p > int((item as Dictionary).get("priority", 1)):
+				item["priority"] = p
+				item["reason"] = reason
+			return
+	_ai_queue.append({"bot_id": bot_id, "priority": p, "reason": reason, "t": Time.get_ticks_msec()})
+	_ai_queue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a.get("priority", 1)) != int(b.get("priority", 1)):
+			return int(a.get("priority", 1)) > int(b.get("priority", 1))
+		return int(a.get("t", 0)) < int(b.get("t", 0))
+	)
+
+func _ai_pop_next_request() -> Dictionary:
+	while not _ai_queue.is_empty():
+		var item: Dictionary = _ai_queue.pop_front()
+		var bid := int(item.get("bot_id", 0))
+		if bots.has(bid) and _ai_bot_eligible(bots[bid]):
+			return item
+	return {}
+
+# Firma discreta de situación para evitar consultas duplicadas a Groq cuando
+# el estado del bot no ha cambiado sustancialmente.
+func _ai_situation_signature(b: Dictionary) -> String:
+	var proxy = b.get("proxy")
+	var pos := (proxy as Node3D).global_position if proxy != null and is_instance_valid(proxy) else Vector3.ZERO
+	var hp_band := int(float(b.get("health", 100.0)) / 25.0)
+	var h_band := int(float(b.get("hunger", 100.0)) / 25.0)
+	var t_band := int(float(b.get("thirst", 100.0)) / 25.0)
+	var threat := 1 if (_sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null) else 0
+	var zone := _poi_kind_near(pos)
+	return "%d|%d|%d|%d|%d|%s|%s" % [hp_band, h_band, t_band, threat, 1 if _is_world_night() else 0, str(b.get("held_item", "")), zone]
 
 func _ai_ensure_http() -> void:
 	if _ai_http != null and is_instance_valid(_ai_http):
@@ -3553,17 +4182,31 @@ func _ai_ensure_http() -> void:
 	add_child(_ai_http)
 
 func _ai_tick(_delta: float) -> void:
+	if bots.is_empty() or not _ai_can_query_remote():
+		return
+	var now := Time.get_ticks_msec()
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
-	if key.is_empty() or bots.is_empty():
+	if key.is_empty():
+		_ai_conn_status = "no_api_key (local_brain)"
+		# Sin clave de Groq, los bots actualizan periódicamente su directiva con su cerebro local
+		for bid in bots.keys():
+			var b_loc: Dictionary = bots[bid]
+			if _ai_bot_eligible(b_loc) and _ai_active_directive(b_loc).is_empty():
+				_ai_apply_local_fallback_decision(int(bid), "no_api_key")
 		return
 	var day := int(Time.get_unix_time_from_system() / 86400.0)
 	if day != _ai_day_key:
 		_ai_day_key = day
 		_ai_calls_day = 0
-	if _ai_calls_day >= AI_MAX_CALLS_PER_DAY or _ai_pending_bot != 0:
+		_ai_tokens_day = 0
+	if now < _ai_backoff_until_msec:
+		return
+	if _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
+		_ai_conn_status = "quota_reached (local_brain)"
+		return
+	if _ai_pending_bot != 0:
 		return
 	_ai_ensure_http()
-	var now := Time.get_ticks_msec()
 	var ids: Array = bots.keys()
 	ids.sort()
 	for i in range(ids.size()):
@@ -3574,13 +4217,23 @@ func _ai_tick(_delta: float) -> void:
 			continue
 		var next_at := int(_ai_next_at.get(bot_id, 0))
 		if next_at == 0:
-			# Primer intento escalonado tras el boot (~1.5-7 min segun bot)
 			_ai_next_at[bot_id] = now + (90 + _ai_rr * 150 + randi() % 120) * 1000
 			continue
-		if now < next_at:
-			continue
-		_ai_request_decision(key, bot_id, b)
+		if now >= next_at:
+			var urgency := 4 if (float(b["hunger"]) < 45.0 or float(b["health"]) < 60.0) else 2
+			_ai_enqueue_request(bot_id, urgency, "scheduled")
+	var req := _ai_pop_next_request()
+	if req.is_empty():
 		return
+	var target_bot := int(req["bot_id"])
+	var tb: Dictionary = bots[target_bot]
+	var sig := _ai_situation_signature(tb)
+	if _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
+		_ai_cache_hits += 1
+		_ai_next_at[target_bot] = now + int(AI_DECISION_MIN_SEC * 1000.0)
+		return
+	_ai_last_sig[target_bot] = sig
+	_ai_request_decision(key, target_bot, tb)
 
 func _ai_bot_eligible(b: Dictionary) -> bool:
 	var proxy = b.get("proxy")
@@ -3600,11 +4253,13 @@ func _ai_bot_eligible(b: Dictionary) -> bool:
 func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_pending_bot = bot_id
 	_ai_calls_day += 1
+	_ai_calls_total += 1
+	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_DECISION_MIN_SEC * 1000.0) + randi() % int(AI_DECISION_SPREAD_SEC * 1000.0)
 	var payload := {
 		"model": AI_ADVISOR_MODEL,
 		"temperature": 0.4,
-		"max_tokens": 140,
+		"max_tokens": 160,
 		"response_format": {"type": "json_object"},
 		"messages": [
 			{"role": "system", "content": AI_SYSTEM_PROMPT},
@@ -3614,20 +4269,41 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
 	if _ai_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_ai_pending_bot = 0
+		_ai_conn_status = "request_error (local_fallback)"
+		_ai_apply_local_fallback_decision(bot_id, "http_send_error")
 		print("[AI-ADV] peticion fallida para bot %d" % bot_id)
 
 func _ai_build_prompt(b: Dictionary) -> String:
 	var proxy: Node3D = b["proxy"]
 	var pos := proxy.global_position
-	var mem: Dictionary = b.get("_mem", {})
+	var mem: Dictionary = _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
 	var visited: Array = mem.get("visited", [])
 	var cur := {}
 	var d = b.get("ai_directive", {})
 	if d is Dictionary and not (d as Dictionary).is_empty():
-		cur = {"mode": str(d.get("mode", "")), "reason": str(d.get("reason", ""))}
+		cur = {"goal": str(d.get("goal", "")), "action": str(d.get("action", d.get("mode", ""))), "target": str(d.get("target", "")), "reason": str(d.get("reason", ""))}
+	var known_list: Array = []
+	var known_dict: Dictionary = mem.get("known_locations", {})
+	for lid in known_dict.keys():
+		if known_list.size() >= 8:
+			break
+		var le: Dictionary = known_dict[lid]
+		known_list.append({"id": str(lid), "kind": str(le.get("kind", "")), "risk": float(le.get("risk", 0.0))})
+	var rel_list: Array = []
+	var rel_dict: Dictionary = mem.get("relationships", {})
+	for rid in rel_dict.keys():
+		if rel_list.size() >= 5:
+			break
+		var re: Dictionary = rel_dict[rid]
+		rel_list.append({"id": str(rid), "trust": float(re.get("trust", 0.0)), "hostility": float(re.get("hostility", 0.0)), "fear": float(re.get("fear", 0.0))})
+	var recent_events: Array = []
+	var evs: Array = mem.get("events", [])
+	for idx in range(maxi(0, evs.size() - 5), evs.size()):
+		recent_events.append(evs[idx])
 	var state := {
 		"name": str(b["name"]),
 		"faction": str(b["faction"]),
+		"personality": _get_bot_personality(b),
 		"hp": int(float(b["health"])),
 		"hunger": int(float(b["hunger"])),
 		"thirst": int(float(b["thirst"])),
@@ -3639,6 +4315,10 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"deaths": int(mem.get("deaths", 0)),
 		"items": (proxy.get_meta("saved_inventory", []) as Array).size(),
 		"has_shelter": b.get("shelter_pos", Vector3.INF) != Vector3.INF,
+		"known_locations": known_list,
+		"relationships": rel_list,
+		"recent_events": recent_events,
+		"allowed_actions": AI_ALLOWED_ACTIONS,
 		"last_plan": cur,
 		"memory": _ai_memory_summary(mem),
 	}
@@ -3647,11 +4327,35 @@ func _ai_build_prompt(b: Dictionary) -> String:
 func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var bot_id := _ai_pending_bot
 	_ai_pending_bot = 0
-	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200 or bot_id == 0 or not bots.has(bot_id):
+	if bot_id == 0 or not bots.has(bot_id):
 		return
+	if response_code == 429:
+		_ai_429_count += 1
+		_ai_backoff_until_msec = Time.get_ticks_msec() + int(_ai_backoff_sec * 1000.0)
+		_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
+		_ai_conn_status = "rate_limited (429)"
+		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
+		return
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		_ai_conn_status = "offline_fallback (%d)" % response_code
+		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
+		return
+	_ai_backoff_sec = 60.0
+	_ai_conn_status = "online (200)"
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
+		_ai_apply_local_fallback_decision(bot_id, "invalid_json")
 		return
+	var usage = parsed.get("usage", {})
+	if usage is Dictionary:
+		var tok := int((usage as Dictionary).get("total_tokens", int((usage as Dictionary).get("prompt_tokens", 0)) + int((usage as Dictionary).get("completion_tokens", 0))))
+		if tok <= 0:
+			tok = 220
+		_ai_tokens_day += tok
+		_ai_tokens_total += tok
+	else:
+		_ai_tokens_day += 220
+		_ai_tokens_total += 220
 	var choices = parsed.get("choices", [])
 	if not (choices is Array) or choices.is_empty():
 		return
@@ -3665,9 +4369,9 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	if content is String and not (content as String).is_empty():
 		_ai_apply_decision(bot_id, content)
 
-# Valida la respuesta del modelo contra el catalogo cerrado. Devuelve {} si no
-# es una decision ejecutable; nunca lanza errores con texto arbitrario.
-func _ai_parse_decision(text: String) -> Dictionary:
+# Valida la respuesta del modelo contra el catálogo cerrado y contra las
+# ubicaciones conocidas del bot (anti-omnisciencia). Devuelve {} si no es válida.
+func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 	var t := text.strip_edges()
 	if t.begins_with("```"):
 		var first_nl := t.find("\n")
@@ -3680,9 +4384,42 @@ func _ai_parse_decision(text: String) -> Dictionary:
 	if not (parsed is Dictionary):
 		return {}
 	var action := str(parsed.get("action", "")).to_lower().strip_edges()
-	var kind := str(parsed.get("poi_kind", "")).to_lower().strip_edges()
+	if not AI_ALLOWED_ACTIONS.has(action):
+		return {}
+	var raw_target := str(parsed.get("target", parsed.get("poi_kind", ""))).strip_edges()
+	var kind := raw_target.to_lower()
+	var goal := str(parsed.get("goal", action)).substr(0, 64)
+	var prio := clampi(int(parsed.get("priority", 3)), 1, 5)
 	var reason := str(parsed.get("reason", "")).substr(0, 80)
-	var out := {"action": action, "reason": reason}
+
+	# Anti-omnisciencia: si Qwen indica un poi_id concreto ("house:100:100") o
+	# coordenadas explícitas ("250,-250"), el bot DEBE conocer esa ubicación.
+	var specific_pos := Vector3.INF
+	if ":" in raw_target or "," in raw_target:
+		if b.is_empty() or not bot_knows_location(b, raw_target):
+			return {}
+		var known: Dictionary = (b.get("_mem", {}) as Dictionary).get("known_locations", {})
+		for k in known.keys():
+			if str(k).to_lower() == kind:
+				var p_arr = (known[k] as Dictionary).get("pos", [])
+				if p_arr is Array and (p_arr as Array).size() >= 3:
+					specific_pos = Vector3(float(p_arr[0]), float(p_arr[1]), float(p_arr[2]))
+				kind = str((known[k] as Dictionary).get("kind", "wild")).to_lower()
+				break
+
+	var out := {
+		"goal": goal,
+		"action": action,
+		"target": raw_target if not raw_target.is_empty() else kind,
+		"priority": prio,
+		"reason": reason,
+		"source": "qwen",
+	}
+	if specific_pos != Vector3.INF:
+		out["mode"] = "pos"
+		out["pos"] = specific_pos
+		return out
+
 	match action:
 		"explore":
 			out["mode"] = "poi"
@@ -3693,8 +4430,10 @@ func _ai_parse_decision(text: String) -> Dictionary:
 		"hunt":
 			out["mode"] = "poi"
 			out["only_kinds"] = ["wild"]
-		"return_home", "rest":
+		"return_home", "rest", "fortify_camp":
 			out["mode"] = "pos"
+		"seek_ally":
+			out["mode"] = "ally"
 		"forage":
 			out["mode"] = "food"
 		"avoid_zone":
@@ -3710,12 +4449,12 @@ func _ai_apply_decision(bot_id: int, content: String) -> void:
 	if not bots.has(bot_id):
 		return
 	var b: Dictionary = bots[bot_id]
-	var d := _ai_parse_decision(content)
+	var d := _ai_parse_decision(content, b)
 	if d.is_empty():
 		return
-	if str(d.get("mode", "")) == "pos":
+	if str(d.get("mode", "")) == "pos" and not d.has("pos"):
 		var home: Vector3 = b.get("shelter_pos", Vector3.INF)
-		if str(d.get("action", "")) == "rest":
+		if str(d.get("action", "")) in ["rest", "fortify_camp"]:
 			var camp: Vector3 = b.get("camp_spot", Vector3.INF)
 			if camp != Vector3.INF:
 				home = camp
@@ -3724,9 +4463,57 @@ func _ai_apply_decision(bot_id: int, content: String) -> void:
 		if home == Vector3.INF:
 			return
 		d["pos"] = home
+	elif str(d.get("mode", "")) == "ally":
+		var ally_pos := _nearest_friendly_bot_pos(bot_id)
+		if ally_pos != Vector3.INF:
+			d["mode"] = "pos"
+			d["pos"] = ally_pos
+		else:
+			d["mode"] = "poi"
+			d["only_kinds"] = ["house"]
 	d["until"] = Time.get_ticks_msec() + AI_DIRECTIVE_TTL_MSEC
 	b["ai_directive"] = d
-	print("[AI-ADV] %s: %s (%s)" % [str(b.get("name", bot_id)), str(d.get("action", "?")), str(d.get("reason", ""))])
+	b["current_goal"] = str(d.get("goal", d.get("action", "survive")))
+	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
+	mem["pending_goals"] = [{"goal": b["current_goal"], "action": str(d.get("action", "")), "target": str(d.get("target", "")), "priority": int(d.get("priority", 3))}]
+	print("[AI-ADV] %s: %s -> %s (p=%d, %s)" % [str(b.get("name", bot_id)), str(d.get("goal", "?")), str(d.get("action", "?")), int(d.get("priority", 3)), str(d.get("reason", ""))])
+
+func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fallback") -> Dictionary:
+	if not bots.has(bot_id):
+		return {}
+	var b: Dictionary = bots[bot_id]
+	var local_d := decide_situational_action(b)
+	local_d["reason"] = "%s (%s)" % [str(local_d.get("reason", "local")), reason]
+	var json_str := JSON.stringify(local_d)
+	_ai_apply_decision(bot_id, json_str)
+	if b.get("ai_directive") is Dictionary:
+		b["ai_directive"]["source"] = "local_fallback"
+	return b.get("ai_directive", {})
+
+func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
+	if not bots.has(bot_id):
+		return Vector3.INF
+	var b: Dictionary = bots[bot_id]
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return Vector3.INF
+	var pos := (proxy as Node3D).global_position
+	var best := Vector3.INF
+	var best_d := INF
+	for oid in bots.keys():
+		if int(oid) == bot_id:
+			continue
+		var ob: Dictionary = bots[oid]
+		if str(ob.get("faction", "")) != "friendly":
+			continue
+		var op = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var d := pos.distance_to((op as Node3D).global_position)
+		if d < best_d:
+			best_d = d
+			best = (op as Node3D).global_position
+	return best
 
 func _ai_active_directive(b: Dictionary) -> Dictionary:
 	var d = b.get("ai_directive", {})
@@ -3737,21 +4524,19 @@ func _ai_active_directive(b: Dictionary) -> Dictionary:
 		return {}
 	return d
 
-# ==================== MEMORIA PERSISTENTE ENTRE SESIONES ====================
-# Los bots recuerdan entre partidas (solo en el servidor dedicado, donde el
-# mundo se regenera en cada arranque): donde murieron y por que, que tipos de
-# zona dieron buen botin y cuales fueron letales. El archivo user:// queda
-# fuera del borrado de server_savegame.json, asi que sobrevive a los deploys.
-# La lista 'visited' NO se persiste: el mundo es nuevo en cada sesion y el
-# botin de las casas vuelve a aparecer.
+# ==================== MEMORIA PERSISTENTE ENTRE SESIONES (V2) ====================
+# Persiste por separado para cada bot: identidad, personalidad evolutiva,
+# eventos (y su resumen histórico), ubicaciones conocidas (con riesgo y score),
+# relaciones con jugadores/bots, estrategias (éxito/fracaso/preferencia) y
+# objetivos pendientes. Sobrevive al reinicio del servidor.
 
 func _ai_memory_enabled() -> bool:
-	return OS.has_feature("dedicated_server")
+	return force_memory_io or OS.has_feature("dedicated_server")
 
 func _ai_load_memory() -> void:
-	if not _ai_memory_enabled() or not FileAccess.file_exists(AI_MEMORY_PATH):
+	if not _ai_memory_enabled() or not FileAccess.file_exists(memory_path):
 		return
-	var f := FileAccess.open(AI_MEMORY_PATH, FileAccess.READ)
+	var f := FileAccess.open(memory_path, FileAccess.READ)
 	if f == null:
 		return
 	var parsed = JSON.parse_string(f.get_as_text())
@@ -3766,8 +4551,8 @@ func _ai_load_memory() -> void:
 		if not (sd is Dictionary):
 			continue
 		var bid := int(key)
-		var mem: Dictionary = _memory.get_or_add(bid, {})
-		for field in ["deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "sessions"]:
+		var mem: Dictionary = _ensure_bot_memory(bid)
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		var lp = sd.get("last_death_pos")
@@ -3775,42 +4560,51 @@ func _ai_load_memory() -> void:
 			mem["last_death_pos"] = Vector3(float(lp[0]), float(lp[1]), float(lp[2]))
 		else:
 			mem["last_death_pos"] = Vector3.INF
-		mem["visited"] = [] # mundo nuevo: nadie conserva el mapa de exploracion
+		mem["visited"] = [] # cada sesión regenera el loot de las casas
 		mem["sessions"] = int(mem.get("sessions", 0)) + 1
+		if bots.has(bid):
+			bots[bid]["_mem"] = mem
+			bots[bid]["personality"] = mem.get("personality", {})
 
 func _ai_save_memory() -> void:
 	if not _ai_memory_enabled():
 		return
-	var out := {"version": 1, "bots": {}}
+	var out := {"version": 2, "bots": {}}
 	for bid in _memory.keys():
-		var mem: Dictionary = _memory[bid]
+		var mem: Dictionary = _ensure_bot_memory(int(bid))
+		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "sessions"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
 		sd["last_death_pos"] = [lp.x, lp.y, lp.z] if lp is Vector3 and lp != Vector3.INF else []
 		out["bots"][str(bid)] = sd
-	var f := FileAccess.open(AI_MEMORY_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(memory_path, FileAccess.WRITE)
 	if f == null:
 		return
 	f.store_string(JSON.stringify(out))
 	f.close()
 
-# Registra que botin dio la zona donde se recogio (casa, militar, ciudad, salvaje).
+# Registra qué botín dio la zona donde se recogió y actualiza la estrategia y ubicación.
 func _ai_note_loot(b: Dictionary, item_name: String, item_type: String) -> void:
 	var mem: Dictionary = b.get("_mem", {})
 	var proxy = b.get("proxy")
 	if mem.is_empty() or proxy == null or not is_instance_valid(proxy):
 		return
-	var kind := _poi_kind_near(proxy.global_position)
+	var bid := int(b.get("bot_id", 0))
+	var pos := (proxy as Node3D).global_position
+	var kind := _poi_kind_near(pos)
 	var zy: Dictionary = mem.get("zone_yield", {})
 	var zk: Dictionary = zy.get(kind, {"n": 0, "good": 0})
 	zk["n"] = int(zk.get("n", 0)) + 1
-	if _is_gear_item(item_name, item_type) or item_type.begins_with("weapon") or item_type == "medical":
+	var is_good := _is_gear_item(item_name, item_type) or item_type.begins_with("weapon") or item_type == "medical"
+	if is_good:
 		zk["good"] = int(zk.get("good", 0)) + 1
+		_evolve_personality(b, "good_loot", 0.25)
 	zy[kind] = zk
 	mem["zone_yield"] = zy
+	record_strategy_outcome(bid, "scavenge" if kind in ["military", "city"] else "explore", true, 0.10 if is_good else 0.04)
 
 func _poi_kind_near(pos: Vector3) -> String:
 	var best := "wild"
@@ -3823,8 +4617,8 @@ func _poi_kind_near(pos: Vector3) -> String:
 			best = str(p.get("kind", "wild"))
 	return best
 
-# Factor 0.3-1.6 sobre el score de un POI segun lo aprendido: las zonas que
-# solian dar equipo pesan mas; las que ya fueron letales pesan menos.
+# Factor 0.2-1.7 sobre el score de un POI según lo aprendido: rendimiento de
+# botín, puntos letales, riesgo percibido en known_locations y estrategias.
 func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 	var mem: Dictionary = b.get("_mem", {})
 	if mem.is_empty():
@@ -3840,7 +4634,18 @@ func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 			if dx * dx + dz * dz < 2025.0:
 				factor *= 0.55
 				break
-	return clampf(factor, 0.3, 1.6)
+	var known: Dictionary = mem.get("known_locations", {})
+	var pid := "%s:%d:%d" % [kind, int(pos.x), int(pos.z)]
+	if known.has(pid) and known[pid] is Dictionary:
+		var risk := float((known[pid] as Dictionary).get("risk", 0.0))
+		if risk > 0.0:
+			var surv := float(_get_bot_personality(b).get("survival_instinct", 0.7))
+			factor *= clampf(1.0 - risk * (0.28 + surv * 0.25), 0.22, 1.0)
+	var strats: Dictionary = mem.get("strategies", {})
+	var st_key := "explore_" + kind
+	if strats.has(st_key) and strats[st_key] is Dictionary:
+		factor *= clampf(float((strats[st_key] as Dictionary).get("preference", 1.0)), 0.4, 1.45)
+	return clampf(factor, 0.2, 1.7)
 
 func _ai_memory_summary(mem: Dictionary) -> Dictionary:
 	var out := {"deaths": int(mem.get("deaths", 0))}
@@ -3857,7 +4662,104 @@ func _ai_memory_summary(mem: Dictionary) -> Dictionary:
 	var spots: Array = mem.get("death_spots", [])
 	if not spots.is_empty():
 		out["death_spots"] = spots.size()
+	var known: Dictionary = mem.get("known_locations", {})
+	if not known.is_empty():
+		out["known_locations"] = known.size()
+	var rels: Dictionary = mem.get("relationships", {})
+	if not rels.is_empty():
+		out["relationships"] = rels.size()
 	return out
+
+# ==================== PANEL Y API DE DEPURACIÓN ====================
+# Expone personalidad, objetivo actual, última decisión de Qwen, recuerdos
+# relevantes, confianza hacia jugadores, peticiones/tokens y estado de Groq.
+
+func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
+	if not bots.has(bot_id):
+		return {}
+	var b: Dictionary = bots[bot_id]
+	var mem: Dictionary = _ensure_bot_memory(bot_id, b.get("cfg", {}))
+	var evs: Array = mem.get("events", [])
+	var recent_evs: Array = []
+	for i in range(maxi(0, evs.size() - 4), evs.size()):
+		recent_evs.append(evs[i])
+	return {
+		"bot_id": bot_id,
+		"name": str(b.get("name", "")),
+		"faction": str(b.get("faction", "")),
+		"hp": int(float(b.get("health", 100.0))),
+		"hunger": int(float(b.get("hunger", 100.0))),
+		"thirst": int(float(b.get("thirst", 100.0))),
+		"personality": _get_bot_personality(b).duplicate(true),
+		"current_goal": str(b.get("current_goal", "survival_patrol")),
+		"last_qwen_decision": (b.get("ai_directive", {}) as Dictionary).duplicate(true),
+		"recent_memories": recent_evs,
+		"known_locations_count": (mem.get("known_locations", {}) as Dictionary).size(),
+		"relationships": (mem.get("relationships", {}) as Dictionary).duplicate(true),
+		"strategies": (mem.get("strategies", {}) as Dictionary).duplicate(true),
+		"pending_goals": (mem.get("pending_goals", []) as Array).duplicate(true),
+		"groq_stats": {
+			"status": _ai_conn_status,
+			"calls_day": _ai_calls_day,
+			"calls_total": _ai_calls_total,
+			"tokens_day": _ai_tokens_day,
+			"tokens_total": _ai_tokens_total,
+			"cache_hits": _ai_cache_hits,
+			"http_429_count": _ai_429_count,
+			"queue_size": _ai_queue.size(),
+		},
+	}
+
+func get_ai_debug_report() -> String:
+	var lines: Array[String] = []
+	lines.append("=== SISTEMA IA PERSISTENTE DE BOTS (GROQ / QWEN) ===")
+	lines.append("Estado Groq: %s  |  Peticiones hoy: %d/%d (total %d)  |  Tokens hoy: %d/%d (total %d)  |  Caché: %d  |  429s: %d  |  Cola: %d" % [
+		_ai_conn_status, _ai_calls_day, ai_max_calls_per_day, _ai_calls_total,
+		_ai_tokens_day, ai_max_tokens_per_day, _ai_tokens_total, _ai_cache_hits, _ai_429_count, _ai_queue.size()
+	])
+	var ids: Array = bots.keys()
+	ids.sort()
+	for bid in ids:
+		var snap := get_bot_debug_snapshot(int(bid))
+		var p: Dictionary = snap.get("personality", {})
+		var d: Dictionary = snap.get("last_qwen_decision", {})
+		lines.append("------------------------------------------------------------")
+		lines.append("[%d] %s (%s) — HP %d%% · Hambre %d%% · Sed %d%% · Objetivo: %s" % [
+			int(bid), str(snap.get("name", "")), str(snap.get("faction", "")),
+			int(snap.get("hp", 100)), int(snap.get("hunger", 100)), int(snap.get("thirst", 100)),
+			str(snap.get("current_goal", ""))
+		])
+		lines.append("  Personalidad: Val=%.2f Agr=%.2f Cur=%.2f Soc=%.2f Desc=%.2f Coop=%.2f Sup=%.2f" % [
+			float(p.get("bravery", 0)), float(p.get("aggression", 0)), float(p.get("curiosity", 0)),
+			float(p.get("sociability", 0)), float(p.get("distrust", 0)), float(p.get("cooperation", 0)),
+			float(p.get("survival_instinct", 0))
+		])
+		if not d.is_empty():
+			lines.append("  Última decisión (%s): goal=%s action=%s target=%s prio=%d (%s)" % [
+				str(d.get("source", "qwen")), str(d.get("goal", "")), str(d.get("action", "")),
+				str(d.get("target", "")), int(d.get("priority", 3)), str(d.get("reason", ""))
+			])
+		else:
+			lines.append("  Última decisión: (sin directiva activa — IA táctica local)")
+		var rels: Dictionary = snap.get("relationships", {})
+		if not rels.is_empty():
+			var r_parts: Array[String] = []
+			for rk in rels.keys():
+				var rv: Dictionary = rels[rk]
+				r_parts.append("%s(trust=%.2f,host=%.2f,fear=%.2f)" % [str(rv.get("name", rk)), float(rv.get("trust", 0)), float(rv.get("hostility", 0)), float(rv.get("fear", 0))])
+			lines.append("  Relaciones: %s" % ", ".join(r_parts))
+		else:
+			lines.append("  Relaciones: ninguna registrada aún")
+		var mems: Array = snap.get("recent_memories", [])
+		var m_parts: Array[String] = []
+		for mv in mems:
+			if mv is Dictionary:
+				m_parts.append("%s:%s(%s)" % [str(mv.get("type", "")), str(mv.get("actor", "")), str(mv.get("zone", ""))])
+		lines.append("  Ubicaciones conocidas: %d  |  Recuerdos recientes: %s" % [
+			int(snap.get("known_locations_count", 0)),
+			(", ".join(m_parts) if not m_parts.is_empty() else "ninguno")
+		])
+	return "\n".join(lines)
 
 # ==================== FORRAJEO: SETAS Y FRUTA ====================
 # Con hambre y sin comida comestible en la mochila, el bot busca lo que un

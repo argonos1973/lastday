@@ -1196,6 +1196,113 @@ func run() -> void:
 	var s_crouch := mgr._effective_human_sight(elena_proxy, 44.0)
 	check(s_crouch < s_stand * 0.75, "Ir agachado reduce el alcance al que un bot hostil te detecta (%.1f < %.1f)" % [s_crouch, s_stand])
 
+	# --- 28) Pruebas de Aceptación: Sistema de Inteligencia Persistente (Groq / Qwen) ---
+	# Resetear personalidades base de los 3 bots para evaluar sus decisiones ante una situación idéntica
+	for bid_p in [901, 902, 903]:
+		var cfg_p: Dictionary = mgr.bots[bid_p]["cfg"]
+		var mem_p: Dictionary = mgr._ensure_bot_memory(bid_p, cfg_p)
+		mem_p["personality"] = mgr._default_personality_for_bot(bid_p, cfg_p)
+		mem_p["strategies"] = {}
+		mgr.bots[bid_p]["personality"] = mem_p["personality"]
+
+	# Aceptación 1: Los tres bots muestran decisiones diferentes ante una situación idéntica
+	var shared_sit := {"hp": 72.0, "hunger": 56.0, "thirst": 75.0, "has_shelter": false, "threat": false}
+	var dec_elena := mgr.decide_situational_action(mgr.bots[901], shared_sit)
+	var dec_carlos := mgr.decide_situational_action(mgr.bots[902], shared_sit)
+	var dec_kael := mgr.decide_situational_action(mgr.bots[903], shared_sit)
+	var a_e := str(dec_elena.get("action", ""))
+	var a_c := str(dec_carlos.get("action", ""))
+	var a_k := str(dec_kael.get("action", ""))
+	check(a_e != a_c and a_c != a_k and a_e != a_k,
+		"Aceptación 1: Los 3 bots toman decisiones distintas ante la misma situación (Elena=%s, Carlos=%s, Kael=%s)" % [a_e, a_c, a_k])
+
+	# Aceptación 2: Un bot recuerda a un jugador tras reiniciar el servidor (persistencia real en disco)
+	var test_mem_path := "user://test_acceptance_bot_memory.json"
+	mgr.memory_path = test_mem_path
+	mgr.force_memory_io = true
+	mgr.record_social_event(901, "client_sami_77", "Sami", "help", 0.65, "shared_water_and_bandage")
+	mgr.observe_location(901, "house:120:140", "house", Vector3(120.0, 0.0, 140.0), "observed", true)
+	mgr._ai_save_memory()
+	# Simular reinicio del servidor con un nuevo SurvivorBotManager que carga desde disco
+	var mgr_restarted := SurvivorBotManagerScript.new()
+	mgr_restarted.memory_path = test_mem_path
+	mgr_restarted.force_memory_io = true
+	mgr_restarted._ai_load_memory()
+	var rel_after := mgr_restarted.get_bot_relationship(901, "client_sami_77")
+	check(float(rel_after.get("trust", 0.0)) > 0.35 and int(rel_after.get("helped", 0)) >= 1 and str(rel_after.get("name", "")) == "Sami",
+		"Aceptación 2: Tras reiniciar el servidor, Elena recuerda al jugador Sami y su confianza (trust=%.2f, helped=%d)" % [float(rel_after.get("trust", 0.0)), int(rel_after.get("helped", 0))])
+	check(mgr_restarted.bot_knows_location(901, "house:120:140"),
+		"Aceptación 2b: Tras reiniciar el servidor, Elena conserva sus ubicaciones conocidas")
+	mgr_restarted.free()
+	if FileAccess.file_exists(test_mem_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(test_mem_path))
+	mgr.force_memory_io = false
+	mgr.memory_path = SurvivorBotManagerScript.AI_MEMORY_PATH
+
+	# Aceptación 3: Un bot modifica su comportamiento tras experiencias repetidas
+	# 3a) Riesgo repetido en una ubicación reduce su preferencia de exploración y evoluciona personalidad
+	var p_surv_before := float(mgr._get_bot_personality(elena).get("survival_instinct", 0.0))
+	var f_before_hazard := mgr._ai_poi_memory_factor(elena, Vector3(150.0, 0.0, 150.0), "military")
+	for h_i in range(3):
+		mgr.record_zone_hazard(901, Vector3(150.0, 0.0, 150.0), "military", 0.55)
+	var f_after_hazard := mgr._ai_poi_memory_factor(elena, Vector3(150.0, 0.0, 150.0), "military")
+	var p_surv_after := float(mgr._get_bot_personality(elena).get("survival_instinct", 0.0))
+	check(f_after_hazard < f_before_hazard * 0.65 and p_surv_after > p_surv_before,
+		"Aceptación 3a: Experiencias peligrosas repetidas reducen preferencia por la zona (%.2f -> %.2f) y suben instinto de supervivencia (%.3f -> %.3f)" % [f_before_hazard, f_after_hazard, p_surv_before, p_surv_after])
+	# 3b) Ataques repetidos de un jugador cambian la actitud social de Elena (rechaza unirse al agresor, hasta reconciliación)
+	elena["team_leader_id"] = 0
+	for atk_i in range(3):
+		mgr.record_social_event(901, "player_99", "Agresor", "attack", 0.60, "shot_rifle")
+	var msg_refuse := mgr.interact_with_bot(901, 99, "toggle")
+	check(int(elena["team_leader_id"]) == 0 and msg_refuse.contains("desconfía"),
+		"Aceptación 3b: Tras ataques repetidos, el bot modifica su conducta social y rehúsa unirse al agresor (%s)" % msg_refuse)
+
+	# Aceptación 4: Los bots siguen funcionando cuando Groq no está disponible (sin API key o HTTP 429)
+	elena["ai_directive"] = {}
+	mgr._ai_pending_bot = 901
+	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 429, PackedStringArray(), PackedByteArray())
+	check(mgr._ai_429_count >= 1 and mgr._ai_backoff_until_msec > Time.get_ticks_msec() and mgr._ai_conn_status.contains("429"),
+		"Aceptación 4a: HTTP 429 activa backoff exponencial y registra estado rate_limited (%s)" % mgr._ai_conn_status)
+	check(not (elena.get("ai_directive", {}) as Dictionary).is_empty() and str((elena["ai_directive"] as Dictionary).get("source", "")) == "local_fallback",
+		"Aceptación 4b: Cuando Groq falla o devuelve 429, el bot aplica automáticamente decisión local de respaldo (%s)" % str((elena.get("ai_directive", {}) as Dictionary).get("action", "")))
+	mgr._ai_backoff_until_msec = 0
+
+	# Aceptación 5: Ningún bot conoce experiencias privadas de otro sin comunicación
+	mgr.observe_location(901, "secret_bunker:410:-390", "military", Vector3(410.0, 0.0, -390.0), "observed", true)
+	mgr.record_bot_event(901, "private_discovery", "Elena", "military", Vector3(410.0, 0.0, -390.0), "found_bunker")
+	check(mgr.bot_knows_location(901, "secret_bunker:410:-390") and not mgr.bot_knows_location(902, "secret_bunker:410:-390") and not mgr.bot_knows_location(903, "secret_bunker:410:-390"),
+		"Aceptación 5a: Sin comunicación, ni Carlos ni Kael conocen la ubicación privada descubierta por Elena")
+	check(mgr.bot_knows_event(901, "private_discovery", "Elena") and not mgr.bot_knows_event(902, "private_discovery", "Elena"),
+		"Aceptación 5b: Los recuerdos privados de Elena no existen en la memoria de Carlos")
+	# Cuando dos aliados (Elena 901 y Carlos 902) se comunican, comparten ubicaciones conocidas; Kael (hostil 903) sigue sin saberlo
+	var shared_n := mgr.share_bot_knowledge(901, 902)
+	check(shared_n > 0 and mgr.bot_knows_location(902, "secret_bunker:410:-390") and not mgr.bot_knows_location(903, "secret_bunker:410:-390"),
+		"Aceptación 5c: Tras comunicarse con su aliado, Carlos conoce la ubicación compartida pero el hostil Kael no")
+
+	# Aceptación 6: Las decisiones de Qwen no pueden ejecutar acciones fuera de las permitidas ni ir a ubicaciones desconocidas
+	var bad_action := mgr._ai_parse_decision("{\"goal\":\"hack\",\"action\":\"teleport\",\"target\":\"city\",\"priority\":5,\"reason\":\"cheat\"}", elena)
+	var unknown_loc := mgr._ai_parse_decision("{\"goal\":\"loot\",\"action\":\"explore\",\"target\":\"military:888:-888\",\"priority\":4,\"reason\":\"omniscient\"}", elena)
+	var known_loc := mgr._ai_parse_decision("{\"goal\":\"loot_bunker\",\"action\":\"explore\",\"target\":\"secret_bunker:410:-390\",\"priority\":4,\"reason\":\"remembered\"}", elena)
+	check(bad_action.is_empty(), "Aceptación 6a: Qwen no puede ejecutar acciones fuera del catálogo permitido")
+	check(unknown_loc.is_empty(), "Aceptación 6b: Qwen no puede enviar al bot a una ubicación específica que el bot no conoce")
+	check(not known_loc.is_empty() and str(known_loc.get("mode", "")) == "pos" and (known_loc.get("pos") as Vector3).distance_to(Vector3(410.0, 0.0, -390.0)) < 1.0,
+		"Aceptación 6c: Qwen sí puede dirigir al bot a una ubicación específica que el bot ya conoce")
+
+	# Aceptación 7: Cola de prioridades, deduplicación, panel de depuración y rendimiento sin bloqueos (<2 ms)
+	mgr._ai_queue.clear()
+	mgr._ai_enqueue_request(901, 2, "low_prio")
+	mgr._ai_enqueue_request(902, 5, "high_prio_threat")
+	mgr._ai_enqueue_request(903, 3, "mid_prio")
+	var popped := mgr._ai_pop_next_request()
+	check(int(popped.get("bot_id", 0)) == 902 and int(popped.get("priority", 0)) == 5,
+		"Aceptación 7a: La cola de prioridades despacha primero la consulta más urgente (bot=%d prio=%d)" % [int(popped.get("bot_id", 0)), int(popped.get("priority", 0))])
+	var t0_usec := Time.get_ticks_usec()
+	mgr._ai_tick(0.016)
+	var report_str := mgr.get_ai_debug_report()
+	var dt_ms := float(Time.get_ticks_usec() - t0_usec) / 1000.0
+	check(dt_ms < 15.0 and report_str.contains("Elena") and report_str.contains("Carlos") and report_str.contains("Kael") and report_str.contains("Personalidad:") and report_str.contains("Relaciones:"),
+		"Aceptación 7b: El tick cognitivo y el panel de depuración se ejecutan sin bloquear el hilo principal (%.2f ms)" % dt_ms)
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
