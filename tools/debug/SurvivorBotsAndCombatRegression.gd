@@ -1123,6 +1123,79 @@ func run() -> void:
 	mgr._bot_start_gutting(elena, wolf5)
 	check(elena["gut_target"] == null, "Sin filo no agenda destripado (como el jugador)")
 
+	# --- 27) Caza de presas (ciervo/zorro), sigilo agachado, antorcha ante lobos y refugio seguro ---
+	var deer := WildlifeControllerScript.new()
+	deer.name = "Wildlife_deer_hunt"
+	world.add_child(deer)
+	deer.setup("deer", [Vector3(0.0, 0.4, 0.0)])
+	deer.set_process(false)
+	elena_proxy.global_position = Vector3(140.0, 0.4, 140.0)
+	deer.global_position = elena_proxy.global_position + Vector3(18.0, 0.0, 0.0)
+	elena["hunger"] = 42.0
+	elena["shelter_id"] = ""
+	elena["shelter_pos"] = Vector3.INF
+	elena["hide_timer"] = 0.0
+	elena["flee_until"] = 0.0
+	elena["_s_leader"] = null
+	elena["_want_cache"] = {}
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+	])
+	var found_prey := mgr._find_huntable_prey(elena, 32.0)
+	check(found_prey == deer, "Con hambre y filo el bot detecta ciervos/zorros para cazar")
+	mgr._hunt_prey(elena, deer, 0.2)
+	check(bool(elena["crouching"]) and bool(elena_proxy.get_meta("crouching", false)),
+		"Al acechar una presa a media distancia se agacha y sincroniza meta crouching en el proxy")
+	check(deer._effective_prey_alert_range(elena_proxy) <= 13.0,
+		"El ciervo respeta el sigilo agachado del bot (alerta %.1fm <= 13m)" % deer._effective_prey_alert_range(elena_proxy))
+	# Remate de cerca y destripado: entrega pieles, carne, tendón y hueso sin duplicar drops en suelo
+	deer.global_position = elena_proxy.global_position + Vector3(2.2, 0.0, 0.0)
+	deer.health = 20.0
+	elena["attack_cooldown"] = 0.0
+	mgr._hunt_prey(elena, deer, 0.2)
+	check(bool(deer.get("_is_dead")) and elena["gut_target"] == deer,
+		"Al abatir al ciervo agenda su destripado inmediatamente")
+	var drops_pre_gut: int = (world._dropped_items as Array).size()
+	mgr._bot_harvest_dead_animal(elena, deer)
+	check(mgr._bot_item_count(elena_proxy, "Piel de ciervo") == 2 and mgr._bot_item_count(elena_proxy, "Tendón") >= 1,
+		"Destripar ciervo da 2 pieles y tendón (para cuerda de refugio/arco)")
+	check((world._dropped_items as Array).size() == drops_pre_gut,
+		"El destripado del bot usa collect_mode y no duplica pieles/carne en el suelo")
+
+	# Antorcha al huir de un lobo: la enciende y empuña para activar wary_torch
+	var wolf6 := WildlifeControllerScript.new()
+	wolf6.name = "Wildlife_wolf_torch"
+	world.add_child(wolf6)
+	wolf6.setup("wolf", [Vector3(0.0, 0.4, 0.0)])
+	wolf6.set_process(false)
+	elena_proxy.global_position = Vector3(160.0, 0.4, 160.0)
+	wolf6.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
+	elena["torch_lit"] = false
+	elena_proxy.set_meta("torch_lit", false)
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Antorcha", "type": "tool_torch", "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+	])
+	mgr._handle_predator_encounter(elena, wolf6, 0.2)
+	check(bool(elena["torch_lit"]) and str(elena["held_item"]) == "Antorcha" and bool(elena_proxy.get_meta("torch_lit", false)),
+		"Al huir de un lobo con antorcha en mochila la enciende y empuña (wary_torch)")
+
+	# Dentro de una casa o refugio construido no sale corriendo a las fauces del lobo
+	elena_proxy.global_position = Vector3(60.0, 0.4, 60.0) # interior de Casa prueba (Rect2(55,55,10,10))
+	elena["pos"] = elena_proxy.global_position
+	wolf6.global_position = Vector3(60.0, 0.4, 54.2) # fuera, a 5.8 m
+	mgr._handle_predator_encounter(elena, wolf6, 0.2)
+	check(bool(elena["sitting"]) and elena_proxy.global_position.distance_to(Vector3(60.0, 0.4, 60.0)) < 0.2,
+		"Dentro de una casa con un lobo fuera permanece a resguardo en vez de salir a pelear")
+
+	# Visión humana realista: agacharse y la oscuridad reducen el alcance visual
+	elena_proxy.set_meta("crouching", false)
+	elena_proxy.set_meta("in_built_shelter", false)
+	var s_stand := mgr._effective_human_sight(elena_proxy, 44.0)
+	elena_proxy.set_meta("crouching", true)
+	var s_crouch := mgr._effective_human_sight(elena_proxy, 44.0)
+	check(s_crouch < s_stand * 0.75, "Ir agachado reduce el alcance al que un bot hostil te detecta (%.1f < %.1f)" % [s_crouch, s_stand])
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

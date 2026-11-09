@@ -503,6 +503,8 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"_s_leader": null,
 		"_s_has_wolf": false,
 		"_s_tame_wolf": null,
+		"_s_prey": null,
+		"_s_corpse": null,
 		"_s_loot": {},
 		"climb_route": [],
 		"climb_i": -1,
@@ -761,6 +763,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var has_wolf := _bot_has_tamed_wolf(b)
 		b["_s_has_wolf"] = has_wolf
 		b["_s_tame_wolf"] = null if has_wolf else _find_tameable_wolf(b, 20.0)
+		var hunt_dir := str(_ai_active_directive(b).get("action", "")) == "hunt"
+		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
+		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
@@ -774,6 +779,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["torch_lit"] = is_night and not hiding_in_shelter and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
 	proxy.set_meta("in_built_shelter", sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 3.4)
+	proxy.set_meta("crouching", bool(b["crouching"]))
+	proxy.set_meta("prone", bool(b["prone"]))
+	proxy.set_meta("sprinting", str(b["anim"]) == "run")
+	proxy.set_meta("moving", moving_now)
 
 	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
@@ -888,6 +897,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if _bot_try_forage(b, delta):
 		return
 
+	# 4c) Caza de presas (ciervos/zorros) y aprovechamiento de cadáveres cuando
+	# falta comida o materiales animales (pieles, tendón para cuerda, hueso).
+	if leader == null and _bot_try_hunt_or_scavenge(b, delta):
+		return
+
 	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
 	if leader != null:
 		_tick_teammate_behavior(b, leader, delta)
@@ -939,18 +953,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["no_fire_spot"] = true
 		return
 
-	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio,
-	# enciende la fogata, cocina carne y se oculta dentro del refugio
+	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio
+	# (o a la casa/fogata segura mas cercana si aun no construyo el suyo), cocina y descansa
 	var wants_camp: bool = is_night or float(b["health"]) < 65.0 or float(b["hide_timer"]) > 0.0
-	if sh_pos != Vector3.INF and wants_camp:
+	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, 85.0)
+	if rest_pos != Vector3.INF and wants_camp:
 		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
-		var d_sh := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
+		var d_sh := Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length()
 		if d_sh > 1.8:
-			_move_bot_towards(b, sh_pos, 3.8, delta, "walk")
+			_move_bot_towards(b, rest_pos, 3.8, delta, "walk")
 			return
 		# Dentro del refugio: encender fogata si se apagó, asar carne y descansar/ocultarse
-		_ensure_bot_campfire_lit(b)
-		if float(b["cook_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy):
+		if sh_pos != Vector3.INF:
+			_ensure_bot_campfire_lit(b)
+		if float(b["cook_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy) and (sh_pos != Vector3.INF or _is_near_any_lit_campfire(proxy.global_position, 6.0)):
 			_bot_cook_meat_at_fire(b)
 		# Solo craftea en el refugio si esta sano y no se esta ocultando de una
 		# amenaza: herido o escondido descansa/aguanta, no se pone a tallar.
@@ -958,6 +974,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 		b["sitting"] = true
 		b["crouching"] = str(b["faction"]) == "hostile"
+		proxy.set_meta("crouching", bool(b["crouching"]))
 		b["anim"] = "sit"
 		if float(b["health"]) < 100.0:
 			var healed := minf(100.0, float(b["health"]) + delta * 1.8)
@@ -1332,15 +1349,6 @@ func _find_threatening_predator(b: Dictionary, max_dist: float) -> Node3D:
 
 func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
-	b["sitting"] = false
-	b["sleeping"] = false
-	b["crouching"] = false
-	var weapon := _best_weapon_name(proxy)
-	b["held_item"] = weapon
-	var is_rifle := weapon == "Fusil de asalto" or weapon == "Rifle francotirador"
-	b["has_rifle"] = is_rifle
-	proxy.set_meta("saved_held_item", weapon)
-
 	var ppos := predator.global_position
 	var dist := proxy.global_position.distance_to(ppos)
 	var to_pred := ppos - proxy.global_position
@@ -1348,6 +1356,52 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	if to_pred.length_squared() > 0.001:
 		b["rot"] = atan2(-to_pred.x, -to_pred.z)
 		proxy.rotation.y = float(b["rot"])
+
+	var weapon := _best_weapon_name(proxy)
+	var is_rifle := weapon == "Fusil de asalto" or weapon == "Rifle francotirador"
+	var melee_reach := 4.0 if weapon in ["Lanza", "Lanza de hueso", "Palo afilado", "Hacha"] else 3.5
+
+	# Si ya está a salvo en su refugio construido o dentro de una casa (donde
+	# lobos/osos no pueden entrar) y el depredador está fuera, un humano NO sale
+	# corriendo a sus fauces: dispara desde seguro o aguanta a resguardo.
+	if _is_bot_wolf_protected(b) and dist > melee_reach + 0.5:
+		_command_bot_wolf_against(b, predator)
+		var pick_safe := _pick_fight_weapon(b, dist)
+		var skind := str(pick_safe.get("kind", "melee"))
+		var sweapon := str(pick_safe.get("name", weapon))
+		if skind in ["rifle", "bow", "thrown"] and _has_clear_shot(proxy.global_position, ppos):
+			b["sitting"] = false
+			b["crouching"] = false
+			b["is_aiming"] = true
+			b["held_item"] = sweapon
+			b["has_rifle"] = skind == "rifle"
+			proxy.set_meta("saved_held_item", sweapon)
+			b["anim"] = "idle"
+			if float(b["shoot_cooldown"]) <= 0.0:
+				if skind == "rifle":
+					b["shoot_cooldown"] = 0.95 if sweapon == "Fusil de asalto" else 1.65
+					_bot_fire_rifle_at(b, predator, 68.0 if sweapon == "Fusil de asalto" else 145.0)
+				elif skind == "bow":
+					b["shoot_cooldown"] = 1.55 if sweapon == "Arco reforzado" else 1.9
+					_bot_fire_bow(b, predator, sweapon)
+				else:
+					b["shoot_cooldown"] = 2.1
+					_bot_fire_thrown(b, predator, sweapon, false)
+			return
+		b["is_aiming"] = false
+		b["sitting"] = true
+		b["crouching"] = true
+		proxy.set_meta("crouching", true)
+		b["anim"] = "sit"
+		return
+
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	b["held_item"] = weapon
+	b["has_rifle"] = is_rifle
+	proxy.set_meta("saved_held_item", weapon)
 
 	# Si lleva fusil y está a > 4 m, dispara al depredador retrocediendo para mantener distancia
 	if is_rifle and dist > 3.6:
@@ -1365,7 +1419,6 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 		return
 
 	b["is_aiming"] = false
-	var melee_reach := 4.0 if weapon in ["Lanza", "Lanza de hueso", "Palo afilado", "Hacha"] else 3.5
 	# Sin arma de fuego un superviviente no caza lobos ni osos: huye como haría
 	# un humano y solo pelea cuerpo a cuerpo cuando el animal ya está encima.
 	if dist > melee_reach + 2.2:
@@ -1388,18 +1441,40 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 		# Acorralado: cierra el último tramo para poder defenderse
 		_move_bot_towards(b, ppos, 4.9, delta, "run")
 
-# Como un humano, el bot no caza depredadores sin arma de fuego: huye a su
-# refugio (donde la fauna no puede entrar) o en zigzag. Su lobo domado, si lo
-# tiene, lo cubre interceptando la amenaza.
+# Como un humano, el bot no caza depredadores sin arma de fuego: huye a un
+# lugar seguro (su refugio, una fogata encendida o una casa) o en zigzag.
+# Si tiene antorcha la enciende para intimidar al lobo (wary_torch), y si tiene
+# boleadoras las lanza para frenar al perseguidor mientras escapa.
 func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	_command_bot_wolf_against(b, predator)
-	# Cautela prolongada para que el sentido lo siga viendo a 30 m mientras huye
 	b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 9.0)
+	var dist := proxy.global_position.distance_to(predator.global_position)
+	# Antorcha encendida: mantiene a los lobos a raya (wary_torch en WildlifeController)
+	if str(predator.get("animal_type")) == "wolf" and _bot_has_item(proxy, "Antorcha"):
+		b["torch_lit"] = true
+		b["held_item"] = "Antorcha"
+		b["has_rifle"] = false
+		proxy.set_meta("torch_lit", true)
+		proxy.set_meta("saved_held_item", "Antorcha")
+	# Boleadoras defensivas en huida: frena 6 s al depredador sin detenerse a pelear
+	if _bot_item_count(proxy, "Boleadoras") > 0 and float(b["shoot_cooldown"]) <= 0.0 and dist >= 4.5 and dist <= 18.0:
+		if float(predator.get_meta("bola_slow_until", 0.0)) < Time.get_unix_time_from_system() and _has_clear_shot(proxy.global_position, predator.global_position):
+			b["shoot_cooldown"] = 2.6
+			_bot_fire_thrown(b, predator, "Boleadoras", true)
 	var sh_pos: Vector3 = b["shelter_pos"]
 	if sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 110.0:
-		b["hide_timer"] = 10.0
-		_move_bot_towards(b, sh_pos, 5.2, delta, "run")
+		var to_sh := sh_pos - proxy.global_position
+		var to_pr := predator.global_position - proxy.global_position
+		if to_sh.length() < 3.5 or to_sh.normalized().dot(to_pr.normalized()) < 0.35:
+			b["hide_timer"] = 10.0
+			_move_bot_towards(b, sh_pos, 5.2, delta, "run")
+			return
+	var refuge := _nearest_safe_refuge(b, 95.0, predator.global_position)
+	if refuge != Vector3.INF:
+		if proxy.global_position.distance_to(refuge) < 3.5:
+			b["hide_timer"] = 8.0
+		_move_bot_towards(b, refuge, 5.2, delta, "run")
 		return
 	var away := proxy.global_position - predator.global_position
 	away.y = 0.0
@@ -1410,6 +1485,75 @@ func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 		b["strafe_timer"] = 0.0
 	var side := Vector3(-away_dir.z, 0.0, away_dir.x)
 	_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.45).normalized() * 9.0, 5.2, delta, "run")
+
+func _is_near_any_lit_campfire(pos: Vector3, max_dist: float) -> bool:
+	if world == null or not ("_lit_campfires" in world):
+		return false
+	var r_sq := max_dist * max_dist
+	for lc in world._lit_campfires:
+		if lc is Dictionary and lc.get("pos") is Vector3:
+			if pos.distance_squared_to(lc["pos"] as Vector3) <= r_sq:
+				return true
+	return false
+
+# Comprueba si el bot ya está dentro de un refugio construido o de una casa
+# cerrada/abierta donde lobos y osos tienen prohibido entrar.
+func _is_bot_wolf_protected(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var pos := proxy.global_position
+	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if sh_pos != Vector3.INF and pos.distance_to(sh_pos) < 3.4:
+		return true
+	if world != null and world.has_method("_is_player_in_house") and world._is_player_in_house(pos):
+		return true
+	if world != null and "wildlife_blockers" in world:
+		var p2 := Vector2(pos.x, pos.z)
+		for blk in world.wildlife_blockers:
+			if blk is Dictionary and (blk as Dictionary).has("house_bounds"):
+				var hb: Rect2 = (blk as Dictionary)["house_bounds"]
+				if hb.grow(-0.4).has_point(p2):
+					return true
+	return false
+
+# Refugio seguro más cercano (propio refugio, fogata encendida o casa real)
+# cuya dirección no obligue a correr hacia la amenaza.
+func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = Vector3.INF) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	var cur := proxy.global_position
+	var to_threat := Vector3.ZERO
+	var has_threat := threat_pos != Vector3.INF
+	if has_threat:
+		to_threat = threat_pos - cur
+		to_threat.y = 0.0
+	var candidates: Array = []
+	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if sh_pos != Vector3.INF:
+		candidates.append(sh_pos)
+	if world != null and "_lit_campfires" in world:
+		for lc in world._lit_campfires:
+			if lc is Dictionary and lc.get("pos") is Vector3:
+				candidates.append(lc["pos"] as Vector3)
+	if world != null and "wildlife_blockers" in world:
+		for blk in world.wildlife_blockers:
+			if blk is Dictionary and (blk as Dictionary).has("house_bounds"):
+				var hb: Rect2 = (blk as Dictionary)["house_bounds"]
+				var hc := hb.get_center()
+				candidates.append(Vector3(hc.x, _ground_y(hc.x, hc.y), hc.y))
+	var best := Vector3.INF
+	var best_d := max_dist
+	for cand in candidates:
+		var cpos: Vector3 = cand
+		var d := Vector2(cur.x - cpos.x, cur.z - cpos.z).length()
+		if d > best_d:
+			continue
+		if has_threat and d > 2.5 and to_threat.length_squared() > 0.01:
+			var to_c := cpos - cur
+			to_c.y = 0.0
+			if to_c.length_squared() > 0.01 and to_c.normalized().dot(to_threat.normalized()) > 0.25:
+				continue
+		best_d = d
+		best = cpos
+	return best
 
 # Un humano no destripa cada cadáver que mata: solo le interesa si le falta
 # algo — carne cuando tiene hambre o sin reserva, piel mientras le falte
@@ -1459,15 +1603,214 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 		return
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var kind := str(animal.get("animal_type"))
-	var meat_name := "Carne cruda de ciervo" if kind == "deer" else ("Carne cruda de oso" if kind == "bear" else "Carne cruda de lobo")
-	var hide_name := "Piel de ciervo" if kind == "deer" else ("Piel de oso" if kind == "bear" else "Piel de lobo")
+	var meat_name := "Carne cruda de lobo"
+	var meat_qty := 3
+	var hide_name := "Piel de lobo"
+	var hide_qty := 1
+	var part_qty := 1
+	match kind:
+		"deer":
+			meat_name = "Carne cruda de ciervo"
+			meat_qty = 4
+			hide_name = "Piel de ciervo"
+			hide_qty = 2
+			part_qty = 2
+		"fox":
+			meat_name = "Carne cruda de zorro"
+			meat_qty = 2
+			hide_name = "Piel de zorro"
+			hide_qty = 1
+			part_qty = 1
+		"bear":
+			meat_name = "Carne cruda de oso"
+			meat_qty = 5
+			hide_name = "Piel de oso"
+			hide_qty = 3
+			part_qty = 2
 	if take_meat:
-		_bot_add_inventory_item(inv, {"name": meat_name, "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0})
+		_bot_add_inventory_item(inv, {"name": meat_name, "type": "food", "weight": 0.3, "quantity": meat_qty, "use_value": 15.0})
 	if take_pelts:
-		_bot_add_inventory_item(inv, {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": 2, "use_value": 0.0})
+		_bot_add_inventory_item(inv, {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": hide_qty, "use_value": 0.0})
+	# Hueso y tendón: solo si los necesita ahora para cuerda, refugio, arco o armas de hueso
+	if _bot_item_count(proxy, "Tendón") < 4 and (_bot_wants_craft_input(b, "Tendón") or _bot_wants_craft_input(b, "Cuerda") or (str(b["shelter_id"]).is_empty() and _bot_item_count(proxy, "Cuerda") < 1)):
+		_bot_add_inventory_item(inv, {"name": "Tendón", "type": "resource", "weight": 0.06, "quantity": part_qty, "use_value": 0.0})
+	if _bot_item_count(proxy, "Hueso") < 4 and _bot_wants_craft_input(b, "Hueso"):
+		_bot_add_inventory_item(inv, {"name": "Hueso", "type": "resource", "weight": 0.18, "quantity": part_qty, "use_value": 0.0})
 	proxy.set_meta("saved_inventory", inv)
+	animal.set("_gutted", true)
+	# collect_mode = true retira el cadáver y sincroniza animal_gutted sin
+	# duplicar otro juego de pieles/carne en el suelo.
 	if world != null and world.has_method("_net_gut_animal"):
-		world._net_gut_animal(animal.name, int(b["bot_id"]), false)
+		world._net_gut_animal(animal.name, int(b["bot_id"]), true)
+
+# ==================== CAZA DE PRESAS (CIERVOS / ZORROS) ====================
+# Así es como un humano consigue carne, pieles, hueso y tendón sin suicidarse
+# contra lobos ni osos: acechando ciervos y zorros agachado (menor radio de
+# alerta en WildlifeController), usando arco/lanza/boleadoras/fusil o
+# persiguiéndolos hasta que agotan su sprint, y aprovechando cadáveres.
+
+func _bot_should_hunt_prey(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_has_can_opener(proxy):
+		return false
+	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
+		return false
+	if _sensed_node(b, "_s_leader") != null:
+		return false
+	var hunger := float(b["hunger"])
+	if _is_world_night() and hunger >= 24.0:
+		return false
+	if hunger < 62.0 or not _bot_has_edible_food(proxy, hunger < 28.0):
+		return true
+	if str(_ai_active_directive(b).get("action", "")) == "hunt":
+		return true
+	var pick := _pick_fight_weapon(b, 16.0)
+	if str(pick.get("kind", "melee")) != "melee" and _bot_wants_pelts(b, proxy):
+		return true
+	return false
+
+func _find_huntable_prey(b: Dictionary, max_dist: float) -> Node3D:
+	if world == null or world.get_tree() == null or not _bot_should_hunt_prey(b):
+		return null
+	var proxy: Node3D = b["proxy"]
+	var best: Node3D = null
+	var best_d := max_dist
+	for w in world.get_tree().get_nodes_in_group("wildlife"):
+		if not (w is Node3D) or not is_instance_valid(w) or bool(w.get("_is_dead")):
+			continue
+		var at := str(w.get("animal_type"))
+		if at != "deer" and at != "fox":
+			continue
+		var d := proxy.global_position.distance_to((w as Node3D).global_position)
+		if d < best_d:
+			best_d = d
+			best = w as Node3D
+	return best
+
+func _find_guttable_corpse(b: Dictionary, max_dist: float) -> Node3D:
+	if world == null or world.get_tree() == null:
+		return null
+	var proxy: Node3D = b["proxy"]
+	if not _bot_wants_animal_loot(b, proxy):
+		return null
+	var best: Node3D = null
+	var best_d := max_dist
+	for w in world.get_tree().get_nodes_in_group("wildlife"):
+		if not (w is Node3D) or not is_instance_valid(w):
+			continue
+		if not bool(w.get("_is_dead")) or bool(w.get("_gutted")):
+			continue
+		var at := str(w.get("animal_type"))
+		if at not in ["deer", "fox", "wolf", "bear"]:
+			continue
+		var d := proxy.global_position.distance_to((w as Node3D).global_position)
+		if d < best_d:
+			best_d = d
+			best = w as Node3D
+	return best
+
+func _bot_try_hunt_or_scavenge(b: Dictionary, delta: float) -> bool:
+	var corpse := _sensed_node(b, "_s_corpse")
+	if corpse != null and not bool(corpse.get("_gutted")) and b.get("gut_target") == null:
+		_bot_start_gutting(b, corpse)
+		if b.get("gut_target") != null:
+			return true
+	var prey := _sensed_node(b, "_s_prey")
+	if prey == null or bool(prey.get("_is_dead")) or not _bot_should_hunt_prey(b):
+		return false
+	_hunt_prey(b, prey, delta)
+	return true
+
+func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	b["sitting"] = false
+	b["sleeping"] = false
+	var ppos := prey.global_position
+	var dist := proxy.global_position.distance_to(ppos)
+	var to_prey := ppos - proxy.global_position
+	to_prey.y = 0.0
+	if to_prey.length_squared() > 0.001:
+		b["rot"] = atan2(-to_prey.x, -to_prey.z)
+		proxy.rotation.y = float(b["rot"])
+
+	var pick := _pick_fight_weapon(b, dist)
+	var wkind := str(pick.get("kind", "melee"))
+	var weapon := str(pick.get("name", "Cuchillo"))
+	# Si tiene boleadoras y la presa aún no está trabada, priorizar bolearla
+	if wkind != "rifle" and _bot_item_count(proxy, "Boleadoras") > 0 and dist > 4.5 and dist <= 22.0:
+		if float(prey.get_meta("bola_slow_until", 0.0)) < Time.get_unix_time_from_system():
+			wkind = "bola"
+			weapon = "Boleadoras"
+	b["held_item"] = weapon
+	b["has_rifle"] = wkind == "rifle"
+	proxy.set_meta("saved_held_item", weapon)
+
+	var prey_fleeing := str(prey.get("_state")) == "flee"
+	var stalk_crouch := not prey_fleeing and dist > 12.5
+
+	if wkind == "rifle" and dist > 3.5:
+		b["is_aiming"] = true
+		b["crouching"] = stalk_crouch
+		proxy.set_meta("crouching", stalk_crouch)
+		if dist > 30.0:
+			_move_bot_towards(b, ppos, 2.8 if stalk_crouch else 4.4, delta, "walk" if stalk_crouch else "run")
+		else:
+			b["anim"] = "idle"
+		if dist <= 45.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			b["shoot_cooldown"] = 0.95 if weapon == "Fusil de asalto" else 1.65
+			var dmg := 68.0 if weapon == "Fusil de asalto" else 145.0
+			_bot_fire_rifle_at(b, prey, dmg)
+		return
+
+	if wkind == "bow" and dist > 4.5:
+		b["is_aiming"] = true
+		b["crouching"] = stalk_crouch
+		proxy.set_meta("crouching", stalk_crouch)
+		if dist > 22.0:
+			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 4.2, delta, "walk" if stalk_crouch else "run")
+		else:
+			b["anim"] = "idle"
+		if dist <= 34.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
+			_bot_fire_bow(b, prey, weapon)
+		return
+
+	if wkind in ["thrown", "bola"] and dist > 4.5:
+		b["is_aiming"] = true
+		b["crouching"] = stalk_crouch
+		proxy.set_meta("crouching", stalk_crouch)
+		if dist > 16.0:
+			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 4.5, delta, "walk" if stalk_crouch else "run")
+		else:
+			b["anim"] = "idle"
+		if dist <= 22.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
+			_bot_fire_thrown(b, prey, weapon, wkind == "bola")
+		return
+
+	b["is_aiming"] = false
+	var melee_reach := 4.0 if weapon in ["Lanza", "Lanza de hueso", "Palo afilado", "Hacha"] else 3.5
+	if dist <= melee_reach:
+		b["crouching"] = false
+		proxy.set_meta("crouching", false)
+		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
+		if float(b["attack_cooldown"]) <= 0.0:
+			b["attack_cooldown"] = 0.55
+			var m_dmg := _weapon_melee_damage(weapon)
+			if prey.has_method("take_damage"):
+				prey.take_damage(m_dmg, true, proxy)
+			if bool(prey.get("_is_dead")):
+				_bot_start_gutting(b, prey)
+	elif stalk_crouch:
+		# Acecho agachado: reduce el radio de alerta de 26 m a 12 m
+		b["crouching"] = true
+		proxy.set_meta("crouching", true)
+		_move_bot_towards(b, ppos, 2.6, delta, "walk")
+	else:
+		# La presa ya arrancó o está trabada: esprintar tras ella hasta alcanzarla
+		b["crouching"] = false
+		proxy.set_meta("crouching", false)
+		_move_bot_towards(b, ppos, 5.1, delta, "run")
 
 func _find_tameable_wolf(b: Dictionary, max_dist: float) -> Node3D:
 	if world == null or world.get_tree() == null:
@@ -1529,6 +1872,26 @@ func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> voi
 		b["tame_cooldown"] = 11.0
 		b["anim"] = "idle"
 
+# Alcance visual humano realista: de noche se ve menos (salvo que el objetivo
+# lleve antorcha o linterna encendida, que lo delata), y un objetivo agachado
+# o cuerpo a tierra o en refugio camuflado cuesta mucho más de distinguir.
+func _effective_human_sight(target: Node3D, base_sight: float) -> float:
+	if target == null or not is_instance_valid(target):
+		return base_sight
+	if bool(target.get_meta("in_built_shelter", false)):
+		return 8.0
+	var s := base_sight
+	if _is_world_night():
+		var lit: bool = bool(target.get_meta("torch_lit", false)) or target.get("_torch_lit") == true or bool(target.get_meta("flashlight_on", false))
+		s *= 1.2 if lit else 0.62
+	var is_prone_t: bool = (target.get("is_prone") == true) or bool(target.get_meta("prone", false))
+	var is_crouch_t: bool = (target.get("is_crouching") == true) or bool(target.get_meta("crouching", false))
+	if is_prone_t:
+		s *= 0.42
+	elif is_crouch_t:
+		s *= 0.65
+	return maxf(8.0, s)
+
 func _find_combat_foe(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
 		return null
@@ -1553,21 +1916,20 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 				continue
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
 				continue
-			# Si el objetivo está oculto en un refugio camuflado, solo lo ve de muy cerca (< 8 m)
-			var in_sh := bool(p.get_meta("in_built_shelter", false))
-			var max_r := 8.0 if in_sh else best_d
-			var d := proxy.global_position.distance_to((p as Node3D).global_position)
-			if d < max_r:
+			var p3 := p as Node3D
+			var max_r := minf(best_d, _effective_human_sight(p3, sight))
+			var d := proxy.global_position.distance_to(p3.global_position)
+			if d < max_r and (d <= 10.0 or _has_clear_shot(proxy.global_position, p3.global_position)):
 				best_d = d
-				best = p as Node3D
+				best = p3
 		var local_p = world.get("player")
 		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
-			var in_sh_l := bool(local_p.get_meta("in_built_shelter", false))
-			var max_rl := 8.0 if in_sh_l else best_d
-			var dl := proxy.global_position.distance_to((local_p as Node3D).global_position)
-			if dl < max_rl:
+			var lp3 := local_p as Node3D
+			var max_rl := minf(best_d, _effective_human_sight(lp3, sight))
+			var dl := proxy.global_position.distance_to(lp3.global_position)
+			if dl < max_rl and (dl <= 10.0 or _has_clear_shot(proxy.global_position, lp3.global_position)):
 				best_d = dl
-				best = local_p as Node3D
+				best = lp3
 	else:
 		# Aliado/cooperativo: ataca bandidos hostiles que se acerquen a él o a su líder
 		for other_id in bots.keys():
@@ -1577,10 +1939,12 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			var op: Node3D = ob.get("proxy")
 			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 				continue
+			var max_ro := minf(best_d, _effective_human_sight(op, sight))
 			var d := proxy.global_position.distance_to(op.global_position)
 			var dl := leader.global_position.distance_to(op.global_position) if leader != null else 9999.0
-			if minf(d, dl) < best_d:
-				best_d = minf(d, dl)
+			var eff_d := minf(d, dl)
+			if eff_d < max_ro and (eff_d <= 10.0 or _has_clear_shot(proxy.global_position, op.global_position)):
+				best_d = eff_d
 				best = op
 	return best
 
@@ -1664,11 +2028,16 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		return
 
 	# Arco: consume una flecha por disparo, como un jugador. A distancia media
-	# se mueve en zigzag; de cerca cambia a melee porque el arco no sirve.
+	# se mueve en zigzag; si el rival se cierra (< 9.5 m) retrocede disparando;
+	# de muy cerca cambia a melee porque el arco no sirve.
 	if wkind == "bow" and dist > 4.5 and dist <= 46.0:
 		b["is_aiming"] = true
 		if dist > 30.0:
 			_move_bot_towards(b, fpos, 4.0, delta, "run")
+		elif dist < 9.5 and to_foe.length_squared() > 0.01:
+			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 5.0, 3.5, delta, "walk")
+			b["rot"] = atan2(-to_foe.x, -to_foe.z)
+			proxy.rotation.y = float(b["rot"])
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			if float(b["strafe_timer"]) > 1.5:
@@ -1692,6 +2061,10 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		b["is_aiming"] = true
 		if dist > 26.0:
 			_move_bot_towards(b, fpos, 4.2, delta, "run")
+		elif dist < 8.5 and to_foe.length_squared() > 0.01:
+			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 4.5, 3.5, delta, "walk")
+			b["rot"] = atan2(-to_foe.x, -to_foe.z)
+			proxy.rotation.y = float(b["rot"])
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			if float(b["strafe_timer"]) > 1.6:
@@ -2497,10 +2870,10 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 	var proxy: Node3D = b["proxy"]
 	_consume_bot_item(proxy, "Palo", 4)
 	_consume_bot_item(proxy, "Cuerda", 1)
-	var has_pelts := _bot_item_count(proxy, "Piel de lobo") + _bot_item_count(proxy, "Piel de ciervo") >= 4
+	var has_pelts := _bot_pelt_count(proxy) >= 4
 	if has_pelts:
 		var used := 0
-		for pelt_nm in ["Piel de lobo", "Piel de ciervo"]:
+		for pelt_nm in ["Piel de lobo", "Piel de ciervo", "Piel de oso", "Piel de zorro"]:
 			while used < 4 and _bot_item_count(proxy, pelt_nm) > 0:
 				_consume_bot_item(proxy, pelt_nm, 1)
 				used += 1
@@ -2736,6 +3109,10 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 	b["rot"] = lerp_angle(float(b["rot"]), atan2(-chosen_dir.x, -chosen_dir.z), minf(1.0, delta * 8.0))
 	proxy.rotation.y = float(b["rot"])
 	b["anim"] = anim_name
+	proxy.set_meta("crouching", bool(b.get("crouching", false)))
+	proxy.set_meta("prone", bool(b.get("prone", false)))
+	proxy.set_meta("sprinting", anim_name == "run")
+	proxy.set_meta("moving", anim_name == "walk" or anim_name == "run")
 	# Deteccion real de atasco: mide el avance acumulado durante la ventana
 	# completa de 2.0 s (no el paso de un unico frame).
 	b["stuck_timer"] = float(b["stuck_timer"]) + delta
