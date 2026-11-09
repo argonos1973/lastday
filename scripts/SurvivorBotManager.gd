@@ -221,6 +221,8 @@ func _ground_y(x: float, z: float, from_y: float = -INF) -> float:
 	var ty := 0.375
 	if world != null and world.has_method("_get_exact_ground_y"):
 		ty = world._get_exact_ground_y(x, z) - 0.025
+	if x < -210.0 and z < -210.0:
+		ty = maxf(ty, HighMountainZone.ground_height_at(Vector3(x, 0.0, z)) - 0.025)
 	if from_y == -INF or not (world is Node3D):
 		return ty
 	# Escaleras, rampas y pisos transitables sobre el terreno: mismo sondeo
@@ -1251,6 +1253,30 @@ func _explore_pois() -> Array:
 		for z in zones:
 			if z is Vector3:
 				_poi_cache.append({"pos": z, "kind": "wild"})
+	# Zona del Lago (NE) y perímetro exterior del mapa para que los bots
+	# exploren los cuatro cuadrantes completos, no solo el anillo ±200 m.
+	for ext_p in [
+		Vector3(162.0, 0.4, -307.0), # Orilla oeste del lago / embarcadero
+		Vector3(250.0, 0.4, -368.0), # Orilla norte del lago
+		Vector3(342.0, 0.4, -307.0), # Orilla este del lago
+		Vector3(215.0, 0.4, -225.0), # Bosque sur del lago
+		Vector3(-252.0, 0.8, -268.0), # Pie de la carretera de montaña (NW)
+		Vector3(-150.0, 0.4, -330.0), # Valle norte
+		Vector3(40.0, 0.4, -330.0), # Valle noreste
+		Vector3(-330.0, 0.4, -90.0), # Bosque oeste
+		Vector3(-330.0, 0.4, 150.0), # Bosque suroeste
+		Vector3(330.0, 0.4, 160.0), # Bosque sureste
+		Vector3(220.0, 0.4, 320.0), # Llanura sureste
+		Vector3(-200.0, 0.4, 330.0), # Llanura suroeste
+	]:
+		_poi_cache.append({"pos": ext_p, "kind": "wild"})
+	# Base Militar de la Cima (HighMountainZone, cota +56 m): accesible por la
+	# carretera asfaltada en espiral (MOUNTAIN_ROAD_WAYPOINTS_3D).
+	var hm_origin := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
+	var hm_yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
+	_poi_cache.append({"pos": hm_origin + HighMountainZone.TENT_A_OFFSET.rotated(Vector3.UP, hm_yaw), "kind": "military"})
+	_poi_cache.append({"pos": hm_origin + HighMountainZone.TENT_B_OFFSET.rotated(Vector3.UP, hm_yaw), "kind": "military"})
+	_poi_cache.append({"pos": hm_origin + (HighMountainZone.COMMS_TOWER_OFFSET + Vector3(-6.8, 0.0, 3.4)).rotated(Vector3.UP, hm_yaw), "kind": "military"})
 	# La torre militar es un POI con altura: la ruta en caracol de sus
 	# escaleras la guarda el mundo en _watchtower_climb.
 	var wtc = world.get("_watchtower_climb")
@@ -1279,10 +1305,24 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 	b["_visited"] = visited
 
 # Direccion preferente de exploracion de cada bot: angulo aureo separa los
-# sectores ~222 grados entre ellos para que se repartan el mapa.
+# sectores ~222 grados entre ellos al inicio y rota cada 2 POIs visitados para
+# barrer los 360 grados del mapa (Lago NE, Base Cima NW, Ciudad S, Granero SW).
 func _bot_explore_sector(b: Dictionary) -> float:
 	var bid := int(b.get("bot_id", 0))
-	return TAU * fposmod(float(bid) * 0.618034, 1.0)
+	var visited: Array = b.get("_mem", {}).get("visited", [])
+	var step := int(visited.size() / 2)
+	return TAU * fposmod(float(bid) * 0.618034 + float(step) * 0.381966, 1.0)
+
+func _is_pos_already_visited(b: Dictionary, pos: Vector3) -> bool:
+	var visited: Array = b.get("_mem", {}).get("visited", [])
+	if visited.is_empty():
+		return false
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		if Vector2(pos.x - pp.x, pos.z - pp.z).length() < 14.0:
+			if visited.has(_poi_id(p)):
+				return true
+	return false
 
 func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 	var bl: Array = b.get("_bad_water", [])
@@ -1356,7 +1396,12 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	var directive := _ai_active_directive(b)
 	if not directive.is_empty() and str(directive.get("mode", "")) == "pos":
 		var dp = directive.get("pos")
-		if dp is Vector3 and (dp as Vector3) != Vector3.INF and not _is_goal_blacklisted(b, dp):
+		var d_act := str(directive.get("action", ""))
+		# No permitir que una directiva explore/scavenge/hunt de Qwen basada en
+		# known_locations devuelva al bot a un POI que ya visito: eso los
+		# encerraba en el pueblo en vez de salir al Lago, Base Cima o Ciudad.
+		var skip_visited_dp: bool = d_act in ["explore", "scavenge", "hunt"] and dp is Vector3 and _is_pos_already_visited(b, dp)
+		if dp is Vector3 and (dp as Vector3) != Vector3.INF and not _is_goal_blacklisted(b, dp) and not skip_visited_dp:
 			return dp
 	var only_kinds: Array = directive.get("only_kinds", []) if not directive.is_empty() else []
 	var avoid_kinds: Array = directive.get("avoid_kinds", []) if not directive.is_empty() else []
@@ -1416,7 +1461,12 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if known.has(pid):
 				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
-			var score := w * 100.0 - minf(d, 260.0) * 0.45 + rng.randf_range(0.0, 30.0)
+			var score := w * 100.0 - minf(d, 220.0) * 0.25 + rng.randf_range(0.0, 30.0)
+			# Bono de expedicion a regiones exteriores (Lago NE, Base Cima NW,
+			# Granero remoto SW, Ciudad S, campamentos militares) tras el primer
+			# saqueo local, para que recorran todo el mapa.
+			if visited.size() >= 1 and Vector2(pp.x, pp.z).length() > 190.0:
+				score += (55.0 + curiosity * 45.0)
 			# Dispersion territorial: cada bot tiene un sector de exploracion
 			# propio (determinista por bot_id) desde su campamento — asi los tres
 			# no orbitan el mismo pueblo. La curiosidad tira hacia POIs lejanos.
@@ -1444,6 +1494,9 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				best = pp
 				best_p = p
 		if best != Vector3.INF:
+			if pass_i == 1:
+				visited.clear()
+				mem["visited"] = visited
 			break
 	if str(best_p.get("kind", "")) == "tower" and best_p.get("route") is Array:
 		b["climb_route"] = best_p["route"]
@@ -3385,10 +3438,60 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 			return dpos
 	return goal
 
+# Guia de ascenso y descenso por la carretera asfaltada en espiral hacia la
+# Base Militar de la Cima (HighMountainZone, cota +56 m): un humano no escala
+# el acantilado en linea recta ni se tira desde 56 m; sube y baja siguiendo los
+# puntos de get_road_polyline_3d() desde el pie (-252, 0.8, -268) hasta la
+# entrada sureste de la base (-356, 56, -356).
+func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
+	var on_summit_cur: bool = cur.x < -315.0 and cur.z < -315.0 and cur.y >= 48.0
+	var goal_is_summit: bool = goal.x < -290.0 and goal.z < -290.0 and goal.y >= 20.0
+	var on_road_slope: bool = not on_summit_cur and ((cur.x < -235.0 and cur.z < -235.0) or cur.y > 4.0)
+	if not goal_is_summit and not on_summit_cur and not on_road_slope:
+		return goal
+	if on_summit_cur and goal_is_summit:
+		return goal
+	var pts := HighMountainZone.get_road_polyline_3d()
+	if pts.size() < 70:
+		return goal
+	var foot_idx := 64 # (-252.0, 0.8, -268.0) pie de la montaña
+	var top_idx := pts.size() - 1 # (-356.0, 56.0, -356.0) puerta sureste de la base
+	if goal_is_summit:
+		# Ascenso: desde el valle ir primero al pie de la carretera (foot_idx)
+		if not on_road_slope and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() > 14.0:
+			return pts[foot_idx]
+		var best_i := foot_idx
+		var best_d := 1e9
+		for i in range(foot_idx, pts.size()):
+			var p: Vector3 = pts[i]
+			var d := Vector2(cur.x - p.x, cur.z - p.z).length() + absf(cur.y - p.y) * 2.5
+			if d < best_d:
+				best_d = d
+				best_i = i
+		if best_i >= top_idx - 1 and Vector2(cur.x - pts[top_idx].x, cur.z - pts[top_idx].z).length() < 9.0:
+			return goal
+		return pts[mini(best_i + 3, top_idx)]
+	# Descenso: desde la meseta o la ladera hacia el valle
+	if on_summit_cur and Vector2(cur.x - pts[top_idx].x, cur.z - pts[top_idx].z).length() > 8.0:
+		return pts[top_idx]
+	var best_i2 := top_idx
+	var best_d2 := 1e9
+	for i in range(foot_idx, pts.size()):
+		var p2: Vector3 = pts[i]
+		var d2 := Vector2(cur.x - p2.x, cur.z - p2.z).length() + absf(cur.y - p2.y) * 2.5
+		if d2 < best_d2:
+			best_d2 = d2
+			best_i2 = i
+	if best_i2 <= foot_idx + 1 and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() < 10.0:
+		return goal
+	return pts[maxi(foot_idx, best_i2 - 3)]
+
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	var cur := proxy.global_position
-	var goal := _resolve_door_approach_goal(b, cur, raw_goal)
+	var road_goal := _resolve_mountain_road_waypoint(cur, raw_goal)
+	var goal := _resolve_door_approach_goal(b, cur, road_goal)
+	var on_mountain_3d: bool = road_goal != raw_goal or (cur.x < -235.0 and cur.z < -235.0 and cur.y > 2.0)
 	# Inercia como un jugador: tras una pausa >0.5 s arranca desde parado, sin
 	# saltos bruscos de velocidad ni giros instantaneos.
 	var now := float(Time.get_ticks_msec()) / 1000.0
@@ -3406,7 +3509,9 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var bot_nav_ref = world.get("bot_nav") if world != null else null
 	if bot_nav_ref == null and world != null:
 		bot_nav_ref = world.get("wolf_nav")
-	if (flat_dist > 3.5 or direct_blocked) and bot_nav_ref != null:
+	if on_mountain_3d and (cur.x < -235.0 and cur.z < -235.0):
+		nav_guided = true
+	elif (flat_dist > 3.5 or direct_blocked) and bot_nav_ref != null:
 		var path: Array = b["path"]
 		if path.is_empty() or float(b["path_timer"]) <= 0.0:
 			b["path"] = bot_nav_ref.find_path(cur, goal)

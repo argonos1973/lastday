@@ -1458,6 +1458,33 @@ func run() -> void:
 	check(opened_back and dist_inside < 2.5,
 		"SpawnReal 10g: bot detras de casa cerrada rodea al umbral, abre la puerta y entra con bot_nav (open=%s dist=%.2f)" % [str(opened_back), dist_inside])
 
+	# 10h: los POIs incluyen Base Cima y Lago, y el bot sube por la carretera
+	# de montana hasta la Base Militar de la Cima (+56 m)
+	mgr._poi_cache_built = false
+	mgr._poi_cache.clear()
+	var all_pois := mgr._explore_pois()
+	var has_summit_poi := false
+	var has_lake_poi := false
+	for p_it in all_pois:
+		var ppos2: Vector3 = (p_it as Dictionary)["pos"]
+		if ppos2.x < -340.0 and ppos2.z < -340.0 and ppos2.y >= 50.0:
+			has_summit_poi = true
+		if ppos2.x > 150.0 and ppos2.z < -220.0:
+			has_lake_poi = true
+	check(has_summit_poi and has_lake_poi,
+		"SpawnReal 10h: _explore_pois incluye la Base Militar de la Cima y la zona del Lago (summit=%s lake=%s)" % [str(has_summit_poi), str(has_lake_poi)])
+	fresh_b["proxy"].global_position = Vector3(-252.0, 0.8, -268.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["path"] = []
+	var summit_goal := Vector3(-375.0, 56.0, -375.0)
+	for i in range(420):
+		mgr._move_bot_towards(fresh_b, summit_goal, 5.0, 0.25, "run")
+		if fresh_b["proxy"].global_position.distance_to(summit_goal) < 3.5:
+			break
+	var end_pos: Vector3 = fresh_b["proxy"].global_position
+	check(end_pos.y >= 54.0 and Vector2(end_pos.x - summit_goal.x, end_pos.z - summit_goal.z).length() < 4.5,
+		"SpawnReal 10i: el bot sube por la carretera en espiral hasta la Base Cima (pos=%s)" % str(end_pos))
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

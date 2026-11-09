@@ -1100,7 +1100,8 @@ static func _build_summit_military_base(world: Node3D, parent: Node3D, server_on
 				world._build_military_tent_collision(t_node, t_name + "_Col", t_name + "_RoofCol")
 				if world.has_method("_add_tent_interior_light"):
 					world._add_tent_interior_light(t_node, t_name + "_Light")
-		world._register_wildlife_blocker(t_pos, 4.5)
+		var t_blk: int = world._register_wildlife_blocker(t_pos, 4.5)
+		world.wildlife_blockers[t_blk]["tent_open"] = true
 
 	# 4) Torre de Comunicaciones estilo DayZ Green Mountain (68 m de altura + 6 pisos + escaleras de mano)
 	var ct_pos := base_origin + COMMS_TOWER_OFFSET.rotated(Vector3.UP, yaw_rad)

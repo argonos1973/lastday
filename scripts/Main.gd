@@ -9795,6 +9795,13 @@ func _create_survival_objectives() -> void:
 	_create_loose_survival_pickups()
 	_create_house_loot()
 	_create_mushrooms()
+	if is_ded:
+		var hut_pos := Vector3(250.0, 0.0, -254.0)
+		_create_tool_pickup("hut_axe", "axe_tool", "Hacha", "res://assets/models/props/simple_axe.glb", hut_pos + Vector3(-1.5, 0.05, -2.5), 1.2, Vector3(0, 45, 0))
+		_create_pickup_item({"id": "hut_bottle", "name": "Botella de plastico", "type": "misc", "weight": 0.1, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.0, 0.05, -2.8), "paths": [PLASTIC_BOTTLE_MODEL], "scale": 0.02, "rot": Vector3(0, 20, 0), "color": Color(0.15, 0.18, 0.20)})
+		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
+		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.0005, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
+		_create_pickup_item({"id": "hut_fishing_rod", "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.6, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.2, 0.05, -2.5), "paths": ["res://assets/models/props/cana_de_pescar.glb"], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.25, 0.18, 0.10)})
 
 func _create_river_drink_zones() -> void:
 	var segments := _default_river_segments()
@@ -17317,6 +17324,8 @@ func is_bot_blocked_at(pos: Vector3, extra_margin := 0.0) -> bool:
 				if door_is_open and _bot_house_pos_ok(p, bounds, blocker_pos, blocker):
 					continue
 				return true
+			continue
+		if blocker.get("tent_open", false) == true:
 			continue
 		var radius := float(blocker.get("radius", 1.8)) + extra_margin
 		if p.distance_to(Vector2(blocker_pos.x, blocker_pos.z)) <= radius:
