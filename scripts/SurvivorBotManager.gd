@@ -791,6 +791,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 	if bool(proxy.get_meta("proxy_dead", false)):
 		b["anim"] = "dead"
+		b["_act"] = "dead"
 		b["torch_lit"] = false
 		b["is_aiming"] = false
 		b["respawn_timer"] = float(b.get("respawn_timer", 0.0)) + delta
@@ -849,6 +850,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["sleeping"] = false
 		b["is_aiming"] = false
 		b["anim"] = str(b.get("flinch_anim", "hit"))
+		b["_act"] = "flinch"
 		return
 
 	# Refresco de sentidos a ~5 Hz escalonado entre bots. Un humano reacciona
@@ -889,6 +891,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
 	if predator != null:
+		b["_act"] = "predator"
 		_handle_predator_encounter(b, predator, delta)
 		return
 
@@ -896,12 +899,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if float(b["tame_cooldown"]) <= 0.0 and not bool(b.get("_s_has_wolf", false)):
 		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
 		if wild_wolf != null and _bot_has_raw_meat(proxy):
+			b["_act"] = "tame"
 			_perform_wolf_taming_step(b, wild_wolf, delta)
 			return
 
 	# 3) Combate contra enemigos humanos / otros bots de facción opuesta
 	var human_foe := _sensed_node(b, "_s_foe")
 	if human_foe != null:
+		b["_act"] = "foe"
 		# Herido grave (< 30 HP) o en huida: repliegue real. Con refugio va a
 		# ocultarse; sin refugio escapa en zigzag hasta perder la amenaza.
 		var fleeing: bool = float(b["flee_until"]) > 0.0
@@ -938,6 +943,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# demasiado o el bot ya no necesita nada de él.
 	var gut: Node3D = b.get("gut_target")
 	if gut != null:
+		b["_act"] = "gut"
 		var gut_ok: bool = is_instance_valid(gut) and not bool(gut.get("_gutted"))
 		var gdist: float = proxy.global_position.distance_to(gut.global_position) if gut_ok else 999.0
 		if not gut_ok or gdist > 60.0 or not _bot_wants_animal_loot(b, proxy):
@@ -958,8 +964,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var leader := _sensed_node(b, "_s_leader")
 	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
 	if float(b["thirst"]) < thirsty_line and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
+		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
-			b["drink_at"] = _nearest_water_pos(proxy.global_position)
+			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
+			if float(b["drink_scan"]) <= 0.0:
+				b["drink_scan"] = 4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5)
+				b["drink_at"] = _nearest_water_pos(proxy.global_position)
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
 			# Con agua vadeable basta tener los pies mojados para beber; el centro
@@ -993,25 +1003,33 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 							proxy.set_meta("saved_inventory", inv_w)
 							break
 			return
+		# Sin agua localizable (drink_at == INF): NO parar al bot — sigue con
+		# su vida (forrajeo, saqueo, explorar) y reintenta localizar agua en
+		# el proximo escaneo de sed en ~4 s. Antes este return se ejecutaba
+		# siempre y el bot quedaba congelado en idle para siempre.
 
 	# 4b) Hambre sin comida comestible: forrajeo — setas (eat_food) y arboles
 	# frutales (pick_fruit), lo mismo que buscaria un jugador hambriento.
 	if _bot_try_forage(b, delta):
+		b["_act"] = "forage"
 		return
 
 	# 4c) Caza de presas (ciervos/zorros) y aprovechamiento de cadáveres cuando
 	# falta comida o materiales animales (pieles, tendón para cuerda, hueso).
 	if leader == null and _bot_try_hunt_or_scavenge(b, delta):
+		b["_act"] = "hunt"
 		return
 
 	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
 	if leader != null:
+		b["_act"] = "team"
 		_tick_teammate_behavior(b, leader, delta)
 		return
 
 	# 5) Saqueo oportuno de objetos cercanos (comida, armas, ropa mejor, materiales)
 	var loot_action: Dictionary = b.get("_s_loot", {})
 	if not loot_action.is_empty():
+		b["_act"] = "loot"
 		b["sitting"] = false
 		b["crouching"] = false
 		var lpos := _loot_entry_pos(loot_action)
@@ -1026,10 +1044,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# hay drops a mano, el bot tala arbustos (fell_bush) igual que un jugador —
 	# filo en mano, 5 s de corte, 3 palos y semillas al suelo.
 	if _bot_try_gather_mats(b, delta):
+		b["_act"] = "mats"
 		return
 
 	# 6) Construir campamento propio (refugio + camuflaje/pieles + fogata) y ocultarse/descansar
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
+		b["_act"] = "build"
 		var d_camp := Vector2(proxy.global_position.x - camp_pos.x, proxy.global_position.z - camp_pos.z).length()
 		if d_camp > 2.4:
 			_move_bot_towards(b, camp_pos, 3.8, delta, "walk")
@@ -1038,6 +1058,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
+		b["_act"] = "campfire"
 		# La fogata tambien necesita suelo valido: junto al refugio pero nunca
 		# en agua, carretera, pendiente ni zona habitada.
 		var fire_spot := Vector3.INF
@@ -1060,6 +1081,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var wants_camp: bool = is_night or float(b["health"]) < 65.0 or float(b["hide_timer"]) > 0.0
 	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, 85.0)
 	if rest_pos != Vector3.INF and wants_camp:
+		b["_act"] = "rest"
 		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
 		var d_sh := Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length()
 		if d_sh > 1.8:
@@ -1088,11 +1110,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 6b) Crafteo: sin urgencias, fabrica con los mismos RECIPES que un jugador
 	# (herramientas, armas, flechas, cuerda, ropa de piel, antorcha, comida...)
 	if _bot_try_craft(b, delta):
+		b["_act"] = "craft"
 		return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
 	# tiendas militares, ciudad, graneros, zonas salvajes) recordando los ya
 	# visitados entre vidas, y evitando la zona donde murio la ultima vez.
+	b["_act"] = "explore"
 	b["sitting"] = false
 	b["crouching"] = false
 	b["caution_until"] = maxf(0.0, float(b.get("caution_until", 0.0)) - delta)
@@ -1116,6 +1140,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if float(b.get("explore_dwell", 0.0)) > 0.0:
 		b["explore_dwell"] = float(b["explore_dwell"]) - delta
 		b["anim"] = "idle"
+		b["_act"] = "dwell"
 		return
 	if cur_target == Vector3.INF:
 		# Sin POIs en el mundo (tests): patrulla heredada del config
@@ -4914,6 +4939,7 @@ func get_full_web_status() -> Dictionary:
 		snap["pos"] = [snappedf(pos.x, 0.1), snappedf(pos.y, 0.1), snappedf(pos.z, 0.1)]
 		snap["rot"] = snappedf(float(b.get("rot", 0.0)), 0.01)
 		snap["anim"] = str(b.get("anim", "idle"))
+		snap["act"] = str(b.get("_act", "?"))
 		snap["dead"] = bool(proxy.get_meta("proxy_dead", false)) if proxy != null and is_instance_valid(proxy) else false
 		snap["respawn_seconds"] = int(maxf(0.0, 180.0 - float(b.get("respawn_timer", 0.0)))) if bool(snap["dead"]) else 0
 		snap["held_item"] = str(b.get("held_item", ""))
@@ -4961,6 +4987,27 @@ func get_full_web_status() -> Dictionary:
 	if world != null and bool(world.get("_high_mountain_ready")):
 		var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
 		landmarks_out.append({"kind": "summit_base", "label": "Base Cima", "pos": [snappedf(summit.x, 0.1), snappedf(summit.y, 0.1), snappedf(summit.z, 0.1)]})
+	# Jugadores humanos conectados: el monitor los dibuja en el mismo mapa.
+	var players_out: Array = []
+	var proxies = world.get("net_player_proxy") if world != null else null
+	if net != null and "players" in net and proxies is Dictionary:
+		for pid in net.players.keys():
+			if is_bot_peer_id(int(pid)):
+				continue
+			var pdata: Dictionary = net.players[pid]
+			if bool(pdata.get("offline", false)):
+				continue
+			var pr = (proxies as Dictionary).get(pid)
+			if pr == null or not is_instance_valid(pr) or not (pr is Node3D):
+				continue
+			var pp: Vector3 = (pr as Node3D).global_position
+			players_out.append({
+				"id": int(pid),
+				"name": str(pdata.get("char_name", pdata.get("name", "Jugador"))),
+				"pos": [snappedf(pp.x, 0.1), snappedf(pp.y, 0.1), snappedf(pp.z, 0.1)],
+				"health": snappedf(float((pr as Node3D).get_meta("proxy_health", pdata.get("health", 100.0))), 0.1),
+				"dead": bool((pr as Node3D).get_meta("proxy_dead", false)),
+			})
 	return {
 		"timestamp": int(Time.get_unix_time_from_system()),
 		"server": {
@@ -4985,6 +5032,7 @@ func get_full_web_status() -> Dictionary:
 		},
 		"pois": pois_out,
 		"landmarks": landmarks_out,
+		"players": players_out,
 		"bots": bots_out,
 	}
 

@@ -284,6 +284,7 @@
       <span><i class="dot" style="background:#6c8cff"></i> Casa / Ciudad</span>
       <span><i class="dot" style="background:#d96b27"></i> Militar / Torre</span>
       <span><i class="dot" style="background:#e8b84a"></i> ▲ Base Cima</span>
+      <span><i class="dot" style="background:#f2f5f3"></i> ◆ Jugador</span>
       <span><i class="dot" style="background:#52d18a"></i> Refugio Bot</span>
     </div>
   </div>
@@ -385,7 +386,7 @@ function renderSummary(data) {
     html += `<tr>
       <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)}</span></td>
       <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
-      <td>${esc(b.anim || "idle")} ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
+      <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
       <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
       <td>${d.action ? `${srcBadge} <b>${esc(d.action)}</b> → ${esc(d.target || "-")}<br/><span style="color:var(--muted)">${esc(d.reason || "")}</span>` : `<span class="empty-note">IA táctica local activa</span>`}</td>
       <td>${b.known_locations_count || 0} conocidas<br/><span style="color:var(--muted)">${b.deaths || 0} muertes ${b.last_death_cause ? `(${esc(b.last_death_cause)})` : ""}</span></td>
@@ -409,6 +410,9 @@ function renderMap(data) {
   }
   for (const l of (data.landmarks || [])) {
     ext = Math.max(ext, Math.abs(l.pos[0]), Math.abs(l.pos[2]));
+  }
+  for (const pl of (data.players || [])) {
+    ext = Math.max(ext, Math.abs(pl.pos[0]), Math.abs(pl.pos[2]));
   }
   for (const b of (data.bots || [])) {
     if (b.pos) ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2]));
@@ -465,6 +469,27 @@ function renderMap(data) {
       ctx.fillText(l.label, lx, lz + 16);
       ctx.textAlign = "left";
     }
+  }
+
+  // Jugadores humanos conectados (rombo blanco con nombre)
+  for (const pl of (data.players || [])) {
+    const [px, pz] = toScreen(pl.pos[0], pl.pos[2]);
+    ctx.fillStyle = pl.dead ? "#8a8f8c" : "#f2f5f3";
+    ctx.beginPath();
+    ctx.moveTo(px, pz - 7);
+    ctx.lineTo(px + 7, pz);
+    ctx.lineTo(px, pz + 7);
+    ctx.lineTo(px - 7, pz);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#f2f5f3";
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(pl.name || "Jugador", px, pz - 10);
+    ctx.textAlign = "left";
   }
 
   // Bots, shelters, targets
@@ -584,7 +609,7 @@ function renderBots(data) {
           <div style="font-size:10px;color:var(--muted);margin-top:3px">PUNTUACIÓN</div>
           <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b></div>
           <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)}</div>
-          <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")}</span>
+          <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")} · ${esc(b.act || "?")}</span>
         </div>
       </div>
 

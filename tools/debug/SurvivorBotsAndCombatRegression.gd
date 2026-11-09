@@ -1398,6 +1398,19 @@ func run() -> void:
 		"SpawnReal 10c: el spawn nunca queda pegado a otro superviviente (sep a Elena=%.0f m)" % Vector2(spawn_far.x - elena_p.x, spawn_far.z - elena_p.z).length())
 	if old_zones is Array:
 		world._spawn_zones = old_zones
+	# SpawnReal 10d: sed sin agua localizable no congela al bot. Antes, la rama
+	# de beber hacia `return` siempre: con thirst<32 y _nearest_water_pos=INF
+	# (river_segs vacio en el mundo de prueba) el bot quedaba en idle eterno.
+	fresh_b["thirst"] = 20.0
+	fresh_b["hunger"] = 90.0
+	fresh_b["drink_at"] = Vector3.INF
+	fresh_b["drink_scan"] = 0.0
+	for i in range(40):
+		mgr._tick_bot(fresh_b, 0.1)
+	var acted := str(fresh_b.get("_act", ""))
+	var moved: bool = str(fresh_b.get("anim", "")) in ["walk", "run"] or fresh_b.get("explore_target", Vector3.INF) != Vector3.INF
+	check(acted != "drink" and moved,
+		"SpawnReal 10d: sed sin agua no congela al bot (act=%s anim=%s)" % [acted, str(fresh_b.get("anim", "?"))])
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
