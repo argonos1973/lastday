@@ -485,6 +485,8 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"stuck_count": 0,
 		"last_move_pos": spawn_pos,
 		"flee_until": 0.0,
+		"gut_target": null,
+		"gut_t": 0.0,
 		"strafe_dir": 1.0,
 		"strafe_timer": 0.0,
 		"drink_at": Vector3.INF,
@@ -819,6 +821,26 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	b["is_aiming"] = false
+
+	# 3b) Destripado en curso: caminar hasta el cadáver y dedicarle unos
+	# segundos agachado. Se abandona si el cadáver desaparece, se aleja
+	# demasiado o el bot ya no necesita nada de él.
+	var gut: Node3D = b.get("gut_target")
+	if gut != null:
+		var gut_ok: bool = is_instance_valid(gut) and not bool(gut.get("_gutted"))
+		var gdist: float = proxy.global_position.distance_to(gut.global_position) if gut_ok else 999.0
+		if not gut_ok or gdist > 60.0 or not _bot_wants_animal_loot(b, proxy):
+			b["gut_target"] = null
+		elif gdist > 2.4:
+			_move_bot_towards(b, gut.global_position, 4.6, delta, "run")
+			return
+		else:
+			b["gut_t"] = float(b["gut_t"]) + delta
+			b["anim"] = "sit"
+			if float(b["gut_t"]) >= 3.5:
+				b["gut_target"] = null
+				_bot_harvest_dead_animal(b, gut)
+			return
 
 	# 4) Sed critica sin botellas: ir al rio/lago a beber (solo si no esta
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
@@ -1344,6 +1366,11 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 
 	b["is_aiming"] = false
 	var melee_reach := 4.0 if weapon in ["Lanza", "Lanza de hueso", "Palo afilado", "Hacha"] else 3.5
+	# Sin arma de fuego un superviviente no caza lobos ni osos: huye como haría
+	# un humano y solo pelea cuerpo a cuerpo cuando el animal ya está encima.
+	if dist > melee_reach + 2.2:
+		_flee_predator(b, predator, delta)
+		return
 	if dist <= melee_reach:
 		# Paso lateral ágil mientras golpea para no quedarse quieto bajo las fauces
 		var side := Vector3(-to_pred.z, 0.0, to_pred.x).normalized() if to_pred.length_squared() > 0.01 else Vector3.RIGHT
@@ -1354,22 +1381,90 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 			var m_dmg := _weapon_melee_damage(weapon)
 			if predator.has_method("take_damage"):
 				predator.take_damage(m_dmg, true, proxy)
-			# Si lo mata, lo destripa automáticamente para aprovechar carne y pieles
+			# Si lo mata, valora si merece destriparlo (no recoge por recoger)
 			if bool(predator.get("_is_dead")):
-				_bot_harvest_dead_animal(b, predator)
+				_bot_start_gutting(b, predator)
 	else:
+		# Acorralado: cierra el último tramo para poder defenderse
 		_move_bot_towards(b, ppos, 4.9, delta, "run")
+
+# Como un humano, el bot no caza depredadores sin arma de fuego: huye a su
+# refugio (donde la fauna no puede entrar) o en zigzag. Su lobo domado, si lo
+# tiene, lo cubre interceptando la amenaza.
+func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	_command_bot_wolf_against(b, predator)
+	# Cautela prolongada para que el sentido lo siga viendo a 30 m mientras huye
+	b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 9.0)
+	var sh_pos: Vector3 = b["shelter_pos"]
+	if sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 110.0:
+		b["hide_timer"] = 10.0
+		_move_bot_towards(b, sh_pos, 5.2, delta, "run")
+		return
+	var away := proxy.global_position - predator.global_position
+	away.y = 0.0
+	var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
+	b["strafe_timer"] = float(b["strafe_timer"]) + delta
+	if float(b["strafe_timer"]) > 1.1:
+		b["strafe_dir"] = -float(b["strafe_dir"])
+		b["strafe_timer"] = 0.0
+	var side := Vector3(-away_dir.z, 0.0, away_dir.x)
+	_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.45).normalized() * 9.0, 5.2, delta, "run")
+
+# Un humano no destripa cada cadáver que mata: solo le interesa si le falta
+# algo — carne cuando tiene hambre o sin reserva, piel mientras le falte
+# equipo de abrigo. Y necesita un filo igual que el jugador.
+func _bot_wants_pelts(b: Dictionary, proxy: Node3D) -> bool:
+	const FUR := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel", "Tocado de piel animal", "Gorro de piel"]
+	var fur_worn := 0
+	for it in b["clothing"]:
+		if str(it) in FUR:
+			fur_worn += 1
+	var pelts := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		var entry: Dictionary = it
+		if str(entry.get("name", "")).begins_with("Piel de "):
+			pelts += int(entry.get("quantity", 1))
+	return fur_worn * 3 + pelts < 9
+
+func _bot_wants_animal_loot(b: Dictionary, proxy: Node3D) -> bool:
+	if not _bot_has_can_opener(proxy):
+		return false
+	if float(b["hunger"]) < 62.0 or not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0):
+		return true
+	return _bot_wants_pelts(b, proxy)
+
+# Tras una baja se agenda el destripado: el bot camina hasta el cadáver y
+# dedica unos segundos agachado, igual que la acción del jugador.
+func _bot_start_gutting(b: Dictionary, animal: Node3D) -> void:
+	if animal == null or not is_instance_valid(animal) or bool(animal.get("_gutted")):
+		return
+	var proxy: Node3D = b["proxy"]
+	if not _bot_wants_animal_loot(b, proxy):
+		return
+	if proxy.global_position.distance_to(animal.global_position) > 55.0:
+		return
+	b["gut_target"] = animal
+	b["gut_t"] = 0.0
 
 func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 	if animal == null or not is_instance_valid(animal) or bool(animal.get("_gutted")):
 		return
 	var proxy: Node3D = b["proxy"]
+	if not _bot_has_can_opener(proxy):
+		return
+	var take_meat := float(b["hunger"]) < 62.0 or not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
+	var take_pelts := _bot_wants_pelts(b, proxy)
+	if not take_meat and not take_pelts:
+		return
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var kind := str(animal.get("animal_type"))
 	var meat_name := "Carne cruda de ciervo" if kind == "deer" else ("Carne cruda de oso" if kind == "bear" else "Carne cruda de lobo")
 	var hide_name := "Piel de ciervo" if kind == "deer" else ("Piel de oso" if kind == "bear" else "Piel de lobo")
-	_bot_add_inventory_item(inv, {"name": meat_name, "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0})
-	_bot_add_inventory_item(inv, {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": 2, "use_value": 0.0})
+	if take_meat:
+		_bot_add_inventory_item(inv, {"name": meat_name, "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0})
+	if take_pelts:
+		_bot_add_inventory_item(inv, {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": 2, "use_value": 0.0})
 	proxy.set_meta("saved_inventory", inv)
 	if world != null and world.has_method("_net_gut_animal"):
 		world._net_gut_animal(animal.name, int(b["bot_id"]), false)
@@ -1643,7 +1738,7 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)
 		if bool(target.get("_is_dead")):
-			_bot_harvest_dead_animal(b, target)
+			_bot_start_gutting(b, target)
 	else:
 		_apply_bot_damage_to_target(b, target, dmg, "rifle")
 
@@ -1765,7 +1860,7 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)
 		if bool(target.get("_is_dead")):
-			_bot_harvest_dead_animal(b, target)
+			_bot_start_gutting(b, target)
 	else:
 		var wname := "rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee")
 		_apply_bot_damage_to_target(b, target, dmg, wname)

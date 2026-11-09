@@ -1036,6 +1036,93 @@ func run() -> void:
 	check(Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length() < 2.5,
 		"Puerta: el bot entra en la casa por la puerta abierta (dist=%.2f)" % Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length())
 
+	# --- 26) Depredadores: sin arma de fuego el bot huye, no caza ---
+	var wolf3 := WildlifeControllerScript.new()
+	wolf3.name = "Wildlife_wolf_flee"
+	world.add_child(wolf3)
+	wolf3.setup("wolf", [Vector3(0.0, 0.4, 0.0)])
+	elena["shelter_pos"] = Vector3.INF
+	elena["sense_t"] = 999.0
+	elena["_s_predator"] = null
+	elena["_s_foe"] = null
+	elena["aggro_target"] = null
+	elena["hide_timer"] = 0.0
+	elena["tame_cooldown"] = 99.0
+	elena["attack_cooldown"] = 0.0
+	elena_proxy.set_meta("saved_inventory", [{"name": "Cuchillo", "type": "tool_knife", "quantity": 1}])
+
+	# Lobo a 15 m: huye alejándose, no carga a por él
+	elena_proxy.global_position = Vector3(100.0, 0.4, 100.0)
+	wolf3.global_position = elena_proxy.global_position + Vector3(15.0, 0.0, 0.0)
+	var d_pred := elena_proxy.global_position.distance_to(wolf3.global_position)
+	mgr._handle_predator_encounter(elena, wolf3, 0.2)
+	check(elena_proxy.global_position.distance_to(wolf3.global_position) > d_pred,
+		"Sin fusil el bot huye del lobo en vez de acercarse a cazar (d %.1f->%.1f)" % [d_pred, elena_proxy.global_position.distance_to(wolf3.global_position)])
+	check(float(elena["caution_until"]) > 0.0, "La huida prolonga la cautela (sigue viendo al depredador)")
+
+	# Oso a 14 m: tampoco se acerca a pegarle con un cuchillo
+	var bear := WildlifeControllerScript.new()
+	bear.name = "Wildlife_bear_flee"
+	world.add_child(bear)
+	bear.setup("bear", [Vector3(0.0, 0.4, 0.0)])
+	bear.global_position = elena_proxy.global_position + Vector3(14.0, 0.0, 0.0)
+	d_pred = elena_proxy.global_position.distance_to(bear.global_position)
+	mgr._handle_predator_encounter(elena, bear, 0.2)
+	check(elena_proxy.global_position.distance_to(bear.global_position) > d_pred,
+		"Sin fusil el bot huye del oso igual que del lobo (d %.1f->%.1f)" % [d_pred, elena_proxy.global_position.distance_to(bear.global_position)])
+
+	# Acorralado (lobo encima): defensa a vida o muerte en melee
+	wolf3.global_position = elena_proxy.global_position + Vector3(3.0, 0.0, 0.0)
+	elena["attack_cooldown"] = 0.0
+	var whp := float(wolf3.health)
+	mgr._handle_predator_encounter(elena, wolf3, 0.2)
+	check(float(wolf3.health) < whp, "Con el lobo encima el bot se defiende en melee (hp %.1f->%.1f)" % [whp, float(wolf3.health)])
+
+	# Destripado: solo si le hace falta algo, con filo y dedicando ~3.5 s
+	wolf3.take_damage(999.0, true, elena_proxy)
+	check(bool(wolf3.get("_is_dead")), "El lobo muere para la prueba de destripado")
+	elena["hunger"] = 30.0
+	elena["gut_target"] = null
+	mgr._bot_start_gutting(elena, wolf3)
+	check(elena["gut_target"] == wolf3, "Con hambre y filo agenda destripar al animal muerto")
+	elena_proxy.global_position = wolf3.global_position + Vector3(1.5, 0.0, 0.0)
+	for i in range(50):
+		mgr._tick_bot(elena, 0.1)
+		if elena["gut_target"] == null:
+			break
+	check(bool(wolf3.get("_gutted")), "El destripado marca el cadáver como gutted tras dedicarle tiempo")
+	var inv_gut: Array = elena_proxy.get_meta("saved_inventory", [])
+	var got_pelt := false
+	for it in inv_gut:
+		if str((it as Dictionary).get("name", "")).begins_with("Piel de "):
+			got_pelt = true
+	check(got_pelt, "El destripado entrega pieles reales al inventario")
+
+	# Sin hambre y con pieles de sobra: no destripa por destripar
+	elena["hunger"] = 95.0
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Seta amanita", "type": "food", "quantity": 1, "use_value": 12.0},
+		{"name": "Piel de ciervo", "type": "resource", "quantity": 9, "use_value": 0.0},
+		{"name": "Cuchillo", "type": "tool_knife", "quantity": 1}])
+	var wolf4 := WildlifeControllerScript.new()
+	wolf4.name = "Wildlife_wolf_skip"
+	world.add_child(wolf4)
+	wolf4.setup("wolf", [Vector3(0.0, 0.4, 0.0)])
+	wolf4.take_damage(999.0, true, elena_proxy)
+	mgr._bot_start_gutting(elena, wolf4)
+	check(elena["gut_target"] == null, "Sin hambre ni falta de abrigo no destripa cadáveres por acumular")
+
+	# Sin filo: no puede destripar aunque se muera de hambre
+	elena["hunger"] = 20.0
+	elena_proxy.set_meta("saved_inventory", [{"name": "Seta amanita", "type": "food", "quantity": 1, "use_value": 12.0}])
+	var wolf5 := WildlifeControllerScript.new()
+	wolf5.name = "Wildlife_wolf_noedge"
+	world.add_child(wolf5)
+	wolf5.setup("wolf", [Vector3(0.0, 0.4, 0.0)])
+	wolf5.take_damage(999.0, true, elena_proxy)
+	mgr._bot_start_gutting(elena, wolf5)
+	check(elena["gut_target"] == null, "Sin filo no agenda destripado (como el jugador)")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
