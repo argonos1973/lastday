@@ -1314,7 +1314,7 @@ func run() -> void:
 		var sec := mgr._bot_explore_sector(tb)
 		var sdir := Vector2(cos(sec), sin(sec))
 		var ppos := camp_base + Vector3(sdir.x * 300.0, 0.0, sdir.y * 300.0)
-		world.HOUSE_FOOTPRINTS.append({"origin": ppos})
+		world.HOUSE_FOOTPRINTS.append({"origin": ppos, "w": 8.0, "d": 8.0})
 		sector_pois[tbid] = ppos
 	mgr._poi_cache.clear()
 	mgr._poi_cache_built = false

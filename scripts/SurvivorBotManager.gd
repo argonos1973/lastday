@@ -4926,6 +4926,13 @@ func get_full_web_status() -> Dictionary:
 		snap["score"] = score
 		snap["stats"] = st
 		bots_out.append(snap)
+	# Puntos de interes fijos del mundo que no son objetivos de exploracion de
+	# los bots (p. ej. la base militar de la cumbre: esta a 56 m de altura y
+	# solo se alcanza por la carretera de montana).
+	var landmarks_out: Array = []
+	if world != null and bool(world.get("_high_mountain_ready")):
+		var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
+		landmarks_out.append({"kind": "summit_base", "label": "Base Cima", "pos": [snappedf(summit.x, 0.1), snappedf(summit.y, 0.1), snappedf(summit.z, 0.1)]})
 	return {
 		"timestamp": int(Time.get_unix_time_from_system()),
 		"server": {
@@ -4949,6 +4956,7 @@ func get_full_web_status() -> Dictionary:
 			"queue_size": _ai_queue.size(),
 		},
 		"pois": pois_out,
+		"landmarks": landmarks_out,
 		"bots": bots_out,
 	}
 

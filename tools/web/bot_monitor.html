@@ -273,7 +273,7 @@
 <div class="top-grid">
   <div class="card">
     <div class="card-title">
-      <span>Mapa Táctico en Tiempo Real (-500..+500 m)</span>
+      <span id="mapTitle">Mapa Táctico en Tiempo Real</span>
       <span id="mapClock" style="color:var(--muted);font-size:12px;">En vivo (2s)</span>
     </div>
     <canvas id="mapCanvas" width="400" height="360"></canvas>
@@ -283,6 +283,7 @@
       <span><i class="dot" style="background:var(--kael)"></i> Kael (903)</span>
       <span><i class="dot" style="background:#6c8cff"></i> Casa / Ciudad</span>
       <span><i class="dot" style="background:#d96b27"></i> Militar / Torre</span>
+      <span><i class="dot" style="background:#e8b84a"></i> ▲ Base Cima</span>
       <span><i class="dot" style="background:#52d18a"></i> Refugio Bot</span>
     </div>
   </div>
@@ -401,15 +402,31 @@ function renderMap(data) {
   const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
+  // Extremo dinamico: la ciudad/base militar queda fuera del centro ±500 m
+  let ext = 500;
+  for (const p of (data.pois || [])) {
+    ext = Math.max(ext, Math.abs(p.pos[0]), Math.abs(p.pos[2]));
+  }
+  for (const l of (data.landmarks || [])) {
+    ext = Math.max(ext, Math.abs(l.pos[0]), Math.abs(l.pos[2]));
+  }
+  for (const b of (data.bots || [])) {
+    if (b.pos) ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2]));
+    if (b.explore_target && b.explore_target.length >= 3) ext = Math.max(ext, Math.abs(b.explore_target[0]), Math.abs(b.explore_target[2]));
+    if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
+  }
+  ext = Math.ceil((ext + 40) / 100) * 100; // margen + redondeo a 100 m
+  document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m)`;
+
   const toScreen = (x, z) => [
-    ((x + 500) / 1000) * (W - 24) + 12,
-    ((z + 500) / 1000) * (H - 24) + 12
+    ((x + ext) / (ext * 2)) * (W - 24) + 12,
+    ((z + ext) / (ext * 2)) * (H - 24) + 12
   ];
 
-  // Grid
+  // Grid cada 200 m
   ctx.strokeStyle = "rgba(38, 56, 48, 0.45)";
   ctx.lineWidth = 1;
-  for (let g = -400; g <= 400; g += 200) {
+  for (let g = -ext + 200; g <= ext - 200; g += 200) {
     const [gx] = toScreen(g, 0);
     const [, gz] = toScreen(0, g);
     ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
@@ -424,6 +441,30 @@ function renderMap(data) {
     ctx.beginPath();
     ctx.arc(px, pz, poi.kind === "tower" ? 4.5 : 3.0, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // Landmarks fijos del mundo (base militar de la cumbre, etc.): triangulo
+  // dorado con etiqueta — no son POIs de exploracion de los bots.
+  for (const l of (data.landmarks || [])) {
+    const [lx, lz] = toScreen(l.pos[0], l.pos[2]);
+    ctx.fillStyle = "#e8b84a";
+    ctx.strokeStyle = "#e8b84a";
+    ctx.beginPath();
+    ctx.moveTo(lx, lz - 8);
+    ctx.lineTo(lx - 7, lz + 5);
+    ctx.lineTo(lx + 7, lz + 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    if (l.label) {
+      ctx.fillStyle = "#e8b84a";
+      ctx.font = "bold 10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(l.label, lx, lz + 16);
+      ctx.textAlign = "left";
+    }
   }
 
   // Bots, shelters, targets
