@@ -342,7 +342,7 @@ func _nearest_tree_dist(pos: Vector3, max_dist: float) -> float:
 
 # Punto de agua alcanzable mas cercano (segmentos del rio/lago) para que el
 # superviviente vaya a beber cuando se quede sin botellas.
-func _nearest_water_pos(from: Vector3) -> Vector3:
+func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	if world == null or not world.has_method("_default_river_segments"):
 		return Vector3.INF
 	var best := Vector3.INF
@@ -351,10 +351,36 @@ func _nearest_water_pos(from: Vector3) -> Vector3:
 		if not (seg is Dictionary):
 			continue
 		var c: Vector3 = seg.get("center", Vector3.ZERO)
-		var d := Vector2(from.x - c.x, from.z - c.z).length()
+		var sz: Vector2 = seg.get("size", Vector2.ZERO)
+		var yaw: float = deg_to_rad(float(seg.get("yaw", 0.0)))
+		var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var across := Vector3(sin(yaw), 0.0, cos(yaw))
+		var off := from - c
+		off.y = 0.0
+		var target_pt := c
+		if sz.x >= 60.0:
+			# Lago: apuntar a la orilla de la elipse mas cercana al bot, nunca
+			# al centro profundo de 150x90 m.
+			var rx := maxf(1.0, sz.x * 0.5 * 0.82)
+			var rz := maxf(1.0, sz.y * 0.5 * 0.82)
+			var nf := off.dot(along) / rx
+			var ns := off.dot(across) / rz
+			var nlen := sqrt(nf * nf + ns * ns)
+			if nlen > 0.01:
+				target_pt = c + along * (nf / nlen * rx) + across * (ns / nlen * rz)
+		elif sz.x > 0.1 and sz.y > 0.1:
+			# Rio: apuntar a la orilla somera del lado del bot en vez del eje
+			# profundo, para que _move_bot_towards no frene antes de beber.
+			var lf := clampf(off.dot(along), -sz.x * 0.45, sz.x * 0.45)
+			var side_sign := 1.0 if off.dot(across) >= 0.0 else -1.0
+			var hw := maxf(0.5, sz.y * 0.5 - 0.35)
+			target_pt = c + along * lf + across * (side_sign * hw)
+		if not b.is_empty() and _is_water_blacklisted(b, target_pt):
+			continue
+		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
 		if d < best_d:
 			best_d = d
-			best = c
+			best = target_pt
 	return best
 
 func spawn_all_bots() -> void:
@@ -391,7 +417,7 @@ func _random_bot_spawn(cfg: Dictionary, avoid_pos: Vector3 = Vector3.INF) -> Vec
 	for zi in order:
 		var zone: Vector3 = zones[zi]
 		for j in range(3):
-			var cand := Vector3(zone.x + rng.randf_range(-4.0, 4.0), 0.0, zone.z + rng.randf_range(-4.0, 4.0))
+			var cand := Vector3(zone.x + rng.randf_range(-3.0, 3.0), 0.0, zone.z + rng.randf_range(-3.0, 3.0))
 			if avoid_pos != Vector3.INF and Vector2(cand.x - avoid_pos.x, cand.z - avoid_pos.z).length() < 220.0:
 				continue
 			if world.has_method("_is_near_river") and world._is_near_river(cand, 30.0):
@@ -435,14 +461,26 @@ func _min_dist_to_survivors(pos: Vector3) -> float:
 	var sep := _min_dist_to_other_bots(pos)
 	if world == null:
 		return sep
-	var proxies = world.get("net_player_proxy")
-	if proxies is Dictionary:
-		for pid in (proxies as Dictionary).keys():
-			if is_bot_peer_id(int(pid)):
+	for prop_name in ["server_proxies", "proxy_by_client_id", "net_player_proxy"]:
+		var proxies = world.get(prop_name)
+		if proxies is Dictionary:
+			for k in (proxies as Dictionary).keys():
+				if str(k).is_valid_int() and is_bot_peer_id(int(k)):
+					continue
+				var pr = (proxies as Dictionary)[k]
+				if pr != null and is_instance_valid(pr) and pr is Node3D:
+					sep = minf(sep, Vector2(pos.x - (pr as Node3D).global_position.x, pos.z - (pr as Node3D).global_position.z).length())
+	var net = world.get("net")
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)):
 				continue
-			var pr = (proxies as Dictionary)[pid]
-			if pr != null and is_instance_valid(pr) and pr is Node3D:
-				sep = minf(sep, Vector2(pos.x - (pr as Node3D).global_position.x, pos.z - (pr as Node3D).global_position.z).length())
+			var pdata: Dictionary = net.players[pid]
+			if bool(pdata.get("is_ai_bot", false)) or bool(pdata.get("offline", false)):
+				continue
+			var ppos = pdata.get("pos")
+			if ppos is Vector3 and (ppos as Vector3) != Vector3.ZERO:
+				sep = minf(sep, Vector2(pos.x - (ppos as Vector3).x, pos.z - (ppos as Vector3).z).length())
 	return sep
 
 func _sanitize_ground_point(preferred: Vector3) -> Vector3:
@@ -962,25 +1000,40 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 4) Sed critica sin botellas: ir al rio/lago a beber (solo si no esta
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
 	var leader := _sensed_node(b, "_s_leader")
+	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
-	if float(b["thirst"]) < thirsty_line and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
+	if float(b["thirst"]) < thirsty_line and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
 			if float(b["drink_scan"]) <= 0.0:
-				b["drink_scan"] = 4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5)
-				b["drink_at"] = _nearest_water_pos(proxy.global_position)
+				b["drink_at"] = _nearest_water_pos(proxy.global_position, b)
+				b["drink_walk_t"] = 0.0
+				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
-			# Con agua vadeable basta tener los pies mojados para beber; el centro
-			# del segmento puede quedar en zona profunda e inalcanzable.
+			# Con agua vadeable o ya en la orilla (_is_near_river <=3.2 m) basta
+			# para beber: el nav detiene al bot a ~2.6 m del borde del agua y
+			# exigir pisar el centro profundo causaba un deadlock eterno en idle.
 			var feet_wet := false
 			if world != null and world.has_method("get_river_depth_at"):
 				feet_wet = float(world.get_river_depth_at(proxy.global_position)) > 0.05
-			if d_water > 3.5 and not feet_wet:
-				_move_bot_towards(b, b["drink_at"], 4.6, delta, "run")
+			var at_shore: bool = d_water <= 4.5 or feet_wet or (world != null and world.has_method("_is_near_river") and bool(world._is_near_river(proxy.global_position, 3.2)))
+			if not at_shore:
+				b["drink_walk_t"] = float(b.get("drink_walk_t", 0.0)) + delta
+				if float(b["drink_walk_t"]) > 12.0:
+					var bw: Array = b.get("_bad_water", [])
+					bw.append({"pos": b["drink_at"], "until": float(Time.get_ticks_msec()) / 1000.0 + 120.0})
+					b["_bad_water"] = bw
+					b["drink_at"] = Vector3.INF
+					b["drink_walk_t"] = 0.0
+					b["drink_giveup"] = 12.0
+				else:
+					_move_bot_towards(b, b["drink_at"], 4.6, delta, "run")
+					return
 			else:
 				# En la orilla: se agacha a beber unos segundos y repone su sed
+				b["drink_walk_t"] = 0.0
 				b["drinking_timer"] = float(b["drinking_timer"]) + delta
 				b["crouching"] = true
 				b["sitting"] = false
@@ -1002,7 +1055,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 							_bot_add_inventory_item(inv_w, {"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0})
 							proxy.set_meta("saved_inventory", inv_w)
 							break
-			return
+				return
 		# Sin agua localizable (drink_at == INF): NO parar al bot — sigue con
 		# su vida (forrajeo, saqueo, explorar) y reintenta localizar agua en
 		# el proximo escaneo de sed en ~4 s. Antes este return se ejecutaba
@@ -1227,6 +1280,64 @@ func _bot_explore_sector(b: Dictionary) -> float:
 	var bid := int(b.get("bot_id", 0))
 	return TAU * fposmod(float(bid) * 0.618034, 1.0)
 
+func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
+	var bl: Array = b.get("_bad_water", [])
+	if bl.is_empty():
+		return false
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	for entry in bl:
+		if entry is Dictionary and float(entry.get("until", 0.0)) > now_s:
+			var bp = entry.get("pos")
+			if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 12.0:
+				return true
+	return false
+
+# Lista negra temporal de destinos inalcanzables para que un bot que se rinde
+# ante un rio/obstaculo no vuelva a elegir el mismo POI en el frame siguiente.
+func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
+	var bl: Array = b.get("_unreachable", [])
+	if bl.is_empty():
+		return false
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	for entry in bl:
+		if entry is Dictionary and float(entry.get("until", 0.0)) > now_s:
+			var bp = entry.get("pos")
+			if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 18.0:
+				return true
+	return false
+
+func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var bl: Array = b.get("_unreachable", [])
+	var kept: Array = []
+	for entry in bl:
+		if entry is Dictionary and float(entry.get("until", 0.0)) > now_s:
+			kept.append(entry)
+	if goal != Vector3.INF:
+		kept.append({"pos": goal, "until": now_s + 240.0})
+		_mark_poi_visited(b, goal)
+	var et: Vector3 = b.get("explore_target", Vector3.INF)
+	if et != Vector3.INF:
+		kept.append({"pos": et, "until": now_s + 240.0})
+		_mark_poi_visited(b, et)
+		b["explore_target"] = Vector3.INF
+		b["explore_dwell"] = 0.0
+	b["_unreachable"] = kept
+	b["path"] = []
+	b["path_timer"] = 0.0
+	b["climb_route"] = []
+	var d0: Dictionary = b.get("_ai_directive", {})
+	if not d0.is_empty() and str(d0.get("mode", "")) == "pos":
+		b["_ai_directive"] = {}
+	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
+		b["drink_at"] = Vector3.INF
+		b["drink_giveup"] = 12.0
+	if not (b.get("_forage", {}) as Dictionary).is_empty():
+		b["_forage"] = {}
+	var pat: Array = b.get("patrol", [])
+	if not pat.is_empty():
+		b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
+
 # Elige el siguiente destino de exploracion como haria un jugador: prefiere
 # sitios no visitados, acordes a su personalidad y rol, cercanos, y nunca el
 # lugar donde murio la ultima vez.
@@ -1236,7 +1347,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	var directive := _ai_active_directive(b)
 	if not directive.is_empty() and str(directive.get("mode", "")) == "pos":
 		var dp = directive.get("pos")
-		if dp is Vector3 and (dp as Vector3) != Vector3.INF:
+		if dp is Vector3 and (dp as Vector3) != Vector3.INF and not _is_goal_blacklisted(b, dp):
 			return dp
 	var only_kinds: Array = directive.get("only_kinds", []) if not directive.is_empty() else []
 	var avoid_kinds: Array = directive.get("avoid_kinds", []) if not directive.is_empty() else []
@@ -1264,6 +1375,8 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 		for p in pois:
 			var pp: Vector3 = p["pos"]
 			var pid := _poi_id(p)
+			if _is_goal_blacklisted(b, pp):
+				continue
 			if pass_i == 0 and visited.has(pid):
 				continue
 			if death_pos != Vector3.INF and Vector2(pp.x - death_pos.x, pp.z - death_pos.z).length() < 70.0:
@@ -3236,6 +3349,12 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 			b["path_timer"] = 1.8
 			path = b["path"]
 		var pidx := int(b["path_idx"])
+		# Si find_path devuelve un unico punto (_nearest_free_cell) que queda
+		# MAS LEJOS del objetivo que la posicion actual, el nav esta intentando
+		# tirar hacia atras desde el margen de un rio o edificio: ignorar ese
+		# retroceso evita el pendulo infinito de 6 m en la orilla.
+		if path.size() == 1 and Vector2(path[0].x - goal.x, path[0].z - goal.z).length() >= flat_dist - 0.2:
+			pidx = 1
 		while pidx < path.size() and Vector2(path[pidx].x - cur.x, path[pidx].z - cur.z).length() < 1.5:
 			pidx += 1
 		b["path_idx"] = pidx
@@ -3275,13 +3394,7 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 			b["stuck_count"] = int(b["stuck_count"]) + 1
 			if int(b["stuck_count"]) >= 2:
 				b["stuck_count"] = 0
-				# Rendirse con cualquier objetivo trans-rio, no solo patrullas:
-				# sin esto una meta de exploracion/saqueo aparcaba al bot en la orilla.
-				b["explore_target"] = Vector3.INF
-				b["explore_dwell"] = 0.0
-				var pat: Array = b.get("patrol", [])
-				if not pat.is_empty():
-					b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
+				_abandon_unreachable_goal(b, goal)
 			return
 	var to_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
 	var d := to_next.length()
@@ -3372,17 +3485,23 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 				b["path_timer"] = 0.0
 			else:
 				b["stuck_count"] = 0
-				b["path"] = []
-				# Rendirse como un humano: si el destino es inalcanzable (casa
-				# cerrada, interior bloqueado), abandona el objetivo y sigue.
-				if b.get("explore_target", Vector3.INF) != Vector3.INF:
-					b["explore_target"] = Vector3.INF
-					b["explore_dwell"] = 0.0
-				var pat: Array = b.get("patrol", [])
-				if not pat.is_empty():
-					b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
+				_abandon_unreachable_goal(b, goal)
 		else:
 			b["stuck_count"] = 0
+	# Detector de oscilacion (macro-progreso cada 6 s): un bot que va y viene
+	# 3-6 m cada 2 s enganaba al check corto (moved >= 0.75) pero seguia
+	# encerrado en el mismo circulo de <3 m indefinidamente.
+	b["macro_timer"] = float(b.get("macro_timer", 0.0)) + delta
+	if not b.has("macro_pos"):
+		b["macro_pos"] = cur
+	if float(b["macro_timer"]) >= 6.0:
+		var mpos: Vector3 = b.get("macro_pos", cur)
+		var macro_moved := Vector2(new_pos.x - mpos.x, new_pos.z - mpos.z).length()
+		b["macro_pos"] = new_pos
+		b["macro_timer"] = 0.0
+		if macro_moved < 3.0 and flat_dist > 4.0:
+			b["avoid_sign"] = -float(b.get("avoid_sign", 1.0))
+			_abandon_unreachable_goal(b, goal)
 
 func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	if world == null or not (world is Node3D) or (world as Node3D).get_world_3d() == null:
@@ -4987,27 +5106,74 @@ func get_full_web_status() -> Dictionary:
 	if world != null and bool(world.get("_high_mountain_ready")):
 		var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
 		landmarks_out.append({"kind": "summit_base", "label": "Base Cima", "pos": [snappedf(summit.x, 0.1), snappedf(summit.y, 0.1), snappedf(summit.z, 0.1)]})
-	# Jugadores humanos conectados: el monitor los dibuja en el mismo mapa.
+	# Jugadores humanos: el diccionario en Main es server_proxies (conectados)
+	# y proxy_by_client_id (desconectados en el mundo), mas net.players.
 	var players_out: Array = []
-	var proxies = world.get("net_player_proxy") if world != null else null
-	if net != null and "players" in net and proxies is Dictionary:
+	var s_proxies = world.get("server_proxies") if world != null else null
+	var c_proxies = world.get("proxy_by_client_id") if world != null else null
+	var seen_pids: Dictionary = {}
+	if net != null and "players" in net:
 		for pid in net.players.keys():
-			if is_bot_peer_id(int(pid)):
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)):
 				continue
 			var pdata: Dictionary = net.players[pid]
-			if bool(pdata.get("offline", false)):
+			if bool(pdata.get("is_ai_bot", false)):
 				continue
-			var pr = (proxies as Dictionary).get(pid)
-			if pr == null or not is_instance_valid(pr) or not (pr is Node3D):
+			var is_off := bool(pdata.get("offline", false))
+			var pr: Node3D = null
+			if s_proxies is Dictionary and (s_proxies as Dictionary).has(pid):
+				var cand = (s_proxies as Dictionary)[pid]
+				if cand != null and is_instance_valid(cand) and cand is Node3D:
+					pr = cand as Node3D
+			if pr == null and c_proxies is Dictionary:
+				var cid := str(pdata.get("client_id", ""))
+				if not cid.is_empty() and (c_proxies as Dictionary).has(cid):
+					var cand2 = (c_proxies as Dictionary)[cid]
+					if cand2 != null and is_instance_valid(cand2) and cand2 is Node3D:
+						pr = cand2 as Node3D
+				if pr == null:
+					for op in (c_proxies as Dictionary).values():
+						if op != null and is_instance_valid(op) and op is Node3D and int((op as Node3D).get_meta("peer_id", 0)) == int(pid):
+							pr = op as Node3D
+							break
+			var pp := Vector3.INF
+			var h_raw = pdata.get("health", 100.0)
+			var hp := float(h_raw) if (h_raw is float or h_raw is int) else 100.0
+			var pdead := false
+			if pr != null:
+				pp = pr.global_position
+				var ph_raw = pr.get_meta("proxy_health", hp)
+				if ph_raw is float or ph_raw is int:
+					hp = float(ph_raw)
+				pdead = bool(pr.get_meta("proxy_dead", false))
+			elif pdata.get("pos") is Vector3:
+				pp = pdata["pos"]
+			if pp == Vector3.INF:
 				continue
-			var pp: Vector3 = (pr as Node3D).global_position
+			seen_pids[int(pid)] = true
 			players_out.append({
 				"id": int(pid),
 				"name": str(pdata.get("char_name", pdata.get("name", "Jugador"))),
 				"pos": [snappedf(pp.x, 0.1), snappedf(pp.y, 0.1), snappedf(pp.z, 0.1)],
-				"health": snappedf(float((pr as Node3D).get_meta("proxy_health", pdata.get("health", 100.0))), 0.1),
-				"dead": bool((pr as Node3D).get_meta("proxy_dead", false)),
+				"health": snappedf(hp, 0.1),
+				"dead": pdead,
+				"offline": is_off,
 			})
+	if s_proxies is Dictionary:
+		for pid2 in (s_proxies as Dictionary).keys():
+			if seen_pids.has(int(pid2)) or is_bot_peer_id(int(pid2)):
+				continue
+			var pr2 = (s_proxies as Dictionary)[pid2]
+			if pr2 != null and is_instance_valid(pr2) and pr2 is Node3D:
+				var pp2: Vector3 = (pr2 as Node3D).global_position
+				players_out.append({
+					"id": int(pid2),
+					"name": "Jugador_%d" % int(pid2),
+					"pos": [snappedf(pp2.x, 0.1), snappedf(pp2.y, 0.1), snappedf(pp2.z, 0.1)],
+					"health": snappedf(float((pr2 as Node3D).get_meta("proxy_health", 100.0)), 0.1),
+					"dead": bool((pr2 as Node3D).get_meta("proxy_dead", false)),
+					"offline": false,
+				})
 	return {
 		"timestamp": int(Time.get_unix_time_from_system()),
 		"server": {

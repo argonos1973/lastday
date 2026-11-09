@@ -357,7 +357,9 @@ function renderHeader(data) {
   document.getElementById("mGroqTokens").textContent = `${g.tokens_day || 0} / ${Math.round((g.max_tokens_day || 120000)/1000)}k (tot ${g.tokens_total || 0})`;
   document.getElementById("mGroqCache").textContent = `${g.cache_hits || 0} caché · ${g.http_429_count || 0} 429s · ${g.queue_size || 0} cola`;
   document.getElementById("mServerPerf").textContent = `${srv.fps || 0} fps · ${fmtHour(srv.time_of_day)} ${srv.is_night ? "🌙" : "☀️"}`;
-  document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.`;
+  const pls = (data.players || []).filter(p => !p.offline);
+  const plNames = pls.map(p => p.name).join(", ");
+  document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.${plNames ? ` (${plNames})` : ""}`;
   document.getElementById("modelBadge").textContent = g.model || "qwen/qwen3.8-27b";
   const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
   document.getElementById("subStatus").textContent = `Autoridad Godot 4 Servidor Dedicado · Último snapshot: ${dt}`;
@@ -471,10 +473,11 @@ function renderMap(data) {
     }
   }
 
-  // Jugadores humanos conectados (rombo blanco con nombre)
+  // Jugadores humanos (rombo blanco en linea, atenuado si su cuerpo quedo desconectado)
   for (const pl of (data.players || [])) {
     const [px, pz] = toScreen(pl.pos[0], pl.pos[2]);
-    ctx.fillStyle = pl.dead ? "#8a8f8c" : "#f2f5f3";
+    const isOff = !!pl.offline;
+    ctx.fillStyle = pl.dead ? "#8a8f8c" : (isOff ? "rgba(242,245,243,0.45)" : "#f2f5f3");
     ctx.beginPath();
     ctx.moveTo(px, pz - 7);
     ctx.lineTo(px + 7, pz);
@@ -485,10 +488,10 @@ function renderMap(data) {
     ctx.strokeStyle = "#080d0b";
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    ctx.fillStyle = "#f2f5f3";
+    ctx.fillStyle = isOff ? "rgba(242,245,243,0.65)" : "#f2f5f3";
     ctx.font = "bold 11px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(pl.name || "Jugador", px, pz - 10);
+    ctx.fillText((pl.name || "Jugador") + (isOff ? " (off)" : ""), px, pz - 10);
     ctx.textAlign = "left";
   }
 

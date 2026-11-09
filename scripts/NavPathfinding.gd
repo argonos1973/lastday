@@ -175,14 +175,15 @@ func _block_river_cells(river_segments: Array, road_test: Callable = Callable())
 				if size.x >= 60.0 and pow(local_along / half_length, 2) + pow(local_across / half_width, 2) > 1.0:
 					continue
 				var world_pos: Vector3 = center + along * local_along + across * local_across
-				# Los vados (_ford_depth_cap, FORD_DEPTH=0.45) estan donde una
-				# carretera cruza el rio: esas celdas son vadeables y quedan
-				# abiertas para que el pathing cruce por el vado.
-				if road_test.is_valid() and bool(road_test.call(world_pos)):
-					continue
 				var cell := world_to_grid(world_pos)
-				if cell.x >= 0 and cell.x < _grid_size and cell.y >= 0 and cell.y < _grid_size_z:
-					_grid[cell] = true
+				if cell.x < 0 or cell.x >= _grid_size or cell.y < 0 or cell.y >= _grid_size_z:
+					continue
+				# Evaluar road_test sobre el centro de la celda para que una
+				# sub-muestra en la esquina fuera de la calzada no re-bloquee
+				# una celda cuyo centro si pisa el vado.
+				if road_test.is_valid() and (bool(road_test.call(world_pos)) or bool(road_test.call(grid_to_world(cell)))):
+					continue
+				_grid[cell] = true
 
 func is_cell_blocked(cell: Vector2i) -> bool:
 	if cell.x < 1 or cell.x >= _grid_size - 1 or cell.y < 1 or cell.y >= _grid_size_z - 1:

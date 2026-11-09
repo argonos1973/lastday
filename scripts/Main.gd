@@ -7762,12 +7762,11 @@ func _create_map() -> void:
 		nav.build(wildlife_blockers, _wildlife_water_obstacles())
 		wolf_nav = _new_nav_pathfinding()
 		wolf_nav.build(wildlife_blockers, river_segments_data)
-		# Nav exclusiva de los bots: igual que la de fauna pero con los vados
-		# (_ford_depth_cap: carreteras que cruzan el rio quedan a 0.45 m) abiertos
-		# para que crucen por el vado en vez de quedarse en la orilla. Los lobos
-		# siguen sin poder entrar al rio, asi que su nav queda como estaba.
-		bot_nav = _new_nav_pathfinding()
-		bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_on_road"))
+		# Nav exclusiva de los bots: usa NavPathfindingScript (la extension C
+		# LastDayNav ignora el 3er argumento road_test) con vados de carretera y
+		# pasos someros (<=0.52 m) abiertos para que crucen rios sin atascarse.
+		bot_nav = NavPathfindingScript.new()
+		bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
 		await get_tree().process_frame
 		if _loading_label != null:
 			_set_loading_phase("Generando fauna...")
@@ -14644,6 +14643,9 @@ func _ford_depth_cap(pos: Vector3, depth: float) -> float:
 	if depth > FORD_DEPTH and _is_on_road(pos):
 		return FORD_DEPTH
 	return depth
+
+func _is_bot_river_ford(pos: Vector3) -> bool:
+	return _is_on_road(pos) or get_river_depth_at(pos) <= 0.52
 
 func get_river_surface_y_at(world_pos: Vector3) -> float:
 	# El agua se construye en la altura Y del segmento; exponerla evita que los

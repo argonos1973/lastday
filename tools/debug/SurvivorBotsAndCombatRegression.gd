@@ -1401,6 +1401,7 @@ func run() -> void:
 	# SpawnReal 10d: sed sin agua localizable no congela al bot. Antes, la rama
 	# de beber hacia `return` siempre: con thirst<32 y _nearest_water_pos=INF
 	# (river_segs vacio en el mundo de prueba) el bot quedaba en idle eterno.
+	world.river_segs = []
 	fresh_b["thirst"] = 20.0
 	fresh_b["hunger"] = 90.0
 	fresh_b["drink_at"] = Vector3.INF
@@ -1408,9 +1409,31 @@ func run() -> void:
 	for i in range(40):
 		mgr._tick_bot(fresh_b, 0.1)
 	var acted := str(fresh_b.get("_act", ""))
-	var moved: bool = str(fresh_b.get("anim", "")) in ["walk", "run"] or fresh_b.get("explore_target", Vector3.INF) != Vector3.INF
+	var moved: bool = str(fresh_b.get("anim", "")) in ["walk", "run"] or acted in ["explore", "dwell", "predator", "forage"] or fresh_b.get("explore_target", Vector3.INF) != Vector3.INF
 	check(acted != "drink" and moved,
 		"SpawnReal 10d: sed sin agua no congela al bot (act=%s anim=%s)" % [acted, str(fresh_b.get("anim", "?"))])
+
+	# 10e: la telemetria web expone jugadores humanos desde server_proxies / net.players
+	var h_proxy := Node3D.new()
+	world.add_child(h_proxy)
+	h_proxy.global_position = Vector3(111.0, 0.4, -222.0)
+	h_proxy.set_meta("proxy_health", 88.0)
+	world.server_proxies[7] = h_proxy
+	fnet.players[7] = {"name": "Sami", "char_name": "Sami", "pos": h_proxy.global_position, "offline": false}
+	var web_st := mgr.get_full_web_status()
+	var web_pls: Array = web_st.get("players", [])
+	check(web_pls.size() >= 1 and str((web_pls[0] as Dictionary).get("name", "")) == "Sami",
+		"SpawnReal 10e: get_full_web_status incluye jugadores humanos conectados en server_proxies (n=%d)" % web_pls.size())
+	world.server_proxies.erase(7)
+	fnet.players.erase(7)
+	h_proxy.queue_free()
+
+	# 10f: un destino bloqueado tras agua profunda se abandona y entra en lista negra
+	var unreach := Vector3(500.0, 0.4, 500.0)
+	fresh_b["explore_target"] = unreach
+	mgr._abandon_unreachable_goal(fresh_b, unreach)
+	check(fresh_b["explore_target"] == Vector3.INF and mgr._is_goal_blacklisted(fresh_b, unreach),
+		"SpawnReal 10f: objetivo inalcanzable se abandona y queda en lista negra para no oscilar")
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
