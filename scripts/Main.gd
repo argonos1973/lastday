@@ -1109,8 +1109,13 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_O and not player.is_sleeping and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
-			if not _try_open_bot_menu():
-				_open_wolf_menu()
+			_open_wolf_menu()
+			get_viewport().set_input_as_handled()
+			return
+		# [Z] abre el menú de órdenes del superviviente aliado reclutado más
+		# cercano (tecla propia: [O] queda reservada al menú del lobo).
+		if event.keycode == KEY_Z and not player.is_sleeping and not hud.inventory_visible and not hud.craft_panel_visible and _loot_panel == null:
+			_try_open_bot_menu()
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_ESCAPE:
@@ -5814,9 +5819,13 @@ func _my_tamed_wolf() -> Node:
 
 # Menú de órdenes sin apuntar (tecla O): abre el panel sobre el lobo propio
 # más cercano; si ya está abierto lo cierra (contextual).
-# Menú de órdenes del superviviente aliado (mismo panel que el del lobo):
-# seguir/quedarse, equiparte con lo del suelo, comer, dar objeto en mano, libre.
+# Menú de órdenes del superviviente aliado (tecla Z, mismo panel que el del
+# lobo): seguir/quedarse, equiparte con lo del suelo, comer, dar objeto en
+# mano, libre. Si ya hay un panel abierto lo cierra como toggle.
 func _try_open_bot_menu() -> bool:
+	if _wolf_menu != null:
+		_close_wolf_orders()
+		return true
 	if player == null or not is_instance_valid(player) or player.is_dead:
 		return false
 	var my_id: int = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1

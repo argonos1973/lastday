@@ -377,7 +377,7 @@ func run() -> void:
 	check("rifle" in kinds and "melee" in kinds and "wolf_bite" in kinds,
 		"Impactos de rifle/melee/mordisco emiten evento de reaccion sincronizado (%s)" % str(kinds))
 
-	# --- 12) Ordenes de equipo directas tipo lobo (menu [O]) ---
+	# --- 12) Ordenes de equipo directas tipo lobo (menu [Z]) ---
 	elena["team_leader_id"] = 1
 	elena["follow_mode"] = "stay"
 	var msg_follow: String = mgr.interact_with_bot(901, 1, "follow")
@@ -1674,6 +1674,84 @@ func run() -> void:
 		"SpawnReal 10t: en equipo el bot sigue al jugador humano dentro de la casa y sube las escaleras al 2º piso (pos=%s)" % str(team_pos))
 	world.server_proxies.erase(1)
 	leader_human.queue_free()
+
+	# 10u: los bots recogen las mochilas del pueblo — cualquier modelo que
+	# mejore la suya (sin mochila -> Mochila pequena -> Mochila militar), la
+	# equipada sale del inventario y la vieja vuelve como repuesto.
+	fresh_b["team_leader_id"] = 0
+	fresh_b["backpack"] = ""
+	fresh_b["proxy"].set_meta("saved_backpack", "")
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	check(mgr._is_loot_desirable(fresh_b, "Mochila pequena", "backpack"),
+		"SpawnReal 10u1: sin mochila la Mochila pequena del pueblo interesa")
+	check(not mgr._is_loot_desirable(fresh_b, "Cuchillo", "backpack"),
+		"SpawnReal 10u2: un objeto tipo backpack sin nombre de mochila no interesa")
+	world._dropped_items = [
+		{"id": "vil_bp", "name": "Mochila pequena", "type": "backpack", "pos": fresh_b["proxy"].global_position + Vector3(1, 0, 0), "qty": 1, "weight": 0.9, "use": 0.0},
+	]
+	mgr._collect_loot_entry(fresh_b, world._dropped_items[0])
+	check(str(fresh_b["backpack"]) == "Mochila pequena" and mgr._bot_item_count(fresh_b["proxy"], "Mochila pequena") == 0,
+		"SpawnReal 10u3: recoge la mochila del pueblo y la lleva equipada (sale del inventario)")
+	check(not mgr._is_loot_desirable(fresh_b, "Mochila pequena", "backpack") and mgr._is_loot_desirable(fresh_b, "Mochila militar", "backpack"),
+		"SpawnReal 10u4: con pequena puesta no recoge otra igual, pero sí la militar")
+	world._dropped_items = [
+		{"id": "mil_bp", "name": "Mochila militar", "type": "backpack", "pos": fresh_b["proxy"].global_position + Vector3(1, 0, 0), "qty": 1, "weight": 1.8, "use": 0.0},
+	]
+	mgr._collect_loot_entry(fresh_b, world._dropped_items[0])
+	check(str(fresh_b["backpack"]) == "Mochila militar" and mgr._bot_item_count(fresh_b["proxy"], "Mochila pequena") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Mochila militar") == 0,
+		"SpawnReal 10u5: mejora a la militar y guarda la pequena de repuesto")
+	world._dropped_items = []
+
+	# 10v: los bots beben de la fuente de la plaza de la ciudad — la zona
+	# drink_water cae dentro del bloqueador circular de la pileta, así que el
+	# destino se proyecta al brocal (fuera del bloqueo) y allí bebe/rellena.
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0},
+	])
+	var fountain_pos := Vector3(41.0, 0.0, 728.0)
+	world._register_wildlife_blocker(fountain_pos, 2.0)
+	var ftn_drink := WorldActionScript.new()
+	ftn_drink.setup("district_fountain_drink", "drink_water", "Fuente de la plaza", Vector3(4.6, 1.7, 4.6), Color(0.08, 0.22, 0.48, 0.0), true, false)
+	world.add_child(ftn_drink)
+	ftn_drink.global_position = fountain_pos + Vector3(0.0, 0.9, 0.0)
+	world.world_actions_by_id["district_fountain_drink"] = ftn_drink
+	fresh_b["proxy"].global_position = fountain_pos + Vector3(18.0, 0.375, 0.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["thirst"] = 20.0
+	fresh_b["hunger"] = 90.0
+	fresh_b["drink_at"] = Vector3.INF
+	fresh_b["drink_scan"] = 0.0
+	fresh_b["drink_walk_t"] = 0.0
+	fresh_b["drinking_timer"] = 0.0
+	fresh_b["drink_giveup"] = 0.0
+	fresh_b["_bad_water"] = []
+	fresh_b["aggro_target"] = null
+	fresh_b["_s_leader"] = null
+	fresh_b["_s_foe"] = null
+	fresh_b["_s_predator"] = null
+	fresh_b["_s_tame_wolf"] = null
+	fresh_b["_s_has_wolf"] = false
+	fresh_b["_s_loot"] = {}
+	fresh_b["_s_raid_shelter"] = {}
+	fresh_b["gut_target"] = null
+	fresh_b["flee_until"] = 0.0
+	fresh_b["forced_eat"] = false
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["flinch_timer"] = 0.0
+	world.river_segs = []
+	mgr._tick_bot(fresh_b, 0.1)
+	var ftn_goal: Vector3 = fresh_b["drink_at"]
+	var ftn_dist := Vector2(ftn_goal.x - fountain_pos.x, ftn_goal.z - fountain_pos.z).length() if ftn_goal != Vector3.INF else -1.0
+	check(ftn_goal != Vector3.INF and ftn_dist > 2.0 and ftn_dist < 3.5 and not world.is_bot_blocked_at(ftn_goal),
+		"SpawnReal 10v1: con sed el bot apunta al brocal de la fuente de la ciudad (goal=%s d=%.2f)" % [str(ftn_goal), ftn_dist])
+	fresh_b["proxy"].global_position = ftn_goal
+	fresh_b["pos"] = ftn_goal
+	for i in range(45):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(float(fresh_b["thirst"]) >= 99.0 and mgr._bot_item_count(fresh_b["proxy"], "Botella de agua llena") == 1,
+		"SpawnReal 10v2: bebe en la fuente de la ciudad y rellena su botella (sed=%.0f)" % float(fresh_b["thirst"]))
+	world.world_actions_by_id.erase("district_fountain_drink")
+	ftn_drink.queue_free()
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

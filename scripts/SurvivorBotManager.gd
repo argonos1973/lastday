@@ -383,7 +383,57 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 		if d < best_d:
 			best_d = d
 			best = target_pt
+	# Fuentes y otras zonas drink_water en tierra firme (p.ej. la fuente de la
+	# plaza de la ciudad): el bot puede beber y rellenar su botella en ellas
+	# igual que un jugador con E mantenida. Las acciones drink_N del rio/lago
+	# caen dentro del agua y ya las cubren los segmentos de arriba.
+	if "world_actions_by_id" in world:
+		for aid in world.world_actions_by_id.keys():
+			var a = world.world_actions_by_id[aid]
+			if a == null or not is_instance_valid(a) or not (a is Node3D):
+				continue
+			if str(a.get("action_type")) != "drink_water":
+				continue
+			var ap: Vector3 = (a as Node3D).global_position
+			if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(ap)) >= 0.05:
+				continue
+			var target_pt := Vector3(ap.x, 0.0, ap.z)
+			if world.has_method("is_bot_blocked_at") and world.is_bot_blocked_at(target_pt):
+				target_pt = _unblock_bot_point(target_pt, from)
+				if target_pt == Vector3.INF:
+					continue
+			if not b.is_empty() and _is_water_blacklisted(b, target_pt):
+				continue
+			var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
+			if d < best_d:
+				best_d = d
+				best = target_pt
 	return best
+
+# Punto dentro de un bloqueador circular (la fuente de la plaza es un bloque
+# solido de radio 2.0): proyecta el destino al brocal del bloqueo, hacia el
+# lado por donde viene el bot, para que pueda beber sin chocar con la pileta.
+func _unblock_bot_point(blocked: Vector3, from: Vector3) -> Vector3:
+	if world == null:
+		return Vector3.INF
+	var blockers: Array = world.get("wildlife_blockers") if world.get("wildlife_blockers") != null else []
+	for bl in blockers:
+		if not (bl is Dictionary) or bl.has("house_bounds") or bool(bl.get("tent_open", false)):
+			continue
+		var bp: Vector3 = bl.get("pos", Vector3.ZERO)
+		var radius := float(bl.get("radius", 1.8))
+		if Vector2(blocked.x - bp.x, blocked.z - bp.z).length() > radius:
+			continue
+		var dir := Vector2(from.x - bp.x, from.z - bp.z)
+		if dir.length() < 0.01:
+			dir = Vector2(1.0, 0.0)
+		dir = dir.normalized()
+		var rim := radius + 0.55
+		var cand := Vector3(bp.x + dir.x * rim, 0.0, bp.z + dir.y * rim)
+		if world.has_method("is_bot_blocked_at") and world.is_bot_blocked_at(cand):
+			continue
+		return cand
+	return Vector3.INF
 
 func spawn_all_bots() -> void:
 	if world == null:
@@ -1715,9 +1765,17 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 			continue
 		var nm := str(it.get("name", ""))
 		var tp := str(it.get("type", ""))
-		if tp == "backpack" and (nm == "Mochila militar" or (nm == "Mochila pequena" and str(b["backpack"]).is_empty())):
+		# La mochila equipada sale del inventario (como al ponérsela un jugador)
+		# y la vieja vuelve a la mochila como repuesto guardable en su refugio.
+		if tp == "backpack" and _backpack_tier(nm) > _backpack_tier(str(b["backpack"])):
+			var old_bp := str(b["backpack"])
 			b["backpack"] = nm
 			proxy.set_meta("saved_backpack", nm)
+			it["quantity"] = int(it.get("quantity", 1)) - 1
+			if int(it["quantity"]) <= 0:
+				to_remove.append(it)
+			if not old_bp.is_empty():
+				_bot_add_inventory_item(inv, {"name": old_bp, "type": "backpack", "weight": 0.9, "quantity": 1, "use_value": 0.0})
 		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm):
 			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
 			var cur := _worn_in_slot(worn, slot)
@@ -3276,8 +3334,10 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 	# Pieles: para ropa de piel o forro; unas pocas bastan para empezar
 	if CraftingSystem._is_pelt_name(nm):
 		return _bot_wants_craft_input(b, "ANY_PELT") or _bot_pelt_count(b["proxy"]) < 4
-	if tp == "backpack" and nm == "Mochila militar" and str(b["backpack"]) != "Mochila militar":
-		return true
+	# Mochilas: cualquier modelo sirve, pero solo se recoge si es mejor que la
+	# que ya lleva equipada (sin mochila < pequeña < militar) — nunca repuestos.
+	if tp == "backpack" or nm.begins_with("Mochila"):
+		return _backpack_tier(nm) > _backpack_tier(str(b["backpack"]))
 	if tp == "clothing":
 		# Ropa cortable (militar/camuflaje): interesa si el bot necesita trapos
 		if _bot_wants_craft_input(b, nm):
@@ -3290,6 +3350,15 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 			# ropa decente (>=4) interesa como repuesto.
 			return pr > int(CLOTHING_PRIORITY.get(cur, 0)) or (bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4)
 	return false
+
+# Nivel de mochila para decidir si recogerla/equiparla mejora al bot:
+# sin mochila = 0 < Mochila pequena/Mochila = 1 < Mochila militar = 2.
+func _backpack_tier(nm: String) -> int:
+	if nm == "Mochila militar":
+		return 2
+	if nm.begins_with("Mochila"):
+		return 1
+	return 0
 
 # Equipo vestible/usable: lo que la orden "equip" debe buscar en el suelo.
 func _is_gear_item(nm: String, tp: String) -> bool:
