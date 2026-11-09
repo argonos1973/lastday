@@ -147,3 +147,4 @@ bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su 
 02703d3|Punto de mira del M4 mas proporcional al apuntar: la alza trasera ya no ocupa casi toda la pantalla
 572de72|Combate con lobos y osos mas fluido: el personaje ya no se queda clavado al defenderse o recibir mordiscos, y los lobos mueven las patas al perseguir en lugar de deslizarse en pose de ataque
 f454180|Eliminado el personaje generico "Superviviente": siempre se usa el personaje del servidor o uno de la pantalla de inicio
+27f011d|Ordenes de supervivientes con la tecla Z (la O queda solo para el lobo), los bots beben en la fuente de la ciudad y ya recogen las mochilas del pueblo
