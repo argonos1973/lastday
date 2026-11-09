@@ -1538,6 +1538,30 @@ func run() -> void:
 	check(mgr._bot_item_count(fresh_b["proxy"], "Lata de atun abierta") >= 1,
 		"SpawnReal 10l: el bot retira comida de su propio refugio cuando tiene hambre")
 
+	# 10m y 10n: cocinar carne cruda exige Palo afilado para ensartarla y
+	# permite al bot armar/encender una hoguera para asarla igual que un humano
+	fresh_b["cook_cooldown"] = 0.0
+	fresh_b["campfire_id"] = ""
+	fresh_b["campfire_pos"] = Vector3.INF
+	world._lit_campfires.clear()
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 20.0},
+	])
+	check(not mgr._bot_cook_meat_at_fire(fresh_b) and mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") == 0,
+		"SpawnReal 10m: sin Palo afilado el bot no puede cocinar la carne cruda")
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 20.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 2, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 2, "use_value": 0.0},
+	])
+	for i in range(25):
+		mgr._bot_try_cook_meat(fresh_b, 0.2)
+		if mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") > 0:
+			break
+	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
+		"SpawnReal 10n: con Palo afilado + 2 Palos + 2 Piedras el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

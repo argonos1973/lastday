@@ -1133,19 +1133,19 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "campfire"
 		# La fogata tambien necesita suelo valido: junto al refugio pero nunca
 		# en agua, carretera, pendiente ni zona habitada.
-		var fire_spot := Vector3.INF
-		for off in [Vector3(2.8, 0.0, 1.4), Vector3(-2.8, 0.0, 1.4), Vector3(0.0, 0.0, 3.2), Vector3(2.8, 0.0, -1.4), Vector3(0.0, 0.0, -3.2)]:
-			var cand: Vector3 = sh_pos + off
-			cand.y = _ground_y(cand.x, cand.z)
-			if _is_flat_dry_pos(cand, str(b["shelter_id"])):
-				fire_spot = cand
-				break
+		var fire_spot := _find_nearby_campfire_spot(b, sh_pos)
 		if fire_spot != Vector3.INF:
 			_bot_build_and_light_campfire(b, fire_spot)
 		else:
 			# Sin sitio valido: no construye la fogata y sigue con su vida,
 			# en vez de quedar bloqueado intentandolo cada tick.
 			b["no_fire_spot"] = true
+		return
+
+	# 6a-bis) Hacer hoguera y cocinar carne cruda ensartada con Palo afilado,
+	# igual que un jugador humano (aunque aun no tenga refugio construido).
+	if _bot_try_cook_meat(b, delta):
+		b["_act"] = "cook"
 		return
 
 	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio
@@ -1180,10 +1180,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if d_sh > 1.8:
 			_move_bot_towards(b, rest_pos, 3.8, delta, "walk")
 			return
-		# Dentro del refugio: encender fogata si se apagó, asar carne y descansar/ocultarse
+		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
 		if sh_pos != Vector3.INF:
 			_ensure_bot_campfire_lit(b)
-		if float(b["cook_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy) and (sh_pos != Vector3.INF or _is_near_any_lit_campfire(proxy.global_position, 6.0)):
+		if float(b["cook_cooldown"]) <= 0.0 and _bot_can_cook_raw_meat(proxy) and (sh_pos != Vector3.INF or _is_near_any_lit_campfire(proxy.global_position, 6.0)):
 			_bot_cook_meat_at_fire(b)
 		# Solo craftea en el refugio si esta sano y no se esta ocultando de una
 		# amenaza: herido o escondido descansa/aguanta, no se pone a tallar.
@@ -1577,7 +1577,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 					or (nm.begins_with("Lata de ") and not nm.ends_with(" abierta")):
 				continue
 			# La carne cruda solo se come desesperado: un superviviente real la cocina
-			if nm.begins_with("Carne cruda") and not desperate:
+			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and not desperate:
 				continue
 			var use_v := float(it.get("use_value", 18.0))
 			var gain_h := use_v
@@ -1604,7 +1604,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			elif nm == "Higo":
 				gain_t = use_v * 0.70
 				gain_hp = maxf(5.0, use_v * 0.50)
-			elif nm.begins_with("Carne cruda"):
+			elif nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado":
 				gain_h = use_v * 0.4
 				gain_t = use_v * 0.10
 				gain_hp = 0.0
@@ -1622,7 +1622,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			b["health"] = minf(100.0, float(b["health"]) + gain_hp)
 			# Carne cruda = intoxicacion como en el jugador (get_sick 60s:
 			# primera vez reduce hambre/sed/salud a la mitad, sin regen pasiva)
-			if nm.begins_with("Carne cruda"):
+			if nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado":
 				if float(b.get("sick_timer", 0.0)) <= 0.0:
 					b["hunger"] = float(b["hunger"]) * 0.5
 					b["thirst"] = float(b["thirst"]) * 0.5
@@ -3579,9 +3579,15 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 				store.append(it)
 			continue
 		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear", "tool_hoe", "tool_shovel"]:
-			store.append(it)
+			if nm == "Palo afilado" and _bot_has_raw_meat(proxy):
+				keep.append(it)
+			else:
+				store.append(it)
 			continue
 		if tp == "food":
+			if nm == "Carne ensartada" or nm == "Pez ensartado" or (nm.begins_with("Carne cruda") and _bot_item_count(proxy, "Palo afilado") > 0):
+				keep.append(it)
+				continue
 			if food_kept < 1:
 				var take_k := mini(1 - food_kept, qty)
 				food_kept += take_k
@@ -3732,16 +3738,95 @@ func _ensure_bot_campfire_lit(b: Dictionary) -> void:
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.campfire_lit.rpc_id(pid, cf_id, fire_name, pos)
 
-func _bot_cook_meat_at_fire(b: Dictionary) -> void:
+func _find_nearby_campfire_spot(b: Dictionary, origin: Vector3) -> Vector3:
+	for off in [Vector3(2.8, 0.0, 1.4), Vector3(-2.8, 0.0, 1.4), Vector3(0.0, 0.0, 3.2), Vector3(2.8, 0.0, -1.4), Vector3(0.0, 0.0, -3.2), Vector3(4.2, 0.0, 0.0), Vector3(-4.2, 0.0, 0.0)]:
+		var cand: Vector3 = origin + off
+		cand.y = _ground_y(cand.x, cand.z)
+		if _is_flat_dry_pos(cand, str(b.get("shelter_id", ""))):
+			return cand
+	return Vector3.INF
+
+func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float) -> Vector3:
+	if world == null or not ("_lit_campfires" in world):
+		return Vector3.INF
+	var best := Vector3.INF
+	var best_d := max_dist
+	for lc in world._lit_campfires:
+		if lc is Dictionary and lc.get("pos") is Vector3:
+			var cp: Vector3 = lc["pos"]
+			var d := Vector2(from_pos.x - cp.x, from_pos.z - cp.z).length()
+			if d < best_d:
+				best_d = d
+				best = cp
+	return best
+
+# Cocinar carne cruda igual que el jugador humano: exige ensartar primero la
+# carne en un Palo afilado ("Carne ensartada") y cocinarla en una hoguera
+# encendida (propia o cercana; si no hay y tiene 2 Palos + 2 Piedras, arma y
+# enciende una hoguera en el sitio).
+func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
+	if float(b.get("cook_cooldown", 0.0)) > 0.0:
+		return false
 	var proxy: Node3D = b["proxy"]
-	var raw := _first_raw_meat_name(proxy)
-	if raw.is_empty():
-		return
-	if _consume_bot_item(proxy, raw, 1):
+	if not _bot_can_cook_raw_meat(proxy):
+		return false
+	var cur := proxy.global_position
+	var fire_pos := _nearest_lit_campfire_pos(cur, 85.0)
+	var cf_pos: Vector3 = b.get("campfire_pos", Vector3.INF)
+	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
+		fire_pos = cf_pos
+	if fire_pos == Vector3.INF:
+		if not _can_bot_build_campfire(proxy):
+			return false
+		var base_origin: Vector3 = b.get("shelter_pos", Vector3.INF)
+		if base_origin == Vector3.INF or Vector2(cur.x - base_origin.x, cur.z - base_origin.z).length() > 35.0:
+			base_origin = cur
+		var spot := _find_nearby_campfire_spot(b, base_origin)
+		if spot == Vector3.INF:
+			spot = cur + Vector3(2.2, 0.0, 0.0)
+			spot.y = _ground_y(spot.x, spot.z)
+		_bot_build_and_light_campfire(b, spot)
+		fire_pos = spot
+	# Ensartar la carne cruda con el Palo afilado antes de acercarla al fuego
+	if not _bot_skewer_raw_meat(proxy):
+		return false
+	var d_fire := Vector2(cur.x - fire_pos.x, cur.z - fire_pos.z).length()
+	if d_fire > 2.4:
+		b["sitting"] = false
+		b["crouching"] = false
+		b["held_item"] = "Carne ensartada"
+		proxy.set_meta("saved_held_item", "Carne ensartada")
+		_move_bot_towards(b, fire_pos, 4.0, delta, "walk")
+		return true
+	if cf_pos != Vector3.INF and Vector2(fire_pos.x - cf_pos.x, fire_pos.z - cf_pos.z).length() < 2.5:
+		_ensure_bot_campfire_lit(b)
+	b["held_item"] = "Carne ensartada"
+	proxy.set_meta("saved_held_item", "Carne ensartada")
+	b["sitting"] = true
+	b["crouching"] = false
+	b["anim"] = "sit"
+	return _bot_cook_meat_at_fire(b)
+
+func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	# Regla idéntica al jugador humano: no se puede cocinar carne cruda sin
+	# ensartarla en un Palo afilado ("Carne ensartada" / "Pez ensartado").
+	if not _bot_skewer_raw_meat(proxy):
+		return false
+	var skewered := ""
+	if _bot_item_count(proxy, "Carne ensartada") > 0:
+		skewered = "Carne ensartada"
+	elif _bot_item_count(proxy, "Pez ensartado") > 0:
+		skewered = "Pez ensartado"
+	if skewered.is_empty():
+		return false
+	if _consume_bot_item(proxy, skewered, 1):
 		var inv: Array = proxy.get_meta("saved_inventory", [])
 		_bot_add_inventory_item(inv, {"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 28.0})
 		proxy.set_meta("saved_inventory", inv)
-		b["cook_cooldown"] = 18.0
+		b["cook_cooldown"] = 12.0
+		return true
+	return false
 
 # Agua vadeable: un humano cruza rios someros (~hasta la cintura); solo el agua
 # profunda bloquea el paso.
@@ -4189,6 +4274,29 @@ func _bot_item_count(proxy: Node3D, item_name: String) -> int:
 func _bot_has_raw_meat(proxy: Node3D) -> bool:
 	return not _first_raw_meat_name(proxy).is_empty()
 
+func _bot_has_skewered_meat(proxy: Node3D) -> bool:
+	return _bot_item_count(proxy, "Carne ensartada") > 0 or _bot_item_count(proxy, "Pez ensartado") > 0
+
+func _bot_can_cook_raw_meat(proxy: Node3D) -> bool:
+	if _bot_has_skewered_meat(proxy):
+		return true
+	return _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") > 0
+
+func _bot_skewer_raw_meat(proxy: Node3D) -> bool:
+	if _bot_has_skewered_meat(proxy):
+		return true
+	var raw := _first_raw_meat_name(proxy)
+	if raw.is_empty() or _bot_item_count(proxy, "Palo afilado") <= 0:
+		return false
+	if not _consume_bot_item(proxy, "Palo afilado", 1):
+		return false
+	if not _consume_bot_item(proxy, raw, 1):
+		return false
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	_bot_add_inventory_item(inv, {"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0})
+	proxy.set_meta("saved_inventory", inv)
+	return true
+
 func _first_raw_meat_name(proxy: Node3D) -> String:
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary:
@@ -4386,6 +4494,8 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	# Armas y herramienta: solo si mejoran lo que ya tiene en la mano
 	if otype in ["weapon", "tool_axe", "tool_spear"]:
 		if oname == "Palo afilado":
+			if _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") == 0:
+				return 6.7 # indispensable para ensartar y cocinar su carne cruda
 			return 4.2 # habilita lanzas, espetones y es un arma floja
 		var cur := _weapon_melee_damage(_best_melee_weapon(proxy))
 		var nw := _weapon_melee_damage(oname)
@@ -4409,6 +4519,8 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if oname == "Venda":
 		return 5.2 if float(b.get("health", 100.0)) < 80.0 else 1.8
 	if otype == "food":
+		if oname in ["Carne ensartada", "Pez ensartado"]:
+			return 6.8
 		return 3.4
 	return 2.0
 
@@ -5799,7 +5911,7 @@ func _bot_has_edible_food(proxy: Node3D, desperate: bool) -> bool:
 		var tp := str(it.get("type", ""))
 		if tp != "food" or nm == "Carne humana" or nm == "Pez crudo":
 			continue
-		if nm.begins_with("Carne cruda") and not desperate:
+		if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and not desperate:
 			continue
 		if nm.begins_with("Lata de ") and not nm.ends_with(" abierta"):
 			continue
@@ -6027,6 +6139,9 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		palo_need = 4
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
+	if _bot_has_raw_meat(proxy) or _bot_has_skewered_meat(proxy):
+		var cook_palos := (1 if _bot_item_count(proxy, "Palo afilado") == 0 and not _bot_has_skewered_meat(proxy) else 0) + (2 if str(b["campfire_id"]).is_empty() else 0)
+		palo_need = maxi(palo_need, cook_palos)
 	var tool := _bot_bush_tool(proxy)
 	# Escondido o reclutado no sale a talar: las ordenes del lider y la
 	# amenaza van primero. El ruido del corte atrae lobos, como al jugador.
