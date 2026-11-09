@@ -1261,6 +1261,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 		else:
 			# Fall back to keyword matching
 			var lower := anim.to_lower()
+			var holding_rifle_now: bool = _has_rifle or _is_rifle_item_name(_puppet_held)
 			if lower.find("riflefire") >= 0 and not _rifle_fire_animation.is_empty():
 				target = _rifle_fire_animation
 			elif lower.find("rifleaim") >= 0 and not _rifle_aim_idle_animation.is_empty():
@@ -1271,14 +1272,16 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = _rifle_walk_animation
 			elif lower.find("riflerun") >= 0 and not _rifle_run_animation.is_empty():
 				target = _rifle_run_animation
-			elif lower.find("run") >= 0:
-				target = third_person_run_animation
-			elif lower.find("walk") >= 0:
-				target = third_person_walk_animation
-			elif lower.find("sneak") >= 0:
+			elif lower.find("stair") >= 0 and not third_person_stairs_animation.is_empty():
+				target = third_person_stairs_animation
+			elif lower.find("sneak") >= 0 or (is_crouching and (lower == "walk" or lower == "idle")):
 				target = third_person_sneak_animation
+			elif lower.find("run") >= 0:
+				target = _rifle_run_animation if (holding_rifle_now and not _rifle_run_animation.is_empty()) else third_person_run_animation
+			elif lower.find("walk") >= 0:
+				target = _rifle_walk_animation if (holding_rifle_now and not _rifle_walk_animation.is_empty()) else third_person_walk_animation
 			elif lower.find("idle") >= 0:
-				target = third_person_idle_animation
+				target = (_rifle_aim_idle_animation if _is_aiming else _rifle_idle_animation) if (holding_rifle_now and not _rifle_idle_animation.is_empty()) else third_person_idle_animation
 			elif lower.find("jumpdown") >= 0 or lower.find("jump_down") >= 0:
 				target = third_person_jump_down_animation
 			elif lower.find("jump") >= 0:
@@ -1295,11 +1298,11 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_sit_animation
 			elif lower.find("sleep") >= 0:
 				target = third_person_sleep_animation
-			elif lower.find("drink") >= 0:
+			elif lower.find("drink") >= 0 or lower.find("eat") >= 0:
 				target = third_person_drink_animation
 			elif lower.find("plant") >= 0:
 				target = third_person_plant_animation
-			elif lower.find("gather") >= 0:
+			elif lower.find("gather") >= 0 or lower.find("forage") >= 0 or lower.find("chop") >= 0:
 				target = third_person_gather_animation
 			elif lower.find("fish") >= 0:
 				target = third_person_fish_animation
@@ -1324,6 +1327,12 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			# sounds still follow the attacker's synced action clip.
 			if target == third_person_punch_animation or target == third_person_attack_animation:
 				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
+			elif anim.to_lower().find("drink") >= 0:
+				_play_consumption_audio(true, 1.8, _mark_action_started())
+			elif anim.to_lower().find("eat") >= 0:
+				_play_consumption_audio(false, 1.6, _mark_action_started())
+			elif anim.to_lower().find("chop") >= 0 or (anim.to_lower().find("forage") >= 0 and _puppet_held in ["Hacha", "Hacha de piedra", "Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]):
+				_play_puppet_chop_sound()
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
 	if not is_puppet:
@@ -1674,6 +1683,9 @@ func _process(delta: float) -> void:
 				_is_firing = false
 				_puppet_current_anim = ""
 		if not is_dead:
+			if third_person_action_timer <= 0.0 and third_person_animation_player != null and not third_person_animation_player.current_animation.is_empty():
+				_loop_third_person_animation(third_person_animation_player.current_animation)
+				third_person_animation_player.speed_scale = 0.55 if is_crouching else 1.0
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
 			_update_puppet_locomotion_audio(delta)
@@ -14864,26 +14876,58 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
+func _play_puppet_chop_sound() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var sc := get_tree().current_scene if get_tree() != null else null
+	if sc != null and sc.get("player") is Node3D and is_instance_valid(sc.player):
+		if global_position.distance_to((sc.player as Node3D).global_position) > 40.0:
+			return
+	var st := _load_audio_stream("res://cortarArbol.mp3")
+	if st == null:
+		return
+	if not is_instance_valid(_consumption_audio):
+		_consumption_audio = AudioStreamPlayer3D.new()
+		_consumption_audio.name = "ConsumptionAudio"
+		_consumption_audio.position = Vector3(0, 1.2, 0)
+		_consumption_audio.max_distance = 35.0
+		_consumption_audio.unit_size = 8.0
+		add_child(_consumption_audio)
+	_consumption_audio.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	_consumption_audio.volume_db = 4.0
+	_consumption_audio.stream = st
+	_consumption_audio.pitch_scale = randf_range(0.94, 1.05)
+	_consumption_audio.play()
+
 func _update_puppet_locomotion_audio(delta: float) -> void:
 	if DisplayServer.get_name() == "headless" or is_dead or is_sleeping or is_sitting or is_prone:
+		if _puppet_step_player != null and _puppet_step_player.playing:
+			_puppet_step_player.stop()
 		return
 	var anim_l := _puppet_anim.to_lower()
 	var is_run := anim_l.find("run") >= 0 or anim_l.find("sprint") >= 0
-	var is_walk := not is_run and anim_l.find("walk") >= 0 and anim_l.find("sneak") < 0 and not is_crouching
+	var is_walk := not is_run and (anim_l.find("walk") >= 0 or anim_l.find("stair") >= 0) and anim_l.find("sneak") < 0 and not is_crouching
 	if not is_run and not is_walk:
 		_puppet_step_timer = 0.0
+		if _puppet_step_player != null and _puppet_step_player.playing:
+			_puppet_step_player.stop()
 		return
 	var sc := get_tree().current_scene if get_tree() != null else null
 	if sc != null and sc.get("player") is Node3D and is_instance_valid(sc.player):
 		if global_position.distance_to((sc.player as Node3D).global_position) > 42.0:
+			if _puppet_step_player != null and _puppet_step_player.playing:
+				_puppet_step_player.stop()
 			return
-	_puppet_step_timer -= delta
-	if _puppet_step_timer > 0.0:
-		return
-	_puppet_step_timer = 0.34 if is_run else 0.56
 	if sc != null and sc.has_method("get_river_depth_at") and float(sc.get_river_depth_at(global_position)) > 0.05:
-		_play_water_step_sound(global_position)
+		if _puppet_step_player != null and _puppet_step_player.playing:
+			_puppet_step_player.stop()
+		_puppet_step_timer -= delta
+		if _puppet_step_timer <= 0.0:
+			_puppet_step_timer = 0.34 if is_run else 0.56
+			_play_water_step_sound(global_position)
 		return
+	# Mismos sonidos de andar (andar.mp3) y correr (correr.mp3) que reproduce
+	# AudioSystem para el personaje humano, pero en 3D posicional sobre el puppet.
 	if _puppet_step_player == null:
 		_puppet_step_player = AudioStreamPlayer3D.new()
 		_puppet_step_player.name = "PuppetStepAudio"
@@ -14891,17 +14935,22 @@ func _update_puppet_locomotion_audio(delta: float) -> void:
 		_puppet_step_player.max_distance = 38.0
 		_puppet_step_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_puppet_step_player)
-	if _puppet_step_streams.is_empty():
-		for pth in ["res://assets/external/audio/footstep_grass_01.wav", "res://assets/external/audio/footstep_grass_02.wav", "res://assets/external/audio/footstep_grass_03.wav"]:
-			var st := _load_audio_stream(pth)
-			if st != null:
-				_puppet_step_streams.append(st)
-	if _puppet_step_streams.is_empty():
+	if _puppet_step_streams.size() < 2:
+		_puppet_step_streams = [
+			_load_audio_stream("res://assets/audio/andar.mp3"),
+			_load_audio_stream("res://assets/audio/correr.mp3"),
+		]
+		for s in _puppet_step_streams:
+			if s is AudioStreamMP3:
+				(s as AudioStreamMP3).loop = true
+	var desired_stream: AudioStream = _puppet_step_streams[1] if is_run else _puppet_step_streams[0]
+	if desired_stream == null:
 		return
-	_puppet_step_player.stream = _puppet_step_streams[randi() % _puppet_step_streams.size()]
-	_puppet_step_player.volume_db = 4.0 if is_run else 0.0
-	_puppet_step_player.pitch_scale = randf_range(0.92, 1.08)
-	_puppet_step_player.play()
+	if _puppet_step_player.stream != desired_stream or not _puppet_step_player.playing:
+		_puppet_step_player.stream = desired_stream
+		_puppet_step_player.volume_db = 3.0 if is_run else 0.0
+		_puppet_step_player.pitch_scale = 1.0
+		_puppet_step_player.play()
 
 func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	if is_puppet:

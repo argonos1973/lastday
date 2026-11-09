@@ -308,11 +308,12 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
 		var is_barn_always_open: bool = blocker.get("barn_door_always_open", false) == true
 		var door = blocker.get("door", null)
+		var door_open := is_barn_always_open
 		if not is_barn_always_open:
-			var door_open: bool = blocker.get("door_open", false) == true
+			door_open = blocker.get("door_open", false) == true
 			if not door_open and door != null and is_instance_valid(door):
 				door_open = door.get("is_open") == true
-			if not door_open:
+			if not door_open and not house_ok.is_valid():
 				continue
 		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
@@ -333,7 +334,7 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 					elif house_ok.is_valid():
 						if bool(house_ok.call(world_pos, blocker)):
 							_door_open_cache[cell] = true
-					elif is_in_doorway.call(world_pos, blocker_pos):
+					elif door_open and is_in_doorway.call(world_pos, blocker_pos):
 						_door_open_cache[cell] = true
 			continue
 		var radius: float = float(blocker.get("radius", 1.8))

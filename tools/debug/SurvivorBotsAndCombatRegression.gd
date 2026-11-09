@@ -1605,6 +1605,76 @@ func run() -> void:
 	check(str(fresh_b.get("shelter_id", "")).is_empty() and not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Pez cocinado") == 1,
 		"SpawnReal 10q: sin refugio el bot crea hoguera para cocinar Pez crudo ensartado en Palo afilado -> Pez cocinado")
 
+	# 10r: un bot entra en una vivienda de 2 plantas de la ciudad (city_01),
+	# abre su puerta, sube por las escaleras (anim=stairs) hasta la planta
+	# superior (y=3.92) y llega a la habitacion alta
+	var city01_pos: Vector3 = Vector3(9.0, 0.0, 680.0) + Vector3(-16.0, 0.0, -17.0)
+	var city01_idx: int = world._register_wildlife_blocker(city01_pos, 9.0)
+	world.wildlife_blockers[city01_idx]["door_name"] = "city_01_door"
+	world.wildlife_blockers[city01_idx]["door_pos"] = city01_pos + Vector3(-0.85, 0.12, 6.08)
+	world.wildlife_blockers[city01_idx]["door_center"] = city01_pos + Vector3(0.15, 0.12, 6.08)
+	world.wildlife_blockers[city01_idx]["door_out_dir"] = Vector2(0.0, 1.0)
+	world.wildlife_blockers[city01_idx]["city_building_index"] = 0
+	world.wildlife_blockers[city01_idx]["building_yaw"] = 0.0
+	world.wildlife_blockers[city01_idx]["house_bounds"] = Rect2(city01_pos.x - 6.0, city01_pos.z - 6.0, 12.0, 12.0)
+	world._server_door_states["city_01_door"] = false
+	world._refresh_nav_door_caches()
+	fresh_b["proxy"].global_position = city01_pos + Vector3(-3.5, 0.12, 9.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["has_rifle"] = false
+	fresh_b["path"] = []
+	var upper_room_goal: Vector3 = city01_pos + Vector3(-1.2, 3.92, -2.5)
+	var saw_stairs_anim := false
+	for i in range(180):
+		mgr._move_bot_towards(fresh_b, upper_room_goal, 3.8, 0.12, "walk")
+		if str(fresh_b.get("anim", "")) == "stairs":
+			saw_stairs_anim = true
+		if fresh_b["proxy"].global_position.distance_to(upper_room_goal) < 1.2:
+			break
+	var pos_after_house: Vector3 = fresh_b["proxy"].global_position
+	check(bool(world._server_door_states.get("city_01_door", false)) and saw_stairs_anim and pos_after_house.y > 3.5 and pos_after_house.distance_to(upper_room_goal) < 1.8,
+		"SpawnReal 10r: el bot abre la puerta de city_01, sube las escaleras (anim=stairs) y explora el piso superior (pos=%s)" % str(pos_after_house))
+
+	# 10s: el bot explora la Torre del Reloj de la ciudad (41, 0, 750), sube
+	# piso a piso los 7 tramos de escaleras en zigzag y llega hasta el final
+	# en la azotea (y=29.46 m)
+	fresh_b["proxy"].global_position = Vector3(41.0, 0.06, 738.0) # frente al pórtico norte
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["path"] = []
+	var ct_roof_goal := Vector3(39.6, 29.46, 750.8)
+	var max_tower_y := 0.0
+	var floors_seen := {}
+	for i in range(600):
+		mgr._move_bot_towards(fresh_b, ct_roof_goal, 4.0, 0.15, "walk")
+		var py: float = fresh_b["proxy"].global_position.y
+		max_tower_y = maxf(max_tower_y, py)
+		floors_seen[clampi(int(round((py - 0.06) / 4.2)), 0, 7)] = true
+		if fresh_b["proxy"].global_position.distance_to(ct_roof_goal) < 1.5:
+			break
+	var ct_end: Vector3 = fresh_b["proxy"].global_position
+	check(ct_end.y >= 28.8 and floors_seen.size() >= 7 and ct_end.distance_to(ct_roof_goal) < 2.2,
+		"SpawnReal 10s: el bot sube la Torre del Reloj piso a piso (%d plantas) hasta la cima a 29.46 m (pos=%s)" % [floors_seen.size(), str(ct_end)])
+
+	# 10t: cuando forma equipo con un jugador humano, el bot aliado sigue al
+	# jugador dentro de la casa y sube las escaleras con él al piso superior
+	var leader_human := Node3D.new()
+	world.add_child(leader_human)
+	leader_human.global_position = city01_pos + Vector3(-1.0, 3.92, 1.5) # humano en la 2ª planta de city_01
+	world.server_proxies[1] = leader_human
+	fresh_b["team_leader_id"] = 1
+	fresh_b["follow_mode"] = "follow"
+	fresh_b["proxy"].global_position = city01_pos + Vector3(0.0, 0.12, 9.5) # bot fuera en la calle
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	for i in range(180):
+		mgr._tick_teammate_behavior(fresh_b, leader_human, 0.12)
+		if fresh_b["proxy"].global_position.distance_to(leader_human.global_position) < 2.6:
+			break
+	var team_pos: Vector3 = fresh_b["proxy"].global_position
+	check(team_pos.y > 3.5 and team_pos.distance_to(leader_human.global_position) < 3.2,
+		"SpawnReal 10t: en equipo el bot sigue al jugador humano dentro de la casa y sube las escaleras al 2º piso (pos=%s)" % str(team_pos))
+	world.server_proxies.erase(1)
+	leader_human.queue_free()
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

@@ -62,8 +62,16 @@ static func create(world: Node3D, server: bool) -> Node3D:
    interiors.register_interior(building.get_node("Interior"))
   var door:Door=building.get_node(str(BLOCK.BUILDINGS[i].id)+"_door")
   var footprint:Vector2=BLOCK.BUILDINGS[i].get("footprint",Vector2(6,6))
+  var yaw:float=float(BLOCK.BUILDINGS[i].get("yaw",0.0))
+  var out3:=Vector3(0.0,0.0,1.0).rotated(Vector3.UP,yaw)
   var index:int=world._register_wildlife_blocker(building.global_position,maxf(footprint.x,footprint.y)+3.0)
   world.wildlife_blockers[index]["door"]=door
+  world.wildlife_blockers[index]["door_name"]=String(door.name)
+  world.wildlife_blockers[index]["door_pos"]=door.global_position
+  world.wildlife_blockers[index]["door_center"]=building.global_position+Vector3(0.15,0.12,6.08).rotated(Vector3.UP,yaw)
+  world.wildlife_blockers[index]["door_out_dir"]=Vector2(out3.x,out3.z)
+  world.wildlife_blockers[index]["city_building_index"]=i
+  world.wildlife_blockers[index]["building_yaw"]=yaw
   world.wildlife_blockers[index]["house_bounds"]=Rect2(Vector2(building.global_position.x-footprint.x,building.global_position.z-footprint.y),footprint*2.0)
  await world.get_tree().process_frame
  preload("res://scripts/CityStreetscape.gd").create(world, server)

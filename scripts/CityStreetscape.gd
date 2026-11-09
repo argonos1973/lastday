@@ -36,7 +36,16 @@ static func create(world: Node3D, server: bool) -> void:
  var tower:=preload("res://scripts/CityClockTower.gd").new()
  tower.name="CityClockTower";tower.position=tower.WORLD_POSITION
  world.add_child(tower);tower.visible=not server
- world._register_wildlife_blocker(tower.position,12.0)
+ var ct_idx:int=world._register_wildlife_blocker(tower.position,12.0)
+ world.wildlife_blockers[ct_idx]["house_bounds"]=Rect2(Vector2(tower.position.x-9.0,tower.position.z-8.0),Vector2(18.0,16.0))
+ world.wildlife_blockers[ct_idx]["barn_door_always_open"]=true
+ world.wildlife_blockers[ct_idx]["door_open"]=true
+ world.wildlife_blockers[ct_idx]["front_door_x"]=tower.position.x
+ world.wildlife_blockers[ct_idx]["front_door_w"]=3.2
+ world.wildlife_blockers[ct_idx]["door_pos"]=tower.position+Vector3(0.0,0.06,-8.0)
+ world.wildlife_blockers[ct_idx]["door_center"]=tower.position+Vector3(0.0,0.06,-8.0)
+ world.wildlife_blockers[ct_idx]["door_out_dir"]=Vector2(0.0,-1.0)
+ world.wildlife_blockers[ct_idx]["is_clock_tower"]=true
 
  var plaza: Node3D = load("res://assets/models/environment/city/district_plaza.glb").instantiate()
  plaza.name="DistrictPlaza";plaza.position=ORIGIN+Vector3(32,0,48)

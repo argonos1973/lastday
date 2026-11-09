@@ -6,7 +6,7 @@ class World extends Node3D:
 	func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
 		return [] if no_route else nav.find_path(start, goal)
 	func is_wildlife_allowed_at(pos: Vector3) -> bool:
-		return not nav.is_cell_blocked(nav.world_to_grid(pos))
+		return not no_route and not nav.is_cell_blocked(nav.world_to_grid(pos))
 	func _get_exact_ground_y(_x: float, _z: float) -> float:
 		return 0.0
 

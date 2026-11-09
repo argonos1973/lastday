@@ -3923,6 +3923,12 @@ func _server_door_position(door_name: String) -> Vector3:
 	for h in _HOUSE_DOOR_LAYOUT:
 		if door_name == String(h[0]) + " Door":
 			return Vector3(float(h[1]) - 0.9, 0.0, float(h[2]) + float(h[3]) * 0.5)
+	for def in CityExpansion.BLOCK.BUILDINGS:
+		if door_name == String(def.get("id", "")) + "_door":
+			var bpos: Vector3 = CityExpansion.CENTER + (def["position"] as Vector3)
+			var yaw: float = float(def.get("yaw", 0.0))
+			var dloc: Vector3 = def.get("door_position", Vector3(-0.85, 0.12, 6.08))
+			return bpos + dloc.rotated(Vector3.UP, yaw)
 	return Vector3.INF
 
 # Los bots abren puertas como un jugador: una puerta cerrada a su alcance se
@@ -8273,7 +8279,17 @@ func _register_server_house_blockers() -> void:
 			if is_equal_approx(float(h[1]), origin.x) and is_equal_approx(float(h[2]), origin.z):
 				wildlife_blockers[idx]["door_name"] = String(h[0]) + " Door"
 				wildlife_blockers[idx]["door_pos"] = Vector3(float(h[1]) - 0.9, 0.0, float(h[2]) + float(h[3]) * 0.5)
+				wildlife_blockers[idx]["door_center"] = Vector3(float(h[1]) + 0.15, 0.0, float(h[2]) + float(h[3]) * 0.5)
+				wildlife_blockers[idx]["door_out_dir"] = Vector2(0.0, 1.0)
 				break
+	for b_origin in [Vector3(45.0, 0.0, 120.0), Vector3(-340.0, 0.0, 280.0)]:
+		var b_idx := _register_wildlife_blocker(b_origin, 11.0)
+		wildlife_blockers[b_idx]["house_bounds"] = Rect2(b_origin.x - 4.0, b_origin.z - 9.0, 8.0, 18.0)
+		wildlife_blockers[b_idx]["barn_door_always_open"] = true
+		wildlife_blockers[b_idx]["front_door_x"] = b_origin.x
+		wildlife_blockers[b_idx]["front_door_w"] = 2.8
+		wildlife_blockers[b_idx]["back_door_x"] = b_origin.x
+		wildlife_blockers[b_idx]["back_door_w"] = 2.8
 
 func _create_barn(origin: Vector3, name_suffix := "") -> void:
 	var barn_path := BARN_MODEL
@@ -8685,6 +8701,10 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	var door_node := get_node_or_null(label + " Door")
 	if door_node != null:
 		wildlife_blockers[blocker_idx]["door"] = door_node
+		wildlife_blockers[blocker_idx]["door_name"] = label + " Door"
+		wildlife_blockers[blocker_idx]["door_pos"] = Vector3(origin.x - 0.9, 0.0, origin.z + half_d)
+		wildlife_blockers[blocker_idx]["door_center"] = Vector3(origin.x + 0.15, 0.0, origin.z + half_d)
+		wildlife_blockers[blocker_idx]["door_out_dir"] = Vector2(0.0, 1.0)
 		wildlife_blockers[blocker_idx]["house_bounds"] = Rect2(origin.x - half_w - 0.3, origin.z - half_d - 0.5, width + 0.6, depth + 1.0)
 
 func _create_house_foundation(origin: Vector3, label: String, half_w: float, half_d: float, front_seg_c: float, front_seg_w: float) -> void:
@@ -9240,7 +9260,8 @@ func _build_city_military_base_perimeter(server_only := false) -> void:
 			0.0
 		):
 			_apply_camo_net_material(get_node_or_null("MilitaryBaseWatchTowerCamoNet"))
-	_register_wildlife_blocker(tower_world, 4.0)
+	var wt_blocker_idx := _register_wildlife_blocker(tower_world, 4.0)
+	wildlife_blockers[wt_blocker_idx]["tent_open"] = true
 	# La GLB de la torre es una malla fusionada: la escalera caracol, los
 	# descansillos y la cubierta reciben colision propia en ambos lados.
 	_build_military_watchtower_collision(tower_pos, tower_scale)
@@ -17326,7 +17347,10 @@ func is_bot_blocked_at(pos: Vector3, extra_margin := 0.0) -> bool:
 		var door_is_open := _check_door_open(blocker.get("door", null), blocker)
 		if blocker.has("house_bounds"):
 			var bounds: Rect2 = blocker["house_bounds"]
-			if bounds.grow(3.5).has_point(p):
+			# El exterior (>0.45 m fuera de los muros reales) es acera/patio libre
+			# para que el bot pueda acercarse hasta la puerta cerrada (~2 m) y
+			# abrirla sin quedar frenado a 4 m por el halo de lobos (grow(3.5)).
+			if bounds.grow(0.45 + extra_margin).has_point(p):
 				if door_is_open and _bot_house_pos_ok(p, bounds, blocker_pos, blocker):
 					continue
 				return true
@@ -17343,21 +17367,69 @@ func is_bot_blocked_at(pos: Vector3, extra_margin := 0.0) -> bool:
 			return true
 	return false
 
-# Posiciones transitables del bot dentro del bloqueo de una casa con la
-# puerta abierta: el vano, una burbuja junto a la puerta que cubre el delantal
-# hasta el borde libre (~3.5 m) y el interior completo.
+# Posiciones transitables del bot dentro de una casa con la puerta abierta:
+# el interior libre (bounds.grow(-0.45)) y el pasillo recto del vano de la
+# puerta (nunca los muros laterales ni el muro frontal a ambos lados del vano).
 func _bot_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocker: Dictionary) -> bool:
 	if blocker.get("barn_door_always_open", false) == true:
 		if _is_in_barn_doorway_passage(Vector3(p.x, 0.0, p.y), blocker):
 			return true
-		return bounds.grow(-0.4).has_point(p)
-	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
-	if dpos.is_finite():
-		if p.distance_to(Vector2(dpos.x, dpos.z)) <= 4.4:
+		if blocker.get("is_clock_tower", false) == true:
+			var ct_dc: Vector3 = blocker.get("door_center", blocker_pos + Vector3(0.0, 0.0, -8.0))
+			if absf(p.x - ct_dc.x) <= 1.55 and p.y >= ct_dc.z - 3.5 and p.y <= ct_dc.z + 3.0:
+				return true
+		return bounds.grow(-0.45).has_point(p)
+	if bounds.grow(-0.45).has_point(p):
+		return true
+	var dc := _blocker_door_center(blocker, blocker_pos, bounds)
+	if dc.is_finite():
+		var out_dir := _blocker_door_out_dir(blocker, blocker_pos, bounds)
+		var side_dir := Vector2(-out_dir.y, out_dir.x)
+		var rel := p - Vector2(dc.x, dc.z)
+		var along := rel.dot(out_dir)
+		var across := absf(rel.dot(side_dir))
+		if across <= 0.95 and along >= -2.5 and along <= 3.5:
 			return true
 	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
 		return true
-	return bounds.grow(-0.4).has_point(p)
+	return false
+
+func _blocker_door_center(blocker: Dictionary, blocker_pos: Vector3, bounds: Rect2) -> Vector3:
+	if blocker.has("door_center"):
+		var dc: Vector3 = blocker["door_center"]
+		if dc.is_finite():
+			return dc
+	if blocker.has("building_yaw"):
+		var yaw := float(blocker["building_yaw"])
+		return blocker_pos + Vector3(0.15, 0.12, 6.08).rotated(Vector3.UP, yaw)
+	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
+	if dpos.is_finite():
+		var hc := bounds.get_center()
+		# En las casas del pueblo la bisagra esta en x = hc.x - 0.9 y el hueco
+		# mide 1.8 m centrándose en hc.x (ligeramente +0.15 m lejos de la hoja).
+		if absf((dpos.x + 0.9) - hc.x) < 0.35:
+			return Vector3(hc.x + 0.15, dpos.y, dpos.z)
+		return dpos
+	return Vector3.INF
+
+func _blocker_door_out_dir(blocker: Dictionary, blocker_pos: Vector3, bounds: Rect2) -> Vector2:
+	if blocker.has("door_out_dir"):
+		var od: Vector2 = blocker["door_out_dir"]
+		if od.length_squared() > 0.01:
+			return od.normalized()
+	if blocker.has("building_yaw"):
+		var yaw := float(blocker["building_yaw"])
+		var out3 := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
+		return Vector2(out3.x, out3.z).normalized()
+	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
+	var hc := bounds.get_center()
+	if dpos.is_finite():
+		var dx := dpos.x - hc.x
+		var dz := dpos.z - hc.y
+		if absf(dz) >= absf(dx):
+			return Vector2(0.0, 1.0 if dz >= 0.0 else -1.0)
+		return Vector2(1.0 if dx >= 0.0 else -1.0, 0.0)
+	return Vector2(0.0, 1.0)
 
 # Posiciones transitables para el lobo domesticado dentro del bloqueo de una
 # casa con la puerta abierta: el vano siempre; el interior solo si el lobo ya
@@ -17444,7 +17516,35 @@ func _notify_tamed_wolf_assist(owner_id: String, foe: Node3D) -> void:
 func _is_in_bot_house_nav(pos: Vector3, blocker: Dictionary) -> bool:
 	var bounds: Rect2 = blocker.get("house_bounds", Rect2())
 	var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
-	return _bot_house_pos_ok(Vector2(pos.x, pos.z), bounds, blocker_pos, blocker)
+	var p := Vector2(pos.x, pos.z)
+	# En la malla AStar (celdas de 2.0 m), el exterior fuera de bounds.grow(1.8)
+	# es siempre transitable (aceras/calles/patios), mientras que la banda de
+	# muro de 2.3 m (bounds.grow(1.8) minus bounds.grow(-0.5)) permanece sólida
+	# en las 4 paredes salvo el puente recto del vano cuando la puerta está abierta.
+	if not bounds.grow(1.8).has_point(p):
+		return true
+	if not _check_door_open(blocker.get("door", null), blocker):
+		return false
+	if blocker.get("barn_door_always_open", false) == true:
+		if _is_in_barn_doorway_passage(pos, blocker):
+			return true
+		if blocker.get("is_clock_tower", false) == true:
+			var ct_dc: Vector3 = blocker.get("door_center", blocker_pos + Vector3(0.0, 0.0, -8.0))
+			if absf(p.x - ct_dc.x) <= 1.65 and p.y >= ct_dc.z - 4.0 and p.y <= ct_dc.z + 3.5:
+				return true
+		return bounds.grow(-0.5).has_point(p)
+	if bounds.grow(-0.5).has_point(p):
+		return true
+	var dc := _blocker_door_center(blocker, blocker_pos, bounds)
+	if dc.is_finite():
+		var out_dir := _blocker_door_out_dir(blocker, blocker_pos, bounds)
+		var side_dir := Vector2(-out_dir.y, out_dir.x)
+		var rel := p - Vector2(dc.x, dc.z)
+		var along := rel.dot(out_dir)
+		var across := absf(rel.dot(side_dir))
+		if across <= 1.35 and along >= -3.2 and along <= 4.0:
+			return true
+	return false
 
 func _refresh_nav_door_caches() -> void:
 	for blocker in wildlife_blockers:
@@ -17644,7 +17744,7 @@ func get_wildlife_avoidance_vector_at(pos: Vector3) -> Vector3:
 				var expanded := bounds.grow(2.5)
 				if expanded.has_point(p) and not bounds.has_point(p):
 					var center := bounds.get_center()
-					push += Vector3(center.x - p.x, 0.0, center.y - p.y).normalized()
+					push += Vector3(p.x - center.x, 0.0, p.y - center.y).normalized()
 			continue
 		var radius := float(blocker.get("radius", 1.8)) + 2.1
 		var offset := p - Vector2(blocker_pos.x, blocker_pos.z)
@@ -17729,6 +17829,8 @@ func _is_near_wildlife_blocker(pos: Vector3, extra_margin := 0.0) -> bool:
 			var bounds: Rect2 = blocker["house_bounds"]
 			var expanded_bounds := bounds.grow(3.5)
 			if expanded_bounds.has_point(p):
+				if blocker.get("is_clock_tower", false) == true:
+					return true
 				if door_is_open and blocker.get("barn_door_always_open", false) == true:
 					if _is_in_barn_doorway_passage(pos, blocker):
 						continue
