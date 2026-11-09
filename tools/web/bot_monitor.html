@@ -534,7 +534,7 @@ function renderBots(data) {
             <span>${esc(b.name)}</span>
             <span class="badge ${b.faction === "hostile" ? "err" : "ok"}">${esc(b.faction)}</span>
             ${b.sick ? `<span class="badge warn">Enfermo</span>` : ""}
-            ${b.dead ? `<span class="badge err">MUERTO</span>` : ""}
+            ${b.dead ? `<span class="badge err">MUERTO${b.respawn_seconds ? ` — respawn en ${fmtDur(b.respawn_seconds)}` : ""}</span>` : ""}
           </div>
           <div class="bot-sub">ID ${b.bot_id} · Arma: <b>${esc(b.held_item || "Ninguna")}</b> · Mochila: ${esc(b.backpack || "Ninguna")}</div>
         </div>

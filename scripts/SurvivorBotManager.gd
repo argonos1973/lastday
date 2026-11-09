@@ -4887,6 +4887,7 @@ func get_full_web_status() -> Dictionary:
 		snap["rot"] = snappedf(float(b.get("rot", 0.0)), 0.01)
 		snap["anim"] = str(b.get("anim", "idle"))
 		snap["dead"] = bool(proxy.get_meta("proxy_dead", false)) if proxy != null and is_instance_valid(proxy) else false
+		snap["respawn_seconds"] = int(maxf(0.0, 180.0 - float(b.get("respawn_timer", 0.0)))) if bool(snap["dead"]) else 0
 		snap["held_item"] = str(b.get("held_item", ""))
 		snap["clothing"] = str(b.get("clothing", ""))
 		snap["backpack"] = str(b.get("backpack", ""))
