@@ -3888,6 +3888,39 @@ func _server_door_position(door_name: String) -> Vector3:
 			return Vector3(float(h[1]) - 0.9, 0.0, float(h[2]) + float(h[3]) * 0.5)
 	return Vector3.INF
 
+# Los bots abren puertas como un jugador: una puerta cerrada a su alcance se
+# abre en el servidor (estado + nav desbloqueada) y se retransmite a los
+# clientes para que la vean girar y oigan el sonido igual que con un humano.
+const BOT_DOOR_REACH := 5.0
+func bot_try_open_door_at(pos: Vector3) -> bool:
+	var cell := Vector2i(floori(pos.x / _BLOCKER_CELL), floori(pos.z / _BLOCKER_CELL))
+	var best_name := ""
+	var best_dist := BOT_DOOR_REACH
+	for cx in range(cell.x - 1, cell.x + 2):
+		for cz in range(cell.y - 1, cell.y + 2):
+			for idx in _blocker_grid.get(Vector2i(cx, cz), []):
+				var blocker: Dictionary = wildlife_blockers[idx]
+				var door_name := String(blocker.get("door_name", ""))
+				if door_name.is_empty() or _check_door_open(blocker.get("door", null), blocker):
+					continue
+				var dpos: Vector3 = blocker.get("door_pos", _server_door_position(door_name))
+				if not dpos.is_finite():
+					continue
+				var dist := Vector2(dpos.x - pos.x, dpos.z - pos.z).length()
+				if dist < best_dist:
+					best_dist = dist
+					best_name = door_name
+	if best_name.is_empty():
+		return false
+	if not _net_door_state_changed(best_name, true, 0):
+		return false
+	_refresh_nav_door_caches()
+	if net != null and net.get("is_host") == true and net.get("peer") != null:
+		for pid in net.players.keys():
+			if not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.door_state_changed.rpc_id(pid, best_name, true)
+	return true
+
 func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 0) -> bool:
 	# En el host un toggle remoto tiene que venir de una puerta conocida y al
 	# alcance del proxy del emisor — si no cualquier cliente podía abrir o
@@ -17102,6 +17135,47 @@ func is_tamed_wolf_allowed_at(pos: Vector3, animal: Node = null) -> bool:
 					continue
 			return false
 	return true
+
+# Movimiento del bot: mismos bloqueos que la fauna (_is_near_wildlife_blocker)
+# pero con la puerta abierta el vano, la burbuja de aproximacion y el interior
+# son transitables — los bots abren puertas y exploran casas como un jugador.
+func is_bot_blocked_at(pos: Vector3, extra_margin := 0.0) -> bool:
+	var p := Vector2(pos.x, pos.z)
+	var cell := Vector2i(floori(pos.x / _BLOCKER_CELL), floori(pos.z / _BLOCKER_CELL))
+	for idx in _blocker_grid.get(cell, []):
+		var blocker: Dictionary = wildlife_blockers[idx]
+		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+		var door_is_open := _check_door_open(blocker.get("door", null), blocker)
+		if blocker.has("house_bounds"):
+			var bounds: Rect2 = blocker["house_bounds"]
+			if bounds.grow(3.5).has_point(p):
+				if door_is_open and _bot_house_pos_ok(p, bounds, blocker_pos, blocker):
+					continue
+				return true
+			continue
+		var radius := float(blocker.get("radius", 1.8)) + extra_margin
+		if p.distance_to(Vector2(blocker_pos.x, blocker_pos.z)) <= radius:
+			if door_is_open:
+				var local_x := pos.x - blocker_pos.x
+				var local_z := pos.z - blocker_pos.z
+				if abs(local_x) <= 3.0 and local_z >= -5.5 and local_z <= 10.0:
+					continue
+			return true
+	return false
+
+# Posiciones transitables del bot dentro del bloqueo de una casa con la
+# puerta abierta: el vano, una burbuja junto a la puerta que cubre el delantal
+# hasta el borde libre (~3.5 m) y el interior completo.
+func _bot_house_pos_ok(p: Vector2, bounds: Rect2, blocker_pos: Vector3, blocker: Dictionary) -> bool:
+	if blocker.get("barn_door_always_open", false) == true:
+		if _is_in_barn_doorway_passage(Vector3(p.x, 0.0, p.y), blocker):
+			return true
+	elif _is_in_doorway_passage(Vector3(p.x, 0.0, p.y), blocker_pos):
+		return true
+	var dpos := _blocker_door_pos(blocker, blocker_pos, bounds)
+	if dpos.is_finite() and p.distance_to(Vector2(dpos.x, dpos.z)) <= 4.0:
+		return true
+	return bounds.grow(-0.4).has_point(p)
 
 # Posiciones transitables para el lobo domesticado dentro del bloqueo de una
 # casa con la puerta abierta: el vano siempre; el interior solo si el lobo ya

@@ -2480,6 +2480,8 @@ func _is_pos_blocked(pos: Vector3, margin: float = 0.45) -> bool:
 		return false
 	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > WADE_DEPTH:
 		return true
+	if world.has_method("is_bot_blocked_at"):
+		return world.is_bot_blocked_at(pos, margin)
 	if world.has_method("_is_near_wildlife_blocker") and world._is_near_wildlife_blocker(pos, margin):
 		return true
 	return false
@@ -2606,8 +2608,16 @@ func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float,
 	var step := minf(spd * delta, d)
 	var chosen_dir := sm if sm.length_squared() > 0.001 else dir
 	var new_pos := cur + chosen_dir * step
+	var front_blocked := _is_step_blocked(cur, new_pos)
+	# Una puerta cerrada no es un muro: si el paso choca y hay una puerta
+	# cerrada al alcance, el bot la abre como un jugador y repatha ya libre.
+	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and (world.bot_try_open_door_at(cur) or world.bot_try_open_door_at(next_goal)):
+		b["path"] = []
+		b["path_timer"] = 0.0
+		b["anim"] = "idle"
+		return
 	# Si el paso frontal choca contra un obstaculo/agua, tantear angulos libres
-	if _is_step_blocked(cur, new_pos) and not _is_pos_blocked(cur, 0.25):
+	if front_blocked and not _is_pos_blocked(cur, 0.25):
 		var sign_pref := float(b.get("avoid_sign", 1.0))
 		var steered := false
 		for deg in [28.0, -28.0, 56.0, -56.0, 88.0, -88.0, 125.0, -125.0]:

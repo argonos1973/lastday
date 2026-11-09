@@ -991,6 +991,51 @@ func run() -> void:
 	arbol.queue_free()
 	world.world_actions_by_id.clear()
 
+	# --- 25) Puertas: el bot abre puertas cerradas como un jugador ---
+	world.nav = NavPathfinding.new()
+	world.nav.build([], [])
+	var house_idx: int = world._register_wildlife_blocker(Vector3(60.0, 0.0, 60.0), 8.0)
+	world.wildlife_blockers[house_idx]["house_bounds"] = Rect2(55.0, 55.0, 10.0, 10.0)
+	world.wildlife_blockers[house_idx]["door_name"] = "Casa prueba Door"
+	world.wildlife_blockers[house_idx]["door_pos"] = Vector3(60.0, 0.0, 55.0)
+	check(not world.bot_try_open_door_at(Vector3(30.0, 0.0, 30.0)),
+		"Puerta: lejos no se abre nada")
+	check(world.bot_try_open_door_at(Vector3(59.0, 0.0, 52.0)),
+		"Puerta: junto a una cerrada se abre")
+	check(bool(world._server_door_states.get("Casa prueba Door", false)),
+		"Puerta: el estado del servidor queda abierto")
+	check(world._check_door_open(null, world.wildlife_blockers[house_idx]),
+		"Puerta: _check_door_open la da por abierta")
+	check(not world.bot_try_open_door_at(Vector3(59.0, 0.0, 52.0)),
+		"Puerta: ya abierta no se reabre")
+	check(not world._is_near_wildlife_blocker(Vector3(60.0, 0.0, 58.0), 0.0),
+		"Puerta: el paso de la puerta queda libre al abrirse")
+	# Y en movimiento: una puerta cerrada en el paso se abre, no se rodea
+	world._server_door_states["Casa prueba Door"] = false
+	world._refresh_nav_door_caches()
+	check(world._is_near_wildlife_blocker(Vector3(60.0, 0.0, 58.0), 0.0),
+		"Puerta: cerrada vuelve a bloquear el paso")
+	elena_proxy.global_position = Vector3(60.0, 0.4, 51.2)
+	elena["_speed"] = 4.0
+	elena["_last_move_t"] = float(Time.get_ticks_msec()) / 1000.0
+	elena["path"] = []
+	elena["path_timer"] = 0.0
+	elena["stuck_timer"] = 0.0
+	elena["stuck_count"] = 0
+	for i in range(3):
+		mgr._move_bot_towards(elena, Vector3(60.0, 0.4, 60.0), 4.0, 0.1, "walk")
+		if bool(world._server_door_states.get("Casa prueba Door", false)):
+			break
+	check(bool(world._server_door_states.get("Casa prueba Door", false)),
+		"Puerta: el bot abre la puerta que le bloquea el paso")
+	# Con la puerta abierta el paso queda libre y el bot puede entrar
+	for i in range(30):
+		mgr._move_bot_towards(elena, Vector3(60.0, 0.4, 60.0), 4.0, 0.1, "walk")
+		if Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length() < 1.5:
+			break
+	check(Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length() < 2.5,
+		"Puerta: el bot entra en la casa por la puerta abierta (dist=%.2f)" % Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length())
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
