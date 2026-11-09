@@ -1365,6 +1365,31 @@ func run() -> void:
 	check(float(sick_b.get("sick_timer", 0.0)) <= 0.0 and int((sick_p.get_meta("saved_inventory", []) as Array).size()) == 1,
 		"Enfermedad 9c: sin desesperacion el bot no come carne cruda (prefiere cocinarla)")
 
+	# Spawn realista: el bot nace como un jugador humano — solo la ropa puesta,
+	# sin arma, sin mochila ni items — y su respawn nunca cerca del punto de
+	# muerte (morir te reubica en otra zona del mapa)
+	var fresh_proxy: Node3D = mgr.bots[902]["proxy"]
+	fresh_proxy.queue_free()
+	mgr.bots.erase(902)
+	mgr._spawn_bot((mgr.BOT_CONFIGS as Array)[1])
+	var fresh_b: Dictionary = mgr.bots[902]
+	var f_inv: Array = fresh_b["proxy"].get_meta("saved_inventory", [])
+	var f_weapons := 0
+	for f_it in f_inv:
+		var f_nm := str((f_it as Dictionary).get("name", ""))
+		if f_nm in ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera", "Lanza", "Hacha", "Cuchillo", "Palo afilado"]:
+			f_weapons += 1
+	check(f_weapons == 0 and str(fresh_b["proxy"].get_meta("saved_held_item", "?")) == "",
+		"SpawnReal 10a: el bot nace sin arma ni items, solo con su ropa (igual que el jugador humano)")
+	var death_p := Vector3(0.0, 0.0, 0.0)
+	var old_zones = world.get("_spawn_zones")
+	world._spawn_zones = [Vector3(0.0, 0.0, 0.0), Vector3(10.0, 0.0, 0.0), Vector3(400.0, 0.0, 0.0)]
+	var spawn_p := mgr._random_bot_spawn(fresh_b["cfg"], death_p)
+	check(Vector2(spawn_p.x - death_p.x, spawn_p.z - death_p.z).length() >= 200.0,
+		"SpawnReal 10b: el respawn queda a >=220 m del punto de muerte (dist=%.0f m)" % Vector2(spawn_p.x - death_p.x, spawn_p.z - death_p.z).length())
+	if old_zones is Array:
+		world._spawn_zones = old_zones
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

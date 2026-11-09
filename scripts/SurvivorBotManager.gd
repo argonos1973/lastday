@@ -369,7 +369,7 @@ func spawn_all_bots() -> void:
 # Spawn aleatorio dentro de las mismas zonas de spawn que usan los jugadores
 # (_spawn_zones del mundo): zona al azar + offset +-3 m, evitando rios,
 # bloqueadores y quedar pegado a otro superviviente IA.
-func _random_bot_spawn(cfg: Dictionary) -> Vector3:
+func _random_bot_spawn(cfg: Dictionary, avoid_pos: Vector3 = Vector3.INF) -> Vector3:
 	var fallback := Vector3(cfg.get("spawn", Vector3.ZERO))
 	var zones_v = world.get("_spawn_zones") if world != null else null
 	var zones: Array = zones_v if zones_v is Array else []
@@ -377,11 +377,14 @@ func _random_bot_spawn(cfg: Dictionary) -> Vector3:
 		return _sanitize_ground_point(fallback)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	var best := _sanitize_ground_point(zones[rng.randi() % zones.size()])
+	var best := Vector3.INF
 	var best_sep := -1.0
 	for i in range(16):
 		var zone: Vector3 = zones[rng.randi() % zones.size()]
 		var cand := Vector3(zone.x + rng.randf_range(-3.0, 3.0), 0.0, zone.z + rng.randf_range(-3.0, 3.0))
+		# El respawn nunca cerca del punto de muerte: morir te reubica lejos
+		if avoid_pos != Vector3.INF and Vector2(cand.x - avoid_pos.x, cand.z - avoid_pos.z).length() < 220.0:
+			continue
 		if world.has_method("_is_near_river") and world._is_near_river(cand, 30.0):
 			continue
 		if _is_pos_blocked(cand, 0.7):
@@ -392,7 +395,19 @@ func _random_bot_spawn(cfg: Dictionary) -> Vector3:
 		if sep > best_sep:
 			best_sep = sep
 			best = cand
-	return _sanitize_ground_point(best)
+	if best != Vector3.INF:
+		return _sanitize_ground_point(best)
+	# Sin candidato valido: la zona MAS ALEJADA del punto de muerte (o al azar)
+	var far_zone: Vector3 = zones[rng.randi() % zones.size()]
+	if avoid_pos != Vector3.INF:
+		var far_d := -1.0
+		for z in zones:
+			var zv: Vector3 = z
+			var dz := Vector2(zv.x - avoid_pos.x, zv.z - avoid_pos.z).length()
+			if dz > far_d:
+				far_d = dz
+				far_zone = zv
+	return _sanitize_ground_point(far_zone)
 
 func _min_dist_to_other_bots(pos: Vector3) -> float:
 	var sep := INF
@@ -419,7 +434,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	var bot_id := int(cfg["bot_id"])
 	if bots.has(bot_id):
 		return
-	var spawn_pos: Vector3 = _random_bot_spawn(cfg)
+	var spawn_pos: Vector3 = _random_bot_spawn(cfg, Vector3(_ensure_bot_memory(bot_id, cfg).get("last_death_pos", Vector3.INF)))
 	var patrol: Array = []
 	for pt in cfg.get("patrol", []):
 		patrol.append(_sanitize_ground_point(pt as Vector3))
@@ -451,22 +466,13 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	proxy.set_meta("saved_thirst", 95.0)
 	proxy.set_meta("proxy_dead", false)
 
+	# Como el jugador humano: el bot nace solo con la ropa puesta, sin arma,
+	# sin mochila y sin items — todo lo que lleve lo ha saqueado o fabricado.
 	var inv_items: Array = (cfg.get("starting_items", []) as Array).duplicate(true)
-	# El arma inicial es equipo, no botin: vive en el inventario como cualquier
-	# arma saqueada para que combata y craftee con ella; saved_held_item marca
-	# el slot que lleva en la mano.
-	var start_weapon := str(cfg.get("starting_weapon", "Cuchillo"))
-	var wdur := 100.0
-	var wtype := "weapon"
-	match start_weapon:
-		"Fusil de asalto", "Rifle francotirador": wtype = "weapon_rifle"
-		"Hacha": wtype = "tool_axe"
-		"Cuchillo": wdur = 80.0
-	inv_items.append({"name": start_weapon, "type": wtype, "weight": 1.4, "quantity": 1, "use_value": 10.0, "durability": wdur, "max_durability": wdur})
 	var cloth_arr: Array = (cfg.get("starting_clothing", []) as Array).duplicate()
 	var cloth_str := ",".join(cloth_arr)
-	var bp_str := str(cfg.get("starting_backpack", "Mochila pequena"))
-	var held_str := str(cfg.get("starting_weapon", "Cuchillo"))
+	var bp_str := str(cfg.get("starting_backpack", ""))
+	var held_str := ""
 
 	proxy.set_meta("saved_inventory", inv_items)
 	proxy.set_meta("saved_clothing", cloth_str)
@@ -3351,7 +3357,7 @@ func _best_weapon_name(proxy: Node3D) -> String:
 		for it in inv:
 			if it is Dictionary and str(it.get("name", "")) == w and int(it.get("quantity", 1)) > 0:
 				return w
-	return "Cuchillo"
+	return ""
 
 # Armas cuerpo a cuerpo por orden de letalidad (incluye las de crafteo).
 func _best_melee_weapon(proxy: Node3D) -> String:
@@ -3361,7 +3367,7 @@ func _best_melee_weapon(proxy: Node3D) -> String:
 	for w in order:
 		if _bot_item_count(proxy, w) > 0:
 			return w
-	return "Cuchillo"
+	return ""
 
 func _bot_best_bow(proxy: Node3D) -> String:
 	if _bot_item_count(proxy, "Arco reforzado") > 0:
