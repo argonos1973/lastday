@@ -884,6 +884,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, lpos, 4.4, delta, "run")
 		return
 
+	# 5b) Materiales de campamento: si faltan palos para el refugio/fogata y no
+	# hay drops a mano, el bot tala arbustos (fell_bush) igual que un jugador —
+	# filo en mano, 5 s de corte, 3 palos y semillas al suelo.
+	if _bot_try_gather_mats(b, delta):
+		return
+
 	# 6) Construir campamento propio (refugio + camuflaje/pieles + fogata) y ocultarse/descansar
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
 		var d_camp := Vector2(proxy.global_position.x - camp_pos.x, proxy.global_position.z - camp_pos.z).length()
@@ -3570,3 +3576,159 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 					if pid != net2.get_my_id() and not is_bot_peer_id(pid) and not net2.players[pid].get("offline", false) and net2.peer_alive(pid):
 						net2.item_dropped.rpc_id(pid, drop_id, fruit_name, "food", fruit_w, 1, fruit_use, fpos, Color(0, 0, 0, 0))
 		b["eat_cooldown"] = 4.0
+
+# ==================== RECOLECCION DE MATERIALES: TALAR ARBUSTOS ====================
+# El palo no existe como drop libre: un jugador lo consigue cortando arbustos
+# (accion fell_bush, 5 s con filo en mano) y el bot hace exactamente lo mismo.
+# Se activa cuando faltan palos para el refugio (4) o para la fogata (2) y no
+# hay drops de Palo cerca — la piedra ya la recoge el saqueo normal y la cuerda
+# sale del crafteo con tendon.
+
+const BUSH_TOOLS := ["Hacha", "Hacha de piedra", "Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]
+
+func _bot_bush_tool(proxy: Node3D) -> String:
+	for t in BUSH_TOOLS:
+		if _bot_item_count(proxy, t) > 0:
+			return t
+	return ""
+
+func _bot_release_gather_claim(b: Dictionary, st: Dictionary) -> void:
+	if world == null or not ("_pickup_claims" in world):
+		return
+	var aid := str(st.get("id", ""))
+	if aid.is_empty():
+		return
+	if int((world._pickup_claims as Dictionary).get(aid, -1)) == int(b["bot_id"]):
+		(world._pickup_claims as Dictionary).erase(aid)
+		if "_pickup_claim_until" in world:
+			(world._pickup_claim_until as Dictionary).erase(aid)
+
+func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var palo_need := 0
+	if str(b["shelter_id"]).is_empty():
+		palo_need = 4
+	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
+		palo_need = 2
+	var tool := _bot_bush_tool(proxy)
+	# Escondido o reclutado no sale a talar: las ordenes del lider y la
+	# amenaza van primero. El ruido del corte atrae lobos, como al jugador.
+	var allowed := palo_need > 0 and _bot_item_count(proxy, "Palo") < palo_need \
+			and not tool.is_empty() and float(b.get("hide_timer", 0.0)) <= 0.0 \
+			and _sensed_node(b, "_s_leader") == null
+	var st0: Dictionary = b.get("_gather", {})
+	if not allowed:
+		if not st0.is_empty():
+			_bot_release_gather_claim(b, st0)
+			b["_gather"] = {}
+		return false
+	var st: Dictionary = b.get("_gather", {})
+	if not st.is_empty():
+		var aid := str(st.get("id", ""))
+		var apos = st.get("pos")
+		var act = world.world_actions_by_id.get(aid) if world != null and "world_actions_by_id" in world else null
+		var taken := false
+		if world != null and "_pickup_claims" in world:
+			var claimer := int((world._pickup_claims as Dictionary).get(aid, int(b["bot_id"])))
+			taken = claimer != int(b["bot_id"])
+		if not (apos is Vector3) or act == null or not is_instance_valid(act) or taken \
+				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)):
+			_bot_release_gather_claim(b, st)
+			b["_gather"] = {}
+			return false
+		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
+		if flat > 2.2:
+			b["sitting"] = false
+			b["crouching"] = false
+			b["held_item"] = tool
+			proxy.set_meta("saved_held_item", tool)
+			_move_bot_towards(b, apos, 4.8 if flat > 9.0 else 3.8, delta, "run" if flat > 9.0 else "walk")
+			return true
+		st["t"] = float(st.get("t", 0.0)) + delta
+		b["anim"] = "forage"
+		b["crouching"] = true
+		b["sitting"] = false
+		b["held_item"] = tool
+		proxy.set_meta("saved_held_item", tool)
+		if float(st["t"]) >= float(st.get("t_need", 5.0)):
+			b["_gather"] = {}
+			_bot_fell_bush_complete(b, st)
+		return true
+	# Escaneo con cadencia, como el forrajeo
+	b["_gather_scan"] = float(b.get("_gather_scan", 0.0)) - delta
+	if float(b["_gather_scan"]) > 0.0:
+		return false
+	b["_gather_scan"] = 1.4 + fmod(float(int(b["bot_id"])) * 0.29, 0.6)
+	var target := _find_bush_target(b, 80.0)
+	if target.is_empty():
+		return false
+	if world != null and "_pickup_claims" in world:
+		(world._pickup_claims as Dictionary)[target["id"]] = int(b["bot_id"])
+		if "_pickup_claim_until" in world:
+			(world._pickup_claim_until as Dictionary)[target["id"]] = Time.get_ticks_msec() + 30000
+	b["_gather"] = target
+	return _bot_try_gather_mats(b, 0.0)
+
+func _find_bush_target(b: Dictionary, radius: float) -> Dictionary:
+	if world == null or not ("world_actions_by_id" in world):
+		return {}
+	var proxy: Node3D = b["proxy"]
+	var camp: Vector3 = b.get("camp_spot", proxy.global_position)
+	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
+	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
+	var best := {}
+	var best_score := INF
+	for aid in world.world_actions_by_id.keys():
+		var a = world.world_actions_by_id[aid]
+		if a == null or not is_instance_valid(a):
+			continue
+		if str(a.get("action_type")) != "fell_bush" or claims.has(aid) or depleted.has(aid):
+			continue
+		var d := proxy.global_position.distance_to((a as Node3D).global_position)
+		if d > radius:
+			continue
+		# Prefiere arbustos entre el bot y su campamento: el humano tala cerca
+		# de donde va a construir, no en la punta opuesta del mapa.
+		var d_camp := (a as Node3D).global_position.distance_to(camp)
+		var score := d + d_camp * 0.5
+		if score < best_score:
+			best_score = score
+			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": 5.0}
+	return best
+
+func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var aid := str(st.get("id", ""))
+	var pos: Vector3 = st.get("pos", Vector3.INF)
+	_bot_release_gather_claim(b, st)
+	if world == null or aid.is_empty() or pos == Vector3.INF:
+		return
+	var action = world.world_actions_by_id.get(aid) if "world_actions_by_id" in world else null
+	if action == null or not is_instance_valid(action):
+		return
+	if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
+		return
+	var tool := _bot_bush_tool(proxy)
+	if tool.is_empty():
+		return
+	# Mismo coste que el jugador: el filo pierde 5 de durabilidad por arbusto.
+	_reduce_bot_item_durability(proxy, tool, 5.0)
+	# El ruido del corte atrae fauna hostil, igual que al jugador.
+	if world.has_method("_attract_wolves_to_noise"):
+		world._attract_wolves_to_noise(pos, 30.0)
+	# Los mismos drops que genera el handler del jugador: 3 palos + semillas.
+	var base := Time.get_ticks_msec()
+	var spawns: Array = [
+		{"id": "pickup_Palo_%d" % (base + randi() % 1000), "name": "Palo", "type": "resource", "pos": pos + Vector3(0.3, 0.06, 0.0), "weight": 0.3, "qty": 1, "use": 0.0},
+		{"id": "pickup_Palo_%d" % (base + randi() % 1000), "name": "Palo", "type": "resource", "pos": pos + Vector3(-0.3, 0.06, 0.2), "weight": 0.3, "qty": 1, "use": 0.0},
+		{"id": "pickup_Palo_%d" % (base + randi() % 1000), "name": "Palo", "type": "resource", "pos": pos + Vector3(0.1, 0.06, -0.3), "weight": 0.3, "qty": 1, "use": 0.0},
+		{"id": "pickup_Semillas_%d" % (base + randi() % 1000), "name": "Semillas", "type": "resource", "pos": pos + Vector3(-0.15, 0.05, -0.25), "weight": 0.05, "qty": 1, "use": 0.0},
+	]
+	if world.has_method("_net_world_action_completed"):
+		world._net_world_action_completed(aid, spawns, "", pos, 0)
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.world_action_completed.rpc_id(pid, aid, spawns, "", pos)
+	# Los palos caen al suelo: el saqueo normal los recoge en el proximo tick.
