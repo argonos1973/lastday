@@ -3916,10 +3916,19 @@ func bot_try_open_door_at(pos: Vector3) -> bool:
 		for cz in range(cell.y - 1, cell.y + 2):
 			for idx in _blocker_grid.get(Vector2i(cx, cz), []):
 				var blocker: Dictionary = wildlife_blockers[idx]
-				var door_name := String(blocker.get("door_name", ""))
-				if door_name.is_empty() or _check_door_open(blocker.get("door", null), blocker):
+				if _check_door_open(blocker.get("door", null), blocker):
 					continue
-				var dpos: Vector3 = blocker.get("door_pos", _server_door_position(door_name))
+				var door_obj = blocker.get("door", null)
+				var door_name := String(blocker.get("door_name", ""))
+				if door_name.is_empty() and door_obj is Node3D and is_instance_valid(door_obj):
+					door_name = String((door_obj as Node3D).name)
+				if door_name.is_empty():
+					continue
+				var dpos: Vector3 = blocker.get("door_pos", Vector3.INF)
+				if not dpos.is_finite() and door_obj is Node3D and is_instance_valid(door_obj):
+					dpos = (door_obj as Node3D).global_position
+				if not dpos.is_finite():
+					dpos = _server_door_position(door_name)
 				if not dpos.is_finite():
 					continue
 				var dist := Vector2(dpos.x - pos.x, dpos.z - pos.z).length()
@@ -7757,6 +7766,12 @@ func _create_map() -> void:
 		_city_tent2_pos = _find_flat_area_for_city_tent2()
 		_build_city_military_base_perimeter(true)
 		_register_server_house_blockers()
+		# Poblar el botin estatico (casas, graneros, tiendas militares, ciudad,
+		# cuchillos/hachas sueltos y setas) tambien en el servidor dedicado con
+		# la misma semilla fija (WORLD_SEED + 424242) pero sin instanciar mallas
+		# 3D: sin esto las casas estaban vacias en el servidor y los bots morian
+		# de hambre al entrar a saquearlas.
+		_create_survival_objectives()
 	# Only server simulates wildlife AI and navigation
 	if not is_client:
 		nav.build(wildlife_blockers, _wildlife_water_obstacles())
@@ -7767,6 +7782,7 @@ func _create_map() -> void:
 		# pasos someros (<=0.52 m) abiertos para que crucen rios sin atascarse.
 		bot_nav = NavPathfindingScript.new()
 		bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
+		_refresh_nav_door_caches()
 		await get_tree().process_frame
 		if _loading_label != null:
 			_set_loading_phase("Generando fauna...")
@@ -9671,6 +9687,7 @@ func _create_survival_objectives() -> void:
 	# fallbacks, so pin the stream here to keep every loot id identical across
 	# clients and reconnects — depleted ids are the server sync contract.
 	_world_rng.seed = GameConst.WORLD_SEED + 424242
+	var is_ded: bool = net != null and net.is_dedicated_server
 	#_create_label("Objetivo: construir una cabana", Vector3(-54, 2.8, 48))
 	for i in range(5):
 		var wood_pos := Vector3(_world_rng.randf_range(-62, -28), 0.04, _world_rng.randf_range(12, 62))
@@ -9680,12 +9697,13 @@ func _create_survival_objectives() -> void:
 			continue
 		var log_a_name := "HarvestableLogA_%d" % i
 		var log_b_name := "HarvestableLogB_%d" % i
-		var wood_spawned_a := _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], log_a_name, wood_pos + Vector3(-0.25, 0.04, 0.0), Vector3.ONE * 0.72, Vector3(0, wood_rot_a, 0), true, 0.04)
-		var wood_spawned_b := _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], log_b_name, wood_pos + Vector3(0.25, 0.04, 0.08), Vector3.ONE * 0.58, Vector3(0, wood_rot_b, 0), true, 0.04)
-		if not wood_spawned_a or not wood_spawned_b:
-			continue
-		_mark_world_action_visual(log_a_name)
-		_mark_world_action_visual(log_b_name)
+		if not is_ded:
+			var wood_spawned_a := _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], log_a_name, wood_pos + Vector3(-0.25, 0.04, 0.0), Vector3.ONE * 0.72, Vector3(0, wood_rot_a, 0), true, 0.04)
+			var wood_spawned_b := _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], log_b_name, wood_pos + Vector3(0.25, 0.04, 0.08), Vector3.ONE * 0.58, Vector3(0, wood_rot_b, 0), true, 0.04)
+			if not wood_spawned_a or not wood_spawned_b:
+				continue
+			_mark_world_action_visual(log_a_name)
+			_mark_world_action_visual(log_b_name)
 		var wood_action = _create_world_action("wood_%d" % i, "wood", "Troncos aprovechables", wood_pos, Vector3(1.9, 0.8, 1.2), Color(0.20, 0.12, 0.055), false, false)
 		wood_action.set_meta("visual_name", log_a_name + "|" + log_b_name)
 	var stone_bank_segments := [0, 4, 9, 13]
@@ -9717,23 +9735,25 @@ func _create_survival_objectives() -> void:
 		if _depleted_action_ids.has("stone_%d" % i):
 			continue
 		var stone_visual_name := "StonePickup_%d" % i
-		if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["stone"]], stone_visual_name, stone_pos, Vector3.ONE * stone_scale, Vector3(0, stone_rot, 0), true, 0.04):
-			continue
-		_mark_world_action_visual(stone_visual_name)
+		if not is_ded:
+			if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["stone"]], stone_visual_name, stone_pos, Vector3.ONE * stone_scale, Vector3(0, stone_rot, 0), true, 0.04):
+				continue
+			_mark_world_action_visual(stone_visual_name)
 		var stone_action = _create_world_action("stone_%d" % i, "stone", "Piedras utiles", stone_pos, Vector3(1.2, 0.75, 1.1), Color(0.31, 0.30, 0.26), false, false)
 		stone_action.set_meta("visual_name", stone_visual_name)
 		stone_action.set_meta("item_name", "Piedra")
 		stone_action.set_meta("item_type", "resource")
 		stone_action.set_meta("item_weight", 0.45)
 		stone_action.set_meta("item_quantity", 3)
-		# Cover the pile with grass tufts so it blends into the river bank.
-		var tuft_rng := RandomNumberGenerator.new()
-		tuft_rng.seed = _stable_loot_seed("stone_grass_%d" % i)
-		for g in range(grass_tuft_count):
-			var gd: Vector4 = grass_draws[g]
-			var grass_pos := stone_pos + seg_along * gd.x + seg_across * gd.y
-			grass_pos.y = 0.05
-			_create_grass_clump(grass_pos, gd.z, Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.42, 0.13), gd.w), tuft_rng)
+		if not is_ded:
+			# Cover the pile with grass tufts so it blends into the river bank.
+			var tuft_rng := RandomNumberGenerator.new()
+			tuft_rng.seed = _stable_loot_seed("stone_grass_%d" % i)
+			for g in range(grass_tuft_count):
+				var gd: Vector4 = grass_draws[g]
+				var grass_pos := stone_pos + seg_along * gd.x + seg_across * gd.y
+				grass_pos.y = 0.05
+				_create_grass_clump(grass_pos, gd.z, Color(0.13, 0.30, 0.09).lerp(Color(0.34, 0.42, 0.13), gd.w), tuft_rng)
 	_create_world_action("fish_north", "fish", "Zona de pesca", Vector3(-35, 0.05, -57), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("fish_south", "fish", "Zona de pesca", Vector3(22, 0.05, 64), Vector3(2.8, 0.7, 1.6), Color(0.09, 0.16, 0.14), true, false)
 	_create_world_action("hunt_trail", "hunt", "Rastro de animal", Vector3(-50, 0.04, 28), Vector3(1.8, 0.65, 1.2), Color(0.16, 0.11, 0.055), true, false)
@@ -10193,23 +10213,26 @@ func _create_tool_pickup(id: String, action_type: String, label: String, model_p
 	if _depleted_action_ids.has(id):
 		return
 	var visual_name := "Pickup_" + id
-	var spawned := _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.05)
-	if not spawned:
-		push_warning("No se crea %s porque falta/carga mal el asset: %s" % [label, model_path])
-		return
-	var tool_node := get_node_or_null(visual_name)
-	if tool_node != null:
-		_remove_collision_from_node(tool_node)
+	if net == null or not net.is_dedicated_server:
+		var spawned := _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * scale_value, rot, true, 0.05)
+		if not spawned:
+			push_warning("No se crea %s porque falta/carga mal el asset: %s" % [label, model_path])
+			return
+		var tool_node := get_node_or_null(visual_name)
+		if tool_node != null:
+			_remove_collision_from_node(tool_node)
+	var eff_type := "tool_matches" if action_type == "matches_tool" else ("tool_axe" if action_type == "axe_tool" else action_type)
 	var action = _create_world_action(id, action_type, label, pos, Vector3(1.2, 0.75, 1.2), Color(0.10, 0.095, 0.07), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", label)
-	action.set_meta("item_type", "tool_matches" if action_type == "matches_tool" else action_type)
+	action.set_meta("item_type", eff_type)
 	action.set_meta("item_quantity", 1)
 	if action_type == "matches_tool":
 		action.set_meta("item_max_durability", 10.0)
 		action.set_meta("item_durability", 10.0)
 	action.set_meta("item_weight", 0.1)
 	action.set_meta("item_use_value", 0.0)
+	_dropped_items.append({"id": id, "name": label, "type": eff_type, "weight": 0.1, "qty": 1, "use": 0.0, "pos": [pos.x, pos.y, pos.z], "static_loot": true})
 
 func _create_mushrooms() -> void:
 	var mushroom_count := int(200 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0) / 7.9)
@@ -10326,18 +10349,20 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	var scale_value := 0.04
 	var item_rng := RandomNumberGenerator.new()
 	item_rng.seed = _stable_loot_seed(id)
-	var spawned := _try_instance_external_scene(["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, item_rng.randf_range(0, 360), 0), false, 0.0)
-	if not spawned:
-		push_warning("No se crea seta %s porque falta/carga mal el asset .glb" % id)
-		return
-	var sn := get_node_or_null(NodePath(visual_name))
-	if sn is Node3D:
-		_snap_node_bottom_to_y(sn as Node3D, pos.y)
-		_disable_emission_recursive(sn as Node3D)
-		_mark_world_action_visual(visual_name)
-	var pickup_node := get_node_or_null(visual_name)
-	if pickup_node != null:
-		_remove_collision_from_node(pickup_node)
+	var _yaw := item_rng.randf_range(0, 360)
+	if net == null or not net.is_dedicated_server:
+		var spawned := _try_instance_external_scene(["res://assets/models/environment/mushrooms/amanita_muscaria_mushroom.glb"], visual_name, pos, Vector3.ONE * scale_value, Vector3(0, _yaw, 0), false, 0.0)
+		if not spawned:
+			push_warning("No se crea seta %s porque falta/carga mal el asset .glb" % id)
+			return
+		var sn := get_node_or_null(NodePath(visual_name))
+		if sn is Node3D:
+			_snap_node_bottom_to_y(sn as Node3D, pos.y)
+			_disable_emission_recursive(sn as Node3D)
+			_mark_world_action_visual(visual_name)
+		var pickup_node := get_node_or_null(visual_name)
+		if pickup_node != null:
+			_remove_collision_from_node(pickup_node)
 	var action = _create_world_action(id, "eat_food", "Seta amanita", pos, Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
 	action.set_meta("visual_name", visual_name)
 	action.set_meta("item_name", "Seta amanita")
@@ -11413,88 +11438,89 @@ func _create_pickup_item(data: Dictionary) -> void:
 	var lay_flat: bool = bool(data.get("flat", false))
 	if lay_flat:
 		rotation_degrees.x += 90.0
-	var space_state := get_world_3d().direct_space_state
-	# Rayo desde justo encima de la posición pedida: si se lanza desde muy alto,
-	# dentro de una casa golpea la colisión del tejado y el objeto acaba en el
-	# tejado en lugar de en el suelo interior.
-	var real_ground_y := NodeUtils.raycast_ground_y(space_state, pos, pos.y + 2.0)
-	if data.has("floor_y"):
-		real_ground_y = maxf(real_ground_y, float(data["floor_y"]))
-	var spawned := false
-	if not paths.is_empty():
-		spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
-	if not spawned:
-		push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
-		return
-	var sn := get_node_or_null(NodePath(visual_name))
-	if sn is Node3D:
-		_snap_node_bottom_to_y(sn as Node3D, real_ground_y)
-		_mark_world_action_visual(visual_name)
-	var pickup_node := get_node_or_null(visual_name)
-	if pickup_node != null:
-		_remove_collision_from_node(pickup_node)
-	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
-	if item_name == "Botas survival":
-		var boot_node := get_node_or_null(NodePath(visual_name))
-		if boot_node is Node3D:
-			var remy_meshes: Array = []
-			_collect_meshes_recursive(boot_node as Node3D, remy_meshes)
-			for mi in remy_meshes:
-				if mi is MeshInstance3D:
-					var m := mi as MeshInstance3D
-					if m.name.to_lower() == "shoes":
-						m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
-					else:
-						m.visible = false
-			_center_visible_meshes_xz(boot_node as Node3D, pos)
-			_snap_node_bottom_to_y(boot_node as Node3D, real_ground_y)
-	# Remy clothing: hide all meshes except the relevant one, paint with color
-	if data.has("remy_mesh"):
-		var remy_mesh_name := str(data["remy_mesh"])
-		var remy_node := get_node_or_null(NodePath(visual_name))
-		if remy_node is Node3D:
-			var remy_meshes: Array = []
-			_collect_meshes_recursive(remy_node as Node3D, remy_meshes)
-			for mi in remy_meshes:
-				if mi is MeshInstance3D:
-					var m := mi as MeshInstance3D
-					if m.name.to_lower() == remy_mesh_name:
-						var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
-						m.material_override = MaterialFactory.make_clothing_material(kind if not kind.is_empty() else "denim", color, 0.0)
-					else:
-						m.visible = false
-			_center_visible_meshes_xz(remy_node as Node3D, pos)
-			_snap_node_bottom_to_y(remy_node as Node3D, real_ground_y)
-	# Apply tint or camo material to military clothing pickups
-	if item_name == "Chaqueta de campaña verde":
-		var olive_node := get_node_or_null(NodePath(visual_name))
-		if olive_node is Node3D:
-			MilitaryJackets.apply_woodland_camo_recursive(olive_node)
-	elif item_name == "Tela de camuflaje":
-		var cnet_node := get_node_or_null(NodePath(visual_name))
-		if cnet_node is Node3D:
-			_apply_camo_net_material(cnet_node)
-	elif data.has("tint"):
-		var tint_node := get_node_or_null(NodePath(visual_name))
-		if tint_node is Node3D:
-			if bool(data.get("camo", false)):
-				_apply_camo_material_recursive(tint_node as Node3D, data["tint"])
-			else:
-				_apply_color_material_recursive(tint_node as Node3D, data["tint"])
-	# Si todas las mallas estan ocultas o no existen, eliminar el nodo y no crear la indicacion
-	var _fb_node := get_node_or_null(NodePath(visual_name))
-	if _fb_node is Node3D:
-		var _fb_mesh_list: Array = []
-		_collect_meshes_recursive(_fb_node as Node3D, _fb_mesh_list)
-		var _any_visible := false
-		for mi in _fb_mesh_list:
-			if mi is MeshInstance3D and (mi as MeshInstance3D).visible and (mi as MeshInstance3D).mesh != null:
-				_any_visible = true
-				break
-		if not _any_visible:
-			(_fb_node as Node3D).queue_free()
-			push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
+	if net == null or not net.is_dedicated_server:
+		var space_state := get_world_3d().direct_space_state
+		# Rayo desde justo encima de la posición pedida: si se lanza desde muy alto,
+		# dentro de una casa golpea la colisión del tejado y el objeto acaba en el
+		# tejado en lugar de en el suelo interior.
+		var real_ground_y := NodeUtils.raycast_ground_y(space_state, pos, pos.y + 2.0)
+		if data.has("floor_y"):
+			real_ground_y = maxf(real_ground_y, float(data["floor_y"]))
+		var spawned := false
+		if not paths.is_empty():
+			spawned = _try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * scale_value, rotation_degrees, false, 0.0)
+		if not spawned:
+			push_warning("No se crea %s porque falta/carga mal el asset .glb" % item_name)
 			return
+		var sn := get_node_or_null(NodePath(visual_name))
+		if sn is Node3D:
+			_snap_node_bottom_to_y(sn as Node3D, real_ground_y)
+			_mark_world_action_visual(visual_name)
+		var pickup_node := get_node_or_null(visual_name)
+		if pickup_node != null:
+			_remove_collision_from_node(pickup_node)
+		# Botas survival: use Remy model, hide all meshes except Shoes, paint black
+		if item_name == "Botas survival":
+			var boot_node := get_node_or_null(NodePath(visual_name))
+			if boot_node is Node3D:
+				var remy_meshes: Array = []
+				_collect_meshes_recursive(boot_node as Node3D, remy_meshes)
+				for mi in remy_meshes:
+					if mi is MeshInstance3D:
+						var m := mi as MeshInstance3D
+						if m.name.to_lower() == "shoes":
+							m.material_override = MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
+						else:
+							m.visible = false
+				_center_visible_meshes_xz(boot_node as Node3D, pos)
+				_snap_node_bottom_to_y(boot_node as Node3D, real_ground_y)
+		# Remy clothing: hide all meshes except the relevant one, paint with color
+		if data.has("remy_mesh"):
+			var remy_mesh_name := str(data["remy_mesh"])
+			var remy_node := get_node_or_null(NodePath(visual_name))
+			if remy_node is Node3D:
+				var remy_meshes: Array = []
+				_collect_meshes_recursive(remy_node as Node3D, remy_meshes)
+				for mi in remy_meshes:
+					if mi is MeshInstance3D:
+						var m := mi as MeshInstance3D
+						if m.name.to_lower() == remy_mesh_name:
+							var kind := MaterialFactory.clothing_kind_for_mesh(str(m.name))
+							m.material_override = MaterialFactory.make_clothing_material(kind if not kind.is_empty() else "denim", color, 0.0)
+						else:
+							m.visible = false
+				_center_visible_meshes_xz(remy_node as Node3D, pos)
+				_snap_node_bottom_to_y(remy_node as Node3D, real_ground_y)
+		# Apply tint or camo material to military clothing pickups
+		if item_name == "Chaqueta de campaña verde":
+			var olive_node := get_node_or_null(NodePath(visual_name))
+			if olive_node is Node3D:
+				MilitaryJackets.apply_woodland_camo_recursive(olive_node)
+		elif item_name == "Tela de camuflaje":
+			var cnet_node := get_node_or_null(NodePath(visual_name))
+			if cnet_node is Node3D:
+				_apply_camo_net_material(cnet_node)
+		elif data.has("tint"):
+			var tint_node := get_node_or_null(NodePath(visual_name))
+			if tint_node is Node3D:
+				if bool(data.get("camo", false)):
+					_apply_camo_material_recursive(tint_node as Node3D, data["tint"])
+				else:
+					_apply_color_material_recursive(tint_node as Node3D, data["tint"])
+		# Si todas las mallas estan ocultas o no existen, eliminar el nodo y no crear la indicacion
+		var _fb_node := get_node_or_null(NodePath(visual_name))
+		if _fb_node is Node3D:
+			var _fb_mesh_list: Array = []
+			_collect_meshes_recursive(_fb_node as Node3D, _fb_mesh_list)
+			var _any_visible := false
+			for mi in _fb_mesh_list:
+				if mi is MeshInstance3D and (mi as MeshInstance3D).visible and (mi as MeshInstance3D).mesh != null:
+					_any_visible = true
+					break
+			if not _any_visible:
+				(_fb_node as Node3D).queue_free()
+				push_warning("Eliminado %s: el modelo carga pero no tiene mallas visibles" % item_name)
+				return
 	var action_kind := "plant_seeds" if item_name == "Semillas" else ("eat_food" if (item_type == "food" and (not item_name.begins_with("Lata de ") or item_name.ends_with(" abierta")) and item_name != "Pez crudo") else "pickup_item")
 	var action = _create_world_action(id, action_kind, item_name, pos, Vector3(1.0, 0.72, 1.0), color, false, false)
 	var stored_visual_name := visual_name
@@ -11584,16 +11610,18 @@ func _create_backpack_pickup(id: String, pos: Vector3) -> void:
 	if _depleted_action_ids.has(id):
 		return
 	var visual_name := "Pickup_" + id
-	if not _try_instance_external_scene([ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]], visual_name, pos, Vector3.ONE * 1.2, Vector3(0.0, -18.0, 0.0), true, 0.05):
-		push_warning("No se crea mochila porque falta/carga mal el asset real.")
-		return
-	_mark_world_action_visual(visual_name)
-	var backpack_node := get_node_or_null(visual_name)
-	if backpack_node != null:
-		_remove_collision_from_node(backpack_node)
+	if net == null or not net.is_dedicated_server:
+		if not _try_instance_external_scene([ROOT_BACKPACK_MODEL, SURVIVAL_TOOL_MODELS["backpack"]], visual_name, pos, Vector3.ONE * 1.2, Vector3(0.0, -18.0, 0.0), true, 0.05):
+			push_warning("No se crea mochila porque falta/carga mal el asset real.")
+			return
+		_mark_world_action_visual(visual_name)
+		var backpack_node := get_node_or_null(visual_name)
+		if backpack_node != null:
+			_remove_collision_from_node(backpack_node)
 
 	var action = _create_world_action(id, "backpack_pickup", "Mochila pequena", pos, Vector3(1.25, 0.85, 1.25), Color(0.06, 0.075, 0.055), false, false)
 	action.set_meta("visual_name", visual_name)
+	_dropped_items.append({"id": id, "name": "Mochila pequena", "type": "backpack", "weight": 0.9, "qty": 1, "use": 0.0, "pos": [pos.x, pos.y, pos.z], "static_loot": true})
 
 func _create_choppable_tree(id: String, pos: Vector3) -> void:
 	var visual_name := "ChoppableTree_" + id
@@ -17347,6 +17375,11 @@ func _notify_tamed_wolf_assist(owner_id: String, foe: Node3D) -> void:
 		if str(w.get("tamed_to")) == owner_id and w.has_method("notify_foe"):
 			w.notify_foe(foe, 20.0)
 
+func _is_in_bot_house_nav(pos: Vector3, blocker: Dictionary) -> bool:
+	var bounds: Rect2 = blocker.get("house_bounds", Rect2())
+	var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
+	return _bot_house_pos_ok(Vector2(pos.x, pos.z), bounds, blocker_pos, blocker)
+
 func _refresh_nav_door_caches() -> void:
 	for blocker in wildlife_blockers:
 		blocker["door_open"] = _check_door_open(blocker.get("door", null), blocker)
@@ -17354,7 +17387,7 @@ func _refresh_nav_door_caches() -> void:
 	if wolf_nav != null:
 		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 	if bot_nav != null:
-		bot_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+		bot_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable(self, "_is_in_bot_house_nav"))
 
 func _wildlife_water_obstacles() -> Array:
 	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)

@@ -1130,8 +1130,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio
-	# (o a la casa/fogata segura mas cercana si aun no construyo el suyo), cocina y descansa
-	var wants_camp: bool = is_night or float(b["health"]) < 65.0 or float(b["hide_timer"]) > 0.0
+	# (o a la casa/fogata segura mas cercana si aun no construyo el suyo), cocina y descansa.
+	# Excepcion vital: si se esta muriendo de hambre o sed (<26) y no se esta
+	# escondiendo de un ataque, sentarse a "descansar" es suicidio — debe seguir
+	# buscando comida/agua fuera.
+	var starving_or_parched: bool = (float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 22.0 and not _bot_has_drink(proxy))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (not starving_or_parched and (is_night or float(b["health"]) < 65.0))
 	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, 85.0)
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
@@ -1397,6 +1401,8 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 					w = 1.1 + bravery * 0.75
 				elif kind == "house":
 					w = 1.3 + surv_t * 0.45
+				elif kind == "city":
+					w = 1.25 + curiosity * 0.45
 				elif kind == "wild":
 					w = 0.9 + curiosity * 0.55
 				else:
@@ -1405,7 +1411,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if known.has(pid):
 				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
-			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 30.0)
+			var score := w * 100.0 - minf(d, 260.0) * 0.45 + rng.randf_range(0.0, 30.0)
 			# Dispersion territorial: cada bot tiene un sector de exploracion
 			# propio (determinista por bot_id) desde su campamento — asi los tres
 			# no orbitan el mismo pueblo. La curiosidad tira hacia POIs lejanos.
@@ -1416,15 +1422,17 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if away.length() > 30.0:
 				var sector := _bot_explore_sector(b)
 				var diff := absf(wrapf(away.angle() - sector, -PI, PI))
-				score += (1.0 - diff / PI) * (45.0 + curiosity * 60.0)
-				score += curiosity * minf(d, 320.0) * 0.35
-			# Anti-cluster: si un aliado ya va hacia esta zona, otro elige otra
+				score += (1.0 - diff / PI) * (55.0 + curiosity * 65.0)
+				score += curiosity * minf(d, 380.0) * 0.38
+			# Anti-cluster: si otro bot ya esta en esa zona o va hacia ella
+			# (<110 m, tamano de todo el pueblo), los demas se reparten fuera.
 			for ob in bots.values():
 				if ob == b:
 					continue
 				var ot: Vector3 = ob.get("explore_target", Vector3.INF)
-				if ot != Vector3.INF and Vector2(ot.x - pp.x, ot.z - pp.z).length() < 45.0:
-					score -= 70.0
+				var op: Vector3 = ob.get("pos", Vector3.INF)
+				if (ot != Vector3.INF and Vector2(ot.x - pp.x, ot.z - pp.z).length() < 110.0) or (op != Vector3.INF and Vector2(op.x - pp.x, op.z - pp.z).length() < 110.0):
+					score -= 180.0
 			score *= _ai_poi_memory_factor(b, pp, kind)
 			if score > best_score:
 				best_score = score
@@ -3321,9 +3329,54 @@ func _is_step_blocked(from_pos: Vector3, to_pos: Vector3) -> bool:
 					return true
 	return false
 
-func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
+# Si el objetivo esta dentro de una casa cuya puerta esta cerrada (y el bot
+# esta fuera,p. ej. al norte/detras del edificio), redirige primero al umbral
+# exterior de la puerta para que la bordee, la abra al llegar (<4.8 m) y entre
+# a recoger el loot en vez de chocar contra el muro trasero.
+func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
+	if world == null or not ("wildlife_blockers" in world) or not world.has_method("bot_try_open_door_at"):
+		return goal
+	var p_cur := Vector2(cur.x, cur.z)
+	var p_goal := Vector2(goal.x, goal.z)
+	for blk in world.wildlife_blockers:
+		if not (blk is Dictionary) or not (blk as Dictionary).has("house_bounds"):
+			continue
+		var dblk: Dictionary = blk
+		if bool(dblk.get("barn_door_always_open", false)):
+			continue
+		var hb: Rect2 = dblk["house_bounds"]
+		var cur_in := hb.has_point(p_cur)
+		var goal_in := hb.grow(1.0).has_point(p_goal)
+		if cur_in == goal_in:
+			continue
+		var dpos: Vector3 = dblk.get("door_pos", Vector3.INF)
+		var door_obj = dblk.get("door", null)
+		if not dpos.is_finite() and door_obj is Node3D and is_instance_valid(door_obj):
+			dpos = (door_obj as Node3D).global_position
+		if not dpos.is_finite():
+			continue
+		var is_open: bool = bool(world._check_door_open(door_obj, dblk)) if world.has_method("_check_door_open") else bool(dblk.get("door_open", false))
+		if is_open:
+			continue
+		var d_door := p_cur.distance_to(Vector2(dpos.x, dpos.z))
+		if d_door <= 4.8:
+			if world.bot_try_open_door_at(dpos) or world.bot_try_open_door_at(cur):
+				b["path"] = []
+				b["path_timer"] = 0.0
+			return goal
+		if goal_in:
+			var hc := hb.get_center()
+			var out_dir := (Vector2(dpos.x, dpos.z) - hc).normalized()
+			if out_dir.length_squared() < 0.01:
+				out_dir = Vector2(0.0, 1.0)
+			return Vector3(dpos.x + out_dir.x * 3.8, cur.y, dpos.z + out_dir.y * 3.8)
+		return dpos
+	return goal
+
+func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	var cur := proxy.global_position
+	var goal := _resolve_door_approach_goal(b, cur, raw_goal)
 	# Inercia como un jugador: tras una pausa >0.5 s arranca desde parado, sin
 	# saltos bruscos de velocidad ni giros instantaneos.
 	var now := float(Time.get_ticks_msec()) / 1000.0

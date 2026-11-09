@@ -1435,6 +1435,29 @@ func run() -> void:
 	check(fresh_b["explore_target"] == Vector3.INF and mgr._is_goal_blacklisted(fresh_b, unreach),
 		"SpawnReal 10f: objetivo inalcanzable se abandona y queda en lista negra para no oscilar")
 
+	# 10g: bot situado DETRAS de una casa cerrada con bot_nav activa rodea el
+	# edificio hasta la puerta frontal, la abre y entra a recoger el loot
+	world._server_door_states["Casa prueba Door"] = false
+	world.bot_nav = NavPathfinding.new()
+	world.bot_nav.build(world.wildlife_blockers, [])
+	world._refresh_nav_door_caches()
+	fresh_b["proxy"].global_position = Vector3(60.0, 0.4, 70.0) # muro trasero (+Z), puerta en (60,0,55)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["path"] = []
+	fresh_b["path_timer"] = 0.0
+	fresh_b["stuck_timer"] = 0.0
+	fresh_b["stuck_count"] = 0
+	fresh_b["macro_timer"] = 0.0
+	fresh_b["macro_pos"] = fresh_b["pos"]
+	for i in range(120):
+		mgr._move_bot_towards(fresh_b, Vector3(60.0, 0.4, 60.0), 4.5, 0.1, "run")
+		if Vector2(fresh_b["proxy"].global_position.x - 60.0, fresh_b["proxy"].global_position.z - 60.0).length() < 2.2:
+			break
+	var opened_back := bool(world._server_door_states.get("Casa prueba Door", false))
+	var dist_inside := Vector2(fresh_b["proxy"].global_position.x - 60.0, fresh_b["proxy"].global_position.z - 60.0).length()
+	check(opened_back and dist_inside < 2.5,
+		"SpawnReal 10g: bot detras de casa cerrada rodea al umbral, abre la puerta y entra con bot_nav (open=%s dist=%.2f)" % [str(opened_back), dist_inside])
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

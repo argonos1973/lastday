@@ -301,7 +301,7 @@ func _is_path_clear(a: Vector3, b: Vector3) -> bool:
 		previous = cell
 	return true
 
-func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_doorway: Callable) -> void:
+func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_doorway: Callable, house_ok: Callable = Callable()) -> void:
 	var previous := _door_open_cache.duplicate()
 	_door_open_cache.clear()
 	for blocker in blockers:
@@ -328,7 +328,10 @@ func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_door
 						continue
 					var world_pos := grid_to_world(cell)
 					if is_barn_always_open:
-						if is_in_barn_doorway.call(world_pos, blocker):
+						if is_in_barn_doorway.call(world_pos, blocker) or (house_ok.is_valid() and bool(house_ok.call(world_pos, blocker))):
+							_door_open_cache[cell] = true
+					elif house_ok.is_valid():
+						if bool(house_ok.call(world_pos, blocker)):
 							_door_open_cache[cell] = true
 					elif is_in_doorway.call(world_pos, blocker_pos):
 						_door_open_cache[cell] = true
