@@ -1119,7 +1119,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "mats"
 		return
 
-	# 6) Construir campamento propio (refugio + camuflaje/pieles + fogata) y ocultarse/descansar
+	# 6) Hacer hoguera y cocinar carne cruda o pescado crudo ensartado en Palo
+	# afilado, igual que un jugador humano: NO hace falta tener refugio para
+	# crear una hoguera cuando lleva carne o pescado para asar.
+	if _bot_try_cook_meat(b, delta):
+		b["_act"] = "cook"
+		return
+
+	# 6b) Construir refugio propio si ya reunio los materiales
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
 		b["_act"] = "build"
 		var d_camp := Vector2(proxy.global_position.x - camp_pos.x, proxy.global_position.z - camp_pos.z).length()
@@ -1131,21 +1138,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
 		b["_act"] = "campfire"
-		# La fogata tambien necesita suelo valido: junto al refugio pero nunca
-		# en agua, carretera, pendiente ni zona habitada.
 		var fire_spot := _find_nearby_campfire_spot(b, sh_pos)
 		if fire_spot != Vector3.INF:
 			_bot_build_and_light_campfire(b, fire_spot)
 		else:
-			# Sin sitio valido: no construye la fogata y sigue con su vida,
-			# en vez de quedar bloqueado intentandolo cada tick.
 			b["no_fire_spot"] = true
-		return
-
-	# 6a-bis) Hacer hoguera y cocinar carne cruda ensartada con Palo afilado,
-	# igual que un jugador humano (aunque aun no tenga refugio construido).
-	if _bot_try_cook_meat(b, delta):
-		b["_act"] = "cook"
 		return
 
 	# De noche o con poca salud o emboscando (bandido), el superviviente vuelve a su refugio
@@ -3850,21 +3847,22 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 			spot.y = _ground_y(spot.x, spot.z)
 		_bot_build_and_light_campfire(b, spot)
 		fire_pos = spot
-	# Ensartar la carne cruda con el Palo afilado antes de acercarla al fuego
+	# Ensartar la carne cruda o pescado crudo con el Palo afilado antes de acercarla al fuego
 	if not _bot_skewer_raw_meat(proxy):
 		return false
+	var held_skewer := "Pez ensartado" if _bot_item_count(proxy, "Pez ensartado") > 0 else "Carne ensartada"
 	var d_fire := Vector2(cur.x - fire_pos.x, cur.z - fire_pos.z).length()
 	if d_fire > 2.4:
 		b["sitting"] = false
 		b["crouching"] = false
-		b["held_item"] = "Carne ensartada"
-		proxy.set_meta("saved_held_item", "Carne ensartada")
+		b["held_item"] = held_skewer
+		proxy.set_meta("saved_held_item", held_skewer)
 		_move_bot_towards(b, fire_pos, 4.0, delta, "walk")
 		return true
 	if cf_pos != Vector3.INF and Vector2(fire_pos.x - cf_pos.x, fire_pos.z - cf_pos.z).length() < 2.5:
 		_ensure_bot_campfire_lit(b)
-	b["held_item"] = "Carne ensartada"
-	proxy.set_meta("saved_held_item", "Carne ensartada")
+	b["held_item"] = held_skewer
+	proxy.set_meta("saved_held_item", held_skewer)
 	b["sitting"] = true
 	b["crouching"] = false
 	b["anim"] = "sit"
@@ -3872,20 +3870,25 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 
 func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
-	# Regla idéntica al jugador humano: no se puede cocinar carne cruda sin
-	# ensartarla en un Palo afilado ("Carne ensartada" / "Pez ensartado").
+	# Regla idéntica al jugador humano: no se puede cocinar carne cruda ni
+	# pescado crudo sin ensartarlos en un Palo afilado ("Carne ensartada" / "Pez ensartado").
 	if not _bot_skewer_raw_meat(proxy):
 		return false
 	var skewered := ""
+	var is_fish := false
 	if _bot_item_count(proxy, "Carne ensartada") > 0:
 		skewered = "Carne ensartada"
 	elif _bot_item_count(proxy, "Pez ensartado") > 0:
 		skewered = "Pez ensartado"
+		is_fish = true
 	if skewered.is_empty():
 		return false
 	if _consume_bot_item(proxy, skewered, 1):
 		var inv: Array = proxy.get_meta("saved_inventory", [])
-		_bot_add_inventory_item(inv, {"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 28.0})
+		if is_fish:
+			_bot_add_inventory_item(inv, {"name": "Pez cocinado", "type": "food", "weight": 0.35, "quantity": 1, "use_value": 30.0})
+		else:
+			_bot_add_inventory_item(inv, {"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 28.0})
 		proxy.set_meta("saved_inventory", inv)
 		b["cook_cooldown"] = 12.0
 		return true
@@ -4356,7 +4359,10 @@ func _bot_skewer_raw_meat(proxy: Node3D) -> bool:
 	if not _consume_bot_item(proxy, raw, 1):
 		return false
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	_bot_add_inventory_item(inv, {"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0})
+	if raw == "Pez crudo":
+		_bot_add_inventory_item(inv, {"name": "Pez ensartado", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 18.0})
+	else:
+		_bot_add_inventory_item(inv, {"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0})
 	proxy.set_meta("saved_inventory", inv)
 	return true
 
@@ -4364,7 +4370,7 @@ func _first_raw_meat_name(proxy: Node3D) -> String:
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary:
 			var nm := str(it.get("name", ""))
-			if nm.begins_with("Carne cruda"):
+			if nm.begins_with("Carne cruda") or nm == "Pez crudo":
 				return nm
 	return ""
 

@@ -1583,6 +1583,28 @@ func run() -> void:
 	check(kael_b.get("aggro_target") == fresh_b["proxy"],
 		"SpawnReal 10p: bot hostil armado a 85 m oye el disparo y localiza al tirador")
 
+	# 10q: sin refugio construido, un bot con Pez crudo + Palo afilado +
+	# 2 Palos + 2 Piedras crea hoguera, ensarta el pez (Pez ensartado) y lo
+	# cocina (Pez cocinado)
+	fresh_b["shelter_id"] = ""
+	fresh_b["shelter_pos"] = Vector3.INF
+	fresh_b["campfire_id"] = ""
+	fresh_b["campfire_pos"] = Vector3.INF
+	fresh_b["cook_cooldown"] = 0.0
+	world._lit_campfires.clear()
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Pez crudo", "type": "food", "weight": 0.4, "quantity": 1, "use_value": 15.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 2, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 2, "use_value": 0.0},
+	])
+	for i in range(25):
+		mgr._bot_try_cook_meat(fresh_b, 0.2)
+		if mgr._bot_item_count(fresh_b["proxy"], "Pez cocinado") > 0:
+			break
+	check(str(fresh_b.get("shelter_id", "")).is_empty() and not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Pez cocinado") == 1,
+		"SpawnReal 10q: sin refugio el bot crea hoguera para cocinar Pez crudo ensartado en Palo afilado -> Pez cocinado")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
