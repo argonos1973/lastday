@@ -3714,12 +3714,18 @@ func _send_world_state_to_client(peer_id: int) -> void:
 		for door in get_tree().get_nodes_in_group("doors"):
 			if door is Door and door.is_open:
 				open_doors.append(door.name)
-	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, _dropped_items, _built_campfires, _lit_campfires, open_doors, _built_shelters, _planted_crops)
+	var dyn_drops: Array = []
+	for d in _dropped_items:
+		if d is Dictionary and not bool(d.get("static_loot", false)):
+			dyn_drops.append(d)
+	net.sync_world_state.rpc_id(peer_id, _depleted_action_ids, dyn_drops, _built_campfires, _lit_campfires, open_doors, _built_shelters, _planted_crops)
 
 func _net_sync_world_state(depleted_ids: Array, dropped_items: Array, campfires: Array, lit_campfires: Array, open_doors: Array, shelters: Array = [], planted_crops: Array = []) -> void:
 	for action_id in depleted_ids:
 		_net_item_picked_up(str(action_id))
 	for drop in dropped_items:
+		if not (drop is Dictionary) or bool(drop.get("static_loot", false)):
+			continue
 		if _depleted_action_ids.has(str(drop["id"])):
 			continue
 		if not world_actions_by_id.has(str(drop["id"])):
@@ -3821,15 +3827,26 @@ func _apply_pending_doors() -> void:
 	for door_name in applied:
 		_pending_open_doors.erase(door_name)
 
+func _is_static_world_loot_id(action_id: String) -> bool:
+	for pfx in ["mushroom_", "house_loot_", "city_loot_", "barn_loot_", "remote_barn_", "tent_loot_", "remote_tent_", "city_tent", "loose_", "small_backpack_", "stone_", "wood_", "summit_", "hut_", "surv_"]:
+		if action_id.begins_with(pfx):
+			return true
+	for entry in _dropped_items:
+		if entry is Dictionary and str(entry.get("id", "")) == action_id and bool(entry.get("static_loot", false)):
+			return true
+	return false
+
 func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
 	if net != null and net.is_host and sender_id != 0:
-		if _depleted_action_ids.has(action_id) or (_pickup_claims.has(action_id) and int(_pickup_claims[action_id]) != sender_id):
+		var claim_owner := int(_pickup_claims.get(action_id, 0))
+		var claim_active := claim_owner != 0 and claim_owner != sender_id and int(_pickup_claim_until.get(action_id, 0)) > Time.get_ticks_msec()
+		if _depleted_action_ids.has(action_id) or claim_active:
 			return false
 	# Host: a client-reported pickup must be plausible. Dynamic drops carry a
 	# server-known position, so the sender's proxy has to be within reach.
 	# (Static world-loot positions aren't tracked on the dedicated server;
 	# those ids are accepted but still deduped below.)
-	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
+	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id() and not _is_static_world_loot_id(action_id):
 		var drop_pos := Vector3.INF
 		for entry in _dropped_items:
 			if str(entry.get("id", "")) == action_id:
@@ -4790,6 +4807,9 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 					old_visual.free()
 					var dpaths := _get_drop_model_paths(iname, itype, dpelt)
 					_try_instance_external_scene(dpaths, "Pickup_" + did, dpos, Vector3.ONE * _get_drop_scale(iname, itype), Vector3(0, randf_range(0, 360), 0), true, 0.0)
+					var regen_vis := get_node_or_null("Pickup_" + did)
+					if regen_vis != null:
+						_remove_collision_from_node(regen_vis)
 		if camo and iname in ["Camiseta", "Pantalones"]:
 			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
 			if dropped_visual != null:
@@ -6894,6 +6914,7 @@ func _spawn_raw_meat_visual(drop_id: String, item_name: String, pos: Vector3) ->
 	if _try_instance_external_scene([meat_model], visual_name, pos, Vector3.ONE * 1.0, Vector3(0, randf_range(0, 360), 0), true, 0.0):
 		var meat_node := get_node_or_null(NodePath(visual_name))
 		if meat_node is Node3D:
+			_remove_collision_from_node(meat_node)
 			_snap_node_bottom_to_y(meat_node as Node3D, pos.y)
 	_mark_world_action_visual(visual_name)
 	var meat_action_type := "bird_meat_raw" if item_name == "Carne cruda de ave" else "wolf_meat_raw"
@@ -6950,6 +6971,9 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 			var laid := get_node_or_null(NodePath(visual_name))
 			if laid is Node3D:
 				_snap_node_bottom_to_y(laid as Node3D, pos.y)
+		var spawned_drop_node := get_node_or_null(visual_name)
+		if spawned_drop_node != null:
+			_remove_collision_from_node(spawned_drop_node)
 		_mark_world_action_visual(visual_name)
 	else:
 		# Fallback: no model available, create a simple shape
@@ -9702,6 +9726,10 @@ func _create_survival_objectives() -> void:
 			var wood_spawned_b := _try_instance_external_scene([SURVIVAL_TOOL_MODELS["wood"]], log_b_name, wood_pos + Vector3(0.25, 0.04, 0.08), Vector3.ONE * 0.58, Vector3(0, wood_rot_b, 0), true, 0.04)
 			if not wood_spawned_a or not wood_spawned_b:
 				continue
+			for ln in [log_a_name, log_b_name]:
+				var lnode := get_node_or_null(ln)
+				if lnode != null:
+					_remove_collision_from_node(lnode)
 			_mark_world_action_visual(log_a_name)
 			_mark_world_action_visual(log_b_name)
 		var wood_action = _create_world_action("wood_%d" % i, "wood", "Troncos aprovechables", wood_pos, Vector3(1.9, 0.8, 1.2), Color(0.20, 0.12, 0.055), false, false)
@@ -9738,6 +9766,9 @@ func _create_survival_objectives() -> void:
 		if not is_ded:
 			if not _try_instance_external_scene([SURVIVAL_TOOL_MODELS["stone"]], stone_visual_name, stone_pos, Vector3.ONE * stone_scale, Vector3(0, stone_rot, 0), true, 0.04):
 				continue
+			var st_node := get_node_or_null(stone_visual_name)
+			if st_node != null:
+				_remove_collision_from_node(st_node)
 			_mark_world_action_visual(stone_visual_name)
 		var stone_action = _create_world_action("stone_%d" % i, "stone", "Piedras utiles", stone_pos, Vector3(1.2, 0.75, 1.1), Color(0.31, 0.30, 0.26), false, false)
 		stone_action.set_meta("visual_name", stone_visual_name)
@@ -10505,7 +10536,24 @@ func _create_house_loot() -> void:
 				if template.get("rare", false) and _world_rng.randf() > 0.50:
 					template = house_loot_pool[_world_rng.randi() % house_loot_pool.size()]
 			var loot_data: Dictionary = template.duplicate()
-			loot_data["pos"] = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs)
+			# Consumir exactamente 2 draws de _world_rng por objeto tanto en
+			# cliente como en servidor dedicado (donde no hay nodos de muebles).
+			# Si en el cliente el punto pisa un mueble, recolocar con un RNG
+			# local aislado para no desincronizar los IDs siguientes.
+			var base_hpos := _find_pos_inside_house(origin, half_w, half_d)
+			if not furniture_aabbs.is_empty():
+				var hit_furn := false
+				for aabb in furniture_aabbs:
+					var box: AABB = aabb
+					var expanded := AABB(box.position - Vector3(0.6, 0.0, 0.6), box.size + Vector3(1.2, box.size.y + 1.0, 1.2))
+					if expanded.has_point(Vector3(base_hpos.x, box.position.y, base_hpos.z)):
+						hit_furn = true
+						break
+				if hit_furn:
+					var furn_rng := RandomNumberGenerator.new()
+					furn_rng.seed = _stable_loot_seed("house_furn_%d" % loot_idx)
+					base_hpos = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs, furn_rng)
+			loot_data["pos"] = base_hpos
 			loot_data["id"] = "house_loot_%d" % loot_idx
 			loot_idx += 1
 			_create_pickup_item(loot_data)
@@ -11237,7 +11285,7 @@ func _find_safe_loot_pos() -> Vector3:
 func _is_pos_safe_for_loot(pos: Vector3) -> bool:
 	if _is_near_river(pos, 5.0):
 		return false
-	if _is_near_wildlife_blocker(pos, 3.0):
+	if _is_near_house(pos, 4.0):
 		return false
 	if _is_near_car_or_container(pos, 4.0):
 		return false
@@ -11885,6 +11933,8 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 			cs_action.remove_meta("ready_unix")
 			cs_action.set_crop_state(cs_state, 0.0)
 	if not action_id.is_empty():
+		if not _depleted_action_ids.has(action_id):
+			_depleted_action_ids.append(action_id)
 		for di in range(_dropped_items.size() - 1, -1, -1):
 			if str(_dropped_items[di].get("id", "")) == action_id:
 				_dropped_items.remove_at(di)
@@ -11894,14 +11944,8 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-	elif not action_id.is_empty():
-		# The action was never spawned here — e.g. a MultiMesh tree outside the
-		# activation radius. Record the depletion (so a later approach shows the
-		# stump instead of a fresh choppable tree) and hide the batched instance.
-		if not _depleted_action_ids.has(action_id):
-			_depleted_action_ids.append(action_id)
-		if action_id.begins_with("fell_tree_"):
-			_hide_remote_felled_tree(action_id)
+	elif not action_id.is_empty() and action_id.begins_with("fell_tree_"):
+		_hide_remote_felled_tree(action_id)
 	if action_id.begins_with("crop_"):
 		_remove_crop(action_id)
 	# Spawn any items that resulted from the action (skip if already spawned
@@ -12062,27 +12106,32 @@ func _actor_still_reaches(action, actor, max_dist: float) -> bool:
 	return false
 
 func _claim_world_pickup(action_id: String, sender: int) -> bool:
-	if action_id.is_empty() or _depleted_action_ids.has(action_id):
+	if action_id.is_empty():
+		return false
+	if _depleted_action_ids.has(action_id):
+		if net != null and net.is_host and sender != 0 and sender != net.get_my_id() and net.peer != null and net.peer_alive(sender):
+			net.item_picked_up.rpc_id(sender, action_id)
 		return false
 	var owner := int(_pickup_claims.get(action_id, 0))
 	if owner != 0 and owner != sender and (owner == net.get_my_id() or net.peer_alive(owner)) \
 			and int(_pickup_claim_until.get(action_id, 0)) > Time.get_ticks_msec():
 		return false
-	var pos := Vector3.INF
-	var action = world_actions_by_id.get(action_id)
-	if is_instance_valid(action):
-		pos = action.global_position
-	else:
-		for entry in _dropped_items:
-			if str(entry.get("id", "")) == action_id:
-				var ep = entry.get("pos")
-				if ep is Vector3:
-					pos = ep
-				elif ep is Array and ep.size() >= 3:
-					pos = Vector3(ep[0], ep[1], ep[2])
-				break
-	if sender != net.get_my_id() and pos != Vector3.INF and not _sender_within(sender, pos, 8.0):
-		return false
+	if sender != net.get_my_id() and not _is_static_world_loot_id(action_id):
+		var pos := Vector3.INF
+		var action = world_actions_by_id.get(action_id)
+		if is_instance_valid(action):
+			pos = action.global_position
+		else:
+			for entry in _dropped_items:
+				if str(entry.get("id", "")) == action_id:
+					var ep = entry.get("pos")
+					if ep is Vector3:
+						pos = ep
+					elif ep is Array and ep.size() >= 3:
+						pos = Vector3(ep[0], ep[1], ep[2])
+					break
+		if pos != Vector3.INF and not _sender_within(sender, pos, 8.0):
+			return false
 	_pickup_claims[action_id] = sender
 	_pickup_claim_until[action_id] = Time.get_ticks_msec() + PICKUP_CLAIM_TIMEOUT_MSEC
 	return true
