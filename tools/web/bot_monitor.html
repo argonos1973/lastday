@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Last Day — Monitor Cognitivo de Bots (Groq / Qwen)</title>
+<style>
+  :root {
+    --bg: #0b0f0d;
+    --panel: #121916;
+    --panel-alt: #17211d;
+    --border: #263830;
+    --text: #e3ece6;
+    --muted: #8fa698;
+    --accent: #52d18a;
+    --warn: #e5a93c;
+    --danger: #e25555;
+    --info: #4da6ff;
+    --elena: #4ecdc4;
+    --carlos: #f7b731;
+    --kael: #ff5e57;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 14px 18px 32px;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+  }
+  .brand h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #fff;
+  }
+  .brand p { color: var(--muted); font-size: 12px; }
+  .metrics-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .metric-pill {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 11px;
+    min-width: 110px;
+  }
+  .metric-pill .label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .metric-pill .val {
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge.ok { background: rgba(82, 209, 138, 0.16); color: var(--accent); border: 1px solid rgba(82, 209, 138, 0.4); }
+  .badge.warn { background: rgba(229, 169, 60, 0.16); color: var(--warn); border: 1px solid rgba(229, 169, 60, 0.4); }
+  .badge.err { background: rgba(226, 85, 85, 0.16); color: var(--danger); border: 1px solid rgba(226, 85, 85, 0.4); }
+  .badge.info { background: rgba(77, 166, 255, 0.16); color: var(--info); border: 1px solid rgba(77, 166, 255, 0.4); }
+
+  .top-grid {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 1100px) {
+    .top-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 15px;
+  }
+  .card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--border);
+  }
+  #mapCanvas {
+    width: 100%;
+    height: 360px;
+    background: #080d0b;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: block;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+  .bots-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 1200px) {
+    .bots-grid { grid-template-columns: 1fr; }
+  }
+  .bot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bot-name {
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .bot-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin: 11px 0 6px;
+    font-weight: 600;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 92px 1fr 40px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+    font-size: 12px;
+  }
+  .bar-track {
+    height: 8px;
+    background: #0a0e0c;
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.35s ease;
+  }
+  .decision-box {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .decision-box .goal-line {
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 3px;
+  }
+  .decision-box .meta-line {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .kv-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .kv-item {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .kv-item b { color: var(--muted); font-weight: 500; display: block; font-size: 10px; }
+  .pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .item-tag {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+  table.mini-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  table.mini-table th, table.mini-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(38, 56, 48, 0.55);
+    text-align: left;
+  }
+  table.mini-table th { color: var(--muted); font-weight: 600; }
+  .empty-note { color: var(--muted); font-style: italic; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>LAST DAY — Monitor Cognitivo de Bots IA</h1>
+    <p id="subStatus">Conectando con telemetría en vivo del servidor dedicado...</p>
+  </div>
+  <div class="metrics-row">
+    <div class="metric-pill">
+      <div class="label">Estado Groq / Qwen</div>
+      <div class="val" id="mGroqStatus"><span class="badge info">Cargando...</span></div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Peticiones (Hoy / Total)</div>
+      <div class="val" id="mGroqCalls">0 / 380</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Tokens (Hoy / Total)</div>
+      <div class="val" id="mGroqTokens">0 / 120k</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Caché / 429s / Cola</div>
+      <div class="val" id="mGroqCache">0 · 0 · 0</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Servidor (FPS / Hora)</div>
+      <div class="val" id="mServerPerf">-- fps · --:--</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Fauna / Jugadores</div>
+      <div class="val" id="mWorldCounts">-- · --</div>
+    </div>
+  </div>
+</header>
+
+<div class="top-grid">
+  <div class="card">
+    <div class="card-title">
+      <span>Mapa Táctico en Tiempo Real (-500..+500 m)</span>
+      <span id="mapClock" style="color:var(--muted);font-size:12px;">En vivo (2s)</span>
+    </div>
+    <canvas id="mapCanvas" width="400" height="360"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--elena)"></i> Elena (901)</span>
+      <span><i class="dot" style="background:var(--carlos)"></i> Carlos (902)</span>
+      <span><i class="dot" style="background:var(--kael)"></i> Kael (903)</span>
+      <span><i class="dot" style="background:#6c8cff"></i> Casa / Ciudad</span>
+      <span><i class="dot" style="background:#d96b27"></i> Militar / Torre</span>
+      <span><i class="dot" style="background:#52d18a"></i> Refugio Bot</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>Resumen Estratégico y Flujo de Decisiones Qwen</span>
+      <span id="modelBadge" class="badge info">qwen/qwen3.8-27b</span>
+    </div>
+    <div id="summaryTableWrap"></div>
+  </div>
+</div>
+
+<div class="bots-grid" id="botsContainer"></div>
+
+<script>
+const BOT_COLORS = { 901: "#4ecdc4", 902: "#f7b731", 903: "#ff5e57" };
+const TRAIT_LABELS = {
+  bravery: "Valentía",
+  aggression: "Agresividad",
+  curiosity: "Curiosidad",
+  sociability: "Sociabilidad",
+  distrust: "Desconfianza",
+  cooperation: "Cooperación",
+  survival_instinct: "Inst. Supervivencia"
+};
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function fmtHour(tod) {
+  const h = Math.floor(tod || 0);
+  const m = Math.floor(((tod || 0) - h) * 60);
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+function barColor(val) {
+  if (val >= 65) return "#52d18a";
+  if (val >= 35) return "#e5a93c";
+  return "#e25555";
+}
+
+function renderHeader(data) {
+  const srv = data.server || {};
+  const g = data.groq || {};
+  const st = String(g.status || "idle");
+  let cls = "info";
+  if (st.includes("online") || st.includes("200")) cls = "ok";
+  else if (st.includes("429") || st.includes("quota")) cls = "warn";
+  else if (st.includes("error")) cls = "err";
+
+  document.getElementById("mGroqStatus").innerHTML = `<span class="badge ${cls}">${esc(st)}</span>`;
+  document.getElementById("mGroqCalls").textContent = `${g.calls_day || 0} / ${g.max_calls_day || 380} (tot ${g.calls_total || 0})`;
+  document.getElementById("mGroqTokens").textContent = `${g.tokens_day || 0} / ${Math.round((g.max_tokens_day || 120000)/1000)}k (tot ${g.tokens_total || 0})`;
+  document.getElementById("mGroqCache").textContent = `${g.cache_hits || 0} caché · ${g.http_429_count || 0} 429s · ${g.queue_size || 0} cola`;
+  document.getElementById("mServerPerf").textContent = `${srv.fps || 0} fps · ${fmtHour(srv.time_of_day)} ${srv.is_night ? "🌙" : "☀️"}`;
+  document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.`;
+  document.getElementById("modelBadge").textContent = g.model || "qwen/qwen3.8-27b";
+  const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
+  document.getElementById("subStatus").textContent = `Autoridad Godot 4 Servidor Dedicado · Último snapshot: ${dt}`;
+}
+
+function renderSummary(data) {
+  const bots = data.bots || [];
+  let html = `<table class="mini-table">
+    <thead>
+      <tr>
+        <th>Bot</th>
+        <th>Posición</th>
+        <th>Estado / Arma</th>
+        <th>Objetivo Actual</th>
+        <th>Última Decisión (Qwen / Local)</th>
+        <th>Ubicaciones / Muertes</th>
+      </tr>
+    </thead><tbody>`;
+  for (const b of bots) {
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const p = b.pos || [0,0,0];
+    const d = b.last_qwen_decision || {};
+    const srcBadge = d.source === "qwen"
+      ? `<span class="badge ok">Qwen p=${d.priority || 3}</span>`
+      : `<span class="badge info">${esc(d.source || "Local")}</span>`;
+    html += `<tr>
+      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)}</span></td>
+      <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
+      <td>${esc(b.anim || "idle")} ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
+      <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
+      <td>${d.action ? `${srcBadge} <b>${esc(d.action)}</b> → ${esc(d.target || "-")}<br/><span style="color:var(--muted)">${esc(d.reason || "")}</span>` : `<span class="empty-note">IA táctica local activa</span>`}</td>
+      <td>${b.known_locations_count || 0} conocidas<br/><span style="color:var(--muted)">${b.deaths || 0} muertes ${b.last_death_cause ? `(${esc(b.last_death_cause)})` : ""}</span></td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  document.getElementById("summaryTableWrap").innerHTML = html;
+}
+
+function renderMap(data) {
+  const canvas = document.getElementById("mapCanvas");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const toScreen = (x, z) => [
+    ((x + 500) / 1000) * (W - 24) + 12,
+    ((z + 500) / 1000) * (H - 24) + 12
+  ];
+
+  // Grid
+  ctx.strokeStyle = "rgba(38, 56, 48, 0.45)";
+  ctx.lineWidth = 1;
+  for (let g = -400; g <= 400; g += 200) {
+    const [gx] = toScreen(g, 0);
+    const [, gz] = toScreen(0, g);
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, gz); ctx.lineTo(W, gz); ctx.stroke();
+  }
+
+  // POIs
+  for (const poi of (data.pois || [])) {
+    const [px, pz] = toScreen(poi.pos[0], poi.pos[2]);
+    ctx.fillStyle = (poi.kind === "military" || poi.kind === "tower") ? "#d96b27"
+      : (poi.kind === "house" || poi.kind === "city") ? "#6c8cff" : "rgba(143,166,152,0.35)";
+    ctx.beginPath();
+    ctx.arc(px, pz, poi.kind === "tower" ? 4.5 : 3.0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Bots, shelters, targets
+  for (const b of (data.bots || [])) {
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const pos = b.pos || [0,0,0];
+    const [bx, bz] = toScreen(pos[0], pos[2]);
+
+    if (b.shelter_pos && b.shelter_pos.length >= 3) {
+      const [sx, sz] = toScreen(b.shelter_pos[0], b.shelter_pos[2]);
+      ctx.strokeStyle = col;
+      ctx.fillStyle = "rgba(82, 209, 138, 0.25)";
+      ctx.strokeRect(sx - 5, sz - 5, 10, 10);
+      ctx.fillRect(sx - 5, sz - 5, 10, 10);
+    }
+
+    if (b.explore_target && b.explore_target.length >= 3) {
+      const [tx, tz] = toScreen(b.explore_target[0], b.explore_target[2]);
+      ctx.strokeStyle = col;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(bx, bz);
+      ctx.lineTo(tx, tz);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(bx, bz, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText(`${b.name} (${b.hp}%)`, bx + 9, bz + 4);
+  }
+}
+
+function renderBots(data) {
+  const container = document.getElementById("botsContainer");
+  const bots = data.bots || [];
+  let html = "";
+
+  for (const b of bots) {
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const p = b.personality || {};
+    const d = b.last_qwen_decision || {};
+    const inv = b.inventory || [];
+    const rels = Object.values(b.relationships || {});
+    const strats = Object.entries(b.strategies || {});
+    const locs = (b.known_locations || []).slice(0, 8);
+    const mems = (b.recent_memories || []).slice().reverse();
+
+    let traitsHtml = "";
+    for (const [k, label] of Object.entries(TRAIT_LABELS)) {
+      const pct = Math.round((Number(p[k] || 0)) * 100);
+      traitsHtml += `<div class="bar-row">
+        <span>${esc(label)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <span style="text-align:right;color:var(--muted)">${(Number(p[k] || 0)).toFixed(2)}</span>
+      </div>`;
+    }
+
+    let invHtml = inv.length
+      ? inv.map(it => `<span class="item-tag">${esc(it.name)}${it.quantity > 1 ? ` ×${it.quantity}` : ""}</span>`).join("")
+      : `<span class="empty-note">Mochila vacía</span>`;
+
+    let relHtml = rels.length
+      ? `<table class="mini-table"><thead><tr><th>Actor</th><th>Trust</th><th>Hostil</th><th>Miedo</th><th>Ayuda/Atq</th></tr></thead><tbody>` +
+        rels.map(r => `<tr>
+          <td><b>${esc(r.name || r.id)}</b></td>
+          <td style="color:${r.trust >= 0 ? "var(--accent)" : "var(--danger)"}">${Number(r.trust || 0).toFixed(2)}</td>
+          <td>${Number(r.hostility || 0).toFixed(2)}</td>
+          <td>${Number(r.fear || 0).toFixed(2)}</td>
+          <td>+${r.helped || 0} / -${r.attacked || 0}</td>
+        </tr>`).join("") + `</tbody></table>`
+      : `<div class="empty-note">Sin interacciones registradas con jugadores aún</div>`;
+
+    let stratHtml = strats.length
+      ? `<div class="pill-list">` + strats.map(([sk, sv]) =>
+          `<span class="item-tag"><b>${esc(sk)}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)</span>`
+        ).join("") + `</div>`
+      : `<div class="empty-note">Aprendiendo estrategias en curso...</div>`;
+
+    let memHtml = mems.length
+      ? `<table class="mini-table"><thead><tr><th>Evento</th><th>Actor / Zona</th><th>Detalle</th></tr></thead><tbody>` +
+        mems.map(m => `<tr>
+          <td><b>${esc(m.type)}</b></td>
+          <td>${esc(m.actor)} · ${esc(m.zone)}</td>
+          <td style="color:var(--muted)">${esc(m.detail)}</td>
+        </tr>`).join("") + `</tbody></table>`
+      : `<div class="empty-note">Sin eventos recientes</div>`;
+
+    let locHtml = locs.length
+      ? `<div class="pill-list">` + locs.map(l =>
+          `<span class="item-tag">${esc(l.id)} (${l.source === "shared" ? "🤝" : "👁️"} r=${Number(l.risk || 0).toFixed(1)})</span>`
+        ).join("") + `</div>`
+      : `<div class="empty-note">Explorando entorno inicial</div>`;
+
+    html += `<div class="card">
+      <div class="bot-header">
+        <div>
+          <div class="bot-name">
+            <span class="dot" style="background:${col};width:12px;height:12px"></span>
+            <span>${esc(b.name)}</span>
+            <span class="badge ${b.faction === "hostile" ? "err" : "ok"}">${esc(b.faction)}</span>
+            ${b.dead ? `<span class="badge err">MUERTO</span>` : ""}
+          </div>
+          <div class="bot-sub">ID ${b.bot_id} · Arma: <b>${esc(b.held_item || "Ninguna")}</b> · Mochila: ${esc(b.backpack || "Ninguna")}</div>
+        </div>
+        <span class="badge info">${esc(b.anim || "idle")}</span>
+      </div>
+
+      <div class="bar-row">
+        <span>Salud</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.hp}%;background:${barColor(b.hp)}"></div></div>
+        <span style="text-align:right">${b.hp}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Hambre</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.hunger}%;background:${barColor(b.hunger)}"></div></div>
+        <span style="text-align:right">${b.hunger}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Sed</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.thirst}%;background:${barColor(b.thirst)}"></div></div>
+        <span style="text-align:right">${b.thirst}%</span>
+      </div>
+
+      <div class="section-label">Objetivo y Última Decisión (Qwen / Cerebro Local)</div>
+      <div class="decision-box" style="border-left-color:${col}">
+        <div class="goal-line">🎯 ${esc(b.current_goal || "survival_patrol")}</div>
+        ${d.action
+          ? `<div class="meta-line">Acción: <b>${esc(d.action)}</b> → Destino: <b>${esc(d.target || "-")}</b> · Prioridad: <b>${d.priority || 3}/5</b> (${esc(d.source || "qwen")})</div>
+             <div class="meta-line">Motivo: "${esc(d.reason || "")}"</div>`
+          : `<div class="meta-line">Operando con IA táctica local (esperando ventana de consulta)</div>`
+        }
+      </div>
+
+      <div class="section-label">Personalidad Evolutiva (7 Rasgos)</div>
+      ${traitsHtml}
+
+      <div class="section-label">Relaciones Sociales (Confianza / Hostilidad / Miedo)</div>
+      ${relHtml}
+
+      <div class="section-label">Estrategias Aprendidas</div>
+      ${stratHtml}
+
+      <div class="section-label">Ubicaciones Conocidas (${b.known_locations_count || 0} — Sin Omnisciencia)</div>
+      ${locHtml}
+
+      <div class="section-label">Recuerdos Recientes</div>
+      ${memHtml}
+
+      <div class="section-label">Ropa Equipada e Inventario (${inv.length})</div>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
+      <div class="pill-list">${invHtml}</div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+async function pollStatus() {
+  try {
+    const res = await fetch("./status.json?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    renderHeader(data);
+    renderSummary(data);
+    renderMap(data);
+    renderBots(data);
+  } catch (err) {
+    document.getElementById("subStatus").textContent = "Esperando generación del primer snapshot en el servidor (" + err.message + ")...";
+  }
+}
+
+pollStatus();
+setInterval(pollStatus, 2000);
+</script>
+</body>
+</html>

@@ -172,6 +172,8 @@ const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
 const AI_ALLOWED_ACTIONS := ["explore", "scavenge", "hunt", "return_home", "rest", "avoid_zone", "forage", "fortify_camp", "seek_ally"]
 const AI_PERSONALITY_TRAITS := ["bravery", "aggression", "curiosity", "sociability", "distrust", "cooperation", "survival_instinct"]
 const AI_MEMORY_PATH := "user://survivor_bot_memory.json"
+const AI_STATUS_PATH := "user://survivor_bot_status.json"
+const AI_STATUS_SAVE_SEC := 2.0
 const AI_MEMORY_MAX_SPOTS := 10
 const AI_MEMORY_MAX_EVENTS := 28
 const AI_OBSERVE_RADIUS := 72.0
@@ -190,6 +192,7 @@ var _ai_429_count := 0
 var _ai_day_key := -1
 var _ai_rr := 0
 var _mem_accum := 0.0
+var _status_accum := 0.0
 var _ai_queue: Array = [] # [{bot_id, priority, reason, t}]
 var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
 var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
@@ -205,6 +208,7 @@ func setup(main_world: Node) -> void:
 	world = main_world
 	_ai_load_memory()
 	spawn_all_bots()
+	_ai_save_live_status()
 
 static func is_bot_peer_id(pid: int) -> bool:
 	return pid >= 901 and pid <= 909
@@ -694,6 +698,10 @@ func tick(delta: float) -> void:
 	if _mem_accum >= AI_MEMORY_SAVE_SEC:
 		_mem_accum = 0.0
 		_ai_save_memory()
+	_status_accum += delta
+	if _status_accum >= AI_STATUS_SAVE_SEC:
+		_status_accum = 0.0
+		_ai_save_live_status()
 	_sync_accum += delta
 	if _sync_accum >= 0.10:
 		_sync_accum = fmod(_sync_accum, 0.10)
@@ -4763,6 +4771,91 @@ func get_ai_debug_report() -> String:
 			(", ".join(m_parts) if not m_parts.is_empty() else "ninguno")
 		])
 	return "\n".join(lines)
+
+func get_full_web_status() -> Dictionary:
+	var tod := 14.0
+	if world != null and world.get("day_cycle") != null:
+		tod = float(world.day_cycle.get("time_of_day"))
+	var wild_n := 0
+	if world != null and world.get_tree() != null:
+		wild_n = world.get_tree().get_nodes_in_group("wildlife").size()
+	var online_p := 0
+	var net = world.get("net") if world != null else null
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			if int(pid) != int(net.get_my_id()) and not is_bot_peer_id(int(pid)) and not bool(net.players[pid].get("offline", false)):
+				online_p += 1
+	var pois_out: Array = []
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		pois_out.append({"id": _poi_id(p), "kind": str(p.get("kind", "wild")), "pos": [snappedf(pp.x, 0.1), snappedf(pp.y, 0.1), snappedf(pp.z, 0.1)]})
+	var bots_out: Array = []
+	var ids: Array = bots.keys()
+	ids.sort()
+	for bid in ids:
+		var b: Dictionary = bots[bid]
+		var proxy: Node3D = b.get("proxy")
+		var pos := proxy.global_position if proxy != null and is_instance_valid(proxy) else Vector3(b.get("pos", Vector3.ZERO))
+		var mem: Dictionary = _ensure_bot_memory(int(bid), b.get("cfg", {}))
+		var snap := get_bot_debug_snapshot(int(bid))
+		var camp: Vector3 = b.get("camp_spot", Vector3.INF)
+		var sh: Vector3 = b.get("shelter_pos", Vector3.INF)
+		var et: Vector3 = b.get("explore_target", Vector3.INF)
+		snap["pos"] = [snappedf(pos.x, 0.1), snappedf(pos.y, 0.1), snappedf(pos.z, 0.1)]
+		snap["rot"] = snappedf(float(b.get("rot", 0.0)), 0.01)
+		snap["anim"] = str(b.get("anim", "idle"))
+		snap["dead"] = bool(proxy.get_meta("proxy_dead", false)) if proxy != null and is_instance_valid(proxy) else false
+		snap["held_item"] = str(b.get("held_item", ""))
+		snap["clothing"] = str(b.get("clothing", ""))
+		snap["backpack"] = str(b.get("backpack", ""))
+		snap["torch_lit"] = bool(b.get("torch_lit", false))
+		snap["crouching"] = bool(b.get("crouching", false))
+		snap["sitting"] = bool(b.get("sitting", false))
+		snap["in_shelter"] = _is_bot_wolf_protected(b) if proxy != null and is_instance_valid(proxy) else false
+		snap["team_leader_id"] = int(b.get("team_leader_id", 0))
+		snap["follow_mode"] = str(b.get("follow_mode", "follow"))
+		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
+		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
+		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
+		snap["inventory"] = (proxy.get_meta("saved_inventory", []) as Array) if proxy != null and is_instance_valid(proxy) else []
+		snap["known_locations"] = (mem.get("known_locations", {}) as Dictionary).values()
+		snap["deaths"] = int(mem.get("deaths", 0))
+		snap["last_death_cause"] = str(mem.get("last_death_cause", ""))
+		bots_out.append(snap)
+	return {
+		"timestamp": int(Time.get_unix_time_from_system()),
+		"server": {
+			"fps": Engine.get_frames_per_second(),
+			"time_of_day": snappedf(tod, 0.05),
+			"is_night": _is_world_night(),
+			"wildlife_count": wild_n,
+			"players_online": online_p,
+		},
+		"groq": {
+			"model": AI_ADVISOR_MODEL,
+			"status": _ai_conn_status,
+			"calls_day": _ai_calls_day,
+			"max_calls_day": ai_max_calls_per_day,
+			"calls_total": _ai_calls_total,
+			"tokens_day": _ai_tokens_day,
+			"max_tokens_day": ai_max_tokens_per_day,
+			"tokens_total": _ai_tokens_total,
+			"cache_hits": _ai_cache_hits,
+			"http_429_count": _ai_429_count,
+			"queue_size": _ai_queue.size(),
+		},
+		"pois": pois_out,
+		"bots": bots_out,
+	}
+
+func _ai_save_live_status() -> void:
+	if not _ai_memory_enabled():
+		return
+	var f := FileAccess.open(AI_STATUS_PATH, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(get_full_web_status()))
+	f.close()
 
 # ==================== FORRAJEO: SETAS Y FRUTA ====================
 # Con hambre y sin comida comestible en la mochila, el bot busca lo que un
