@@ -16,8 +16,12 @@ func check(ok: bool, msg: String) -> void:
 
 class FakeDayCycle extends Node:
 	var time_of_day := 14.0
+	var ambient_temp := 15.0
+	var weather_darkness := 0.0
 	func get_ambient_temperature() -> float:
-		return 15.0
+		return ambient_temp
+	func is_night() -> bool:
+		return time_of_day < 6.2 or time_of_day > 19.3
 
 class FakeNet extends Node:
 	var is_host := true
@@ -26,6 +30,7 @@ class FakeNet extends Node:
 	var peer = null
 	var players := {}
 	var animals := {}
+	var authoritative_weather := {}
 	func get_my_id() -> int:
 		return 1
 	func peer_alive(_pid: int) -> bool:
@@ -73,6 +78,16 @@ class TestWorld extends "res://scripts/Main.gd":
 		if act != null and is_instance_valid(act):
 			act.mark_depleted()
 			world_actions_by_id.erase(aid)
+		return true
+	var built_campfires: Array = []
+	func _net_campfire_built(cid: String, pos: Vector3, _owner: int = 0) -> bool:
+		built_campfires.append(cid)
+		campfire_positions.append(pos)
+		return true
+	func _net_campfire_lit(cid: String, fire_name: String, pos: Vector3, _owner: int = 0) -> bool:
+		_lit_campfires.append({"id": cid, "fire_name": fire_name, "pos": pos})
+		if not campfire_positions.has(pos):
+			campfire_positions.append(pos)
 		return true
 
 func _initialize() -> void:
@@ -1752,6 +1767,151 @@ func run() -> void:
 		"SpawnReal 10v2: bebe en la fuente de la ciudad y rellena su botella (sed=%.0f)" % float(fresh_b["thirst"]))
 	world.world_actions_by_id.erase("district_fountain_drink")
 	ftn_drink.queue_free()
+
+	# 10w: supervivencia de jugador humano en los bots — duermen de noche en su
+	# refugio, despiertan con ruido/amenaza/amanecer, el frio y la lluvia les
+	# afectan igual que al jugador, y encienden hogueras para calentarse.
+	var vs: SurvivalStats = fresh_b["vstats"]
+	check(vs != null and vs is SurvivalStats,
+		"SpawnReal 10w0: cada bot lleva un modelo SurvivalStats humano real")
+	fresh_b["proxy"].global_position = Vector3(500.0, 0.4, 500.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["shelter_pos"] = fresh_b["proxy"].global_position
+	fresh_b["shelter_id"] = ""
+	fresh_b["campfire_id"] = ""
+	fresh_b["camp_spot"] = fresh_b["proxy"].global_position
+	fresh_b["team_leader_id"] = 0
+	fresh_b["aggro_target"] = null
+	fresh_b["aggro_timer"] = 0.0
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["flee_until"] = 0.0
+	fresh_b["caution_until"] = 0.0
+	fresh_b["flinch_timer"] = 0.0
+	fresh_b["forced_eat"] = false
+	fresh_b["gut_target"] = null
+	fresh_b["climb_route"] = []
+	fresh_b["sleeping"] = false
+	fresh_b["hunger"] = 80.0
+	fresh_b["thirst"] = 80.0
+	fresh_b["health"] = 100.0
+	fresh_b["proxy"].set_meta("proxy_health", 100.0)
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	for k in ["_s_predator", "_s_foe", "_s_leader", "_s_tame_wolf", "_s_prey", "_s_corpse"]:
+		fresh_b[k] = null
+	fresh_b["_s_loot"] = {}
+	fresh_b["_s_raid_shelter"] = {}
+	fresh_b["_s_has_wolf"] = false
+	fresh_b["explore_target"] = Vector3.INF
+	dc.time_of_day = 22.6
+	dc.ambient_temp = 12.0
+	vs.sleep = 55.0
+	vs.body_temperature = 36.6
+	vs.wetness = 0.0
+	mgr._tick_bot(fresh_b, 0.1)
+	check(bool(fresh_b["sleeping"]) and str(fresh_b["anim"]) == "sleep",
+		"SpawnReal 10w1: de noche en su refugio el bot se tumba a dormir (anim=%s)" % str(fresh_b["anim"]))
+	var sleep0 := vs.sleep
+	for i in range(20):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(vs.sleep > sleep0 and bool(fresh_b["sleeping"]),
+		"SpawnReal 10w2: dormir recupera el sueño (%.1f->%.1f)" % [sleep0, vs.sleep])
+	check(str(mgr._bot_effective_net_anim(fresh_b)) == "sleep",
+		"SpawnReal 10w3: el avatar remoto muestra la pose de dormir")
+	mgr.notify_sound_event(777, fresh_b["proxy"].global_position + Vector3(4.0, 0.0, 0.0), "gunshot", 220.0)
+	check(not bool(fresh_b["sleeping"]),
+		"SpawnReal 10w4: un disparo cercano lo despierta")
+	fresh_b["caution_until"] = 0.0
+	fresh_b["flee_until"] = 0.0
+	vs.sleep = 60.0
+	mgr._tick_bot(fresh_b, 0.1)
+	check(bool(fresh_b["sleeping"]),
+		"SpawnReal 10w5: pasado el susto vuelve a tumbarse a dormir")
+	dc.time_of_day = 8.0
+	vs.sleep = 80.0
+	mgr._tick_bot(fresh_b, 0.1)
+	check(not bool(fresh_b["sleeping"]),
+		"SpawnReal 10w6: al amanecer se despierta solo")
+
+	# Frio ambiental y calor de hoguera (mismo modelo SurvivalStats del jugador)
+	dc.time_of_day = 14.0
+	dc.ambient_temp = -14.0
+	fresh_b["shelter_pos"] = Vector3.INF
+	fresh_b["shelter_id"] = ""
+	fresh_b["camp_spot"] = fresh_b["proxy"].global_position
+	fresh_b["proxy"].global_position = Vector3(450.0, 0.4, 450.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["sleeping"] = false
+	fresh_b["hunger"] = 90.0
+	fresh_b["thirst"] = 90.0
+	vs.body_temperature = 36.6
+	vs.wetness = 0.0
+	for i in range(150):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(vs.body_temperature < 36.0,
+		"SpawnReal 10w7: el frio ambiental baja su temperatura corporal (%.2f)" % vs.body_temperature)
+	vs.body_temperature = 34.6
+	world.campfire_positions.append(fresh_b["proxy"].global_position + Vector3(1.2, 0.0, 0.0))
+	for i in range(40):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(vs.body_temperature > 34.8,
+		"SpawnReal 10w8: el calor de una hoguera cercana lo calienta (%.2f)" % vs.body_temperature)
+	world.campfire_positions.clear()
+	world._lit_campfires = []
+
+	# Lluvia: empapa al aire libre igual que al jugador; bajo techo se seca.
+	fnet.is_connected = true
+	fnet.authoritative_weather = {"weather_code": 61, "temperature": -999.0, "rain": 4.0,
+		"snow": 0.0, "cloud_cover": 0.9, "wind_speed": 8.0, "wind_direction": 0.0}
+	dc.ambient_temp = 10.0
+	fresh_b["proxy"].global_position = Vector3(480.0, 0.4, 480.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["shelter_pos"] = Vector3.INF
+	fresh_b["sleeping"] = false
+	vs.wetness = 0.0
+	vs.body_temperature = 36.6
+	for i in range(40):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(vs.wetness > 0.05,
+		"SpawnReal 10w10: la lluvia lo empapa igual que al jugador (wet=%.2f)" % vs.wetness)
+	var wet_peak := vs.wetness
+	fresh_b["shelter_pos"] = fresh_b["proxy"].global_position
+	fresh_b["hide_timer"] = 30.0 # se queda agazapado en su refugio, sin deambular
+	for i in range(40):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(vs.wetness < wet_peak,
+		"SpawnReal 10w11: bajo techo deja de mojarse y se va secando (wet=%.2f)" % vs.wetness)
+	fresh_b["hide_timer"] = 0.0
+	fnet.authoritative_weather = {}
+	fnet.is_connected = false
+
+	# Con frio letal y materiales enciende su propia hoguera para calentarse.
+	fresh_b["shelter_pos"] = Vector3.INF
+	fresh_b["proxy"].global_position = Vector3(460.0, 0.4, 460.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["sleeping"] = false
+	fresh_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.2, "quantity": 4},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 3},
+	])
+	vs.body_temperature = 34.0
+	var fires0: int = world.built_campfires.size()
+	mgr._tick_bot(fresh_b, 0.1)
+	check(world.built_campfires.size() > fires0 and world.campfire_positions.size() > 0,
+		"SpawnReal 10w9: con frio letal y materiales enciende una hoguera para calentarse")
+	world.campfire_positions.clear()
+	world.built_campfires.clear()
+
+	# La inanicion/deshidratacion mata igual que al jugador humano.
+	fresh_b["hunger"] = 0.0
+	vs.hunger = 0.0
+	fresh_b["health"] = 2.0
+	vs.health = 2.0
+	fresh_b["proxy"].set_meta("proxy_health", 2.0)
+	fresh_b["proxy"].set_meta("saved_health", 2.0)
+	for i in range(30):
+		mgr._tick_bot(fresh_b, 0.1)
+	check(bool(fresh_b["proxy"].get_meta("proxy_dead", false)),
+		"SpawnReal 10w12: la inanicion real lo mata igual que a un jugador humano")
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

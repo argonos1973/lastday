@@ -702,6 +702,18 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"current_goal": "survival_patrol",
 	}
 	bots[bot_id] = bot_state
+	# Modelo de supervivencia identico al del jugador humano (SurvivalStats):
+	# hambre, sed, energia, sueño, temperatura corporal y lluvia con las mismas
+	# reglas. La senal died mata al bot por inanicion/hipotermia/calor/etc.
+	var vstats := SurvivalStats.new()
+	vstats.health = float(bot_state["health"])
+	vstats.hunger = float(bot_state["hunger"])
+	vstats.thirst = float(bot_state["thirst"])
+	vstats.energy = 100.0
+	vstats.sleep = 100.0
+	vstats.body_temperature = 36.7
+	vstats.died.connect(_on_bot_stats_died.bind(bot_state))
+	bot_state["vstats"] = vstats
 	# Enlazar la memoria persistente del personaje: identidad, personalidad
 	# evolutiva, recuerdos de eventos, ubicaciones conocidas (sin omnisciencia),
 	# relaciones sociales, estrategias y objetivos pendientes.
@@ -716,7 +728,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 			observe_location(bot_id, pid, "wild", pt as Vector3, "observed")
 	# Prudencia aprendida: si murio por depredadores o inanicion, durante los
 	# primeros minutos de su nueva vida evita la zona donde cayo.
-	bot_state["caution_until"] = 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved"] else 0.0
+	bot_state["caution_until"] = 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved", "dehydrated", "hypothermia"] else 0.0
 	_publish_bot_to_net_players(bot_state)
 	_sync_bot_appearance_to_clients(bot_state)
 	# Si estamos en singleplayer o host con render, crear su avatar visual inmediatamente
@@ -857,6 +869,8 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
 	if raw == "dead":
 		return "dead"
+	if bool(b.get("sleeping", false)):
+		return "sleep"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw in ["idle", "walk"]:
 		return str(b.get("consume_anim", "eat"))
 	if bool(b.get("sitting", false)) or raw == "sit":
@@ -930,29 +944,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
 
-	# Necesidades reales: hambre/sed bajan como en un jugador (algo mas lento
-	# para que un bot dure la sesion, pero puede morir si no encuentra recursos)
-	var moving_now: bool = str(b["anim"]) == "walk" or str(b["anim"]) == "run"
-	var drain_mult := 1.15 if moving_now else 0.8
-	b["hunger"] = maxf(0.0, float(b["hunger"]) - delta * 0.055 * drain_mult)
-	b["thirst"] = maxf(0.0, float(b["thirst"]) - delta * 0.050 * drain_mult)
+	# Supervivencia identica a la del jugador humano: SurvivalStats simula
+	# hambre, sed, energia, sueño, temperatura corporal, lluvia, vadeo, calor
+	# de fogata/antorcha y muerte por inanicion/hipotermia/calor/agotamiento.
+	_bot_survival_tick(b, delta)
+	if bool(proxy.get_meta("proxy_dead", false)):
+		return
 	proxy.set_meta("saved_hunger", float(b["hunger"]))
 	proxy.set_meta("saved_thirst", float(b["thirst"]))
 	_maintain_bot_needs(b, delta)
-	# Hambre o sed a cero = desgaste real de salud hasta la muerte
-	var starve_dmg := 0.0
-	if float(b["hunger"]) <= 0.0:
-		starve_dmg += 1.1
-	if float(b["thirst"]) <= 0.0:
-		starve_dmg += 1.4
-	if starve_dmg > 0.0:
-		var hp2 := float(proxy.get_meta("proxy_health", 100.0)) - starve_dmg * delta
-		proxy.set_meta("proxy_health", maxf(0.0, hp2))
-		proxy.set_meta("saved_health", maxf(0.0, hp2))
-		b["health"] = maxf(0.0, hp2)
-		if hp2 <= 0.0:
-			_kill_bot(b, "starved")
-			return
 
 	# Si acaba de recibir un disparo o golpe, acusa el impacto (flinch) antes de
 	# reanudar movimiento o ataque, manteniendo la animacion shot/hit visible.
@@ -993,13 +993,29 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var sh_pos: Vector3 = b["shelter_pos"]
 	var camp_pos: Vector3 = b["camp_spot"]
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
-	b["torch_lit"] = is_night and not hiding_in_shelter and _bot_has_item(proxy, "Antorcha")
+	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
 	proxy.set_meta("in_built_shelter", sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 3.4)
 	proxy.set_meta("crouching", bool(b["crouching"]))
 	proxy.set_meta("prone", bool(b["prone"]))
 	proxy.set_meta("sprinting", str(b["anim"]) == "run")
+	var moving_now: bool = str(b["anim"]) == "walk" or str(b["anim"]) == "run"
 	proxy.set_meta("moving", moving_now)
+
+	# Dormido: sigue tumbado salvo que haya motivo para despertar (amenaza
+	# detectada, frio/calor letal, hambre/sed urgente o amanecer con el
+	# deposito medio lleno). Los sentidos escalonados siguen refrescandose
+	# arriba, asi un depredador o enemigo acercandose lo despierta.
+	if bool(b.get("sleeping", false)):
+		if _bot_should_wake(b, is_night):
+			b["sleeping"] = false
+			b["anim"] = "idle"
+		else:
+			b["anim"] = "sleep"
+			b["sitting"] = false
+			b["crouching"] = false
+			proxy.set_meta("crouching", false)
+			return
 
 	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
@@ -1240,8 +1256,17 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["crouching"] = false
 			_move_bot_towards(b, sh_pos, 4.2, delta, "run" if d_own_sh > 12.0 else "walk")
 			return
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (not starving_or_parched and (is_night or float(b["health"]) < 65.0))
-	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, 85.0)
+	# Helándose: si no hay fuego encendido al alcance, arma una hoguera aquí
+	# mismo antes de seguir — igual que haría un jugador humano.
+	if _bot_is_freezing(b) and not _is_near_any_lit_campfire(proxy.global_position, 8.0) and _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2:
+		_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (not starving_or_parched and (is_night or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
+	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
+	# el radio normal: sobrevivir pesa mas que la comodidad.
+	var refuge_radius := 85.0
+	if _bot_is_freezing(b) or _bot_is_exhausted(b):
+		refuge_radius = 220.0
+	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, refuge_radius)
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
 		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
@@ -1256,7 +1281,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_bot_cook_meat_at_fire(b)
 		# Solo craftea en el refugio si esta sano y no se esta ocultando de una
 		# amenaza: herido o escondido descansa/aguanta, no se pone a tallar.
+		# (De noche la Antorcha puntua alto aqui: la fabrica antes de dormir.)
 		if float(b["health"]) >= 70.0 and float(b["hide_timer"]) <= 0.0 and _bot_try_craft(b, delta):
+			return
+		# Dormir de noche igual que un jugador humano: se tumba, recupera
+		# sueño/energia/salud y despierta al amanecer, con frio o calor letal,
+		# hambre/sed urgente, o al oir/sufrir una amenaza.
+		if _bot_try_start_sleep(b, is_night):
 			return
 		b["sitting"] = true
 		b["crouching"] = str(b["faction"]) == "hostile"
@@ -2457,6 +2488,10 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 		b["last_heard_actor"] = actor_id
 		b["last_heard_until"] = now_s + (18.0 if kind == "gunshot" else 9.0)
 		b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 14.0 if kind == "gunshot" else 7.0)
+		# Un ruido real lo despierta: sale del sueño como un jugador humano.
+		if bool(b.get("sleeping", false)):
+			b["sleeping"] = false
+			b["anim"] = "idle"
 		record_bot_event(int(bid), "heard_" + kind, "actor_%d" % actor_id, _poi_kind_near(sound_pos), sound_pos, "%s:%.0fm" % [kind, d])
 		if kind == "gunshot":
 			var my_faction := str(b.get("faction", "friendly"))
@@ -2920,7 +2955,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	mem["deaths"] = int(mem.get("deaths", 0)) + 1
 	mem["last_death_pos"] = proxy.global_position
 	mem["last_death_cause"] = death_kind
-	if death_kind == "starved":
+	if death_kind in ["starved", "dehydrated", "hypothermia", "exhausted"]:
 		mem["scarcity"] = true
 	mem["gear_learned"] = true # morir enseña: la buena equipacion importa
 	# Historial de puntos letales: muertes cercanas (<25 m) se agrupan y pesan
@@ -3002,6 +3037,9 @@ func _respawn_bot(b: Dictionary) -> void:
 		if is_instance_valid(rp):
 			rp.queue_free()
 		world.remote_players.erase(bot_id)
+	var old_stats = b.get("vstats")
+	if old_stats != null and is_instance_valid(old_stats):
+		old_stats.free()
 	bots.erase(bot_id)
 	_spawn_bot(cfg)
 
@@ -3108,6 +3146,7 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		b["team_leader_id"] = sender_id
 		b["follow_mode"] = "follow"
 		b["sitting"] = false
+		b["sleeping"] = false
 		b["aggro_target"] = null
 		proxy.set_meta("team_leader_id", sender_id)
 		proxy.set_meta("bot_follow_mode", "follow")
@@ -4659,6 +4698,245 @@ func _is_world_night() -> bool:
 		return tod < 6.2 or tod > 19.3
 	return false
 
+# --- Supervivencia de bot identica a la del jugador humano -----------------
+# Cada bot lleva una instancia real de SurvivalStats (la misma clase que el
+# jugador): hambre, sed, energia, sueño, temperatura corporal, lluvia/nieve,
+# vadeo, calor de fogata/antorcha, abrigo de la ropa y muerte por inanicion,
+# deshidratacion, hipotermia, calor o agotamiento. La IA sigue decidiendo sobre
+# b["hunger"]/b["thirst"]/b["health"]; este puente sincroniza ambos lados.
+
+func _bot_weather_observation() -> Dictionary:
+	var net = world.get("net") if world != null else null
+	if net != null and bool(net.get("is_connected")):
+		var aw = net.get("authoritative_weather")
+		if aw is Dictionary and not (aw as Dictionary).is_empty():
+			return aw
+		# Antes de la primera observacion real publicada por un cliente, el
+		# servidor usa el mismo estado neutro nublado que para los jugadores.
+		return {"weather_code": 3, "temperature": -999.0, "rain": 0.0, "snow": 0.0,
+			"cloud_cover": 0.88, "wind_speed": 0.0, "wind_direction": 0.0}
+	return {}
+
+# Bajo techo: refugio propio/ajeno construido, o casa con la puerta cerrada.
+func _bot_is_sheltered(b: Dictionary, pos: Vector3) -> bool:
+	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if sh_pos != Vector3.INF and pos.distance_to(sh_pos) < 3.4:
+		return true
+	if world.has_method("_is_near_built_shelter") and world._is_near_built_shelter(pos):
+		return true
+	if world.has_method("_is_player_in_house") and world._is_player_in_house(pos):
+		if world.has_method("_is_in_open_house") and world._is_in_open_house(pos):
+			return false
+		return true
+	return false
+
+# Fraccion de lluvia que llega a la piel: mismo modelo cubierta/filtracion
+# del jugador (CLOTHING_SLOTS + SLOT_WET_WEIGHT + CLOTHING_WATER_RESIST).
+func _bot_skin_wet_factor(b: Dictionary) -> float:
+	var worn_slots := {}
+	for nm in str(b["clothing"]).split(",", false):
+		var cn := nm.strip_edges()
+		var slot := str(PlayerController.CLOTHING_SLOTS.get(cn, ""))
+		if not slot.is_empty() and not worn_slots.has(slot):
+			worn_slots[slot] = cn
+	var covered := 0.0
+	var covered_leaky := 0.0
+	for slot in PlayerController.SLOT_WET_WEIGHT.keys():
+		var w_slot := float(PlayerController.SLOT_WET_WEIGHT[slot])
+		if worn_slots.has(slot):
+			covered += w_slot
+			covered_leaky += w_slot * (1.0 - float(PlayerController.CLOTHING_WATER_RESIST.get(worn_slots[slot], 0.0)))
+	return clampf((1.0 - covered) + 0.2 * covered_leaky, 0.0, 1.0)
+
+func _bot_is_freezing(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	return st != null and not st.dead and st.body_temperature < 35.2
+
+func _bot_is_exhausted(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	return st != null and not st.dead and st.sleep < 14.0
+
+func _bot_survival_tick(b: Dictionary, delta: float) -> void:
+	var st: SurvivalStats = b.get("vstats")
+	var proxy: Node3D = b["proxy"]
+	if st == null or st.dead:
+		return
+	# Las acciones de la IA (comer, beber, vendas, daño recibido) viven en b y
+	# en los metas del proxy: se vuelcan al modelo humano antes de simular.
+	st.health = clampf(float(b["health"]), 0.0, st.max_health)
+	st.hunger = clampf(float(b["hunger"]), 0.0, st.max_stat)
+	st.thirst = clampf(float(b["thirst"]), 0.0, st.max_stat)
+	var b_sick_t := float(b.get("sick_timer", 0.0))
+	st.sick = b_sick_t > 0.0
+	st.sick_timer = maxf(float(st.sick_timer), b_sick_t)
+	var pos: Vector3 = proxy.global_position
+	var dc = world.get("day_cycle")
+	var obs := _bot_weather_observation()
+	var is_night := _is_world_night()
+	var ambient_temp := float(obs.get("temperature", -999.0))
+	if ambient_temp <= -900.0:
+		ambient_temp = float(dc.call("get_ambient_temperature")) if dc != null and dc.has_method("get_ambient_temperature") else 15.0
+	var sheltered := _bot_is_sheltered(b, pos)
+	var shelter_warmth := 0.0
+	if world.has_method("_is_near_pelt_lined_shelter") and world._is_near_pelt_lined_shelter(pos):
+		ambient_temp += 2.5
+		shelter_warmth += 0.45
+	if world.has_method("_is_near_camo_covered_shelter") and world._is_near_camo_covered_shelter(pos):
+		ambient_temp += 2.0
+		shelter_warmth += 0.35
+	# Abrigo/proteccion termica de la ropa equipada (mismas tablas que el
+	# jugador; la ropa empapada abriga menos, la piel casi nada pierde).
+	var wet := clampf(st.wetness, 0.0, 1.0)
+	var warmth_sum := 0.0
+	var heat_prot := 0.0
+	var heat_ret := 0.0
+	for nm in str(b["clothing"]).split(",", false):
+		var cn := nm.strip_edges()
+		if cn.is_empty():
+			continue
+		var w := float(PlayerController.CLOTHING_WARMTH.get(cn, 0.0))
+		if w > 0.0:
+			var retain: float = PlayerController.WET_WARMTH_RETAIN_PELT if PlayerController.CLOTHING_WATER_RESIST.has(cn) else PlayerController.WET_WARMTH_RETAIN
+			warmth_sum += w * lerpf(1.0, retain, wet)
+		heat_prot = maxf(heat_prot, float(PlayerController.CLOTHING_HEAT_PROTECTION.get(cn, 0.0)))
+		heat_ret += float(PlayerController.CLOTHING_HEAT_RETENTION.get(cn, 0.0))
+	st.warmth_bonus = warmth_sum
+	st.heat_protection_bonus = heat_prot
+	st.heat_retention_bonus = heat_ret
+
+	# Lluvia y nieve empapan como al jugador; bajo techo no moja. Vadear el
+	# rio/lago cala mucho mas rapido.
+	if not sheltered:
+		var rain_amt := float(obs.get("rain", 0.0))
+		var snow_amt := float(obs.get("snow", 0.0))
+		if rain_amt > 0.1 or snow_amt > 0.05:
+			var wet_gain := delta * 0.20 * clampf(rain_amt * 0.5, 0.1, 1.0)
+			if rain_amt <= 0.1:
+				wet_gain = delta * 0.05 * clampf(snow_amt, 0.1, 1.0)
+			st.wetness = minf(1.0, st.wetness + wet_gain * _bot_skin_wet_factor(b))
+	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.30:
+		st.wetness = minf(1.0, st.wetness + delta * 0.9)
+
+	# Calor de fogatas y antorchas igual que _apply_campfire_effect /
+	# _apply_torch_fire_effect del jugador: calienta, seca y quema al pisar
+	# las brasas.
+	for fire_pos in (world.get("campfire_positions") if world.get("campfire_positions") != null else []):
+		if not (fire_pos is Vector3):
+			continue
+		var dx: float = fire_pos.x - pos.x
+		var dz: float = fire_pos.z - pos.z
+		var dist_sq: float = dx * dx + dz * dz
+		var dy: float = absf(fire_pos.y - pos.y)
+		if dist_sq < 0.36 and dy < 1.2:
+			st.health = maxf(0.0, st.health - 5.0 * delta)
+		elif dist_sq < 16.0 and dy < 2.5:
+			var wf: float = 1.0 - (sqrt(dist_sq) - 0.6) / 3.4
+			st.apply_external_heat(wf * 3.0 * delta, 38.0)
+			st.wetness = maxf(0.0, st.wetness - wf * 0.05 * delta)
+	for fire_pos in (world.get("torch_fire_positions") if world.get("torch_fire_positions") != null else []):
+		if not (fire_pos is Vector3):
+			continue
+		var dx2: float = fire_pos.x - pos.x
+		var dz2: float = fire_pos.z - pos.z
+		var dist_sq2: float = dx2 * dx2 + dz2 * dz2
+		if dist_sq2 < 4.0 and absf(fire_pos.y - pos.y) < 2.5:
+			var wf2: float = 1.0 - sqrt(dist_sq2) / 2.0
+			st.apply_external_heat(wf2 * 1.5 * delta, 37.5)
+			st.wetness = maxf(0.0, st.wetness - wf2 * 0.02 * delta)
+
+	var sleeping := bool(b.get("sleeping", false))
+	var anim_now := str(b["anim"])
+	var moving: bool = anim_now in ["walk", "run"] and not sleeping
+	var sprinting: bool = anim_now == "run" and not sleeping
+	var inv_n: int = (proxy.get_meta("saved_inventory", []) as Array).size()
+	var carry_ratio := clampf(float(inv_n) / 30.0, 0.0, 1.0)
+	var sun := 1.0 - (float(dc.get("weather_darkness")) if dc != null else 0.0)
+	var wind := float(obs.get("wind_speed", 0.0))
+	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind)
+	if sleeping:
+		st.do_sleep(delta, false)
+	if st.dead:
+		return
+	# Vuelta al estado del bot: la IA decide sobre b/* y el proxy como siempre.
+	b["hunger"] = st.hunger
+	b["thirst"] = st.thirst
+	b["health"] = st.health
+	b["energy"] = st.energy
+	proxy.set_meta("proxy_health", st.health)
+	proxy.set_meta("saved_health", st.health)
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var sx: Dictionary = (extra.get("stats_extra", {}) as Dictionary).duplicate()
+	sx["energy"] = st.energy
+	sx["sleep"] = st.sleep
+	sx["body_temperature"] = st.body_temperature
+	sx["wetness"] = st.wetness
+	sx["survival_seconds"] = st.survival_seconds
+	extra["stats_extra"] = sx
+	proxy.set_meta("saved_extra", extra)
+
+# Causa de muerte deducida del estado final de sus stats humanos.
+func _on_bot_stats_died(b: Dictionary) -> void:
+	var st: SurvivalStats = b.get("vstats")
+	var kind := "succumbed"
+	if st != null:
+		if st.body_temperature < 34.5:
+			kind = "hypothermia"
+		elif st.body_temperature > 39.0:
+			kind = "heatstroke"
+		elif st.hunger <= 0.0:
+			kind = "starved" # hambre a 0 (con o sin sed): inanicion, la etiqueta historica
+		elif st.thirst <= 0.0:
+			kind = "dehydrated"
+		elif st.sleep <= 10.0:
+			kind = "exhausted"
+	_kill_bot(b, kind)
+
+# Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
+# bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
+func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
+	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
+	if bool(b.get("sleeping", false)) or int(b.get("team_leader_id", 0)) > 0 or float(b.get("hide_timer", 0.0)) > 0.0 or b.get("aggro_target") != null:
+		return false
+	var st: SurvivalStats = b.get("vstats")
+	if st == null or st.dead:
+		return false
+	# Duerme de noche; si esta agotado de verdad cabecea incluso de dia.
+	var exhausted := st.sleep < 14.0
+	if not is_night and not exhausted:
+		return false
+	if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
+		return false
+	if st.body_temperature < 34.9 or st.body_temperature > 38.4:
+		return false
+	if st.sleep >= 99.0 and st.energy >= 98.0 and float(b["health"]) >= 99.0:
+		return false # nada que recuperar: queda sentado de vigilancia
+	b["sleeping"] = true
+	b["sitting"] = false
+	b["crouching"] = false
+	b["prone"] = false
+	b["anim"] = "sleep"
+	return true
+
+func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
+	if b.get("aggro_target") != null or b.get("_s_predator") != null or b.get("_s_foe") != null:
+		return true
+	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
+		return true
+	if float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
+		return true
+	var st: SurvivalStats = b.get("vstats")
+	if st == null:
+		return true
+	if st.body_temperature < 34.8 or st.body_temperature > 38.6:
+		return true
+	if st.health < 25.0:
+		return true
+	if st.sleep >= 99.5 and st.energy >= 95.0:
+		return true # descansado: se sienta de guardia aunque siga de noche
+	if not is_night and st.sleep > 55.0:
+		return true # amanecio con el deposito medio lleno
+	return false
+
 func _best_weapon_name(proxy: Node3D) -> String:
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var order := ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera",
@@ -6143,6 +6421,11 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"hp": int(float(b.get("health", 100.0))),
 		"hunger": int(float(b.get("hunger", 100.0))),
 		"thirst": int(float(b.get("thirst", 100.0))),
+		"sleeping": bool(b.get("sleeping", false)),
+		"sleep": int(float((b.get("vstats") as SurvivalStats).sleep)) if b.get("vstats") != null else 100,
+		"energy": int(float((b.get("vstats") as SurvivalStats).energy)) if b.get("vstats") != null else 100,
+		"body_temperature": snappedf(float((b.get("vstats") as SurvivalStats).body_temperature), 0.1) if b.get("vstats") != null else 36.7,
+		"wetness": snappedf(float((b.get("vstats") as SurvivalStats).wetness), 0.01) if b.get("vstats") != null else 0.0,
 		"personality": _get_bot_personality(b).duplicate(true),
 		"current_goal": str(b.get("current_goal", "survival_patrol")),
 		"last_qwen_decision": (b.get("ai_directive", {}) as Dictionary).duplicate(true),
@@ -6256,6 +6539,13 @@ func get_full_web_status() -> Dictionary:
 		snap["sick"] = float(b.get("sick_timer", 0.0)) > 0.0
 		snap["crouching"] = bool(b.get("crouching", false))
 		snap["sitting"] = bool(b.get("sitting", false))
+		snap["sleeping"] = bool(b.get("sleeping", false))
+		var vst: SurvivalStats = b.get("vstats")
+		if vst != null:
+			snap["sleep"] = int(vst.sleep)
+			snap["energy"] = int(vst.energy)
+			snap["body_temperature"] = snappedf(vst.body_temperature, 0.1)
+			snap["wetness"] = snappedf(vst.wetness, 0.01)
 		snap["in_shelter"] = _is_bot_wolf_protected(b) if proxy != null and is_instance_valid(proxy) else false
 		snap["team_leader_id"] = int(b.get("team_leader_id", 0))
 		snap["follow_mode"] = str(b.get("follow_mode", "follow"))
