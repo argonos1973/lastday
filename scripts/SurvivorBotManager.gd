@@ -2318,13 +2318,73 @@ func _effective_human_sight(target: Node3D, base_sight: float) -> float:
 		s *= 0.65
 	return maxf(8.0, s)
 
+# Percepcion auditiva entre bots y jugadores: disparos (220 m), esprints/tala
+# (34-55 m), puertas (30 m) y pasos normales (16 m) se oyen aunque haya muros
+# o arboles interpuestos.
+func _can_bot_hear_actor(b: Dictionary, target: Node3D, dist: float) -> bool:
+	var is_sprint: bool = bool(target.get_meta("sprinting", false)) or str(target.get("_puppet_anim")).to_lower().find("run") >= 0 or target.get("is_sprinting") == true
+	if is_sprint and dist <= 34.0:
+		return true
+	var is_crouch: bool = (target.get("is_crouching") == true) or bool(target.get_meta("crouching", false))
+	var is_prone: bool = (target.get("is_prone") == true) or bool(target.get_meta("prone", false))
+	var is_moving: bool = bool(target.get_meta("moving", false)) or target.get("is_moving") == true or str(target.get("_puppet_anim")).to_lower().find("walk") >= 0
+	if is_moving and not is_crouch and not is_prone and dist <= 16.0:
+		return true
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	if float(b.get("last_heard_until", 0.0)) > now_s:
+		var hpos: Vector3 = b.get("last_heard_pos", Vector3.INF)
+		if hpos != Vector3.INF and target.global_position.distance_to(hpos) <= 18.0:
+			return true
+	return false
+
+func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius: float = 120.0) -> void:
+	if world == null:
+		return
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var actor_node := _find_actor_by_peer_id(actor_id) if actor_id > 0 else null
+	for bid in bots.keys():
+		if int(bid) == actor_id:
+			continue
+		var b: Dictionary = bots[bid]
+		var proxy: Node3D = b.get("proxy")
+		if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+			continue
+		var d := proxy.global_position.distance_to(sound_pos)
+		if d > radius:
+			continue
+		b["last_heard_pos"] = sound_pos
+		b["last_heard_kind"] = kind
+		b["last_heard_actor"] = actor_id
+		b["last_heard_until"] = now_s + (18.0 if kind == "gunshot" else 9.0)
+		b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 14.0 if kind == "gunshot" else 7.0)
+		record_bot_event(int(bid), "heard_" + kind, "actor_%d" % actor_id, _poi_kind_near(sound_pos), sound_pos, "%s:%.0fm" % [kind, d])
+		if kind == "gunshot":
+			var my_faction := str(b.get("faction", "friendly"))
+			var shooter_hostile := (actor_id == 903) or (my_faction == "hostile" and actor_id != 903)
+			if not shooter_hostile and actor_id > 0:
+				var rel := get_bot_relationship(int(bid), _actor_persist_key(actor_id))
+				shooter_hostile = float(rel.get("hostility", 0.0)) > 0.25
+			var has_gun := _best_weapon_name(proxy) in ["Fusil de asalto", "Rifle francotirador"]
+			var pers := _get_bot_personality(b)
+			var brave := float(pers.get("bravery", 0.5))
+			if shooter_hostile:
+				if (has_gun or (my_faction == "hostile" and brave >= 0.45)) and float(b.get("health", 100.0)) >= 55.0:
+					if actor_node != null and is_instance_valid(actor_node) and d <= 130.0:
+						b["aggro_target"] = actor_node
+						b["aggro_timer"] = 14.0
+					elif b.get("explore_target", Vector3.INF) == Vector3.INF or d <= 140.0:
+						b["explore_target"] = sound_pos
+				elif d <= 95.0:
+					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
+					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30)
+
 func _find_combat_foe(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
 		return null
 	var proxy: Node3D = b["proxy"]
 	var aggro: Node3D = b.get("aggro_target")
 	if aggro != null and is_instance_valid(aggro) and not bool(aggro.get_meta("proxy_dead", false)) and aggro.get("is_dead") != true:
-		if proxy.global_position.distance_to(aggro.global_position) < 60.0:
+		if proxy.global_position.distance_to(aggro.global_position) < 130.0:
 			return aggro
 
 	var faction := str(b["faction"])
@@ -2343,17 +2403,19 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
 				continue
 			var p3 := p as Node3D
-			var max_r := minf(best_d, _effective_human_sight(p3, sight))
+			var heard := _can_bot_hear_actor(b, p3, proxy.global_position.distance_to(p3.global_position))
+			var max_r := minf(best_d, maxf(34.0 if heard else 0.0, _effective_human_sight(p3, sight)))
 			var d := proxy.global_position.distance_to(p3.global_position)
-			if d < max_r and (d <= 10.0 or _has_clear_shot(proxy.global_position, p3.global_position)):
+			if d < max_r and (d <= 10.0 or heard or _has_clear_shot(proxy.global_position, p3.global_position)):
 				best_d = d
 				best = p3
 		var local_p = world.get("player")
 		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
 			var lp3 := local_p as Node3D
-			var max_rl := minf(best_d, _effective_human_sight(lp3, sight))
+			var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
+			var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
 			var dl := proxy.global_position.distance_to(lp3.global_position)
-			if dl < max_rl and (dl <= 10.0 or _has_clear_shot(proxy.global_position, lp3.global_position)):
+			if dl < max_rl and (dl <= 10.0 or heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
 				best_d = dl
 				best = lp3
 	else:
@@ -2365,11 +2427,12 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			var op: Node3D = ob.get("proxy")
 			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 				continue
-			var max_ro := minf(best_d, _effective_human_sight(op, sight))
 			var d := proxy.global_position.distance_to(op.global_position)
 			var dl := leader.global_position.distance_to(op.global_position) if leader != null else 9999.0
 			var eff_d := minf(d, dl)
-			if eff_d < max_ro and (eff_d <= 10.0 or _has_clear_shot(proxy.global_position, op.global_position)):
+			var heard_o := _can_bot_hear_actor(b, op, eff_d)
+			var max_ro := minf(best_d, maxf(34.0 if heard_o else 0.0, _effective_human_sight(op, sight)))
+			if eff_d < max_ro and (eff_d <= 10.0 or heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
 				best_d = eff_d
 				best = op
 	return best

@@ -1203,6 +1203,9 @@ var _puppet_hair_color := Color(0.2, 0.15, 0.1)
 var _puppet_skin_color := Color(0.8, 0.7, 0.6)
 var _puppet_top_camo := false
 var _puppet_bottom_camo := false
+var _puppet_step_timer := 0.0
+var _puppet_step_player: AudioStreamPlayer3D = null
+var _puppet_step_streams: Array = []
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
@@ -1673,6 +1676,7 @@ func _process(delta: float) -> void:
 		if not is_dead:
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
+			_update_puppet_locomotion_audio(delta)
 		_update_hand_socket()
 		_update_torch_hand_socket()
 		_update_drink_hand_socket()
@@ -14860,10 +14864,53 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
+func _update_puppet_locomotion_audio(delta: float) -> void:
+	if DisplayServer.get_name() == "headless" or is_dead or is_sleeping or is_sitting or is_prone:
+		return
+	var anim_l := _puppet_anim.to_lower()
+	var is_run := anim_l.find("run") >= 0 or anim_l.find("sprint") >= 0
+	var is_walk := not is_run and anim_l.find("walk") >= 0 and anim_l.find("sneak") < 0 and not is_crouching
+	if not is_run and not is_walk:
+		_puppet_step_timer = 0.0
+		return
+	var sc := get_tree().current_scene if get_tree() != null else null
+	if sc != null and sc.get("player") is Node3D and is_instance_valid(sc.player):
+		if global_position.distance_to((sc.player as Node3D).global_position) > 42.0:
+			return
+	_puppet_step_timer -= delta
+	if _puppet_step_timer > 0.0:
+		return
+	_puppet_step_timer = 0.34 if is_run else 0.56
+	if sc != null and sc.has_method("get_river_depth_at") and float(sc.get_river_depth_at(global_position)) > 0.05:
+		_play_water_step_sound(global_position)
+		return
+	if _puppet_step_player == null:
+		_puppet_step_player = AudioStreamPlayer3D.new()
+		_puppet_step_player.name = "PuppetStepAudio"
+		_puppet_step_player.unit_size = 5.5
+		_puppet_step_player.max_distance = 38.0
+		_puppet_step_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+		add_child(_puppet_step_player)
+	if _puppet_step_streams.is_empty():
+		for pth in ["res://assets/external/audio/footstep_grass_01.wav", "res://assets/external/audio/footstep_grass_02.wav", "res://assets/external/audio/footstep_grass_03.wav"]:
+			var st := _load_audio_stream(pth)
+			if st != null:
+				_puppet_step_streams.append(st)
+	if _puppet_step_streams.is_empty():
+		return
+	_puppet_step_player.stream = _puppet_step_streams[randi() % _puppet_step_streams.size()]
+	_puppet_step_player.volume_db = 4.0 if is_run else 0.0
+	_puppet_step_player.pitch_scale = randf_range(0.92, 1.08)
+	_puppet_step_player.play()
+
 func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	if is_puppet:
+		# El RPC fiable player_shot_rifle puede llegar antes de que el snapshot
+		# unreliable_ordered actualice _puppet_held en un bot que acaba de
+		# desenfundar: asegurar el arma para que el sonido 3D nunca se pierda.
 		if not _is_rifle_item_name(_puppet_held):
-			return
+			_puppet_held = M4_NAME
+			_update_puppet_held_item(_puppet_held)
 	else:
 		if not _has_rifle_equipped():
 			return

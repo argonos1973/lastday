@@ -3159,6 +3159,8 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
 
 func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
+		survivor_bot_mgr.notify_sound_event(peer_id, pos, "combat", 38.0)
 	# Sound/animation feedback for observers (and a lethal hit's victim) is a
 	# reliable one-shot event; movement snapshots remain lossy by design.
 	if peer_id == net.get_my_id():
@@ -3912,6 +3914,8 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 			w.flee_from_gunshot(origin, 120.0)
 			if w is Node3D and (w as Node3D).global_position.distance_to(origin) > 120.0 and (w as Node3D).global_position.distance_to(mid_impact) <= 75.0:
 				w.flee_from_gunshot(mid_impact, 75.0)
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
+		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
 
 # El servidor dedicado no instancia nodos Door — deriva la posición de la
 # puerta desde la tabla _HOUSE_DOOR_LAYOUT (bisagra del marco).
@@ -3956,6 +3960,8 @@ func bot_try_open_door_at(pos: Vector3) -> bool:
 		return false
 	if not _net_door_state_changed(best_name, true, 0):
 		return false
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
+		survivor_bot_mgr.notify_sound_event(0, pos, "door", 30.0)
 	_refresh_nav_door_caches()
 	if net != null and net.get("is_host") == true and net.get("peer") != null:
 		for pid in net.players.keys():

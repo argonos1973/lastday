@@ -1562,6 +1562,27 @@ func run() -> void:
 	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
 		"SpawnReal 10n: con Palo afilado + 2 Palos + 2 Piedras el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
 
+	# 10o: percepcion auditiva — un disparo de rifle a 85 m es oido por los
+	# otros bots (activa alerta/huida en desarmados y aggro en un bot armado)
+	fresh_b["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["flee_until"] = 0.0
+	fresh_b["caution_until"] = 0.0
+	fresh_b["proxy"].set_meta("saved_inventory", []) # desarmado
+	var kael_b: Dictionary = mgr.bots[903]
+	kael_b["proxy"].global_position = Vector3(85.0, 0.4, 0.0)
+	kael_b["pos"] = kael_b["proxy"].global_position
+	kael_b["aggro_target"] = null
+	kael_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 0.0},
+	])
+	mgr.notify_sound_event(903, kael_b["proxy"].global_position, "gunshot", 220.0)
+	check(float(fresh_b.get("caution_until", 0.0)) >= 10.0 and float(fresh_b.get("flee_until", 0.0)) >= 8.0 and mgr.bot_knows_event(902, "heard_gunshot"),
+		"SpawnReal 10o: bot desarmado a 85 m oye el disparo de rifle, registra heard_gunshot y entra en cautela/huida")
+	mgr.notify_sound_event(902, fresh_b["proxy"].global_position, "gunshot", 220.0)
+	check(kael_b.get("aggro_target") == fresh_b["proxy"],
+		"SpawnReal 10p: bot hostil armado a 85 m oye el disparo y localiza al tirador")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
