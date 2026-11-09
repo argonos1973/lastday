@@ -2062,8 +2062,10 @@ func _bot_credit_kill(b: Dictionary, animal: Node3D) -> void:
 	var kind := str(animal.get("animal_type"))
 	if kind == "wolf" or kind == "bear":
 		ck_st["kills_predator"] = int(ck_st.get("kills_predator", 0)) + 1
+		_evolve_personality(b, "kill_threat", 0.45)
 	else:
 		ck_st["kills_prey"] = int(ck_st.get("kills_prey", 0)) + 1
+		_evolve_personality(b, "hunt_success", 0.30)
 	ck_mem["stats"] = ck_st
 
 # ==================== CAZA DE PRESAS (CIERVOS / ZORROS) ====================
@@ -4492,7 +4494,15 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		var def_p := _default_personality_for_bot(bot_id, cfg)
 		var p_dict: Dictionary = mem["personality"]
 		for k in AI_PERSONALITY_TRAITS:
-			p_dict[k] = clampf(float(p_dict.get(k, def_p[k])), 0.05, 0.98)
+			var bv := float(def_p[k])
+			var lo := maxf(0.05, bv - 0.22)
+			var hi := minf(0.98, bv + 0.22)
+			var raw_v := float(p_dict.get(k, bv))
+			# Si un rasgo venia saturado al tope global (0.05 o 0.98) de sesiones
+			# anteriores sin ancla innata, devolverlo al temperamento base del bot.
+			if is_equal_approx(raw_v, 0.05) or is_equal_approx(raw_v, 0.98):
+				raw_v = lerpf(bv, clampf(raw_v, lo, hi), 0.35)
+			p_dict[k] = snappedf(clampf(raw_v, lo, hi), 0.001)
 	if not mem.has("deaths"):
 		mem["deaths"] = 0
 	if not mem.has("stats") or not (mem["stats"] is Dictionary):
@@ -4537,40 +4547,51 @@ func _get_bot_personality(b: Dictionary) -> Dictionary:
 	b["personality"] = p
 	return p
 
-func _adjust_trait(p: Dictionary, trait_name: String, delta_v: float) -> void:
+func _adjust_trait(p: Dictionary, trait_name: String, delta_v: float, base_v: float = -1.0) -> void:
 	if not AI_PERSONALITY_TRAITS.has(trait_name):
 		return
-	p[trait_name] = snappedf(clampf(float(p.get(trait_name, 0.5)) + delta_v, 0.05, 0.98), 0.001)
+	var lo := maxf(0.05, base_v - 0.22) if base_v >= 0.0 else 0.05
+	var hi := minf(0.98, base_v + 0.22) if base_v >= 0.0 else 0.98
+	p[trait_name] = snappedf(clampf(float(p.get(trait_name, 0.5)) + delta_v, lo, hi), 0.001)
 
-# Evolución gradual de la personalidad según experiencias verificadas.
+# Evolución gradual de la personalidad según experiencias verificadas, anclada
+# al temperamento innato de cada bot (±0.22) con homeostasis suave para que los
+# tres nunca converjan a los topes globales [0.05, 0.98].
 func _evolve_personality(b: Dictionary, event_kind: String, intensity: float = 0.25) -> void:
 	var p := _get_bot_personality(b)
-	var step := clampf(intensity, 0.05, 1.0) * 0.08
+	var bid := int(b.get("bot_id", 901))
+	var base_p := _default_personality_for_bot(bid, b.get("cfg", {}))
+	for k in AI_PERSONALITY_TRAITS:
+		var bv := float(base_p.get(k, 0.5))
+		var cur_v := float(p.get(k, bv))
+		p[k] = snappedf(cur_v + (bv - cur_v) * 0.04, 0.001)
+	var step := clampf(intensity, 0.05, 1.0) * 0.055
 	match event_kind:
 		"death":
-			_adjust_trait(p, "survival_instinct", step * 1.1)
-			_adjust_trait(p, "bravery", -step * 0.8)
-			_adjust_trait(p, "distrust", step * 0.6)
+			_adjust_trait(p, "survival_instinct", step * 1.1, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "bravery", -step * 0.8, float(base_p["bravery"]))
+			_adjust_trait(p, "distrust", step * 0.6, float(base_p["distrust"]))
 		"predator_hit", "zone_hazard":
-			_adjust_trait(p, "survival_instinct", step * 0.7)
-			_adjust_trait(p, "bravery", -step * 0.45)
+			_adjust_trait(p, "survival_instinct", step * 0.7, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "bravery", -step * 0.45, float(base_p["bravery"]))
 		"player_attacked":
-			_adjust_trait(p, "distrust", step * 1.2)
-			_adjust_trait(p, "aggression", step * 0.65)
-			_adjust_trait(p, "sociability", -step * 0.75)
-			_adjust_trait(p, "cooperation", -step * 0.75)
+			_adjust_trait(p, "distrust", step * 1.2, float(base_p["distrust"]))
+			_adjust_trait(p, "aggression", step * 0.65, float(base_p["aggression"]))
+			_adjust_trait(p, "sociability", -step * 0.75, float(base_p["sociability"]))
+			_adjust_trait(p, "cooperation", -step * 0.75, float(base_p["cooperation"]))
 		"player_helped":
-			_adjust_trait(p, "sociability", step * 0.95)
-			_adjust_trait(p, "cooperation", step * 1.1)
-			_adjust_trait(p, "distrust", -step * 0.95)
-			_adjust_trait(p, "aggression", -step * 0.4)
+			_adjust_trait(p, "sociability", step * 0.95, float(base_p["sociability"]))
+			_adjust_trait(p, "cooperation", step * 1.1, float(base_p["cooperation"]))
+			_adjust_trait(p, "distrust", -step * 0.95, float(base_p["distrust"]))
+			_adjust_trait(p, "aggression", -step * 0.4, float(base_p["aggression"]))
 		"hunt_success", "kill_threat":
-			_adjust_trait(p, "bravery", step * 0.7)
-			_adjust_trait(p, "aggression", step * 0.35)
+			_adjust_trait(p, "bravery", step * 0.7, float(base_p["bravery"]))
+			_adjust_trait(p, "aggression", step * 0.35, float(base_p["aggression"]))
 		"good_loot", "poi_discovered":
-			_adjust_trait(p, "curiosity", step * 0.65)
+			_adjust_trait(p, "curiosity", step * 0.45, float(base_p["curiosity"]))
+			_adjust_trait(p, "bravery", step * 0.20, float(base_p["bravery"]))
 		"starving":
-			_adjust_trait(p, "survival_instinct", step * 0.85)
+			_adjust_trait(p, "survival_instinct", step * 0.85, float(base_p["survival_instinct"]))
 	b["personality"] = p
 
 # Observación local: cada bot solo conoce las ubicaciones que ha visto dentro de
