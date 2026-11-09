@@ -1160,6 +1160,12 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 	mem["visited"] = visited
 	b["_visited"] = visited
 
+# Direccion preferente de exploracion de cada bot: angulo aureo separa los
+# sectores ~222 grados entre ellos para que se repartan el mapa.
+func _bot_explore_sector(b: Dictionary) -> float:
+	var bid := int(b.get("bot_id", 0))
+	return TAU * fposmod(float(bid) * 0.618034, 1.0)
+
 # Elige el siguiente destino de exploracion como haria un jugador: prefiere
 # sitios no visitados, acordes a su personalidad y rol, cercanos, y nunca el
 # lugar donde murio la ultima vez.
@@ -1226,6 +1232,25 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
 			var score := w * 100.0 - d * 0.8 + rng.randf_range(0.0, 45.0)
+			# Dispersion territorial: cada bot tiene un sector de exploracion
+			# propio (determinista por bot_id) desde su campamento — asi los tres
+			# no orbitan el mismo pueblo. La curiosidad tira hacia POIs lejanos.
+			var base: Vector3 = b.get("camp_spot", proxy.global_position)
+			if base == Vector3.INF:
+				base = proxy.global_position
+			var away := Vector2(pp.x - base.x, pp.z - base.z)
+			if away.length() > 30.0:
+				var sector := _bot_explore_sector(b)
+				var diff := absf(wrapf(away.angle() - sector, -PI, PI))
+				score += (1.0 - diff / PI) * (25.0 + curiosity * 60.0)
+				score += curiosity * minf(d, 320.0) * 0.35
+			# Anti-cluster: si un aliado ya va hacia esta zona, otro elige otra
+			for ob in bots.values():
+				if ob == b:
+					continue
+				var ot: Vector3 = ob.get("explore_target", Vector3.INF)
+				if ot != Vector3.INF and Vector2(ot.x - pp.x, ot.z - pp.z).length() < 45.0:
+					score -= 70.0
 			score *= _ai_poi_memory_factor(b, pp, kind)
 			if score > best_score:
 				best_score = score

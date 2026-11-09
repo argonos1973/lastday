@@ -1303,6 +1303,43 @@ func run() -> void:
 	check(dt_ms < 15.0 and report_str.contains("Elena") and report_str.contains("Carlos") and report_str.contains("Kael") and report_str.contains("Personalidad:") and report_str.contains("Relaciones:"),
 		"Aceptación 7b: El tick cognitivo y el panel de depuración se ejecutan sin bloquear el hilo principal (%.2f ms)" % dt_ms)
 
+	# Dispersión territorial: con el mismo campamento y POIs repartidos por el
+	# mapa, cada bot debe elegir un destino dentro de su propio sector dorado
+	# (y los aliados no deben converger al mismo POI)
+	world.HOUSE_FOOTPRINTS = []
+	var camp_base := Vector3(0.0, 0.0, 0.0)
+	var sector_pois := {}
+	for tbid in [901, 902, 903]:
+		var tb: Dictionary = mgr.bots[tbid]
+		var sec := mgr._bot_explore_sector(tb)
+		var sdir := Vector2(cos(sec), sin(sec))
+		var ppos := camp_base + Vector3(sdir.x * 300.0, 0.0, sdir.y * 300.0)
+		world.HOUSE_FOOTPRINTS.append({"origin": ppos})
+		sector_pois[tbid] = ppos
+	mgr._poi_cache.clear()
+	mgr._poi_cache_built = false
+	var chosen_targets := {}
+	for tbid in [901, 902, 903]:
+		var tb: Dictionary = mgr.bots[tbid]
+		tb["camp_spot"] = camp_base
+		tb["ai_directive"] = {}
+		tb["explore_dwell"] = 0.0
+		var tmem: Dictionary = tb.get("_mem", {})
+		tmem["visited"] = []
+		tmem["last_death_pos"] = Vector3.INF
+		tb["_visited"] = []
+		(tb["proxy"] as Node3D).global_position = camp_base
+		var chosen := mgr._choose_explore_target(tb)
+		tb["explore_target"] = chosen
+		chosen_targets[tbid] = chosen
+		var sec2 := mgr._bot_explore_sector(tb)
+		var away := Vector2(chosen.x - camp_base.x, chosen.z - camp_base.z)
+		var diff := absf(wrapf(away.angle() - sec2, -PI, PI))
+		check(chosen != Vector3.INF and diff < PI * 0.5,
+			"Dispersion 8a: bot %d elige un POI dentro de su sector de exploracion (diff=%.2f rad)" % [tbid, diff])
+	check(chosen_targets[901] != chosen_targets[902] and chosen_targets[901] != chosen_targets[903] and chosen_targets[902] != chosen_targets[903],
+		"Dispersion 8b: los tres bots eligen POIs distintos y no convergen a la misma zona")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
