@@ -1389,6 +1389,15 @@ func run() -> void:
 		"SpawnReal 10b: el respawn queda a >=220 m del punto de muerte (dist=%.0f m)" % Vector2(spawn_p.x - death_p.x, spawn_p.z - death_p.z).length())
 	if old_zones is Array:
 		world._spawn_zones = old_zones
+	# SpawnReal 10c: dos supervivientes nunca comparten punto de aparicion.
+	# Con una zona a 15 m de Elena y otra a 300 m, el spawn debe elegir la lejana.
+	var elena_p: Vector3 = mgr.bots[901]["proxy"].global_position
+	world._spawn_zones = [elena_p + Vector3(15.0, 0.0, 0.0), elena_p + Vector3(300.0, 0.0, 0.0)]
+	var spawn_far := mgr._random_bot_spawn(fresh_b["cfg"], Vector3.INF)
+	check(Vector2(spawn_far.x - elena_p.x, spawn_far.z - elena_p.z).length() >= 80.0,
+		"SpawnReal 10c: el spawn nunca queda pegado a otro superviviente (sep a Elena=%.0f m)" % Vector2(spawn_far.x - elena_p.x, spawn_far.z - elena_p.z).length())
+	if old_zones is Array:
+		world._spawn_zones = old_zones
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

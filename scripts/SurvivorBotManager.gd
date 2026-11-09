@@ -366,9 +366,12 @@ func spawn_all_bots() -> void:
 	if net != null and net.is_host and net.peer != null and net.has_method("_broadcast_player_list"):
 		net._broadcast_player_list()
 
-# Spawn aleatorio dentro de las mismas zonas de spawn que usan los jugadores
-# (_spawn_zones del mundo): zona al azar + offset +-3 m, evitando rios,
-# bloqueadores y quedar pegado a otro superviviente IA.
+# Spawn dentro de las mismas zonas de spawn que usan los jugadores
+# (_spawn_zones del mundo): se evaluan TODAS las zonas con pequenos offsets
+# y se toma la primera con >=80 m de separacion a cualquier superviviente
+# (bot o jugador humano). Si ninguna llega, se elige la que maximiza la
+# separacion: dos supervivientes nunca comparten punto de aparicion.
+# El respawn ademas queda siempre a >=220 m del punto de muerte.
 func _random_bot_spawn(cfg: Dictionary, avoid_pos: Vector3 = Vector3.INF) -> Vector3:
 	var fallback := Vector3(cfg.get("spawn", Vector3.ZERO))
 	var zones_v = world.get("_spawn_zones") if world != null else null
@@ -377,24 +380,30 @@ func _random_bot_spawn(cfg: Dictionary, avoid_pos: Vector3 = Vector3.INF) -> Vec
 		return _sanitize_ground_point(fallback)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
+	var order: Array = range(zones.size())
+	for i in range(order.size()):
+		var j: int = rng.randi() % order.size()
+		var t = order[i]
+		order[i] = order[j]
+		order[j] = t
 	var best := Vector3.INF
 	var best_sep := -1.0
-	for i in range(16):
-		var zone: Vector3 = zones[rng.randi() % zones.size()]
-		var cand := Vector3(zone.x + rng.randf_range(-3.0, 3.0), 0.0, zone.z + rng.randf_range(-3.0, 3.0))
-		# El respawn nunca cerca del punto de muerte: morir te reubica lejos
-		if avoid_pos != Vector3.INF and Vector2(cand.x - avoid_pos.x, cand.z - avoid_pos.z).length() < 220.0:
-			continue
-		if world.has_method("_is_near_river") and world._is_near_river(cand, 30.0):
-			continue
-		if _is_pos_blocked(cand, 0.7):
-			continue
-		var sep := _min_dist_to_other_bots(cand)
-		if sep >= 40.0:
-			return _sanitize_ground_point(cand)
-		if sep > best_sep:
-			best_sep = sep
-			best = cand
+	for zi in order:
+		var zone: Vector3 = zones[zi]
+		for j in range(3):
+			var cand := Vector3(zone.x + rng.randf_range(-4.0, 4.0), 0.0, zone.z + rng.randf_range(-4.0, 4.0))
+			if avoid_pos != Vector3.INF and Vector2(cand.x - avoid_pos.x, cand.z - avoid_pos.z).length() < 220.0:
+				continue
+			if world.has_method("_is_near_river") and world._is_near_river(cand, 30.0):
+				continue
+			if _is_pos_blocked(cand, 0.7):
+				continue
+			var sep := _min_dist_to_survivors(cand)
+			if sep >= 80.0:
+				return _sanitize_ground_point(cand)
+			if sep > best_sep:
+				best_sep = sep
+				best = cand
 	if best != Vector3.INF:
 		return _sanitize_ground_point(best)
 	# Sin candidato valido: la zona MAS ALEJADA del punto de muerte (o al azar)
@@ -412,9 +421,28 @@ func _random_bot_spawn(cfg: Dictionary, avoid_pos: Vector3 = Vector3.INF) -> Vec
 func _min_dist_to_other_bots(pos: Vector3) -> float:
 	var sep := INF
 	for other_id in bots.keys():
-		var op = bots[other_id].get("pos", Vector3.INF)
-		if op is Vector3 and (op as Vector3) != Vector3.INF:
-			sep = minf(sep, Vector2(pos.x - (op as Vector3).x, pos.z - (op as Vector3).z).length())
+		var ob: Dictionary = bots[other_id]
+		var opr = ob.get("proxy")
+		var op: Vector3 = ob.get("pos", Vector3.INF)
+		if opr != null and is_instance_valid(opr) and opr is Node3D:
+			op = (opr as Node3D).global_position
+		if op is Vector3 and op != Vector3.INF:
+			sep = minf(sep, Vector2(pos.x - op.x, pos.z - op.z).length())
+	return sep
+
+# Distancia al superviviente mas cercano (bot o jugador humano con proxy vivo).
+func _min_dist_to_survivors(pos: Vector3) -> float:
+	var sep := _min_dist_to_other_bots(pos)
+	if world == null:
+		return sep
+	var proxies = world.get("net_player_proxy")
+	if proxies is Dictionary:
+		for pid in (proxies as Dictionary).keys():
+			if is_bot_peer_id(int(pid)):
+				continue
+			var pr = (proxies as Dictionary)[pid]
+			if pr != null and is_instance_valid(pr) and pr is Node3D:
+				sep = minf(sep, Vector2(pos.x - (pr as Node3D).global_position.x, pos.z - (pr as Node3D).global_position.z).length())
 	return sep
 
 func _sanitize_ground_point(preferred: Vector3) -> Vector3:
