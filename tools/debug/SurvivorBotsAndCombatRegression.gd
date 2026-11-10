@@ -2321,6 +2321,17 @@ func run() -> void:
 	check(meet_ok, "10z6: status expone meet{target,dist} del reencuentro")
 	elena_y["_meet_id"] = 0
 
+	# Media de tiempo de vida: total acumulado / vidas (muertes + vida actual)
+	var mem_z := mgr._ensure_bot_memory(901)
+	mem_z["stats"]["alive_total_sec"] = 3600.0
+	mem_z["deaths"] = 3
+	var st_avg: Dictionary = mgr.get_full_web_status()
+	var avg_ok := false
+	for sb in st_avg.get("bots", []):
+		if int((sb as Dictionary).get("bot_id", 0)) == 901:
+			avg_ok = int((sb as Dictionary).get("avg_life_seconds", -1)) >= 900
+	check(avg_ok, "10z7: avg_life_seconds = total/vidas (>=900 s con 3600 s y 3 muertes)")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

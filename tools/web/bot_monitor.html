@@ -391,7 +391,7 @@ function renderSummary(data) {
       ? `<span class="badge ok">Qwen p=${d.priority || 3}</span>`
       : `<span class="badge info">${esc(d.source || "Local")}</span>`;
     html += `<tr>
-      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)}</span></td>
+      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)} · ⌀ vida ${fmtDur(b.avg_life_seconds)}</span></td>
       <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
       <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
       <td>${(() => {
@@ -678,8 +678,8 @@ function renderBots(data) {
         <div style="text-align:right">
           <div style="font-size:22px;font-weight:800;color:${col};line-height:1">⭐ ${b.score ?? 0}</div>
           <div style="font-size:10px;color:var(--muted);margin-top:3px">PUNTUACIÓN</div>
-          <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b></div>
-          <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)}</div>
+          <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b> · ⌀ vida: <b>${fmtDur(b.avg_life_seconds)}</b></div>
+          <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)} · ${b.deaths || 0} muertes</div>
           <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")} · ${esc(b.act || "?")}</span>
         </div>
       </div>

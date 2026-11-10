@@ -7174,6 +7174,10 @@ func get_full_web_status() -> Dictionary:
 		))
 		snap["alive_seconds"] = int(life_sec)
 		snap["alive_total_seconds"] = int(alive_total)
+		# Media de tiempo de vida: total acumulado entre vidas (muertes + la
+		# vida en curso si sigue vivo) — mide cuanto sobrevive de verdad.
+		var lives_n: int = int(mem.get("deaths", 0)) + (0 if is_dead else 1)
+		snap["avg_life_seconds"] = int(alive_total / maxf(1.0, float(lives_n)))
 		snap["score"] = score
 		snap["stats"] = st
 		bots_out.append(snap)
